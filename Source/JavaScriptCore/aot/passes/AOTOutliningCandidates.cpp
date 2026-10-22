@@ -29,10 +29,13 @@
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/HashFunctions.h>
+#include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -43,6 +46,39 @@ enum class BackwardExtension : uint8_t { ConstantsOnly, UsedValues, AllValues };
 enum class SitesThatCannotPayOff : uint8_t { AreKeptToBeSplit, AreDropped };
 enum class NamedGuards : uint8_t { None, AllDefinedInSite, SomeDefinedOutside };
 
+class HashesOfSplittableSites {
+    WTF_MAKE_NONCOPYABLE(HashesOfSplittableSites);
+public:
+    HashesOfSplittableSites(const ParallelLoops& loops, size_t numberOfFunctions)
+        : m_slots(loops, roundUpToPowerOfTwo(std::max<size_t>(slotsForFunction * numberOfFunctions, 1 << 10)), [](unsigned) { return 0u; })
+    {
+    }
+
+    // True where the hash was added before. False says nothing: there may have been no room for it.
+    bool add(unsigned hash)
+    {
+        if (!hash)
+            return false;
+        size_t mask = m_slots.size() - 1;
+        size_t index = WTF::intHash(hash) & mask;
+        for (unsigned probe = 0; probe < longestProbe; ++probe, index = (index + 1) & mask) {
+            std::atomic_ref<unsigned> slot(m_slots[index]);
+            unsigned found = slot.load(std::memory_order_relaxed);
+            if (!found && slot.compare_exchange_strong(found, hash, std::memory_order_relaxed))
+                return false;
+            if (found == hash)
+                return true;
+        }
+        return false;
+    }
+
+private:
+    static constexpr size_t slotsForFunction = 8;
+    static constexpr unsigned longestProbe = 16;
+
+    ParallelArray<unsigned> m_slots;
+};
+
 struct FinderInputs {
     AnalysisContext contextOf(FunctionID id) const { return { build, program, &inputs.flow, &inputs.effects, id }; }
 
@@ -52,6 +88,7 @@ struct FinderInputs {
     OpcodeSet opcodesThatMayDefineObjects;
     OpcodeSet opcodesThatDefineObjectsThatNeedNotBeFresh;
     OpcodeSet opcodesThatProve;
+    HashesOfSplittableSites& hashesOfSplittableSites;
 };
 
 class GuardsInUse {
@@ -684,8 +721,7 @@ static Origin originOfBodyCall(const Function& function, const OutliningSite& si
 
 static bool isShownInStackTraces(const FunctionScan& scan, ValueID id)
 {
-    const Effects& effects = scan.analyses.effectsOf(id).normal;
-    return effects.mayThrow || effects.mayCallUnknownCode;
+    return scan.analyses.mayThrow(id) || scan.analyses.mayCallUnknownCode(id);
 }
 
 static bool isShownAt(const FunctionScan& scan, ValueID id, Origin origin)
@@ -815,19 +851,22 @@ static bool findExitArgument(const FunctionScan& scan, OutliningSite& region)
     return true;
 }
 
+static uint32_t codeBytesOf(FunctionScan& scan, ValueID id)
+{
+    std::optional<uint32_t>& cached = scan.cachedCodeBytes[id.index()];
+    if (!cached)
+        cached = estimatedCodeBytes(scan.program, scan.function, scan.function.at(id));
+    return *cached;
+}
+
 static uint32_t computeCodeBytes(FunctionScan& scan, const OutliningSite& site)
 {
     const Function& function = scan.function;
     uint32_t bytes = 0;
     auto addValues = [&](std::span<const ValueID> values) {
         for (ValueID id : values) {
-            const Value& value = function.at(id);
-            if (isRematerializable(value))
-                continue;
-            std::optional<uint32_t>& cached = scan.cachedCodeBytes[id.index()];
-            if (!cached)
-                cached = estimatedCodeBytes(scan.program, function, value);
-            bytes += *cached;
+            if (!isRematerializable(function.at(id)))
+                bytes += codeBytesOf(scan, id);
         }
     };
 
@@ -844,23 +883,23 @@ static uint32_t computeCodeBytes(FunctionScan& scan, const OutliningSite& site)
 }
 
 // In cold code an access by key and a call of a value are the moves of their operands and one call of a stub: what a call of a function is. As a function of its own it gets a frame and two more jumps each time it runs.
-static bool isOneCallOfStub(const Program& program, const OutliningSite& site)
+static bool isOneCallOfStub(FunctionScan& scan, const OutliningSite& site)
 {
     static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete };
     if (site.isRegion())
         return false;
-    const Function& function = program.at(site.function);
+    const Function& function = scan.function;
     auto passesConstantThatTakesCode = [&](const Value& call) {
         bool result = false;
         call.forEachOperand([&](ValueID operand, uint32_t) {
-            result |= isRematerializable(function.at(operand)) && estimatedCodeBytes(program, function, function.at(operand));
+            result |= isRematerializable(function.at(operand)) && codeBytesOf(scan, operand);
         });
         return result;
     };
     unsigned numberOfOperations = 0;
     for (ValueID id : entryValuesOf(function, site)) {
         const Value& value = function.at(id);
-        if (isRematerializable(value) || !estimatedCodeBytes(program, function, value))
+        if (isRematerializable(value) || !codeBytesOf(scan, id))
             continue;
         bool isCallOfValue = accessClassOf(value.opcode) == AccessClass::IndirectCall && !passesConstantThatTakesCode(value);
         if (!(isCallOfValue || accessesByKey.contains(value.opcode)) || ++numberOfOperations > 1)
@@ -870,9 +909,9 @@ static bool isOneCallOfStub(const Program& program, const OutliningSite& site)
 }
 
 // However many equal sites there are, each of them gets no shorter.
-static bool canPayOff(const Program& program, const OutliningSite& site)
+static bool canPayOff(FunctionScan& scan, const OutliningSite& site)
 {
-    return site.codeBytes > site.callBytes && !isOneCallOfStub(program, site);
+    return site.codeBytes > site.callBytes && !isOneCallOfStub(scan, site);
 }
 
 // What a call returns is a value of its own. Checks that hand on the object they were given would, as a call, cut the object in two:
@@ -937,7 +976,7 @@ static bool completeSite(FunctionScan& scan, OutliningSite& site, SitesThatCanno
     site.liveIns = form.liveIns();
     site.codeBytes = computeCodeBytes(scan, site);
     site.callBytes = estimatedCallBytes(site);
-    site.canPayOff = canPayOff(scan.program, site);
+    site.canPayOff = canPayOff(scan, site);
     if (site.canPayOff || (unprofitableSites == SitesThatCannotPayOff::AreKeptToBeSplit && canBeSplit(scan.program, site)))
         site.hash = form.hash();
     return true;
@@ -1043,7 +1082,7 @@ static bool isOneOperationThatCannotPayOff(FunctionScan& scan, const OutliningSi
     }
     if (liveIns.size() > scan.build.limit(LimitID::MaxOutlinedOperands))
         return false;
-    return computeCodeBytes(scan, run) <= estimatedDirectCallBytes(liveIns.size()) || isOneCallOfStub(scan.program, run);
+    return computeCodeBytes(scan, run) <= estimatedDirectCallBytes(liveIns.size()) || isOneCallOfStub(scan, run);
 }
 
 static std::optional<OutliningSite> tryCreateRun(FunctionScan& scan, const ValueRange& range, uint32_t rootIndex, BackwardExtension extension, SitesThatCannotPayOff unprofitableSites)
@@ -1102,6 +1141,7 @@ static void findParts(FunctionScan& scan, const OutliningSite& site, Vector<Outl
 
 // Whether a site is repeated is known when all functions have been looked at. Its parts are found at once, while the analyses of the function are there.
 // A part lies within its site and sites do not overlap, so the parts of one site are found without regard to any other site.
+// A site whose hash another splittable site had before it is repeated, whatever follows, and stays whole.
 static void findPartsOfSplittableSites(FunctionScan& scan, FunctionSites& found)
 {
     scan.valuesInSites.clearAll();
@@ -1110,7 +1150,8 @@ static void findPartsOfSplittableSites(FunctionScan& scan, FunctionSites& found)
         if (!canBeSplit(scan.program, site))
             continue;
         uint32_t firstPart = found.parts.size();
-        findParts(scan, site, found.parts);
+        if (!scan.finder.hashesOfSplittableSites.add(site.hash))
+            findParts(scan, site, found.parts);
         found.splittableSites.append(SplittableSite { index, firstPart, static_cast<uint32_t>(found.parts.size() - firstPart), false });
     }
 }
@@ -1245,12 +1286,14 @@ struct OutliningSiteFinder::State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
 
     State(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
-        : finder { program, inputs, build, findOpcodesThatMayDefineObjects(), findOpcodesThatDefineObjectsThatNeedNotBeFresh(), findOpcodesThatProve() }
+        : hashesOfSplittableSites(build.parallelLoops(), program.functions.size())
+        , finder { program, inputs, build, findOpcodesThatMayDefineObjects(), findOpcodesThatDefineObjectsThatNeedNotBeFresh(), findOpcodesThatProve(), hashesOfSplittableSites }
         , functions(build.parallelLoops(), program.functions.size(), [](unsigned) { return FunctionSites(); })
         , hasSites(FillWith { }, program.functions.size(), static_cast<uint8_t>(0))
     {
     }
 
+    HashesOfSplittableSites hashesOfSplittableSites;
     FinderInputs finder;
     ParallelArray<FunctionSites> functions;
     Vector<uint8_t> hasSites;

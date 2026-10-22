@@ -326,7 +326,7 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
         return;
     }
     // A call tests a slot that may be empty, and goes to the function without making the closure.
-    if (query.readIsOnlyCalled() && canCallWithoutFieldRead(program, state) && (state.isAlwaysFilled || !query.usesOnlyPlansWithoutTests)) {
+    if (canCallWithoutFieldRead(program, state) && (state.isAlwaysFilled || !query.usesOnlyPlansWithoutTests) && query.readIsOnlyCalled()) {
         plan.form = AccessForm::Method;
         plan.member.method = state.deferredFunction;
         plan.capturesReceiver = state.deferral == ClosureDeferral::CapturesObject;

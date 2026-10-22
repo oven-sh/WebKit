@@ -68,10 +68,10 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
     size_t numberOfOtherSites = tables.sites.allocationSites.size();
     size_t numberOfOtherClasses = tables.sites.allocationClasses.size();
 
-    // All threads look for the allocations and at what is marked on their objects. They are numbered in the order of the functions.
     struct Instance {
         ValueID operation;
         ValueFlowObjectID object;
+        BuiltinClassID builtinClass;
         OptionSet<ObjectMutation> markedMutations;
         bool neverChanges;
     };
@@ -83,7 +83,7 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
         // An allocation that stores nothing has no statement: the empty array that a spread fills, for one. It allocates the storage that its stamp tells it like any other.
         for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
             if (ValueFlowObjectID object = builtinInstanceAllocatedBy(universe, FunctionID(index), ValueID(valueIndex), function.values[valueIndex].opcode))
-                instances.append({ ValueID(valueIndex), object, markedMutationsOf(inputs, object), neverChangesOnceMade(inputs, object) });
+                instances.append({ ValueID(valueIndex), object, universe.siteOf(object)->builtinClass, markedMutationsOf(inputs, object), neverChangesOnceMade(inputs, object) });
         }
         return instances;
     });
@@ -91,40 +91,47 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
     auto functionsWithInstances = findIndicesInParallel(inputs.loops(), program.functions.size(), [&](unsigned index) {
         return !instancesOfFunction[index].isEmpty();
     });
+    auto classOf = [&](const Instance& instance) -> AllocationClassID& {
+        bool isUnwrittenArray = instance.builtinClass == BuiltinClasses::Array && !instance.markedMutations.contains(ObjectMutation::StoreAfterCreation);
+        return isUnwrittenArray ? classOfUnwrittenArrays : classOfBuiltinClass[instance.builtinClass.index()];
+    };
+    Vector<uint32_t> firstSiteOfFunction;
+    firstSiteOfFunction.reserveInitialCapacity(functionsWithInstances.size());
+    uint32_t numberOfSites = static_cast<uint32_t>(numberOfOtherSites);
     for (uint32_t index : functionsWithInstances) {
-        const Function& function = program.functions[index];
-        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
-        size_t numberOfOtherStamps = stamps.size();
+        firstSiteOfFunction.append(numberOfSites);
         for (const Instance& instance : instancesOfFunction[index]) {
-            ValueID operation = instance.operation;
-            Opcode opcode = function.at(operation).opcode;
-            ValueFlowObjectID object = instance.object;
-
-            BuiltinClassID builtinClass = universe.siteOf(object)->builtinClass;
-            bool isUnwrittenArray = builtinClass == BuiltinClasses::Array && !instance.markedMutations.contains(ObjectMutation::StoreAfterCreation);
-            AllocationClassID& allocationClass = isUnwrittenArray ? classOfUnwrittenArrays : classOfBuiltinClass[builtinClass.index()];
+            AllocationClassID& allocationClass = classOf(instance);
             if (!allocationClass) {
                 allocationClass = AllocationClassID(tables.sites.allocationClasses.size());
                 AllocationClass instances;
-                instances.builtinClass = builtinClass;
+                instances.builtinClass = instance.builtinClass;
                 instances.impossibleMutations = allObjectMutations - mutationsOfBuiltinInstancesWithoutMark;
                 tables.sites.allocationClasses.append(WTF::move(instances));
             }
-
-            const ValueFlowContainerFacts* facts = containers.find(object);
-            AllocationClass& instances = tables.sites.allocationClasses[allocationClass.index()];
-            instances.impossibleMutations.remove(instance.markedMutations);
-
-            AllocationSiteID site(tables.sites.allocationSites.size());
-            tables.sites.allocationSites.append(AllocationSite { FunctionID(index), { }, builtinClass, allocationClass, function.locationOf(operation) });
-            if (instance.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, builtinClass.index()))
-                tables.sites.sitesOfObjectsThatNeverChange.set(site.index());
-            bool hasElements = facts && opcode == Opcode::NewArray && indexOfElements < facts->contents.size();
+            tables.sites.allocationClasses[allocationClass.index()].impossibleMutations.remove(instance.markedMutations);
+            if (instance.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, instance.builtinClass.index()))
+                tables.sites.sitesOfObjectsThatNeverChange.set(numberOfSites);
+            ++numberOfSites;
+        }
+    }
+    tables.sites.allocationSites.grow(numberOfSites);
+    forEachIndexInParallel(inputs.loops(), functionsWithInstances.size(), [&](unsigned position) {
+        uint32_t index = functionsWithInstances[position];
+        const Function& function = program.functions[index];
+        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
+        uint32_t nextSite = firstSiteOfFunction[position];
+        for (const Instance& instance : instancesOfFunction[index]) {
+            ValueID operation = instance.operation;
+            AllocationClassID allocationClass = classOf(instance);
+            const ValueFlowContainerFacts* facts = containers.find(instance.object);
+            AllocationSiteID site(nextSite++);
+            tables.sites.allocationSites[site.index()] = AllocationSite { FunctionID(index), { }, instance.builtinClass, allocationClass, function.locationOf(operation) };
+            bool hasElements = facts && function.at(operation).opcode == Opcode::NewArray && indexOfElements < facts->contents.size();
             stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID() });
         }
-        if (stamps.size() != numberOfOtherStamps)
-            std::ranges::sort(stamps, { }, &FlowAllocationStamp::value);
-    }
+        std::ranges::sort(stamps, { }, &FlowAllocationStamp::value);
+    });
 
     classOfBuiltinClass.append(classOfUnwrittenArrays);
     for (AllocationClassID allocationClass : classOfBuiltinClass) {
@@ -410,6 +417,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     });
     auto unknownResults = add("unknown results"_s, { }, [&](PhaseTimes&) {
         tables = createUnknownResultTables(program, build);
+        tables.sites.accessSiteLosses.grow(tables.application->accessSites.numberOfSites());
     });
     auto classesOfResults = add("classes of what built-ins answer"_s, { }, [&](PhaseTimes&) {
         classesOfBuiltinResults = computeClassesOfBuiltinResults(inputs);
@@ -525,17 +533,19 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     });
     add("accesses"_s, { stampsOfAccesses, literalKeyOrders }, [&](PhaseTimes&) {
         computeStoreNamingResults(inputs, *usesOfHeap, tables);
-        usesOfHeap = nullptr;
+        build.destroyLater(WTF::move(usesOfHeap));
     });
     steps->run();
     inputs.heapIndex = nullptr;
-    heapIndex = nullptr;
+    build.destroyLater(WTF::move(heapIndex));
     inputs.nodesAskedFor = nullptr;
-    nodesAskedFor = nullptr;
+    build.destroyLater(WTF::move(nodesAskedFor));
     times.didFinish("the results behind the rounds"_s);
     recordLockedWritesUnderNewNames(program, types, writesUnderNewNames.span(), tables);
 
-    // Nobody waits for their memory, and one thread takes a while to free it. Only what holds nothing but its own data: what gives a maker of sets back as it dies asks `inputs` for the pool.
+    // Nobody waits for their memory, and one thread takes a while to free it. They die in this order: what gives a maker of sets back as it dies gives it to the pool of the solution.
+    inputs.numbersOfValues = nullptr;
+    build.destroyLater(WTF::move(numbersOfValues));
     build.destroyLater(WTF::move(containers));
     build.destroyLater(WTF::move(fieldContents));
     build.destroyLater(WTF::move(constructions));

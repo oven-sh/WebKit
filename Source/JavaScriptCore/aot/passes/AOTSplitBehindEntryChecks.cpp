@@ -819,7 +819,7 @@ void skipAnsweredEntryChecks(ProgramEditor& editor, const Heat& heat, BuildConte
     editFunctionsInParallel(editor, build, callers.span(), [&](unsigned, FunctionID id, Function& caller, TaskArenas&) {
         auto [first, last] = std::ranges::equal_range(calls, id, { }, &AnsweredCall::caller);
         for (; first != last; ++first)
-            caller.edit(first->call).setFunction(added[std::ranges::lower_bound(keys, ShorterEntrance { first->entrance, first->answered }) - keys.begin()]);
+            caller.edit(first->call, ValueEdit::Definition).setFunction(added[std::ranges::lower_bound(keys, ShorterEntrance { first->entrance, first->answered }) - keys.begin()]);
     });
 
     Statistics& statistics = build.statistics();

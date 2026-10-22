@@ -260,7 +260,7 @@ static void becomeForwarder(const AnalysisContext& context, Function& original, 
         for (size_t index = 0; index < entryParameters.size(); ++index) {
             auto& parameter = original.at(entryParameters[index]);
             ValueID copy = builder.addParameter(entry, parameter.type);
-            forwarder.edit(copy).setExpected(parameter.expected());
+            forwarder.edit(copy, ValueEdit::Type).setExpected(parameter.expected());
             if (!removed.get(index))
                 arguments.append(copy);
         }

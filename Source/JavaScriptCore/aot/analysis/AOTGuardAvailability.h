@@ -345,6 +345,8 @@ public:
     explicit FailedTests(FunctionAnalyses&);
 
     EarlierTest find(const Value& test, BlockID at) const;
+    // False: find() answers Unknown for every test of the value, wherever it is asked.
+    bool hasTestOf(ValueID) const;
 
 private:
     struct FailedEdge {

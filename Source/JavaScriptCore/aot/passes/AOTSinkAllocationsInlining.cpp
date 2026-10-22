@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBlockFrequencies.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTHeat.h"
 
@@ -137,11 +138,10 @@ static bool needsCell(const Program& program, const Function& function, const Ob
 // unlikely code that takes a cell. A list for each turn of a loop is what pays for a copy of the callee.
 class CalleeOfCall {
 public:
-    CalleeOfCall(FunctionPassContext& context, ValueID call)
+    CalleeOfCall(FunctionPassContext& context, BlockID block, ValueID call)
         : m_context(context)
         , m_id(context.function.at(call).function())
     {
-        BlockID block = context.analyses.useLists().blockOf(call);
         m_isRepeated = isHot(heatClassOf(context, block)) || context.analyses.blockFrequencies().frequencyOf(block) >= HeatModel::minWeightOfCallInLoop;
     }
 
@@ -176,20 +176,98 @@ static bool needsCellOnlyFor(FunctionAnalyses& analyses, ObjectID object, ValueI
     return isPassedToCall;
 }
 
-enum class SeenOfAllocation : uint8_t { Nothing, NeedsCellElsewhere, Escapes };
+enum class SeenOfAllocation : uint8_t { Nothing, NeedsCellElsewhere, Escapes, NeedsCellOnlyForCall };
 
-// What needsCellOnlyFor() finds false, seen without the solve: from the uses of the value that makes the object, and of the values that it is handed on to.
+// The parameters that take the operand of a test on the edges where the test has narrowed it: PointsToSolver::findNarrowedCopies() for one use.
+static void forEachNarrowedCopy(FunctionAnalyses& analyses, const Use& use, NOESCAPE const Invocable<void(ValueID)> auto& functor)
+{
+    const Function& function = analyses.function();
+    auto visitTargetsOf = [&](BlockID block) {
+        const Terminator& terminator = function.at(block).terminator;
+        uint32_t numberOfTargets = terminator.targets.size();
+        for (uint32_t targetIndex = 0; targetIndex < numberOfTargets; ++targetIndex) {
+            const Target& target = terminator.targets[targetIndex];
+            if (target.proofs.isEmpty() || targetResultsOf(terminator.kind, targetIndex, numberOfTargets) != TargetResults::Proofs)
+                continue;
+            const auto& parameters = function.at(target.block).parameters;
+            size_t firstParameter = target.arguments.size();
+            for (size_t resultIndex = 0; resultIndex < target.proofs.size() && firstParameter + resultIndex < parameters.size(); ++resultIndex) {
+                if (target.proofs[resultIndex] == use.operandIndex)
+                    functor(parameters[firstParameter + resultIndex]);
+            }
+        }
+    };
+    auto narrows = [](Proof proof) {
+        return proof != Proof::None && !provesForStretch(proof);
+    };
+
+    switch (use.kind) {
+    case Use::Kind::TerminatorOperand: {
+        const Terminator& terminator = function.at(use.block).terminator;
+        if (!terminator.isConditionalBranch() && narrows(provesOf(terminator.kind)) && terminator.operandKind(use.operandIndex) != OperandKind::Guard)
+            visitTargetsOf(use.block);
+        return;
+    }
+    case Use::Kind::Operand: {
+        const Value& test = function.at(use.user);
+        if (!narrows(provesOf(test.opcode)) || test.operandKind(use.operandIndex) == OperandKind::Guard)
+            return;
+        for (const Use& useOfTest : analyses.useLists().usesOf(use.user)) {
+            if (useOfTest.kind != Use::Kind::TerminatorOperand)
+                continue;
+            const Terminator& terminator = function.at(useOfTest.block).terminator;
+            if (terminator.isConditionalBranch() && terminator.conditionOperand() == use.user)
+                visitTargetsOf(useOfTest.block);
+        }
+        return;
+    }
+    case Use::Kind::EdgeArgument:
+    case Use::Kind::HandlerArgument:
+    case Use::Kind::BlockSubject:
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// A listed use that keeps the object nowhere and calls nothing lets it escape by nothing that happens elsewhere.
+static bool maySendObjectOn(FunctionAnalyses& analyses, const Use& use)
+{
+    static constexpr OperandUses usesThatSendOn = callingUses | OperandUses { OperandUse::Retains, OperandUse::Returns };
+
+    const Function& function = analyses.function();
+    switch (use.kind) {
+    case Use::Kind::Operand:
+        return summarizeOperand(analyses.effectContext(), function, function.at(use.user), use.operandIndex).uses.containsAny(usesThatSendOn);
+    case Use::Kind::TerminatorOperand:
+        return summarizeOperand(analyses.effectContext(), function, function.at(use.block).terminator, use.operandIndex).uses.containsAny(usesThatSendOn);
+    case Use::Kind::BlockSubject:
+        return false;
+    case Use::Kind::EdgeArgument:
+    case Use::Kind::HandlerArgument:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What needsCellOnlyFor() finds, seen without the solve: from the uses of the value that makes the object, and of the values that it is handed on to.
+// That it holds is seen only where every name of the object is: each of its uses is understood, and none puts it where it could be read out again.
 static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, ValueID call, CalleeOfCall& callee)
 {
     constexpr size_t maxNames = 12;
 
     const Function& function = analyses.function();
     const UseLists& useLists = analyses.useLists();
-    SeenOfAllocation result = SeenOfAllocation::Nothing;
+    bool needsCellElsewhere = false;
+    bool isPassedToCall = false;
+    bool hasSeenAll = true;
     Vector<ValueID, maxNames> names { maker };
     auto addName = [&](ValueID name) {
+        if (names.contains(name))
+            return;
         if (names.size() < maxNames)
-            names.appendIfNotContains(name);
+            names.append(name);
+        else
+            hasSeenAll = false;
     };
     for (size_t next = 0; next < names.size(); ++next) {
         for (const Use& use : useLists.usesOf(names[next])) {
@@ -197,11 +275,15 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
                 const CompactList<ValueID>& parameters = function.at(targetOf(function, use.edge()).block).parameters;
                 if (use.operandIndex < parameters.size())
                     addName(parameters[use.operandIndex]);
+                else
+                    hasSeenAll = false;
                 continue;
             }
+            forEachNarrowedCopy(analyses, use, addName);
             bool isOperandOfCall = use.kind == Use::Kind::Operand && use.user == call;
             switch (classifyUseAlone(analyses, use)) {
             case UseSeenAlone::Unknown:
+                hasSeenAll = false;
                 break;
             case UseSeenAlone::HandsOn:
                 addName(use.user);
@@ -209,38 +291,59 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
             case UseSeenAlone::IsListedAsEscape:
                 if (!(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(use.operandIndex)))
                     return SeenOfAllocation::Escapes;
+                isPassedToCall = true;
                 break;
             case UseSeenAlone::IsListed:
-                if (!isOperandOfCall && needsCell(analyses.program(), function, ObjectUse { .use = use }))
-                    result = SeenOfAllocation::NeedsCellElsewhere;
+                hasSeenAll = hasSeenAll && !maySendObjectOn(analyses, use);
+                if (isOperandOfCall)
+                    isPassedToCall = true;
+                else if (needsCell(analyses.program(), function, ObjectUse { .use = use }))
+                    needsCellElsewhere = true;
                 break;
             }
         }
     }
-    return result;
+    if (needsCellElsewhere)
+        return SeenOfAllocation::NeedsCellElsewhere;
+    return hasSeenAll && isPassedToCall ? SeenOfAllocation::NeedsCellOnlyForCall : SeenOfAllocation::Nothing;
 }
 
-// Nearly every question ends with none, and the function is another one behind each call that is inlined: the solve is left to the few calls that may gain something.
-static bool isSeenToPassNoAllocationBuiltOnlyFor(FunctionAnalyses& analyses, ValueID call, CalleeOfCall& callee)
+// Nearly every question ends with none, and the function is another one behind each call that is inlined: the solve is left to the few calls of which this does not tell.
+static std::optional<unsigned> countAllocationsSeenToBeBuiltOnlyFor(FunctionAnalyses& analyses, ValueID call, CalleeOfCall& callee)
 {
-    const Function& function = analyses.function();
-    bool result = true;
-    function.at(call).forEachOperand([&](ValueID operand, uint32_t) {
-        if (!result)
+    bool isSeen = true;
+    Vector<ValueID, 4> counted;
+    analyses.function().at(call).forEachOperand([&](ValueID operand, uint32_t) {
+        if (!isSeen)
             return;
         std::optional<Vector<ValueID, 8>> makers = findMakersOfObjectsBehind(analyses, operand);
         if (!makers) {
-            result = false;
+            isSeen = false;
             return;
         }
         // A value that makes an object of its own names no other. Else the operand may name what stands in the objects too: that escapes where its holder does.
         bool namesItsOwnObject = makers->size() == 1 && makers->first() == operand;
         for (ValueID maker : *makers) {
-            SeenOfAllocation seen = lookAtUsesOf(analyses, maker, call, callee);
-            result = result && (seen == SeenOfAllocation::Escapes || (seen == SeenOfAllocation::NeedsCellElsewhere && namesItsOwnObject));
+            switch (lookAtUsesOf(analyses, maker, call, callee)) {
+            case SeenOfAllocation::Escapes:
+                break;
+            case SeenOfAllocation::NeedsCellElsewhere:
+                isSeen = isSeen && namesItsOwnObject;
+                break;
+            case SeenOfAllocation::NeedsCellOnlyForCall:
+                isSeen = isSeen && namesItsOwnObject;
+                if (namesItsOwnObject && describeVirtualObject(analyses, maker).support == VirtualObjectSupport::Supported)
+                    counted.appendIfNotContains(maker);
+                break;
+            case SeenOfAllocation::Nothing:
+                isSeen = false;
+                break;
+            }
         }
     });
-    return result;
+    if (!isSeen)
+        return std::nullopt;
+    return counted.size();
 }
 
 static unsigned countAllocationsBuiltOnlyFor(FunctionAnalyses& analyses, ValueID call, CalleeOfCall& callee)
@@ -256,9 +359,11 @@ static unsigned countAllocationsBuiltOnlyFor(FunctionAnalyses& analyses, ValueID
     });
     if (!mayPassUnescapedAllocation && !analyses.context().build.options().verifiesAfterEveryPass)
         return 0;
-    bool isSeenToPassNone = !analyses.computed().contains(FunctionAnalysis::Escape) && isSeenToPassNoAllocationBuiltOnlyFor(analyses, call, callee);
-    if (isSeenToPassNone && !analyses.context().build.options().verifiesAfterEveryPass)
-        return 0;
+    std::optional<unsigned> countSeen;
+    if (!analyses.computed().contains(FunctionAnalysis::Escape))
+        countSeen = countAllocationsSeenToBeBuiltOnlyFor(analyses, call, callee);
+    if (countSeen && !analyses.context().build.options().verifiesAfterEveryPass)
+        return *countSeen;
 
     const EscapeAnalysis& escape = analyses.escape();
     BitVector passedObjects;
@@ -276,7 +381,7 @@ static unsigned countAllocationsBuiltOnlyFor(FunctionAnalyses& analyses, ValueID
             ++count;
     }
     RELEASE_ASSERT(mayPassUnescapedAllocation || !count);
-    RELEASE_ASSERT(!isSeenToPassNone || !count);
+    RELEASE_ASSERT(!countSeen || escape.gaveUp() || *countSeen == count);
     return count;
 }
 
@@ -288,12 +393,12 @@ Vector<SunkAllocation> predictSinking(FunctionAnalyses& analyses)
     return sinking.outcomes();
 }
 
-unsigned sinkableAllocationsAfterInlining(FunctionPassContext& context, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate)
+unsigned sinkableAllocationsAfterInlining(FunctionPassContext& context, BlockID block, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate)
 {
     if (context.function.at(call).opcode != Opcode::CallDirect)
         return 0;
 
-    CalleeOfCall callee(context, call);
+    CalleeOfCall callee(context, block, call);
     unsigned count = countAllocationsBuiltOnlyFor(context.analyses, call, callee);
     if (isOnlyInterpreted(context.analyses, call, UsesLookedAt::All) && calleeReturnsFreshAggregate())
         ++count;

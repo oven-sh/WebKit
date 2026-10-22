@@ -286,12 +286,12 @@ static void sinkAwaitIntoPredecessors(FunctionPassContext& context, IRBuilder& b
         Value moved = IRBuilder::make(Opcode::AwaitBySavingFrame, { incoming, driver });
         setExpectedIfNarrower(context, moved, expected);
         ValueID result = builder.insertBefore(pointBeforeTerminatorOf(function, predecessor), WTF::move(moved));
-        function.edit(predecessor).terminator.next().arguments[site.parameterIndex] = result;
+        function.edit(predecessor, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.next().arguments[site.parameterIndex] = result;
     }
     builder.applyInsertions();
 
-    function.edit(parameter).type = type;
-    function.edit(parameter).setExpected(expected);
+    function.edit(parameter, ValueEdit::Type).type = type;
+    function.edit(parameter, ValueEdit::Type).setExpected(expected);
     becomeUpcast(function, site.await, parameter);
     eraseValuesIn(builder, site.block, casts.span());
 }
@@ -733,7 +733,7 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
         becomeUpcast(function, read, done);
     // The result is an object, and so is the generator: a test for primitives answers the same for both.
     for (ValueID test : site.resultReads->testsForPrimitives)
-        function.edit(test).setValueOperand(generator);
+        function.edit(test, ValueEdit::Definition).setValueOperand(generator);
     eraseValuesEverywhere(builder, site.resultReads->casts.span());
 }
 

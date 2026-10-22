@@ -404,7 +404,7 @@ private:
     Target& targetOnEdge(Edge edge)
     {
         if (std::optional<BlockID> block = blockOnEdge(edge))
-            return m_function.edit(*block).terminator.next();
+            return m_function.edit(*block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.next();
         return editTarget(m_function, edge);
     }
 
@@ -578,7 +578,7 @@ private:
             ValueID converted = convertedOperandOf(m_function.at(part), *forms);
             if (!converted || !onlyCreatesString(m_context.analyses.effectsOf(part).onAnyEdge()))
                 continue;
-            m_function.edit(append).setOperand(operandIndex, converted);
+            m_function.edit(append, ValueEdit::Definition).setOperand(operandIndex, converted);
             erase(part);
         }
     }
@@ -639,7 +639,7 @@ private:
         if (parts.isEmpty())
             erase(fold.append);
         else
-            m_function.edit(fold.append).setPartsOperands(parts.span());
+            m_function.edit(fold.append, ValueEdit::Definition).setPartsOperands(parts.span());
     }
 
     void erase(ValueID value)
@@ -914,7 +914,7 @@ private:
     void finishConcatenation(ValueID concatenation, ValueID outer, std::span<const ValueID> laterParts)
     {
         if (m_function.at(concatenation).opcode == Opcode::StringBuilderAppend) {
-            m_function.edit(concatenation).setPartsOperands(laterParts);
+            m_function.edit(concatenation, ValueEdit::Definition).setPartsOperands(laterParts);
             return;
         }
         bool isLikelyKey = m_function.at(concatenation).opcode == Opcode::Strcat && m_function.at(concatenation).isLikelyKey();

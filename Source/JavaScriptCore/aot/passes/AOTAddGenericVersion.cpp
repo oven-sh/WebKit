@@ -556,14 +556,15 @@ bool GenericVersionBuilder::removeRedundantChecks()
     const UseLists& useLists = m_analyses.useLists();
     size_t numberOfChecks = m_sites.size();
     m_sites.removeAllMatching([&](const CheckSite& site) {
-        Value& check = m_function.edit(site.check);
-        ValueID operand = check.valueOperand();
-        if (typeOf(operand).isSubsetOf(m_context.types.at(check.castType()), m_program)) {
-            convertToUpcast(check, operand, check.castType());
+        ValueID operand = m_function.at(site.check).valueOperand();
+        TypeID castType = m_function.at(site.check).castType();
+        if (typeOf(operand).isSubsetOf(m_context.types.at(castType), m_program)) {
+            convertToUpcast(m_function.edit(site.check, ValueEdit::Definition), operand, castType);
             return true;
         }
         if (useLists.useCount(site.check))
             return false;
+        Value& check = m_function.edit(site.check);
         convertToUpcast(check, operand, m_anyValue);
         check.type = m_function.at(operand).type;
         check.setExpected({ });
@@ -632,12 +633,13 @@ void GenericVersionBuilder::mergeBlocksCutForNothing()
     // From the last cut of a block to the first: what has been merged into a part goes on into the part in front of it.
     for (size_t index = m_cuts.size(); index--;) {
         const Cut& cut = m_cuts[index];
-        Block& before = m_function.edit(cut.blockBefore);
+        const Block& blockBefore = m_function.at(cut.blockBefore);
         const Block& after = m_function.at(cut.blockAfter);
-        if (before.terminator.kind != TerminatorKind::Jump || before.terminator.next().block != cut.blockAfter)
+        if (blockBefore.terminator.kind != TerminatorKind::Jump || blockBefore.terminator.next().block != cut.blockAfter)
             continue;
-        if (!after.parameters.isEmpty() || before.handler != after.handler || before.frequency != after.frequency || !cfg.singleIncomingEdge(cut.blockAfter))
+        if (!after.parameters.isEmpty() || blockBefore.handler != after.handler || blockBefore.frequency != after.frequency || !cfg.singleIncomingEdge(cut.blockAfter))
             continue;
+        Block& before = m_function.edit(cut.blockBefore, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
         Block merged = std::exchange(m_function.edit(cut.blockAfter), Block { });
         before.values.appendVector(merged.values);
         before.terminator = WTF::move(merged.terminator);
@@ -671,15 +673,16 @@ void GenericVersionBuilder::findUnmergeableExits()
 
 void GenericVersionBuilder::eraseProof(ValueID id, ExpectedTypes expectedTypes)
 {
-    Value& value = m_function.edit(id);
-    if (typeValidations.contains(value.opcode)) {
+    Opcode opcode = m_function.at(id).opcode;
+    if (typeValidations.contains(opcode)) {
         becomeUndefined(m_function, id);
         return;
     }
     // An Upcast behind a Check adds what the type only declares, the contents of a collection for one. Its source is no longer inside its type.
-    if (value.opcode != Opcode::Check && value.opcode != Opcode::AssumeType && value.opcode != Opcode::Upcast)
+    if (opcode != Opcode::Check && opcode != Opcode::AssumeType && opcode != Opcode::Upcast)
         return;
 
+    Value& value = m_function.edit(id);
     TypeID castType = value.castType();
     if (value.opcode == Opcode::AssumeType && m_function.at(sameObjectThroughCasts(m_function, value.valueOperand())).opcode == Opcode::NewArray)
         m_erasedProofsOfLiterals.append({ value.valueOperand(), castType });
@@ -710,15 +713,15 @@ void GenericVersionBuilder::eraseProofsInCopy(const GenericCopy& copy, const Bit
         BlockID genericBlock = copy.copyOf(BlockID(index));
         const Terminator& terminator = m_function.blocks[index].terminator;
         if (genericBlock && terminator.kind == TerminatorKind::ReturnCall && isTainted.get(terminator.callOperand().index()))
-            m_function.edit(genericBlock).terminator.setCasts({ });
+            m_function.edit(genericBlock, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.setCasts({ });
     }
 
     // A callee brings its own generic version along, so inlining here as well would double the code at each level of calls.
     for (BlockID block : copy.copiedBlocks()) {
         for (ValueID id : m_function.at(block).values) {
-            Value& value = m_function.edit(id);
+            const Value& value = m_function.at(id);
             if (value.opcode == Opcode::Call || (value.opcode == Opcode::CallDirect && !value.isAlwaysInlined()))
-                value.setIsNeverInlined(true);
+                m_function.edit(id, ValueEdit::Definition).setIsNeverInlined(true);
 
             bool takesTaintedOperand = false;
             value.forEachOperand([&](ValueID operand, uint32_t) {
@@ -727,9 +730,9 @@ void GenericVersionBuilder::eraseProofsInCopy(const GenericCopy& copy, const Bit
             if (!takesTaintedOperand)
                 continue;
             if (Value::opcodesWithReceivers.contains(value.opcode))
-                value.setReceivers({ });
+                m_function.edit(id, ValueEdit::Definition).setReceivers({ });
             if (Value::opcodesWithCallees.contains(value.opcode))
-                value.setCallees({ });
+                m_function.edit(id, ValueEdit::Definition).setCallees({ });
         }
     }
     m_analyses.didChangeValues();
@@ -754,7 +757,7 @@ void GenericVersionBuilder::lowerCheck(GenericCopy& copy, const CheckSite& site)
     BlockID genericContinuation = copy.copyOf(site.continuation);
     RELEASE_ASSERT(genericContinuation);
 
-    Block& block = m_function.edit(site.block);
+    Block& block = m_function.edit(site.block, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
     RELEASE_ASSERT(block.values.last() == site.check && block.terminator.next().block == site.continuation);
     block.values.removeLast();
     block.terminator = Terminator { };
@@ -765,8 +768,8 @@ void GenericVersionBuilder::lowerCheck(GenericCopy& copy, const CheckSite& site)
     ValueID test = m_builder.appendTypeTest(operand, castType);
     IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, m_function.at(site.block).frequency, m_function.at(genericContinuation).frequency);
 
-    convertToUpcast(m_function.edit(site.check), branch.provenOnTaken, castType);
-    m_function.edit(branch.taken).values.append(site.check);
+    convertToUpcast(m_function.edit(site.check, ValueEdit::Definition), branch.provenOnTaken, castType);
+    m_function.edit(branch.taken, BlockEdit::Values).values.append(site.check);
     m_analyses.didChangeValues();
     m_builder.emitJump(site.continuation);
 
@@ -931,11 +934,12 @@ void GenericVersionBuilder::insertAssumedTypes(std::span<const OperandOfOtherKin
     for (const OperandOfOtherKind& use : uses) {
         auto instruction = [&]() -> Instruction& {
             if (use.user)
-                return m_function.edit(use.user);
-            return m_function.edit(use.point.block).terminator;
+                return m_function.edit(use.user, ValueEdit::Definition);
+            return m_function.edit(use.point.block, BlockEdit::Terminator).terminator;
         };
-        ValueID operand = instruction().operand(use.operandIndex);
-        m_builder.setOrigin(instruction().origin());
+        const Instruction& user = use.user ? static_cast<const Instruction&>(m_function.at(use.user)) : m_function.at(use.point.block).terminator;
+        ValueID operand = user.operand(use.operandIndex);
+        m_builder.setOrigin(user.origin());
         if (m_context.build.validates())
             m_builder.insertBefore(use.point, makeValidateType(operand, use.castType));
         ValueID assumed = m_builder.insertBefore(use.point, makeAssumeType(operand, use.castType));
@@ -1026,7 +1030,7 @@ bool GenericVersionBuilder::assumeTypesOfProvenPositions()
             continue;
 
         TypeID requiredResult = typing.typeIDOf(m_function.result());
-        Terminator& terminator = m_function.edit(block).terminator;
+        Terminator& terminator = m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
         if (terminator.kind == TerminatorKind::Return)
             visit({ block, numberOfValues }, { }, terminator.valueOperand(), OperandIndex::Return::value, requiredResult);
         if (terminator.kind != TerminatorKind::ReturnCall || requiredResult == TypeTable::anything)
@@ -1737,8 +1741,8 @@ public:
         for (size_t index = m_casts.size(); index--;)
             m_function.edit(m_casts[index].id) = WTF::move(m_casts[index].value);
         for (const SavedTypes& saved : m_types) {
-            m_function.edit(saved.id).type = saved.type;
-            m_function.edit(saved.id).setExpected(saved.expected);
+            m_function.edit(saved.id, ValueEdit::Type).type = saved.type;
+            m_function.edit(saved.id, ValueEdit::Type).setExpected(saved.expected);
         }
     }
 
@@ -2086,6 +2090,92 @@ static bool readsMarkedPosition(const Program& program, FunctionID id, const Rea
     });
 }
 
+// Which bodies read a position of an owner: a variable, the fields of a layout, the results of a function. Made once from the lists of reads, so that a round looks at the bodies that may read
+// what it has marked and not at every body of the program. It names a body that reads another position of the owner too: whoever asks goes on to the body's own list.
+class ReadersByOwner {
+public:
+    ReadersByOwner(const Program& program, const ParallelLoops& loops, std::span<const ReadsOfBody> readsOfBodies)
+        : m_firstLayout(program.variables.size())
+        , m_firstFunction(m_firstLayout + program.layouts.size())
+    {
+        size_t numberOfOwners = m_firstFunction + program.functions.size();
+        m_first.fill(0, numberOfOwners + 1);
+        forEachIndexInParallel(loops, readsOfBodies.size(), [&](unsigned index) {
+            forEachOwnerIn(readsOfBodies[index].positions.span(), [&](uint32_t owner) {
+                std::atomic_ref(m_first[owner + 1]).fetch_add(1, std::memory_order_relaxed);
+            });
+        });
+        for (size_t owner = 0; owner < numberOfOwners; ++owner)
+            m_first[owner + 1] += m_first[owner];
+        m_readers.grow(m_first[numberOfOwners]);
+        Vector<uint32_t> next = m_first;
+        // The order inside a row is that of arrival. Nobody reads it: a reader is a mark on a body.
+        forEachIndexInParallel(loops, readsOfBodies.size(), [&](unsigned index) {
+            forEachOwnerIn(readsOfBodies[index].positions.span(), [&](uint32_t owner) {
+                m_readers[std::atomic_ref(next[owner]).fetch_add(1, std::memory_order_relaxed)] = FunctionID(index);
+            });
+        });
+    }
+
+    // None: nobody reads an entry parameter but its own function.
+    std::optional<uint32_t> ownerOf(Position position) const
+    {
+        switch (position.kind) {
+        case Position::Kind::Variable:
+            return position.owner;
+        case Position::Kind::Field:
+            return m_firstLayout + position.owner;
+        case Position::Kind::Result:
+            return m_firstFunction + position.owner;
+        case Position::Kind::EntryParameter:
+            return std::nullopt;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    std::span<const FunctionID> readersOf(uint32_t owner) const LIFETIME_BOUND { return m_readers.span().subspan(m_first[owner], m_first[owner + 1] - m_first[owner]); }
+
+    // The positions of one owner stand together.
+    void forEachOwnerIn(std::span<const Position> ascendingPositions, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
+    {
+        std::optional<uint32_t> last;
+        for (Position position : ascendingPositions) {
+            std::optional<uint32_t> owner = ownerOf(position);
+            if (owner && owner != last)
+                functor(*owner);
+            last = owner;
+        }
+    }
+
+private:
+    uint32_t m_firstLayout;
+    uint32_t m_firstFunction;
+    Vector<uint32_t> m_first;
+    Vector<FunctionID> m_readers;
+};
+
+// What a round has to know of a body without touching its list.
+enum class BodyToAsk : uint8_t {
+    // The table does not hold all that the body reads: its list is not made, or names an owner that the list before it did not name.
+    IsOutsideTable = 1 << 0,
+    HasTypedReadsByName = 1 << 1,
+};
+
+static bool namesOwnerThatIsNotIn(std::span<const Position> ascendingPositions, std::span<const Position> otherAscendingPositions)
+{
+    auto isBefore = [](Position a, Position b) {
+        return std::tie(a.kind, a.owner) < std::tie(b.kind, b.owner);
+    };
+    size_t other = 0;
+    for (Position position : ascendingPositions) {
+        while (other < otherAscendingPositions.size() && isBefore(otherAscendingPositions[other], position))
+            ++other;
+        if (other == otherAscendingPositions.size() || isBefore(position, otherAscendingPositions[other]))
+            return true;
+    }
+    return false;
+}
+
 static Vector<GuardedRead> collectGuardedReads(const Program& program, FunctionID id, const Function& function, FunctionAnalyses& analyses, std::span<const Position> marked, Vector<ValueID, 16>& valuesReadingMarkedPositions)
 {
     const UseLists& useLists = analyses.useLists();
@@ -2219,6 +2309,22 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
     if (run == TaintedPositionsRun::BeforeFlow)
         assignedByEvaluatedText = findPositionsAssignedByEvaluatedText(program);
     Vector<ReadsOfBody> readsOfBodies(program.functions.size());
+    Vector<OptionSet<BodyToAsk>> bodiesToAsk(FillWith { }, program.functions.size(), OptionSet<BodyToAsk> { BodyToAsk::IsOutsideTable });
+    std::optional<ReadersByOwner> readers;
+    // A body that was edited keeps its list until the new one is made, which is held against it.
+    auto listReadsOf = [&](FunctionID id) {
+        ReadsOfBody& reads = readsOfBodies[id.index()];
+        if (reads.isListed)
+            return;
+        ReadsOfBody listed = listReads(program, program.at(id));
+        OptionSet<BodyToAsk>& toAsk = bodiesToAsk[id.index()];
+        if (!readers)
+            toAsk.remove(BodyToAsk::IsOutsideTable);
+        else if (namesOwnerThatIsNotIn(listed.positions.span(), reads.positions.span()))
+            toAsk.add(BodyToAsk::IsOutsideTable);
+        toAsk.set(BodyToAsk::HasTypedReadsByName, !listed.typedReadsByName.isEmpty());
+        reads = WTF::move(listed);
+    };
     while (!worklist.isEmpty()) {
         Vector<Vector<Position>> storesByFunction(worklist.size());
         build.setRecordsLimitHits(false);
@@ -2228,9 +2334,7 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
             // What the body reads is listed in the same visit, while the body is at hand: whoever is visited here is new or was edited in the round before.
             forEachIndexInParallel(loops, worklist.size(), [&](unsigned index) {
                 collectTaintedStores(program, worklist[index], &program.at(worklist[index]), build, run, proofs, storesByFunction[index]);
-                ReadsOfBody& reads = readsOfBodies[worklist[index].index()];
-                if (!reads.isListed)
-                    reads = listReads(program, program.at(worklist[index]));
+                listReadsOf(worklist[index]);
             });
         }
         build.setRecordsLimitHits(true);
@@ -2255,20 +2359,40 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
         markedObjectField |= markedObjectFieldInRound;
         markedObjectField |= markNamespaceFields(program, marked.span());
 
-        worklist = collectInParallel<FunctionID>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionID>& readers) {
-            const Function& function = program.functions[index];
-            if (!function.hasBody())
+        if (!readers)
+            readers.emplace(program, loops, readsOfBodies.span());
+        Vector<bool> mayReadMarkedPosition(FillWith { }, program.functions.size(), false);
+        std::optional<uint32_t> lastOwner;
+        for (Position position : marked) {
+            if (position.kind == Position::Kind::EntryParameter || position.kind == Position::Kind::Result)
+                mayReadMarkedPosition[position.owner] = true;
+            std::optional<uint32_t> owner = readers->ownerOf(position);
+            if (!owner || owner == lastOwner)
+                continue;
+            lastOwner = owner;
+            for (FunctionID reader : readers->readersOf(*owner))
+                mayReadMarkedPosition[reader.index()] = true;
+        }
+        OptionSet<BodyToAsk> askedWhatever { BodyToAsk::IsOutsideTable };
+        if (hasMarkedField(marked.span()))
+            askedWhatever.add(BodyToAsk::HasTypedReadsByName);
+        Vector<FunctionID> bodiesToLookAt;
+        for (unsigned index = 0; index < program.functions.size(); ++index) {
+            if (mayReadMarkedPosition[index] || bodiesToAsk[index].containsAny(askedWhatever))
+                bodiesToLookAt.append(FunctionID(index));
+        }
+        worklist = collectInParallel<FunctionID>(loops, bodiesToLookAt.size(), [&](unsigned index, Vector<FunctionID>& found) {
+            FunctionID id = bodiesToLookAt[index];
+            if (!program.at(id).hasBody())
                 return;
-            ReadsOfBody& reads = readsOfBodies[index];
-            if (!reads.isListed)
-                reads = listReads(program, function);
-            if (readsMarkedPosition(program, FunctionID(index), reads, marked.span()))
-                readers.append(FunctionID(index));
+            listReadsOf(id);
+            if (readsMarkedPosition(program, id, readsOfBodies[id.index()], marked.span()))
+                found.append(id);
         });
         sortLargestFirst(program, loops, worklist);
         editFunctionsInParallel(editor, build, BehindEdit::Nothing, worklist.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             numberOfChecks.fetch_add(insertReadChecks(program, id, function, arenas.types, build, marked.span()), std::memory_order_relaxed);
-            readsOfBodies[id.index()] = { };
+            readsOfBodies[id.index()].isListed = false;
         });
     }
     build.destroyLater(WTF::move(readsOfBodies));
@@ -2870,7 +2994,7 @@ void PositionsProvenByTypes::apply()
                 stopListingStartsThatNobodyReads(function);
             if (isAssumed({ Position::Kind::Result, id.index(), 0 })) {
                 for (BlockID block : body.tailCallsProvenByCallees) {
-                    Terminator& terminator = function.edit(block).terminator;
+                    Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
                     Vector<TailCast, 4> casts;
                     for (TailCast cast : terminator.casts())
                         casts.append(cast);

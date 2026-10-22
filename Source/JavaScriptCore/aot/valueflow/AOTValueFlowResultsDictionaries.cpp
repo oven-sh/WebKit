@@ -19,15 +19,15 @@ namespace {
 
 // Lists the layouts of a set that a record names by itself or in a set of layouts. The types are no records of that sort: see createTypesBehindDictionaries().
 struct NamedLayouts {
-    NamedLayouts(const Program& program, const BitVector& layouts)
+    NamedLayouts(const Program& program, const BitVector& layouts, const ParallelLoops& loops)
         : program(program)
         , layouts(layouts)
         , setsNamingThem(program.types.numberOfLayoutSets())
     {
-        for (unsigned index = 0; index < program.types.numberOfLayoutSets(); ++index) {
-            if (std::ranges::any_of(program.at(LayoutSetID(index)).members, [&](LayoutID member) { return layouts.quickGet(member.index()); }))
-                setsNamingThem.quickSet(index);
-        }
+        for (uint32_t index : findIndicesInParallel(loops, program.types.numberOfLayoutSets(), [&](unsigned index) {
+            return std::ranges::any_of(program.at(LayoutSetID(index)).members, [&](LayoutID member) { return layouts.quickGet(member.index()); });
+        }))
+            setsNamingThem.quickSet(index);
     }
 
     const Program& program;
@@ -136,9 +136,9 @@ Type typeBehindDictionaries(const Program& program, const BitVector& layoutsOfDi
 }
 
 // A type names such a layout by itself or in what a container holds, however deep. A container has its turn behind what it holds.
-static void createTypesBehindDictionaries(const Program& program, const BitVector& layoutsOfDictionaries, TypeTable& types, FlowApplication& application)
+static void createTypesBehindDictionaries(const Program& program, const BitVector& layoutsOfDictionaries, TypeTable& types, FlowApplication& application, const ParallelLoops& loops)
 {
-    application.layoutSetsNamingDictionaries = NamedLayouts(program, layoutsOfDictionaries).setsNamingThem;
+    application.layoutSetsNamingDictionaries = NamedLayouts(program, layoutsOfDictionaries, loops).setsNamingThem;
     unsigned numberOfTypes = types.size();
     Vector<TypeID> behindOf(numberOfTypes);
     auto holdsChangedType = [&](const Type& type) {
@@ -147,13 +147,20 @@ static void createTypesBehindDictionaries(const Program& program, const BitVecto
         });
     };
 
+    Vector<uint32_t> typesThatMayChange = findIndicesInParallel(loops, numberOfTypes, [&](unsigned index) {
+        const Type& type = program.at(TypeID(index));
+        bool namesDictionaries = type.layouts && application.layoutSetsNamingDictionaries.quickGet(type.layouts.index());
+        return namesDictionaries || std::ranges::any_of(type.classes, [](const ClassPart& part) {
+            return !part.contents.isEmpty();
+        });
+    });
     Vector<uint32_t> changedTypes;
     Vector<TypeID> testedBehind;
     TypeInterningPhase phase(types, 1);
     {
         TypeArena arena(phase, 0);
         for (bool didChange = true; std::exchange(didChange, false);) {
-            for (unsigned index = 0; index < numberOfTypes; ++index) {
+            for (uint32_t index : typesThatMayChange) {
                 const Type& type = program.at(TypeID(index));
                 bool namesDictionaries = type.layouts && application.layoutSetsNamingDictionaries.quickGet(type.layouts.index());
                 if (!namesDictionaries && !holdsChangedType(type))
@@ -176,7 +183,7 @@ static void createTypesBehindDictionaries(const Program& program, const BitVecto
             }, InPlaceOfDictionaries::Nothing));
         });
     }
-    TypeRemap remap = phase.finish(StringRemap { });
+    TypeRemap remap = phase.finish(StringRemap { }, &loops);
     application.typesBehindDictionaries = WTF::map(changedTypes, [&](uint32_t index) {
         return std::pair { TypeID(index), remap(behindOf[index]) };
     });
@@ -206,7 +213,7 @@ BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs& inputs, Type
     if (candidates.isEmpty())
         return candidates;
 
-    NamedLayouts named(program, candidates);
+    NamedLayouts named(program, candidates, inputs.loops());
     Vector<uint32_t> found = collectInParallel<uint32_t>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<uint32_t>& foundInFunction) {
         listLayoutsNamedIn(program, program.functions[index], { named, foundInFunction });
     });
@@ -251,7 +258,7 @@ BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs& inputs, Type
     }
     application.hasDictionaries = !candidates.isEmpty();
     if (application.hasDictionaries)
-        createTypesBehindDictionaries(program, candidates, types, application);
+        createTypesBehindDictionaries(program, candidates, types, application, inputs.loops());
     return candidates;
 }
 

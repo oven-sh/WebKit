@@ -313,7 +313,7 @@ private:
             return false;
 
         BlockID body = bodyOf(m_function.at(id).handler->block);
-        Block& throwingBlock = m_function.edit(id);
+        Block& throwingBlock = m_function.edit(id, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
         Arguments arguments = throwingBlock.handler->arguments;
         m_builder.setOrigin(throwingBlock.terminator.origin());
         throwingBlock.terminator = Terminator { };
@@ -344,12 +344,12 @@ private:
         for (ValueID parameter : handlerParameters) {
             m_builder.setOrigin(m_function.at(parameter).origin());
             ValueID bodyParameter = m_builder.addParameter(body, m_function.at(parameter).type);
-            m_function.edit(bodyParameter).setExpected(m_function.at(parameter).expected());
+            m_function.edit(bodyParameter, ValueEdit::Type).setExpected(m_function.at(parameter).expected());
             substitution.replace(parameter, bodyParameter);
         }
 
-        Block& source = m_function.edit(handler);
-        Block& destination = m_function.edit(body);
+        Block& source = m_function.edit(handler, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
+        Block& destination = m_function.edit(body, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
         destination.values = std::exchange(source.values, { });
         destination.terminator = std::exchange(source.terminator, Terminator { });
         destination.handler = std::exchange(source.handler, std::nullopt);

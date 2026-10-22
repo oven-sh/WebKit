@@ -165,7 +165,7 @@ private:
             m_builder.removeHandler(edge.from);
             return;
         }
-        m_function.edit(edge.from).handler = *outer;
+        m_function.edit(edge.from, { BlockEdit::Edges, BlockEdit::Arguments }).handler = *outer;
         m_incomingEdges[outer->block.index()].append(edge);
     }
 

@@ -286,7 +286,7 @@ unsigned leaveRangesOfBytesUnmade(FunctionPassContext& context, const BuiltinCal
             builder.setOrigin(function.at(use.user).origin());
             std::optional<Value> made = makeCallOfHelper(context, Builtins::CompilerHelpersRangeOfBytes, { }, { use.used, startOf(use.used) });
             RELEASE_ASSERT(made);
-            function.edit(use.user).setOperand(use.operandIndex, builder.insertBefore(use.point, WTF::move(*made)));
+            function.edit(use.user, ValueEdit::Definition).setOperand(use.operandIndex, builder.insertBefore(use.point, WTF::move(*made)));
         }
         ++rewrites;
     }

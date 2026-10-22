@@ -468,7 +468,7 @@ enum class TestingSwitch : uint32_t {
     IgnoreBranchHints = 1u << 0, ForceGCSlowPaths = 1u << 1, MayEncounterMasqueradesAsUndefined = 1u << 2, DropGuard = 1u << 3,
     IgnoreExpectedTypes = 1u << 4, DropReferenceGuards = 1u << 5, ProveEverything = 1u << 6, NoCallConvertsCells = 1u << 7,
     NoLayoutIsMadeSeldom = 1u << 8, FlattenUntilHeldWhereverLegal = 1u << 9, DelayFlowRules = 1u << 10, DelayOtherFlowRules = 1u << 11,
-    GenerateAllCodeDirectly = 1u << 12, CheckProofsAtRunTime = 1u << 13, ConvertOperandsAtFetch = 1u << 14
+    GenerateAllCodeDirectly = 1u << 12, CheckProofsAtRunTime = 1u << 13, ConvertOperandsAtFetch = 1u << 14, GenerateDirectCodeByLinearScan = 1u << 15
 };
 enum class Instrumentation : uint32_t { CountBranches = 1u << 0, CountArrivals = 1u << 1 };
 enum class AdmittedCode : uint32_t { Inspector = 1u << 0 };
@@ -555,7 +555,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Wire::ArrivalFieldFlags
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AllocationEscapeReason> = 8;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::CheckSet> = 9;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::ReportSet> = 7;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::TestingSwitch> = 15;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::TestingSwitch> = 16;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Instrumentation> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AdmittedCode> = 1;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::ExcludedCode> = 2;

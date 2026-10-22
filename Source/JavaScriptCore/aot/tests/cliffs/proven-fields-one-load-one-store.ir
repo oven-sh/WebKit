@@ -1,7 +1,7 @@
 # class Filled { count: number; next: Filled; constructor(seed) { this.count = seed | 0; this.next = this } }   a.next = b; b.next = a
 # Nothing but the program holds the objects, so every field is proven: `p = p.next` is one load, `p.count = 3` is one store, with no test of a type, of a shape, of a filled slot or of nil.
 # What costs that: `undefined` from the definitions of the fields in the types, a read by name that may find nothing, an int32 that counts as a value of another type
-# The read of `count` has the type of its field, an int32 without the five numbers that mark the states of an int slot; until 10-20 08:02 it had the wider i32. It is one load of an @Int32 either way
+# The read of `count` has the type of its field, an int32 without the five numbers that mark the states of an int slot; it once had the wider i32. It is one load of an @Int32 either way
 # FORM: AsRead
 # OPTIONS: disable=pass:DeferInitializers
 # RUN: pipeline ChooseRepresentations

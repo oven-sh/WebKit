@@ -54,20 +54,20 @@ static bool isResultRead(const Function& function, ValueID id, ValueID producer)
 
 static void becomeParameter(Function& function, ValueID id)
 {
-    function.edit(id).become(Opcode::Parameter);
+    function.edit(id, ValueEdit::Definition).become(Opcode::Parameter);
 }
 
 static void copyExpectedType(Function& function, ValueID to, ValueID from)
 {
-    function.edit(to).setExpected(function.at(from).expected());
+    function.edit(to, ValueEdit::Type).setExpected(function.at(from).expected());
 }
 
 static void replaceProducerWithResults(Function& function, ValueID producer, std::span<const ValueID> parameters, BlockID continuation)
 {
-    Value& results = function.edit(producer);
+    Value& results = function.edit(producer, ValueEdit::Definition);
     results.become(Opcode::Results);
     results.setValuesOperands(parameters);
-    function.edit(continuation).values.insert(0, producer);
+    function.edit(continuation, BlockEdit::Values).values.insert(0, producer);
 }
 
 static ResultReads collectResultReads(const Program& program, const Function& function, TypeArena& types, const UseLists& useLists, ValueID producer, uint32_t numberOfResults)
@@ -156,7 +156,7 @@ static Vector<ValueID, 1> convertResultReads(IRBuilder& builder, TypeArena& type
         ValueID& parameter = parameters[resultIndex];
         if (parameter) {
             becomeParameter(function, parameter);
-            function.edit(continuation).parameters.append(parameter);
+            function.edit(continuation, BlockEdit::Parameters).parameters.append(parameter);
             continue;
         }
         parameter = builder.addParameter(continuation, resultTypeAt(builder.context().program, function, types, producer, resultIndex));
@@ -184,8 +184,8 @@ IRBuilder::Expansion IRBuilder::cutForExpansion(ProgramPoint point)
     setHandler(handler);
     BlockID continuation = addBlock(m_function.at(point.block).frequency);
     {
-        auto& from = m_function.edit(point.block);
-        auto& to = m_function.edit(continuation);
+        auto& from = m_function.edit(point.block, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
+        auto& to = m_function.edit(continuation, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments, BlockEdit::Rest });
         to.values.append(from.values.subspan(point.index + 1));
         from.values.shrink(point.index);
         to.terminator = std::exchange(from.terminator, Terminator { });
@@ -217,7 +217,7 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point)
         becomeUndefined(m_function, id);
     else {
         becomeParameter(m_function, id);
-        m_function.edit(expansion.continuation).parameters.append(id);
+        m_function.edit(expansion.continuation, BlockEdit::Parameters).parameters.append(id);
         expansion.results.append(id);
     }
     didChangeControlFlow(changedBlocks.span());
@@ -340,7 +340,7 @@ void IRBuilder::endExpansion(const Expansion& expansion, std::span<const ValueID
 void IRBuilder::mergeContinuation(const Expansion& expansion, BlockID predecessor)
 {
     RELEASE_ASSERT(!m_block && m_insertions.isEmpty());
-    Block& block = m_function.edit(predecessor);
+    Block& block = m_function.edit(predecessor, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments, BlockEdit::Rest });
     RELEASE_ASSERT(block.terminator.kind == TerminatorKind::Jump && block.terminator.targets[0].block == expansion.continuation);
     RELEASE_ASSERT(block.handler == m_function.at(expansion.continuation).handler);
     Arguments arguments = WTF::move(block.terminator.targets[0].arguments);

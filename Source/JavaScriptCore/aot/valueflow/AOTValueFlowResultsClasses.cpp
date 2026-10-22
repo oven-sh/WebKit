@@ -406,7 +406,6 @@ private:
     const ValueFlowResultInputs& m_inputs;
     ValueSetMaker& m_maker;
     Vector<Carrier> m_carriers;
-    // By ValueFlowSolver::indexOfMadeNodes().
     BitVector m_isCarrier;
     ValueSetID m_taken { ValueSets::nothing };
 };
@@ -501,7 +500,6 @@ void ClosuresTakenOutOfMembers::collectCarriers(ValueSetID closuresOfMembers)
         if (m_inputs.sets().meet(value, closuresOfMembers))
             carriers.append({ { key->kind, key->detail, key->payload, key->set.index(), maker.intersect(value, closuresOfMembers) }, solver.indexOfMadeNodes(*key) });
     });
-    // There may be more numbers than nodes: see UsesOfObjects::noteReads().
     for (const CarrierAt& entry : found)
         m_isCarrier.set(entry.indexOfMadeNodes);
     m_isCarrier.ensureSize(solver.numberOfRecordsOfMadeNodes());
@@ -587,7 +585,6 @@ void ClosuresTakenOutOfMembers::noteStatement(Walk& walk, ValueFlowStatementID i
 {
     const ValueFlowSolver& solver = m_inputs.solver();
     m_inputs.forEachIndexOfMadeNodesAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Read, ValueFlowMadeNodeKind::Lookup }), false, [&](uint32_t index) {
-        // One node in fifty carries such a closure.
         if (!m_isCarrier.quickGet(index))
             return;
         const ValueFlowNodeKey& key = solver.keyOfMadeNodesAt(index);

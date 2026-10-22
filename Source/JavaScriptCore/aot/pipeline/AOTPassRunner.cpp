@@ -187,6 +187,7 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
 {
     FunctionAnalyses analyses(AnalysisContext { m_build, program, &inputs.flow, &inputs.effects, id }, function);
     FunctionPassContext context { program, inputs, id, function, analyses, arenas.types, arenas.strings, m_build };
+    analyses.setTypingMemo(&context.typingMemo);
     context.openSites.setLogIsWritten(true);
     context.openSites.setVerifiesLists(m_build.options().verifiesAfterEveryPass);
     ScheduleRun run;

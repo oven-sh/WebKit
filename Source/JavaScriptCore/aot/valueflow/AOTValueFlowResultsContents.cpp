@@ -206,6 +206,7 @@ private:
 
     void noteSetOfArrays(Walker&, ValueSetID);
     void findComponents();
+    void listMembersOfComponents();
     void shareStorageWithinComponents();
 
     bool isUnchangedHolder(BuiltinID holder) const;
@@ -244,6 +245,8 @@ private:
     std::array<Lock, 1024> m_locks;
 
     ConcurrentComponents m_componentsOfArrays;
+    Vector<Vector<uint32_t>> m_membersOfComponent;
+    Vector<Vector<uint32_t>> m_levelsOfConversions;
 
     BitVector m_classInheritsUnchangedMembers;
     BitVector m_classHasDefaultSpecies;
@@ -957,7 +960,7 @@ void ContainerAnalysis::convertLevel(std::span<const uint32_t> containers)
             });
         }
     });
-    TypeRemap remap = phase.finish(StringRemap { });
+    TypeRemap remap = phase.finish(StringRemap { }, &m_inputs.loops());
     forEachIndexInParallel(m_inputs.loops(), numberOfTasks, [&](unsigned task) {
         for (uint32_t index : containers.subspan(task * containersPerTask, std::min(containersPerTask, containers.size() - task * containersPerTask))) {
             for (TypeID& contents : m_facts[index].contents)
@@ -1022,14 +1025,21 @@ static bool mayGetDoubleStorage(ArrayStorage storage, const Type& elements)
 
 // A creator allocates the storage that fits what the type of its array says the array holds, so all the arrays of a component get one type for their elements.
 // The storage is proven where no store converts it: no NaN goes into an array of fractions, and nothing but an int32 into an array of those.
+void ContainerAnalysis::listMembersOfComponents()
+{
+    m_membersOfComponent = Vector<Vector<uint32_t>>(m_containers.size());
+    for (uint32_t index = 0; index < m_containers.size(); ++index) {
+        if (isArray(index))
+            m_membersOfComponent[m_componentsOfArrays.componentOf(index)].append(index);
+    }
+}
+
 void ContainerAnalysis::shareStorageWithinComponents()
 {
-    Vector<Vector<uint32_t>> membersOfComponent(m_containers.size());
+    const Vector<Vector<uint32_t>>& membersOfComponent = m_membersOfComponent;
     for (uint32_t index = 0; index < m_containers.size(); ++index) {
-        if (!isArray(index))
-            continue;
-        membersOfComponent[m_componentsOfArrays.componentOf(index)].append(index);
-        m_facts[index].arrayStorage = ArrayStorage::Other;
+        if (isArray(index))
+            m_facts[index].arrayStorage = ArrayStorage::Other;
     }
 
     TypeInterningPhase phase(m_types, 1);
@@ -1049,7 +1059,7 @@ void ContainerAnalysis::shareStorageWithinComponents()
             elementsOfComponent.append({ component, elements });
         }
     }
-    TypeRemap remap = phase.finish(StringRemap { });
+    TypeRemap remap = phase.finish(StringRemap { }, &m_inputs.loops());
     for (auto [component, elements] : elementsOfComponent) {
         remap.apply(elements);
         const Type& type = m_types.at(elements);
@@ -1239,14 +1249,17 @@ void ContainerAnalysis::collectWrites()
         walker = nullptr;
     m_makers.reset();
     times.didFinish("writes to containers: pristine aspects"_s);
+
+    m_levelsOfConversions = scheduleConversions();
+    listMembersOfComponents();
+    times.didFinish("writes to containers: conversions scheduled"_s);
 }
 
 ValueFlowContainerResults ContainerAnalysis::convertContents()
 {
     // The second round gives the type of a container the storage of the arrays in it.
-    Vector<Vector<uint32_t>> levels = scheduleConversions();
     for (unsigned round = 0; round < 2; ++round) {
-        for (const Vector<uint32_t>& level : levels)
+        for (const Vector<uint32_t>& level : m_levelsOfConversions)
             convertLevel(level.span());
         shareStorageWithinComponents();
     }

@@ -134,7 +134,7 @@ void appendChecksAtEntry(const Program& program, BuildContext& build, Function& 
         checks.append(ValueID(function.values.size()));
         function.add(WTF::move(convert));
     }
-    function.edit(point.block).values.insertVector(point.index, checks);
+    function.edit(point.block, BlockEdit::Values).values.insertVector(point.index, checks);
     build.statistics().count(StatisticID::TypesCheckedAtEntry, checkedParameters.size());
 }
 

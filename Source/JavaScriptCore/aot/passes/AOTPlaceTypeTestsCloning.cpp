@@ -113,7 +113,7 @@ void TestPlacer::passArgumentsThrough(Edge edge, BlockID blockOnEdge)
     Arguments parameters;
     for (ValueID parameter : Vector<ValueID, 4>(m_function.at(next.block).parameters.span())) {
         ValueID added = m_builder.addParameter(blockOnEdge, m_function.at(parameter).type);
-        m_function.edit(added).setExpected(m_function.at(parameter).expected());
+        m_function.edit(added, ValueEdit::Type).setExpected(m_function.at(parameter).expected());
         parameters.append(added);
     }
     m_builder.redirectEdge(edge, blockOnEdge, WTF::move(next.arguments));
@@ -289,6 +289,16 @@ BlockID TestPlacer::lastPartOf(BlockID block) const
         return block;
     const Cut& last = *std::prev(next);
     return last.point.block == block ? last.blockAfter : block;
+}
+
+// A point of the plan, in the part of its block that holds it now.
+ProgramPoint TestPlacer::pointBehindCuts(ProgramPoint point) const
+{
+    auto next = std::ranges::upper_bound(m_cuts, PointKey { point.block, point.index }, { }, &Cut::key);
+    if (next == m_cuts.begin())
+        return point;
+    const Cut& last = *std::prev(next);
+    return last.point.block == point.block ? ProgramPoint { last.blockAfter, point.index - last.point.index } : point;
 }
 
 Vector<BlockID, 8> TestPlacer::collectCopiedBlocks() const
@@ -596,8 +606,9 @@ void TestPlacer::addWayBackIntoLoop(const PreparedLoop& loop)
         Target nextInCopy = copy ? Target { copy, { }, { } } : Target { headOfCopy, next.arguments, { } };
 
         m_builder.setOrigin(m_function.at(block).terminator.origin());
-        m_function.edit(block).frequency = m_function.at(headOfCopy).frequency;
-        m_function.edit(block).terminator = Terminator { };
+        Block& onBackEdge = m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments, BlockEdit::Rest });
+        onBackEdge.frequency = m_function.at(headOfCopy).frequency;
+        onBackEdge.terminator = Terminator { };
         m_builder.moveToEndOf(block);
         if (!canRepeatTests) {
             m_builder.emitJump(nextInCopy.block, WTF::move(nextInCopy.arguments));

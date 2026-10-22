@@ -204,7 +204,7 @@ static void createClosuresAtDefinition(const Program& program, Function& functio
     for (ValueID value : { match.value, match.getter, match.setter }) {
         // The literal is never made, so the object is made where it stands.
         if (ValueID object = findObjectMadeOnDemand(function, value))
-            function.edit(object).setIsMadeOnDemand(false);
+            function.edit(object, ValueEdit::Definition).setIsMadeOnDemand(false);
         ValueID id = findClosureMadeOnDemand(function, value);
         if (!id)
             continue;
@@ -421,11 +421,11 @@ PassOutcome makeDescriptorLiteralsBehindJoins(FunctionPassContext& pass)
         }
         for (size_t index = 0; index < edges.size(); ++index)
             editTarget(function, edges[index]).arguments[found.parameterIndex] = function.at(found.literals[index]).valuesOperands()[differing];
-        function.edit(found.parameter).type = type;
+        function.edit(found.parameter, ValueEdit::Type).type = type;
         literal.setValuesOperands(members.span());
         ValueID made = builder.insertBefore(point, WTF::move(literal));
         ValueID finished = builder.insertBefore(point, IRBuilder::make(Opcode::FinishObject, { made }));
-        function.edit(found.call).setOperand(found.operandIndex, finished);
+        function.edit(found.call, ValueEdit::Definition).setOperand(found.operandIndex, finished);
         builder.applyInsertions();
 
         std::ranges::sort(dead, [](ProgramPoint a, ProgramPoint b) {

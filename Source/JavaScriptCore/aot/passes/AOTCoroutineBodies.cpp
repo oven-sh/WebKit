@@ -107,7 +107,7 @@ static void markModeArmsRare(Function& function, const UseLists& useLists, Value
             BlockID otherwise = terminator.otherwise().block;
             for (const Target& target : terminator.caseTargets()) {
                 if (target.block != otherwise)
-                    function.edit(target.block).frequency = BlockFrequency::Rare;
+                    function.edit(target.block, BlockEdit::Rest).frequency = BlockFrequency::Rare;
             }
         }
     }
@@ -443,7 +443,7 @@ void BodyBuilder::replaceAwaits()
             bool takesExtraTurn = value.takesExtraTurn();
             if (canKeepType(IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, m_driver }), value.type)) {
                 rewriteInPlace(block, values[index], Opcode::AwaitBySavingFrame, { awaited, m_driver });
-                m_body.edit(values[index]).setTakesExtraTurn(takesExtraTurn);
+                m_body.edit(values[index], ValueEdit::Definition).setTakesExtraTurn(takesExtraTurn);
             } else
                 typedAwaits.append(ProgramPoint { block, index });
         }
@@ -539,7 +539,7 @@ void BodyBuilder::replaceReturns()
     bool isAsyncFunction = m_record.kind == CoroutineKind::AsyncFunction;
     for (uint32_t blockIndex = 0; blockIndex < m_body.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
-        Terminator& terminator = m_body.edit(block).terminator;
+        Terminator& terminator = m_body.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
         if (terminator.kind != TerminatorKind::Return)
             continue;
 

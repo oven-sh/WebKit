@@ -113,6 +113,8 @@ void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const Va
 void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext&);
 // For a call that may call anything: its operands escape and its result is unknown, so of the entry only the use is left.
 void noteCallOfBuiltin(BuiltinID, ValueFlowCallKind, ValueFlowRuleContext&);
+// Of a name under which the host passes a function of a start-up module.
+bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext&, BuiltinName);
 // The function stands behind entries of the table that are all declared, or it is a helper beside such functions. The overloads list what such code calls of its operands.
 bool isCodeBehindDeclaredEntries(const Program&, FunctionID);
 // What can be called and is neither a function of the program nor a built-in function: a bound function.

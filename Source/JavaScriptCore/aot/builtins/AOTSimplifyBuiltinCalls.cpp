@@ -853,8 +853,8 @@ static unsigned fuseDefinitionsByDescriptors(FunctionPassContext& context, const
                 editTarget(function, descriptions.edges[index]).arguments[parameterIndex] = description;
         }
         if (ValueID parameter = descriptions.mergingParameter) {
-            function.edit(parameter).type = function.at(descriptions.descriptions.first()).type;
-            function.edit(parameter).setExpected({ });
+            function.edit(parameter, ValueEdit::Type).type = function.at(descriptions.descriptions.first()).type;
+            function.edit(parameter, ValueEdit::Type).setExpected({ });
             match.secondHalf.setOperand(match.secondHalf.numberOfOperands() - 2, parameter);
             match.secondHalf.setOperand(match.secondHalf.numberOfOperands() - 1, parameter);
         }

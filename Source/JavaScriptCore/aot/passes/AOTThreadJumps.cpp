@@ -337,7 +337,7 @@ private:
                 addDefinition(value);
         }
 
-        Terminator dispatch = std::exchange(m_function.edit(copied.copy).terminator, Terminator { });
+        Terminator dispatch = std::exchange(m_function.edit(copied.copy, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { });
         Target& chosen = dispatch.targets[targetIndex];
         m_builder.setOrigin(dispatch.origin());
         m_builder.moveToEndOf(copied.copy);
@@ -411,7 +411,7 @@ private:
         Target taken = substituteParameters(mergePoint, branch.taken().block, branch.taken().arguments, incomingArguments);
         Target notTaken = substituteParameters(mergePoint, branch.notTaken().block, branch.notTaken().arguments, incomingArguments);
 
-        m_function.edit(source).terminator = Terminator { };
+        m_function.edit(source, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
         m_builder.setOrigin(origin);
         m_builder.moveToEndOf(source);
         m_builder.emitBranch(condition, WTF::move(taken), WTF::move(notTaken));

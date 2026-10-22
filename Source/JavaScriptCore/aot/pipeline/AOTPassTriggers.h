@@ -24,6 +24,8 @@ enum class BodyTrait : uint8_t {
     SeveralTargets = 1 << 3,
     // A value with a result whose type is never.
     NeverValues = 1 << 4,
+    ParametersOfRuntimeFunction = 1 << 5,
+    UnfinishedThis = 1 << 6,
 };
 
 // What a pass can tell from that it has nothing to do in a body. All values count, listed in a block or not, and all blocks, reachable or not: it says too much rather than too little.

@@ -150,7 +150,7 @@ static void removeCasts(Function& function, BlockID block, ValueID lastCast, Val
         RELEASE_ASSERT(isCast(function.at(cast).opcode));
         casts.set(cast.index());
     }
-    function.edit(block).values.removeAllMatching([&](ValueID id) {
+    function.edit(block, BlockEdit::Values).values.removeAllMatching([&](ValueID id) {
         return casts.get(id.index());
     });
 }
@@ -167,7 +167,7 @@ static void removeCastsOfAwaitedPromise(Function& function, const TypedResultSit
 
     size_t parameterIndex = function.at(site.awaitBlock).parameters.find(site.mergedPromise);
     RELEASE_ASSERT(parameterIndex != notFound);
-    Target& target = function.edit(site.block).terminator.targets[0];
+    Target& target = function.edit(site.block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets[0];
     removeCasts(function, site.block, target.arguments[parameterIndex], site.call);
     target.arguments[parameterIndex] = site.call;
 }

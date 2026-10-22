@@ -273,7 +273,7 @@ static void returnWhatIsConstructed(IRBuilder& builder, ValueID object)
 
         ValueID returned = body.at(block).terminator.valueOperand();
         builder.setOrigin(body.at(block).terminator.origin());
-        body.edit(block).terminator = Terminator();
+        body.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator();
         builder.moveToEndOf(block);
         emitReturnOfConstruction(builder, returned, object);
     }
@@ -329,15 +329,15 @@ Function buildConstructBody(const DerivedFunctionKey& key, DerivedFunctionInputs
     }
     substitution.apply(body, nullptr);
     if (validation)
-        body.edit(validation).setValueOperand(closure);
+        body.edit(validation, ValueEdit::Definition).setValueOperand(closure);
     if (ownClosure)
-        body.edit(ownClosure).setValueOperand(closure);
+        body.edit(ownClosure, ValueEdit::Definition).setValueOperand(closure);
 
     BitVector removedParameters(body.at(entryBlock).parameters.size());
     removedParameters.set(thisIndex);
     builder.removeParameters(entryBlock, removedParameters);
     if (!original.has(FunctionFlags::HasNewTarget) && newTarget) {
-        auto& parameters = body.edit(entryBlock).parameters;
+        auto& parameters = body.edit(entryBlock, BlockEdit::Parameters).parameters;
         RELEASE_ASSERT(parameters.last() == newTarget);
         parameters.removeLast();
         parameters.insert(*body.newTargetParameterIndex(), newTarget);

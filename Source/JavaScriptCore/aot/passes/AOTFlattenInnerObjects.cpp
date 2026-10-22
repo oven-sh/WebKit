@@ -1434,7 +1434,7 @@ private:
                 continue;
             }
             if (parent && parent != m_function.at(name.value).operand(0))
-                m_function.edit(name.value).setOperand(0, parent);
+                m_function.edit(name.value, ValueEdit::Definition).setOperand(0, parent);
             nameInUse.append(name.value);
         }
         for (const UseAt& use : read.uses) {
@@ -1464,8 +1464,8 @@ private:
     void leaveObjectUnmade(const Holder& holder)
     {
         for (ValueID link : CastChain(m_function, holder.held))
-            m_function.edit(blockOf(m_function, link)).values.removeFirst(link);
-        BlockValues& values = m_function.edit(holder.block).values;
+            m_function.edit(blockOf(m_function, link), BlockEdit::Values).values.removeFirst(link);
+        BlockValues& values = m_function.edit(holder.block, BlockEdit::Values).values;
         size_t index = values.find(holder.value);
         RELEASE_ASSERT(index != notFound);
         values.insert(index, holder.object);
@@ -1475,8 +1475,8 @@ private:
                 taker.setOperand(operandIndex, holder.object);
         }
         // Whoever makes the object late makes it as this allocation would have, and finds the allocation by its class.
-        m_function.edit(holder.object).setAllocationClass(m_candidates.at(holder.candidate).birth->allocationClass);
-        m_function.edit(holder.object).setIsMadeOnDemand(true);
+        m_function.edit(holder.object, ValueEdit::Definition).setAllocationClass(m_candidates.at(holder.candidate).birth->allocationClass);
+        m_function.edit(holder.object, ValueEdit::Definition).setIsMadeOnDemand(true);
         ++m_counts.births;
     }
 

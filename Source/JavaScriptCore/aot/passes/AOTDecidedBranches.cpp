@@ -621,7 +621,7 @@ void castArgumentsToParameters(IRBuilder& builder, BlockID block, bool validates
 {
     const Program& program = builder.context().program;
     Function& function = builder.function();
-    Terminator& terminator = function.edit(block).terminator;
+    Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     RELEASE_ASSERT(terminator.kind == TerminatorKind::Jump);
 
     builder.setOrigin(terminator.origin());
@@ -714,7 +714,7 @@ void decideTerminator(IRBuilder& builder, BlockID block, uint32_t targetIndex)
     Edge edge { block, targetIndex };
     RELEASE_ASSERT(canFollowWithoutTest(function, edge));
 
-    Terminator& terminator = function.edit(block).terminator;
+    Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     if (terminator.isConditionalBranch()) {
         builder.convertBranchToJump(block, targetIndex);
         return;

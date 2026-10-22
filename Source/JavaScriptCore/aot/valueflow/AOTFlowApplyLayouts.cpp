@@ -162,6 +162,43 @@ Vector<Vector<std::optional<Type>>> findTypesDeclaredInFamilies(const Program& p
     return types;
 }
 
+Vector<BitVector> findAppendedFieldsDeclaredInFamilies(const Program& program, const Vector<FlowLayoutUpdate>& updates, const ParallelLoops& loops)
+{
+    struct Worker {
+        explicit Worker(const TypeTable& types)
+            : arena(types)
+        {
+        }
+
+        ScratchTypeArena arena;
+        FamilyFieldTypeCache cache;
+    };
+
+    Vector<BitVector> isDeclared(updates.size());
+    Vector<uint32_t> layouts = findIndicesInParallel(loops, updates.size(), [&](unsigned index) {
+        return !updates[index].appendedFields.isEmpty();
+    });
+    BitVector declaredLayoutsWithFields(program.layouts.size());
+    for (uint32_t index : layouts)
+        declaredLayoutsWithFields.quickSet(declaredLayoutOf(program, LayoutID(index)).index());
+    Vector<Vector<LayoutID>> declaredViews = declaredViewsOf(program, declaredLayoutsWithFields);
+    Vector<std::unique_ptr<Worker>> workers(loops.width());
+    forEachIndexInParallel(loops, layouts.size(), [&](unsigned position, unsigned number) {
+        if (!workers[number])
+            workers[number] = makeUniqueWithoutFastMallocCheck<Worker>(program.types);
+        Worker& worker = *workers[number];
+        uint32_t index = layouts[position];
+        Vector<LayoutSetID, 2> families = declaredFamiliesOf(program, LayoutID(index));
+        std::span<const LayoutID> views = declaredViews[declaredLayoutOf(program, LayoutID(index)).index()].span();
+        const Vector<FlowAppendedField>& fields = updates[index].appendedFields;
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            if (typeDeclaredInFamilies(program, worker.cache, families.span(), views, fields[field].key, worker.arena))
+                isDeclared[index].set(field);
+        }
+    });
+    return isDeclared;
+}
+
 namespace {
 
 struct TypeOfPlaceholder {
@@ -331,7 +368,11 @@ void applyLayoutUpdates(const FlowApplyContext& context)
     forEachIndexInParallel(context.build.parallelLoops(), program.layouts.size(), [&](unsigned index) {
         applyLayoutUpdate(program.layouts[index], updates[index]);
     });
-    for (size_t index = 0; index < program.layouts.size(); ++index)
+    for (uint32_t index : findIndicesInParallel(context.build.parallelLoops(), program.layouts.size(), [&](unsigned index) {
+        return std::ranges::any_of(updates[index].fields, [](const FlowFieldUpdate& update) {
+            return update.accessor.isAccessor();
+        });
+    }))
         applyAccessorFields(arena, program.layouts[index], updates[index]);
     // Where flow has proven nothing of the field, it takes the type, and every store is tested against it.
     for (const TypeOfPlaceholder& placeholder : typesOfPlaceholders) {

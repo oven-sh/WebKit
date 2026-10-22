@@ -136,8 +136,10 @@ void LoopPathSeparator::rememberTypes()
 void LoopPathSeparator::restoreRememberedTypes()
 {
     rememberTypes();
-    for (size_t index = 0; index < m_rememberedTypes.size(); ++index)
-        m_function.edit(ValueID(index)).type = m_rememberedTypes[index];
+    for (size_t index = 0; index < m_rememberedTypes.size(); ++index) {
+        if (m_function.values[index].type != m_rememberedTypes[index])
+            m_function.edit(ValueID(index), ValueEdit::Type).type = m_rememberedTypes[index];
+    }
 }
 
 // Inner loops come first. A loop around a separated loop stays as it is: its copy would hold both copies of the inner loop again.
@@ -368,7 +370,7 @@ void LoopPathSeparator::separate(const SeparationPlan& plan)
     // A copy that the loop is entered through runs as often as the loop did.
     for (BlockID block : plan.region) {
         if (!plan.letsVariablesBeCarried)
-            m_function.edit(cloner.cloneOf(block)).frequency = frequencyOfCopy(m_function.at(block).frequency);
+            m_function.edit(cloner.cloneOf(block), BlockEdit::Rest).frequency = frequencyOfCopy(m_function.at(block).frequency);
     }
     for (Edge edge : plan.leavingEdges) {
         const Target& target = targetOf(m_function, edge);
@@ -622,7 +624,7 @@ bool LoopPathSeparator::addWayBack(IRBuilder& builder, const SeparationPlan& pla
         builder.redirectEdge(edge, passes ? entry : tests, WTF::move(arguments));
     }
     if (entersThroughTests)
-        m_function.edit(tests).frequency = frequencyOfLoop;
+        m_function.edit(tests, BlockEdit::Rest).frequency = frequencyOfLoop;
     for (Edge edge : latchEdgesOfCopy)
         builder.redirectEdge(edge, tests, Arguments(targetOf(m_function, edge).arguments));
     testOnEdges(builder, latchEdges.span(), testedEveryTurn.span(), header, headerOfCopy);
@@ -645,7 +647,7 @@ void LoopPathSeparator::testOnEdges(IRBuilder& builder, std::span<const Edge> ed
             continue;
         BlockID tests = builder.splitEdge(edge);
         Arguments arguments(m_function.at(tests).terminator.next().arguments);
-        m_function.edit(tests).terminator = Terminator { };
+        m_function.edit(tests, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
         builder.moveToEndOf(tests);
         emitTests(builder, arguments, tested, header, headerOfCopy, m_function.at(tests).frequency);
     }

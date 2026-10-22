@@ -128,11 +128,9 @@ std::optional<Type> tryWidestNaturalTypeOf(const Value&);
 // The operations whose rule reads the type of a variable or the record of a function. Those get narrower between two schedules, and nobody types what reads them again.
 const OpcodeSet& opcodesTypedFromNarrowedRecords();
 
-TypeID resultTypeOf(const Program&, const Function&, const Value&, TypeArena&);
-// Gives a value that nobody has typed, and of which nothing is expected yet, the types that the propagation of types would give it.
-void typeByRule(const Program&, const Function&, Value&, TypeArena&);
+TypeID resultTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
 // Null where nothing narrower than the type is expected.
-TypeID expectedTypeOf(const Program&, const Function&, const Value&, TypeArena&);
+TypeID expectedTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
 
 inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
     OpcodeSet opcodes;

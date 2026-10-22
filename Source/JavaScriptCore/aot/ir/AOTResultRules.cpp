@@ -1082,32 +1082,14 @@ TypeID computeResultTypeID(const TypingContext& context, const Value& value)
     return type;
 }
 
-TypeID resultTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena)
+TypeID resultTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena, TypingMemo* memo)
 {
-    return computeResultTypeID({ program, function, arena, TypeLevel::Proven }, value);
+    return computeResultTypeID({ program, function, arena, TypeLevel::Proven, memo }, value);
 }
 
-// As TypePropagation::typeAgain() does it.
-void typeByRule(const Program& program, const Function& function, Value& value, TypeArena& arena)
+TypeID expectedTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena, TypingMemo* memo)
 {
-    TypingContext proving { program, function, arena, TypeLevel::Proven, nullptr, nullptr, true };
-    value.type = computeResultTypeID(proving, value);
-    TypingContext expecting = proving.atLevel(TypeLevel::Expected);
-    TypeID expected = computeResultTypeID(expecting, value);
-    if (expected == TypeTable::never) {
-        bool isContradicted = value.opcode == Opcode::AssumeType && expecting.typeIDOf(value.valueOperand()) != TypeTable::never;
-        value.setExpected(isContradicted || value.type == TypeTable::never ? TypeID() : expected);
-        return;
-    }
-    if (expected != value.type)
-        expected = arena.intersectionOf(value.type, expected);
-    bool saysSomething = expected != value.type && expected != TypeTable::never && program.at(expected).isSubsetOf(program.at(value.type), program);
-    value.setExpected(saysSomething ? expected : TypeID());
-}
-
-TypeID expectedTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena)
-{
-    TypeID expected = computeResultTypeID({ program, function, arena, TypeLevel::Expected }, value);
+    TypeID expected = computeResultTypeID({ program, function, arena, TypeLevel::Expected, memo }, value);
     if (expected == value.type)
         return { };
     const Type& type = arena.at(value.type);

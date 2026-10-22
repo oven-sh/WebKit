@@ -952,7 +952,7 @@ static void expectInt32(const Program& program, FunctionID id, Function& functio
 
     Vector<ValueID, 8> changed;
     for (auto [check, index] : checkedParameters) {
-        function.edit(check).setCastType(TypeTable::int32);
+        function.edit(check, ValueEdit::Definition).setCastType(TypeTable::int32);
         function.declaredEntryParameter(index)->type = TypeTable::int32;
         changed.append(function.at(entryBlock).parameters[index]);
         changed.append(check);

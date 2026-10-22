@@ -97,18 +97,24 @@ static bool isAddressRandomizationDisabled()
 }
 #endif
 
-static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size)
+static void* chooseAddressForCode(size_t size)
 {
-    int fileDescriptor = static_cast<int>(descriptor);
-    void* hint = nullptr;
 #if OS(LINUX) && CPU(ADDRESS64)
     static constexpr uintptr_t lowestRandomAddress = 64 * GB;
     static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
     uintptr_t numberOfSlots = (highestRandomAddress - lowestRandomAddress - size) / imagePageSize;
     if (!isAddressRandomizationDisabled())
-        hint = std::bit_cast<void*>(lowestRandomAddress + cryptographicallyRandomNumber<uint64_t>() % numberOfSlots * imagePageSize);
+        return std::bit_cast<void*>(lowestRandomAddress + cryptographicallyRandomNumber<uint64_t>() % numberOfSlots * imagePageSize);
+#else
+    UNUSED_PARAM(size);
 #endif
-    void* code = mmap(hint, size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
+    return nullptr;
+}
+
+static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size)
+{
+    int fileDescriptor = static_cast<int>(descriptor);
+    void* code = mmap(chooseAddressForCode(size), size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
 #if !OS(LINUX)
     if (code == MAP_FAILED && errno == EPERM) {
         code = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fileDescriptor, fileOffset);
@@ -132,6 +138,22 @@ static void unmapCode(void* code, size_t size)
 }
 
 #if OS(LINUX)
+#ifndef MREMAP_DONTUNMAP
+#define MREMAP_DONTUNMAP 4
+#endif
+
+static void* moveLoadedCode(std::span<const uint8_t> code)
+{
+    void* target = mmap(chooseAddressForCode(code.size()), code.size(), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (target == MAP_FAILED)
+        return nullptr;
+    if (mremap(const_cast<uint8_t*>(code.data()), code.size(), code.size(), MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP, target) == MAP_FAILED) {
+        munmap(target, code.size());
+        return nullptr;
+    }
+    return target;
+}
+
 static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code)
 {
     void* copy = mmap(nullptr, code.size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -199,6 +221,7 @@ public:
     static CodeMapping useExecutableSegment(std::span<const uint8_t> code);
     static std::optional<CodeMapping> protectLoadedSection(std::span<const uint8_t> code);
 #if OS(LINUX)
+    static std::optional<CodeMapping> moveExecutableSegment(std::span<const uint8_t> code);
     static std::optional<CodeMapping> copy(std::span<const uint8_t> code);
 #endif
 
@@ -251,6 +274,14 @@ std::optional<CodeMapping> CodeMapping::protectLoadedSection(std::span<const uin
 }
 
 #if OS(LINUX)
+std::optional<CodeMapping> CodeMapping::moveExecutableSegment(std::span<const uint8_t> code)
+{
+    void* moved = moveLoadedCode(code);
+    if (!moved)
+        return std::nullopt;
+    return CodeMapping { Kind::FileMapping, moved, code.size() };
+}
+
 std::optional<CodeMapping> CodeMapping::copy(std::span<const uint8_t> code)
 {
     void* anonymousCopy = copyCodeToAnonymousMemory(code);
@@ -389,13 +420,18 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
     if (isLoadedExecutable && isAddressRandomizationDisabled())
         return CodeMapping::useExecutableSegment(code);
 #endif
-    if (s_positionOfImage) {
-        if (std::optional<CodeMapping> mapping = CodeMapping::mapFile({ s_positionOfImage->descriptor, s_positionOfImage->offset }, header.codeOffset, size)) {
-            // Compiled code reads the constants in the code part through pointers into the loaded image.
-            if (isLoadedExecutable)
-                mprotect(const_cast<uint8_t*>(code.data()), code.size(), PROT_READ);
-            return mapping;
-        }
+    std::optional<CodeMapping> mapping;
+    if (s_positionOfImage)
+        mapping = CodeMapping::mapFile({ s_positionOfImage->descriptor, s_positionOfImage->offset }, header.codeOffset, size);
+#if OS(LINUX)
+    if (!mapping && isLoadedExecutable)
+        mapping = CodeMapping::moveExecutableSegment(code);
+#endif
+    if (mapping) {
+        // Compiled code reads the constants in the code part through pointers into the loaded image.
+        if (isLoadedExecutable)
+            mprotect(const_cast<uint8_t*>(code.data()), code.size(), PROT_READ);
+        return mapping;
     }
     if (isLoadedExecutable)
         return CodeMapping::useExecutableSegment(code);

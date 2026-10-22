@@ -43,7 +43,7 @@ public:
     void takeBack()
     {
         for (auto [id, replaced] : m_replacedTypes | std::views::reverse)
-            m_function.edit(id).setExpected(replaced);
+            m_function.edit(id, ValueEdit::Type).setExpected(replaced);
         m_replacedTypes.clear();
     }
 

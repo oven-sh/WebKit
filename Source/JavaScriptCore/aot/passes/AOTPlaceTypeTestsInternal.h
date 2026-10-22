@@ -107,6 +107,7 @@ private:
     Cut* findCut(ProgramPoint);
     BlockID blockOf(const StretchRange&) const;
     BlockID lastPartOf(BlockID) const;
+    ProgramPoint pointBehindCuts(ProgramPoint) const;
     BlockID guardedBlockOf(const PlannedTest&);
 
     void prepareLoops();

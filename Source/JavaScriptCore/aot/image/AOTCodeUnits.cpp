@@ -342,15 +342,16 @@ void CodeUnitRecorder::didGenerateInBlock(MacroAssembler::Label begin, MacroAsse
     if (begin == end)
         return;
 
+    // All of a hot block is pinned, whatever its instructions are.
     switch (m_blockState) {
     case BlockState::NoBlock:
     case BlockState::StartsHotBlock:
         m_hotBlockRanges.append({ begin, end });
         m_blockState = BlockState::InHotBlock;
-        break;
+        return;
     case BlockState::InHotBlock:
         m_hotBlockRanges.last().second = end;
-        break;
+        return;
     case BlockState::InColdBlock:
         break;
     case BlockState::StartsColdBlockThatMayRun:
@@ -490,12 +491,24 @@ Vector<CodeUnit> CodeUnitRecorder::link(ImageLinkBuffer& buffer, std::span<const
 
     LinkedRanges ranges;
     ranges.recorded.reserveInitialCapacity(m_ranges.size());
-    for (auto& range : m_ranges)
-        appendLinkedRange(ranges.recorded, range.begin, range.end, range.kind);
-    if (!ascendStrictly(ranges.recorded, &OffsetRange::begin))
+    // An instruction mostly begins where the one in front of it ends.
+    MacroAssembler::Label lastEnd;
+    uint32_t offsetOfLastEnd = 0;
+    bool ascends = true;
+    for (auto& range : m_ranges) {
+        uint32_t begin = range.begin == lastEnd ? offsetOfLastEnd : linkBuffer.offsetOf(range.begin);
+        ascends &= begin >= offsetOfLastEnd;
+        lastEnd = range.end;
+        offsetOfLastEnd = linkBuffer.offsetOf(range.end);
+        RELEASE_ASSERT(begin <= offsetOfLastEnd);
+        if (begin != offsetOfLastEnd)
+            ranges.recorded.append(OffsetRange { begin, offsetOfLastEnd, range.kind });
+    }
+    if (!ascends) {
         std::ranges::sort(ranges.recorded, { }, &OffsetRange::begin);
-    for (size_t i = 1; i < ranges.recorded.size(); ++i)
-        RELEASE_ASSERT(ranges.recorded[i - 1].end <= ranges.recorded[i].begin);
+        for (size_t i = 1; i < ranges.recorded.size(); ++i)
+            RELEASE_ASSERT(ranges.recorded[i - 1].end <= ranges.recorded[i].begin);
+    }
 
     for (auto& [begin, end] : m_pins)
         appendLinkedRange(ranges.pins, begin, end, CodeUnit::Kind::Pinned);

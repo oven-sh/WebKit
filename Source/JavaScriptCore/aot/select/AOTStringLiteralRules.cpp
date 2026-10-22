@@ -412,7 +412,7 @@ static void recordLiteralSeparators(SelectionContext& context)
         StringID separator = findLiteralSeparator(context, function.at(id));
         if (!separator)
             continue;
-        function.edit(id).setLiteralSeparator(separator);
+        function.edit(id, ValueEdit::Definition).setLiteralSeparator(separator);
         ++numberOfSeparators;
     }
     context.didSelectForms(SelectionRuleID::StringLiteralForms, numberOfSeparators);

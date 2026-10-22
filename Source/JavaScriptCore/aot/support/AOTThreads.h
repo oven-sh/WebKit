@@ -61,21 +61,6 @@ public:
     JS_EXPORT_PRIVATE void schedule(TaskPriority, void (*run)(void* argument), void* argument) const;
     bool shouldYield(TaskPriority) const;
 
-    // For a stretch of many short loops. Waking a thread that sleeps takes the waker a system call and the sleeper tens of microseconds, which is
-    // as long as such a loop. So while a scope is alive, a thread that has run out of work looks for more for a moment before it sleeps, and so
-    // does a thread that waits for the helpers of its loop. Narrow loops belong to a small program, which has no time to gain: there it does nothing.
-    class ShortLoopsScope {
-        WTF_MAKE_NONCOPYABLE(ShortLoopsScope);
-        WTF_MAKE_NONMOVABLE(ShortLoopsScope);
-    public:
-        JS_EXPORT_PRIVATE explicit ShortLoopsScope(const ParallelLoops&);
-        JS_EXPORT_PRIVATE ~ShortLoopsScope();
-
-    private:
-        const ParallelLoops& m_loops;
-    };
-    bool expectsShortLoops() const;
-
 private:
     class RestingThreads;
 
@@ -314,9 +299,25 @@ void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isL
     forEachIndexInParallel(loops, numberOfRuns, [&](unsigned run) {
         std::ranges::sort(runOf(from, run, numberOfRuns), isLess);
     });
+    // The last round merges two runs: one thread would go through the whole list, and two through the round in front of it. So each merge is cut into parts that any thread takes.
+    // A part begins at an element of the first run and at the first element of the second run that is not less: what stands in front of the two is what a merge of the whole runs puts in front of them.
+    constexpr size_t partsPerRound = 4 * numberOfRuns;
     for (size_t runs = numberOfRuns; runs > 1; runs /= 2) {
-        forEachIndexInParallel(loops, runs / 2, [&](unsigned pair) {
-            std::ranges::merge(runOf(from, 2 * pair, runs), runOf(from, 2 * pair + 1, runs), runOf(to, pair, runs / 2).begin(), isLess);
+        size_t partsPerMerge = partsPerRound / (runs / 2);
+        forEachIndexInParallel(loops, partsPerRound, [&](unsigned index) {
+            size_t pair = index / partsPerMerge;
+            std::span<T> first = runOf(from, 2 * pair, runs);
+            std::span<T> second = runOf(from, 2 * pair + 1, runs);
+            auto beginOf = [&](size_t part) {
+                if (part == partsPerMerge)
+                    return std::pair { first.size(), second.size() };
+                size_t inFirst = first.size() * part / partsPerMerge;
+                size_t inSecond = part ? static_cast<size_t>(std::ranges::lower_bound(second, first[inFirst], isLess) - second.begin()) : 0;
+                return std::pair { inFirst, inSecond };
+            };
+            auto [firstBegin, secondBegin] = beginOf(index % partsPerMerge);
+            auto [firstEnd, secondEnd] = beginOf(index % partsPerMerge + 1);
+            std::ranges::merge(first.subspan(firstBegin, firstEnd - firstBegin), second.subspan(secondBegin, secondEnd - secondBegin), runOf(to, pair, runs / 2).begin() + (firstBegin + secondBegin), isLess);
         });
         std::swap(from, to);
     }

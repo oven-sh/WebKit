@@ -147,22 +147,26 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
     Vector<Vector<uint32_t, 2>> functionsUnderName;
     // Only a list that takes the functions of another one is asked what it holds.
     BitVector takesFunctionsOfOtherNames(program.types.numberOfPropertyKeys());
-    HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> isListed;
+    using SetOfFunctions = HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    Vector<SetOfFunctions> listed;
     auto ensureListOf = [&](uint32_t name) {
         uint32_t& list = listOfName[name];
         if (list == noList) {
             list = static_cast<uint32_t>(functionsUnderName.size());
             functionsUnderName.append(Vector<uint32_t, 2>());
+            listed.append(SetOfFunctions());
         }
         return list;
     };
     struct NameStoredAgain {
         uint32_t from;
         uint32_t to;
-        // The functions of the first list that the second one has got.
-        uint32_t numberTaken { 0 };
+        // Where numberTaken says how many functions of the first list the second one has got. The same two lists share it wherever they stand.
+        uint32_t pair;
     };
     Vector<NameStoredAgain> namesStoredAgain;
+    Vector<uint32_t> numberTaken;
+    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numberOfPair;
     for (unsigned index = 0; index < bodies.size(); ++index) {
         for (auto [from, to] : bodies[index].namesStoredAgain)
             takesFunctionsOfOtherNames.quickSet(to);
@@ -172,20 +176,26 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             uint32_t list = ensureListOf(name);
             functionsUnderName[list].append(function);
             if (takesFunctionsOfOtherNames.quickGet(name))
-                isListed.add(static_cast<uint64_t>(list) << 32 | function);
+                listed[list].add(function);
         }
     }
     for (unsigned index = 0; index < bodies.size(); ++index) {
-        for (auto [from, to] : bodies[index].namesStoredAgain)
-            namesStoredAgain.append({ ensureListOf(from), ensureListOf(to) });
+        for (auto [nameFrom, nameTo] : bodies[index].namesStoredAgain) {
+            uint32_t from = ensureListOf(nameFrom);
+            uint32_t to = ensureListOf(nameTo);
+            auto pair = numberOfPair.add(static_cast<uint64_t>(from) << 32 | to, static_cast<uint32_t>(numberTaken.size()));
+            if (pair.isNewEntry)
+                numberTaken.append(0);
+            namesStoredAgain.append({ from, to, pair.iterator->value });
+        }
     }
     for (bool hasMoved = true; hasMoved;) {
         hasMoved = false;
-        for (NameStoredAgain& stored : namesStoredAgain) {
+        for (const NameStoredAgain& stored : namesStoredAgain) {
             uint32_t end = functionsUnderName[stored.from].size();
-            for (; stored.numberTaken < end; ++stored.numberTaken) {
-                uint32_t function = functionsUnderName[stored.from][stored.numberTaken];
-                if (isListed.add(static_cast<uint64_t>(stored.to) << 32 | function).isNewEntry) {
+            for (uint32_t& taken = numberTaken[stored.pair]; taken < end; ++taken) {
+                uint32_t function = functionsUnderName[stored.from][taken];
+                if (listed[stored.to].add(function).isNewEntry) {
                     functionsUnderName[stored.to].append(function);
                     hasMoved = true;
                 }
@@ -193,12 +203,67 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         }
     }
 
+    // Of the functions under a name a call by that name asks only at which positions they take a key.
+    constexpr uint32_t positionsCounted = 8;
+    struct PositionsTaken {
+        std::array<uint32_t, positionsCounted> functionsTakingKeyAt { };
+        uint32_t functionsTakingKeyFurtherOn { 0 };
+    };
+    Vector<PositionsTaken> positionsTakenUnder(functionsUnderName.size());
+    auto count = [&](uint32_t list, uint32_t position, uint32_t change) {
+        if (position == noKey)
+            return;
+        PositionsTaken& taken = positionsTakenUnder[list];
+        (position < positionsCounted ? taken.functionsTakingKeyAt[position] : taken.functionsTakingKeyFurtherOn) += change;
+    };
+    // Only a function with such a call moves. By function: the lists that hold it, once for each time they do.
+    BitVector mayMove(numberOfFunctions);
+    for (const Found& body : bodies.span()) {
+        for (const CallPassingParameters& call : body.calls)
+            mayMove.quickSet(call.caller);
+    }
+    Vector<uint32_t> endOfListsHolding;
+    endOfListsHolding.fill(0, numberOfFunctions + 1);
+    for (uint32_t list = 0; list < functionsUnderName.size(); ++list) {
+        for (uint32_t function : functionsUnderName[list]) {
+            count(list, positionOfKey[function], 1);
+            endOfListsHolding[function] += mayMove.quickGet(function);
+        }
+    }
+    for (uint32_t function = 0, sum = 0; function <= numberOfFunctions; ++function)
+        endOfListsHolding[function] = sum += endOfListsHolding[function];
+    Vector<uint32_t> listsHoldingFunctions(endOfListsHolding[numberOfFunctions]);
+    for (uint32_t list = functionsUnderName.size(); list--;) {
+        for (uint32_t function : functionsUnderName[list]) {
+            if (mayMove.quickGet(function))
+                listsHoldingFunctions[--endOfListsHolding[function]] = list;
+        }
+    }
+    // The ends have become the starts.
+    auto listsHolding = [&](uint32_t function) {
+        return listsHoldingFunctions.span().subspan(endOfListsHolding[function], endOfListsHolding[function + 1] - endOfListsHolding[function]);
+    };
+    BitVector liesUnderNameItCalls;
+    {
+        size_t numberOfCalls = 0;
+        for (const Found& body : bodies.span()) {
+            for (const CallPassingParameters& call : body.calls) {
+                size_t number = numberOfCalls++;
+                if (!call.callee && std::ranges::contains(listsHolding(call.caller), listOfName[call.nameOfCallee.index()]))
+                    liesUnderNameItCalls.set(number);
+            }
+        }
+    }
+
     for (bool hasMoved = true; hasMoved;) {
         hasMoved = false;
+        size_t numberOfCall = 0;
         for (const Found& body : bodies.span()) {
             uint32_t firstArgument = 0;
             for (const CallPassingParameters& call : body.calls) {
                 uint32_t index = call.caller;
+                uint32_t positionBefore = positionOfKey[index];
+                size_t number = numberOfCall++;
                 std::span<const Argument> arguments = body.arguments.span().subspan(firstArgument, call.endOfArguments - firstArgument);
                 firstArgument = call.endOfArguments;
                 auto handOnTo = [&](uint32_t callee) {
@@ -215,8 +280,24 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                 if (call.callee)
                     handOnTo(call.callee.index());
                 else if (uint32_t list = listOfName[call.nameOfCallee.index()]; list != noList) {
-                    for (uint32_t callee : functionsUnderName[list])
-                        handOnTo(callee);
+                    const PositionsTaken& taken = positionsTakenUnder[list];
+                    if (taken.functionsTakingKeyFurtherOn || liesUnderNameItCalls.get(number)) {
+                        for (uint32_t callee : functionsUnderName[list])
+                            handOnTo(callee);
+                    } else {
+                        for (const Argument& argument : arguments) {
+                            if (argument.index < positionsCounted && taken.functionsTakingKeyAt[argument.index] && argument.positionOfParameter < positionOfKey[index]) {
+                                positionOfKey[index] = argument.positionOfParameter;
+                                hasMoved = true;
+                            }
+                        }
+                    }
+                }
+                if (positionOfKey[index] != positionBefore) {
+                    for (uint32_t list : listsHolding(index)) {
+                        count(list, positionBefore, -1);
+                        count(list, positionOfKey[index], 1);
+                    }
                 }
             }
         }
@@ -392,10 +473,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     MonotonicTime start = MonotonicTime::now();
     m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
-    {
-        ParallelLoops::ShortLoopsScope shortLoops(build.parallelLoops());
-        m_hasResult = m_solver->solve();
-    }
+    m_hasResult = m_solver->solve();
     times.didFinish("solve: rounds"_s);
     m_timeToSolve = MonotonicTime::now() - start;
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())

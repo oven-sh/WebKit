@@ -328,7 +328,7 @@ void ObjectInterpreter::splitThrowingVariants(ValueID cast, VirtualObjectID obje
         ValueID test = emitTagTest(object, throwingTagBits);
         BlockID failing = cursor().addCoveredBlock(*this);
         BlockID passing = cursor().addUncoveredBlock();
-        builder.function().edit(failing).frequency = BlockFrequency::Rare;
+        builder.function().edit(failing, BlockEdit::Rest).frequency = BlockFrequency::Rare;
         builder.emitBranch(test, Target { failing, { }, { } }, Target { passing, { }, { } });
 
         cursor().moveTo(failing);

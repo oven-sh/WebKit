@@ -1160,7 +1160,7 @@ void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>
         }
         for (uint32_t number : maker.constants) {
             const MadeNodes& made = m_madeNodes[maker.madeNodesMovedUp(number)];
-            m_graph.makeConstant(made.first, made.key.set, worker);
+            m_graph.makeConstant(made.first, made.key.set, worker, made.key.unknownSource() ? ValueFlowGraph::EdgesOutOfConstant::AreListed : ValueFlowGraph::EdgesOutOfConstant::AreKeptAtTargetsAlone);
         }
         if (!isOneMaker && maker.madeNodesBefore) {
             Vector<uint32_t>& ofManyObjects = m_nodesOfManyObjects[index].madeNodes;
@@ -1553,7 +1553,7 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
             }
             switch (key.kind) {
             case ValueFlowMadeNodeKind::Constant:
-                m_graph.makeConstant(made.first, key.set, worker);
+                m_graph.makeConstant(made.first, key.set, worker, key.unknownSource() ? ValueFlowGraph::EdgesOutOfConstant::AreListed : ValueFlowGraph::EdgesOutOfConstant::AreKeptAtTargetsAlone);
                 break;
             case ValueFlowMadeNodeKind::Read:
             case ValueFlowMadeNodeKind::ReadUnderKind:
@@ -3374,6 +3374,23 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
                 holdsUnknownObject.quickSet(node);
         });
     });
+    // The graph keeps an edge out of a constant at its target, and lists those of the constants that the walk begins at. So far nobody else has a source.
+    size_t numberOfConstantsFound = found.size();
+    Vector<ValueFlowEdge> edgesOutOfConstantsFound;
+    m_graph.forEachListedEdgeOutOfConstants([&](ValueFlowEdge edge) {
+        if (m_unknownSourceOfNode[edge.from.index()] && holdsUnknownObject.quickGet(edge.to.index()))
+            edgesOutOfConstantsFound.append(edge);
+    });
+    parallelSort(m_loops, edgesOutOfConstantsFound.mutableSpan(), [](ValueFlowEdge first, ValueFlowEdge second) {
+        return std::pair { first.from.index(), first.to.index() } < std::pair { second.from.index(), second.to.index() };
+    });
+    auto successorsOfConstantFound = [&](uint32_t constant) {
+        auto range = std::ranges::equal_range(edgesOutOfConstantsFound.span(), constant, { }, [](ValueFlowEdge edge) {
+            return edge.from.index();
+        });
+        return std::span<const ValueFlowEdge>(range.begin(), range.end());
+    };
+
     Vector<uint32_t> firstSuccessor;
     firstSuccessor.fill(0u, numberOfNodes + 1);
     forEachIndexInParallel(m_loops, numberOfShares, [&](unsigned share) {
@@ -3424,7 +3441,15 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
     constexpr size_t stepsAheadForSources = 4;
     constexpr uint32_t mostSourcesAskedFor = 8;
     auto walk = [&] {
-        for (size_t next = 0; next < found.size(); ++next) {
+        for (size_t next = 0; next < numberOfConstantsFound; ++next) {
+            for (ValueFlowEdge edge : successorsOfConstantFound(found[next])) {
+                if (m_unknownSourceOfNode[edge.to.index()])
+                    continue;
+                m_unknownSourceOfNode[edge.to.index()] = m_unknownSourceOfNode[found[next]];
+                found.append(edge.to.index());
+            }
+        }
+        for (size_t next = numberOfConstantsFound; next < found.size(); ++next) {
             if (next + stepsAheadForRow < found.size())
                 __builtin_prefetch(&firstSuccessor[found[next + stepsAheadForRow]]);
             if (next + stepsAheadForSuccessors < found.size())

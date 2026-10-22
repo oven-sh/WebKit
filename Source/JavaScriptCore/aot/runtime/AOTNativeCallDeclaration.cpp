@@ -297,9 +297,14 @@ NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallEx
         return declaration;
     }
 
+    // A spy of bun:test stands in the realm where the function stood that it spies on, under the name of that function, and runs what the program gave it. It is no JSFunction:
+    // of the table only a constructor is something else.
+    auto mayBe = [&](BuiltinID candidate) {
+        return call.callee->inherits<JSFunction>() || table.at(candidate).kind == BuiltinKind::Constructor;
+    };
     BuiltinCallMode mode = modeOf(kind, call.kind);
     for (BuiltinID candidate : candidates->value) {
-        if (table.at(candidate).scope == BuiltinScope::Module)
+        if (table.at(candidate).scope == BuiltinScope::Module || !mayBe(candidate))
             continue;
         BuiltinCellKey key = kind == BuiltinCellKey::Kind::Object ? BuiltinCellKey::object(candidate) : kind == BuiltinCellKey::Kind::Getter ? BuiltinCellKey::getter(candidate) : BuiltinCellKey::setter(candidate);
         // Compiled code has no cell for the function of an accessor that it never calls by itself. A generic read or store calls it all the same.
@@ -321,7 +326,7 @@ NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallEx
 
     // The program may have replaced a step of the path to the function, such as `console`. The call names the built-ins that flow lists as its callees.
     for (BuiltinID candidate : candidates->value) {
-        if (table.at(candidate).scope == BuiltinScope::Module || !expectation.isKnown || expectation.namesMoreBuiltins || !expectation.names(table.canonicalID(candidate)))
+        if (table.at(candidate).scope == BuiltinScope::Module || !mayBe(candidate) || !expectation.isKnown || expectation.namesMoreBuiltins || !expectation.names(table.canonicalID(candidate)))
             continue;
         declaration.source = NativeCallDeclarationSource::CalleeInRealm;
         declaration.builtin = candidate;

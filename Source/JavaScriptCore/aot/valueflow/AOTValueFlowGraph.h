@@ -102,7 +102,20 @@ public:
     void takeNodesAtWhichPlaceholdersStopped(Vector<StoppedPlaceholder>&);
     bool flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID) const;
     // Beside other threads: each with a worker's number of its own, and a node of its own.
-    void makeConstant(ValueFlowNodeID, ValueSetID, unsigned worker = 0);
+    // A constant never moves, so nobody follows its edges forward: an edge out of it is kept at its target alone, among the predecessors. forEachSuccessor() answers none for it.
+    // Where the edges are listed, forEachListedEdgeOutOfConstants() answers them.
+    enum class EdgesOutOfConstant : bool { AreKeptAtTargetsAlone, AreListed };
+    void makeConstant(ValueFlowNodeID, ValueSetID, unsigned worker = 0, EdgesOutOfConstant = EdgesOutOfConstant::AreKeptAtTargetsAlone);
+    bool isConstant(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && isConstant(node.index()); }
+    // In no order.
+    void forEachListedEdgeOutOfConstants(NOESCAPE const Invocable<void(ValueFlowEdge)> auto& functor) const
+    {
+        RELEASE_ASSERT(!m_hasReleasedSolvingState);
+        for (const std::unique_ptr<Shard>& shard : m_shards) {
+            for (ValueFlowEdge edge : shard->listedEdgesOutOfConstants)
+                functor(edge);
+        }
+    }
     // A node that has just been added holds from the start what its mask lets through of what the other node holds; that does not count as a move.
     void startWithValueOf(ValueFlowNodeID, ValueFlowNodeID other);
     // The same for many: `to` begins with what `from` holds. No `from` is the `to` of another.
@@ -123,6 +136,20 @@ public:
         RELEASE_ASSERT(!m_hasReleasedSolvingState);
         if (edge.from.index() >= m_numberOfNodes)
             return false;
+        if (isConstant(edge.from.index())) {
+            if (edge.to.index() >= m_numberOfNodes)
+                return false;
+            willUse(edge.to.index());
+            const Links& predecessors = m_predecessors[edge.to.index()];
+            if (predecessors.count > mostPredecessorsScanned)
+                return m_shards[shardOf(edge.to.index())]->edgesOutOfConstantsIntoNodesWithManyPredecessors.contains(edge);
+            const uint32_t* others = predecessors.begin();
+            for (uint32_t index = 0; index < predecessors.count; ++index) {
+                if (others[index] == edge.from.index())
+                    return true;
+            }
+            return false;
+        }
         willUse(edge.from.index());
         const Links& successors = m_successors[edge.from.index()];
         if (successors.count > mostSuccessorsScanned)
@@ -136,15 +163,30 @@ public:
     }
 
     // Ahead of hasAdded(): first the one for all edges that will be asked after, then the other.
-    void prefetchSuccessorsOf(ValueFlowNodeID from) const
+    void prefetchLinksThatHold(ValueFlowEdge edge) const
     {
-        if (from.index() < m_numberOfNodes)
-            __builtin_prefetch(&m_successors[from.index()]);
+        if (edge.from.index() >= m_numberOfNodes)
+            return;
+        if (!isConstant(edge.from.index()))
+            __builtin_prefetch(&m_successors[edge.from.index()]);
+        else if (edge.to.index() < m_numberOfNodes)
+            __builtin_prefetch(&m_predecessors[edge.to.index()]);
     }
     void prefetchWhereEdgeIsListed(ValueFlowEdge edge) const
     {
         if (edge.from.index() >= m_numberOfNodes)
             return;
+        if (isConstant(edge.from.index())) {
+            if (edge.to.index() >= m_numberOfNodes)
+                return;
+            willUse(edge.to.index());
+            const Links& predecessors = m_predecessors[edge.to.index()];
+            if (predecessors.count > mostPredecessorsScanned)
+                m_shards[shardOf(edge.to.index())]->edgesOutOfConstantsIntoNodesWithManyPredecessors.prefetch(edge);
+            else if (predecessors.count > 2)
+                __builtin_prefetch(predecessors.block);
+            return;
+        }
         willUse(edge.from.index());
         const Links& successors = m_successors[edge.from.index()];
         if (successors.count > mostSuccessorsScanned)
@@ -301,6 +343,7 @@ private:
 
     static constexpr uint32_t numberOfLowMembers = 64;
     static constexpr uint32_t mostSuccessorsScanned = 8;
+    static constexpr uint32_t mostPredecessorsScanned = 8;
 
     static constexpr unsigned numberOfShards = 64;
     static constexpr unsigned shardOf(uint32_t node) { return node >> 6 & (numberOfShards - 1); }
@@ -324,6 +367,8 @@ private:
         Arena blocksOfSuccessors;
         Arena blocksOfPredecessors;
         EdgeSet edgesOfNodesWithManySuccessors;
+        EdgeSet edgesOutOfConstantsIntoNodesWithManyPredecessors;
+        Vector<ValueFlowEdge> listedEdgesOutOfConstants;
         Arrivals arrivals;
         std::array<std::array<Vector<Message>, numberOfShards>, 2> messages;
         Vector<uint32_t> nodesWithRecentSuccessors;
@@ -353,6 +398,12 @@ private:
 
     void takeEdgesIntoLists(Team&, std::span<const ValueFlowEdge>);
     bool addSuccessorIfAbsent(ValueFlowEdge);
+    bool addEdgeOutOfConstantIfAbsent(ValueFlowEdge);
+    bool addEdgeIfAbsent(ValueFlowEdge);
+    void willHaveManyPredecessors(Shard&, uint32_t node);
+    bool isConstant(uint32_t node) const { return m_isConstant[node / 64].load(std::memory_order_relaxed) >> node % 64 & 1; }
+    // The shard whose thread adds the edge.
+    unsigned shardThatKeeps(ValueFlowEdge edge) const { return shardOf(isConstant(edge.from.index()) ? edge.to.index() : edge.from.index()); }
     void countRecentEdgesAsOlder();
 
     bool passesEverythingOn(uint32_t node) const { return !m_gates[node].mask && !(m_gates[node].flags & IsAtRest); }
@@ -383,6 +434,9 @@ private:
     ArrayByNode<ValueSetID> m_value;
     // A bit for the nodes whose rows fill one page, and whose links fill one.
     mutable Vector<std::atomic<uint64_t>> m_arePagesWritable;
+    // A bit a node.
+    Vector<std::atomic<uint64_t>> m_isConstant;
+    Vector<std::atomic<uint64_t>> m_areEdgesOutOfConstantListed;
     unsigned m_shiftFromNodeToPage { 0 };
 
     Vector<Mask> m_masks;

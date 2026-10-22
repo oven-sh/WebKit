@@ -644,8 +644,9 @@ void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE con
     for (BlockID block : m_region) {
         RELEASE_ASSERT(!m_blockMap[block.index()]);
         BlockID clone = m_destination.addBlock(m_source.at(block).frequency);
-        m_destination.function().edit(clone).role = m_source.at(block).role;
-        m_destination.function().edit(clone).shape = m_source.at(block).shape;
+        Block& added = m_destination.function().edit(clone, BlockEdit::Rest);
+        added.role = m_source.at(block).role;
+        added.shape = m_source.at(block).shape;
         m_blockMap[block.index()] = clone;
         m_isInRegion.set(block.index());
         m_clonedBlocks.append(clone);
@@ -660,7 +661,7 @@ void RegionCloner::cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE con
 void RegionCloner::addClones(BlockID regionBlock, NOESCAPE const DidCloneValue& didCloneValue)
 {
     const Block& source = m_source.at(regionBlock);
-    Block& clone = m_destination.function().edit(m_blockMap[regionBlock.index()]);
+    Block& clone = m_destination.function().edit(m_blockMap[regionBlock.index()], BlockEdit::Parameters);
     auto addClone = [&](ValueID id) {
         RELEASE_ASSERT(!m_valueMap[id.index()]);
         ValueID added = m_destination.addValue(Value(m_source.at(id)));
@@ -687,7 +688,7 @@ void RegionCloner::cloneContents(BlockID regionBlock, NOESCAPE const DidCloneVal
     auto cloneValues = [&](std::span<const ValueID> values) {
         for (ValueID id : values) {
             ValueID clone = cloneOperands(id, regionBlock, cloneBlock, didCloneValue);
-            function.edit(cloneBlock).values.append(clone);
+            function.edit(cloneBlock, BlockEdit::Values).values.append(clone);
         }
     };
 
@@ -696,7 +697,7 @@ void RegionCloner::cloneContents(BlockID regionBlock, NOESCAPE const DidCloneVal
     cloneValues(source.values.span().first(numberOfCaughtValues));
     Terminator terminator = cloneTerminator(regionBlock, cloneBlock, didCloneValue);
     cloneValues(source.values.span().subspan(numberOfCaughtValues));
-    function.edit(cloneBlock).terminator = WTF::move(terminator);
+    function.edit(cloneBlock, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = WTF::move(terminator);
 
     auto hasCloneAtHead = [&](ValueID inSource) -> bool {
         return !inSource || isSameFunction() || cloneOf(inSource);
@@ -709,7 +710,7 @@ void RegionCloner::cloneContents(BlockID regionBlock, NOESCAPE const DidCloneVal
     }
     RELEASE_ASSERT(hasCloneAtHead(source.subject));
 
-    Block& clone = function.edit(cloneBlock);
+    Block& clone = function.edit(cloneBlock, { BlockEdit::Edges, BlockEdit::Arguments, BlockEdit::Rest });
     if (handler || isSameFunction())
         clone.handler = WTF::move(handler);
     clone.subject = remap(source.subject, regionBlock, cloneBlock, didCloneValue);
@@ -719,11 +720,11 @@ ValueID RegionCloner::cloneOperands(ValueID inSource, BlockID regionBlock, Block
 {
     Function& function = m_destination.function();
     ValueID clone = m_valueMap[inSource.index()];
-    Value value = WTF::move(function.edit(clone));
+    Value value = WTF::move(function.edit(clone, ValueEdit::Definition));
     value.forEachChild([&](ValueID& child) {
         child = remap(child, regionBlock, cloneBlock, didCloneValue);
     });
-    function.edit(clone) = WTF::move(value);
+    function.edit(clone, ValueEdit::Definition) = WTF::move(value);
     callDidCloneValue(inSource, clone, didCloneValue);
     return clone;
 }
@@ -767,7 +768,7 @@ ValueID RegionCloner::remap(ValueID inSource, BlockID regionBlock, BlockID clone
         return m_rematerializedClone[inSource.index()];
     ValueID clone = m_destination.addValue(Value(m_source.at(inSource)));
     callDidCloneValue(inSource, clone, didCloneValue);
-    m_destination.function().edit(cloneBlock).values.append(clone);
+    m_destination.function().edit(cloneBlock, BlockEdit::Values).values.append(clone);
     m_rematerializedIn[inSource.index()] = regionBlock;
     m_rematerializedClone[inSource.index()] = clone;
     return clone;

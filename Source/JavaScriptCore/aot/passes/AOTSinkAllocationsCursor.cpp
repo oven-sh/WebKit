@@ -77,7 +77,7 @@ void RewriteCursor::beginBlock(BlockID original, std::optional<Target>&& handler
         return;
     }
     std::optional<Target> target = handlerTargetFor(interpreter);
-    m_function.edit(original).handler = WTF::move(target);
+    m_function.edit(original, { BlockEdit::Edges, BlockEdit::Arguments }).handler = WTF::move(target);
 }
 
 void RewriteCursor::finishBlock(Terminator&& terminator)
@@ -93,7 +93,7 @@ ValueID RewriteCursor::emit(Value&& value)
 
 void RewriteCursor::keep(ValueID id)
 {
-    m_function.edit(block()).values.append(id);
+    m_function.edit(block(), BlockEdit::Values).values.append(id);
 }
 
 ValueID RewriteCursor::takeConditionOf(const Terminator& terminator)
@@ -102,7 +102,7 @@ ValueID RewriteCursor::takeConditionOf(const Terminator& terminator)
         return ValueID();
 
     ValueID condition = terminator.conditionOperand();
-    BlockValues& values = m_function.edit(block()).values;
+    BlockValues& values = m_function.edit(block(), BlockEdit::Values).values;
     if (!m_sinking.inputs().conditionsOnlyBranchedOn.get(condition.index()) || values.isEmpty() || values.last() != condition)
         return ValueID();
     values.removeLast();
@@ -125,7 +125,7 @@ void RewriteCursor::cut(ObjectInterpreter& interpreter)
 BlockID RewriteCursor::addUncoveredBlock()
 {
     BlockID block = m_builder.addBlock(m_frequency);
-    m_function.edit(block).shape = m_function.at(m_originalBlock).shape;
+    m_function.edit(block, BlockEdit::Rest).shape = m_function.at(m_originalBlock).shape;
     return block;
 }
 
@@ -133,7 +133,7 @@ BlockID RewriteCursor::addCoveredBlock(ObjectInterpreter& interpreter)
 {
     BlockID block = addUncoveredBlock();
     std::optional<Target> target = handlerTargetFor(interpreter);
-    m_function.edit(block).handler = WTF::move(target);
+    m_function.edit(block, { BlockEdit::Edges, BlockEdit::Arguments }).handler = WTF::move(target);
     return block;
 }
 

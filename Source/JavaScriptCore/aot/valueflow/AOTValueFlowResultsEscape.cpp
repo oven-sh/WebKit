@@ -40,7 +40,6 @@ struct OperandNodes {
 
     Vector<uint32_t> firstNodeOfFunction;
     Vector<uint32_t> firstNodeOfLayout;
-    // By type: mayBeReference(). Every value is asked twice, and the types lie all over the table.
     Vector<uint8_t> mayBeReferenceByType;
 };
 
@@ -88,7 +87,6 @@ private:
         if (uses == OperandUses::all() && subject - m_firstNode < m_mayBecomeAnything.size())
             m_mayBecomeAnything.quickSet(subject - m_firstNode);
     }
-    // Anything may become of the value, by a rule that was collected before. No other rule about it adds to that.
     bool mayBecomeAnything(uint32_t subject) const { return m_mayBecomeAnything.quickGet(subject - m_firstNode); }
     void addDependency(uint32_t subject, uint32_t source, SinkTransform transform)
     {
@@ -117,7 +115,6 @@ private:
     EffectContext m_effects;
     Vector<uint32_t> m_nodeOfValue;
     uint32_t m_firstNode { 0 };
-    // By node of this body, from m_firstNode on.
     BitVector m_mayBecomeAnything;
     BitVector m_blocksInCycles;
 };
@@ -212,8 +209,6 @@ void BodyRuleCollector::collect()
     numberValues();
     findBlocksInCycles();
     visitEntryParameters();
-    // A call of something unknown and a check say of their operands that anything may become of them, and they say it at little cost. So they speak first:
-    // half of what the other operations take needs no look then.
     auto speaksFirst = [&](ValueID id) {
         Opcode opcode = m_function.at(id).opcode;
         return opcode == Opcode::Check || effectRuleOf(opcode) == EffectRule::Call;
@@ -310,7 +305,6 @@ void BodyRuleCollector::visit(ValueID id, bool isInCycle)
 {
     const Value& user = m_function.at(id);
     std::optional<CalleeList> callees;
-    // The read of a field of an environment says something about the field too.
     bool speaksOfOperandsAlone = user.opcode != Opcode::GetEnvironmentField;
     user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         uint32_t subject = nodeOf(operand);

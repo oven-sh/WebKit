@@ -326,8 +326,8 @@ static Parts expandConstruction(FunctionPassContext& context, IRBuilder& builder
     ValueID base = construction.argumentsOperands().size() > 1 ? construction.argumentsOperands()[1] : ValueID();
 
     IRBuilder::Expansion expansion = beginExpansionOf(context, builder, id);
-    function.edit(id).type = context.types.unionOf(TypeTable::undefined, typeOfObject);
-    function.edit(id).setExpected({ });
+    function.edit(id, ValueEdit::Type).type = context.types.unionOf(TypeTable::undefined, typeOfObject);
+    function.edit(id, ValueEdit::Type).setExpected({ });
     ValueID textParameter = builder.addParameter(expansion.continuation, TypeTable::string);
     ValueID packedParameter = builder.addParameter(expansion.continuation, TypeTable::int32);
     expansion.results.append(textParameter);
@@ -418,8 +418,8 @@ static ValueID appendPairs(FunctionPassContext& context, IRBuilder& builder, con
 static void endWithEither(FunctionPassContext& context, IRBuilder& builder, const IRBuilder::Expansion& expansion, ValueID merged, ValueID result)
 {
     Function& function = context.function;
-    function.edit(merged).type = context.types.unionOf(function.at(merged).type, function.at(result).type);
-    function.edit(merged).setExpected({ });
+    function.edit(merged, ValueEdit::Type).type = context.types.unionOf(function.at(merged).type, function.at(result).type);
+    function.edit(merged, ValueEdit::Type).setExpected({ });
     builder.endExpansion(expansion, result);
 }
 
@@ -470,7 +470,7 @@ static void pointWalksAt(FunctionPassContext& context, ValueID iterable)
         return true;
     });
     for (ValueID walk : walks)
-        function.edit(walk).setOperand(0, iterable);
+        function.edit(walk, ValueEdit::Definition).setOperand(0, iterable);
     if (!casts.isEmpty())
         context.analyses.didChangeValues();
 }
@@ -482,12 +482,12 @@ static void expandWalk(FunctionPassContext& context, IRBuilder& builder, const P
     placeholder.setCastType(function.at(parts.objectOrUndefined).type);
     ValueID iterable = builder.insertBefore(context.analyses.useLists().pointOf(walk), WTF::move(placeholder));
     builder.applyInsertions();
-    function.edit(walk).setOperand(0, iterable);
+    function.edit(walk, ValueEdit::Definition).setOperand(0, iterable);
     context.analyses.didChangeValues();
 
     IRBuilder::Expansion expansion = beginExpansionOf(context, builder, iterable);
     IRBuilder::ProvenBranch isUnbuilt = branchOnUnbuilt(builder, parts);
-    function.edit(iterable).type = function.at(isUnbuilt.provenOnNotTaken).type;
+    function.edit(iterable, ValueEdit::Type).type = function.at(isUnbuilt.provenOnNotTaken).type;
     builder.moveToEndOf(isUnbuilt.notTaken);
     builder.endExpansion(expansion, isUnbuilt.provenOnNotTaken);
     builder.moveToEndOf(isUnbuilt.taken);

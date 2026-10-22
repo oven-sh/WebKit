@@ -625,6 +625,7 @@ public:
             }
         }
         Vector<uint32_t> largestFirst = largeFunctions(m_program, m_loops);
+        largestFirst.insert(0, m_numberOfFunctions);
         runTasksInParallel(m_loops, {
             [&] {
                 m_result.m_universe.m_recordsThatTypedCodeTakes = findRecordsThatTypedCodeTakes();

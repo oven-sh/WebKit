@@ -1059,7 +1059,7 @@ void MovableCode::narrowElementsThatAreThere(FunctionID id, Function& function)
                     replace(argument);
             }
         }
-        function.edit(narrowing.block).values.insert(narrowing.index + 1, cast);
+        function.edit(narrowing.block, BlockEdit::Values).values.insert(narrowing.index + 1, cast);
     }
 }
 
@@ -2544,10 +2544,10 @@ BlockID UnitBuilder::addBlockLike(BlockID original)
 {
     const Block& block = m_body.at(original);
     BlockID added = m_builder.addBlock(block.frequency);
-    m_builder.function().edit(added).shape = block.shape;
+    m_builder.function().edit(added, BlockEdit::Rest).shape = block.shape;
     for (ValueID parameter : block.parameters) {
         ValueID copy = m_builder.addParameter(added, m_body.at(parameter).type);
-        m_builder.function().edit(copy).setExpected(m_body.at(parameter).expected());
+        m_builder.function().edit(copy, ValueEdit::Type).setExpected(m_body.at(parameter).expected());
         m_values.add(parameter.index(), copy);
     }
     m_blocks.add(original.index(), added);
@@ -2657,7 +2657,7 @@ static void removeUnits(const Plan& plan, std::span<const Unit> units, IRBuilder
             Terminator jump = IRBuilder::makeTerminator(TerminatorKind::Jump);
             jump.setOrigin(origin);
             jump.targets.append(Target { item.join, { }, { } });
-            function.edit(item.block).terminator = WTF::move(jump);
+            function.edit(item.block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = WTF::move(jump);
         }
     }
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
@@ -2671,7 +2671,7 @@ static void removeUnits(const Plan& plan, std::span<const Unit> units, IRBuilder
                 builder.setOrigin(function.at(id).origin());
                 bool isAbsent = plan.emptinessOf(function.at(id).variable()) == Emptiness::AbsentFromDeclaration;
                 ValueID mark = builder.addDetached(IRBuilder::make(isAbsent ? Opcode::Absent : Opcode::Undefined));
-                function.edit(id).setValueOperand(mark);
+                function.edit(id, ValueEdit::Definition).setValueOperand(mark);
                 kept.append(mark);
             }
             kept.append(id);
@@ -2682,7 +2682,7 @@ static void removeUnits(const Plan& plan, std::span<const Unit> units, IRBuilder
                 kept.append(builder.addDetached(WTF::move(store)));
             }
         }
-        function.edit(BlockID(index)).values = WTF::move(kept);
+        function.edit(BlockID(index), BlockEdit::Values).values = WTF::move(kept);
     }
     for (size_t index : isRemoved)
         becomeUndefined(function, ValueID(index));

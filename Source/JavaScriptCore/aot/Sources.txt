@@ -187,6 +187,10 @@ aot/codegen/AOTIntegerUpdatesInMemory.cpp @no-unify
 aot/codegen/AOTJSONParseEmitter.cpp @no-unify
 aot/codegen/AOTJSONParseEmitterKeyOrders.cpp @no-unify
 aot/codegen/AOTJSONWriteEmitter.cpp @no-unify
+aot/codegen/AOTLinearScanAllocation.cpp @no-unify
+aot/codegen/AOTLinearScanCodeGenerator.cpp @no-unify
+aot/codegen/AOTLinearScanImport.cpp @no-unify
+aot/codegen/AOTLinearScanLowering.cpp @no-unify
 aot/codegen/AOTModuleEmitter.cpp @no-unify
 aot/codegen/AOTNarrowReferenceValidation.cpp @no-unify
 aot/codegen/AOTObjectCreationEmitter.cpp @no-unify

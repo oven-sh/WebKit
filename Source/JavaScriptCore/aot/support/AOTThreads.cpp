@@ -106,30 +106,6 @@ BusyThreads::WaitScope::~WaitScope()
         setCurrentThreadIsBusy(true);
 }
 
-static ALWAYS_INLINE void spinHint()
-{
-#if CPU(X86_64)
-    __builtin_ia32_pause();
-#elif CPU(ARM64)
-    asm volatile("isb" ::: "memory");
-#endif
-}
-
-// See ParallelLoops::ShortLoopsScope.
-static bool spinUntil(const Invocable<bool()> auto& isDone)
-{
-    constexpr Seconds spinTime = Seconds::fromMicroseconds(100);
-    constexpr unsigned spinsBetweenClockReads = 32;
-    MonotonicTime end = MonotonicTime::now() + spinTime;
-    for (unsigned spins = 1;; ++spins) {
-        if (isDone())
-            return true;
-        spinHint();
-        if (!(spins % spinsBetweenClockReads) && MonotonicTime::now() > end)
-            return false;
-    }
-}
-
 // A pool wakes its threads one after the other, each when the one before has found work. That way a loop waits milliseconds for its helpers, and
 // on a busy machine a hundred times longer. So a thread of the pool that has run out of work rests here for a while, and a task goes to a resting
 // thread first. Whoever has the task wakes that thread itself: a loop whose helpers each ask for two more has them all after a few steps.
@@ -186,10 +162,6 @@ public:
         m_isClosed.store(true, std::memory_order_seq_cst);
         while (wakeOne(IsSentBack, { })) { }
     }
-
-    void didOpenShortLoopsScope() { m_numberOfShortLoopsScopes.fetch_add(1, std::memory_order_relaxed); }
-    void didCloseShortLoopsScope() { m_numberOfShortLoopsScopes.fetch_sub(1, std::memory_order_relaxed); }
-    bool expectsShortLoops() const { return m_numberOfShortLoopsScopes.load(std::memory_order_relaxed); }
 
     unsigned numberOfRestingThreads() const
     {
@@ -341,11 +313,6 @@ private:
     {
         // Either this thread sees the posted wakeup, or whoever posted it sees this thread in the list.
         bool shouldLeave = m_numberOfPostedWakeups.load(std::memory_order_seq_cst) || m_isClosed.load(std::memory_order_seq_cst);
-        if (!shouldLeave && expectsShortLoops()) {
-            spinUntil([&] {
-                return seat.state.load(std::memory_order_relaxed) != IsResting;
-            });
-        }
         MonotonicTime end = MonotonicTime::now() + m_restTime;
         for (;;) {
             uint32_t state = seat.state.load();
@@ -370,7 +337,6 @@ private:
     SeatList m_restingSeats;
     std::atomic<unsigned> m_numberOfPostedWakeups { 0 };
     std::atomic<bool> m_isClosed { false };
-    std::atomic<unsigned> m_numberOfShortLoopsScopes { 0 };
     alignas(128) std::array<std::atomic<size_t>, numberOfTaskPriorities> m_numberOfPendingTasks { };
     alignas(128) Lock m_pendingTasksLock;
     std::array<Deque<Task>, numberOfTaskPriorities> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksLock);
@@ -405,26 +371,6 @@ unsigned ParallelLoops::numberOfRestingThreads() const
 bool ParallelLoops::shouldYield(TaskPriority priority) const
 {
     return m_restingThreads->hasPendingTaskAbove(priority);
-}
-
-static constexpr unsigned narrowestLoopsThatSpin = 8;
-
-ParallelLoops::ShortLoopsScope::ShortLoopsScope(const ParallelLoops& loops)
-    : m_loops(loops)
-{
-    if (m_loops.width() >= narrowestLoopsThatSpin)
-        m_loops.m_restingThreads->didOpenShortLoopsScope();
-}
-
-ParallelLoops::ShortLoopsScope::~ShortLoopsScope()
-{
-    if (m_loops.width() >= narrowestLoopsThatSpin)
-        m_loops.m_restingThreads->didCloseShortLoopsScope();
-}
-
-bool ParallelLoops::expectsShortLoops() const
-{
-    return m_restingThreads->expectsShortLoops();
 }
 
 void ParallelLoops::schedule(TaskPriority priority, void (*run)(void* argument), void* argument) const
@@ -482,13 +428,8 @@ private:
         if (m_state.load() == isClosed)
             return;
         BusyThreads::WaitScope waitScope;
-        for (uint32_t state = m_state.load(); state != isClosed; state = m_state.load()) {
-            bool hasChanged = m_loops.expectsShortLoops() && spinUntil([&] {
-                return m_state.load(std::memory_order_relaxed) != state;
-            });
-            if (!hasChanged)
-                ParkingLot::compareAndPark(&m_state, state);
-        }
+        for (uint32_t state = m_state.load(); state != isClosed; state = m_state.load())
+            ParkingLot::compareAndPark(&m_state, state);
     }
 
     void runOnHelper()

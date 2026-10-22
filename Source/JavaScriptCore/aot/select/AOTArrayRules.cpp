@@ -30,7 +30,7 @@ void selectArrayLiteralStorage(SelectionContext& context)
         ArrayLiteralStorage storage = chooseArrayLiteralStorage(context, literal);
         if (storage == ArrayLiteralStorage::Fresh)
             continue;
-        function.edit(literal).setLiteralStorage(storage);
+        function.edit(literal, ValueEdit::Definition).setLiteralStorage(storage);
         ++numberOfSelectedLiterals;
     }
     context.didSelectForms(SelectionRuleID::ArrayLiteralStorage, numberOfSelectedLiterals);

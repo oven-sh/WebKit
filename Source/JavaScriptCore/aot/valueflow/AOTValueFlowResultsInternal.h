@@ -12,6 +12,7 @@
 #include "AOTFlowApplication.h"
 #include "AOTLayout.h"
 #include "AOTThreads.h"
+#include "AOTTypeTable.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowLog.h"
 #include <algorithm>
@@ -201,7 +202,6 @@ class ValueFlowHeapIndex;
 class ValueFlowHeapView;
 class ValueFlowNodesAskedFor;
 
-// Kinds of made nodes, a bit a kind.
 using ValueFlowKindsOfMadeNodes = uint16_t;
 constexpr ValueFlowKindsOfMadeNodes kindsOfMadeNodes(std::initializer_list<ValueFlowMadeNodeKind> kinds)
 {
@@ -232,7 +232,6 @@ struct ValueFlowResultInputs {
     const ValueFlowLayoutsOfSites* layoutsOfSites { nullptr };
     // Whoever has none gets one with each ValueFlowHeapView that it makes.
     const ValueFlowHeapIndex* heapIndex { nullptr };
-    // Whoever has none asks the solver.
     const ValueFlowNodesAskedFor* nodesAskedFor { nullptr };
 
     const ValueFlowBodies& bodies() const { return solution.bodies(); }
@@ -242,7 +241,6 @@ struct ValueFlowResultInputs {
     const ParallelLoops& loops() const { return build.parallelLoops(); }
     ValueSetMakerPool& makerPool() const { return solution.makerPool(); }
     bool isReached(FunctionID function) const { return solution.solver().isReached(function); }
-    // As ValueFlowSolver::forEachMadeNodeAskedForBy(), for the nodes of these kinds and, if so wished, every node with which a statement was made.
     void forEachMadeNodeAskedForBy(ValueFlowStatementID, ValueFlowKindsOfMadeNodes, bool alsoWithStatement, NOESCAPE const auto& functor) const;
     void forEachIndexOfMadeNodesAskedForBy(ValueFlowStatementID, ValueFlowKindsOfMadeNodes, bool alsoWithStatement, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const;
     void prefetchMadeNodesAskedForBy(uint32_t statement, ValueFlowKindsOfMadeNodes, bool alsoWithStatement) const;
@@ -501,16 +499,12 @@ struct ValueFlowFieldContents {
     Vector<Vector<ValueSetID>> storedInAppendedFields;
 };
 
-// What ValueFlowSolver::forEachMadeNodeAskedForBy() hands out, statement by statement, side by side and in the same order. The solver keeps it in lists whose links lie all over its memory, and each link
-// leads to a record that lies somewhere else again: nine steps walked nine million links, most of them for one kind of node in four. Here a word says what kind of node was asked for and whether
-// a statement was made with it, so whoever looks for something else goes on without a look at the record.
 class ValueFlowNodesAskedFor {
     WTF_MAKE_NONCOPYABLE(ValueFlowNodesAskedFor);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowNodesAskedFor);
 public:
     explicit ValueFlowNodesAskedFor(const ValueFlowResultInputs&);
 
-    // The nodes of these kinds and, if so wished, every node with which a statement was made.
     void forEach(const ValueFlowSolver& solver, ValueFlowStatementID statement, ValueFlowKindsOfMadeNodes kinds, bool alsoWithStatement, NOESCAPE const auto& functor) const
     {
         for (uint32_t word : m_words.subspan(m_first[statement.index()], m_first[statement.index() + 1] - m_first[statement.index()])) {
@@ -524,7 +518,6 @@ public:
         }
     }
 
-    // The same nodes by ValueFlowSolver::indexOfMadeNodes(), for whoever knows by the number whether a node is worth a look.
     void forEachIndex(ValueFlowStatementID statement, ValueFlowKindsOfMadeNodes kinds, bool alsoWithStatement, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
     {
         for (uint32_t word : m_words.subspan(m_first[statement.index()], m_first[statement.index() + 1] - m_first[statement.index()])) {
@@ -533,7 +526,6 @@ public:
         }
     }
 
-    // For whoever goes through the statements in their order: the records that a later statement will want are on their way when it has its turn.
     void prefetch(const ValueFlowSolver& solver, uint32_t statement, ValueFlowKindsOfMadeNodes kinds, bool alsoWithStatement) const
     {
         if (statement + 1 >= m_first.size())
@@ -554,7 +546,6 @@ private:
         return (kinds >> (word >> (bitsOfIndex + 1)) & 1) || (alsoWithStatement && (word & hasStatement));
     }
 
-    // One entry more than there are statements.
     Vector<uint32_t> m_first;
     Vector<uint32_t> m_words;
 };
@@ -593,7 +584,6 @@ inline void ValueFlowResultInputs::prefetchMadeNodesAskedForBy(uint32_t statemen
         nodesAskedFor->prefetch(solver(), statement, kinds, alsoWithStatement);
 }
 
-// What has been answered about a set, or about a set and a number, for all the threads that ask. An answer follows from the question and the solution alone, so it makes no difference who gives it first.
 class ValueFlowAnswersAboutSets {
     WTF_MAKE_NONCOPYABLE(ValueFlowAnswersAboutSets);
 public:
@@ -642,7 +632,6 @@ public:
     };
 
     struct NodesWrittenUnderName {
-        // Of the name, among the names under which something was written.
         uint32_t number { 0 };
         Vector<WrittenNode> nodes;
         bool isIndexed { false };
@@ -659,13 +648,11 @@ public:
         ValueSetID callees;
     };
 
-    // What the rules see at the operands of one of callsThatMayApplyBuiltins(). Ten steps walk those calls, and each would put the same sets together.
     struct OperandsOfCall {
         ValueSetID thisValue { ValueSets::nothing };
         ValueSetID otherArguments { ValueSets::nothing };
         uint32_t firstArgument { 0 };
         uint32_t numberOfArguments { 0 };
-        // The callees that are bound functions which bind no argument.
         uint32_t firstBoundFunction { 0 };
         uint32_t numberOfBoundFunctions { 0 };
     };
@@ -675,8 +662,11 @@ public:
     // The nodes that hold something, in the order of their numbers. None where nothing was written under the name.
     const NodesWrittenUnderName* findNodesWrittenUnder(ValueFlowName name) const LIFETIME_BOUND
     {
-        auto nodes = m_nodesByName.find(static_cast<uint64_t>(name.kind) << 32 | name.payload);
-        return nodes == m_nodesByName.end() ? nullptr : &nodes->value;
+        uint64_t number = static_cast<uint64_t>(name.kind) << 32 | name.payload;
+        std::optional<uint32_t> position = m_positionOfNameWritten.find(IntHash<uint64_t>::hash(number), [&](uint32_t candidate) {
+            return m_namesWritten[candidate] == number;
+        });
+        return position ? &m_nodesOfNamesWritten[*position] : nullptr;
     }
     struct Stretch {
         ValueFlowName name;
@@ -686,11 +676,11 @@ public:
     {
         constexpr size_t nodesPerStretch = 512;
         Vector<Stretch> stretches;
-        for (const auto& entry : m_nodesByName) {
-            ValueFlowName name { static_cast<ValueFlowNameKind>(entry.key >> 32), static_cast<uint32_t>(entry.key) };
+        for (uint32_t position = 0; position < m_namesWritten.size(); ++position) {
+            ValueFlowName name { static_cast<ValueFlowNameKind>(m_namesWritten[position] >> 32), static_cast<uint32_t>(m_namesWritten[position]) };
             if (!isWanted(name))
                 continue;
-            std::span<const WrittenNode> nodes = entry.value.nodes.span();
+            std::span<const WrittenNode> nodes = m_nodesOfNamesWritten[position].nodes.span();
             for (size_t first = 0; first < nodes.size(); first += nodesPerStretch)
                 stretches.append({ name, nodes.subspan(first, std::min(nodesPerStretch, nodes.size() - first)) });
         }
@@ -698,19 +688,15 @@ public:
     }
     // The calls and constructions of a value in reached functions at whose callee a built-in function arrives, or a callable object that is neither a closure nor a built-in function. In the order of the statements.
     std::span<const CallOfValue> callsThatMayApplyBuiltins() const LIFETIME_BOUND { return m_callsThatMayApplyBuiltins.span(); }
-    // Once, before anybody asks, with a view of the heap that looks things up in this index. Whoever has an index without them puts the operands together call by call.
     void findOperandsOfCalls(const ValueFlowResultInputs&, const ValueFlowHeapView&);
-    // By the position of the call in callsThatMayApplyBuiltins(). None unless they were found.
     const OperandsOfCall* operandsOfCallAt(size_t position) const LIFETIME_BOUND { return m_operandsOfCalls.isEmpty() ? nullptr : &m_operandsOfCalls[position]; }
     std::span<const ValueSetID> argumentsOf(const OperandsOfCall& operands) const LIFETIME_BOUND { return m_argumentsOfCalls.subspan(operands.firstArgument, operands.numberOfArguments); }
     std::span<const ValueFlowObjectID> boundFunctionsOf(const OperandsOfCall& operands) const LIFETIME_BOUND { return m_boundFunctionsOfCalls.subspan(operands.firstBoundFunction, operands.numberOfBoundFunctions); }
     // Ascending.
     std::span<const ValueFlowNodeID> firstNodesOfCallGroups() const LIFETIME_BOUND { return m_firstNodesOfCallGroups.span(); }
     std::span<const ValueFlowNodeID> nodesOfMarks() const LIFETIME_BOUND { return m_nodesOfMarks.span(); }
-    // By set: what ValueFlowHeapView::prototypesOf() and chainOf() answer.
     ValueFlowAnswersAboutSets& prototypesOfSets() const LIFETIME_BOUND { return m_prototypesOfSets; }
     ValueFlowAnswersAboutSets& chainsOfSets() const LIFETIME_BOUND { return m_chainsOfSets; }
-    // By the number of a name and a set of objects: what ValueFlowHeapView::writtenUnder() answers.
     ValueFlowAnswersAboutSets& writtenUnderNames() const LIFETIME_BOUND { return m_writtenUnderNames; }
 
 private:
@@ -718,7 +704,9 @@ private:
     static void indexNodesWrittenUnder(const ValueFlowResultInputs&, NodesWrittenUnderName&);
     void collectCalls(const ValueFlowResultInputs&);
 
-    HashMap<uint64_t, NodesWrittenUnderName, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodesByName;
+    Vector<uint64_t> m_namesWritten;
+    ParallelArray<NodesWrittenUnderName> m_nodesOfNamesWritten;
+    HashedIndex m_positionOfNameWritten;
     Vector<CallOfValue> m_callsThatMayApplyBuiltins;
     Vector<OperandsOfCall> m_operandsOfCalls;
     Vector<ValueSetID> m_argumentsOfCalls;
@@ -800,6 +788,7 @@ private:
     const ValueFlowResultInputs& m_inputs;
     std::unique_ptr<ValueFlowHeapIndex> m_ownIndex;
     const ValueFlowHeapIndex& m_index;
+    ValueSetMakerPool& m_makerPool;
     ValueSetMaker& m_maker;
     ValueSetID m_escaped;
     ValueSetID m_lost;

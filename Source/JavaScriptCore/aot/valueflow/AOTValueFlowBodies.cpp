@@ -34,7 +34,13 @@ BitVector findValuesBehindChecks(const Program& program, const Function& functio
 {
     BitVector isBehindCheck;
     isBehindCheck.ensureSize(function.values.size());
+    bool hasCheck = std::ranges::any_of(function.values, [](const Value& value) {
+        return value.opcode == Opcode::Check;
+    });
+    if (!hasCheck)
+        return isBehindCheck;
     bool hasChanged = false;
+    bool takesFromLaterBlock = false;
     auto isNoted = [&](ValueID value) {
         return value && isBehindCheck.get(value.index());
     };
@@ -43,6 +49,7 @@ BitVector findValuesBehindChecks(const Program& program, const Function& functio
     };
     auto visitParameter = [&](BlockID block, uint32_t index, ValueID parameter) {
         for (Edge edge : cfg.incomingEdges(block)) {
+            takesFromLaterBlock |= cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block);
             IncomingValue incoming = incomingValueOf(function, edge, index);
             if (incoming.kind == IncomingValue::Kind::Argument) {
                 if (isNoted(incoming.argument))
@@ -84,7 +91,7 @@ BitVector findValuesBehindChecks(const Program& program, const Function& functio
                     visitValue(value);
             }
         }
-    } while (hasChanged);
+    } while (hasChanged && takesFromLaterBlock);
     return isBehindCheck;
 }
 
@@ -201,10 +208,25 @@ public:
         : m_records(records)
     {
         m_records.append(Record { });
+        m_hashes.append(0);
     }
 
     uint32_t intern(Record&& record, unsigned hash)
     {
+        constexpr size_t mostSearchedInOrder = 24;
+        if (m_records.size() <= mostSearchedInOrder) {
+            for (uint32_t candidate = 1; candidate < m_hashes.size(); ++candidate) {
+                if (m_hashes[candidate] == hash && m_records[candidate] == record)
+                    return candidate;
+            }
+            m_hashes.append(hash);
+            m_records.append(WTF::move(record));
+            return m_records.size() - 1;
+        }
+        if (m_byHash.isEmpty()) {
+            for (uint32_t candidate = 1; candidate < m_hashes.size(); ++candidate)
+                m_byHash.add(m_hashes[candidate], Vector<uint32_t, 1> { }).iterator->value.append(candidate);
+        }
         Vector<uint32_t, 1>& candidates = m_byHash.add(hash, Vector<uint32_t, 1> { }).iterator->value;
         for (uint32_t candidate : candidates) {
             if (m_records[candidate] == record)
@@ -217,6 +239,7 @@ public:
 
 private:
     Vector<Record>& m_records;
+    Vector<unsigned, 25> m_hashes;
     HashMap<unsigned, Vector<uint32_t, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_byHash;
 };
 
@@ -660,7 +683,7 @@ private:
                     addSource(parameter, incoming.argument, 0);
                     break;
                 case IncomingValue::Kind::EdgeResult:
-                    addEdgeResult(parameter, edgeResultAt(m_function, incoming.result));
+                    addEdgeResult(parameter, edgeResultAt(m_function, incoming.result), m_function.at(incoming.result.from).terminator);
                     break;
                 }
             }
@@ -669,7 +692,16 @@ private:
 
     static bool isStrictlyEqualOnlyToItself(const Type& type) { return type.isSingleValue() && !(type.primitives & Primitive::Number); }
 
-    void addEdgeResult(ValueID parameter, const EdgeResult& result)
+    uint32_t maskOfCase(const Terminator& terminator, uint32_t caseIndex)
+    {
+        if (terminator.kind == TerminatorKind::Switch)
+            return maskInside(TypeTable::number, ValueFlowMaskKind::Checked);
+        if (terminator.kind != TerminatorKind::SwitchString)
+            return 0;
+        return maskInside(m_program.types.find(Type::stringLiteral(terminator.strings()[caseIndex])).value_or(TypeTable::string), ValueFlowMaskKind::Checked);
+    }
+
+    void addEdgeResult(ValueID parameter, const EdgeResult& result, const Terminator& terminator)
     {
         TypeID type = m_function.at(parameter).type;
         switch (result.kind) {
@@ -690,6 +722,8 @@ private:
                 } else if (test.opcode == Opcode::ToBoolean)
                     mask = maskOfTruthinessTest(result.side);
             }
+            if (restsOnCheck && result.caseIndex)
+                mask = maskOfCase(terminator, *result.caseIndex);
             if (result.test && result.side == EdgeSide::NotTaken) {
                 const Value& test = m_function.at(result.test);
                 if (test.opcode == Opcode::TypeTest)

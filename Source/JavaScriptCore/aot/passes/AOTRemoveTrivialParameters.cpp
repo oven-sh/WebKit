@@ -238,7 +238,7 @@ private:
 
     size_t replaceParametersOf(BlockID id, IRBuilder& builder, ValueSubstitution& replacements)
     {
-        Block& block = m_function.edit(id);
+        const Block& block = m_function.at(id);
         BitVector removedIndexes;
         Vector<PendingUpcast, 4> upcasts;
         Vector<std::pair<ValueID, KnownValue>, 4> constants;
@@ -265,21 +265,24 @@ private:
             upcasts.append({ parameter, argument, value.type, value.expected() });
         }
         builder.removeParameters(id, removedIndexes);
+        if (constants.isEmpty() && upcasts.isEmpty())
+            return removedIndexes.bitCount();
 
         uint32_t index = indexAfterCaughtValues(m_function, block);
+        BlockValues& values = m_function.edit(id, BlockEdit::Values).values;
         for (auto [parameter, constant] : constants) {
             becomeConstant(parameter, constant);
-            block.values.insert(index++, parameter);
+            values.insert(index++, parameter);
         }
         for (const PendingUpcast& upcast : upcasts) {
-            Value& value = m_function.edit(upcast.parameter);
+            Value& value = m_function.edit(upcast.parameter, ValueEdit::Type);
             value.type = upcast.type;
             value.setExpected(upcast.expected);
             becomeUpcast(m_function, upcast.parameter, upcast.argument);
-            block.values.insert(index++, upcast.parameter);
+            values.insert(index++, upcast.parameter);
             // The subject is named at the head of the block, above the Upcast.
             if (block.subject == upcast.parameter)
-                block.subject = upcast.argument;
+                m_function.edit(id, BlockEdit::Rest).subject = upcast.argument;
         }
         return removedIndexes.bitCount();
     }

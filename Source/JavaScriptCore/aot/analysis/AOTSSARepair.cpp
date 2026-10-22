@@ -534,7 +534,7 @@ ValueID SSARepair::addMergeParameter(VariableData& data, BlockID block)
     Function& function = m_builder.function();
     m_builder.setOrigin(function.at(data.values.first()).origin());
     ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
-    function.edit(parameter).setExpected(data.expected);
+    function.edit(parameter, ValueEdit::Type).setExpected(data.expected);
     data.definitions.append(Definition { block, headOrder, parameter });
     return parameter;
 }

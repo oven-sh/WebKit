@@ -128,13 +128,18 @@ static bool isSurpriseWhereItFails(TestSiteReporter& reporter, const Value& test
 void reportRepeatedTests(TestSiteReporter& reporter)
 {
     HashMap<SubjectAndType, unsigned> numberOfTests;
-    reporter.forEachCandidate([&](const Value& test) {
-        if (canBeDecidedEarlier(reporter, test))
-            ++numberOfTests.add(subjectAndTypeOf(reporter, test), 0).iterator->value;
-    });
-
+    BitVector canBeDecided;
     reporter.forEachCandidate([&](const Value& test) {
         if (!canBeDecidedEarlier(reporter, test))
+            return;
+        canBeDecided.set(reporter.use().index());
+        ++numberOfTests.add(subjectAndTypeOf(reporter, test), 0).iterator->value;
+    });
+    if (canBeDecided.isEmpty())
+        return;
+
+    reporter.forEachCandidate([&](const Value& test) {
+        if (!canBeDecided.get(reporter.use().index()))
             return;
         SubjectAndType tested = subjectAndTypeOf(reporter, test);
         bool isInvariantInLoop = isDefinedOutsideLoopAround(reporter, tested.first, reporter.point().block);

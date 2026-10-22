@@ -39,6 +39,7 @@ class CCallHelpers;
 
 namespace AOT { namespace Typed {
 class DirectCodeGenerator;
+class LinearScanCodeGenerator;
 } }
 
 namespace B3 {
@@ -125,6 +126,7 @@ private:
     friend class CheckSpecial;
     friend class PatchpointSpecial;
     friend class AOT::Typed::DirectCodeGenerator;
+    friend class AOT::Typed::LinearScanCodeGenerator;
     
     StackmapGenerationParams(StackmapValue*, const Vector<ValueRep>& reps, Air::GenerationContext&);
     StackmapGenerationParams(StackmapValue*, Reps&& reps, Air::GenerationContext&);

@@ -30,7 +30,7 @@ void InsertionSet::execute(Function& function, NOESCAPE const ScopedLambda<void(
     Vector<ValueID, 8> insertedValues;
     for (size_t next = 0; next < m_insertions.size();) {
         BlockID id = m_insertions[next].block;
-        Block& block = function.edit(id, BlockEdit::Values);
+        Block& block = function.edit(id);
         size_t maxIndex = block.values.size();
         for (; next < m_insertions.size() && m_insertions[next].block == id; ++next) {
             const QueuedInsertion& insertion = m_insertions[next];

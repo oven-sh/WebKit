@@ -96,7 +96,7 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
         clone.inlineFrame += firstFrame;
     });
     for (BlockID id : cloner.clonedBlocks())
-        builder.function().edit(id).terminator.inlineFrame += firstFrame;
+        builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;
 }
 
 static bool hasSignatureMismatch(const FunctionPassContext& context, const InliningSummary& summary, const Value& call, const Function& callee)
@@ -211,7 +211,7 @@ static void cloneBody(IRBuilder& builder, RegionCloner& cloner, InlineCopy& copy
 static void replaceReturn(IRBuilder& builder, BlockID block, const InlineCopy& copy)
 {
     Function& caller = builder.function();
-    ValueID returned = std::exchange(caller.edit(block).terminator, Terminator { }).valueOperand();
+    ValueID returned = std::exchange(caller.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { }).valueOperand();
     builder.moveToEndOf(block);
     if (copy.callee.results.size() == 1) {
         builder.endExpansion(copy.expansion, returned ? returned : builder.appendUndefined());
@@ -250,14 +250,13 @@ static void appendCasts(Terminator& returnCall, const Terminator& siteReturnCall
 
 static void finishClonedTerminator(IRBuilder& builder, BlockID clone, const InlineCopy& copy)
 {
-    Terminator& terminator = builder.function().edit(clone).terminator;
-    switch (terminator.kind) {
+    switch (builder.function().at(clone).terminator.kind) {
     case TerminatorKind::Return:
         replaceReturn(builder, clone, copy);
         return;
     case TerminatorKind::ReturnCall:
         if (copy.siteReturnCall) {
-            appendCasts(terminator, *copy.siteReturnCall);
+            appendCasts(builder.function().edit(clone, BlockEdit::Terminator).terminator, *copy.siteReturnCall);
             return;
         }
         builder.demoteReturnCall(clone);
@@ -284,7 +283,7 @@ static void finishClonedBlocks(IRBuilder& builder, const RegionCloner& cloner, c
     builder.setOrigin(copy.call.origin());
     std::span<const BlockID> clones = cloner.clonedBlocks();
     for (size_t index = 0; index < clones.size(); ++index) {
-        Block& block = caller.edit(clones[index]);
+        Block& block = caller.edit(clones[index], { BlockEdit::Arguments, BlockEdit::Rest });
         block.frequency = rarerOf(block.frequency, copy.callBlockFrequency);
         if (copy.summary.noReturnBlocks.get(copy.region[index].index()))
             block.frequency = BlockFrequency::Rare;

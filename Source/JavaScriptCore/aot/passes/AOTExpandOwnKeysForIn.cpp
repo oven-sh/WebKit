@@ -104,7 +104,7 @@ static bool rejoinSeparatedLoop(FunctionPassContext& context, Function& function
             ends.append(predecessor);
     }
     for (BlockID end : ends) {
-        for (Target& target : function.edit(end).terminator.targets) {
+        for (Target& target : function.edit(end, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets) {
             if (target.block == second)
                 target.block = loop.header();
         }
@@ -235,7 +235,7 @@ public:
         m_pass.analyses.didChangeControlFlow();
 
         Target toLoop = function.at(m_loop.entry).terminator.targets[0];
-        function.edit(m_loop.entry).terminator = Terminator();
+        function.edit(m_loop.entry, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator();
         m_pass.analyses.didChangeControlFlow();
         builder().setHandler(function.at(m_loop.entry).handler);
         builder().moveToEndOf(m_loop.entry);
@@ -282,7 +282,7 @@ private:
         cloner->cloneBlocks(m_loop.region.span(), [](ValueID, Value&) { });
         BlockID header = cloner->cloneOf(m_loop.header);
         for (BlockID block : cloner->clonedBlocks()) {
-            for (Target& target : function.edit(block).terminator.targets) {
+            for (Target& target : function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets) {
                 if (target.block == header)
                     target.block = nextTurn;
             }

@@ -139,7 +139,7 @@ void FunctionRewriter::removeCapturedOperands(Value& supplier)
 
 void FunctionRewriter::rewriteValues(BlockID block)
 {
-    BlockValues values = std::exchange(m_function.edit(block).values, { });
+    BlockValues values = std::exchange(m_function.edit(block, BlockEdit::Values).values, { });
     uint32_t numberOfCaughtValues = 0;
     while (numberOfCaughtValues < values.size() && isCaughtValue(m_function.at(values[numberOfCaughtValues]).opcode))
         ++numberOfCaughtValues;
@@ -168,7 +168,7 @@ void FunctionRewriter::rewriteValues(BlockID block)
         rewritten.append(id);
         appendCapturedValueStore(rewritten, id);
     }
-    m_function.edit(block).values = WTF::move(rewritten);
+    m_function.edit(block, BlockEdit::Values).values = WTF::move(rewritten);
 }
 
 void FunctionRewriter::removeBlockParameters(BlockID block)
@@ -219,7 +219,7 @@ void FunctionRewriter::replaceCaptures()
     for (size_t index = 0; index < reads.size(); ++index)
         m_function.edit(replacedParameters[index]) = WTF::move(reads[index]);
     values.appendVector(m_function.at(entryBlock).values);
-    m_function.edit(entryBlock).values = WTF::move(values);
+    m_function.edit(entryBlock, BlockEdit::Values).values = WTF::move(values);
 }
 
 void FunctionRewriter::run()

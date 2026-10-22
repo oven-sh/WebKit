@@ -771,12 +771,12 @@ static void removeDefinitions(std::span<const Deferral> deferrals, IRBuilder& bu
             if (endsDeadZone.quickGet(id.index())) {
                 builder.setOrigin(function.at(id).origin());
                 ValueID marker = builder.addDetached(IRBuilder::make(Opcode::Undefined));
-                function.edit(id).setValueOperand(marker);
+                function.edit(id, ValueEdit::Definition).setValueOperand(marker);
                 kept.append(marker);
             }
             kept.append(id);
         }
-        function.edit(BlockID(index)).values = WTF::move(kept);
+        function.edit(BlockID(index), BlockEdit::Values).values = WTF::move(kept);
     }
     for (size_t index : isRemoved)
         becomeUndefined(function, ValueID(index));
@@ -833,7 +833,7 @@ static void readObjectsBehindDeadZoneTests(const Plan& plan, IRBuilder& builder)
             }
             rewritten.append(id);
         }
-        function.edit(BlockID(index)).values = WTF::move(rewritten);
+        function.edit(BlockID(index), BlockEdit::Values).values = WTF::move(rewritten);
     }
 }
 

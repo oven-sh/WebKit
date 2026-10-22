@@ -296,7 +296,6 @@ private:
     Vector<StoredFunction> m_storedFunctions;
     Vector<StoredFunctionReader> m_storedFunctionReaders;
     Vector<StoredFunction> m_functionsTakenOut;
-    // By the first function of a run of m_functionsTakenOut: the entries of readers with which the functions of the run were lowered.
     HashMap<uint32_t, Vector<FlowScopeEntry, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_entriesOfReadersOfRuns;
     Vector<FlowScopeLocationAccess> m_definitions;
     Vector<FlowReadOfLocation> m_readsAfterInitialization;

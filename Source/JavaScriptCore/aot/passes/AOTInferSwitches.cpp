@@ -149,7 +149,7 @@ static void rewriteRun(IRBuilder& builder, const ShapeTestLinks& links)
     BitVector testIndex;
     testIndex.set(function.at(head).values.size() - 1);
     builder.eraseValues(head, testIndex);
-    function.edit(head).terminator = Terminator { };
+    function.edit(head, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
     builder.setOrigin(origin);
     builder.moveToEndOf(head);
     builder.emitSwitchOnShape(subject, WTF::move(cases), WTF::move(otherwise));

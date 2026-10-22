@@ -133,6 +133,48 @@ static bool sortOrderIgnoresWidth(const ParallelLoops& loops, const ParallelLoop
     return sortByFirst(loops, count) == sortByFirst(one, count);
 }
 
+// The parts that a merge is cut into give what one merge of the two whole runs gives, also where many elements compare equal and where one run lies in front of the other.
+static bool sortsLikeMergesOfWholeRuns(const ParallelLoops& loops, size_t count, const Invocable<uint32_t(size_t)> auto& keyAt)
+{
+    using Element = std::pair<uint32_t, uint32_t>;
+    constexpr size_t numberOfRuns = 16;
+    auto isLess = [](const Element& a, const Element& b) {
+        return a.first < b.first;
+    };
+    Vector<Element> list(count, [&](size_t index) {
+        return Element { keyAt(index), static_cast<uint32_t>(index) };
+    });
+    Vector<Element> expected = list;
+    Vector<Element> scratch(count);
+    std::span<Element> from = expected.mutableSpan();
+    std::span<Element> to = scratch.mutableSpan();
+    auto runOf = [&](std::span<Element> all, size_t run, size_t runs) {
+        size_t start = count * run / runs;
+        return all.subspan(start, count * (run + 1) / runs - start);
+    };
+    for (size_t run = 0; run < numberOfRuns; ++run)
+        std::ranges::sort(runOf(from, run, numberOfRuns), isLess);
+    for (size_t runs = numberOfRuns; runs > 1; runs /= 2) {
+        for (size_t pair = 0; pair < runs / 2; ++pair)
+            std::ranges::merge(runOf(from, 2 * pair, runs), runOf(from, 2 * pair + 1, runs), runOf(to, pair, runs / 2).begin(), isLess);
+        std::swap(from, to);
+    }
+    parallelSort(loops, list.mutableSpan(), isLess);
+    return list == expected;
+}
+
+static bool sortsLikeMergesOfWholeRuns(const ParallelLoops& loops, size_t count)
+{
+    WeakRandom random(1);
+    Vector<uint32_t> fewKeys(count, [&](size_t) {
+        return random.getUint32(16);
+    });
+    return sortsLikeMergesOfWholeRuns(loops, count, [&](size_t index) { return fewKeys[index]; })
+        && sortsLikeMergesOfWholeRuns(loops, count, [&](size_t index) { return static_cast<uint32_t>((count - index) / 1000); })
+        && sortsLikeMergesOfWholeRuns(loops, count, [&](size_t index) { return static_cast<uint32_t>(index / 1000); })
+        && sortsLikeMergesOfWholeRuns(loops, count, [](size_t) { return 7u; });
+}
+
 static bool sortsAndRemovesDuplicates(const ParallelLoops& loops, unsigned count)
 {
     WeakRandom random(1);
@@ -379,29 +421,6 @@ static bool restingThreadsTakeTheNextLoop()
     return askedPoolOncePerHelper && numberOfCountedThreads().load() == width - 1;
 }
 
-static bool shortLoopsRunInScope()
-{
-    constexpr unsigned width = 8;
-    ParallelLoops loops(width, &poolOfNewThreads, 1_ms);
-    std::atomic<unsigned> numberOfVisits { 0 };
-    constexpr unsigned numberOfLoops = 2000;
-    {
-        ParallelLoops::ShortLoopsScope outerScope(loops);
-        for (unsigned loop = 0; loop < numberOfLoops; ++loop) {
-            ParallelLoops::ShortLoopsScope innerScope(loops);
-            forEachIndexInParallel(loops, 3 * width, [&](unsigned) {
-                numberOfVisits.fetch_add(1, std::memory_order_relaxed);
-            });
-            if (!(loop % 100))
-                runLoopThatNeedsEveryThread(loops);
-        }
-    }
-    // Behind the scope the threads sleep and go back to the pool as ever.
-    waitForRestingThreads(loops, 0);
-    runLoopThatNeedsEveryThread(loops);
-    return numberOfVisits.load() == numberOfLoops * 3 * width;
-}
-
 static bool restingThreadsGoBackToThePool()
 {
     constexpr unsigned width = 4;
@@ -583,7 +602,7 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "the longest indices first"_s, visitsLongestIndicesFirst(loops, one));
     printCheck(out, "collect"_s, collectsInIndexOrder(loops));
     printCheck(out, "find"_s, findsInIndexOrder(loops));
-    printCheck(out, "sort"_s, sortsLikeStandardSort(loops, 1000) && sortsLikeStandardSort(loops, 20000) && sortOrderIgnoresWidth(loops, one, 20000));
+    printCheck(out, "sort"_s, sortsLikeStandardSort(loops, 1000) && sortsLikeStandardSort(loops, 20000) && sortOrderIgnoresWidth(loops, one, 20000) && sortsLikeMergesOfWholeRuns(loops, 20000) && sortsLikeMergesOfWholeRuns(loops, 100003));
     printCheck(out, "sort and remove duplicates"_s, sortsAndRemovesDuplicates(loops, 1000) && sortsAndRemovesDuplicates(loops, 20000));
     printCheck(out, "tasks"_s, runsEveryTask(loops));
     printCheck(out, "width one is serial"_s, runsSeriallyOnCaller(one));
@@ -597,7 +616,6 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "a thread gets its storage back"_s, storagePoolGivesThreadItsStorageBack());
     printCheck(out, "an array creates and destroys each element once"_s, parallelArrayCreatesAndDestroysEachElementOnce(loops));
     printCheck(out, "resting threads take the next loop"_s, restingThreadsTakeTheNextLoop());
-    printCheck(out, "short loops run in a scope"_s, shortLoopsRunInScope());
     printCheck(out, "resting threads go back to the pool"_s, restingThreadsGoBackToThePool());
     printCheck(out, "ordered commit"_s, std::ranges::all_of(loopCounts, [&](unsigned count) {
         return commitsInIndexOrder(loops, count);

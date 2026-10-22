@@ -356,10 +356,10 @@ static PassOutcome markArmsOfAbsentElements(FunctionPassContext& context)
         if (!asksForElementOfArray(context, context.function.at(block.terminator.conditionOperand())))
             continue;
         // An arm with code of its own is code of the program, which gets its tests as any other.
-        Block& absent = context.function.edit(block.terminator.notTaken().block);
+        const Block& absent = context.function.at(block.terminator.notTaken().block);
         if (absent.frequency != BlockFrequency::Normal || !absent.values.isEmpty() || absent.terminator.kind != TerminatorKind::Jump || cfg.incomingEdges(block.terminator.notTaken().block).size() != 1)
             continue;
-        absent.frequency = BlockFrequency::Unlikely;
+        context.function.edit(block.terminator.notTaken().block, BlockEdit::Rest).frequency = BlockFrequency::Unlikely;
         outcome = PassOutcome::Changed;
     }
     if (outcome == PassOutcome::Changed)

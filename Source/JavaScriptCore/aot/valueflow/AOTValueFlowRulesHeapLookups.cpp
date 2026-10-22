@@ -1298,6 +1298,20 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     if (mayHoldUndeclaredProperty(chain.objects, key))
         builtinGetters.append(m_tables.undescribedNativeCode());
 
+    // The method by which a class of the host prints itself calls a function of a start-up module, whoever calls the method: the formatter, or the program, which has it from here.
+    // The table has some of these methods. The others lie on a prototype object of which it does not list all members.
+    for (BuiltinName name : m_builtins.namesOfHostMethodsCallingStartupLoads()) {
+        if (key.keyClass != HeapKeyClass::Name || m_program.keyOf(name) != key.name)
+            continue;
+        bool findsMethodOfHost = chain.holdsUnknownObject && mayBeFoundOnObjectNobodyKnows(m_context, name);
+        m_context.forEachMember(m_context.restrict(chain.objects, m_context.maker().unite(m_tables.under(key.name).holders, holdersOfUndeclaredPropertiesUnder(key))), [&](ValueFlowObjectID holder) {
+            BuiltinID builtin = m_universe.builtinOf(holder);
+            findsMethodOfHost |= builtin && m_builtins.at(builtin).origin == BuiltinOrigin::Host;
+        });
+        if (findsMethodOfHost)
+            letHostChooseOperands(m_context);
+    }
+
     // The untracked object answers by name. What it answers holds a placeholder only where a value that was written does.
     if (chain.holdsUntrackedObject) {
         forEachNodeReadByName(value, answer);

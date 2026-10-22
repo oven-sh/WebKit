@@ -93,6 +93,18 @@ EarlierTest FailedTests::find(const Value& test, BlockID at) const
     return EarlierTest::Unknown;
 }
 
+bool FailedTests::hasTestOf(ValueID value) const
+{
+    if (m_failedEdges.isEmpty() && m_failedSwitches.isEmpty())
+        return false;
+    ValueID subject = m_analyses.identityOf(value);
+    return m_failedEdges.containsIf([&](const FailedEdge& edge) {
+        return edge.subject == subject;
+    }) || m_failedSwitches.containsIf([&](const FailedSwitch& entry) {
+        return entry.subject == subject;
+    });
+}
+
 bool FailedTests::isCoveredBySwitch(const Value& shapeTest, const FailedSwitch& entry) const
 {
     const Program& program = m_analyses.program();

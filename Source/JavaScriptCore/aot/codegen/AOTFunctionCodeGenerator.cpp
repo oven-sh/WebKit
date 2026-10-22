@@ -260,8 +260,12 @@ bool FunctionCodeGenerator::generateB3(DirectCodeAttempt attempt)
 
     bool isWorthOptimizing = !isGeneratedWithoutOptimizing(build, m_inputs.heat, m_inputs.program, m_id);
     bool checksAir = options.validatesBackEnd || options.validatesReferences || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
-    if (!isWorthOptimizing && !checksAir && attempt != DirectCodeAttempt::None && traits.convention == BackEndConvention::Function)
-        m_directCode = planDirectCode(proc, attempt);
+    if (!isWorthOptimizing && !checksAir && attempt != DirectCodeAttempt::None && traits.convention == BackEndConvention::Function) {
+        if (!isX86_64() || build.recordedOptions().has(TestingSwitch::GenerateDirectCodeByLinearScan))
+            m_linearScanCode = planLinearScanCode(proc, attempt, LoopsInDirectCode::AreGenerated);
+        else
+            m_directCode = planDirectCode(proc, attempt);
+    }
     return true;
 }
 
@@ -274,7 +278,7 @@ CompiledCode FunctionCodeGenerator::finish()
         m_worker.build.statistics().count(StatisticID::DirectGenerationsAbandoned);
         return { };
     }
-    if (m_directCode)
+    if (generatesDirectly())
         m_worker.build.statistics().count(StatisticID::FunctionsGeneratedDirectly);
     if (reportBackEnd())
         return { };
@@ -287,7 +291,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
     const AOT::CompileOptions& options = build.options();
     B3::Procedure& proc = *m_procedure;
 
-    if (!m_directCode) {
+    if (!generatesDirectly()) {
         ColdAirBlocks coldBlocks = findColdAirBlocks(m_inputs, m_id, proc.code());
         m_records.units.setColdBlocks(WTF::move(coldBlocks.cold), WTF::move(coldBlocks.rarelyRun));
         proc.code().setInstObserver(&m_records.observer);
@@ -296,9 +300,10 @@ CompiledCode FunctionCodeGenerator::emitCode()
     readTagsFromInstance(m_jit);
     emitEntryPreambles(m_jit, m_inputs, m_id, m_records);
     CCallHelpers::Label bodyStart = m_jit.label();
-    if (m_directCode) {
+    if (generatesDirectly()) {
         BlockColdnessRule coldness(m_inputs, m_id);
-        if (!generateDirectCode(*m_directCode, m_jit, m_records, coldness)) {
+        bool isGenerated = m_linearScanCode ? generateLinearScanCode(*m_linearScanCode, m_jit, m_records, coldness) : generateDirectCode(*m_directCode, m_jit, m_records, coldness);
+        if (!isGenerated) {
             m_didFailToGenerateDirectly = true;
             return { };
         }

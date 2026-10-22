@@ -157,9 +157,7 @@ PassOutcome CallInliner::run()
             return outcome;
 
         for (InlineSite& site : sites) {
-            double heat = m_context.heatOf(site.block);
             site.summary = &summaryOf(m_caller.at(site.call).function());
-            site.heat = heat > 0 ? heat : 0;
             site.verdict = computeVerdict(site);
         }
         spendCallerBudget(sites);
@@ -253,7 +251,7 @@ InlineVerdict CallInliner::computeVerdict(const InlineSite& site)
     InlineDecision legality = canInline(m_context, *site.summary, site.call);
     if (legality != InlineDecision::Unknown)
         return { .decision = legality };
-    return computeInlineVerdict(m_context, *site.summary, site.call);
+    return computeInlineVerdict(m_context, *site.summary, site.block, site.call);
 }
 
 // The limit is on what inlining adds. A caller that is large by itself takes in as much as a small one.
@@ -299,6 +297,13 @@ void CallInliner::spendCallerBudget(Vector<InlineSite>& sites)
         if (isAccepted(sites[index]))
             order.append(index);
     }
+    // Heat only says who comes first.
+    if (order.size() > 1) {
+        for (uint32_t index : order) {
+            double heat = m_context.heatOf(sites[index].block);
+            sites[index].heat = heat > 0 ? heat : 0;
+        }
+    }
     std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
         const InlineSite& first = sites[a];
         const InlineSite& second = sites[b];
@@ -324,7 +329,7 @@ PassOutcome CallInliner::markCallsClosingCycles(std::span<const InlineSite> site
     for (const InlineSite& site : sites) {
         if (handlingOf(site.verdict.decision).followUp != FollowUp::MarkNeverInlined)
             continue;
-        m_caller.edit(site.call).setIsNeverInlined(true);
+        m_caller.edit(site.call, ValueEdit::Definition).setIsNeverInlined(true);
         outcome = PassOutcome::Changed;
     }
     return outcome;

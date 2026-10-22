@@ -469,7 +469,7 @@ static bool evaluateAtCreation(const Value& test, const Value& allocation)
 static void decideBranchOn(IRBuilder& builder, const TestOfAllocation& test, bool result)
 {
     BlockID block = test.point.block;
-    Terminator& terminator = builder.function().edit(block).terminator;
+    Terminator& terminator = builder.function().edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     if (!terminator.isConditionalBranch() || terminator.conditionOperand() != test.test)
         return;
     if (!result) {

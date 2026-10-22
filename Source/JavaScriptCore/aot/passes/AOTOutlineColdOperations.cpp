@@ -311,7 +311,7 @@ BlockID BodyBuilder::addBlockLike(BlockID original)
 {
     const Block& block = m_source.at(original);
     BlockID added = m_builder.addBlock(block.frequency);
-    m_builder.function().edit(added).shape = block.shape;
+    m_builder.function().edit(added, BlockEdit::Rest).shape = block.shape;
     return added;
 }
 

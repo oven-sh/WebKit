@@ -15,6 +15,7 @@
 #include "AOTHeat.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccess.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
 #include <algorithm>
@@ -264,7 +265,12 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
         if (function.at(block).frequency != BlockFrequency::Normal)
             continue;
         // A read by name is a short call, which cold code keeps. Under a private name it is an operation of the run time.
-        bool keepsCallsByName = isCold(heatClassOf(context, block));
+        std::optional<bool> isColdBlock;
+        auto keepsCallsByName = [&] {
+            if (!isColdBlock)
+                isColdBlock = isCold(heatClassOf(context, block));
+            return *isColdBlock;
+        };
         for (ValueID id : function.at(block).values) {
             const Value& access = function.at(id);
             Opcode opcode = access.opcode;
@@ -276,7 +282,7 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
             PropertyKeyID key = keyOfNamedAccess(program, access);
             if (!type.anyObject || type.layouts)
                 continue;
-            if (keepsCallsByName && program.at(key).kind != PropertyKeyKind::PrivateName && (tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, id, key)))
+            if (keepsCallsByName() && program.at(key).kind != PropertyKeyKind::PrivateName && (tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, id, key)))
                 continue;
             // `Promise.resolve` through a variable that is expected to hold the constructor: flow has followed the one object, and it answers.
             if (TypeID expected = function.at(receiver).expected(); expected && !context.types.at(expected).builtins.isEmpty())
@@ -874,19 +880,38 @@ static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter
     if (use.opcode != Opcode::PropGet || !use.key())
         return std::nullopt;
     FunctionPassContext& context = reporter.context();
+    // Nearly every read of a program is none of these, and the same few reads stand all over it.
+    PropertyAccessCache* cache = context.program.propertyAccessCache();
+    std::optional<SiteContent> content = cache ? contentOfNamedAccess(context, use, static_cast<uint8_t>(TestSitePlanner::FieldOrGetter)) : std::nullopt;
+    bool isKnownToBeRefused = content && cache->refusedContents.find(*content);
+    if (isKnownToBeRefused && !cache->checksAnswers) [[likely]]
+        return std::nullopt;
+    auto refuse = [&]() -> std::optional<Type> {
+        if (content && !isKnownToBeRefused)
+            cache->refusedContents.add(*content);
+        return std::nullopt;
+    };
+
     std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(context.program, context.function, use);
     if (!query || query->receivers.isProven() || query->receivers.predicted.size() < 2)
-        return std::nullopt;
+        return refuse();
     query->maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
     PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
     const MemberPartition& partition = plan.partition;
-    if (!plan.isResolved() || partition.arms.size() < 2 || !partition.rest.isEmpty() || context.exceeds(LimitID::MaxDispatchCases, partition.arms.size(), reporter.use()))
-        return std::nullopt;
+    if (!plan.isResolved() || partition.arms.size() < 2 || !partition.rest.isEmpty())
+        return refuse();
     bool everyArmHoldsData = std::ranges::all_of(partition.arms, [](const MemberArm& arm) {
         return arm.answer.kind == MemberKind::Field || (arm.answer.kind == MemberKind::Accessor && arm.answer.getter);
     });
-    if (!everyArmHoldsData || !partition.findArm(MemberKind::Accessor) || !partition.findArm(MemberKind::Field))
+    bool isRefusedByArms = !everyArmHoldsData || !partition.findArm(MemberKind::Accessor) || !partition.findArm(MemberKind::Field);
+    // A limit that is passed is noted for the read.
+    if (context.exceeds(LimitID::MaxDispatchCases, partition.arms.size(), reporter.use())) {
+        RELEASE_ASSERT(!isKnownToBeRefused);
         return std::nullopt;
+    }
+    if (isRefusedByArms)
+        return refuse();
+    RELEASE_ASSERT(!isKnownToBeRefused);
     return Type::forLayouts(query->receivers.predicted.span(), context.types);
 }
 

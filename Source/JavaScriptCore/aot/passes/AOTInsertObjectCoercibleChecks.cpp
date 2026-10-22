@@ -202,7 +202,7 @@ private:
         IRBuilder builder(m_context.analyses.context(), m_function, m_context.types, &m_context.analyses);
         for (const ReplacedTest& replaced : replacedTests) {
             const Value& access = m_function.at(replaced.access);
-            Terminator& terminator = m_function.edit(replaced.block).terminator;
+            Terminator& terminator = m_function.edit(replaced.block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
             Value check = IRBuilder::make(Opcode::RequireObjectCoercible, { m_function.at(terminator.conditionOperand()).valueOperand() });
             check.setNullishAccess(*nullishAccessOf(access.opcode));
             check.setName(accessedNameOf(access));

@@ -60,10 +60,7 @@ public:
 
     void giveReferencesTo(ProgramAnalyses& analyses)
     {
-        Vector<ReferencesOfBody*> byFunction(m_references.size(), [&](size_t index) {
-            return m_references[index].get();
-        });
-        analyses.takeReferencesOfBodies(byFunction.span());
+        analyses.takeReferencesOfBodies(m_references.span());
         m_build.destroyLater(WTF::move(m_references));
     }
 

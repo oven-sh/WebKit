@@ -163,12 +163,12 @@ private:
     friend class RegionCloner;
     friend class SSARepair;
 
-    ValueID addValue(Value&&, OptionSet<ValueEdit> = ValueEdit::Added);
-    OptionSet<ValueEdit> prepare(Value&);
-    ValueID appendPrepared(Value&&, OptionSet<ValueEdit> = ValueEdit::Added);
+    ValueID addValue(Value&&);
+    void prepare(Value&);
+    ValueID appendPrepared(Value&&);
     Expansion cutForExpansion(ProgramPoint);
 
-    void forEachIncomingTarget(BlockID, NOESCAPE const ScopedLambda<void(Edge, Target&)>&);
+    Vector<Edge, 8> incomingEdgesOf(BlockID);
     uint32_t numberOfSharedExplicitParameters(BlockID);
 
     Terminator& openTerminator();

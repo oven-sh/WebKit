@@ -122,7 +122,7 @@ static void writeBindings(ProgramEditor& editor, const ParallelLoops& loops, std
         auto sitesOfFunction = sites.subspan(boundaries[group], boundaries[group + 1] - boundaries[group]);
         Function& function = editor.atForPlacedWords(sitesOfFunction.front().function);
         for (const BindingSite& site : sitesOfFunction)
-            function.edit(site.value).setBinding(findBinding(ascendingBindings, site.key));
+            function.edit(site.value, ValueEdit::Definition).setBinding(findBinding(ascendingBindings, site.key));
     });
 }
 

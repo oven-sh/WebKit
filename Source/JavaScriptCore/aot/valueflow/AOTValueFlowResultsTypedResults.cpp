@@ -148,78 +148,118 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
     // What holds for a class holds for every array of it in the tree of a Data value. The arrays that no store reaches have a class of their own.
     std::array<AllocationClassID, 2> classesOfArrays;
     size_t numberOfOtherNodes = tables.sites.dataNodes.size();
-    TypeInterningPhase phase(types, 1);
-    std::optional<TypeArena> arena;
-    arena.emplace(phase, 0);
     ValueFlowPositionCounts counts(nullptr);
 
-    for (uint32_t index : findIndicesInParallel(inputs.loops(), program.functions.size(), [&](unsigned index) {
+    struct Node {
+        ValueID operation;
+        uint32_t ordinal;
+        LayoutID layout;
+        BuiltinClassID builtinClass;
+        AllocationClassID classOfLayout;
+        OptionSet<ObjectMutation> markedMutations;
+        bool neverChanges;
+        TypeID elements;
+        TypeID type;
+    };
+    const ParallelLoops& loops = inputs.loops();
+    Vector<uint32_t> functions = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         return inputs.isReached(FunctionID(index)) && std::ranges::any_of(inputs.bodies().statementsOf(index), [](const ValueFlowStatement& statement) {
             return statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::Data;
         });
-    })) {
+    });
+    TypeInterningPhase phase(types, functions.size());
+    Vector<Vector<Node>> nodesOfFunction(functions.size());
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned task) {
+        uint32_t index = functions[task];
         const Function& function = program.functions[index];
+        TypeArena arena(phase, task);
         std::optional<ValueFlowPositions> positions;
-        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
-        size_t numberOfOtherStamps = stamps.size();
         for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
             if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Data)
                 continue;
-
-            AllocationSiteID rootSite;
-            forEachDataNodeInPreorder(program.at(function.at(statement.site).data()).root, [&](uint32_t ordinal, const DataNode& node) {
-                if (!node.is<DataNode::Array>() && !node.is<DataNode::Object>())
+            forEachDataNodeInPreorder(program.at(function.at(statement.site).data()).root, [&](uint32_t ordinal, const DataNode& dataNode) {
+                if (!dataNode.is<DataNode::Array>() && !dataNode.is<DataNode::Object>())
                     return;
                 ValueFlowObjectID object = universe.siteObject(statement, ordinal);
                 RELEASE_ASSERT(object);
                 const ValueFlowSite& site = *universe.siteOf(object);
-
-                FlowDataNodeStamp stamp { AllocationSiteID(tables.sites.allocationSites.size()), { }, { }, { } };
+                Node node { statement.site, ordinal, site.layout, site.builtinClass, { }, { }, false, { }, { } };
                 if (site.layout) {
                     const Vector<AllocationClassID>& classes = application.layouts[site.layout.index()].flow.allocationClasses;
                     if (!classes.isEmpty())
-                        stamp.allocationClass = classes[0];
+                        node.classOfLayout = classes[0];
                 } else {
-                    AllocationClassID& classOfArrays = classesOfArrays[markedMutationsOf(inputs, object).contains(ObjectMutation::StoreAfterCreation)];
-                    if (!classOfArrays) {
-                        classOfArrays = AllocationClassID(tables.sites.allocationClasses.size());
-                        AllocationClass arrays;
-                        arrays.builtinClass = BuiltinClasses::Array;
-                        arrays.impossibleMutations = allObjectMutations - mutationsOfArraysWithoutMark;
-                        tables.sites.allocationClasses.append(WTF::move(arrays));
-                    }
+                    node.markedMutations = markedMutationsOf(inputs, object);
+                    node.neverChanges = neverChangesOnceMade(inputs, object);
                     const ValueFlowContainerFacts* facts = containers.find(object);
-                    AllocationClass& arrays = tables.sites.allocationClasses[classOfArrays.index()];
-                    arrays.impossibleMutations.remove(markedMutationsOf(inputs, object));
-                    stamp.allocationClass = classOfArrays;
                     // Where nothing is ever stored, the record says best which storage to begin with.
                     if (facts && indexOfElements < facts->contents.size() && facts->contents[indexOfElements] != TypeTable::never)
-                        stamp.elements = facts->contents[indexOfElements];
+                        node.elements = facts->contents[indexOfElements];
                     // The value of the operation gets a cast to what is proven of it. An array further down in the tree has no value until the tree is expanded.
                     if (facts && ordinal && (facts->contentsAreProven || !facts->pristine.isEmpty())) {
                         if (!positions)
-                            positions.emplace(inputs, *arena, counts, index);
-                        stamp.type = arena->intern(positions->typeOfObject(object));
+                            positions.emplace(inputs, arena, counts, index);
+                        node.type = arena.intern(positions->typeOfObject(object));
                     }
                 }
-                tables.sites.allocationSites.append(AllocationSite { FunctionID(index), site.layout, site.builtinClass, stamp.allocationClass, function.locationOf(statement.site) });
-                if (!site.layout && neverChangesOnceMade(inputs, object) && inputs.build.isEnabled(FlowResultKind::HolderMutations, site.builtinClass.index()))
-                    tables.sites.sitesOfObjectsThatNeverChange.set(stamp.site.index());
-                if (!ordinal) {
-                    rootSite = stamp.site;
-                    stamps.append(FlowAllocationStamp { .value = statement.site, .site = rootSite, .allocationClass = stamp.allocationClass });
-                }
-                tables.sites.dataNodes.append({ rootSite, ordinal, stamp });
+                nodesOfFunction[task].append(node);
             });
+        }
+    });
+
+    auto classOfArray = [&](const Node& node) -> AllocationClassID& {
+        return classesOfArrays[node.markedMutations.contains(ObjectMutation::StoreAfterCreation)];
+    };
+    Vector<uint32_t> firstSiteOfFunction;
+    firstSiteOfFunction.reserveInitialCapacity(functions.size());
+    uint32_t numberOfSites = static_cast<uint32_t>(numberOfOtherSites);
+    for (const Vector<Node>& nodes : nodesOfFunction) {
+        firstSiteOfFunction.append(numberOfSites);
+        for (const Node& node : nodes) {
+            uint32_t site = numberOfSites++;
+            if (node.layout)
+                continue;
+            AllocationClassID& classOfArrays = classOfArray(node);
+            if (!classOfArrays) {
+                classOfArrays = AllocationClassID(tables.sites.allocationClasses.size());
+                AllocationClass arrays;
+                arrays.builtinClass = BuiltinClasses::Array;
+                arrays.impossibleMutations = allObjectMutations - mutationsOfArraysWithoutMark;
+                tables.sites.allocationClasses.append(WTF::move(arrays));
+            }
+            tables.sites.allocationClasses[classOfArrays.index()].impossibleMutations.remove(node.markedMutations);
+            if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, node.builtinClass.index()))
+                tables.sites.sitesOfObjectsThatNeverChange.set(site);
+        }
+    }
+    tables.sites.allocationSites.grow(numberOfSites);
+    tables.sites.dataNodes.grow(numberOfOtherNodes + (numberOfSites - numberOfOtherSites));
+    TypeRemap remap = phase.finish(StringRemap { }, &loops);
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned task) {
+        uint32_t index = functions[task];
+        const Function& function = program.functions[index];
+        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
+        size_t numberOfOtherStamps = stamps.size();
+        uint32_t nextSite = firstSiteOfFunction[task];
+        ValueID operation;
+        AllocationSiteID rootSite;
+        for (const Node& node : nodesOfFunction[task]) {
+            if (node.operation != operation) {
+                operation = node.operation;
+                rootSite = { };
+            }
+            FlowDataNodeStamp stamp { AllocationSiteID(nextSite++), node.layout ? node.classOfLayout : classOfArray(node), node.elements, node.type };
+            remap.apply(stamp.type);
+            tables.sites.allocationSites[stamp.site.index()] = AllocationSite { FunctionID(index), node.layout, node.builtinClass, stamp.allocationClass, function.locationOf(node.operation) };
+            if (!node.ordinal) {
+                rootSite = stamp.site;
+                stamps.append(FlowAllocationStamp { .value = node.operation, .site = rootSite, .allocationClass = stamp.allocationClass });
+            }
+            tables.sites.dataNodes[numberOfOtherNodes + (stamp.site.index() - numberOfOtherSites)] = { rootSite, node.ordinal, stamp };
         }
         if (stamps.size() != numberOfOtherStamps)
             std::ranges::sort(stamps, { }, &FlowAllocationStamp::value);
-    }
-
-    arena.reset();
-    TypeRemap remap = phase.finish(StringRemap { });
-    for (FlowDataNode& node : tables.sites.dataNodes.mutableSpan().subspan(numberOfOtherNodes))
-        remap.apply(node.stamp.type);
+    });
 
     for (AllocationClassID classOfArrays : classesOfArrays) {
         if (!classOfArrays)

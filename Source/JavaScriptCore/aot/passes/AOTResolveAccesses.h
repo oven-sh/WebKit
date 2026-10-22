@@ -9,6 +9,7 @@
 
 #include "AOTMethodDispatch.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTRefusedContents.h"
 #include "AOTResolveCallsDirectCall.h"
 #include <optional>
 #include <wtf/Noncopyable.h>
@@ -37,6 +38,8 @@ struct ElementAccessSite {
 };
 
 std::optional<NamedAccessSite> planNamedAccessSite(FunctionPassContext&, const ValueSite&);
+// All that propertyAccessQueryOf() and planPropertyAccess() take from a named access and its function, but for who uses what is read. None where it names what an arena gave out.
+std::optional<SiteContent> contentOfNamedAccess(const FunctionPassContext&, const Value& access, uint8_t planner);
 std::optional<ElementAccessSite> planElementAccessSite(FunctionPassContext&, const ValueSite&);
 
 bool isOnlyCalled(FunctionAnalyses&, ValueID read);

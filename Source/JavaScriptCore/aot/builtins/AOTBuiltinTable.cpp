@@ -605,7 +605,10 @@ const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const
 bool BuiltinTable::letsInUnseenCode(BuiltinID id) const
 {
     constexpr OptionSet<BuiltinFlag> flagsOfEvents { BuiltinFlag::EvaluatesText, BuiltinFlag::LoadsModuleByName, BuiltinFlag::RunsUnseenCode };
-    return at(id).flags.containsAny(flagsOfEvents) || unseenCodeOf(id);
+    const BuiltinUnseenCode* row = unseenCodeOf(id);
+    if (row && row->condition && row->condition->hasProperty)
+        return false;
+    return at(id).flags.containsAny(flagsOfEvents) || row;
 }
 
 const BuiltinForms* BuiltinTable::formsOf(BuiltinID id) const

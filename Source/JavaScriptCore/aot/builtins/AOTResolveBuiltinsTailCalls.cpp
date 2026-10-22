@@ -279,7 +279,7 @@ static void passOnOwnArgumentsByCount(SiteExpansion& expansion, const CallOfOwnA
         builder.moveToEndOf(arms[numberPassed]);
         ValueID passedOn = expansion.appendOriginal();
         becomeForwardedCall(function.edit(passedOn), planWithoutList);
-        function.edit(passedOn).setArgumentsOperands(parameters.span().first(numberPassed));
+        function.edit(passedOn, ValueEdit::Definition).setArgumentsOperands(parameters.span().first(numberPassed));
         expansion.finishArm(passedOn);
     }
 

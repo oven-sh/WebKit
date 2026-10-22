@@ -761,9 +761,21 @@ std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, Buil
     if (entry.flags.contains(BuiltinFlag::EvaluatesText))
         return refusesEvaluatedText ? std::nullopt : std::optional(UnseenCodeCause::EvaluatesText);
     const BuiltinUnseenCode* unseenCode = builtins.unseenCodeOf(builtin);
+    if (unseenCode && unseenCode->condition && unseenCode->condition->hasProperty)
+        return std::nullopt;
     if (unseenCode ? mayHold(unseenCode->condition) : entry.flags.contains(BuiltinFlag::RunsUnseenCode))
         return UnseenCodeCause::RunsUnseenCode;
     return std::nullopt;
+}
+
+static bool someCallPassesPropertyThatRunsUnseenCode(ValueFlowRuleContext& context, BuiltinID builtin)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    const BuiltinUnseenCode* row = builtins.unseenCodeOf(builtin);
+    if (!row || !row->condition || !row->condition->hasProperty)
+        return false;
+    ValueFlowName cell { ValueFlowNameKind::Slot, builtins.slotCount() + row->condition->hasProperty.index() };
+    return context.meet(context.valueOf(context.read(only(context, context.universe().objectOf(builtin)), cell)), ValueSets::anything);
 }
 
 // Once something has escaped and a value nobody knows is called, what the library keeps in its own objects is a value nobody knows, and nearly every store in the library goes through the unknown object.
@@ -969,6 +981,8 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
     context.forEachMember(context.restrict(callees, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
         BuiltinID builtin = builtins.canonicalID(universe.builtinOf(callee));
         std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, context.refusesEvaluatedText());
+        if (!cause && someCallPassesPropertyThatRunsUnseenCode(context, builtin))
+            cause = UnseenCodeCause::RunsUnseenCode;
         bool loadsMachineCode = std::ranges::contains(loadersOfMachineCode, builtin, &LoaderOfMachineCode::callee);
         if ((!cause && !loadsMachineCode) || !isCalledBySeenCode())
             return;

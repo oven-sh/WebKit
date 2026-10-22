@@ -13,6 +13,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResolveCalls.h"
 #include "AOTResultRules.h"
@@ -96,13 +97,14 @@ static std::optional<TestedMemberUse> planTestedMemberCall(FunctionPassContext& 
     return TestedMemberUse { { site, WTF::move(query), WTF::move(plan) }, operands, stamp, WTF::move(tests) };
 }
 
-static std::optional<TestedMemberUse> planWithoutFailedArms(TestSiteReporter& reporter, TestedMemberUsePlanner plan, const ValueSite& site)
+static std::optional<TestedMemberUse> planWithoutFailedArms(TestSiteReporter& reporter, TestedMemberUsePlanner plan, const ValueSite& site, bool& hasFailedTest)
 {
     std::optional<TestedMemberUse> use = plan(reporter.context(), site, nullptr);
     while (use && !use->tests.tests.isEmpty()) {
         const Value* receiverTest = use->tests.findReceiverLayoutTest();
         if (!receiverTest || reporter.findEarlierTest(*receiverTest) != EarlierTest::Failed)
             break;
+        hasFailedTest = true;
 
         ReceiverCandidates remaining = use->site.query.receivers;
         remaining.predicted.subtract(use->site.plan.receivers);
@@ -149,17 +151,51 @@ static std::optional<TestedMemberUse> planWithTestsOfEachObject(FunctionPassCont
     return WTF::move(use);
 }
 
-static std::optional<TestedMemberUse> planWithoutFailedTests(TestSiteReporter& reporter, TestedMemberUsePlanner plan, const ValueSite& site)
+// hasFailedTest: the plan is another than where no test has failed.
+static std::optional<TestedMemberUse> planWithoutFailedTests(TestSiteReporter& reporter, TestedMemberUsePlanner plan, const ValueSite& site, bool& hasFailedTest)
 {
-    std::optional<TestedMemberUse> use = planWithoutFailedArms(reporter, plan, site);
+    std::optional<TestedMemberUse> use = planWithoutFailedArms(reporter, plan, site, hasFailedTest);
     if (!use)
         return std::nullopt;
 
     auto conditionsTest = std::ranges::find(use->tests.tests, Opcode::AreMembersUnchanged, &Value::opcode);
     if (conditionsTest == use->tests.tests.end() || reporter.findEarlierTest(*conditionsTest) != EarlierTest::Failed)
         return use;
+    hasFailedTest = true;
     return planWithTestsOfEachObject(reporter.context(), WTF::move(*use));
 }
+
+namespace {
+
+// A use of a member for which the plan without a failed test leads to no site, whoever uses what is read. Most reads of a program read fields, and the same few reads stand all over it.
+// planWithTestsOfEachObject() keeps the form and the member of the plan, so what is refused for them is refused behind a failed test of the conditions too.
+// It is not asked where a test of the receiver may have failed: there the plan is made for other receivers.
+class RefusedMemberUse {
+public:
+    RefusedMemberUse(TestSiteReporter& reporter, ValueID receiver, NOESCAPE const Invocable<std::optional<SiteContent>()> auto& contentOfUse)
+        : m_cache(reporter.program().propertyAccessCache())
+    {
+        if (!m_cache || reporter.mayHaveFailedTestOf(receiver))
+            return;
+        m_content = contentOfUse();
+        m_isKnown = m_content && m_cache->refusedContents.find(*m_content);
+    }
+
+    bool isKnown() const { return m_isKnown && !m_cache->checksAnswers; }
+    void didRefuse(bool hasFailedTest)
+    {
+        if (m_content && !m_isKnown && !hasFailedTest)
+            m_cache->refusedContents.add(*m_content);
+    }
+    void willReport() const { RELEASE_ASSERT(!m_isKnown); }
+
+private:
+    PropertyAccessCache* m_cache;
+    std::optional<SiteContent> m_content;
+    bool m_isKnown { false };
+};
+
+} // anonymous namespace
 
 static bool needsPlaceableTests(const TestedMemberUse& use)
 {
@@ -214,19 +250,40 @@ static bool reportTestOfMethodRead(TestSiteReporter& reporter, FunctionID method
 static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& site)
 {
     FunctionPassContext& context = reporter.context();
-    if (!isMemberCall(context.analyses, context.function, reporter.useValue()))
+    const Value& call = reporter.useValue();
+    if (!isMemberCall(context.analyses, context.function, call))
         return false;
 
-    std::optional<TestedMemberUse> use = planWithoutFailedTests(reporter, planTestedMemberCall, site);
-    if (!use || !needsPlaceableTests(*use))
+    // All that planTestedMemberCall() takes from the call and its function.
+    RefusedMemberUse refused(reporter, call.thisValueOperand(), [&]() -> std::optional<SiteContent> {
+        SiteContent content(static_cast<uint32_t>(TestSitePlanner::MemberCall) << 24);
+        content.add(&context.inputs.flow);
+        content.add(call.calleeKey());
+        content.add(context.function.module.index());
+        content.addTypesOf(context.function, call.thisValueOperand());
+        return content.holdsOnlyIDsOfProgram() ? std::optional(content) : std::nullopt;
+    });
+    if (refused.isKnown()) [[likely]]
+        return false;
+
+    bool hasFailedTest = false;
+    std::optional<TestedMemberUse> use = planWithoutFailedTests(reporter, planTestedMemberCall, site, hasFailedTest);
+    if (!use || use->tests.tests.isEmpty()) {
+        refused.didRefuse(hasFailedTest);
+        return false;
+    }
+    if (!needsPlaceableTests(*use))
         return false;
 
     const PropertyAccessPlan& plan = use->site.plan;
-    if ((plan.requiredProofs | monotoneObjectProofs) != monotoneObjectProofs)
+    if ((plan.requiredProofs | monotoneObjectProofs) != monotoneObjectProofs) {
+        refused.willReport();
         return reportTestOfMethodRead(reporter, plan.member.method);
+    }
     if (!canCallTestedMethod(context.program, plan))
         return false;
 
+    refused.willReport();
     reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, plan.member.method));
     return reporter.didReport();
 }
@@ -277,22 +334,53 @@ static bool canBecomeMethodClosure(FunctionPassContext& context, ValueID read)
 static void reportMemberAccessTests(TestSiteReporter& reporter, const ValueSite& site)
 {
     FunctionPassContext& context = reporter.context();
-    std::optional<TestedMemberUse> use = planWithoutFailedTests(reporter, planTestedAccess, site);
-    if (!use || !needsPlaceableTests(*use))
+    const Value& access = reporter.useValue();
+    RefusedMemberUse refused(reporter, access.operand(*receiverOf(access.opcode)), [&] {
+        return contentOfNamedAccess(context, access, static_cast<uint8_t>(TestSitePlanner::CalledMember));
+    });
+    if (refused.isKnown()) [[likely]]
         return;
 
-    const PropertyAccessPlan& plan = use->site.plan;
-    if (plan.form == AccessForm::Method) {
-        if (canRecreateMethodClosure(context.program, plan) && canBecomeMethodClosure(context, site.value))
-            reporter.report(use->tests.tests.span(), effectsAfterRewrite(context, plan, use->stamp));
+    bool hasFailedTest = false;
+    std::optional<TestedMemberUse> use = planWithoutFailedTests(reporter, planTestedAccess, site, hasFailedTest);
+    if (!use) {
+        refused.didRefuse(hasFailedTest);
         return;
     }
-    if (plan.form != AccessForm::Call)
-        return;
+    // The rule of property accesses is next to ask for the plan of an access that gets no site here.
+    auto leavePlan = [&] {
+        if (hasFailedTest || reporter.didReport())
+            return;
+        std::optional<bool> isOnlyCalled = use->site.query.planFollowsFromIsOnlyCalled ? std::optional(true) : std::nullopt;
+        reporter.keepPlanOfUse({ isOnlyCalled, WTF::move(use->site.plan), use->stamp, WTF::move(use->tests) });
+    };
+    auto refuse = [&] {
+        refused.didRefuse(hasFailedTest);
+        leavePlan();
+    };
+
+    const PropertyAccessPlan& plan = use->site.plan;
+    if (use->tests.tests.isEmpty() || (plan.form != AccessForm::Method && plan.form != AccessForm::Call))
+        return refuse();
+    if (!needsPlaceableTests(*use))
+        return leavePlan();
+
+    if (plan.form == AccessForm::Method) {
+        if (!canRecreateMethodClosure(context.program, plan))
+            return refuse();
+        if (canBecomeMethodClosure(context, site.value)) {
+            refused.willReport();
+            reporter.report(use->tests.tests.span(), effectsAfterRewrite(context, plan, use->stamp));
+        }
+        return leavePlan();
+    }
 
     FunctionID accessor = plan.member.accessorFor(use->site.query.access);
-    if (canCallWithoutClosure(context.program, accessor))
-        reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, accessor));
+    if (!canCallWithoutClosure(context.program, accessor))
+        return refuse();
+    refused.willReport();
+    reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, accessor));
+    leavePlan();
 }
 
 static TestedSuperAccess planTestedSuperAccess(FunctionPassContext& context, const Value& access)
@@ -633,7 +721,7 @@ static void finishTestedCallRewrite(TestSiteRewriter& rewriter)
 {
     FunctionPassContext& context = rewriter.context();
     Value& use = rewriter.useValue();
-    use.type = resultTypeOf(context.program, context.function, use, context.types);
+    use.type = resultTypeOf(context.program, context.function, use, context.types, &context.typingMemo);
 
     context.build.statistics().count(StatisticID::CallsGuarded);
 }

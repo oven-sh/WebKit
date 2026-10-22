@@ -95,12 +95,12 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = program.functions.size();
-    tables.sites.accessSiteLosses.grow(application.accessSites.numberOfSites());
+    RELEASE_ASSERT(tables.sites.accessSiteLosses.size() == application.accessSites.numberOfSites());
 
     // The types count what lies outside them. Here the same sets are only looked at again.
     ValueFlowPositionCounts counts(nullptr);
     ValueSetMakers makers(inputs);
-    TypeInterningPhase phase(types, numberOfFunctions);
+    auto phase = makeUnique<TypeInterningPhase>(types, numberOfFunctions);
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index, unsigned worker) {
         FunctionID id(index);
         std::span<const ValueFlowStatement> statements = inputs.bodies().statementsOf(index);
@@ -117,7 +117,7 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
             return;
         }
 
-        TypeArena arena(phase, index);
+        TypeArena arena(*phase, index);
         ValueFlowPositions positions(inputs, arena, counts, index, &makers.of(worker));
         CallsOfFunction calls { inputs, id, function, arena, positions, makers.of(worker), application.bodies[index], tables.sites, WTF::move(accessSites) };
         for (const ValueFlowStatement& statement : statements) {
@@ -127,7 +127,8 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
         std::ranges::sort(calls.update.calls, { }, &FlowCallStamp::value);
         inputs.build.statistics().count(StatisticID::FlowCallsOfUnknownCallees, calls.numberOfUnknownCallees);
     });
-    TypeRemap remap = phase.finish(StringRemap { });
+    TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());
+    inputs.build.destroyLater(WTF::move(phase));
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
         if (!remap.isIdentityFor(index))
             remapTypes(application.bodies[index], remap);

@@ -36,8 +36,6 @@ struct ListedReceivers {
     Vector<BuiltinClassID, 4> builtinClasses;
 };
 
-// Many accesses ask about the same set, on all the threads. Whichever thread meets a set first walks its members. Two threads may walk one set at the same time: what they find is the same, and the first one stays.
-// The name is the number of a set, or the name of a block of sets: big sets share most of their blocks, and what is listed for a block follows from its members alone.
 class ListedReceiversByName {
     WTF_MAKE_NONCOPYABLE(ListedReceiversByName);
 public:
@@ -69,10 +67,8 @@ private:
     std::array<Part, 64> m_parts;
 };
 
-// One for each worker: what it has asked for before, without a lock.
 using ListedReceiversKnownToWorker = HashMap<uint64_t, const ListedReceivers*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
-// By key: the layouts whose objects have a field of that name, their own, one of a base that is proven, or one that the results append. Ascending.
 class LayoutsWithFieldOfKey {
 public:
     LayoutsWithFieldOfKey(const ValueFlowResultInputs& inputs, const FlowApplication& application)
@@ -96,7 +92,6 @@ public:
         sortAndRemoveDuplicates(inputs.loops(), m_holders);
     }
 
-    // Each is a key in the upper half and a layout in the lower one.
     std::span<const uint64_t> holdersOf(PropertyKeyID key) const LIFETIME_BOUND
     {
         uint64_t first = static_cast<uint64_t>(key.index()) << 32;
@@ -143,8 +138,6 @@ private:
     bool m_verifies;
 };
 
-// By member: one more than the layout of an object that has one and is made with it. Zero for any other member.
-// A set lists a thousand members and sixty thousand sets are listed: what the universe looks up in three tables for a member stands here in one place, and the members of a set come in ascending order.
 static Vector<uint32_t> findLayoutsOfMembers(const ValueFlowResultInputs& inputs)
 {
     const ValueFlowUniverse& universe = inputs.universe();
@@ -160,7 +153,6 @@ static Vector<uint32_t> findLayoutsOfMembers(const ValueFlowResultInputs& inputs
     return layouts;
 }
 
-// One for each worker. By layout: the number of the last listing that has met it.
 struct LayoutsMetByListing {
     Vector<uint32_t> lastListing;
     uint32_t numberOfListings { 0 };
@@ -351,7 +343,6 @@ static uint32_t beginListing(AccessesOfFunction& accesses)
     return ++met.numberOfListings;
 }
 
-// The layouts come in the order in which they are met.
 static const ListedReceivers& listedReceiversOfBlock(AccessesOfFunction& accesses, uint64_t nameOfBlock)
 {
     auto result = accesses.listedBlocks.add(nameOfBlock, nullptr);
@@ -367,7 +358,6 @@ static const ListedReceivers& listedReceiversOfBlock(AccessesOfFunction& accesse
         listReceiver(accesses, member, listing, *listed);
     });
     listed->layouts.shrinkToFit();
-    // The table of this worker may have grown while the classes of members were looked for.
     const ListedReceivers& kept = accesses.listedBlocksOfAll.add(nameOfBlock, WTF::move(listed));
     accesses.listedBlocks.set(nameOfBlock, &kept);
     return kept;
@@ -383,7 +373,6 @@ static const ListedReceivers& listedReceiversOf(AccessesOfFunction& accesses, Va
         return *known;
     }
 
-    // A small set has blocks of its own.
     constexpr uint32_t fewestMembersToListByBlock = 128;
     const ValueSets& sets = accesses.inputs.sets();
     auto listed = makeUnique<ListedReceivers>();
@@ -438,7 +427,6 @@ static std::optional<LayoutSet> receiversSeenToArrive(AccessesOfFunction& access
         }
     }
 
-    // A set lists thousands of layouts and a name is a field of a few, or the other way round: the shorter list is walked and the longer one is searched.
     LayoutSet receivers;
     bool areTooMany = false;
     auto add = [&](LayoutID layout) {
@@ -505,7 +493,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
     Vector<uint32_t> layoutsOfMembers = findLayoutsOfMembers(inputs);
     Vector<LayoutsMetByListing> layoutsMet(inputs.loops().width());
     BuiltinClassesOfMembers builtinClassesOfMembers(inputs);
-    TypeInterningPhase phase(types, numberOfFunctions);
+    auto phase = makeUnique<TypeInterningPhase>(types, numberOfFunctions);
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index, unsigned worker) {
         FunctionID id(index);
         std::span<const ValueFlowStatement> statements = inputs.bodies().statementsOf(index);
@@ -522,7 +510,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             return;
         }
 
-        TypeArena arena(phase, index);
+        TypeArena arena(*phase, index);
         ValueFlowPositions positions(inputs, arena, counts, index, &makers.of(worker));
         AccessesOfFunction accesses { inputs, id, function, arena, positions, makers.of(worker), application.bodies[index], tables.sites, WTF::move(accessSites), layoutsWithFieldOfKey, listedReceiversOfSets, listedReceivers[worker], listedBlocksOfAll, listedBlocks[worker], layoutsOfMembers, layoutsMet[worker], builtinClassesOfMembers };
         for (const ValueFlowStatement& statement : statements) {
@@ -532,7 +520,8 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         std::ranges::sort(accesses.update.accesses, { }, &FlowAccessStamp::value);
         inputs.build.statistics().count(StatisticID::FlowAccessesOfUnknownReceivers, accesses.numberOfUnknownReceivers);
     });
-    TypeRemap remap = phase.finish(StringRemap { });
+    TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());
+    inputs.build.destroyLater(WTF::move(phase));
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
         if (!remap.isIdentityFor(index))
             remapTypes(application.bodies[index], remap);

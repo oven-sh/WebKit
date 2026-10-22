@@ -92,7 +92,7 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
     size_t endOfNodesRead = m_log.nodesRead.size();
     size_t endOfNodesAskedWhetherEmpty = m_log.nodesAskedWhetherEmpty.size();
     for (size_t index = m_firstEdgeOfRun; index < std::min(endOfEdges, m_firstEdgeOfRun + mostAtOnce); ++index)
-        graph.prefetchSuccessorsOf(m_log.edges[index].from);
+        graph.prefetchLinksThatHold(m_log.edges[index]);
     if (mayBeKnown) {
         size_t kept = m_firstNodeReadOfRun;
         for (size_t first = m_firstNodeReadOfRun; first < endOfNodesRead; first += mostAtOnce) {
@@ -124,7 +124,7 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
         for (size_t index = first; index < end; ++index)
             graph.prefetchWhereEdgeIsListed(m_log.edges[index]);
         for (size_t index = end; index < std::min(endOfEdges, end + mostAtOnce); ++index)
-            graph.prefetchSuccessorsOf(m_log.edges[index].from);
+            graph.prefetchLinksThatHold(m_log.edges[index]);
         for (size_t index = first; index < end; ++index) {
             ValueFlowEdge edge = m_log.edges[index];
             if (edge.to.index() < numberOfNodes && graph.hasAdded(edge))

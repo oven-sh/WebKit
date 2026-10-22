@@ -106,6 +106,9 @@ private:
 
 ProofEnding endingOfTerminator(FunctionAnalyses&, const TestCondition&, const Effects& effectsOfTerminator);
 
+// A value of any other operation suspends nothing and writes nothing.
+const OpcodeSet& opcodesThatMayEndProofs();
+
 struct TestEventInputs {
     FunctionAnalyses& analyses;
     const TestConditions& conditions;

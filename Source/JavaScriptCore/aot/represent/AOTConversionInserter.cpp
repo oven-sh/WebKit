@@ -37,7 +37,7 @@ static ValueID assumeTypeOf(IRBuilder& builder, ValueID typed, ValueID sameValue
     Value cast = IRBuilder::make(Opcode::AssumeType, { sameValue });
     cast.setCastType(type);
     ValueID result = builder.insertBefore(before, WTF::move(cast));
-    function.edit(result).representation = representation;
+    function.edit(result, ValueEdit::Type).representation = representation;
     return result;
 }
 
@@ -71,13 +71,13 @@ void ConversionInserter::convertOperand(ValueID user, uint32_t operandIndex, Rep
     Function& function = m_pass.function;
     m_builder.setOrigin(function.at(user).origin());
     ValueID converted = convert(function.at(user).operand(operandIndex), wanted, pointOfUser, SharingScope::Block);
-    function.edit(user).setOperand(operandIndex, converted);
+    function.edit(user, ValueEdit::Definition).setOperand(operandIndex, converted);
 }
 
 void ConversionInserter::convertTerminatorOperand(BlockID block, uint32_t operandIndex, Representation wanted)
 {
     Function& function = m_pass.function;
-    Terminator& terminator = function.edit(block).terminator;
+    Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     RELEASE_ASSERT(terminator.kind != TerminatorKind::TestAndBranch && terminator.kind != TerminatorKind::ReturnCall);
     m_builder.setOrigin(terminator.origin());
     ValueID converted = convert(terminator.operand(operandIndex), wanted, pointBeforeTerminatorOf(function, block), SharingScope::Block);
@@ -181,7 +181,7 @@ ValueID ConversionInserter::convert(ValueID source, Representation wanted, Progr
     const Type& type = m_pass.program.typeOf(function, source);
     if (std::optional<Value> constant = makeOnlyValueOf(type); constant && isLegalRepresentation(type, wanted)) {
         ValueID made = m_builder.insertBefore(before, WTF::move(*constant));
-        function.edit(made).representation = wanted;
+        function.edit(made, ValueEdit::Type).representation = wanted;
         shareConversion(scope, before.block, source, wanted, made);
         ++m_numberOfConversions;
         return made;
@@ -200,7 +200,7 @@ ValueID ConversionInserter::convert(ValueID source, Representation wanted, Progr
             continue;
         }
         current = m_builder.insertBefore(before, IRBuilder::make(step.opcode, { current }));
-        function.edit(current).representation = step.to;
+        function.edit(current, ValueEdit::Type).representation = step.to;
         shareConversion(scope, before.block, source, step.to, current);
         ++m_numberOfConversions;
     }
@@ -259,7 +259,7 @@ void ConversionInserter::shareConversion(SharingScope scope, BlockID block, Valu
 void ConversionInserter::convertJumpArgument(BlockID block, uint32_t argumentIndex, Representation wanted)
 {
     Function& function = m_pass.function;
-    Terminator& jump = function.edit(block).terminator;
+    Terminator& jump = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     m_builder.setOrigin(jump.origin());
     ValueID converted = convert(jump.next().arguments[argumentIndex], wanted, pointBeforeTerminatorOf(function, block), SharingScope::Block);
     jump.next().arguments[argumentIndex] = converted;
@@ -268,7 +268,7 @@ void ConversionInserter::convertJumpArgument(BlockID block, uint32_t argumentInd
 void ConversionInserter::convertHandlerArgument(BlockID covered, uint32_t argumentIndex, Representation wanted)
 {
     Function& function = m_pass.function;
-    Target& handler = *function.edit(covered).handler;
+    Target& handler = *function.edit(covered, { BlockEdit::Edges, BlockEdit::Arguments }).handler;
     ValueID source = handler.arguments[argumentIndex];
 
     ProgramPoint afterDefinition = m_useLists.pointAfter(source);
@@ -292,16 +292,16 @@ BlockID ConversionInserter::splitEdge(const SplitEdge& split)
     BlockID added = m_builder.splitEdge(split.edge);
 
     const Target& next = function.at(added).terminator.next();
-    function.edit(added).shape = moreCompactOf(function.at(split.edge.from).shape, function.at(next.block).shape);
+    function.edit(added, BlockEdit::Rest).shape = moreCompactOf(function.at(split.edge.from).shape, function.at(next.block).shape);
 
     const CompactList<ValueID>& parameters = function.at(next.block).parameters;
     size_t firstResult = next.arguments.size() - function.at(added).parameters.size();
     for (size_t index = firstResult; index < next.arguments.size(); ++index)
-        function.edit(next.arguments[index]).representation = function.at(parameters[index]).representation;
+        function.edit(next.arguments[index], ValueEdit::Type).representation = function.at(parameters[index]).representation;
 
     for (const EdgeConversion& conversion : split.conversions) {
         if (conversion.passed)
-            function.edit(next.arguments[conversion.parameterIndex]).representation = *conversion.passed;
+            function.edit(next.arguments[conversion.parameterIndex], ValueEdit::Type).representation = *conversion.passed;
     }
 
     // An edge that would pass a value of type never is not taken, and no code may follow such a value.
@@ -309,7 +309,7 @@ BlockID ConversionInserter::splitEdge(const SplitEdge& split)
         return function.at(parameter).type == TypeTable::never;
     });
     if (passesNever) {
-        Terminator& terminator = function.edit(added).terminator;
+        Terminator& terminator = function.edit(added, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
         Origin origin = terminator.origin();
         terminator.become(TerminatorKind::Unreachable);
         terminator.setOrigin(origin);

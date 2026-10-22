@@ -26,10 +26,10 @@ function f0 name="provenUnion" parameters=[{type=string|L0|L1|Array<number>}] re
 # CHECK: = IsPristine [[narrowed0]] builtinClass=Array aspects=[Storage, Names]
 # CHECK: [[others0]]([[remaining0]]: string|L0|L1):
 # CHECK: = TypeTest [[remaining0]] testedType=object
-# CHECK: = ShapeTest [[object0]] layouts=[L0]
 # CHECK: = ShapeTest [[object0]] layouts=[L1]
-# CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfPoint]]
+# CHECK: = ShapeTest [[object0]] layouts=[L0]
 # CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfOther]]
+# CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfPoint]]
 # CHECK: = StringBuilderFinish [[builder0]]
 
 function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Array<L1> flags=[IsExpected]}] results=[{type=anything}] {

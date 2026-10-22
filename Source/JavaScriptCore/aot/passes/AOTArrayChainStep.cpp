@@ -76,7 +76,7 @@ Function buildChainStep(const DerivedFunctionKey& key, DerivedFunctionInputs& in
 
     std::array<ValueID, 6> arguments { array, start, end, shapeWord, operands, operand ? operand : undefined };
     ValueID call = appendDirectCall(builder, { .callee = key.target, .arguments = arguments });
-    step.edit(call).setIsAlwaysInlined(true);
+    step.edit(call, ValueEdit::Definition).setIsAlwaysInlined(true);
     emitReturnOfCall(builder, call);
     return step;
 }

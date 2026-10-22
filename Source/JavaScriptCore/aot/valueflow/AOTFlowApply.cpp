@@ -133,17 +133,19 @@ static FlowFirstTimeMarks createFirstTimeMarks(const FlowApplyContext& context, 
     return marks;
 }
 
-static Vector<BitVector> findExpectedFields(const Program& program)
+static Vector<BitVector> findExpectedFields(const Program& program, const ParallelLoops& loops)
 {
-    return Vector<BitVector>(program.layouts.size(), [&](size_t index) {
+    Vector<BitVector> expectedFieldsOfLayouts(program.layouts.size());
+    forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned index) {
         const Vector<Field>& fields = program.layouts[index].fields;
         BitVector expectedFields(fields.size());
         for (size_t field = 0; field < fields.size(); ++field) {
             if (fields[field].declared.flags.contains(PositionFlags::IsExpected))
                 expectedFields.quickSet(field);
         }
-        return expectedFields;
+        expectedFieldsOfLayouts[index] = WTF::move(expectedFields);
     });
+    return expectedFieldsOfLayouts;
 }
 
 void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, const Vector<BitVector>& fieldsExpectedAsRead)
@@ -191,14 +193,16 @@ static void nameObjectInPlaceOfDictionaryLayouts(Program& program, const FlowApp
         return;
     DictionaryTypeRewriter rewriter(application);
     auto rewriteList = [&](auto& list) {
-        for (auto& record : list)
-            forEachReference(record, rewriter);
+        forEachIndexInParallel(loops, list.size(), [&](unsigned index) {
+            forEachReference(list[index], rewriter);
+        });
     };
     forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
         forEachReference(static_cast<FunctionRecord&>(program.functions[index]), rewriter);
     });
-    for (Layout& layout : program.layouts)
-        forEachReference(static_cast<LayoutRecord&>(layout), rewriter);
+    forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned index) {
+        forEachReference(static_cast<LayoutRecord&>(program.layouts[index]), rewriter);
+    });
     rewriteList(program.typeSites);
     rewriteList(program.expectedResults);
     rewriteList(program.variables);
@@ -226,7 +230,7 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     FlowApplyContext context { program, results, *application, build };
     ProgramEditor editor(program);
     PhaseTimes times(build, PassID::ApplyFlowResults);
-    Vector<BitVector> fieldsExpectedAsRead = findExpectedFields(program);
+    Vector<BitVector> fieldsExpectedAsRead = findExpectedFields(program, build.parallelLoops());
     nameObjectInPlaceOfDictionaryLayouts(program, *application, build.parallelLoops());
     applyLayoutUpdates(context);
     times.didFinish("applyLayoutUpdates"_s);

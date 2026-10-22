@@ -1,5 +1,5 @@
 # What the sites of a block ask of the classes about one object is one test in front of the first site, so no branch stands between an allocation and its stores. Unknown code between two sites or another object leaves a site the test of its own conditions. A block that seldom runs gets no test
-# Rule changed 10-19 23:13: in a block that is not Normal a site is tested only where a test of its own, or another test of the value it tests, has failed on the way in.
+# The rule: in a block that is not Normal a site is tested only where a test of its own, or another test of the value it tests, has failed on the way in.
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
 # CHECK: outcome: Changed

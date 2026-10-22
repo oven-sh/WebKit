@@ -11,6 +11,7 @@
 #include "AOTCodeRecords.h"
 #include "AOTCompileFunctions.h"
 #include "AOTDirectCodeGenerator.h"
+#include "AOTLinearScanCodeGenerator.h"
 #include "AOTFrameAddressValidation.h"
 #include "AOTNarrowReferenceValidation.h"
 #include "AOTRelocationLowering.h"
@@ -56,9 +57,9 @@ public:
     static std::unique_ptr<FunctionCodeGenerator> create(const CodeGenerationWorker&, const CodeGenerationInputs&, FunctionID, CodeGenerationTotals&, DirectCodeAttempt = DirectCodeAttempt::First);
 
     B3::Procedure& procedure() { return *m_procedure; }
-    bool generatesDirectly() const { return !!m_directCode; }
+    bool generatesDirectly() const { return m_directCode || m_linearScanCode; }
     bool didFailToGenerateDirectly() const { return m_didFailToGenerateDirectly; }
-    DirectCodeAttempt nextDirectCodeAttempt() const { return attemptAfterFailure(*m_directCode); }
+    DirectCodeAttempt nextDirectCodeAttempt() const { return m_linearScanCode ? attemptAfterFailure(*m_linearScanCode) : attemptAfterFailure(*m_directCode); }
     CompiledCode finish();
 
 private:
@@ -85,6 +86,7 @@ private:
     // Last, so that it is destroyed first: its generators and client phases point into the members above.
     std::unique_ptr<B3::Procedure> m_procedure;
     DirectCodeGeneratorPointer m_directCode;
+    LinearScanCodeGeneratorPointer m_linearScanCode;
     bool m_didFailToGenerateDirectly { false };
 };
 

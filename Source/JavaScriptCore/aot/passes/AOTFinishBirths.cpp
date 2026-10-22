@@ -63,7 +63,7 @@ public:
             atEnd[block.index()] = WTF::move(states);
         }
         for (ValueID test : m_testsOfUnfinishedObjects)
-            m_function.edit(test).setMayMeetUnfinishedObject(true);
+            m_function.edit(test, ValueEdit::Definition).setMayMeetUnfinishedObject(true);
         if (m_insertions.isEmpty()) {
             if (m_testsOfUnfinishedObjects.isEmpty())
                 return PassOutcome::Unchanged;

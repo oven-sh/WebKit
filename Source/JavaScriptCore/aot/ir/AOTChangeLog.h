@@ -8,6 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include <algorithm>
+#include <limits>
 #include <optional>
 #include <span>
 #include <wtf/FastMalloc.h>
@@ -18,7 +20,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class ValueEdit : uint8_t {
-    // The function has one value more. It stands in no list until a block says so.
+    // The function has one value more. It stands in no list until a block says so. A reader takes Added as every bit, of the value as it is when it reads:
+    // until the entry has been shown to somebody, further edits of the value write none.
     Added = 1 << 0,
     // Opcode, operands, payload, flags, origin.
     Definition = 1 << 1,
@@ -32,6 +35,7 @@ enum class ValueEdit : uint8_t {
 };
 
 enum class BlockEdit : uint16_t {
+    // As for a value. Its targets have no entry either.
     Added = 1 << 0,
     // Which values the block lists, and in which order.
     Values = 1 << 1,
@@ -158,8 +162,14 @@ public:
         return m_blocks[cursor.m_blocks++];
     }
 
+    bool wasAddedAndShownToNobody(BlockID block) const { return block.index() >= m_firstBlockShownToNobody; }
+
     ALWAYS_INLINE void didEdit(ValueID value, OptionSet<ValueEdit> edits, TypeID typeBefore, TypeID expectedBefore)
     {
+        if (edits.contains(ValueEdit::Added) || value.index() >= m_firstValueShownToNobody) {
+            didAddOrEditWhatNobodyWasShown(ValueChange { value, edits, typeBefore, expectedBefore });
+            return;
+        }
         size_t size = m_values.size();
         if (size > m_numberOfShownValues) {
             ValueChange& last = m_values.mutableSpan().data()[size - 1];
@@ -177,6 +187,10 @@ public:
 
     ALWAYS_INLINE void didEdit(BlockID block, OptionSet<BlockEdit> edits)
     {
+        if (edits.contains(BlockEdit::Added))
+            m_firstBlockShownToNobody = std::min(m_firstBlockShownToNobody, block.index());
+        else if (block.index() >= m_firstBlockShownToNobody)
+            return;
         size_t size = m_blocks.size();
         if (size > m_numberOfShownBlocks) {
             BlockChange& last = m_blocks.mutableSpan().data()[size - 1];
@@ -201,11 +215,29 @@ public:
         m_numberOfShownBlocks = 0;
         m_numberOfSettledValues = 0;
         m_numberOfSettledBlocks = 0;
+        didShowEntries();
     }
 
     void setMaxNumberOfEntries(size_t max) { m_maxNumberOfEntries = max; }
 
 private:
+    NEVER_INLINE void didAddOrEditWhatNobodyWasShown(const ValueChange& change)
+    {
+        if (!change.edits.contains(ValueEdit::Added)) {
+            m_values[m_entriesOfValuesShownToNobody[change.value.index() - m_firstValueShownToNobody]].edits.remove(ValueEdit::TypedByRule);
+            return;
+        }
+        m_firstValueShownToNobody = std::min(m_firstValueShownToNobody, change.value.index());
+        uint32_t generation = m_generation;
+        uint32_t entry = m_values.size();
+        if (entry == m_values.capacity())
+            makeRoomAndAdd(change);
+        else
+            m_values.unsafeAppendWithoutCapacityCheck(change);
+        if (m_generation == generation)
+            m_entriesOfValuesShownToNobody.append(entry);
+    }
+
     NEVER_INLINE void makeRoomAndAdd(const ValueChange& change)
     {
         if (m_values.size() >= m_maxNumberOfEntries) {
@@ -229,12 +261,18 @@ private:
     {
         m_numberOfShownValues = m_values.size();
         m_numberOfShownBlocks = m_blocks.size();
+        m_firstValueShownToNobody = std::numeric_limits<uint32_t>::max();
+        m_firstBlockShownToNobody = std::numeric_limits<uint32_t>::max();
+        m_entriesOfValuesShownToNobody.shrink(0);
     }
 
     Vector<ValueChange, 8> m_values;
     Vector<BlockChange, 8> m_blocks;
     mutable size_t m_numberOfShownValues { 0 };
     mutable size_t m_numberOfShownBlocks { 0 };
+    mutable uint32_t m_firstValueShownToNobody { std::numeric_limits<uint32_t>::max() };
+    mutable uint32_t m_firstBlockShownToNobody { std::numeric_limits<uint32_t>::max() };
+    mutable Vector<uint32_t, 8> m_entriesOfValuesShownToNobody;
     size_t m_numberOfSettledValues { 0 };
     size_t m_numberOfSettledBlocks { 0 };
     size_t m_maxNumberOfEntries { 1 << 16 };

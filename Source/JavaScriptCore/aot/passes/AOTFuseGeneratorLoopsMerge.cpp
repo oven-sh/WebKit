@@ -447,7 +447,7 @@ static void copyBody(Merge& merge, RegionCloner& cloner, const Function& body, s
     builder.emitJump(cloner.cloneOf(entryBlock));
 
     for (BlockID clone : cloner.clonedBlocks()) {
-        function.edit(clone).frequency = rarerOf(function.at(clone).frequency, merge.frequency);
+        function.edit(clone, BlockEdit::Rest).frequency = rarerOf(function.at(clone).frequency, merge.frequency);
         // The first site is the start at the creation, which runs up to the initial yield.
         for (ValueID id : function.at(clone).values) {
             Value& value = function.edit(id);
@@ -470,7 +470,7 @@ static void replaceReturns(Merge& merge, std::span<const BlockID> clonedBlocks)
         if (function.at(block).terminator.kind != TerminatorKind::Return)
             continue;
 
-        Terminator returned = std::exchange(function.edit(block).terminator, Terminator());
+        Terminator returned = std::exchange(function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator());
         merge.pass.analyses.didChangeControlFlow();
         builder.setOrigin(returned.origin());
         builder.moveToEndOf(block);

@@ -195,7 +195,7 @@ private:
             division.setRounding(QuotientRounding::ToInt32);
             builder.setOrigin(m_function.at(candidate.user).origin());
             ValueID quotient = builder.insertBefore(candidate.point, WTF::move(division));
-            m_function.edit(candidate.user).setOperand(candidate.operandIndex, quotient);
+            m_function.edit(candidate.user, ValueEdit::Definition).setOperand(candidate.operandIndex, quotient);
             m_divisions.append(quotient);
         }
         builder.applyInsertions();

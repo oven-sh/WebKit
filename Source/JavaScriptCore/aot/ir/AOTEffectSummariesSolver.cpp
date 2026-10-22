@@ -525,7 +525,7 @@ void EffectSummarizer::summarizeBodies()
     growInParallel(loops, m_kept.m_functionsOfClosuresMade, numberOfFunctions);
     m_kept.m_wasLoweredSinceSummarized.insertFill(m_numberOfFunctionsBefore, 0, numberOfFunctions - m_numberOfFunctionsBefore);
     if (m_references)
-        m_references->prepareToTake(m_program, m_kept.m_stampsOfRecords.span());
+        m_references->prepareToTake(m_program, loops, m_kept.m_stampsOfRecords.span());
     Vector<uint8_t> doesSomethingElse(FillWith { }, functionsToSummarize.size(), static_cast<uint8_t>(0));
     Vector<Vector<FunctionID>> functionsNamedForTheFirstTime(functionsToSummarize.size());
     forEachIndexInParallel(loops, functionsToSummarize.size(), longestFirst.span(), [&](unsigned position) {
@@ -1436,33 +1436,72 @@ void EffectSummarizer::takeInSources(uint32_t node)
 Vector<uint32_t> EffectSummarizer::resolveNodesBelowCycles()
 {
     constexpr size_t fewestNodesWorthARound = 2048;
+    constexpr uint32_t nodesInShare = 4096;
     const ParallelLoops& loops = m_build.parallelLoops();
 
-    Vector<uint32_t> unresolved(unknownCodeNode(), [](size_t node) {
-        return static_cast<uint32_t>(node);
-    });
-    Vector<uint32_t> resolvedInThisRound;
-    for (;;) {
-        resolvedInThisRound = collectInParallel<uint32_t>(loops, unresolved.size(), [&](unsigned position, Vector<uint32_t>& resolved) {
-            uint32_t node = unresolved[position];
-            bool isReady = std::ranges::all_of(sourcesOf(node), [&](uint32_t source) {
-                return source == unknownCodeNode() || m_isResolved[source];
-            });
-            if (!isReady)
-                return;
-            takeInSources(node);
-            resolved.append(node);
+    // A source that is resolved stays so: a round goes on looking where the round before it stopped.
+    struct UnresolvedNode {
+        uint32_t node;
+        uint32_t firstSourceToLookAt;
+    };
+    // The nodes of a stretch of numbers that are left, in their order. Whichever thread takes the share in a round thins the list out where it lies: between two rounds nothing is gathered on one thread.
+    struct Share {
+        Vector<UnresolvedNode> unresolved;
+        Vector<uint32_t> resolvedInThisRound;
+    };
+    uint32_t numberOfNodes = unknownCodeNode();
+    Vector<Share> shares((numberOfNodes + nodesInShare - 1) / nodesInShare);
+    auto resolveIfReady = [&](Share& share, UnresolvedNode& entry) {
+        std::span<const uint32_t> sources = sourcesOf(entry.node);
+        uint32_t index = entry.firstSourceToLookAt;
+        while (index < sources.size() && (sources[index] == unknownCodeNode() || m_isResolved[sources[index]]))
+            ++index;
+        entry.firstSourceToLookAt = index;
+        if (index < sources.size())
+            return false;
+        takeInSources(entry.node);
+        share.resolvedInThisRound.append(entry.node);
+        return true;
+    };
+    for (bool isFirstRound = true;; isFirstRound = false) {
+        std::atomic<size_t> numberResolvedInThisRound { 0 };
+        forEachIndexInParallel(loops, shares.size(), [&](unsigned index) {
+            Share& share = shares[index];
+            if (isFirstRound) {
+                uint32_t first = index * nodesInShare;
+                for (uint32_t node = first, end = std::min(numberOfNodes, first + nodesInShare); node < end; ++node) {
+                    UnresolvedNode entry { node, 0 };
+                    if (!resolveIfReady(share, entry))
+                        share.unresolved.append(entry);
+                }
+            } else {
+                share.unresolved.removeAllMatching([&](UnresolvedNode& entry) {
+                    return resolveIfReady(share, entry);
+                });
+            }
+            numberResolvedInThisRound.fetch_add(share.resolvedInThisRound.size(), std::memory_order_relaxed);
         });
-        forEachIndexInParallel(loops, resolvedInThisRound.size(), [&](unsigned position) {
-            m_isResolved[resolvedInThisRound[position]] = 1;
+        forEachIndexInParallel(loops, shares.size(), [&](unsigned index) {
+            for (uint32_t node : shares[index].resolvedInThisRound)
+                m_isResolved[node] = 1;
+            shares[index].resolvedInThisRound.shrink(0);
         });
-        unresolved = collectInParallel<uint32_t>(loops, unresolved.size(), [&](unsigned position, Vector<uint32_t>& rest) {
-            if (!m_isResolved[unresolved[position]])
-                rest.append(unresolved[position]);
-        });
-        if (resolvedInThisRound.size() < fewestNodesWorthARound)
-            return unresolved;
+        if (numberResolvedInThisRound.load(std::memory_order_relaxed) < fewestNodesWorthARound)
+            break;
     }
+
+    size_t numberLeft = 0;
+    for (const Share& share : shares)
+        numberLeft += share.unresolved.size();
+    Vector<uint32_t> unresolved = createVectorWithCapacityInParallel<uint32_t>(loops, numberLeft);
+    for (const Share& share : shares) {
+        for (const UnresolvedNode& entry : share.unresolved)
+            unresolved.append(entry.node);
+    }
+    forEachIndexInParallel(loops, shares.size(), [&](unsigned index) {
+        shares[index] = { };
+    });
+    return unresolved;
 }
 
 // A cycle of calls may overflow the stack.

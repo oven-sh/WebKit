@@ -354,7 +354,7 @@ void ArmDispatcher::cloneRegionPerArm()
 
         if (m_plan.arms[arm].form == IterationForm::Protocol) {
             for (BlockID block : cloner.clonedBlocks())
-                m_function.edit(block).frequency = rarerOf(m_function.at(block).frequency, BlockFrequency::Unlikely);
+                m_function.edit(block, BlockEdit::Rest).frequency = rarerOf(m_function.at(block).frequency, BlockFrequency::Unlikely);
             m_analyses.didChangeControlFlow();
         }
 
@@ -393,7 +393,7 @@ void ArmDispatcher::addVariablesOfCopies()
 
 void ArmDispatcher::reopenHead()
 {
-    m_function.edit(m_head).terminator = Terminator();
+    m_function.edit(m_head, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator();
     m_analyses.didChangeControlFlow();
     m_builder.setHandler(m_function.at(m_head).handler);
     m_builder.moveToEndOf(m_head);
@@ -805,7 +805,7 @@ void ArmDispatcher::emitStepOfWrappedIterator(ArmState& state)
     ValueID done = step.results[static_cast<size_t>(IteratorResumeResult::Done)];
     if (!isAsyncGenerator(m_function)) {
         ValueID value = appendAwait(m_builder, step.results[static_cast<size_t>(IteratorResumeResult::Value)]);
-        m_function.edit(value).setTakesExtraTurn(true);
+        m_function.edit(value, ValueEdit::Definition).setTakesExtraTurn(true);
         m_expansion.finishStep(done, value);
         return;
     }
@@ -908,7 +908,7 @@ ValueID ArmDispatcher::addParameterLike(BlockID block, ValueID model)
     TypeID expected = m_function.at(model).expected();
     ValueID parameter = m_builder.addParameter(block, m_function.at(model).type);
     if (expected) {
-        m_function.edit(parameter).setExpected(expected);
+        m_function.edit(parameter, ValueEdit::Type).setExpected(expected);
         m_analyses.didChangeValues();
     }
     return parameter;

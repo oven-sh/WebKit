@@ -100,7 +100,7 @@ void selectOperatorForm(SelectionContext& context)
 
             if (function.at(id).form() == form)
                 continue;
-            function.edit(id).setForm(form);
+            function.edit(id, ValueEdit::Definition).setForm(form);
             ++changed;
         }
     }

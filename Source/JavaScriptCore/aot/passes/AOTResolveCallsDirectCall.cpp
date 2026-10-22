@@ -31,7 +31,7 @@ static TypeID requiredTypeOf(const ValueInsertion& insertion, const DeclaredType
 static ValueID insertWithOrigin(const ValueInsertion& insertion, Value&& value)
 {
     ValueID id = insertion.insert(WTF::move(value));
-    insertion.function.edit(id).setOrigin(insertion.origin);
+    insertion.function.edit(id, ValueEdit::Definition).setOrigin(insertion.origin);
     return id;
 }
 

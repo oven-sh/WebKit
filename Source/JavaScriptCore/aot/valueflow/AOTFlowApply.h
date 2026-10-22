@@ -47,6 +47,7 @@ void applyPosition(DeclaredType&, const FlowPositionUpdate&);
 void applyLayoutUpdates(const FlowApplyContext&);
 // By layout, then by appended field: the type that the families of the layout declare for the key. None where they declare none, or anything. Reads the field types as declared.
 Vector<Vector<std::optional<Type>>> findTypesDeclaredInFamilies(const Program&, const Vector<FlowLayoutUpdate>&, TypeArena&);
+Vector<BitVector> findAppendedFieldsDeclaredInFamilies(const Program&, const Vector<FlowLayoutUpdate>&, const ParallelLoops&);
 void applyVariableUpdates(const FlowApplyContext&);
 
 void createBoundFunctions(const FlowApplyContext&, ProgramEditor&);

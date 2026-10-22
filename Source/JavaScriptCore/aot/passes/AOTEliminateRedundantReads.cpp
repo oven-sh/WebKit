@@ -1245,7 +1245,7 @@ private:
         for (const Merge& merge : m_merges) {
             builder.setOrigin(m_function.at(merge.read).origin());
             ValueID parameter = builder.addParameter(merge.block, m_function.at(merge.read).type);
-            m_function.edit(parameter).setExpected(m_function.at(merge.read).expected());
+            m_function.edit(parameter, ValueEdit::Type).setExpected(m_function.at(merge.read).expected());
             for (const Merge::Incoming& incoming : merge.incoming)
                 builder.appendArgument(incoming.edge, incoming.value);
             keepReadForValidation(builder, { merge.block, merge.index }, parameter);

@@ -728,17 +728,54 @@ static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const 
     return context.restrict(closures, ValueSets::complement(context.maker().of(entered.span())));
 }
 
+// `await Promise.resolve(<a built-in>)`, which is how import("bun") is spelled: the built-in. A pattern tests what it takes apart, so the way leads through tests.
+static ValueID builtinResolvedAndAwaited(const Program& program, const Function& function, ValueID id)
+{
+    const Value& awaited = function.at(id);
+    if (awaited.opcode != Opcode::Await)
+        return { };
+    const Value& resolved = function.at(definitionThroughSameValues(function, awaited.operand(0)));
+    if (resolved.opcode != Opcode::Call || resolved.numberOfOperands() != 3 || !resolved.operand(2))
+        return { };
+    BuiltinID callee = entryNamedByOperations(program, function, resolved.calleeOperand());
+    if (!callee || program.builtins().canonicalID(callee) != program.builtins().canonicalID(Builtins::PromiseResolve))
+        return { };
+    ValueID holder = definitionThroughSameValues(function, resolved.operand(2));
+    return function.at(holder).opcode == Opcode::Builtin ? holder : ValueID();
+}
+
 BuiltinID entryNamedByOperations(const Program& program, const Function& function, ValueID value)
 {
     constexpr unsigned mostReads = 4;
     Vector<PropertyKeyID, mostReads> keys;
-    ValueID id = definitionThroughSameValues(function, value);
-    while (function.at(id).opcode == Opcode::PropGet && keys.size() < mostReads) {
-        keys.append(function.at(id).key());
-        id = definitionThroughSameValues(function, function.at(id).objectOperand());
+    auto followReads = [&](NOESCAPE const Invocable<ValueID(ValueID)> auto& definitionOf) {
+        keys.shrink(0);
+        ValueID id = definitionOf(value);
+        while (function.at(id).opcode == Opcode::PropGet && keys.size() < mostReads) {
+            keys.append(function.at(id).key());
+            id = definitionOf(function.at(id).objectOperand());
+        }
+        return id;
+    };
+    ValueID id = followReads([&](ValueID read) {
+        return definitionThroughSameValues(function, read);
+    });
+    if (function.at(id).opcode != Opcode::Builtin) {
+        // The walk through tests goes over every block, so it is for a read that may come to something: under the name of a member of Bun, of what a block or an Await hands on.
+        const BuiltinTable& builtins = program.builtins();
+        Opcode last = function.at(id).opcode;
+        if (!function.has(FunctionFlags::IsAsync) || (last != Opcode::Parameter && last != Opcode::Await) || !builtins.contains(Builtins::Bun))
+            return { };
+        if (!keys.isEmpty() && !findOwnMember(program, builtins.canonicalID(Builtins::Bun), keys.last()))
+            return { };
+        if (keys.isEmpty() && function.at(entryBlock).parameters.contains(id))
+            return { };
+        id = builtinResolvedAndAwaited(program, function, followReads([&](ValueID read) {
+            return definitionThroughTests(function, read);
+        }));
+        if (!id)
+            return { };
     }
-    if (function.at(id).opcode != Opcode::Builtin)
-        return { };
     BuiltinID entry = function.at(id).builtin();
     for (PropertyKeyID key : keys | std::views::reverse) {
         entry = findOwnMember(program, program.builtins().canonicalID(entry), key);

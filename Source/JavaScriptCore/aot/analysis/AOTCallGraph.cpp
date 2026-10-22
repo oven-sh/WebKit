@@ -287,16 +287,22 @@ ReferencesOfBody collectReferencesOf(const Program& program, const FlowResults& 
     return collector.finish(flow, id);
 }
 
-void BodyReferences::prepareToTake(const Program& program, std::span<const uint64_t> stampsOfRecords)
+void BodyReferences::prepareToTake(const Program& program, const ParallelLoops& loops, std::span<const uint64_t> stampsOfRecords)
 {
     size_t numberOfKeptBodies = m_bodies.size();
-    RELEASE_ASSERT(numberOfKeptBodies <= stampsOfRecords.size() && stampsOfRecords.size() == program.functions.size());
-    m_bodies.grow(stampsOfRecords.size());
-    m_isChanged.insertFill(numberOfKeptBodies, 1, stampsOfRecords.size() - numberOfKeptBodies);
+    size_t numberOfBodies = stampsOfRecords.size();
+    RELEASE_ASSERT(numberOfKeptBodies <= numberOfBodies && numberOfBodies == program.functions.size() && m_stampsOfRecordsForCallers.size() == numberOfKeptBodies);
+    growInParallel(loops, m_bodies, numberOfBodies);
+    reserveCapacityInParallel(loops, m_isChanged, numberOfBodies);
+    m_isChanged.insertFill(numberOfKeptBodies, 1, numberOfBodies - numberOfKeptBodies);
+    reserveCapacityInParallel(loops, m_stampsOfRecords, numberOfBodies);
     m_stampsOfRecords.append(stampsOfRecords.subspan(numberOfKeptBodies));
-    m_stampsOfRecordsForCallers.reserveCapacity(stampsOfRecords.size());
-    for (size_t index = numberOfKeptBodies; index < stampsOfRecords.size(); ++index)
-        m_stampsOfRecordsForCallers.append(stampOfRecordForCallers(program.functions[index]));
+    // The record of a function lies in lines of its own, which nobody has read of late.
+    growInParallel(loops, m_stampsOfRecordsForCallers, numberOfBodies);
+    forEachIndexInParallel(loops, static_cast<unsigned>(numberOfBodies - numberOfKeptBodies), [&](unsigned added) {
+        size_t index = numberOfKeptBodies + added;
+        m_stampsOfRecordsForCallers[index] = stampOfRecordForCallers(program.functions[index]);
+    });
 }
 
 void BodyReferences::take(const Program& program, FunctionID id, ReferencesOfBody&& references, uint64_t stampOfRecord)

@@ -560,6 +560,94 @@ static void remapIDsWithIdentityRemapsChangesNothing()
     AOT_TEST_CHECK(function.captures[0].type == fixture.thirdType && function.derivation.source == fixture.function);
 }
 
+static void logNamesWhatWasHandedOut()
+{
+    Function function;
+    BlockID entry = addBlock(function);
+    BlockID exit = addBlock(function);
+    ValueID value = addValue(function, entry, Opcode::Undefined);
+    jump(function, entry, exit, { });
+
+    ChangeLog log;
+    function.attach(log);
+    ChangeLog::Cursor seen = log.end();
+    AOT_TEST_CHECK(!log.hasChangesSince(seen));
+
+    function.edit(value, ValueEdit::Type).type = TypeTable::undefined;
+    function.edit(value, ValueEdit::Definition).become(Opcode::Null);
+    function.edit(entry, BlockEdit::Values);
+    function.edit(entry, BlockEdit::Rest);
+    AOT_TEST_CHECK(log.hasChangesSince(seen));
+    AOT_TEST_CHECK(log.valuesSince(seen).size() == 1 && log.valuesSince(seen)[0].value == value && log.valuesSince(seen)[0].edits == anyValueEdit);
+    OptionSet<BlockEdit> valuesAndRest { BlockEdit::Values, BlockEdit::Rest };
+    AOT_TEST_CHECK(log.blocksSince(seen).size() == 1 && log.blocksSince(seen)[0].block == entry && log.blocksSince(seen)[0].edits == valuesAndRest);
+
+    function.edit(value, ValueEdit::Type);
+    AOT_TEST_CHECK(log.valuesSince(seen).size() == 2);
+
+    seen = log.end();
+    function.edit(entry, BlockEdit::Edges);
+    AOT_TEST_CHECK(log.blocksSince(seen).size() == 2 && log.blocksSince(seen)[0].block == entry && log.blocksSince(seen)[1].block == exit && log.blocksSince(seen)[1].edits == BlockEdit::Incoming);
+    function.detach(log);
+}
+
+static void logHoldsOneEntryForWhatWasAddedUntilItIsShown()
+{
+    Function function;
+    BlockID entry = addBlock(function);
+    BlockID exit = addBlock(function);
+    ValueID old = addValue(function, entry, Opcode::Undefined);
+
+    ChangeLog log;
+    function.attach(log);
+    ChangeLog::Cursor seen = log.end();
+
+    ValueID first = function.add(Value(Opcode::Undefined));
+    ValueID second = function.add(Value(Opcode::Undefined));
+    function.edit(second).become(Opcode::Null);
+    function.edit(old, ValueEdit::Definition).become(Opcode::Null);
+    function.edit(first, ValueEdit::Type).type = TypeTable::undefined;
+    BlockID added = function.addBlock();
+    function.edit(added, BlockEdit::Values).values.append(first);
+    Terminator& terminator = function.edit(added, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
+    terminator.become(TerminatorKind::Jump);
+    terminator.targets.append(Target { exit, { }, { } });
+    function.edit(added, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
+    function.edit(entry, BlockEdit::Edges).handler = Target { added, { }, { } };
+    function.edit(entry, BlockEdit::Edges);
+
+    std::span<const ValueChange> values = log.valuesSince(seen);
+    AOT_TEST_CHECK(values.size() == 3 && values[0].value == first && values[0].edits == ValueEdit::Added && values[1].value == second && values[1].edits == ValueEdit::Added && values[2].value == old);
+    std::span<const BlockChange> blocks = log.blocksSince(seen);
+    AOT_TEST_CHECK(blocks.size() == 2 && blocks[0].block == added && blocks[0].edits == BlockEdit::Added && blocks[1].block == entry);
+
+    seen = log.end();
+    function.edit(second, ValueEdit::Definition);
+    function.edit(added, BlockEdit::Edges);
+    AOT_TEST_CHECK(log.valuesSince(seen).size() == 1 && log.valuesSince(seen)[0].value == second);
+    AOT_TEST_CHECK(log.blocksSince(seen).size() == 2 && log.blocksSince(seen)[0].block == added && log.blocksSince(seen)[1].block == exit);
+
+    seen = log.end();
+    ValueID third = function.add(Value(Opcode::Undefined));
+    log.forget();
+    AOT_TEST_CHECK(log.hasForgottenSince(seen));
+    seen = log.end();
+    function.edit(third, ValueEdit::Definition);
+    AOT_TEST_CHECK(log.valuesSince(seen).size() == 1 && log.valuesSince(seen)[0].value == third);
+    function.detach(log);
+}
+
+static void editOfWhatWasAddedTakesItsPromiseBack()
+{
+    ChangeLog log;
+    ChangeLog::Cursor seen = log.end();
+    log.didEdit(ValueID(4u), { ValueEdit::Added, ValueEdit::TypedByRule }, { }, { });
+    log.didEdit(ValueID(5u), { ValueEdit::Added, ValueEdit::TypedByRule }, { }, { });
+    log.didEdit(ValueID(5u), ValueEdit::Type, { }, { });
+    std::span<const ValueChange> values = log.valuesSince(seen);
+    AOT_TEST_CHECK(values.size() == 2 && values[0].edits.contains(ValueEdit::TypedByRule) && values[1].edits == ValueEdit::Added);
+}
+
 #define FOR_EACH_AOT_IR_FUNCTION_TEST(v) \
     v(constructorFormOfEachKind) v(coroutinesAreNotConstructors) v(moduleBodiesByKind) \
     v(entryParameterIndexesOfEveryFlagCombination) v(implicitEntryParametersHaveNoDeclaredPosition) \
@@ -568,7 +656,8 @@ static void remapIDsWithIdentityRemapsChangesNothing()
     v(bodyIsBlocksAndValues) v(copyOfFunctionSharesNothing) v(declarationLocationNeedsModule) \
     v(compactKeepsBlockReachedThroughHandlerOnly) v(compactSortsBlocksWithoutEarlierPredecessor) v(compactKeepsValidBlockOrder) \
     v(remapIDsRewritesTypesOfValues) v(remapIDsClearsExpectedTypeThatBecomesTheType) v(remapIDsRewritesPayloadsOfValues) v(remapIDsRewritesPayloadsOfTerminators) v(remapIDsRewritesHeader) \
-    v(remapIDsWithIdentityRemapsChangesNothing) v(adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne)
+    v(remapIDsWithIdentityRemapsChangesNothing) v(adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne) \
+    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(editOfWhatWasAddedTakesItsPromiseBack)
 
 std::span<const NativeTest> irFunctionTests()
 {

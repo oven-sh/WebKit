@@ -259,7 +259,7 @@ static ValueID addThisParameter(IRBuilder& builder)
     Function& version = builder.function();
     ValueID thisParameter = builder.addParameter(entryBlock, version.thisType.type);
 
-    auto& parameters = version.edit(entryBlock).parameters;
+    auto& parameters = version.edit(entryBlock, BlockEdit::Parameters).parameters;
     RELEASE_ASSERT(parameters.last() == thisParameter);
     parameters.removeLast();
     parameters.insert(*version.thisParameterIndex(), thisParameter);
@@ -442,7 +442,7 @@ static ReturnedValues returnUndefinedForThis(IRBuilder& builder, ValueID thisPar
 
         builder.setOrigin(version.at(block).terminator.origin());
         ValueID undefined = builder.insertBefore(pointBeforeTerminatorOf(version, block), IRBuilder::make(Opcode::Undefined));
-        version.edit(block).terminator.setValueOperand(undefined);
+        version.edit(block, BlockEdit::Terminator).terminator.setValueOperand(undefined);
     }
     builder.applyInsertions();
     return returnedValues;

@@ -39,6 +39,7 @@ constexpr size_t minSitesOfSmallPieceThatMayRun = 512;
 constexpr uint32_t minBytesSavedByPieceWithFewSites = 16;
 constexpr unsigned numberOfShards = 256;
 constexpr unsigned unitsInChunk = 1 << 16;
+constexpr unsigned unitsInBlock = 64;
 constexpr uint64_t hashBase = 0x9e3779b97f4a7c15ULL;
 
 constexpr auto hashBasePowers = [] {
@@ -119,6 +120,20 @@ static_assert(sizeof(Window) == 16);
 struct ChosenWindow {
     uint32_t unit;
     uint32_t function;
+    uint32_t window;
+};
+
+constexpr uint32_t isChosenWindow = 1u << 31;
+constexpr uint32_t windowMayRun = 1u << 30;
+constexpr uint32_t functionOfWindow = windowMayRun - 1;
+
+struct ChosenFamily {
+    uint32_t begin;
+    uint32_t end;
+    uint32_t body;
+    uint32_t sizeInBytes;
+    uint32_t firstLocation;
+    uint32_t firstUnit;
 };
 
 struct Family {
@@ -126,6 +141,8 @@ struct Family {
     uint32_t begin;
     uint32_t end;
     uint32_t firstUnit;
+    uint32_t sizeInBytes;
+    bool endsInCall;
     bool allAreIdentical;
 };
 
@@ -161,6 +178,18 @@ void zeroOnPool(const ParallelLoops& loops, std::span<uint8_t> bytes)
     forEachIndexInParallel(loops, static_cast<unsigned>((bytes.size() + bytesInChunk - 1) / bytesInChunk), [&](unsigned chunk) {
         size_t start = static_cast<size_t>(chunk) * bytesInChunk;
         zeroSpan(bytes.subspan(start, std::min(bytesInChunk, bytes.size() - start)));
+    });
+}
+
+template<typename T>
+void copyOnPool(const ParallelLoops& loops, std::span<T> target, std::span<const T> source)
+{
+    static_assert(std::is_trivially_copyable_v<T>);
+    constexpr size_t elementsInChunk = MB / sizeof(T);
+    forEachIndexInParallel(loops, static_cast<unsigned>((source.size() + elementsInChunk - 1) / elementsInChunk), [&](unsigned chunk) {
+        size_t start = static_cast<size_t>(chunk) * elementsInChunk;
+        size_t size = std::min(elementsInChunk, source.size() - start);
+        memcpySpan(target.subspan(start, size), source.subspan(start, size));
     });
 }
 
@@ -202,49 +231,74 @@ public:
                 selectWindowsOf(length);
             times.didFinish("outliner: select windows"_s);
         }
-        parallelSort(m_context.parallelLoops(), m_chosenLocations.mutableSpan(), [](const ChosenLocation& a, const ChosenLocation& b) {
-            return a.function != b.function ? a.function < b.function : a.firstUnit < b.firstUnit;
-        });
-        Vector<uint32_t> functionFirstLocations;
-        for (uint32_t i = 0; i < m_chosenLocations.size(); ++i) {
-            if (!i || m_chosenLocations[i].function != m_chosenLocations[i - 1].function)
-                functionFirstLocations.append(i);
-        }
-        forEachIndexInParallel(m_context.parallelLoops(), functionFirstLocations.size(), [&](unsigned number) {
-            uint32_t first = functionFirstLocations[number];
-            uint32_t end = number + 1 < functionFirstLocations.size() ? functionFirstLocations[number + 1] : m_chosenLocations.size();
-            m_result.sites[m_chosenLocations[first].function] = Vector<OutlinedSite>(end - first, [&](size_t i) {
-                auto& location = m_chosenLocations[first + i];
-                return OutlinedSite { m_offsets[location.firstUnit], location.sizeInBytes, location.body };
-            });
-        });
+        listSites();
         countStatistics();
         times.didFinish("outliner: list sites"_s);
-        m_context.destroyLater(std::tuple { WTF::move(m_firstUnit), WTF::move(m_prefixHashes), WTF::move(m_offsets), WTF::move(m_lengths), WTF::move(m_flags), WTF::move(m_runs), WTF::move(m_longestRepeatCandidate), WTF::move(m_chosenLocations), WTF::move(m_active), WTF::move(m_stillActive), WTF::move(m_found), WTF::move(m_windows) });
+        m_context.destroyLater(std::tuple { WTF::move(m_firstUnit), WTF::move(m_prefixHashes), WTF::move(m_offsets), WTF::move(m_lengths), WTF::move(m_flags), WTF::move(m_runs), WTF::move(m_longestRepeatCandidate), WTF::move(m_chosenLocations), WTF::move(m_active), WTF::move(m_stillActive), WTF::move(m_found), WTF::move(m_windows), WTF::move(m_chosenFamilies), WTF::move(m_takenUnits), WTF::move(m_functionOfBlock), WTF::move(m_code) });
         return WTF::move(m_result);
     }
 
 private:
+    // No two sites of a function begin at one offset, so the order in which the threads come by does not show.
+    void listSites()
+    {
+        const ParallelLoops& loops = m_context.parallelLoops();
+        constexpr unsigned locationsInChunk = 1 << 12;
+        unsigned numberOfChunks = (m_chosenLocations.size() + locationsInChunk - 1) / locationsInChunk;
+        auto forEachLocation = [&](const auto& functor) {
+            forEachIndexInParallel(loops, numberOfChunks, [&](unsigned chunk) {
+                size_t start = static_cast<size_t>(chunk) * locationsInChunk;
+                for (const ChosenLocation& location : m_chosenLocations.span().subspan(start, std::min<size_t>(locationsInChunk, m_chosenLocations.size() - start)))
+                    functor(location);
+            });
+        };
+        Vector<uint32_t> numberOfSites;
+        fillWithZeroesOnPool(loops, numberOfSites, m_functions.size());
+        forEachLocation([&](const ChosenLocation& location) {
+            std::atomic_ref(numberOfSites[location.function]).fetch_add(1, std::memory_order_relaxed);
+        });
+        forEachIndexInParallel(loops, m_functions.size(), [&](unsigned function) {
+            if (numberOfSites[function])
+                m_result.sites[function] = Vector<OutlinedSite>(std::exchange(numberOfSites[function], 0));
+        });
+        forEachLocation([&](const ChosenLocation& location) {
+            uint32_t position = std::atomic_ref(numberOfSites[location.function]).fetch_add(1, std::memory_order_relaxed);
+            m_result.sites[location.function][position] = { m_offsets[location.firstUnit], location.sizeInBytes, location.body };
+        });
+        forEachIndexInParallel(loops, m_functions.size(), [&](unsigned function) {
+            if (numberOfSites[function] > 1)
+                std::ranges::sort(m_result.sites[function], { }, &OutlinedSite::offset);
+        });
+    }
+
     void gatherUnits()
     {
         unsigned count = m_functions.size();
-        m_firstUnit.reserveInitialCapacity(count + 1);
-        size_t total = 0;
-        for (unsigned function = 0; function < count; ++function) {
-            m_firstUnit.append(safeCast<uint32_t>(total));
-            total += m_functions[function].body.units.size();
-        }
-        m_firstUnit.append(safeCast<uint32_t>(total));
-        m_numberOfUnits = safeCast<uint32_t>(total);
+        RELEASE_ASSERT(count <= functionOfWindow);
         const ParallelLoops& loops = m_context.parallelLoops();
+        size_t total = 0;
+        m_firstUnit.grow(count + 1);
+        forEachIndexInParallel(loops, count, [&](unsigned function) {
+            m_firstUnit[function] = safeCast<uint32_t>(m_functions[function].body.units.size());
+        });
+        for (unsigned function = 0; function < count; ++function)
+            total += std::exchange(m_firstUnit[function], safeCast<uint32_t>(total));
+        m_firstUnit[count] = safeCast<uint32_t>(total);
+        m_numberOfUnits = safeCast<uint32_t>(total);
         fillWithZeroesOnPool(loops, m_prefixHashes, total + 1);
         fillWithZeroesOnPool(loops, m_offsets, total);
         fillWithZeroesOnPool(loops, m_lengths, total);
         fillWithZeroesOnPool(loops, m_flags, total);
         fillWithZeroesOnPool(loops, m_runs, total);
         fillWithZeroesOnPool(loops, m_longestRepeatCandidate, total);
+        fillWithZeroesOnPool(loops, m_takenUnits, total / 64 + 1);
+        m_functionOfBlock.grow(total / unitsInBlock + 1);
+        m_code.grow(count);
         Vector<Vector<uint32_t, 0>> aliasesByBody = groupAliasesByBody();
         forEachIndexInParallel(loops, count, [&](unsigned function) {
+            m_code[function] = m_functions[function].body.bytes.span().data();
+            for (size_t block = (static_cast<size_t>(m_firstUnit[function]) + unitsInBlock - 1) / unitsInBlock; block * unitsInBlock < m_firstUnit[function + 1]; ++block)
+                m_functionOfBlock[block] = function;
             if (!m_functions[function].body.units.isEmpty())
                 gatherUnitsOf(function, aliasesByBody[function].span());
         });
@@ -558,12 +612,24 @@ private:
         m_stillActive.reserveCapacity(repeatCandidateCount);
         m_found.reserveCapacity(repeatCandidateCount);
         m_windows.reserveCapacity(repeatCandidateCount);
+        m_chosenLocations.reserveCapacity(repeatCandidateCount);
     }
 
     ALWAYS_INLINE uint64_t hashOf(uint32_t unit, unsigned length) const { return mix(m_prefixHashes[unit + length] - m_prefixHashes[unit] * hashBasePowers[length]); }
     ALWAYS_INLINE uint32_t sizeInBytesOf(uint32_t unit, unsigned length) const { return m_offsets[unit + length - 1] + m_lengths[unit + length - 1] - m_offsets[unit]; }
     // A taken window is at least this long, so one that overlaps this window covers its first or last unit.
     ALWAYS_INLINE bool isFree(uint32_t unit, unsigned length) const { return !((m_flags[unit] | m_flags[unit + length - 1]) & IsTaken); }
+    // The flags get IsTaken behind the families of a length. Until then only these bits have it.
+    ALWAYS_INLINE bool isTakenUnit(uint32_t unit) const { return m_takenUnits[unit / 64] >> (unit % 64) & 1; }
+    ALWAYS_INLINE bool isStillFree(uint32_t unit, unsigned length) const { return !isTakenUnit(unit) && !isTakenUnit(unit + length - 1); }
+    ALWAYS_INLINE void takeUnits(uint32_t unit, unsigned length)
+    {
+        static_assert(longestWindow < 64);
+        uint64_t bits = (1ULL << length) - 1;
+        m_takenUnits[unit / 64] |= bits << (unit % 64);
+        if (unit % 64 + length > 64)
+            m_takenUnits[unit / 64 + 1] |= bits >> (64 - unit % 64);
+    }
     ALWAYS_INLINE bool savesTooLittleWhereItMayRun(uint32_t unit, unsigned length) const
     {
         return ((m_flags[unit] | m_flags[unit + length - 1]) & MayRun) && sizeInBytesOf(unit, length) < sizeOfNearCall + minBytesSavedAtSiteThatMayRun;
@@ -574,7 +640,13 @@ private:
             return flags & MayRun;
         });
     }
-    unsigned functionOf(uint32_t unit) const { return std::ranges::upper_bound(m_firstUnit, unit) - m_firstUnit.begin() - 1; }
+    unsigned functionOf(uint32_t unit) const
+    {
+        unsigned function = m_functionOfBlock[unit / unitsInBlock];
+        while (m_firstUnit[function + 1] <= unit)
+            ++function;
+        return function;
+    }
 
     bool hasSingleCaller(std::span<const Window> sortedByUnit) const { return sortedByUnit.back().unit < m_firstUnit[functionOf(sortedByUnit.front().unit) + 1]; }
     uint64_t numberOfCopiesOf(OptionalIndex singleCaller) const { return singleCaller ? 1 : m_inputs.numberOfSharedCodeCopies; }
@@ -593,15 +665,15 @@ private:
         uint32_t sizeInBytes = sizeInBytesOf(first, length);
         if (sizeInBytesOf(second, length) != sizeInBytes)
             return false;
-        auto& a = m_functions[firstFunction];
-        auto& b = m_functions[secondFunction];
         bool endsInCall = m_flags[first + length - 1] & IsCall;
         if (endsInCall != !!(m_flags[second + length - 1] & IsCall))
             return false;
-        if (memcmp(a.body.bytes.span().data() + m_offsets[first], b.body.bytes.span().data() + m_offsets[second], sizeInBytes))
+        if (memcmp(m_code[firstFunction] + m_offsets[first], m_code[secondFunction] + m_offsets[second], sizeInBytes))
             return false;
         if (!endsInCall)
             return true;
+        auto& a = m_functions[firstFunction];
+        auto& b = m_functions[secondFunction];
         auto callAt = [&](const CompiledCode& code, uint32_t offset) -> const Relocation& {
             auto found = std::ranges::lower_bound(code.body.relocations, offset, { }, &Relocation::offset);
             RELEASE_ASSERT(found != code.body.relocations.end() && found->offset == offset);
@@ -612,7 +684,9 @@ private:
 
     void selectWindowsOf(unsigned length)
     {
-        m_active.appendVector(m_unitsByLongest[length]);
+        size_t numberOfActiveBefore = m_active.size();
+        m_active.grow(numberOfActiveBefore + m_unitsByLongest[length].size());
+        copyOnPool(m_context.parallelLoops(), m_active.mutableSpan().subspan(numberOfActiveBefore), m_unitsByLongest[length].span());
         m_unitsByLongest[length].clear();
         if (m_active.isEmpty())
             return;
@@ -698,18 +772,46 @@ private:
                     saving = savingsOf(numberOfSites, sizeInBytes, endsInCall, m_inputs.numberOfSharedCodeCopies);
                 if (saving >= minSavings) {
                     bool allAreIdentical = true;
+                    unsigned firstFunction = functionOf(first);
+                    constexpr size_t unitPrefetchDistance = 16;
+                    constexpr size_t codePrefetchDistance = 8;
+                    auto prefetchUnit = [&](Window& window) {
+                        window.function = functionOf(window.unit);
+                        __builtin_prefetch(&m_code[window.function]);
+                        __builtin_prefetch(&m_offsets[window.unit]);
+                        __builtin_prefetch(&m_lengths[window.unit + length - 1]);
+                        __builtin_prefetch(&m_flags[window.unit]);
+                    };
+                    auto prefetchCode = [&](const Window& window) {
+                        __builtin_prefetch(m_code[window.function] + m_offsets[window.unit]);
+                    };
+                    for (size_t i = begin; i < std::min(end, begin + unitPrefetchDistance); ++i)
+                        prefetchUnit(windows[i]);
+                    for (size_t i = begin; i < std::min(end, begin + codePrefetchDistance); ++i)
+                        prefetchCode(windows[i]);
                     for (size_t i = begin; i < end; ++i) {
-                        windows[i].function = functionOf(windows[i].unit);
-                        allAreIdentical = allAreIdentical && isIdentical(first, windows[begin].function, windows[i].unit, windows[i].function, length);
+                        if (end - i > unitPrefetchDistance)
+                            prefetchUnit(windows[i + unitPrefetchDistance]);
+                        if (end - i > codePrefetchDistance)
+                            prefetchCode(windows[i + codePrefetchDistance]);
+                        unsigned function = windows[i].function;
+                        allAreIdentical = allAreIdentical && isIdentical(first, firstFunction, windows[i].unit, function, length);
+                        windows[i].function = function | (mayRun(windows[i].unit, length) ? windowMayRun : 0);
                     }
-                    shardFamilies[shard].append({ saving, static_cast<uint32_t>(shardStart[shard] + begin), static_cast<uint32_t>(shardStart[shard] + end), first, allAreIdentical });
+                    shardFamilies[shard].append({ saving, static_cast<uint32_t>(shardStart[shard] + begin), static_cast<uint32_t>(shardStart[shard] + end), first, sizeInBytes, endsInCall, allAreIdentical });
                 }
                 begin = end;
             }
         });
         Vector<Family> families;
-        for (auto& familiesInShard : shardFamilies)
-            families.appendVector(familiesInShard);
+        ShardStarts firstFamily;
+        uint32_t numberOfFamilies = 0;
+        for (unsigned shard = 0; shard < numberOfShards; ++shard)
+            firstFamily[shard] = std::exchange(numberOfFamilies, static_cast<uint32_t>(numberOfFamilies + shardFamilies[shard].size()));
+        families.grow(numberOfFamilies);
+        forEachIndexInParallel(m_context.parallelLoops(), numberOfShards, [&](unsigned shard) {
+            memcpySpan(families.mutableSpan().subspan(firstFamily[shard], shardFamilies[shard].size()), shardFamilies[shard].span());
+        });
         parallelSort(m_context.parallelLoops(), families.mutableSpan(), [](const Family& a, const Family& b) {
             return a.saving != b.saving ? a.saving > b.saving : a.firstUnit < b.firstUnit;
         });
@@ -719,6 +821,8 @@ private:
     void chooseFamilies(unsigned length, const Vector<Family>& families)
     {
         Vector<ChosenWindow> chosen;
+        m_chosenFamilies.shrink(0);
+        uint32_t numberOfLocations = 0;
         for (size_t number = 0; number < families.size(); ++number) {
             constexpr uint32_t windowPrefetchDistance = 16;
             constexpr size_t familyWindowPrefetchDistance = 8;
@@ -730,34 +834,35 @@ private:
             if (number + familyFlagPrefetchDistance < families.size()) {
                 auto& later = families[number + familyFlagPrefetchDistance];
                 for (uint32_t i = later.begin; i < std::min(later.end, later.begin + windowsInCacheLine); ++i)
-                    __builtin_prefetch(&m_flags[m_windows[i].unit]);
+                    __builtin_prefetch(&m_takenUnits[m_windows[i].unit / 64]);
             }
             chosen.shrink(0);
             uint32_t afterLast = 0;
             for (uint32_t i = family.begin; i < family.end; ++i) {
                 if (family.end - i > windowPrefetchDistance)
-                    __builtin_prefetch(&m_flags[m_windows[i + windowPrefetchDistance].unit]);
+                    __builtin_prefetch(&m_takenUnits[m_windows[i + windowPrefetchDistance].unit / 64]);
                 uint32_t unit = m_windows[i].unit;
-                if ((!chosen.isEmpty() && unit < afterLast) || !isFree(unit, length))
+                if ((!chosen.isEmpty() && unit < afterLast) || !isStillFree(unit, length))
                     continue;
-                unsigned function = m_windows[i].function;
+                unsigned function = m_windows[i].function & functionOfWindow;
                 if (!chosen.isEmpty() && !family.allAreIdentical && !isIdentical(chosen[0].unit, chosen[0].function, unit, function, length))
                     continue;
-                chosen.append({ unit, function });
+                chosen.append({ unit, function, i });
                 afterLast = unit + length;
             }
             if (chosen.isEmpty())
                 continue;
-            if (chosen.size() < minSitesOfSmallPieceThatMayRun && sizeInBytesOf(chosen[0].unit, length) < sizeOfNearCall + minBytesSavedByPieceWithFewSites) {
+            bool knowsSize = family.allAreIdentical;
+            if (chosen.size() < minSitesOfSmallPieceThatMayRun && (knowsSize ? family.sizeInBytes : sizeInBytesOf(chosen[0].unit, length)) < sizeOfNearCall + minBytesSavedByPieceWithFewSites) {
                 chosen.removeAllMatching([&](const ChosenWindow& window) {
-                    return mayRun(window.unit, length);
+                    return !!(m_windows[window.window].function & windowMayRun);
                 });
                 if (chosen.isEmpty())
                     continue;
             }
             uint32_t first = chosen[0].unit;
-            uint32_t sizeInBytes = sizeInBytesOf(first, length);
-            bool endsInCall = m_flags[first + length - 1] & IsCall;
+            uint32_t sizeInBytes = knowsSize ? family.sizeInBytes : sizeInBytesOf(first, length);
+            bool endsInCall = knowsSize ? family.endsInCall : m_flags[first + length - 1] & IsCall;
             OptionalIndex singleCaller;
             if (chosen.last().function == chosen[0].function)
                 singleCaller = { chosen[0].function };
@@ -765,13 +870,29 @@ private:
             if (saving < minSavings)
                 continue;
             uint32_t body = m_result.bodies.size();
-            for (auto& [unit, function] : chosen) {
-                for (unsigned i = 0; i < length; ++i)
-                    m_flags[unit + i] |= IsTaken;
-                m_chosenLocations.append({ function, unit, sizeInBytes, body });
+            for (auto& [unit, function, window] : chosen) {
+                takeUnits(unit, length);
+                m_windows[window].function |= isChosenWindow;
             }
-            m_result.bodies.append({ chosen[0].function, m_offsets[first], sizeInBytes, static_cast<uint32_t>(chosen.size()), singleCaller, endsInCall });
+            m_chosenFamilies.append({ family.begin, family.end, body, sizeInBytes, std::exchange(numberOfLocations, numberOfLocations + static_cast<uint32_t>(chosen.size())), first });
+            m_result.bodies.append({ chosen[0].function, 0, sizeInBytes, static_cast<uint32_t>(chosen.size()), singleCaller, endsInCall });
         }
+        size_t numberOfLocationsBefore = m_chosenLocations.size();
+        m_chosenLocations.grow(numberOfLocationsBefore + numberOfLocations);
+        std::span<ChosenLocation> locations = m_chosenLocations.mutableSpan().subspan(numberOfLocationsBefore);
+        forEachIndexInParallel(m_context.parallelLoops(), m_chosenFamilies.size(), [&](unsigned number) {
+            const ChosenFamily& family = m_chosenFamilies[number];
+            m_result.bodies[family.body].offset = m_offsets[family.firstUnit];
+            uint32_t location = family.firstLocation;
+            for (uint32_t i = family.begin; i < family.end; ++i) {
+                const Window& window = m_windows[i];
+                if (!(window.function & isChosenWindow))
+                    continue;
+                locations[location++] = { window.function & functionOfWindow, window.unit, family.sizeInBytes, family.body };
+                for (unsigned unit = 0; unit < length; ++unit)
+                    m_flags[window.unit + unit] |= IsTaken;
+            }
+        });
     }
 
     void removeTakenUnits()
@@ -823,6 +944,9 @@ private:
     Vector<uint8_t> m_flags;
     Vector<uint8_t> m_runs;
     Vector<uint8_t> m_longestRepeatCandidate;
+    Vector<uint64_t> m_takenUnits;
+    Vector<uint32_t> m_functionOfBlock;
+    Vector<const uint8_t*> m_code;
     std::array<Vector<uint32_t>, longestWindow + 1> m_unitsByLongest;
     struct ChosenLocation {
         uint32_t function;
@@ -831,6 +955,7 @@ private:
         uint32_t body;
     };
     Vector<ChosenLocation> m_chosenLocations;
+    Vector<ChosenFamily> m_chosenFamilies;
     Vector<uint32_t> m_active;
     Vector<uint32_t> m_stillActive;
     Vector<Window> m_found;

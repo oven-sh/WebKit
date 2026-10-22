@@ -271,7 +271,7 @@ static void emitIntegerTests(IRBuilder& builder, FunctionAnalyses& analyses, Spl
     Function& function = builder.function();
     builder.setOrigin(function.at(split.path->group.root).origin());
     builder.setHandler(function.at(split.head).handler);
-    function.edit(split.head).terminator = Terminator { };
+    function.edit(split.head, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
     analyses.didChangeControlFlow();
     builder.moveToEndOf(split.head);
 

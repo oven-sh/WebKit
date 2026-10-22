@@ -546,7 +546,7 @@ static Function createBody(const AnalysisContext& context, TypeArena& types, con
         const Value& value = split.at(inSplit);
         builder.setOrigin(value.origin());
         ValueID added = builder.addParameter(entry, value.type);
-        body.edit(added).setExpected(value.expected());
+        body.edit(added, ValueEdit::Type).setExpected(value.expected());
         body.derivation.parameterMap.append(ParameterOrigin { original });
         return added;
     };

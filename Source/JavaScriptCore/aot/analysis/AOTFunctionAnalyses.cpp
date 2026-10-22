@@ -990,6 +990,11 @@ EarlierTest FunctionAnalyses::findEarlierTest(const Value& test, BlockID at)
     return failedTests().find(test, at);
 }
 
+bool FunctionAnalyses::hasFailedTestOf(ValueID value)
+{
+    return failedTests().hasTestOf(value);
+}
+
 ExecutionCount FunctionAnalyses::executionCountOf(BlockID block)
 {
     if (!m_context.flow || !m_context.id || !m_context.flow->runsAtMostOnce(m_context.program, m_context.id))

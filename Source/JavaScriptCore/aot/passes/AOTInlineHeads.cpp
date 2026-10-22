@@ -398,7 +398,7 @@ static void skipTestsThatArgumentsDecide(IRBuilder& builder, FunctionAnalyses& a
         Value copy = IRBuilder::make(Opcode::TypeTest, { incomingArguments[testedIndex] });
         copy.setTestedType(test.testedType());
         builder.setOrigin(test.origin());
-        function.edit(edge.from).terminator = Terminator { };
+        function.edit(edge.from, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
         builder.moveToEndOf(edge.from);
         branch.setConditionOperand(builder.append(WTF::move(copy)));
         for (Target& target : branch.targets) {

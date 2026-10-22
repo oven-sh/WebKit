@@ -68,7 +68,7 @@ static ValueID appendEdgeResult(IRBuilder& builder, Edge edge, uint32_t proof)
     const Terminator& terminator = function.at(edge.from).terminator;
     RELEASE_ASSERT(targetResultsOf(terminator.kind, edge.targetIndex, terminator.targets.size()) == TargetResults::Proofs);
 
-    Target& target = editTarget(function, edge);
+    Target& target = editTarget(function, edge, BlockEdit::Arguments);
     EdgeResultPosition position { edge.from, edge.targetIndex, static_cast<uint32_t>(target.proofs.size()) };
     target.proofs.append(proof);
 
@@ -137,13 +137,13 @@ BlockID IRBuilder::addHandlerBlock(BlockRole role, ValueID subject, BlockFrequen
 {
     RELEASE_ASSERT(role != BlockRole::Ordinary);
     BlockID id = addBlock(frequency);
-    Block& block = m_function.edit(id);
+    Block& block = m_function.edit(id, BlockEdit::Rest);
     block.role = role;
     block.subject = subject;
     return id;
 }
 
-void IRBuilder::forEachIncomingTarget(BlockID block, NOESCAPE const ScopedLambda<void(Edge, Target&)>& functor)
+Vector<Edge, 8> IRBuilder::incomingEdgesOf(BlockID block)
 {
     Vector<Edge, 8> edges;
     if (m_analyses) {
@@ -160,9 +160,7 @@ void IRBuilder::forEachIncomingTarget(BlockID block, NOESCAPE const ScopedLambda
             });
         }
     }
-
-    for (Edge edge : edges)
-        functor(edge, editTarget(m_function, edge));
+    return edges;
 }
 
 uint32_t IRBuilder::numberOfParametersForEdgeResults(BlockID block)
@@ -172,10 +170,10 @@ uint32_t IRBuilder::numberOfParametersForEdgeResults(BlockID block)
         return 0;
 
     uint32_t largest = 0;
-    forEachIncomingTarget(block, [&](Edge edge, Target&) {
+    for (Edge edge : incomingEdgesOf(block)) {
         if (!edge.isHandlerEdge())
             largest = std::max(largest, numberOfEdgeResults(m_function, edge.from, edge.targetIndex));
-    });
+    }
     RELEASE_ASSERT(largest <= contents.parameters.size());
     return largest;
 }
@@ -211,7 +209,7 @@ void IRBuilder::appendArgument(Edge edge, ValueID value)
 
 void IRBuilder::appendArgument(Edge edge, ValueID value, uint32_t numberOfParametersForEdgeResults)
 {
-    Target& target = editTarget(m_function, edge);
+    Target& target = editTarget(m_function, edge, BlockEdit::Arguments);
     size_t numberOfParameters = m_function.at(target.block).parameters.size();
     size_t numberOfResults = edge.isHandlerEdge() ? 0 : numberOfEdgeResults(m_function, edge.from, edge.targetIndex);
     RELEASE_ASSERT(target.arguments.size() + numberOfResults < numberOfParameters);
@@ -224,13 +222,7 @@ void IRBuilder::appendArgument(Edge edge, ValueID value, uint32_t numberOfParame
 
 ValueID IRBuilder::addEdgeResult(Edge edge, uint32_t proof)
 {
-#if ASSERT_ENABLED
-    unsigned numberOfIncomingTargets = 0;
-    forEachIncomingTarget(targetOf(m_function, edge).block, [&](Edge, Target&) {
-        ++numberOfIncomingTargets;
-    });
-    ASSERT(numberOfIncomingTargets == 1);
-#endif
+    ASSERT(incomingEdgesOf(targetOf(m_function, edge).block).size() == 1);
 
     ValueID id = appendEdgeResult(*this, edge, proof);
     didAddDetachedValue(id);
@@ -246,14 +238,15 @@ void IRBuilder::removeParameters(BlockID block, const BitVector& parameterIndexe
 
     auto& parameters = m_function.edit(block, BlockEdit::Parameters).parameters;
     Vector<BlockID, 8> changedBlocks { block };
-    forEachIncomingTarget(block, [&](Edge edge, Target& target) {
+    for (Edge edge : incomingEdgesOf(block)) {
+        Target& target = editTarget(m_function, edge, BlockEdit::Arguments);
         changedBlocks.append(edge.from);
         size_t numberOfArguments = target.arguments.size();
         size_t numberOfResults = edge.isHandlerEdge() ? 0 : numberOfEdgeResults(m_function, edge.from, edge.targetIndex);
         RELEASE_ASSERT(numberOfArguments + numberOfResults == parameters.size());
         if (!numberOfResults) {
             removeAtIndexes(target.arguments, parameterIndexes);
-            return;
+            continue;
         }
 
         BitVector argumentIndexes(numberOfArguments);
@@ -266,12 +259,12 @@ void IRBuilder::removeParameters(BlockID block, const BitVector& parameterIndexe
         }
         removeAtIndexes(target.arguments, argumentIndexes);
         if (proofIndexes.isEmpty())
-            return;
+            continue;
 
         const Terminator& terminator = m_function.at(edge.from).terminator;
         RELEASE_ASSERT(targetResultsOf(terminator.kind, edge.targetIndex, terminator.targets.size()) == TargetResults::Proofs);
         removeAtIndexes(target.proofs, proofIndexes);
-    });
+    }
 
     for (size_t index : parameterIndexes)
         becomeUndefined(m_function, parameters[index]);
@@ -296,37 +289,34 @@ Terminator IRBuilder::makeTerminator(TerminatorKind kind, std::initializer_list<
     return terminator;
 }
 
-ValueID IRBuilder::addValue(Value&& value, OptionSet<ValueEdit> edits)
+ValueID IRBuilder::addValue(Value&& value)
 {
-    m_function.add(WTF::move(value), edits);
+    m_function.add(WTF::move(value));
     return ValueID(m_function.values.size() - 1);
 }
 
-// What to tell the log of changes when the value is added as it is.
-OptionSet<ValueEdit> IRBuilder::prepare(Value& value)
+void IRBuilder::prepare(Value& value)
 {
     RELEASE_ASSERT(value.opcode != Opcode::Parameter);
     value.setOrigin(m_origin);
-    if (keepsExpectedTypes(m_context.program) && !value.expectedForTyping()) {
-        typeByRule(m_context.program, m_function, value, m_types);
-        return { ValueEdit::Added, ValueEdit::TypedByRule };
-    }
-    value.type = resultTypeOf(m_context.program, m_function, value, m_types);
-    return ValueEdit::Added;
+    TypingMemo* memo = m_analyses ? m_analyses->typingMemo() : nullptr;
+    value.type = resultTypeOf(m_context.program, m_function, value, m_types, memo);
+    if (keepsExpectedTypes(m_context.program) && !value.expected())
+        value.setExpected(expectedTypeOf(m_context.program, m_function, value, m_types, memo));
 }
 
 ValueID IRBuilder::addDetached(Value&& value)
 {
-    OptionSet<ValueEdit> edits = prepare(value);
-    ValueID id = addValue(WTF::move(value), edits);
+    prepare(value);
+    ValueID id = addValue(WTF::move(value));
     didAddDetachedValue(id);
     return id;
 }
 
 ValueID IRBuilder::append(Value&& value)
 {
-    OptionSet<ValueEdit> edits = prepare(value);
-    return appendPrepared(WTF::move(value), edits);
+    prepare(value);
+    return appendPrepared(WTF::move(value));
 }
 
 ValueID IRBuilder::appendWithType(Value&& value, TypeID type)
@@ -337,10 +327,10 @@ ValueID IRBuilder::appendWithType(Value&& value, TypeID type)
     return appendPrepared(WTF::move(value));
 }
 
-ValueID IRBuilder::appendPrepared(Value&& value, OptionSet<ValueEdit> edits)
+ValueID IRBuilder::appendPrepared(Value&& value)
 {
     RELEASE_ASSERT(m_block);
-    ValueID id = addValue(WTF::move(value), edits);
+    ValueID id = addValue(WTF::move(value));
     m_function.edit(m_block, BlockEdit::Values).values.append(id);
     didAddDetachedValue(id);
     didListValues(m_block, singleElementSpan(id));
@@ -407,8 +397,8 @@ ValueID IRBuilder::insertBefore(ProgramPoint point, Value&& value)
 {
     const Block& block = m_function.at(point.block);
     RELEASE_ASSERT(point.index <= block.values.size());
-    OptionSet<ValueEdit> edits = prepare(value);
-    ValueID id = addValue(WTF::move(value), edits);
+    prepare(value);
+    ValueID id = addValue(WTF::move(value));
     m_insertions.insert(point, id);
     didAddDetachedValue(id);
     return id;
@@ -439,14 +429,14 @@ void IRBuilder::eraseValues(BlockID id, const BitVector& indexes)
 Terminator& IRBuilder::openTerminator()
 {
     RELEASE_ASSERT(m_block);
-    Block& block = m_function.edit(m_block);
+    Block& block = m_function.edit(m_block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
     RELEASE_ASSERT(isUnterminated(block));
     return block.terminator;
 }
 
 void IRBuilder::closeBlock()
 {
-    Terminator& terminator = m_function.edit(m_block).terminator;
+    Terminator& terminator = m_function.edit(m_block, BlockEdit::Terminator).terminator;
     for (const Target& target : terminator.targets)
         RELEASE_ASSERT(target.block != entryBlock && target.block.index() < m_function.blocks.size());
     terminator.setOrigin(m_origin);

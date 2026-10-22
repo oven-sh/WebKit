@@ -218,7 +218,7 @@ static void emitCalleeSplit(SiteExpansion& expansion, const CalleeSplit& split)
         [&](uint32_t armIndex, ValueID narrowedCallee) {
             auto finishArmWithCallOn = [&](ValueID narrowedReceiver) {
                 ValueID call = expansion.appendOriginal({ OperandIndex::Call::callee, narrowedCallee, { }, { } });
-                expansion.function().edit(call).setThisValueOperand(narrowedReceiver);
+                expansion.function().edit(call, ValueEdit::Definition).setThisValueOperand(narrowedReceiver);
                 context.analyses.didChangeValues();
                 expansion.finishArm(call);
             };

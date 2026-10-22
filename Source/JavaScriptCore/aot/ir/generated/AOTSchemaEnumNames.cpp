@@ -1015,13 +1015,14 @@ ASCIILiteral nameOf(ReportSet value)
 
 ASCIILiteral nameOf(TestingSwitch value)
 {
-    static constexpr EnumeratorNames<15, 310> names {
+    static constexpr EnumeratorNames<16, 341> names {
         {
-            0, 18, 35, 70, 80, 100, 120, 136, 156, 177, 207, 222, 242, 266, 287
+            0, 18, 35, 70, 80, 100, 120, 136, 156, 177, 207, 222, 242, 266, 287, 310
         },
         "IgnoreBranchHints\0" "ForceGCSlowPaths\0" "MayEncounterMasqueradesAsUndefined\0" "DropGuard\0" "IgnoreExpectedTypes\0"
         "DropReferenceGuards\0" "ProveEverything\0" "NoCallConvertsCells\0" "NoLayoutIsMadeSeldom\0" "FlattenUntilHeldWhereverLegal\0"
-        "DelayFlowRules\0" "DelayOtherFlowRules\0" "GenerateAllCodeDirectly\0" "CheckProofsAtRunTime\0" "ConvertOperandsAtFetch"
+        "DelayFlowRules\0" "DelayOtherFlowRules\0" "GenerateAllCodeDirectly\0" "CheckProofsAtRunTime\0" "ConvertOperandsAtFetch\0"
+        "GenerateDirectCodeByLinearScan"
     };
     return nameAt(names, value);
 }

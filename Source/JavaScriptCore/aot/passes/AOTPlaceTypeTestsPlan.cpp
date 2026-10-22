@@ -314,7 +314,7 @@ bool expectedTypeTellsResultOf(FunctionPassContext& context, const TestSite& sit
     const Value& use = context.function.at(site.use);
     if (!use.type || use.expected())
         return true;
-    TypeID expectedNow = expectedTypeOf(context.program, context.function, use, context.types);
+    TypeID expectedNow = expectedTypeOf(context.program, context.function, use, context.types, &context.typingMemo);
     return !expectedNow || expectedNow == use.type;
 }
 

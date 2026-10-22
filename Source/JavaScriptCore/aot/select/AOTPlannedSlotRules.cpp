@@ -173,7 +173,7 @@ static void repeatInFrontOfBranches(GroupRewriter& rewriter, const RepeatedTest&
 {
     Function& function = rewriter.function();
     for (BlockID branch : test.branches)
-        function.edit(branch).terminator.setConditionOperand(rewriter.copyRootToEndOf(branch));
+        function.edit(branch, BlockEdit::Terminator).terminator.setConditionOperand(rewriter.copyRootToEndOf(branch));
     if (test.hasOtherUsers)
         rewriter.leaveUnclaimed(test.group.root);
     else

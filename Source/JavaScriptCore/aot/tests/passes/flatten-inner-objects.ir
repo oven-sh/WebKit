@@ -1,7 +1,7 @@
 # `{ c: { d: 1 } }` makes one object. Where nobody ever holds the inner object its fields become private fields of the outer layout and the field goes away.
 # Anywhere else the field stays and its slot defers the inner object: the allocation of the inner object stays as the list of what goes into the room of the outer one (isMadeOnDemand),
 # what only reads and stores slots borrows the outer object (GetFlattenedSlot), and whatever wants the object itself reads the slot with the operation that makes it.
-# TODO: flatten: the form that keeps the slot is off since 10-21 00:45, until every folder of test programs is right with it taken wherever it is legal
+# TODO: flatten: the form that keeps the slot is off until every folder of test programs is right with it taken wherever it is legal
 # FORM: Prepared
 # OPTIONS: references=narrow check=VerifyEachPass
 # RUN: pass FlattenInnerObjects

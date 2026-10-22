@@ -311,6 +311,15 @@ auto JSONSerializerBuilder::planLayouts(const Type& objects, TypeCertainty certa
         if (jsonSupportOf(program(), inputs().flow, layout) == JSONSupport::Compiled)
             plan.layouts.append(layout);
     }
+    // The order of the tests, and who gets one where there are too many.
+    if (plan.layouts.size() > 1) {
+        Vector<std::pair<JSONLikelihood, LayoutID>, 8> ranked(plan.layouts.size(), [&](size_t index) {
+            return std::pair { jsonLikelihoodOf(program(), inputs().flow, plan.layouts[index]), plan.layouts[index] };
+        });
+        std::ranges::sort(ranked);
+        for (size_t index = 0; index < ranked.size(); ++index)
+            plan.layouts[index] = ranked[index].second;
+    }
     BuildContext& build = inputs().build;
     uint64_t limit = build.limit(LimitID::MaxJSONLayoutSetMembers);
     if (plan.layouts.size() > limit) {

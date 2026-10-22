@@ -131,26 +131,34 @@ void dropDataOfUnreachedCode(const FlowApplyContext& context)
 // The readers of an array go by what flow says it holds. An array of a record that stays constant data begins with the storage that fits that too, as a literal that ExpandData makes of a small record does.
 void narrowContentsOfData(const FlowApplyContext& context)
 {
+    struct RootSite {
+        DataID data;
+        AllocationSiteID site;
+    };
+
     Program& program = context.program;
-    Vector<AllocationSiteID> rootSites(program.data.size());
-    BitVector isNamedTwice(program.data.size());
-    for (uint32_t index = 0; index < context.application.bodies.size(); ++index) {
+    const ParallelLoops& loops = context.build.parallelLoops();
+    Vector<RootSite> sites = collectInParallel<RootSite>(loops, context.application.bodies.size(), [&](unsigned index, Vector<RootSite>& found) {
         const Function& function = program.functions[index];
         if (!function.hasBody())
-            continue;
+            return;
         for (const FlowAllocationStamp& stamp : context.application.bodies[index].allocations) {
             const Value& value = function.at(stamp.value);
-            if (value.opcode != Opcode::Data)
-                continue;
-            AllocationSiteID& rootSite = rootSites[value.data().index()];
-            if (rootSite)
-                isNamedTwice.quickSet(value.data().index());
-            rootSite = stamp.site;
+            if (value.opcode == Opcode::Data)
+                found.append({ value.data(), stamp.site });
         }
+    });
+    Vector<AllocationSiteID> rootSites(program.data.size());
+    BitVector isNamedTwice(program.data.size());
+    for (const RootSite& root : sites) {
+        AllocationSiteID& rootSite = rootSites[root.data.index()];
+        if (rootSite)
+            isNamedTwice.quickSet(root.data.index());
+        rootSite = root.site;
     }
-    for (uint32_t index = 0; index < program.data.size(); ++index) {
+    forEachIndexInParallel(loops, program.data.size(), [&](unsigned index) {
         if (!rootSites[index] || isNamedTwice.quickGet(index))
-            continue;
+            return;
         forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t ordinal, const DataNode& node) {
             const auto* array = node.tryAs<DataNode::Array>();
             if (!array || !isStorageOfArray(*array))
@@ -158,7 +166,7 @@ void narrowContentsOfData(const FlowApplyContext& context)
             if (TypeID elements = context.results.dataNodeStamp(rootSites[index], ordinal).elements)
                 const_cast<DataNode::Array*>(array)->contents = elements;
         });
-    }
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

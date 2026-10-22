@@ -131,7 +131,7 @@ BlockID IRBuilder::splitEdge(Edge edge)
         didAddDetachedValue(id);
     }
 
-    Terminator& jump = m_function.edit(added).terminator;
+    Terminator& jump = m_function.edit(added, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     jump.become(TerminatorKind::Jump);
     jump.targets.append(Target { original.block, WTF::move(original.arguments), { } });
     jump.setOrigin(origin);
@@ -163,24 +163,24 @@ Vector<BlockID> IRBuilder::splitBlock(BlockID block, std::span<const uint32_t> a
     parts.reserveInitialCapacity(ascendingIndexes.size());
     for (size_t i = 0; i < ascendingIndexes.size(); ++i) {
         parts.append(addBlock(frequency));
-        m_function.edit(parts.last()).shape = shape;
+        m_function.edit(parts.last(), BlockEdit::Rest).shape = shape;
     }
     m_handler = WTF::move(handler);
 
-    auto& first = m_function.edit(block);
+    auto& first = m_function.edit(block, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
     Terminator terminator = std::exchange(first.terminator, Terminator { });
     BlockID previous = block;
     for (size_t i = 0; i < parts.size(); ++i) {
         size_t begin = ascendingIndexes[i];
         size_t end = i + 1 < parts.size() ? ascendingIndexes[i + 1] : numberOfValues;
-        m_function.edit(parts[i]).values.append(first.values.subspan(begin, end - begin));
-        auto& jump = m_function.edit(previous).terminator;
+        m_function.edit(parts[i], BlockEdit::Values).values.append(first.values.subspan(begin, end - begin));
+        auto& jump = m_function.edit(previous, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
         jump.become(TerminatorKind::Jump);
         jump.targets.append(Target { parts[i], { }, { } });
         jump.setOrigin(m_origin);
         previous = parts[i];
     }
-    m_function.edit(previous).terminator = WTF::move(terminator);
+    m_function.edit(previous, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = WTF::move(terminator);
     first.values.shrink(ascendingIndexes.front());
     didChangeControlFlow(singleElementSpan(block));
     return parts;
@@ -207,7 +207,7 @@ void IRBuilder::redirectEdge(Edge edge, Target&& target)
 void IRBuilder::convertBranchToJump(BlockID block, uint32_t targetIndex)
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
-    auto& terminator = m_function.edit(block).terminator;
+    auto& terminator = m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     RELEASE_ASSERT(terminator.isConditionalBranch());
 
     Vector<ValueID, 2> results;
@@ -243,13 +243,13 @@ void IRBuilder::convertBranchToJump(BlockID block, uint32_t targetIndex)
 
 void IRBuilder::demoteReturnCall(BlockID block)
 {
-    Terminator& terminator = m_function.edit(block).terminator;
+    Terminator& terminator = m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     RELEASE_ASSERT(terminator.kind == TerminatorKind::ReturnCall && block != m_block && m_insertions.isEmpty());
 
     ValueID result = terminator.callOperand();
     // SiteExpansion returns the converted result of a call that it has marked itself.
-    if (Value& call = m_function.edit(result); FlagMask::isDemotedTailCall(call.opcode))
-        call.setIsDemotedTailCall(true);
+    if (FlagMask::isDemotedTailCall(m_function.at(result).opcode))
+        m_function.edit(result, ValueEdit::Definition).setIsDemotedTailCall(true);
     Vector<TailCast, 2> casts;
     for (TailCast cast : terminator.casts())
         casts.append(cast);
@@ -281,7 +281,7 @@ void IRBuilder::demoteReturnCall(BlockID block)
 
 void IRBuilder::removeHandler(BlockID block)
 {
-    m_function.edit(block).handler = std::nullopt;
+    m_function.edit(block, { BlockEdit::Edges, BlockEdit::Arguments }).handler = std::nullopt;
     didChangeControlFlow(singleElementSpan(block));
 }
 

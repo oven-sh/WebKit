@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBlockCycles.h"
+#include "AOTHeat.h"
 #include "AOTTypeTestConditions.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
@@ -104,6 +105,42 @@ EarlierTest TestSiteReporter::findEarlierTest(const Value& test) const
         return EarlierTest::Unknown;
     m_hasFailedEarlierTest = true;
     return EarlierTest::Failed;
+}
+
+bool TestSiteReporter::mayHaveFailedTestOf(ValueID value) const
+{
+    return function().at(m_point.block).frequency != BlockFrequency::Normal || analyses().hasFailedTestOf(value);
+}
+
+bool TestSiteReporter::takesAwaySitesInColdCode()
+{
+    if (!m_isColdFunction)
+        m_isColdFunction = isCold(m_context.inputs.heat.of(program(), m_context.id));
+    if (!*m_isColdFunction)
+        return false;
+    if (m_blockOfHeatClass != m_point.block) {
+        m_blockOfHeatClass = m_point.block;
+        m_blockIsCold = heatClassOf(m_context, m_point.block) == HeatClass::Cold;
+    }
+    return m_blockIsCold;
+}
+
+void TestSiteReporter::keepPlanOfUse(PlannedAccess&& planned)
+{
+    if (m_plannedAccessOfValue.isEmpty())
+        m_plannedAccessOfValue.fill(UINT32_MAX, function().values.size());
+    m_plannedAccessOfValue[m_use.index()] = m_plannedAccesses.size();
+    m_plannedAccesses.append(WTF::move(planned));
+}
+
+std::optional<PlannedAccess> TestSiteReporter::takePlanOfUse(bool isOnlyCalled)
+{
+    if (m_plannedAccessOfValue.isEmpty())
+        return std::nullopt;
+    uint32_t position = std::exchange(m_plannedAccessOfValue[m_use.index()], UINT32_MAX);
+    if (position == UINT32_MAX || m_plannedAccesses[position].isOnlyCalled.value_or(isOnlyCalled) != isOnlyCalled)
+        return std::nullopt;
+    return WTF::move(m_plannedAccesses[position]);
 }
 
 bool TestSiteReporter::canPlace(const Value& test) const

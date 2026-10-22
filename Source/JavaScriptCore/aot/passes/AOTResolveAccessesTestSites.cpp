@@ -68,18 +68,33 @@ static bool storedValueFitsBehindTests(FunctionPassContext& context, const Prope
     return plan.isResolved() && plan.receiverTest == ReceiverTest::None && plan.stores() && plan.storedValueFits;
 }
 
-static std::optional<TestedAccess> planAccessUnderTests(TestSiteReporter& reporter, const Value& access, PropertyAccessQuery& query)
+enum class ReceiversOfQuery : bool { AsExpected, Chosen };
+
+static std::optional<TestedAccess> planAccessUnderTests(TestSiteReporter& reporter, const Value& access, PropertyAccessQuery& query, ReceiversOfQuery receivers = ReceiversOfQuery::AsExpected)
 {
     FunctionPassContext& context = reporter.context();
     AccessOperands operands = operandsOfNamedAccess(access);
+    // The rule of calls has asked the same of a read or a store that it left alone.
+    std::optional<PlannedAccess> planned;
+    if (receivers == ReceiversOfQuery::AsExpected && !query.expectsEmptySlot && !query.mayTestSlotFirst)
+        planned = reporter.takePlanOfUse(false);
     while (true) {
         TestedAccess tested;
-        tested.plan = planWithoutCalls(context, query);
-        if (!tested.plan.isResolved() || tested.plan.needsNoTest())
-            return std::nullopt;
+        if (planned) {
+            query.isOnlyCalled = false;
+            query.maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
+            tested = { WTF::move(planned->plan), planned->stamp, WTF::move(planned->tests) };
+            planned = std::nullopt;
+            if (tested.plan.needsNoTest())
+                return std::nullopt;
+        } else {
+            tested.plan = planWithoutCalls(context, query);
+            if (!tested.plan.isResolved() || tested.plan.needsNoTest())
+                return std::nullopt;
 
-        tested.stamp = createSlotStamp(context, access, tested.plan);
-        tested.tests = createAccessTests(context, tested.plan, { operands.receiver, operands.stored, tested.stamp });
+            tested.stamp = createSlotStamp(context, access, tested.plan);
+            tested.tests = createAccessTests(context, tested.plan, { operands.receiver, operands.stored, tested.stamp });
+        }
         if (tested.tests.tests.isEmpty())
             return std::nullopt;
 
@@ -221,7 +236,7 @@ static std::optional<TestedAccess> planForReceiversThatClaimNoAbsence(TestSiteRe
     expected.predicted = WTF::move(others);
     expected.mayBeNullish = query.receivers.mayBeNullish;
     query.receivers = WTF::move(expected);
-    std::optional<TestedAccess> tested = planAccessUnderTests(reporter, access, query);
+    std::optional<TestedAccess> tested = planAccessUnderTests(reporter, access, query, ReceiversOfQuery::Chosen);
     if (!tested || claimsAbsenceOfNameOnInstalledPrototype(reporter, tested->plan, query.key))
         return std::nullopt;
     return tested;

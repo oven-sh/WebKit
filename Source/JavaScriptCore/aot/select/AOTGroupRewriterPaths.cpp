@@ -63,7 +63,7 @@ BlockFrequency GroupRewriter::slowPathFrequency() const
 void GroupRewriter::moveRootToBlockEnd()
 {
     flushInsertions();
-    BlockValues& values = function().edit(state().block).values;
+    BlockValues& values = function().edit(state().block, BlockEdit::Values).values;
     if (values.last() == m_group.root)
         return;
 
@@ -78,7 +78,7 @@ void GroupRewriter::emitTestAndBranch()
     RELEASE_ASSERT(state().isOnlyBranchedOn && branchesOf(function().at(m_group.root).opcode) != Branches::No);
     moveRootToBlockEnd();
 
-    Terminator& branch = function().edit(state().block).terminator;
+    Terminator& branch = function().edit(state().block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     RELEASE_ASSERT(branch.kind == TerminatorKind::Branch && branch.conditionOperand() == m_group.root);
     changeBranchKind(branch, TerminatorKind::TestAndBranch);
     analyses().didChangeBlock(state().block);
@@ -124,7 +124,7 @@ void GroupRewriter::expandRoot()
     flushInsertions();
     m_expansion = builder().beginExpansion(ProgramPoint { state().block, state().index });
     builder().setHandler(m_expansion->handler);
-    unfuseBranch(function().edit(m_expansion->continuation).terminator, m_group.root);
+    unfuseBranch(function().edit(m_expansion->continuation, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, m_group.root);
     m_session.m_needsCompaction |= m_expansion->results.isEmpty();
     m_didReplaceRoot = false;
 }

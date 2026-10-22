@@ -18,7 +18,7 @@
 
 namespace JSC { namespace AOT { namespace Wire {
 
-inline constexpr uint64_t schemaHash = 0x90673dbd44dd2f0aull;
+inline constexpr uint64_t schemaHash = 0x16f9c8e90fc1eaa4ull;
 inline constexpr uint32_t none = UINT32_MAX;
 inline constexpr uint32_t Magic = 0x52495442;
 inline constexpr int64_t MaxTrackedInteger = 4611686018427387903ll;

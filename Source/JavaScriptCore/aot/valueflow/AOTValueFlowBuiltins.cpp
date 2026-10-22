@@ -898,6 +898,8 @@ private:
         // A store through the proxy and a change of its integrity reach the target as definitions of its properties.
         m_context.mark(objectsAt(BuiltinOperand::argument(0)), ObjectMutation::RedefineProperty);
         answer(unknownObject(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+        if (m_builtins.canonicalID(m_builtin) == Builtins::Proxy)
+            m_context.add(m_call.result, m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_tables.heap().objectsThatLetInUnseenCode()));
     }
 
     // Where an instance of a class may exist, native code does with it what hangs on the constructor and on the prototype object. So the rows of both count from the first overload that is applied
@@ -974,6 +976,17 @@ private:
         return isWritten || m_context.meet(m_context.valueOf(m_context.lookup(holders, ValueFlowName::property(key))), ValueSets::complement(m_universe.undefinedValue()));
     }
 
+    bool hasFieldUnderName(ClimbingSet holders, BuiltinName name)
+    {
+        PropertyKeyID key = m_program.keyOf(name);
+        bool hasField = false;
+        m_context.forEachMember(known(withSourcesOfCopies(holders)), [&](ValueFlowObjectID object) {
+            LayoutID layout = m_universe.layoutOf(object);
+            hasField |= layout && std::ranges::contains(m_program.at(layout).fields, key, &Field::key);
+        });
+        return hasField;
+    }
+
     // The sets tell one string from another only where it names a property. A literal that the call spells out says which one it is, and any other operand may be any text.
     bool mayHaveText(const BuiltinCondition& condition) const
     {
@@ -1034,6 +1047,8 @@ private:
                 noteIn(condition->firstText());
         };
         BuiltinID builtin = m_builtins.canonicalID(m_builtin);
+        if (const BuiltinUnseenCode* row = m_builtins.unseenCodeOf(builtin); row && row->condition && row->condition->hasProperty && hasFieldUnderName(valueAt(row->condition->operand), row->condition->hasProperty))
+            noteIn(row->condition->hasProperty);
         for (const BuiltinModuleLoad& load : m_builtins.moduleLoadsOf(builtin))
             note(load.condition);
         for (const BuiltinCalledFunction& called : m_builtins.calledFunctionsOf(builtin))
@@ -3082,7 +3097,7 @@ static bool isCalledWithFunctionsOfStartupModules(ValueFlowRuleContext& context,
 // The host finds the method under its name. Of the names under which it passes a function of a start-up module the stores are followed: on an object nobody knows lies what some statement has stored
 // under the name, on whatever object, or the method of a class of the table of which an instance may exist. A class that the table does not have comes out of native code that nothing describes,
 // which says so by itself: see letUndeclaredNativeCodeRun().
-static bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName name)
+bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName name)
 {
     const ValueFlowUniverse& universe = context.universe();
     if (context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads)), universe.callables()))

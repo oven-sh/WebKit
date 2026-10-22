@@ -13,7 +13,6 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
-#include "AOTExactBuffer.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
@@ -158,21 +157,19 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
             }
         }
     });
-    size_t numberOfNodesWritten = 0;
     size_t numberOfCallGroups = 0;
-    for (const FoundInChunk& found : chunks) {
-        numberOfNodesWritten += found.written.size();
+    for (const FoundInChunk& found : chunks)
         numberOfCallGroups += found.firstNodesOfCallGroups.size();
-    }
-    Vector<NodeUnderName> nodes;
-    nodes.reserveInitialCapacity(numberOfNodesWritten);
     m_firstNodesOfCallGroups.reserveInitialCapacity(numberOfCallGroups);
+    Vector<Vector<NodeUnderName>> nodesOfChunks(chunks.size(), [&](size_t chunk) {
+        return WTF::move(chunks[chunk].written);
+    });
     for (FoundInChunk& found : chunks) {
-        nodes.appendVector(WTF::move(found.written));
         m_firstNodesOfCallGroups.appendVector(WTF::move(found.firstNodesOfCallGroups));
         m_nodesOfMarks.appendVector(WTF::move(found.nodesOfMarks));
     }
     chunks.clear();
+    ParallelArray<NodeUnderName> nodes = ParallelArray<NodeUnderName>::concatenationOf(loops, WTF::move(nodesOfChunks));
     parallelSort(loops, nodes.mutableSpan(), [](const NodeUnderName& a, const NodeUnderName& b) {
         return std::pair { a.name, a.node } < std::pair { b.name, b.node };
     });
@@ -184,19 +181,22 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
     }
     uint32_t numberOfNames = firstNodeOfName.size();
     firstNodeOfName.append(nodes.size());
-    m_nodesByName.reserveInitialCapacity(numberOfNames);
-    for (uint32_t position = 0; position < numberOfNames; ++position)
-        m_nodesByName.add(nodes[firstNodeOfName[position]].name, NodesWrittenUnderName());
-    // The table has all its names: each thread fills the entries of the names that it takes.
-    forEachIndexInParallel(loops, numberOfNames, [&](unsigned position) {
-        std::span<const NodeUnderName> nodesOfName = nodes.subspan(firstNodeOfName[position], firstNodeOfName[position + 1] - firstNodeOfName[position]);
-        NodesWrittenUnderName& entry = m_nodesByName.find(nodesOfName[0].name)->value;
+    m_namesWritten.grow(numberOfNames);
+    m_positionOfNameWritten.reserve(loops, numberOfNames);
+    m_nodesOfNamesWritten = ParallelArray<NodesWrittenUnderName>(loops, numberOfNames, [&](unsigned position) {
+        std::span<const NodeUnderName> nodesOfName = nodes.span().subspan(firstNodeOfName[position], firstNodeOfName[position + 1] - firstNodeOfName[position]);
+        m_namesWritten[position] = nodesOfName[0].name;
+        m_positionOfNameWritten.addConcurrently(IntHash<uint64_t>::hash(nodesOfName[0].name), position);
+        NodesWrittenUnderName entry;
         entry.number = position;
         entry.nodes = Vector<WrittenNode>(nodesOfName.size(), [&](size_t index) {
             return nodesOfName[index].written;
         });
         indexNodesWrittenUnder(inputs, entry);
+        return entry;
     });
+    m_positionOfNameWritten.didAddConcurrently(numberOfNames);
+    inputs.build.destroyLater(WTF::move(nodes));
 }
 
 // On any thread.
@@ -235,7 +235,8 @@ ValueFlowHeapView::ValueFlowHeapView(const ValueFlowResultInputs& inputs)
     : m_inputs(inputs)
     , m_ownIndex(inputs.heapIndex ? nullptr : makeUnique<ValueFlowHeapIndex>(inputs))
     , m_index(inputs.heapIndex ? *inputs.heapIndex : *m_ownIndex)
-    , m_maker(inputs.makerPool().take())
+    , m_makerPool(inputs.makerPool())
+    , m_maker(m_makerPool.take())
     , m_escaped(inputs.solver().valueOf(ValueFlowProgramNodes::escaped()))
     , m_lost(inputs.solver().valueOf(ValueFlowProgramNodes::lost()))
     , m_escapedAndWritable(m_maker.intersect(m_escaped, ValueSets::complement(unseenCodeChangesRealm(inputs.solution) ? inputs.universe().lockedObjects() : inputs.universe().objectsOfRealm())))
@@ -244,7 +245,7 @@ ValueFlowHeapView::ValueFlowHeapView(const ValueFlowResultInputs& inputs)
 
 ValueFlowHeapView::~ValueFlowHeapView()
 {
-    m_inputs.makerPool().giveBack(m_maker);
+    m_makerPool.giveBack(m_maker);
 }
 
 static ValueSetID valueSeenByRulesAt(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const ValueFlowOperand& operand)
@@ -312,7 +313,6 @@ ValueSetID ValueFlowHeapView::writtenUnder(ValueSetMaker& maker, ValueSetID obje
     const NodesWrittenUnderName* nodes = m_index.findNodesWrittenUnder(name);
     if (!nodes)
         return ValueSets::nothing;
-    // Many ask what lies under one name in the same objects. Where a look at a node or two answers, the look costs less than the question who has asked before.
     constexpr size_t fewestNodesToRemember = 4;
     if (nodes->nodes.size() < fewestNodesToRemember)
         return findWrittenUnder(maker, objects, *nodes);
@@ -720,7 +720,6 @@ static bool passesAnyOf(const ValueFlowBuiltinApplication& application, SetsMeet
     });
 }
 
-// See bindsNoArgument().
 static void appendBoundFunctionsBindingNoArgument(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const ValueFlowStatement& call, ValueSetID callees, Vector<ValueFlowObjectID, 4>& boundFunctions)
 {
     const ValueFlowUniverse& universe = inputs.universe();
@@ -799,10 +798,8 @@ void ValueFlowHeapIndex::findOperandsOfCalls(const ValueFlowResultInputs& inputs
     m_operandsOfCalls = WTF::move(operandsOfCalls);
 }
 
-// Takes all the built-in functions that one call applies to the same operands at once. The application names none of them.
 using ValueFlowBuiltinApplicationsFunctor = ScopedLambda<void(const ValueFlowBuiltinApplication&, ValueSetID builtinCallees)>;
 
-// The callees are what the rules see at the first operand.
 static void forEachBuiltinAppliedByOperation(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, const ValueFlowStatement& call, ValueSetID callees, const ValueFlowHeapIndex::OperandsOfCall* knownOperands, ValueSetID amongFunctions, SetsMeetingOneSet* wantedOperands, const ValueFlowBuiltinApplicationFunctor& functor, const ValueFlowBuiltinApplicationsFunctor* functorForAllCallees)
 {
     const ValueFlowUniverse& universe = inputs.universe();
@@ -1783,6 +1780,9 @@ private:
     void forEachWriteAmong(std::span<const uint32_t>, NOESCAPE const Invocable<void(const Writer&, const ValueFlowNodeKey&, ValueSetID value)> auto&) const;
     ObjectsOfSet findObjectsOf(ValueSetID) const;
     const ObjectsOfSet& objectsOf(ValueSetID);
+    std::optional<uint32_t> positionOfSetLookedAt(ValueSetID) const;
+    void noteObjectsOf(ValueSetID, ObjectsOfSet&&);
+    const ObjectsOfSet& objectsOfSetAt(uint32_t position) const;
     const ObjectsOfSet& objectsOfSetOfWrite(ValueSetID) const;
     void forEachLayoutListedAmong(const ObjectsOfSet&, const Writer&, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
     bool admits(std::span<const LayoutID> layoutsOfReceiver, LayoutID) const;
@@ -1793,7 +1793,7 @@ private:
     StoreUnderName describeStore(ValueSetMaker&, const Writer&, ValueFlowName) const;
     // The store is what the call before has left there: the description of the last statement and name that were looked at.
     WritesThroughSet describeWrite(ValueSetMaker&, StoreUnderName&, const Writer&, const ValueFlowNodeKey&, ValueSetID value) const;
-    Vector<WritesThroughSet> collectWrites(ValueSetMakers&) const;
+    ParallelArray<WritesThroughSet> collectWrites(ValueSetMakers&) const;
     void noteWrites();
     void noteWritesInto(ValueSetMaker&, LayoutID, const WritesThroughSet&);
     void noteWritesThroughPlaceholder(ValueSetMaker&, StoresIntoObjects&, const WritesThroughSet&);
@@ -1821,7 +1821,10 @@ private:
     Vector<Vector<PropertyKeyID>> m_keysReadFrom;
     ValueSetID m_objectsPutAboveOthers { ValueSets::nothing };
     const LayoutsOfObjects& m_layoutsOfObjects;
-    HashMap<uint32_t, ObjectsOfSet, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_objectsOfSet;
+    Vector<uint32_t> m_setsLookedAt;
+    Vector<ObjectsOfSet> m_objectsOfSetsOfWrites;
+    Vector<ObjectsOfSet> m_objectsOfOtherSets;
+    HashedIndex m_positionOfSetLookedAt;
     Vector<StoresIntoObjects> m_storesOfLayout;
     Vector<Vector<LayoutID>> m_layoutsExpectedDirectlyBelow;
     HashMap<uint32_t, Vector<LayoutID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_layoutsAdmittedBy;
@@ -2180,17 +2183,37 @@ auto StoresByLayout::findObjectsOf(ValueSetID set) const -> ObjectsOfSet
 
 auto StoresByLayout::objectsOf(ValueSetID set) -> const ObjectsOfSet&
 {
-    return m_objectsOfSet.ensure(set.index(), [&] {
-        return findObjectsOf(set);
-    }).iterator->value;
+    if (std::optional<uint32_t> position = positionOfSetLookedAt(set))
+        return objectsOfSetAt(*position);
+    noteObjectsOf(set, findObjectsOf(set));
+    return m_objectsOfOtherSets.last();
+}
+
+auto StoresByLayout::objectsOfSetAt(uint32_t position) const -> const ObjectsOfSet&
+{
+    return position < m_objectsOfSetsOfWrites.size() ? m_objectsOfSetsOfWrites[position] : m_objectsOfOtherSets[position - m_objectsOfSetsOfWrites.size()];
+}
+
+std::optional<uint32_t> StoresByLayout::positionOfSetLookedAt(ValueSetID set) const
+{
+    return m_positionOfSetLookedAt.find(IntHash<uint32_t>::hash(set.index()), [&](uint32_t position) {
+        return m_setsLookedAt[position] == set.index();
+    });
+}
+
+void StoresByLayout::noteObjectsOf(ValueSetID set, ObjectsOfSet&& objects)
+{
+    m_positionOfSetLookedAt.add(IntHash<uint32_t>::hash(set.index()), m_setsLookedAt.size());
+    m_setsLookedAt.append(set.index());
+    m_objectsOfOtherSets.append(WTF::move(objects));
 }
 
 // noteWrites() has looked at the set of every write.
 auto StoresByLayout::objectsOfSetOfWrite(ValueSetID set) const -> const ObjectsOfSet&
 {
-    auto found = m_objectsOfSet.find(set.index());
-    RELEASE_ASSERT(found != m_objectsOfSet.end());
-    return found->value;
+    std::optional<uint32_t> position = positionOfSetLookedAt(set);
+    RELEASE_ASSERT(position);
+    return objectsOfSetAt(*position);
 }
 
 // The type of a receiver is proven, so the object has one of the layouts that it lists, or one that is expected to lie below one of them: an allocation is typed with the layout that it names.
@@ -2292,7 +2315,7 @@ void StoresByLayout::lookAt(std::span<const ValueSetID> sets)
 {
     Vector<ValueSetID> unseen;
     for (ValueSetID set : sets) {
-        if (!m_objectsOfSet.contains(set.index()))
+        if (!positionOfSetLookedAt(set))
             unseen.append(set);
     }
     Vector<ObjectsOfSet> objects(unseen.size());
@@ -2300,7 +2323,7 @@ void StoresByLayout::lookAt(std::span<const ValueSetID> sets)
         objects[position] = findObjectsOf(unseen[position]);
     });
     for (size_t position = 0; position < unseen.size(); ++position)
-        m_objectsOfSet.add(unseen[position].index(), WTF::move(objects[position]));
+        noteObjectsOf(unseen[position], WTF::move(objects[position]));
 }
 
 auto StoresByLayout::placeholdersInSetOfWrite(ValueSetID set) const -> PlaceholdersInSet
@@ -2658,7 +2681,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
     };
 }
 
-auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> Vector<WritesThroughSet>
+auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArray<WritesThroughSet>
 {
     const ParallelLoops& loops = m_inputs.loops();
     auto isInEarlierGroup = [](const WritesThroughSet& a, const WritesThroughSet& b) {
@@ -2674,17 +2697,6 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> Vector<Write
         merged.accessorForms |= write.accessorForms;
         merged.numbers.unite(write.numbers);
     };
-    auto foldSortedWrites = [&](Vector<WritesThroughSet>& writes) {
-        size_t size = 0;
-        for (const WritesThroughSet& write : writes) {
-            if (!size || writes[size - 1].group() != write.group())
-                writes[size++] = write;
-            else
-                fold(writes[size - 1], write);
-        }
-        writes.shrink(size);
-    };
-
     // Many statements write through one set under one name. Each thread has one record for each group that it has met, so nobody holds a record per statement.
     struct GroupsOfWorker {
         Vector<WritesThroughSet> writes;
@@ -2706,18 +2718,38 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> Vector<Write
         groups.positionOfGroup.add(hash, groups.writes.size());
         groups.writes.append(write);
     });
-    size_t numberOfWrites = 0;
-    for (const GroupsOfWorker& groups : groupsOfWorker)
-        numberOfWrites += groups.writes.size();
-    Vector<WritesThroughSet> writes;
-    writes.reserveInitialCapacity(numberOfWrites);
-    for (GroupsOfWorker& groups : groupsOfWorker)
-        writes.appendVector(std::exchange(groups, { }).writes);
-
+    Vector<Vector<WritesThroughSet>> writesOfWorkers(groupsOfWorker.size(), [&](size_t worker) {
+        return WTF::move(groupsOfWorker[worker].writes);
+    });
+    ParallelArray<WritesThroughSet> writes = ParallelArray<WritesThroughSet>::concatenationOf(loops, WTF::move(writesOfWorkers));
+    forEachIndexInParallel(loops, groupsOfWorker.size(), [&](unsigned worker) {
+        groupsOfWorker[worker] = { };
+    });
     parallelSort(loops, writes.mutableSpan(), isInEarlierGroup);
-    foldSortedWrites(writes);
-    moveToExactBuffer(writes);
-    return writes;
+
+    constexpr size_t writesPerShare = 1 << 13;
+    size_t numberOfWrites = writes.size();
+    unsigned numberOfShares = static_cast<unsigned>((numberOfWrites + writesPerShare - 1) / writesPerShare);
+    Vector<size_t> firstWriteOfShare(numberOfShares + 1, [&](size_t share) {
+        size_t first = std::min(share * writesPerShare, numberOfWrites);
+        while (first && first < numberOfWrites && writes[first - 1].group() == writes[first].group())
+            ++first;
+        return first;
+    });
+    Vector<Vector<WritesThroughSet>> groupsOfShares(numberOfShares);
+    forEachIndexInParallel(loops, numberOfShares, [&](unsigned share) {
+        Vector<WritesThroughSet>& groups = groupsOfShares[share];
+        if (firstWriteOfShare[share] >= firstWriteOfShare[share + 1])
+            return;
+        for (const WritesThroughSet& write : writes.span().subspan(firstWriteOfShare[share], firstWriteOfShare[share + 1] - firstWriteOfShare[share])) {
+            if (groups.isEmpty() || groups.last().group() != write.group())
+                groups.append(write);
+            else
+                fold(groups.last(), write);
+        }
+    });
+    m_inputs.build.destroyLater(WTF::move(writes));
+    return ParallelArray<WritesThroughSet>::concatenationOf(loops, WTF::move(groupsOfShares));
 }
 
 void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const WritesThroughSet& writes)
@@ -2782,7 +2814,7 @@ void StoresByLayout::noteWrites()
     const ParallelLoops& loops = m_inputs.loops();
     uint32_t numberOfLayouts = m_inputs.program.layouts.size();
     ValueSetMakers makers(m_inputs);
-    Vector<WritesThroughSet> writes = collectWrites(makers);
+    ParallelArray<WritesThroughSet> writes = collectWrites(makers);
 
     Vector<uint32_t> firstWriteOfSet;
     for (uint32_t index = 0; index < writes.size(); ++index) {
@@ -2807,7 +2839,7 @@ void StoresByLayout::noteWrites()
                 write.isNamedByOperation = false;
         }
     });
-    if (std::ranges::any_of(writes, &WritesThroughSet::createsData))
+    if (std::ranges::any_of(writes.span(), &WritesThroughSet::createsData))
         indexNumbersInData();
 
     Vector<uint32_t> firstSetOfLayout;
@@ -2928,9 +2960,18 @@ void StoresByLayout::noteWrites()
         }
     }
 
-    m_objectsOfSet.reserveInitialCapacity(numberOfSets);
-    for (uint32_t position = 0; position < numberOfSets; ++position)
-        m_objectsOfSet.add(writes[firstWriteOfSet[position]].set, WTF::move(objectsOfSet[position]));
+    RELEASE_ASSERT(m_setsLookedAt.isEmpty());
+    m_objectsOfSetsOfWrites = WTF::move(objectsOfSet);
+    m_setsLookedAt.grow(numberOfSets);
+    m_positionOfSetLookedAt.reserve(loops, numberOfSets);
+    forEachIndexInParallel(loops, numberOfSets, [&](unsigned position) {
+        uint32_t set = writes[firstWriteOfSet[position]].set;
+        m_setsLookedAt[position] = set;
+        m_positionOfSetLookedAt.addConcurrently(IntHash<uint32_t>::hash(set), position);
+    });
+    m_positionOfSetLookedAt.didAddConcurrently(numberOfSets);
+    m_inputs.build.destroyLater(WTF::move(writes));
+    m_inputs.build.destroyLater(WTF::move(writesThroughPlaceholdersInto));
 }
 
 // The layouts that the type of a receiver admits and that have an object which the placeholders may stand for.
@@ -3422,7 +3463,6 @@ private:
     void noteApplication(Noter, const ValueFlowBuiltinApplication&);
     void noteRefusedOperands(Noter, const ValueFlowBuiltinApplication&);
 
-    // What the built-in functions of one set, applied in one mode, note of the operands of a call, whatever the operands are. Each thing comes once, however many of the functions note it.
     struct NotesOfBuiltins {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NotesOfBuiltins);
 
@@ -3442,11 +3482,9 @@ private:
         };
         struct RefusedOperand {
             BuiltinOperand operand;
-            // What every one of the functions that may refuse something at the operand is sure to take there.
             ValueSetID taken;
         };
 
-        // One of the functions has a parameter at the place of the receiver: what it takes there hangs on the call, so each function has its turn by itself.
         bool areToldApart { false };
         bool enumeratesAnything { false };
         Vector<BuiltinOperand, 4> enumerated;
@@ -3500,7 +3538,6 @@ private:
     ListsOfSetsByNumber m_receiversOfReads;
     // By worker. Empty once the unions are made.
     Vector<Notes> m_notes;
-    // For noteRefusedOperands(), by receivers and name: what the program has stored under the name on the receivers or above them.
     ValueFlowAnswersAboutSets m_foundAboveReceivers;
     NotesOfSetsOfBuiltins m_notesOfSetsOfBuiltins;
     BitVector m_builtinsThatLookAtObjects;
@@ -4211,7 +4248,6 @@ void UsesOfObjects::noteApplication(Noter noter, const ValueFlowBuiltinApplicati
     }
 }
 
-// What noteApplication() notes for each of the functions in turn, as far as it hangs on the function and the mode alone. What a receiver may be refused hangs on the call: see noteApplicationOfAll().
 auto UsesOfObjects::findNotesOf(ValueSetMaker& maker, ValueSetID builtinFunctions, BuiltinCallMode mode) const -> std::unique_ptr<NotesOfBuiltins>
 {
     const Program& program = m_inputs.program;
@@ -4308,7 +4344,6 @@ auto UsesOfObjects::findNotesOf(ValueSetMaker& maker, ValueSetID builtinFunction
                 }
             }
         }
-        // What one function or another may refuse is all but what every one of them takes.
         for (const NotesOfBuiltins::RefusedOperand& entry : takenAtOperands) {
             if (entry.taken == ValueSets::anything)
                 continue;
@@ -4331,7 +4366,6 @@ void UsesOfObjects::noteTestUnderKeys(Noter noter, const ValueFlowBuiltinApplica
     const ValueFlowHeapTables& tables = universe.builtinTables().heap();
     ValueSetID objects = application.valueAt(object, noter.maker);
     ValueSetID keys = application.valueAt(key, noter.maker);
-    // An operand that is left out is undefined, which names a property like any other value.
     if (sets.isEmpty(keys) || sets.meet(keys, tables.keysNobodyKnows()) || sets.meet(keys, tables.numberKinds())) {
         noter.notes.observedUnderAnyKey.add(objects);
         return;
@@ -4342,7 +4376,6 @@ void UsesOfObjects::noteTestUnderKeys(Noter noter, const ValueFlowBuiltinApplica
     });
 }
 
-// One call has hundreds of built-in callees where its callee is little known, a quarter of a million calls share a few thousand sets of them, and all that is noted is united in the end.
 void UsesOfObjects::noteApplicationOfAll(Noter noter, const ValueFlowBuiltinApplication& application, ValueSetID builtinCallees)
 {
     const NotesOfBuiltins& notes = m_notesOfSetsOfBuiltins.ensure(static_cast<uint64_t>(builtinCallees.index()) << 8 | static_cast<uint64_t>(application.mode()), [&] {
@@ -4369,7 +4402,6 @@ void UsesOfObjects::noteApplicationOfAll(Noter noter, const ValueFlowBuiltinAppl
     for (const NotesOfBuiltins::RefusedOperand& refused : notes.refusedOperands)
         noter.notes.enumerated.add(noter.maker.intersect(application.valueAt(refused.operand, noter.maker), ValueSets::complement(refused.taken)));
 
-    // A receiver may be refused by a function that the program has stored under the name of the callee. Such a function has its turn by itself: what it notes a second time changes nothing.
     PropertyKeyID key = application.kind == ValueFlowCallKind::Call ? m_inputs.program.at(application.function).at(application.site).calleeKey() : PropertyKeyID();
     auto stored = key ? m_hostFunctionsStoredUnderKey.find(key.index()) : m_hostFunctionsStoredUnderKey.end();
     if (stored == m_hostFunctionsStoredUnderKey.end())
@@ -5287,17 +5319,36 @@ static Vector<Vector<PropertyKeyID>> chooseAppendedKeys(const FieldResults& resu
         for (PropertyKeyID key : keys)
             isCandidate.quickSet(key.index());
     }
-    Vector<Vector<PropertyKeyID>> keysDeclaredBelow = collectKeysDeclaredBelow(program, isCandidate);
-    LayoutsByKey layoutsWithField = collectLayoutsWithFields(program, isCandidate);
-    BitVector declaredLayoutsWithKeys(numberOfLayouts);
+    Vector<Vector<PropertyKeyID>> keysDeclaredBelow;
+    LayoutsByKey layoutsWithField;
+    Vector<Vector<LayoutID>> declaredViews;
+    runTasksInParallel(loops, {
+        [&] {
+            keysDeclaredBelow = collectKeysDeclaredBelow(program, isCandidate);
+        },
+        [&] {
+            layoutsWithField = collectLayoutsWithFields(program, isCandidate);
+        },
+        [&] {
+            BitVector declaredLayoutsWithKeys(numberOfLayouts);
+            for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+                if (!keysByLayout[index].isEmpty())
+                    declaredLayoutsWithKeys.quickSet(declaredLayoutOf(program, LayoutID(index)).index());
+            }
+            declaredViews = declaredViewsOf(program, declaredLayoutsWithKeys);
+        },
+    });
+    Vector<uint32_t> layoutsWithKeys;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         if (!keysByLayout[index].isEmpty())
-            declaredLayoutsWithKeys.quickSet(declaredLayoutOf(program, LayoutID(index)).index());
+            layoutsWithKeys.append(index);
     }
-    Vector<Vector<LayoutID>> declaredViews = declaredViewsOf(program, declaredLayoutsWithKeys);
-    forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
-        if (!keysByLayout[index].isEmpty())
-            removeKeysWithoutRoom(results, makers.of(worker), symbolsCreatedOnce, keysDeclaredBelow[index].span(), layoutsWithField, declaredViews[declaredLayoutOf(program, LayoutID(index)).index()].span(), LayoutID(index), keysByLayout[index]);
+    std::ranges::stable_sort(layoutsWithKeys, std::greater { }, [&](uint32_t index) {
+        return keysByLayout[index].size();
+    });
+    forEachIndexInParallel(loops, layoutsWithKeys.size(), [&](unsigned position, unsigned worker) {
+        uint32_t index = layoutsWithKeys[position];
+        removeKeysWithoutRoom(results, makers.of(worker), symbolsCreatedOnce, keysDeclaredBelow[index].span(), layoutsWithField, declaredViews[declaredLayoutOf(program, LayoutID(index)).index()].span(), LayoutID(index), keysByLayout[index]);
     });
 
     AccessCounts counts(results.inputs);
@@ -5907,17 +5958,7 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
         return;
 
     // By layout: the appended fields for whose key the families of the layout declare a type.
-    Vector<BitVector> isDeclaredInFamilies(application.layouts.size());
-    {
-        ScratchTypeArena scratchTypes(types);
-        Vector<Vector<std::optional<Type>>> declared = findTypesDeclaredInFamilies(inputs.program, application.layouts, scratchTypes);
-        for (uint32_t index = 0; index < declared.size(); ++index) {
-            for (uint32_t field = 0; field < declared[index].size(); ++field) {
-                if (declared[index][field])
-                    isDeclaredInFamilies[index].set(field);
-            }
-        }
-    }
+    Vector<BitVector> isDeclaredInFamilies = findAppendedFieldsDeclaredInFamilies(inputs.program, application.layouts, inputs.loops());
 
     ValueFlowPositionCounts counts(nullptr);
     BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
@@ -5952,7 +5993,7 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
             }
         }
     }
-    TypeRemap remap = phase.finish(StringRemap { });
+    TypeRemap remap = phase.finish(StringRemap { }, &inputs.loops());
     for (FlowLayoutUpdate& update : application.layouts) {
         for (FlowAppendedField& field : update.appendedFields)
             remapTypes(field.position, remap);

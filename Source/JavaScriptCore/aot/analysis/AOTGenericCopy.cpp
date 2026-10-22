@@ -637,7 +637,7 @@ void GenericCopy::addPlaceholders()
         placeholder.setCastType(m_function.at(value).type);
         m_builder.setOrigin(m_function.at(value).origin());
         ValueID id = m_builder.addDetached(WTF::move(placeholder));
-        m_function.edit(id).setExpected({ });
+        m_function.edit(id, ValueEdit::Type).setExpected({ });
         m_cloner->mapValue(value, id);
     }
 }
@@ -650,7 +650,7 @@ void GenericCopy::clone(BlockFrequency (*frequencyOfCopy)(BlockFrequency))
     addPlaceholders();
     m_cloner->cloneBlocks(m_region.span(), [](ValueID, Value&) { });
     for (BlockID block : m_region)
-        m_function.edit(copyOf(block)).frequency = frequencyOfCopy(m_function.at(block).frequency);
+        m_function.edit(copyOf(block), BlockEdit::Rest).frequency = frequencyOfCopy(m_function.at(block).frequency);
     m_numberOfValuesAfterCloning = m_function.values.size();
     m_builder.setOrigin(savedOrigin);
 }
@@ -694,7 +694,10 @@ Vector<TypeID> GenericCopy::computeTypesIgnoringCopy(std::span<const ValueID> ch
         return m_function.values[index].type;
     });
     for (size_t index = 0; index < storedTypes.size(); ++index) {
-        Value& value = m_function.edit(ValueID(index));
+        const Value& typed = m_function.values[index];
+        if (typed.type == storedTypes[index].type && typed.expectedForTyping() == storedTypes[index].expected)
+            continue;
+        Value& value = m_function.edit(ValueID(index), ValueEdit::Type);
         value.type = storedTypes[index].type;
         value.setExpected(storedTypes[index].expected);
     }
@@ -859,7 +862,7 @@ void GenericCopy::addRejoinBlocks(Vector<RejoinPlan, 4>& rejoins, Vector<Prehead
         Vector<ValueID, 4> parametersOfCopy(m_function.at(copyOf(plan.block)).parameters.span());
         for (size_t index = 0; index < parametersOfCopy.size(); ++index) {
             ValueID carried = m_builder.addParameter(plan.testBlock, plan.carriedTypes[index]);
-            m_function.edit(carried).setExpected(m_function.at(parametersOfCopy[index]).expected());
+            m_function.edit(carried, ValueEdit::Type).setExpected(m_function.at(parametersOfCopy[index]).expected());
             plan.carriedValues.append(carried);
         }
     }
@@ -868,7 +871,7 @@ void GenericCopy::addRejoinBlocks(Vector<RejoinPlan, 4>& rejoins, Vector<Prehead
         for (ValueID parameter : Vector<ValueID, 4>(m_function.at(plan.header).parameters.span())) {
             TypeID type = rejoinTypes.ignoringCopy.isEmpty() ? m_function.at(parameter).type : rejoinTypes.ignoringCopy[parameter.index()];
             ValueID added = m_builder.addParameter(plan.preheader, type);
-            m_function.edit(added).setExpected(m_function.at(parameter).expected());
+            m_function.edit(added, ValueEdit::Type).setExpected(m_function.at(parameter).expected());
             plan.parameters.append(added);
         }
     }
@@ -1028,10 +1031,11 @@ void GenericCopy::addDefinition(ValueID inTypedCode, ValueID otherDefinition)
     if (!m_hasPlaceholder.get(inTypedCode.index()))
         return;
 
-    Value& placeholder = m_function.edit(nameInCopy(inTypedCode));
-    TypeID type = m_context.types.unionOf(placeholder.type, m_function.at(otherDefinition).type);
-    if (type == placeholder.type)
+    ValueID name = nameInCopy(inTypedCode);
+    TypeID type = m_context.types.unionOf(m_function.at(name).type, m_function.at(otherDefinition).type);
+    if (type == m_function.at(name).type)
         return;
+    Value& placeholder = m_function.edit(name);
     placeholder.type = type;
     placeholder.setCastType(type);
     m_analyses.didChangeValuesButNotUses();

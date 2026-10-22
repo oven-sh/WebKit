@@ -141,7 +141,7 @@ private:
             if (move.movedUser)
                 copies[*move.movedUser].setOperand(move.operandIndex, copy);
             else
-                m_function.edit(move.user).setOperand(move.operandIndex, copy);
+                m_function.edit(move.user, ValueEdit::Definition).setOperand(move.operandIndex, copy);
         }
         builder.applyInsertions();
     }

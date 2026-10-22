@@ -829,7 +829,8 @@ static Wire::AccessRecord siteRecordOf(const Program& program, const FlowResults
         .location = access.location,
         .kind = access.kind,
         .level = level.level,
-        .cause = loss.cause,
+        // Data from outside is an object out of code that nobody compiles, like any other: the cause says what it does to the access, and the `why` where it comes from.
+        .cause = loss.cause == UnprovenCause::DataFromOutside ? UnprovenCause::UnknownObject : loss.cause,
         .limit = loss.limit,
         .layout = findLayoutAsRead(&program, level.layout).index(),
         .copies = level.copies,
@@ -891,6 +892,11 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
         AccessSiteID site(index);
         const AccessSite& access = flow.at(site);
         if (!flow.mayBeReached(access.function) || access.kind == AccessKind::Unknown || !hasModule(access.location))
+            return;
+        // The count describes the machine code. An access of which no copy is left was removed, or it has become a part of something else: the read of `push` in `items.push(item)` of the call of the built-in,
+        // the read of `log` from `console` a constant. A call that was inlined has been resolved, so it counts.
+        bool isCall = access.kind == AccessKind::Call || access.kind == AccessKind::Construct;
+        if (!isCall && !levels[index].copies)
             return;
         found.append(SiteRecord { siteRecordOf(program, flow, build, site, levels[index]), program.at(access.function).role == FunctionRole::GenericVersion });
     });

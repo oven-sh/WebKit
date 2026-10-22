@@ -370,8 +370,12 @@ static void closeIterators(ValueFlowRuleContext& context, ClimbingSet state, Ite
         context.lookup(unknownObjectAlone(context), iteratorResultsName(ResumeMode::Return));
     auto close = [&](ClimbingSet iterators) {
         ValueFlowNodeID results = context.lookup(iterators, iteratorResultsName(ResumeMode::Return));
-        if (kind == IteratorKind::Async)
-            context.lookup(context.valueOf(results), awaitedValueName);
+        if (kind != IteratorKind::Async)
+            return;
+        // The state does not say whether an iterator is wrapped. %AsyncFromSyncIteratorPrototype%.return reads `done` and `value` of what the `return` of a synchronous iterator answers, and awaits the value.
+        ClimbingSet answers = context.valueOf(context.lookup(context.valueOf(results), awaitedValueName));
+        context.lookup(answers, nameOf(context, BuiltinNames::done));
+        context.lookup(context.valueOf(context.lookup(answers, nameOf(context, BuiltinNames::value))), awaitedValueName);
     };
     close(known(context, state));
     if (mayBeUntrackedObject(context, state))

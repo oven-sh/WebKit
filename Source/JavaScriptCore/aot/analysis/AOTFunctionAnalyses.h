@@ -35,6 +35,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+struct TypingMemo;
+
 enum class FunctionAnalysis : uint16_t {
     ControlFlow = 1 << 0,
     Dominators = 1 << 1,
@@ -146,7 +148,12 @@ public:
     GuardState guardStateAt(ValueID guard, const Use&);
     bool isGuardAvailable(ValueID guard, ValueID user);
     bool isGuardAvailable(ValueID guard, ProgramPoint point) { return guards().stateAt(guard, point) == GuardState::Available; }
+    // Of whoever runs passes on the function, for all who type single values of it. Null where nobody keeps one.
+    TypingMemo* typingMemo() const { return m_typingMemo; }
+    void setTypingMemo(TypingMemo* memo) { m_typingMemo = memo; }
+
     EarlierTest findEarlierTest(const Value& test, BlockID at);
+    bool hasFailedTestOf(ValueID);
 
     ExecutionCount executionCountOf(BlockID);
     bool isInCycle(BlockID block) { return cfg().hasCycle() && blockCycles().isInCycle(block); }
@@ -287,6 +294,7 @@ private:
 
     const AnalysisContext m_context;
     const Function& m_function;
+    TypingMemo* m_typingMemo { nullptr };
     ChangeLog m_ownChanges;
     // Null where the function is only read.
     ChangeLog* m_changes { nullptr };

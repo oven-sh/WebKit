@@ -149,9 +149,9 @@ Execution ObjectInterpreter::executeBuiltinResult(ValueID call, VirtualObjectID 
     }
 
     IRBuilder& builder = cursor().builder();
-    builder.function().edit(call).setBuiltinCallForm(form);
+    builder.function().edit(call, ValueEdit::Definition).setBuiltinCallForm(form);
     if (isPrefix)
-        builder.function().edit(call).setPrefixLength(prefixLength);
+        builder.function().edit(call, ValueEdit::Definition).setPrefixLength(prefixLength);
     keep(call);
     retypeProducer(program(), builder, call);
     m_state.add(object, WTF::move(state));

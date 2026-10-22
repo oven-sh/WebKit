@@ -251,6 +251,20 @@ uint32_t TestEvents::endOfResultReadsAfter(ProgramPoint point) const
     return end;
 }
 
+const OpcodeSet& opcodesThatMayEndProofs()
+{
+    static const OpcodeSet opcodes = [] {
+        OpcodeSet result;
+        for (Opcode opcode : allMembersOf<Opcode>) {
+            Effects bound = declaredBoundOf(opcode);
+            if (!effectFactsOf(opcode).staysWithinDeclaredBound || bound.maySuspend || !bound.writes.isEmpty())
+                result.add(opcode);
+        }
+        return result;
+    }();
+    return opcodes;
+}
+
 void TestEvents::collectEvents()
 {
     m_guardDependencies.grow(conditions().size());
@@ -415,12 +429,15 @@ void TestEvents::collectEventsOf(BlockID id)
             effectsWhenPassed = EffectsOnEdges::onBothEdges(site->effectsWhenPassed);
         else if (m_inputs.measuresCodeBetweenEvents)
             m_pendingBytes += estimatedCodeBytes(program, m_function, m_function.at(value));
-        const EffectsOnEdges& effects = effectsWhenPassed ? *effectsWhenPassed : analyses().effectsOf(value);
 
-        if (effects.normal.maySuspend)
-            appendEvent(TestEvent::Kind::Suspension, index, 0);
-        else if (effects.normal.writes.containsAny(heapsDependedOn))
-            appendEnding(index, findConditionsEndedBy(value, effects, conditionsThatMatterIn(id)));
+        // Most values are of operations that write nothing and suspend nothing, whatever their operands are.
+        if (site || opcodesThatMayEndProofs().contains(m_function.at(value).opcode)) {
+            const EffectsOnEdges& effects = effectsWhenPassed ? *effectsWhenPassed : analyses().effectsOf(value);
+            if (effects.normal.maySuspend)
+                appendEvent(TestEvent::Kind::Suspension, index, 0);
+            else if (effects.normal.writes.containsAny(heapsDependedOn))
+                appendEnding(index, findConditionsEndedBy(value, effects, conditionsThatMatterIn(id)));
+        }
 
         takeItemsAt(valueProofs, index, [&](uint32_t proof) {
             appendEvent(TestEvent::Kind::ValueProof, index, proof);

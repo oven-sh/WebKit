@@ -72,7 +72,7 @@ public:
     // The operations of the functions were replaced by others that do no more, but for what is listed apart. With that, what a summary says of a function stays an upper bound.
     void didLower(std::span<const FunctionID> functions, std::span<const AddedEffects>);
     // For each function, or null: what collectReferencesOf() gives for the function as it is now. The next call graph does not read those bodies.
-    void takeReferencesOfBodies(std::span<ReferencesOfBody* const> byFunction);
+    void takeReferencesOfBodies(std::span<const std::unique_ptr<ReferencesOfBody>> byFunction);
 
 private:
     struct BorrowingBodiesOfHeat;

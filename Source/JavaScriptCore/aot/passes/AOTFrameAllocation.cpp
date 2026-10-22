@@ -184,9 +184,9 @@ static void makeClosuresAgainWhereTheyLeave(IRBuilder& builder, FunctionAnalyses
     builder.applyInsertions();
     for (const Replacement& replacement : replacements) {
         if (replacement.use.kind == Use::Kind::Operand)
-            function.edit(replacement.use.user).setOperand(replacement.use.operandIndex, replacement.closure);
+            function.edit(replacement.use.user, ValueEdit::Definition).setOperand(replacement.use.operandIndex, replacement.closure);
         else
-            function.edit(replacement.use.block).terminator.setOperand(replacement.use.operandIndex, replacement.closure);
+            function.edit(replacement.use.block, BlockEdit::Terminator).terminator.setOperand(replacement.use.operandIndex, replacement.closure);
     }
 
     struct SplitEdge {
@@ -207,7 +207,7 @@ static void makeClosuresAgainWhereTheyLeave(IRBuilder& builder, FunctionAnalyses
             }
             BlockID added = splitEdges[index].added;
             builder.setOrigin(function.at(decision.allocation).origin());
-            function.edit(added).terminator.targets[0].arguments[use.operandIndex] = builder.insertBefore(ProgramPoint::atHeadOf(added), closureOfHeapLike(function.at(decision.allocation)));
+            function.edit(added, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets[0].arguments[use.operandIndex] = builder.insertBefore(ProgramPoint::atHeadOf(added), closureOfHeapLike(function.at(decision.allocation)));
             builder.applyInsertions();
         }
     }

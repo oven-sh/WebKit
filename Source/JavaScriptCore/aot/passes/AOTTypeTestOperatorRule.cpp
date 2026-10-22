@@ -132,13 +132,16 @@ static std::optional<OperatorTests> findFewestTests(TestSiteReporter& reporter, 
     return OperatorTests { *chosen, best.effects.normal };
 }
 
+// The one rule behind this one looks at tests of a type, so a site that is left out here is claimed from nobody.
+static_assert(!hasOperatorForm(Opcode::TypeTest));
+
 void reportOperatorTests(TestSiteReporter& reporter)
 {
     TypingContext typing { reporter.program(), reporter.function(), reporter.types() };
     OperatorSite site { typing, reporter.analyses().effectContext(), CodeShape::Fast };
 
     reporter.forEachCandidate([&](const Value& value) {
-        if (!hasOperatorForm(value.opcode))
+        if (!hasOperatorForm(value.opcode) || reporter.takesAwaySitesInColdCode())
             return;
         uint32_t numberOfOperands = value.numberOfOperands();
         RELEASE_ASSERT(numberOfOperands == 1 || numberOfOperands == 2);

@@ -241,7 +241,7 @@ static void writeSiteCaches(ProgramEditor& editor, const ParallelLoops& loops, s
         auto cachesOfFunction = caches.span().subspan(first, firstCacheOfFunction[group + 1] - first);
         Function& function = editor.atForPlacedWords(cachesOfFunction.front().function);
         for (const PlacedCache& placed : cachesOfFunction)
-            function.edit(placed.value).setSiteCache(placed.cache);
+            function.edit(placed.value, ValueEdit::Definition).setSiteCache(placed.cache);
     });
 }
 

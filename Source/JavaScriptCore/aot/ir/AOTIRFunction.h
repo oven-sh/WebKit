@@ -136,7 +136,7 @@ struct Function : FunctionRecord {
         m_changes.didEdit();
         if (m_changes.log) {
             m_changes.log->didEdit(id, edits);
-            if (edits.contains(BlockEdit::Edges))
+            if (edits.contains(BlockEdit::Edges) && !m_changes.log->wasAddedAndShownToNobody(id))
                 willEditEdgesOf(block);
         }
         return block;

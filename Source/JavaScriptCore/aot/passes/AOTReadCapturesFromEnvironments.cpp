@@ -1013,7 +1013,7 @@ static void storeCaptures(const Plan& plan, FunctionID id, IRBuilder& builder)
             store.setField(added.fields[index]);
             stores.append(builder.addDetached(WTF::move(store)));
         }
-        function.edit(added.block).values.insertSpan(added.indexInBlock + 1, stores.span());
+        function.edit(added.block, BlockEdit::Values).values.insertSpan(added.indexInBlock + 1, stores.span());
     }
 }
 
@@ -1083,8 +1083,8 @@ static void readCaptures(const CandidateTable& candidates, const Plan& plan, con
         for (ValueID parameter : function.at(block).parameters) {
             if (!webs.standsForCapturesOnly(parameter))
                 continue;
-            function.edit(parameter).type = plan.typeOfEnvironment[webs.candidateOf(parameter)];
-            function.edit(parameter).setExpected({ });
+            function.edit(parameter, ValueEdit::Type).type = plan.typeOfEnvironment[webs.candidateOf(parameter)];
+            function.edit(parameter, ValueEdit::Type).setExpected({ });
         }
 
         const BlockValues& values = function.at(block).values;

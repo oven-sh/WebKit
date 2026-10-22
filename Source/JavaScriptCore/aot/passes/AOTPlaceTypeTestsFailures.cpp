@@ -25,47 +25,6 @@ struct FailingEdge {
     TestConditionID condition;
 };
 
-class FailedConditionsProblem {
-    WTF_MAKE_NONCOPYABLE(FailedConditionsProblem);
-public:
-    using State = BitVector;
-    static constexpr bool readsEffects() { return false; }
-
-    FailedConditionsProblem(const Function& function, std::span<const FailingEdge> failingEdges)
-        : m_function(function)
-        , m_failingEdges(failingEdges)
-    {
-    }
-
-    State stateAtEntry() const { return { }; }
-
-    bool merge(State& into, const State& from) const
-    {
-        size_t numberOfConditions = into.bitCount();
-        into.merge(from);
-        return into.bitCount() != numberOfConditions;
-    }
-
-    void enterEdge(State& state, Edge edge) const
-    {
-        if (m_function.at(targetOf(m_function, edge).block).frequency == BlockFrequency::Normal) {
-            state.clearAll();
-            return;
-        }
-        if (edge.isHandlerEdge())
-            return;
-        for (const FailingEdge& failing : std::ranges::equal_range(m_failingEdges, EdgeKey { edge.from.index(), edge.targetIndex }, { }, &FailingEdge::key))
-            state.set(failing.condition.index());
-    }
-
-    void execute(State&, const DataflowStep&) const { }
-    void executeTerminator(State&, const DataflowTerminatorStep&) const { }
-
-private:
-    const Function& m_function;
-    std::span<const FailingEdge> m_failingEdges;
-};
-
 } // anonymous namespace
 
 static Edge edgeTo(BlockID from, const Terminator& terminator, const Target& target)
@@ -110,12 +69,46 @@ static Vector<FailingEdge> collectFailingEdges(const Function& function, const C
 FailedConditions::FailedConditions(FunctionAnalyses& analyses)
     : m_conditions(analyses)
 {
-    Vector<FailingEdge> failingEdges = collectFailingEdges(analyses.function(), analyses.cfg(), m_conditions);
+    const Function& function = analyses.function();
+    const CFG& cfg = analyses.cfg();
+    Vector<FailingEdge> failingEdges = collectFailingEdges(function, cfg, m_conditions);
     if (failingEdges.isEmpty())
         return;
 
-    FailedConditionsProblem problem(analyses.function(), failingEdges.span());
-    m_failedAtHead = analyses.solveForward(problem);
+    // What has failed goes on along every edge and is forgotten where normal code is entered: it is known in the marked blocks behind the failing edges and nowhere else.
+    std::span<const BlockID> order = cfg.reversePostOrder();
+    m_failedAtHead.grow(function.blocks.size());
+    BitVector isPending(order.size());
+    auto failedAtHeadOf = [&](BlockID block) -> BitVector& {
+        std::optional<BitVector>& failed = m_failedAtHead[block.index()];
+        if (!failed)
+            failed.emplace();
+        return *failed;
+    };
+    for (const FailingEdge& failing : failingEdges) {
+        BlockID target = targetOf(function, failing.edge).block;
+        if (failedAtHeadOf(target).add(failing.condition.index()))
+            isPending.quickSet(cfg.reversePostOrderIndex(target));
+    }
+    for (bool shouldRepeat = true; shouldRepeat;) {
+        shouldRepeat = false;
+        for (size_t position : isPending) {
+            isPending.quickClear(position);
+            BlockID block = order[position];
+            function.at(block).forEachTarget([&](const Target& target) {
+                if (target.block == block || function.at(target.block).frequency == BlockFrequency::Normal)
+                    return;
+                BitVector& failed = failedAtHeadOf(target.block);
+                size_t numberOfConditions = failed.bitCount();
+                failed.merge(*m_failedAtHead[block.index()]);
+                if (failed.bitCount() == numberOfConditions)
+                    return;
+                uint32_t positionOfTarget = cfg.reversePostOrderIndex(target.block);
+                isPending.quickSet(positionOfTarget);
+                shouldRepeat |= positionOfTarget <= position;
+            });
+        }
+    }
 }
 
 bool FailedConditions::mayHaveFailed(const Value& test, BlockID at) const

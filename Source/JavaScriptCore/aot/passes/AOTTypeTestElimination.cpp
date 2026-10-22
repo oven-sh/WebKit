@@ -275,20 +275,6 @@ private:
     bool m_didReachRoundLimit { false };
 };
 
-static const OpcodeSet& opcodesThatMayEndProofs()
-{
-    static const OpcodeSet opcodes = [] {
-        OpcodeSet result;
-        for (Opcode opcode : allMembersOf<Opcode>) {
-            Effects bound = declaredBoundOf(opcode);
-            if (!effectFactsOf(opcode).staysWithinDeclaredBound || bound.maySuspend || !bound.writes.isEmpty())
-                result.add(opcode);
-        }
-        return result;
-    }();
-    return opcodes;
-}
-
 ConditionCoverage::ConditionCoverage(FunctionAnalyses& analyses, const TestConditions& conditions, std::span<const TestRequirement> requirements, std::span<const ExistingProof> proofs)
     : m_analyses(analyses)
     , m_function(analyses.function())
@@ -993,7 +979,7 @@ void BranchFolder::replaceBooleanUses()
 void BranchFolder::fold(const FoldedBranch& folded)
 {
     BlockID block = branchOf(folded).block;
-    Terminator& terminator = m_function.edit(block).terminator;
+    Terminator& terminator = m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     Target taken = terminator.taken();
     Arguments arguments = WTF::move(taken.arguments);
     for (size_t result = 0; result < taken.proofs.size(); ++result)
@@ -1467,9 +1453,8 @@ PassOutcome GuardEliminator::simplifyGuardLists()
     bool didChange = false;
     for (ValueID list : lists) {
         Vector<ValueID, 4> guards = flattenedGuardsOf(list);
-        Value& value = m_function.edit(list);
-        if (!std::ranges::equal(guards, value.guardsOperands())) {
-            value.setGuardsOperands(guards.span());
+        if (!std::ranges::equal(guards, m_function.at(list).guardsOperands())) {
+            m_function.edit(list, ValueEdit::Definition).setGuardsOperands(guards.span());
             didChange = true;
         }
         if (guards.size() != 1)
@@ -1548,7 +1533,7 @@ static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
     Function& function = context.function;
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     for (BlockID block : blocks) {
-        Terminator& terminator = function.edit(block).terminator;
+        Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
         ValueID test = terminator.conditionOperand();
         Target taken = terminator.taken();
         Arguments arguments = WTF::move(taken.arguments);

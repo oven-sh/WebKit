@@ -327,6 +327,12 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
         for (uint32_t page = 0; page < m_numberOfNodes >> m_shiftFromNodeToPage; ++page)
             arePagesWritable[page / 64].store(arePagesWritable[page / 64].load(std::memory_order_relaxed) | 1ull << page % 64, std::memory_order_relaxed);
         m_arePagesWritable = WTF::move(arePagesWritable);
+        for (Vector<std::atomic<uint64_t>>* bits : { &m_isConstant, &m_areEdgesOutOfConstantListed }) {
+            Vector<std::atomic<uint64_t>> grown(capacity / 64 + 1);
+            for (size_t word = 0; word < bits->size(); ++word)
+                grown[word].store((*bits)[word].load(std::memory_order_relaxed), std::memory_order_relaxed);
+            *bits = WTF::move(grown);
+        }
         m_hasMoved.ensureSize(capacity);
         for (Covering& covering : m_coverings) {
             covering.flowsIntoCovered.ensureSize(capacity);
@@ -458,8 +464,11 @@ ALWAYS_INLINE void ValueFlowGraph::hold(uint32_t node, uint64_t low, ValueSetID 
     m_rows[node].set = (value == worker.setOfLowMembers(low) ? ValueSets::nothing : value).index();
 }
 
-void ValueFlowGraph::makeConstant(ValueFlowNodeID node, ValueSetID set, unsigned worker)
+void ValueFlowGraph::makeConstant(ValueFlowNodeID node, ValueSetID set, unsigned worker, EdgesOutOfConstant edges)
 {
+    m_isConstant[node.index() / 64].fetch_or(1ull << node.index() % 64, std::memory_order_relaxed);
+    if (edges == EdgesOutOfConstant::AreListed)
+        m_areEdgesOutOfConstantListed[node.index() / 64].fetch_or(1ull << node.index() % 64, std::memory_order_relaxed);
     hold(node.index(), lowMembersOf(set, *m_makers[worker]), set, *m_workers[worker]);
 }
 
@@ -604,6 +613,50 @@ ALWAYS_INLINE bool ValueFlowGraph::addSuccessorIfAbsent(ValueFlowEdge edge)
     return true;
 }
 
+// From here on the constants among the predecessors of the node are looked for in the set.
+void ValueFlowGraph::willHaveManyPredecessors(Shard& shard, uint32_t node)
+{
+    const Links& predecessors = m_predecessors[node];
+    const uint32_t* others = predecessors.begin();
+    for (uint32_t index = 0; index < predecessors.count; ++index) {
+        if (isConstant(others[index]))
+            shard.edgesOutOfConstantsIntoNodesWithManyPredecessors.add(ValueFlowEdge { ValueFlowNodeID(others[index]), ValueFlowNodeID(node) });
+    }
+}
+
+// The link is made here and not in takeEdgesIntoLists(): it says that the edge is there.
+ALWAYS_INLINE bool ValueFlowGraph::addEdgeOutOfConstantIfAbsent(ValueFlowEdge edge)
+{
+    Shard& shard = *m_shards[shardOf(edge.to.index())];
+    willUse(edge.to.index());
+    Links& predecessors = m_predecessors[edge.to.index()];
+    if (predecessors.count > mostPredecessorsScanned) {
+        if (!shard.edgesOutOfConstantsIntoNodesWithManyPredecessors.add(edge))
+            return false;
+    } else {
+        const uint32_t* others = predecessors.begin();
+        for (uint32_t index = 0; index < predecessors.count; ++index) {
+            if (others[index] == edge.from.index())
+                return false;
+        }
+        if (predecessors.count == mostPredecessorsScanned) {
+            willHaveManyPredecessors(shard, edge.to.index());
+            shard.edgesOutOfConstantsIntoNodesWithManyPredecessors.add(edge);
+        }
+    }
+    if (predecessors.count == predecessors.older)
+        shard.nodesWithRecentPredecessors.append(edge.to.index());
+    addLink(shard.blocksOfPredecessors, predecessors, edge.from.index());
+    if (m_areEdgesOutOfConstantListed[edge.from.index() / 64].load(std::memory_order_relaxed) >> edge.from.index() % 64 & 1)
+        shard.listedEdgesOutOfConstants.append(edge);
+    return true;
+}
+
+ALWAYS_INLINE bool ValueFlowGraph::addEdgeIfAbsent(ValueFlowEdge edge)
+{
+    return isConstant(edge.from.index()) ? addEdgeOutOfConstantIfAbsent(edge) : addSuccessorIfAbsent(edge);
+}
+
 size_t ValueFlowGraph::addEdges(std::span<const ValueFlowEdge> edges)
 {
     constexpr size_t distance = 12;
@@ -611,10 +664,12 @@ size_t ValueFlowGraph::addEdges(std::span<const ValueFlowEdge> edges)
     size_t before = m_edgesNotInLists.size();
     if (edges.size() < fewestEdgesForThreads || m_loops.width() == 1) {
         for (size_t index = 0; index < edges.size(); ++index) {
-            if (index + distance < edges.size())
-                __builtin_prefetch(&m_successors[edges[index + distance].from.index()], 1);
+            if (index + distance < edges.size()) {
+                ValueFlowEdge ahead = edges[index + distance];
+                __builtin_prefetch(isConstant(ahead.from.index()) ? &m_predecessors[ahead.to.index()] : &m_successors[ahead.from.index()], 1);
+            }
             ValueFlowEdge edge = edges[index];
-            if (edge.from != edge.to && addSuccessorIfAbsent(edge))
+            if (edge.from != edge.to && addEdgeIfAbsent(edge))
                 m_edgesNotInLists.append(edge);
         }
         return m_edgesNotInLists.size() - before;
@@ -629,16 +684,18 @@ size_t ValueFlowGraph::addEdges(std::span<const ValueFlowEdge> edges)
         for (size_t index = part * edgesPerPart; index < std::min(edges.size(), (part + 1) * edgesPerPart); ++index) {
             m_isNewEdge[index] = 0;
             if (edges[index].from != edges[index].to)
-                m_indicesBySource[part * numberOfShards + shardOf(edges[index].from.index())].append(static_cast<uint32_t>(index));
+                m_indicesBySource[part * numberOfShards + shardThatKeeps(edges[index])].append(static_cast<uint32_t>(index));
         }
     });
     m_team->run(numberOfShards, [&](unsigned number, unsigned) {
         for (unsigned part = 0; part < numberOfParts; ++part) {
             Vector<uint32_t>& own = m_indicesBySource[part * numberOfShards + number];
             for (size_t position = 0; position < own.size(); ++position) {
-                if (position + distance < own.size())
-                    __builtin_prefetch(&m_successors[edges[own[position + distance]].from.index()], 1);
-                if (addSuccessorIfAbsent(edges[own[position]]))
+                if (position + distance < own.size()) {
+                    ValueFlowEdge ahead = edges[own[position + distance]];
+                    __builtin_prefetch(isConstant(ahead.from.index()) ? &m_predecessors[ahead.to.index()] : &m_successors[ahead.from.index()], 1);
+                }
+                if (addEdgeIfAbsent(edges[own[position]]))
                     m_isNewEdge[own[position]] = 1;
             }
             own.shrink(0);
@@ -692,10 +749,15 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
     constexpr size_t fewestEdgesForThreads = 4096;
     auto takeEdge = [&](Shard& shard, ValueFlowEdge edge, Vector<Message>& messages) {
         willUse(edge.to.index());
-        Links& predecessors = m_predecessors[edge.to.index()];
-        if (predecessors.count == predecessors.older)
-            shard.nodesWithRecentPredecessors.append(edge.to.index());
-        addLink(shard.blocksOfPredecessors, predecessors, edge.from.index());
+        // An edge out of a constant has its link since it was added.
+        if (!isConstant(edge.from.index())) {
+            Links& predecessors = m_predecessors[edge.to.index()];
+            if (predecessors.count == mostPredecessorsScanned)
+                willHaveManyPredecessors(shard, edge.to.index());
+            if (predecessors.count == predecessors.older)
+                shard.nodesWithRecentPredecessors.append(edge.to.index());
+            addLink(shard.blocksOfPredecessors, predecessors, edge.from.index());
+        }
         const Row& row = m_rows[edge.from.index()];
         if ((!row.low && !row.set) || (m_gates[edge.to.index()].flags & IgnoresArrivals))
             return false;
@@ -836,7 +898,7 @@ void ValueFlowGraph::connectStraightToCoveredNode(Covering& covering, uint32_t n
     if (node == covering.covered || covering.isRetired.quickGet(node) || takesNoMore(node))
         return;
     ValueFlowEdge straight { ValueFlowNodeID(node), ValueFlowNodeID(covering.covered) };
-    if (!addSuccessorIfAbsent(straight))
+    if (!addEdgeIfAbsent(straight))
         return;
     m_edgesNotInLists.append(straight);
     ++m_counters.edgesStraightIntoCoveredNodes;
@@ -1330,6 +1392,8 @@ void ValueFlowGraph::releaseSolvingState()
     for (const std::unique_ptr<Shard>& shard : m_shards) {
         shard->blocksOfPredecessors.release();
         shard->edgesOfNodesWithManySuccessors = { };
+        shard->edgesOutOfConstantsIntoNodesWithManyPredecessors = { };
+        shard->listedEdgesOutOfConstants = { };
         shard->arrivals = { };
         shard->messages = { };
         shard->nodesWithRecentSuccessors = { };
@@ -1349,7 +1413,7 @@ size_t ValueFlowGraph::memoryInBytes() const
     bytes += bytesOf(m_masks) + bytesOf(m_edgesNotInLists) + bytesOf(m_edgesOfSolve);
     bytes += (1 + 3 * m_coverings.size()) * (m_capacity / 8);
     for (const std::unique_ptr<Shard>& shard : m_shards)
-        bytes += shard->blocksOfSuccessors.memoryInBytes() + shard->blocksOfPredecessors.memoryInBytes() + shard->edgesOfNodesWithManySuccessors.memoryInBytes();
+        bytes += shard->blocksOfSuccessors.memoryInBytes() + shard->blocksOfPredecessors.memoryInBytes() + shard->edgesOfNodesWithManySuccessors.memoryInBytes() + shard->edgesOutOfConstantsIntoNodesWithManyPredecessors.memoryInBytes() + bytesOf(shard->listedEdgesOutOfConstants);
     return bytes;
 }
 

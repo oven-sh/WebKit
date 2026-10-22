@@ -133,7 +133,11 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
     jit.loadPtr(Address(r.size, PropertyTable::offsetOfIndexVector()), r.vector);
     isUnknown.append(jit.branchTestPtr(CCallHelpers::Zero, r.vector, TrustedImm32(PropertyTable::flagOfCompactIndexVector)));
     jit.load32(Address(r.size, PropertyTable::offsetOfIndexSize()), r.size);
+    // StringImpl::existingSymbolAwareHash().
     jit.load32(Address(r.uid, StringImpl::flagsOffset()), r.index);
+    Jump isNoSymbol = jit.branchTest32(CCallHelpers::Zero, r.index, TrustedImm32(StringImpl::flagIsSymbol()));
+    jit.load32(Address(r.uid, OBJECT_OFFSETOF(SymbolImpl::StaticSymbolImpl, m_hashForSymbolShiftedWithFlagCount)), r.index);
+    isNoSymbol.link(&jit);
     jit.urshift32(TrustedImm32(StringImpl::s_flagCount), r.index);
 
     // PropertyTable::findImpl(). The address in vector is one too high, by the flag. The entries lie behind the index, and their numbers begin at one.
@@ -371,8 +375,8 @@ static void answerByFieldRecordAndReturn(StubAssembler& jit, ObjectLookupQuestio
 
 void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, ObjectLookupName name, JumpList& isUnknown)
 {
-    constexpr int32_t flagsOfOwnLookup = OverridesGetOwnPropertySlot | OverridesGetPrototype | HasStaticPropertyTable;
-    static_assert(flagsOfOwnLookup <= UINT8_MAX);
+    constexpr int32_t flagsOfOwnLookup = OverridesGetOwnPropertySlot | OverridesGetPrototype;
+    static_assert((flagsOfOwnLookup | HasStaticPropertyTable) <= UINT8_MAX);
     JumpList isAbsentHere;
     JumpList isAbsentFromExtraProperties;
     JumpList extraPropertiesDoNotSay;
@@ -394,8 +398,6 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
 
     isUnknown.append(jit.branchIfNotCell(r.receiver));
     isUnknown.append(jit.branchIfNotObject(r.receiver));
-    // A symbol has its hash elsewhere.
-    isUnknown.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsSymbol())));
     // The empty name is the one name of the image whose uid is no atom of the image, so neither can be had from the other.
     isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(r.uid, StringImpl::lengthMemoryOffset())));
     jit.move(r.receiver, r.object);
@@ -408,6 +410,11 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     answerByPropertyTableAndReturn(jit, question, r, isAbsentHere, isUnknown, isUnknown, [] { });
 
     isAbsentHere.link(&jit);
+    // A property of a static table is put into the property table at its first read. Until all of them are there, what the property table lacks may be in the static one.
+    Jump hasNoStaticTable = jit.branchTest8(CCallHelpers::Zero, Address(r.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(HasStaticPropertyTable));
+    loadStructure(jit, r.object, r.structure);
+    isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(r.structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_staticPropertiesReifiedBits)));
+    hasNoStaticTable.link(&jit);
     Label askObjectAbove = jit.label();
     if (question == ObjectLookupQuestion::HasOwn)
         returnAnswer(jit, question, false);
@@ -421,6 +428,8 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     }
 
     hasOwnLookup.link(&jit);
+    // The tables of the image go by the number of a name, which a symbol does not have.
+    isUnknown.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsSymbol())));
     Jump isNotCompiledObject = jit.branch8(CCallHelpers::NotEqual, Address(r.object, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType));
     answerByFieldRecordAndReturn(jit, question, r, name, isUnknown);
     jit.branchTest32(CCallHelpers::Zero, Address(r.object, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)).linkTo(askObjectAbove, &jit);

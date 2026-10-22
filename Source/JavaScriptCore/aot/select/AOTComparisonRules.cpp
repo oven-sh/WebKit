@@ -212,7 +212,7 @@ static void rewriteLoopBounds(SelectionContext& context, GroupRewriter& rewriter
     Function& function = rewriter.function();
     for (size_t index = 0; index < match.bounds.size(); ++index) {
         for (const BoundedComparison& comparison : match.bounds[index].comparisons)
-            function.edit(comparison.value).setOperand(comparison.numberOperand, boundValues[index]);
+            function.edit(comparison.value, ValueEdit::Definition).setOperand(comparison.numberOperand, boundValues[index]);
     }
     context.analyses().didChangeValues();
 }

@@ -71,8 +71,7 @@ static std::optional<PropertyAccessQuery> namedAccessQueryOf(const FunctionPassC
     return query;
 }
 
-// All that propertyAccessQueryOf() and planPropertyAccess() take from a named access and its function, but for who uses what is read.
-static std::optional<SiteContent> contentOfNamedAccess(const FunctionPassContext& context, const Value& access)
+std::optional<SiteContent> contentOfNamedAccess(const FunctionPassContext& context, const Value& access, uint8_t planner)
 {
     const Program& program = context.program;
     const Function& function = context.function;
@@ -81,7 +80,7 @@ static std::optional<SiteContent> contentOfNamedAccess(const FunctionPassContext
     if (!isNamedAccess(opcode) || (FlagMask::isFreeName(opcode) && access.isFreeName()))
         return std::nullopt;
 
-    SiteContent content(static_cast<uint32_t>(RefusalKind::Access) << 24 | static_cast<uint32_t>(opcode) << 8 | access.flags);
+    SiteContent content(static_cast<uint32_t>(planner) << 24 | static_cast<uint32_t>(opcode) << 8 | access.flags);
     content.add(&flow);
     PropertyKeyID key = keyOfNamedAccess(program, access);
     content.add(key);
@@ -246,8 +245,8 @@ ValueID AccessRewriter::insert(Value&& value, Origin origin)
 void AccessRewriter::finish(const ValueSite& site, const ReplacedEffects& replaced)
 {
     Value& value = valueAt(site);
-    value.type = resultTypeOf(m_context.program, m_context.function, value, m_context.types);
-    value.setExpected(expectedTypeOf(m_context.program, m_context.function, value, m_context.types));
+    value.type = resultTypeOf(m_context.program, m_context.function, value, m_context.types, &m_context.typingMemo);
+    value.setExpected(expectedTypeOf(m_context.program, m_context.function, value, m_context.types, &m_context.typingMemo));
     checkRewrite(m_context, site, replaced);
 }
 
@@ -452,7 +451,7 @@ bool AccessResolver::listFirstStoresAtAllocation(BlockID block, uint32_t allocat
     listedValues.shrink(numberOfFieldsToList);
     fillers.shrink(numberOfFillersToList);
 
-    BlockValues& values = function.edit(block).values;
+    BlockValues& values = function.edit(block, BlockEdit::Values).values;
     Vector<ValueID, 32> reordered;
     for (uint32_t index = allocationIndex + 1; index <= *lastListedStore; ++index) {
         if (!isListedNow.quickGet(values[index].index()) && !movesBehindAllocation.quickGet(values[index].index()))
@@ -608,7 +607,7 @@ void AccessResolver::planSites()
         auto refuse = [&] {
             m_context.refusedSites.add(RefusalKind::Access, m_context.function, site.value, state);
         };
-        std::optional<SiteContent> content = cache ? contentOfNamedAccess(m_context, m_context.function.at(site.value)) : std::nullopt;
+        std::optional<SiteContent> content = cache ? contentOfNamedAccess(m_context, m_context.function.at(site.value), static_cast<uint8_t>(RefusalKind::Access)) : std::nullopt;
         std::optional<uint32_t> limitOfKnownRefusal = content ? cache->refusedContents.find(*content) : std::nullopt;
         if (limitOfKnownRefusal && !cache->checksAnswers) [[likely]] {
             recordLoss(site, static_cast<LimitID>(*limitOfKnownRefusal));

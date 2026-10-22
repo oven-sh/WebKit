@@ -112,6 +112,26 @@ bool hasNoToJSON(const Program& program, const FlowResults& flow, LayoutID id)
     return (toJSON.receiverProofs | proofsTestedBySerializers) == proofsTestedBySerializers;
 }
 
+JSONLikelihood jsonLikelihoodOf(const Program& program, const FlowResults& flow, LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    JSONLikelihood likelihood;
+    likelihood.isInstance = layout.kind == LayoutKind::Instance;
+    likelihood.position = layout.position;
+    if (layout.module) {
+        likelihood.isOfLibrary = program.at(layout.module).flags.contains(ModuleFlags::IsLibrary);
+        likelihood.module = layout.module.index() + 1;
+    }
+    for (const Field& field : layout.fields) {
+        if (!isEnumerableStringField(program, field))
+            continue;
+        ++likelihood.members;
+        if (hasNoJSONText(program, flow, program.at(slotTypeOf(program, field))))
+            ++likelihood.membersWithoutText;
+    }
+    return likelihood;
+}
+
 JSONSupport jsonSupportOf(const Program& program, const FlowResults& flow, LayoutID id)
 {
     const Layout& layout = program.at(id);

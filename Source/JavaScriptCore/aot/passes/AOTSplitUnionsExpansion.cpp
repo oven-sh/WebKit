@@ -219,7 +219,7 @@ void SiteExpansion::finishArmWithReturn(ValueID result)
     bool endsWithTailCall = canEndWithTailCall(result);
     // An arm marks its call before it is known whether the call can stay a tail call.
     if (endsWithTailCall) {
-        function().edit(result).setIsDemotedTailCall(false);
+        function().edit(result, ValueEdit::Definition).setIsDemotedTailCall(false);
         m_context.analyses.didChangeValues();
     } else
         result = convertTo(m_builder, result, DeclaredType { .type = m_original.type });

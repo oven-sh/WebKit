@@ -2085,7 +2085,7 @@ private:
         }
         if (hasOtherUses)
             return false;
-        m_function.edit(uses.blockOf(id)).values.removeFirst(id);
+        m_function.edit(uses.blockOf(id), BlockEdit::Values).values.removeFirst(id);
         m_didDetachValues = true;
         return true;
     }
@@ -2131,7 +2131,7 @@ private:
     {
         if (!m_analyses)
             m_analyses.emplace(m_context, m_function);
-        bool wasListed = m_function.edit(m_analyses->useLists().blockOf(id)).values.removeFirst(id);
+        bool wasListed = m_function.edit(m_analyses->useLists().blockOf(id), BlockEdit::Values).values.removeFirst(id);
         RELEASE_ASSERT(wasListed);
     }
 
@@ -2180,7 +2180,7 @@ private:
                 sources[position] = index;
         }
 
-        BlockValues& values = m_function.edit(object.block).values;
+        BlockValues& values = m_function.edit(object.block, BlockEdit::Values).values;
         size_t allocationIndex = values.find(object.allocation);
         RELEASE_ASSERT(allocationIndex != notFound);
         size_t begin = allocationIndex;
@@ -2286,7 +2286,7 @@ private:
                 break;
         }
         moved.reverse();
-        BlockValues& values = m_function.edit(store.block).values;
+        BlockValues& values = m_function.edit(store.block, BlockEdit::Values).values;
         if (!values.contains(store.closure))
             takeOutOfItsBlock(store.closure);
         values.removeAllMatching([&](ValueID id) {
@@ -2315,7 +2315,7 @@ private:
                     break;
             }
         }
-        m_function.edit(entryBlock).values.removeAllMatching([&](ValueID id) {
+        m_function.edit(entryBlock, BlockEdit::Values).values.removeAllMatching([&](ValueID id) {
             return isRemoved.quickGet(id.index());
         });
         m_didDetachValues = true;
@@ -2730,12 +2730,12 @@ public:
         for (const Join& join : joins) {
             builder.setOrigin(m_function.at(join.closures[0]).origin());
             ValueID closure = builder.insertBefore(ProgramPoint { join.block, 0 }, Value(m_function.at(join.closures[0])));
-            m_function.edit(join.user).setOperand(join.operandIndex, closure);
+            m_function.edit(join.user, ValueEdit::Definition).setOperand(join.operandIndex, closure);
         }
         builder.applyInsertions();
         for (const Join& join : joins) {
             for (size_t index = 0; index < join.closures.size(); ++index) {
-                bool wasListed = m_function.edit(join.blocksOfClosures[index]).values.removeFirst(join.closures[index]);
+                bool wasListed = m_function.edit(join.blocksOfClosures[index], BlockEdit::Values).values.removeFirst(join.closures[index]);
                 RELEASE_ASSERT(wasListed);
             }
         }

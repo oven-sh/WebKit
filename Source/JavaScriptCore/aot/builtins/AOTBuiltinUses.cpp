@@ -531,8 +531,8 @@ static void finish(const BuiltinUseRewrite& rewrite, const ReplacedEffects& repl
 {
     FunctionPassContext& context = rewrite.context;
     Value& value = context.function.edit(rewrite.use);
-    value.type = resultTypeOf(context.program, context.function, value, context.types);
-    value.setExpected(expectedTypeOf(context.program, context.function, value, context.types));
+    value.type = resultTypeOf(context.program, context.function, value, context.types, &context.typingMemo);
+    value.setExpected(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo));
     checkRewrite(context, ValueSite { rewrite.block, 0, rewrite.use }, replaced);
 }
 
@@ -579,7 +579,7 @@ static ValueID insertNewTarget(const BuiltinUseRewrite& rewrite, const BuiltinUs
     if (plan.newTarget)
         return plan.newTarget;
     ValueID constructor = rewrite.insert(makeConstant(context.program, plan));
-    context.function.edit(constructor).setOrigin(origin);
+    context.function.edit(constructor, ValueEdit::Definition).setOrigin(origin);
     return constructor;
 }
 
@@ -619,7 +619,7 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
     // ScopedLambda hands its arguments to the functor as lvalues.
     auto insertWithOrigin = [&](auto&& inserted) {
         ValueID id = rewrite.insert(WTF::move(inserted));
-        function.edit(id).setOrigin(origin);
+        function.edit(id, ValueEdit::Definition).setOrigin(origin);
         return id;
     };
     InsertBeforeCall insert = insertWithOrigin;

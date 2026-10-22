@@ -61,6 +61,8 @@ BodyContents contentsOf(const Function& function)
             contents.traits.add(BodyTrait::SeveralTargets);
     }
     contents.traits.set(BodyTrait::NeverValues, hasNeverValue);
+    contents.traits.set(BodyTrait::ParametersOfRuntimeFunction, function.enclosingRuntimeFunction && contents.opcodes.contains(Opcode::Parameter));
+    contents.traits.set(BodyTrait::UnfinishedThis, function.role == FunctionRole::AllocatedThisVersion || function.kind == FunctionKind::Initializer);
     return contents;
 }
 
@@ -74,7 +76,7 @@ static constexpr PassTriggers rowOf(PassID id)
     case PassID::AddGenericVersion:
         return PassTriggers::anyOf({ Opcode::Check, Opcode::Construct, Opcode::CallBuiltin });
     case PassID::ResolveBuiltins:
-        return PassTriggers::anyOf({ Opcode::Parameter }).orOpcodes(operationsResolvedToBuiltins);
+        return PassTriggers::anyOf({ }).orOpcodes(operationsResolvedToBuiltins).orTraits(BodyTrait::ParametersOfRuntimeFunction);
     case PassID::BindGlobalNames:
         return PassTriggers::anyOf({ }).orOpcodes(bindableAccesses);
     case PassID::CallThroughMethodTable:
@@ -170,7 +172,7 @@ static constexpr PassTriggers rowOf(PassID id)
     case PassID::ExpandLongArrayLiterals:
         return PassTriggers::anyOf({ Opcode::NewArray });
     case PassID::FinishBirths:
-        return PassTriggers::anyOf({ Opcode::Parameter, Opcode::NewObject });
+        return PassTriggers::anyOf({ Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::NewObject }).orTraits(BodyTrait::UnfinishedThis);
     case PassID::PlaceAllocationsAtTheirUse:
         return PassTriggers::anyOf({ }).orOpcodes(allocationsPlacedAtTheirUse);
     case PassID::RemoveRedundantBarriers:

@@ -79,7 +79,7 @@ bool acceptsCastOfValue(const Function& function, const Use& use)
 
 void becomeUpcast(Function& function, ValueID id, ValueID operand)
 {
-    Value& value = function.edit(id);
+    Value& value = function.edit(id, ValueEdit::Definition);
     value.become(Opcode::Upcast);
     value.setValueOperand(operand);
     value.setCastType(value.type);
@@ -185,7 +185,7 @@ void ValueSubstitution::apply(Function& function, FunctionAnalyses* analyses)
 
 void replaceReadWithValue(const Program& program, Function& function, ValueSubstitution& substitution, ValueID read, ValueID replacement)
 {
-    Value& value = function.edit(read);
+    const Value& value = function.at(read);
     if (!program.at(value.type).isJavaScriptValue()) {
         substitution.replace(read, replacement);
         becomeUndefined(function, read);

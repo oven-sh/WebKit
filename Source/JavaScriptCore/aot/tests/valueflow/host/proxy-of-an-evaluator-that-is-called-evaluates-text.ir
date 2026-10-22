@@ -1,0 +1,27 @@
+# new Proxy(Function, {})("return 7"); new (new Proxy(new Proxy(eval, {}), {}))
+# An evaluator is followed as a value until it is applied, through a proxy too: whoever calls the proxy applies its target.
+# FORM: AsRead
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText Function f0:
+# CHECK: unseen EvaluatesText Eval f0:
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function" [isFreeName]
+    v2 = NewObject
+    v3 = Builtin builtin=Proxy
+    v4 = Construct v3, -, v1, v2
+    v5 = String string="return 7"
+    v6 = Call v4, -, v5
+    v7 = PropGet v0 key="eval" [isFreeName]
+    v8 = NewObject
+    v9 = Construct v3, -, v7, v8
+    v10 = NewObject
+    v11 = Construct v3, -, v9, v10
+    v12 = Call v11, -, v5
+    Return v6
+}

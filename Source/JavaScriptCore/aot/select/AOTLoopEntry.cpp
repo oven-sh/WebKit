@@ -93,7 +93,7 @@ LoopEntryResult emitOnLoopEntry(SelectionContext& context, IRBuilder& builder, B
         return LoopEntryResult::HandlerDiffers;
 
     BlockID preheader = ensurePreheader(builder, *entry, header);
-    Terminator jump = std::exchange(function.edit(preheader).terminator, Terminator { });
+    Terminator jump = std::exchange(function.edit(preheader, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { });
     analyses.didChangeControlFlow();
 
     Origin savedOrigin = builder.origin();

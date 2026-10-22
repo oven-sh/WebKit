@@ -87,7 +87,7 @@ void GroupRewriter::flushInsertions()
 
 void GroupRewriter::reopenBlock(BlockID block)
 {
-    function().edit(block).terminator = Terminator { };
+    function().edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
     analyses().didChangeControlFlow(singleElementSpan(block));
     builder().moveToEndOf(block);
 }
@@ -106,7 +106,7 @@ Value& GroupRewriter::replaceRoot(Opcode opcode)
     value.become(opcode);
     m_didReplaceRoot = true;
     if (branchesOf(opcode) == Branches::No)
-        unfuseBranch(function().edit(state().block).terminator, m_group.root);
+        unfuseBranch(function().edit(state().block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, m_group.root);
     analyses().didChangeBlock(state().block);
     return value;
 }
@@ -133,7 +133,7 @@ void GroupRewriter::replaceWithResult(ValueID member, ValueID producer, uint32_t
     analyses().didChangeBlock(state().block);
     if (member == m_group.root) {
         m_didReplaceRoot = true;
-        unfuseBranch(function().edit(state().block).terminator, m_group.root);
+        unfuseBranch(function().edit(state().block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, m_group.root);
         return;
     }
 
@@ -149,7 +149,7 @@ void GroupRewriter::replaceWithValue(ValueID member, ValueID replacement)
     m_session.m_needsCompaction = true;
     if (member == m_group.root) {
         m_didReplaceRoot = false;
-        unfuseBranch(function().edit(state().block).terminator, m_group.root);
+        unfuseBranch(function().edit(state().block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, m_group.root);
     }
 
     TypeID previous = function().at(member).type;
@@ -259,7 +259,7 @@ void GroupRewriter::finish()
     didChangeOwnBlocks();
 
     if (m_duplicatedTerminator) {
-        function().edit(m_expansion->continuation).terminator = Terminator { };
+        function().edit(m_expansion->continuation, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
         analyses().didChangeControlFlow(singleElementSpan(m_expansion->continuation));
         m_session.m_needsCompaction = true;
     }

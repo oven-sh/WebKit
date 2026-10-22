@@ -1056,6 +1056,37 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
     return callees;
 }
 
+// What a call of JSON.parse or its like has made: a built-in whose row answers plain data is among the callees of the call that the object stands for.
+// Flow follows such an object like any other, so at a type it is a stranger with a shape outside the family. To whoever reads a report it is data from outside.
+static bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    const BuiltinTable& builtins = inputs.program.builtins();
+    const ValueFlowSite* site = universe.isObject(object) ? universe.siteOf(object) : nullptr;
+    FunctionID function = site ? universe.functionOf(object) : FunctionID();
+    if (!function || site->origin != ValueFlowSiteOrigin::BuiltinResult || !site->value)
+        return false;
+    bool answersPlainData = false;
+    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(function.index())) {
+        if (statement.kind != ValueFlowStatementKind::Operation || statement.site != site->value)
+            continue;
+        std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+        if (operands.empty() || !operands[0].node)
+            continue;
+        ValueSetID callees = inputs.solver().valueOf(operands[0].node);
+        if (ValueSets::isComplement(callees))
+            continue;
+        inputs.sets().forEachMember(callees, [&](ValueFlowObjectID callee) {
+            BuiltinID builtin = universe.isObject(callee) ? universe.builtinOf(callee) : BuiltinID();
+            if (!builtin)
+                return;
+            for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin)))
+                answersPlainData |= overload.result.type && builtins.at(overload.result.type).flags.contains(BuiltinTypeFlag::HasPlainData);
+        });
+    }
+    return answersPlainData;
+}
+
 Witness ValueFlowPositions::witnessOfStranger(const ValueFlowPositionResult& result) const
 {
     return result.stranger && m_inputs.universe().isObject(result.stranger) ? witnessOfAllocation(m_inputs, result.stranger) : noWitness;
@@ -1082,7 +1113,7 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
     case ValueFlowProof::Untracked:
         return { .cause = UnprovenCause::Untracked };
     case ValueFlowProof::OutsideFamily:
-        return { .cause = UnprovenCause::LayoutOutsideFamily, .witness = witnessOfStranger(result) };
+        return { .cause = result.stranger && isDataFromOutside(m_inputs, result.stranger) ? UnprovenCause::DataFromOutside : UnprovenCause::LayoutOutsideFamily, .witness = witnessOfStranger(result) };
     case ValueFlowProof::UndecidedLayout:
         return { .cause = UnprovenCause::OtherNewTarget, .witness = witnessOfStranger(result) };
     }

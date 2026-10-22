@@ -252,7 +252,7 @@ static NEVER_INLINE void collectWithWordOnStack(VM& vm, uintptr_t hiddenCell, pt
     AOT_TEST_CHECK(word);
 }
 
-// The fault of 10-20: the field points elsewhere, collections pass and free what the old inner object referred to, and only then a word of the stack names it.
+// The fault: the field points elsewhere, collections pass and free what the old inner object referred to, and only then a word of the stack names it.
 static void testStaleWordOfStackNamesInnerObjectNobodyHeld(LoadedProgram& program)
 {
     VM& vm = program.vm();

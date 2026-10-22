@@ -527,7 +527,7 @@ void ProgramAnalyses::didLower(std::span<const FunctionID> functions, std::span<
     destroyResults(addedEffects.empty() ? resultsAboutBodies - ProgramResult::EffectSummaries : resultsAboutBodies);
 }
 
-void ProgramAnalyses::takeReferencesOfBodies(std::span<ReferencesOfBody* const> byFunction)
+void ProgramAnalyses::takeReferencesOfBodies(std::span<const std::unique_ptr<ReferencesOfBody>> byFunction)
 {
     RELEASE_ASSERT(byFunction.size() == m_program.functions.size());
     if (m_callGraph)
@@ -535,11 +535,10 @@ void ProgramAnalyses::takeReferencesOfBodies(std::span<ReferencesOfBody* const> 
     const ParallelLoops& loops = m_runner.build().parallelLoops();
     if (!m_bodyReferences)
         m_bodyReferences = makeUnique<BodyReferences>();
-    Vector<uint64_t> stampsOfRecords(byFunction.size());
-    forEachIndexInParallel(loops, byFunction.size(), [&](unsigned index) {
-        stampsOfRecords[index] = stampOfRecord(m_program, FunctionID(index));
+    ParallelArray<uint64_t> stampsOfRecords(loops, byFunction.size(), [&](unsigned index) {
+        return stampOfRecord(m_program, FunctionID(index));
     });
-    m_bodyReferences->prepareToTake(m_program, stampsOfRecords.span());
+    m_bodyReferences->prepareToTake(m_program, loops, stampsOfRecords.span());
     forEachIndexInParallel(loops, byFunction.size(), [&](unsigned index) {
         if (byFunction[index])
             m_bodyReferences->take(m_program, FunctionID(index), WTF::move(*byFunction[index]), stampsOfRecords[index]);

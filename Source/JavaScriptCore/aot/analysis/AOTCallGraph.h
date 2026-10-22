@@ -216,7 +216,7 @@ public:
     const ReferencesOfBody& of(FunctionID id) const LIFETIME_BOUND { return m_bodies[id.index()]; }
 
     // For somebody who reads bodies anyway and has collected what they name. First the stamps of the records of all functions as they are now, then the bodies, each from any one thread.
-    void prepareToTake(const Program&, std::span<const uint64_t> stampsOfRecords);
+    void prepareToTake(const Program&, const ParallelLoops&, std::span<const uint64_t> stampsOfRecords);
     void take(const Program&, FunctionID, ReferencesOfBody&&, uint64_t stampOfRecord);
 
 private:

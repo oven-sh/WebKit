@@ -865,7 +865,7 @@ void allocateInnerObjects(ProgramEditor& editor, const FlowResults& flow, const 
                 (allocation.opcode == Opcode::NewArray ? numberOfInnerArrays : numberOfInnerObjects) += !allocation.outerLayout();
                 allocation.setOuterLayout(layout);
             });
-            editor.atForLowering(birth.function).edit(birth.value).setTakesCellOfInnerObject(true);
+            editor.atForLowering(birth.function).edit(birth.value, ValueEdit::Definition).setTakesCellOfInnerObject(true);
         }
         if (!hasInnerObject)
             continue;

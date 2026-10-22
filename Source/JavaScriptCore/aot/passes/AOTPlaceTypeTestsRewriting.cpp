@@ -106,7 +106,7 @@ ValueID GuardWrappers::wrap(ValueID guard, ProgramPoint pointAfter)
 
 void GuardWrappers::redirectGuardOperandsOf(ValueID user) const
 {
-    Value& value = m_function.edit(user);
+    Value& value = m_function.edit(user, ValueEdit::Definition);
     value.forEachOperand([&](ValueID& operand, uint32_t operandIndex) {
         if (value.operandKind(operandIndex) != OperandKind::Guard)
             return;
@@ -160,14 +160,23 @@ static bool acceptsNarrowedValue(const Function& function, const Use& use)
 
 void TestPlacer::rewriteUses()
 {
-    const UseLists& useLists = m_context.analyses.useLists();
+    // Where a use stands now follows from where it stood and from the cuts: the lists of all uses of the function are not made for that.
     m_usePoints.reserveInitialCapacity(m_plan.uses.size());
     for (const PlannedUse& planned : m_plan.uses) {
-        ValueLocation location = useLists.locationOf(m_plan.sites.sites[planned.site].use);
-        RELEASE_ASSERT(location.placement == ValuePlacement::InBlock);
-        m_usePoints.append(ProgramPoint { location.block, location.index });
+        const TestSite& site = m_plan.sites.sites[planned.site];
+        ProgramPoint point = pointBehindCuts(site.point);
+        const BlockValues& values = m_function.at(point.block).values;
+        if (point.index >= values.size() || values[point.index] != site.use) {
+            // Something was put in front of it.
+            ValueLocation location = m_context.analyses.useLists().locationOf(site.use);
+            RELEASE_ASSERT(location.placement == ValuePlacement::InBlock);
+            point = { location.block, location.index };
+        }
+        m_usePoints.append(point);
     }
-    Vector<AdoptedDefinition, 4> adoptedDefinitions = findAdoptedDefinitions(*m_plan.conditions,m_definitions.span(), m_adoptedProofs.span(), useLists);
+    Vector<AdoptedDefinition, 4> adoptedDefinitions;
+    if (!m_adoptedProofs.isEmpty())
+        adoptedDefinitions = findAdoptedDefinitions(*m_plan.conditions, m_definitions.span(), m_adoptedProofs.span(), m_context.analyses.useLists());
 
     // SSARepair redirects every use of a definition, and an adopted proof has other uses: an allocation is also the object.
     GuardWrappers wrappers(m_function, m_builder);
@@ -199,14 +208,14 @@ void TestPlacer::rewriteUses()
         for (ValueID definition : definitions.subspan(1))
             typeOfAll = typeOfAll.unionWith(m_context.types.at(m_function.at(definition).type), m_context.types);
         typesOfRepresentatives.append({ definitions.first(), typeOfFirst });
-        m_function.edit(definitions.first()).type = m_context.types.intern(typeOfAll);
+        m_function.edit(definitions.first(), ValueEdit::Type).type = m_context.types.intern(typeOfAll);
     }
     for (uint32_t useIndex = 0; useIndex < m_plan.uses.size(); ++useIndex) {
         if (isPlaced(m_plan.uses[useIndex].stretch))
             rewriteUse(m_plan.uses[useIndex], useIndex);
     }
     for (auto [representative, type] : typesOfRepresentatives)
-        m_function.edit(representative).type = type;
+        m_function.edit(representative, ValueEdit::Type).type = type;
     m_builder.applyInsertions();
     // The uses and the guard operands of the tests were written past the builder.
     m_context.analyses.didChangeValues();
@@ -239,7 +248,7 @@ void TestPlacer::rewriteUse(const PlannedUse& planned, uint32_t useIndex)
         ValueID passed = representativeOf(requirementAt(narrowed.requirement).condition);
         ValueID operand = m_function.at(site.use).operand(narrowed.operandIndex);
         ValueID replacement = narrowToOperand(passed, operand, useIndex);
-        m_function.edit(site.use).setOperand(narrowed.operandIndex, replacement);
+        m_function.edit(site.use, ValueEdit::Definition).setOperand(narrowed.operandIndex, replacement);
     }
 
     Vector<ValueID, 4> proofs;
@@ -300,7 +309,7 @@ void TestPlacer::rewriteUse(const PlannedUse& planned, uint32_t useIndex)
     TypeID type = useAsPlanned.type;
     TypeID expected = useAsPlanned.expected();
     ruleOf(site.rule).rewrite(rewriter);
-    Value& use = m_function.edit(site.use);
+    Value& use = m_function.edit(site.use, ValueEdit::Type);
     use.type = type;
     use.setExpected(expected);
 }
@@ -499,12 +508,12 @@ void TestPlacer::leaveOutBlocksOfUnusedProofs(const BitVector& isUsed)
         if (!emitted.provenWhenFailed || isUsed.get(emitted.provenWhenFailed.index()))
             continue;
         // A rewritten use may have split the block of the test, so the branch is looked for from its target.
-        Block& failed = m_function.edit(emitted.failed);
         std::optional<Edge> edge = m_context.analyses.cfg().singleIncomingEdge(emitted.failed);
-        RELEASE_ASSERT(edge && failed.terminator.kind == TerminatorKind::Jump);
+        RELEASE_ASSERT(edge && m_function.at(emitted.failed).terminator.kind == TerminatorKind::Jump);
         // The repair of SSA may have led a value through the block, and a cast may stand in it.
-        if (!failed.values.isEmpty() || failed.parameters.size() != 1)
+        if (!m_function.at(emitted.failed).values.isEmpty() || m_function.at(emitted.failed).parameters.size() != 1)
             continue;
+        Block& failed = m_function.edit(emitted.failed, { BlockEdit::Parameters, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
         Target& notTaken = editTarget(m_function, *edge);
         notTaken = Target { failed.terminator.next().block, WTF::move(failed.terminator.next().arguments), { } };
         failed.parameters.clear();

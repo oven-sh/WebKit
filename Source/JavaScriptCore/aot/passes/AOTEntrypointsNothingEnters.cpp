@@ -73,6 +73,7 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
     CalleesOfSites result;
 
     struct Chunk {
+        Vector<AccessSiteID> sites;
         Vector<CalleeSetOfSite> calleeSets;
         Vector<CalleeOfSite> typedCallees;
     };
@@ -84,7 +85,9 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
                 return;
             if (found.isEmpty())
                 found.append(Chunk { });
-            found[0].calleeSets.append({ site, call.callees() });
+            found[0].sites.append(site);
+            if (call.callees())
+                found[0].calleeSets.append({ site, call.callees() });
             ValueID callee = calledOperandOf(call);
             if (!callee)
                 return;
@@ -96,27 +99,56 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
         });
     });
 
+    auto join = [&]<typename Entry>(Vector<Entry> Chunk::* list, Vector<Entry>& joined) {
+        forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
+            if (chunks[chunk].isEmpty())
+                return;
+            std::ranges::sort(chunks[chunk][0].*list);
+            removeRepeatedElements(chunks[chunk][0].*list);
+        });
+        size_t size = 0;
+        bool isAscending = true;
+        const Entry* last = nullptr;
+        for (const Vector<Chunk>& chunk : chunks) {
+            if (chunk.isEmpty() || (chunk[0].*list).isEmpty())
+                continue;
+            isAscending &= !last || *last < (chunk[0].*list).first();
+            last = &(chunk[0].*list).last();
+            size += (chunk[0].*list).size();
+        }
+        joined = createVectorWithCapacityInParallel<Entry>(loops, size);
+        for (const Vector<Chunk>& chunk : chunks) {
+            if (!chunk.isEmpty())
+                joined.appendVector(chunk[0].*list);
+        }
+        if (!isAscending)
+            sortAndRemoveDuplicates(loops, joined);
+    };
     runTasksInParallel(loops, {
         [&] {
+            uint32_t numberOfSites = 0;
             for (const Vector<Chunk>& chunk : chunks) {
-                if (!chunk.isEmpty())
-                    result.m_calleeSets.appendVector(chunk[0].calleeSets);
+                if (chunk.isEmpty())
+                    continue;
+                for (AccessSiteID site : chunk[0].sites)
+                    numberOfSites = std::max(numberOfSites, site.index() + 1);
             }
-            for (const CalleeSetOfSite& entry : result.m_calleeSets)
-                result.m_hadCallByValue.set(entry.site.index());
-            result.m_calleeSets.removeAllMatching([](const CalleeSetOfSite& entry) {
-                return !entry.callees;
-            });
-            sortAndRemoveDuplicates(loops, result.m_calleeSets);
+            result.m_hadCallByValue.ensureSize(numberOfSites);
+            for (const Vector<Chunk>& chunk : chunks) {
+                if (chunk.isEmpty())
+                    continue;
+                for (AccessSiteID site : chunk[0].sites)
+                    result.m_hadCallByValue.quickSet(site.index());
+            }
         },
         [&] {
-            for (const Vector<Chunk>& chunk : chunks) {
-                if (!chunk.isEmpty())
-                    result.m_typedCallees.appendVector(chunk[0].typedCallees);
-            }
-            sortAndRemoveDuplicates(loops, result.m_typedCallees);
+            join(&Chunk::calleeSets, result.m_calleeSets);
+        },
+        [&] {
+            join(&Chunk::typedCallees, result.m_typedCallees);
         },
     });
+    build.destroyLater(WTF::move(chunks));
     result.m_wasTaken = true;
     return result;
 }

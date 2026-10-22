@@ -47,7 +47,7 @@ struct InlineVerdict {
     bool introducesHandlers { false };
 };
 
-InlineVerdict computeInlineVerdict(FunctionPassContext&, const InliningSummary& callee, ValueID call);
+InlineVerdict computeInlineVerdict(FunctionPassContext&, const InliningSummary& callee, BlockID blockOfCall, ValueID call);
 
 unsigned inlineDepthOf(const Program&, const Function& caller, uint32_t inlineFrame);
 uint32_t inlineBudgetBytes(const FunctionPassContext&, HeatClass, unsigned depth);

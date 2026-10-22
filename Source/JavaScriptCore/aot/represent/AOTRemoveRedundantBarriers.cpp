@@ -316,20 +316,21 @@ private:
 
     void setFlags(ValueID id, BarrierDecision decision)
     {
-        Value& value = m_function.edit(id);
+        const Value& value = m_function.at(id);
         bool ownerCannotBeMarked = decision == BarrierDecision::OwnerCannotBeMarked;
         bool laterBarrierCovers = decision == BarrierDecision::LaterBarrierCovers;
         if (takesCell(value)) {
             if (value.cellCannotBeMarked() != ownerCannotBeMarked) {
-                value.setCellCannotBeMarked(ownerCannotBeMarked);
+                m_function.edit(id, ValueEdit::Definition).setCellCannotBeMarked(ownerCannotBeMarked);
                 m_outcome = PassOutcome::Changed;
             }
             return;
         }
         if (value.ownerCannotBeMarked() == ownerCannotBeMarked && value.laterBarrierCovers() == laterBarrierCovers)
             return;
-        value.setOwnerCannotBeMarked(ownerCannotBeMarked);
-        value.setLaterBarrierCovers(laterBarrierCovers);
+        Value& store = m_function.edit(id, ValueEdit::Definition);
+        store.setOwnerCannotBeMarked(ownerCannotBeMarked);
+        store.setLaterBarrierCovers(laterBarrierCovers);
         m_outcome = PassOutcome::Changed;
     }
 

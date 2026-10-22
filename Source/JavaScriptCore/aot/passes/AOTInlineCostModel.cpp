@@ -479,7 +479,7 @@ static bool calleeReturnsFreshAggregate(FunctionPassContext& context, const Inli
     return known == InliningSummary::Answer::Yes;
 }
 
-InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningSummary& summary, ValueID call)
+InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call)
 {
     const Program& program = context.program;
     const Function& caller = context.function;
@@ -500,7 +500,6 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     if (introducesHandlers)
         cost = saturatingSum<uint32_t>(cost, InlineModel::handlerIntroductionBytes);
 
-    BlockID block = context.analyses.useLists().blockOf(call);
     HeatClass heat = heatClassOf(context, block);
     // However often the caller runs, this part of it is not expected to.
     if (caller.at(block).frequency != BlockFrequency::Normal && !isCold(heat))
@@ -565,7 +564,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         // a body that only passes the list on is then smaller in the entrypoint than the call of it.
         if (!isTooDeep && !isWithinBudget() && (!isCold(heat) || callerIsEntrypoint)) {
             uint64_t bytesOfAllocation = isCold(heat) ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);
-            unsigned allocations = sinkableAllocationsAfterInlining(context, call, [&] {
+            unsigned allocations = sinkableAllocationsAfterInlining(context, block, call, [&] {
                 return calleeReturnsFreshAggregate(context, summary, value.function());
             });
             if (allocations)

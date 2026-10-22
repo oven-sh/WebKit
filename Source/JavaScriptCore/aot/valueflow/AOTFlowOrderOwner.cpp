@@ -589,8 +589,6 @@ void FlowScopeOwnerAnalysis::runFixpoint()
             continue;
         for (const FlowFunctionMention& reference : body->references)
             lower(reference.function, entry);
-        // A module of a library exports hundreds of functions and has thousands of readers, which are entered behind the end of its body or nobody knows when.
-        // An entry only ever falls, so to lower it a second time to the same point changes nothing.
         constexpr size_t mostEntriesToRemember = 8;
         for (const StoredFunctionReader& read : recordsWith(m_storedFunctionReaders.span(), function, &StoredFunctionReader::reader)) {
             Vector<FlowScopeEntry, 2>& entriesOfReaders = m_entriesOfReadersOfRuns.add(read.first, Vector<FlowScopeEntry, 2>()).iterator->value;

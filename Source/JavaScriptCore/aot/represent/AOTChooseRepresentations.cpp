@@ -175,7 +175,7 @@ static Vector<ValueID, 8> keepSumsOfBoxedNumbersBoxed(FunctionPassContext& pass,
         }
     }
     for (ValueID id : kept)
-        function.edit(id).representation = Representation::JSValue;
+        function.edit(id, ValueEdit::Type).representation = Representation::JSValue;
     return kept;
 }
 
@@ -186,7 +186,7 @@ static void settleSumsKeptBoxed(const RepresentationInputs& inputs, Function& fu
             return function.at(operand).representation == Representation::JSValue;
         });
         if (!operandsStayedBoxed)
-            function.edit(id).representation = Representation::Double;
+            function.edit(id, ValueEdit::Type).representation = Representation::Double;
     }
 }
 
@@ -201,9 +201,9 @@ static void writeRepresentations(FunctionPassContext& pass, const Representation
     for (BlockID id : pass.analyses.cfg().reversePostOrder()) {
         const Block& block = function.at(id);
         for (ValueID parameter : block.parameters)
-            function.edit(parameter).representation = webs.representationOf(parameter);
+            function.edit(parameter, ValueEdit::Type).representation = webs.representationOf(parameter);
         for (ValueID value : block.values)
-            function.edit(value).representation = webs.representationOf(value);
+            function.edit(value, ValueEdit::Type).representation = webs.representationOf(value);
     }
 
     settleSumsKeptBoxed(inputs, function, sumsKeptBoxed.span());

@@ -230,7 +230,7 @@ static ValueID emitReplacement(AllocationSinking& sinking, ObjectInterpreter& in
     ValueID emitted = cursor.emit(WTF::move(replacement));
     Function& function = cursor.builder().function();
     if (!function.at(emitted).expected() && function.at(emitted).type == function.at(read).type)
-        function.edit(emitted).setExpected(function.at(read).expected());
+        function.edit(emitted, ValueEdit::Type).setExpected(function.at(read).expected());
     return emitted;
 }
 

@@ -667,7 +667,7 @@ static void becomeCodeUnit(const Program& program, GroupRewriter& rewriter, cons
     replaceRootWith(rewriter, makeCodeUnitRead(rewriter, match));
     rewriter.leaveUnclaimed(root);
     for (BlockID block : match.switchBlocks)
-        switchOnCodeUnit(program, rewriter.function().edit(block).terminator, root);
+        switchOnCodeUnit(program, rewriter.function().edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, root);
 }
 
 static void becomeRangeOfBase(GroupRewriter& rewriter, const Match& match)

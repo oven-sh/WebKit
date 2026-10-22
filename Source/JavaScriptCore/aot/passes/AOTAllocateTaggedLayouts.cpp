@@ -67,27 +67,27 @@ static ValueID appendAsRead(IRBuilder& builder, Value&& value)
     value.setOrigin(builder.origin());
     function.add(WTF::move(value));
     ValueID id(function.values.size() - 1);
-    function.edit(builder.currentBlock()).values.append(id);
+    function.edit(builder.currentBlock(), BlockEdit::Values).values.append(id);
     return id;
 }
 
 static ValueID addProofAsRead(IRBuilder& builder, BlockID from, uint32_t targetIndex, uint32_t provenOperand)
 {
     Function& function = builder.function();
-    Target& target = function.edit(from).terminator.targets[targetIndex];
+    Target& target = function.edit(from, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets[targetIndex];
     target.proofs.append(provenOperand);
 
     Value parameter(Opcode::Parameter);
     parameter.setOrigin(builder.origin());
     function.add(WTF::move(parameter));
     ValueID id(function.values.size() - 1);
-    function.edit(target.block).parameters.append(id);
+    function.edit(target.block, BlockEdit::Parameters).parameters.append(id);
     return id;
 }
 
 static void reopen(IRBuilder& builder, BlockID block)
 {
-    builder.function().edit(block).terminator = Terminator { };
+    builder.function().edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
     builder.moveToEndOf(block);
 }
 
@@ -200,7 +200,7 @@ static ValueID findParameterStoredAsTag(const Program& program, const Function& 
 static ValueID ensureNewTargetParameter(IRBuilder& builder)
 {
     Function& function = builder.function();
-    auto& parameters = function.edit(entryBlock).parameters;
+    auto& parameters = function.edit(entryBlock, BlockEdit::Parameters).parameters;
     if (function.has(FunctionFlags::HasNewTarget))
         return parameters[*function.newTargetParameterIndex()];
 
@@ -510,7 +510,7 @@ bool TaggedLayoutAllocator::allocateInClassConstructor(const TaggedFamily& famil
     substitution.replace(own->value, object);
     substitution.apply(function, nullptr);
     RELEASE_ASSERT(function.at(own->block).values.last() == own->value);
-    function.edit(own->block).values.removeLast();
+    function.edit(own->block, BlockEdit::Values).values.removeLast();
 
     BlockFrequency frequency = function.at(own->block).frequency;
     builder.setHandler(function.at(own->block).handler);

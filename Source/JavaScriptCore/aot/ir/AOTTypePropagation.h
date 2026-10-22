@@ -73,8 +73,6 @@ public:
     void typeDependentsOf(std::span<const ValueID> changedValues, ChangedValues);
     // A value that was edited is computed again, and so is what is typed from a value whose types have come out different. What is computed to the same types ends there.
     void typePendingValues(PendingTyping&);
-    // The same for a caller in the middle of its edits: the values it names are computed again, and what is typed from them. Whatever else is pending stays pending.
-    void typeWhatFollows(std::span<const ValueID> changedValues);
     // For whoever has typed values in another way.
     void tellWhatIsTyped();
 
@@ -128,8 +126,7 @@ private:
     TypeID partOfExpectedTypeInside(TypeID type, TypeID expected);
     void typeAgain(ValueID, bool isParameter, BlockID, uint32_t index);
     bool hasTypesOfEveryArgument(BlockID, uint32_t index, const Value& parameter) const;
-    void enqueueParametersOf(BlockID, size_t positionOfEntry);
-    void willTypeQueuedValues();
+    void enqueueParametersOf(BlockID);
     void enqueuePendingValues(PendingTyping&);
     void typeQueuedValues();
     uint32_t componentOf(ValueID, unsigned cycle);
@@ -202,9 +199,6 @@ private:
     bool m_didGiveUp { false };
     bool m_dropsExpectedTypesAtOnce { false };
     BitVector m_didEnqueueParametersOf;
-    const PendingTyping* m_pending { nullptr };
-    bool m_typesWhatFollowsValuesOfCaller { false };
-    BitVector m_isNamedByCaller;
     ChangeLog::Cursor m_logAtStart;
     const BlockCycles* m_cycles { nullptr };
     bool m_queuesOnlySomeValues { false };
@@ -316,33 +310,14 @@ private:
 public:
     // For the propagation of types.
     void takeEntries(const ChangeLog&);
-    void forgetChangesOfTypesAlone(size_t firstEntry = 0);
+    void forgetChangesOfTypesAlone();
     void didTypePendingValues();
     void didTypeEverythingBefore(const ChangeLog::Cursor&);
 
 private:
-    // Somebody has typed the value behind so many of the entries. An entry says that a reference for writing was handed out, not that the writing was over,
-    // so those entries count for nothing only while the value is what it was then.
-    struct TypedSince {
-        uint32_t numberOfValueEntries { 0 };
-        uint32_t numberOfBlockEntries { 0 };
-        uint64_t hash { 0 };
-    };
-    enum class Entry : uint8_t { IsPending, WasTypedSince, WasTypedSinceWithoutItsUsers, WasWrittenBehindTyping };
-    // The lowest bit of the hash.
-    enum class Users : uint8_t { MayHaveSeenOtherTypes, WereTypedToo };
-
-    static uint64_t hashOf(const Value&);
-    void didType(const Function&, ValueID, size_t numberOfValueEntries, size_t numberOfBlockEntries, Users);
-    Entry stateOfValueEntry(const Function&, size_t position) const;
-    bool wasTypedBehindBlockEntry(ValueID parameter, size_t position) const { return parameter.index() < m_typedSince.size() && position < m_typedSince[parameter.index()].numberOfBlockEntries; }
-    void forgetEntriesTypedSince(const Function&);
-
     ChangeLog::Cursor m_seen;
     Vector<ValueChange, 16> m_values;
     Vector<BlockChange, 8> m_blocks;
-    // By value. Empty while nobody else has typed anything.
-    Vector<TypedSince> m_typedSince;
     bool m_isEverythingPending { true };
     bool m_valuesTypedFromRecordsArePending { false };
 };

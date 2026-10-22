@@ -79,7 +79,7 @@ static BlockID createLoopHeader(FunctionPassContext& context, IRBuilder& builder
     ValueSubstitution substitution(function);
     for (ValueID entryParameter : entryParameters) {
         ValueID headerParameter = builder.addParameter(header, function.at(entryParameter).type);
-        function.edit(headerParameter).setExpected(function.at(entryParameter).expected());
+        function.edit(headerParameter, ValueEdit::Type).setExpected(function.at(entryParameter).expected());
         substitution.replace(entryParameter, headerParameter);
     }
     substitution.apply(function, &context.analyses);

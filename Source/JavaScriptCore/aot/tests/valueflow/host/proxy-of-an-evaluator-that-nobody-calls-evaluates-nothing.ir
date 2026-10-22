@@ -1,0 +1,17 @@
+# kept = new Proxy(Function, {}); typeof kept
+# RUN: valueflow-solve unseen
+# FORM: AsRead
+# CHECK: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function" [isFreeName]
+    v2 = NewObject
+    v3 = Builtin builtin=Proxy
+    v4 = Construct v3, -, v1, v2
+    v5 = TypeOf v4
+    Return v5
+}

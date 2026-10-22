@@ -101,7 +101,7 @@ static ValueID addLoopEntry(SpreadExpansion& expansion, BlockFrequency frequency
     expansion.loopEntry = expansion.builder.addBlock(frequency);
     ValueID source = expansion.builder.addParameter(expansion.loopEntry, function.at(iterable).type);
     if (expected) {
-        function.edit(source).setExpected(expected);
+        function.edit(source, ValueEdit::Type).setExpected(expected);
         expansion.pass.analyses.didChangeValues();
     }
     return source;
@@ -252,7 +252,7 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
     BlockID entry = builder.addBlock();
     ValueID array = builder.addParameter(entry, arrayType);
     ValueID iterable = builder.addParameter(entry, TypeTable::anything);
-    function.edit(iterable).setExpected(inputs.types.intern(iterablesExpectedBy(key, inputs.types)));
+    function.edit(iterable, ValueEdit::Type).setExpected(inputs.types.intern(iterablesExpectedBy(key, inputs.types)));
     builder.moveToEndOf(entry);
     builder.append(Opcode::AppendSpread, { array, iterable });
     builder.emitReturn(builder.appendUndefined());

@@ -76,7 +76,7 @@ PassOutcome threadForInPositions(FunctionPassContext& pass, IRBuilder& builder)
         ValueID found = builder.insertBefore(step.pointAfterValue, makeResultAt(step.value, static_cast<uint32_t>(ForInStepResult::Position)));
         ValueID one = builder.insertBefore(step.pointAfterValue, makeInteger(1));
         ValueID next = builder.insertBefore(step.pointAfterValue, IRBuilder::make(Opcode::Add, { found, one }));
-        function.edit(step.value).setPositionOperand(position.anyDefinition);
+        function.edit(step.value, ValueEdit::Definition).setPositionOperand(position.anyDefinition);
         repair.addDefinition(position.variable, next);
     }
 

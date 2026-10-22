@@ -516,7 +516,7 @@ void convertChainToSwitch(IRBuilder& builder, FunctionAnalyses& analyses, ChainK
     mergeLinksIntoHead(function, chain, isLeftWithoutReader);
     builder.setOrigin(function.at(chain.head).terminator.origin());
     builder.setHandler(function.at(chain.head).handler);
-    function.edit(chain.head).terminator = Terminator { };
+    function.edit(chain.head, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
     analyses.didChangeControlFlow();
     builder.moveToEndOf(chain.head);
 

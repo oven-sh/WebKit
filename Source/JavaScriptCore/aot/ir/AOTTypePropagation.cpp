@@ -178,7 +178,6 @@ void TypePropagation::typeAllValues()
     }
 
     willTypeValues();
-    m_dropsExpectedTypesAtOnce = true;
     Function& function = m_inputs.function;
     m_sweepFlags.fill(SweepFlag::IsChangedValue, function.values.size());
     auto startOver = [&](ValueID id) {
@@ -285,8 +284,6 @@ bool TypePropagation::isParameterToSweep(TypeLevel level, BlockID block, uint32_
 // which is another thing than to expect no value.
 TypeID TypePropagation::partOfExpectedTypeInside(TypeID type, TypeID expected)
 {
-    if (expected == type)
-        return { };
     expected = m_inputs.types.intersectionOf(type, expected);
     return expected == TypeTable::never ? TypeID() : narrowerTypeOrNull(expected, type);
 }
@@ -1004,10 +1001,8 @@ bool TypePropagation::mayHaveCodeToCut() const
     if (m_statesBeforeRestart.isEmpty() || m_rememberedValues.isEmpty())
         return !m_everyOtherValueIsAsTyped;
     const Function& function = m_inputs.function;
-    // Behind a value that had no type left before, the code was cut then, or waits for the runner to cut it.
     return std::ranges::any_of(m_rememberedValues, [&](ValueID id) {
-        bool hasNoTypeLeft = function.at(id).type == TypeTable::never && (!m_everyOtherValueIsAsTyped || m_typesWhatFollowsValuesOfCaller || m_statesBeforeRestart[id.index()].type != TypeTable::never);
-        return hasNoTypeLeft || function.at(id).opcode == Opcode::NarrowByField;
+        return function.at(id).type == TypeTable::never || function.at(id).opcode == Opcode::NarrowByField;
     });
 }
 
@@ -1097,8 +1092,7 @@ bool TypePropagation::hasTypesOfEveryArgument(BlockID block, uint32_t index, con
     return !edges.empty();
 }
 
-// The entries of blocks are read from the last to the first, so a block comes here with the last entry that names it.
-void TypePropagation::enqueueParametersOf(BlockID blockID, size_t positionOfEntry)
+void TypePropagation::enqueueParametersOf(BlockID blockID)
 {
     if (m_didEnqueueParametersOf.set(blockID.index()))
         return;
@@ -1111,7 +1105,7 @@ void TypePropagation::enqueueParametersOf(BlockID blockID, size_t positionOfEntr
                 if (!target.block)
                     return;
                 if (m_cfg.isReachable(target.block))
-                    enqueueParametersOf(target.block, positionOfEntry);
+                    enqueueParametersOf(target.block);
                 else if (!m_didEnqueueParametersOf.set(target.block.index()))
                     unreachableBlocks.append(target.block);
             });
@@ -1123,8 +1117,6 @@ void TypePropagation::enqueueParametersOf(BlockID blockID, size_t positionOfEntr
     bool mayBeTypedFromItself = m_cycles && m_cycles->isInCycle(blockID);
     for (uint32_t index = 0; index < parameters.size(); ++index) {
         ValueID id = parameters[index];
-        if (m_pending->wasTypedBehindBlockEntry(id, positionOfEntry))
-            continue;
         if (!mayBeTypedFromItself && blockID != entryBlock && hasTypesOfEveryArgument(blockID, index, function.at(id)))
             continue;
         m_placesOfParameters[id.index()] = { blockID.index(), index };
@@ -1134,26 +1126,17 @@ void TypePropagation::enqueueParametersOf(BlockID blockID, size_t positionOfEntr
 
 // What the log of changes has named since types were last propagated. A value that was edited is computed again. Where what is typed from it was typed from other types than it has now,
 // that follows. The parameters of a block are joins over its incoming edges.
-void TypePropagation::willTypeQueuedValues()
-{
-    size_t numberOfValues = m_inputs.function.values.size();
-    m_everyOtherValueIsAsTyped = true;
-    m_dropsExpectedTypesAtOnce = true;
-    willTypeValues();
-    m_isQueued.ensureSize(numberOfValues);
-    m_placesOfParameters.grow(numberOfValues);
-    m_cycles = m_cfg.hasCycle() ? &m_inputs.analyses.blockCycles() : nullptr;
-}
-
 void TypePropagation::enqueuePendingValues(PendingTyping& pending)
 {
     const Function& function = m_inputs.function;
     size_t numberOfValues = function.values.size();
-    willTypeQueuedValues();
-    m_pending = &pending;
+    willTypeValues();
+    m_isQueued.ensureSize(numberOfValues);
+    m_placesOfParameters.grow(numberOfValues);
+    m_cycles = m_cfg.hasCycle() ? &m_inputs.analyses.blockCycles() : nullptr;
 
     if (pending.m_valuesTypedFromRecordsArePending) {
-        enqueueParametersOf(entryBlock, pending.m_blocks.size());
+        enqueueParametersOf(entryBlock);
         for (uint32_t index = 0; index < numberOfValues; ++index) {
             if (opcodesTypedFromNarrowedRecords().contains(function.values[index].opcode))
                 enqueue(ValueID(index));
@@ -1173,31 +1156,18 @@ void TypePropagation::enqueuePendingValues(PendingTyping& pending)
     };
 
     BitVector hasEarlierEntry(numberOfValues);
-    for (size_t position = 0; position < pending.m_values.size(); ++position) {
-        const ValueChange& change = pending.m_values[position];
-        PendingTyping::Entry state = pending.stateOfValueEntry(function, position);
-        if (state == PendingTyping::Entry::WasTypedSince)
-            continue;
-        if (state == PendingTyping::Entry::WasWrittenBehindTyping) {
-            willRestartValues();
-            enqueue(change.value);
-            enqueueUsersOf(change.value);
-            continue;
-        }
+    for (const ValueChange& change : pending.m_values) {
         if (change.edits.contains(ValueEdit::TypedByRule))
             continue;
         if (change.edits.contains(ValueEdit::OperandsOfSameTypes)) {
-            if (state == PendingTyping::Entry::IsPending)
-                enqueueIfTypedFromItself(change.value);
+            enqueueIfTypedFromItself(change.value);
             continue;
         }
         const Value& value = function.at(change.value);
-        if (state == PendingTyping::Entry::IsPending) {
-            // Only the lists of uses say where a parameter stands.
-            if (value.opcode == Opcode::Parameter)
-                willRestartValues();
-            enqueue(change.value);
-        }
+        // Only the lists of uses say where a parameter stands.
+        if (value.opcode == Opcode::Parameter)
+            willRestartValues();
+        enqueue(change.value);
         if (change.edits.contains(ValueEdit::Definition) && opcodesWithIndirectUsers.contains(value.opcode)) {
             willRestartValues();
             enqueueIndirectUsersOf(change.value);
@@ -1214,19 +1184,14 @@ void TypePropagation::enqueuePendingValues(PendingTyping& pending)
     constexpr OptionSet<BlockEdit> editsOfOwnParameters { BlockEdit::Added, BlockEdit::Parameters, BlockEdit::Incoming };
     constexpr OptionSet<BlockEdit> editsOfWhatIsPassedOn { BlockEdit::Added, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments, BlockEdit::Rest };
     BitVector didLookAtTargetsOf;
-    for (size_t position = pending.m_blocks.size(); position--;) {
-        const BlockChange& change = pending.m_blocks[position];
+    for (const BlockChange& change : pending.m_blocks) {
         if (change.edits.containsAny(editsOfOwnParameters))
-            enqueueParametersOf(change.block, position);
+            enqueueParametersOf(change.block);
         if (change.edits.contains(BlockEdit::OperandsOfSameTypes)) {
             if (m_cycles) {
                 function.at(change.block).forEachTarget([&](const Target& target) {
-                    if (!target.block || !m_cfg.isReachable(target.block) || !m_cycles->isInCycle(target.block))
-                        return;
-                    for (ValueID parameter : function.at(target.block).parameters) {
-                        if (!pending.wasTypedBehindBlockEntry(parameter, position))
-                            enqueueIfTypedFromItself(parameter);
-                    }
+                    if (target.block && m_cfg.isReachable(target.block) && m_cycles->isInCycle(target.block))
+                        std::ranges::for_each(function.at(target.block).parameters, enqueueIfTypedFromItself);
                 });
             }
             continue;
@@ -1235,33 +1200,18 @@ void TypePropagation::enqueuePendingValues(PendingTyping& pending)
             continue;
         function.at(change.block).forEachTarget([&](const Target& target) {
             if (target.block)
-                enqueueParametersOf(target.block, position);
+                enqueueParametersOf(target.block);
         });
     }
 }
 
 void TypePropagation::typePendingValues(PendingTyping& pending)
 {
+    m_everyOtherValueIsAsTyped = true;
+    m_dropsExpectedTypesAtOnce = true;
     enqueuePendingValues(pending);
     if (!m_worklist.isEmpty())
         typeQueuedValues();
-}
-
-void TypePropagation::typeWhatFollows(std::span<const ValueID> changedValues)
-{
-    if (changedValues.empty())
-        return;
-    m_typesWhatFollowsValuesOfCaller = true;
-    willTypeQueuedValues();
-    willRestartValues();
-    m_isNamedByCaller.ensureSize(m_inputs.function.values.size());
-    for (ValueID id : changedValues) {
-        m_isNamedByCaller.quickSet(id.index());
-        enqueue(id);
-        // The caller may have given it other types by hand.
-        enqueueUsersOf(id);
-    }
-    typeQueuedValues();
 }
 
 // Every value in the list is computed from the types that its sources have now, and what is typed from it follows where its types come out different. In which order does not matter
@@ -1506,49 +1456,63 @@ void TypePropagation::tellWhatIsTyped()
     reportRetypedValues();
     if (log->hasForgottenSince(m_logAtStart))
         return;
-    bool didTypeEverything = m_didTypeAllValues || m_didGiveUp;
-    if (pending->isEverythingPending(*log)) {
-        if (!didTypeEverything)
-            return;
-        // What the pass that asks has edited so far it may still be writing.
-        pending->didTypeEverythingBefore(log->endOfSettledEntries());
+    if (m_didTypeAllValues || m_didGiveUp) {
+        // What it has written into the log itself: which types have changed, an upcast that it has replaced, a block that it has cut.
+        pending->didTypeEverythingBefore(m_logAtStart);
+        pending->takeEntries(*log);
+        pending->forgetChangesOfTypesAlone();
+        return;
     }
-    if (!didTypeEverything && m_everyOtherValueIsAsTyped && !m_typesWhatFollowsValuesOfCaller)
+    if (pending->isEverythingPending(*log))
         return;
 
-    // Its own entries say which types have changed, but for an upcast that it has replaced and a block that it has cut.
-    size_t numberOfOwnValueEntries = log->valuesSince(m_logAtStart).size();
-    size_t numberOfOwnBlockEntries = log->blocksSince(m_logAtStart).size();
-    pending->takeEntries(*log);
-    size_t numberOfValueEntries = pending->m_values.size() - numberOfOwnValueEntries;
-    size_t numberOfBlockEntries = pending->m_blocks.size() - numberOfOwnBlockEntries;
-    pending->forgetChangesOfTypesAlone(numberOfValueEntries);
-    if (!numberOfValueEntries && !numberOfBlockEntries)
+    // Where it stops behind a value that keeps its types, what is typed from a value that somebody has given other types by hand may not have had its turn.
+    if (m_everyOtherValueIsAsTyped)
         return;
 
     const Function& function = m_inputs.function;
-    using Users = PendingTyping::Users;
-    if (didTypeEverything) {
-        for (uint32_t index = 0; index < function.values.size(); ++index)
-            pending->didType(function, ValueID(index), numberOfValueEntries, numberOfBlockEntries, Users::WereTypedToo);
-        return;
+    auto isTyped = [&](ValueID id) {
+        return !m_rememberedValues.isEmpty() && id.index() < m_isRemembered.size() && m_isRemembered.quickGet(id.index());
+    };
+    auto areParametersTyped = [&](BlockID block) {
+        return std::ranges::all_of(function.at(block).parameters, isTyped);
+    };
+    auto isStillPending = [&](const BlockChange& change) {
+        if (!areParametersTyped(change.block))
+            return true;
+        bool isPending = false;
+        function.at(change.block).forEachTarget([&](const Target& target) {
+            isPending |= target.block && !areParametersTyped(target.block);
+        });
+        return isPending;
+    };
+
+    size_t numberOfOwnValueEntries = log->valuesSince(m_logAtStart).size();
+    size_t numberOfOwnBlockEntries = log->blocksSince(m_logAtStart).size();
+    pending->takeEntries(*log);
+    size_t firstOwnValueEntry = pending->m_values.size() - numberOfOwnValueEntries;
+    size_t firstOwnBlockEntry = pending->m_blocks.size() - numberOfOwnBlockEntries;
+    size_t kept = 0;
+    for (size_t index = 0; index < pending->m_values.size(); ++index) {
+        const ValueChange& change = pending->m_values[index];
+        // Its own entries say which types have changed, but for an upcast that it has replaced.
+        bool isPending = index < firstOwnValueEntry ? !isTyped(change.value) : change.edits.containsAny({ ValueEdit::Added, ValueEdit::Definition });
+        if (isPending)
+            pending->m_values[kept++] = change;
     }
-    for (ValueID id : m_rememberedValues) {
-        // Where it stops behind a value that keeps its types, what is typed from a value that somebody has given other types by hand may not have had its turn.
-        Users users = Users::WereTypedToo;
-        if (m_typesWhatFollowsValuesOfCaller && !m_isNamedByCaller.quickGet(id.index())) {
-            const Value& value = function.at(id);
-            const StateBeforeRestart& before = m_statesBeforeRestart[id.index()];
-            if (value.type == before.type && value.expectedOrTypeForTyping() == before.expectedOrType)
-                users = Users::MayHaveSeenOtherTypes;
-        }
-        pending->didType(function, id, numberOfValueEntries, numberOfBlockEntries, users);
+    pending->m_values.shrink(kept);
+    kept = 0;
+    for (size_t index = 0; index < pending->m_blocks.size(); ++index) {
+        const BlockChange& change = pending->m_blocks[index];
+        if (index >= firstOwnBlockEntry || isStillPending(change))
+            pending->m_blocks[kept++] = change;
     }
+    pending->m_blocks.shrink(kept);
 }
 
 namespace {
 
-enum class TypedFirst : uint8_t { Nothing, DependentsOfChangedValues, WhatFollowsChangedValues, AllValues, PendingValues };
+enum class TypedFirst : uint8_t { Nothing, DependentsOfChangedValues, AllValues, PendingValues };
 using ChangedValues = TypePropagation::ChangedValues;
 
 } // anonymous namespace
@@ -1570,9 +1534,6 @@ static TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs&
             break;
         case TypedFirst::DependentsOfChangedValues:
             propagation.typeDependentsOf(changedValues, kind);
-            break;
-        case TypedFirst::WhatFollowsChangedValues:
-            propagation.typeWhatFollows(changedValues);
             break;
         case TypedFirst::AllValues:
             propagation.typeAllValues();
@@ -1598,8 +1559,7 @@ static TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs&
         // The log names the blocks that have lost an edge.
         if (typedFirst == TypedFirst::PendingValues)
             continue;
-        if (typedFirst != TypedFirst::WhatFollowsChangedValues)
-            typedFirst = TypedFirst::DependentsOfChangedValues;
+        typedFirst = TypedFirst::DependentsOfChangedValues;
         changedValues = parametersBehindRemovedEdges.span();
     }
 
@@ -1641,9 +1601,6 @@ TypePropagationOutcome finishTypedValues(const TypePropagationInputs& inputs)
 
 TypePropagationOutcome narrowValueTypes(const TypePropagationInputs& inputs, std::span<const ValueID> changedValues)
 {
-    // Where it is known which values have still to be typed, every other value is typed as it is defined, and nothing has to be typed behind a value that keeps its types.
-    if (PendingTyping* pending = pendingTypingOf(inputs); pending && !pending->isEverythingPending(*inputs.function.changeLog()))
-        return typeUntilNothingIsCut(inputs, TypedFirst::WhatFollowsChangedValues, changedValues);
     return typeUntilNothingIsCut(inputs, TypedFirst::DependentsOfChangedValues, changedValues);
 }
 
@@ -1661,78 +1618,18 @@ void PendingTyping::takeEntries(const ChangeLog& log)
     m_seen = log.end();
 }
 
-void PendingTyping::forgetChangesOfTypesAlone(size_t firstEntry)
+void PendingTyping::forgetChangesOfTypesAlone()
 {
     m_values.removeAllMatching([](const ValueChange& change) {
         return change.edits == ValueEdit::Type;
-    }, firstEntry);
+    });
 }
 
 void PendingTyping::didTypePendingValues()
 {
     m_values.shrink(0);
     m_blocks.shrink(0);
-    m_typedSince.shrink(0);
     m_valuesTypedFromRecordsArePending = false;
-}
-
-uint64_t PendingTyping::hashOf(const Value& value)
-{
-    uint64_t types = static_cast<uint64_t>(value.type.index()) << 32 | value.expectedForTyping().index();
-    return value.hashOfWords() ^ static_cast<uint64_t>(value.opcode) << 48 ^ types * 0x9e3779b97f4a7c15ull;
-}
-
-void PendingTyping::didType(const Function& function, ValueID id, size_t numberOfValueEntries, size_t numberOfBlockEntries, Users users)
-{
-    if (m_typedSince.size() < function.values.size())
-        m_typedSince.grow(function.values.size());
-    TypedSince& typedSince = m_typedSince[id.index()];
-    // Whose users had still to be typed behind an earlier entry, has them still.
-    if (typedSince.numberOfValueEntries && !(typedSince.hash & 1))
-        users = Users::MayHaveSeenOtherTypes;
-    typedSince = { static_cast<uint32_t>(numberOfValueEntries), static_cast<uint32_t>(numberOfBlockEntries), (hashOf(function.at(id)) & ~1ull) | static_cast<uint64_t>(users) };
-}
-
-auto PendingTyping::stateOfValueEntry(const Function& function, size_t position) const -> Entry
-{
-    ValueID id = m_values[position].value;
-    if (id.index() >= m_typedSince.size() || position >= m_typedSince[id.index()].numberOfValueEntries)
-        return Entry::IsPending;
-    uint64_t hash = m_typedSince[id.index()].hash;
-    if ((hash ^ hashOf(function.at(id))) & ~1ull)
-        return Entry::WasWrittenBehindTyping;
-    return hash & 1 ? Entry::WasTypedSince : Entry::WasTypedSinceWithoutItsUsers;
-}
-
-// For whoever gives the values other numbers. No reference for writing outlasts that.
-void PendingTyping::forgetEntriesTypedSince(const Function& function)
-{
-    if (m_typedSince.isEmpty())
-        return;
-    size_t kept = 0;
-    for (size_t position = 0; position < m_values.size(); ++position) {
-        if (stateOfValueEntry(function, position) != Entry::WasTypedSince)
-            m_values[kept++] = m_values[position];
-    }
-    m_values.shrink(kept);
-
-    auto wereParametersTyped = [&](BlockID block, size_t position) {
-        return std::ranges::all_of(function.at(block).parameters, [&](ValueID parameter) {
-            return wasTypedBehindBlockEntry(parameter, position);
-        });
-    };
-    kept = 0;
-    for (size_t position = 0; position < m_blocks.size(); ++position) {
-        BlockID block = m_blocks[position].block;
-        bool wasTyped = wereParametersTyped(block, position);
-        function.at(block).forEachTarget([&](const Target& target) {
-            wasTyped = wasTyped && (!target.block || wereParametersTyped(target.block, position));
-        });
-        if (!wasTyped)
-            m_blocks[kept++] = m_blocks[position];
-    }
-    m_blocks.shrink(kept);
-    m_typedSince.shrink(0);
 }
 
 void PendingTyping::didTypeEverything(const ChangeLog& log)
@@ -1760,7 +1657,6 @@ bool PendingTyping::compact(Function& function, Renumbering* renumberingForCalle
 {
     const ChangeLog& log = *function.changeLog();
     takeEntries(log);
-    forgetEntriesTypedSince(function);
     bool wasEverythingPending = isEverythingPending(log);
     Renumbering renumbering;
     bool didMove = compactFunction(function, &renumbering);

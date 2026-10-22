@@ -287,20 +287,20 @@ void AllocationSinking::rewriteBlock(BlockID block)
     for (uint32_t targetIndex = 0; targetIndex < function.at(block).terminator.targets.size(); ++targetIndex)
         edges.append(outgoingEdgeOf(function, Edge { block, targetIndex }));
 
-    BlockValues oldValues = std::exchange(function.edit(block).values, { });
-    Terminator terminator = std::exchange(function.edit(block).terminator, Terminator());
-    std::optional<Target> handler = std::exchange(function.edit(block).handler, std::nullopt);
+    BlockValues oldValues = std::exchange(function.edit(block, BlockEdit::Values).values, { });
+    Terminator terminator = std::exchange(function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator());
+    std::optional<Target> handler = std::exchange(function.edit(block, { BlockEdit::Edges, BlockEdit::Arguments }).handler, std::nullopt);
     if (handler)
         m_tables->enteredBlocks.set(handler->block.index());
 
     ObjectInterpreter interpreter(*this, SinkingMode::Rewrite, state, &values);
     if (VirtualObjectID subject = interpreter.objectOf(function.at(block).subject)) {
         RELEASE_ASSERT(state.find(subject)->isCell());
-        function.edit(block).subject = values.find(subject)->cell;
+        function.edit(block, BlockEdit::Rest).subject = values.find(subject)->cell;
     }
     m_cursor->beginBlock(block, WTF::move(handler), interpreter);
     if (state.objects.isEmpty() && !m_inputs.blocksWithCandidates.get(block.index()))
-        function.edit(m_cursor->block()).values = WTF::move(oldValues);
+        function.edit(m_cursor->block(), BlockEdit::Values).values = WTF::move(oldValues);
     else {
         for (ValueID id : oldValues)
             interpreter.execute(id);
@@ -524,7 +524,7 @@ ValueID AllocationSinking::entryConstant(Value&& value)
 
 void AllocationSinking::insertEntryConstants()
 {
-    m_cursor->builder().function().edit(entryBlock).values.insertVector(0, m_tables->entryConstants);
+    m_cursor->builder().function().edit(entryBlock, BlockEdit::Values).values.insertVector(0, m_tables->entryConstants);
 }
 
 void AllocationSinking::removeBoundParameters(IRBuilder& builder)

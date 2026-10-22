@@ -114,7 +114,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxVersionedIterationBytes(Optimize, CodeSize, NotOptimized, 1024, 1024, "code duplicated to specialize a loop per kind of iterable")
     MaxDestructuredElements(Optimize, CodeSize, GenericPath, 8, 8, "elements read by one array destructuring")
     MinRequestedJSONCapacity(Optimize, CodeSize, NotOptimized, 128, 128, "bytes under which JSON buffer reservations are merged")
-    MaxJSONLayoutSetMembers(Optimize, CodeSize, CallByOperation, 4, 4, "object shapes a compiled JSON.stringify tests per value")
+    MaxJSONLayoutSetMembers(Optimize, CodeSize, CallByOperation, 8, 8, "object shapes a compiled JSON.stringify tests per value")
     MaxBuiltinCallArguments(Optimize, BitWidth, GenericPath, 254, 254, "arguments of a built-in call")
     MaxPlannedArrayCapacity(Optimize, Memory, NotOptimized, 100000, 100000, "capacity reserved when an array is created")
 

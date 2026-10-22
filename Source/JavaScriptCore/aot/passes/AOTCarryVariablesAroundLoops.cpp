@@ -489,7 +489,7 @@ void VariableCarrier::rewrite(const NaturalLoop& loop, Edge entry, std::span<con
         }
         builder.setOrigin(m_function.at(first).origin());
         ValueID parameter = builder.addParameter(header, m_function.at(first).type);
-        m_function.edit(parameter).setExpected(m_function.at(first).expected());
+        m_function.edit(parameter, ValueEdit::Type).setExpected(m_function.at(first).expected());
         builder.appendArgument(entry, first);
         for (Edge edge : latchEdges)
             builder.appendArgument(edge, parameter);
@@ -538,7 +538,7 @@ bool VariableCarrier::hoistCaptures(const NaturalLoop& loop)
 
     Vector<ValueID, 4> hoisted;
     for (unsigned position = 0; position < loop.size(); ++position) {
-        BlockValues& values = m_function.edit(loop.at(position)).values;
+        BlockValues& values = m_function.edit(loop.at(position), BlockEdit::Values).values;
         values.removeAllMatching([&](ValueID id) {
             Value& value = m_function.edit(id);
             if (value.opcode != Opcode::GetCapture)
@@ -553,7 +553,7 @@ bool VariableCarrier::hoistCaptures(const NaturalLoop& loop)
     }
     if (hoisted.isEmpty())
         return false;
-    m_function.edit(entry->from).values.appendVector(hoisted);
+    m_function.edit(entry->from, BlockEdit::Values).values.appendVector(hoisted);
     m_analyses.didChangeValues();
     return true;
 }
@@ -653,7 +653,7 @@ bool VariableCarrier::moveLeadingTestsAheadOf(const NaturalLoop& loop)
             entering[*tests[position].parameterOfHeader] = provenAheadOfLoop[position];
     }
     builder.setOrigin(m_function.at(landing).terminator.origin());
-    m_function.edit(landing).terminator = Terminator { };
+    m_function.edit(landing, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
     builder.moveToEndOf(landing);
     builder.emitJump(header, WTF::move(entering));
 
@@ -663,7 +663,7 @@ bool VariableCarrier::moveLeadingTestsAheadOf(const NaturalLoop& loop)
             builder.convertBranchToJump(block, 0);
             continue;
         }
-        Terminator branch = std::exchange(m_function.edit(block).terminator, Terminator { });
+        Terminator branch = std::exchange(m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { });
         Arguments arguments = WTF::move(branch.targets[0].arguments);
         for (size_t proof = 0; proof < branch.targets[0].proofs.size(); ++proof)
             arguments.append(provenAheadOfLoop[position]);

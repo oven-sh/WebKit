@@ -564,7 +564,7 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
     Vector<ValueID, 1> arguments;
     for (ValueID parameter : code.at(entryBlock).parameters) {
         ValueID copy = builder.addParameter(entry, code.at(parameter).type);
-        start.edit(copy).setExpected(code.at(parameter).expected());
+        start.edit(copy, ValueEdit::Type).setExpected(code.at(parameter).expected());
         arguments.append(copy);
     }
     builder.moveToEndOf(entry);
@@ -625,7 +625,7 @@ static void beginEvaluationInCode(const AnalysisContext& context, Function& code
 
     BlockID body = builder.splitBlock(ProgramPoint::atHeadOf(entryBlock));
     builder.removeHandler(entryBlock);
-    code.edit(entryBlock).terminator = Terminator { };
+    code.edit(entryBlock, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
     builder.moveToEndOf(entryBlock);
     ValueID begins = builder.append(makeModuleOperation(Opcode::BeginModuleEvaluation, module));
     BlockID done = builder.addBlock();

@@ -79,7 +79,7 @@ private:
 
     std::optional<uint32_t> findAbsorbableOperand(ProgramPoint outerPoint, ValueID operand, uint32_t limit, const BitVector& absorbed, size_t numberOfOtherParts);
     void fuseOperands(ProgramPoint outerPoint, BitVector& absorbed);
-    bool dropEmptyParts(Value&);
+    bool dropEmptyParts(ValueID);
     void fuseInBlock(BlockID);
     size_t eraseAbsorbedValues(IRBuilder&);
 
@@ -193,7 +193,8 @@ std::optional<uint32_t> ConcatenationFuser::findAbsorbableOperand(ProgramPoint o
 
 void ConcatenationFuser::fuseOperands(ProgramPoint outerPoint, BitVector& absorbed)
 {
-    Value& outer = m_function.edit(m_function.at(outerPoint.block).values[outerPoint.index]);
+    ValueID outerID = m_function.at(outerPoint.block).values[outerPoint.index];
+    const Value& outer = m_function.at(outerID);
     Vector<ValueID, 16> reversedParts;
     uint32_t limit = outerPoint.index;
     bool didAbsorb = false;
@@ -217,14 +218,16 @@ void ConcatenationFuser::fuseOperands(ProgramPoint outerPoint, BitVector& absorb
 
     reversedParts.reverse();
     bool isLikelyKey = Value::opcodesWithIsLikelyKey.contains(outer.opcode) && outer.isLikelyKey();
-    outer.become(Opcode::Strcat);
-    outer.setVariadicOperands(reversedParts.span());
-    outer.setIsLikelyKey(isLikelyKey);
+    Value& fused = m_function.edit(outerID, ValueEdit::Definition);
+    fused.become(Opcode::Strcat);
+    fused.setVariadicOperands(reversedParts.span());
+    fused.setIsLikelyKey(isLikelyKey);
 }
 
 // A concatenation converts each of its parts by itself, so the constant without characters adds nothing to it: "" + x is x as a string.
-bool ConcatenationFuser::dropEmptyParts(Value& value)
+bool ConcatenationFuser::dropEmptyParts(ValueID id)
 {
+    const Value& value = m_function.at(id);
     Vector<ValueID, 16> parts;
     uint32_t numberOfOperands = value.numberOfOperands();
     for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {
@@ -237,9 +240,10 @@ bool ConcatenationFuser::dropEmptyParts(Value& value)
         return false;
 
     bool isLikelyKey = Value::opcodesWithIsLikelyKey.contains(value.opcode) && value.isLikelyKey();
-    value.become(Opcode::Strcat);
-    value.setVariadicOperands(parts.span());
-    value.setIsLikelyKey(isLikelyKey);
+    Value& shortened = m_function.edit(id, ValueEdit::Definition);
+    shortened.become(Opcode::Strcat);
+    shortened.setVariadicOperands(parts.span());
+    shortened.setIsLikelyKey(isLikelyKey);
     return true;
 }
 
@@ -248,11 +252,10 @@ void ConcatenationFuser::fuseInBlock(BlockID id)
     const BlockValues& values = m_function.at(id).values;
     BitVector absorbed;
     for (uint32_t index = 0; index < values.size(); ++index) {
-        Value& value = m_function.edit(values[index]);
-        if (!isConcatenation(value))
+        if (!isConcatenation(m_function.at(values[index])))
             continue;
         fuseOperands({ id, index }, absorbed);
-        m_didDropParts |= dropEmptyParts(value);
+        m_didDropParts |= dropEmptyParts(values[index]);
     }
     if (!absorbed.isEmpty())
         m_absorbedValues.append(AbsorbedValues { id, WTF::move(absorbed) });
@@ -388,7 +391,8 @@ void ConcatenationFuser::findAbsorbedValuesWhereTheyLieNow()
 
 void ConcatenationFuser::fuseOperandsOfEarlierBlocks(ProgramPoint outerPoint)
 {
-    Value& outer = m_function.edit(m_function.at(outerPoint.block).values[outerPoint.index]);
+    ValueID outerID = m_function.at(outerPoint.block).values[outerPoint.index];
+    const Value& outer = m_function.at(outerID);
     Vector<ValueID, 16> parts;
     bool didAbsorb = false;
     uint32_t numberOfOperands = outer.numberOfOperands();
@@ -412,9 +416,10 @@ void ConcatenationFuser::fuseOperandsOfEarlierBlocks(ProgramPoint outerPoint)
         return;
 
     bool isLikelyKey = Value::opcodesWithIsLikelyKey.contains(outer.opcode) && outer.isLikelyKey();
-    outer.become(Opcode::Strcat);
-    outer.setVariadicOperands(parts.span());
-    outer.setIsLikelyKey(isLikelyKey);
+    Value& fused = m_function.edit(outerID, ValueEdit::Definition);
+    fused.become(Opcode::Strcat);
+    fused.setVariadicOperands(parts.span());
+    fused.setIsLikelyKey(isLikelyKey);
 }
 
 void ConcatenationFuser::findReadersAsTheyAreNow()
@@ -475,9 +480,9 @@ void ConcatenationFuser::copyOntoEdges(IRBuilder& builder)
             if (isDone.get(index) || m_copiesOnEdges[index].edge != edge)
                 continue;
             isDone.set(index);
-            Arguments& arguments = m_function.edit(added).terminator.targets[0].arguments;
-            if (!std::ranges::contains(arguments.span(), m_copiesOnEdges[index].original))
+            if (!std::ranges::contains(m_function.at(added).terminator.targets[0].arguments.span(), m_copiesOnEdges[index].original))
                 continue;
+            Arguments& arguments = m_function.edit(added, BlockEdit::Arguments).terminator.targets[0].arguments;
             ValueID copy = builder.insertBefore(ProgramPoint::atHeadOf(added), Value(originals[index]));
             for (uint32_t argumentIndex = 0; argumentIndex < arguments.size(); ++argumentIndex) {
                 if (arguments[argumentIndex] == m_copiesOnEdges[index].original)
@@ -771,8 +776,8 @@ bool ConcatenationFuser::passPrimitivesToConcatenations(IRBuilder& builder)
     const UseLists& uses = m_context.analyses.useLists();
     for (const Passed& change : passed) {
         ValueID primitive = m_function.at(change.conversion).operand(0);
-        editTarget(m_function, change.edge).arguments[change.parameter.index] = primitive;
-        Value& parameter = m_function.edit(m_function.at(change.parameter.block).parameters[change.parameter.index]);
+        editTarget(m_function, change.edge, BlockEdit::Arguments).arguments[change.parameter.index] = primitive;
+        Value& parameter = m_function.edit(m_function.at(change.parameter.block).parameters[change.parameter.index], ValueEdit::Type);
         parameter.type = m_context.types.unionOf(parameter.type, m_function.at(primitive).type);
         markAbsorbed(uses.locationOf(change.conversion));
     }

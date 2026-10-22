@@ -79,7 +79,7 @@ static ValueID addEntryParameter(IRBuilder& builder, BlockID block, const Declar
     TypeID proven = TypingContext { builder.context().program, function, builder.types() }.typeIDOf(declared);
     ValueID parameter = builder.addParameter(block, proven);
     if (declared.type != proven)
-        function.edit(parameter).setExpected(declared.type);
+        function.edit(parameter, ValueEdit::Type).setExpected(declared.type);
     return parameter;
 }
 

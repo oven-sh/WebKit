@@ -168,7 +168,7 @@ unsigned applyCapacityPlans(FunctionPassContext& context, std::span<const Capaci
         ValueID sum = emitSum(plan, insert);
         if (!context.program.typeOf(function, sum).isInteger())
             continue;
-        function.edit(plan.literal).setCapacityOperand(sum);
+        function.edit(plan.literal, ValueEdit::Definition).setCapacityOperand(sum);
         ++numberOfPlannedLiterals;
     }
     builder.applyInsertions();
@@ -355,11 +355,11 @@ unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
                 readAsDoubles = findAllocationsReadAsDoubles(context);
             if (!readAsDoubles->quickGet(allocation.index()))
                 continue;
-            function.edit(allocation).setArrayStorage(ArrayStorage::Double);
+            function.edit(allocation, ValueEdit::Definition).setArrayStorage(ArrayStorage::Double);
             for (ValueID store : uses.testedStores)
-                function.edit(store).setArrayStorage(ArrayStorage::Double);
+                function.edit(store, ValueEdit::Definition).setArrayStorage(ArrayStorage::Double);
             for (ValueID test : uses.tests)
-                function.edit(test).setArrayStorage(ArrayStorage::Double);
+                function.edit(test, ValueEdit::Definition).setArrayStorage(ArrayStorage::Double);
             ++numberOfChangedAllocations;
             continue;
         }
@@ -367,9 +367,9 @@ unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         if (kind == ArrayStorage::Contiguous)
             continue;
 
-        function.edit(allocation).setArrayStorage(kind);
+        function.edit(allocation, ValueEdit::Definition).setArrayStorage(kind);
         for (ValueID store : uses.directStores)
-            function.edit(store).setArrayStorage(kind);
+            function.edit(store, ValueEdit::Definition).setArrayStorage(kind);
         ++numberOfChangedAllocations;
     }
     return numberOfChangedAllocations;

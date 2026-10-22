@@ -118,7 +118,7 @@ private:
         ValueID widerTest = builder.appendTypeTest(tested, widerType);
         builder.emitBranch(widerTest, WTF::move(taken), WTF::move(notTaken));
 
-        m_function.edit(widerID).setTestedType(narrowerType);
+        m_function.edit(widerID, ValueEdit::Definition).setTestedType(narrowerType);
         builder.redirectEdge(Edge { chain.wider, 0 }, WTF::move(provenNarrower));
         builder.redirectEdge(Edge { chain.wider, 1 }, Target { failed, { }, { } });
     }

@@ -9,6 +9,7 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTMethodDispatch.h"
 #include "AOTPass.h"
 #include "AOTTypeTestConditions.h"
 #include <initializer_list>
@@ -120,6 +121,15 @@ struct TestSites {
     bool isEmpty() const { return sites.isEmpty(); }
 };
 
+// A named access as the first rule that looked at it has planned it: for the receivers that are expected, with no test failed and nothing said about its slot.
+struct PlannedAccess {
+    // None: the plan is the same whoever uses what is read.
+    std::optional<bool> isOnlyCalled;
+    PropertyAccessPlan plan;
+    SlotStamp stamp;
+    AccessTests tests;
+};
+
 class TestSiteReporter {
     WTF_MAKE_NONCOPYABLE(TestSiteReporter);
 public:
@@ -138,6 +148,13 @@ public:
     const Type& typeOf(ValueID value) const LIFETIME_BOUND { return m_context.types.at(m_context.function.at(value).type); }
     std::optional<Type> expectedPartOf(ValueID operand, uint16_t droppedPrimitives = Primitive::UndefinedOrNull) const;
     EarlierTest findEarlierTest(const Value& test) const;
+    // False: findEarlierTest() answers Unknown here for every test of the value.
+    bool mayHaveFailedTestOf(ValueID) const;
+    // Whatever the rule reports here is taken away again: collectTestSites() says why.
+    bool takesAwaySitesInColdCode();
+    // A rule that has planned the use and reports nothing leaves its plan to the rules behind it, which would make the same one.
+    void keepPlanOfUse(PlannedAccess&&);
+    std::optional<PlannedAccess> takePlanOfUse(bool isOnlyCalled);
 
     void report(std::span<const Value> tests, const Effects& effectsWhenPassed);
     void report(std::initializer_list<Value> tests, const Effects& effectsWhenPassed) { report(std::span<const Value> { tests.begin(), tests.size() }, effectsWhenPassed); }
@@ -182,6 +199,11 @@ private:
     BitVector m_awaitsExpansion;
     TestSites m_sites;
     mutable std::optional<FailedConditions> m_failedConditions;
+    Vector<PlannedAccess> m_plannedAccesses;
+    Vector<uint32_t> m_plannedAccessOfValue;
+    std::optional<bool> m_isColdFunction;
+    BlockID m_blockOfHeatClass;
+    bool m_blockIsCold { false };
 };
 
 class TestSiteRewriter {

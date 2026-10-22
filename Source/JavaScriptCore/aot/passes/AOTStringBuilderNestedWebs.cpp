@@ -374,7 +374,7 @@ void NestedWebMerger::applyMerges()
         numberOfNestedWebs += merge.nestedWebs.size();
 
         if (merge.remainingOperands.size() > 1) {
-            m_function.edit(merge.concatenation).setVariadicOperands(merge.remainingOperands.span());
+            m_function.edit(merge.concatenation, ValueEdit::Definition).setVariadicOperands(merge.remainingOperands.span());
             continue;
         }
         substitution.replace(merge.concatenation, merge.remainingOperands.first());
@@ -414,7 +414,7 @@ void NestedWebMerger::prependToEntry(std::span<const ValueID> front, const Strin
     }
 
     if (entry.concatenation)
-        m_function.edit(entry.concatenation).setOperand(stateOperandIndex, state);
+        m_function.edit(entry.concatenation, ValueEdit::Definition).setOperand(stateOperandIndex, state);
     else
         editTarget(m_function, *entry.edge).arguments[m_useLists.locationOf(entry.parameter).index] = state;
 }

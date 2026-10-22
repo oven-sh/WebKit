@@ -1511,56 +1511,59 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
     }
 }
 
-// The host's body puts `undefined` into a variable of `var`. Every other `undefined` in its set comes along an edge or as a constant from the body of a function that stores to the variable.
-static BitVector findVariablesStoredUndefined(const ValueFlowResultInputs& inputs)
-{
-    const ValueFlowBodies& bodies = inputs.bodies();
-    uint32_t numberOfVariables = inputs.program.variables.size();
-    BitVector variables(numberOfVariables);
-    if (!numberOfVariables)
-        return variables;
-    uint32_t firstVariable = bodies.nodes().variable(VariableID(0u)).index();
-    auto note = [&](ValueFlowNodeID target, ValueSetID stored) {
-        if (target.index() < firstVariable || target.index() - firstVariable >= numberOfVariables)
-            return;
-        uint32_t variable = target.index() - firstVariable;
-        if (inputs.program.variables[variable].initialization == VariableInitialization::Undefined && !variables.quickGet(variable) && inputs.sets().meet(stored, inputs.universe().undefinedValue()))
-            variables.quickSet(variable);
-    };
-    for (uint32_t body = 0; body < bodies.hostBody(); ++body) {
-        for (const ValueFlowEdge& edge : bodies.edgesOnceReached(body))
-            note(edge.to, inputs.solver().valueOf(edge.from));
-        for (const ValueFlowNodeSet& seed : bodies.seedsOnceReached(body))
-            note(seed.node, seed.set);
-    }
-    return variables;
-}
+namespace {
 
-// The same for a `var` that lives in an environment, by the number of its node: the host's body holds the `undefined` that its allocation lists. Only the fields whose start nobody reads are asked about.
-static HashSet<uint32_t> findEnvironmentFieldsStoredUndefined(const ValueFlowResultInputs& inputs, const FlowApplication& application)
+struct LocationsStoredUndefined {
+    BitVector variables;
+    HashSet<uint32_t> environmentFields;
+};
+
+} // anonymous namespace
+
+// The host's body puts `undefined` into a variable of `var`. Every other `undefined` in its set comes along an edge or as a constant from the body of a function that stores to the variable.
+static LocationsStoredUndefined findLocationsStoredUndefined(const ValueFlowResultInputs& inputs, const FlowApplication& application)
 {
     const ValueFlowBodies& bodies = inputs.bodies();
-    HashSet<uint32_t> asked;
-    for (uint32_t layout = 0; layout < application.layouts.size(); ++layout) {
+    const ParallelLoops& loops = inputs.loops();
+    uint32_t numberOfVariables = inputs.program.variables.size();
+    uint32_t firstVariable = numberOfVariables ? bodies.nodes().variable(VariableID(0u)).index() : 0;
+    BitVector isAskedAbout;
+    for (uint32_t node : collectInParallel<uint32_t>(loops, application.layouts.size(), [&](unsigned layout, Vector<uint32_t>& found) {
         const Vector<FlowFieldUpdate>& fields = application.layouts[layout].fields;
         for (uint32_t field = 0; field < fields.size(); ++field) {
             if (fields[field].undefinedAtStartIsNeverRead)
-                asked.add(bodies.nodes().environmentField(LayoutID(layout), field).index());
+                found.append(bodies.nodes().environmentField(LayoutID(layout), field).index());
         }
-    }
-    HashSet<uint32_t> stored;
-    if (asked.isEmpty())
-        return stored;
-    auto note = [&](ValueFlowNodeID target, ValueSetID set) {
-        if (asked.contains(target.index()) && inputs.sets().meet(set, inputs.universe().undefinedValue()))
-            stored.add(target.index());
-    };
-    for (uint32_t body = 0; body < bodies.hostBody(); ++body) {
+    }))
+        isAskedAbout.set(node);
+
+    Vector<uint8_t> variableIsStored(FillWith { }, numberOfVariables, static_cast<uint8_t>(0));
+    Vector<uint32_t> fieldsStored = collectInParallel<uint32_t>(loops, bodies.hostBody(), [&](unsigned body, Vector<uint32_t>& found) {
+        auto note = [&](ValueFlowNodeID target, NOESCAPE const Invocable<ValueSetID()> auto& findStored) {
+            uint32_t node = target.index();
+            if (node >= firstVariable && node - firstVariable < numberOfVariables) {
+                uint32_t variable = node - firstVariable;
+                std::atomic_ref isStored(variableIsStored[variable]);
+                if (inputs.program.variables[variable].initialization == VariableInitialization::Undefined && !isStored.load(std::memory_order_relaxed) && inputs.sets().meet(findStored(), inputs.universe().undefinedValue()))
+                    isStored.store(1, std::memory_order_relaxed);
+            }
+            if (isAskedAbout.get(node) && inputs.sets().meet(findStored(), inputs.universe().undefinedValue()))
+                found.append(node);
+        };
         for (const ValueFlowEdge& edge : bodies.edgesOnceReached(body))
-            note(edge.to, inputs.solver().valueOf(edge.from));
+            note(edge.to, [&] { return inputs.solver().valueOf(edge.from); });
         for (const ValueFlowNodeSet& seed : bodies.seedsOnceReached(body))
-            note(seed.node, seed.set);
+            note(seed.node, [&] { return seed.set; });
+    });
+
+    LocationsStoredUndefined stored;
+    stored.variables = BitVector(numberOfVariables);
+    for (uint32_t variable = 0; variable < numberOfVariables; ++variable) {
+        if (variableIsStored[variable])
+            stored.variables.quickSet(variable);
     }
+    for (uint32_t node : fieldsStored)
+        stored.environmentFields.add(node);
     return stored;
 }
 
@@ -1629,14 +1632,18 @@ static bool hasTypeOfNarrowedLocation(const FlowApplication& application, const 
 
 namespace {
 
-// Questions that have been answered with no, for all the threads. It only grows, and it forgets what finds no room.
 class QuestionsAnsweredWithNo {
     WTF_MAKE_NONCOPYABLE(QuestionsAnsweredWithNo);
 public:
-    explicit QuestionsAnsweredWithNo(size_t mostQuestions)
+    QuestionsAnsweredWithNo(const ParallelLoops& loops, size_t mostQuestions)
         : m_mask(std::bit_ceil(std::max<size_t>(1024, mostQuestions * 2)) - 1)
-        , m_slots(std::make_unique<std::atomic<uint64_t>[]>(m_mask + 1))
+        , m_slots(MallocSpan<std::atomic<uint64_t>>::malloc((m_mask + 1) * sizeof(std::atomic<uint64_t>)))
     {
+        constexpr size_t placesPerTask = 32 * KB;
+        forEachIndexInParallel(loops, static_cast<unsigned>((m_mask + placesPerTask) / placesPerTask), [&](unsigned task) {
+            for (size_t place = task * placesPerTask, end = std::min(m_mask + 1, place + placesPerTask); place < end; ++place)
+                new (NotNull, &m_slots[place]) std::atomic<uint64_t>(0);
+        });
     }
 
     bool contains(uint64_t question) const
@@ -1670,20 +1677,19 @@ private:
     }
 
     size_t m_mask;
-    // One more than the question. Zero for a free place.
-    std::unique_ptr<std::atomic<uint64_t>[]> m_slots;
+    MallocSpan<std::atomic<uint64_t>> m_slots;
 };
 
-// By the type of a value as read and the set that arrives: the set leaves nothing of the type that is worth a proof. Five values in six have no proof, and thousands of them ask the same question.
 struct ValuesWithoutProof {
-    explicit ValuesWithoutProof(size_t mostQuestions)
-        : inside(mostQuestions)
-        , outsideFamily(mostQuestions / 8)
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ValuesWithoutProof);
+
+    ValuesWithoutProof(const ParallelLoops& loops, size_t mostQuestions)
+        : inside(loops, mostQuestions)
+        , outsideFamily(loops, mostQuestions / 8)
     {
     }
 
     QuestionsAnsweredWithNo inside;
-    // The positions count each such answer.
     QuestionsAnsweredWithNo outsideFamily;
 };
 
@@ -1801,12 +1807,12 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
 }
 
 // Such a read has the type of its location, which holds `absent` for the sake of other reads.
-static void proveReadsAfterInitialization(const Program& program, TypeTable& types, FlowApplication& application)
+static void proveReadsAfterInitialization(const Program& program, const ParallelLoops& loops, TypeTable& types, FlowApplication& application)
 {
-    for (uint32_t index = 0; index < application.bodies.size(); ++index) {
+    for (uint32_t index : findIndicesInParallel(loops, application.bodies.size(), [&](unsigned index) {
+        return !application.bodies[index].readsAfterInitialization.isEmpty();
+    })) {
         FlowBodyUpdate& update = application.bodies[index];
-        if (update.readsAfterInitialization.isEmpty())
-            continue;
         const Function& function = program.functions[index];
         for (ValueID read : update.readsAfterInitialization) {
             const Value& value = function.at(read);
@@ -1841,8 +1847,9 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     bool logsTimes = inputs.build.options().logging.logsPhaseTimes;
     Vector<Seconds> timeOfTask(logsTimes ? numberOfTasks : 0);
-    BitVector variablesStoredUndefined = findVariablesStoredUndefined(inputs);
-    HashSet<uint32_t> environmentFieldsStoredUndefined = findEnvironmentFieldsStoredUndefined(inputs, application);
+    LocationsStoredUndefined locationsStoredUndefined = findLocationsStoredUndefined(inputs, application);
+    const BitVector& variablesStoredUndefined = locationsStoredUndefined.variables;
+    const HashSet<uint32_t>& environmentFieldsStoredUndefined = locationsStoredUndefined.environmentFields;
     Vector<FieldsDefined> fieldsDefinedUnobserved = findFieldsDefinedUnobserved(inputs);
     Vector<BitVector> fieldsWithUnobservedDefinition = findFieldsWithUnobservedDefinition(inputs, fieldsDefinedUnobserved);
     RELEASE_ASSERT(inputs.numbersOfValues);
@@ -1850,9 +1857,8 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
 
     // The subject of the switches is the variable, the layout or the function that the positions belong to.
     ValueFlowPositionCounts counts(linesAboutSetsOutsideTypes);
-    TypeInterningPhase phase(types, numberOfTasks);
+    auto phase = makeUnique<TypeInterningPhase>(types, numberOfTasks);
     ValueSetMakers makers(inputs);
-    // A switch that is off for one subject gives that subject other answers, a validating build proves more, and whoever lists the sets outside their types wants a line for each.
     constexpr FlowResultKind kindsThatDecideProofs[] {
         FlowResultKind::NarrowedTypes, FlowResultKind::Initialization, FlowResultKind::RemovedNullish, FlowResultKind::ProvenLayoutSets, FlowResultKind::LiteralValues,
         FlowResultKind::ExactFunctions, FlowResultKind::ProvenContents, FlowResultKind::ArrayStorageKinds, FlowResultKind::PristineInstances,
@@ -1860,9 +1866,9 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     bool answersAreTheSameForEverySubject = std::ranges::all_of(kindsThatDecideProofs, [&](FlowResultKind kind) {
         return inputs.build.isEnabledEverywhere(kind);
     });
-    std::optional<ValuesWithoutProof> valuesWithoutProof;
+    std::unique_ptr<ValuesWithoutProof> valuesWithoutProof;
     if (answersAreTheSameForEverySubject && !inputs.build.validates() && !linesAboutSetsOutsideTypes)
-        valuesWithoutProof.emplace(inputs.solver().input().numberOfNodes / 4);
+        valuesWithoutProof = makeUnique<ValuesWithoutProof>(inputs.loops(), inputs.solver().input().numberOfNodes / 4);
     forEachIndexInParallel(inputs.loops(), numberOfTasks, [&](unsigned task, unsigned worker) {
         if (task >= firstFunctionTask && (!inputs.isReached(FunctionID(task - firstFunctionTask)) || !program.functions[task - firstFunctionTask].hasBody()))
             return;
@@ -1873,7 +1879,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
             if (isTimed)
                 timeOfTask[task] = CPUTime::forCurrentThread() - start;
         });
-        TypeArena arena(phase, task);
+        TypeArena arena(*phase, task);
         ValueSetMaker* maker = &makers.of(worker);
         if (task < numberOfLayouts) {
             ValueFlowPositions positions(inputs, arena, counts, task, maker);
@@ -1893,8 +1899,9 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         CallerState callers = tables.functions.functions[id.index()].callers;
         narrowEntryParameters(inputs, id, callers, numbers, positions, application.signatures[id.index()]);
         narrowResults(inputs, id, numbers, positions, arena, counts, application.signatures[id.index()]);
-        proveValuesOfOperations(inputs, id, callers, numbers, positions, arena, application, valuesWithoutProof ? &*valuesWithoutProof : nullptr, counts, application.bodies[id.index()]);
+        proveValuesOfOperations(inputs, id, callers, numbers, positions, arena, application, valuesWithoutProof.get(), counts, application.bodies[id.index()]);
     });
+    inputs.build.destroyLater(WTF::move(valuesWithoutProof));
 
     times.didFinish("types: layouts, variables, functions"_s);
     if (logsTimes) [[unlikely]] {
@@ -1923,7 +1930,8 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         std::ranges::sort(*linesAboutSetsOutsideTypes, codePointCompareLessThan);
 
     times.didFinish("types: awaits printed"_s);
-    TypeRemap remap = phase.finish(StringRemap { });
+    TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());
+    inputs.build.destroyLater(WTF::move(phase));
     times.didFinish("types: arenas merged"_s);
     forEachIndexInParallel(inputs.loops(), numberOfTasks, [&](unsigned task) {
         if (remap.isIdentityFor(task))
@@ -1943,7 +1951,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     });
     times.didFinish("types: remapped"_s);
     replaceUnobservedDefinitions(inputs, fieldsDefinedUnobserved, types, application);
-    proveReadsAfterInitialization(program, types, application);
+    proveReadsAfterInitialization(program, inputs.loops(), types, application);
 }
 
 } } } // namespace JSC::AOT::Typed

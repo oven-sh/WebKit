@@ -123,7 +123,7 @@ void TestPlacer::emitTests()
 
 void TestPlacer::emitChain(TestChain&& chain, std::span<const uint32_t> plannedTests)
 {
-    Terminator& jump = m_function.edit(chain.block).terminator;
+    Terminator& jump = m_function.edit(chain.block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
     RELEASE_ASSERT(jump.kind == TerminatorKind::Jump && jump.next().block == chain.passedTarget.block);
     jump = Terminator { };
 
