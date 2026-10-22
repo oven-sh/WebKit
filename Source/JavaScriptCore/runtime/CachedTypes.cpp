@@ -882,7 +882,7 @@ public:
 
     VM& vm() { return m_vm; }
 
-    Allocation malloc(unsigned size, size_t alignment)
+    Allocation malloc(size_t size, size_t alignment)
     {
         RELEASE_ASSERT(size);
         ptrdiff_t offset;
@@ -917,7 +917,7 @@ public:
     Allocation mallocPlaced(size_t alignment, const SizeAt& sizeAt)
     {
         ptrdiff_t offset = m_baseOffset + roundUpToMultipleOf(static_cast<ptrdiff_t>(alignment), static_cast<ptrdiff_t>(m_currentPage->size()));
-        unsigned size = sizeAt(offset);
+        size_t size = sizeAt(offset);
         ptrdiff_t pageOffset;
         if (!m_currentPage->malloc(size, alignment, pageOffset)) {
             // A fresh page starts max-aligned, so the allocation lands at its base.
@@ -1234,7 +1234,11 @@ public:
     }
     void alignCurrentPageEnd() { m_currentPage->alignEnd(); }
 #endif
-    uint32_t nextStringOrdinal() { return m_numberStrings ? m_nextStringOrdinal++ : std::numeric_limits<uint32_t>::max(); }
+    // What a string record has for a string without a number. The eight values above it are a symbol's (see
+    // CachedUniquedStringImplBase::m_ordinal). A payload is under 2^32 bytes and a numbered record is over 12, so a
+    // number never reaches them.
+    static constexpr uint32_t noStringOrdinal = std::numeric_limits<uint32_t>::max() - 8;
+    uint32_t nextStringOrdinal() { return m_numberStrings ? m_nextStringOrdinal++ : noStringOrdinal; }
 
     // Content-sharing of arrays is only on while a code block encodes the arrays that may lie outside the block's own region.
     class ShareableArrayScope {
@@ -2272,22 +2276,17 @@ public:
     static constexpr bool decodesToCanonicalObject = true;
 #endif
 
-    // The characters follow this 12-byte header (length/flags, precomputed hash, ordinal) directly (see tailSize), instead
-    // of a separately aligned allocation reached through an offset.
+    // The characters follow this 12-byte header (length and width, precomputed hash, ordinal or kind of symbol) directly
+    // (see tailSize), instead of a separately aligned allocation reached through an offset.
     static size_t tailSize(const StringImpl& string) { return Shape(string).byteLength(); }
 
     void encode(Encoder& encoder, const StringImpl& string)
     {
         Shape shape(string);
-        m_isSymbol = shape.isSymbol;
-        m_isRegistered = shape.isRegistered;
-        m_isWellKnownSymbol = shape.isWellKnownSymbol;
-        m_isPrivate = shape.isPrivate;
         m_is8Bit = shape.characters->is8Bit();
         m_length = shape.characters->length();
-        RELEASE_ASSERT(m_length == shape.characters->length()); // fits the bitfield
         m_hash = shape.characters->hash(); // what StringImpl::hash() / the atom table use, so decode never rehashes
-        m_ordinal = m_isSymbol || !m_length ? noOrdinal : encoder.nextStringOrdinal(); // see Decoder::atomForOrdinal
+        m_ordinal = shape.isSymbol ? shape.symbolOrdinal() : !m_length ? noOrdinal : encoder.nextStringOrdinal(); // see Decoder::atomForOrdinal
         if (m_is8Bit)
             memcpy(tail(), shape.characters->span8().data(), shape.byteLength());
         else
@@ -2296,14 +2295,14 @@ public:
 
     UniquedStringImpl* decode(Decoder& decoder) const
     {
-        if (m_ordinal != noOrdinal) {
+        if (hasOrdinal()) {
             if (AtomStringImpl* known = decoder.atomForOrdinal(m_ordinal)) {
                 known->ref();
                 return static_cast<UniquedStringImpl*>(static_cast<StringImpl*>(known));
             }
         }
         auto create = [&](auto buffer) -> UniquedStringImpl* {
-            if (!m_isSymbol) {
+            if (!isSymbol()) {
                 RefPtr<AtomStringImpl> atom;
                 // Long strings out of a persistent payload keep their characters in the mapping (clean, shared pages) and
                 // only allocate the StringImpl header, and only once the stored-hash probe found no atom.
@@ -2323,26 +2322,26 @@ public:
 
             SymbolImpl* symbol;
             VM& vm = decoder.vm();
-            if (m_isRegistered) {
+            if (isRegistered()) {
                 String str(buffer);
-                if (m_isPrivate)
+                if (isPrivate())
                     symbol = static_cast<SymbolImpl*>(&protect(vm.privateSymbolRegistry())->symbolForKey(str).leakRef());
                 else
                     symbol = static_cast<SymbolImpl*>(&protect(vm.symbolRegistry())->symbolForKey(str).leakRef());
             } else {
-                if (m_isWellKnownSymbol)
+                if (isWellKnownSymbol())
                     symbol = vm.propertyNames->builtinNames().lookUpWellKnownSymbol(buffer);
                 else
                     symbol = vm.propertyNames->builtinNames().lookUpPrivateName(buffer);
                 RELEASE_ASSERT(symbol);
                 symbol->ref();
             }
-            ASSERT(m_isWellKnownSymbol != symbol->isPrivate());
+            ASSERT(isWellKnownSymbol() != symbol->isPrivate());
             return symbol;
         };
 
         if (!m_length) {
-            if (m_isSymbol)
+            if (isSymbol())
                 return &SymbolImpl::createNullSymbol().leakRef();
             return RefPtr { emptyAtom().impl() }.leakRef();
         }
@@ -2353,7 +2352,7 @@ public:
     // For uses that only need the characters (a string constant's JSString), not an atom: no atom table involved.
     String decodePlainString(Decoder& decoder) const
     {
-        if (m_isSymbol)
+        if (isSymbol())
             return String { adoptRef(*static_cast<StringImpl*>(decode(decoder))) };
         if (!m_length)
             return emptyString();
@@ -2397,6 +2396,10 @@ private:
                 characters = StringImpl::create8BitIfPossible(characters->span16());
         }
         size_t byteLength() const { return characters->length() * (characters->is8Bit() ? 1 : 2); }
+        uint32_t symbolOrdinal() const
+        {
+            return firstSymbolOrdinal | (isWellKnownSymbol ? isWellKnownSymbolFlag : 0) | (isRegistered ? isRegisteredFlag : 0) | (isPrivate ? isPrivateFlag : 0);
+        }
         RefPtr<StringImpl> characters;
         bool isSymbol { false };
         bool isRegistered { false };
@@ -2405,16 +2408,27 @@ private:
     };
     const uint8_t* tail() const { return std::bit_cast<const uint8_t*>(this + 1); }
     uint8_t* tail() { return std::bit_cast<uint8_t*>(this + 1); }
-    uint32_t m_length : 27;
+    bool hasOrdinal() const { return m_ordinal < noOrdinal; }
+    bool isSymbol() const { return m_ordinal > noOrdinal; }
+    bool isWellKnownSymbol() const { return m_ordinal & isWellKnownSymbolFlag; }
+    bool isRegistered() const { return m_ordinal & isRegisteredFlag; }
+    bool isPrivate() const { return m_ordinal & isPrivateFlag; }
+
+    // The same word as in a DecoderStringTable record: every length a string can have fits.
+    static constexpr unsigned lengthBits = 31;
+    static_assert(StringImpl::MaxLength < (1u << lengthBits));
+    uint32_t m_length : lengthBits;
     uint32_t m_is8Bit : 1;
-    uint32_t m_isSymbol : 1;
-    uint32_t m_isWellKnownSymbol : 1;
-    uint32_t m_isRegistered : 1;
-    uint32_t m_isPrivate : 1;
     uint32_t m_hash { 0 };
     // Distinct (non-symbol) strings are numbered in encode order; the decoder keeps the atom for each number it has seen,
-    // so only the first block to name a string goes through the atom table.
-    static constexpr uint32_t noOrdinal = std::numeric_limits<uint32_t>::max();
+    // so only the first block to name a string goes through the atom table. A symbol is never numbered: its word is one
+    // of the eight values above noOrdinal, firstSymbolOrdinal with the flags of what kind of symbol it is.
+    static constexpr uint32_t noOrdinal = Encoder::noStringOrdinal;
+    static constexpr uint32_t firstSymbolOrdinal = noOrdinal + 1;
+    static constexpr uint32_t isWellKnownSymbolFlag = 1;
+    static constexpr uint32_t isRegisteredFlag = 2;
+    static constexpr uint32_t isPrivateFlag = 4;
+    static_assert(!(firstSymbolOrdinal & (isWellKnownSymbolFlag | isRegisteredFlag | isPrivateFlag)));
     uint32_t m_ordinal { noOrdinal };
 };
 class CachedUniquedStringImpl : public CachedUniquedStringImplBase<UniquedStringImpl> { };
@@ -5320,7 +5334,8 @@ protected:
     // 12: a global code block and the entry of a builtin function have the line starts of their source.
     // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 13;
+    // 14: a string record's length is 31 bits, and a symbol record says what kind of symbol it is in its ordinal word.
+    static constexpr uint32_t cachedTypesFormatRevision = 14;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
