@@ -317,3 +317,12 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   * WebKit tree: unchanged (head 0b2110fe90). The pause-limit patch stays dropped.
   * TODO: CI result of 130791; pushback result (run 49c2ef2e6e00) -> address, "Self-reviewed" bullet; WebKit#838 body: ASAN probes of the head, then
     mark it ready; wrap-up update; delete scratch + wip branches at the very end.
+- 2026-10-22 07:50 UTC:
+  * Windows x64 verify-baseline PASSED on be97bcb973 (build 130791: flat grey 2528 ms, gradient 2329 ms, PASS 32.5 s); the Linux lanes too.
+  * claude[bot] nit on "join from the start with ...=0": assert markedKB < 2048 there. NOT VALID AS WRITTEN: with option 0 a cycle runs while the
+    program replaces the ring, and the largest non-first eden is 2688 KB in 19 of 60 runs and 4033 KB in 3 (/tmp/smallp/eden-max.ts). Done instead:
+    a control run of the same ring with the default threshold in the same test (every non-first eden 1345 KB in 60 of 60 runs, helpers 0, mw 0):
+    asserts markedKB < 2048 and helpersKB == 0 there. Commit 57701c02e6 on the bun branch (head now). 12 of 12 passes; block 5/5 x3; main arm 4 fail.
+    Thread answered and resolved. PR body Notes updated.
+  * Open thread on bun#46432: only the webkit.ts pin (on purpose).
+  * CI for 57701c02e6 running (build after 130791). Pushback run 49c2ef2e6e00 still in "Survey".

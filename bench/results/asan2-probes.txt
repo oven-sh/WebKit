@@ -12,3 +12,18 @@
 0 260s wide.jsc.js [--numberOfGCMarkers=8 --collectContinuously=true --verifyGC=true] done 3
 0 294s lru.jsc.js [--numberOfGCMarkers=8 --collectContinuously=true --verifyGC=true --minimumBytesMarkedForParallelMarking=0] done 24218 285620 ms
 0 175s wide.jsc.js [--numberOfGCMarkers=8 --collectContinuously=true --verifyGC=true --minimumBytesMarkedForParallelMarking=0] done 3
+0 34s lru.jsc.js [--numberOfGCMarkers=8 --useConcurrentGC=false] done 24218 30597 ms
+0 64s wide.jsc.js [--numberOfGCMarkers=8 --useConcurrentGC=false] done 3
+0 55s lru.jsc.js [--numberOfGCMarkers=8 --useStochasticMutatorScheduler=false] done 24218 44230 ms
+0 44s wide.jsc.js [--numberOfGCMarkers=8 --useStochasticMutatorScheduler=false] done 3
+0 43s lru.jsc.js [--numberOfGCMarkers=8 --gcIncrementScale=1] done 24218 40272 ms
+0 51s wide.jsc.js [--numberOfGCMarkers=8 --gcIncrementScale=1] done 3
+0 30s lru.jsc.js [--numberOfGCMarkers=8 --minimumGCPauseMS=0] done 24218 28934 ms
+0 31s wide.jsc.js [--numberOfGCMarkers=8 --minimumGCPauseMS=0] done 3
+0 47s lru.jsc.js [--numberOfGCMarkers=8 --gcMarkerPollMS=0] done 24218 43206 ms
+0 42s wide.jsc.js [--numberOfGCMarkers=8 --gcMarkerPollMS=0] done 3
+0 44s lru.jsc.js [--numberOfGCMarkers=8 --slowPathAllocsBetweenGCs=200] done 24218 41660 ms
+0 407s wide.jsc.js [--numberOfGCMarkers=8 --slowPathAllocsBetweenGCs=200] done 3
+0 33s lru.jsc.js [--numberOfGCMarkers=8 --useGenerationalGC=false] done 24218 30787 ms
+0 36s wide.jsc.js [--numberOfGCMarkers=8 --useGenerationalGC=false] done 3
+DONE
