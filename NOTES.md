@@ -270,3 +270,18 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
     and the one-pause cycle moves or adds one. NOT CONFIRMED.
   * diag v6 = bun commit 2d71faeec7: times the rows of png(), deflateSync and the rest; arms default x2(+1), upstream, useJIT=0 | useDFGJIT=0,
     useFTLJIT=0 | useConcurrentJIT=0, one marker | default; the slot of an arm rotates per batch (v5 had the default arms always in slots 0 and 1).
+- 2026-10-22 06:50 UTC: diag v6 result (build 130758, bench/results/vb-diag-v6.log; 12 batches x 6, slots rotated; parser /tmp/parse-v6.py).
+  * BUN_JSC_useJIT=0: png 716 ms (rows 58, deflate 508, rest 11), flat grey 1.6 s, whole file 17.1 s (default: png 3.1..3.6 s, flat 4.4..5.0 s at 6 concurrent,
+    file 26.1 s). So under SDE the JIT tier-ups are what makes png() take seconds: row 2 or 3 of the loop takes 130 ms, row 6 takes 350..820 ms
+    (png's loop OSR at 500 back edges), the IHDR chunk (first crc32) about 1.2 s, the rest 0.45..1.1 s. With useConcurrentJIT=0 the same rows spike
+    (0:64 1:105 6:540) and the startup takes 23.4 s.
+  * This time the default arm had NO slow run (0 of 30), upstream 0 of 12, one marker 0 of 6, no FTL 0 of 6. The no-DFG arm had 2 of 6:
+    png 3.8..4.0 s against 1.4..1.8 s: +1.7 s between the end of the loop and deflateSync, and deflateSync itself 950 ms against 530 ms.
+    That is a window of about 2.5 s in which the JS thread runs at about half speed: something else competes. Which thread is unknown.
+  * The rate of the slow mode is erratic: v1/v2 3 of 17, v3 2 of 13, v5 8 of 28 in the default arms (slots 0 and 1) and 1 of 56 elsewhere, v6 2 of 72.
+    Other builds (main WebKit): 1 of 108 (a "gradient" failure at 5.1 s).
+  * DynamoRIO on Linux as a local stand-in for Pin: bun does not get through `-e 'console.log()'` in 2.5 minutes under it. Dropped.
+  * BUN_JSC_reportCompileTimes=1 works in release builds (prints every Baseline/DFG/FTL compile with its time).
+  * diag v7 = bun commit 86f944ce50: reportCompileTimes in every run, and a PowerShell sampler (thread-sampler.ps1, written by the harness) that prints every
+    150 ms the threads of each bun-profile process that used 30 ms of CPU or more, with their names (GetThreadDescription) and the threads that came and went.
+    Arms: default x4, no DFG, upstream, slots rotated. Timelines for slow runs (png > 4300) and the first 5 runs.
