@@ -1,0 +1,53 @@
+diff --git a/test/js/bun/gc/gc-controller-cadence.test.ts b/test/js/bun/gc/gc-controller-cadence.test.ts
+index 2146a0755b..e706d3f140 100644
+--- a/test/js/bun/gc/gc-controller-cadence.test.ts
++++ b/test/js/bun/gc/gc-controller-cadence.test.ts
+@@ -655,9 +655,10 @@ describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
+     return edens;
+   }
+ 
+-  // Every one of them is marked by the collector's thread alone.
++  // Every one of them is marked by the collector's thread alone. The limit on the pause is set out of reach: on a busy
++  // machine a pause of one of these collections can take longer than the 10 ms, and the resume would wake a helper.
+   test("stay out of a collection that marks little", async () => {
+-    const edens = await edenCollectionsOf(1024);
++    const edens = await edenCollectionsOf(1024, { BUN_JSC_maximumSmallGCPauseMS: "60000" });
+     for (const eden of edens) expect(eden.markedKB, JSON.stringify(eden)).toBeLessThan(1024);
+     expect(
+       edens.map(c => c.helpersKB),
+@@ -670,6 +671,35 @@ describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
+     ).toEqual(edens.map(() => 0));
+   });
+ 
++  // The 2 MB stand for the time that a thread takes to mark them, and that holds on a machine of usual speed only.
++  // Under an emulator a collection of 500 KB can take a second (Intel SDE, the first collection of a process: 916 ms),
++  // and with one thread in one pause the program waits for all of it. So a collection keeps the mutator stopped for
++  // BUN_JSC_maximumSmallGCPauseMS (10) at most. Past that the scheduler decides as it does for any other collection,
++  // and the resume wakes one helper for the marking that is left. The scheduler options make its first pause the
++  // shortest one, so that with the limit at 0 every collection has marking left when the mutator resumes. With the
++  // limit out of reach the same collections are one pause each.
++  test("mark what is left of a small collection that takes long", async () => {
++    const shortestPause = { BUN_JSC_minimumGCPauseMS: "0.01", BUN_JSC_gcPauseScale: "0" };
++    const [overTheLimit, underTheLimit] = await Promise.all([
++      edenCollectionsOf(4096, { ...shortestPause, BUN_JSC_maximumSmallGCPauseMS: "0" }),
++      edenCollectionsOf(4096, { ...shortestPause, BUN_JSC_maximumSmallGCPauseMS: "60000" }),
++    ]);
++    const summary = JSON.stringify({ overTheLimit, underTheLimit });
++    for (const eden of [...overTheLimit, ...underTheLimit]) expect(eden.markedKB, summary).toBeLessThan(2048);
++    expect(
++      overTheLimit.reduce((sum, c) => sum + c.markerWakeups, 0),
++      summary,
++    ).toBeGreaterThan(0);
++    expect(
++      overTheLimit.reduce((sum, c) => sum + c.helpersKB, 0),
++      summary,
++    ).toBeGreaterThan(0);
++    expect(
++      underTheLimit.map(c => [c.markerWakeups, c.helpersKB]),
++      summary,
++    ).toEqual(underTheLimit.map(() => [0, 0]));
++  });
++
+   // The GC race tests depend on this: with the threshold at 0 they join from the start. A ring four times the size gives
+   // each collection about 1 MB to mark, of which the collector donates some to them.
+   test("join from the start with BUN_JSC_minimumBytesMarkedForParallelMarking=0", async () => {

@@ -1,0 +1,1504 @@
+~~~ Running agent environment hook
+> C:\buildkite-agent\hooks\environment.ps1
+# BUILDKITE_BUILD_CHECKOUT_PATH changed
+~~~ Preparing working directory
+# Creating "C:\\buildkite-agent\\build"
+> cd C:\buildkite-agent\build
+> git clone -v --depth=1 -- https://github.com/oven-sh/bun.git .
+Cloning into '.'...
+POST git-upload-pack (193 bytes)
+POST git-upload-pack (262 bytes)
+Updating files:  11% (2811/24712)Updating files:  12% (2966/24712)Updating files:  13% (3213/24712)Updating files:  13% (3399/24712)Updating files:  14% (3460/24712)Updating files:  14% (3653/24712)Updating files:  15% (3707/24712)Updating files:  16% (3954/24712)Updating files:  17% (4202/24712)Updating files:  18% (4449/24712)Updating files:  19% (4696/24712)Updating files:  20% (4943/24712)Updating files:  21% (5190/24712)Updating files:  22% (5437/24712)Updating files:  22% (5662/24712)Updating files:  23% (5684/24712)Updating files:  24% (5931/24712)Updating files:  25% (6178/24712)Updating files:  26% (6426/24712)Updating files:  27% (6673/24712)Updating files:  28% (6920/24712)Updating files:  29% (7167/24712)Updating files:  30% (7414/24712)Updating files:  30% (7605/24712)Updating files:  31% (7661/24712)Updating files:  32% (7908/24712)Updating files:  33% (8155/24712)Updating files:  34% (8403/24712)Updating files:  35% (8650/24712)Updating files:  36% (8897/24712)Updating files:  37% (9144/24712)Updating files:  38% (9391/24712)Updating files:  39% (9638/24712)Updating files:  40% (9885/24712)Updating files:  40% (10053/24712)Updating files:  41% (10132/24712)Updating files:  42% (10380/24712)Updating files:  43% (10627/24712)Updating files:  44% (10874/24712)Updating files:  45% (11121/24712)Updating files:  46% (11368/24712)Updating files:  47% (11615/24712)Updating files:  48% (11862/24712)Updating files:  49% (12109/24712)Updating files:  50% (12356/24712)Updating files:  50% (12566/24712)Updating files:  51% (12604/24712)Updating files:  52% (12851/24712)Updating files:  53% (13098/24712)Updating files:  54% (13345/24712)Updating files:  55% (13592/24712)Updating files:  56% (13839/24712)Updating files:  57% (14086/24712)Updating files:  58% (14333/24712)Updating files:  58% (14426/24712)Updating files:  59% (14581/24712)Updating files:  60% (14828/24712)Updating files:  61% (15075/24712)Updating files:  62% (15322/24712)Updating files:  63% (15569/24712)Updating files:  64% (15816/24712)Updating files:  65% (16063/24712)Updating files:  66% (16310/24712)Updating files:  67% (16558/24712)Updating files:  67% (16625/24712)Updating files:  68% (16805/24712)Updating files:  69% (17052/24712)Updating files:  70% (17299/24712)Updating files:  71% (17546/24712)Updating files:  72% (17793/24712)Updating files:  73% (18040/24712)Updating files:  74% (18287/24712)Updating files:  75% (18534/24712)Updating files:  76% (18782/24712)Updating files:  77% (19029/24712)Updating files:  77% (19141/24712)Updating files:  78% (19276/24712)Updating files:  79% (19523/24712)Updating files:  80% (19770/24712)Updating files:  81% (20017/24712)Updating files:  82% (20264/24712)Updating files:  83% (20511/24712)Updating files:  84% (20759/24712)Updating files:  85% (21006/24712)Updating files:  86% (21253/24712)Updating files:  87% (21500/24712)Updating files:  88% (21747/24712)Updating files:  88% (21822/24712)Updating files:  89% (21994/24712)Updating files:  90% (22241/24712)Updating files:  91% (22488/24712)Updating files:  92% (22736/24712)Updating files:  93% (22983/24712)Updating files:  94% (23230/24712)Updating files:  95% (23477/24712)Updating files:  96% (23724/24712)Updating files:  97% (23971/24712)Updating files:  97% (23972/24712)Updating files:  98% (24218/24712)Updating files:  99% (24465/24712)Updating files: 100% (24712/24712)Updating files: 100% (24712/24712), done.
+> git clean -ffxdq
+# Fetch and checkout pull request head from GitHub
+> git fetch -v --prune --depth=1 -- origin refs/pull/46432/head cead8d2ddf6645336e0918b5b7da9b2e6deab656
+POST git-upload-pack (419 bytes)
+POST git-upload-pack (340 bytes)
+POST git-upload-pack (349 bytes)
+From https://github.com/oven-sh/bun
+ * branch              refs/pull/46432/head -> FETCH_HEAD
+ * branch              cead8d2ddf6645336e0918b5b7da9b2e6deab656 -> FETCH_HEAD
+# FETCH_HEAD is now `cead8d2ddf6645336e0918b5b7da9b2e6deab656`
+# Skipping commit verification: pull request build (#46432)
+> git -c advice.detachedHead=false checkout -f cead8d2ddf6645336e0918b5b7da9b2e6deab656
+HEAD is now at cead8d2d ci: diagnose the Windows baseline lane (temporary)
+# Cleaning again to catch any post-checkout changes
+> git clean -ffxdq
+# Remote Git mirror: outcome=skipped site=none skip_reason=no-url
+# Checking to see if git commit information needs to be sent to Buildkite...
+# BUILDKITE_COMMIT is already resolved and meta-data populated, skipping
+~~~ Running batch script
+> C:\Windows\SystemTemp\buildkite-script-4043446006.bat
+Downloading build artifacts...
+2026-10-22 05:30:48 INFO   Searching for artifacts: "bun-windows-x64-profile.zip" within step: "windows-x64-build-bun"
+2026-10-22 05:30:48 INFO   Found 1 artifacts. Starting to download to: C:\buildkite-agent\build
+2026-10-22 05:30:53 INFO   Successfully downloaded "bun-windows-x64-profile.zip" 272 MiB with SHA256 2155d27a9ee0793a5364b1d3bf81beba1fe4f8a1c926cbbd8895261757d48038
+Extracting bun-windows-x64-profile.zip...
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded memchr v2.8.0
+  Downloaded lazy_static v1.5.0
+  Downloaded scroll v0.11.0
+  Downloaded fallible-iterator v0.2.0
+  Downloaded uuid v1.21.0
+  Downloaded pdb v0.8.0
+  Downloaded object v0.36.7
+  Downloaded iced-x86 v1.21.0
+   Compiling object v0.36.7
+   Compiling fallible-iterator v0.2.0
+   Compiling memchr v2.8.0
+   Compiling scroll v0.11.0
+   Compiling lazy_static v1.5.0
+   Compiling uuid v1.21.0
+   Compiling iced-x86 v1.21.0
+   Compiling pdb v0.8.0
+   Compiling verify-baseline-static v0.1.0 (C:\buildkite-agent\build\scripts\verify-baseline-static)
+    Finished `release` profile [optimized] target(s) in 31.04s
+--- Verifying bun-profile.exe on Nehalem (SSE4.2, no AVX/AVX2/AVX512)
+    Binary:   C:\buildkite-agent\build\bun-windows-x64-profile\bun-profile.exe
+    Emulator: C:\intel-sde\sde.exe -nhm --
+
++++ Static instruction scan
+scanning C:\buildkite-agent\build\bun-windows-x64-profile\bun-profile.exe (115591680 bytes, 96835 symbols, 0 data ranges) against x86-64 Nehalem (no AVX/AES-NI/BMI)
+decoded 21906319 instructions across 1 text section(s)
+
+ALLOWLISTED (suppressed, runtime-dispatched):
+  <lib:aesni-gcm-x86_64-win.asm.obj>  [AES, AVX, MOVBE, PCLMULQDQ]  (353 insns)
+  <lib:libcpmt.lib>  [AVX, AVX2, AVX512F, AVX512VL, LZCNT]  (342 insns)
+  AddGreenToBlueAndRed_AVX2  [AVX, AVX2]  (7 insns)
+  AddVectorEq_AVX2  [AVX, AVX2]  (25 insns)
+  AddVector_AVX2  [AVX, AVX2]  (25 insns)
+  BundleColorMap_AVX2  [AVX, AVX2]  (65 insns)
+  CHUNKCOPY_SAFE  [AVX, AVX2]  (44 insns)
+  CRYPTO_rdrand  [RDRAND]  (1 insns)
+  CRYPTO_rdrand_multiple8_buf  [RDRAND]  (1 insns)
+  ChaCha20_ctr32_avx2  [AVX, AVX2]  (433 insns)
+  CollectColorBlueTransforms_AVX2  [AVX, AVX2]  (50 insns)
+  CollectColorRedTransforms_AVX2  [AVX, AVX2]  (44 insns)
+  CombinedShannonEntropy_AVX2  [AVX, AVX2]  (24 insns)
+  ConvertBGRAToRGBA_AVX2  [AVX, AVX2]  (19 insns)
+  GET_CHUNK_MAG  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (45 insns)
+  PredictorAdd0_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorAdd10_AVX2  [AVX, AVX2]  (130 insns)
+  PredictorAdd11_AVX2  [AVX, AVX2]  (126 insns)
+  PredictorAdd12_AVX2  [AVX, AVX2]  (81 insns)
+  PredictorAdd1_AVX2  [AVX, AVX2]  (15 insns)
+  PredictorAdd2_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorAdd3_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorAdd4_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorAdd8_AVX2  [AVX, AVX2]  (11 insns)
+  PredictorAdd9_AVX2  [AVX, AVX2]  (11 insns)
+  PredictorSub0_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub10_AVX2  [AVX, AVX2]  (25 insns)
+  PredictorSub11_AVX2  [AVX, AVX2]  (27 insns)
+  PredictorSub12_AVX2  [AVX, AVX2]  (20 insns)
+  PredictorSub13_AVX2  [AVX, AVX2]  (59 insns)
+  PredictorSub1_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub2_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub3_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub4_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub5_AVX2  [AVX, AVX2]  (17 insns)
+  PredictorSub6_AVX2  [AVX, AVX2]  (12 insns)
+  PredictorSub7_AVX2  [AVX, AVX2]  (12 insns)
+  PredictorSub8_AVX2  [AVX, AVX2]  (12 insns)
+  PredictorSub9_AVX2  [AVX, AVX2]  (12 insns)
+  SubtractGreenFromBlueAndRed_AVX2  [AVX, AVX2]  (7 insns)
+  TransformColorInverse_AVX2  [AVX, AVX2]  (24 insns)
+  TransformColor_AVX2  [AVX, AVX2]  (21 insns)
+  VectorMismatch_AVX2  [AVX, AVX2]  (13 insns)
+  __remainder_piby2_fma3  [AVX, FMA]  (21 insns)
+  __remainder_piby2_fma3_bdl  [AVX, FMA]  (21 insns)
+  __std_reverse_trivially_swappable_1  [AVX, AVX2]  (8 insns)
+  __std_reverse_trivially_swappable_2  [AVX, AVX2]  (8 insns)
+  __std_reverse_trivially_swappable_4  [AVX, AVX2]  (6 insns)
+  __std_reverse_trivially_swappable_8  [AVX, AVX2]  (5 insns)
+  _handle_nan_fma  [AVX]  (1 insns)
+  _handle_nanf_fma  [AVX]  (1 insns)
+  acos_fma  [AVX, FMA]  (67 insns)
+  acosf_fma  [AVX, FMA]  (60 insns)
+  adler32_avx2  [AVX, AVX2]  (87 insns)
+  adler32_avx512  [AVX, AVX512BW, AVX512F, AVX512VL]  (65 insns)
+  adler32_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]  (67 insns)
+  adler32_fold_copy_avx2  [AVX, AVX2]  (92 insns)
+  adler32_fold_copy_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (72 insns)
+  adler32_fold_copy_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]  (119 insns)
+  adler32_x86_avx2  [AVX, AVX2]  (66 insns)
+  adler32_x86_avx2_vnni  [AVX, AVX2, AVX_VNNI]  (119 insns)
+  adler32_x86_avx512_vl256_vnni  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]  (164 insns)
+  adler32_x86_avx512_vl512_vnni  [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI]  (99 insns)
+  aes_gcm_dec_update_vaes_avx2  [AVX, AVX2, PCLMULQDQ, VAES, VPCLMULQDQ]  (281 insns)
+  aes_gcm_dec_update_vaes_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2, VAES, VPCLMULQDQ]  (318 insns)
+  aes_gcm_enc_update_vaes_avx2  [AVX, AVX2, PCLMULQDQ, VAES, VPCLMULQDQ]  (366 insns)
+  aes_gcm_enc_update_vaes_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2, VAES, VPCLMULQDQ]  (412 insns)
+  aes_hw_cbc_encrypt  [AES]  (118 insns)
+  aes_hw_ctr32_encrypt_blocks  [AES]  (135 insns)
+  aes_hw_decrypt  [AES]  (196 insns)
+  aes_hw_ecb_encrypt  [AES]  (4 insns)
+  aes_hw_encrypt  [AES]  (2 insns)
+  aes_hw_encrypt_key_to_decrypt_key  [AES]  (3 insns)
+  aes_hw_set_encrypt_key_alt  [AES]  (6 insns)
+  aes_hw_set_encrypt_key_base  [AES]  (31 insns)
+  aesni_gcm_decrypt  [AES, AVX]  (115 insns)
+  aesni_gcm_encrypt  [AVX, PCLMULQDQ]  (215 insns)
+  asin_fma  [AVX, FMA]  (70 insns)
+  asinf_fma  [AVX, FMA]  (61 insns)
+  atan2_fma  [AVX, BMI2, FMA]  (131 insns)
+  atan2f_fma  [AVX, BMI2, FMA]  (80 insns)
+  atan_fma  [AVX, FMA]  (54 insns)
+  atanf_fma  [AVX, FMA]  (41 insns)
+  beeu_mod_inverse_vartime  [AVX]  (8 insns)
+  blake2b_simd::avx2::compress1_loop  [AVX, AVX2]  (1437 insns)
+  bn_mulx4x_mont  [ADX, BMI2]  (96 insns)
+  bn_mulx4x_mont_gather5  [ADX, BMI2]  (94 insns)
+  bn_sqrx8x_internal  [ADX, BMI1, BMI2]  (198 insns)
+  bssl::BORINGSSL_keccak_short_x4  [AVX]  (40 insns)
+  bun::N_AVX10_2::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX10_2::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX10_2::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX10_2::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX10_2::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (23 insns)
+  bun::N_AVX10_2::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX10_2::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX10_2::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX10_2::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16]  (135 insns)
+  bun::N_AVX10_2::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (104 insns)
+  bun::N_AVX10_2::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (482 insns)
+  bun::N_AVX10_2::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX10_2::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX10_2::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX10_2::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX10_2::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX10_2::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX10_2::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX10_2::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX10_2::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX10_2::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX10_2::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX10_2::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX10_2::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX10_2::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX10_2::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX10_2::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX10_2::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX10_2::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX10_2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX10_2::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX10_2::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX10_2::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]  (60 insns)
+  bun::N_AVX10_2::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX10_2::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX10_2::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX10_2::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX10_2::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX10_2::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX10_2::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX10_2::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX10_2::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX10_2::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (29 insns)
+  bun::N_AVX10_2::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, BMI2, GFNI]  (243 insns)
+  bun::N_AVX10_2::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F, GFNI]  (50 insns)
+  bun::N_AVX10_2::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX10_2::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX10_2::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX10_2::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]  (78 insns)
+  bun::N_AVX10_2::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (62 insns)
+  bun::N_AVX2::BSwap16Impl  [AVX, AVX2]  (38 insns)
+  bun::N_AVX2::BSwap32Impl  [AVX, AVX2]  (38 insns)
+  bun::N_AVX2::BSwap64Impl  [AVX, AVX2]  (38 insns)
+  bun::N_AVX2::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX2]  (9 insns)
+  bun::N_AVX2::CopyAsciiPrefixImpl  [AVX, AVX2]  (9 insns)
+  bun::N_AVX2::CopyU16ToU8Impl  [AVX, AVX2]  (39 insns)
+  bun::N_AVX2::CountCharImpl  [AVX, AVX2]  (70 insns)
+  bun::N_AVX2::CountDelimsImpl  [AVX, AVX2]  (76 insns)
+  bun::N_AVX2::CountPrintableAscii16Impl  [AVX, AVX2]  (33 insns)
+  bun::N_AVX2::DecodeHex16Impl  [AVX, AVX2]  (115 insns)
+  bun::N_AVX2::DecodeHex8Impl  [AVX, AVX2]  (103 insns)
+  bun::N_AVX2::EncodeHexLowerImpl  [AVX, AVX2]  (104 insns)
+  bun::N_AVX2::FillWithSkipMaskImpl  [AVX]  (33 insns)
+  bun::N_AVX2::FirstNonAscii16Impl  [AVX, AVX2, BMI2]  (9 insns)
+  bun::N_AVX2::FirstNonAscii8Impl  [AVX, AVX2]  (5 insns)
+  bun::N_AVX2::HtmlEscapeExtraLen16Impl  [AVX, AVX2]  (18 insns)
+  bun::N_AVX2::HtmlEscapeExtraLen8Impl  [AVX, AVX2]  (18 insns)
+  bun::N_AVX2::IndexOfAnyCharImpl  [AVX, AVX2]  (34 insns)
+  bun::N_AVX2::IndexOfCharImpl  [AVX, AVX2]  (9 insns)
+  bun::N_AVX2::IndexOfEscapeChar16Impl  [AVX, AVX2, BMI2]  (37 insns)
+  bun::N_AVX2::IndexOfEscapeChar8Impl  [AVX, AVX2]  (36 insns)
+  bun::N_AVX2::IndexOfFirstAsciiUpper16Impl  [AVX, AVX2, BMI2]  (9 insns)
+  bun::N_AVX2::IndexOfFirstAsciiUpperImpl  [AVX, AVX2]  (8 insns)
+  bun::N_AVX2::IndexOfHTMLEscapeChar16Impl  [AVX, AVX2, BMI2]  (20 insns)
+  bun::N_AVX2::IndexOfHTMLEscapeChar8Impl  [AVX, AVX2]  (19 insns)
+  bun::N_AVX2::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX2]  (11 insns)
+  bun::N_AVX2::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX2]  (17 insns)
+  bun::N_AVX2::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX2]  (22 insns)
+  bun::N_AVX2::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX2]  (17 insns)
+  bun::N_AVX2::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX2]  (7 insns)
+  bun::N_AVX2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX2]  (16 insns)
+  bun::N_AVX2::IndexOfNotCharImpl  [AVX, AVX2]  (7 insns)
+  bun::N_AVX2::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX2]  (7 insns)
+  bun::N_AVX2::JsonIndexImpl  [AVX, AVX2, BMI1, BMI2]  (199 insns)
+  bun::N_AVX2::LastIndexOfAnyCharImpl  [AVX, AVX2]  (34 insns)
+  bun::N_AVX2::LastIndexOfCharImpl  [AVX, AVX2]  (22 insns)
+  bun::N_AVX2::LineStartsImpl  [AVX, AVX2, BMI1]  (15 insns)
+  bun::N_AVX2::LowerAscii16Impl  [AVX, AVX2]  (28 insns)
+  bun::N_AVX2::LowerAsciiImpl  [AVX, AVX2]  (50 insns)
+  bun::N_AVX2::MemMem16Impl  [AVX, AVX2]  (123 insns)
+  bun::N_AVX2::MemMemImpl  [AVX, AVX2]  (287 insns)
+  bun::N_AVX2::MemMemSearch<0,unsigned short>  [AVX, AVX2, BMI2]  (118 insns)
+  bun::N_AVX2::MemMemSearch<1,unsigned short>  [AVX, AVX2, BMI2]  (165 insns)
+  bun::N_AVX2::MemRMem16Impl  [AVX, AVX2]  (123 insns)
+  bun::N_AVX2::MemRMemImpl  [AVX, AVX2]  (226 insns)
+  bun::N_AVX2::OddBlocksImpl  [AVX, AVX2, BMI2]  (43 insns)
+  bun::N_AVX2::ParseMappingsImpl  [AVX, AVX2, BMI2]  (346 insns)
+  bun::N_AVX2::ScannerRunStopsImpl  [AVX, AVX2]  (99 insns)
+  bun::N_AVX2::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX2, BMI1, BMI2]  (142 insns)
+  bun::N_AVX2::VisibleLatin1WidthImpl  [AVX, AVX2]  (127 insns)
+  bun::N_AVX2::VisibleUTF16WidthImpl  [AVX, AVX2]  (87 insns)
+  bun::N_AVX2::XmlIndex16Impl  [AVX, AVX2, BMI1, BMI2]  (503 insns)
+  bun::N_AVX2::XmlIndexImpl  [AVX, AVX2, BMI1, BMI2]  (202 insns)
+  bun::N_AVX3::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX3::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX3::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX3::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (31 insns)
+  bun::N_AVX3::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX3::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX3::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (144 insns)
+  bun::N_AVX3::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (108 insns)
+  bun::N_AVX3::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512F]  (153 insns)
+  bun::N_AVX3::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX3::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX3::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX3::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX3::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX3::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX3::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX3::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (58 insns)
+  bun::N_AVX3::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX3::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX3::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX3::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX3::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX3::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX3::MemMemSearch<0,unsigned short>  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (64 insns)
+  bun::N_AVX3::MemMemSearch<1,unsigned short>  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (128 insns)
+  bun::N_AVX3::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX3::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2]  (29 insns)
+  bun::N_AVX3::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (241 insns)
+  bun::N_AVX3::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F]  (50 insns)
+  bun::N_AVX3::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX3::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX3::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]  (81 insns)
+  bun::N_AVX3::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2]  (60 insns)
+  bun::N_AVX3_DL::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_DL::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX3_DL::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_DL::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX3_DL::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX3_DL::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (23 insns)
+  bun::N_AVX3_DL::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX3_DL::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_DL::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX3_DL::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (135 insns)
+  bun::N_AVX3_DL::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (104 insns)
+  bun::N_AVX3_DL::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (482 insns)
+  bun::N_AVX3_DL::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX3_DL::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_DL::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_DL::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX3_DL::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX3_DL::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX3_DL::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX3_DL::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_DL::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_DL::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_DL::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_DL::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_DL::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_DL::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX3_DL::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_DL::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX3_DL::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_DL::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_DL::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_DL::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]  (60 insns)
+  bun::N_AVX3_DL::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX3_DL::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX3_DL::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX3_DL::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX3_DL::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX3_DL::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_DL::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX3_DL::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_DL::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX3_DL::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (29 insns)
+  bun::N_AVX3_DL::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, GFNI]  (243 insns)
+  bun::N_AVX3_DL::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F, GFNI]  (50 insns)
+  bun::N_AVX3_DL::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX3_DL::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX3_DL::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_DL::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]  (78 insns)
+  bun::N_AVX3_DL::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (62 insns)
+  bun::N_AVX3_SPR::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_SPR::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX3_SPR::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_SPR::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX3_SPR::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX3_SPR::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (23 insns)
+  bun::N_AVX3_SPR::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX3_SPR::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_SPR::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX3_SPR::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16]  (135 insns)
+  bun::N_AVX3_SPR::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (104 insns)
+  bun::N_AVX3_SPR::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (482 insns)
+  bun::N_AVX3_SPR::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX3_SPR::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_SPR::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_SPR::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX3_SPR::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX3_SPR::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX3_SPR::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX3_SPR::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_SPR::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_SPR::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_SPR::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_SPR::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_SPR::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_SPR::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX3_SPR::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_SPR::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX3_SPR::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_SPR::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_SPR::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_SPR::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]  (75 insns)
+  bun::N_AVX3_SPR::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX3_SPR::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX3_SPR::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX3_SPR::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX3_SPR::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX3_SPR::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_SPR::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX3_SPR::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_SPR::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX3_SPR::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (29 insns)
+  bun::N_AVX3_SPR::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, BMI2, GFNI]  (243 insns)
+  bun::N_AVX3_SPR::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F, GFNI]  (50 insns)
+  bun::N_AVX3_SPR::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX3_SPR::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX3_SPR::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_SPR::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]  (93 insns)
+  bun::N_AVX3_SPR::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (77 insns)
+  bun::N_AVX3_ZEN4::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_ZEN4::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX3_ZEN4::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_ZEN4::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX3_ZEN4::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX3_ZEN4::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (23 insns)
+  bun::N_AVX3_ZEN4::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX3_ZEN4::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_ZEN4::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX3_ZEN4::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (135 insns)
+  bun::N_AVX3_ZEN4::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (104 insns)
+  bun::N_AVX3_ZEN4::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (482 insns)
+  bun::N_AVX3_ZEN4::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX3_ZEN4::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_ZEN4::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_ZEN4::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX3_ZEN4::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX3_ZEN4::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX3_ZEN4::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX3_ZEN4::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_ZEN4::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_ZEN4::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_ZEN4::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_ZEN4::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_ZEN4::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_ZEN4::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX3_ZEN4::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_ZEN4::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX3_ZEN4::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_ZEN4::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_ZEN4::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_ZEN4::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]  (75 insns)
+  bun::N_AVX3_ZEN4::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX3_ZEN4::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX3_ZEN4::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX3_ZEN4::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX3_ZEN4::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX3_ZEN4::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_ZEN4::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX3_ZEN4::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_ZEN4::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX3_ZEN4::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (29 insns)
+  bun::N_AVX3_ZEN4::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, GFNI]  (243 insns)
+  bun::N_AVX3_ZEN4::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F, GFNI]  (50 insns)
+  bun::N_AVX3_ZEN4::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX3_ZEN4::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX3_ZEN4::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_ZEN4::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]  (93 insns)
+  bun::N_AVX3_ZEN4::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (77 insns)
+  bun::xxh3::N_AVX10_2::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun::xxh3::N_AVX2::HashLong  [AVX, AVX2, BMI2]  (108 insns)
+  bun::xxh3::N_AVX3::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun::xxh3::N_AVX3_DL::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun::xxh3::N_AVX3_SPR::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun::xxh3::N_AVX3_ZEN4::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun_image::N_AVX10_2::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (195 insns)
+  bun_image::N_AVX10_2::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX10_2::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]  (28 insns)
+  bun_image::N_AVX10_2::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX10_2::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX10_2::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX10_2::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]  (29 insns)
+  bun_image::N_AVX2::CmykToRgbaImpl  [AVX, AVX2]  (220 insns)
+  bun_image::N_AVX2::FlipHImpl  [AVX, AVX2]  (16 insns)
+  bun_image::N_AVX2::HorizPass  [AVX, AVX2]  (20 insns)
+  bun_image::N_AVX2::ModulateImpl  [AVX, AVX2, FMA]  (52 insns)
+  bun_image::N_AVX2::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX2::Rotate180Impl  [AVX, AVX2]  (16 insns)
+  bun_image::N_AVX2::VertPass  [AVX, AVX2, BMI1]  (22 insns)
+  bun_image::N_AVX3::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (218 insns)
+  bun_image::N_AVX3::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3::HorizPass  [AVX, AVX2]  (20 insns)
+  bun_image::N_AVX3::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX3::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX3::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3::VertPass  [AVX, AVX512BW, AVX512F, BMI1]  (23 insns)
+  bun_image::N_AVX3_DL::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (195 insns)
+  bun_image::N_AVX3_DL::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_DL::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]  (28 insns)
+  bun_image::N_AVX3_DL::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX3_DL::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX3_DL::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_DL::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]  (29 insns)
+  bun_image::N_AVX3_SPR::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (195 insns)
+  bun_image::N_AVX3_SPR::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_SPR::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]  (28 insns)
+  bun_image::N_AVX3_SPR::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX3_SPR::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX3_SPR::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_SPR::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]  (29 insns)
+  bun_image::N_AVX3_ZEN4::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (195 insns)
+  bun_image::N_AVX3_ZEN4::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_ZEN4::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]  (28 insns)
+  bun_image::N_AVX3_ZEN4::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX3_ZEN4::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX3_ZEN4::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_ZEN4::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]  (29 insns)
+  chacha20_poly1305_open_avx2  [AVX, AVX2, BMI2]  (1232 insns)
+  chacha20_poly1305_seal_avx2  [AVX, AVX2, BMI2]  (1629 insns)
+  chunkmemset_avx512  [AVX, AVX2, AVX512BW, AVX512VL, BMI2]  (45 insns)
+  chunkmemset_safe_avx2  [AVX, AVX2]  (36 insns)
+  compare256_avx2  [AVX, AVX2]  (27 insns)
+  compare256_avx512  [AVX, AVX512BW, AVX512F, AVX512VL]  (26 insns)
+  cos  [AVX, FMA]  (49 insns)
+  cosf  [AVX, FMA]  (58 insns)
+  cosh_fma  [AVX, FMA]  (91 insns)
+  coshf_fma  [AVX, FMA]  (82 insns)
+  crc32_fold_pclmulqdq  [PCLMULQDQ]  (100 insns)
+  crc32_fold_pclmulqdq_copy  [PCLMULQDQ]  (24 insns)
+  crc32_fold_pclmulqdq_final  [PCLMULQDQ]  (10 insns)
+  crc32_fold_vpclmulqdq  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (317 insns)
+  crc32_fold_vpclmulqdq_copy  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (271 insns)
+  crc32_fold_vpclmulqdq_final  [AVX, AVX2, AVX512F, AVX512VL, PCLMULQDQ]  (41 insns)
+  crc32_fold_vpclmulqdq_reset  [AVX]  (6 insns)
+  crc32_pclmulqdq  [PCLMULQDQ]  (10 insns)
+  crc32_vpclmulqdq  [AVX, AVX2, AVX512F, AVX512VL, PCLMULQDQ]  (47 insns)
+  crc32_x86_pclmulqdq  [PCLMULQDQ]  (51 insns)
+  crc32_x86_pclmulqdq_avx  [AVX, PCLMULQDQ]  (198 insns)
+  crc32_x86_vpclmulqdq_avx2  [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]  (206 insns)
+  crc32_x86_vpclmulqdq_avx512_vl256  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (245 insns)
+  crc32_x86_vpclmulqdq_avx512_vl512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (254 insns)
+  ctiMasmProbeTrampolineAVX  [AVX]  (32 insns)
+  deflate_decompress_bmi2  [BMI2]  (48 insns)
+  ecp_nistz256_mul_mont_adx  [ADX, BMI2]  (58 insns)
+  ecp_nistz256_ord_mul_mont_adx  [ADX, BMI2]  (106 insns)
+  ecp_nistz256_ord_sqr_mont_adx  [ADX, BMI2]  (86 insns)
+  ecp_nistz256_select_w5_avx2  [AVX, AVX2]  (45 insns)
+  ecp_nistz256_select_w7_avx2  [AVX, AVX2]  (53 insns)
+  ecp_nistz256_sqr_mont_adx  [ADX, BMI2]  (42 insns)
+  exp  [AVX, FMA]  (34 insns)
+  exp2_fma  [AVX, FMA]  (54 insns)
+  expf  [AVX, FMA]  (28 insns)
+  fma  [FMA]  (1 insns)
+  fmod  [FMA]  (1 insns)
+  gcm_ghash_avx  [AVX, PCLMULQDQ]  (364 insns)
+  gcm_ghash_clmul  [PCLMULQDQ]  (39 insns)
+  gcm_ghash_vpclmulqdq_avx2  [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]  (116 insns)
+  gcm_ghash_vpclmulqdq_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (144 insns)
+  gcm_gmult_clmul  [PCLMULQDQ]  (3 insns)
+  gcm_gmult_vpclmulqdq_avx2  [AVX, PCLMULQDQ]  (28 insns)
+  gcm_gmult_vpclmulqdq_avx512  [AVX, AVX512F, AVX512VL, PCLMULQDQ]  (29 insns)
+  gcm_init_avx  [AVX, PCLMULQDQ]  (87 insns)
+  gcm_init_clmul  [PCLMULQDQ]  (9 insns)
+  gcm_init_vpclmulqdq_avx2  [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]  (76 insns)
+  gcm_init_vpclmulqdq_avx512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (58 insns)
+  gen_half_mask  [BMI2]  (1 insns)
+  inflate_fast_avx2  [AVX, AVX2, BMI2]  (146 insns)
+  inflate_fast_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (77 insns)
+  ipint_i64_atomic_rmw32_cmpxchg_u_atomic_validate  [AVX]  (8 insns)
+  ipint_simd_f32x4_abs_validate  [AVX]  (3 insns)
+  ipint_simd_f32x4_add_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_ceil_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_convert_i32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_convert_i32x4_u_validate  [AVX]  (8 insns)
+  ipint_simd_f32x4_demote_f64x2_zero_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_div_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_eq_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_floor_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_ge_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_gt_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_le_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_lt_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_max_validate  [AVX]  (8 insns)
+  ipint_simd_f32x4_min_validate  [AVX]  (7 insns)
+  ipint_simd_f32x4_mul_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_ne_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_nearest_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_neg_validate  [AVX]  (3 insns)
+  ipint_simd_f32x4_pmax_validate  [AVX]  (2 insns)
+  ipint_simd_f32x4_pmin_validate  [AVX]  (2 insns)
+  ipint_simd_f32x4_relaxed_madd_validate  [AVX]  (2 insns)
+  ipint_simd_f32x4_relaxed_max_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_relaxed_min_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_relaxed_nmadd_validate  [AVX]  (2 insns)
+  ipint_simd_f32x4_splat_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_sqrt_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_sub_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_trunc_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_abs_validate  [AVX]  (3 insns)
+  ipint_simd_f64x2_add_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_ceil_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_convert_low_i32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_convert_low_i32x4_u_validate  [AVX]  (6 insns)
+  ipint_simd_f64x2_div_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_eq_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_floor_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_ge_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_gt_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_le_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_lt_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_max_validate  [AVX]  (8 insns)
+  ipint_simd_f64x2_min_validate  [AVX]  (7 insns)
+  ipint_simd_f64x2_mul_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_ne_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_nearest_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_neg_validate  [AVX]  (3 insns)
+  ipint_simd_f64x2_pmax_validate  [AVX]  (2 insns)
+  ipint_simd_f64x2_pmin_validate  [AVX]  (2 insns)
+  ipint_simd_f64x2_promote_low_f32x4_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_relaxed_madd_validate  [AVX]  (2 insns)
+  ipint_simd_f64x2_relaxed_max_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_relaxed_min_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_relaxed_nmadd_validate  [AVX]  (2 insns)
+  ipint_simd_f64x2_splat_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_sqrt_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_sub_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_trunc_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_abs_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_add_sat_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_add_sat_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_add_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_all_true_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_avgr_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_eq_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_extadd_pairwise_i8x16_s_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_extadd_pairwise_i8x16_u_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_extend_high_i8x16_s_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_extend_high_i8x16_u_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_extend_low_i8x16_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_extend_low_i8x16_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_extmul_high_i8x16_s_validate  [AVX]  (5 insns)
+  ipint_simd_i16x8_extmul_high_i8x16_u_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_extmul_low_i8x16_s_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_extmul_low_i8x16_u_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_ge_s_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_ge_u_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_gt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_gt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_le_s_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_le_u_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_lt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_lt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_max_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_max_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_min_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_min_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_mul_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_narrow_i32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_narrow_i32x4_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_ne_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_neg_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_q15mulr_sat_s_validate  [AVX]  (6 insns)
+  ipint_simd_i16x8_relaxed_dot_i8x16_i7x16_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_relaxed_laneselect_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_relaxed_q15mulr_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_shl_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_shr_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_shr_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_splat_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_sub_sat_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_sub_sat_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_sub_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_abs_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_add_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_all_true_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_dot_i16x8_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_eq_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_extadd_pairwise_i16x8_s_validate  [AVX]  (4 insns)
+  ipint_simd_i32x4_extadd_pairwise_i16x8_u_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_extend_high_i16x8_s_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_extend_high_i16x8_u_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_extend_low_i16x8_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_extend_low_i16x8_u_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_extmul_high_i16x8_s_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_extmul_high_i16x8_u_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_extmul_low_i16x8_s_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_extmul_low_i16x8_u_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_ge_s_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_ge_u_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_gt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_gt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i32x4_le_s_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_le_u_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_lt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_lt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i32x4_max_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_max_u_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_min_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_min_u_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_mul_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_ne_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_neg_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_relaxed_dot_i8x16_i7x16_add_s_validate  [AVX]  (5 insns)
+  ipint_simd_i32x4_relaxed_laneselect_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_relaxed_trunc_f32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_relaxed_trunc_f32x4_u_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_relaxed_trunc_f64x2_s_zero_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_relaxed_trunc_f64x2_u_zero_validate  [AVX]  (7 insns)
+  ipint_simd_i32x4_shl_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_shr_s_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_shr_u_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_splat_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_sub_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_trunc_sat_f32x4_s_validate  [AVX]  (8 insns)
+  ipint_simd_i32x4_trunc_sat_f32x4_u_validate  [AVX]  (13 insns)
+  ipint_simd_i32x4_trunc_sat_f64x2_s_zero_validate  [AVX]  (6 insns)
+  ipint_simd_i32x4_trunc_sat_f64x2_u_zero_validate  [AVX]  (10 insns)
+  ipint_simd_i64x2_abs_validate  [AVX]  (4 insns)
+  ipint_simd_i64x2_add_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_all_true_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_eq_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_extend_high_i32x4_s_validate  [AVX]  (2 insns)
+  ipint_simd_i64x2_extend_high_i32x4_u_validate  [AVX]  (2 insns)
+  ipint_simd_i64x2_extend_low_i32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_extend_low_i32x4_u_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_extmul_high_i32x4_s_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_extmul_high_i32x4_u_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_extmul_low_i32x4_s_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_extmul_low_i32x4_u_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_ge_s_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_gt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_le_s_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_lt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_ne_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_neg_validate  [AVX]  (2 insns)
+  ipint_simd_i64x2_relaxed_laneselect_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_shl_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_shr_u_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_splat_validate  [AVX]  (2 insns)
+  ipint_simd_i64x2_sub_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_abs_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_add_sat_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_add_sat_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_add_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_all_true_validate  [AVX]  (3 insns)
+  ipint_simd_i8x16_avgr_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_eq_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_ge_s_validate  [AVX]  (3 insns)
+  ipint_simd_i8x16_ge_u_validate  [AVX]  (2 insns)
+  ipint_simd_i8x16_gt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_gt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i8x16_le_s_validate  [AVX]  (3 insns)
+  ipint_simd_i8x16_le_u_validate  [AVX]  (2 insns)
+  ipint_simd_i8x16_lt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_lt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i8x16_max_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_max_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_min_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_min_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_narrow_i16x8_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_narrow_i16x8_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_ne_validate  [AVX]  (3 insns)
+  ipint_simd_i8x16_neg_validate  [AVX]  (2 insns)
+  ipint_simd_i8x16_popcnt_validate  [AVX]  (13 insns)
+  ipint_simd_i8x16_relaxed_laneselect_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_relaxed_swizzle_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_shl_validate  [AVX]  (10 insns)
+  ipint_simd_i8x16_shr_s_validate  [AVX]  (6 insns)
+  ipint_simd_i8x16_shr_u_validate  [AVX]  (6 insns)
+  ipint_simd_i8x16_splat_validate  [AVX]  (4 insns)
+  ipint_simd_i8x16_sub_sat_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_sub_sat_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_sub_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_swizzle_validate  [AVX]  (4 insns)
+  ipint_simd_v128_and_validate  [AVX]  (1 insns)
+  ipint_simd_v128_andnot_validate  [AVX]  (1 insns)
+  ipint_simd_v128_any_true_validate  [AVX]  (1 insns)
+  ipint_simd_v128_bitselect_validate  [AVX]  (3 insns)
+  ipint_simd_v128_load16_splat_mem_validate  [AVX]  (3 insns)
+  ipint_simd_v128_load32_splat_mem_validate  [AVX]  (1 insns)
+  ipint_simd_v128_load64_splat_mem_validate  [AVX]  (1 insns)
+  ipint_simd_v128_load8_splat_mem_validate  [AVX]  (3 insns)
+  ipint_simd_v128_not_validate  [AVX]  (2 insns)
+  ipint_simd_v128_or_validate  [AVX]  (1 insns)
+  ipint_simd_v128_xor_validate  [AVX]  (1 insns)
+  jsimd_convsamp_avx2  [AVX, AVX2]  (15 insns)
+  jsimd_extbgr_gray_convert_avx2  [AVX, AVX2]  (99 insns)
+  jsimd_extbgr_ycc_convert_avx2  [AVX, AVX2]  (185 insns)
+  jsimd_extbgrx_gray_convert_avx2  [AVX, AVX2]  (101 insns)
+  jsimd_extbgrx_ycc_convert_avx2  [AVX, AVX2]  (187 insns)
+  jsimd_extrgb_gray_convert_avx2  [AVX, AVX2]  (99 insns)
+  jsimd_extrgb_ycc_convert_avx2  [AVX, AVX2]  (185 insns)
+  jsimd_extrgbx_gray_convert_avx2  [AVX, AVX2]  (101 insns)
+  jsimd_extrgbx_ycc_convert_avx2  [AVX, AVX2]  (187 insns)
+  jsimd_extxbgr_gray_convert_avx2  [AVX, AVX2]  (101 insns)
+  jsimd_extxbgr_ycc_convert_avx2  [AVX, AVX2]  (187 insns)
+  jsimd_extxrgb_gray_convert_avx2  [AVX, AVX2]  (101 insns)
+  jsimd_extxrgb_ycc_convert_avx2  [AVX, AVX2]  (187 insns)
+  jsimd_fdct_islow_avx2  [AVX, AVX2]  (146 insns)
+  jsimd_h2v1_downsample_avx2  [AVX, AVX2]  (27 insns)
+  jsimd_h2v1_extbgr_merged_upsample_avx2  [AVX, AVX2]  (128 insns)
+  jsimd_h2v1_extbgrx_merged_upsample_avx2  [AVX, AVX2]  (121 insns)
+  jsimd_h2v1_extrgb_merged_upsample_avx2  [AVX, AVX2]  (128 insns)
+  jsimd_h2v1_extrgbx_merged_upsample_avx2  [AVX, AVX2]  (121 insns)
+  jsimd_h2v1_extxbgr_merged_upsample_avx2  [AVX, AVX2]  (121 insns)
+  jsimd_h2v1_extxrgb_merged_upsample_avx2  [AVX, AVX2]  (121 insns)
+  jsimd_h2v1_fancy_upsample_avx2  [AVX, AVX2]  (51 insns)
+  jsimd_h2v1_merged_upsample_avx2  [AVX, AVX2]  (128 insns)
+  jsimd_h2v1_upsample_avx2  [AVX, AVX2]  (12 insns)
+  jsimd_h2v2_downsample_avx2  [AVX, AVX2]  (43 insns)
+  jsimd_h2v2_fancy_upsample_avx2  [AVX, AVX2]  (152 insns)
+  jsimd_h2v2_upsample_avx2  [AVX, AVX2]  (16 insns)
+  jsimd_idct_islow_avx2  [AVX, AVX2]  (204 insns)
+  jsimd_quantize_avx2  [AVX, AVX2]  (29 insns)
+  jsimd_rgb_gray_convert_avx2  [AVX, AVX2]  (99 insns)
+  jsimd_rgb_ycc_convert_avx2  [AVX, AVX2]  (185 insns)
+  jsimd_ycc_extbgr_convert_avx2  [AVX, AVX2]  (120 insns)
+  jsimd_ycc_extbgrx_convert_avx2  [AVX, AVX2]  (113 insns)
+  jsimd_ycc_extrgb_convert_avx2  [AVX, AVX2]  (120 insns)
+  jsimd_ycc_extrgbx_convert_avx2  [AVX, AVX2]  (113 insns)
+  jsimd_ycc_extxbgr_convert_avx2  [AVX, AVX2]  (113 insns)
+  jsimd_ycc_extxrgb_convert_avx2  [AVX, AVX2]  (113 insns)
+  jsimd_ycc_rgb_convert_avx2  [AVX, AVX2]  (120 insns)
+  keccak_f_x4  [AVX, AVX2]  (375 insns)
+  log  [AVX, FMA]  (72 insns)
+  log10  [AVX, FMA]  (79 insns)
+  log10f  [AVX, FMA]  (57 insns)
+  log2f_fma  [AVX, FMA]  (18 insns)
+  logf  [AVX, FMA]  (48 insns)
+  longest_match_avx2  [AVX, AVX2]  (25 insns)
+  longest_match_avx512  [AVX, AVX512BW, AVX512F, AVX512VL]  (22 insns)
+  longest_match_slow_avx2  [AVX, AVX2]  (26 insns)
+  longest_match_slow_avx512  [AVX, AVX512BW, AVX512F, AVX512VL]  (23 insns)
+  memchr::arch::x86_64::avx2::packedpair::Finder::find_impl  [AVX, AVX2]  (37 insns)
+  memchr::arch::x86_64::avx2::packedpair::Finder::find_prefilter_impl  [AVX, AVX2]  (21 insns)
+  memchr::arch::x86_64::avx2::packedpair::Finder::with_pair_impl  [AVX, AVX2]  (9 insns)
+  memchr::arch::x86_64::memchr::memchr2_raw::find_avx2  [AVX, AVX2]  (53 insns)
+  memchr::arch::x86_64::memchr::memchr3_raw::find_avx2  [AVX, AVX2]  (79 insns)
+  memchr::arch::x86_64::memchr::memchr_raw::find_avx2  [AVX, AVX2]  (29 insns)
+  memcpy  [AVX]  (68 insns)
+  memcpy_avx_ermsb_Intel  [AVX]  (68 insns)
+  memcpy_avx_ermsb_amd  [AVX]  (68 insns)
+  memset  [AVX]  (37 insns)
+  pow_fma  [AVX, BMI2, FMA]  (159 insns)
+  powf  [AVX, FMA]  (150 insns)
+  rsaz_1024_gather5_avx2  [AVX, AVX2]  (101 insns)
+  rsaz_1024_mul_avx2  [AVX, AVX2]  (367 insns)
+  rsaz_1024_scatter5_avx2  [AVX, AVX2]  (6 insns)
+  rsaz_1024_sqr_avx2  [AVX, AVX2]  (440 insns)
+  sha1_block_data_order_avx  [AVX]  (213 insns)
+  sha1_block_data_order_avx2  [AVX, AVX2, BMI1, BMI2]  (644 insns)
+  sha1_block_data_order_hw  [SHA]  (72 insns)
+  sha256_block_data_order_avx  [AVX]  (145 insns)
+  sha256_block_data_order_hw  [SHA]  (56 insns)
+  sha512_block_data_order_avx  [AVX]  (235 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,0,char16_t>  [AVX, AVX2, BMI1]  (302 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,0,char>  [AVX, AVX2, BMI1]  (298 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,1,char16_t>  [AVX, AVX2, BMI1]  (306 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,1,char>  [AVX, AVX2, BMI1]  (302 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,1,0,char16_t>  [AVX, AVX2, BMI1]  (290 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,1,0,char>  [AVX, AVX2, BMI1]  (286 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,1,1,char16_t>  [AVX, AVX2, BMI1]  (294 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,1,1,char>  [AVX, AVX2, BMI1]  (290 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,0,0,char16_t>  [AVX, AVX2, BMI1]  (302 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,0,0,char>  [AVX, AVX2, BMI1]  (298 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,1,0,char16_t>  [AVX, AVX2, BMI1]  (290 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,1,0,char>  [AVX, AVX2, BMI1]  (286 insns)
+  simdutf::haswell::implementation::binary_length_from_base64  [AVX, AVX2]  (136 insns)
+  simdutf::haswell::implementation::binary_to_base64  [AVX, AVX2]  (219 insns)
+  simdutf::haswell::implementation::binary_to_base64_with_lines  [AVX, AVX2]  (465 insns)
+  simdutf::haswell::implementation::change_endianness_utf16  [AVX, AVX2]  (38 insns)
+  simdutf::haswell::implementation::convert_latin1_to_utf16be  [AVX, AVX2]  (18 insns)
+  simdutf::haswell::implementation::convert_latin1_to_utf16le  [AVX, AVX2]  (11 insns)
+  simdutf::haswell::implementation::convert_latin1_to_utf32  [AVX, AVX2]  (11 insns)
+  simdutf::haswell::implementation::convert_latin1_to_utf8  [AVX, AVX2]  (31 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_latin1  [AVX, AVX2]  (77 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_latin1_with_errors  [AVX, AVX2]  (11 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_utf32  [AVX, AVX2]  (14 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_utf32_with_errors  [AVX, AVX2]  (14 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_utf8  [AVX, AVX2]  (88 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_utf8_with_errors  [AVX, AVX2]  (89 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_latin1  [AVX, AVX2]  (55 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_latin1_with_errors  [AVX, AVX2]  (7 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_utf32  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_utf32_with_errors  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_utf8  [AVX, AVX2]  (88 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_utf8_with_errors  [AVX, AVX2]  (89 insns)
+  simdutf::haswell::implementation::convert_utf32_to_latin1  [AVX, AVX2]  (84 insns)
+  simdutf::haswell::implementation::convert_utf32_to_latin1_with_errors  [AVX, AVX2]  (28 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf16be  [AVX, AVX2]  (87 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf16be_with_errors  [AVX, AVX2]  (83 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf16le  [AVX, AVX2]  (14 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf16le_with_errors  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf8  [AVX, AVX2]  (108 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf8_with_errors  [AVX, AVX2]  (101 insns)
+  simdutf::haswell::implementation::convert_utf8_to_latin1  [AVX, AVX2]  (78 insns)
+  simdutf::haswell::implementation::convert_utf8_to_latin1_with_errors  [AVX, AVX2]  (75 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf16be  [AVX, AVX2]  (193 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf16be_with_errors  [AVX, AVX2]  (205 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf16le  [AVX, AVX2]  (177 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf16le_with_errors  [AVX, AVX2]  (183 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf32  [AVX, AVX2]  (171 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf32_with_errors  [AVX, AVX2]  (181 insns)
+  simdutf::haswell::implementation::convert_valid_utf16be_to_utf32  [AVX, AVX2]  (14 insns)
+  simdutf::haswell::implementation::convert_valid_utf16le_to_utf32  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::convert_valid_utf8_to_latin1  [AVX, AVX2]  (24 insns)
+  simdutf::haswell::implementation::convert_valid_utf8_to_utf16be  [AVX, AVX2]  (132 insns)
+  simdutf::haswell::implementation::convert_valid_utf8_to_utf16le  [AVX, AVX2]  (118 insns)
+  simdutf::haswell::implementation::convert_valid_utf8_to_utf32  [AVX, AVX2]  (113 insns)
+  simdutf::haswell::implementation::count_utf16be  [AVX, AVX2]  (46 insns)
+  simdutf::haswell::implementation::count_utf16le  [AVX, AVX2]  (41 insns)
+  simdutf::haswell::implementation::count_utf8  [AVX, AVX2]  (89 insns)
+  simdutf::haswell::implementation::detect_encodings  [AVX, AVX2]  (223 insns)
+  simdutf::haswell::implementation::find  [AVX, AVX2]  (16 insns)
+  simdutf::haswell::implementation::latin1_length_from_utf8  [AVX, AVX2]  (89 insns)
+  simdutf::haswell::implementation::to_well_formed_utf16be  [AVX, AVX2, BMI1]  (149 insns)
+  simdutf::haswell::implementation::to_well_formed_utf16le  [AVX, AVX2, BMI1]  (149 insns)
+  simdutf::haswell::implementation::utf16_length_from_utf32  [AVX, AVX2]  (77 insns)
+  simdutf::haswell::implementation::utf16_length_from_utf8  [AVX, AVX2]  (136 insns)
+  simdutf::haswell::implementation::utf32_length_from_utf16be  [AVX, AVX2]  (46 insns)
+  simdutf::haswell::implementation::utf32_length_from_utf16le  [AVX, AVX2]  (41 insns)
+  simdutf::haswell::implementation::utf32_length_from_utf8  [AVX, AVX2]  (63 insns)
+  simdutf::haswell::implementation::utf8_length_from_latin1  [AVX, AVX2]  (74 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf16be  [AVX, AVX2]  (93 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf16be_with_replacement  [AVX, AVX2]  (103 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf16le  [AVX, AVX2]  (87 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf16le_with_replacement  [AVX, AVX2]  (100 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf32  [AVX, AVX2]  (157 insns)
+  simdutf::haswell::implementation::validate_ascii  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::validate_ascii_with_errors  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::validate_utf16be  [AVX, AVX2, BMI1]  (19 insns)
+  simdutf::haswell::implementation::validate_utf16be_as_ascii  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::validate_utf16be_with_errors  [AVX, AVX2, BMI1]  (19 insns)
+  simdutf::haswell::implementation::validate_utf16le  [AVX, AVX2, BMI1]  (21 insns)
+  simdutf::haswell::implementation::validate_utf16le_as_ascii  [AVX, AVX2]  (8 insns)
+  simdutf::haswell::implementation::validate_utf16le_with_errors  [AVX, AVX2, BMI1]  (21 insns)
+  simdutf::haswell::implementation::validate_utf32  [AVX, AVX2]  (17 insns)
+  simdutf::haswell::implementation::validate_utf32_with_errors  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::validate_utf8  [AVX, AVX2]  (150 insns)
+  simdutf::haswell::implementation::validate_utf8_with_errors  [AVX, AVX2]  (149 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,0,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (119 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,0,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (111 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,1,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (119 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,1,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (111 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,1,0,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (97 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,1,0,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (89 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,1,1,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (97 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,1,1,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (89 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,0,0,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (119 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,0,0,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (111 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,1,0,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (97 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,1,0,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (89 insns)
+  simdutf::icelake::implementation::binary_length_from_base64  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (101 insns)
+  simdutf::icelake::implementation::binary_to_base64  [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (95 insns)
+  simdutf::icelake::implementation::binary_to_base64_with_lines  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (83 insns)
+  simdutf::icelake::implementation::change_endianness_utf16  [AVX, AVX512BW, AVX512F, BMI2]  (10 insns)
+  simdutf::icelake::implementation::convert_latin1_to_utf16be  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (25 insns)
+  simdutf::icelake::implementation::convert_latin1_to_utf16le  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (17 insns)
+  simdutf::icelake::implementation::convert_latin1_to_utf32  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (17 insns)
+  simdutf::icelake::implementation::convert_latin1_to_utf8  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (83 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_latin1  [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (19 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_latin1_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (21 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (40 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_utf32_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (40 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_utf8  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (120 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_utf8_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (122 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_latin1  [AVX, AVX512BW, AVX512F, BMI2]  (13 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_latin1_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (16 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (38 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_utf32_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (38 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_utf8  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (115 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_utf8_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (117 insns)
+  simdutf::icelake::implementation::convert_utf32_to_latin1  [AVX, AVX512BW, AVX512F, BMI2]  (13 insns)
+  simdutf::icelake::implementation::convert_utf32_to_latin1_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (16 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf16be  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI2]  (74 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf16be_with_errors  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]  (91 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf16le  [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI2]  (63 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf16le_with_errors  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]  (88 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (150 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf8_with_errors  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (159 insns)
+  simdutf::icelake::implementation::convert_utf8_to_latin1  [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI1, BMI2]  (47 insns)
+  simdutf::icelake::implementation::convert_utf8_to_latin1_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI1, BMI2]  (48 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf16be  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, LZCNT]  (278 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf16be_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, LZCNT]  (278 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf16le  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, LZCNT]  (264 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf16le_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, LZCNT]  (264 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf32  [AVX, AVX2, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (383 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf32_with_errors  [AVX, AVX2, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (356 insns)
+  simdutf::icelake::implementation::convert_valid_utf16be_to_latin1  [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (19 insns)
+  simdutf::icelake::implementation::convert_valid_utf16be_to_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (40 insns)
+  simdutf::icelake::implementation::convert_valid_utf16le_to_latin1  [AVX, AVX512BW, AVX512F, BMI2]  (13 insns)
+  simdutf::icelake::implementation::convert_valid_utf16le_to_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (38 insns)
+  simdutf::icelake::implementation::convert_valid_utf32_to_utf16be  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI2]  (74 insns)
+  simdutf::icelake::implementation::convert_valid_utf8_to_latin1  [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI2]  (35 insns)
+  simdutf::icelake::implementation::convert_valid_utf8_to_utf16be  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI2]  (471 insns)
+  simdutf::icelake::implementation::convert_valid_utf8_to_utf16le  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (410 insns)
+  simdutf::icelake::implementation::convert_valid_utf8_to_utf32  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2]  (235 insns)
+  simdutf::icelake::implementation::count_utf16be  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (64 insns)
+  simdutf::icelake::implementation::count_utf16le  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (61 insns)
+  simdutf::icelake::implementation::count_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VPOPCNTDQ]  (94 insns)
+  simdutf::icelake::implementation::detect_encodings  [AVX, AVX512BW, AVX512F, BMI2]  (110 insns)
+  simdutf::icelake::implementation::find  [AVX, AVX512BW, BMI2]  (36 insns)
+  simdutf::icelake::implementation::latin1_length_from_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VPOPCNTDQ]  (94 insns)
+  simdutf::icelake::implementation::to_well_formed_utf16be  [AVX, AVX512BW, AVX512F, BMI2]  (109 insns)
+  simdutf::icelake::implementation::to_well_formed_utf16le  [AVX, AVX512BW, AVX512F, BMI2]  (109 insns)
+  simdutf::icelake::implementation::utf16_length_from_utf32  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]  (55 insns)
+  simdutf::icelake::implementation::utf16_length_from_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (102 insns)
+  simdutf::icelake::implementation::utf32_length_from_utf16be  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (64 insns)
+  simdutf::icelake::implementation::utf32_length_from_utf16le  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (61 insns)
+  simdutf::icelake::implementation::utf32_length_from_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VPOPCNTDQ]  (94 insns)
+  simdutf::icelake::implementation::utf8_length_from_latin1  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (84 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf16be  [AVX, AVX512BW, AVX512F, BMI2]  (43 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf16be_with_replacement  [AVX, AVX512BW, AVX512F, BMI2]  (64 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf16le  [AVX, AVX512BW, AVX512F, BMI2]  (38 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf16le_with_replacement  [AVX, AVX512BW, AVX512F, BMI2]  (59 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf32  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]  (144 insns)
+  simdutf::icelake::implementation::validate_ascii  [AVX, AVX512BW, AVX512F, BMI2]  (19 insns)
+  simdutf::icelake::implementation::validate_ascii_with_errors  [AVX, AVX512BW, BMI2]  (13 insns)
+  simdutf::icelake::implementation::validate_utf16be  [AVX, AVX512BW, AVX512F, BMI2]  (21 insns)
+  simdutf::icelake::implementation::validate_utf16be_as_ascii  [AVX, AVX512BW, AVX512F, BMI2]  (14 insns)
+  simdutf::icelake::implementation::validate_utf16be_with_errors  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (25 insns)
+  simdutf::icelake::implementation::validate_utf16le  [AVX, AVX512BW, AVX512F, BMI2]  (33 insns)
+  simdutf::icelake::implementation::validate_utf16le_as_ascii  [AVX, AVX512BW, AVX512F, BMI2]  (10 insns)
+  simdutf::icelake::implementation::validate_utf16le_with_errors  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (23 insns)
+  simdutf::icelake::implementation::validate_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (25 insns)
+  simdutf::icelake::implementation::validate_utf32_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (18 insns)
+  simdutf::icelake::implementation::validate_utf8  [AVX, AVX512BW, AVX512F, BMI2]  (74 insns)
+  simdutf::icelake::implementation::validate_utf8_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (78 insns)
+  sin  [AVX, FMA]  (47 insns)
+  sinf  [AVX, FMA]  (65 insns)
+  sinh_fma  [AVX, FMA]  (96 insns)
+  sinhf_fma  [AVX, FMA]  (82 insns)
+  slide_hash_avx2  [AVX, AVX2]  (30 insns)
+  strnlen  [AVX, AVX2]  (4 insns)
+  tan  [AVX, FMA]  (94 insns)
+  tanf  [AVX, FMA]  (58 insns)
+  tanh_fma  [AVX, FMA]  (86 insns)
+  tanhf_fma  [AVX, FMA]  (83 insns)
+  wcslen  [AVX, AVX2]  (4 insns)
+  wcsnlen  [AVX, AVX2]  (4 insns)
+  -- 970 symbols, 65060 instructions total
+
+STALE ALLOWLIST ENTRIES (no matching symbol found — remove these?):
+  <lib:lolhtml.lib>
+  PredictorAdd13_AVX2
+  PredictorAdd5_AVX2
+  PredictorAdd6_AVX2
+  PredictorAdd7_AVX2
+  _RINvYNtNt<rust-hash>9hashbrown6hasher18DefaultHashBuilderNtNt<rust-hash>4core4hash11BuildHasher8hash_oneRNtNtNt<rust-hash>8lol_html4html10local_name9LocalNameEB1R_
+  _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw6detect
+  _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw6detect
+  _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect
+  __std_min_element_d
+  __std_mismatch_1
+  __std_reverse_copy_trivially_copyable_1
+  __std_search_1
+  `anonymous namespace'::__std_find_last_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char>
+  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char>
+  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_2,unsigned short>
+  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_4,unsigned int>
+  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_8,unsigned __int64>
+  `anonymous namespace'::__std_minmax_disp<1,`anonymous namespace'::_Minmax_traits_8,0>
+  `anonymous namespace'::__std_minmax_impl<1,`anonymous namespace'::_Minmax_traits_8_avx,0>
+  `anonymous namespace'::__std_minmax_impl<3,`anonymous namespace'::_Minmax_traits_8_avx,1>
+  bssl::BORINGSSL_keccak_squeeze_x4
+  bun_image::N_AVX2::Rotate270Impl
+  bun_image::N_AVX2::Rotate90Impl
+  bun_image::N_AVX3::Rotate270Impl
+  bun_image::N_AVX3::Rotate90Impl
+  bun_image::N_AVX3_DL::Rotate270Impl
+  bun_image::N_AVX3_DL::Rotate90Impl
+  bun_image::N_AVX3_SPR::Rotate270Impl
+  bun_image::N_AVX3_SPR::Rotate90Impl
+  bun_image::N_AVX3_ZEN4::Rotate270Impl
+  bun_image::N_AVX3_ZEN4::Rotate90Impl
+  chunkcopy_safe
+  chunkmemset_avx2
+  chunkmemset_safe_avx512
+  crc32_fold_pclmulqdq_reset
+  llint_entry
+  memchr::arch::x86_64::avx2::memchr::One::find_raw_avx2
+  memchr::arch::x86_64::avx2::memchr::One::rfind_raw_avx2
+  memchr::arch::x86_64::avx2::memchr::Three::find_raw_avx2
+  memchr::arch::x86_64::avx2::memchr::Two::find_raw_avx2
+  memchr::arch::x86_64::memchr::memrchr_raw::find_avx2
+  pow
+  simdutf::haswell::implementation::convert_valid_utf16be_to_latin1
+  simdutf::haswell::implementation::convert_valid_utf16le_to_latin1
+  simdutf::haswell::implementation::convert_valid_utf32_to_latin1
+  simdutf::icelake::implementation::convert_valid_utf32_to_latin1
+  simdutf::icelake::implementation::convert_valid_utf32_to_utf16le
+  strcspn
+  strpbrk
+  strspn
+
+SUMMARY:
+  violations:  0 symbols, 0 instructions
+  allowlisted: 970 symbols
+  stale allowlist entries: 51
+  PASS
+
+    PASS (1.5s)
+
++++ SIMD baseline tests
+bun test v1.4.4-canary.1 (cead8d2dd)
+
+..\buildkite-agent\build\test\js\bun\jsc-stress\fixtures\simd-baseline.test.ts:
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > clean passthrough [25.78ms]
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > ampersand in middle [61.51ms]
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > all special chars [7.03ms]
+(pass) stringWidth — @Vector(16, u8) ungated > ascii [3.78ms]
+(pass) stringWidth — @Vector(16, u8) ungated > empty [0.34ms]
+(pass) stringWidth — @Vector(16, u8) ungated > tabs [7.43ms]
+(pass) stringWidth — @Vector(16, u8) ungated > mixed printable and zero-width [8.84ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 16 [22.51ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 32 [6.80ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 64 [1.99ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 128 [0.67ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 256 [1.56ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > all byte values [10.70ms]
+(pass) base64 — simdutf runtime dispatch > ascii roundtrip [20.00ms]
+(pass) base64 — simdutf runtime dispatch > binary roundtrip [96.96ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > ascii roundtrip [19.64ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > mixed ascii + multibyte [21.66ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > emoji surrogate pairs [5.99ms]
+(pass) decodeURIComponent — SIMD % scanning > clean passthrough [8.64ms]
+(pass) decodeURIComponent — SIMD % scanning > encoded at various positions [12.38ms]
+(pass) decodeURIComponent — SIMD % scanning > heavy utf8 encoding [15.18ms]
+(pass) URL parsing — Highway indexOfChar/indexOfAny > long URL with all components [67.42ms]
+(pass) JSON — JS lexer SIMD string scanning > large object roundtrip [66.12ms]
+(pass) JSON — JS lexer SIMD string scanning > string with escape sequences [23.37ms]
+(pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1681.45ms]
+(pass) Latin-1 to UTF-8 — @Vector(16, u8) ungated > full byte range [27.61ms]
+(pass) String search — Highway memMem/indexOfChar > indexOf long string [12.85ms]
+(pass) String search — Highway memMem/indexOfChar > includes long string [0.73ms]
+(pass) JPEG codec: libjpeg-turbo jsimd runtime dispatch > flat grey survives encode, decode, encode byte for byte [3720.11ms]
+(pass) JPEG codec: libjpeg-turbo jsimd runtime dispatch > gradient round-trips through baseline and progressive encoders [3128.36ms]
+
+ 30 pass
+ 0 fail
+ 54 expect() calls
+Ran 30 tests across 1 file. [21.86s]
+    PASS (28.1s)
++++ diagnosis: files next to the binary: bun-profile.exe bun-profile.linker-map bun-profile.map bun-profile.pdb features.json linker.order testFFI.exe
++++ diagnosis: default, 120 s limit: flat grey 3606.6 ms, Ran 30 tests across 1 file. [20.91s], exit 0 after 50.5s, panic(main thread): Segmentation fault at address 0xEB315FFAD0
+https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA22Ogt9/rxB
+ntdll.dll+0x5e895 bun+0x62ae0 bun+0x622dd bun+0x25e751 ntdll.dll+0x76395 ntdll.dll+0x291e8 ntdll.dll+0x6d03d KERNEL32.DLL+0x1d94a bun+0x25e311 bun+0x25dc66 bun+0x6a07ef bun+0x6a07d5 bun+0x6a075c bun+0x528c3ba bun+0x3d1001 bun+0x12259 bun+0x10d38 bun+0x61f0 bun+0x520af14 KERNEL32.DLL+0x17ad4
+pdb-addr2line -f -C -i -p: exit 0
+mi_scav_wake_one(std::atomic<unsigned int>*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:127
+ (inlined by) _mi_scavenger_wake(mi_subproc_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:282
+ (inlined by) mi_arena_schedule_purge(mi_arena_s*, unsigned long long, unsigned long long, long) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:2603
+mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:1288
+core::cell::BorrowRefMut::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:2069
+ (inlined by) core::cell::RefCell::try_borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1259
+ (inlined by) core::cell::RefCell::borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1225
+ (inlined by) std::sys::thread_local::destructors::list::run() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/destructors/list.rs:31
+ (inlined by) std::sys::thread_local::guard::windows::cleanup() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/guard/windows.rs:267
+bun_core::Global::exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/bun_core/Global.rs:720
+bun_opaque::opaque_deref::closure$0() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) core::ptr::non_null::NonNull::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1067
+ (inlined by) bun_opaque::opaque_deref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) bun_jsc::js_global_object::JSGlobalObject::opaque_ref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/JSGlobalObject.rs:29
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1049
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::close_sqlite_databases_for_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2461
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2416
+bun_runtime::cli::test_command::impl$4::bail_out::closure$1() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2766
+bun_jsc::virtual_machine::impl$7::run_with_api_lock::call<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1997
+JSC__VM__holdAPILock(JSC::VM*, void*, void (*)(void*)) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../src/jsc/bindings/bindings.cpp:4998
+core::mem::maybe_uninit::MaybeUninit::assume_init() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:726
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::run_with_api_lock<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2008
+core::slice::index::impl$7::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:545
+ (inlined by) alloc::vec::impl$10::deref() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:19
+ (inlined by) alloc::vec::impl$15::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3977
+ (inlined by) bun_runtime::cli::test_command::TestCommand::exec() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2523
+bun_runtime::cli::command::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:1141
+bun_runtime::cli::cli::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:379
+bun_runtime::bin_entry::main() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/bin_entry/mod.rs:215
+?? at ??:?
+
++++ diagnosis: default, 120 s limit: flat grey 3406.97 ms, Ran 30 tests across 1 file. [22.05s], exit 0 after 24.7s
++++ diagnosis: default, 120 s limit: flat grey 3665.65 ms, Ran 30 tests across 1 file. [20.78s], exit 0 after 49.3s, panic(main thread): Segmentation fault at address 0x5D1A9FF810
+https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA26Fgh8/za
+ntdll.dll+0x5e895 bun+0x62ae0 bun+0x622dd bun+0x25e751 ntdll.dll+0x76395 ntdll.dll+0x291e8 ntdll.dll+0x6d03d KERNEL32.DLL+0x1d94a bun+0x25e311 bun+0x25dc66 bun+0x6a07ef bun+0x6a07d5 bun+0x6a075c bun+0x528c3ba bun+0x3d1001 bun+0x12259 bun+0x10d38 bun+0x61f0 bun+0x520af14 KERNEL32.DLL+0x17ad4
+pdb-addr2line -f -C -i -p: exit 0
+mi_scav_wake_one(std::atomic<unsigned int>*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:127
+ (inlined by) _mi_scavenger_wake(mi_subproc_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:282
+ (inlined by) mi_arena_schedule_purge(mi_arena_s*, unsigned long long, unsigned long long, long) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:2603
+mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:1288
+core::cell::BorrowRefMut::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:2069
+ (inlined by) core::cell::RefCell::try_borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1259
+ (inlined by) core::cell::RefCell::borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1225
+ (inlined by) std::sys::thread_local::destructors::list::run() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/destructors/list.rs:31
+ (inlined by) std::sys::thread_local::guard::windows::cleanup() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/guard/windows.rs:267
+bun_core::Global::exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/bun_core/Global.rs:720
+bun_opaque::opaque_deref::closure$0() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) core::ptr::non_null::NonNull::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1067
+ (inlined by) bun_opaque::opaque_deref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) bun_jsc::js_global_object::JSGlobalObject::opaque_ref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/JSGlobalObject.rs:29
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1049
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::close_sqlite_databases_for_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2461
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2416
+bun_runtime::cli::test_command::impl$4::bail_out::closure$1() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2766
+bun_jsc::virtual_machine::impl$7::run_with_api_lock::call<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1997
+JSC__VM__holdAPILock(JSC::VM*, void*, void (*)(void*)) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../src/jsc/bindings/bindings.cpp:4998
+core::mem::maybe_uninit::MaybeUninit::assume_init() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:726
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::run_with_api_lock<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2008
+core::slice::index::impl$7::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:545
+ (inlined by) alloc::vec::impl$10::deref() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:19
+ (inlined by) alloc::vec::impl$15::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3977
+ (inlined by) bun_runtime::cli::test_command::TestCommand::exec() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2523
+bun_runtime::cli::command::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:1141
+bun_runtime::cli::cli::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:379
+bun_runtime::bin_entry::main() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/bin_entry/mod.rs:215
+?? at ??:?
+
++++ diagnosis: default, 5 s limit: flat grey 3450.82 ms, Ran 30 tests across 1 file. [22.16s], exit 0 after 50.5s, panic(main thread): Segmentation fault at address 0x880F7FF630
+https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA2wIgj7/vP
+ntdll.dll+0x5e895 bun+0x62ae0 bun+0x622dd bun+0x25e751 ntdll.dll+0x76395 ntdll.dll+0x291e8 ntdll.dll+0x6d03d KERNEL32.DLL+0x1d94a bun+0x25e311 bun+0x25dc66 bun+0x6a07ef bun+0x6a07d5 bun+0x6a075c bun+0x528c3ba bun+0x3d1001 bun+0x12259 bun+0x10d38 bun+0x61f0 bun+0x520af14 KERNEL32.DLL+0x17ad4
+pdb-addr2line -f -C -i -p: exit 0
+mi_scav_wake_one(std::atomic<unsigned int>*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:127
+ (inlined by) _mi_scavenger_wake(mi_subproc_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:282
+ (inlined by) mi_arena_schedule_purge(mi_arena_s*, unsigned long long, unsigned long long, long) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:2603
+mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:1288
+core::cell::BorrowRefMut::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:2069
+ (inlined by) core::cell::RefCell::try_borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1259
+ (inlined by) core::cell::RefCell::borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1225
+ (inlined by) std::sys::thread_local::destructors::list::run() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/destructors/list.rs:31
+ (inlined by) std::sys::thread_local::guard::windows::cleanup() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/guard/windows.rs:267
+bun_core::Global::exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/bun_core/Global.rs:720
+bun_opaque::opaque_deref::closure$0() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) core::ptr::non_null::NonNull::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1067
+ (inlined by) bun_opaque::opaque_deref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) bun_jsc::js_global_object::JSGlobalObject::opaque_ref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/JSGlobalObject.rs:29
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1049
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::close_sqlite_databases_for_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2461
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2416
+bun_runtime::cli::test_command::impl$4::bail_out::closure$1() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2766
+bun_jsc::virtual_machine::impl$7::run_with_api_lock::call<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1997
+JSC__VM__holdAPILock(JSC::VM*, void*, void (*)(void*)) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../src/jsc/bindings/bindings.cpp:4998
+core::mem::maybe_uninit::MaybeUninit::assume_init() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:726
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::run_with_api_lock<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2008
+core::slice::index::impl$7::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:545
+ (inlined by) alloc::vec::impl$10::deref() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:19
+ (inlined by) alloc::vec::impl$15::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3977
+ (inlined by) bun_runtime::cli::test_command::TestCommand::exec() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2523
+bun_runtime::cli::command::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:1141
+bun_runtime::cli::cli::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:379
+bun_runtime::bin_entry::main() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/bin_entry/mod.rs:215
+?? at ??:?
+
++++ diagnosis: default, 5 s limit: flat grey 3698.42 ms, Ran 30 tests across 1 file. [20.85s], exit 0 after 23.5s
++++ diagnosis: threshold 0, 120 s limit: flat grey 3593.15 ms, Ran 30 tests across 1 file. [21.06s], exit 0 after 49.4s, panic(main thread): Segmentation fault at address 0xEA9ADFFAA0
+https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA20Oh2igklD
+ntdll.dll+0x5e895 bun+0x62ae0 bun+0x622dd bun+0x25e751 ntdll.dll+0x76395 ntdll.dll+0x291e8 ntdll.dll+0x6d03d KERNEL32.DLL+0x1d94a bun+0x25e311 bun+0x25dc66 bun+0x6a07ef bun+0x6a07d5 bun+0x6a075c bun+0x528c3ba bun+0x3d1001 bun+0x12259 bun+0x10d38 bun+0x61f0 bun+0x520af14 KERNEL32.DLL+0x17ad4
+pdb-addr2line -f -C -i -p: exit 0
+mi_scav_wake_one(std::atomic<unsigned int>*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:127
+ (inlined by) _mi_scavenger_wake(mi_subproc_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:282
+ (inlined by) mi_arena_schedule_purge(mi_arena_s*, unsigned long long, unsigned long long, long) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:2603
+mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:1288
+core::cell::BorrowRefMut::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:2069
+ (inlined by) core::cell::RefCell::try_borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1259
+ (inlined by) core::cell::RefCell::borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1225
+ (inlined by) std::sys::thread_local::destructors::list::run() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/destructors/list.rs:31
+ (inlined by) std::sys::thread_local::guard::windows::cleanup() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/guard/windows.rs:267
+bun_core::Global::exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/bun_core/Global.rs:720
+bun_opaque::opaque_deref::closure$0() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) core::ptr::non_null::NonNull::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1067
+ (inlined by) bun_opaque::opaque_deref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) bun_jsc::js_global_object::JSGlobalObject::opaque_ref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/JSGlobalObject.rs:29
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1049
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::close_sqlite_databases_for_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2461
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2416
+bun_runtime::cli::test_command::impl$4::bail_out::closure$1() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2766
+bun_jsc::virtual_machine::impl$7::run_with_api_lock::call<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1997
+JSC__VM__holdAPILock(JSC::VM*, void*, void (*)(void*)) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../src/jsc/bindings/bindings.cpp:4998
+core::mem::maybe_uninit::MaybeUninit::assume_init() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:726
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::run_with_api_lock<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2008
+core::slice::index::impl$7::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:545
+ (inlined by) alloc::vec::impl$10::deref() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:19
+ (inlined by) alloc::vec::impl$15::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3977
+ (inlined by) bun_runtime::cli::test_command::TestCommand::exec() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2523
+bun_runtime::cli::command::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:1141
+bun_runtime::cli::cli::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:379
+bun_runtime::bin_entry::main() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/bin_entry/mod.rs:215
+?? at ??:?
+
++++ diagnosis: threshold 0, 120 s limit: flat grey 3624.2 ms, Ran 30 tests across 1 file. [21.15s], exit 0 after 49.4s, panic(main thread): Segmentation fault at address 0xAC077FF720
+https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA24Kgy7/vH
+ntdll.dll+0x5e895 bun+0x62ae0 bun+0x622dd bun+0x25e751 ntdll.dll+0x76395 ntdll.dll+0x291e8 ntdll.dll+0x6d03d KERNEL32.DLL+0x1d94a bun+0x25e311 bun+0x25dc66 bun+0x6a07ef bun+0x6a07d5 bun+0x6a075c bun+0x528c3ba bun+0x3d1001 bun+0x12259 bun+0x10d38 bun+0x61f0 bun+0x520af14 KERNEL32.DLL+0x17ad4
+pdb-addr2line -f -C -i -p: exit 0
+mi_scav_wake_one(std::atomic<unsigned int>*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:127
+ (inlined by) _mi_scavenger_wake(mi_subproc_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:282
+ (inlined by) mi_arena_schedule_purge(mi_arena_s*, unsigned long long, unsigned long long, long) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:2603
+mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:1288
+core::cell::BorrowRefMut::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:2069
+ (inlined by) core::cell::RefCell::try_borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1259
+ (inlined by) core::cell::RefCell::borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1225
+ (inlined by) std::sys::thread_local::destructors::list::run() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/destructors/list.rs:31
+ (inlined by) std::sys::thread_local::guard::windows::cleanup() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/guard/windows.rs:267
+bun_core::Global::exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/bun_core/Global.rs:720
+bun_opaque::opaque_deref::closure$0() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) core::ptr::non_null::NonNull::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1067
+ (inlined by) bun_opaque::opaque_deref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) bun_jsc::js_global_object::JSGlobalObject::opaque_ref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/JSGlobalObject.rs:29
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1049
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::close_sqlite_databases_for_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2461
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2416
+bun_runtime::cli::test_command::impl$4::bail_out::closure$1() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2766
+bun_jsc::virtual_machine::impl$7::run_with_api_lock::call<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1997
+JSC__VM__holdAPILock(JSC::VM*, void*, void (*)(void*)) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../src/jsc/bindings/bindings.cpp:4998
+core::mem::maybe_uninit::MaybeUninit::assume_init() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:726
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::run_with_api_lock<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2008
+core::slice::index::impl$7::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:545
+ (inlined by) alloc::vec::impl$10::deref() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:19
+ (inlined by) alloc::vec::impl$15::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3977
+ (inlined by) bun_runtime::cli::test_command::TestCommand::exec() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2523
+bun_runtime::cli::command::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:1141
+bun_runtime::cli::cli::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:379
+bun_runtime::bin_entry::main() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/bin_entry/mod.rs:215
+?? at ??:?
+
++++ diagnosis: threshold 0, 120 s limit: flat grey 3650.42 ms, Ran 30 tests across 1 file. [21.08s], exit 0 after 49.5s, panic(main thread): Segmentation fault at address 0x3359FFF8A0
+https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA2mDgq8//5C
+ntdll.dll+0x5e895 bun+0x62ae0 bun+0x622dd bun+0x25e751 ntdll.dll+0x76395 ntdll.dll+0x291e8 ntdll.dll+0x6d03d KERNEL32.DLL+0x1d94a bun+0x25e311 bun+0x25dc66 bun+0x6a07ef bun+0x6a07d5 bun+0x6a075c bun+0x528c3ba bun+0x3d1001 bun+0x12259 bun+0x10d38 bun+0x61f0 bun+0x520af14 KERNEL32.DLL+0x17ad4
+pdb-addr2line -f -C -i -p: exit 0
+mi_scav_wake_one(std::atomic<unsigned int>*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:127
+ (inlined by) _mi_scavenger_wake(mi_subproc_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:282
+ (inlined by) mi_arena_schedule_purge(mi_arena_s*, unsigned long long, unsigned long long, long) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:2603
+mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:1288
+core::cell::BorrowRefMut::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:2069
+ (inlined by) core::cell::RefCell::try_borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1259
+ (inlined by) core::cell::RefCell::borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1225
+ (inlined by) std::sys::thread_local::destructors::list::run() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/destructors/list.rs:31
+ (inlined by) std::sys::thread_local::guard::windows::cleanup() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/guard/windows.rs:267
+bun_core::Global::exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/bun_core/Global.rs:720
+bun_opaque::opaque_deref::closure$0() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) core::ptr::non_null::NonNull::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1067
+ (inlined by) bun_opaque::opaque_deref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) bun_jsc::js_global_object::JSGlobalObject::opaque_ref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/JSGlobalObject.rs:29
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1049
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::close_sqlite_databases_for_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2461
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2416
+bun_runtime::cli::test_command::impl$4::bail_out::closure$1() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2766
+bun_jsc::virtual_machine::impl$7::run_with_api_lock::call<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1997
+JSC__VM__holdAPILock(JSC::VM*, void*, void (*)(void*)) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../src/jsc/bindings/bindings.cpp:4998
+core::mem::maybe_uninit::MaybeUninit::assume_init() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:726
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::run_with_api_lock<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2008
+core::slice::index::impl$7::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:545
+ (inlined by) alloc::vec::impl$10::deref() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:19
+ (inlined by) alloc::vec::impl$15::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3977
+ (inlined by) bun_runtime::cli::test_command::TestCommand::exec() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2523
+bun_runtime::cli::command::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:1141
+bun_runtime::cli::cli::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:379
+bun_runtime::bin_entry::main() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/bin_entry/mod.rs:215
+?? at ??:?
+
++++ diagnosis: GC timer off, 120 s limit: flat grey 3166.48 ms, Ran 30 tests across 1 file. [20.06s], exit 0 after 48.6s, panic(main thread): Segmentation fault at address 0xDC8F9FF910
+https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA24NhvjgswD
+ntdll.dll+0x5e895 bun+0x62ae0 bun+0x622dd bun+0x25e751 ntdll.dll+0x76395 ntdll.dll+0x291e8 ntdll.dll+0x6d03d KERNEL32.DLL+0x1d94a bun+0x25e311 bun+0x25dc66 bun+0x6a07ef bun+0x6a07d5 bun+0x6a075c bun+0x528c3ba bun+0x3d1001 bun+0x12259 bun+0x10d38 bun+0x61f0 bun+0x520af14 KERNEL32.DLL+0x17ad4
+pdb-addr2line -f -C -i -p: exit 0
+mi_scav_wake_one(std::atomic<unsigned int>*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:127
+ (inlined by) _mi_scavenger_wake(mi_subproc_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:282
+ (inlined by) mi_arena_schedule_purge(mi_arena_s*, unsigned long long, unsigned long long, long) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:2603
+mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:1288
+core::cell::BorrowRefMut::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:2069
+ (inlined by) core::cell::RefCell::try_borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1259
+ (inlined by) core::cell::RefCell::borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1225
+ (inlined by) std::sys::thread_local::destructors::list::run() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/destructors/list.rs:31
+ (inlined by) std::sys::thread_local::guard::windows::cleanup() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/guard/windows.rs:267
+bun_core::Global::exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/bun_core/Global.rs:720
+bun_opaque::opaque_deref::closure$0() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) core::ptr::non_null::NonNull::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1067
+ (inlined by) bun_opaque::opaque_deref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) bun_jsc::js_global_object::JSGlobalObject::opaque_ref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/JSGlobalObject.rs:29
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1049
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::close_sqlite_databases_for_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2461
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2416
+bun_runtime::cli::test_command::impl$4::bail_out::closure$1() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2766
+bun_jsc::virtual_machine::impl$7::run_with_api_lock::call<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1997
+JSC__VM__holdAPILock(JSC::VM*, void*, void (*)(void*)) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../src/jsc/bindings/bindings.cpp:4998
+core::mem::maybe_uninit::MaybeUninit::assume_init() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:726
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::run_with_api_lock<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2008
+core::slice::index::impl$7::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:545
+ (inlined by) alloc::vec::impl$10::deref() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:19
+ (inlined by) alloc::vec::impl$15::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3977
+ (inlined by) bun_runtime::cli::test_command::TestCommand::exec() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2523
+bun_runtime::cli::command::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:1141
+bun_runtime::cli::cli::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:379
+bun_runtime::bin_entry::main() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/bin_entry/mod.rs:215
+?? at ??:?
+
++++ diagnosis: GC log, 120 s limit: flat grey 3688.9 ms, Ran 30 tests across 1 file. [20.92s], exit 0 after 23.6s
++++ diagnosis: GC log, 120 s limit: flat grey 3607.37 ms, Ran 30 tests across 1 file. [20.85s], exit 0 after 49.4s, panic(main thread): Segmentation fault at address 0xA86B3FFD40
+bun test v1.4.4-canary.1 (cead8d2dd)
+
+[GC<0x000001AF57660110>: starting 110.161800ms]
+
+..\buildkite-agent\build\test\js\bun\jsc-stress\fixtures\simd-baseline.test.ts:
+[GC<0x000001AF57660110>: START M 1360kb => EdenCollection, ca=558.610352kb h=11729.389648kb a=0kb hf=0.000 mu=0.700 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=0 b=0 i#1:N<CsMsrShDMsm(0)SrbBcs> tp=65.567400ms 470+0 v=43kb (C:43 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=0 b=0 333+0 v=49kb (C:49 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=0 b=0 317+0 v=50kb (C:50 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=0 b=0 20+0 v=75kb (C:75 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=0 b=0 233+0 v=408kb (C:408 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=0 218+0 v=428kb (C:428 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=0 233+0 v=435kb (C:435 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=0 207+0 v=500kb (C:500 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=0 i#2:N<WsOJw>Pbc tp=11.744400ms 1+0 v=500kb (C:500 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=0 i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=951.124300ms (max 951.124300), cycle 942.383200ms END]
+GC END!
+[GC<0x000001AF57660110>: epilogue 32.239100ms]
+[GC<0x000001AF57660110>: START M 1556kb => EdenCollection, ca=0.000000kb h=12288.000000kb a=0kb hf=0.000 mu=0.700 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=3 i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.533190ms 3+5 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=3 i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=3 i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=12.096200ms (max 951.124300), cycle 11.858900ms END]
+GC END!
+[GC<0x000001AF57660110>: epilogue 0.701000ms]
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > clean passthrough [25.64ms]
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > ampersand in middle [60.38ms]
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > all special chars [6.88ms]
+(pass) stringWidth — @Vector(16, u8) ungated > ascii [3.71ms]
+(pass) stringWidth — @Vector(16, u8) ungated > empty [0.33ms]
+(pass) stringWidth — @Vector(16, u8) ungated > tabs [6.71ms]
+(pass) stringWidth — @Vector(16, u8) ungated > mixed printable and zero-width [8.66ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 16 [22.10ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 32 [6.05ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 64 [2.51ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 128 [0.67ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 256 [1.52ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > all byte values [10.43ms]
+(pass) base64 — simdutf runtime dispatch > ascii roundtrip [19.58ms]
+(pass) base64 — simdutf runtime dispatch > binary roundtrip [96.58ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > ascii roundtrip [19.06ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > mixed ascii + multibyte [24.04ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > emoji surrogate pairs [5.91ms]
+(pass) decodeURIComponent — SIMD % scanning > clean passthrough [8.60ms]
+(pass) decodeURIComponent — SIMD % scanning > encoded at various positions [12.14ms]
+(pass) decodeURIComponent — SIMD % scanning > heavy utf8 encoding [14.49ms]
+(pass) URL parsing — Highway indexOfChar/indexOfAny > long URL with all components [66.32ms]
+(pass) JSON — JS lexer SIMD string scanning > large object roundtrip [65.34ms]
+(pass) JSON — JS lexer SIMD string scanning > string with escape sequences [22.99ms]
+[GC<0x000001AF57660110>: START M 1685kb => EdenCollection, ca=68.028320kb h=12219.971680kb a=0kb hf=0.000 mu=0.700 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=41 i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.316980ms 114+43 v=16kb (C:16 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=41 73+0 v=43kb (C:43 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=41 i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=43kb (C:43 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=41 i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=209.284900ms (max 951.124300), cycle 135.680200ms END]
+GC END!
+[GC<0x000001AF57660110>: epilogue 2.188100ms]
+[GC<0x000001AF57660110>: START M 1719kb => EdenCollection, ca=0.000000kb h=12288.000000kb a=0kb hf=0.000 mu=0.700 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=1 i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=1 i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=1 i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=8.654700ms (max 951.124300), cycle 8.401700ms END]
+GC END!
+[GC<0x000001AF57660110>: epilogue 0.188400ms]
+(pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1645.96ms]
+(pass) Latin-1 to UTF-8 — @Vector(16, u8) ungated > full byte range [37.93ms]
+(pass) String search — Highway memMem/indexOfChar > indexOf long string [14.70ms]
+(pass) String search — Highway memMem/indexOfChar > includes long string [0.74ms]
+[GC<0x000001AF57660110>: START M 1849kb => EdenCollection, ca=147.703125kb h=12140.296875kb a=0kb hf=0.000 mu=0.700 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=2 b=110 i#1:N<CsMsrShDMsm(111)SrbBcs> tp=0.789510ms 12+111 v=20kb (C:20 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=3 b=110 86+11 v=26kb (C:26 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=3 b=110 62+11 v=35kb (C:35 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=3 b=110 24+11 v=42kb (C:42 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=3 b=110 i#2:N<WsOJw>Pbc tp=1.663230ms 0+0 v=42kb (C:42 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=3 b=110 i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 887kb, mw=0 p=87.093400ms (max 951.124300), cycle 86.833700ms END]
+GC END!
+[GC<0x000001AF57660110>: epilogue 22.895300ms]
+(pass) JPEG codec: libjpeg-turbo jsimd runtime dispatch > flat grey survives encode, decode, encode byte for byte [3607.37ms]
+[GC<0x000001AF57660110>: START M 2261kb => EdenCollection, ca=416.868164kb h=11871.131836kb a=0kb hf=0.000 mu=0.700 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=3 b=72 i#1:N<CsMsrShDMsm(75)SrbBcs> tp=0.300000ms 0+75 v=2kb (C:2 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=4 b=72 3+0 v=3kb (C:3 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=4 b=72 i#2:N<WsOJw>Pbc tp=6.349440ms 9+0 v=4kb (C:4 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=5 b=72 i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb (C:4 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=5 b=72 i#4:P<WsJwOMsm(0)CsShBcsMsrDSrbCbDomo>Pbc => 924kb, mw=0 p=67.914200ms (max 951.124300), cycle 67.692600ms END]
+GC END!
+[GC<0x000001AF57660110>: epilogue 180.644600ms]
+[GC<0x000001AF57660110>: START M 2284kb => EdenCollection, ca=0.000000kb h=12288.000000kb a=0kb hf=0.000 mu=0.700 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=5 b=0 i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=5 b=0 i#2:N<WsOJw>Pbc tp=0.346860ms 0+0 v=0kb (C:0 M:0 P1:0 P2:0 P3:0 P4:0 P5:0 P6:0 P7:0) o=5 b=0 i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsJwO>Pbc => 924kb, mw=0 p=4.595600ms (max 951.124300), cycle 4.333800ms END]
+GC END!
+[GC<0x000001AF57660110>: epilogue 0.214400ms]
+(pass) JPEG codec: libjpeg-turbo jsimd runtime dispatch > gradient round-trips through baseline and progressive encoders [3131.83ms]
+
+ 30 pass
+ 0 fail
+ 54 expect() calls
+Ran 30 tests across 1 file. [20.85s]
+============================================================
+Bun Canary v1.4.4-canary.1 (cead8d2dd) Windows x64
+Windows v10.17763
+CPU: sse42 popcnt
+Args: "C:\buildkite-agent\build\bun-windows-x64-profile\bun-profile.exe" "test" "--timeout" "120000" "C:\buildkite-agent\build\test\js\bun\jsc-stress\fixtures\simd-baseline.test.ts"
+Features: fetch http_server jsc no_avx2 no_avx transpiler_cache tsconfig(3) tsconfig_paths exited 
+Builtins: "bun:test" "node:zlib" 
+
+Elapsed: 21553ms | User: 7968ms | Sys: 13468ms
+RSS: 0.81 GB | Peak: 0.81 GB | Commit: 0.89 GB | Faults: 220134 | Machine: 68.71 GB
+
+CPU lacks AVX support. Please consider upgrading to a newer CPU.
+panic(main thread): Segmentation fault at address 0xA86B3FFD40
+oh no: Bun has crashed. This indicates a bug in Bun, not your code.
+
+To send a redacted crash report to Bun's team,
+please file a GitHub issue using the link below:
+
+ https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA2wKg0+/nrD
+
+
+https://bun.report/1.4.4/wt2cead8d2gngQggooigDCSntdll.dllqp0Xgu1Y6txYi1z3ECSntdll.dllq5xdCSntdll.dllw+oKCSntdll.dll6jobCYKERNEL32.DLL00sHixx3Esmu3E++joNq9joN41joN07hjlFigo0HylxEwzmEg/wBox3ikFCYKERNEL32.DLLot9FA2wKg0+/nrD
+ntdll.dll+0x5e895 bun+0x62ae0 bun+0x622dd bun+0x25e751 ntdll.dll+0x76395 ntdll.dll+0x291e8 ntdll.dll+0x6d03d KERNEL32.DLL+0x1d94a bun+0x25e311 bun+0x25dc66 bun+0x6a07ef bun+0x6a07d5 bun+0x6a075c bun+0x528c3ba bun+0x3d1001 bun+0x12259 bun+0x10d38 bun+0x61f0 bun+0x520af14 KERNEL32.DLL+0x17ad4
+pdb-addr2line -f -C -i -p: exit 0
+mi_scav_wake_one(std::atomic<unsigned int>*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:127
+ (inlined by) _mi_scavenger_wake(mi_subproc_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/scavenger.c:282
+ (inlined by) mi_arena_schedule_purge(mi_arena_s*, unsigned long long, unsigned long long, long) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:2603
+mi_arenas_page_free_prim(mi_page_s*, mi_subproc_s*, mi_arena_pages_s*) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../vendor/mimalloc/src/arena.c:1288
+core::cell::BorrowRefMut::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:2069
+ (inlined by) core::cell::RefCell::try_borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1259
+ (inlined by) core::cell::RefCell::borrow_mut() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:1225
+ (inlined by) std::sys::thread_local::destructors::list::run() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/destructors/list.rs:31
+ (inlined by) std::sys::thread_local::guard::windows::cleanup() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/guard/windows.rs:267
+bun_core::Global::exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/bun_core/Global.rs:720
+bun_opaque::opaque_deref::closure$0() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) core::ptr::non_null::NonNull::new() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:1067
+ (inlined by) bun_opaque::opaque_deref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/opaque/lib.rs:260
+ (inlined by) bun_jsc::js_global_object::JSGlobalObject::opaque_ref() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/JSGlobalObject.rs:29
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1049
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::close_sqlite_databases_for_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2461
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::global_exit() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2416
+bun_runtime::cli::test_command::impl$4::bail_out::closure$1() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2766
+bun_jsc::virtual_machine::impl$7::run_with_api_lock::call<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:1997
+JSC__VM__holdAPILock(JSC::VM*, void*, void (*)(void*)) at /var/lib/buildkite-agent/build/build/release-windows-x64/../../src/jsc/bindings/bindings.cpp:4998
+core::mem::maybe_uninit::MaybeUninit::assume_init() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_uninit.rs:726
+ (inlined by) bun_jsc::virtual_machine::VirtualMachine::run_with_api_lock<bun_runtime::cli::test_command::impl$4::bail_out::closure_env$1,never$>() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/jsc/VirtualMachine.rs:2008
+core::slice::index::impl$7::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:545
+ (inlined by) alloc::vec::impl$10::deref() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:19
+ (inlined by) alloc::vec::impl$15::index() at /opt/rust/toolchains/nightly-2026-09-15-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3977
+ (inlined by) bun_runtime::cli::test_command::TestCommand::exec() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/test_command.rs:2523
+bun_runtime::cli::command::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:1141
+bun_runtime::cli::cli::start() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/cli/mod.rs:379
+bun_runtime::bin_entry::main() at /var/lib/buildkite-agent/build/build/release-windows-x64/src/runtime/bin_entry/mod.rs:215
+?? at ??:?
+

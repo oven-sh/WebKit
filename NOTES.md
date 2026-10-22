@@ -227,3 +227,17 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   * Diagnostic v3 = bun commit e7f50a50c8 ("[skip tests]" in the subject: builds + verify-baseline only), build 130728: forced idle full GCs (BUN_IDLE_GC_SECONDS=3,3,3)
     x default / upstream (option 0) / price 32 KB, then natural default runs with GC log. Result -> /tmp/vb-diag.log (wait-vb.py).
   * The temporary commit on the bun branch MUST go before the PR is ready (return to d20afca6a2 + new pin).
+- 2026-10-22 06:05 UTC: diag v3 result (build 130728, bench/results/vb-diag-v3.log). THE IDLE-FULL-GC HYPOTHESIS IS WRONG.
+  * Forced idle full GC (BUN_IDLE_GC_SECONDS=3,3,3) under SDE: pause 224 ms (default), 244 ms (upstream protocol), 110 ms + concurrent (price 32 KB). Not 1.5 s.
+    It runs when JS next runs after the await (Windows: mutator keeps the conn while parked), so it sits at the end of flat grey: +0.4 s in every protocol.
+  * First collection of a process under SDE: one pause of 951..984 ms (default) vs 601 + 360 ms in two pauses (upstream). Same total.
+  * Natural slow run caught (diag 12, flat grey 5492 ms): its GC log is the SAME as a normal run: 7 eden collections, all mw=0, pauses 972/12/220/9/121/68/7 ms,
+    no full collection. So the +1.9 s is NOT a GC pause of the JS thread. Forced-default run 3 was slow too (5521) with a normal GC log.
+  * Slow-mode rate so far on this build: default protocol natural 4 of 29, forced 1 of 2; upstream protocol on this build 0 of 8; other builds 0 of 108.
+  * Totals of the file are bimodal by ~1.4 s also in runs with a normal flat grey (21.9 vs 23.3 s): looks like ONE floating event of about 1.5 s that lands
+    in the startup in most runs, in flat grey in the slow runs, nowhere in some. Cause unknown. Candidates: thread creation/exit under Pin, mimalloc scavenger
+    sweep of a parked thread, a JIT tier first use, Pin code cache.
+  * The pause-limit patches (WebKit maximumSmallGCPauseMS, bun tests) are parked in bench/wk-pause-limit.patch and bench/bun-test-pause-limit.patch: NOT the fix
+    for this lane. WebKit working tree still has the change applied (uncommitted).
+  * diag v4 = bun commit 326db49d43 ([skip tests]): instrumented copies of the test file (step times png/encode1/recode, optional 20 ms heartbeat for JS-thread
+    gaps), 6 concurrent runs per batch: default x2, heartbeat|original, upstream|one marker, minimumGCPauseMS=0|GC timer off, MIMALLOC_SCAVENGER=0|useDFGJIT=0.
