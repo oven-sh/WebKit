@@ -217,8 +217,7 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
     }
     if (cache && m_program.nameClassOf(key) == NameClass::Length)
         return Boxed(callStub(context, getLengthAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier, .origin = origin }).first);
-    // A site cache pays where one kind of receiver comes again and again. Compact code runs seldom: there the tables answer, and the site has one operand less.
-    // A name that the program reads in hundreds of places has a stub of its own, which answers for every Structure in about what a hit at a site costs.
+    // A site cache pays where one kind of receiver comes again and again.
 #if CPU(X86_64)
     // The tables answer for every Structure alike, in about what a hit at a site and the site's operand cost together.
     bool tablesAnswer = context.shape() != CodeShape::Fast || inputs().stubCatalog.bindsImmediate(AOT::getById(), *identifier);

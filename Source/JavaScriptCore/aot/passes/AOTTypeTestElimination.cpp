@@ -87,8 +87,6 @@ private:
 };
 
 // Where the conditions of branches hold: the answers of TestCoverage over TestEvents for requirements that only ask, without a budget, with slow paths that come back.
-// A condition begins to hold at a proof, so rows of conditions are carried from the proofs on, and only blocks that such a row reaches are visited. A block is looked through for what ends
-// a proof when a row that is not empty first enters it, and a writer is asked about a condition when a row first brings that condition to it.
 class ConditionCoverage {
     WTF_MAKE_NONCOPYABLE(ConditionCoverage);
 public:
@@ -324,8 +322,7 @@ void ConditionCoverage::collectProofs(std::span<const ExistingProof> proofs)
     });
 }
 
-// Nobody asks for a condition behind its last requirement. A way from a block to a position in front of it first goes back over an edge that spans the block, and from there on over edges
-// that each span the target of the one before. So the stretches of positions that such edges span, taken together wherever they overlap, bound what a block reaches.
+// Nobody asks for a condition behind its last requirement.
 void ConditionCoverage::findWhereConditionsMatter()
 {
     m_lastRequirement.fill(0, m_conditions.size());
@@ -640,8 +637,7 @@ void ConditionCoverage::didFindDeadEdgeInto(BlockID target, Vector<BlockID, 16>&
     deadBlocks.append(target);
 }
 
-// The blocks that nothing leads to once the failing edges are left out: those with dead edges alone. That misses a block of a cycle which only a dead edge leads into.
-// The first such block in the order has a dead edge, since an edge forward leads to it, and beside its dead edges only edges back. Where there is such a block, false.
+// The blocks that nothing leads to once the failing edges are left out: those with dead edges alone.
 bool ConditionCoverage::findDeadBlocks()
 {
     if (!m_blocksWithIgnoredFailingEdge)
@@ -1124,8 +1120,7 @@ bool GuardEliminator::mayBeProvenElsewhere(TestConditionID id, const Vector<uint
     return condition.subject && !proofsOfAllocation(m_context.program, m_function, m_function.at(condition.subject)).isEmpty();
 }
 
-// The one branch on a condition that nothing else proves is not redundant: on the way to its first turn nothing has proven the condition. It may be unreachable once the failing edges of
-// redundant branches are left out, and then its own edges lead nowhere from the entry. So the other branches come to the same verdicts without it.
+// The one branch on a condition that nothing else proves is not redundant: on the way to its first turn nothing has proven the condition.
 void GuardEliminator::takeBranchesThatMayBeRedundantFrom(const GuardEliminator& all)
 {
     Vector<uint32_t> numberOfBranches(FillWith { }, all.m_conditions.size(), 0u);
@@ -1267,8 +1262,7 @@ void GuardEliminator::findProofs(ProofsHeldByGuards heldByGuards)
     }
 }
 
-// Nearly every function has no redundant branch. That shows without the guards: see ProofsHeldByGuards. Where there is one, the guards are wanted as the values that take the place of its proof.
-// A search that comes to the limit of rounds says nothing.
+// Nearly every function has no redundant branch.
 bool GuardEliminator::findsNoRedundantBranchWithoutGuards()
 {
     findProofs(ProofsHeldByGuards::AreLeftOut);

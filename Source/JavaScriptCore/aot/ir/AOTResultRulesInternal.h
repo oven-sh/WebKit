@@ -67,10 +67,7 @@ private:
     uint64_t m_hash { 0x243f6a8885a308d3ull };
 };
 
-// A second hash of the words of a key, which does not follow from the first. The memo of one function goes by the first alone. The memo that all functions share
-// holds far more entries and takes both.
-// An id that an arena has made up names another record in another arena, so a key with such a word stays with its function. Every such id has its highest bit set and is not the null id.
-// A number that looks like one keeps its key at home too.
+// A second hash of the words of a key, which does not follow from the first.
 class SecondWordHasher {
 public:
     void add(uint32_t first, uint32_t second = 0)
@@ -133,8 +130,7 @@ private:
     uint32_t m_wordsPlusOne { 0 };
 };
 
-// What `compute` answers to a question whose key holds all that the answer follows from but the program. `addWords` adds the words of the key to the hasher it is given,
-// and `hash` is what a WordHasher makes of them. Without a kind of answer, the answer is for this function alone.
+// What `compute` answers to a question whose key holds all that the answer follows from but the program.
 TypeID sharedOrComputedType(const TypingContext& context, std::optional<SharedAnswers> answers, uint64_t hash, NOESCAPE const auto& addWords, NOESCAPE const Invocable<TypeID()> auto& compute)
 {
     // What a caller knows about the positions beyond their types, only that caller knows.

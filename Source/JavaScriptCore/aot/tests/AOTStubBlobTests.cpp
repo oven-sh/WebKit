@@ -412,8 +412,6 @@ static void checkHostCallReferences(const StubCatalog& catalog)
     }
 }
 
-// The call of a closure that its field has not made keeps the cell in the frame of the stub, so it returns to the site that the unwinder takes for the frame of a list of arguments.
-// A validating build allocates nothing in frames, and with wide references no slot defers a closure.
 static void checkMethodCallReferences(const StubCatalog& catalog)
 {
     StubOptions validatingOptions;

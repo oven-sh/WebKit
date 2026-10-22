@@ -423,11 +423,7 @@ void AOTHeaps::appendHeaps(const LocationMasks& masks, B3HeapList& list) const
     }
 }
 
-// The effects of the IR say what a program can tell. These heaps say what lies in memory, and the run time converts a cell where no program can tell:
-// a slim closure that is constructed, or asked for its prototype, its name or its keys, gets another Structure, another type, and a butterfly where its word lay;
-// a property that is made at its first read gets a slot, which gives its holder another Structure and may move its butterfly; so does flattening a dictionary;
-// the prototype of a new object and a holder that a cache relies on are marked as prototypes, which converts a slim closure and moves the elements of a frozen array.
-// Only a call that stores nothing, allocates nothing, always returns and looks at no object does none of this.
+// The effects of the IR say what a program can tell.
 bool AOTHeaps::mayConvertCells(const Typed::Effects& effectsOfCall)
 {
     constexpr Typed::AbstractHeapSet heapsOfObjects { IRHeap::NamedProperties, IRHeap::ObjectFields, IRHeap::ShapeWords, IRHeap::OrderWords, IRHeap::PrototypeLinks };

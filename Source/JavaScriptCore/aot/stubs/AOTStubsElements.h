@@ -17,8 +17,7 @@ enum class ElementStoreMode : uint8_t { Strict, Sloppy };
 constexpr StubKey getByVal(bool indexIsInteger) { return StubKey(indexIsInteger ? StubFamily::GetByValAtIndex : StubFamily::GetByVal); }
 constexpr StubKey putByVal(bool indexIsInteger, ECMAMode mode) { return StubKey(indexIsInteger ? StubFamily::PutByValAtIndex : StubFamily::PutByVal).withForm(static_cast<uint8_t>(mode.isStrict() ? ElementStoreMode::Strict : ElementStoreMode::Sloppy)); }
 
-// What the type of the receiver at a site leads one to expect. The stub tests for that first, in a dozen instructions, and whatever else arrives goes on to the stub that takes everything.
-// An array needs no form: that stub begins with arrays, and the type of an array does not say which storage it has.
+// What the type of the receiver at a site leads one to expect.
 enum class ExpectedElements : uint8_t { Int32Array, Uint8Array };
 inline constexpr uint8_t numberOfExpectedElements = 2;
 

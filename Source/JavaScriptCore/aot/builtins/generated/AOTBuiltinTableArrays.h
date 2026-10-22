@@ -8,26 +8,26 @@
 
 namespace JSC { namespace AOT {
 
-extern const Builtin builtinTableBuiltins[6337];
-extern const BuiltinPackedOverload builtinTableOverloads[6736];
-extern const BuiltinDispatch builtinTableDispatches[6169];
-extern const BuiltinDispatchNode builtinTableDispatchNodes[853];
-extern const BuiltinType builtinTableTypes[1056];
+extern const Builtin builtinTableBuiltins[6330];
+extern const BuiltinPackedOverload builtinTableOverloads[6747];
+extern const BuiltinDispatch builtinTableDispatches[6167];
+extern const BuiltinDispatchNode builtinTableDispatchNodes[865];
+extern const BuiltinType builtinTableTypes[1081];
 extern const BuiltinClass builtinTableClasses[271];
 extern const BuiltinSlot builtinTableSlots[39];
 extern const BuiltinLayout builtinTableLayouts[13];
-extern "C" const BuiltinTextStorage<5462, 101177> builtinTableTextNames;
-extern const BuiltinNameSlots<5462> builtinTableTextNameSlots;
+extern "C" const BuiltinTextStorage<5519, 102445> builtinTableTextNames;
+extern const BuiltinNameSlots<5519> builtinTableTextNameSlots;
 extern const BuiltinTextStorage<15, 155> builtinTableSymbolNames;
 extern const BuiltinTextStorage<4, 80> builtinTableRegisteredSymbolNames;
 extern const BuiltinSymbolConstant builtinTableSymbolConstants[15];
-extern const BuiltinNameClasses builtinTableClassesByMemberName[1373];
+extern const BuiltinNameClasses builtinTableClassesByMemberName[1374];
 extern const BuiltinProtocolKeys builtinTableProtocolKeys[9];
 extern const BuiltinID builtinTableBuiltinsWithQualifiedTokens[68];
 extern const BuiltinTextStorage<271, 4034> builtinTableClassTokens;
 extern const BuiltinTextStorage<39, 751> builtinTableSlotTokens;
 extern const BuiltinTextStorage<13, 227> builtinTableLayoutTokens;
-extern const BuiltinTextStorage<220, 4047> builtinTableModuleTokens;
+extern const BuiltinTextStorage<219, 4028> builtinTableModuleTokens;
 extern const BuiltinFeatureUse builtinTableFeatureUses[4145];
 extern const BuiltinUnseenCode builtinTableUnseenCode[1];
 extern const BuiltinModuleLoad builtinTableModuleLoads[59];
@@ -41,8 +41,8 @@ extern const BuiltinForms builtinTableForms[9];
 extern const BuiltinBoxedCall builtinTableBoxedCalls[30];
 extern const BuiltinNumberConstant builtinTableNumberConstants[42];
 extern const BuiltinStringConstant builtinTableStringConstants[7];
-extern const BuiltinOverloadSummary builtinTableOverloadSummaries[6736];
-extern const RuntimeModuleData builtinTableRuntimeModules[220];
+extern const BuiltinOverloadSummary builtinTableOverloadSummaries[6747];
+extern const RuntimeModuleData builtinTableRuntimeModules[219];
 extern const RuntimeFunctionData builtinTableRuntimeFunctions[186];
 extern const RuntimeModuleID builtinTableStartupModules[1];
 extern const RuntimeFunctionID builtinTableFunctionsCalledWithStartupLoads[2];
@@ -53,11 +53,11 @@ extern const BuiltinID builtinTableLockedObjects[13];
 extern const BuiltinClosedKeys builtinTableClosedKeys[186];
 extern const BuiltinNamesReadByNativeCode builtinTableNamesReadByNativeCode[1];
 
-constexpr uint32_t builtinTableHashOfBuiltinTokens = 0xc0c64ee4;
+constexpr uint32_t builtinTableHashOfBuiltinTokens = 0x23972a1f;
 
-static_assert(6736 <= BuiltinOverloadID::hashTableDeletedIndex);
-static_assert(1056 <= BuiltinTypeID::hashTableDeletedIndex);
-static_assert(853 <= BuiltinDispatchNodeID::hashTableDeletedIndex);
+static_assert(6747 <= BuiltinOverloadID::hashTableDeletedIndex);
+static_assert(1081 <= BuiltinTypeID::hashTableDeletedIndex);
+static_assert(865 <= BuiltinDispatchNodeID::hashTableDeletedIndex);
 
 } }
 

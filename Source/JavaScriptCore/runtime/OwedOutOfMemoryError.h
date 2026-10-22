@@ -6,6 +6,7 @@
 #pragma once
 
 #include "Error.h"
+#include "ExceptionHelpers.h"
 #include "MarkedBlockCage.h"
 #include "VM.h"
 

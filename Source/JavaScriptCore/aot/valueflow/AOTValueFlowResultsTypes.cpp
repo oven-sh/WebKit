@@ -66,14 +66,7 @@ static FlowPositionUpdate updateFrom(const ValueFlowPositionResult& result, cons
 
 namespace {
 
-// A set knows numbers by kind alone: an integer is any integer, and the sum of two numbers is any number. This says which numbers arrive at a variable, at a field of an environment, at a capture,
-// at a parameter, at a result and among the values of a Map, from the proven types of the values that the operations hand to them.
-// It starts from the types of the positions as read. Each round looks at such a value once more, with what the round before has found about the positions that the value is computed from.
-// Which positions those are is the program's and stays. So the first round looks at every value and notes them, and a later round looks only at the values for which one of them has moved:
-// any other value is what it was, and the meet with what was met before changes nothing.
-// A round starts from what holds, so what it finds holds, however many rounds there are.
-// It speaks for a position only where every number comes from an operation that it has looked at. Where a check fails, the generic version of the function goes through the same operations
-// with what the check has turned away: the type of a value that rests on a check counts for nothing here, and such a value is whatever its operation makes of any operand.
+// A set knows numbers by kind alone: an integer is any integer, and the sum of two numbers is any number.
 class NumbersOfPositions final : public ValueFlowNumbersOfValues {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NumbersOfPositions);
 public:
@@ -711,7 +704,6 @@ std::optional<uint32_t> NumbersOfPositions::indexOfMap(ValueFlowObjectID object)
 }
 
 // A value gets into a Map by a call of `set` that spells it out, or out of the pairs that Object.entries has made of objects that operations alone fill.
-// Whatever else may store into a Map, or into an object of which its pairs are made, leaves the Map out. Answers which Maps are left out.
 BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
 {
     BitVector hasOtherWriter(m_maps.size());
@@ -1159,9 +1151,7 @@ Type NumbersOfPositions::typeWithoutProof(const DeclaredType& declared) const
     return anything;
 }
 
-// A counter of a loop is an integer by induction, and under a bound by the test that the loop ends on. The rules of the IR find both.
-// They type a copy of the function in which every check lets everything through, as the generic version does, under what was found about the positions.
-// Answers whether it has found something.
+// A counter of a loop is an integer by induction, and under a bound by the test that the loop ends on.
 bool NumbersOfPositions::typeWritersByRules(TypeArena& arena, FunctionID id, std::span<const uint32_t> writers, Vector<uint32_t>& positionsAsked)
 {
     const Program& program = m_inputs.program;
@@ -1469,8 +1459,7 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         }
         update.fields[index].position = updateFrom(result, asRead, types, counts);
 
-        // The proof speaks for the objects: none is ill-typed and none is a stranger to the family. The primitives are asked of the type itself.
-        // So are the objects where the positions give no proof: the switch for narrowed types is off, or an object that nobody knows arrives at a field that takes any object.
+        // The proof speaks for the objects: none is ill-typed and none is a stranger to the family.
         ValueSetID surelyInside = inputs.universe().membersSurelyInside(maker, program, layout.fields[index].declared.type);
         // A store through a wider view of the object is tested against the view, so the proof, which speaks for what the slot holds, takes nothing on trust here.
         bool storesOnlyObjectsOfType = (result.proof == ValueFlowProof::Proven && !positions.holdsObjectThatMayLieOutside(stored, asRead)) || result.proof == ValueFlowProof::NothingArrives
@@ -1490,8 +1479,7 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         // Which getters the slot of an accessor takes is a guess: a pair with another getter, or with a setter alone, is turned away and lies beside the slots.
         if (inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) && !update.fields[index].accessor.isAccessor() && (asRead.isAnything() || (storesOnlyObjectsOfType && storesOnlyPrimitivesOfType)))
             flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
-        // An allocation writes the slot without a test. So a value that may lie outside the type is stored behind the allocation, by a store that tests it, in the generic version of a function for one:
-        // the field is not filled by its allocation alone, and whoever took its value from the allocation would take what stands in for the value.
+        // An allocation writes the slot without a test.
         if (!flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) && flow.location.stores == StoreCount::AtMostOnce) {
             flow.location.stores = StoreCount::Unknown;
             flow.location.isUnchangedDuringActivation = false;
@@ -1581,7 +1569,6 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
 }
 
 // The node of a capture holds what every reached operation that makes a closure of the function stores there, and what a call that names the function hands on.
-// Whoever else enters the function passes what nobody has looked at. A capture comes out of the closure, which only an operation of the program has filled.
 static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionID id, CallerState callers, const NumbersOfPositions& numbers, ValueFlowPositions& positions, FlowSignatureUpdate& update)
 {
     const Function& function = inputs.program.at(id);
@@ -1616,8 +1603,7 @@ static void narrowResults(const ValueFlowResultInputs& inputs, FunctionID id, co
         update.results = WTF::move(results);
 }
 
-// The values that the reduced body names: what an operation gives and what it takes, what a branch tests and what a cast checks. Of the others it keeps nothing.
-// The read of a location has the type of the location.
+// The values that the reduced body names: what an operation gives and what it takes, what a branch tests and what a cast checks.
 static bool hasTypeOfNarrowedLocation(const FlowApplication& application, const Value& value)
 {
     switch (value.opcode) {

@@ -370,7 +370,6 @@ const void* Image::stubAddress(StubKey key) const
 }
 
 // The family is the most significant part of a key, so the stubs of a family lie side by side, by form and then by count.
-// Whoever wants all of them searches once.
 std::span<const StubAddressInImage> Image::stubAddressesOf(StubFamily family) const
 {
     auto addresses = std::ranges::equal_range(section<StubAddressInImage>(ImageSection::StubAddresses), family, { }, [](const StubAddressInImage& address) {
@@ -395,7 +394,6 @@ bool Image::hasFrameAtReturnOffset(uint32_t function, const SideTableParts& part
         return false;
     if constexpr (!hasFixedInstructionSize) {
         // The fault handler makes the address of a faulting instruction plus sizeOfNearCall the return address, whatever the length of the instruction.
-        // No instruction that faults begins as a near call does, and most return addresses stand behind one: they are not looked for in the fault table.
         constexpr uint8_t opcodeOfNearCall = 0xe8;
         if (returnOffset >= sizeOfNearCall && codeOf(function)[returnOffset - sizeOfNearCall] != opcodeOfNearCall) {
             std::optional<FaultSite> fault = faultSiteAt(codeOf(function) + (returnOffset - sizeOfNearCall));

@@ -557,8 +557,7 @@ private:
         return allocation;
     }
 
-    // What EscapeAnalysis::mayAlias() says, seen without the solve. Behind most accesses stands no object that the function makes:
-    // two such values may name one object wherever their types allow it.
+    // What EscapeAnalysis::mayAlias() says, seen without the solve.
     enum class AliasSeenAlone : uint8_t { Unknown, NoAlias, MayAlias };
 
     bool namesNoObjectMadeHere(ValueID value)
@@ -804,8 +803,7 @@ private:
         });
     }
 
-    // Goes through the block with the rows and hands each action to the functor in front of carrying it out on all of them. Writers are held against the classes that have a bit in one of the rows.
-    // With one row that is empty the values up to the next access are passed over.
+    // Goes through the block with the rows and hands each action to the functor in front of carrying it out on all of them.
     void walk(BlockID blockID, std::span<Row*> rows, bool watchesThrows, NOESCAPE const Invocable<void(const Action&)> auto& functor)
     {
         const Block& block = m_function.at(blockID);
@@ -940,8 +938,6 @@ private:
     }
 
     // A bit of a class is set at an access of the class and looked at in front of one, so behind the last access that a block may reach the bits of the class say nothing.
-    // A way from a block to a position in front of it first goes back over an edge that spans the block, and from there on over edges that each span the target of the one before.
-    // So the stretches of positions that such edges span, taken together wherever they overlap, bound what a block reaches.
     void findWhereClassesMatter()
     {
         m_lastPositionOfClass.fill(0, m_classes.size());

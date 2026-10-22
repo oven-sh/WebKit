@@ -41,7 +41,6 @@ enum class SlotExitReason : uint8_t { Delete, Redefinition, StoreOfOtherType };
 using PropertyWalk::isCompiledObject;
 
 // What the slot of one field may hold: a value of the field's type, or undefined or null where the slot has a marker for it.
-// A test against that field makes one. So does the compiler, for a value that it has tested itself.
 class AcceptedValue {
 public:
     static AcceptedValue provenAtBuildTime(JSValue value) { return AcceptedValue(value); }
@@ -59,8 +58,7 @@ private:
     JSValue m_value;
 };
 
-// An entry of a key order below the number of fields lists that field. Any other entry lists the extra keys that are not listed yet, in their own order, up to a count:
-// the entry less the number of fields, plus one, on top of what the full entries before it count. A full entry is maxKeyOrderEntry, so an order counts any number of extra keys.
+// An entry of a key order below the number of fields lists that field.
 class ExtraKeyCounter {
 public:
     explicit ExtraKeyCounter(uint32_t numberOfFields)

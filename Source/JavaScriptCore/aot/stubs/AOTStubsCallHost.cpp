@@ -52,7 +52,6 @@ static constexpr GPRReg directThisGPR = operationArgumentGPR(directThisArgumentI
 static constexpr GPRReg directCalleeGPR = operationArgumentGPR(directCalleeArgumentIndex);
 
 // The native function is no operation: it stores no frame, and it reports an exception by the empty value.
-// The frame of the stub stands for its frame: the return address in it is a return site of the caller.
 void generateCallDirectFunction(StubAssembler& jit)
 {
     const DirectFunctionCall form = static_cast<DirectFunctionCall>(jit.key().form());
@@ -129,8 +128,7 @@ void generateCallInternalFunction(StubAssembler& jit)
     callNativeFunctionAndReturn(jit, kind, scratch, Address(calleeGPR, InternalFunction::offsetOfGlobalObject()), Address(calleeGPR, InternalFunction::offsetOfNativeFunctionFor(kind)));
 }
 
-// As ProxyObject.cpp performProxyCall(), in the frame that it would have, which a stack trace lists. The trap, or the target where the handler has none, is entered from here:
-// no native code lies between the caller and it.
+// As ProxyObject.cpp performProxyCall(), in the frame that it would have, which a stack trace lists.
 void generateCallProxy(StubAssembler& jit)
 {
     static_assert(numberOfArgumentGPRs >= 3);

@@ -217,9 +217,7 @@ static bool resolvesNoRope(const Program& program, const Function& function, con
     return isBoundOf(NamedEffectSet::ResolvesRopes, declared) && readsOnlyFlatStrings(program, function, value);
 }
 
-// The namespace object is made from the tables of the image where they name every export: nothing is linked and nothing runs for it, whether the operation stands behind
-// an import or behind a `require`. A module that takes names from a module of another kind asks that module, the face of a CommonJS module whose names only a run shows
-// asks its exports object, a deferred import is evaluated by the first read, and neither a CommonJS module nor uncompiled code has a table.
+// The namespace object is made from the tables of the image where they name every export: nothing is linked and nothing runs for it, whether the operation stands behind an import or behind a `require`.
 static bool createsNamespaceFromTables(const Program& program, const Value& value)
 {
     if (value.opcode != Opcode::ModuleNamespace || value.phase() != ImportPhase::Evaluation)
@@ -229,8 +227,7 @@ static bool createsNamespaceFromTables(const Program& program, const Value& valu
         && std::ranges::none_of(module.requests, &ModuleRequest::isDynamicStarExport);
 }
 
-// The operation throws what the getter or the trap throws that its read of the property runs, and for a proxy that was revoked. A function that is created with the property keeps it as a data property of its own:
-// there the language prescribes no error, and a read whose answer nobody takes goes away like the allocation that it stood in front of.
+// The operation throws what the getter or the trap throws that its read of the property runs, and for a proxy that was revoked.
 static bool readsPrototypePropertyWithoutRunningCode(const Program& program, const Function& function, const Value& value)
 {
     if (value.opcode != Opcode::GetConstructPrototype)
@@ -269,7 +266,6 @@ static Effects refinedEffectsOf(const Program& program, const Function& function
 }
 
 // The operation writes a part of the value that JSON.stringify was called with, where the serializer that took the place of the call has no plan for the part.
-// It runs what the call runs on that part, so a test that was placed across the call holds across what replaces it.
 static void describePartOfStringify(const Program& program, const Function& function, const Value& value, EffectDescription& description)
 {
     describeOverload(program, program.builtins().overloadIDsOf(Builtins::JSONStringify).at(0), program.typeOf(function, value.valueOperand()), description);

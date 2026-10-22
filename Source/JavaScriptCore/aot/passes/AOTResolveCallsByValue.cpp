@@ -55,7 +55,6 @@ PlanOrDecline<Vector<FunctionID, 4>> CallResolver::chooseDispatchedCallees(const
     if (members.isEmpty())
         return std::unexpected(CallDeclineReason::CalleeNotCallable);
     // Callees get an arm each or none: arms for some of them would be chosen by id, and the next run would take as many from the rest.
-    // Arms for all the callees there are take the place of the call. Where another function may come the call stays behind them, and it serves several callees as well as their arms would.
     bool listsEveryCallee = candidates.isProven() && !candidates.hasOtherCallees;
     // What exceeds a limit is reported, site by site.
     m_context.planAsksAboutPlace |= listsEveryCallee || members.size() <= 1;

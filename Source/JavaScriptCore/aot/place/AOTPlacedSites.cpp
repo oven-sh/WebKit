@@ -265,8 +265,7 @@ bool SiteScanner::isUnordered(const Value& allocation) const
     return m_context.slots().layout(layout).keysAreNeverEnumerated;
 }
 
-// Of an operation with a weighed opcode. The shapes are numbered by the weights of the sites that test them, and an access tests shapes only where some receiver has no slot for the field:
-// FieldAccess::Coverage::SomeMembers. The first weight of a function takes an estimate of all its blocks.
+// Of an operation with a weighed opcode.
 bool SiteScanner::isWeightRead(const Value& value) const
 {
     auto someReceiverLacksSlot = [&](PropertyKeyID key) {

@@ -46,9 +46,7 @@ bool CallResolver::mayCallThroughTable(const ValueSite& position) const
     return candidates.proof == ReceiverProof::Type && !candidates.hasOtherParts && candidates.proven.size() <= m_context.limit(LimitID::MaxAccessPlanMembers);
 }
 
-// The layouts of the receiver's family find methods of classes under the name, and not all of them the same one. What each of them finds is in the table, and whatever changes that
-// changes the table, so the call tests nothing and has nothing to fall back to. A layout that finds something else, as the layout of an interface that has the member as a field,
-// is told from them by one test of the receiver, and ResolveCalls goes on with it.
+// The layouts of the receiver's family find methods of classes under the name, and not all of them the same one.
 PlanOrDecline<TableCallPlan> CallResolver::planTableCall(const CallSite& site)
 {
     constexpr auto declined = std::unexpected(CallDeclineReason::None);
@@ -97,7 +95,6 @@ PlanOrDecline<TableCallPlan> CallResolver::planTableCall(const CallSite& site)
         plan.methods.append(answer.method);
     }
     // One method: a test of one bit in front of a direct call, which can be inlined, costs less than the load of an entry and an indirect call.
-    // A few methods that nothing can replace: a switch on the shape with a direct call in each arm.
     if (plan.methods.size() < 2 || (!hasConditions && partition.arms.size() <= m_context.limit(LimitID::MaxDispatchCases)))
         return declined;
 

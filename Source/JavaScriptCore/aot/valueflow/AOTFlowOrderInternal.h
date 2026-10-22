@@ -75,8 +75,7 @@ struct FlowScopeCall {
     friend auto operator<=>(const FlowScopeCall&, const FlowScopeCall&) = default;
 };
 
-// A call or a property access throws on a callee or a receiver that is undefined or absent. Where that value comes, through reads of properties, from a variable
-// that starts so, the operation completes only after a store to the variable.
+// A call or a property access throws on a callee or a receiver that is undefined or absent.
 VariableID variableBehindSubjectOf(const Function&, ValueID operation);
 
 struct FlowScopeCalls {
@@ -213,7 +212,6 @@ private:
     };
 
     // Whoever reads a location may take out each function that is stored there, and whoever reads the value of a module each function in a variable that the module exports.
-    // The functions are a run of m_functionsTakenOut.
     struct StoredFunctionReader {
         FunctionID reader;
         uint32_t first;

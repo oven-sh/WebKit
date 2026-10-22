@@ -57,9 +57,7 @@ static Vector<HandlerRange> computeHandlerRanges(std::span<const SiteHandler> ha
     return ranges;
 }
 
-// The ranges of sites ascend. Each is three numbers: the sites between the range in front and this one, the sites in it less one,
-// and a word with the type in its last two bits and above them the distance of the target from the target of the range in front.
-// Whoever looks a site up reads the ranges in order. That is the cache of call sites, once for a return address.
+// The ranges of sites ascend.
 void encodeHandlers(Vector<uint8_t>& bytes, std::span<const SiteHandler> handlers)
 {
     uint32_t endOfLast = 0;

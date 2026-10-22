@@ -18,8 +18,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What the plan of an access takes from a loop over the layouts of its receiver, once per list of layouts and key. Shared by all threads while the layouts and the results of flow
-// stay as they are (ProgramCaches). An entry holds ids of the program only, none that an arena gave out, so a reader has nothing to adopt.
+// What the plan of an access takes from a loop over the layouts of its receiver, once per list of layouts and key.
 class PropertyAccessCache {
     WTF_MAKE_NONCOPYABLE(PropertyAccessCache);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PropertyAccessCache);
@@ -95,9 +94,7 @@ public:
         bool isOptionOfRecordInEveryLayout { false };
     };
 
-    // All that provenAccessOf() takes from a named access and its function. The same few accesses stand all over a program, and the effects of each are asked for again and again:
-    // by the passes, the summaries of bodies, the call graph and the heat. What the receiver is expected to be, the layouts that were seen at the access and the module it is
-    // written in choose among plans with a test, and a proven access has none.
+    // All that provenAccessOf() takes from a named access and its function.
     struct ProvenAccessKey {
         Opcode opcode { Opcode::Undefined };
         bool isListedByAllocation { false };

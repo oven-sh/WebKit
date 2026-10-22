@@ -598,8 +598,7 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
     });
 }
 
-// An inquiry runs no code of the program. It may create a closure that a slot defers. A class that creates its members on demand is asked as getWithoutCaches() asks it, through its table:
-// an inquiry of its prototype object would create the members, and that ends guards of stores which no lookup of the program ends. The test behind the lookup would find a guard gone that holds without it.
+// An inquiry runs no code of the program.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance* instance, JSCell* receiver, uint32_t key, JSCell* expected))
 {
     VM& vm = *instance->vm;

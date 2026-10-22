@@ -108,8 +108,7 @@ void RepresentationWebs::build()
     admitNarrowReferences();
 }
 
-// A web votes in the choices of its neighbors with the form it has at the time: at first the default of its type. One web after the other chooses, and what it chooses counts at once,
-// so that a choice is never made against a form that the neighbor has already left.
+// A web votes in the choices of its neighbors with the form it has at the time: at first the default of its type.
 void RepresentationWebs::choose()
 {
     constexpr unsigned maxRounds = 8;
@@ -146,8 +145,7 @@ void RepresentationWebs::choose()
         }
         return votes;
     };
-    // Each of two webs, one of which is copied into the other, can be held where it is by the other alone: a conversion in an inner loop stays there because the value comes in that form, and it comes in that form
-    // because that is how the inner loop takes it. So the two are also asked together.
+    // Each of two webs, one of which is copied into the other, can be held where it is by the other alone.
     auto moveTogether = [&](uint32_t source, uint32_t destination) {
         Web& from = m_webs[source];
         Web& to = m_webs[destination];
@@ -331,7 +329,6 @@ void RepresentationWebs::restrictToLegalRepresentations()
 }
 
 // No type has a narrow reference for its default, so a web is preferred in another form and leaves it only for one that gets more votes.
-// A narrow reference gets its votes from what makes one, such as a load of a narrow slot, and from what takes one, such as a store into one. Of a web without such a vote nobody needs to know whether it may stay narrow.
 void RepresentationWebs::admitNarrowReferences()
 {
     constexpr size_t narrowReference = std::to_underlying(Representation::Cell32);
@@ -390,8 +387,7 @@ void RepresentationWebs::excludeWebsThatMayLieInFrames(BitVector& narrowWebs)
     }
 }
 
-// A narrow reference counts from the base of the cage of cells, and a cell of a frame lies outside of the cage. A caller may hand one in for a parameter that the function borrows,
-// and a cell may hold one in a field, a capture or a field of an environment, which is wide for it: what is read out of a narrow slot lies in the cage.
+// A narrow reference counts from the base of the cage of cells, and a cell of a frame lies outside of the cage.
 BitVector RepresentationWebs::findValuesThatMayLieInFrames() const
 {
     const Function& function = m_inputs.function;
@@ -521,8 +517,7 @@ bool RepresentationWebs::isReachedBeforeCollectorCanRun(const Use& use, BlockID 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A narrow reference lives from a load to its Decode. A cast or a test on the way leaves the Decode fewer cases, so it stays narrow through a cast and into the blocks behind a jump or a branch.
-// Where the collector can run, a pointer names the cell: the reference is decoded before.
+// A narrow reference lives from a load to its Decode.
 bool RepresentationWebs::mayStayNarrow(ValueID member) const
 {
     ValueLocation location = m_analyses.useLists().locationOf(member);
@@ -674,7 +669,6 @@ uint64_t RepresentationWebs::votesOf(BlockID block) const
 }
 
 // What an edge passes is converted on the edge: no more often than either end is entered, and in the loops that hold both ends.
-// A value that one edge passes to several parameters is converted once for all of them.
 uint64_t RepresentationWebs::votesOfArgument(Edge edge, ValueID argument) const
 {
     uint64_t timesPassed = 0;

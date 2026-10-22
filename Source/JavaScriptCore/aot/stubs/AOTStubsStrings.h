@@ -41,8 +41,7 @@ static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqua
 static_assert(exists(concatenate(2)) && exists(concatenate(3)));
 static_assert(!exists(concatenate(2).withCount(1)) && !exists(concatenate(3).withCount(4)));
 
-// AOTStubsStrings.cpp
-// fiber holds the value word of string. length may be fiber.
+// AOTStubsStrings.cpp fiber holds the value word of string. length may be fiber.
 void loadStringLength(StubAssembler&, GPRReg string, GPRReg fiber, GPRReg length);
 struct OrderedFlatStrings {
     GPRReg first;
@@ -56,8 +55,7 @@ struct OrderedFlatStrings {
 // The impls are those of the two cells. Falls through when the first string comes after the second. At needsLeaf the impls are intact. Only the cells survive.
 void branchOnOrderOfFlatStrings(StubAssembler&, const OrderedFlatStrings&, MacroAssembler::JumpList& needsLeaf, MacroAssembler::JumpList& isLess, MacroAssembler::JumpList& isEqual);
 
-// AOTStubsStringHelpers.cpp
-// string is a substring rope. The three registers differ.
+// AOTStubsStringHelpers.cpp string is a substring rope.
 void loadSubstringBaseAndOffset(StubAssembler&, GPRReg string, GPRReg base, GPRReg offset);
 // The inverse: lengthWord gets the word at offsetOfLength(), base the word after it. Overwrites offset. Bits 32 to 63 of length are zero.
 void packSubstringFibers(StubAssembler&, GPRReg base, GPRReg offset, GPRReg length, GPRReg lengthWord);
@@ -70,8 +68,7 @@ struct ComparedBytes {
     GPRReg firstWord;
     GPRReg secondWord;
 };
-// Falls through when the bytes are the same. At differ, with DifferingWords::AreLoaded, the two words, zero-extended, are the bytes at one position, and the bytes before it are the same.
-// Bits 32 to 63 of size are zero. Overwrites all five registers.
+// Falls through when the bytes are the same.
 enum class DifferingWords : bool { AreLoaded, MayBeUnloaded };
 void branchIfBytesDiffer(StubAssembler&, const ComparedBytes&, MacroAssembler::JumpList& differ, DifferingWords = DifferingWords::AreLoaded);
 struct ComparedImpls {
@@ -97,8 +94,7 @@ void branchUnlessASCIIOutsideRange(StubAssembler&, const ScannedBytes&, uint8_t 
 // Calls operationAOTFlatten in a frame of its own, which only preservedGPRs survive, then jumps to continuation or to the exception handler. Overwrites T9.
 void flattenSubject(StubAssembler&, GPRReg string, std::initializer_list<GPRReg> preservedGPRs, Label continuation);
 
-// AOTStubsStringConversions.cpp
-// A flat 8-bit string of ASCII characters without a letter of the other case is its own conversion.
+// AOTStubsStringConversions.cpp A flat 8-bit string of ASCII characters without a letter of the other case is its own conversion.
 PreludeExit emitToLowerCasePrelude(StubAssembler&);
 PreludeExit emitToUpperCasePrelude(StubAssembler&);
 
@@ -110,8 +106,7 @@ struct LiteralStringProbeRegisters {
     GPRReg tables;
     GPRReg maxLength;
 };
-// Probes the literal string cache of the instance and falls through with the word of the string in entry. The five registers differ, and only string survives.
-// isNotLiteral: the string has no word and is represented by its cell. isNotCached: only operationAOTToLiteralString can tell.
+// Probes the literal string cache of the instance and falls through with the word of the string in entry.
 void findLiteralStringWord(StubAssembler&, const LiteralStringProbeRegisters&, JumpList& isEmpty, JumpList& isNotLiteral, JumpList& isNotCached);
 
 // AOTStubsStringSubstrings.cpp
@@ -123,12 +118,10 @@ struct FlatSubstringRegisters {
     GPRReg firstScratch;
     GPRReg secondScratch;
 };
-// string is no rope, and bits 32 to 63 of start and length are zero. Falls through with the substring in result. Only string survives.
-// The generator calls emitLateRefill after an exit of its fast path and before it links fails.
+// string is no rope, and bits 32 to 63 of start and length are zero.
 [[nodiscard]] AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler&, const FlatSubstringRegisters&, MacroAssembler::JumpList& fails);
 
-// AOTStubsStringConcatenation.cpp
-// Both are boxed values. Returns the rope of two strings when it can be allocated. At slow the operands are intact. The caller has allocated T13.
+// AOTStubsStringConcatenation.cpp Both are boxed values.
 void makeRopeOfTwoValuesAndReturn(StubAssembler&, GPRReg first, GPRReg second, MacroAssembler::JumpList& slow);
 
 } } // namespace JSC::AOT

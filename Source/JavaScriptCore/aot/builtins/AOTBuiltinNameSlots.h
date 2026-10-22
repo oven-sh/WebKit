@@ -17,7 +17,6 @@
 namespace JSC { namespace AOT {
 
 // A hash table from a string to its position in a list of names, which the C++ compiler fills: it is read-only data, and finding a name takes the hash that the string has already.
-// A slot is zero, or the position plus one with 16 bits of the hash above it, so that a slot of another name is nearly always passed over without a look at its text.
 constexpr size_t numberOfSlotsForNames(size_t numberOfNames)
 {
     return std::bit_ceil(numberOfNames + numberOfNames / 2 + 1);

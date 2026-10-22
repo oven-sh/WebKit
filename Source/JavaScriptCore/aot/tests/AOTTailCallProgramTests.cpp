@@ -11,9 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// function down(n, next): number { return n === 0 ? 0.5 : next(n - 1, next) }   function text(n, next): string { return n === 0 ? "text" : next(n - 1, next) }
-// `id` hands both back as values nobody knows, so every call of `next` is a call by value.
-// print(unknownDown(400000, unknownDown)); print(down(400000, unknownDown)); try { print(unknownDown(400000, unknownText)) } catch (e) { print(e.name) } print(unknownText(400000, unknownText))
 static constexpr ASCIILiteral typedFunctionsCalledByValue = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=10 kind=Result
@@ -77,8 +74,6 @@ function f2 name="text" flags=[IsChecked] parameters=[{type=anything}, {type=any
 }
 )IR"_s;
 
-// A call that is no tail call lies under a frame with a declared result of its own, and gives a value outside the declared result of its callee. Nothing throws that plain JavaScript does not:
-// function outer(f, wrong): number { const inner = f(1, wrong); return inner === "text" ? f(1, f) : 1 }, where f is `down` and wrong gives a string: inner is that string, and outer answers with down(1, down).
 static constexpr ASCIILiteral ordinaryCallUnderWaitingFrame = R"IR(module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=10 kind=Result

@@ -145,7 +145,6 @@ Condition RuntimeValidationEmitter::hasShapeAmong(CellPointer cell, LayoutSetID 
 }
 
 // A guard may rely on a guard: whether the fields are in the order of the layout is asked of an object that an earlier test found to have the layout.
-// The object is asked again for that layout here too, as at an access.
 void RuntimeValidationEmitter::checkShapeBehindGuard(const OperationContext& context, const Value& user)
 {
     if (familyOf(user.opcode) == OperationFamily::SlotAccess || !reliesOf(user.opcode).contains(Proof::Shape))
@@ -174,7 +173,6 @@ void RuntimeValidationEmitter::checkShapeBehindGuard(const OperationContext& con
 }
 
 // The type of the object need not name the layouts of an access: a guard may stand for them, and a guard is no value that could be tested.
-// So the object is asked again, at the access, for everything the access relies on: a guard holds only as long as nothing takes away what it found.
 void RuntimeValidationEmitter::checkReceiverOfSlotAccess(const OperationContext& context, const Value& access)
 {
     if (familyOf(access.opcode) != OperationFamily::SlotAccess)
@@ -208,7 +206,6 @@ void RuntimeValidationEmitter::checkReceiverOfSlotAccess(const OperationContext&
 }
 
 // The form of a slot with markers is as wide as the form without them, so a read whose type admits no marker loads the bare bits.
-// A marker read that way is a NaN or `false` like any other, and no test of the result finds it.
 void RuntimeValidationEmitter::checkRawNumberSlot(const OperationContext& context, CellPointer cell, const FieldAccess& field)
 {
     ValueID id = context.valueID();
@@ -373,8 +370,7 @@ static Type kindsRejectedDespiteWidening(const Type& listed, const BuiltinTable&
     return kinds;
 }
 
-// A complete set of callees says which functions the call may run. A callee that is no function makes the call throw.
-// A listed callee that has no test widens the tested type to every function. Even then a bound function or a proxy passes only if it is listed itself.
+// A complete set of callees says which functions the call may run.
 void RuntimeValidationEmitter::generateValidateCallee(const ValueContext& value)
 {
     ValueID callee = value->calleeOperand();
@@ -558,7 +554,6 @@ void RuntimeValidationEmitter::poisonFrameCells(ProgramPoint point)
 }
 
 // A rest array of many arguments is on the heap, and so is every array of a realm whose arrays are not pristine.
-// The header says which it is: isInStack() has a patchpoint, and the address would be in use behind it (see validateOperands()).
 void RuntimeValidationEmitter::poisonFrameArray(CellPointer array)
 {
     LBasicBlock isInFrame = newBlock();

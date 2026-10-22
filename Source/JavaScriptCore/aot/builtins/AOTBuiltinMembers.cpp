@@ -254,7 +254,6 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
 }
 
 // Only a script adds a let, const or class binding to the realm: what eval and Function declare stays their own.
-// A script may declare no name under which the global object holds a locked property, so such a name is never shadowed.
 static bool canBeShadowedByScript(const BuiltinLookupContext& context, PropertyKeyID key)
 {
     if (isLockedLocation(context.program, Builtins::GlobalThis, key))

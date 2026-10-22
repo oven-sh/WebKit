@@ -322,8 +322,7 @@ void FunctionVerifier::verifyModuleEvaluation(BlockID block, ValueID id, const V
         failRule(EvaluationRule::BareSiteRunsOnce);
 }
 
-// The pass that turns the sites into calls walks them in the order of the text and lets the second site of a module do nothing. So every run comes to them in
-// that order, and a run that misses one ends in a throw, which no handler of the body sees. The sites are listed in reverse postorder.
+// The pass that turns the sites into calls walks them in the order of the text and lets the second site of a module do nothing.
 void FunctionVerifier::verifyBareEvaluations()
 {
     if (hasFailed())

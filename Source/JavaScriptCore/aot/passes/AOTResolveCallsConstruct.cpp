@@ -64,8 +64,7 @@ static bool allocatesOwnThis(const Function& constructor)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The run time reads the prototype property at the first allocation of a site. No code can change the property of a class.
-// An assigned prototype object is stored before every read of the property, and a construction is one.
+// The run time reads the prototype property at the first allocation of a site.
 static bool hasOnePrototypeObject(const Program& program, LayoutID layout)
 {
     const Layout& constructed = program.at(layout);
@@ -123,8 +122,7 @@ static bool isClassConstructor(const Function& function)
     return function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor;
 }
 
-// new.target selects what is allocated, and the allocation is handed its prototype object alone. That object names a class, whose prototype property nobody can store to.
-// What a function has as its prototype names nothing, so a function may be new.target here only where its own layout is allocated.
+// new.target selects what is allocated, and the allocation is handed its prototype object alone.
 static bool isAlwaysClass(const Program& program, const Type& newTarget)
 {
     if (!newTarget.isObject() || !newTarget.hasOnlyKnownCallees() || newTarget.layouts || !newTarget.builtins.isEmpty())
@@ -135,7 +133,6 @@ static bool isAlwaysClass(const Program& program, const Type& newTarget)
 }
 
 // The run time exchanges the object for an instance of the class that new.target selects, so the class that holds the super call stands for all of them.
-// A class that nobody constructs itself has no placement: the one class below it that has instances is allocated in its place, and with several the run time chooses.
 static LayoutID findClassAllocatedBySuperCall(const Program& program, LayoutID holder)
 {
     // The source names a built-in class as the parent. Its constructor makes the instances, so the layout has no placement either, whatever flow finds above the class object.

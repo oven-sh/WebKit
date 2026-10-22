@@ -163,7 +163,6 @@ StubSignature signatureOfSuperConstructFrontEnd(StubKey)
 }
 
 // A function whose Structure is remembered has its `prototype` property at the remembered place, and an object found there is the answer.
-// A class object whose Structure does not list the property is remembered itself. The function is a cell.
 static void loadRememberedPrototypeProperty(StubAssembler& jit, GPRReg function, GPRReg structureID, GPRReg place, GPRReg offset, GPRReg prototype, JumpList& isNotRemembered)
 {
     static_assert(sizeof(PlaceOfPrototypeProperty) == sizeof(uint64_t) && !(numberOfPlacesOfPrototypeProperties & (numberOfPlacesOfPrototypeProperties - 1)));

@@ -61,7 +61,6 @@ struct NameOnHolder {
 };
 
 // What the solved program does to the built-in objects, read off the nodes that the rules have made: whatever is stored, defined or deleted lies in a node that is keyed by the receivers and the name.
-// A built-in is named by its canonical entry, which stands for the object of the realm and for those of the modules.
 class BuiltinHolders {
     WTF_MAKE_NONCOPYABLE(BuiltinHolders);
 public:
@@ -71,8 +70,7 @@ public:
     bool hasEscaped(BuiltinID holder) const { return m_escaped.get(holder.index()); }
     bool isLost(BuiltinID holder) const { return m_lost.get(holder.index()); }
 
-    // An operation with the holder among its receivers may write the location. The run time has to let it.
-    // It says nothing once code runs that the build has not seen: then the analysis itself stores under keys nobody knows into whatever has escaped.
+    // An operation with the holder among its receivers may write the location.
     bool isWrittenByProgram(BuiltinID holder, PropertyKeyID) const;
     // Something may write the location that has the holder in its hands as a value nobody knows. The analysis leaves the objects of the realm out of such a write, so the run time has to refuse it.
     bool mayBeWrittenBehindAnalysis(BuiltinID holder, PropertyKeyID) const;
@@ -358,8 +356,7 @@ void BuiltinHolders::noteWrite(Notes& notes, ValueSetMaker& maker, ValueSetID re
     });
 }
 
-// No lookup hands out a member that lets in unseen code, so `globalThis[key]` lists no Function. At run time it answers Function all the same, and the program has the object and what it holds
-// in its hands: `globalThis[key].prototype[name] = f` is a store of compiled code into Function.prototype that the sets show as one through the unknown object.
+// No lookup hands out a member that lets in unseen code, so `globalThis[key]` lists no Function.
 void BuiltinHolders::findObjectsHeldWithoutBeingListed()
 {
     const ValueFlowUniverse& universe = m_inputs.universe();
@@ -426,7 +423,6 @@ static Vector<BuiltinUseRecord> collectBuiltinUses(const ValueFlowResultInputs& 
 }
 
 // Native code of the feature creates the value of a data property on the first read, and what the property holds is called as an unknown function.
-// A function that may be called is a callee that some call lists, or it has escaped and a call of a value nobody knows is reached, or the group of a placeholder has applied it. That it was read runs nothing.
 static OptionSet<BuiltinUse> usesEnteringCode(BuiltinKind kind)
 {
     switch (kind) {
@@ -521,7 +517,6 @@ static BitVector findBuiltinsWhoseCodeRuns(const ValueFlowResultInputs& inputs)
 }
 
 // A build that admits code at run time is not solved.
-// Whoever applies a built-in says whether an operand may have the property, or be one of the texts, that a line asks for, and nobody says what a caller passes that nobody follows.
 static bool mayHold(const BuiltinHolders& holders, BuiltinID builtin, const BuiltinCondition* condition)
 {
     if (!condition)
@@ -740,8 +735,7 @@ static void warnAboutLoadsUnderComputedNames(BuildContext& build, std::span<cons
     }
 }
 
-// A store through the unknown object is a use of the member too, wherever the holder has escaped. The analysis lets such a store reach an object of the realm only where code runs that the build has not seen.
-// Everywhere else what lookups have answered holds only if the run time refuses the store, so it does not count as a write here: the location is constant, and start-up locks it.
+// A store through the unknown object is a use of the member too, wherever the holder has escaped.
 static BuiltinLocationState stateOfLocation(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders, BuiltinID member)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
@@ -765,7 +759,6 @@ static BuiltinLocationState stateOfLocation(const ValueFlowResultInputs& inputs,
     if (!holders.mayBeWrittenBehindAnalysis(holder, key))
         return BuiltinLocationState::Constant;
     // Start-up makes a location immutable that is listed as constant, if it finds the holder: whoever writes it behind the analysis is refused.
-    // That does not help a member of the global object against code that the build has not seen: a script declares a `let` of the name, which every free name finds first, and writes nothing.
     bool isLockedAtStartUp = !uses.isEmpty() && canLockAtStartUp(builtins, member) && !(holders.unseenCodeRuns() && holder == Builtins::GlobalThis);
     return isLockedAtStartUp ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown;
 }
@@ -936,8 +929,6 @@ private:
 } // anonymous namespace
 
 // In untyped code an object may be a locked built-in, a callee a built-in that writes, and a key the name of a locked member, as each of them may be anything else.
-// A record for each such operation would put a warning at most calls and stores of a program. So a write is recorded only where the sets say what is written:
-// none of the three holds something that nobody has seen.
 bool WritesOfLockedLocations::listsItsObjects(ValueSetID objects) const
 {
     return !ValueSets::isComplement(objects) && !m_inputs.sets().meet(objects, m_inputs.universe().objectsThatMayBeAnything());
@@ -1008,8 +999,7 @@ void WritesOfLockedLocations::noteUnderText(const Notes& notes, ValueSetID recei
     }
 }
 
-// A key names one property where it is a key of the program, where the language makes one text of it, and where it is a text that the type of the value spells out:
-// to the sets a text that names no property anywhere else in the program is a string like any other. Whatever else the key may be names nothing here.
+// A key names one property where it is a key of the program, where the language makes one text of it, and where it is a text that the type of the value spells out.
 void WritesOfLockedLocations::noteUnderNamesAmong(const Notes& notes, ValueSetID keys, FunctionID function, ValueID keyValue, ValueSetID receivers, const Witness& witness) const
 {
     const ValueSets& sets = m_inputs.sets();
@@ -1205,8 +1195,6 @@ void recordLockedWritesUnderNewNames(const Program& program, TypeTable& types, s
 }
 
 // The instances of one VM are counted: no object of another VM gets here, so a worker, which runs the program once more in a VM of its own, is none of them.
-// Only a built-in that the table marks makes a second one. Evaluated text has of the host what the program uses, and a realm that it makes in an image built for one instance gets none.
-// Other unseen code finds every built-in that there is.
 static ProgramInstances countProgramInstances(const ValueFlowResultInputs& inputs)
 {
     const BuiltinTable& builtins = inputs.program.builtins();

@@ -24,9 +24,7 @@ class UseLists;
 // The record of a class has the key, the kind and the function of a member. It creates the closure as the function is written, over nothing or over the environment of the class.
 bool canClassRecordCreate(const Program&, const Function& constructor, const ClassMember&);
 
-// The record of such a class says all that its definition does: the class is evaluated at most once, none of its functions captures anything, the record can create every member,
-// and the class above, if there is one, is a class that is evaluated at most once, and so on up to a class without heritage.
-// The run time can define the class whenever something first needs it. Nobody can tell when that was.
+// The record of such a class says all that its definition does.
 bool isDefinedByClassRecord(const Program&, LayoutID);
 // The constructor of the built-in class that the class is proven to extend, where the run time can find that object whenever it makes the class. None otherwise.
 BuiltinID builtinParentNamedByClassRecord(const Program&, const Layout&);

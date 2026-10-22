@@ -34,7 +34,6 @@ static std::optional<Target> findHandlerAround(const Function& function, const T
 }
 
 // Nothing but the cleanup block leads to the handler around it, so what stands there may read a parameter of the cleanup block by its name.
-// A covered block that goes past a dropped cleanup block brings no such value. The handler takes it as a parameter of its own, which findHandlerAround fills.
 void passParametersOfCleanupBlocksOn(FunctionPassContext& pass, IRBuilder& builder)
 {
     Function& function = pass.function;

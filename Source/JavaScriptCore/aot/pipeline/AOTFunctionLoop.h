@@ -16,8 +16,7 @@ namespace JSC { namespace AOT { namespace Typed {
 class PassRunner;
 class ProgramAnalyses;
 
-// Reads one function as a schedule that runs in place has left it, with the ids that it keeps. It is called once for every function with a body, from any thread, and reads no other body.
-// Most functions are read right behind their schedule, while they are in the cache. One that holds an id which the loop replaces at its end is read then.
+// Reads one function as a schedule that runs in place has left it, with the ids that it keeps.
 using ReaderOfScheduledFunction = ScopedLambda<void(FunctionID)>;
 
 // What rides along with a schedule that runs in place.

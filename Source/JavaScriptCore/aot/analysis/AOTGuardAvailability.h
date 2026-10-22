@@ -111,7 +111,6 @@ struct GuardDependencies : DependedLocations {
 std::optional<GuardDependencies> dependenciesOfGuardOf(FunctionAnalyses&, const Value& test);
 
 // The value may be an object that was there before the function began, or that other code made: an entry parameter, what a read or a call gave, or what a block is passed one of those for.
-// EscapeAnalysis says of such a value that it may be untracked, or lists an entry parameter for it. This is seen from the definitions alone. False says nothing.
 bool comesFromOutside(FunctionAnalyses&, ValueID);
 
 // Answers for one writer whether it may end what tests prove. What that takes to know about the writer is computed once.

@@ -38,8 +38,6 @@ bool ClosureTestEmitter::closureWordNames(FunctionID function) const
 }
 
 // A closure that has got a property, another prototype or another level of integrity has a butterfly where its word was, and the comparison refuses it.
-// A closure that is only called and that no built-in looks at stays as it was created: Object.getOwnPropertyNames reads and stores nothing, and it makes `length` and `name`.
-// Of the others nothing follows from a refusal where the type of the value admits every function.
 bool ClosureTestEmitter::isDecidedByClosureWord(FunctionID function, const Type& tested) const
 {
     if (!closureWordNames(function))

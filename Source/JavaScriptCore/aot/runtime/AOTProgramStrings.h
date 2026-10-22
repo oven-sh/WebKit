@@ -73,7 +73,6 @@ private:
     enum class Made : bool { AnyNumberOfTimes, Once };
     JSString* createString(VM&, StringID, Made = Made::AnyNumberOfTimes) const;
     // A StringImpl over characters of the image, as the image has one for other texts: static, so nobody counts references to it.
-    // Such a string may outlive the instance in the hands of native code, so the memory is never given back, and only the first instance of the process has any: in a Worker the string counts its references.
     StringImpl* tryCreateHeader(StringView charactersInImage, unsigned hash) const;
     bool isHeaderOfConstant(const StringImpl&) const;
     void setConstant(uint32_t number, JSString*);

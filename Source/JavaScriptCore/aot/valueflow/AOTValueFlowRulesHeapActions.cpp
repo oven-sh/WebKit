@@ -11,8 +11,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The target finds what the source holds as it finds what it inherits. Getters of the source run once, here, and what they answer lies on the target under a key nobody knows.
-// Where the properties are defined as they stand no getter runs: the target finds the accessors of the source as it finds those that it inherits, and they run on the target.
+// The target finds what the source holds as it finds what it inherits.
 void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties copiedProperties)
 {
     bool storesThroughSetters = copiedProperties == CopiedProperties::AreAssigned;
@@ -156,8 +155,6 @@ void HeapRule::changePrototype(ClimbingSet objects, const ValueFlowOperand& prot
 }
 
 // The function behind an accessor of the table is an object that nobody follows.
-// What an object that an operation of the program allocates has of its own is what was written into it and what it is created with: the length of an array, the length, name and prototype of a function,
-// the accessor under `callee` of the arguments of strict code. What native code allocates, or an instance of a class that extends something, may hold more. Under a key nobody knows a walk up the chain would find all that Object.prototype holds.
 bool HeapRule::holdsOnlyWhatWasWritten(ClimbingSet receivers)
 {
     return !m_context.meet(receivers, m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_tables.objectsWithoutPropertiesOfNativeCode())));
@@ -184,8 +181,7 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
     bool mayFindAccessorOfTable = m_context.meet(m_context.valueOf(found), m_universe.builtinObjects());
     if (mayFindAccessorOfArguments || mayFindAccessorOfTable)
         addFunctionNobodyFollows();
-    // The getter of `__proto__` climbs. Whoever calls it does so as a function that nobody follows, on what has thereby escaped, and gets an object that nobody knows:
-    // so what lies above an escaped instance, which is otherwise kept for those who are seen to ask, has escaped with the instance from here on.
+    // The getter of `__proto__` climbs.
     bool mayNamePrototypeLink = (key.keyClass == HeapKeyClass::Unknown && !key.namesEnumerableProperty) || (key.keyClass == HeapKeyClass::Name && key.name == m_context.program().keyOf(BuiltinNames::__proto__));
     if (mayFindAccessorOfTable && part == HeapPropertyPart::Getter && mayNamePrototypeLink)
         connect(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances), ValueFlowProgramNodes::escaped());

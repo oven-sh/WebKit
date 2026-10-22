@@ -85,16 +85,14 @@ struct ArrayLiteralParts {
     bool hasCapacity { false };
 };
 
-// The kind that a literal has for certain once it is allocated. Other where the representations of its elements or what its site has seen decide.
-// The prototypes of arrays are locked and take no index, so the realm of compiled code gives a literal no storage of another sort.
+// The kind that a literal has for certain once it is allocated.
 ArrayStorage arrayStorageOfLiteral(const Program&, const Type& array, ArrayLiteralParts);
 ArrayStorage arrayStorageOfLiteral(const Program&, const Value& literal);
 // The kind that an array of constant data has once it is made, in the table of the image too.
 JS_EXPORT_PRIVATE ArrayStorage arrayStorageOfData(const Program&, const DataNode::Array&);
 // No element is a cell, so what the table of the image holds is what the storage of the array holds, and the array points at it until it is written to.
 JS_EXPORT_PRIVATE bool isStorageOfArray(const DataNode::Array&);
-// The kind of an array that is created with a length and nothing in it. Its creator has no place for the elements that flow found in the arrays of its site,
-// so the readers expect this kind and not the one that would hold the elements. Nothing for any other creator.
+// The kind of an array that is created with a length and nothing in it.
 std::optional<ArrayStorage> arrayStorageOfNewHoles(const Value& allocation);
 bool canStoreWithoutConversion(ArrayStorage, const Type& stored);
 

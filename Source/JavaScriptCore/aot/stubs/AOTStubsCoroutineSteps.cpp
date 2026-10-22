@@ -107,8 +107,7 @@ StubSignature signatureOfStepAsyncIteratorInEngine(StubKey)
     return signatureOfStep({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T13), gprOf(StubRegister::T9) });
 }
 
-// One step of "for await" over an async generator of compiled code, as asyncIteratorNextWithDriver does it for an idle generator: the request is written as JSAsyncGenerator::enqueue
-// writes the first one, and the body is entered from here. Everything else is left to the engine.
+// One step of "for await" over an async generator of compiled code, as asyncIteratorNextWithDriver does it for an idle generator: the request is written as JSAsyncGenerator::enqueue writes the first one, and the body is entered from here.
 void generateStepAsyncGenerator(StubAssembler& jit)
 {
     using ResumeModeOfRequest = JSAsyncGenerator::AsyncGeneratorResumeMode;
@@ -218,8 +217,7 @@ static void emitPushStepFrame(StubAssembler& jit, GPRReg producer, GPRReg consum
     jit.storePair64(driver, siteWord, fp, TrustedImm32(StepFrame::offsetOfDriver));
 }
 
-// A body has taken the word for its own frame, and an adapter that the engine went through has cleared it. The right of the consumer comes from its own entry and is not lost by that.
-// Leaves in stored what it stores.
+// A body has taken the word for its own frame, and an adapter that the engine went through has cleared it.
 static void emitGiveBackRightToContinue(StubAssembler& jit, GPRReg consumer, GPRReg stored)
 {
     jit.move(TrustedImm32(0), stored);
@@ -273,8 +271,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     isNotSentinel.link(&jit);
     isNotCell.link(&jit);
 
-    // What follows is asyncGeneratorDispatchSuspend, asyncGeneratorYield and asyncGeneratorCompleteStep for a step that tryAwaitForStepInProgress and tryFinishStepInProgress finish,
-    // with the request of the stub as the only one.
+    // What follows is asyncGeneratorDispatchSuspend, asyncGeneratorYield and asyncGeneratorCompleteStep for a step that tryAwaitForStepInProgress and tryFinishStepInProgress finish, with the request of the stub as the only one.
     finishesInEngine.append(jit.branchTestPtr(CCallHelpers::Zero, word));
     jit.load32(fieldOf(generator, Field::State), word);
     Jump needsNoAwait = jit.branch32(CCallHelpers::Equal, word, TrustedImm32(hasYieldedWithoutAwait));
@@ -365,8 +362,7 @@ static void emitStoreExecutingState(StubAssembler& jit, GPRReg generator)
 
 enum class WaitingDriver : uint8_t { IsEnteredNext, MayGetJob };
 
-// The driver of a step is the SavedFrame of an async function or an async generator. Leaves the SavedFrame, which is suspended. Stores nothing before the last branch to otherwise.
-// A generator that is entered next is then executing, as asyncGeneratorBodyCall leaves it.
+// The driver of a step is the SavedFrame of an async function or an async generator.
 static void emitLoadFrameOfWaitingDriver(StubAssembler& jit, WaitingDriver what, GPRReg driver, GPRReg frame, GPRReg scratch, JumpList& otherwise)
 {
     otherwise.append(jit.branchIfNotCell(driver));
@@ -456,8 +452,7 @@ void emitTakeDriverResumeJob(StubAssembler& jit, const GeneratorJobRegisters& re
     jit.move(TrustedImm32(static_cast<int32_t>(ResumeMode::Next)), mode);
 }
 
-// asyncGeneratorYieldAwaited for a fulfilled await, with one request, which a driver of this instance waits for. The job that resumes the driver would be queued now:
-// behind an empty queue it is the next one to run, so the driver is entered in its place.
+// asyncGeneratorYieldAwaited for a fulfilled await, with one request, which a driver of this instance waits for.
 void emitTakeYieldAwaitedJob(StubAssembler& jit, const GeneratorJobRegisters& registers, JumpList& isLeftToJobLoop, JumpList& hasQueuedDriver)
 {
     const auto [queue, slot, word, driver, saved, mode, value] = registers;

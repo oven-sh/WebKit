@@ -64,8 +64,7 @@ public:
     // Fills the room in the outer object with what the allocation lists, and marks the slot of the field.
     void storeFlattenedObject(const ValueContext&, CellPointer outerObject, LayoutID outerLayout, uint32_t field, ValueID held, bool roomIsZero);
 
-    // Lists the key. For a slot in the extension that is about to be stored into, it also sees to the granule.
-    // With the number of a place plus one it says whether the same call has remembered the step for that place.
+    // Lists the key.
     bool didCreateField(const ValueContext&, CellPointer, const FieldAccess&, bool needsStorage, std::optional<uint32_t> placePlusOne = std::nullopt);
 
     // An object that a constructor is still filling is expected to get the field from the store.
@@ -79,9 +78,7 @@ public:
     std::optional<uint32_t> orderWordAfterCreating(uint32_t orderWordBefore, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys) const;
     void storeOrderWord(CellPointer, uint32_t);
     void takeKeyOrderStepOr(CellPointer, const std::optional<KeyOrderStep>&, NOESCAPE const Invocable<void()> auto& otherwise);
-    // For fields that are missing where no place in an order of the image applies. What asks the run time comes last, and the place of the store remembers the answer:
-    // the objects that one place completes mostly have the same keys.
-    // askRuntime gets the number of the place plus one, if the place remembers, and says whether what it called has remembered the step.
+    // For fields that are missing where no place in an order of the image applies.
     void takeRememberedKeyOrderStepOr(const ValueContext&, CellPointer, NOESCAPE const Invocable<bool(std::optional<uint32_t>)> auto& askRuntime);
     bool takeRememberedKeyOrderStepFirst(const ValueContext&, CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys, NOESCAPE const Invocable<void()> auto& otherwise);
     // The granule of the slot and those of the stores to the same object that the store leads to: an object that gets one late field tends to get them all.

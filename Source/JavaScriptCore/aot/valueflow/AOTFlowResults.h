@@ -159,8 +159,7 @@ struct FlowSiteTables {
     Vector<bool> callsOfBoundFunctions;
     Vector<AllocationSite> allocationSites;
     Vector<AllocationClass> allocationClasses;
-    // By allocation site of an instance of a built-in class: nothing is stored to, added to, taken from or redefined on an object of the site once it is made, its prototype stays,
-    // and no unknown code gets it. What may happen to an object with a layout is known by layout.
+    // By allocation site of an instance of a built-in class: nothing is stored to, added to, taken from or redefined on an object of the site once it is made, its prototype stays, and no unknown code gets it.
     BitVector sitesOfObjectsThatNeverChange;
     Vector<FlowSinkOperand> sinkOperands;
     Vector<FlowTypedResultCall> typedResultCalls;
@@ -182,7 +181,6 @@ struct FlowProgramTables {
     Vector<ModuleFlow> modules;
     Vector<UnseenCodeRecord> unseenCode;
     // Machine code is no JavaScript that nobody has seen: no fact falls for it, and the run time admits no text for its sake, so it is none of the records above.
-    // But an addon is handed the global object for the asking, and reads and calls what hangs there by names that nobody sees: whoever removes what the program does not use is told.
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     ProgramInstances instances { ProgramInstances::Unknown };
     Vector<PropertyKeyID> keysStoredThroughUnknownReceivers;
@@ -235,7 +233,6 @@ public:
     // A bound function is derived from its target, so function() answers for closures of the target.
     ClosureUse closureUseOfBoundFunction(FunctionID target, uint32_t numberOfBoundArguments) const;
     // No operation and no built-in that flow has followed can tell two closures of the function apart: none stands on both sides of `==` or `===`, none is looked at by a built-in, none is a key of a Map or a Set.
-    // It says nothing of a closure that has left flow's sight: ask it beside function(id).closureUse == ClosureUse::CalledOnly.
     bool closuresAreNeverCompared(FunctionID) const;
     // The program makes a closure of the function at one place, which runs at most once: two values that are closures of it are one object.
     bool hasOneClosure(FunctionID) const;
@@ -255,7 +252,6 @@ public:
     void setOperandSummaries(Vector<Vector<OperandSummary>>&& parameterSummaries, Vector<Vector<OperandUses>>&& storedValueUses);
     OperandUses storedValueUses(FieldReference) const;
     // The same two answers for a value that may be in no cell of the heap: a store into any cell retains it, also a cell that dies with the activation.
-    // The first names functions and entry parameters as they are when the table is set, and says nothing before that.
     OperandSummary framePointerSummary(FunctionID, uint32_t entryParameter) const;
     OperandUses storedFramePointerUses(FieldReference) const;
     void setBorrowedParameters(BorrowedParameters&& table) { m_borrowedParameters = WTF::move(table); }

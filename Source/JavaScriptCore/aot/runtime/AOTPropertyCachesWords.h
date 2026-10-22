@@ -152,9 +152,7 @@ struct StructureRowWords {
     static constexpr unsigned wordShift = 2;
 };
 
-// The names that an object of one Structure, or an object above it, may have: a bit for each, found by the number of the name. A name whose bit is clear is absent.
-// What the object itself has is told by its Structure. A change to any object that is a prototype starts a new generation, which no filter of before belongs to.
-// One miss fills the filter for every name. The tables are filed by Structure and name, and a program that builds objects key by key asks each of dozens of Structures for dozens of names once or twice.
+// The names that an object of one Structure, or an object above it, may have: a bit for each, found by the number of the name.
 struct AbsenceFilter {
     static constexpr unsigned numberOfFilters = 256;
     static constexpr unsigned sizeShift = 6;
@@ -180,9 +178,7 @@ struct AbsenceFilter {
     uint64_t namesThatStopStores[numberOfWordsForStores];
 };
 
-// The name that a short text is, for a key that is no atom: a piece of a longer string, or a string made a moment ago. A router asks for the path of each request so, and whoever lowers the name of a
-// method or of a header. What the text of a name is never changes, so an entry holds while its name lives, and the entry keeps it alive.
-// The text is held as two words that cover it, the first bytes and the last ones, which overlap unless it is as long as both: with the length they say every byte.
+// The name that a short text is, for a key that is no atom: a piece of a longer string, or a string made a moment ago.
 struct NameOfText {
     // Two entries side by side take the texts of one hash, the one that came last in front.
     static constexpr unsigned numberOfPairs = 64;
@@ -225,8 +221,7 @@ struct PropertyCacheWords {
     const uint64_t* namesChangedOnChains;
     // As AbsenceFilter::readsAnswered, for the reads that a Structure's flag answers.
     uint32_t absentReadsAnswered;
-    // How often a read of a Structure and a name has found them in no table, by a hash of the two. What answers behind the tables files nothing, so one miss in MissesOfPairs::missesBetweenFilings
-    // goes to the operation that files, with the flag set.
+    // How often a read of a Structure and a name has found them in no table, by a hash of the two.
     uint8_t* missesOfPairs;
     const NameOfText* namesOfTexts;
     uint8_t missIsDueForFiling;

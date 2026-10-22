@@ -297,7 +297,6 @@ CellPointer AllocationEmitter::allocateCell(const ValueContext& value, Allocatio
 void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout, AllocationStorage storage, CellBody body)
 {
     // A store whose receiver may also be on the heap runs its barrier, which must not mistake a frame cell for a marked one.
-    // Only an environment whose layout is never on the heap is out of reach of such a store.
     bool mayReachBarrier = isObjectLayout(m_program.at(layout).kind) || !inputs().frameAllocation.isOnlyInFrames(layout);
     if (storage != AllocationStorage::Heap && mayReachBarrier)
         m_out.store32As8(m_out.constInt32(frameCellState), m_out.address(m_heaps.collectorState, cell.value(), JSCell::cellStateOffset()));
@@ -634,8 +633,6 @@ void AllocationEmitter::storePrototype(const ValueContext& value, CellPointer ce
     bool mayBeMarked = !!m_placement.freeCellOffset(m_placement.allocation(value->allocation()).layout);
 
     // Each evaluation of a class and each closure of a constructor function has a prototype object of its own, and the site knows one of them.
-    // Code on the failing side of "the class was evaluated once" is compact, and from the second evaluation on it is what runs.
-    // B3 does not see the operation store a Structure into the cell, so the code that follows reads the header of the result.
     define(value, selectByBranch<CellPointer>(hasSitePrototype, useCell, [&] {
         LBasicBlock isUnknown = newBlock();
         Join<CellPointer> join(m_out);

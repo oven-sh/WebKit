@@ -144,8 +144,7 @@ void useModule(ValueFlowRuleContext& context, ModuleID module)
         evaluateModule(context, module);
 }
 
-// The importer may have a name from a module that exports it again. Nobody says here which names the functions of the importer use: a name counts once the module that holds the variable is evaluated,
-// and at once where that module does not wait for a use, since modules that nobody uses may be the only ones that import it.
+// The importer may have a name from a module that exports it again.
 static bool exportsUsedNameAgain(ValueFlowRuleContext& context, ModuleID id)
 {
     const Program& program = context.program();
@@ -398,7 +397,6 @@ ValueFlowSources evaluationErrorsOf(ValueFlowRuleContext& context, ModuleID id)
     }
 
     // What the body of an imported module throws has escaped when that body was entered, and the loader throws where an import cannot be linked.
-    // What a required module throws is thrown by the operation in the body.
     bool importsSomething = std::ranges::contains(module.requests, ModuleRequestKind::Import, &ModuleRequest::kind);
     ValueFlowSources sources = importsSomething ? unknownSources(context, ValueFlowUnknownSource::ThrownByRunTime) : ValueFlowSources();
     if (module.body)
@@ -407,7 +405,6 @@ ValueFlowSources evaluationErrorsOf(ValueFlowRuleContext& context, ModuleID id)
 }
 
 // The loader reads every own property of the value of the module when it links the namespace object, so every getter runs, and it hands the value to nobody.
-// The namespace object finds under a name what the value holds under it, as an object finds what was copied onto it. What a getter has answered lies under a key nobody knows.
 static void tieNamespaceToCapturedNames(ValueFlowRuleContext& context, ModuleID id, Vector<ModuleID, 4>& namespacesBehind)
 {
     const Program& program = context.program();
@@ -426,7 +423,6 @@ static void tieNamespaceToCapturedNames(ValueFlowRuleContext& context, ModuleID 
     } else if (module.kind != ModuleKind::SourceText)
         context.add(underAnyName, unknownValue(context, sourceOfWhatLoaderMakes(module)));
     // The exports of a module of the host are read off the object that the host answers for it, each of them: whatever the host does to create one of them is done.
-    // That names no table of the loader: in an image whose code does not name the cache of node:module, the host captures undefined for it.
     if (module.kind == ModuleKind::Runtime) {
         ClimbingSet answered = valueOf(context, runtimeNamespaceOf(context, module.runtimeModule));
         context.add(holdersOfNames, context.restrict(answered, universe.knownObjects()));
@@ -508,8 +504,7 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
     if (program.at(first).kind == ModuleKind::External)
         return sourcesOf(unknownObject(context, sourceOfWhatLoaderMakes(program.at(first))));
 
-    // Whoever ties a module ties the modules inside and behind it in the same run. A statement of a body that has tied one says so and ties it in each of its runs, so that what a tie asks for stays asked for.
-    // Whoever finds that said by a run of an earlier round leaves the module to that statement.
+    // Whoever ties a module ties the modules inside and behind it in the same run.
     bool staysForGood = context.isStatementOfBody();
     ValueFlowNodeID tiedForGood = context.nodes().ofHost(ValueFlowHostNode::NamespacesTiedByStatementsOfBodies);
     ValueSetID tiedByThisStatement = staysForGood && context.rememberedByStatement() ? context.rememberedByStatement() : ValueSets::nothing;
@@ -691,7 +686,6 @@ static bool mayCaptureDefaultMember(SyntheticExportRule rule)
 }
 
 // Once the body has run the loader reads the own enumerable properties of the module's value and keeps what it finds under the names that importers use in variables.
-// The body of a CommonJS file stores its names itself. Where nobody knows them before the file has run, the module through which ES modules import the file is the one that captures.
 static void captureSyntheticExports(ValueFlowRuleContext& context, ModuleID id)
 {
     const Program& program = context.program();
@@ -731,7 +725,6 @@ static void tieModuleObjectToExports(ValueFlowRuleContext& context, const Module
 }
 
 // The module objects hang together as the requests of the build say: `children` lists what the module has required, and `parent` is a module that has required it.
-// Nothing is done for a module object until somebody has got hold of it or of one beside it.
 static void followModuleObject(ValueFlowRuleContext& context, ModuleID id)
 {
     const Module& module = context.program().at(id);
@@ -805,8 +798,7 @@ static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleCont
     connect(context, evaluationErrorsOf(context, module), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
 }
 
-// What a load finds outside the image: the run time refuses code there, and a file that loads as an object of the host. What is left is parsed as data: a primitive, or an object or an array
-// that holds such data and no function. One object and one array of the operation stand for all of them.
+// What a load finds outside the image: the run time refuses code there, and a file that loads as an object of the host.
 static ValueSetID dataFromOutsideImage(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();

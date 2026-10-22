@@ -79,7 +79,6 @@ ValueID appendAwait(IRBuilder& builder, ValueID awaited)
 }
 
 // Where the iterator does not answer at once the step suspends this frame, and whoever finishes the step resumes the frame through its driver.
-// An unsplit coroutine has no driver yet: SplitCoroutines puts it in.
 ValueID appendAsyncIteratorStep(IRBuilder& builder, ValueID iterator, ValueID sent)
 {
     Function& function = builder.function();

@@ -77,9 +77,7 @@ std::optional<int64_t> integerConstantThroughCasts(const Program& program, const
     return function.at(*constant).integer();
 }
 
-// A walk reaches the head of a cycle before the values that the cycle passes back to it. A value that the walk has not reached has no identity, and says nothing against the identity of
-// a parameter that receives it. So what a walk finds for a parameter is looked at again at its end, when every edge passes a value with an identity.
-// Where it does not hold, all that the walk found behind the parameter rests on an identity that the parameter does not have. The next walk starts from nothing and expects less of that parameter.
+// A walk reaches the head of a cycle before the values that the cycle passes back to it.
 class ValueIdentities::PassedValues {
 public:
     PassedValues(std::span<const ValueID> parameters, size_t numberOfEdges, std::span<const ValueID> valuesByEdge, bool isRoot)

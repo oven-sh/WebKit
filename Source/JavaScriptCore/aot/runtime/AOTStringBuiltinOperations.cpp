@@ -271,8 +271,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringOfAnyValue, EncodedJSValue, (Instance
     OPERATION_RETURN(scope, JSValue::encode(stringConstructor(globalObject, value)));
 }
 
-// decodeURI, decodeURIComponent, encodeURI, encodeURIComponent. A text without a percent sign decodes to itself, and one that holds nothing but what the coding leaves alone encodes to itself:
-// most parameters of a route and most keys of a query are such texts. The engine's functions copy them character by character into a new string. Everything else is theirs.
+// decodeURI, decodeURIComponent, encodeURI, encodeURIComponent.
 static bool isUnchangedByURICoding(StringView text, URICoding coding)
 {
     static constexpr auto leftAloneInURI = makeLatin1CharacterBitSet("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$&'()*+,-./:;=?@_~"_s);

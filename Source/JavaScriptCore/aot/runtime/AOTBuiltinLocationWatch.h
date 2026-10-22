@@ -36,8 +36,7 @@ class BuiltinCellKey;
 struct Instance;
 struct State;
 
-// The byte of a member in BuiltinWords::locationStates. Start-up leaves every byte zero, and compiled code takes the member for what the realm was created with only where it reads Unchanged.
-// Changed is for good. It also stands for a location that cannot be watched.
+// The byte of a member in BuiltinWords::locationStates.
 enum class WatchedLocationState : uint8_t { NotArmed, Unchanged, Changed };
 static_assert(!static_cast<uint8_t>(WatchedLocationState::NotArmed));
 
@@ -51,7 +50,6 @@ constexpr PropertyOffset propertyOffsetOfOwnSlot(JSType typeOfInstances, uint8_t
 }
 
 // Answers at run time for the members of built-in objects that only a write replaces, where the compiler could not rule the write out.
-// Nothing is watched before compiled code asks about a member for the first time.
 class BuiltinLocationWatch {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BuiltinLocationWatch);
     WTF_MAKE_NONCOPYABLE(BuiltinLocationWatch);
@@ -62,9 +60,7 @@ public:
     WatchedLocationState stateOf(BuiltinID member) const;
     unsigned numberOfWatches() const { return m_watches.size(); }
 
-    // Whether the holder still has the member that start-up found. The first question about a member compares the two and starts the watch.
-    // A member that the host makes when it is first looked for is not made for the question: while nobody has looked, stored, defined or deleted, the answer is no and the question stays open.
-    // The engine reports every object that a host makes that way, whoever looked, and a question compares the location with what was reported.
+    // Whether the holder still has the member that start-up found.
     bool arm(VM&, BuiltinID member);
     void didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* member);
 

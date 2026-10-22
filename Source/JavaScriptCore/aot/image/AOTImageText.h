@@ -62,9 +62,7 @@ struct ImageString {
 };
 static_assert(sizeof(ImageString) == 8 && isImageRecord<ImageString>);
 
-// ImageSection::Strings has one for each StringID. Zero: the image has no text for the string.
-// The number is that of the string's header, which says where the characters are and has their hash. The header of an identifier's text has the number of the identifier.
-// Of a string without a header it is the index of its first word in ImageSection::LongStrings: see ImageListedString.
+// ImageSection::Strings has one for each StringID.
 struct ImageStringWord {
     bool hasText() const { return !!bits; }
     bool is16Bit() const { return bits & ImageString::is16BitFlag; }
@@ -142,11 +140,7 @@ struct ImageStringRecord {
 static_assert(sizeof(ImageStringRecord) == 8 && isImageRecord<ImageStringRecord>);
 #endif
 
-// The words of a WTF::StaticStringImpl. In an image that is in memory at ImageHeader::address, a pointer to a header with a length is a StringImpl*.
-// ImageSection::StringHeaders has one header for each identifier number, then one for each other string that has one, in the order of their StringIDs.
-// The header of an identifier is an atom, or all zero where the run time has to make or find the name: a symbol, a private name, the empty text.
-// literalStringWord lies in the padding of a StringImpl. It is the word of a string that is one of the program's literal strings and zero in the header of any other,
-// so nothing is looked up for a string of the image. No identifier has the number 0: in that header it is the size of the section in bytes.
+// The words of a WTF::StaticStringImpl.
 struct ImageStringHeader {
     static ImageStringHeader create(uint64_t characters, uint32_t length, uint32_t hash, bool is16Bit, StringImpl::StringKind kind)
     {
@@ -213,8 +207,7 @@ struct ImageIdentifier {
 };
 static_assert(sizeof(ImageIdentifier) == 8 && isImageRecord<ImageIdentifier>);
 
-// ImageSection::Identifiers has one for each identifier number: the text, the kind, and above them the name class. Only a text has another class than Ordinary:
-// a well-known symbol has its number there.
+// ImageSection::Identifiers has one for each identifier number: the text, the kind, and above them the name class.
 struct ImageIdentifierWord {
     static constexpr uint32_t textMask = ImageIdentifier::hashMask;
 
@@ -262,8 +255,7 @@ public:
     JS_EXPORT_PRIVATE StringView view(StringID) const;
     JS_EXPORT_PRIVATE unsigned hash(StringID) const;
     JS_EXPORT_PRIVATE bool equals(StringID, StringView) const;
-    // Both allocate nothing for a string whose header says what is asked for: the result is the header in the image. For a string without a header they allocate one over the characters in the image.
-    // An atom that is no identifier's text is made in the atom table of the thread, over the characters in the image.
+    // Both allocate nothing for a string whose header says what is asked for: the result is the header in the image.
     JS_EXPORT_PRIVATE String createString(StringID) const;
     JS_EXPORT_PRIVATE String createAtom(StringID) const;
     // The header of a string of two characters or more, where the header is what both of them would give. Null for any other string.
@@ -408,10 +400,7 @@ inline std::optional<uint32_t> ImageText::identifierNumber(StringID string) cons
     return word.number();
 }
 
-// An image holds addresses in two kinds of places, and nowhere else: ImageHeader::address, which is the address of the image itself,
-// and ImageStringHeader::characters. They are right while the image is in memory at ImageHeader::address. The compiler writes an image for the address 0.
-// Who knows where the executable's loader puts the image calls relocateImage() before the image goes into the file,
-// and lists the places for a loader that may put it elsewhere. A place that holds zero holds no address.
+// An image holds addresses in two kinds of places, and nowhere else: ImageHeader::address, which is the address of the image itself, and ImageStringHeader::characters.
 struct ImageAddressPlaces {
     uint64_t offsetOfImageAddress;
     uint64_t offsetOfFirstStringAddress;
@@ -427,7 +416,6 @@ JS_EXPORT_PRIVATE ImageAddressPlaces addressPlacesOf(std::span<const uint8_t> im
 JS_EXPORT_PRIVATE void relocateImage(std::span<uint8_t> image, uint64_t address);
 
 // For an image that no loader brought to its address: an image in a file that the process mapped or read, or in an executable whose writer did not call relocateImage().
-// It writes to every page with a header, so those pages become the process's own. Does nothing to an image that is at its address. False if the pages cannot be written.
 [[nodiscard]] JS_EXPORT_PRIVATE bool relocateLoadedImage(std::span<const uint8_t> image);
 #endif
 

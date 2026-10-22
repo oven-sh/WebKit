@@ -30,12 +30,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Most calls that run go to a function that leaves early: it reads a field or two of what it was handed, tests them and returns. InlineCalls cannot take that way in: it sees a read as an
-// operation that may run a getter, with its tests and its slow path still to come, and a body many times the size of what runs. Behind selection a read is a load and its tests, and what
-// may run other code stands in blocks of its own.
-//
-// The head of a function is the blocks next to its entry that only read and test and can come to a Return without leaving them. It is copied in front of a hot call. Whatever leaves the copy
-// makes the call, and the function starts over: nobody can tell that a read or a test was carried out twice.
+// Most calls that run go to a function that leaves early: it reads a field or two of what it was handed, tests them and returns.
 
 namespace {
 
@@ -210,8 +205,7 @@ static bool mayBeCopiedFrom(const HeadInputs& inputs, FunctionID id)
     return function.hasBody() && function.hasOrdinaryFrame() && function.mayBeCloned() && function.results.size() == 1 && inputs.build.isEnabled(PassID::InlineHeads, id);
 }
 
-// A copy buys time where time is spent. The estimate of how often a function is entered is rough, and a loop multiplies whatever it is: in a loop of code that is not cold
-// a head is copied too, if the call behind it is not expected to run. A head that is left runs twice.
+// A copy buys time where time is spent.
 static bool isWorthCopy(const Head& head, HeatClass heat, bool isInCycle)
 {
     return isHot(heat) || (head.holdsEveryLikelyPath && isInCycle && !isCold(heat));
@@ -331,8 +325,7 @@ static bool mayPromiseToPass(const Program& program, const Function& function, B
     return callee.results.size() == 1 && callee.results[0].flags.contains(PositionFlags::IsExpected) && program.at(callee.results[0].type).isSubsetOf(tested, program);
 }
 
-// A copy often returns what it was handed or has read from a slot, and the caller knows the type of that. The call returns anything, so the caller tests what the two hand it.
-// What comes out of the copy goes where the test would send it, and what the call returns is tested behind the call.
+// A copy often returns what it was handed or has read from a slot, and the caller knows the type of that.
 static void skipTestsThatArgumentsDecide(IRBuilder& builder, FunctionAnalyses& analyses, const TypeArena& types)
 {
     const Program& program = builder.context().program;

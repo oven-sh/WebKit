@@ -452,7 +452,6 @@ RequestRecord FunctionResolver::dataRecordOf(const Value& value) const
 }
 
 // SlotData::create asserts what the limit reports, so the offset is read here without creating one.
-// A closure table entry is numbered by its generic entrypoint, which placedVariableSlot looks up and checks.
 uint32_t FunctionResolver::slotOffsetOf(const EvalBinding& binding) const
 {
     if (binding.variable) {

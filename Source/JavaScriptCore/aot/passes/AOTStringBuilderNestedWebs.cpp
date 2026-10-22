@@ -246,7 +246,6 @@ bool NestedWebMerger::isDefinedBefore(ValueID value, const StringWeb& web)
 }
 
 // The front is written at the entries, so a text that grows too long throws there and not at the concatenation.
-// Nobody can tell the two apart where each path from an entry leads to the concatenation and all that runs on it builds strings or could be removed.
 bool NestedWebMerger::buildsOnlyStringsUntil(ValueID concatenation, const StringWeb& web)
 {
     if (!web.discardedEdges.isEmpty() || !web.discardedAfter.isEmpty())

@@ -14,6 +14,7 @@
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
 #include <algorithm>
+#include <wtf/CommaPrinter.h>
 #include <wtf/DataLog.h>
 #include <wtf/PrintStream.h>
 
@@ -53,8 +54,7 @@ constexpr uint32_t noValue = UINT32_MAX;
 
 constexpr OptionSet<ValueFate> fatesThatKeepBesideTheResult = fatesThatKeep - ValueFate::IsReturned;
 
-// The origins that a value may be: indexes, ascending. None: the value never comes about, because the call that would answer it does not return.
-// A value of which nothing is known has the origin of kind Anything without a type and no other.
+// The origins that a value may be: indexes, ascending.
 using Choice = Vector<uint32_t, 4>;
 
 // A result while it is made. What the table keeps has room for what it holds and no more.
@@ -66,8 +66,7 @@ struct ResultInTheMaking {
     Vector<StoreIntoOrigin, 8> stores;
 };
 
-// Flow's results are applied to the bodies in front of the link, which puts another operation in the place of some values. So a value is looked at before it is taken for what the record says.
-// Not among the reads: Await. What a promise holds is there when the function goes on, which is after the call has returned.
+// Flow's results are applied to the bodies in front of the link, which puts another operation in the place of some values.
 constexpr OpcodeSet reads { Opcode::PropGet, Opcode::PrivateGet, Opcode::GetEnvironmentField, Opcode::ElemGet, Opcode::GetContiguousIndex };
 constexpr OpcodeSet literals { Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::BigInt };
 
@@ -91,12 +90,10 @@ bool makesAnotherObjectEachTime(Opcode opcode)
     return flowOf(opcode) == ValueFlowEdgeClass::Allocates && boundToOf(opcode) != BoundTo::Site;
 }
 
-// The operations that put nothing into the object but their operands, each of which has a row. Not among them: `{ ...source }`, which is born with what the source holds,
-// and a literal of constants, which is copied out of the program's data.
+// The operations that put nothing into the object but their operands, each of which has a row.
 constexpr OpcodeSet fillsObjectFromOperandsAlone { Opcode::NewObject, Opcode::NewArray, Opcode::NewDictionary };
 
-// One result of one function. The subjects that the record says are returned become origins, and what a call answers is put into the terms of this function:
-// for a parameter of the callee stands what the call passes.
+// One result of one function.
 class Composer {
 public:
     // Without a link: before flow has run. No callee is followed, nothing is said of who holds an object, and the stores are those that the function makes itself.
@@ -451,8 +448,7 @@ Choice Composer::choiceOfComputed(uint32_t index)
     return computed(origin, operands.span());
 }
 
-// The front end may list what the key is as it lists the operands of an operator. A type of the key in the body says nothing here:
-// it may hold behind a test only, and a call that fails the test goes on in the generic version and answers all the same.
+// The front end may list what the key is as it lists the operands of an operator.
 Choice Composer::choiceOfComputedKey(uint32_t index, const Value& read)
 {
     Choice choice;
@@ -1034,8 +1030,7 @@ bool linkResultOrigins(const RelationalLink& link, FunctionID id, std::span<cons
     // A call of a coroutine answers a promise or a generator. What the body returns goes into that.
     if (record.subjects.size() == fatesOfSubjects.size() && !function.isUnsplitCoroutine()) {
         for (uint32_t result = 0; result < std::min<size_t>(found.size(), 32); ++result) {
-            // The limits make a result that has grown too large "anything", and a result that is made of such a result small again. Nothing would keep a function that
-            // hands what it answers to itself from going round for ever. So "anything" stays, and a result changes a limited number of times.
+            // The limits make a result that has grown too large "anything", and a result that is made of such a result small again.
             bool wasFullyListed = result < origins.size() && origins[result].isFullyListed;
             if (!wasFullyListed || !(record.resultsFullyListed >> result & 1))
                 continue;

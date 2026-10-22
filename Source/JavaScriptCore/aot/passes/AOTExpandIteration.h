@@ -227,7 +227,6 @@ IterationPlan planSpread(FunctionPassContext&, ValueID appendSpread);
 ArmDispatch chooseArmDispatch(FunctionPassContext&, const Iteration&, const IterationPlan&, std::span<const BlockID> liveRegion);
 Vector<BlockID> findLiveRegion(FunctionPassContext&, ValueID open);
 // What a passed test leaves of a type may lie outside it: beside a class that may be related, the part of the tested class loses what it proves.
-// The parameter of the block that follows the protocol has the type of the value that was tested.
 ValueID chooseArgumentOfProtocolEntry(FunctionPassContext&, BlockID protocolEntry, ValueID narrowed, ValueID tested);
 
 Vector<Iteration> collectIterations(FunctionPassContext&);

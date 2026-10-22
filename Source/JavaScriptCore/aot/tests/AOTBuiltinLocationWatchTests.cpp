@@ -18,8 +18,6 @@ namespace JSC { namespace AOT {
 
 std::span<const NativeTest> builtinLocationWatchTests();
 
-// The program calls a function that nobody compiled, which may store to Math.sign. So no proof says what a read of it finds, and start-up keeps the function the realm was created with.
-// The program stores to the member itself, so no proof says what a read finds and start-up does not lock the member.
 static constexpr ASCIILiteral usesOfMathSign = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {

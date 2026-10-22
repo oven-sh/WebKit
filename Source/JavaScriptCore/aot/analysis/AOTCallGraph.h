@@ -159,8 +159,7 @@ struct ReferencesOfBody {
     friend bool operator==(const ReferencesOfBody&, const ReferencesOfBody&) = default;
 };
 
-// Collects what one body names. It is told every operation and every terminator of the body, block by block, each with what describeEffects() says of it.
-// Past deduplicationThreshold callees it switches to a seen-set, so large callee sets repeated at many call sites stay cheap.
+// Collects what one body names.
 class BodyReferenceCollector {
     WTF_MAKE_NONCOPYABLE(BodyReferenceCollector);
 public:

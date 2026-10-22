@@ -61,8 +61,7 @@ bool everyAllocationClassCannot(const Program& program, const FlowResults& flow,
     });
 }
 
-// An object keeps its shape whatever happens to it, so it has to be ready for all that is not proven impossible. Reaching unknown JavaScript clears every proof of a class,
-// and of a layout without classes nothing is proven.
+// An object keeps its shape whatever happens to it, so it has to be ready for all that is not proven impossible.
 bool someAllocationClassMay(const Program& program, const FlowResults& flow, LayoutID layout, OptionSet<ObjectMutation> mutations)
 {
     if (program.at(layout).flow.allocation == AllocationState::NeverAllocated)
@@ -335,12 +334,10 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
     return layouts;
 }
 
-// By the estimate. What a program makes for each event is below it, what its hot loops and recursive functions make far above it.
-// One loop alone is far below it too, and may fill an array with any number of objects: what is made in a loop is not made seldom, whatever the estimate.
+// By the estimate.
 static constexpr double maxCreationsOfLayoutMadeSeldom = 1e9;
 
 // The holders of a row are the objects of the layout and of every layout that inherits the row or hands it down.
-// The objects of a tagged family are the nodes of a tree: there are many of them, whatever the estimate says of a constructor that is called through a variable.
 static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const SlotUses& uses)
 {
     const Program& program = context.program;

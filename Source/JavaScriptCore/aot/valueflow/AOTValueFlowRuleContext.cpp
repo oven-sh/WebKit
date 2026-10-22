@@ -329,8 +329,6 @@ ValueFlowBehaviorID ValueFlowRuleContext::behaviorOfKey() const
 }
 
 // What is left out of the normal form has been handed on by what earlier rounds have logged, and the rules for what a placeholder covers deal with it from now on.
-// Any other node of this turn holds nothing yet, and whoever has read it is told when something arrives. A constant holds the set of its key from the start and nothing ever moves in it:
-// a statement that saw it empty in the turn that made it would never be told to look again. Whoever holds such a node has asked for it in this run.
 std::optional<ValueSetID> ValueFlowRuleContext::setOfConstantOfThisTurn(ValueFlowNodeID node) const
 {
     if (m_constantsOfThisTurn.isEmpty()) [[likely]]
@@ -628,9 +626,7 @@ bool ValueFlowRuleContext::runsCodeThatRecordsDescribe() const
 
 ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowName name)
 {
-    // The library's code behind a described built-in is entered with operands nobody knows. What a call of the built-in finds on its operand, under a key or by a protocol, the records say where the call is.
-    // So while a statement of such code runs, nothing is looked up through the unknown object: nothing is handed out, opened, stepped or awaited, and the answer is a value nobody knows.
-    // The node that holds the answer is one for all such statements: it takes what the lookup through the other receivers finds.
+    // The library's code behind a described built-in is entered with operands nobody knows.
     if (sets().contains(receivers.m_set, ValueFlowUniverse::unknownObject()) && runsCodeThatRecordsDescribe()) {
         ValueFlowNodeID found = lookup(ClimbingSet(m_maker.intersect(receivers.m_set, ValueSets::complement(universe().unknownObjectAlone()))), name);
         ValueFlowNodeID answer = masked(found, ValueSets::complement(m_maker.of(calleeOfDescribedCall(universe()))));
@@ -645,8 +641,7 @@ ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowNam
 
 ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin)
 {
-    // Whoever asks for the group of the unknown object calls a value nobody knows, and whatever has escaped may be the callee. It is said here so that the flag names who has asked.
-    // An accessor is found under the name that a read or a store looks under.
+    // Whoever asks for the group of the unknown object calls a value nobody knows, and whatever has escaped may be the callee.
     bool mayBeWhateverHasEscaped = origin == ValueFlowCalleeOrigin::Value && kind != ValueFlowCallKind::Get && kind != ValueFlowCallKind::Set;
     if (mayBeWhateverHasEscaped && m_solver.m_input.nodes && m_solver.m_input.universe && sets().contains(callees.m_set, ValueFlowUniverse::unknownObject()))
         add(nodes().ofHost(ValueFlowHostNode::ValueNobodyKnowsIsCalled), ClimbingSet(leavesOutSomeUnknownSource() ? universe().undefinedValue() : universe().unknownObjectAlone()));
@@ -764,7 +759,6 @@ void ValueFlowRuleContext::useAsAnswerOfUnknownObject(BuiltinID builtin, OptionS
         return;
     ClimbingSet object(m_maker.of(universe().objectOf(builtin)));
     // A store to a member that the host makes when it is first looked for puts the new value in place of a property that is not made yet, and makes nothing: what hangs on such a member is what makes it.
-    // A store to any other member is a use: it runs a setter, or native code keeps something up for it with functions of the library.
     bool onlyReplaces = uses.contains(BuiltinUse::Written) && program().builtins().at(program().builtins().canonicalID(builtin)).flags.contains(BuiltinFlag::IsLazilyCreated);
     if (uses.containsAny({ BuiltinUse::Read, BuiltinUse::Called, BuiltinUse::Constructed, BuiltinUse::Escaped }) || (uses.contains(BuiltinUse::Written) && !onlyReplaces))
         add(nodes().ofHost(ValueFlowHostNode::UsedBuiltins), object);

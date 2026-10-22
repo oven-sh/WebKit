@@ -404,9 +404,7 @@ ValueSetID ValueFlowUniverse::familyObjectsOf(ValueSetMaker& maker, const Progra
     return maker.uniteAll(parts.span());
 }
 
-// Only the program allocates an object with one of its layouts, at a site that names the layout, and only the program makes a closure of one of its functions. A built-in object is listed by itself.
-// So an object that nobody follows and that is inside a type of nothing but these is one of the objects that the type lists.
-// Native code makes objects with the table's layouts. Where nothing allocates any of the layouts the type is taken to say nothing.
+// Only the program allocates an object with one of its layouts, at a site that names the layout, and only the program makes a closure of one of its functions.
 bool ValueFlowUniverse::namesProgramObjectsAlone(const Program& program, const Type& type) const
 {
     if (!type.isJavaScriptValue() || type.anyObject || type.anyFunction || !type.classes.isEmpty())
@@ -787,7 +785,6 @@ private:
         });
 
         // A parser or a validator allocates the same objects for whichever call it stands in, and the sites are made for every call that may turn out to have a typed result.
-        // Each object costs nodes of its own and a number in every set, so those of one layout share the object of the first.
         Vector<uint32_t> firstTypedResultOfLayout(m_program.layouts.size(), [](size_t) {
             return UINT32_MAX;
         });
@@ -870,7 +867,6 @@ private:
     }
 
     // The allocation in the constructor of a base class makes the instances of the classes below it too, and one object stands for all of them.
-    // A type names a class below without the class above, so the object is filed under each class that it may be an instance of.
     void fileAllocationsOfBaseClassesUnderClassesBelow(ValueSetMaker& maker, Vector<Vector<ValueFlowObjectID>>& ofLayout)
     {
         const ValueFlowUniverse& universe = m_result.m_universe;
@@ -925,8 +921,7 @@ private:
         }
     }
 
-    // A module of the library answers what its body returns. The text of the body says which of its allocations that is: what it returns, through the operations that hand an operand on
-    // and through a variable that the body itself fills.
+    // A module of the library answers what its body returns.
     void appendHoldersOfLibraryExports(Vector<ValueFlowObjectID>& holders)
     {
         const ValueFlowUniverse& universe = m_result.m_universe;
@@ -1123,8 +1118,7 @@ private:
                 isLayoutOfTable.quickSet(layout.index());
         }
 
-        // An object with a layout whose class extends something may be an instance of any built-in class: the constructor at the top allocates it. A class that extends nothing allocates an ordinary object,
-        // and what a built-in allocates for a class below such a class after all is an object of that built-in and none of these.
+        // An object with a layout whose class extends something may be an instance of any built-in class: the constructor at the top allocates it.
         auto mayBeAllocatedByBuiltin = [&](LayoutID layout) {
             for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
                 if (!m_program.at(layout).has(LayoutFlags::HasHeritage))
@@ -1156,8 +1150,7 @@ private:
         }
         universe.m_objectsWithLayoutOfProgram = maker.uniteAll(ofLayoutsOfProgram.span());
         universe.m_isLayoutOfTable = WTF::move(isLayoutOfTable);
-        // A test for a class cannot tell a built-in object from an instance. But no object of the table is a promise: taken for one, a namespace that is handed to Promise.resolve(), as import("bun") hands it,
-        // would be answered as it is and kept by native code, and whoever awaits it would hold a value nobody knows.
+        // A test for a class cannot tell a built-in object from an instance.
         ValueSetID inEveryClassButNoBuiltinObject = maker.unite(maker.uniteAll(inheritingLayouts.span()), universe.m_objectsThatMayBeAnything);
         ValueSetID inEveryClass = maker.unite(inEveryClassButNoBuiltinObject, universe.m_builtinObjects);
 

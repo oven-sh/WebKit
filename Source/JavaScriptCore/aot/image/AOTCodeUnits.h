@@ -27,7 +27,6 @@ struct CodeUnit {
         Pinned,
         Plain,
         // One x86-64 instruction with an operand at a displacement off the stack pointer, which names the stack pointer in no other way.
-        // It may run behind a near call once adjustForNearCall() has made up for the return address.
         PlainOffStackPointer,
         Call,
         End,
@@ -43,8 +42,7 @@ struct CodeUnit {
 };
 static_assert(sizeof(CodeUnit) == 8);
 
-// One byte per unit: the length in the low four bits, then the kind, then mayRun. A length of 0 there says that the length is the next two bytes.
-// The units tile the code from offset 0, so the offset of a unit is the sum of the lengths before it.
+// One byte per unit: the length in the low four bits, then the kind, then mayRun.
 class PackedCodeUnits {
 public:
     class Iterator {
@@ -173,7 +171,6 @@ enum class CodeUnitsError : uint8_t {
 CodeUnitsError verifyCodeUnits(const CompiledCode&);
 
 // bytes are a copy of the code from firstOffset on that is reached by a near call: its units of Kind::PlainOffStackPointer address what they addressed in front of the call.
-// `bytes` is a copy of the code at firstOffset, and `from` stands at or before the unit there. The answer stands at that unit.
 PackedCodeUnits::Iterator adjustForNearCall(std::span<uint8_t> bytes, PackedCodeUnits::Iterator from, PackedCodeUnits::Iterator end, uint32_t firstOffset);
 
 } } // namespace JSC::AOT

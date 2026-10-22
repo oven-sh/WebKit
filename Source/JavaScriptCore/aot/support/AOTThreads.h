@@ -34,8 +34,7 @@ struct HostThreadPool {
     void (*schedule)(void (*run)(void* argument), void* argument);
 };
 
-// Foreground is the critical path of the build. Background is work that a later stage waits for. Nothing waits for Idle work.
-// A thread takes the pending task with the highest priority, and a helper of a loop leaves it when a task with a higher priority is pending.
+// Foreground is the critical path of the build.
 enum class TaskPriority : uint8_t { Foreground, Background, Idle };
 static constexpr unsigned numberOfTaskPriorities = 3;
 
@@ -46,8 +45,7 @@ public:
     static constexpr size_t workerStackSize = 8 * MB;
     static constexpr Seconds defaultRestTime = Seconds::fromMilliseconds(100);
 
-    // Without a host pool, the loops run on a pool of their own. A thread of the pool that has run out of work waits for more for the rest time
-    // before it goes back to the pool.
+    // Without a host pool, the loops run on a pool of their own.
     JS_EXPORT_PRIVATE explicit ParallelLoops(unsigned width, const HostThreadPool* = nullptr, Seconds restTime = defaultRestTime);
     JS_EXPORT_PRIVATE ~ParallelLoops();
 
@@ -175,8 +173,6 @@ private:
 };
 
 // Memory that comes from the system costs whoever writes to a page first a fault, and a fault costs as much as writing the page many times over.
-// A list with an entry for each function of a large program is dozens of megabytes. Where one thread makes it, the others wait for its faults.
-// So all threads write to the pages first, and the one thread constructs on pages that are there.
 inline void takePageFaultsInParallel(const ParallelLoops& loops, std::span<uint8_t> bytes)
 {
     constexpr size_t bytesPerTask = 256 * KB;
@@ -299,8 +295,7 @@ void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isL
     forEachIndexInParallel(loops, numberOfRuns, [&](unsigned run) {
         std::ranges::sort(runOf(from, run, numberOfRuns), isLess);
     });
-    // The last round merges two runs: one thread would go through the whole list, and two through the round in front of it. So each merge is cut into parts that any thread takes.
-    // A part begins at an element of the first run and at the first element of the second run that is not less: what stands in front of the two is what a merge of the whole runs puts in front of them.
+    // The last round merges two runs: one thread would go through the whole list, and two through the round in front of it.
     constexpr size_t partsPerRound = 4 * numberOfRuns;
     for (size_t runs = numberOfRuns; runs > 1; runs /= 2) {
         size_t partsPerMerge = partsPerRound / (runs / 2);

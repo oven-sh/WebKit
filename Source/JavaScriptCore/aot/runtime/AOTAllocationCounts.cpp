@@ -106,8 +106,7 @@ static String describePlace(VM& vm, const std::optional<CompiledFrame>& frame)
     return makeString(describeFunction(vm, frame->function), ' ', describePosition(*vm.aotState().image, *frame));
 }
 
-// The constructor of a class allocates the object, in its own frame or in one that was inlined. Whoever reads the counts wants to know who asked for the object.
-// One activation may have two frames: the version of the constructor that runs, and in front of it an entrypoint that no stack trace shows.
+// The constructor of a class allocates the object, in its own frame or in one that was inlined.
 static std::optional<CompiledFrame> findAllocatingFrame(VM& vm, FunctionID constructor)
 {
     std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtTop(vm);

@@ -95,8 +95,7 @@ static AllocationSiteRegisters allocateSiteRegisters(StubAssembler& jit)
     return allocateCellWithLateRefill(jit, cell, allocator, scratch, slowPath, cellSize, CountedUnder::Allocation);
 }
 
-// The first chunk is left to whoever stores the header. Two chunks at a time from the last one down, where the size is not known: with an even number of chunks the first one is zeroed too.
-// So a cell whose size is not known has two chunks or more: AllocationEmitter::findOnlyAllocationIn() sees to that.
+// The first chunk is left to whoever stores the header.
 static void zeroBehindFirstChunk(StubAssembler& jit, const AllocationSiteRegisters& registers, std::optional<unsigned> cellSize)
 {
     const auto [cell, allocation, record, allocator, scratch] = registers;
@@ -389,8 +388,7 @@ static void loadUnitsOfExtensionWith(StubAssembler& jit, GPRReg granuleBits, GPR
     jit.and32(TrustedImm32(15), units);
 }
 
-// As Object::ensureExtensionGranules(). An Extension with room takes the granules where it is: behind those that it holds, or, while no collector may be visiting it, among them. One without room
-// is replaced: a larger one takes the granules held, each at its place among the new ones, which are zero, and the old one stays as it is. The caller has the barrier.
+// As Object::ensureExtensionGranules().
 static void growExtensionAndReturn(StubAssembler& jit, GPRReg owner, GPRReg granuleBits, JumpList& givesUp)
 {
     const GPRReg replacement = jit.allocateScratch(StubRegister::R0);

@@ -127,7 +127,6 @@ static bool regionInterferesWithSteps(FunctionPassContext& pass, const Iteration
 }
 
 // The reads stay where the steps stood, so what stands between them only has to leave alone what they rely on: the length, and what the open tested.
-// Whatever would end the proof of a test of those ends this one. What the type proves holds for good.
 static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, ValueID array)
 {
     FunctionAnalyses& analyses = pass.analyses;
@@ -191,8 +190,7 @@ bool hasProvenPlainElements(const Type& iterable)
     return array && array->provenPristine.contains(PristineAspects::Storage);
 }
 
-// No read of an element runs code, and a read past the end or of a hole finds undefined, as a step past the end does. An array that nothing changes
-// between the steps has one length for all of them, so a step after the last one is a read past the end.
+// No read of an element runs code, and a read past the end or of a hole finds undefined, as a step past the end does.
 static bool hasStepsThatReadElements(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, uint32_t count)
 {
     if (arm.kind != JSC::IterationKind::Values)

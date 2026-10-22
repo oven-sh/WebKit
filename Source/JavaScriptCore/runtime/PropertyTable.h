@@ -168,7 +168,6 @@ public:
     static constexpr unsigned EmptyEntryIndex = 0;
 
     static constexpr ptrdiff_t offsetOfIndexSize() { return OBJECT_OFFSETOF(PropertyTable, m_indexSize); }
-    static constexpr ptrdiff_t offsetOfIndexMask() { return OBJECT_OFFSETOF(PropertyTable, m_indexMask); }
     static constexpr ptrdiff_t offsetOfIndexVector() { return OBJECT_OFFSETOF(PropertyTable, m_indexVector); }
     static constexpr uintptr_t flagOfCompactIndexVector = 0x1;
 

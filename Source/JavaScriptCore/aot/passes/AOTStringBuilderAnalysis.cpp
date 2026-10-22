@@ -234,7 +234,6 @@ void StringBuilderAnalyzer::findUnreplaceableUses()
 }
 
 // A builder operation between the definition of a cursor and a use of it makes the cursor stale, whichever builder it works on.
-// Where a cursor is live no state is defined, begun or passed on, and what an operation reads there is made a string in front of the cursors of its block.
 void StringBuilderAnalyzer::findValuesBesideCursors()
 {
     BitVector cursors(m_function.values.size());

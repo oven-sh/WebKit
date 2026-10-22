@@ -587,8 +587,7 @@ struct BuiltinParameter {
     BuiltinTypeID accepted { };
     BuiltinTypeID converted { };
     BuiltinTypeID refused { };
-    // Of an overload that only propagates errors: inside this type the entry raises no error about the operand. Inside `accepted` and outside it the entry throws by a step of its own:
-    // a negative length, a length above what the engine ever allocates. Without a type all that is accepted is admitted.
+    // Of an overload that only propagates errors: inside this type the entry raises no error about the operand.
     BuiltinTypeID admitted { };
     OperandUses uses { OperandUses::all() };
     OptionSet<BuiltinOperandRole> roles { };
@@ -681,14 +680,12 @@ struct BuiltinOverload {
     uint64_t textHash { 0 };
 
     constexpr bool throws() const { return flags.contains(BuiltinOverloadFlag::Throws); }
-    // With operands that it admits the entry has no step of its own that throws. It throws what an operation on an operand throws: the code that the operand runs, and a store,
-    // a definition, a deletion or a change of integrity that the operand refuses. Beside that there is only lack of memory: a result too large, a nesting too deep for the stack.
+    // With operands that it admits the entry has no step of its own that throws.
     constexpr bool onlyPropagatesErrors() const { return flags.contains(BuiltinOverloadFlag::OnlyPropagatesErrors); }
     constexpr bool isUndeclared() const { return flags.contains(BuiltinOverloadFlag::IsUndeclared); }
     constexpr bool hasTypedResult() const { return result.typedResultForm != TypedResultForm::None; }
 
     // The function of the library that a call is: its body says what the call does, and the call may enter it directly.
-    // A call with a typed result runs code derived from what the result is expected to be, which only a CallBuiltin carries. The records say what that code does.
     constexpr RuntimeFunctionID libraryFunction() const
     {
         bool isCallOfLibraryFunction = code.implementation.kind == BuiltinImplementationKind::Compiled && !hasTypedResult();
@@ -702,8 +699,7 @@ struct BuiltinOverload {
     }
 };
 
-// The form in which the executable holds an overload. Many overloads have the same result, effects, flow or code: each distinct one stands once, and the overload has its number.
-// Nothing but the compiler and the validation of native calls reads an overload. BuiltinTable unpacks all of them at the first read.
+// The form in which the executable holds an overload.
 struct BuiltinPackedOverload {
     uint64_t textHash { 0 };
     BuiltinID builtin { };
@@ -786,7 +782,6 @@ struct Builtin {
     BuiltinOverloadID firstOverload { };
     uint16_t overloadCount { 0 };
     // Of a native binding: some text of the library names it, and the host evaluates it by a number of its own: BuiltinBindings::hostNumberOf().
-    // A function that native code makes and hands over by itself has no such text, and the host answers it to nobody who asks.
     bool isNamedByText { false };
 };
 
@@ -963,8 +958,7 @@ struct BuiltinHostObject {
     std::span<const BuiltinHostObjectField> fields { };
     // Empty: the object has no internal field.
     std::span<const BuiltinHostObjectInternalField> internalFields { };
-    // Of whatever is stored or defined under any key the object keeps a string, which code that the stored value names may make. A row about a store into the object speaks of a value
-    // that is neither a string, a number nor a boolean.
+    // Of whatever is stored or defined under any key the object keeps a string, which code that the stored value names may make.
     bool keepsStringsOfStoredValues { false };
 };
 
@@ -989,8 +983,7 @@ struct BuiltinForms {
     bool hasHostAppendFunction { false };
     BuiltinID jsonTextForm { };
     std::optional<BuiltinOperand> jsonTextArgument { };
-    // The function that does the same where the argument is an object literal that nobody else sees and that has no member but the names. It takes
-    // the other arguments in their order and then the value under each name, undefined for a name that the literal lacks.
+    // The function that does the same where the argument is an object literal that nobody else sees and that has no member but the names.
     BuiltinID literalPartsForm { };
     std::optional<BuiltinOperand> literalPartsArgument { };
     std::array<BuiltinName, maxLiteralPartNames> literalPartNames { };
@@ -1081,8 +1074,7 @@ struct BuiltinHostRead {
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-// Texts one behind the other, each with a zero behind it, and the place where each starts. There is no address in it. A list of literals holds one for each text,
-// and where the loader chooses the place of the executable it has to put every one of them right before the program starts.
+// Texts one behind the other, each with a zero behind it, and the place where each starts.
 template<size_t numberOfTexts, size_t numberOfCharacters>
 struct BuiltinTextStorage {
     constexpr size_t size() const { return numberOfTexts; }
@@ -1282,8 +1274,7 @@ public:
     BuiltinID namespaceOf(RuntimeModuleID id) const { return at(id).namespaceObject; }
     bool existsOn(BuiltinID id, BuiltinPlatform platform) const { return at(id).platforms.contains(platform); }
     bool isLocationOfLockedObject(BuiltinID) const;
-    // A function of the engine whose object in the realm is a host function. All of them are born with one Structure, which keeps its prototype and takes no call, apply, bind or Symbol.hasInstance
-    // of its own (RuntimeHooks::structureOfHostFunctions). So `hasOwnProperty.call` passes the function and finds the member of Function.prototype, whoever has had the function in hand.
+    // A function of the engine whose object in the realm is a host function.
     JS_EXPORT_PRIVATE bool isHostFunctionOfEngine(BuiltinID) const;
     // Such a function, or one that the library writes in JavaScript: its closure takes none of the four names and no other prototype either (Closure::refusesOwnProperty, Closure::setPrototype).
     JS_EXPORT_PRIVATE bool isFunctionOfEngine(BuiltinID) const;

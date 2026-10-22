@@ -45,7 +45,6 @@ void ClassEmitter::generateNewClass(const ValueContext& value)
 }
 
 // The run time enters the prototype object of a class that is evaluated once in ClassWords::classPrototypes: at the definition of a class, at the first construction by a constructor function.
-// No code can change the property of a class. That of a constructor function is proven to stay, or the operation stands behind the test that nobody has stored to it since the class was defined.
 static bool hasOnePrototypeObject(const Program& program, const Layout& classLayout)
 {
     return isEvaluatedOnce(program, classLayout);

@@ -105,7 +105,6 @@ void emitGeneratorStep(IterationExpansion& expansion, ArmState& state, const Ste
 }
 
 // The step suspends the function by itself where it has to wait: nothing is awaited behind it.
-// It answers with the value and whether the iterator is done, or with an iterator result that is still to be read by the protocol.
 void finishAsyncIteratorStep(IterationExpansion& expansion, ValueID step, const StepRequest& request)
 {
     IRBuilder& builder = expansion.builder();

@@ -610,8 +610,7 @@ struct ShapeSetsOfTables {
 
 } // anonymous namespace
 
-// The sets of shapes that stubs and C++ read are the last thing in the program tables. They become the start of the pool of constants, where compiled code reads the same sets,
-// and the image writer lets the range of the table point there.
+// The sets of shapes that stubs and C++ read are the last thing in the program tables.
 static ShapeSetsOfTables takeShapeSets(Vector<uint8_t>& programTables, const Typed::ShapeTable& shapes)
 {
     RELEASE_ASSERT(programTables.size() >= sizeof(ProgramTables));

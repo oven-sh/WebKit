@@ -28,15 +28,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // A loop that reads a variable of an enclosing function or of a module in every turn reads what it stored or read in the turn before.
-// Its reads take that value instead, which goes around the loop as a parameter of the header: the first is read ahead of the loop, and a store defines the next.
-// The stores stay at first, so the variable holds its value wherever other code looks at it: behind the loop, in a handler, in a callee.
-//
-// Nothing else may write the variable on the paths that carry it. SeparateUnlikelyLoopPaths names the paths that are about to leave the loop for its copy:
-// they read the variable as before, and where one of them comes back to the others the variable is read again. That pass then tests what goes around the loop
-// where it is made. A loop that it leaves alone, because no path has to leave, gets the tests that a turn begins with copied ahead of it: what the loop
-// itself passes on has the tested type, so only what enters is tested, and a failing test leaves for the same place as before.
-//
-// When the loop has its final form and types, and nothing in it can look at the variable or throw, the stores wait for the edges that leave the loop.
 
 namespace {
 
@@ -305,7 +296,6 @@ void VariableCarrier::findVariables(const NaturalLoop& loop, const BitVector* le
 }
 
 // The closure of a declared function, for one: nobody stores to it while this function runs, or it is stored to once, ahead of every read.
-// In the second case the read ahead of the loop must not come to stand ahead of that store: nothing that may write runs in a turn before the variable is read.
 bool VariableCarrier::holdsOneValueForEveryRead(const CarriedVariable& variable)
 {
     const Value& read = m_function.at(variable.reads.first());
@@ -695,8 +685,7 @@ bool VariableCarrier::delayStores(std::span<const VariableOfLoop> variables)
     return changed;
 }
 
-// At the head of a turn the parameter is what the variable should hold, behind a store it is what was stored. An edge that leaves stores whichever of them reaches it.
-// A store may wait across an operation that throws for lack of memory alone, as reading a character does while it resolves a rope: by the language it never throws.
+// At the head of a turn the parameter is what the variable should hold, behind a store it is what was stored.
 bool VariableCarrier::delayStoresIn(const NaturalLoop& loop, std::span<const VariableOfLoop> variables)
 {
     struct DelayedVariable {

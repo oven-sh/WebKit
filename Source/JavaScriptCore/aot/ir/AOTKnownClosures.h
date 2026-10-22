@@ -41,8 +41,7 @@ struct ClosureHolder {
     friend auto operator<=>(const ClosureHolder&, const ClosureHolder&) = default;
 };
 
-// The functions whose closures a variable, a capture, an environment field, a method, an accessor or a member of a literal is filled with, read off the
-// operations that fill them. Nothing here follows a value from one function into another: a member that is filled with a parameter is not listed.
+// The functions whose closures a variable, a capture, an environment field, a method, an accessor or a member of a literal is filled with, read off the operations that fill them.
 class KnownClosures {
 public:
     KnownClosures(const Program&, BuildContext&);

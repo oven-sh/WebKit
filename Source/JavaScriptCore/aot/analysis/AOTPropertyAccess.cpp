@@ -369,8 +369,7 @@ static void resetToByName(PropertyAccessPlan& plan)
     plan.conditions.clear();
 }
 
-// `o.read === read`, `typeof o.then`, `o.run.bind(o)`: the value is the closure that the closure table holds for the method. A class that is evaluated twice has two closures of each
-// method, and the table has room for one. A private method is no property, and nothing guards it.
+// `o.read === read`, `typeof o.then`, `o.run.bind(o)`: the value is the closure that the closure table holds for the method.
 static bool mayBeReadAsValue(const Program& program, const PropertyAccessQuery& query, const MemberAnswer& answer)
 {
     return !query.isPrivate && answer.holder && isEvaluatedOnce(program, program.at(answer.holder));
@@ -468,8 +467,7 @@ static MemberPartition partitionClassObject(const PropertyAccessContext& context
     return partition;
 }
 
-// One store into several layouts asks its value to be what the slot of each of them holds. A slot that has held one value, or nothing but undefined and null, in all that flow saw
-// leaves that and no more of a value that may be many things: a test that fails whichever object arrives. Those layouts get an arm of their own, and the others their store.
+// One store into several layouts asks its value to be what the slot of each of them holds.
 static LayoutList findSlotsThatHoldOneValue(const Program& program, const LayoutList& layouts, PropertyKeyID key)
 {
     LayoutList found;
@@ -576,7 +574,6 @@ static void setReceiverTest(const PropertyAccessQuery& query, PropertyAccessPlan
 static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberPartition& partition)
 {
     // Whoever names a member expects to find it: the receivers that lack it come last, however many they are.
-    // A library handles the objects that it makes itself: among arms of one size the one with a layout of the module in which the access is written comes first.
     PropertyAccessPlan heaviest;
     std::tuple<bool, size_t, bool> weightOfHeaviest { false, 0, false };
     for (const MemberArm& arm : partition.arms) {

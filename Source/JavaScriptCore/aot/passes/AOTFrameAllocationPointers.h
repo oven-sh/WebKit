@@ -46,13 +46,10 @@ inline constexpr OperandUses usesLeakingContents {
     OperandUse::AppliesToContents,
 };
 
-// Code that the compiler emits in place of a built-in may look at a cell of a frame. It enters a closure through a stub that finds the VM in the header of the block the callee lies in,
-// so it can call none.
+// Code that the compiler emits in place of a built-in may look at a cell of a frame.
 inline constexpr OperandUses inlineUsesOfFrameCells { OperandUse::Inspects };
 
-// Native code gets no cell of a frame, not even to look at: a weak or strong handle, a barrier and cell->vm() all ask the block the cell lies in, and nothing in the table says which
-// function makes one for the time of the call. removeEventListener() does for its listener.
-// The function object of a built-in is native also where compiled code implements the built-in.
+// Native code gets no cell of a frame, not even to look at.
 constexpr bool mayLookAtFrameCells(EffectRule rule) { return rule == EffectRule::Inline; }
 
 inline constexpr OperandUses usesChangingFrameCells {
@@ -108,9 +105,7 @@ private:
 bool hasFrameStorage(const Value&);
 bool isFrameCell(const Function&, ValueID);
 
-// A closure that is lent lies in the frame and is an argument of one call by value, which nobody knows the callees of. The stub of the call looks at the closure word of the callee it was given:
-// where that does not say that the argument is borrowed (ClosureWord::borrowsArgumentShift), the callee gets a copy on the heap. Nothing else uses the closure, so nobody can tell the copy from it.
-// What the closure captures goes where the copy goes.
+// A closure that is lent lies in the frame and is an argument of one call by value, which nobody knows the callees of.
 bool mayLendArgument(const Value& call, uint32_t operandIndex);
 bool isLentTo(const Function&, const Value& user, uint32_t operandIndex);
 // One bit for each argument that is lent.
@@ -126,8 +121,7 @@ bool canLieInFrame(const Program&, const BuildContext&, const Value& allocation)
 Vector<ValueID, 8> findArraysThatMayLieInFrame(const Program&, const BuildContext&, const Function&);
 // The result is the operand.
 bool givesSameArray(Opcode, uint32_t operandIndex);
-// Compiled code and stubs look at the header, the length and the elements. Where they give up on an array in a frame (a key that is no index, a stack that is full, a target without room), the operation in C++ that they call
-// does no more than that either, or goes on with a copy on the heap: mayBeGivenFrameArray(Entry) in AOTFrameArrays.h lists them. No code of the program runs with the array, and nothing keeps the pointer.
+// Compiled code and stubs look at the header, the length and the elements.
 bool readsArrayWhereItLies(const Program&, const Function&, const Value& user, uint32_t operandIndex);
 bool mayHandFrameArrayTo(const Program&, const FlowResults*, const Value& call, uint32_t operandIndex);
 // Every use that an array in a frame may have, in the function that makes it and in those it is handed to. The planner asks before it puts one there, the verifier behind every pass, and a validating build at run time, at every other use.

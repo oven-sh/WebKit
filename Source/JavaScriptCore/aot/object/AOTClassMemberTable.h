@@ -12,10 +12,7 @@
 
 namespace JSC { namespace AOT {
 
-// What the prototype object of a class has while it is as the class declares it. A class has a row in the field table, as a shape has: entries[classMemberRows[rank of the class] + name].
-// The row is complete: it has an entry for every declared member and for `constructor`, so a name without an entry is absent from the prototype object.
-// Only who comes from a class gets to such an entry, so the bits of the form have a meaning of their own there.
-// The number that the entry holds has its low bits in the operand and the others beside the entry, in the place of the index of a field's record.
+// What the prototype object of a class has while it is as the class declares it.
 struct ClassRowEntry {
     enum class Form : uint8_t {
         // A method, which is the value of a data property. The number is its cell in the closure table.

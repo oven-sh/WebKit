@@ -400,8 +400,7 @@ static NEVER_INLINE JSObject* buildObject(Builder& builder, uint32_t first)
     return object;
 }
 
-// What NewDictionary makes, with its properties. The names differ from each other, and none is an index.
-// No other literal of the program has these names in this order, or they are more than a line of Structures may have: the Structure is the object's own.
+// What NewDictionary makes, with its properties.
 static NEVER_INLINE JSObject* buildOrdinaryObject(Builder& builder, uint32_t first)
 {
     VM& vm = builder.vm;

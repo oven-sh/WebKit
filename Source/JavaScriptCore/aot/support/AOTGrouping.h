@@ -13,8 +13,7 @@
 
 namespace JSC { namespace AOT {
 
-// A counting sort. The entries of group g are entries[firstEntry[g]] up to entries[firstEntry[g + 1]], in the order they were visited in.
-// forEachEntry runs twice. It calls its argument with (group, entry), for the same entries in the same order both times.
+// A counting sort.
 template<typename T, typename ForEachEntry>
 void groupByIndex(size_t numberOfGroups, Vector<uint32_t>& firstEntry, Vector<T>& entries, NOESCAPE const ForEachEntry& forEachEntry)
 {

@@ -62,7 +62,6 @@ enum class BuiltinDirectValue : uint8_t {
     // EncodedJSValue of the receiver.
     Receiver,
     // The others take the arguments of the call, in order.
-    // EncodedJSValue. Of a cell that is its address, so a function that declares a JSString* or a JSObject* takes it this way too.
     Value,
     // EncodedJSValue, or the empty value where the call has no such argument.
     ValueOrEmpty,
@@ -78,7 +77,6 @@ enum class BuiltinDirectValue : uint8_t {
 };
 
 // The native code behind one overload: EncodedJSValue (parameters ..) in the calling convention of the operations of the run time.
-// It takes the operands for what the overload declares, without a test, and answers the empty value where it has thrown.
 struct BuiltinDirectFunctionBinding {
     static constexpr unsigned maxParameterCount = 6;
 

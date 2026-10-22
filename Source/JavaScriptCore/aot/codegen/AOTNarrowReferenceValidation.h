@@ -62,8 +62,7 @@ struct NarrowReferenceOrigins {
 JS_EXPORT_PRIVATE void findNarrowReferenceViolations(B3::Procedure&, const HeapsOfCollection&, const NarrowReferenceOrigins&, NarrowReferenceFindings&);
 JS_EXPORT_PRIVATE B3::ClientPhase validateNarrowReferences(NarrowReferenceFindings&, NarrowReferenceOrigins&&);
 
-// Puts a pointer beside every narrow reference that would be found without one, and returns how many. It runs behind the optimizations: they share and
-// hoist loads of references over calls that the operations of the program did not read them over, and sink the sum that decodes one below a call.
+// Puts a pointer beside every narrow reference that would be found without one, and returns how many.
 JS_EXPORT_PRIVATE uint32_t insertNarrowReferenceGuards(B3::Procedure&, const HeapsOfCollection&, const NarrowReferenceOrigins&);
 JS_EXPORT_PRIVATE B3::ClientPhase guardNarrowReferences(uint32_t& numberOfGuards, NarrowReferenceOrigins&&);
 

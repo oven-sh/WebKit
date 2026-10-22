@@ -47,14 +47,11 @@ struct CoroutineWords {
     uint32_t stepStatus;
     uint8_t savedFramesAreListed;
     // Set by whoever enters the adapter as the last thing that a job does, and cleared by the adapter: only then does it go on with the jobs that follow.
-    // A body that may continue because its consumer waits on the stack for the step is not such an entry.
     uint8_t nextEntryEndsJob;
     // Whoever entered the adapter runs a job under an AsyncContextSwapScope that was made while async contexts were tracked, so it puts back what was there in front of its job.
-    // Only then may the adapter put the contexts of the jobs that follow in place. Each entry keeps the word of the entry around it.
     uint8_t asyncContextIsPutBack;
     uint8_t unused[1];
-    // The SavedFrame entered last: resumeSavedAsyncFunction stores the first one, the adapter each one that it goes on with. An exception that leaves the adapter is that frame's.
-    // Null while the function of a job is what the adapter has entered last.
+    // The SavedFrame entered last: resumeSavedAsyncFunction stores the first one, the adapter each one that it goes on with.
     JSCell* enteredFrame;
     JSCell* enteredAsyncGenerator;
     // The promise that waits for what that function returns or throws, if it is the handler of a reaction. Null once it is settled.

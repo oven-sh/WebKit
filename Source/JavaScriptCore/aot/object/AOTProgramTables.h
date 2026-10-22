@@ -61,9 +61,7 @@ struct RemovedFieldData {
 };
 static_assert(sizeof(RemovedFieldData) == 8 && isImageRecord<RemovedFieldData>);
 
-// Only a validating image has any, in ascending order: for each layout whose list is complete, the names that its objects get beside their fields,
-// and in a table of its own for each class whose list is complete, the names that its prototype object ever has beside `constructor`.
-// In every image, in a third table: for each class, the names that compiled code takes to be absent from its prototype object, because an object below it keeps a field of the name. The run time lets nobody add them.
+// Only a validating image has any, in ascending order.
 struct AddedNameData {
     static constexpr uint32_t listIsComplete = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t getsSharedNames = listIsComplete - 1;
@@ -76,8 +74,7 @@ struct AddedNameData {
 };
 static_assert(sizeof(AddedNameData) == 8 && isImageRecord<AddedNameData>);
 
-// Sorted. One row per field of each record layout that the JSON parser may allocate.
-// And one per required member of each kind of object that a compiled validator accepts: it takes plain data, so what has all of those members stays an ordinary object.
+// Sorted.
 struct ParsedRecordFieldData {
     static constexpr uint32_t isMemberForValidator = 1u << 31;
     static constexpr unsigned requiredMembersShift = 20;
@@ -294,9 +291,7 @@ struct ProgramTables {
         size_t firstListed = numberOfFunctions() - sources.size();
         return function < firstListed ? function : sources[function - firstListed];
     }
-    // A form of a function has the name of its source. Most functions in front of the first form have no name: functionNameGroups() has two words for every 32 of them
-    // (which have a name, how many in front of them have one), and functionNames() the names of those that have one.
-    // The sources behind them are functions that the compiler made, whole stretches of which share a name.
+    // A form of a function has the name of its source.
     static constexpr uint32_t numberOfFunctionNameGroupWords(size_t numberOfFunctions) { return static_cast<uint32_t>((numberOfFunctions + 31) / 32 * 2); }
     uint32_t nameOfFunction(uint32_t function) const
     {

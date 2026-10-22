@@ -126,7 +126,6 @@ void FunctionRewriter::removeCapturedOperands(Value& supplier)
 {
     std::span<const PlannedCapture> planned = m_plan.capturesOf(supplier.function());
     // A closure that is made on demand lists no captures: the object that holds it keeps what it captures, in itself or in a hidden field.
-    // The run time hands that to the function, so the plan leaves the captures of the function and the environment in the hidden field as they are.
     if (supplier.opcode == Opcode::NewClosure && supplier.isMadeOnDemand()) {
         RELEASE_ASSERT(planned.empty());
         return;

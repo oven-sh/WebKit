@@ -80,12 +80,10 @@ public:
     // Allocates no cell and runs no JavaScript.
     JS_EXPORT_PRIVATE void record(JSValue receiver, uint32_t site);
 
-    // An access by name whose stub finds its answer calls nothing. The first operation that is called behind an arrival is where the stub of that site left for the run time,
-    // or, behind an access that called nothing, an operation of other code: a reader keeps the operations that an access by name can call.
+    // An access by name whose stub finds its answer calls nothing.
     JS_EXPORT_PRIVATE void didCallOperation(Entry);
 
-    // "<count> TAB arrival:<site> TAB <what arrived>", by site and then with the largest count first, and behind them "<count> TAB left:<site> TAB <operation>" in the same order.
-    // src/aot/report/tools/arrivals.ts in Bun reads the lines.
+    // "<count> TAB arrival:<site> TAB <what arrived>", by site and then with the largest count first, and behind them "<count> TAB left:<site> TAB <operation>" in the same order. src/aot/report/tools/arrivals.ts in Bun reads the lines.
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
 private:

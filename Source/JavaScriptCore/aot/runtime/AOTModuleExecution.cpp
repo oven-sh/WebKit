@@ -47,7 +47,6 @@ JSValue Modules::callBody(ModuleID module)
     ClosureTable& closures = m_state.objects->closures;
     SetForScope isAskingHost(m_isAskingHost, false);
     // Nothing in a file of the program names the function that is its body, so the body needs no closure of its own: the entry takes the number of the function.
-    // A body that awaits is suspended together with its callee.
     if ((moduleData.kind == ModuleKind::SourceText && !moduleData.hasTopLevelAwait()) || moduleData.kind == ModuleKind::CommonJs) {
         EncodedJSValue function = JSValue::encode(jsNumber(static_cast<int32_t>(body->index())));
         CallData entry = CallData::forCompiledCode(moduleBodyEntrypoint().taggedPtr(), realm);
@@ -153,8 +152,7 @@ JSValue Modules::execute(ModuleID module)
     case ModuleKind::Data:
         RELEASE_ASSERT_NOT_REACHED();
     case ModuleKind::RuntimeSource: {
-        // The stack is asked for once, for the module and all that its body requires. Asked again of each of those, there is a depth of the stack at which the first starts and the second is refused:
-        // the body of the first throws, and the module has failed for good because somebody else had used up the stack.
+        // The stack is asked for once, for the module and all that its body requires.
         if (!m_isStartingRuntimeModule && !canStartRuntimeModule(vm)) [[unlikely]] {
             throwStackOverflowError(realm, scope);
             return { };

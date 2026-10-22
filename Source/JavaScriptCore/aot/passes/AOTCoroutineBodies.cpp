@@ -278,8 +278,7 @@ void BodyBuilder::markRareModeArms()
     m_analyses.invalidate(FunctionAnalysis::Frequencies);
 }
 
-// What the merged await rejects with arrives at the yield as a value that is sent in to be thrown. What is known of the values that `next`, `throw` and `return` send in stands in front of the switch on the mode.
-// It holds in the arms that do not throw, so it goes there. The arm that throws takes the value as it came.
+// What the merged await rejects with arrives at the yield as a value that is sent in to be thrown.
 void BodyBuilder::moveProofsOfSentValueBehindMode(BlockID block, ValueID yield)
 {
     const Terminator& terminator = m_body.at(block).terminator;

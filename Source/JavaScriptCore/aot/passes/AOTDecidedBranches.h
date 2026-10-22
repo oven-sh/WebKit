@@ -77,8 +77,7 @@ private:
     mutable bool m_gaveUpOnLongWays { false };
 };
 
-// The tests of values that were read from slots. Each layout says what its slot holds, so an edge of such a test rules out the layouts whose slot
-// holds nothing that passes along it. An object keeps its layout, whatever is stored into the slot afterwards.
+// The tests of values that were read from slots.
 class SlotValueTests {
 public:
     SlotValueTests(FunctionAnalyses&, TypeArena&, std::span<const BlockID> blocksThatBranchOnTypeTest);

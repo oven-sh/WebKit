@@ -188,7 +188,6 @@ void StringBuiltinEmitter::generateHasAt(const InlineCall& call, LiteralEnd end)
 }
 
 // There is room for other at that place in string.
-// Two strings that are no ropes and have characters of 8 bits, the sought one of at most two words: its first and its last bytes are compared, which may overlap.
 Condition StringBuiltinEmitter::hasCharactersAt(const InlineCall& call, CellPointer string, CellPointer other, Integer at)
 {
     constexpr unsigned maxLengthComparedInLine = 2 * sizeof(uint64_t);

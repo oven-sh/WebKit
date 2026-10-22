@@ -23,9 +23,7 @@ class ValueFlowSolver;
 class ValueFlowUniverse;
 struct ValueFlowNodeKey;
 
-// A set as it stands in this round; a later round may find more in it. So it answers only what stays true when it grows: its members one by one, whether it holds a member, whether it shares one
-// with another set. It cannot be asked whether it is empty, how many members it has, what it lacks or whether it equals another set, and it has no complement.
-// A rule has no `else` after a question to a climbing set and nothing after a loop over its members that rests on what the loop did not find.
+// A set as it stands in this round; a later round may find more in it.
 class ClimbingSet {
 public:
     ClimbingSet() = default;
@@ -59,18 +57,14 @@ private:
     std::span<const ValueSetID> m_setOfNode;
 };
 
-// Where a call has its callee from. A member that was found under a name is, of the built-ins that have escaped, one that the table has under that name.
-// The code behind an entry of the table is entered with operands nobody knows, and what it calls of them the entry says where it is applied, with the operands of that call.
-// Any other value nobody knows may be whatever has escaped: see mayCallWhateverHasEscaped().
+// Where a call has its callee from.
 enum class ValueFlowCalleeOrigin : uint8_t {
     Value,
     MemberFoundUnderName,
     OperandOfAppliedEntry,
 };
 
-// All that a rule may touch. A rule is a pure function of the frozen values of the round into the log of its thread. It only adds.
-// The nodes that it asks for are the one thing that it shares with the rules beside it: whoever asks first makes them, and they hold nothing until the turn is over, so nobody can tell who it was.
-// Whatever it reads of the moving state it reads here, and that read is what makes its statement due again once the answer has moved.
+// All that a rule may touch.
 class ValueFlowInstancedFunctions;
 struct ValueFlowInstancedFunction;
 
@@ -102,8 +96,7 @@ public:
     ValueFlowObjectID markerOfKey() const;
     ValueFlowBehaviorID behaviorOfKey() const;
 
-    // The moving state, in the normal form. A set that holds a placeholder comes without the objects that the placeholder covers so far: beside the unknown object those that have escaped,
-    // beside the untracked object those that the analysis has stopped following. Primitives and keys are never left out for a placeholder. The nodes of the escaped and of the lost objects list them all.
+    // The moving state, in the normal form.
     ClimbingSet valueOf(ValueFlowNodeID);
     // Whether valueOf() would answer something. The statement is due again when the node goes from nothing to something, and whatever arrives later passes it by. No node holds nothing.
     bool holdsAnything(ValueFlowNodeID);
@@ -116,20 +109,15 @@ public:
     ClimbingSet valueWithin(ClimbingSet within, ValueFlowNodeID);
     // Whether valueWithin() would answer something. Once it does it does for good: the statement is due again when the first member of the set arrives at the node, and whatever arrives later passes it by.
     bool holdsAnyOf(ClimbingSet within, ValueFlowNodeID);
-    // The members of the set that the node does not hold yet. Only for a rule that is about to add some of them to that very node and does nothing else with them:
-    // what is left out is there already, so nothing is lost when a later run is shown less.
+    // The members of the set that the node does not hold yet.
     ClimbingSet membersMissingFrom(ValueFlowNodeID, ClimbingSet);
-    // What valueOf() answers for the node, without what it answered when the last run of this statement asked here. What a run adds on behalf of that stays added, and what it has asked for stays asked for,
-    // so a rule that goes over the members one by one goes over each of them once. A rule that keys a node by what it reads has to read all of it: that is valueOf().
-    // A statement that asks here asks in each of its runs: a run that does not lets go of what the runs before it have asked for.
+    // What valueOf() answers for the node, without what it answered when the last run of this statement asked here.
     ClimbingSet newSince(ValueFlowNodeID);
     void addUnlessHeld(ValueFlowNodeID, ValueFlowObjectID);
-    // The members of the set that no run on this thread has been handed here before, under the same number. Only for what follows from the member alone, belongs to no statement and asks for no made node,
-    // like a use of a built-in: the merge unites it, so whoever says it again says nothing, and it does not matter which thread has said it.
+    // The members of the set that no run on this thread has been handed here before, under the same number.
     static constexpr unsigned numberOfSetsRememberedByThread = 3;
     ClimbingSet membersNewToThread(ClimbingSet, unsigned number);
-    // Whether a run in an earlier round has added exactly this set to the node with add(). The same for every run of a round, on whichever thread.
-    // Only for work that is the same whoever does it: whoever finds it done leaves it to those who did it, and those go on doing it in each of their runs.
+    // Whether a run in an earlier round has added exactly this set to the node with add().
     bool wasAddedInEarlierRound(ValueFlowNodeID, ClimbingSet) const;
     // A statement of a body runs for good. One that a rule has made goes to rest when nobody asks for its node any more, and lets go of what it has asked for.
     bool isStatementOfBody() const;
@@ -151,12 +139,9 @@ public:
     // One node for each (set, name). What is written through a set reaches what is read under the same name through every set that shares an object with it.
     ValueFlowNodeID read(ClimbingSet objects, ValueFlowName);
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
-    // Whether each of the objects is still in the hands of the program alone, followed, and nothing but its properties: no accessor, no deletion, no property of another form, no copy, the prototype it was created with.
-    // written() and mark() say so for every rule. While it holds, what lies under a name in one of the objects is what was written there under the name, or under a key nobody knows: see writtenUnderUnknownKey().
-    // The statement is due again once it holds no longer; it never holds again. False where the solve has no bodies.
+    // Whether each of the objects is still in the hands of the program alone, followed, and nothing but its properties.
     bool isPlainSoFar(ClimbingSet objects);
-    // False while read(objects, a name of the kind) could only answer a node that holds nothing. The statement is due again when that changes.
-    // Only for a rule that is a function of what holds now: one that is shown what is new in a node has to ask for the node.
+    // False while read(objects, a name of the kind) could only answer a node that holds nothing.
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
     // In the check of a solve with Rounds::Due: a rule that has a shorter way for a common case leaves it alone.
     bool usesGeneralRulesOnly() const;
@@ -170,8 +155,7 @@ public:
     ValueFlowCallGroup group(ClimbingSet callees, ValueFlowCallKind, ValueFlowCalleeOrigin = ValueFlowCalleeOrigin::Value);
     // With a statement of kind Behavior.
     ValueFlowNodeID hub(ValueFlowBehaviorID);
-    // One node for each (node, mask, kind): it holds what the mask lets through. A mask that a rule asks for is plain: it leaves out what it does not list, a placeholder too.
-    // The other kinds are for the mask of an operand, where a rule needs what the operand holds as a node.
+    // One node for each (node, mask, kind): it holds what the mask lets through.
     ValueFlowNodeID masked(ValueFlowNodeID, ValueSetID mask, ValueFlowMaskKind = ValueFlowMaskKind::Plain);
 
     // A node that holds the set for ever: what stands where an operand has to be a node.
@@ -182,8 +166,7 @@ public:
     // Holds the markers of the instances that the function has so far.
     ValueFlowNodeID markersOf(FunctionID);
     void makeInstanceOfOtherCalls(FunctionID);
-    // What the calls of one instance pass behind the positional parameters, by the index at which it lies in the array of the rest parameter. The index numberOfGroupedArguments is for what may lie at any index.
-    // Of the instance that is entered: none for a function without instances. Of the instance that runs: none where none runs.
+    // What the calls of one instance pass behind the positional parameters, by the index at which it lies in the array of the rest parameter.
     ValueFlowNodeID restArgumentEntered(FunctionID, unsigned index);
     ValueFlowNodeID restArgumentOfRun(FunctionID, unsigned index);
     // While one of these lives, the statement runs for one instance of its function: wherever the rule names a node of the body, it gets the node of the instance.
@@ -197,7 +180,6 @@ public:
         ValueFlowRuleContext& m_context;
     };
     // While one of these lives, whatever the rule hands to a node of an instanced function goes to the instance with the marker, and a group that it asks for is the group of that instance.
-    // Without one it goes to the instance of the other calls.
     class InstanceEntered {
         WTF_MAKE_NONCOPYABLE(InstanceEntered);
     public:
@@ -232,8 +214,7 @@ public:
     // The statement has met more members than mostMembersToldApart() and takes those past the limit together. The build hears of each such statement once.
     void noteMembersNotToldApart();
 
-    // unknownValue() says here why the rule brings the unknown object into being. Every set with the unknown object in it that the run adds or holds from here on has that source, until the run names another one.
-    // A set that the run adds before it has named one holds an unknown object that the run has read somewhere, and has no source of its own. So a rule hands on what it has read by an edge wherever it can.
+    // unknownValue() says here why the rule brings the unknown object into being.
     void noteUnknownSource(ValueFlowUnknownSource source) { m_unknownSource = source; }
     bool leavesOut(ValueFlowUnknownSource) const;
     bool leavesOutSomeUnknownSource() const;

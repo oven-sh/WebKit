@@ -275,7 +275,6 @@ static void emitObjectGetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpLis
 }
 
 // Only an object or a BigInt is asked for toJSON, and `undefined` has no text.
-// A call that names the built-in passes `undefined` for the replacer it leaves out.
 static void emitJSONStringify(StubAssembler& jit, unsigned count, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr GPRReg value = argumentGPR(0);
@@ -383,8 +382,6 @@ static void emitStringSlice(StubAssembler& jit, unsigned count, GPRReg scratch, 
 }
 
 // The element is found by its bits, a string also by its text.
-// Whatever needs more (a number that may be held in two forms, `undefined` beside holes, a rope, a long text) starts over in the host function,
-// and so does a long array: the host function compares several elements at a time.
 static void emitArraySearch(StubAssembler& jit, BoxedCallForm form, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr GPRReg searched = argumentGPR(0);

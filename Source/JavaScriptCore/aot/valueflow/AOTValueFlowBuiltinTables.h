@@ -24,8 +24,7 @@ class ValueFlowUniverse;
 class ValueSetMaker;
 class ValueSets;
 
-// The code of the program that native code runs on every object that reaches an operand, whichever call the object came through. All operands with the same behavior share one node, the hub
-// of the behavior, and one statement.
+// The code of the program that native code runs on every object that reaches an operand, whichever call the object came through.
 struct ValueFlowBehavior {
     Protocols protocols;
     // The protocols also run on whatever an object in the hub holds and on whatever they hand out.
@@ -74,8 +73,7 @@ public:
 
     // What the entry holds comes from code of the library that is in the program: a row of the entry itself names the function, without a condition, and says that the function or what a call of it answers is the value.
     bool holdsValueFromLibrary(BuiltinID entry) const { return m_entriesHoldingValueFromLibrary.get(entry.index()); }
-    // The functions of the library that are such values and that the table names: a row of the entry says that an export of a module is the value, the body of the module exports one function under that name,
-    // and records describe every overload of the entry. One body runs for all callers, so what a call does with its operands is applied where the call is, by the overloads, as for a native built-in.
+    // The functions of the library that are such values and that the table names.
     ValueSetID closuresThatEntriesDescribe() const { return m_closuresThatEntriesDescribe; }
     // None for any other object.
     BuiltinID entryDescribing(ValueFlowObjectID closure) const;

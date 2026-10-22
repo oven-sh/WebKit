@@ -612,8 +612,7 @@ void FlowScopeOwnerAnalysis::refineEntriesByCalls()
         entry.value = neverScopeEntry;
         m_queue.append(entry.key);
     }
-    // First come, first served, and nobody waits twice. A helper that a thousand functions call and that calls a thousand (the wrapper of a bundler's modules) looks at all its callers each time it is
-    // looked at: where the last to come was served first, it was looked at again behind each of its callees, each time that its own entry moved: the cube of the number of modules.
+    // First come, first served, and nobody waits twice.
     std::ranges::sort(m_queue, std::greater { });
     HashSet<FunctionID> waiting;
     for (FunctionID function : m_queue)

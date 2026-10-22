@@ -353,8 +353,7 @@ void ObjectInterpreter::bindParameter(ValueID parameter, const IncomingBinding& 
         return;
     if (isJoinReboundOnEdge(*this, m_sinking, outgoing, alias.object))
         m_sinking.abandon(alias.object);
-    // A parameter stands for the cell as it is built. Where a test that ran before the object was built made the parameter
-    // narrower than that, the uses of the parameter would get a value outside its type.
+    // A parameter stands for the cell as it is built.
     TypeID parameterType = function().at(parameter).type;
     if (alias.kind == AliasKind::Object && !fitsType(alias.object, parameterType))
         m_sinking.abandon(alias.object);

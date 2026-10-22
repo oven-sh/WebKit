@@ -32,9 +32,6 @@ public:
     static constexpr unsigned firstNameSlot = 3;
 
     // Where a private name of this evaluation of the class lies in an object that is no compiled object: an instance of a class with a built-in parent, or an object that a constructor returned.
-    // Such an object keeps the name as a property, so its Structure says where. A record is written once and never changed, and it keeps its Structure alive: no other Structure ever gets that number.
-    // The records lie in a JSCellButterfly of their own: for each field of the layout recordsPerField records of slotsPerRecord values. It is made where a name is first defined on such an object:
-    // a definition may allocate, a read may not.
     enum KnownStructureSlot : unsigned {
         // The number is written last. Compiled code compares it with the number in the header of the object.
         StructureNumber,

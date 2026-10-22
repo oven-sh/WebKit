@@ -31,9 +31,6 @@ template<> struct InlineCellVisit<CellVisitKind::CompiledObject> {
 
 private:
     // Nothing but a reference keeps an inner cell in use, but its bytes last as long as the outer cell, and a word of the stack may name it long after the last reference is gone.
-    // The scan of the stack takes whatever has a header for a root. So an inner cell that this object does not name is noted, and loses its header if the marking ends without a mark for it:
-    // before anything that it refers to is freed.
-    // A reference into the cell of the object itself is a reference to an inner cell. Its mark is found without a division, the outer cell is known to be marked, and the visit takes place at once, not by way of the stack.
     ALWAYS_INLINE static void visitOuterObject(FastMarkAppender& appender, AOT::Object* object, const AOT::LayoutData& layout)
     {
         if (!layout.referencesOffset)

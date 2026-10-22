@@ -364,9 +364,6 @@ static void checkWhatGenericCodeSees(LoadedProgram& program, Event event, JSObje
     }
 }
 
-// The analysis proved that nothing takes a field without a form for "absent" out of its slot, so no event is tried on one. Nor on a field that keeps the state of its birth:
-// compiled code reads it without a test, and the run time ends the process where it would leave its slot (validation/field-that-keeps-the-state-of-its-birth-is-taken-out-of-it.ir).
-// Answers how many fields left their slots.
 static unsigned checkEventOnEachField(LoadedProgram& program, ASCIILiteral layoutName, Event event)
 {
     unsigned numberOfFieldsThatLeft = 0;

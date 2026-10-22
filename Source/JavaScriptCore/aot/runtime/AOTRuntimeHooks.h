@@ -17,6 +17,7 @@ class JSGlobalObject;
 class JSObject;
 class JSValue;
 class LazyClassStructure;
+class PropertyName;
 class Structure;
 class VM;
 

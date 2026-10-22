@@ -94,8 +94,7 @@ public:
     static constexpr unsigned skippedAtBottomBits = 8;
     static_assert(skippedAtBottomShift == promiseLocationShift + 32 && skippedAtBottomShift + skippedAtBottomBits <= 64);
     static constexpr size_t maxNumberOfWords = UINT16_MAX;
-    // deadWordsAtBottom is the outgoing argument area of the function, which no suspension has to keep. What does not fit the field is kept.
-    // numberOfWordsInFrame counts from the stack pointer to the frame pointer. There is no site word for a frame that m_numberOfWords cannot count.
+    // deadWordsAtBottom is the outgoing argument area of the function, which no suspension has to keep.
     static std::optional<uint64_t> siteWord(uint32_t liveSlotMapOffset, uint32_t promiseLocation, uint32_t savedRegistersOrPairs, uint32_t deadWordsAtBottom = 0, size_t numberOfWordsInFrame = 0)
     {
         if (liveSlotMapOffset >> liveSlotMapOffsetBits || savedRegistersOrPairs >> savedRegisterBits || numberOfWordsInFrame > maxNumberOfWords)

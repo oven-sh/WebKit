@@ -131,7 +131,6 @@ static bool isCopyFor(const FunctionPassContext& context, const InlineFrame& cop
 }
 
 // A function that calls what it is given does something else with each function it is given: a traversal in the callback of the same traversal repeats nothing.
-// Its body is copied once for each call in the text, so a chain of copies ends.
 static bool closesCycle(const FunctionPassContext& context, const InliningSummary& summary, const Value& call)
 {
     FunctionID callee = call.function();

@@ -19,7 +19,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // What the steps between selection and the choice of representations take from one body by itself: what it names, for the call graph, and what has to be numbered.
-// A function is read as soon as no step changes it any more, by whoever has it in the cache then. A step that changes it all the same has it read again.
 class FactsOfSelectedBodies {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FactsOfSelectedBodies);
     WTF_MAKE_NONCOPYABLE(FactsOfSelectedBodies);

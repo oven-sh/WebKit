@@ -130,8 +130,7 @@ Condition ElementAccessEmitter::isPristineInstance(CellPointer cell, OptionSet<P
     return result ? result : boolean(true);
 }
 
-// An array has storage for elements from its creation: Array.prototype, which has none, passes no test for an array (AOTTypeTestPlan.cpp). So its shape is not the blank one,
-// and among the others one test of bits tells the contiguous shape, and that of int32s, from the rest: no mask and compare.
+// An array has storage for elements from its creation: Array.prototype, which has none, passes no test for an array (AOTTypeTestPlan.cpp).
 static constexpr IndexingType bitsThatOtherShapesHave(ArrayStorage kind)
 {
     switch (kind) {

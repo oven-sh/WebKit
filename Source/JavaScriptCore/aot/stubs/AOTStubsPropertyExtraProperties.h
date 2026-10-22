@@ -26,8 +26,7 @@ struct ExtraPropertyGrowthRegisters {
     GPRReg scratch;
 };
 
-// Nothing is written before a jump to any list. At growsStorage and at cannot the addition is still right, and operationAOTAddPropertyBySlot does it.
-// At growsStorage extraProperties has the cell, scratch the StructureID that the cell gets, wordIndex the word index of the property.
+// Nothing is written before a jump to any list.
 struct ExtraPropertyAdditionExits {
     JumpList isNotExtensible;
     JumpList growsStorage;

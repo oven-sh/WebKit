@@ -419,8 +419,7 @@ static bool inheritsFromObjectPrototypeAlone(const Program& program, const Layou
     return layout.kind == LayoutKind::Record;
 }
 
-// No operation of the program names the key, so no layout has a field or an accessor under it. An object that cannot gain a property and inherits
-// from Object.prototype alone, which is closed, answers with the method of Object.prototype or with nothing.
+// No operation of the program names the key, so no layout has a field or an accessor under it.
 static ProvenAccess provenReadOfUnnamedKey(const Program& program, const Type& receiver, BuiltinName name)
 {
     const BuiltinTable& table = program.builtins();

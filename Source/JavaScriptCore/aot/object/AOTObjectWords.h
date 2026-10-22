@@ -58,7 +58,6 @@ struct alignas(16) KeyOrderTransition {
 };
 
 // What a run of up to four slot keys, as a call of DidCreateField takes them, makes of the words of an object without extra properties: the transitions of its keys taken one after the other.
-// Transitions never change, so neither does this. Each run has one place: a run that finds another one there takes the place over.
 struct alignas(32) KeyOrderRun {
     static constexpr ptrdiff_t offsetOfOrderAndShapeWordsBefore() { return 0; }
     static constexpr ptrdiff_t offsetOfSlotKeys() { return 8; }
@@ -109,7 +108,6 @@ static constexpr unsigned prototypeTransitionHashShift = 6;
 static constexpr uint32_t indexOfPrototypeTransition(uint32_t before, EncodedJSValue prototype) { return ((before ^ static_cast<uint32_t>(prototype)) >> prototypeTransitionHashShift) % numberOfPrototypeTransitions; }
 
 // What the run time last answered at one place in compiled code where a store, or a run of stores, adds fields: an object with these two words has this order word once the fields are listed.
-// The two words say which keys an object lists as long as the order is numbered and the order word has no bit beside the order and the count. Nothing else is remembered.
 struct KeyOrderStepCache {
     uint32_t orderWordBefore;
     uint32_t shapeWord;
@@ -118,14 +116,12 @@ struct KeyOrderStepCache {
 };
 
 // Places share the entries by their numbers, and an entry names the place that wrote it: few places of a program run, and one entry for each would dirty a page for a handful of them.
-// The number of a place modulo the number of entries says which entry it has. The quotient, its turn, tells it from the others that have the same entry, and compiled code compares one byte.
 static constexpr unsigned logNumberOfKeyOrderStepCaches = 11;
 static constexpr uint32_t numberOfKeyOrderStepCaches = 1u << logNumberOfKeyOrderStepCaches;
 static constexpr uint32_t maxPlacesWithKeyOrderStepCache = numberOfKeyOrderStepCaches * UINT8_MAX;
 
 struct ObjectWords {
     // One word per allocation: the distance in bytes, zero or negative, from the empty record to the record of the allocation.
-    // The empty record lies right below the words and the others below it, so a word that nobody has written names the empty record.
     int32_t* distancesToAllocationSites;
     KeyOrderTransition* keyOrderTransitions;
     uint32_t keyOrderTransitionMask;
@@ -159,8 +155,7 @@ struct ClosureWords {
     LocalAllocator* slimClosureAllocators[numberOfSlimClosureAllocators];
 };
 
-// The entrypoints that allocate the object of a construction themselves, as ProgramTables::constructEntrypoints was searched for them: the word of a function's [[Call]], which is never zero,
-// and the word of that entrypoint. What belongs to a word never changes.
+// The entrypoints that allocate the object of a construction themselves, as ProgramTables::constructEntrypoints was searched for them: the word of a function's [[Call]], which is never zero, and the word of that entrypoint.
 struct ConstructWordCache {
     static constexpr unsigned numberOfEntriesLog2 = 6;
 

@@ -187,8 +187,7 @@ static uint32_t countExtraKeys(State& state, const Object& object, JSObject* ext
     // While no field lies outside its slot, no extra property has the name of a field, and nobody has to look each of them up.
     bool mayHoldFields = object.orderWord() & orderWordHasFieldOutsideSlot;
     uint32_t numberOfExtraKeys;
-    // A Structure allows quick access for enumeration until it gets a symbol or a property that is not enumerable, or loses a property. Until then each of its slots holds a property under a string.
-    // An object that a loop fills, some names fields and the rest not, asks for every field it gets: a walk each time is the square of its size.
+    // A Structure allows quick access for enumeration until it gets a symbol or a property that is not enumerable, or loses a property.
     if (Structure* extraStructure = extra->structure(); !mayHoldFields && extraStructure->isQuickPropertyAccessAllowedForEnumeration()) {
         numberOfExtraKeys = static_cast<uint32_t>(numberOfSlotsForMaxOffset(extraStructure->maxOffset(), extraStructure->inlineCapacity()));
         ASSERT(numberOfExtraKeys == countByWalk(false));

@@ -91,8 +91,7 @@ static bool hasValidationNodes(const Program& program, const Value& call)
     return expectedResult && !program.at(expectedResult).validation.isEmpty();
 }
 
-// The compiler's helpers and the functions of bun:bundle are in no realm. ResolveBuiltins makes each call of one a direct call of its function of the library.
-// A helper that is native code is entered at its C function, which needs no function object.
+// The compiler's helpers and the functions of bun:bundle are in no realm.
 static bool hasFunctionObject(const BuiltinTable& table, const Value& call)
 {
     const Builtin& entry = table.at(table.at(call.overload()).builtin);

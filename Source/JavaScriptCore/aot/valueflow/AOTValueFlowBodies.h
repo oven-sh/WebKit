@@ -91,8 +91,7 @@ struct ValueFlowSite {
     friend bool operator==(const ValueFlowSite&, const ValueFlowSite&) = default;
 };
 
-// Who is who among the members of a set. Kinds of primitives come first, in the order of the bits of PrimitiveSet, then the two placeholders, the built-ins, the objects of
-// modules and layouts, then function by function its closure, the result of a coroutine, the array of a rest parameter and its sites, then the keys.
+// Who is who among the members of a set.
 class ValueFlowUniverse {
 public:
     static constexpr ValueFlowObjectID primitive(PrimitiveSet kind) { return ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(static_cast<uint16_t>(kind)))); }
@@ -197,9 +196,7 @@ public:
     ValueSetID unknownObjectAlone() const { return m_unknownObjectAlone; }
     ValueSetID untrackedObjectAlone() const { return m_untrackedObjectAlone; }
     ValueSetID placeholdersAlone() const { return m_placeholdersAlone; }
-    // What the constructors of base classes allocate. Such an allocation picks its layout by the prototype it is given: objectAllocatedUnder() says what stands for what it makes. The object of the operation
-    // is filed under each layout that it may pick, and for the prototype object of a class that is not below its own the allocation makes an ordinary object.
-    // And the instances that the run time makes for constructor functions: for a new.target that is not below the function it makes an ordinary object in the place of an instance of new.target.
+    // What the constructors of base classes allocate.
     ValueSetID objectsThatPickTheirLayout() const { return m_objectsThatPickTheirLayout; }
     // instanceOf() of the classes and constructor functions without a heritage. Such an instance has the layout of its class unless an operand passes the class as new.target.
     ValueSetID instancesOfRootClasses() const { return m_instancesOfRootClasses; }
@@ -207,14 +204,12 @@ public:
     ValueSetID instancesOfClasses() const { return m_instancesOfClasses; }
     // The records that the type of a parameter of a checked function lists, and those that the types of their fields and of what their arrays hold lead to: data that typed code takes. Each requires a field.
     std::span<const LayoutID> recordsThatTypedCodeTakes() const LIFETIME_BOUND { return m_recordsThatTypedCodeTakes.span(); }
-    // What stands for what the allocation of the site makes under the prototype: instanceOf() of a class where the prototype is the prototype object of that class and the program declares the class
-    // to be the class of the allocation or one below it, so that one allocation makes all that instanceOf() of a class stands for. The object of the site under any other prototype.
+    // What stands for what the allocation of the site makes under the prototype.
     ValueFlowObjectID objectAllocatedUnder(const Program&, ValueFlowObjectID site, ValueFlowObjectID prototype) const;
     // The closures of the constructors that answer nothing but the object that they construct.
     ValueSetID constructorsAnsweringOnlyWhatTheyConstruct() const { return m_constructorsAnsweringOnlyWhatTheyConstruct; }
     ValueFlowPlaceholders placeholders() const { return { untrackedObject(), unknownObject(), m_objectsWithLayoutOfProgram, m_closures }; }
     // The four below are safe from every thread.
-    // What a value of the type may be. It never leaves a placeholder out by itself.
     ValueSetID maskOf(ValueSetMaker&, const Program&, const Type&) const;
     // What is sure to be inside the type: the arm of a test that fails may drop this much. Of objectsThatPickTheirLayout() only the solved sets say what they pick: ValueFlowPositions::isSurelyInside().
     ValueSetID membersSurelyInside(ValueSetMaker&, const Program&, const Type&) const;
@@ -349,7 +344,6 @@ enum class ValueFlowHostNode : uint8_t {
     RequiredValuesLoadedByName,
     NamespacesLoadedByName,
     // The module objects that somebody has got hold of: an operation names one, or `require.main`, `process.mainModule`, `children` or `parent` has answered it.
-    // The `exports` of such an object shows the variable that holds what the module exports.
     ModuleObjectsHandedOut,
     // The namespace objects that somebody has asked for.
     CreatedNamespaces,
@@ -370,10 +364,8 @@ enum class ValueFlowHostNode : uint8_t {
     ObjectsAboveEscapedInstances,
     HoldersOfExportsInEscapedObjects,
     // Holds the unknown object once a call is reached whose callee nobody knows and that names no member of its receiver: `f(..)`, `o[key](..)`, a callback, an accessor, the target of a bound function.
-    // Whatever has escaped may be the callee.
     ValueNobodyKnowsIsCalled,
-    // The built-ins that some statement has read, written, called or constructed as themselves. One of them that has escaped went there as a value that the program handed over,
-    // and whoever has it calls it. Any other has escaped only because a read through the unknown object may have answered it.
+    // The built-ins that some statement has read, written, called or constructed as themselves.
     BuiltinsThatStatementsName,
     // The prototype objects of the classes of the table of which an instance may exist: an overload that was applied names the class in what it answers or in what it hands to a callback.
     PrototypeObjectsOfInstances,
@@ -381,21 +373,17 @@ enum class ValueFlowHostNode : uint8_t {
     PairsOfEntries,
     // The Maps whose constructor has taken keys and values as the records say: out of all that the entries lead to.
     MapsFilledAsRecordsSay,
-    // The built-ins that let in unseen code on a holder at which a read under a key nobody knows starts, and the objects that they hold. No lookup lists them, and the run time answers them all the same:
-    // whoever reads `globalThis[key].prototype` has Function.prototype in its hands as an object nobody knows.
-    // Also the prototype objects of the language that the operand of a write under a key nobody knows lists, and the built-in objects behind a proxy: the program writes them as objects nobody knows.
+    // The built-ins that let in unseen code on a holder at which a read under a key nobody knows starts, and the objects that they hold.
     BuiltinsHeldWithoutBeingListed,
     // Holds the unknown object once unseen code runs that has a loader in its hands: see UnseenCodeReach.
     UnseenCodeHasLoader,
     // What has been stored, on whatever object, under a name under which the host finds a method that it calls with a function of a start-up module (BuiltinTable::namesOfHostMethodsCallingStartupLoads).
-    // An object nobody knows has such a method only if something lies here, or if it may be an instance of a class of the table that has one.
     StoredUnderNamesOfMethodsCallingStartupLoads,
     // instanceOf() of each record that a parser of the run time may make in the place of an ordinary object.
     RecordsMadeByParsers,
     // The built-in objects that a statement stores to, defines on or deletes from as themselves, and the objects of the host that the receiver of a store lists. The run time locks no member that such a statement may hit.
     BuiltinObjectsThatStatementsWrite,
-    // The functions of the host that the program has taken from a holder that the analysis follows: those that the operations of a reached function lead to by themselves (see entryNamedByOperations()),
-    // and every member of a holder that is read under a key nobody knows (see HeapRule::readMembers()). `unknown.name` and `unknown[key]` lead to none.
+    // The functions of the host that the program has taken from a holder that the analysis follows.
     FunctionsOfHostTakenFromKnownHolders,
     // The namespace objects that a statement of a body has tied to the exports of their modules, and goes on tying: see namespaceOf().
     NamespacesTiedByStatementsOfBodies,
@@ -405,7 +393,6 @@ enum class ValueFlowHostNode : uint8_t {
     // The pairs that the steps of built-in iterators over entries have made.
     PairsOfSteps,
     // The keys under which a statement that counts has stored a value through the unknown object, and the unknown object once one has done so under a key nobody knows.
-    // See noteStoreThroughUnknownObject().
     NamesStoredThroughUnknownObject,
     // The same for getters and setters.
     NamesOfAccessorsStoredThroughUnknownObject,
@@ -439,8 +426,7 @@ public:
     ValueFlowNodeID hub(ValueFlowBehaviorID behavior) const { return ValueFlowNodeID(m_thrownOfFunction.last() + 1 + numberOfValueFlowHostNodes + behavior.index()); }
     ValueFlowBehaviorID behaviorOf(ValueFlowNodeID hub) const { return ValueFlowBehaviorID(hub.index() - m_thrownOfFunction.last() - 1 - numberOfValueFlowHostNodes); }
 
-    // Of a function that returns one of its parameters as it came, `identity` or `checkDefined`. One node holds what a parameter is handed by all callers, so through the node of the result
-    // every caller would get back what any caller has passed. A call that knows its callees takes `ownResult`, which leaves those parameters out, and its own operands in their place.
+    // Of a function that returns one of its parameters as it came, `identity` or `checkDefined`.
     struct PassedParameter {
         unsigned entryParameter { 0 };
         // What lies between the parameter and the return lets this through.
@@ -641,8 +627,7 @@ struct ValueFlowBody {
     std::span<const Operand> operandsOf(const Statement& statement) const LIFETIME_BOUND { return operands.subspan(statement.firstOperand, statement.operandCount); }
 };
 
-// Reads nothing but the program, so every body can be reduced on a thread of its own. Of a function without a body only the nodes stay that others name.
-// `genericVersion`: see ValueFlowUniverse::genericVersionOf().
+// Reads nothing but the program, so every body can be reduced on a thread of its own.
 ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr, FunctionID genericVersion = { });
 // What the host does of its own accord: it enters the entry points and the functions it calls, with the unknown object as every operand. It has the number of no function.
 ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&);
@@ -734,18 +719,10 @@ private:
     Vector<ValueFlowBodyRange> m_ranges;
 };
 
-// The values whose type rests on what a Check lets through. The generic version of the function runs the same operations on what the check has turned away,
-// and one statement stands for an operation in both versions, so the type of such a value says nothing about what the statement sees.
-// Not for a typed body, whose generic version is a function of its own: there a check keeps out what it turns away.
-// `checksThatTestNothing`: the checks that flow takes away, behind which no generic version begins.
+// The values whose type rests on what a Check lets through.
 BitVector findValuesBehindChecks(const Program&, const Function&, const CFG&, const BitVector* checksThatTestNothing = nullptr);
 
-// A function whose calls flow tells apart. One node holds what a parameter is handed by all callers, so in `on(type, listener) { this.events[type] = listener; }` every listener would lie under every name.
-// Such a function has an instance for each constant that a call passes as the key, its marker, and one more for all its other calls: whoever passes a key nobody knows, native code, a call through `apply`.
-// An instance is a copy of the nodes of the body, which the rules make when the first call with the marker arrives. The statements of the body run once for each instance, on the nodes of the instance.
-// Each node of an instance hands on to the node that it is a copy of. So the nodes of the body hold what they hold for all calls together: that is what the one compiled body has to deal with,
-// and all that the results read. Objects are not copied: what the body allocates is one object for all instances.
-// Into which instance a call goes decides nothing but how much is kept apart: every operand of a call goes to the same instances, and a statement sees what the nodes of its instance hold.
+// A function whose calls flow tells apart.
 struct ValueFlowInstancedFunction {
     FunctionID function;
     // Among the positional parameters.

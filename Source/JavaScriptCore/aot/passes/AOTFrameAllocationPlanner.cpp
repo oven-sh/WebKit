@@ -330,7 +330,6 @@ void FramePlanner::shareEmptyArgumentLists()
 }
 
 // The language has no name for the list of surplus arguments, so nothing tells one empty list from another.
-// What the callees do with the list, and those they hand it to, is in the uses: they read it, and what they keep is what it holds.
 bool FramePlanner::isOnlyReadAsHiddenRest(ObjectID list) const
 {
     if (!m_escape.at(list).uses.containsOnly(usesOfSharedLists))
@@ -462,8 +461,7 @@ void FramePlanner::takeClosuresOfTable()
     }
 }
 
-// Flow has followed the closures of the function to every place that they reach. Nothing happens to them there but that they are handed on, kept and called, and no two of them ever meet
-// where one could be told from the other. Without captures they all do the same, so the program runs with one: the closure of the table, wherever this one goes.
+// Flow has followed the closures of the function to every place that they reach.
 bool FramePlanner::isLikeEveryClosureOfItsFunction(const Program& program, const FlowResults* flow, const Function& maker, const Value& closure)
 {
     if (!flow || closure.opcode != Opcode::NewClosure || !closure.capturesOperands().empty() || closure.isMadeOnDemand())
@@ -478,8 +476,7 @@ bool FramePlanner::isLikeEveryClosureOfItsFunction(const Program& program, const
     return flow->function(function).closureUse == ClosureUse::CalledOnly && flow->closuresAreNeverCompared(function);
 }
 
-// Without captures one closure of a function does what any other does, and the function does not get hold of the closure it is entered through. So where a closure is only called and tested for what
-// every closure of the function is, nothing tells it from the one in the closure table, which has a cell for every function without captures.
+// Without captures one closure of a function does what any other does, and the function does not get hold of the closure it is entered through.
 bool FramePlanner::isOnlyCalled(ObjectID closure) const
 {
     const Value& definition = definitionOf(closure);
@@ -501,8 +498,7 @@ bool FramePlanner::isOnlyCalled(ObjectID closure) const
 
 static constexpr unsigned maxUsesOfClosureKeptUntilItLeaves = 8;
 
-// Where a closure of the heap is one call of a stub, a closure of the frame is more code than it, and so is every closure that is made again. Where the allocation stands in line it is less.
-// As chooseCodeShapes() will see it.
+// Where a closure of the heap is one call of a stub, a closure of the frame is more code than it, and so is every closure that is made again.
 bool FramePlanner::willHaveLongFormsInLine(BlockID block)
 {
     BlockFrequency frequency = m_function.at(block).frequency;
@@ -524,10 +520,7 @@ static bool liesOffTheWay(const Function& function, BlockID blockOfDefinition, c
     return use.block != blockOfDefinition || (use.kind == Use::Kind::EdgeArgument && function.at(use.block).terminator.targets.size() > 1);
 }
 
-// Whoever borrows the closure cannot tell it from another one afterwards. So it lies in the frame for them, and each use that may let it out gets a closure of the heap: the stub of a call by value
-// makes a copy for a callee that does not borrow, and a closure is made again in front of any other such use. Nothing takes the closure of the frame behind such a use, so there is one closure for the program to see.
-// What the escape analysis lists beside the uses of the value itself, the result of the call and whatever the closure was stored in, is the closure of the heap.
-// The value has no other name, so the closure of one round of a loop is dead when the next one is made.
+// Whoever borrows the closure cannot tell it from another one afterwards.
 bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
 {
     ValueID definition = m_escape.at(closure).definition;
@@ -551,7 +544,6 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
             return false;
         auto known = std::ranges::find(knownUses, use, &ObjectUse::use);
         // A use that keeps the closure in a cell or gives it back makes another way to it, which is not among the uses of the value.
-        // The analysis calls a call an escape for what happens to the closure elsewhere, which is what happens to the closure of the heap. checkUse() asks the callee.
         bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call);
         if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, *known) == AllocationHeapCause::None) {
             isBorrowed = true;
@@ -583,8 +575,7 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     return true;
 }
 
-// A copy costs more than a closure that is made on the heap at once. The functions that are listed say what to expect, also where the list is not complete.
-// The function object of a built-in that is written in JavaScript is a closure of the function of the library. An open list names built-ins by the name of the method alone.
+// A copy costs more than a closure that is made on the heap at once.
 bool FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
 {
     auto borrows = [&](FunctionID id) {
@@ -1047,8 +1038,7 @@ void FramePlanner::checkHolders()
     }
     moveToHeapWithRetainedObjects();
 
-    // FramePointers follows a read of a frame cell by its reference alone, whichever cell the pointer was stored in. The uses of
-    // such a read were checked above only if the read may give a cell that is in the frame.
+    // FramePointers follows a read of a frame cell by its reference alone, whichever cell the pointer was stored in.
     auto mayGiveFrameCell = [&](ValueID value) {
         for (ObjectID object : m_escape.pointsTo(value).objects) {
             if (isCandidate(object) && mayBeInFrame(object))

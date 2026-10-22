@@ -91,7 +91,6 @@ static constexpr unsigned numberOfInterpreterFallbackReasons = 2;
 static_assert(static_cast<unsigned>(InterpreterFallbackReason::VectorsAreDisabled) + 1 == numberOfInterpreterFallbackReasons);
 
 // In the records of the directory an array field is an offset from the start of the directory, and a code offset counts from the start of the image's WebAssembly code.
-// The ModuleInImage records follow the header, and the DeclinedModuleInImage records follow those.
 struct DirectoryInImage {
     uint32_t numberOfModules;
     uint32_t numberOfDeclinedModules;

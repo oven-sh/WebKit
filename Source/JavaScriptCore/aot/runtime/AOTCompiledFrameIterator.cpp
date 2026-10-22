@@ -442,7 +442,6 @@ static SampledTop sampledTopAtReturnSite(const Image& image, const CodeLocation&
 }
 
 // The tables say where a function has its frame at return addresses only, and a sample is taken anywhere: the frame is where a return address into compiled code lies above it.
-// Nothing in the middle of a frame setup or teardown.
 static SUPPRESS_ASAN std::optional<SampledTop> findTopWithoutFrameRecord(const Image& image, const SampledRegisters& registers, const CodeLocation& top, const SuspendedThreadStack& stack)
 {
     const ImageFrame& frame = image.frameOf(top.function);

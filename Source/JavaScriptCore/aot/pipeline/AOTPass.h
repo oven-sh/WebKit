@@ -54,7 +54,6 @@ enum class PassNecessity : uint8_t { Required, Optional };
 enum class PassOutcome : uint8_t { Unchanged, Changed };
 enum class InvalidatedAnalyses : uint8_t { None, Values, All };
 // What a program pass says of the functions that it edits and of those that see a record that it changes.
-// DoNoMore: each does no more than before, but for the effects that the pass names. DoLess: the same, and an edit takes so much away that the function is read again.
 enum class EditedFunctions : uint8_t { DoAnything, DoNoMore, DoLess };
 
 constexpr PassOutcome operator|(PassOutcome a, PassOutcome b) { return a == PassOutcome::Changed ? a : b; }

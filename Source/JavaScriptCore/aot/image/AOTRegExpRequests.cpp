@@ -114,9 +114,7 @@ struct MemoKeyHashTraits : WTF::GenericHashTraits<MemoKey> {
     static bool isDeletedValue(const MemoKey& key) { return key.callChain == UINT32_MAX - 1; }
 };
 
-// The texts that an operand may have, read off the operations that make it: constants, variables with what the stores of the program give them, parameters with the arguments of the direct calls,
-// results of direct calls, concatenations, functions of the engine that depend on their operands alone, and the fields and elements that object and array literals are made with.
-// No branch is decided, no loop is followed and no code of the program runs. Nothing is proven: the run time finds a record by the text it is given.
+// The texts that an operand may have, read off the operations that make it.
 class TextsFromConstants {
 public:
     // A primitive, a RegExp literal, or an object or array literal: the operation that makes it, or a node of constant data.
@@ -849,8 +847,7 @@ private:
         return textsBuiltUpTo(activation, function, function.at(end).builderOperand(), end);
     }
 
-    // What a string builder holds at an operation of the block that begins it, or at the end of that block. A builder that arrives as a parameter of a block holds what it held at the end of
-    // the blocks it comes from, and goes on in the block of the parameter.
+    // What a string builder holds at an operation of the block that begins it, or at the end of that block.
     Constants textsBuiltUpTo(const Activation& activation, const Function& function, ValueID builder, ValueID end)
     {
         if (!m_stackCheck.isSafeToRecurse() || ++m_valuesFollowed > m_budget) {
@@ -1156,8 +1153,6 @@ private:
     }
 
     // A variable that closures share and rewrite, as the text in a builder whose methods answer the builder itself: `make(a).replace(b, c).replace(d, e).finish()`.
-    // The environment of each call comes out of the answer of the call before, so the variable is read as the call left it through which the environment has come:
-    // what that call's function stores there, with the operands of that call. There the variable is read the same way, through the call before.
     Constants fieldSeenThrough(const Activation& activation, ValueID environment, LayoutID layout, uint32_t field)
     {
         if (!m_stackCheck.isSafeToRecurse() || ++m_valuesFollowed > m_budget) {
@@ -1433,8 +1428,7 @@ private:
         return isWithinLimits;
     }
 
-    // A function that is made a closure and handed to another function is called there. What it is given there is read with the operands of the very call that hands it over,
-    // so the callback of one `map` sees the elements of its own array and of no other.
+    // A function that is made a closure and handed to another function is called there.
     bool addArgumentsGivenToClosures(Constants& values, FunctionID callee, uint32_t parameter)
     {
         for (const DirectCall& closure : std::ranges::equal_range(m_closures, sourceOf(callee), { }, &DirectCall::callee)) {

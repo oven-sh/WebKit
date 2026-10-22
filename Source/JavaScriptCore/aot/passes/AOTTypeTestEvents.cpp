@@ -82,7 +82,6 @@ TestEvents::TestEvents(const TestEventInputs& inputs)
 }
 
 // Each pass that makes a slow path marks its own blocks, so a block may be marked likelier than all that leads to it.
-// Where only rarer code leads to a block, its edges are the ways in, and what holds on them is all that holds in the block.
 void TestEvents::findBlocksEnteredOnlyFromRarerCode()
 {
     BitVector isReached(m_function.blocks.size());
@@ -227,7 +226,6 @@ void TestEvents::findResultReads()
 }
 
 // Only a mark says that a block is a slow path: the arm of a failed test, a generic copy.
-// A block that the estimate of a branch calls unlikely is ordinary code, and the estimate may be wrong.
 bool TestEvents::isRejoiningEdge(Edge edge) const
 {
     if (edge.isHandlerEdge())
@@ -327,10 +325,7 @@ void TestEvents::groupConditionsByDependencies()
     m_writtenOfDependencyGroups.grow(firstConditions.size());
 }
 
-// A proof about a value begins behind the definition of the value, which dominates it, and nobody asks for it behind the last requirement. In reverse postorder a block comes behind
-// those that dominate it, and a block outside every cycle comes in front of all that it reaches. A block in a cycle reaches nothing in front of the first block of the outermost cycle round it:
-// a way back leads to a block from which the walk that made the order came down to where the way begins, and so stays in that cycle. So what a writer ends is asked only of the conditions
-// that matter in its block: in a long function each of the many conditions matters in a few blocks.
+// A proof about a value begins behind the definition of the value, which dominates it, and nobody asks for it behind the last requirement.
 void TestEvents::findWhereConditionsMatter()
 {
     const UseLists& useLists = analyses().useLists();

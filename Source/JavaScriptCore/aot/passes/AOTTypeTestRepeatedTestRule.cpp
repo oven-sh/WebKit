@@ -113,18 +113,14 @@ static std::optional<Value> testInFrontOf(TestSiteReporter& reporter, const Valu
     return testForRest;
 }
 
-// Behind a test that failed stands the copy of the failed tests, where nothing else is tested either. That is for a surprise, or for the side that is marked as the rarer one.
-// Of `null === current`, asked five times of a value that is an object as often as it is null, both sides occur: the five tests stay, each is one comparison,
-// and the code on both sides of them is tested code. So it is with `excludeKinds === undefined` in a loop over objects: in front of the loop it would send every round of a call that names kinds through that copy.
-// A loop that holds no access and no call but behind the passing edge of the test loses nothing in the copy: there one test in front decides for all the rounds, whichever way it goes.
+// Behind a test that failed stands the copy of the failed tests, where nothing else is tested either.
 static bool isSurpriseWhereItFails(TestSiteReporter& reporter, const Value& testInFront)
 {
     Type expected = reporter.types().at(reporter.function().at(testInFront.valueOperand()).expectedOrType()).withoutClassProofs();
     return expected.isSubsetOf(reporter.types().at(testInFront.testedType()), reporter.program());
 }
 
-// A pass that splits a value by its type tests it at each use. Such a test is a use of its own proof: where one test in front of them all or on the entry of the loop
-// has passed, the operand is narrowed and the test folds. The planner keeps the site only where that saves a test.
+// A pass that splits a value by its type tests it at each use.
 void reportRepeatedTests(TestSiteReporter& reporter)
 {
     HashMap<SubjectAndType, unsigned> numberOfTests;
@@ -153,8 +149,7 @@ void reportRepeatedTests(TestSiteReporter& reporter)
     });
 }
 
-// The earlier test narrows the value as it is defined. This test keeps its operand: what the casts on the way to it have added, such as a proof of flow about the class,
-// goes on to the operations behind it, which may rely on it without a guard. SimplifyControlFlow decides it as a test behind an edge of a test of the same value for the same type.
+// The earlier test narrows the value as it is defined.
 void rewriteRepeatedTest(TestSiteRewriter& rewriter)
 {
     rewriter.useValue().setValueOperand(rewriter.tests()[0].valueOperand());

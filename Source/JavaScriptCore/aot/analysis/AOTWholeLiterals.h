@@ -22,8 +22,6 @@ namespace Typed {
 class FlowResults;
 
 // WHAT A LIST HOLDS IS KNOWN ONLY WHERE ITS LITERAL IS WHOLE: every element is written in the literal, and nothing ever changes the list.
-// "No store reaches it" does not say so. What completes a literal, the elements behind a spread for one, is no store for flow, and once ExpandIteration has run it may be a call of
-// the library that is handed the list. So nobody puts the mutations that flow rules out beside a NewArray by hand: these functions are asked.
 
 // By allocation site. Run once, behind flow and in front of every pass that takes a literal apart: there each completion still stands beside its literal as an operation on it.
 BitVector collectSitesOfWholeLiterals(const Program&, const FlowResults&, BuildContext&);

@@ -1084,8 +1084,6 @@ static void testCreatedFieldsWithoutStorage()
     key.setHeader(0, SymbolType);
     key.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = stores.uidOf(PropertyStores::unboundName);
 
-    // The page of zeros that stands for "no Extension" belongs to a real cage, so every object here has an Extension:
-    // one with room behind its two granules, one whose granule comes after the new one, or one that is full with the granule in front of the new one.
     struct ExtensionBefore {
         uint64_t granuleBits;
         bool hasRoom;
@@ -1183,8 +1181,6 @@ static void testCreatedFieldsWithoutStorage()
     }
 }
 
-// The slot of a field that has markers for undefined and null holds them whatever the type of the field says.
-// The mark of a cell may answer for the raw value of the field, so the stub stores a marker only where the cell has the mark, and leaves any other cell to the run time.
 static void testUndefinedAndNullInFieldsOfOtherTypes()
 {
     constexpr std::pair<Slot::Kind, Entry> kinds[] = {

@@ -26,7 +26,6 @@ namespace JSC { namespace AOT {
 struct State;
 
 // The table and the records of the allocation sites name Structures and keep none of them alive through a full collection: the objects do that.
-// A Structure that ended is made again by whoever asks for it next.
 class StructureTable {
     WTF_MAKE_NONCOPYABLE(StructureTable);
 public:

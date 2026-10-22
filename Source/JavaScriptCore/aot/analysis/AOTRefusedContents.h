@@ -23,8 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 // The planners behind the rules of PlaceTypeTests, in the word that a content begins with. Those of the resolving passes are numbered by RefusalKind, from 0.
 enum class TestSitePlanner : uint8_t { FieldOrGetter = 16, CalledMember, MemberCall, AccessUnderTests };
 
-// All that a planner takes from a site and its function: what the operation says and the types of its operands, not their numbers. The same few operations stand all over a program.
-// The words are not kept. Two running hashes of them are: 120 bits stand for the content.
+// All that a planner takes from a site and its function: what the operation says and the types of its operands, not their numbers.
 class SiteContent {
 public:
     explicit SiteContent(uint32_t planner) { add(planner); }
@@ -69,8 +68,7 @@ private:
     bool m_holdsOnlyIDsOfProgram { true };
 };
 
-// The contents for which a planner has found no plan, without asking where the site stands and without leaving a record in its arena. Shared by all threads while the layouts and the results of flow stay as they are (ProgramCaches).
-// A lookup takes no lock and reads one line of memory as a rule. Entries are never removed.
+// The contents for which a planner has found no plan, without asking where the site stands and without leaving a record in its arena.
 class RefusedContents {
     WTF_MAKE_NONCOPYABLE(RefusedContents);
 public:

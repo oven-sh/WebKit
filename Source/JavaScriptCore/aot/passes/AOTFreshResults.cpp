@@ -294,7 +294,6 @@ static void assignParts(const AllocationSinking& sinking, FreshResultShape& shap
 }
 
 // The parts of such an object would leave the function with the inner object made, and the caller would build the outer one around it: two cells for ever.
-// Left in one piece the two become one cell, which is no more than the function allocates with the parts.
 static bool listsObjectThatMayLieInIt(const AllocationSinking& sinking, const FreshResultVariant& variant)
 {
     if (variant.kind != VirtualShapeKind::Fields)

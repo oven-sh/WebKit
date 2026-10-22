@@ -51,8 +51,7 @@ public:
     // For a switch on an integer. Answers with the blocks that it has generated. The code that follows is reached with every value that leads to none of them.
     Vector<BlockID, 16> allocateByTable(const TerminatorContext&, LValue subject);
 
-    // For an operation that makes a cell of another class, an array say, in the cell of the object that will list it. The outer object has its header and no reference, the first word of the room is zero:
-    // the collector passes such a room by. Whoever has filled the room says so, and only then does the field of the outer object name it. If something may have collected in between, a barrier on the outer object follows.
+    // For an operation that makes a cell of another class, an array say, in the cell of the object that will list it.
     struct RoomForInnerCell {
         CellPointer outer;
         CellPointer inner;
@@ -91,7 +90,6 @@ private:
         unsigned maxOwnWords { 0 };
     };
     // A row: the number of the allocation in the low half, then a byte for each own word: its place, counted in words of that width.
-    // A layout with fewer own words names a shared one of the same kind, which is then stored twice.
     struct AllocationsByCase {
         int64_t first { 0 };
         Vector<uint32_t> rows;

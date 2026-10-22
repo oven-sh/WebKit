@@ -646,8 +646,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     Effects effects = context ? effectsOfCall(*context, request.effectsOfCallee) : request.effectsOfCallee;
     if (options.pureFunction)
         effects.reads = { };
-    // A site says where in the source a frame stands and which handler is in force there. Nobody asks that of a call that can only collect:
-    // the collector wants the frame, which it finds by the return address alone.
+    // A site says where in the source a frame stands and which handler is in force there.
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
     RELEASE_ASSERT(context || (!hasSite && !effects.mayCollect));
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));

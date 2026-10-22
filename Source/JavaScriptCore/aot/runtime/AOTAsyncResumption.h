@@ -29,8 +29,7 @@ struct Instance;
 JS_EXPORT_PRIVATE void resumeAsyncFunction(JSGlobalObject*, VM&, JSValue context, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
 JS_EXPORT_PRIVATE void resumeDriver(VM&, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
 
-// For the request of an async generator, or of the wrapper of a sync iterator, that settles the target. Each answers only while compiled code waits on the stack for the end
-// of that step and the job that the engine would queue is the next one to run. The first returns what the await of a yielded value gives, or the empty value.
+// For the request of an async generator, or of the wrapper of a sync iterator, that settles the target.
 JS_EXPORT_PRIVATE JSValue tryAwaitForStepInProgress(JSGlobalObject*, JSValue settlementTarget, JSValue awaited);
 JS_EXPORT_PRIVATE bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDone);
 struct AsyncGeneratorBodyEntry {
@@ -48,8 +47,7 @@ JS_EXPORT_PRIVATE JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncG
 JS_EXPORT_PRIVATE bool tryRunHandlerOfJob(JSGlobalObject*, VM&, JSValue promiseOrCapability, JSValue handler, JSValue argument, bool endsJob);
 // A BunPerformMicrotaskJob whose function is compiled code and gets no argument. What it throws is reported before this returns. The caller has no AsyncContextSwapScope yet.
 JS_EXPORT_PRIVATE bool tryRunFunctionOfJob(JSGlobalObject*, VM&, JSValue function, bool endsJob);
-// For the job that resumes a driver. Compiled code takes an iterator result of the engine as a value and a status: returns the value to resume the driver with.
-// The result object that a producer keeps for its driver is left without the value.
+// For the job that resumes a driver.
 JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);
 // A driver of compiled code needs no iterator result: its job has the value as it is, and in the first argument, which is undefined in every other job of the kind, whether the producer is done.
 JS_EXPORT_PRIVATE bool takesBareSteps(JSValue settlementTarget);

@@ -32,13 +32,10 @@ void resumeWhenSettled(JSGlobalObject*, VM&, JSValue awaited, SavedFrame* waiter
 void resumeWhenCallSettles(Instance&, JSValue resultOfCallWithoutPromise, SavedFrame* waiter);
 
 // The frame is that of an async function that returns next: the job is taken out of the queue, so no code of the program may run before the frame has returned to the adapter.
-// Returns true if it fulfilled the promise. The promise's only waiter then runs as soon as the frame has returned: the adapter resumes it, or resumeRemainingWaiters where the adapter declines.
 bool tryScheduleImmediateResume(Instance&, const uint64_t* frame, JSPromise*, JSValue resolution);
 void resumeRemainingWaiters(Instance&);
 
 // A step whose consumer is on the stack below the producer, was entered as the last thing of a job, and suspends next unless the step finishes first.
-// The jobs that lie between the end of the step and the consumer run nothing of the program, so while no other job is queued the consumer takes the result
-// when the engine returns to it. The producer is an async generator or the wrapper of a sync iterator.
 class AsyncGeneratorStepInProgress {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(AsyncGeneratorStepInProgress);
@@ -86,7 +83,6 @@ JSAsyncGenerator* asyncGeneratorEnteredByStub(const Instance&, const uint64_t* f
 SavedFrame* coroutineOfFrame(const Instance&, const uint64_t* frame);
 
 // With the status Result, the value is what the consumer has to await: the sentinel if the producer resumes it, else the promise of an iterator result.
-// The frame is that of the coroutine that iterates. The iterator is an async generator or the wrapper of a sync iterator; sent is empty if next() gets no argument.
 enum class StepAnswer : uint8_t { ResumesDriver, IsPromise };
 AsyncGeneratorStep stepAsyncIterator(Instance&, const uint64_t* frame, SavedFrame* newSavedFrame, StepAnswer, JSObject* iterator, JSValue sent);
 AsyncGeneratorStep finishAsyncGeneratorStep(Instance&, const uint64_t* slotsOfStub, JSAsyncGenerator*, JSValue returned, bool consumerMayContinue);

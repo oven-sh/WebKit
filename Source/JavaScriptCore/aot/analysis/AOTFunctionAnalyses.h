@@ -112,9 +112,7 @@ public:
     NaturalLoops& naturalLoops() LIFETIME_BOUND;
     const BlockCycles& blockCycles() LIFETIME_BOUND;
     const UseLists& useLists() LIFETIME_BOUND;
-    // The lists that are held, for whoever tells them which blocks it has changed (UseLists::didChangeBlock() and its neighbors). Null where none are held, and wherever the
-    // running pass is not known to tell of every change: there the lists are dropped with the rest.
-    // They take note, and useLists() brings them up to date when they are next asked for. Whoever has told them, and nobody else, leaves them out of what it invalidates.
+    // The lists that are held, for whoever tells them which blocks it has changed (UseLists::didChangeBlock() and its neighbors).
     UseLists* updatingUseLists() LIFETIME_BOUND;
     // For a stretch of a pass that is not known to tell of every change: while this holds, whoever edits the function does.
     void setEveryChangeIsReported(bool isReported) { m_everyChangeIsReported = isReported; }
@@ -176,16 +174,13 @@ public:
     void didRetypeValues();
     void didChangeControlFlow() { invalidate(allAnalyses); }
 
-    // Edits that say what they have touched. An analysis that its writer brings up to date in the body of the member stays. Every other one is dropped, as by didChangeValues(),
-    // and in the last two as by didChangeControlFlow().
-    // The function has one value more, which stands in no list.
+    // Edits that say what they have touched.
     void didAddDetachedValue(ValueID);
     // Values that stood in no list stand in the list of the block.
     void didListValues(BlockID, std::span<const ValueID>);
     // The values have left the list of the block. Until the pass is through with its other blocks, a value that is still listed there may use one of them.
     void didEraseValues(BlockID, std::span<const ValueID> erased);
-    // The parameters of the block, its subject, the arguments for its handler, its list of values, an operand of one of those or of its terminator, or what its terminator passes
-    // along an edge. No edge was added, removed or redirected.
+    // The parameters of the block, its subject, the arguments for its handler, its list of values, an operand of one of those or of its terminator, or what its terminator passes along an edge.
     void didChangeBlock(BlockID);
     // Every use of the one value names the other.
     void didReplaceUses(ValueID from, ValueID to);

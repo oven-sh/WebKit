@@ -31,7 +31,6 @@ namespace {
 constexpr uint32_t noNode = UINT32_MAX;
 
 // One node for each value that may hold a reference, and one for each field of an environment.
-// The entry parameters of a function come first among its nodes, whatever they hold, so that a caller finds them by their number.
 struct OperandNodes {
     bool hasNodesOf(FunctionID function) const { return firstNodeOfFunction[function.index()] != firstNodeOfFunction[function.index() + 1]; }
     uint32_t entryParameter(FunctionID function, uint32_t entryParameter) const { return firstNodeOfFunction[function.index()] + entryParameter; }
@@ -59,8 +58,6 @@ struct CollectedRules {
 };
 
 // What the operations of one body do with the values that they take.
-// A use is what summarizeOperand() says, with these differences: where the operation hands the value on, holds it in an object that the body has allocated or reads something out of it,
-// the uses of that other value count in place of a use that says "anything may become of it", and so do the uses of the entry parameters of the functions that a call enters.
 class BodyRuleCollector {
 public:
     BodyRuleCollector(const Program& program, const FlowResults& flow, const OperandNodes& nodes, FunctionID id, CollectedRules& rules)

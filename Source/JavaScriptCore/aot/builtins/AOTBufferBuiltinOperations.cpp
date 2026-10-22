@@ -69,8 +69,7 @@ static std::optional<BytesAreRead> wayToRead(JSValue encoding)
     return std::nullopt;
 }
 
-// `buffer.toString(encoding, start, end)`, the function known. Bytes below 128 are the same characters in UTF-8, ASCII and Latin-1, Latin-1 takes every byte as it is.
-// A range given by integers that lie in the buffer, in order. Nothing is answered for anything else.
+// `buffer.toString(encoding, start, end)`, the function known.
 JSC_DEFINE_JIT_OPERATION(operationAOTTextOfBytes, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedEncoding, EncodedJSValue encodedStart, EncodedJSValue encodedEnd))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTTextOfBytes);

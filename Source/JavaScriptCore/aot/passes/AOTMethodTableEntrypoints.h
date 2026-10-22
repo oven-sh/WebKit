@@ -13,8 +13,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // A call through the method table finds its target under the shape of the receiver and the selector: the name of the method, the number of arguments that the call passes, and how it passes them.
-// Every target of a selector takes `this` as a cell and returns a JavaScript value. Typed: an argument has the type that the methods of the name declare for it, all of them taken together,
-// so that it travels as that type does and a method that declares just that tests nothing. Boxed: an argument is any value. A call whose arguments fit is typed.
 enum class ArgumentForm : uint8_t { Boxed, Typed };
 
 struct MethodSelector {

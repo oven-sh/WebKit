@@ -350,9 +350,7 @@ bool RegionBorder::isAboutValueWithNewNameInCopy(const GuardFact& fact) const
     });
 }
 
-// `for (..) { .. odd[k] .. }` behind tests of `odd` and `k` in front of the loop, and again behind a call in it: the head of the loop takes the guards as arguments, and they join because all the tests are
-// about the same two values. A value of the region that is live at an entry is joined with its copy there and wherever the paths from there meet the others: in the copy the tests would be about values with
-// different names, and so would the operation that relies on what they join into.
+// `for (..) { .. odd[k] .. }` behind tests of `odd` and `k` in front of the loop, and again behind a call in it: the head of the loop takes the guards as arguments, and they join because all the tests are about the same two values.
 bool RegionBorder::joinsGuardsOfValuesWithNewNames(BlockID blockID) const
 {
     if (m_entries.empty())
@@ -850,7 +848,6 @@ void RegionCloner::addVariables(SSARepair& repair, FunctionAnalyses& analyses, s
     }
 
     // One variable holds a definition and all of its clones: an edge out of one copy carries no definition of a variable that knows only another copy.
-    // A definition that the caller has put in a variable may be named where only another definition of that variable reaches, so its clones join that variable.
     for (ValueID definition : definitions) {
         std::optional<SSARepair::Variable> variable = repair.findVariable(definition);
         if (!variable)

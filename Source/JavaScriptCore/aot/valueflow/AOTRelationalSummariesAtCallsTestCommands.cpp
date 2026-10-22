@@ -302,7 +302,6 @@ static bool parseWord(StringView word, WrittenFates& written)
 }
 
 // fates-at-calls [operations] [word ..]: what becomes of each operand of each call and access, when flow's results have been applied. operations: of every other operation too.
-// Without a word about a function the table of the link answers for the entry parameters. With one, what the words say does: see parseWord().
 void runFatesAtCallsTestCommand(TestCommandContext& context)
 {
     WrittenFates written;

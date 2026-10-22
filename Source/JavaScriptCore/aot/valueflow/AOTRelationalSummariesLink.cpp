@@ -671,7 +671,6 @@ void FunctionLinker::applyFateOfCallee(const Handing& handing, const LinkedFate&
         m_hasChanged |= m_rootsHoldingUnlistedValues.add(m_roots[handing.source]);
 
     // What the callee returns is what the call answers, and goes on as that does.
-    // The front end lists the result of every call whose result is used, or says of all the operands of the call that it does not know.
     for (uint32_t rest = ofCallee.itself.contains(ValueFate::IsReturned) ? ofCallee.results : 0; rest; rest &= rest - 1) {
         uint32_t answered = findCallResult(handing.call, static_cast<uint32_t>(std::countr_zero(rest)));
         if (answered != noSubject)
@@ -700,8 +699,7 @@ void FunctionLinker::applyFateOfCallee(const Handing& handing, const LinkedFate&
     }
 }
 
-// Somebody below calls the value `calledSubject` and passes what this function has handed on. `row` says so in terms of this function, but for its two parameters.
-// The called value is a parameter of this function again, a closure that this function has made, or something else.
+// Somebody below calls the value `calledSubject` and passes what this function has handed on.
 void FunctionLinker::composeWithCalledValue(const Handing& handing, uint32_t calledSubject, const HandedToCalledParameter& row, std::span<const Part> parts)
 {
     const Program& program = m_link.program;
@@ -964,7 +962,6 @@ void FunctionLinker::followCallOf(const Handing& handing, const Value& call, con
 }
 
 // The function makes a closure, and the value is what the closure captures: the operands of the operation are the first entry parameters of the closure's function.
-// The value lives as long as the closure, and whenever somebody calls the closure its function does with the value what it does with that parameter.
 void FunctionLinker::followCapture(const Handing& handing, const Value& closure)
 {
     uint32_t made = findSubjectOf(handing.call, SubjectKind::Allocation);
@@ -1047,8 +1044,7 @@ void FunctionLinker::followHanding(const Handing& handing)
         applyBuiltin(handing, call, builtin);
 }
 
-// `const b = new Box(); b.x = v`: a store may find a setter, a read a getter, which get hold of the object and of what is stored. Of a parameter the caller asks, who knows its object.
-// Of an object that the function has made itself nobody else will ever ask.
+// `const b = new Box(); b.x = v`: a store may find a setter, a read a getter, which get hold of the object and of what is stored.
 void FunctionLinker::askOwnObjects()
 {
     for (uint32_t index = 0; index < m_record.subjects.size(); ++index) {
@@ -1300,7 +1296,6 @@ std::unique_ptr<RelationalSummaries> linkRelationalSummaries(const Program& prog
         return found;
     };
     // Round by round: every member that calls one whose answer has changed is visited again, all of a round side by side on what the round before has left.
-    // So the answer does not hang on the number of threads.
     auto visitCycle = [&](std::span<const uint32_t> members) {
         uint32_t component = components.componentOf[members[0]];
         HashMap<uint32_t, Vector<uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callersInCycle;

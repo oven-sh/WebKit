@@ -117,7 +117,6 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
         context.connect(context.read(arrived, { kind, 0 }), escapedNode);
     context.connect(context.read(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), escapedNode);
     // What lies above an instance is found through it and is not handed out with it.
-    // Nor is a built-in that lets in unseen code: with `class F extends Function` in unknown hands, `super(text)` still names the constructor that it enters.
     context.connect(context.masked(context.read(others, prototypeLinkName), ValueSets::complement(universe.builtinTables().heap().objectsThatLetInUnseenCode())), escapedNode);
     context.add(escapedNode, objectsHeldFromCreation(context, others));
     // Whoever holds an entry climbs to the prototype object of its class, and from there to what the program has put above that.
@@ -139,7 +138,6 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
 }
 
 // All that one class or one constructor function of the program constructs is a family. instanceOf() of the layout stands for it, and where the function has no layout, the object that stands for what it constructs.
-// None for an object that neither has constructed.
 static ValueFlowObjectID familyOfInstance(ValueFlowRuleContext& context, ValueFlowObjectID object)
 {
     if (LayoutID layout = layoutOfInstance(context, object))
@@ -155,11 +153,7 @@ static ValueSetID instancesOfFamily(ValueFlowRuleContext& context, ValueFlowObje
     return context.maker().of(family);
 }
 
-// Whoever holds an instance looks up through it what lies on the prototype object of its class and on the objects above that one. It calls the functions that it finds there on the instances
-// that it holds, and it keeps whatever else it finds. It is not handed the objects themselves, so nothing happens to them. Only code that the build has not seen climbs up to them.
-// Seen code climbs by asking. The objects are kept for whoever asks what lies above the unknown object, and the classes that they name as their constructors for whoever reads `constructor` through it.
-// Neither has escaped by that: what such a reader does with them is seen.
-// Only what lies above an instance that has escaped is found.
+// Whoever holds an instance looks up through it what lies on the prototype object of its class and on the objects above that one.
 static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjectID family)
 {
     const Program& program = context.program();
@@ -228,9 +222,7 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     context.connect(group.thrown, escapedNode);
 }
 
-// What is found moves, and it moves for one family at a time. So each family has a statement of its own, made as a lookup is, which runs again once something that it has looked at has moved.
-// What a run has asked for stays asked for when a later run asks on behalf of more instances, like all that the statement of kind Escape asks for.
-// Nothing ever arrives at the result of the statement: a run asks what is new there to say that it adds to the runs before it.
+// What is found moves, and it moves for one family at a time.
 static void runLookupThroughInstances(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     context.newSince(statement.result);
@@ -238,7 +230,6 @@ static void runLookupThroughInstances(const ValueFlowStatement& statement, Value
 }
 
 // The statement of a family is made when the first of its instances arrives: the statement of kind Escape remembers which families it has met.
-// The run that makes the statement looks through the family itself, so that what the look asks for runs in the next turn and not in the one after.
 static void lookUpThroughFamiliesOf(ValueFlowRuleContext& context, ClimbingSet arrived)
 {
     Vector<ValueFlowObjectID, 16> families;
@@ -274,8 +265,6 @@ static void letNativeCodeCallBoundFunctions(ValueFlowRuleContext& context, Climb
 }
 
 // It also tests values against one: `value instanceof bound` asks the target in the place of the bound function, for its method under Symbol.hasInstance, which runs on the target, and for its prototype property.
-// The method that every function inherits does that. It has escaped like every built-in, so whoever calls a value nobody knows on a bound function may have called it: an `instanceof` of the program
-// whose lookup of the method went through an object nobody knows.
 static void letNativeCodeTestAgainstBoundFunctions(ValueFlowRuleContext& context, ClimbingSet escapedCallables)
 {
     if (!holdsSomething(context, escapedCallables))
@@ -285,7 +274,6 @@ static void letNativeCodeTestAgainstBoundFunctions(ValueFlowRuleContext& context
 }
 
 // The interpreter gives an object literal the layout of a record with the same names (AOT::Interpreter::ObjectLiteralPlans), so that it passes the type tests of compiled code.
-// Only where an object of the record has escaped to such code: nothing is claimed about those.
 static void letUnseenCodeCreateRecords(ValueFlowRuleContext& context, ClimbingSet escapedObjects)
 {
     const Program& program = context.program();
@@ -313,8 +301,7 @@ static void letUnseenCodeCreateRecords(ValueFlowRuleContext& context, ClimbingSe
     context.add(ValueFlowProgramNodes::escaped(), created);
 }
 
-// What has escaped was handed to code that nobody compiles. Such code reads whatever an escaped object holds, calls whatever it can reach with whatever it can reach, and keeps what it gets.
-// It stores into what it holds only once something says that it may.
+// What has escaped was handed to code that nobody compiles.
 void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();

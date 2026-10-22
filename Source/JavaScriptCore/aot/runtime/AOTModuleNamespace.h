@@ -50,8 +50,7 @@ public:
     bool hasNamespaceLayoutOf(ModuleID module) const { return m_module == module && !m_isDeferred; }
     std::optional<unsigned> find(UniquedStringImpl*) const;
     bool hasExport(UniquedStringImpl* name) const { return find(name) || isDynamicExport(name); }
-    // Reads every export once, in the order of the keys, as [[OwnPropertyKeys]] and [[Get]] of each key would, without a lookup by name. A binding in its dead zone throws.
-    // Answers false, having read nothing, where the keys are found at run time or a read may evaluate the module.
+    // Reads every export once, in the order of the keys, as [[OwnPropertyKeys]] and [[Get]] of each key would, without a lookup by name.
     bool tryReadExports(JSGlobalObject*, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values);
 
     bool hasESModuleMarker() const { return m_hasESModuleMarker; }

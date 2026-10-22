@@ -11,19 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// class C {
-//   constructor(v) { this.v = v }
-//   async #later(a) { const b = await a; return this.v + b }
-//   async *#stream(n) { for (let i = 0; i < n; i++) yield this.v + i }
-//   later(a) { return this.#later(a) }
-//   async collect(n) { let text = ""; for await (const x of this.#stream(n)) text += x + ","; return text }
-//   static later(o) { return o.#later(1) }
-// }
-// const c = new C(10)
-// c.later(5).then(v => print("later " + v))
-// c.collect(3).then(v => print("collected " + v))
-// try { C.later({}) } catch (e) { print(e instanceof TypeError) }
-// print("end of module")
 static constexpr ASCIILiteral asyncMethods = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
 layout L1 module=m0
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
@@ -261,13 +248,6 @@ data d0 root=Object{layout=L1} module=m0
 entry module=m0
 )IR"_s;
 
-// class C {
-//   constructor(v) { this.v = v }
-//   *#each(n) { for (let i = 0; i < n; i++) yield this.v + i }
-//   sum(n) { let total = 0; for (const x of this.#each(n)) total += x; return total }
-//   static open(o) { try { o.#each(1); return "opened" } catch (e) { return e instanceof TypeError } }
-// }
-// print(new C(10).sum(3)); print(C.open(new C(1))); print(C.open({}))
 static constexpr ASCIILiteral generatorMethods = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
 layout L1 module=m0
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
@@ -452,23 +432,6 @@ data d0 root=Object{layout=L1} module=m0
 entry module=m0
 )IR"_s;
 
-// class C {
-//   #x = 1
-//   #y
-//   #m() { return this.#x + 10 }
-//   get #g() { return this.#x + 100 }
-//   set #g(v) { this.#x = v }
-//   constructor() { this.#y = this.#m() }
-//   all() { this.#g = 5; return this.#x + ":" + this.#y + ":" + this.#m() + ":" + this.#g }
-// }
-// class D {
-//   static #m() { return "static #m" }
-//   static #x = "static #x"
-//   static get #g() { return "static #g" }
-//   static all() { return D.#m() + ", " + D.#x + ", " + D.#g }
-//   static onOther(o) { try { return o.#m() } catch (e) { return e instanceof TypeError } }
-// }
-// print(new C().all()); print(D.all()); print(D.onOther(new C()))
 static constexpr ASCIILiteral besideFieldsAndStatics = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#x"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}, {key=#"#y"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}]
 layout L1 kind=Instance name="D" module=m0 constructor=f6
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]

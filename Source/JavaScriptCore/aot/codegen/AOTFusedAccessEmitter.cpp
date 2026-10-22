@@ -201,10 +201,7 @@ Condition PropertyRunEmitter::tryStore(const ValueContext& store)
     });
 }
 
-// A run of stores calls the operation to fill its site cache. Without one the single stores cost less, in time and in bytes.
-// A definition that runs for the first time misses every table, which costs many times its share of the operation. So a run of definitions calls the operation every time
-// in code that seldom runs: compact code, and a site that has no cache because nothing would read it again.
-// A site that lost its cache to the limit runs often, and there the single definitions hit the tables.
+// A run of stores calls the operation to fill its site cache.
 bool PropertyRunEmitter::paysWithoutSiteCache(const ValueContext& store)
 {
     if (!store->isDefinition())

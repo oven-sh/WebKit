@@ -36,8 +36,7 @@ struct CalleeOfSite {
     friend auto operator<=>(const CalleeOfSite&, const CalleeOfSite&) = default;
 };
 
-// What the call by value at each site may find, as flow left it. It is taken right behind ApplyFlowResults:
-// later passes copy calls, erase the stamps of what rests on a check and widen the types of callees, and a copy still finds what its site listed here.
+// What the call by value at each site may find, as flow left it.
 class CalleesOfSites {
 public:
     bool wasTaken() const { return m_wasTaken; }
@@ -57,8 +56,6 @@ private:
 CalleesOfSites collectCalleesOfSites(const Program&, BuildContext&);
 
 // The closure of a function may be created though every call that finds it names the function by the time its caller is optimized.
-// Its identity is its generic entrypoint, so the entrypoint stays, with a body that throws an error which names the function.
-// It rests on what flow says of a function whose callers are all known, which the .cpp quotes. One call that is left and of which nobody can say what it finds leaves every entrypoint as it is.
 void closeEntrypointsThatNothingEnters(ProgramEditor&, const FlowResults&, const CalleesOfSites&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

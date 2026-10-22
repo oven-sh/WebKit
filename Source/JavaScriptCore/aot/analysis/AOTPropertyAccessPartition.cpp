@@ -95,8 +95,7 @@ static bool mayAnswerLikeOtherLayouts(const Layout& layout)
 
 namespace {
 
-// Gives what findMember() gives, for one member of a family after the other, and asks it once for all the members that it can't tell apart.
-// findInstanceMember() and what it calls read nothing of such a layout but what is compared here.
+// Gives what findMember() gives, for one member of a family after the other, and asks it once for all the members that it can't tell apart. findInstanceMember() and what it calls read nothing of such a layout but what is compared here.
 class FamilyMemberFinder {
 public:
     FamilyMemberFinder(const PropertyAccessContext& context, const MemberQuery& query)

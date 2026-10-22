@@ -249,11 +249,7 @@ bool BodyScanner::namesItsCallees(const Function& function, const Value& call) c
     return callee && expectedOrTypeOf(function, callee).listsOnlyFunctions;
 }
 
-// The functions that the program hands on as values, to a callee or into memory that no type describes. Whoever gets hold of one calls it with anything, so the tests at its head stay.
-// A function that is only called has callers that flow knows: it folds each test that no caller fails. A test that a caller may fail stays, and what rests on it is proven no more.
-//
-// The layouts of the objects that the program puts somewhere: into a field, an element or a variable, into the hands of a callee that it does not name, or under a type that lists no layouts.
-// An object of any other layout is made, handed to the functions that the program names, read and dropped. It proves nothing, like the stores that the program shows.
+// The functions that the program hands on as values, to a callee or into memory that no type describes.
 bool BodyScanner::scan(FunctionID id, unsigned worker)
 {
     const Function& function = m_program.at(id);
@@ -450,13 +446,10 @@ static std::optional<Type> findExpectedIntegers(const Program& program, const Fi
     StoredKinds stored = evidence.visibleStores(reference);
     bool listsOnlyInt32s = !field.declared.flags.contains(PositionFlags::IsExpected) && program.at(field.declared.type).isInt32OrNullish();
     bool isDeclaredInt32 = listsOnlyInt32s || slotType.isInt32OrNullish() || field.declared.flags.contains(PositionFlags::IsInt32Promise);
-    // A position in a text and an index of a table get numbers that nobody can bound: what a scanner counts up, what a caller passes. The stores alone do not tell such a field
-    // from a coordinate, which starts at 0 and goes on with fractions. The uses do. In checked code `number` is what the checker says of every store. In code without types it is what was
-    // inferred from the stores that were seen, the readers take whatever comes, and an int32 is made a number again for them behind a test that the wider slot does not need.
+    // A position in a text and an index of a table get numbers that nobody can bound: what a scanner counts up, what a caller passes.
     bool isCountedWith = admitted == IntegerEvidence::Uses && slotType.isNumberOrNullish() && stored.contains(StoredKind::Int32) && !stored.contains(StoredKind::NoInt32)
         && evidence.isUsedAsInteger(reference) && isDeclaredInCheckedCode(program, reference.layout);
-    // An object that starts with a number of a wider type is made with a filler and gets the number by a tested store. The arm of the test that fails goes on with a second form of the object.
-    // That is the price of four bytes in an object that somebody keeps. An object that nobody keeps would have been taken apart, with whatever it was made from, and now stays in memory.
+    // An object that starts with a number of a wider type is made with a filler and gets the number by a tested store.
     bool isShownOnlyInt32s = showsOnlyInt32s(stored) && (evidence.isKept(reference.layout) || evidence.typesOfInitialValuesFitInt32Slot(reference));
     if (!isDeclaredInt32 && !isShownOnlyInt32s && !isCountedWith)
         return std::nullopt;
@@ -524,8 +517,7 @@ static uint32_t likelyWidthOfSlot(const Program& program, const Field& field)
     return widthOf(representation);
 }
 
-// The uses are a guess, and a guess costs a test at every store and every read. Four bytes fewer buy memory only where they take a cell down a size class, so only there is the guess made.
-// The packer comes much later. This reckons with a cell that holds every field of its layout and nothing else. A layout that is too large for that has fields out of line whatever their widths.
+// The uses are a guess, and a guess costs a test at every store and every read.
 static Vector<FieldReference> findCountedFieldsThatMakeCellsSmaller(const Program& program, const FieldEvidence& evidence, const CellSizeClasses& sizeClasses, const ParallelLoops& loops)
 {
     constexpr uint32_t saved = widthOf(SlotRepresentation::OptionalDouble) - widthOf(SlotRepresentation::OptionalInt32);
@@ -665,8 +657,7 @@ bool canBeStoredBehindAllocation(const Field& field)
 
 static constexpr OpcodeSet opcodesThatListInitialValues { Opcode::NewObject, Opcode::CloneAs };
 
-// The values with one of the opcodes that the blocks of the function list, in the order of the blocks, until the functor answers true. Answers whether it did.
-// The index of bodies says where they are without a walk over the body.
+// The values with one of the opcodes that the blocks of the function list, in the order of the blocks, until the functor answers true.
 static bool findListedValue(const Program& program, FunctionID id, const OpcodeSet& opcodes, NOESCAPE const Invocable<bool(const Value&)> auto& functor)
 {
     const Function& function = program.at(id);
@@ -758,8 +749,7 @@ std::optional<Value> tryCreateFiller(const Program& program, const Type& type)
     return string;
 }
 
-// Something that fits the slot stands in for the value until the store. Where nothing does, the field is defined behind the allocation,
-// and property order is observable, so every field listed from this one on moves behind the allocation too.
+// Something that fits the slot stands in for the value until the store.
 bool canStoreInitialValueBehindAllocation(const Program& program, const Value& allocation, uint32_t valueIndex)
 {
     const Field& field = initializedField(program, allocation, valueIndex);
@@ -898,10 +888,7 @@ void storeUnprovenInitialValues(const Program& program, FunctionID id, Function&
     storeUnprovenInitialValues(builder);
 }
 
-// A parameter of type number that every call the program shows fills with an int32. The test at the head of the function asks for an int32,
-// and whatever else arrives goes on in the generic version, like any other value outside the type of a parameter.
-// In a function that is only called, the arguments have to be int32s by their types, not only by their looks: then flow folds the narrower test like the wider one,
-// and a counter that runs up to the parameter is an int32 before flow asks what the program stores.
+// A parameter of type number that every call the program shows fills with an int32.
 static void forEachCheckedNumberParameter(const Function& function, NOESCAPE const Invocable<void(ValueID check, unsigned entryParameterIndex)> auto& functor)
 {
     if (!function.hasBody())
@@ -1011,8 +998,7 @@ static bool accessesNarrowedField(const Value& value, const BitVector& narrowedK
     return Value::opcodesWithKey.contains(value.opcode) && value.key() && narrowedKeys.get(value.key().index());
 }
 
-// Most functions that name the key of a narrowed field name it on other objects. Where the rules give each such access the types that it has, nothing in the function is typed from
-// anything that has changed.
+// Most functions that name the key of a narrowed field name it on other objects.
 static bool hasAccessTypedOtherwise(const Program& program, FunctionID id, const BitVector& narrowedKeys)
 {
     if (narrowedKeys.isEmpty())

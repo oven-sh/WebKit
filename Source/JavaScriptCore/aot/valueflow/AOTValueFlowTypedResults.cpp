@@ -260,7 +260,6 @@ ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuil
 }
 
 // Before the solve only the text of a call says what it may call: the name that its callee was read under, or the built-in that it names.
-// A function with a typed result that reaches a call in any other way answers there as it does without a type.
 static bool mayCallFunctionWithTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const Value& call)
 {
     if (PropertyKeyID key = call.calleeKey()) {
@@ -319,8 +318,7 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     if (!isValidated && !parses)
         return;
 
-    // What SelectTypedResults puts in the place of the call hands whatever the compiled code gives up on to helpers in the library. No operation names a helper before that pass runs,
-    // so the call counts as a call of each: a function that flow has not reached has no body to call.
+    // What SelectTypedResults puts in the place of the call hands whatever the compiled code gives up on to helpers in the library.
     for (BuiltinID helper : { Builtins::CompilerHelpersValidateByPlan, Builtins::CompilerHelpersInterpretNode, Builtins::CompilerHelpersHoldsRule, Builtins::CompilerHelpersCopyOwnProperties })
         context.use(helper, BuiltinUse::Called);
 

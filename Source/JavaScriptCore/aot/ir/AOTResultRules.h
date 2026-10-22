@@ -58,8 +58,7 @@ struct TypingMemo {
     TypeMemo narrowerTypes;
 };
 
-// The same answers for every thread that types functions while the layouts stay as they are. An answer is computed in an arena of its own, and each reader adopts it:
-// which thread asked first decides no id.
+// The same answers for every thread that types functions while the layouts stay as they are.
 class SharedFieldTypes {
     WTF_MAKE_NONCOPYABLE(SharedFieldTypes);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SharedFieldTypes);
@@ -144,8 +143,7 @@ inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
 
 std::optional<uint32_t> numberOfResultsOf(const Program&, const Function&, const Value&);
 
-// The one function of the program that the callee of a call by value is, by its type. Null where the type admits anything else, and for a function whose call does not answer
-// with what its one declared result says. `inner(box)` names a function declaration that nothing assigns to, so the front end types the callee as that function.
+// The one function of the program that the callee of a call by value is, by its type.
 FunctionID onlyCalleeOf(const Program&, const Type& callee);
 
 // What a Convert becomes. Nothing: the value is inside the type, or the position is only expected to hold its type and nothing is tested.

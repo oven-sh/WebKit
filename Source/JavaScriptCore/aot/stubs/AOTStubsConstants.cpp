@@ -76,8 +76,7 @@ StubSignature signatureOfCreateConstant(StubKey)
 }
 
 #if CPU(X86_64)
-// ProgramStrings::createString(), for a string whose StringImpl lies in the image: nothing but the cell is made, and no operation is called.
-// headerAndResult holds a StringImpl*, once prepareHeader has run, which may use the three registers that are saved here. What it appends to its list leaves for cannot.
+// ProgramStrings::createString(), for a string whose StringImpl lies in the image.
 template<typename Functor>
 static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResult, GPRReg scratch, std::optional<GPRReg> number, JumpList& cannot, const Functor& prepareHeader)
 {
@@ -123,9 +122,7 @@ static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResu
     jit.returnToCaller();
 }
 
-// wordAndResult holds the ImageStringWord of the string. Where number is given, the cell becomes that of the string constant with the number.
-// Where the image has no header for the string the stub makes one: ProgramStrings::tryCreateHeader().
-// Leaves for cannot with number as it was: the thread's atom table has to be asked, the VM has a cell for the text, the free list is at its end; of a string without a header also: it is none that gets one, it is long or far, or there is no room for a header.
+// wordAndResult holds the ImageStringWord of the string.
 static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndResult, GPRReg scratch, std::optional<GPRReg> number, JumpList& cannot)
 {
     const GPRReg header = wordAndResult;

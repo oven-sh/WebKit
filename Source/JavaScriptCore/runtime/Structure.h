@@ -754,16 +754,6 @@ public:
         return OBJECT_OFFSETOF(Structure, m_propertyTableUnsafe);
     }
 
-    static constexpr ptrdiff_t maxOffsetOffset()
-    {
-        return OBJECT_OFFSETOF(Structure, m_maxOffset);
-    }
-
-    static constexpr ptrdiff_t variantOffset()
-    {
-        return OBJECT_OFFSETOF(Structure, m_structureVariant);
-    }
-
     static constexpr ptrdiff_t inlineCapacityOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_inlineCapacity);

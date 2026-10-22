@@ -85,8 +85,7 @@ static void loadZeroExtended(StubAssembler& jit, unsigned width, auto address, G
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// visit(width, addressIn) emits code for one word of that many bytes, at addressIn(start) for each of the starts. The words go up in address, lie inside the size bytes
-// and cover them. The last one may overlap the one before it. Overwrites the starts and size.
+// visit(width, addressIn) emits code for one word of that many bytes, at addressIn(start) for each of the starts.
 static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg> starts, GPRReg size, const auto& visit)
 {
     auto atStart = [](GPRReg bytes) {

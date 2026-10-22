@@ -58,8 +58,7 @@ private:
     void forgetTableOfEarlierProbes();
 };
 
-// A table that grows moves, and the pages it leaves are unmapped. What adds a transition only remembers an answer, so operations such as JSONObjectKey
-// declare no write for it, and without this B3 would probe with the base and the mask that an earlier probe loaded.
+// A table that grows moves, and the pages it leaves are unmapped.
 void KeyOrderTransitionProbe::forgetTableOfEarlierProbes()
 {
     B3::PatchpointValue* clobber = m_out.patchpoint(B3::Void);

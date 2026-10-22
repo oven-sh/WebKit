@@ -95,7 +95,6 @@ CalleeList calleesOfCall(const Program& program, const Value& call)
 }
 
 // A call by value reaches the body through the entrypoint of the callee, which refuses a call of the wrong kind and collects the rest arguments.
-// The summary of the body has none of this. The tests of `this` and of the arguments are operations of the body, and none of them throws.
 static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, EffectDescription& description)
 {
     if (throwsBeforeEntry(callee, mode))
@@ -115,8 +114,7 @@ static void describeReadOfConstructPrototype(const Program& program, const Type&
     describeOperandCode(program, newTarget, declaredBehaviorOf(Opcode::GetConstructPrototype, OperandIndex::GetConstructPrototype::newTarget), description);
 }
 
-// What a construction does before it enters the callee is in no summary either. A class constructor reads the prototype of new.target and allocates in its body,
-// or leaves both to its parent. For any other constructor whoever constructs does both and hands over the object.
+// What a construction does before it enters the callee is in no summary either.
 static void describeCreationOfThis(const Program& program, FunctionID callee, const EnteringOperands& operands, EffectDescription& description)
 {
     if (!takesThisFromConstruction(program.at(callee)))

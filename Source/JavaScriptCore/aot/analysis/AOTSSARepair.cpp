@@ -164,8 +164,7 @@ void SSARepair::run()
     m_builder.setOrigin(savedOrigin);
 }
 
-// An operation may name an allocation as the guard for what holds of a new object. A parameter that two allocations meet in is the object and no guard.
-// So the uses as a guard get a variable of their own: its definitions are an AllGuards behind each allocation, and the parameters they meet in are guards.
+// An operation may name an allocation as the guard for what holds of a new object.
 void SSARepair::separateUsesAsGuards()
 {
     struct NamedDefinition {

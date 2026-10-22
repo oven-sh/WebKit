@@ -197,8 +197,7 @@ static bool hangsOnMarkedCellsOnly(Visitor& visitor, Structure* structure)
     return (!prototype || visitor.isMarked(prototype)) && (!realm || visitor.isMarked(realm));
 }
 
-// The objects of a shape come and go, and a full collection may find none: a server between two requests. Without this the Structure would end, and with it whatever the program has learned about the shape.
-// A site has one entry, so the image bounds what the sites name. An Eden collection leaves old Structures alone, and StructureTable keeps the young ones.
+// The objects of a shape come and go, and a full collection may find none: a server between two requests.
 template<typename Visitor>
 void SiteCaches::visitRoots(Visitor& visitor)
 {

@@ -186,8 +186,7 @@ static bool hasStorage(const SlotPlanContext& context, const FieldInputs& field)
     return !isRemovedField(context.program, field.reference);
 }
 
-// Zero says that nobody has asked for the closure yet. What takes the field out of its slot makes the closure first, so the slot leaves like any other: it reads empty
-// and the property lies with the extra properties. Any other object that the program stores is in the slot as a reference.
+// Zero says that nobody has asked for the closure yet.
 static std::optional<FunctionID> deferredFunctionOf(const SlotPlanContext& context, const FieldInputs& field)
 {
     const LocationFlow& location = field.flow.location;
@@ -297,10 +296,7 @@ static SlotRow declaringRowOf(const SlotPlanContext& context, FieldReference ref
     return context.rows.rowOf(declaration.layout, declaration.field);
 }
 
-// The store that creates a field records the key, so it has to find the slot absent. Only an allocation that lists the field records the key itself.
-// A base class constructor allocates with NewObject. For a subclass and for a function called with new the run time allocates, and it lists nothing.
-// The run time's definition of a private name throws where the field exists, so it has to find the slot absent whoever enumerates.
-// The answer is by declaring row, so that a class and its subclasses agree on the slot.
+// The store that creates a field records the key, so it has to find the slot absent.
 static BitVector findFieldsCreatedByStores(const SlotPlanContext& context, const SlotUses& uses)
 {
     const Program& program = context.program;
@@ -565,8 +561,7 @@ static bool changesForm(const ClaimUnit& unit, SlotRepresentation own, SlotRepre
     return sharedValueKindOf(own) != sharedValueKindOf(shared) || (!canLeaveSlot(own) && canLeaveSlot(shared));
 }
 
-// One representation saves the accesses that reach fields with several a dispatch on the shape. Where it is of another kind than a field's own, or has an absent state that the field does without,
-// it costs the accesses that reach only such fields.
+// One representation saves the accesses that reach fields with several a dispatch on the shape.
 bool ClaimSharer::isWorthSharing(const JoinedRows::Set& joined, std::span<const ClaimUnit> units, SlotRepresentation shared) const
 {
     Vector<std::pair<SlotRow, const ClaimUnit*>, 16> unitsByRow;

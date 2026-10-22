@@ -17,9 +17,7 @@ struct Function;
 struct Terminator;
 struct Value;
 
-// Whether an operation may throw, and whether it may throw an error that the language prescribes for its operands. The errors beside those tell of a lack of memory or of stack.
-// No program may count on one of them, so an operation that throws nothing else goes away with its unused result. Edges to handlers and exception checks are there for every error.
-// A bool gives both answers: whoever says only that something throws says that it throws by rule.
+// Whether an operation may throw, and whether it may throw an error that the language prescribes for its operands.
 class ThrowEffect {
 public:
     constexpr ThrowEffect(bool mayThrow = true)

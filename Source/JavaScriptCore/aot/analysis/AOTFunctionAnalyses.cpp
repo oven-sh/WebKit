@@ -747,7 +747,6 @@ static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass)
 }
 
 // These passes see the same identities whether the table is completed before they start or when they first ask.
-// ThreadJumps and InferSwitches first ask before they edit, or after an edit that IRBuilder has reported. The others never ask, directly or through another analysis.
 static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatMayCompleteIdentitiesLate {
     PassID::FoldConstants, PassID::PropagateBranchConditions, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
     PassID::InferSwitches, PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::MergeDuplicateBlocks, PassID::CompactBlocks,

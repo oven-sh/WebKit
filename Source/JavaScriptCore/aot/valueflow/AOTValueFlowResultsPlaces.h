@@ -19,7 +19,6 @@ public:
     ValueFlowPlacesInProgram(const ValueFlowResultInputs&, const BitVector& builtinsAskedAbout);
 
     // The first statement in the text of the program that has the built-in as its result or as a constant operand, or that asks for the module whose namespace object it is.
-    // Where only the library names it, the way to that place. A built-in that has escaped and that nothing names came out of a read under a key nobody knows: the first such read. None for any other.
     Witness whereNamed(BuiltinID) const;
     // The place itself if it is written in the program. Of a place in the library the nearest call, import or require of the program that leads there, the first in the text among equals. None where nobody spells the way out.
     Witness wayTo(const Witness&) const;

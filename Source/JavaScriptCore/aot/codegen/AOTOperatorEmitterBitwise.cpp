@@ -65,7 +65,6 @@ void OperatorEmitter::generateURShift(const ValueContext& value)
 }
 
 // The conversion of a number has a branch to a call for what lies beyond int64, and B3 shares the arithmetic of two conversions but not their branches.
-// So the word that a block has made serves whatever that block dominates: the operators of a loop take what was converted ahead of it.
 template<typename Functor>
 Word32 OperatorEmitter::int32ConvertedOnce(const ValueContext& user, ValueID number, const Functor& convert)
 {

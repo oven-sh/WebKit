@@ -103,8 +103,7 @@ Jump branchIfWatchpointSetIsNotWatched(StubAssembler&, Address set, GPRReg scrat
 Jump branchIfNotFunctionType(CCallHelpers&, GPRReg cell, GPRReg scratch);
 void bumpRuntimeCounter(StubAssembler&, RuntimeCounterID, GPRReg scratch);
 
-// AOTStubHelpersAllocation.cpp
-// In a program that counts its allocations both count the cell under the family of the stub, before they look for room: see ExactAllocationCounts.
+// AOTStubHelpersAllocation.cpp In a program that counts its allocations both count the cell under the family of the stub, before they look for room: see ExactAllocationCounts.
 enum class CountedUnder : bool { FamilyOfStub, Allocation };
 void allocateCell(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath);
 // The bump path falls through. The generator calls emitLateRefill after an exit of its fast path and before it links slowPath.

@@ -39,8 +39,7 @@ struct WireBlockHead {
     uint32_t numberOfValues;
 };
 
-// A body as the front end wrote it: blocks in order, values in the order of their numbers. A record is valid during the call that hands it over.
-// Nothing has set the type, the expected type or the representation of a value.
+// A body as the front end wrote it: blocks in order, values in the order of their numbers.
 class WireBodyVisitor {
 public:
     virtual ~WireBodyVisitor() = default;

@@ -344,7 +344,6 @@ Address emitLocateRememberedConstructWord(StubAssembler& jit, GPRReg wordOfCall,
 }
 
 // A binary search of ProgramTables::constructEntrypoints, which is ascending by function and lists every function that comes here.
-// The word of an entrypoint that allocates the object itself comes back marked as not callable, like the word of a class: nobody makes a `this` for it.
 static void emitFindConstructWord(StubAssembler& jit, GPRReg word, const ConstructWordSearch& search, Address newTarget, GPRReg candidate)
 {
     static_assert(sizeof(ConstructEntrypointData) == 8);

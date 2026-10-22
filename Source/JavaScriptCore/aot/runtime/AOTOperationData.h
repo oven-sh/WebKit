@@ -130,13 +130,7 @@ struct NarrowDataWord {
 };
 static_assert(static_cast<uint32_t>(DataWord::Kind::Node) < 1u << NarrowDataWord::operandShift);
 
-// An array's words are an IndexingHeader, then its elements: where no element is a constant that the run time makes or a node, that is the storage of an array as the engine has it,
-// and the arrays made from the node point at it until they are written to.
-// An object's words are the values of its fields, then the index of each field. ObjectWithOtherMembers ends with one more word, which names an OtherMembers node:
-// the values of the members that are no fields, in the order of their creation, then the identifier number of each.
-// The words of an ObjectBody are the bytes of the cell behind its header and its order and shape words, as they are once every member is stored: the object is a copy of them.
-// Only a slot that the collector visits may hold something else: a DataWord, or a NarrowDataWord where the slot is narrow.
-// An OrdinaryObject has no layout: its words are those of OtherMembers, the values of its properties in the order of their creation, then the identifier number of each.
+// An array's words are an IndexingHeader, then its elements.
 struct DataNodeHeader {
     enum class Kind : uint32_t { Array, Object, ObjectWithOtherMembers, OtherMembers, ObjectBody, OrdinaryObject };
     static constexpr unsigned fieldIndicesPerWord = sizeof(uint64_t) / sizeof(uint16_t);

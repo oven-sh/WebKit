@@ -107,7 +107,6 @@ static Vector<VariableID> createFirstRunMarks(const FlowApplyContext& context, P
 }
 
 // As the mark of a first run, filled by the store of a variable that is stored at most once and by the definition of a class that is evaluated at most once.
-// Every copy of the operation shares the mark.
 static FlowFirstTimeMarks createFirstTimeMarks(const FlowApplyContext& context, ProgramEditor& editor)
 {
     FlowFirstTimeMarks marks;
@@ -168,8 +167,6 @@ void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, co
 }
 
 // Past form AsRead no Check may stay on a terminator, and nothing tests the result of a tail call.
-// They speak of the functions as read: nobody reads them behind the link, no version of a function shall copy them,
-// and a pass that changes the entry parameters or the values of a function does not carry them along.
 static void dropRelations(Program& program, BuildContext& build)
 {
     forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {

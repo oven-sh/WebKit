@@ -68,8 +68,7 @@ static constexpr uint32_t orderOf(uint32_t orderWord) { return orderWord & order
 static constexpr uint32_t countOf(uint32_t orderWord) { return orderWord >> orderWordCountShift & maxFieldsInOrder; }
 static constexpr bool isOrderStoredOutOfLine(uint32_t orderWord) { return orderOf(orderWord) == orderStoredOutOfLine; }
 
-// A property that the layout has a field for lies among the extra properties: something was stored that the slot cannot hold, or the property was redefined. It stays set.
-// While it is clear an empty slot says that the object has no such property, whatever else its extra properties hold.
+// A property that the layout has a field for lies among the extra properties: something was stored that the slot cannot hold, or the property was redefined.
 static constexpr uint32_t orderWordHasFieldOutsideSlot = 1u << 27;
 static constexpr uint32_t orderWordHasExtraProperties = 1u << 28;
 static constexpr uint32_t orderWordIsFrozen = 1u << 29;
@@ -89,15 +88,12 @@ static constexpr uint32_t maxExtensionGranules = 64;
 static constexpr uint32_t maxExtensionSize = offsetOfFirstExtensionSlot + maxExtensionGranules * extensionGranuleSize;
 static constexpr uint32_t minExtensionSize = 16;
 // A narrow hidden word names an Extension by its distance from a page of zeros, which lies in the part of the cell cage where nothing is allocated.
-// An object without an Extension has zero in that word, so compiled code finds no bit set and has nothing else to test.
 static constexpr uint32_t offsetOfEmptyExtensionInCage = 8 << 20;
 
 static constexpr uint32_t granuleOf(uint32_t offsetInExtension) { return offsetInExtension / extensionGranuleSize - 1; }
 static constexpr uint64_t granuleBitOf(uint32_t offsetInExtension) { return 1ull << granuleOf(offsetInExtension); }
 static constexpr uint32_t offsetInGranule(uint32_t offsetInExtension) { return offsetInExtension % extensionGranuleSize; }
-// Most Extensions hold one granule for good, so an Extension with one granule is the smallest cell there is and has no room. An object that gets a second granule tends to get more of them, so from
-// there on an Extension has room for a few more granules than it holds. How many follows from the number it holds and from nothing else: whoever creates an Extension clears that much, and whoever
-// appends to one knows how far it may go.
+// Most Extensions hold one granule for good, so an Extension with one granule is the smallest cell there is and has no room.
 static constexpr uint32_t extensionCapacities[] = { 1, 3, 5, 9, 13, 19, 27, 39, maxExtensionGranules };
 static constexpr uint32_t extensionCapacityFor(uint32_t numberOfGranules)
 {

@@ -46,8 +46,7 @@ struct ValueFlowMembersUnderKey {
     ValueSetID prototypeObjectsOfEntries;
 };
 
-// A key under which the instances of a class have a property of their own for life. ValueFlowMembersUnderKey::instancesThatKeepProperty lists the instances that operations allocate.
-// What a built-in allocates is known as an instance of the class only while the rules run: HeapRule::instancesThatKeepProperty().
+// A key under which the instances of a class have a property of their own for life.
 struct ValueFlowPropertyKeptForLife {
     PropertyKeyID key;
     BuiltinClassID instanceClass;
@@ -60,7 +59,6 @@ struct ValueFlowClassOfEntries {
 };
 
 // A built-in object of the realm on which native code that was not handed it looks up the names of a list and no other: BuiltinTable::namesReadByNativeCode().
-// The prototype object of a class whose instances are such entries is one too: native code comes to it from those entries alone.
 struct ValueFlowNameReadByNativeCode {
     BuiltinName name;
     // None: the program does not spell the name.
@@ -92,11 +90,9 @@ struct ValueFlowMembersOfHolder {
 };
 
 // The host makes the member when it is first looked for, or computes it at each read, and runs code of the library for that: whoever looks for the member needs that code, whatever for.
-// What lies on an object without such code is there for every walk.
 bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
 
-// What the rules of the heap ask of the table of built-ins and of the layouts. It is a function of the table and of the keys of the program, made before the first round, so that no run of a rule
-// goes over the table: a question about a set of objects is one intersection with a mask.
+// What the rules of the heap ask of the table of built-ins and of the layouts.
 class ValueFlowHeapTables {
     WTF_MAKE_NONCOPYABLE(ValueFlowHeapTables);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowHeapTables);
@@ -169,7 +165,6 @@ public:
     // The table's entry for native code that nothing describes. On a chain it stands for a prototype object that the table does not describe, among accessors for one that the table does not list.
     ValueFlowObjectID undescribedNativeCode() const { return m_undescribedNativeCode; }
     // What HeapRule::prototypesAtCreationOf() has found for a block of a set (ValueSets::forEachBlock()): five words: a count, the name of the block, then up to six prototypes, each one more than its number, two a word.
-    // One block takes the place of another. The count is odd while somebody writes: whoever writes has made it odd himself, whoever reads reads it before and behind.
     static constexpr uint64_t noBlockKept = UINT64_MAX;
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
     std::atomic<uint64_t>& prototypesAtCreationOf(ValueFlowObjectID object) const { return m_prototypesAtCreation[object.index()]; }

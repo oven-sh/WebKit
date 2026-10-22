@@ -82,8 +82,7 @@ static JSValue ownPrototypeProperty(VM& vm, JSObject* compiledCallee)
     return prototype;
 }
 
-// new.target selects the layout. Only what is or may be below the class of the constructor gets the shape of its class: the flow analysis has an allocation for nothing else,
-// so any other new.target gets an ordinary object, which passes no test for a shape.
+// new.target selects the layout.
 static std::optional<ThisPrototype> resolveThisPrototype(JSGlobalObject* globalObject, ClassTable& classes, Instance& instance, const LayoutData* constructorLayout, JSObject* newTarget)
 {
     VM& vm = globalObject->vm();
@@ -241,8 +240,6 @@ static bool looksFilledWhenNotListed(const FieldData& field)
 }
 
 // A subclass may declare the name again with another type, so the field of the instance tests what compiled code stored.
-// Some slots look filled whether the allocation listed their field or not, and compiled code lists no field where the prototype may select another class.
-// So what such a slot holds creates no field: it moves only into a slot that has no absent state either. A subclass that declares the name again may have one.
 static void copyFieldToInstance(VM& vm, State& state, const Object& allocated, const FieldData& field, Object& instance)
 {
     UniquedStringImpl* name = propertyNameOf(vm, allocated, field);
@@ -266,8 +263,7 @@ static void copyFieldToInstance(VM& vm, State& state, const Object& allocated, c
     instance.putDirectFromNativeCode(vm, name, value, allocated.attributesOf(field));
 }
 
-// The instance declares other fields or none. Some slots look filled whether the allocation listed their field or not, and compiled code
-// lists no field where the prototype may select another class.
+// The instance declares other fields or none.
 static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated, const FieldData& field, JSObject& instance)
 {
     if (looksFilledWhenNotListed(field))
@@ -282,9 +278,6 @@ static void defineFieldOnInstance(VM& vm, State& state, const Object& allocated,
 }
 
 // The prototype object of another class never leaves the object with the allocated shape: what the program does to that object is recorded for the other class.
-// A class that is or may be below the allocated one gets an instance of its own where it has a shape. For any other class the flow analysis has no allocation, or one whose shape
-// it does not prove, and its constructor does not run: the object is an ordinary one, which passes no test for a shape.
-// The layout of a constructor function is allocated for that function as new.target alone, and it stays whatever the program has stored as the prototype of the function.
 JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype)
 {
     const LayoutData& allocatedLayout = allocated->layout();

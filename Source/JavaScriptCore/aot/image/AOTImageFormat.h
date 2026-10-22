@@ -114,10 +114,6 @@ struct ImageCodeRanges {
 };
 
 // Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, and without LoadsModulesByName only while no module is found by a name.
-// The run time refuses both.
-// Without AdmitsLibraryText the image holds of a module of the host's library only what seen code reaches, so the run time lets nothing of that library run from its text.
-// Without ShowsWaysBetweenModuleObjects no code of the program names a way from one module object to another (Typed::namesWaysToModuleObjects()): whoever reads process.mainModule, `require.main`,
-// or `children` or `parent` of a module object finds undefined.
 enum class ImageFlag : uint32_t {
     IsObfuscated = 1 << 0,
     AdmitsUnknownJavaScript = 1 << 1,
@@ -126,8 +122,7 @@ enum class ImageFlag : uint32_t {
     ShowsWaysBetweenModuleObjects = 1 << 4,
 };
 
-// codeOffset and sections[].offset count from the header. Every member of ImageCodeRanges that is an offset counts from codeOffset.
-// address is where the image has to be in memory for the addresses in it to be right. AOTImageText.h says where they are and who sets them.
+// codeOffset and sections[].offset count from the header.
 struct ImageHeader {
     bool has(ImageFlag flag) const { return flags & static_cast<uint32_t>(flag); }
     bool isObfuscated() const { return has(ImageFlag::IsObfuscated); }
@@ -190,8 +185,7 @@ static_assert(sizeof(ImageFunction) == 8 && std::has_unique_object_representatio
 static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) <= 1ull << ImageFunction::numberOfFunctionBits);
 static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) == ClosureWord::firstReservedFunction);
 
-// A frame is named by the place of its frame record: the word below its return address. While the frame is set up the stack pointer is frameSizeInBytes() below that place.
-// A frame without a record leaves the frame pointer register as it found it, and the word is a slot like any other.
+// A frame is named by the place of its frame record: the word below its return address.
 struct ImageFrame {
     static constexpr unsigned maxCalleeSavesStart = (1u << 6) - 1;
     static constexpr uint16_t hasNoFrameRecordBit = 1u << 15;
@@ -247,10 +241,6 @@ static_assert(sizeof(StubAddressInImage) == 16);
 static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
 // frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
-// The answer is no in front of the first of them and stays what it is behind the last.
-// frame is a position in ImageSection::Frames. Only a function with frame ranges has one.
-// callSites is the stream of AOTCallSiteTable.cpp. It comes last, so that whoever walks the stack reads one run of bytes for a function.
-// What only a stack trace that is printed asks for, the positions, lies in ImageSection::Positions.
 struct SideTableInputs {
     std::span<const uint8_t> frameRanges;
     uint32_t frame { 0 };

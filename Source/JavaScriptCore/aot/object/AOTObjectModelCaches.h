@@ -38,8 +38,7 @@ struct DirectEvalStructures {
     Structure* variableScope { nullptr };
 };
 
-// How the getters of an object literal came to lie in the slots of one new object. The next object of the literal starts out the same, so they come to lie there the same way.
-// The names are those of fields and the fields are data of the image: nothing here is a cell.
+// How the getters of an object literal came to lie in the slots of one new object.
 struct GetterDefinitionPlan {
     struct Entry {
         UniquedStringImpl* name;

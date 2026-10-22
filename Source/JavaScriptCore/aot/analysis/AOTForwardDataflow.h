@@ -35,8 +35,7 @@ concept HasThrowTransfer = requires(Problem& problem, typename Problem::State& s
     problem.executeThrow(state, step);
 };
 
-// A problem may name states in which effects decide nothing: every transfer leaves such a state as that of an operation without effects would,
-// and the state at the head of a handler does not hang on whether it was met with such a state. The effects of what is executed in such a state are not computed.
+// A problem may name states in which effects decide nothing: every transfer leaves such a state as that of an operation without effects would, and the state at the head of a handler does not hang on whether it was met with such a state.
 template<typename Problem>
 concept HasStatesThatIgnoreEffects = requires(const Problem& problem, const typename Problem::State& state) {
     { problem.ignoresEffects(state) } -> std::same_as<bool>;
@@ -57,8 +56,7 @@ concept ReadsNoEffects = requires {
     requires !Problem::readsEffects();
 };
 
-// A problem may carry out all values of a block in one step, with the outcome of execute() for one after the other. The solver goes value by value only in a block with a handler,
-// where it has to see the state at whatever may throw.
+// A problem may carry out all values of a block in one step, with the outcome of execute() for one after the other.
 template<typename Problem>
 concept ExecutesValuesOfBlock = requires(Problem& problem, typename Problem::State& state, BlockID block) {
     problem.executeValuesOf(state, block);

@@ -300,8 +300,7 @@ void ObjectCensus::collect()
         ++(entry.value == 1 ? m_singlyReferencedArrays : m_multiplyReferencedArrays);
 }
 
-// An obsolete table names the table that took its place, so whoever holds the first of a chain holds them all. The longest chains are listed with the cells that have a word, wide or narrow,
-// that may name the first table. A chain without such a cell is held from outside the heap: by the stack, a register or a table of the run time.
+// An obsolete table names the table that took its place, so whoever holds the first of a chain holds them all.
 void ObjectCensus::findHoldersOfFirstTables()
 {
     constexpr size_t maxListedChains = 8;

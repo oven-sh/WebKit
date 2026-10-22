@@ -24,12 +24,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The nodes, the edges between them and the least solution of
-//     value(n) = what mask(n) lets through of the union of value(p) over the edges p -> n
-// where a constant node holds its set for ever. Edges and nodes are only ever added, so values only ever grow, and after an addition only what the addition reaches is computed again.
-//
-// A placeholder is a member that stands for whatever one node, the covered node, holds. A node that holds the placeholder and hands on all it gets to the covered node says no more by listing what arrives later:
-// it is retired. What a retired node lists may then be less than the equation says, and what is missing is in the covered node.
+// The nodes, the edges between them and the least solution of value(n) = what mask(n) lets through of the union of value(p) over the edges p -> n where a constant node holds its set for ever.
 class ValueFlowGraph {
     WTF_MAKE_NONCOPYABLE(ValueFlowGraph);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowGraph);
@@ -86,15 +81,11 @@ public:
     void setMask(ValueFlowNodeID, ValueSetID, ValueFlowMaskKind = ValueFlowMaskKind::Plain, ValueSetID familyObjects = { });
     // Before any node has a value. Without them no member stands for another at a mask.
     void setPlaceholders(const ValueFlowPlaceholders& placeholders) { m_placeholders = placeholders; }
-    // Before the first solve, once for a placeholder. From then on a node is retired at the end of a solve if it has no mask, is not at rest, holds all of `whole`,
-    // and reaches the covered node over edges into nodes that have no mask and are not at rest, so that all it gets ends up there.
-    // A retired node keeps what it lists and takes no more members of `coverable`; whatever else arrives it takes as before. Each node with an edge into it gets an edge straight into the covered node.
-    // A covered node is never retired.
+    // Before the first solve, once for a placeholder.
     void retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable);
     // On account of any placeholder.
     bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
     // A placeholder with a covered node does not pass a mask that comes with family objects, and nothing takes its place by itself: what it covers moves.
-    // Lists each node at whose mask one has stopped since the last call, once for a placeholder, in ascending order. Whoever asks connects what the covered node holds of the family objects.
     struct StoppedPlaceholder {
         ValueFlowNodeID node;
         ValueFlowObjectID placeholder;
@@ -102,8 +93,6 @@ public:
     void takeNodesAtWhichPlaceholdersStopped(Vector<StoppedPlaceholder>&);
     bool flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID) const;
     // Beside other threads: each with a worker's number of its own, and a node of its own.
-    // A constant never moves, so nobody follows its edges forward: an edge out of it is kept at its target alone, among the predecessors. forEachSuccessor() answers none for it.
-    // Where the edges are listed, forEachListedEdgeOutOfConstants() answers them.
     enum class EdgesOutOfConstant : bool { AreKeptAtTargetsAlone, AreListed };
     void makeConstant(ValueFlowNodeID, ValueSetID, unsigned worker = 0, EdgesOutOfConstant = EdgesOutOfConstant::AreKeptAtTargetsAlone);
     bool isConstant(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && isConstant(node.index()); }
@@ -209,8 +198,7 @@ public:
     bool hasNodesJustRetired() const;
     void connectPredecessorsOfNodesJustRetired();
 
-    // Behind the last solve. Frees what only adding edges and solving read: the set of known edges, the lists that the rows are built from, the successors, what has arrived.
-    // The values, the masks and the predecessors stay.
+    // Behind the last solve.
     void releaseSolvingState();
     void releaseRows();
 

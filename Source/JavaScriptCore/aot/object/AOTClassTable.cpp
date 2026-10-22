@@ -256,8 +256,6 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
 }
 
 // The class of a constructor function is that of the first function of its text that gets a prototype property, which comes before its first construction.
-// A second function that gets one tells that the text was evaluated again. What it constructs is born below another prototype object, of which the guards say nothing,
-// and compiled code asks no object that it has made itself which one it was born below. So the guards end for good, as those of a class that is evaluated again.
 void ClassTable::didCreatePrototypePropertyOf(Closure* function)
 {
     const LayoutData* classLayout = classConstructedBy(function->function());
@@ -275,11 +273,7 @@ void ClassTable::didCreatePrototypePropertyOf(Closure* function)
     didEvaluateClassAgain(m_state, *classLayout);
 }
 
-// No operation defines the class of a constructor function. Its holders are the function and the object in its prototype property when the prototype of the instances is first asked for,
-// which is at the first construction: a program fills or replaces that object before. The guards can tell the names of an ordinary object and of a compiled one.
-// Where that object can hold no class, the function never gets one: the Structures and the allocation sites of its instances name another prototype from then on.
-// A function may get its class because a function or a class below it gets one. Its own guards speak of objects that it makes itself, and most such functions make none
-// (nobody constructs a Stream): until it does, its holders are entered and report, and its guards stand in the way of no set, as those of a class that does not exist yet.
+// No operation defines the class of a constructor function.
 JSObject* ClassTable::defineClassOfConstructorFunction(VM& vm, const LayoutData& classLayout, UseOfFunction use)
 {
     if (m_constructorFunctionsWithoutClass.contains(classLayout.index))
@@ -356,7 +350,6 @@ void ClassTable::finishLazyParts(VM& vm, const LayoutData& classLayout)
 }
 
 // A member that an operation of the definition creates is added to the Structure in place, and a Structure that is kept says what the record alone creates.
-// So the first evaluation of a class with such members keeps none: most classes have no second one.
 bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData& classLayout) const
 {
     ASSERT(&classLayout == classObject.classData());

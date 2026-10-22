@@ -30,12 +30,7 @@ struct ChangedRecords {
     std::span<const VariableID> variables;
 };
 
-// The functions that see one of the records. What the body of any other function says by itself stays as it is when these records change.
-// A layout or a variable is seen by whoever names it: in an operation, in a type, or by way of a layout that inherits from it or that stands for such a layout.
-// A field is seen by an operation that names its layout in one of these ways and looks for its key, for a key that is an operand, or for all the fields there are.
-// followsFieldsOfOperands has a byte for each function, and none for those at the end that nothing is kept of. A function with a byte that is set came to layouts
-// by way of the fields of others, so it counts as naming whatever the records of the layouts it names lead to.
-// isAsked has a byte for each function. A function whose byte is not set is left out, whatever it sees.
+// The functions that see one of the records.
 Vector<FunctionID> findFunctionsSeeing(const Program&, const ChangedRecords&, std::span<const uint8_t> followsFieldsOfOperands, std::span<const uint8_t> isAsked, const ParallelLoops&);
 
 } } } // namespace JSC::AOT::Typed

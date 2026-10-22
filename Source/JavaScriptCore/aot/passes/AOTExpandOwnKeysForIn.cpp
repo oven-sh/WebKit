@@ -85,8 +85,7 @@ static bool leadsToEntryWithoutEffect(FunctionPassContext& context, ValueID open
     }
 }
 
-// `out[name] = record[name]` under a type: the value is tested, and the arm of the failing test is unlikely. SeparateUnlikelyLoopPaths gives such a loop a second header in front of the first,
-// for the turns that end in unlikely code. It only hands its parameters on. A for-in loop is expanded turn by turn, however a turn ends, so those turns go back to the header with the step.
+// `out[name] = record[name]` under a type: the value is tested, and the arm of the failing test is unlikely.
 static bool rejoinSeparatedLoop(FunctionPassContext& context, Function& function, const NaturalLoop& loop)
 {
     if (!findStepAtHeadOf(context, loop.header()))

@@ -506,7 +506,6 @@ static LayoutID findLayoutFilledOutsideFieldTypes(const Program& program, const 
 }
 
 // The slot of a field holds values of the field's type, and the run time stores the members of constant data without a test.
-// Passes narrow the types of fields, so this holds in every form.
 void ProgramVerifier::verifyDataTypes()
 {
     Vector<InternalError> errors = collectInParallel<InternalError>(m_build.parallelLoops(), m_program.data.size(), [&](unsigned index, Vector<InternalError>& found) {

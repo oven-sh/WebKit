@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
 #include "AOTDerivedFunctions.h"
 

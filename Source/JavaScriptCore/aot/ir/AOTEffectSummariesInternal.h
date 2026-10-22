@@ -67,9 +67,7 @@ struct BodySummary {
     friend bool operator==(const BodySummary&, const BodySummary&) = default;
 };
 
-// A BodySummary whose masks are IDs of a table and whose lists share one allocation. Two of them compare only if they use the same table.
-// The dependencies are grouped by the function of their source, ascending, unknown code first. A group is a word for the function (0 for unknown code, else its index + 1), the number of its dependencies,
-// and for each of them the node of the source and the node of the target, where 0 is OnReturn, 1 is OnThrow and 2 + n is parameter n: two halves of a word, or two words if one body has a node past 65535.
+// A BodySummary whose masks are IDs of a table and whose lists share one allocation.
 class StoredBodySummary {
     WTF_MAKE_NONCOPYABLE(StoredBodySummary);
 public:
@@ -163,9 +161,6 @@ struct StoredAddedEffects {
 };
 
 // What is kept from one computation of the summaries to the next: what each body does by itself, and the solution.
-// The summary of a body reads the body, the records of the functions that its dependencies name, and records that all functions share.
-// Whoever keeps this says which functions changed, among them those that name a shared record that changed.
-// A body also reads what the seed says, which follows bodies any number of calls away. The summarizer keeps the seed and compares.
 class BodySummaries {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodySummaries);
     WTF_MAKE_NONCOPYABLE(BodySummaries);
@@ -175,7 +170,6 @@ public:
     // SayNoLess: what the records of the functions say of them to a caller holds as before, or more does.
     enum class Records : uint8_t { MaySayLess, SayNoLess };
     // OnlySetStorage: all that the edits wrote is where the cells that the functions allocate lie, which neither a summary nor the table of borrowed parameters reads.
-    // What is kept of a body that was read as it stands is what reading it again gives. A body that was lowered since it was read, before the edits or behind them, counts as changed.
     enum class Edits : uint8_t { Any, OnlySetStorage };
     void didChange(std::span<const FunctionID>, Records = Records::MaySayLess, Edits = Edits::Any);
     // The functions do no more than before. What is kept of them stays, as an upper bound.
@@ -227,7 +221,6 @@ private:
     Vector<uint64_t> m_stampsOfEntries;
     BorrowingBodies m_borrowingBodies;
     // Empty unless computeBorrowedParametersOfChangedBodies() has looked at the changed bodies since the summaries were brought up to date.
-    // A body that nobody has touched since, and that reads no record that looks different since, is not looked at once more.
     Vector<uint8_t> m_wasTouchedSinceLatestTable;
     Vector<uint64_t> m_stampsOfRecordsAtLatestTable;
     BorrowedParameters m_borrowed;
@@ -263,11 +256,9 @@ struct ExitReachability {
 // What the role of a function says it does, whatever its body looks like. False for a role that says nothing.
 bool describeByRole(const Program&, const Function&, EffectDescription&);
 // The rows of a serializer or a parser say more than the built-in they stand for: they name no operand types, and they write what the function has just allocated.
-// Its summary is the one of the built-in before and after the summarizer sees the body, so a caller that has placed its tests by one of them is right by the other.
 constexpr bool isSummarizedByRole(FunctionRole role) { return role == FunctionRole::Serializer || role == FunctionRole::Parser || role == FunctionRole::ValidatingParser; }
 
-// What the seed takes from the types of the parameters. Bit i: the function borrows entry parameter i, the table names a call, and no value of the type of the parameter can be called.
-// The seed says the same of a function as long as flow, the word of the table and this stay as they are.
+// What the seed takes from the types of the parameters.
 uint64_t parametersWhoseContentsAreCalled(const Program&, FunctionID, const BorrowedParameters&);
 
 ExitReachability computeExitReachability(const Function&);

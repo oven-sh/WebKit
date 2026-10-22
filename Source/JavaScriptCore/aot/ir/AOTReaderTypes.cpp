@@ -34,15 +34,13 @@ struct DeclaredNames {
 
     Vector<Vector<uint32_t>> required;
     Vector<Vector<uint32_t>> declared;
-    // Not the objects of a constructor. `new Type(checker, flags)`, then `result.id = ..; result.symbol = ..`: the program stores names that the type requires after the constructor has
-    // returned, and the record lists what the constructor stores. An instance of a class may also find a name in an accessor of a prototype, or in a base that the engine brings along.
+    // Not the objects of a constructor.
     BitVector declaresEveryName;
     uint32_t firstTaggedLayout { 0 };
     Vector<Vector<uint32_t>> declaredByTaggedLayouts;
 };
 
-// What the objects of each layout pass for: what the program converts them to, and every type whose names they have. A conversion carries the whole family of its source along.
-// Names do not: a layout below one that has the names of a type may lack those that are optional there.
+// What the objects of each layout pass for: what the program converts them to, and every type whose names they have.
 struct Conversions {
     const Wire::Sections& checkedSections;
     Vector<Vector<uint32_t>> typesMetByNames;
@@ -253,9 +251,7 @@ static constexpr uint64_t pairOf(uint32_t first, uint32_t second) { return stati
 
 constexpr size_t maxLayoutsMetByNames = 128;
 
-// An object that has every name a type requires passes for the type, whatever brought it there: a cast, `any`, another file. That is more than the checker lets through,
-// and it is sound: what a read finds under a name is what the layout of the object declares for it, which every store is tested against, never what the type says.
-// A type that requires no name says nothing about the names of an object.
+// An object that has every name a type requires passes for the type, whatever brought it there: a cast, `any`, another file.
 static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, const Wire::Sections& checkedSections, const TellingFields& tellingFields)
 {
     std::span<const Wire::Layout> layouts = checkedSections.layouts;
@@ -335,10 +331,7 @@ static bool requiresNoName(const Conversions& conversions, uint32_t type)
     return isStructuralType(conversions.checkedSections.layouts[type]) && conversions.declaredNames.required[type].isEmpty();
 }
 
-// A type that requires no name is a view of every object: `interface Handle { readonly brand?: never }`, `{}`, a bag of options. Whatever the program converts to it passes for it,
-// which says nothing about what else the object is: an assertion out of such a type is an assertion out of `object`. So what has reached the type goes on from there to the types
-// that require no name either, and to no other, or everything that goes up into it would come down as a member of everything that it is asserted to be.
-// The objects that are born with its own layout go wherever the program converts them.
+// A type that requires no name is a view of every object: `interface Handle { readonly brand?: never }`, `{}`, a bag of options.
 static bool passesOn(const Conversions& conversions, Conversion conversion, LayoutID member)
 {
     if (!requiresNoName(conversions, conversion.source) || requiresNoName(conversions, conversion.target))
@@ -406,10 +399,7 @@ static DeclaredFamilies collectDeclaredMembers(const ParallelLoops& loops, const
     return families;
 }
 
-// The set of a type is the layouts that declare the names it requires, whatever brought them near it. A layout that has the names of a small type, which the program asserts to be
-// a larger one, has not got the names of the larger one. Nor has the empty literal of `{} as T`. No read of such a name finds a field there: to the flow analysis it would be a
-// property that anybody may have added, an accessor among them, and one such member takes the proof from the whole set.
-// The planner of tagged layouts looks for the types of a maker in the families as the conversions give them, so this comes behind it.
+// The set of a type is the layouts that declare the names it requires, whatever brought them near it.
 static void removeMembersThatLackRequiredNames(const ParallelLoops& loops, const DeclaredNames& names, DeclaredFamilies& families)
 {
     forEachIndexInParallel(loops, static_cast<unsigned>(families.members.size()), [&](unsigned type) {
@@ -562,10 +552,7 @@ bool Reader::computeDeclaredMembers()
     m_typeParametersWithoutFamily = findTypeParametersWithoutFamily(m_sections.layouts, families);
 
     size_t numberOfLayoutIDs = numberOfRecords<LayoutID>();
-    // No test finds a member without a layout, and every value of a position has passed a test or comes from one that has. So the type of a position lists the layouts alone:
-    // an object without one fails the test and goes on in the generic version.
-    // A type is a view: a record that nothing allocates is the layout of no object, so it is a member of no set, not even of its own. A view that no layout of the program
-    // can pass for says nothing about the layout of what arrives: an object that the program did not make, or one without a declared layout.
+    // No test finds a member without a layout, and every value of a position has passed a test or comes from one that has.
     m_viewsWithoutLayouts = BitVector(numberOfLayouts);
     Vector<LayoutSet> sets(numberOfLayoutIDs);
     Vector<uint8_t> isViewWithoutLayouts(FillWith { }, numberOfLayouts, static_cast<uint8_t>(0));
@@ -742,8 +729,7 @@ void Reader::makeRoomForFunctions()
     growFromEmpty(m_build.parallelLoops(), m_program.functions, numberOfFunctions);
 }
 
-// Each is work for one thread for most of its time, and none looks at what another makes: the sets of layouts and the sets of callees are tables of their own,
-// and nothing asks for a function before the layouts are read. A failure in the layouts is the one that is reported, as if the rest had not been tried.
+// Each is work for one thread for most of its time, and none looks at what another makes: the sets of layouts and the sets of callees are tables of their own, and nothing asks for a function before the layouts are read.
 bool Reader::computeFamilies()
 {
     bool hasDeclaredMembers = false;
@@ -851,8 +837,7 @@ void Reader::addFunctions(Type& type, std::span<const FunctionID> named) const
     if (type.anyFunction)
         return;
 
-    // Every function whose signature fits satisfies a function type, and no test at run time knows a signature. So the type admits every function,
-    // and lists those that the program is seen to convert to it: they are what a call through the type expects.
+    // Every function whose signature fits satisfies a function type, and no test at run time knows a signature.
     Vector<FunctionID, 8> members;
     Vector<BuiltinID, 4> builtinMembers(type.builtins.span());
     for (FunctionID function : named) {

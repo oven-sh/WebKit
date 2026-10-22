@@ -279,9 +279,7 @@ static Type typeOfArraysAmong(FunctionPassContext& context, const Type& operand)
     return arrays;
 }
 
-// `$isMap(x)`, `$isPromise(x)`, `$isTypedArrayView(x)` in the library ask for the kind of a cell. Where the instances of some classes of the engine, and of the classes below them, are the cells of those kinds,
-// that is the test for the classes: it folds where the type answers it, and what passes it has the type. Not `$isJSArray(x)`: it asks for ArrayType alone, and the test for an array also takes
-// an array of a class below Array, whose kind is DerivedArrayType, and does not take Array.prototype.
+// `$isMap(x)`, `$isPromise(x)`, `$isTypedArrayView(x)` in the library ask for the kind of a cell.
 static std::optional<Value> simplifyTestOfCellKind(FunctionPassContext& context, const Value& test)
 {
     const BuiltinTable& table = context.program.builtins();
@@ -456,8 +454,7 @@ static KnownBoolean evaluateNumberTest(BuiltinID builtin, const Type& operand)
     return KnownBoolean::Unknown;
 }
 
-// Error.isError and ArrayBuffer.isView ask what kind of cell an object is, and look through no Proxy. The class of the engine says it. An object that nobody knows may be of any class,
-// one with the layout of a class of the program may be made by a built-in constructor above that class, and what a class of the host answers is the host's to say.
+// Error.isError and ArrayBuffer.isView ask what kind of cell an object is, and look through no Proxy.
 static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID builtin, const Type& operand)
 {
     const BuiltinTable& table = program.builtins();
@@ -497,8 +494,7 @@ static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID
     return hasSome ? KnownBoolean::True : KnownBoolean::False;
 }
 
-// `$inheritsReadableStream(x)` in the library asks whether a cell is of one class of the host. A primitive is none, nor is a function of the program, an instance of a class of the engine,
-// or an object with the layout of a class that no built-in constructor stands above.
+// `$inheritsReadableStream(x)` in the library asks whether a cell is of one class of the host.
 static bool isOfNoClassOfHost(const Program& program, const Type& operand)
 {
     if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty())
@@ -629,8 +625,7 @@ static bool isCallOf(const Program& program, const Value& value, BuiltinID funct
     return overload.mode == BuiltinCallMode::Call && program.builtins().canonicalID(overload.builtin) == function && value.argumentsOperands().size() == numberOfArguments;
 }
 
-// An ordinary source is read by the definition, behind this value, so the value changes nothing. It sees nothing either: the definition may be first to
-// make what the description made.
+// An ordinary source is read by the definition, behind this value, so the value changes nothing.
 static bool maySwapWithAnyCall(const EffectContext& effectContext, const Function& function, const Value& value)
 {
     Effects effects = effectsOf(effectContext, function, value).onAnyEdge();
@@ -808,9 +803,7 @@ static std::optional<DefinitionByDescriptors> matchDefinitionByDescriptors(Funct
     return DefinitionByDescriptors { site, WTF::move(*secondHalf), WTF::move(*found) };
 }
 
-// Each call stays where it stands, so whoever sees where an error comes from, or catches it, sees what it saw. The first does what somebody may see of
-// the description and otherwise hands the source on, and the second defines each own property of the source on the target as it stands. No object
-// describes a property of an ordinary object on the way.
+// Each call stays where it stands, so whoever sees where an error comes from, or catches it, sees what it saw.
 static unsigned fuseDefinitionsByDescriptors(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;
@@ -1008,8 +1001,7 @@ static std::optional<CallWithLiteralParts> matchCallWithLiteralParts(FunctionPas
     return match;
 }
 
-// Native code reads each member of such a literal by name, the absent ones too. A literal that only such calls see is left without a user: the two
-// arms that a call with a form for JSON text has become share one.
+// Native code reads each member of such a literal by name, the absent ones too.
 static unsigned takeLiteralArgumentsApart(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;

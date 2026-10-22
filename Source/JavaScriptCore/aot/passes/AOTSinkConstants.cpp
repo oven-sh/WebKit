@@ -183,7 +183,6 @@ private:
     }
 
     // Where the users lie in a cycle or reach each other, one value serves them all: it is created in the lowest block outside of every cycle that dominates them.
-    // That block runs no more often than the one it leaves, and not at all on the paths that use nothing.
     bool tryPlanMove(ValueID original, BlockID definitionBlock, std::span<const Use> uses, const UseLists& useLists)
     {
         if (uses.empty() || isRematerializable(m_function.at(original)) || m_analyses.isInCycle(definitionBlock))

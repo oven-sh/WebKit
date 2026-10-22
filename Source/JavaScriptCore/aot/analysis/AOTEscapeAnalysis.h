@@ -150,8 +150,6 @@ public:
     bool gaveUp() const { return m_gaveUp; }
 
     // The body makes no object, so every object is an entry parameter, and its caller may have done anything with it before the function was entered.
-    // Here the solve stays within its limit, no two values are known to be different objects but by their types, and nothing about an object is known not to have happened yet.
-    // All that is seen without the solve, which waits for the first question about an entry parameter. False says nothing.
     bool tracksOnlyEntryParameters() const { return m_tracksOnlyEntryParameters; }
 
     unsigned numberOfObjects() const
@@ -189,8 +187,7 @@ public:
 
     // The object, and every object that some value may name as well as it.
     BitVector objectsSharingValuesWith(ObjectID) const;
-    // About an object that a terminator makes on an edge: those of objectsSharingValuesWith of which no value that is live in front of any such terminator
-    // may name an earlier instance. What happened to them is over there. An object that is still in use there keeps its past and costs the others nothing.
+    // About an object that a terminator makes on an edge: those of objectsSharingValuesWith of which no value that is live in front of any such terminator may name an earlier instance.
     const BitVector& objectsRenewedAtMakersOf(ObjectID object) const LIFETIME_BOUND
     {
         RELEASE_ASSERT(m_hasLiveInstances);
@@ -286,11 +283,8 @@ private:
 };
 
 // False where every allocation that the value may name was read out of an object that is open to others, and so has a use that lets it escape.
-// It is seen from what the value is computed from, without the solve. True says nothing.
 bool mayNameUnescapedAllocation(const Function&, ValueID);
-// Seen without the solve too, through the parameters of blocks as well: the values that make the objects which the value may name, or out of which what it names may have been read,
-// however many objects lie between. An allocation that the value may name and that is made by none of them, and stands in none of their objects, was read out of an object that is open to others.
-// Nothing where that takes too long to see.
+// Seen without the solve too, through the parameters of blocks as well: the values that make the objects which the value may name, or out of which what it names may have been read, however many objects lie between.
 std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses&, ValueID);
 
 // What the solve says of a use of a value for every object that the value names, seen from the use alone.

@@ -23,9 +23,7 @@ struct PlannedLayout;
 // The form under which the table of fields lists a field with such a slot, by the cases of FieldTableEntry::forField(). None for Form::Field, whose record says how it is read.
 JS_EXPORT_PRIVATE std::optional<FieldTableEntry::Form> formInFieldTable(const PlacedSlot&);
 
-// A read by name finds its field in the table of fields and then asks which form the entry has, one form after the other. The form that stands first costs the least.
-// Fields of one name mostly hold one kind of value, whichever layout has them. So for each name: the form of most objects that have a field of the name, each layout counted as often as the program is
-// estimated to allocate it. A prediction by the name alone: it holds for a receiver of which nothing is known, two equal reads have equal code, and nothing may rely on it.
+// A read by name finds its field in the table of fields and then asks which form the entry has, one form after the other.
 class FormsExpectedOfNames {
 public:
     FormsExpectedOfNames() = default;

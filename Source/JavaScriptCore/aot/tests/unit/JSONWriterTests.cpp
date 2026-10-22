@@ -188,8 +188,6 @@ static void testLongStrings()
     }
 }
 
-// Eight characters are given their backslashes at once: every way in which eight characters may want one, in either half of a vector, with quotes and with backslashes,
-// behind a plain vector, in front of a tail, and beside a control character, which takes the vector out of that road.
 static void testStringsFullOfQuotes()
 {
     DetachedInstance fixture;

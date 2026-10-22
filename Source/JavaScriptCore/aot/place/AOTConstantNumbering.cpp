@@ -194,9 +194,7 @@ void collectKeyCellUses(const Program& program, FunctionID id, Vector<KeyCellUse
     }
 }
 
-// Few of the names of a program are ever values, so only those have a word in the table of key cells. The words are in the order of the program's text:
-// most modules and functions of a large program never run, and what they name then shares no page with what the others name.
-// A type test compares with the cell of a symbol, and the type it tests for can be the type of any value. There are few symbols, so each has a cell.
+// Few of the names of a program are ever values, so only those have a word in the table of key cells.
 static void numberKeyCells(const PlacementContext& context, const KeyCellUsesOfBodies* usesOfBodies, ConstantNumbering& numbering)
 {
     const Program& program = context.program;

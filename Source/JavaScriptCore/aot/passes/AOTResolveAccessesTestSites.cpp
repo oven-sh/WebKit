@@ -118,9 +118,7 @@ static std::optional<TestedAccess> planAccessUnderTests(TestSiteReporter& report
     }
 }
 
-// One test of a slot is cheaper than the three under which an empty slot reads as undefined. Those three are asked of the object, not of the field, and what they prove never comes back once it is lost.
-// `const { children, ...style } = props`, then `style.margin`, `style.padding`, `style.gap` ..: a function that reads this many optional fields of one kind of object handles options, most of which are left out,
-// and one of them that is left out would send the rest of the function into its copy.
+// One test of a slot is cheaper than the three under which an empty slot reads as undefined.
 static constexpr unsigned minOptionalFieldsReadToExpectEmptySlots = 4;
 
 static LayoutSetID layoutsOfReceiver(TestSiteReporter& reporter, const Value& access)
@@ -163,8 +161,7 @@ static bool storesOptionOfRecord(const Program& program, LayoutSetID layouts, Pr
     return optionalityOf(program, layouts, key).isOptionOfRecordInEveryLayout;
 }
 
-// `const P = (F.prototype = {}); P.emit = ..`: the members of such a class are fields of a record, and the class lists none of them. A plan that rests on "nothing above the object has the name"
-// asks for a guard that is never set: the test would fail every time and send the rest of the function into its copy. Without it the one access goes by name where it stands.
+// `const P = (F.prototype = {}); P.emit = ..`: the members of such a class are fields of a record, and the class lists none of them.
 static bool claimsAbsenceOfNameOnInstalledPrototype(TestSiteReporter& reporter, const PropertyAccessPlan& plan, PropertyKeyID key)
 {
     if (plan.member.kind != MemberKind::Absent && plan.member.kind != MemberKind::Field)
@@ -182,8 +179,7 @@ static bool claimsAbsenceOfNameOnInstalledPrototype(TestSiteReporter& reporter, 
     });
 }
 
-// `Object.setPrototypeOf(make(), prototype).method()`: the object has just been handed a prototype, so a test that it still has the one of its layout fails every time
-// and sends the rest of the function into its copy. Without the test the one access goes by name where it stands.
+// `Object.setPrototypeOf(make(), prototype).method()`: the object has just been handed a prototype, so a test that it still has the one of its layout fails every time and sends the rest of the function into its copy.
 static bool testsPrototypeThatWasJustReplaced(TestSiteReporter& reporter, const Value& access, const TestedAccess& tested)
 {
     if (!std::ranges::contains(tested.tests.tests, Opcode::HasLayoutPrototype, &Value::opcode))
@@ -193,8 +189,7 @@ static bool testsPrototypeThatWasJustReplaced(TestSiteReporter& reporter, const 
     return receiver.opcode == Opcode::CallBuiltin && reporter.program().builtins().at(receiver.overload()).code.implementation.inlineBuiltin == InlineBuiltin::SetPrototypeOf;
 }
 
-// A test buys a load in place of a read by name and costs the test, the arm with the read by name and the join. Where the plan asks for the shape and at most that the slot is filled,
-// the read gives `anything` either way: in the cold code of a cold function of a very large program it stays by name. Typed fields, instances, optional fields, loops and small functions keep their tests.
+// A test buys a load in place of a read by name and costs the test, the arm with the read by name and the join.
 static bool isReadOfUntypedFieldInColdCode(TestSiteReporter& reporter, const Value& access, const TestedAccess& tested)
 {
     FunctionPassContext& context = reporter.context();
@@ -214,8 +209,7 @@ static bool isReadOfUntypedFieldInColdCode(TestSiteReporter& reporter, const Val
     });
 }
 
-// `this._events = ..` in EventEmitter, for every emitter of the program. One heir whose plan makes that claim, a constructor function of a package below Stream, would take the tests from all the others,
-// whose plans do not, and send their stores by name. The others are tested for, and the heir fails their test.
+// `this._events = ..` in EventEmitter, for every emitter of the program.
 static std::optional<TestedAccess> planForReceiversThatClaimNoAbsence(TestSiteReporter& reporter, const Value& access, PropertyAccessQuery& query, const PropertyAccessPlan& refused)
 {
     if (query.start != MemberStart::Instance || refused.receivers.size() < 2)
@@ -342,7 +336,6 @@ struct ReadOfOption {
 } // anonymous namespace
 
 // The block that the test of the slot leads to where it passes: the guard is its one parameter, and nothing stands in front of the read but what joins that guard to others for it.
-// A test that was placed a moment ago leads there through a block of its own that holds the guard and nothing else.
 static std::optional<ValueSite> findReadBehindSlotTest(FunctionPassContext& context, const Value& test, BlockID filled)
 {
     const Function& function = context.function;
@@ -391,9 +384,7 @@ static Vector<ReadOfOption> findReadsOfOptionsBehindSlotTests(FunctionPassContex
     return reads;
 }
 
-// `settings.model ?? "default"`: one option, read by a function that handles no others. A test of the slot is all that a filled slot costs, and it stays so.
-// Where the slot is empty the object mostly has left the option out: behind the tests under which that reads as undefined the function goes on in its typed code,
-// and only an object that fails one of them leaves for the copy.
+// `settings.model ?? "default"`: one option, read by a function that handles no others.
 PassOutcome readOptionsLeftOutAsUndefined(FunctionPassContext& context)
 {
     if (!readsOptionsLeftOutAsUndefined(context))

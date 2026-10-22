@@ -87,8 +87,7 @@ struct ReservedBytes {
     friend auto operator<=>(const ReservedBytes&, const ReservedBytes&) = default;
 };
 
-// An object that lies in the cell of another, behind the fields of that one, with a header of its own. The field of the outer object is a reference like any other.
-// Only an allocation that makes both objects asks for a cell with the room. The size of the layout is the size without.
+// An object that lies in the cell of another, behind the fields of that one, with a header of its own.
 struct PlacedInnerObject {
     FieldIndex field { 0 };
     // None for an array: its cell, and behind that its first storage.
@@ -100,7 +99,6 @@ struct PlacedInnerObject {
 };
 
 // An object that is not made yet has its slots in the object that holds it: as far behind `distance` as they lie behind the start of a cell of their own.
-// Every object of the outer layout has the room, which is part of the size of the layout.
 struct PlacedFlattenedObject {
     uint32_t begin() const { return distance + beginInOwnCell; }
     uint32_t end() const { return distance + endInOwnCell; }

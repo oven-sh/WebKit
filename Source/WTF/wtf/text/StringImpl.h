@@ -277,13 +277,6 @@ public:
     static Ref<StringImpl> createWithoutCopying(std::span<const char16_t> characters) { return characters.empty() ?  Ref { *empty() } : createWithoutCopyingNonEmpty(characters); }
     static Ref<StringImpl> createWithoutCopying(std::span<const Latin1Character> characters) { return characters.empty() ? Ref { *empty() } : createWithoutCopyingNonEmpty(characters); }
     ALWAYS_INLINE static Ref<StringImpl> createWithoutCopying(std::span<const char> characters) { return createWithoutCopying(byteCast<Latin1Character>(characters)); }
-    template<typename CharacterType> static Ref<StringImpl> createWithoutCopyingWithHash(std::span<const CharacterType> characters, unsigned hash)
-    {
-        Ref string = createWithoutCopying(characters);
-        if (!string->isStatic() && !string->hasHash())
-            string->setHash(hash);
-        return string;
-    }
     static Ref<StringImpl> create(std::span<const Latin1Character> characters, unsigned hash)
     {
         ASSERT(hash == StringHasher::computeHashAndMaskTop8Bits(characters));

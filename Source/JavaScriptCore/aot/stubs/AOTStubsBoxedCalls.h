@@ -133,8 +133,7 @@ constexpr StubKey stringIndexOf() { return StubKey(StubFamily::StringIndexOf); }
 
 constexpr StubKey findBoxedCall() { return StubKey(StubFamily::FindBoxedCall); }
 
-// executable has the NativeExecutable of the callee. The registers of the call are in place and stay so.
-// Leaves for hasNoBoxedCall, with executable as it was, when the function has no boxed call. Nothing falls through. Emits nothing for a count that no boxed call takes.
+// executable has the NativeExecutable of the callee.
 void emitBoxedCallDispatch(StubAssembler&, const CallRegisters&, unsigned count, JumpList& hasNoBoxedCall);
 
 static_assert(descriptorOf(StubFamily::CallBoxedBuiltin).numberOfForms == static_cast<unsigned>(BoxedCallForm::WeakSetHas) + 1);

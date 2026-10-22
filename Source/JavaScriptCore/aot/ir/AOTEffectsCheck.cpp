@@ -197,8 +197,7 @@ void checkSummaryCoversBody(const EffectContext& context, FunctionID id, Functio
 {
     FunctionSummary fresh = summarizeBody(context, id, analyses);
     EffectsOnEdges claimed = context.summaries.of(id).onCall();
-    // The memory of a parameter does not say on which edge it is reached, and that of a parameter that the body stores holds what goes to either exit. Whether a callee
-    // stores its parameter is asked of the summaries at hand, which say so more often than flow's, with which the claim was made.
+    // The memory of a parameter does not say on which edge it is reached, and that of a parameter that the body stores holds what goes to either exit.
     Effects onAnyEdge = claimed.onAnyEdge();
     bool coversParameters = fresh.throughParameters.reads.isSubsetOf(onAnyEdge.reads) && fresh.throughParameters.writes.isSubsetOf(onAnyEdge.writes);
     // The same holds one call down: an argument that is no parameter of this body, like the list made of a rest parameter, books the memory of the callee's parameter with the exits, on both edges of the call.

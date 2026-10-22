@@ -342,8 +342,7 @@ BorrowedParameters BodySummaries::computeBorrowedParametersOfChangedBodies(const
     return table;
 }
 
-// stampsOfRecords has the stamp of every function as it is now. recordLooksDifferent goes by function, ends where the summarized functions end,
-// and compares with the records as they were when the summaries were brought up to date.
+// stampsOfRecords has the stamp of every function as it is now. recordLooksDifferent goes by function, ends where the summarized functions end, and compares with the records as they were when the summaries were brought up to date.
 BorrowedParameters BodySummaries::computeBorrowedParametersFromLatestTable(const Program& program, BuildContext& build, std::span<const uint64_t> stampsOfRecords, std::span<const uint8_t> recordLooksDifferent)
 {
     if (m_stampsOfRecordsAtLatestTable.isEmpty())
@@ -384,8 +383,7 @@ void EffectSummarizer::findRecordsThatLookDifferent()
     });
 }
 
-// A body is summarized against the seed. It asks what the seed says of its own function, of its callees, which are all among its dependencies,
-// and of the functions whose closures it makes. So a function with a new seed counts as changed, and so do the bodies that name it in one of these ways.
+// A body is summarized against the seed.
 void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -926,8 +924,7 @@ Vector<uint8_t> EffectSummarizer::markTransitiveUsers(std::span<const uint32_t> 
     return states;
 }
 
-// Returns the functions plus their affected transitive sources, sorted, and marks those pending. The result has only settled sources outside itself and contains every cycle it touches.
-// Past the limit it returns nothing and leaves the states alone.
+// Returns the functions plus their affected transitive sources, sorted, and marks those pending.
 std::optional<Vector<uint32_t>> EffectSummarizer::addAffectedSources(std::span<const uint32_t> functions, Vector<uint8_t>& states, size_t limit) const
 {
     Vector<uint32_t> found(functions);
@@ -984,8 +981,7 @@ static void forEachPosition(const ParallelLoops& loops, size_t count, const Invo
 
 static constexpr uint32_t isNotSolvedAnew = UINT32_MAX;
 
-// Solves the nodes of the functions from the current solution of all other nodes. Returns the functions whose solution changed.
-// Every entry of firstPositionOf is isNotSolvedAnew on entry and on return.
+// Solves the nodes of the functions from the current solution of all other nodes.
 Vector<uint32_t> EffectSummarizer::solveFunctions(std::span<const uint32_t> functions, Vector<uint32_t>& firstPositionOf)
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -1109,9 +1105,6 @@ Vector<uint32_t> EffectSummarizer::solveFunctions(std::span<const uint32_t> func
 }
 
 // Change propagation with a cutoff: a function is solved again if its body summary changed or the solution of one of its sources changed.
-// A batch may only read settled sources and must contain whole cycles, so it includes the affected sources of its functions. When that set is large,
-// usually because a big cycle lies between two pending functions, only the pending functions whose sources are all settled are solved first.
-// solveFunctions() is mostly serial and solveAll() is parallel, so the budget is small.
 bool EffectSummarizer::solveAgain(EffectSummaries& summaries)
 {
     constexpr unsigned maxSearches = 3;
@@ -1301,9 +1294,7 @@ void EffectSummarizer::solveAll(EffectSummaries& summaries, PhaseTimes& times)
     times.didFinish("assemble"_s);
 }
 
-// The sources of a node are the nodes whose effects it takes in. A body names sources for the nodes of its own function only, so each function
-// fills its own part of the lists. Unknown code takes in every node of the functions that it may enter. A node that takes in unknown code has those
-// from there, so it does not list them: most of the dependencies of a program go this way, and what reaches what stays the same.
+// The sources of a node are the nodes whose effects it takes in.
 void EffectSummarizer::createNodes()
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -1431,8 +1422,7 @@ void EffectSummarizer::takeInSources(uint32_t node)
     m_kept.m_takesInUnknownCode[node] = takesInUnknownCode;
 }
 
-// In each round the nodes whose sources were all resolved in earlier rounds. What is left at the end lies in a cycle or takes one in,
-// but for a few nodes that are not worth another round.
+// In each round the nodes whose sources were all resolved in earlier rounds.
 Vector<uint32_t> EffectSummarizer::resolveNodesBelowCycles()
 {
     constexpr size_t fewestNodesWorthARound = 2048;
@@ -1566,8 +1556,6 @@ void EffectSummarizer::resolveNodesInAndAboveCycles(std::span<const uint32_t> no
 }
 
 // Unknown code takes in most of a program and most of a program takes it in: with it nearly every node lies in one cycle, which only one thread can find.
-// Without it the calls that name their callee are left: few cycles, and most nodes below all of them. So a node only remembers that it
-// takes in unknown code. What unknown code does is then what its sources do, and whoever asks what a node does adds it where the node remembers.
 void EffectSummarizer::propagateEffects(PhaseTimes& times)
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -1627,9 +1615,6 @@ void EffectSummarizer::checkEffectsAgainstPlainSolve(std::span<const Effects> ef
     }
 }
 
-// A node without a witness takes the witness of the source that a breadth-first walk from the nodes with one comes to first, where the walk starts
-// at the nodes in ascending order and goes from a node to those that take it in in ascending order. Every source with a witness of a node that
-// has none was reached in the latest round, so the ranks in that round order them.
 void EffectSummarizer::propagateWitnesses()
 {
     constexpr uint32_t notReached = UINT32_MAX;

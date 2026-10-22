@@ -16,12 +16,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// A set of numbers, cut into pages of 64. A short or dense set is its pages, one word each.
-// Where most of the numbers lie far apart the words begin with an entry for each page: the index, among these same words,
-// of the word that holds the bits of the page. Pages with equal bits share a word, so an empty page costs its entry and nothing else.
-// A few numbers that lie far apart are no bits at all: a table with a slot for each, found by a multiplication that sends no two of them to one slot.
-// The first word has the multiplier in its lower half and the shift above it, and the slots follow, 32 bits each. A slot without a member holds a number that belongs to another slot,
-// so whatever number is asked for, in reach or not, it is a member if and only if its slot holds it.
+// A set of numbers, cut into pages of 64.
 struct PagedBitSet {
     enum class Entries : uint8_t { None, Narrow, Wide, Hashed };
 

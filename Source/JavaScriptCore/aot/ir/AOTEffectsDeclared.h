@@ -58,8 +58,7 @@ private:
     bool m_isAsOverload { false };
 };
 
-// Their rows say `throws` for the lack of memory alone. The first three make what is written in the program. The others resolve ropes or make a string and do nothing else,
-// and their operands are strings and numbers already, so nothing is converted.
+// Their rows say `throws` for the lack of memory alone.
 inline constexpr OpcodeSet opcodesThrowingOnlyForLackOfMemory {
     Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData,
     Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::FlattenString, Opcode::StringOrder, Opcode::StringOrderToCharacter,

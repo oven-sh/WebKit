@@ -23,15 +23,6 @@
 
 namespace JSC { namespace AOT {
 
-// class Descending { zebra() {} yak() {} static walrus() {} get viper() {} set viper(v) {} ant() {} static bee() {} }
-// class Ascending { ant() {} zebra() {} static bee() {} static walrus() {} }
-// class ComputedInTheMiddle { zebra() {} [key]() {} ant() {} static zebra() {} static ant() {} }
-// class MethodThenGetter { first() {} member() {} last() {} get member() {} }
-// class GetterThenMethod { first() {} get member() {} last() {} member() {} }
-// class MethodTwice { member() {} other() {} member() {} }
-// class StaticName { static zebra() {} static name() {} static ant() {} }
-// class Patched { zebra() {} ant() {} }, Patched.prototype.extra = patch, Patched.prototype.zebra = patch
-// Each member returns the name of its class, its side, its key and its position in the class.
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Descending" module=m0 constructor=f1

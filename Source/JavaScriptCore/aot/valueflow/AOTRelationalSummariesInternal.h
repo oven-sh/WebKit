@@ -15,13 +15,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What the parts of the link share. The link runs when flow's results have been applied to the bodies: a call carries the callees that flow lists for it, and the values that a record names
-// have kept their numbers. It visits the callees of a function before the function. The functions of a cycle of calls are visited together, again and again, until nothing changes.
-//
-// The callees of a call as read:            calleesOfCall(program, function.at(call))                     ir/AOTEffectsDescription.h
-// The entry parameter that an operand is:   entryParameterOf(callee, call, operandIndex)                  ir/AOTEffectsOfOperands.h
-// .. that the called value itself is:       entryParametersOfCalledValue(callee, call)
-// What a built-in does with an operand:     BuiltinOverload { receiver, parameters, flow, result }        builtins/AOTBuiltinTable.h
+// What the parts of the link share.
 class RelationalLink {
 public:
     RelationalLink(const Program& program, const FlowResults& flow, const RelationalSummaries& linked)
@@ -37,17 +31,11 @@ public:
     const RelationalSummaries& linked;
 };
 
-// The origins of all the results of one function. Defined in AOTRelationalSummariesOrigins.cpp.
-// `fatesOfSubjects` goes by the subjects of the function's record: all that the function and its callees do with each.
-// Answers whether something has changed since the last visit, so that the link knows when a cycle has come to rest. What is listed only grows, and isFresh and isFullyListed only go from true to false.
-// Before the first visit of a cycle the link gives every member one origin a result that says "fresh, fully listed, nothing listed".
+// The origins of all the results of one function.
 bool linkResultOrigins(const RelationalLink&, FunctionID, std::span<const LinkedFate> fatesOfSubjects, Vector<ResultOrigin>& origins);
-// When every function has been visited for the last time: keeps what a reader at a call can learn that flow does not say of every call at once: a result that names a parameter, and a result
-// that may be an object which nobody else holds. The callers have taken what they needed of the others.
+// When every function has been visited for the last time: keeps what a reader at a call can learn that flow does not say of every call at once: a result that names a parameter, and a result that may be an object which nobody else holds.
 void keepOriginsThatDependOnTheCall(Vector<ResultOrigin>& origins);
-// One result before flow has run. No callee is followed: what a call answers is said in terms of what is called, the receiver and the arguments. Nothing is said of who holds an object.
-// The stores of an object are those that the function makes itself, and hasOnlyListedStores is false: nobody knows yet what the callees write that the object is handed to.
-// It reads the record of the function alone: any function, in any order, on any thread, as long as the records are there, which is to the end of applyFlowResults().
+// One result before flow has run.
 ResultOrigin originOfResultBeforeFlow(const Program&, FunctionID, uint32_t result);
 // A class is not called and a function that is no constructor is not constructed: the run time throws in front of the body.
 bool throwsBeforeEntry(const Function& callee, bool isConstruction);
@@ -56,8 +44,7 @@ bool isParameterWithoutArgument(const Function& callee, const Value& call, uint3
 
 // From here on: defined in AOTRelationalSummariesAtCalls.cpp.
 
-// Where the operand stands at a call by value. None for any other operation, and for an operand that is passed to nobody.
-// ElementOfList: the operand is the list, and each of its elements is an argument, nobody knows which.
+// Where the operand stands at a call by value.
 std::optional<PlaceAtCall> placeAtCall(const Value& call, uint32_t operandIndex);
 
 // What a value that stands at a place is to a function that is entered by value.
@@ -74,8 +61,7 @@ struct EntryOfPlace {
     uint32_t parameter { 0 };
 };
 
-// No entry: the function cannot see the value. It takes no `this`, or has declared fewer parameters and no way to get at the others.
-// Several: an element of a list, and the called value of a construction, which is taken for new.target too.
+// No entry: the function cannot see the value.
 Vector<EntryOfPlace, 4> entriesAt(const Function& callee, PlaceAtCall);
 // The entry parameter where the value is exactly that.
 std::optional<uint32_t> entryParameterAt(const Function& callee, PlaceAtCall);
@@ -91,7 +77,6 @@ enum class Callbacks : uint8_t {
 LinkedFate fateOfOperandOfBuiltin(const RelationalLink&, const Function& caller, BuiltinID, const Value& call, uint32_t operandIndex, Callbacks);
 
 // Native code calls what the operand `called` holds and passes the operand `handed`, or something read through it, at `place`.
-// Each call has one entry where both are the called value and the place is the callee: it stands for the closure and for what the closure has captured.
 struct CallbackOfBuiltin {
     uint32_t called { 0 };
     uint32_t handed { 0 };
@@ -104,8 +89,7 @@ struct CallbackOfBuiltin {
 void forEachCallbackOfBuiltin(const Program&, const Function* caller, BuiltinID, const Value& call, const ScopedLambda<void(const CallbackOfBuiltin&)>&);
 void forEachCallbackOfBuiltin(const Program&, BuiltinID, const Value& call, const ScopedLambda<void(const CallbackOfBuiltin&)>&);
 
-// Who answers for the entry parameters of functions: the finished table behind FlowResults, which finds the function as read behind a version, the table that the link is filling,
-// or one that a test has written.
+// Who answers for the entry parameters of functions: the finished table behind FlowResults, which finds the function as read behind a version, the table that the link is filling, or one that a test has written.
 class FatesOfParameters {
 public:
     virtual ~FatesOfParameters() = default;

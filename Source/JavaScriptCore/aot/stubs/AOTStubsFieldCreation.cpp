@@ -55,8 +55,7 @@ static void computeTransitionHash(StubAssembler& jit, const KeyOrderRegisters& r
 #endif
 }
 
-// The orders that the compiler listed lie in the image. Where the object's order is one of them and goes on with this very field, the object lists one key more of the same order:
-// nothing is hashed, and there is no first time. The jump is taken with the new order word stored. Falls through, with nothing written, wherever that does not apply. Keeps object and slotKey.
+// The orders that the compiler listed lie in the image.
 static Jump stepInsideOrderOfImage(StubAssembler& jit, const KeyOrderRegisters& r)
 {
     const GPRReg layout = r.scratch;
@@ -280,8 +279,7 @@ static void ensureStorageAndReturn(StubAssembler& jit, GPRReg object, GPRReg gra
     jit.callOperationAndReturn(Entry::operationAOTEnsureExtensionGranules, ensureStorage);
 }
 
-// Only a step between two numbered orders of an object without flags in its order word is remembered. A flag that is set stays set, so the word behind the step says it for both.
-// wordsBefore: the order and shape words in front of the step, or zero for nothing to remember. Overwrites placePlusOne.
+// Only a step between two numbered orders of an object without flags in its order word is remembered.
 static void rememberKeyOrderStepAndReturn(StubAssembler& jit, GPRReg object, GPRReg wordsBefore, GPRReg placePlusOne, GPRReg orderWordAfter, GPRReg scratch)
 {
     static_assert(sizeof(KeyOrderStepCache) == 1 << 4);

@@ -70,9 +70,7 @@ private:
     bool m_isCounting { false };
 };
 
-// What the counts of a run are joined to, by number. Inlining and the versions of a function make several sites of one place in the source.
-// The level of a site is that of the code: Expected where the function has a fast arm for the same access, and then the expected layouts are the ones its fast arms take.
-// Without a fast arm the layouts are what the types and the stamp list for the receiver, proven or not.
+// What the counts of a run are joined to, by number.
 struct ArrivalSiteReport {
     // Ascending by number.
     Vector<Wire::ArrivalSiteRecord> sites;

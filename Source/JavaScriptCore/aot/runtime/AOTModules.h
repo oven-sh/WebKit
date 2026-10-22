@@ -116,9 +116,7 @@ public:
     bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost; }
     bool isAskingHost() const { return m_isAskingHost; }
-    // A name that the build did not follow finds an entry point and no other file of the image, as in an executable that `bun build --compile` makes without --aot:
-    // the analysis counts no other module of the program among what such a load answers. A module of the library that is in the image answers to its name.
-    // So does data, which runs nothing. A build that admits the inspector is not analyzed, and whatever is typed into a console finds every file.
+    // A name that the build did not follow finds an entry point and no other file of the image, as in an executable that `bun build --compile` makes without --aot.
     bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && data(module).kind != ModuleKind::Data && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath(); }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);

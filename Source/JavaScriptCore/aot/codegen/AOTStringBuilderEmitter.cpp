@@ -138,7 +138,6 @@ void StringBuilderEmitter::findStackBuilders()
         return;
 
     // One record serves a web, so no two of its builders may be open at once, and an exception must end it: the cursor that a handler would go on with may be stale.
-    // Webs that are never open at once share a record.
     Liveness liveness(m_function, cfg, useLists, { .trackedValues = &isMember });
     for (BlockID block : cfg.reversePostOrder()) {
         if (m_function.at(block).isHandlerBlock()) {

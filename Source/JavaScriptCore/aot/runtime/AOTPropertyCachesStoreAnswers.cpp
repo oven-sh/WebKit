@@ -95,8 +95,7 @@ bool isHostObjectOverridingPut(Structure* structure)
     return structure->typeInfo().overridesPut() && structure->typeInfo().type() == ObjectType;
 }
 
-// Whether an object above has the name, and in which form, is what the walk by name finds. This asks whether each of them takes part in a store as an ordinary object does.
-// A function does, for every name but its own, and so does a compiled object. Function.prototype has accessors, so the engine's test for its megamorphic caches fails below it for every name.
+// Whether an object above has the name, and in which form, is what the walk by name finds.
 static bool storesAreOrdinaryAlongPrototypeChain(Structure* structure)
 {
     for (;;) {

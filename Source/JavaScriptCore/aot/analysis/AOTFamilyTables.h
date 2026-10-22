@@ -48,8 +48,7 @@ struct FamilyMember {
     bool hasExpectedField { false };
 };
 
-// Caches everything that needs a loop over the members of a family (the LayoutSetID in a type), once per set instead of once per access. Shared by all threads.
-// Results stay valid until the current type interning phase ends or didChangeLayouts() is called. Don't hold on to a reference or a span past that.
+// Caches everything that needs a loop over the members of a family (the LayoutSetID in a type), once per set instead of once per access.
 class FamilyTables {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FamilyTables);
     WTF_MAKE_NONCOPYABLE(FamilyTables);

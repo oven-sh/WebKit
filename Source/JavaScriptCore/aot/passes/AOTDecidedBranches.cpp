@@ -287,8 +287,7 @@ static bool listsOnlyFunctions(const Type& type)
     return !type.functions.isEmpty() && type.hasOnlyKnownCallees() && !type.primitives && !type.layouts && type.builtins.isEmpty();
 }
 
-// No single test dominates the block, and every way to it leaves some test of the value for the type by an edge with the same outcome:
-// a function that is called several times is one of those that its type lists on each of the ways that come together between the calls.
+// No single test dominates the block, and every way to it leaves some test of the value for the type by an edge with the same outcome.
 KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
 {
     static constexpr unsigned maxBlocksOnTheWays = 32;

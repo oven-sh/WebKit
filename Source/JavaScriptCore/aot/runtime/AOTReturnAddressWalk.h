@@ -15,13 +15,7 @@
 
 namespace JSC { namespace AOT {
 
-// Goes over the stack of the thread that runs the VM, from the youngest frame to the oldest, and calls
-//     IterationStatus functor(void*& returnAddress, const CallSiteCache::Entry& site)
-// for every return address into a compiled function: whoever returns to it, a compiled function with or without a frame record, a stub, an operation or a function of the host.
-// It crosses stubs, native frames, frames of the engine and entry frames as a capture of a stack trace does. It ends where functor answers Done.
-// returnAddress is the word on the stack itself: functor may store into it any address for which the tables answer what they answer for the one that was there.
-// site is valid until functor asks the call site cache about another address.
-// For an operation, and for native code below one: vm.topCallFrame and vm.topEntryFrame say where the thread left compiled code or the engine.
+// Goes over the stack of the thread that runs the VM, from the youngest frame to the oldest, and calls IterationStatus functor(void*& returnAddress, const CallSiteCache::Entry& site) for every return address into a compiled function.
 template<typename Functor>
 SUPPRESS_ASAN void forEachReturnAddressIntoCompiledFunctions(VM& vm, const Functor& functor)
 {

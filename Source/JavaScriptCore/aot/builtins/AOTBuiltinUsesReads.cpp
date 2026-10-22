@@ -272,8 +272,7 @@ static bool canBeWatchedAtRunTime(const BuiltinTable& table, BuiltinID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Where flow has lost sight of a holder, a member that only a write replaces is tested at run time. The test answers for the location of the member alone,
-// so the rest of the lookup has to be proven.
+// Where flow has lost sight of a holder, a member that only a write replaces is tested at run time.
 static LocationState locationStateOf(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     if (site.answer.isConstant())

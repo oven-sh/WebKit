@@ -137,7 +137,6 @@ void loadFrontRowOfCell(CCallHelpers&, SlotAccess, GPRReg cell, GPRReg row, GPRR
 // The cell of the front table for a Structure and a name lies at plane + index * 8. structureIDAndIndex holds the StructureID.
 void locateFrontCell(StubAssembler&, SlotAccess, GPRReg structureIDAndIndex, GPRReg column, GPRReg plane);
 // Answers what most reads find, each by a comparison with the cell where it lies: a value of the receiver's own in its cell, then that nothing has the name.
-// Falls through with the cell in `cell` where it has the name and says something else. Changes neither the receiver nor the column there, nor where it leaves for hasOtherName.
 void returnByFrontCell(StubAssembler&, GPRReg receiver, GPRReg column, GPRReg plane, GPRReg index, GPRReg cell, JumpList& hasOtherName);
 // Where branchUnlessOwnInlineValue branches, its scratch register holds the upper half of the cell, with the bits of the name cleared if the cell has that name.
 Jump branchIfUpperHalfHasOtherName(StubAssembler&, GPRReg upperHalf);
@@ -173,22 +172,16 @@ struct FieldTableProbe {
     bool answersAbsent { false };
     // For a probe behind the tables: what it answers is never filed, so one answer in AbsenceFilter::readsBetweenMisses is left to otherwise, where a pair that comes again and again gets its slot.
     bool leavesNowAndThen { false };
-    // For a probe that returns what it reads: where the entry has the name and its slot in the cell does not hold the value, which mostly means that an optional field is missing, the read goes on in
-    // GetByIdOfEmptySlot or GetByIdOfSilentSlot, which answer undefined or go on through the tables by name. Without this such a slot is left to otherwise.
+    // For a probe that returns what it reads.
     std::optional<CallerFrame> answersMissingFields { };
 };
 
 // Reads a field of a compiled object that is in its slot in the cell into result, which may be any of the probe's registers, and goes on with finish, which leaves the stub.
-// Changes neither receiver nor name where it leaves for otherwise.
-// finishWhereAbsent, which leaves the stub too, takes the place of "undefined in result, then finish".
 void readFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg result, JumpList& otherwise, const ScopedLambda<void()>& finish, const ScopedLambda<void()>* finishWhereAbsent = nullptr);
 void returnFieldByTable(StubAssembler&, const FieldTableProbe&, JumpList& otherwise);
-// Binds GetByIdOfSilentSlot and GetByIdOfEmptySlot. The object is a compiled object whose layout has a field of the name, in the cell, and the slot does not hold the value. Mostly an optional field is missing.
-// While no field of the object lies outside its slot, an empty slot says that the object has no such property, and then the Structure and the names of Object.prototype say whether anything above it has.
-// Through the caches that answer cost 170 to 230 instructions at every visit of code that comes by a few times. Nothing falls through. Keeps object and name where it leaves.
+// Binds GetByIdOfSilentSlot and GetByIdOfEmptySlot.
 void answerMissingField(StubAssembler&, CallerFrame, GPRReg object, GPRReg name, GPRReg T10, GPRReg T11, GPRReg T12, JumpList& otherwise);
-// Stores value in a field of a compiled object that is in its slot, has one of the entry's own forms and needs no type test, and returns. Any other field goes on to the stub that is told its record.
-// One in 256 of those leaves by isSampled, where the caller has such a list, with the registers of the probe as they were.
+// Stores value in a field of a compiled object that is in its slot, has one of the entry's own forms and needs no type test, and returns.
 void storeFieldByTable(StubAssembler&, const FieldTableProbe&, GPRReg value, GPRReg scratch, SlotOperation, JumpList& otherwise, JumpList* isSampled = nullptr);
 void findHashedSlot(StubAssembler&, SlotAccess, const HashedProbeRegisters&, JumpList& miss);
 
@@ -209,17 +202,13 @@ struct ObjectLookupRegisters {
     GPRReg index;
 };
 
-// Asks the receiver and then the objects above it, each for what it has at this moment. Nothing is filed and nothing has to have been filed: the first question about a name costs what every other one does.
-// An ordinary object is described by the property table of its Structure, a compiled object by the row of its shape, the records of its fields and the property table of its extra properties.
-// Leaves for isUnknown at any object that looks properties up in a way of its own.
+// Asks the receiver and then the objects above it, each for what it has at this moment.
 void answerFromObjectsAndReturn(StubAssembler&, ObjectLookupQuestion, const ObjectLookupRegisters&, ObjectLookupName, JumpList& isUnknown);
 // Takes the Structure of an ordinary object in structure and leaves there what its property table has for uid: the offset, above the eight bits of the attributes. Writes size, vector and index.
 void findInPropertyTable(StubAssembler&, const ObjectLookupRegisters&, JumpList& isAbsent, JumpList& isUnknown);
 // object is a compiled object. Leaves in index where the row of its shape has the entry of the field with the name. Writes name, where the name is given by its uid, and vector.
 void locateFieldOfObject(StubAssembler&, const ObjectLookupRegisters&, ObjectLookupName, JumpList& hasNoField, JumpList& isUnknown);
-// Where receiver itself has the property as a plain value that may be written, puts value in its place and returns, and nothing is filed: an ordinary object by the property table of its Structure,
-// a compiled object whose layout has no field of the name among its extra properties. A definition only where the property has the attributes of a plain one.
-// uid is the uid itself, without the access that a search of the hashed table puts into its low bits. Leaves for cannot with receiver, value, uid and, where the name is given by its number, name as they were.
+// Where receiver itself has the property as a plain value that may be written, puts value in its place and returns, and nothing is filed.
 void replaceOwnValueAndReturn(StubAssembler&, SlotOperation, const ObjectLookupRegisters&, ObjectLookupName, GPRReg value, JumpList& cannot);
 // What the objects answer is never filed, so a pair that comes again and again has to leave for the operation that files: one miss in MissesOfPairs::missesBetweenFilings.
 void countMissOfPair(StubAssembler&, GPRReg structureID, GPRReg uid, GPRReg counter, JumpList& isDueForFiling);

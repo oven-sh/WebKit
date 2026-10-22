@@ -36,8 +36,7 @@ struct State;
 using ChainObjects = Vector<JSObject*, 4>;
 
 enum class ChainWalkMode : uint8_t { MayAllocate, AllocatesNothing };
-// A kept answer holds until an object of the chain reports a change. An answer that is used at once holds at the time of the walk.
-// KeptForReadsThatAskObjects: the walk passes an empty slot that may be filled without a report, and each read asks the first object that has one.
+// A kept answer holds until an object of the chain reports a change.
 enum class ChainWalkUse : uint8_t { KeptForReads, KeptForReadsThatAskObjects, KeptForStores, UsedAtOnce };
 enum class ChainWalkResult : uint8_t { Unknown, Absent, Found };
 

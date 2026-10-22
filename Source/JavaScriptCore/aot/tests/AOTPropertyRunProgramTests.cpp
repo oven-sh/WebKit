@@ -38,8 +38,6 @@ function f1 name="storeSix" parameters=[{type=anything}, {type=anything}] result
 }
 )IR"_s;
 
-// Each case runs for longer than the longest back-off of the one site cache, 255 misses, so that one of its misses is due for a refill. The very first miss of the site fills nothing: the site may never run again.
-// The six names lie in a row in inline storage, on both sides of its end, in another order, or in a dictionary.
 static constexpr ASCIILiteral statements = R"JS(
 globalThis.publish = storeSix => {
     const calls = () => Number(aotOperationCount("operationAOTTryPutProperties"));

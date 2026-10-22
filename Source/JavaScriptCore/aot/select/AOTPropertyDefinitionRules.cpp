@@ -370,8 +370,7 @@ static std::optional<DescriptorsMeetingInParameter> findDescriptorsMeetingInPara
     return found;
 }
 
-// `for (..) Object.defineProperty(object, key, { get: make(key), enumerable: true })`: where the body of the loop is copied for a rare way through it, the copies meet again in front of the call,
-// and the call sees a parameter where the rule below looks for a literal. The ways in differ in one member: that member takes the place of the descriptor among the arguments, and the literal is made behind the join.
+// `for (..) Object.defineProperty(object, key, { get.
 PassOutcome makeDescriptorLiteralsBehindJoins(FunctionPassContext& pass)
 {
     Function& function = pass.function;

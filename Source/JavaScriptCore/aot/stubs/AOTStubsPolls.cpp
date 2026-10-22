@@ -39,8 +39,7 @@ StubSignature signatureOfPollAtLoop(StubKey) { return { }; }
 StubSignature signatureOfPollBeforeEntering(StubKey) { return { }; }
 
 #if CPU(X86_64)
-// The return address of the stub is on top of the stack. Nothing that the function holds in registers is wanted any more.
-// A frame with a record is dropped by the stub that throws. Only the tables say how large a frame without one is.
+// The return address of the stub is on top of the stack.
 static void leaveFunctionAtPrologue(StubAssembler& jit, StubKey throwingStubAtPrologue, StubKey throwingStub)
 {
     jit.loadPtr(Address(sp), A1);

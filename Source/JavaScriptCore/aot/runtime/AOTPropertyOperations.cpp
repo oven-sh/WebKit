@@ -76,8 +76,7 @@ static void putToCompiledObject(Instance* instance, Object* object, const Identi
     Object::putWithKnownField(object, instance->globalObject, identifier, value, slot, field);
 }
 
-// No slot is filed for a store through `globalThis`, which is a proxy. A name that the global object has as a writable data property is in no symbol table and meets no setter,
-// so the store replaces the value as JSObject::put would at the end of a long way.
+// No slot is filed for a store through `globalThis`, which is a proxy.
 static bool tryReplaceGlobalProperty(Instance* instance, VM& vm, JSValue base, UniquedStringImpl* uid, JSValue value)
 {
     JSGlobalObject* target = instance->globalObject;

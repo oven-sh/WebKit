@@ -346,7 +346,6 @@ void ObjectInterpreter::splitThrowingVariants(ValueID cast, VirtualObjectID obje
 }
 
 // An object that is not built is what its allocation says, so there is nothing to test until it gets a cell.
-// The closure that a lookup is expected to find is made for the comparison alone: it is not what is tested.
 Execution ObjectInterpreter::executeRuntimeValidation(ValueID id)
 {
     bool testsUnbuiltObject = false;

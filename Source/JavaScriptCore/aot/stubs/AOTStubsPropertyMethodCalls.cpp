@@ -284,9 +284,7 @@ static uint32_t asyncFunctionKindBit()
     return std::bit_cast<uint16_t>(kind);
 }
 
-// A field that defers its closure makes it when the field is read. A call needs no function object: the entrypoint of a function whose closures are slim takes the captures
-// out of the cell in calleeGPR and hands the cell to nobody, so a cell in the frame of the stub serves for as long as the call lasts.
-// The frame has the name, this and the arguments. Falls through with calleeGPR and thisGPR as they were where the receiver has no such field.
+// A field that defers its closure makes it when the field is read.
 static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
 {
     using Form = FieldTableEntry::Form;
@@ -474,8 +472,7 @@ void generateTryGetSuperById(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-// What is above the prototype object of a class that is evaluated once: where `super.name` in a method of the class begins to look. The immediate is the rank of the class.
-// The registers are those of the operation, with the rank in place of the kind of home object: a call of this stub is as long as a call of the operation.
+// What is above the prototype object of a class that is evaluated once: where `super.name` in a method of the class begins to look.
 void generateGetSuperBaseOfClass(StubAssembler& jit)
 {
     const GPRReg rank = jit.immediate();

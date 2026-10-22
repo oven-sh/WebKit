@@ -86,7 +86,6 @@ bool hasValidConstructedClass(const Program& program, FunctionID id, const Funct
 }
 
 // The relations name subjects by their places in the list, entry parameters by their indices and values by their numbers.
-// The number of the rule that is broken.
 std::optional<uint32_t> findBrokenRuleOfRelations(const Function& function)
 {
     constexpr uint32_t unlisted = UINT32_MAX;

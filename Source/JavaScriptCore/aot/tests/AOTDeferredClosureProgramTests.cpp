@@ -11,8 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// Each case stores a closure that captures nothing in a field of a fresh object and reads the field as a value. The slot holds no cell until the first read.
-// The object lies in a frame wherever it does not escape, and is read there, in a callee, through a join of two objects, and after a collection.
 static constexpr ASCIILiteral closuresCapturingNothing = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Record" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="m" declared={type=function} flags=[IsRequired]}]

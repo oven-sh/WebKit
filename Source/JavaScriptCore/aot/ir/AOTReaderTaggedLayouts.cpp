@@ -189,8 +189,7 @@ std::span<const Wire::Field> TaggedLayoutPlanner::fieldsOf(const Wire::Layout& l
     return fields.subspan(layout.fields.start, layout.fields.count);
 }
 
-// A constructor function, or a class without heritage: its constructor allocates the objects. The supertypes are the types that the program converts them to,
-// the `this` of the function and what the class implements among them.
+// A constructor function, or a class without heritage: its constructor allocates the objects.
 bool TaggedLayoutPlanner::isMaker(const Wire::Layout& layout) const
 {
     return static_cast<LayoutKind>(layout.kind) == LayoutKind::Instance
@@ -199,8 +198,7 @@ bool TaggedLayoutPlanner::isMaker(const Wire::Layout& layout) const
         && layout.supertypes.count;
 }
 
-// AllocateTaggedLayouts leaves the constructor of such a class as it is. A family that is planned and never allocated would leave types that no object passes for: applyAdditions() takes the maker out of them.
-// Nothing about the record has been checked yet.
+// AllocateTaggedLayouts leaves the constructor of such a class as it is.
 std::optional<uint32_t> TaggedLayoutPlanner::typeNamedByRecordOf(size_t function, uint32_t type) const
 {
     if (!m_externalBodies)
@@ -248,8 +246,7 @@ bool TaggedLayoutPlanner::isDeclaredType(const Wire::Layout& layout) const
     return static_cast<LayoutKind>(layout.kind) == LayoutKind::Record && layout.constructor == Wire::none;
 }
 
-// undefined and null are members of every type that holds a reference, so also of the type of one string. An object whose tag is one of them has the layout of the maker.
-// The types have not been read yet, so nothing about this one has been checked.
+// undefined and null are members of every type that holds a reference, so also of the type of one string.
 std::optional<LayoutTag> TaggedLayoutPlanner::literalOf(const Wire::Type& type) const
 {
     constexpr uint32_t nullish = static_cast<uint32_t>(Wire::Primitives::Undefined) | static_cast<uint32_t>(Wire::Primitives::Null);
@@ -421,8 +418,7 @@ void TaggedLayoutPlanner::planFamily(uint32_t makerIndex)
     m_families.append(WTF::move(family));
 }
 
-// A maker gives an object the layout of its tag wherever there is one. So an object with the maker's own layout was made with a tag that has none,
-// which is none of those that the type writes where each of them has a layout.
+// A maker gives an object the layout of its tag wherever there is one.
 bool TaggedLayoutPlanner::makesTaggedObjectsOf(uint32_t type, std::span<const Addition* const> addedBelowMember, uint32_t member) const
 {
     if (addedBelowMember.empty() || member == type || !isMaker(m_layouts[member]))
@@ -435,7 +431,6 @@ bool TaggedLayoutPlanner::makesTaggedObjectsOf(uint32_t type, std::span<const Ad
 }
 
 // A tagged layout is below its maker and its declaring types, and so below everything that one of them is below, but for a type that writes other literals for the tag.
-// The families stay sorted and closed.
 void TaggedLayoutPlanner::applyAdditions()
 {
     Vector<Vector<const Addition*, 2>> addedBelow(m_layouts.size());

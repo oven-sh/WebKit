@@ -209,7 +209,6 @@ static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::opti
 
     slowPath.append(jit.branch32(CCallHelpers::Above, neededLength.value_or(length), TrustedImm32(maxLengthForElementwiseCopy)));
     // Only the array leads to the new vector, so an array that the collector will not visit again is left to C++.
-    // While the collector marks beside the program every cell needs a barrier, so nobody reads the array during the stores below.
     slowPath.append(branchIfBarrierIsNeeded(jit, array, scratch));
     branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
     // The length of an array with ArrayStorage may lie beyond its vector.

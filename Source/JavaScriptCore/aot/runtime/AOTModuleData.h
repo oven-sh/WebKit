@@ -67,8 +67,7 @@ struct ModuleData {
     Number24 directory;
     // The display path is the public path without as many characters at its start. Where it is not, it stands in ProgramTables::moduleDisplayPaths().
     uint8_t charactersInFrontOfDisplayPath;
-    // With HasValue. Of a CommonJS module: the variable that holds `module.exports`. Of a module with an export table and of code outside the image: a word for the namespace object.
-    // Of any other module: a word for what the module evaluated to.
+    // With HasValue.
     SlotData value;
     uint16_t flags;
     ModuleKind kind : 3;
@@ -176,7 +175,6 @@ struct ModuleRequestData {
     uint8_t isDeferred : 1;
     uint8_t isDynamicStarExport : 1;
     // A require() that the code of the requesting module answers by itself: it evaluates the target where it stands, so no walk of an evaluation follows it.
-    // The target is linked with the requesting module.
     uint8_t isRequire : 1;
 
     static constexpr ModuleRequestData create(uint32_t target, bool isDeferred, bool isDynamicStarExport, bool isRequire = false)
@@ -263,8 +261,7 @@ struct LinkPlanStepData {
     ModuleID targetModule() const { return ModuleID(static_cast<uint32_t>(module)); }
 };
 
-// A link also starts at a module that an import() names, or that no module requests. The walk from there is long where it goes round a large cycle of modules: none of them can be
-// replaced by its list in the lists of its importers. memberOfCycle says whether that is still to come: it is linked when the cycle is. Behind the last record stands one with the end of the steps.
+// A link also starts at a module that an import() names, or that no module requests.
 struct LinkPlanRootData {
     uint32_t module;
     uint32_t firstStep;

@@ -143,8 +143,7 @@ size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     // A dependent that its owner evicted is not counted: nothing records an eviction here, and validation reads a count from an unwritten region as a missing record.
     size_t numberOfDependentsOfDeadObjects = 0;
-    // To ask the owner of each dependent costs more than all the rest of a full collection's sweep of the tables, and what it finds takes room and does no harm:
-    // a dependent that its owner evicted is dropped without effect when its object changes. So the owners are asked when the table may have doubled since they were last asked.
+    // To ask the owner of each dependent costs more than all the rest of a full collection's sweep of the tables, and what it finds takes room and does no harm.
     bool dropsEvictedDependents = scope == CollectionScope::Full && m_numberOfDependentsAddedSinceOwnersWereAsked >= m_numberOfDependentsLeftWhenOwnersWereAsked;
     size_t numberOfDependentsLeft = 0;
     m_structureState->removeDeadStructures(vm);

@@ -85,8 +85,7 @@ public:
 
     enum class ClassPart : uint8_t { Everything, ClassObject, PrototypeMembers };
     JSValue resolveHeritage(JSGlobalObject*, JSValue heritage);
-    // For a class that has one class object, when the closure table is first asked for it: by a read of a variable that is born as the class, by the first allocation of an instance,
-    // by the definition of a class below. Where the record says all that the definition of the class does, no operation defines the class, and this does.
+    // For a class that has one class object, when the closure table is first asked for it: by a read of a variable that is born as the class, by the first allocation of an instance, by the definition of a class below.
     Closure* createClassObject(VM&, const LayoutData&);
     void defineClass(JSGlobalObject*, Closure* classObject, const LayoutData&, JSValue parent, JSValue prototypeParent);
     void defineClass(JSGlobalObject*, Closure* classObject, JSValue parent, JSValue prototypeParent);
@@ -98,11 +97,9 @@ public:
 
     uint64_t* guardWords(const LayoutData&, ClassSide) const;
     // AsDefinitionMadeIt: the definition has made the holder an ordinary object just now, and the holder has what the record says it creates and nothing else.
-    // NotTouched: the definition has made the other holder.
     enum class HolderState : uint8_t { Unknown, AsDefinitionMadeIt, NotTouched };
     void armMemberGuards(VM&, const LayoutData&, ClassSide, JSObject* holder, HolderState = HolderState::Unknown);
-    // The definition of such a class makes nothing but, where only the definition knows its parent, the stand-in for the prototype object. While nobody has looked at them, its two holders
-    // are in no table: each names its class, reports every change by itself, and the guards hold while their bits are clear.
+    // The definition of such a class makes nothing but, where only the definition knows its parent, the stand-in for the prototype object.
     static bool leavesDefinitionToRecord(const LayoutData& classLayout) { return classLayout.createsMembersLazily && classLayout.createsClassObjectOnMutation && classLayout.classData().guardsHoldWhileClear; }
     void didCreatePrototypeLeftToRecord(const LayoutData&);
     void didCreateHolder(const LayoutData&, ClassSide);

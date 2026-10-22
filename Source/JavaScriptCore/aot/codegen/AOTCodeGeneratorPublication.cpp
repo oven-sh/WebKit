@@ -151,8 +151,7 @@ static bool arrivesTypedOnlyBehindTest(const Function& function, const BitVector
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A block parameter is a Phi, and stays in its block. B3 folds a Phi with one source away, and what is computed from the parameter is then computed from the source, wherever that is at hand:
-// also in front of the test whose edge has narrowed it. So the type of a parameter speaks for what is derived from it only if it holds for each of its sources wherever that is computed.
+// A block parameter is a Phi, and stays in its block.
 static BitVector collectParametersTypedOnlyBehindTest(const Function& function, const CFG& cfg)
 {
     BitVector typedOnlyBehindTest;

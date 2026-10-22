@@ -477,8 +477,6 @@ nothing was thrown to the caller
 )"_s);
 }
 
-// A validating build looks at the type of the new error between its creation and the throw, so there the two stay two operations and the error is always created.
-// The fourth row calls what is no function. The stub that calls a value finds that out, and its operation creates the error without asking who catches it.
 static void testIgnoredErrorIsNotCreated()
 {
     checkShellOutput(R"js(

@@ -103,8 +103,7 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution, const Va
     out.println();
 }
 
-// For each operation that runs a protocol of the language: how often it is reached, how often what it looks at holds the unknown object, how often what it gives does,
-// and the first places where it gives the unknown object though it looks at known values alone.
+// For each operation that runs a protocol of the language.
 static void printProtocols(PrintStream& out, ValueFlowSolution& solution)
 {
     constexpr unsigned numberOfPlacesPrinted = 12;
@@ -137,8 +136,7 @@ static void printProtocols(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
-// valueflow-solve [full] [times] [calls] [primitives] [unreached] [unseen] [used] [protocols] [views]: solves the program and prints what the solve found: in numbers, or call by call, or the functions that are never reached.
-// primitives: `calls` also lists what is no object among the callees, as valueflow-why prints it: a test that calls a loop variable, an awaited value or what a read answers states all that flow lets it be.
+// valueflow-solve [full] [times] [calls] [primitives] [unreached] [unseen] [used] [protocols] [views].
 void prepareAsInFrontOfFlow(TestCommandContext& context)
 {
     guardTaintedPositions(*context.program, context.build, TaintedPositionsRun::BeforeFlow);

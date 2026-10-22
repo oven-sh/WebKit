@@ -160,7 +160,6 @@ struct StructureTable::VariantMaps {
     }
 
     // A variant ends with what it hangs on, not with the last object that has it: a full collection may find no such object, as in a server between two requests, and the program would learn the shape again.
-    // So there are no more of them than the prototypes and the Structures of extra properties that something else keeps alive allow. Nothing bounds the orders in which keys may come: those variants end with their objects.
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
@@ -303,9 +302,7 @@ std::span<AllocationSiteRecord> StructureTable::allocationSiteRecords() const
     return { m_state.instance.objects.emptyAllocationSite() - numberOfAllocations, numberOfAllocations + 1 };
 }
 
-// The objects of many layouts live shorter than the time between two collections. A Structure that ended with them would take along what every cache and every plan has learned about it.
-// The usual Structure of a layout and the one in the record of an allocation site last as long as the program: there is one for each, as a function that the engine interprets keeps the Structure of each of its literals.
-// A variant lasts through an Eden collection, except for one whose own prototype is as young as it is: both may belong to objects that are made once. A full collection ends every variant that no object has.
+// The objects of many layouts live shorter than the time between two collections.
 template<typename Appender>
 ALWAYS_INLINE void StructureTable::visitUsualStructures(Appender& appender, size_t begin, size_t end)
 {
@@ -375,7 +372,6 @@ size_t StructureTable::removeDeadEntries(VM& vm, CollectionScope scope)
         });
     }
     // Whatever region of the two tables a collection looks at, it has taken every entry there for a root: none has ended.
-    // A validating build looks all the same, after an Eden collection at everything: an entry that was written without a record may have.
     if (!validatesRuntime(vm)) [[likely]]
         return 0;
 

@@ -67,7 +67,6 @@ static BitVector findModulesWithBodiesThatOnlyLoaderEnters(const ValueFlowResult
 }
 
 // A module of the image is evaluated at most once, whatever its kind: no cache lists it, and a body that has thrown is not run again.
-// What the host loads for a module of the run time or from outside the image nobody counts.
 static bool isEvaluatedAtMostOnce(ModuleKind kind)
 {
     switch (kind) {

@@ -444,7 +444,6 @@ static bool mayGainFrom(const Program& program, const Function& function, const 
 static constexpr unsigned maxRoundsOfPlans = 3;
 
 // A parameter that a closure of the function's own frame captures stays borrowed (AOTBorrowedParameters.h), and which closures lie in the frame is known by the plans.
-// The planner puts no less into a frame where the table says more. So the plans stand, the table grows by them, and only a function that has something to gain is planned again.
 static void planAgainWithWhatFramesHold(const Program& program, const OptimizationInputs& inputs, FlowResults& flow, BuildContext& build, Vector<PlannedFunction>& plannedFunctions)
 {
     struct GrownWord {

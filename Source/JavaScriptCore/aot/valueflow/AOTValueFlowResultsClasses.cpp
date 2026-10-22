@@ -557,8 +557,7 @@ bool ClosuresTakenOutOfMembers::leavesClosuresInPlace(Walk& walk, ValueFlowState
 {
     switch (statement.kind) {
     case ValueFlowStatementKind::Lookup: {
-        // What a lookup of a property or of accessors hands on is in its own result, and whoever has asked for that is looked at by itself. A getter that it finds it calls.
-        // A lookup that stands for a protocol does with a method what the protocol says.
+        // What a lookup of a property or of accessors hands on is in its own result, and whoever has asked for that is looked at by itself.
         ValueFlowNameKind own = m_inputs.solver().keyOf(id).name().kind;
         return namesValuesOfProperties(own) || namesAccessors(own) || own == ValueFlowNameKind::PrototypeLink;
     }
@@ -999,8 +998,7 @@ static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMak
         }
         PropertyKeyID key = assignedToPrototypeObject[first].key;
         first = end;
-        // A name that is listed without a function refuses every access that passes the prototype object by. So a name that is written for other objects too is left out:
-        // the names are then not complete, and under a name that is not listed the access passes, and watches the name at run time.
+        // A name that is listed without a function refuses every access that passes the prototype object by.
         if (key == constructorKey)
             continue;
         if (!isStoredIntoPrototypeObjectsAlone) {
@@ -1038,8 +1036,6 @@ static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMak
 }
 
 // A function is born with Function.prototype above it and with a prototype object in `prototype`, and that object with `constructor` on it and Object.prototype above it.
-// Nobody follows the order of what is stored afterwards. Where seen code alone has the two objects, their marks and what is written through them say what is never done to them at all,
-// and what is never done needs no order.
 static void noteWhatConstructorFunctionKeeps(const ValueFlowResultInputs& inputs, LayoutID id, const WritesToPrototypeObjects& writes, bool listsEveryName, ClassFlow& flow)
 {
     const Layout& layout = inputs.program.at(id);
@@ -1061,8 +1057,7 @@ static void noteWhatConstructorFunctionKeeps(const ValueFlowResultInputs& inputs
     // To an access and to the guards of the run time the prototype object of the class is whatever `prototype` holds. So the rest is said only where that stays the object the function is born with.
     if (writes.mayHaveOtherPrototypeObject(id) || mutationsOfFunction.contains(ObjectMutation::RedefineProperty))
         return;
-    // An allocation that is not handed a prototype object asks the run time for that of its class, and the run time finds the function of a class by itself
-    // only where the closure has no captures (ClassTable::hasOneClassObject).
+    // An allocation that is not handed a prototype object asks the run time for that of its class, and the run time finds the function of a class by itself only where the closure has no captures (ClassTable::hasOneClassObject).
     if (inputs.program.at(layout.constructor).captures.isEmpty())
         flow.prototypeProperty = MemberMutability::Fixed;
 
@@ -1099,8 +1094,7 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
         const Layout& layout = program.layouts[index];
         if (!layout.constructor)
             continue;
-        // The members of a constructor function are assigned, and nobody follows the order of the assignments. A name under which seen code stores one function stands for a definition:
-        // a test compares the holder with it. Where the program's types name a class above its prototype object, that class is expected there, and the link is tested for.
+        // The members of a constructor function are assigned, and nobody follows the order of the assignments.
         if (layout.has(LayoutFlags::IsConstructorFunction)) {
             ClassFlow& flow = application.layouts[index].classFlow;
             flow.prototypeBase = layout.base;

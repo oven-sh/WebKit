@@ -40,8 +40,7 @@ ALWAYS_INLINE bool isCompiledObject(const JSCell* cell) { return cell->type() ==
 JS_EXPORT_PRIVATE bool wouldHaveArrayStorage(JSObject* compiledObject);
 JS_EXPORT_PRIVATE bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
 JS_EXPORT_PRIVATE Result forEachOwnProperty(VM&, JSObject*, Filter, const ScopedLambda<IterationStatus(const OwnProperty&)>&);
-// Every own property but the private names, strings and symbols alike, enumerable or not, in the order of their creation:
-// what the Structure of the ordinary object that would stand in the place of this compiled one lists.
+// Every own property but the private names, strings and symbols alike, enumerable or not, in the order of their creation: what the Structure of the ordinary object that would stand in the place of this compiled one lists.
 JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreated(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&);
 JS_EXPORT_PRIVATE void materializeLazyProperties(VM&, JSObject*);
 // Whether the compiled object has an own enumerable property, under a string or a symbol. The answer shows no name and no order, so it is no listing of the keys. Runs no code.
@@ -52,8 +51,7 @@ Presence hasPropertyOnChain(Structure*, UniquedStringImpl*);
 // A compiled object whose Structure says nothing about its extra properties gets the Structure that lists them. Whether it has another Structure now. Collects nothing.
 bool listExtraPropertiesInStructure(VM&, JSObject*);
 JS_EXPORT_PRIVATE JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned* attributesOrNull);
-// What a read by name finds on the compiled object itself. Present: a plain value, which is handed over. Absent: the object has no such property.
-// Unknown: getOwnPropertySlot() answers. Runs no code.
+// What a read by name finds on the compiled object itself.
 JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStringImpl*, JSValue&);
 JS_EXPORT_PRIVATE void putDirect(VM&, JSObject*, PropertyName, JSValue, unsigned attributes);
 void setIntegrity(VM&, JSObject*, Integrity);

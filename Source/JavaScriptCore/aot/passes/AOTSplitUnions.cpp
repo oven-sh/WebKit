@@ -282,7 +282,6 @@ static bool isReadByKey(const Function& function, const Use& use)
 }
 
 // Read under a number, an arguments object that stays in its function is never allocated.
-// A mapped one shares its elements with the parameters, and one that leaves the function is allocated anyway.
 static bool needsCellForReadsByKeyOnly(FunctionAnalyses& analyses, ValueID arguments)
 {
     const EscapeAnalysis& escape = analyses.escape();
@@ -445,8 +444,7 @@ std::optional<PlannedSplit> UnionSplitter::planSplitByParts(const ValueSite& sit
         if (canSeparateByTest(m_program, m_context.types, whole, parts, part) && resolvesOnPart(m_context, value, part) && !waitsForTestThatNobodyPlaces(m_context, site.block, value, part))
             chosen.append(ChosenPart { &part, isExpected(m_program, part, expected), evidence.countOfPart[index] });
     }
-    // What is expected is tested first, then the part that serves most of what the function does with the value. What is read under a number is
-    // expected to be an array where a string would serve as well: what a parser may answer has every primitive in its type.
+    // What is expected is tested first, then the part that serves most of what the function does with the value.
     bool isAccessedByNumber = evidence.numberOfResolvableElementAccesses;
     std::ranges::stable_sort(chosen, [&](const ChosenPart& a, const ChosenPart& b) {
         if (a.isLikely != b.isLikely)
@@ -506,8 +504,7 @@ std::optional<PlannedSplit> UnionSplitter::planSplitByArms(const ValueSite& site
     return plan;
 }
 
-// With one of its keys the access is an access by name. It is split where each of those is resolved, so that no arm looks a name up.
-// A key that was read past the end of a list of names is undefined, and that is rare.
+// With one of its keys the access is an access by name.
 std::optional<PlannedSplit> UnionSplitter::planSplitByKeys(const ValueSite& site)
 {
     const Value& value = m_function.at(site.value);

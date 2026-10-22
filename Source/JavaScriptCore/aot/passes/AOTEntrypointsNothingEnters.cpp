@@ -158,10 +158,7 @@ static bool isConstructor(FunctionKind kind)
     return kind == FunctionKind::BaseConstructor || kind == FunctionKind::DerivedConstructor;
 }
 
-// THE CONTRACT OF FLOW THAT THIS FILE RESTS ON, as computeFunctionResults (AOTValueFlowResultsFunctions.cpp) and stampCall (AOTValueFlowResultsCalls.cpp) state it:
-// every entry into a function whose callers are all known is a call that names the function, a call whose stamp lists it, or an indirect call out of an operation;
-// a call without a stamp, or with one that is not complete, finds beside what is listed only what has escaped or is lost, and no such function has known callers.
-// HasOnlyDirectCallers and the known callers of the call graph rest on the same.
+// THE CONTRACT OF FLOW THAT THIS FILE RESTS ON, as computeFunctionResults (AOTValueFlowResultsFunctions.cpp) and stampCall (AOTValueFlowResultsCalls.cpp) state it.
 static BitVector findFunctionsEnteredBesideCallsInCode(const Program& program, const FlowResults& flow, const ParallelLoops& loops)
 {
     BitVector isEntered = functionsCalledByHost(program, loops);
@@ -184,14 +181,12 @@ static bool namesItsCallee(const Value& call)
 }
 
 // A pass makes a call of its own for a protocol, which flow lists among the indirect calls, and in the lookup of a method table, whose callers stand at the sites of the calls that they replace.
-// A call from the source names its callee. One that a pass has made again without its site has lost what its site listed, so nobody can say what it finds.
 static bool mayBeCallFromSource(const Function& function, const Value& call)
 {
     return function.role != FunctionRole::TableLookup && namesItsCallee(call);
 }
 
-// The type of the callee lists functions that the call may find. Only where a value of that type may be another function do the stamps count:
-// the one on the call, and what its site listed when flow had just stamped it. Nobody can say what a call finds that stands at a site where no call by value stood then.
+// The type of the callee lists functions that the call may find.
 static void collectFunctionsThatCallsByValueFind(const Program& program, const CalleesOfSites& sites, FunctionID id, Vector<Found>& found)
 {
     const Function& function = program.functions[id.index()];

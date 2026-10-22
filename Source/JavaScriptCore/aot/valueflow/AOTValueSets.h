@@ -22,17 +22,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Interned, immutable sets of members of the universe. Equal sets of one polarity have equal ids, so "is it the same set" is one comparison.
-//
-// An id is twice the number of a stored set, plus one if it stands for everything but that set. Stored set 0 is empty: id 0 is nothing, id 1 is anything.
-// The number of a stored set of one member says which member it is, and nothing is stored for it.
-//
-// A stored set with few members from 64 on is short: one run holds the members below 64 as bits and the others one by one, ascending. Whoever has its number is one load away from all of it.
-// Any other stored set has three levels, all interned. A block covers 4,096 members, a group the blocks at 64 places, and a set is a list of groups. Two sets that differ in a few members
-// share every other block and every other group: the second one costs its list and what differs on the way down, and an operation on the two compares numbers.
-// A group of one block is not made: the list names the block.
-//
-// Every thread may read any set it has an id of, and make sets through a ValueSetMaker of its own, at the same time as the others.
+// Interned, immutable sets of members of the universe.
 class ValueSets {
     WTF_MAKE_NONCOPYABLE(ValueSets);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueSets);
@@ -261,8 +251,7 @@ public:
         });
     }
 
-    // The blocks of a set that is no complement, in ascending order of their places. Equal names hold equal members at equal places, so what follows from the members of a block alone may be kept under its name.
-    // Which name a block has depends on which thread has made it first: nothing may be ordered by it, and nothing that comes out may depend on it.
+    // The blocks of a set that is no complement, in ascending order of their places.
     void forEachBlock(ValueSetID set, NOESCAPE const Invocable<void(uint64_t nameOfBlock)> auto& functor) const
     {
         RELEASE_ASSERT(!isComplement(set));
@@ -312,8 +301,7 @@ public:
         }
     }
 
-    // Up to four of the blocks of the set, and noBlock for the rest. Each is named by a hash of its place and its members, never by its number, which depends on which thread has made the block first.
-    // Which ones they are depends on the blocks alone, so two sets that share most of their blocks mostly share these. Not for a complement.
+    // Up to four of the blocks of the set, and noBlock for the rest.
     static constexpr uint64_t noBlock = UINT64_MAX;
     std::array<uint64_t, 4> sampleOfBlocks(ValueSetID) const;
 
@@ -337,10 +325,6 @@ private:
     static constexpr unsigned wordsPerBlock = membersPerBlock / 64;
 
     // A run of 64-bit words that never changes: this head, and right behind it the words.
-    // Of a block: which of its 64 words are not zero, then those words.
-    // Of a group: at which of its 64 places it has a block; then, in halves of words, the number of the group among the groups of the universe and the numbers of those blocks.
-    // Of a list: entries, ascending, at most one for a group of places: (place << 32 | number of the block) or (first place of the group << 32 | namesGroup | number of the group).
-    // Of a short set: in halves of words, the members from 64 on, ascending, and a zero if their number is odd.
     struct Run {
         const uint64_t* words() const LIFETIME_BOUND { return reinterpret_cast<const uint64_t*>(this + 1); }
         std::span<const uint64_t> span() const LIFETIME_BOUND { return unsafeMakeSpan(words(), numberOfWords); }
@@ -352,10 +336,7 @@ private:
         uint64_t lowestMembers { 0 };
     };
 
-    // Runs found again by their words. A number, once handed out, is good for the life of the table, and its run can be read without a lock.
-    //
-    // The number of a run says where the run lies: so many units from the start of the memory of the table. Whoever has the number is one load away from the head, and the first word lies in
-    // the same cache line.
+    // Runs found again by their words.
     class InternedRuns {
         WTF_MAKE_NONCOPYABLE(InternedRuns);
     public:
@@ -398,7 +379,11 @@ private:
         // The slots lie at a cache line, so the low bits of their address are free for the binary logarithm of their number: one load gives both.
         class Table {
         public:
-            Table() = default;
+            Table()
+                : m_bits(0)
+            {
+            }
+
             Table(Slot* slots, unsigned bits)
                 : m_bits(reinterpret_cast<uintptr_t>(slots) | bits)
             {
@@ -411,7 +396,7 @@ private:
             friend bool operator==(Table, Table) = default;
 
         private:
-            uintptr_t m_bits { 0 };
+            uintptr_t m_bits;
         };
 
         struct alignas(64) Shard {
@@ -659,7 +644,6 @@ private:
 };
 
 // What each placeholder stands for where a value passes a mask: the untracked object for what the analysis has stopped following, the unknown object for what has escaped.
-// Everything, for whoever does not know: then all the family objects of a mask take the place of a placeholder.
 struct ValueFlowCoveredObjects {
     ValueSetID byUntracked { ValueSets::anything };
     ValueSetID byUnknown { ValueSets::anything };
@@ -701,17 +685,9 @@ public:
     void prefetchUnite(ValueSetID, ValueSetID);
     void prefetchIntersect(ValueSetID, ValueSetID);
     // What a place with a mask takes of a value that arrives there.
-    // Plain: what is in both.
-    // Checked: a test has run in front of the place. What is in both; and where the mask comes with family objects no placeholder passes as itself: the family objects that it covers take the place of either.
-    // Declared: the type of the place is taken on trust. Nothing is kept out, so a stranger and the unknown object are still there for whoever asks for a proof;
-    // where the mask comes with family objects they take the place of the untracked object.
-    // Without family objects (none) a placeholder is a member like any other. Of the family objects only those that the mask admits are taken, and only those that the placeholder covers:
-    // an object that fits the type and is still in the hands of the program alone is not what an object nobody knows may be.
-    // pass(a | b) is pass(a) | pass(b): it makes no difference in how many parts a value arrives.
     ValueSetID pass(ValueSetID value, ValueSetID mask, ValueSetID familyObjects, ValueFlowMaskKind, const ValueFlowPlaceholders&, const ValueFlowCoveredObjects& = { });
     ValueSetID uniteAll(std::span<const ValueSetID>);
-    // The set as the union of smaller sets, in ascending order: its blocks, or the words of its one block. A set that grows by a member keeps all its parts but one at each of the two steps.
-    // Nothing for a set of few members, for one that lies within one word and for a complement.
+    // The set as the union of smaller sets, in ascending order: its blocks, or the words of its one block.
     void appendParts(ValueSetID, Vector<ValueSetID>&);
 
     struct Counters {

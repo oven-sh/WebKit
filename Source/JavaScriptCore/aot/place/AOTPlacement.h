@@ -112,8 +112,7 @@ struct KeyOrderContinuation {
     friend bool operator==(const KeyOrderContinuation&, const KeyOrderContinuation&) = default;
 };
 
-// The fields that one store, or one run of stores, creates in an object of the layout, and the places in the orders of the image where exactly
-// these fields come next, the most likely place first.
+// The fields that one store, or one run of stores, creates in an object of the layout, and the places in the orders of the image where exactly these fields come next, the most likely place first.
 struct PlacedFieldCreation {
     static constexpr unsigned maxContinuations = 2;
 
@@ -186,8 +185,7 @@ struct PlacedGuardBit {
     bool holdsWhileClear { false };
 };
 
-// The bits of classes come first, in the order of their guards. Behind them come the bits of sets of guards, which have no class and no key, in the
-// order of their lists of members.
+// The bits of classes come first, in the order of their guards.
 struct GuardBitTable {
     JS_EXPORT_PRIVATE GuardBitID find(LayoutID, ClassSide, MemberGuardKind, PropertyKeyID) const;
     JS_EXPORT_PRIVATE GuardBitID find(PayloadListView<MemberConditionRecord>) const;
@@ -402,8 +400,7 @@ public:
     PlacementInSteps(const PlacementInputs&, BuildContext&, BodyScansForPlacement*);
     ~PlacementInSteps();
 
-    // All of numbering that reads a body, and the words of global bindings. The placement answers what the choice of representations and the removal of barriers ask:
-    // slots(), layout(), slot(), findFieldAccess(), the slot of a fieldAccess(), variable(), freeCellOffset().
+    // All of numbering that reads a body, and the words of global bindings.
     Placement numberWhatRepresentationsAsk(ProgramEditor&, NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites);
     // Reads no body and changes nothing of the program. It leaves where it is what the first step has answered, so others may go on asking for that.
     void numberRest(Placement&);

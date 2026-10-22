@@ -163,8 +163,7 @@ void branchOnFieldPresence(StubAssembler&, const FieldAddressRegisters&, GPRReg 
 void returnFieldPresence(StubAssembler&, const CachedSlot&, const FieldAddressRegisters&, JumpList& isUnknown);
 // Falls through when accepted. Reads bits 0 to 31 of type. Keeps type and value on every path.
 void branchUnlessTypeAccepts(StubAssembler&, const TypeTestRegisters&, JumpList& isRejected, JumpList& cannot);
-// At wasAbsent the slot admits the value: the type accepts it, or it is undefined or null and the representation has a marker for it. Every register but scratch and secondScratch is as on entry there.
-// Under ReturnAfterBarrier cannot means the field is in its slot. Under JoinList the type alone decides, and HasPassed is for a caller that comes from wasAbsent.
+// At wasAbsent the slot admits the value: the type accepts it, or it is undefined or null and the representation has a marker for it.
 void storeField(StubAssembler&, const FieldStoreRegisters&, FieldStoreEnd, FieldTypeTest, JumpList* stored, FieldStoreExits&);
 // As appendFieldToKeyOrder(), for whoever knows the layout and which of its fields it is: fieldIndex is kept, layout is written.
 void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, GPRReg layout, GPRReg fieldIndex, JumpList& hasNoTransition);

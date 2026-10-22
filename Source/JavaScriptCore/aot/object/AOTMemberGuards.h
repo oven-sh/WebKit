@@ -118,7 +118,6 @@ public:
     void didArmHolder(const LayoutData& classLayout, ClassSide);
 
     // While the prototype object of a class is a stand-in, nobody knows what a member under a computed name will hide, so no name is looked up through it.
-    // The first definition that the class carries out itself makes the object an ordinary one.
     void didLeaveMembersUnarmed(const LayoutData& classLayout) { m_classesWithMembersLeftUnarmed.set(classLayout.index); }
     bool takeMembersLeftUnarmed(const LayoutData& classLayout)
     {
@@ -129,7 +128,6 @@ public:
     }
 
     // An entry of the method table that depends on a guard bit holds the compiled method while the bit is set, or while the class has no objects yet, and the lookup of its selector otherwise.
-    // One event may clear a bit and set it again, as the definition of a class does: the table is brought in line when the event is over.
     class MethodTableUpdate {
         WTF_MAKE_NONCOPYABLE(MethodTableUpdate);
     public:
@@ -210,8 +208,7 @@ private:
         uint32_t m_round { 1 };
     };
 
-    // Which member of a set stood in the way when the set was last found blocked: while it still does, the set is not read again. Zero: none is remembered.
-    // A program may have more blocked sets than the small table has places: what another set pushes out of it goes into the large one.
+    // Which member of a set stood in the way when the set was last found blocked: while it still does, the set is not read again.
     struct MemberInTheWay {
         uint32_t setBitPlusOne { 0 };
         uint32_t index { 0 };

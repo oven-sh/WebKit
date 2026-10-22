@@ -150,8 +150,7 @@ PlanOrDecline<BindPlan> CallResolver::planBind(const CallSite& site, const Built
         return std::unexpected(CallDeclineReason::CalleeNotCallable);
     bool testsThatClosureIsAsCreated = false;
     if (!findsMembersAsCreated(m_program, m_flow, *overload.receiver, targetID)) {
-        // A bound function takes its name, its length and its prototype at the bind. A closure that has passed the test in front of the call has them as it was created with them.
-        // The closure of a bound function is created with another name than its function is written with.
+        // A bound function takes its name, its length and its prototype at the bind.
         if (m_program.at(targetID).role == FunctionRole::BoundFunction)
             return std::unexpected(CallDeclineReason::UnknownMember);
         PristineQuery query { m_program, m_function, &m_context.analyses };

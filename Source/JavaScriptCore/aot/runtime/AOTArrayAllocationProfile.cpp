@@ -35,8 +35,7 @@ static void startWindow(ArrayAllocationProfile& profile)
     std::ranges::fill(profile.largestLengths, 0);
 }
 
-// Every array of the site is born with the room, and only the ones that outgrow it pay for that. Lengths are skewed: most arrays of a site are short and a few are many times as long.
-// So the room follows the smallest of the lengths that are kept: in one window that many arrays less one may be longer without a change.
+// Every array of the site is born with the room, and only the ones that outgrow it pay for that.
 void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull)
 {
     if (!lastArrayOrNull)

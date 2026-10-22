@@ -136,12 +136,7 @@ struct MemberGuardData {
 static_assert(sizeof(MemberGuardData) == 8 && isImageRecord<MemberGuardData>);
 static_assert(static_cast<unsigned>(MemberGuardKind::PassedByStores) < 1u << 3 && numberOfClassSides <= 1u << 1);
 
-// A site with several conditions tests one bit, which is set while every guard of the set is. This names the sets that contain one guard. A bit has a number, counted from the start of the statics,
-// because the guards of a set may belong to several classes. At `offset` in the program tables: the numbers of the `count` sets, which is all that clearing the guard reads, then for each set
-// the offset of the list of its members: how many there are, then their numbers. The set is set with the last of them.
-// A member of a class that does not exist yet is not waited for, unless its entry in the list says so.
-// A guard of a class whose guards hold while clear says so in each list of members that it is in, and a set that holds while clear says so in each list of sets. Such a set has no member
-// from the class of a constructor function.
+// A site with several conditions tests one bit, which is set while every guard of the set is.
 struct MemberGuardAggregates {
     uint32_t offset;
     uint32_t count;
@@ -169,8 +164,7 @@ struct ClassData {
     uint32_t numberOfStaticFields;
     uint32_t numberOfMemberGuards : 30;
     uint32_t hasMemberGuardAggregates : 1;
-    // The first definition can only make what the record says: every member has a constant name, and the same goes for each class above. So every guard of the class holds from the start,
-    // which is while its bit is clear, and whoever changes the class or a class above it, or defines it a second time, sets the bit for good.
+    // The first definition can only make what the record says: every member has a constant name, and the same goes for each class above.
     uint32_t guardsHoldWhileClear : 1;
     uint32_t guardWordsOffset[numberOfClassSides];
     // In the program tables: how many classes have this one as their assumed base, then their indexes, ascending. 0 where there is none.
@@ -206,8 +200,7 @@ struct LayoutData {
     // A layout that the compiler derived from its base: the base plus the names that some of its objects get. Its objects are instances of the class of the base.
     uint32_t isDerived : 1;
     uint32_t impossibleMutationsRaw : impossibleMutationBits;
-    // Behind its own fields the cell of an object may hold further objects, the inner objects, each with a header of its own. Their offsets lie in front of the table of references.
-    // Only a cell that was allocated for all of them has the room, which the size of the layout leaves out. Such a cell lies in a block whose cells have inner cells.
+    // Behind its own fields the cell of an object may hold further objects, the inner objects, each with a header of its own.
     uint32_t hasInnerObjects : 1;
     // Some object of the layout may lie in the cell of another.
     uint32_t mayBeInnerObject : 1;
@@ -282,8 +275,7 @@ struct LayoutData {
         const uint32_t* counts = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + referencesOffset);
         return { counts - 1 - counts[-1], counts[-1] };
     }
-    // Every allocation that makes an object of the layout of an inner object. Compiled code copies the header of the inner object out of the record of such an allocation, behind the allocation of the cell.
-    // It looks at the record first only where a class constructs the object: the others are filled before the record of the cell, and nothing empties them.
+    // Every allocation that makes an object of the layout of an inner object.
     std::span<const uint32_t> allocationsOfInnerObjects() const
     {
         if (!hasInnerObjects)
@@ -324,8 +316,7 @@ struct LayoutData {
         ASSERT(field.slot.representation() == SlotRepresentation::DeferredClosure && !field.defersFlattenedObject);
         return FunctionID(fieldOperands()[field.operandIndex]);
     }
-    // The operands of a field whose slot defers a flattened object: no function, where a stub looks for the function of a closure; the allocation that makes the object;
-    // where the room for its slots begins in this object; where the slots begin in a cell of their own; how many bytes they take.
+    // The operands of a field whose slot defers a flattened object.
     struct FlattenedObjectData {
         static constexpr uint32_t noFunction = UINT32_MAX;
         static constexpr uint32_t noAllocation = UINT32_MAX;

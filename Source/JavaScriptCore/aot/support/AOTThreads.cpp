@@ -14,6 +14,7 @@
 #include <limits>
 #include <optional>
 #include <wtf/Atomics.h>
+#include <wtf/BitVector.h>
 #include <wtf/CPUTime.h>
 #include <wtf/Deque.h>
 #include <wtf/Lock.h>
@@ -106,10 +107,7 @@ BusyThreads::WaitScope::~WaitScope()
         setCurrentThreadIsBusy(true);
 }
 
-// A pool wakes its threads one after the other, each when the one before has found work. That way a loop waits milliseconds for its helpers, and
-// on a busy machine a hundred times longer. So a thread of the pool that has run out of work rests here for a while, and a task goes to a resting
-// thread first. Whoever has the task wakes that thread itself: a loop whose helpers each ask for two more has them all after a few steps.
-// A task that finds no resting thread is pending. A thread that finishes a task takes the pending task with the highest priority.
+// A pool wakes its threads one after the other, each when the one before has found work.
 class ParallelLoops::RestingThreads final : public ThreadSafeRefCounted<RestingThreads> {
 public:
     struct Task {
@@ -172,8 +170,7 @@ public:
     }
 
 private:
-    // The thread of a seat that is resting is in the list of resting seats. Whoever takes the seat out of the list gives it a task or sends it back
-    // to the pool. A thread that leaves by itself leaves its seat in the list, for whoever takes it out to find it empty.
+    // The thread of a seat that is resting is in the list of resting seats.
     enum State : uint32_t { IsEmpty, IsResting, HasTask, IsSentBack };
 
     struct Seat {
@@ -183,8 +180,7 @@ private:
         Task task;
     };
 
-    // The low half of the head is the number of the first seat plus one. The high half changes with every push and pop, so that a head that has
-    // the same first seat again is not taken for unchanged.
+    // The low half of the head is the number of the first seat plus one.
     class SeatList {
     public:
         void push(Seat* seats, uint32_t index)
@@ -397,9 +393,7 @@ namespace {
 enum class Participant : bool { Caller, Helper };
 enum class WorkResult : bool { RanOut, Yielded };
 
-// Work that its caller runs, and that threads of the pool join while there is something for them to take. Each helper that finds
-// some asks for two more, so no thread is woken for work that is gone. A helper that arrives after the work ended only drops its reference.
-// A helper that yields asks for another in its place, which comes once no task with a higher priority is pending.
+// Work that its caller runs, and that threads of the pool join while there is something for them to take.
 class SharedWork final : public ThreadSafeRefCounted<SharedWork> {
 public:
     using Work = ScopedLambda<WorkResult(Participant)>;
@@ -530,7 +524,6 @@ static void runLoop(const ParallelLoops& loops, unsigned count, NOESCAPE const S
     }
 
     // A worker's first run is one index, because callers put the largest work first, and each next run is twice as long.
-    // The last runs are short, so that the workers end together. A helper yields only between two runs.
     const TaskPriority priority = ParallelLoops::currentPriority();
     const bool canYield = priority != TaskPriority::Foreground;
     const unsigned longestRun = canYield ? 16 : 256;

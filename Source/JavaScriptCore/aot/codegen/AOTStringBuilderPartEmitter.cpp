@@ -105,8 +105,7 @@ void StringBuilderPartEmitter::appendConstant(const OperationContext& context, B
     builders.commit(builder.storage, builders.writeBytes(cursor, text.span8()));
 }
 
-// How many characters are appended is known only when they are written, and fewer than the bytes that are written. Where those bytes have no room, the operation appends just the characters:
-// near the longest text it is the characters that count.
+// How many characters are appended is known only when they are written, and fewer than the bytes that are written.
 void StringBuilderPartEmitter::appendInWordsOrByCall(const OperationContext& context, Builder builder, int32_t bytesWritten, NOESCAPE const Invocable<Pointer(Pointer cursor)> auto& write, NOESCAPE const Invocable<Boxed()> auto& box)
 {
     StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();

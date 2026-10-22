@@ -80,8 +80,7 @@ bool BuiltinLocationWatch::arm(VM& vm, BuiltinID member)
     return state == WatchedLocationState::Unchanged;
 }
 
-// The engine also reports each native function of a static table when somebody first looks for it, thousands in a long run. Nobody can observe one being made, so the table does not call it lazily made,
-// and start-up looks at the ones that compiled code compares with.
+// The engine also reports each native function of a static table when somebody first looks for it, thousands in a long run.
 static bool isMadeByCodeOfHolder(JSObject* holder, UniquedStringImpl* key)
 {
     constexpr unsigned madeByCode = PropertyAttribute::PropertyCallback | PropertyAttribute::ClassStructure | PropertyAttribute::CellProperty;
@@ -108,8 +107,7 @@ void BuiltinLocationWatch::didFire(VM&, void* context)
     static_cast<Watch*>(context)->state = WatchedLocationState::Changed;
 }
 
-// The program may have replaced a step of the path to the holder, so only a cell of the program's table answers: start-up fills the cell of a step that may be replaced,
-// and a cell keeps its object alive for as long as the instance lives, which the watchpoint relies on.
+// The program may have replaced a step of the path to the holder, so only a cell of the program's table answers.
 JSObject* BuiltinLocationWatch::findHolder(BuiltinID member)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
@@ -194,7 +192,6 @@ BuiltinLocationWatch::Attempt BuiltinLocationWatch::tryWatch(VM& vm, BuiltinID m
         madeByHost = m_objectsMadeByHost.get(Location { holder, name.impl() });
         if (!madeByHost) {
             // A store puts an own property in place of the entry of the static table, a definition makes the member first, and a deletion makes every member.
-            // So an entry without an own property is one that nobody has touched. An own property that nobody has reported is what the program has put there.
             if (isValidOffset(holder->getDirectOffset(vm, name)) || !reportsCreationOfMember(holder, name.impl()))
                 return Attempt::CannotWatch;
             return Attempt::IsNotMadeYet;
@@ -221,8 +218,7 @@ GetValueFunc::Ptr BuiltinLocationWatch::customGetterOf(BuiltinOverloadID overloa
     return known.function;
 }
 
-// The table has the names and not the attributes. A name that the Structure lacks is added the way CreateNonEnumerableDataPropertyOrThrow defines one, which is how the constructors of the errors do it.
-// Whatever comes of that, the number is published only for a Structure that holds every property where compiled code reads it.
+// The table has the names and not the attributes.
 static Structure* structureAfterAdding(VM& vm, const BuiltinTable& table, Structure* structure, std::span<const BuiltinName> names, JSType typeOfInstances)
 {
     for (size_t position = 0; structure && position < names.size(); ++position) {

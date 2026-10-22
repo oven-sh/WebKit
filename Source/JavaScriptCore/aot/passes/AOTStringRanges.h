@@ -64,8 +64,7 @@ static_assert(OperandIndex::StringRangeCharacterOrUndefined::position == Operand
 
 Value makeStringRangeRead(Opcode, ValueID string, std::optional<StringRangeBounds>, ValueID position);
 
-// The calls of built-ins in a function, in the order of forEachValueSite(). Nearly every rule of SimplifyBuiltinCalls begins at one, and a function has few of them among its values:
-// they are listed once, and anew behind a rule that has changed something.
+// The calls of built-ins in a function, in the order of forEachValueSite().
 using BuiltinCallSites = Vector<ValueSite, 16>;
 BuiltinCallSites collectBuiltinCallSites(FunctionPassContext&);
 

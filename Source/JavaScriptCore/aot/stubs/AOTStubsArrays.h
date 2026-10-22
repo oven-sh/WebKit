@@ -20,8 +20,7 @@ namespace JSC { namespace AOT {
 static_assert(maxArrayElementsInRegisters <= 4);
 
 enum class ArrayElementKind : uint8_t { Int32, Double, Contiguous };
-// OwnStorage: the capacity is how many elements the function that makes the array appends itself. Whoever else gets hold of the array may append more, and an array that outgrows
-// the room in its cell leaves the room behind. So the storage is an allocation of its own, which the collector takes back.
+// OwnStorage: the capacity is how many elements the function that makes the array appends itself.
 enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity, ContiguousCapacity1OwnStorage, ContiguousCapacity3OwnStorage };
 enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom };
 // Number: an array of int32 that takes a number which may be none becomes an array of doubles.
@@ -82,8 +81,7 @@ constexpr StubKey arrayPushOfKnownKind() { return StubKey(StubFamily::ArrayPushO
 constexpr StubKey arrayPushDouble() { return StubKey(StubFamily::ArrayPushDouble); }
 // The operands: an array, and the array whose elements go behind its own as the iterator of an array reads them: a hole as undefined.
 constexpr StubKey appendElements() { return StubKey(StubFamily::AppendElements); }
-// What stands behind the code in line of an access to an element of an array whose holes read as undefined. They keep every register but their scratch registers.
-// The array, the boxed value, the position: an integer, or a number in the first argument register for numbers.
+// What stands behind the code in line of an access to an element of an array whose holes read as undefined.
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey arrayPutAtNumber(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtNumber).withForm(static_cast<uint8_t>(stored)); }
 constexpr StubKey arrayGetAtIndex() { return StubKey(StubFamily::ArrayGetAtIndex); }

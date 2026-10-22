@@ -45,7 +45,6 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
 
 #if CPU(X86_64)
     // A closure of this Instance that declares no parameter is entered from here: its Structure says what the test of the type and CallValue would find out.
-    // Where there is one Instance the top byte of the word of a slim closure says it alone.
     static_assert(ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32);
     auto branchIfTopByteRefusesCall = [&](ptrdiff_t offsetOfWord) {
         return jit.branch8(CCallHelpers::LessThan, Address(getter, offsetOfWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(0)));

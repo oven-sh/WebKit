@@ -154,8 +154,7 @@ void VMPropertyCaches::publishWords(Instance& instance) const
     words.infoOfClassPrototypes = ClassPrototype::info();
 }
 
-// Adds every name that the object may answer for by itself. False where nothing lists them.
-// The filter is found by the Structure of the lowest object, which says what is above: each of those is one object, and reports its changes. A store to the lowest object is stopped only by what is above it.
+// Adds every name that the object may answer for by itself.
 enum class PlaceInFilter : bool { Lowest, Above };
 
 static bool addOwnNames(VM& vm, const ProgramIdentifiers& identifiers, JSObject* object, PlaceInFilter place, AbsenceFilter& filter)
@@ -264,8 +263,7 @@ void VMPropertyCaches::fileAbsenceFilterOf(JSGlobalObject* globalObject, JSObjec
     filter = filled;
 }
 
-// The change has been made. A name that the object has lost, or has as a data property that can be written, stops no store below the object.
-// A field that is redefined is reported when it has left its slot in the form that it had, and takes its new form behind the report: outside its slot it counts as whatever stops a store.
+// The change has been made.
 static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
 {
     constexpr unsigned attributesThatStopStores = PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue;
@@ -419,7 +417,6 @@ void initializePropertyCacheWords(Instance& instance)
     PropertyCacheWords& words = instance.propertyCaches;
 
     // The realm creates the classes of numbers and booleans at their first use, and most programs never look a property up in either.
-    // Until something is filed for one, its word names a Structure that no receiver has, so a probe misses as it does for any Structure without entries.
     Structure* numberStructure = globalObject->numberObjectStructureConcurrently();
     Structure* booleanStructure = globalObject->booleanObjectStructureConcurrently();
     Structure* structureOfNoReceiver = vm.structureStructure.get();
@@ -471,7 +468,6 @@ void PropertyCaches::didAddProperty(Structure* before, Structure* after)
 }
 
 // The objects that take an addition may all be gone by the next Eden collection, and nothing but an object keeps the Structure it leads to.
-// As with the transitions in the inline caches of a CodeBlock, that Structure lives on if the one it comes from does. A full collection ends every Structure that no object has.
 template<typename Visitor>
 void PropertyCaches::visitRoots(Visitor& visitor)
 {
@@ -506,8 +502,6 @@ void PropertyCaches::publishIfStandsForPrimitives(Structure* structure)
 }
 
 // A kept answer holds until an object that it depends on reports a change, and only an object that may be a prototype reports.
-// Every object above a receiver is one. The global object, where free names and the properties of its proxy are found, becomes one here:
-// that costs a Structure and a copy of its property table, which a program that keeps no such answer never pays for.
 void PropertyCaches::ensureChangesAreReported(std::span<JSObject* const> objects)
 {
     for (JSObject* object : objects) {

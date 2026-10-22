@@ -184,7 +184,6 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair,
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, size_t, (Instance*, const void* returnAddress));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance*, void* returnAddress, EncodedJSValue misfit));
 // What is to be called in place of the Proxy that is the callee of the frame, and, where that is the trap, the list of arguments, or one where the caller makes it.
-// Nothing: the engine's function is to be called.
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Instance*, CallFrame* hostCallFrame, uint32_t makesList));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallNativeFunction, EncodedJSValue, (Instance*, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* arguments));
 

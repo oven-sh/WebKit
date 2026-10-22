@@ -121,8 +121,7 @@ static void returnBoxedDouble(StubAssembler& jit, const ElementRegisters& regist
     jit.returnToCaller();
 }
 
-// The elements of a compiled object are those of its extra properties. An accessor or a read-only value under an index puts them into array storage, which the callers leave to the operation.
-// So are extra properties that the Structure holds because the layout has no word for them.
+// The elements of a compiled object are those of its extra properties.
 static void loadExtraPropertiesOfCompiledObject(StubAssembler& jit, const ElementRegisters& registers, JumpList& hasNone)
 {
     const GPRReg base = registers.base;

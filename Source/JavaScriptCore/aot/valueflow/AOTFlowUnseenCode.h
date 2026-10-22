@@ -30,8 +30,7 @@ constexpr bool admitsUnknownJavaScript(UnseenCodeCause cause)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// Text that eval or Function is given runs in the global scope, and what it declares with let, const or class stays its own. It gets at the host's ways of running a script only through functions
-// of the library that the image holds for a call of the program's own, and such a call has a record of its own.
+// Text that eval or Function is given runs in the global scope, and what it declares with let, const or class stays its own.
 constexpr bool admitsScripts(UnseenCodeCause cause)
 {
     return admitsUnknownJavaScript(cause) && cause != UnseenCodeCause::EvaluatesText;

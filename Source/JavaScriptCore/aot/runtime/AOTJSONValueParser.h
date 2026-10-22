@@ -53,8 +53,7 @@ private:
         unsigned nameIndex { 0 };
     };
 
-    // The elements of an array mostly have the same members in the same order. How the source spells the names of the element in front, from the quote to the colon,
-    // and what each leads to: names[i] goes on from the Structure that names[i - 1] has led to.
+    // The elements of an array mostly have the same members in the same order.
     struct NamesOfElementInFront {
         static constexpr unsigned capacity = 12;
         static constexpr unsigned maxTextLength = 2 * sizeof(uint64_t);

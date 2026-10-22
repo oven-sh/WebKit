@@ -11,10 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// function lex(src) { const out = []; for (let i = 0; i + 3 <= src.length; i += 3) out.push({ text: src.slice(i, i + 3) }); return out }
-// function count(toks) { const m = new Map(); for (const t of toks) m.set(t.text, (m.get(t.text) ?? 0) + 1); return m }
-// let src = ""; for (let i = 0; i < 200; i++) src += "ab" + (i % 10); let n = 0; for (let r = 0; r < 10; r++) n += count(lex(src)).size; print(n)
-// Nothing in the loop of `count` changes the storage of `toks`, so its address is read once in front of the loop, and nobody but `count` holds the array.
 static constexpr ASCIILiteral arrayReadInLoopThatCollects = R"IR(layout L0 name="Token" fields=[{key="text" declared={type=anything} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {

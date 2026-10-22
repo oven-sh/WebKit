@@ -106,8 +106,7 @@ bool appendCandidates(const Program& program, const Function& callee, const Valu
     return true;
 }
 
-// Flow has counted the reads of a field before these tests are put in, and passes rely on what it found: a field that nobody reads is removed, and one whose value is only called or only
-// looked into may hold something else than the value. A read of such a field would find what the program never sees.
+// Flow has counted the reads of a field before these tests are put in, and passes rely on what it found: a field that nobody reads is removed, and one whose value is only called or only looked into may hold something else than the value.
 bool mayBeReadByAnybody(const Program& program, const Type& object, PropertyKeyID key)
 {
     std::span<const LayoutID> layouts = membersOf(program, object);
@@ -118,8 +117,7 @@ bool mayBeReadByAnybody(const Program& program, const Type& object, PropertyKeyI
     });
 }
 
-// Of a result that is one object of which the table lists all stores: a member holds one of all that was stored under its name. A store that not every path makes may have left it out.
-// A member with a store that no test can decide is passed over, and so is every member where a store has a computed key.
+// Of a result that is one object of which the table lists all stores: a member holds one of all that was stored under its name.
 void appendTestsOfMembers(const Program& program, const Function& callee, const Value& call, const ResultOrigin& answered, Vector<TestOfMember, 0>& members)
 {
     if (answered.mayBe.size() != 1)

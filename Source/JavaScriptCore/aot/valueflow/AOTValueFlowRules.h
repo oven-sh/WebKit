@@ -20,9 +20,7 @@ ValueSetID unknownValue(ValueFlowRuleContext&, ValueFlowUnknownSource);
 // Whoever fills a group of kind Call or Construct says from which position on it passes nothing: a parameter that every caller of the group fills is not undefined.
 void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments);
 
-// The known objects of a value, for a rule that asks each of them something. They come one by one while they are no more than mostMembersToldApart(). Where they are more, the objects of one layout come
-// together, as do those of one built-in class, and the first that many of these groups are told apart, in an order that no run changes: by layout, then by class, then by object.
-// Only what is left comes as `rest`, which the rule takes together. A run with more objects covers what a run with fewer has done: a group only grows, and a group among the first was never in the rest.
+// The known objects of a value, for a rule that asks each of them something.
 struct ValueFlowObjectsToldApart {
     Vector<ValueSetID, 16> groups;
     ValueSetID rest { ValueSets::nothing };
@@ -30,8 +28,6 @@ struct ValueFlowObjectsToldApart {
 ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext&, ClimbingSet knownObjects);
 
 // The key of a group never mixes a placeholder with other members: the rule of the group of a placeholder goes over what the placeholder covers, and only the unknown object lets the operands escape.
-// So whoever asks for a group splits the callees first: those that the analysis follows, the untracked object, the unknown object. The functor runs for a part that holds something.
-// In the library's code behind a described built-in the unknown object is an operand of a call whose records say what becomes of it: see calleeOfDescribedCall().
 ValueSetID unknownCalleeOfStatement(ValueFlowRuleContext&);
 void forEachPartOfCallees(ValueFlowRuleContext& context, ClimbingSet callees, NOESCAPE const Invocable<void(ClimbingSet)> auto& functor)
 {
@@ -74,8 +70,7 @@ void runNewClass(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runDefineMethod(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runReadOfPrototypeProperty(const ValueFlowStatement&, ValueFlowRuleContext&);
 
-// A call that no operation spells out: native code runs a protocol of the language. A function of the program is entered, and the entry of a built-in is applied with the operands of this call alone.
-// A placeholder among the callees is called through its own group. What the callees throw escapes.
+// A call that no operation spells out: native code runs a protocol of the language.
 struct ValueFlowProtocolCall {
     ClimbingSet callees;
     ClimbingSet thisValue;
@@ -90,7 +85,6 @@ struct ValueFlowProtocolCall {
 };
 void callInProtocol(ValueFlowRuleContext&, const ValueFlowProtocolCall&);
 // The objects of the language that the table has as members under the key and that have escaped: beside the unknown object no set lists them.
-// The code behind a built-in of the host is in the image for a use that names the built-in, and that it has come into unknown hands is no such use.
 ClimbingSet escapedMembersUnder(ValueFlowRuleContext&, PropertyKeyID);
 
 // IteratorOpen, IteratorResume, IteratorClose, AppendSpread.

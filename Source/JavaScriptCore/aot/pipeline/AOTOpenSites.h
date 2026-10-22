@@ -52,7 +52,6 @@ enum class SiteList : uint8_t {
 inline constexpr unsigned numberOfSiteLists = static_cast<unsigned>(SiteList::TypedResultCalls) + 1;
 
 // The operations of a function that a resolving pass may have something to do at, by the set of opcodes that the pass starts from, in the order of the blocks in reverse post order and of the values in their blocks.
-// One walk fills all lists. They hold until the log says that the function has changed.
 class OpenSites {
     WTF_MAKE_NONCOPYABLE(OpenSites);
 public:

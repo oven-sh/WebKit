@@ -35,8 +35,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // The object that a constructor makes is followed from its allocation through the constructor and through every function that takes it, up to the first place where somebody else may get hold of it.
-// Inside one function the escape analysis says what happens to the object, as a list of events. The sets of the solve say who is called and which accessors run at an event.
-// Each pair of a function and an object that it holds is a node. The nodes are solved callees first, and a node on a cycle is given up.
 
 namespace {
 
@@ -303,7 +301,6 @@ static bool allocatesConstructedObject(const Program& program, const Function& f
 }
 
 // AllocateTaggedLayouts puts one allocation for each tag where the one allocation of a constructor stood: in the constructor of a class, and in the copy of a constructor function that allocates `this` itself.
-// Whatever layout the tag picks, the function is the constructor of what it allocates there.
 static bool allocatesObjectOfOwnClass(const Program& program, const Function& function, const Value& value)
 {
     if (!allocatesConstructedObject(program, function, value) && !(value.opcode == Opcode::NewObject && function.has(FunctionFlags::AllocatesOwnThis)))
@@ -597,8 +594,7 @@ private:
         addEvent(event, constructionNameOf(m_program, access), storesValue);
     }
 
-    // The allocations by tag meet in one value. Each stands in the block that hands it there, and neither that block nor the one where they meet runs twice:
-    // so wherever one of them has run, the value is what it has allocated.
+    // The allocations by tag meet in one value.
     bool isObjectWhereverItIsAllocated(ObjectID object, ValueID value)
     {
         ValueLocation location = m_useLists.locationOf(sameObjectThroughCasts(m_function, value));
@@ -1098,8 +1094,7 @@ private:
         }).iterator->value;
     }
 
-    // A locked location holds what the table says, as in the lookup of the rules (HeapRule::chainFrom): whoever defines an accessor under a key nobody knows on such a holder, as on Object.prototype,
-    // is refused by the run time where the key is this one.
+    // A locked location holds what the table says, as in the lookup of the rules (HeapRule::chainFrom).
     ValueSetID accessorsUnder(ValueSetID holders, ValueFlowName underKey, ValueFlowNameKind underUnknownKey)
     {
         holders = m_heap.maker().intersect(holders, ValueSets::complement(m_universe.builtinTables().heap().under(PropertyKeyID(underKey.payload)).holdersWithLockedLocation));
@@ -1186,7 +1181,6 @@ private:
     }
 
     // What the object inherits from when it is made: what its allocation is given, and for the instance of a constructor function what the function has as its prototype property.
-    // None where no operation of followed code says it.
     std::optional<ValueSetID> prototypesGivenAtCreation(ValueFlowObjectID object)
     {
         switch (m_universe.kindOf(object)) {
@@ -1222,7 +1216,6 @@ private:
     }
 
     // Until an object leaks, only the code that is followed here holds it: it inherits from what it was given when it was made, and no accessor lies in it but what that code has defined.
-    // One object stands for all that an allocation makes. What code nobody knows does to those that it has got hold of comes later in the life of each of them.
     const std::optional<ChainOfReceivers>& chainOfObjectsBeforeTheyLeak(ValueSetID receivers)
     {
         return m_chainsBeforeLeak.ensure(receivers.index(), [&]() -> std::optional<ChainOfReceivers> {
@@ -1999,8 +1992,7 @@ private:
         });
     }
 
-    // The points before this one are accepted or passed over. A point that has not had its turn comes later in its block or lies in a later block,
-    // so it reaches this one only round a cycle, which is a question about its block: a constructor with thousands of stores in a row asks it once for each of them.
+    // The points before this one are accepted or passed over.
     bool isOrderPointAccepted(uint32_t index)
     {
         uint32_t position = m_creatingPoints[index];
@@ -2158,9 +2150,6 @@ static OwnFieldOrder ownOrderOf(const Program& program, const ConstructionGraph&
 }
 
 // Reflect.construct(Base, [], Derived) creates an object of Derived that the constructor of Derived never stores to.
-// A construction without the operand is its own new.target, and super() hands on the new.target that its constructor was entered with.
-// An allocation picks the layout of new.target only where the class of new.target lies below the class that allocates: ValueFlowUniverse::objectAllocatedUnder(). Under any other new.target it makes
-// an ordinary object. So a class counts only beside another callee for which the same class allocates. A class below something that is no class of the program counts beside any callee.
 static ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap)
 {
     const Program& program = inputs.program;
@@ -2329,8 +2318,7 @@ static std::optional<Vector<uint32_t, 2>> findMakers(const ValueFlowResultInputs
     return makers;
 }
 
-// A literal stores what it lists in the allocation itself, so nobody sees its object without that. What every literal of a layout lists is there at the birth of every object
-// that compiled code makes; the run time marks the objects that it makes itself.
+// A literal stores what it lists in the allocation itself, so nobody sees its object without that.
 static void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, ValueFlowConstructions& result)
 {
     using KeysByLayout = HashMap<uint32_t, Vector<PropertyKeyID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -2352,8 +2340,7 @@ static void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowR
             return;
         const Function& function = program.functions[index];
         for (const Value& value : function.values) {
-            // An accessor, and whatever a key that is computed or a spread brings, may lie outside the slots, and the cell of an object with anything outside its slots is marked for good:
-            // its one test would fail at every access, where the test of a slot passes.
+            // An accessor, and whatever a key that is computed or a spread brings, may lie outside the slots, and the cell of an object with anything outside its slots is marked for good.
             if (value.opcode == Opcode::DefineGetter || value.opcode == Opcode::DefineSetter || value.opcode == Opcode::ElemDefine || value.opcode == Opcode::CopyDataProperties) {
                 const Value& object = function.at(value.operand(0));
                 if (object.opcode == Opcode::NewObject && program.at(object.layout()).kind == LayoutKind::Record)
@@ -2496,8 +2483,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
         std::ranges::sort(construction.fieldsStoredAtBirth);
     }
     addBirthsOfLiterals(inputs, tables, result);
-    // The copy of a maker's body that allocates by the tag does to its object what the maker does to `this`. So whatever is proven of what the maker fills holds of the object whatever its tag.
-    // The orders speak of the fields that a layout declares itself, and a member declares what is added later.
+    // The copy of a maker's body that allocates by the tag does to its object what the maker does to `this`.
     for (const TaggedFamily& family : program.taggedFamilies) {
         const ValueFlowConstructions::OfLayout& maker = result.layouts[family.maker.index()];
         for (const TaggedLayout& member : family.members) {

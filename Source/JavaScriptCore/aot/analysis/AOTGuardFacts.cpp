@@ -44,7 +44,6 @@ static constexpr ProofSet proofsOfNewBuiltinInstance { Proof::Pristine };
 static constexpr OpcodeSet allocationsWithUnprovenLayout { Opcode::CloneAs };
 
 // A compiled object keeps its shape, and with it its instance, for life.
-// A source stays open across the calls of its parsers, which write what opening it read. The typed-data rules check where it is closed.
 static constexpr ProofSet proofsThatOutlastWrites { Proof::Shape, Proof::OwnInstance, Proof::SourceOpen };
 
 // A flow record of the field, the layout or the class can stand for these, so nobody can tell whether an access takes them from its guard.
@@ -140,7 +139,6 @@ static const OpcodeSet& opcodesThatMayMakeObject()
 }
 
 // The solver of EscapeAnalysis lets a value stand for objects of the function alone only where the value defines such an object, is a cast or a conversion, or is a parameter of a block behind the entry.
-// A value that nobody reads brings no object with it.
 static bool isDefinedOutside(FunctionAnalyses& analyses, ValueID definition)
 {
     static const OpcodeSet opcodesThatMayGiveOwnObject = opcodesThatMayDefineObjects() | castsAndConversions | OpcodeSet { Opcode::Unspecified };
@@ -336,7 +334,6 @@ ProofSet proofsOfAllocation(const Program& program, const Function& function, co
 }
 
 // ExpandLongArrayLiterals puts an array of holes that is filled and then cut in the place of a long literal, and whoever named the literal as its guard names the cut array from then on.
-// Only stores that keep the storage fill such an array, and what is cut keeps the storage, or is a copy with the same.
 static bool isFilledArrayOfHoles(const Function& function, const Value& allocation)
 {
     return allocation.opcode == Opcode::TruncateNewArray && function.at(allocation.arrayOperand()).opcode == Opcode::NewContiguousArray;
@@ -696,8 +693,7 @@ static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOper
     });
 }
 
-// An allocation may fill the slot with undefined or null. Another value that it lists stays until a store under the name. One by name ends what the allocation proves;
-// one by slot brings a marker only where its value may be one, and a function that has such a store is not looked at more closely.
+// An allocation may fill the slot with undefined or null.
 static bool fillsSlotWithDeclaredType(const Program& program, const Function& function, const Value& allocation, PropertyKeyID key)
 {
     if (!Value::opcodesWithFields.contains(allocation.opcode))
@@ -1052,7 +1048,6 @@ bool provesSlotFilled(const Program& program, const Function& function, const Gu
 }
 
 // A proof that a slot is filled begins at a test that proves it, or at an allocation that names its layout: proofOfTerminator(), proofsOfAllocation().
-// Where facts meet or are united, none gets a proof that it did not have.
 static constexpr OpcodeSet opcodesBehindProofsOfFilledSlots = [] {
     OpcodeSet opcodes;
     for (Opcode opcode : allMembersOf<Opcode>) {

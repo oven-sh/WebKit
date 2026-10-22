@@ -128,8 +128,7 @@ static bool refersToOperand(const Type& result)
     return result.opaque && !result.isOpaque(OpaqueKind::ClassToken);
 }
 
-// What summarizeOperand() says of an operand that may be a reference, where it says so whatever the types are: the operation is described by its row,
-// runs no code of its operands and calls none of them. Most uses of an object are of this kind: tests, casts, reads and stores of slots.
+// What summarizeOperand() says of an operand that may be a reference, where it says so whatever the types are: the operation is described by its row, runs no code of its operands and calls none of them.
 struct DeclaredOperandFacts {
     bool isSameForEveryReference { false };
     // What PointsToSolver::isContentsStore() says of the summary.
@@ -946,7 +945,6 @@ bool PointsToSolver::isContentsStore(const UserOperand& operand) const
 }
 
 // An object gets to a value that makes none and is no parameter of a block from an operand: the value may be the operand, refer to it, or be read out of it.
-// It gets to a parameter of a block from an argument, from the operand that a test narrows, or from a terminator that declares a result.
 std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& analyses, ValueID value)
 {
     constexpr size_t maxDefinitions = 64;

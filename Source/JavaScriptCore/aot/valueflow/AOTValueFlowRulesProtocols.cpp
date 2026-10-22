@@ -28,11 +28,9 @@ void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& 
     if (!context.meet(call.callees, universe.callables()))
         return;
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
-    // Any other built-in function is there because the program has put it there. It is called through a group like a function of the program, so that the nodes of the group keep its operands
-    // for whoever asks after the solve what the built-in was applied to.
+    // Any other built-in function is there because the program has put it there.
     ClimbingSet builtinFunctions = context.restrict(call.callees, universe.builtinFunctionsOfProtocols());
-    // Beside the unknown object the callees do not list what has escaped, and of that a protocol finds the functions that the table has under the names of protocols. Their code runs.
-    // The operands of a call of the unknown object escape and its result is unknown, which is all that the entry of such a function could say.
+    // Beside the unknown object the callees do not list what has escaped, and of that a protocol finds the functions that the table has under the names of protocols.
     if (call.origin == ValueFlowCalleeOrigin::MemberFoundUnderName && context.contains(call.callees, ValueFlowUniverse::unknownObject())) {
         context.forEachMember(context.valueWithin(ClimbingSet(universe.builtinFunctionsOfProtocols()), escaped), [&](ValueFlowObjectID callee) {
             // That a built-in of the host has come into unknown hands is no use of it: see runUsedBuiltins().
@@ -41,8 +39,7 @@ void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& 
         });
     }
 
-    // A built-in that lets in unseen code does so wherever it is applied. The protocol runs for an operation of a function, or for a statement that a rule has made, behind which seen code may stand.
-    // The group of the other callees says the same of them.
+    // A built-in that lets in unseen code does so wherever it is applied.
     ValueFlowStatement protocol;
     protocol.function = context.functionOfStatement();
     protocol.result = call.result;

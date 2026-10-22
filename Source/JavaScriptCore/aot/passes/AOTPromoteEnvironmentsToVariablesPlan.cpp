@@ -466,8 +466,7 @@ static bool restsOnCheck(const Function& function, ValueID value)
     return false;
 }
 
-// Where the type of the value rests on a check, the generic version of the function stores what the check has turned away. GuardTaintedPositions has marked the capture for that,
-// and the variable takes the place of the capture.
+// Where the type of the value rests on a check, the generic version of the function stores what the check has turned away.
 static Variable createValueVariable(const Function& function, ValueID id, const DeclaredType& capture)
 {
     Variable variable;

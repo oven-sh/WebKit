@@ -165,8 +165,7 @@ double Heat::leastHeatOfFastCode(const Program& program, FunctionID id, double f
     return runsInLoop ? m_thresholds->leastHeatOfFastCodeInLoops : frequencyConstants.iterationsPerLoop;
 }
 
-// Where nothing in the program runs more often than one loop, the loop is hot, and so is the function that it calls. A wrapper that the engine has made for that function is not:
-// nobody may enter it, and a hot wrapper takes in a copy of the body.
+// Where nothing in the program runs more often than one loop, the loop is hot, and so is the function that it calls.
 static bool leadsToBody(const Function& function)
 {
     return isWrapperCreatedByEngine(function) || function.creator.kind() == CreatorRecord::Kind::Entrypoint;
@@ -294,11 +293,6 @@ static Vector<BlockHeat> collectApplicationBlocks(const Program& program, const 
 }
 
 // A threshold is compared with the heat of a block, so it comes from blocks: the hottest fifth of the application's code is hot and the coldest quarter is cold.
-// Blocks that are equally hot have one class, so the hottest ones are hot however large they are. The library is in every executable and its share of a small one
-// is large, so it has no say in which code of the application is hot. Code outside every loop, recursion and handler is never hot. Code that is expected to run less than
-// once is cold however much of it there is, and code that is expected to run more than once is not cold however little there is below it.
-// A fifth of a very large program is more than a processor keeps at hand, and most of it never runs: what is hot also fits MaxHotCodeValues,
-// and what is not cold fits MaxWarmCodeValues: below the hottest code of that size everything is cold, however often it is expected to run.
 static HeatThresholds computeThresholds(const ParallelLoops& loops, Vector<BlockHeat> hottestFirst, const Vector<double>& activations, uint64_t maxHotSize, uint64_t maxWarmSize)
 {
     forEachIndexInParallel(loops, hottestFirst.size(), [&](unsigned k) {
@@ -340,10 +334,7 @@ static HeatThresholds computeThresholds(const ParallelLoops& loops, Vector<Block
     return thresholds;
 }
 
-// Most of a very large program never runs, and which part does is not in the estimate: its products along paths of calls pass every bound, and a call that nobody follows
-// spreads evenly over all that it may reach. A share of the code, or a budget, would also fill up again with other functions whenever some code goes away.
-// So the classes there are read off the structure and depend on nothing else in the program: a function that many functions call runs often,
-// a loop runs as often as a loop, and the rest is cold.
+// Most of a very large program never runs, and which part does is not in the estimate: its products along paths of calls pass every bound, and a call that nobody follows spreads evenly over all that it may reach.
 static bool isVeryLarge(uint64_t totalSize, BuildContext& build)
 {
     return totalSize > HeatModel::warmCodeLimitsInVeryLargeProgram * build.limit(LimitID::MaxWarmCodeValues);
@@ -412,7 +403,6 @@ static bool hasManyCallers(const Program& program, const FlowResults& flow, cons
 }
 
 // The callers of a function are seen at the entry that the engine has put in front of it, which tests or unpacks a parameter, packs a result or binds arguments.
-// The body behind the entry has that one caller, and runs as often. Not the body of an async function, which waits between its steps.
 static void followEntriesMadeByEngine(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, Vector<uint8_t>& runsOften)
 {
     Vector<uint32_t> worklist;
@@ -436,13 +426,7 @@ static void followEntriesMadeByEngine(const Program& program, const FlowResults&
     }
 }
 
-// The structure of a very large program does not tell which of its cold functions run, but it tells which hardly do. A function may run if a chain of known calls leads to it from a function
-// that runs often, that a loop calls, also behind a branch or two, or that the host calls for every event; a call that its caller rarely reaches is not followed. It may also run if two functions call it, or if it has a heavy loop:
-// its values run three or more times per entry. Such a function says little about most of its callees, but a callee that it calls nearly every time may run too:
-// an entry that only checks its arguments has all the callers, and the body behind it has one. Code that runs once gives no reason: what it calls, it calls once.
-// A small function is left out: without its tests it saves few bytes, and accessors, selectors and callbacks, which nobody is seen to call, are what is entered most.
-// Everything else is compact: a third of such a program, and little of what runs. So is an async function, which waits between its steps, of whatever size and with however many callers,
-// unless it has a loop of its own or a chain of calls that each weigh a quarter or more leads to it.
+// The structure of a very large program does not tell which of its cold functions run, but it tells which hardly do.
 static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, const Vector<uint8_t>& isExpectedToRun)
 {
     Vector<uint32_t> worklist;

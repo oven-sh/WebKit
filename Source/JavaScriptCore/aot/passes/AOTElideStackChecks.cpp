@@ -52,9 +52,7 @@ void StackChecks::dump(PrintStream& out, const Program& program) const
     }
 }
 
-// The entrypoint of the method table tests its arguments and goes on with a tail call. It needs no frame, unless it has to check the stack for what it enters.
-// So what it enters that way is not covered by its callers: it checks where it sets up a frame, and the entrypoint leaves the check to it.
-// The method table names the body itself where its entrypoint has nothing to test, and then nothing stands between the call and the body.
+// The entrypoint of the method table tests its arguments and goes on with a tail call.
 static BitVector findFunctionsThatTableEntrypointsTailCall(const Program& program, const ParallelLoops& loops)
 {
     BitVector isTailCalled(program.functions.size());
@@ -75,9 +73,7 @@ static BitVector findFunctionsThatTableEntrypointsTailCall(const Program& progra
     return isTailCalled;
 }
 
-// A closure names its generic entrypoint, and whatever enters code through the word of a closure tests the stack right in front of it: the stubs that call a value
-// or an accessor, and the adapters through which the host comes in, a module's body too. So such an entry is covered like a direct call from a function with a check,
-// and a function that closures are made of is itself entered by direct calls alone.
+// A closure names its generic entrypoint, and whatever enters code through the word of a closure tests the stack right in front of it.
 static bool isEnteredBehindStackCheck(const Function& function, EntrySet entrySet)
 {
     switch (function.role) {
@@ -124,8 +120,7 @@ static bool isEntranceThatLeavesByTailCallsAlone(const Function& function)
     });
 }
 
-// An entrance needs no frame but for a check of its own: the frame, the check, and a jump to the body where it would fall into it. A body has its frame anyway.
-// So where a cycle of calls, or the number of functions without a check, asks an entrance to check, what it enters checks in its place.
+// An entrance needs no frame but for a check of its own: the frame, the check, and a jump to the body where it would fall into it.
 static void computeHeights(const Program& program, const CallGraph& callGraph, unsigned maxNested, BitVector& isCandidate, BuildContext& build)
 {
     unsigned count = program.functions.size();
@@ -197,9 +192,7 @@ static void computeHeights(const Program& program, const CallGraph& callGraph, u
     build.destroyLater(WTF::move(callees));
 }
 
-// An entrance that lies in a cycle of calls has a check of its own. On the way into a function with a check it is one load, the poll of the cycle;
-// on the way into a function that leaves its check to its callers it is a frame, the check, and a call where the check fails.
-// Where the body that the entrance mostly enters checks for itself, what it rarely enters does so too, and then the entrance can leave all of it to them.
+// An entrance that lies in a cycle of calls has a check of its own.
 static void checkStackInWhatEntrancesRarelyEnter(const Program& program, BitVector& isCandidate, const BuildContext& build)
 {
     auto entrances = findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned i) {

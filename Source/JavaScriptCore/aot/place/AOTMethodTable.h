@@ -29,8 +29,7 @@ struct MethodTableDependent {
     uint32_t selector { 0 };
 };
 
-// What an object finds under the name of a method, by the shape of the object. The rows of the selectors lie over one another: an entry belongs to the one pair of a shape and a selector
-// that some call can ask for, and a call asks only for pairs that exist.
+// What an object finds under the name of a method, by the shape of the object.
 struct MethodTable {
     JS_EXPORT_PRIVATE std::optional<uint32_t> offsetOf(MethodSelector) const;
     size_t sizeInBytes() const { return entries.size() * sizeof(uint32_t); }

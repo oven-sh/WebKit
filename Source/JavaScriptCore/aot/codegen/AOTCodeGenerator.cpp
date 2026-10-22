@@ -388,7 +388,6 @@ std::optional<CodeGenerator::LandingOfMisfit> CodeGenerator::takeLandingOfMisfit
 }
 
 // A test for a type that holds neither undefined nor null fails for both, so the check right in front of it is made for the values that failed, and those that pass never meet it.
-// A value that is a cell or nothing is checked by the trap of its first load, which costs nothing.
 ValueID CodeGenerator::nullishCheckBehindFailedTest(BlockID id) const
 {
     const Block& block = function().at(id);

@@ -77,8 +77,6 @@ struct PlaceOfAccess {
 };
 
 // A pass that puts a test in front of an access gives the test the source position of that access.
-// Anything else that relies on the test has another position. So does every access behind a parameter check or behind a test that the program wrote.
-// A test that was hoisted out of a loop is no longer in front of its access, so the access does not pay for it.
 class TestsMadeForAccesses {
     WTF_MAKE_NONCOPYABLE(TestsMadeForAccesses);
 public:
@@ -385,7 +383,6 @@ static auto orderKey(Wire::SourceLocation location)
 }
 
 // The fast half of an access may be an operation that has no stamp: the length of a string, one of its code units, a built-in function that is named and no longer read.
-// It keeps the source position of the access, and it is in a block that is less rare than the copy by name, which runs where a test has failed.
 static void gradeSlowHalvesOfUnstampedOperations(const FlowResults& flow, const Function& function, const CFG& cfg, Vector<FlowSiteObservation>& observations)
 {
     auto isCandidate = [&](const FlowSiteObservation& observation) {
@@ -548,7 +545,6 @@ struct NearestCopies {
 static void foldObservation(FlowSiteLevel& folded, NearestCopies& nearest, const FlowSiteObservation& observation)
 {
     // The slow half of a guarded access is a copy in a block that is rarer than its fast half, and so is the copy in the generic version of the function.
-    // The fast half decides the level of the site, so the slow half is not counted.
     uint8_t rarity = rarityOf(observation.frequency);
     if (rarity < nearest.rarity) {
         nearest.rarity = rarity;
@@ -616,8 +612,7 @@ static Vector<FlowSiteLevel> foldSiteLevels(const FlowResults& flow, std::span<c
 
 AccessSiteObservations observeAccessSites(const Program& program, const FlowResults& flow, BuildContext& build)
 {
-    // Closures and the host enter entrypoints, and an entrypoint may hold a copy of the body it stands for. Then the copy is what runs, and it knows less about its arguments than the body.
-    // Before selection the entrypoints need not exist yet.
+    // Closures and the host enter entrypoints, and an entrypoint may hold a copy of the body it stands for.
     BitVector hasNoCode;
     if (program.form() >= IRForm::Selected)
         hasNoCode = findBodiesWithoutCode(program, build);
@@ -893,8 +888,7 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
         const AccessSite& access = flow.at(site);
         if (!flow.mayBeReached(access.function) || access.kind == AccessKind::Unknown || !hasModule(access.location))
             return;
-        // The count describes the machine code. An access of which no copy is left was removed, or it has become a part of something else: the read of `push` in `items.push(item)` of the call of the built-in,
-        // the read of `log` from `console` a constant. A call that was inlined has been resolved, so it counts.
+        // The count describes the machine code.
         bool isCall = access.kind == AccessKind::Call || access.kind == AccessKind::Construct;
         if (!isCall && !levels[index].copies)
             return;

@@ -224,6 +224,7 @@ WORKDIR /webkit
 
 COPY --from=build_icu /output /icu
 
+# -k 0: the log of a lane that does not compile names every source that fails, not the first few.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
@@ -259,7 +260,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target "jsc" --target "testFFI" --target "testaot" && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target "jsc" --target "testFFI" --target "testaot" -- -k 0 && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q "Machine:.*$(if [ "$LINUX_ARCH" = aarch64 ]; then echo AArch64; else echo X86-64; fi)" && \

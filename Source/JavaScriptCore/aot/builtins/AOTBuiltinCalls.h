@@ -54,8 +54,7 @@ struct BuiltinOperandTypes {
 BuiltinOperandTypes operandTypesOf(const TypingContext&, const BuiltinCall&);
 BuiltinOperandTypes operandTypesOf(const TypingContext&, ValueID receiver, std::span<const ValueID> arguments);
 
-// A part is a field of the layout or an element of the prefix. An element that is a substring of an operand is delivered as its bounds in that operand,
-// both absentBound where the array has no such element or holds undefined there.
+// A part is a field of the layout or an element of the prefix.
 struct BuiltinResultIndexes {
     std::optional<uint32_t> presence;
     std::optional<uint32_t> length;

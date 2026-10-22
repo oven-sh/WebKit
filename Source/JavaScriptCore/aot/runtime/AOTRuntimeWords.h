@@ -38,8 +38,7 @@ struct ExceptionWords {
     uint32_t nameOfUncallableMethod;
 };
 
-// What the last lookup of a bound name of the global scope found. All zero: nothing is filed. No Structure has the number zero, so such a record misses without a test of its own.
-// Reads and stores of one name have a record each, so an inline store meets only a location that a store filed.
+// What the last lookup of a bound name of the global scope found.
 struct GlobalBinding {
     // Not zero: the value, which nothing has replaced since it was filed.
     EncodedJSValue constant;
@@ -65,13 +64,11 @@ struct CounterWords {
 static_assert(!OBJECT_OFFSETOF(CounterWords, values));
 
 // Of literalStrings and keyCells one table each exists: narrow references, or whole pointers in a program with wide references.
-// A key cell has the dense number that placement gives to an identifier that a KeyConstant names.
 struct ConstantCellWords {
     // Where a stub makes the cell of a string constant itself: the allocator of such cells, and the cards of the string cells.
     void* stringAllocator;
     uint8_t* cardsOfStringCells;
-    // Where the headers of constants are made whose text has none in the image: the place of the next one, the end, and the whole stretch. See ProgramStrings::tryCreateHeader().
-    // All zero in every instance but the first of the process.
+    // Where the headers of constants are made whose text has none in the image: the place of the next one, the end, and the whole stretch.
     uint8_t* nextStringHeader;
     uint8_t* endOfStringHeaders;
     uint8_t* startOfStringHeaders;
@@ -82,12 +79,10 @@ struct ConstantCellWords {
     uint64_t* literalStringCache;
     uint32_t* keyCells;
     JSCell** wideKeyCells;
-    // The strings that `name` of a function answered lately. A word has the position of the name in ProgramTables::functionNames() plus one, and above it the cell.
-    // Its place is the position modulo the number of words. Cleared at each collection. Null in a program with wide references.
+    // The strings that `name` of a function answered lately.
     static constexpr uint32_t numberOfCachedFunctionNames = 256;
     uint64_t* functionNameCache;
-    // What `name` answers for a function that ProgramTables::functionNameGroups() gives no entry: its name is the string with the number 0. In nearly every program that is the empty string,
-    // and this is the engine's. Null where it has text: `new Function("..")` with constant text comes first in a program, and so does "anonymous".
+    // What `name` answers for a function that ProgramTables::functionNameGroups() gives no entry: its name is the string with the number 0.
     JSCell* nameOfFunctionsWithoutEntry;
     JSCell** bigIntCells;
 };

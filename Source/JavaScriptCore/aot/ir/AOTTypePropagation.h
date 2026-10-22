@@ -90,7 +90,6 @@ public:
 
     void solveTypes();
     // Expected types come from the positions that are only expected to hold their type: entry parameters, fields, variables, captures, results.
-    // What a pass or the front end expects of one value comes from no rule. It stands on the value (Value::setExpected()) and stays while the rules admit it.
     void solveExpectedTypes();
     TypePropagationOutcome finish();
     // Leaves the ids as they are. A cut removes edges, and the parameters they led to were joined over them: those are to be typed again.
@@ -275,9 +274,7 @@ void TypePropagation::forEachSourceOfParameter(BlockID block, uint32_t index, NO
 
 TypePropagationOutcome typeValuesFromNever(const TypePropagationInputs&);
 
-// What is typed behind a Check holds where the Check has passed. The generic version is a copy of the blocks as they are when it is made,
-// and a value that fails the Check may reach code there that no value reaches in the typed blocks. So nothing is cut while a Check, or a Convert that may become one, is left.
-// Nor before GuardTaintedPositions has run: a capture, a variable or a result that the function reads may hold what a Check in another function has turned away, and the read then gets a Check of its own.
+// What is typed behind a Check holds where the Check has passed.
 bool waitsForGenericVersion(const Program&, const Function&);
 
 // For a caller that may still widen what the function reads: the code behind a value of type never stays. finishTypedValues() cuts it.
@@ -322,8 +319,7 @@ private:
     bool m_valuesTypedFromRecordsArePending { false };
 };
 
-// Types what is pending. A value that nothing changed reaches got the type it has when it was last typed, from what it would be typed from now.
-// What starts over starts from final types where typeValuesFromNever() sees types that still grow, so a join is widened less often: the types are those of typeValuesFromNever() or narrower.
+// Types what is pending.
 TypePropagationOutcome typeChangedValues(const TypePropagationInputs&);
 
 // Turns a typed Convert into what resolveConvert() answers for it, with the types it has. False: nothing is left of it, and its uses are to read its operand.

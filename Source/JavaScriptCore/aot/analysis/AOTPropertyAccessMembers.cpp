@@ -228,8 +228,7 @@ static bool isMemberOfClass(const MemberAnswer& answer)
     return answer.kind == MemberKind::Method || answer.kind == MemberKind::Accessor;
 }
 
-// The object itself must not stand in the way of the lookup. The run time ends the condition of a member of a class as soon as one object of the layout
-// no longer finds the member where the class definitions put it. Whatever else the lookup finds is tested for on the object.
+// The object itself must not stand in the way of the lookup.
 static void requireLookupPastObject(const Program& program, MemberAnswer& walked, const MemberAnswer& found, const MemberQuery& query, Proof proof, UnprovenCause cause)
 {
     if (isMemberOfClass(found))
@@ -535,8 +534,7 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
         if ((member.isListedWithoutDefinition() || isMethodLeftToRunTime) && !isPassedByStore) {
             if (!asksRunTime)
                 return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
-            // `Message.prototype.url = ""`: a default. What a plain store puts on the holder is a writable data property, which a store below passes like a method, and it hides whatever is above it.
-            // Nobody says when the default is stored or what else is done under the name, so the run time looks at the chain that is there.
+            // `Message.prototype.url = ""`: a default.
             addConditionWithCause(walked, memberUnchanged, UnprovenCause::PropertyAdded);
             return finish(createProvenAnswer(MemberKind::Absent));
         }
@@ -596,7 +594,6 @@ MemberAnswer findMemberOnPrototypes(const PropertyAccessContext& context, const 
 }
 
 // A tuple is an array: it has an own length, which its layout does not list, and inherits from Array.prototype.
-// It has no shape word, so no test on the object says that it has gained no name and kept its prototype.
 static MemberAnswer findTupleMember(const PropertyAccessContext& context, const MemberQuery& query)
 {
     const Program& program = context.program;

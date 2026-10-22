@@ -14,9 +14,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What is expected of a position is a guess. A list of a few layouts is a good one: the implementers of an interface, in a file that is not checked. A long list is what the uses of a value say
-// that the checker calls `any`: `props.value`: every layout of the program with a `value`. It tells nothing: the object that comes is as often none of them, the test fails, and what stands
-// behind the test goes by name with it.
+// What is expected of a position is a guess.
 class LongExpectations {
 public:
     LongExpectations(const Program& program, const ParallelLoops& loops)

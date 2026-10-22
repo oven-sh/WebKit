@@ -325,8 +325,7 @@ static void rewriteAwaitOfPrimitive(GroupRewriter& rewriter, const AwaitOfPrimit
     rewriter.endArm(rewriter.appendOriginals());
 }
 
-// An await of a primitive queues the job that resumes the function. With nothing else queued that job runs next, and a frame that a job entered as the last thing it does
-// runs nothing of the program on its way back to the queue. So nobody can tell whether such a frame was saved, nor whether the job took a turn more.
+// An await of a primitive queues the job that resumes the function.
 void selectAwaitInPlace(SelectionContext& context)
 {
     const Function& function = context.function();

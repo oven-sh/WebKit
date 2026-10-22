@@ -21,7 +21,6 @@ namespace JSC { namespace AOT { namespace Typed {
 using ArrayStorageFormList = Vector<const ArrayStorageForm*, arrayStorageForms.size()>;
 
 // The collector reaches the elements through the array alone, and B3 may load `butterfly` once in front of a loop and let the array die.
-// Whoever reads an element that may be a cell through `butterfly` ends with ensureStillAliveHere(array).
 struct ArrayElements {
     CellPointer array;
     Pointer butterfly;

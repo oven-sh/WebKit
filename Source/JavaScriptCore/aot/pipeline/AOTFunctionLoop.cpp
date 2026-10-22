@@ -34,8 +34,7 @@ static uint64_t largestFirstKey(size_t numberOfValues, unsigned index)
     return static_cast<uint64_t>(UINT32_MAX - numberOfValues) << 32 | index;
 }
 
-// Select replaces operations by others whose effects it checks against those of the operations they replace. ChooseRepresentations adds conversions.
-// Where the code generator makes them, nothing in the function says which: every value in an encoded form may be decoded, and no other conversion does anything.
+// Select replaces operations by others whose effects it checks against those of the operations they replace.
 static Effects effectsOfConversionsIn(const Function& function)
 {
     Effects effects = Effects::none();
@@ -298,8 +297,6 @@ static Vector<QueuedFunction> collectScheduledFunctions(const CopyLoop& loop)
 }
 
 // A function is found only when one that names it is finished, so long functions that name each other would run one after the other.
-// The large ones begin at once. One that nothing reaches in the end is dropped with what it interned and the functions it asked for.
-// Its statistics, losses and declines stay in the report. They are the same in every build: the program alone decides which functions begin early.
 static Vector<QueuedFunction> collectFunctionsToStartEarly(const ScheduleDescriptor& schedule, const Program& program, const ParallelLoops& loops)
 {
     if (schedule.functions != ScheduledFunctions::Reached)

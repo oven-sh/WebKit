@@ -92,8 +92,7 @@ public:
         ValueID provenOnNotTaken;
     };
     ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand = 0, BlockFrequency taken = BlockFrequency::Normal, BlockFrequency notTaken = BlockFrequency::Normal);
-    // Blocks that are there already, in place of new ones that only jump to them. A block that no other edge enters takes the proof as its parameter.
-    // A test that proves nothing where it fails may lead anywhere from there. No block is open afterwards.
+    // Blocks that are there already, in place of new ones that only jump to them.
     struct ProvenBranchTargets {
         BlockID enteredOnlyWhenTaken;
         std::optional<Target> whenNotTaken;
@@ -129,8 +128,7 @@ public:
     Expansion beginExpansion(ProgramPoint);
     Expansion beginExpansion(ProgramPoint, std::span<const ValueID> resultReads);
 
-    // For many expansions in one function, each of which would otherwise compute the use lists again: the reads of the results are found
-    // once for all producers, they stay in place while the producers are expanded, and finish() rewrites their users and erases them.
+    // For many expansions in one function, each of which would otherwise compute the use lists again.
     class DeferredResultReads {
         WTF_MAKE_NONCOPYABLE(DeferredResultReads);
     public:

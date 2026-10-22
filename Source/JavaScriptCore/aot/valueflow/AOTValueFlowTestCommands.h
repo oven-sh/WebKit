@@ -23,8 +23,7 @@ void runRelationalSummaryTestCommand(TestCommandContext&);
 void runOriginsBeforeFlowTestCommand(TestCommandContext&);
 void runFatesAtCallsTestCommand(TestCommandContext&);
 
-// The word `split` of valueflow-solve and valueflow-why: the passes that the pipeline runs between the read stage and the analysis run first, so the analysis sees what it sees in a build:
-// the positions that a check taints are guarded, and a function of the program is split into the tests of its arguments, its typed body and its generic version.
+// The word `split` of valueflow-solve and valueflow-why.
 void prepareAsInFrontOfFlow(TestCommandContext&);
 // What every valueflow-* command runs first: GuardTaintedPositions, as Pipeline::runFlowStage() does. `unguarded` skips it, `split` is prepareAsInFrontOfFlow().
 void prepareForFlow(TestCommandContext&);

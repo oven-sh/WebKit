@@ -127,8 +127,7 @@ static bool passesEveryEntryCheck(const Program& program, const Function& caller
     });
 }
 
-// The tests only pass their arguments on, so what the caller knows of the function behind them is lost at a call of the tests: that the await of the result enters it without a promise,
-// and that it calls the one function that the caller passes, for which it gets a version. Both take a call that names the typed body, which stands in the caller once the tests do.
+// The tests only pass their arguments on, so what the caller knows of the function behind them is lost at a call of the tests.
 static bool knowsMoreThanEntryChecksPassOn(FunctionPassContext& context, ValueID callID)
 {
     const Program& program = context.program;
@@ -287,7 +286,6 @@ static bool capturesAtMostHolder(const Program& program, const Function& functio
 }
 
 // Beside the allocation a store that creates a field becomes an entry of the allocation's list, and the allocation proves what the store tests.
-// Only there can the field defer a closure, which then has no code at the allocation.
 static uint64_t computeOwnAllocationBenefit(const Program& program, const Function& callee, const ReceiverParameter& receiver)
 {
     uint64_t bytes = uint64_t { InlineModel::storeIntoOwnAllocationBytes } * receiver.stores;
@@ -337,8 +335,7 @@ static bool iteratesGeneratorOfCaller(const FunctionPassContext& context, const 
     return false;
 }
 
-// The frame holds the call that leads to the function here. Frame 0 is the text of the caller.
-// The call graph counts the calls of the functions that existed when it was built: the call of an entrypoint or of a version that was made since comes on top of what it counts.
+// The frame holds the call that leads to the function here.
 static unsigned numberOfCallSitesCountedHere(const FunctionPassContext& context, uint32_t frame)
 {
     FunctionID holder = frame ? context.function.inlineFrames[frame].callee : context.id;
@@ -353,7 +350,6 @@ static bool mayBeEnteredElsewhere(const FunctionPassContext& context, FunctionID
 }
 
 // Flow lists a function at every call that it has followed a closure to, and types name it where a built-in or an access may enter it.
-// A call of a value that is only expected to be the function tests for it and then names it. An operation that names it in none of these ways enters it by value for good.
 static bool isNamedByOtherFunctions(const FunctionPassContext& context, FunctionID function, HeatClass heat)
 {
     const CallGraph& callGraph = context.inputs.callGraph;
@@ -379,8 +375,7 @@ static bool isEnteredThroughCallerAlone(const FunctionPassContext& context, Func
     return !isNamedByOtherFunctions(context, function, heat);
 }
 
-// The body goes only where the call in the frame is the one call that the graph counts. Beside that call the body stays, and what an entrypoint or a version takes in is a second copy.
-// Hot code is worth the copy.
+// The body goes only where the call in the frame is the one call that the graph counts.
 static bool hasSingleCallSite(const FunctionPassContext& context, FunctionID function, uint32_t frame, HeatClass heat)
 {
     const CallGraph& callGraph = context.inputs.callGraph;
@@ -408,8 +403,7 @@ static unsigned depthOfCopies(const FunctionPassContext& context, uint32_t inlin
     return depth;
 }
 
-// An entrypoint tests what it was given and enters the body. It has the budget of any caller: a body within it is taken in, and goes where nothing else enters it.
-// Beside a body that compiled code enters too, a copy costs its bytes. A hot entrypoint is worth them: its copy is compiled for the calls by value alone.
+// An entrypoint tests what it was given and enters the body.
 static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context, const Value& call, HeatClass heat)
 {
     const Function& caller = context.function;
@@ -426,9 +420,7 @@ static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context
     return false;
 }
 
-// The tests that were split off the head of a function go where the entrypoint that takes them in is all that enters them. Where compiled code enters them too they stay,
-// and the entrypoint would hold a second copy of them and, behind them, of the typed body. However often it runs: the copies lie between the bodies that run, and a call by value then runs code that no call by name has fetched.
-// But for a small body whose result a hot entrypoint has to convert: it cannot jump to the tests, and what it pays to call them is more than the copy.
+// The tests that were split off the head of a function go where the entrypoint that takes them in is all that enters them.
 static bool wouldCopySharedEntryChecksIntoEntrypoint(const FunctionPassContext& context, const Value& call, HeatClass heat)
 {
     const Program& program = context.program;
@@ -560,8 +552,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
             addBenefit(InlineBenefit::SunkAllocation, cost);
         // The limit bounds what each level adds to the caller. A body that costs no more than its call adds nothing.
         isTooDeep = cost > callOverheadBytes && context.exceeds(LimitID::MaxInlineDepth, depth + 1, call);
-        // Where code runs seldom, an allocation that goes is worth its own bytes and no more. An entrypoint makes the list of its frame's arguments only to hand it to the body:
-        // a body that only passes the list on is then smaller in the entrypoint than the call of it.
+        // Where code runs seldom, an allocation that goes is worth its own bytes and no more.
         if (!isTooDeep && !isWithinBudget() && (!isCold(heat) || callerIsEntrypoint)) {
             uint64_t bytesOfAllocation = isCold(heat) ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);
             unsigned allocations = sinkableAllocationsAfterInlining(context, block, call, [&] {

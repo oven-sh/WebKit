@@ -186,8 +186,7 @@ static String messageOfEntryThatNothingEnters(const AnalysisContext& context, co
     return functionNotCompiledMessage(advice);
 }
 
-// No call that flow follows comes here. A call that it lost track of may still find the closure, and throws like the use of an API that was trimmed.
-// Flow follows every call of a function of the program, so a validating build reports such an entry. A function of the library that is found under a computed name alone is left out on purpose.
+// No call that flow follows comes here.
 static void emitEntryThatNothingEnters(IRBuilder& builder, const Function& target, StringArena& strings)
 {
     const AnalysisContext& context = builder.context();
@@ -227,7 +226,6 @@ static void appendTargetCall(IRBuilder& builder, FunctionID target, const EntryA
 }
 
 // new.target is the closure here: whoever enters has seen to that.
-// A short constructor is worth a copy, in which its stores fill the slots of the new object. A long one is entered by a call: the entrypoint of [[Call]] enters it too.
 static void appendConstruction(IRBuilder& builder, FunctionID target, const EntryArguments& arguments, StringArena& strings)
 {
     constexpr size_t mostValuesOfCopiedConstructor = 64;

@@ -127,7 +127,6 @@ struct ImageWords {
     uint64_t lazyStringHeadersCapacity;
 #else
     // The atoms of the image, read-only, one header per identifier number: the name with the number n is programIdentifiers + n.
-    // A symbol or a private name is made at run time. Its header here is zero, and ProgramIdentifiers has its uid.
     UniquedStringImpl* programIdentifiers;
     uint64_t sizeOfProgramIdentifiers;
 #endif

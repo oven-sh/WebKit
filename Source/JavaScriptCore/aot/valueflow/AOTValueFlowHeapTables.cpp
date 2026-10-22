@@ -251,7 +251,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 continue;
             ValueFlowObjectID prototype = universe.objectOf(builtinClass.prototype);
             // No program gets hold of an AsyncFromSyncIterator or of its prototype object: the engine makes one where `for await` goes over an iterator that is not asynchronous, and steps it by itself.
-            // So the unknown object never stands for one, and its prototype object is not among what lies above the unknown object.
             bool reachesPrograms = builtinClass.id != BuiltinClasses::AsyncFromSyncIterator;
             if (builtinClass.instancesAreEntries) {
                 m_classesOfEntries.append({ prototype, entriesRightBelow(builtins, universe, maker, builtinClass.prototype) });

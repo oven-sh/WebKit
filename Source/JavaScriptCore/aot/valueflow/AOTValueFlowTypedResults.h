@@ -16,7 +16,6 @@ class CFG;
 class UseLists;
 
 // `JSON.parse(text) as T`, `await response.json()`, a call whose result is validated: a pass puts compiled parsers and validators in the place of the call, and they allocate objects with the layouts of the type.
-// The universe is made before anybody knows a callee, so the objects are sites of the call, made for every call that may turn out to be one of these.
 struct ValueFlowTypedResult {
     // None where nothing is allocated by type.
     TypeID type;
@@ -49,7 +48,6 @@ ValueFlowTypedResult findTypedResult(const Program&, const ValueFlowBuiltinTable
 void appendSitesOfTypedResults(const Program&, const ValueFlowBuiltinTables&, const Function&, const CFG&, Vector<ValueFlowSite>&);
 
 // For the rule of a built-in: `call` is the operation that applies the overload, `promise` the object that the overload answers, or none.
-// `plainData` is what the overload makes of a text without a type, where objects of the call stand for that: primitives, those objects, and all that they hold. None where the unknown object stands for it.
 void allocateTypedResult(const BuiltinOverload&, const ValueFlowStatement& call, const ValueFlowBuiltinCall&, ValueFlowObjectID promise, ValueSetID plainData, ValueFlowRuleContext&);
 
 } } } // namespace JSC::AOT::Typed

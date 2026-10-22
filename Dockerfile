@@ -410,6 +410,8 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
+#
+# -k 0: the log of a lane that does not compile names every source that fails, not the first few.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     unset C_INCLUDE_PATH && \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
@@ -455,7 +457,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
-    cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" --target "testaot" $(for program in $TEST_PROGRAMS; do echo "--target $program"; done) && \
+    cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" --target "testaot" $(for program in $TEST_PROGRAMS; do echo "--target $program"; done) -- -k 0 && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q "Machine:.*$(if [ "$LINUX_ARCH" = aarch64 ]; then echo AArch64; else echo X86-64; fi)" && \

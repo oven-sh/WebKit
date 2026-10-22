@@ -40,8 +40,7 @@ inline ValueID driverOf(const Function& body)
     return body.at(BlockID(0u)).parameters[*coroutineOfBody(body).promiseParameter];
 }
 
-// Whether ResolveAwaitedCalls, as the function stands, makes this direct call of a ramp and the await of its result enter the callee without a promise. Taken into the caller, the ramp makes the promise for good.
-// For a call of the tests at the head of a typed async function: whether it will do so once the tests are taken into the caller, where a ramp stands in each of their arms.
+// Whether ResolveAwaitedCalls, as the function stands, makes this direct call of a ramp and the await of its result enter the callee without a promise.
 bool willEnterAwaitedCalleeWithoutPromise(FunctionPassContext&, ValueID call);
 
 // `await generator.next(value)` becomes the step that serves `for await`, where nothing but `value` and `done` of the result is read. It comes in front of PlaceTypeTests, which tests the result for what it guesses.

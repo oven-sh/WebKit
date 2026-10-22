@@ -118,8 +118,7 @@ bool hasOrdinaryElements(VM&, JSValue array);
 // RegExp.$1, RegExp.lastMatch and their kin. A match of a program that never reads them leaves nothing for them.
 JS_EXPORT_PRIVATE void willReadLegacyRegExpStatics(VM&);
 
-// A slot is empty, holds undefined or null as a marker, or holds a value of the type of its field. Anything else was stored by a writer that tests no type.
-// Allocates nothing and runs no code, so a collector thread may call it while the mutators are stopped.
+// A slot is empty, holds undefined or null as a marker, or holds a value of the type of its field.
 JS_EXPORT_PRIVATE void validateSlotTypes(VM&, const Object&);
 // Also looks at what died since the last collection. Not for a thread that collects.
 JS_EXPORT_PRIVATE void validateSlotTypesOfLiveObjects(VM&);

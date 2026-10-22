@@ -20,15 +20,13 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class ValueEdit : uint8_t {
-    // The function has one value more. It stands in no list until a block says so. A reader takes Added as every bit, of the value as it is when it reads:
-    // until the entry has been shown to somebody, further edits of the value write none.
+    // The function has one value more.
     Added = 1 << 0,
     // Opcode, operands, payload, flags, origin.
     Definition = 1 << 1,
     // Type, expected type, representation.
     Type = 1 << 2,
-    // Beside Definition, a promise: nothing but operands has changed, and each has the types of the one it replaces. Neither of the two is a value
-    // from whose operands whoever names it is typed.
+    // Beside Definition, a promise: nothing but operands has changed, and each has the types of the one it replaces.
     OperandsOfSameTypes = 1 << 3,
     // Beside Added, a promise: the value has the types that its rule gives.
     TypedByRule = 1 << 4,
@@ -49,7 +47,6 @@ enum class BlockEdit : uint16_t {
     // Subject, role, frequency, shape.
     Rest = 1 << 6,
     // A block that named this one as a target or as its handler was handed out for an edit of its edges: this one may have lost that edge.
-    // Whoever has gained an edge is named by the edited block when the log is read.
     Incoming = 1 << 7,
     // Beside Terminator, Arguments and Rest, a promise: nothing but operands of the terminator, arguments and the subject has changed, as for ValueEdit::OperandsOfSameTypes.
     OperandsOfSameTypes = 1 << 8,
@@ -74,8 +71,7 @@ struct BlockChange {
     OptionSet<BlockEdit> edits;
 };
 
-// What has been edited in one function, in the order of the edits. Function::edit(), add() and addBlock() write it, and nobody else does.
-// Each reader keeps a cursor of its own. An entry says that a reference for writing was handed out: it may say too much, never too little.
+// What has been edited in one function, in the order of the edits.
 class ChangeLog {
     WTF_MAKE_NONCOPYABLE(ChangeLog);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ChangeLog);
@@ -121,7 +117,6 @@ public:
     }
 
     // The entries behind the cursor are gone: blocks and values were renumbered, the body was replaced, or there were more edits than a walk of the function costs.
-    // Whoever reads this looks at the whole function and takes end().
     bool hasForgottenSince(const Cursor& cursor) const { return cursor.m_generation != m_generation; }
     bool hasChangesSince(const Cursor& cursor) const { return hasForgottenSince(cursor) || cursor.m_values != m_values.size() || cursor.m_blocks != m_blocks.size(); }
     size_t numberOfEntriesSince(const Cursor& cursor) const

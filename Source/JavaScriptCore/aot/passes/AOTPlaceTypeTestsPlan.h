@@ -74,8 +74,7 @@ struct PlannedUse {
     uint32_t firstRequirement { 0 };
 };
 
-// The head of the loop wants proofs. At the end of a turn the generic copy joins an edge that enters the loop, in front of the tests that stand on that edge.
-// On its way there it makes the tests for whatever else the head wants, each behind the tests whose proofs it names.
+// The head of the loop wants proofs.
 struct PlannedWayBackIntoLoop {
     unsigned stretch { 0 };
     BlockID head;
@@ -105,8 +104,7 @@ struct TestPlacementPlan {
 
 TestSites collectTestSites(FunctionPassContext&);
 Vector<TestRequirement> chooseRequirements(FunctionPassContext&, TestSites&, TestConditions&);
-// A guard holds what one test or one case of a switch has proven, wherever that has not ended on any way to the guard. The edge of that test or case is listed too, so a guard adds no place
-// at which a condition holds: it adds a value that names the proof. Whoever only asks where conditions hold leaves the guards out, and with them the question where each of them holds.
+// A guard holds what one test or one case of a switch has proven, wherever that has not ended on any way to the guard.
 enum class ProofsHeldByGuards : uint8_t { AreListed, AreLeftOut };
 Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed);
 ValueID ensureEdgeResult(IRBuilder&, FunctionAnalyses&, Edge, uint32_t proof);

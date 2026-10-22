@@ -106,8 +106,7 @@ Type Type::unionWith(const Type& other, TypeArena& arena) const
     return result;
 }
 
-// A test splits a family that the program declares, and the join behind the test puts the two sides together again. Types list such a family anyway, however long it is,
-// and a position that is declared to hold it takes what the join gives only as long as the join still says so.
+// A test splits a family that the program declares, and the join behind the test puts the two sides together again.
 static bool liesInsideDeclaredFamily(const WideningContext& context, const Type& type)
 {
     const Program& program = context.program;

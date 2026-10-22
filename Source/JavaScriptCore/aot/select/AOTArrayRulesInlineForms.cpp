@@ -58,7 +58,6 @@ static bool isArray(const Type& type)
 }
 
 // Code in line serves a number, and what is compared by identity: an object, a function, a symbol, a boolean, undefined, null.
-// Where the type leaves open which it is, the tests for that pay in fast code alone.
 static bool canSearchInline(const InlineBuiltinSite& site)
 {
     constexpr uint16_t comparedByValue = Primitive::Number | Primitive::AnyString | Primitive::BigInt;

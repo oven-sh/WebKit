@@ -235,8 +235,7 @@ static void emitHashedProbe(PutByIdBody& body, Jump hasOtherNameInFront)
     findHashedSlot(jit, accessFor(body.mode), { structureID, uid, entry, header, payload, payload }, isInNoTable);
     jumpToSlotHandler(jit, body.handlerTable(SlotForm::Slot), header, uid);
 
-    // No table has the Structure and the name. A value that the object itself has, plain and writable, is replaced where it lies, and nothing is filed:
-    // so a pair that comes again and again leaves now and then for the operation that files. The search has put the access into the low bits of the name, which tells the pair from that of a read.
+    // No table has the Structure and the name.
     isInNoTable.link(&jit);
     countMissOfPair(jit, structureID, uid, header, body.miss);
     jit.xor64(TrustedImm32(static_cast<int32_t>(accessFor(body.mode))), uid);

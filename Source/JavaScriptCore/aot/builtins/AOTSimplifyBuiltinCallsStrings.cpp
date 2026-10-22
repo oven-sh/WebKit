@@ -67,9 +67,7 @@ static std::optional<CodeUnitRead> codeUnitReadOf(FunctionPassContext& context, 
     return CodeUnitRead { .site = site, .string = string, .position = arguments[0], .readsCodePoint = builtin == Builtins::StringPrototypeCodePointAt };
 }
 
-// Inside the string the answer is an integer, outside it is NaN or undefined. With the tests in the IR the operations behind the read that want an integer get one:
-// PlaceTypeTests tests the joined value for them, and the edge from each side skips that test. A position that is no int32 and a lead surrogate, which may begin a pair,
-// keep the call in unlikely code.
+// Inside the string the answer is an integer, outside it is NaN or undefined.
 static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& read)
 {
     IRBuilder& builder = expansion.builder();

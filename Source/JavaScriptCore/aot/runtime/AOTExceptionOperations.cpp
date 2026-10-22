@@ -351,8 +351,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAtSite);
 #if CPU(X86_64)
-    // The fault handler has passed the return address in the scratch register, which compiled code allocates like any other:
-    // the tested value may have been in it, and so may a value that a handler in the function reads once the stub has loaded the registers again.
+    // The fault handler has passed the return address in the scratch register, which compiled code allocates like any other.
     if (static_cast<ThrowSiteSource>(source) == ThrowSiteSource::FaultSite)
         const_cast<uint64_t*>(registers)[MacroAssembler::s_scratchRegister] = scratchRegisterBeforeFault();
 #endif

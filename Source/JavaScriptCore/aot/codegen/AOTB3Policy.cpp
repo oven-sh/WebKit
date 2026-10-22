@@ -216,7 +216,6 @@ static B3::Air::FramePolicy framePolicyFor(const BuildContext& build, const Func
     frame.ordersSlotsByUse = true;
     frame.prefersStackPointerAddresses = true;
     // A saved frame is laid out around its record, and the stub that rejects a promise returns from the frame through it.
-    // The check of the registers that a stub preserves moves the stack pointer around the call.
     frame.mayOmitFrameRecord = isX86_64() && !traits.savesFrameOnSuspend && !traits.rejectsOnThrow && !build.options().validatesBackEnd;
     frame.maxBytesAddedWithoutFrameRecord = traits.isHot ? maxBytesAddedToHotFunctionWithoutFrameRecord : traits.isCold ? 0 : maxBytesAddedToWarmFunctionWithoutFrameRecord;
     return frame;

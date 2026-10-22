@@ -196,7 +196,6 @@ void BodyScanner::explainLoss(uint64_t bits) const
 }
 
 // A saved frame holds what is live in it, and the function goes on when its caller has long gone on.
-// The other operations read the arguments of the frame, which are no operands of theirs.
 static OpcodeSet opcodesOfFunctionsThatBorrowNothing()
 {
     OpcodeSet opcodes { Opcode::GetArgument, Opcode::GetMyArgumentByVal, Opcode::CreateRest, Opcode::CallForwardVarargs, Opcode::ConstructSuperForwardVarargs };
@@ -418,8 +417,7 @@ uint64_t BodyScanner::referencesGivenBy(const Value& value) const
     return references;
 }
 
-// A capture is a whole word, so it takes a pointer into a frame. A field of an environment does so only where AllocateInFrames has said it holds one.
-// The table of the whole program knows no such closure: it is made many times, most of them before there is a plan, and the summaries of effects that are made from it would all have to be made again.
+// A capture is a whole word, so it takes a pointer into a frame.
 bool BodyScanner::isClosureInOwnFrame(ValueID id) const
 {
     return m_closuresPlannedInFrame && m_closuresPlannedInFrame->get(id.index());
@@ -559,8 +557,6 @@ void BodyScanner::checkOperandOfCall(const Value& call, uint32_t operandIndex, c
     }
     lose(countedCallsOf(carried.all()));
     // Only a function that takes its callee gets hold of the closure it is entered through, and a closure of such a function lies in no frame.
-    // Whoever made the closure knows its function and what that does with its callee and its captures. So a call by value says nothing about the cell, whichever functions it may enter:
-    // one callback that hands itself on takes nothing from the others that the same caller is given.
     if (call.opcode == Opcode::Call)
         return;
     // A construction hands the called value on as new.target.
@@ -594,8 +590,7 @@ void BodyScanner::checkDeclaredOperand(ValueID id, uint32_t operandIndex, Carrie
         lose(contentsOf(carried.references) | carried.held);
 }
 
-// What ResolveAccesses makes a read of a slot. Any other access by name or by key may run code or change the form of the cell,
-// and a read of a property of a function makes the function an object with properties.
+// What ResolveAccesses makes a read of a slot.
 bool BodyScanner::readsProvenSlots(const Value& access, uint32_t operandIndex) const
 {
     if (accessOf(access.opcode) != Access::Read || receiverOf(access.opcode) != operandIndex)
@@ -639,8 +634,7 @@ static uint64_t bitsLostThrough(const Vector<uint64_t>& words, const HandedOnRef
     return bitsLostThrough(entry.callee.index() < words.size() ? words[entry.callee.index()] : 0, entry);
 }
 
-// Functions that hand a parameter to each other keep it. The table depends on the order of the worklist, because bitsLostThrough() is not monotone: for a reference read
-// through a parameter, a callee that still has its own parameter but may call it takes the caller's calls bit, and a callee that has already lost its parameter takes only the reference.
+// Functions that hand a parameter to each other keep it.
 static void takeAwayWhatCalleesLose(const ParallelLoops& loops, Vector<uint64_t>& words, const Vector<BorrowingBody>& bodies)
 {
     unsigned numberOfFunctions = words.size();

@@ -311,8 +311,7 @@ void ArrayBuiltinEmitter::scanShortVector(const ArrayStorageForm& form, const Ar
 
     m_out.appendTo(element);
     Operand raw = elements.loadRawElement(form, storage, index);
-    // A hole equals nothing that is searched: it is a NaN among doubles, and the empty word among boxed integers.
-    // +0 equals -0 among doubles, as both strict equality and SameValueZero want.
+    // A hole equals nothing that is searched: it is a NaN among doubles, and the empty word among boxed integers. +0 equals -0 among doubles, as both strict equality and SameValueZero want.
     Condition isFound = form.element == Representation::Double
         ? equal(raw.as<Number>(), searchedRawElement.as<Number>())
         : equal(raw.as<Boxed>(), searchedRawElement.as<Boxed>());

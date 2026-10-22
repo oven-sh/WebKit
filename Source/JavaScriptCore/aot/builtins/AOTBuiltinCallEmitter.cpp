@@ -288,8 +288,7 @@ Boxed BuiltinCallEmitter::loadProperty(CellPointer object, PropertyOffset offset
     return property;
 }
 
-// An instance that has the Structure its constructor left it with holds the property at a known place. Every other instance is read by name:
-// it may lack the property, hold it elsewhere or have an accessor under the name.
+// An instance that has the Structure its constructor left it with holds the property at a known place.
 Boxed BuiltinCallEmitter::readOwnSlot(const ValueContext& value, const BuiltinOverload& overload)
 {
     RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
@@ -320,7 +319,6 @@ Boxed BuiltinCallEmitter::readOwnSlot(const ValueContext& value, const BuiltinOv
 }
 
 // The getter has no function object, and its native function takes the receiver for an instance of its class without a test.
-// A receiver that no overload was matched against is read by name, which tests it.
 Boxed BuiltinCallEmitter::callCustomGetter(const OperationContext& context, BuiltinOverloadID id, Boxed receiver, bool receiverIsMatched)
 {
     const BuiltinOverload& overload = m_builtins.at(id);

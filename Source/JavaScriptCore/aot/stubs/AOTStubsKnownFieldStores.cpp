@@ -20,10 +20,7 @@
 
 namespace JSC { namespace AOT {
 
-// A store by name into a compiled object that has a field of the name. Whoever comes here knows the field: a site whose receiver has a proven layout, or a stub by name that found the field in the table of fields.
-// So nothing is looked up, missed or filed: the immediate says how far behind the layout's data the record of the field lies, and the record says where the slot is and what it admits.
-// A field that is not there yet is created here too, where the object itself says that it may be and nothing above the object has the name.
-// Everything else goes on as a store by name behind the table of fields, under the name that the record has.
+// A store by name into a compiled object that has a field of the name.
 StubSignature signatureOfPutKnownField(StubKey)
 {
     StubSignature signature;
@@ -53,7 +50,6 @@ static void loadNameOfField(StubAssembler& jit, GPRReg record, GPRReg name)
 }
 
 // Goes on where no object above the receiver has an accessor or a property that cannot be written under the name, so that a store creates the receiver's own property.
-// Below the Object.prototype of its realm a flag of the Structure and the names of that object say so. Elsewhere the filter of the Structure does.
 static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg structure, GPRReg name, GPRReg filter, GPRReg scratch, JumpList& mayHaveName)
 {
     RELEASE_ASSERT(noOverlap(object, structure, name, filter, scratch, instanceGPR));
@@ -113,8 +109,7 @@ static void leaveNowAndThenForGuardOfStores(StubAssembler& jit, GPRReg record, G
     hasNoGuard.link(&jit);
 }
 
-// The caller knows more: the slot lies in the cell and holds any value as it is, and the type of the field is that of any value. So nothing is asked of the value.
-// A field of any unusual kind and an object that may not be stored to go on in the stub for any field, with the operands as they came.
+// The caller knows more: the slot lies in the cell and holds any value as it is, and the type of the field is that of any value.
 static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
 {
     const PutMode mode = static_cast<PutMode>(jit.key().form());
@@ -281,7 +276,6 @@ void generatePutKnownField(StubAssembler& jit)
     hasNoStorage.link(&jit);
     goesByName.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
     // Where the key order alone says that the field exists, a field without a granule reads as undefined, so that value asks for none: the key is listed and nothing is stored.
-    // The tables have a slot that does so for every field but one that is stored once.
     Jump alwaysNeedsStorage = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldMayExistWithoutStorage));
     Jump isNotUndefined = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueUndefined));
     goesByName.append(jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsStoredOnce)));

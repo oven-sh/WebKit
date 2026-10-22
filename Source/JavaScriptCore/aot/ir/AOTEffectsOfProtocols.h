@@ -56,16 +56,13 @@ struct EnteringOperands {
 CalleeList calleesOf(const Program&, const Type& callee);
 CalleeList calleesOf(const Program&, CalleeSetID);
 
-// `Named` is a [[Get]] of namedMembers. What it reads is converted where the operand also runs `ToPrimitive`, unless the parameter says
-// that its built-in only looks at what the members hold.
+// `Named` is a [[Get]] of namedMembers.
 enum class NamedMembers : uint8_t { AreOnlyInspected, AreOnlyRead };
 
 // `CallsNamed` calls what it reads under calledMembers, with the operand as `this`. An empty list stands for every member.
 CalleeList membersRunBy(const Program&, const Type& operand, Protocols, std::span<const BuiltinName> namedMembers, std::span<const BuiltinName> calledMembers, NamedMembers);
 
 // What the protocols that look a member up read in an object and in the objects it inherits from, whether or not they find code to run.
-// A member of a primitive is found on a built-in prototype: it is proven to stay what it is, or the lookup is unknown code.
-// What a protocol without a key reads is declared by the entry that runs it.
 Effects readsOfMemberLookups(const Type& operand, Protocols);
 
 bool protocolMayRunUserCode(const Program&, TypeID operandType, Protocol);

@@ -19,8 +19,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Listing keys and walking the chain of prototypes run the traps of a proxy and nothing else. The handler of a proxy has escaped when the proxy was made.
-// What the species constructor makes goes to the result of one call, so the call sees to it.
+// Listing keys and walking the chain of prototypes run the traps of a proxy and nothing else.
 static constexpr Protocols protocolsWithoutHub { Protocol::OwnKeys, Protocol::PrototypeChain, Protocol::Species };
 
 static ValueSetID maskOf(const Program& program, const ValueFlowUniverse& universe, ValueSetMaker& maker, const BuiltinType& type)
@@ -226,7 +225,6 @@ static bool putsValueInto(const BuiltinTable& builtins, const BuiltinHostUses& u
 }
 
 // The function that the body of the module puts under the name on the object that it exports: a declaration of the module, over which nothing can be stored, or a closure that is made for the store.
-// None where the body stores under the name more than once.
 static FunctionID functionExportedUnder(const Program& program, ModuleID module, BuiltinName name)
 {
     const Function& body = program.at(program.at(module).body);

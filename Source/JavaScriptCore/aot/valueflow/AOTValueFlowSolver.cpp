@@ -183,13 +183,9 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         m_kindsThatCoverKeys.append({ ValueFlowUniverse::primitive(PrimitiveSet::Symbol), ValueSets::complement(maker.intersect(m_input.universe->symbols(), keys)) });
     }
 
-    // A node that hands on all it gets to what a placeholder covers, and holds the placeholder, need not list what the placeholder stands for. The unknown value is anything at all, so such a node is done with.
-    // The untracked object is an object of the program: beside it primitives, keys and the unknown object still count.
+    // A node that hands on all it gets to what a placeholder covers, and holds the placeholder, need not list what the placeholder stands for.
     if (placeholders.unknown && m_input.escaped) {
-        // The object on which the exports of a module of the library hang is kept and not searched when it escapes: what hangs on it has not escaped with it. The unknown object stands for it all the same:
-        // a read by name through the unknown object answers what such an object holds under the name, and a key nobody knows names nothing on it. Listed beside the unknown object it would be searched
-        // by every `value[key]` of the program that it may flow to, and all that the module exports would be in the image.
-        // A built-in that lets in unseen code stays listed where it has arrived, through whatever else lies beside it: that it has escaped says nothing about the call that applies it.
+        // The object on which the exports of a module of the library hang is kept and not searched when it escapes: what hangs on it has not escaped with it.
         m_coverings.append({ placeholders.unknown, m_input.escaped, maker.intersect(m_objectsThatPlaceholdersMayCover, ValueSets::complement(m_objectsAlwaysFollowed)) });
         m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.escaped, m_input.universe ? maker.unite(m_input.universe->anyPrimitive(), unknownObjectAlone) : unknownObjectAlone, ValueSets::anything);
     }
@@ -923,7 +919,6 @@ private:
     }
 
     // The sets that the sites of a program ask for under one name are mostly no supersets of one another: they have a core in common, and each has a few members of its own.
-    // What such a set shares with an earlier one is that core, whichever of them it is compared with. So the core gets a node, which the next set of the kind finds, and only the few are linked for each set.
     bool makeUnionOfCoreAndOthers(uint32_t number, size_t sizeOfEarlierSubset, std::span<const uint32_t> similar)
     {
         ValueFlowNodeKey key = at(number).key;
@@ -961,7 +956,6 @@ private:
     }
 
     // A set that climbs is asked for again round after round, each time with a few members more, and linking a node of many objects costs a look at every node on the other side.
-    // So a node whose set contains one of the last large sets that were asked for under its name is not linked: it is the union of the leaves of that node and of one leaf for the difference, and only that leaf is linked.
     bool makeUnionWithEarlierNode(uint32_t number)
     {
         constexpr size_t mostLeaves = 64;
@@ -2868,8 +2862,7 @@ bool ValueFlowSolver::merge()
     }
     m_stepTimes.didFinish("merge: bodies reached"_s);
 
-    // Linking fills the tables of names and the edges of the graph. Noting who reads what fills the tables of readers and of watchers, and looks at the values of nodes, which nothing changes here.
-    // All wait for memory most of the time, so they run side by side.
+    // Linking fills the tables of names and the edges of the graph.
     growAndFill(m_firstReaderOfNode, m_graph.numberOfNodes(), none);
     growAndFill(m_seenByReadersOfNode, m_graph.numberOfNodes(), ValueSets::nothing);
     growAndFill(m_isWaitedForToHoldSomething, m_graph.numberOfNodes(), static_cast<uint8_t>(0));
@@ -3001,8 +2994,7 @@ ValueSetID ValueFlowSolver::valueShownTo(ValueFlowStatementID statement, ValueFl
     return ValueSets::nothing;
 }
 
-// A mask that admits an object of which somebody says that it is something else than an object with a layout of the program or a closure is the mask of a type that other code makes values of too:
-// there a placeholder may stand for such a value, and it passes as itself.
+// A mask that admits an object of which somebody says that it is something else than an object with a layout of the program or a closure is the mask of a type that other code makes values of too.
 ValueSetID ValueFlowSolver::findFamilyObjectsOf(ValueSetID mask, ValueSetMaker& maker) const
 {
     ValueSetID listed = maker.intersect(mask, m_objectsSaidToBeSomething);
@@ -3026,8 +3018,7 @@ void ValueFlowSolver::noteWhatPlaceholdersCover()
         covering.allButCovered = ValueSets::complement(m_makers[0]->intersect(valueOf(covering.covered), covering.objectsThatMayBeCovered));
 }
 
-// Behind a type that names objects of the program alone an object nobody knows is one of those objects, and of those one that the placeholder covers: one that has escaped, or that the analysis
-// has stopped following. What fits the type and is still followed has not come this way. One node for each mask holds what is covered of its family objects, for all nodes with that mask.
+// Behind a type that names objects of the program alone an object nobody knows is one of those objects, and of those one that the placeholder covers: one that has escaped, or that the analysis has stopped following.
 void ValueFlowSolver::connectWhatStoppedPlaceholdersCover()
 {
     m_graph.takeNodesAtWhichPlaceholdersStopped(m_placeholdersStopped);
@@ -3211,8 +3202,7 @@ bool ValueFlowSolver::hasTooManyLayoutsAndCallees(ValueSetID set)
     }).iterator->value;
 }
 
-// The members of a set that is given up go to `lost`, whatever arrives later too, and the node holds the untracked object. Nothing escapes by that and nothing is entered.
-// Past the budget of edges every set of objects that still moves is given up. A node is given up once, so the rounds end.
+// The members of a set that is given up go to `lost`, whatever arrives later too, and the node holds the untracked object.
 void ValueFlowSolver::saturate(std::span<const ValueFlowNodeID> moved)
 {
     ValueFlowNodeID holdingUntrackedObject;
@@ -3268,9 +3258,7 @@ void ValueFlowSolver::spreadMarks()
     });
 }
 
-// A mask that is made from a type nobody tests takes nothing away but the untracked object, in whose place it puts the family. So an object that the analysis follows and that lies outside the type is still there:
-// a conversion that nobody has recorded, or a fault in the family. It is counted, and nothing is proven about the node.
-// A validating build also looks at what has arrived at each such node: an object that the analysis follows and the unknown object have to be there still.
+// A mask that is made from a type nobody tests takes nothing away but the untracked object, in whose place it puts the family.
 void ValueFlowSolver::findObjectsOutsideFamilies()
 {
     Vector<ValueFlowNodeSet> masks;
@@ -3334,7 +3322,6 @@ void ValueFlowSolver::findObjectsOutsideFamilies()
 }
 
 // Breadth first, along the edges, from the constants through which the rules have brought the unknown object into being, through the nodes that hold it.
-// The nodes are taken in the order of their numbers, so of two ways of one length the same one wins on any number of threads.
 void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& whatRunsBesideTheWalk)
 {
     ValueFlowObjectID unknownObject = m_input.placeholders.unknown;
@@ -3704,7 +3691,6 @@ bool ValueFlowSolver::solve()
 }
 
 // Who is to run again when what moves, which stores and loads have met, what each thread has logged: the rounds read that and nobody else does.
-// On a large program it is a third of what the solver holds, and the results put their own tables on top of it.
 void ValueFlowSolver::releaseRoundState()
 {
     m_memoryInBytesAtEndOfRounds = memoryInBytes();

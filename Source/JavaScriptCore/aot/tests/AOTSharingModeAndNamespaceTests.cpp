@@ -312,8 +312,6 @@ static void testLiteralsMadeBetweenCollectionsLast(LoadedProgram& program)
     checkCellsMadeBetweenCollectionsLast(program, hiddenLiteral);
 }
 
-// The Structure that an addition leads to lives through a young collection if the one it comes from does. Here the second addition comes from the Structure that the first leads to
-// and stands in front of it in the list: when it is first asked, its own first Structure is not marked yet.
 static NEVER_INLINE void addTwoPropertiesInARow(LoadedProgram& program, HiddenCells& hidden)
 {
     VM& vm = program.vm();

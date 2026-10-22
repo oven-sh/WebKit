@@ -58,8 +58,7 @@ bool mayHaveConversionThatAlwaysFails(const Program&, const Function&);
 void forEachDataMemberThatAlwaysFailsConversion(const Program&, TypeArena&, NOESCAPE const ScopedLambda<void(FieldReference, ValueKinds)>&);
 
 bool includesData(const Program&, const Type&, const DataNode&);
-// The run time stores the members of constant data without a test. A field that data fills with a value outside its type, behind an assertion or a silenced error,
-// is only expected to hold the type.
+// The run time stores the members of constant data without a test.
 void expectFieldsFilledWithOtherData(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

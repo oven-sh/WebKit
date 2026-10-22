@@ -201,8 +201,7 @@ private:
         UncheckedKeyHashMap<FunctionID, Vector<uint32_t>> recordedRequests WTF_GUARDED_BY_LOCK(recordedRequestsLock);
     };
 
-    // Every reference to a closure asks for an id, from every thread. Looking takes no lock: a thread that loses its processor while it holds
-    // one stops every thread that comes for it. One thread at a time may add, while others look.
+    // Every reference to a closure asks for an id, from every thread.
     class IDTable {
         WTF_MAKE_NONCOPYABLE(IDTable);
         WTF_MAKE_NONMOVABLE(IDTable);

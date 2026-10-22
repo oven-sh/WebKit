@@ -32,7 +32,6 @@ BuiltinMemberName builtinMemberNameOf(const Program&, PropertyKeyID);
 // The member that the holder has of its own under the key. An engine private name finds the member that it is the private alias of.
 BuiltinID findOwnMember(const Program&, BuiltinID holder, PropertyKeyID);
 // Of what the host keeps under engine private names the table lists the private aliases alone, so it never says that a holder has nothing under such a key.
-// The table has every property that the global object is created with. The entry of the global object lacks the flag, which flow reads: to flow a free name that the table lacks is a value nobody knows.
 bool listsEveryMemberUnder(const Program&, BuiltinID holder, PropertyKeyID);
 
 enum class BuiltinReceiverKind : uint8_t { Unknown, BuiltinObject, Instance, Primitive };
@@ -81,8 +80,7 @@ struct FreeNameAnswer {
     BuiltinID member;
 };
 
-// What `name` and `globalThis.name` find. A free name of the program looks among the top-level let, const and class bindings of scripts first. The host's own modules sit below those.
-// Whoever asks for `typeof name` or `delete name` takes Bound for ByName: a record serves reads and stores.
+// What `name` and `globalThis.name` find.
 FreeNameAnswer freeNameAnswerOf(const BuiltinLookupContext&, PropertyKeyID, bool seesScriptBindings);
 
 struct MemberOfClasses {

@@ -21,8 +21,7 @@ namespace JSC { namespace AOT {
 
 class BuildContext;
 
-// The instructions that the threads of a build retire in user mode, by the hardware counter of each thread. A time moves with the load of the machine, and a number of instructions does not.
-// Only a build that logs its phase times counts. There are none where the system refuses the counter, and on any system but Linux on x86-64.
+// The instructions that the threads of a build retire in user mode, by the hardware counter of each thread.
 class InstructionCounts {
 public:
     // From here on each thread of the pool counts from the moment it takes a task.

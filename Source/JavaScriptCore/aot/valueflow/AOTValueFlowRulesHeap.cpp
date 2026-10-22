@@ -92,9 +92,7 @@ HeapKey HeapRule::keyNamed(PropertyKeyID name) const
     return m_program.isIndexLike(name) ? indexHeapKey : HeapKey { HeapKeyClass::Name, name };
 }
 
-// A symbol is no text and no index. On the built-in objects every name counts, and there a symbol nobody knows is one of the symbols that the program names, or one under which nobody looks by name.
-// An object of the program gets a property that no layout lists, so for it such a key stays a key nobody knows, and so it does for a receiver nobody knows.
-// The answer says for which receivers the key is one of those symbols: for all of them, for the built-in objects among them, or for none (all but the built-in objects take the key as one nobody knows).
+// A symbol is no text and no index.
 HeapKeyReceivers HeapRule::receiversOfSymbolNobodyKnows(ClimbingSet keys, const HeapKeyUse& use)
 {
     if (!use.object)
@@ -146,16 +144,14 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         receivers = m_context.restrict(receivers, ValueSets::complement(only(globalObject)));
     }
 
-    // The library's code behind a described built-in is entered with operands nobody knows. What a call of the built-in reads from its operand the records say where the call is,
-    // so a read of such an operand hands out no member of the table, under whatever key: it answers a value nobody knows.
+    // The library's code behind a described built-in is entered with operands nobody knows.
     if (mayBeUnknownObject(receivers) && m_statement.function && isCodeThatRecordsDescribe(m_universe, m_statement.function)) {
         add(m_statement.result, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
         // A value nobody knows is the unknown object or any primitive, and above a primitive lies the prototype object of its wrapper, with every method of strings and numbers.
         receivers = m_context.restrict(receivers, ValueSets::complement(m_context.maker().unite(m_universe.unknownObjectAlone(), m_universe.anyPrimitive())));
     }
 
-    // A script that nobody has seen declares a `let` under the name of a global, and every free name finds that first. The run time refuses the declaration where the global is locked:
-    // by the table, or at start-up as a constant of the program. A member that changes on its own is neither.
+    // A script that nobody has seen declares a `let` under the name of a global, and every free name finds that first.
     if (!namesObjectOfAccess() && key.keyClass == HeapKeyClass::Name && m_context.contains(receivers, globalObject) && doesUnseenCodeRun()) {
         forEachMemberUnder(ClimbingSet(only(globalObject)), key, [&](BuiltinID member, ModuleID) {
             if (m_builtins.at(member).mutability == BuiltinMutability::ChangesOnItsOwn)
@@ -173,8 +169,6 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
             connect(m_context.lookup(listed, name), m_statement.result);
     }
     // And for whoever goes on to a prototype object: `globalThis[name].prototype` answers the prototype object of a constructor that the operand lists, though the constructor has escaped.
-    // Beside the unknown object nobody is shown it, and a node that holds the unknown object and flows into what has escaped takes no more of what the unknown object covers
-    // (ValueFlowGraph::retireNodesCoveredBy): whether it arrives at a write further on depends on which of the two came first. So it gets the mark of notePrototypeObjectsListedAtWrite() here.
     if (key.keyClass == HeapKeyClass::Name && key.name == m_tables.prototypeKey() && object.node && mayBeUnknownObject(receivers)) {
         ClimbingSet listed = m_context.valueWithin(ClimbingSet(m_tables.under(key.name).holders), object.node);
         if (holdsAnything(listed)) {
@@ -243,8 +237,7 @@ void HeapRule::noteTestOfMembers(const ValueFlowOperand& object, const HeapKey& 
     }
 }
 
-// What is stored through a placeholder lies in one node for each name. A lookup takes it from there if the placeholder stands for an object on its chain: the unknown object for one that has escaped,
-// the untracked object for one that the analysis has stopped following. What is stored through the untracked object stays in the program. What is stored through the unknown object is in unknown hands.
+// What is stored through a placeholder lies in one node for each name.
 void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOperand& value)
 {
     connect(value, m_context.written(known(objects), name));
@@ -252,8 +245,6 @@ void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOpe
     if (mayBeUntracked)
         connect(value, m_context.written(untrackedObjectAlone(), name));
     // Native code reaches the built-in objects of the realm without being handed them, and it reads and calls what the program puts there.
-    // On some of them it looks up the names of a list and no other. What is put above such an object is not handed over: native code looks through it, under those names.
-    // On the global object the engine and the host look up the names that they have put there, which the table lists. Under another name only a statement looks, text that nobody has seen, or an addon.
     bool writesIntoRealm = mayBeUntracked && hasBeenLost(ClimbingSet(m_tables.objectsOfRealm()));
     bool namesProperty = name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter;
     m_context.forEachMember(m_context.restrict(objects, m_universe.builtinObjects()), [&](ValueFlowObjectID object) {
@@ -296,7 +287,6 @@ void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOpe
 }
 
 // A definition and a deletion look for the property before they change it, and the host makes many of its members when they are first looked for: see noteTestOfMembers().
-// A deletion that finds a member has the host make every other member of the holder too. A store does not look: it puts the new value in place of a property that is not made yet.
 void HeapRule::noteMembersLookedForBeforeChange(ClimbingSet receivers, const HeapKey& key, bool makesAllOnceFound)
 {
     ClimbingSet holders = m_context.restrict(receivers, m_tables.holdersOfMembersThatHostMakes());
@@ -358,9 +348,7 @@ ValueSetID HeapRule::standingForClassAndThoseBelow(BuiltinClassID builtinClass)
     return m_context.maker().of(standing.span());
 }
 
-// The universe is made before anybody knows the callee of a call, so what a built-in allocates is a sure instance of nothing there. Each allocation leaves what stands for its class on the object.
-// The node that an allocation writes is asked itself: it is filled in the run that hands the object out, so before the object has come anywhere. What nothing is written about is sure of nothing.
-// While the sets grow an object leaves the answer and never comes back, and whoever asks is due again when it does.
+// The universe is made before anybody knows the callee of a call, so what a built-in allocates is a sure instance of nothing there.
 ValueSetID HeapRule::allocatedByBuiltinsAs(ClimbingSet objects, ValueSetID standingForClasses)
 {
     ClimbingSet candidates = m_context.restrict(objects, m_context.maker().intersect(m_universe.objectsThatMayBeAnything(), m_universe.knownObjects()));
@@ -387,7 +375,6 @@ ValueSetID HeapRule::instancesThatKeepProperty(ClimbingSet objects, PropertyKeyI
 }
 
 // A store under an index adds no name to an array or to a typed array, and neither does a store under a name that the layout of the object declares or that the object has for life.
-// Who has allocated the array makes no difference: an operation, or a built-in.
 void HeapRule::markStore(ClimbingSet receivers, const HeapKey& key, OptionSet<ObjectMutation> otherMarks)
 {
     ClimbingSet objects = m_context.restrict(receivers, m_universe.objects());
@@ -475,9 +462,7 @@ void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPr
     mayThrow();
 }
 
-// A typed array keeps a number under an index and an array keeps a number as its length. Code that the stored object names makes the number.
-// Some objects of the host keep a string under every key, which is made the same way.
-// What is stored through the unknown object has escaped, and native code runs every protocol on that.
+// A typed array keeps a number under an index and an array keeps a number as its length.
 void HeapRule::convertStoredValue(ClimbingSet receivers, const HeapKey& key, const ValueFlowOperand& value)
 {
     bool mayBeUntracked = mayBeUntrackedObject(receivers);
@@ -537,14 +522,12 @@ void HeapRule::callSettersOfReceivers(ClimbingSet start, const HeapKey& key, con
 }
 
 // An operand nobody knows lists the prototype objects of the language, whoever wrote the statement and whatever for: they lie above whatever it may hold.
-// Without a name that names none of them: what such a statement stores would lie under every name and every index that is read off an array. It is a store through the unknown object there.
 ValueSetID HeapRule::objectsThatListingNamesUnder(const HeapKey& key)
 {
     return key.keyClass == HeapKeyClass::Name ? ValueSets::anything : ValueSets::complement(m_tables.prototypeObjectsThatListingDoesNotName());
 }
 
-// Beside the unknown object the normal form leaves out whatever has escaped. A store through the unknown object alone is none to an object of the realm: the run time refuses it there.
-// But a built-in object that the operand lists is stored to by the program, in code that is compiled, and such a store works.
+// Beside the unknown object the normal form leaves out whatever has escaped.
 ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
     if (!object.node || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
@@ -552,8 +535,7 @@ ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOpe
     return m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_universe.builtinObjects(), objectsThatListingNamesUnder(key))), object.node);
 }
 
-// One of the prototype objects that a listing does not name may still be the very object that the statement writes: `globalThis[name].prototype[key] = f`. What is stored stays a store through the unknown object,
-// and one mark on the holder says that the program holds it there: a lookup that passes the holder reads what is stored that way, and the run time locks nothing on it that such a store may hit.
+// One of the prototype objects that a listing does not name may still be the very object that the statement writes: `globalThis[name].prototype[key] = f`.
 void HeapRule::notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
     if (!object.node || key.keyClass != HeapKeyClass::Unknown || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
@@ -561,8 +543,7 @@ void HeapRule::notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object,
     add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.valueWithin(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName()), object.node));
 }
 
-// A definition and a deletion through the unknown object are refused there too. They work on an object that another statement writes: what that statement may hit is not locked.
-// Helpers of packages define under computed keys on operands that list hundreds of built-in objects, none of which the program ever writes.
+// A definition and a deletion through the unknown object are refused there too.
 ClimbingSet HeapRule::unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
     if (!object.node || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
@@ -647,8 +628,7 @@ void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
     mayThrow();
 }
 
-// The constructor of a base class allocates the instances of the classes below it too, and the prototype that it is given picks the class. Each class has one object that stands for its instances:
-// that is what is allocated under the prototype object of the class, and it lies below that prototype object alone. ValueFlowUniverse::objectAllocatedUnder() says under which prototypes it is the object of the operation.
+// The constructor of a base class allocates the instances of the classes below it too, and the prototype that it is given picks the class.
 ClimbingSet HeapRule::allocateUnder(const ValueFlowOperand& prototype)
 {
     ValueFlowObjectID site = m_universe.siteObject(m_statement);
@@ -696,8 +676,7 @@ void HeapRule::runNewObject()
     }
 }
 
-// The copy of a record is a record with the same layout: operationAOTCopyObject(). One object stands for a record and for its copies, so whatever is stored into a copy or done to it
-// is stored into an object with that layout and done to one. The copy of anything else, and a copy that leaves keys out, is an ordinary object.
+// The copy of a record is a record with the same layout: operationAOTCopyObject().
 void HeapRule::runCopyObject()
 {
     const ValueFlowOperand& source = operand(OperandIndex::CopyObject::source);
@@ -731,8 +710,7 @@ void HeapRule::runNewArray()
         connect(element, contents);
 }
 
-// No statement of the program fills a template object. Each element is a string, or undefined where the text has an escape that means nothing, and whoever takes the elements finds them there:
-// a read by index, an iteration, a built-in that copies them or hands them to a callback. The array of the raw strings is followed by nobody.
+// No statement of the program fills a template object.
 void HeapRule::runNewTemplateObject()
 {
     ClimbingSet strings(only(m_universe.siteObject(m_statement)));
@@ -895,8 +873,7 @@ void HeapRule::runSuperSet()
     });
 }
 
-// `args[1]` in an instance of `function (type, ...args)`. One object stands for the arrays of all calls, so it holds what any call has passed at any index.
-// While nobody has done anything to the array but read it, it holds at each index what the calls of the instance have passed there.
+// `args[1]` in an instance of `function (type, ...args)`.
 bool HeapRule::readsRestArgumentOfInstance()
 {
     namespace At = OperandIndex;
@@ -1072,11 +1049,8 @@ void HeapRule::runOperation()
     case Opcode::PrivateDefine: {
         connect(operand(At::PrivateDefine::value), m_context.nodes().privateField(operation().layout(), operation().field()));
         // A constructor whose parent returns another object puts its private names on that object, whose layout has no field for them: there the name is one more property.
-        // Nobody outside the class reads it, so what is stored through a placeholder has not escaped.
         HeapKey key { HeapKeyClass::Name, m_program.at(operation().layout()).fields[operation().field()].key };
         // The allocation in the constructor of a base class also stands for what it makes under the prototype of a class of which nothing says what it extends, and it is listed under every such class.
-        // What it makes has the layout of the class whose prototype it was given: under the prototype of a class without the field it is one more object that is stamped.
-        // Under a prototype that is no class's it makes an ordinary object, of which no layout says anything.
         ClimbingSet objects = m_context.valueOf(operand(At::PrivateDefine::object));
         ValueSetID declaring = m_tables.objectsDeclaringField(key.name);
         Members mayLackField;

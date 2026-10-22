@@ -46,8 +46,7 @@ public:
     CellPointer allocateZeroedByNumber(const OperationContext&, Word32 numberOfAllocation, WholeCell);
     // Sixteen bytes of zero take one store. Somebody writes them where that takes no more instructions than the stores of zero that the caller then leaves out.
     ZeroedBy whoZeroesBody(const OperationContext&, AllocationID, unsigned storesOfZero) const;
-    // For a cell that lies in the cell of another allocation, behind that allocation: whoever fills the record of that one has filled this one,
-    // unless a class constructs the cell: then the code asks in front of the allocation.
+    // For a cell that lies in the cell of another allocation, behind that allocation: whoever fills the record of that one has filled this one, unless a class constructs the cell: then the code asks in front of the allocation.
     void copyHeaderAndWords(AllocationID, CellPointer);
     void ensureRecordIsFilled(const OperationContext&, AllocationID);
     CellPointer allocateObjectCopy(const OperationContext&, AllocationID, WholeCell, CellPointer source, unsigned fieldBytes);

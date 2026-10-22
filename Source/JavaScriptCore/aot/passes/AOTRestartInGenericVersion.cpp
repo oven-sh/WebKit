@@ -67,7 +67,6 @@ static BitVector findBlocksThatEndBeforeAnyEffect(FunctionPassContext& pass)
 }
 
 // A test of a type may be a guess, or tell the members of a union apart: the side on which it fails is then an ordinary way through the function, which is worth its own code.
-// A test of the state of an object fails where somebody has changed the object behind the back of its type.
 static bool testsStateOfObject(const Function& function, const Terminator& branch)
 {
     Proof proof = provesOf(function.at(branch.conditionOperand()).opcode);
@@ -125,8 +124,6 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
 }
 
 // A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
-// Until the body has done something that somebody can see, the call can begin again instead: the generic version is given the arguments of the call, and does all of it.
-// So every such test of a function shares one block, nothing is handed over, and the generic code behind them goes.
 PassOutcome restartInGenericVersion(FunctionPassContext& pass)
 {
     const Program& program = pass.program;

@@ -37,7 +37,6 @@ inline constexpr OperandUses declaredOperandUses = [] {
 }();
 
 // A set of objects is a row of words, as many as hold a bit for each object of the function: one word in nearly every function.
-// What flows, flows by the word: the objects that have arrived at a value go on to its users together.
 using ObjectWord = uint64_t;
 inline constexpr unsigned objectsPerWord = 64;
 

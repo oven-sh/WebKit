@@ -104,8 +104,7 @@ private:
     Vector<uint64_t> m_holders;
 };
 
-// By member without a layout: the built-in class that the member is an instance or a primitive of. The class hangs on the member alone, and thousands of sets share nearly all their members.
-// Whichever thread meets a member first finds its class, for all the threads and all the sets.
+// By member without a layout: the built-in class that the member is an instance or a primitive of.
 class BuiltinClassesOfMembers {
     WTF_MAKE_NONCOPYABLE(BuiltinClassesOfMembers);
 public:
@@ -191,8 +190,7 @@ Witness witnessOfStatement(const Program& program, const ValueFlowStatement& sta
     return { statement.function.index(), statement.site.index(), function.locationOf(statement.site) };
 }
 
-// A rule brings the unknown object into being by an edge out of a constant. From the nodes at the heads of those edges the walk goes along the edges, breadth first, through the nodes that hold the object.
-// Every list is in the order of the nodes, and of two births at one node the lower witness stays, so the answers do not depend on the order in which the edges were added.
+// A rule brings the unknown object into being by an edge out of a constant.
 ValueFlowBirthsOfUnknownObject::ValueFlowBirthsOfUnknownObject(const ValueFlowResultInputs& inputs)
 {
     const ValueFlowSolver& solver = inputs.solver();
@@ -405,9 +403,7 @@ static const ListedReceivers& listedReceiversOf(AccessesOfFunction& accesses, Va
     return kept;
 }
 
-// Where something unknown may arrive at a receiver without a type, the layouts that are seen to arrive and have a field of the name are what the access expects. The set is not complete: whoever reads it tests.
-// The layouts of a type are all expected: fewer of them, picked by a set that is not complete, would send the others by name.
-// Nothing where an array, a string or another built-in object that is seen to arrive answers the name by itself: there the layouts are the odd ones.
+// Where something unknown may arrive at a receiver without a type, the layouts that are seen to arrive and have a field of the name are what the access expects.
 static std::optional<LayoutSet> receiversSeenToArrive(AccessesOfFunction& accesses, const ValueFlowStatement& access, const Type& family, ValueSetID held)
 {
     if (family.layouts || !PayloadWord::key(access.opcode) || ValueSets::isComplement(held))

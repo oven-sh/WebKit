@@ -24,9 +24,6 @@ struct Function;
 void checkTypesAtEntry(ProgramEditor&, BuildContext&);
 
 // For the reader, which has each body at hand once: it decodes a use of a checked parameter as a use of the check, so that no walk over the body follows.
-// The pass leaves alone a function that has its checks.
-//
-// The entry parameters that get a check, by the record of the function alone.
 Vector<unsigned, 8> findParametersCheckedAtEntry(const Program&, const BuildContext&, FunctionID, const Function& record, bool hasBody);
 // The check of checkedParameters[position] gets the number of values that the function has now, plus the position. Every use names it already.
 void appendChecksAtEntry(const Program&, BuildContext&, Function&, std::span<const unsigned> checkedParameters);

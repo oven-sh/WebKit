@@ -242,8 +242,6 @@ static Vector<String> constantsThatAreNoAtoms()
     return constants;
 }
 
-// Native code makes an atom of a String and goes on with the bare pointer: it counts on the String to keep the atom alive, because an ordinary string becomes the atom itself.
-// The atom of a static string is a block of its own, and nothing but the one who asked held it: expect(..).toHaveProperty() looked a freed name up. Now the table holds it.
 static void testAtomOfConstantOutlivesWhoeverAskedForIt()
 {
     for (const String& constant : constantsThatAreNoAtoms()) {

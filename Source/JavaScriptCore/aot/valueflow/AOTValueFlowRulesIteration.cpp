@@ -13,8 +13,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The state of an iteration holds its iterators. A built-in method that makes an iterator over its receiver is stepped over where the language calls it: one iterator object for all those calls
-// would pour together what all containers of the program hold. The state then holds the container, which stands for its iterator, and the container holds the method, which says how that iterator goes over it.
+// The state of an iteration holds its iterators.
 
 namespace {
 
@@ -25,8 +24,7 @@ struct BuiltinIteration {
     ValueSetID containers { ValueSets::nothing };
 };
 
-// Takes the values that steps hand out. An asynchronous iteration awaits whatever a synchronous iterator hands out: the wrapper around that iterator does.
-// Of an asynchronous iterator it awaits what the method answers and never the value in that answer.
+// Takes the values that steps hand out.
 class StepTarget {
 public:
     StepTarget(ValueFlowRuleContext& context, IteratorKind kind, ValueFlowNodeID node)
@@ -177,7 +175,6 @@ static void takeKeys(ValueFlowRuleContext& context, ClimbingSet containers, Buil
 }
 
 // Each of them is an array of a key and its value that a step over entries or Object.entries has made, and nobody has done anything to it but read it: it still holds the key at 0 and the value at 1.
-// Whatever arrives later, another container, a store into a pair, a pair in unknown hands, brings back the answer for any array, which says more.
 static bool areUntouchedPairs(ValueFlowRuleContext& context, ClimbingSet containers)
 {
     const ValueFlowProgramNodes& nodes = context.nodes();
@@ -280,8 +277,7 @@ static void openIteratorsOf(ValueFlowRuleContext& context, ClimbingSet receivers
     });
     callInProtocol(context, { .callees = calledMethods, .thisValue = receivers, .result = state });
 
-    // A receiver that an overload converts first is no container: a String object under String.prototype[@@iterator]. There the method is called like any other,
-    // on the receivers that are containers of no iteration, and only if it is what they find.
+    // A receiver that an overload converts first is no container: a String object under String.prototype[@@iterator].
     ClimbingSet otherReceivers = context.restrict(context.restrict(receivers, universe.knownObjects()), ValueSets::complement(containersOfAnyIteration));
     if (containersOfAnyIteration == ValueSets::nothing || !holdsSomething(context, otherReceivers))
         return;
@@ -404,8 +400,7 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
     if (statement.thrown)
         context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 
-    // The library's code behind a described built-in is entered with operands nobody knows. That a call of the built-in goes over its operand the records say where the call is,
-    // so going over such an operand here opens and steps nothing: it answers a value nobody knows.
+    // The library's code behind a described built-in is entered with operands nobody knows.
     bool isDescribedByRecords = isCodeThatRecordsDescribe(context.universe(), statement.function);
     auto iterated = [&](const ValueFlowOperand& operand, ValueFlowNodeID answer) {
         ClimbingSet held = context.valueOf(operand);
@@ -510,8 +505,7 @@ void runIteratorResults(const ValueFlowStatement& statement, ValueFlowRuleContex
 
     ClimbingSet methods = context.valueOf(context.lookup(iterators, nameOf(context, methodNameOf(mode))));
     ClimbingSet calledMethods = methods;
-    // Nobody has seen such a holder call anything. It may call what has escaped, which the rule of what has escaped says, and that is all the unknown object stands for here:
-    // that code runs which stores into what it reaches is said where an object is handed to native code that nothing describes.
+    // Nobody has seen such a holder call anything.
     if (stepper == Stepper::HolderOfEscapedIterator)
         calledMethods = context.restrict(calledMethods, ValueSets::complement(universe.unknownObjectAlone()));
     context.forEachMember(context.restrict(methods, universe.builtinFunctions()), [&](ValueFlowObjectID method) {

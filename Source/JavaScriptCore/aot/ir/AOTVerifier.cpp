@@ -354,7 +354,6 @@ void FunctionVerifier::verifyBlockOrder()
 }
 
 // Typing runs before dominance is verified and follows operands, so it needs a body without cycles of operands.
-// In the block order just verified a dominator is listed before what it dominates.
 void FunctionVerifier::verifyDefinitionsPrecedeUses()
 {
     BitVector isDefined(m_function.values.size());

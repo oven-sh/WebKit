@@ -115,7 +115,6 @@ static uint32_t bodyEntrypointOf(const TableEncoder& encoder, const Module& modu
 }
 
 // The name of a module of the library and of one outside the image is no path of a file.
-// The loader makes a string of the path of every CommonJS module that runs, and the characters of a path that is whole in the image are not copied for that.
 static bool mayHavePathInPieces(const Module& module)
 {
     return module.kind == ModuleKind::SourceText || module.kind == ModuleKind::Data;
@@ -278,7 +277,6 @@ static BitVector findModulesNotWorthVisiting(const TableEncoder& encoder)
 }
 
 // The code of the requesting module evaluates the target by itself, so nobody links the target at that point: it is linked with the requesting module.
-// Where an operation of the loader is left for the pair, the loader links what it is asked for.
 static bool isAnsweredByCode(const TableEncoder& encoder, ModuleID requester, const ModuleRequest& request)
 {
     switch (encoder.program.at(request.target).kind) {

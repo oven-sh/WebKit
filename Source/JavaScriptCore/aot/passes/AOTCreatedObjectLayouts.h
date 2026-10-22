@@ -15,9 +15,7 @@ class BuildContext;
 
 namespace Typed {
 
-// For a program as read, before its values are typed. `Object.create(prototype)`, the callee being that built-in by binding, is `{ __proto__: prototype }` but for a prototype that is neither an object nor null, which it refuses.
-// So it becomes that literal, with a layout of its own that has no field: the flow analysis gives the layout the names that it sees, as it does for `{}`.
-// Where it gives none the literal makes an ordinary object: see computeLayoutsOfDictionaries().
+// For a program as read, before its values are typed.
 void giveLayoutsToCreatedObjects(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

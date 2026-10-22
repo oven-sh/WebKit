@@ -22,11 +22,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // What becomes of one operand of one operation that enters code: a call, an access that finds an accessor, an operation that runs a protocol.
-//
-// A table says what each function does with each of its entry parameters. Here an operand is followed to the entry parameters that it becomes in the callees which the operation may enter,
-// and their answers are put into the terms of the operation: a parameter that something is stored into becomes the operand that was passed for it.
-// Only here is it known which closure a caller passes. So where a callee calls what it was passed, the function of that closure answers in place of "unknown code".
-// Whatever is not proven is "anything": callees that nobody lists, an operand that the callee finds in `arguments`, a closure whose function nobody knows.
 
 namespace {
 
@@ -166,7 +161,6 @@ static void addKey(const Program& program, KeysOfMembers& keys, BuiltinName name
 }
 
 // Of a value that lies in an object which the entry makes and of which `holder` is said: the array of the rest arguments.
-// Where somebody keeps the object, whoever reads the value out of it has it.
 static LinkedFate fateOfWhatIsReadThrough(const LinkedFate& holder)
 {
     if (holder.isAnything() || !isKeptNowhere(holder))
@@ -374,8 +368,6 @@ static bool covers(BuiltinOperand named, BuiltinOperand asked)
 }
 
 // A type that lists several things stands for a value that is one of them: an element or undefined, the initial value or what the callback answered last.
-// What the type says that an instance holds lies in an object which native code makes.
-// Calls functor(part, whether it lies in a new object) for each part that names something else than a kind of value.
 static void forEachValueNamedIn(const BuiltinTable& table, BuiltinTypeID id, unsigned depth, NOESCAPE const Invocable<void(const BuiltinTypePart*, bool)> auto& functor)
 {
     if (!id || !table.contains(id))
@@ -492,7 +484,6 @@ static OptionSet<ValueFate> fatesOfResultInNativeCode(const BuiltinCallback& cal
 }
 
 // Calls functor(place in the record, where what lies there stands in the call that native code makes), as flow's passArguments() has it.
-// "The arguments from k on" are handed on in order: `f.call(thisArg, a, b)` passes a first and b second. What the record lists behind them, and what is spread, may land anywhere.
 static void forEachPlacePassedTo(const BuiltinCallback& callback, BuiltinOperand asked, NOESCAPE const Invocable<void(const BuiltinPlace&, PlaceAtCall)> auto& functor)
 {
     PlaceAtCall anywhere { PlaceAtCall::Kind::ElementOfList, callback.constructs, 0 };
@@ -662,8 +653,6 @@ void FatesAtCalls::putIntoTermsOf(const Site& site, FunctionID calleeID, const F
 }
 
 // Of a value that somebody below the operation hands to a closure which an operand of the operation holds: from the terms of the closure's function into those of the operation.
-// What the function returns goes back to whoever has called it, and `resultOfCall` says what becomes of it there. What it stores into a capture lies behind the operand that holds the closure.
-// What else it was passed is known to the one who called it alone. A built-in is no closure and has captured nothing.
 void FatesAtCalls::giveBackToCaller(LinkedFate& fate, const Function* closure, std::optional<uint32_t> operandOfClosure, OptionSet<ValueFate> resultOfCall) const
 {
     if (fate.isAnything())
@@ -961,7 +950,6 @@ bool FatesAtCalls::mayRunCode(const Type& operand, OperandBehavior behavior, Pro
 }
 
 // A protocol that only reads is said as what it reads: whether an accessor is there depends on the object, which whoever has made the object knows.
-// A protocol that calls what it has found hands the object to that as `this`. Here only the type of the operand says what is found.
 bool FatesAtCalls::addProtocols(LinkedFate& fate, const OperandBehavior& behavior, const Type& operand) const
 {
     constexpr Protocols readingProtocols { Protocol::OwnKeys, Protocol::OwnValues, Protocol::ToPrimitive, Protocol::Iterate, Protocol::PrototypeChain, Protocol::Named };
@@ -1493,7 +1481,6 @@ LinkedFate FatesAtCalls::ofOperandOfBuiltinCall(const Function& caller, const Va
 }
 
 // Where all that the access may find is proven, the answer is what the accessors among it do: the reader sees the access itself.
-// Where it is not, the access is said as an access. Whether it finds an accessor depends on the object, which whoever has made the object knows.
 LinkedFate FatesAtCalls::ofOperandOfAccess(const Function& caller, const Value& access, uint32_t operandIndex) const
 {
     std::optional<uint32_t> receiver = receiverOf(access.opcode);
@@ -1654,10 +1641,7 @@ LinkedFate FatesAtCalls::ofOperandOfOperation(const Function& caller, const Valu
     return fate;
 }
 
-// A read of a callee may find a getter, which then runs with the operand as `this`. Where the reads can find nothing but getters that a class defines for good, each is one more callee.
-// What it reads and writes in `this` are accesses like those of the callees, which may find the next getter. What it returns is what the callee has read through the operand:
-// a getter that returns `this`, or something that holds `this`, puts the operand among its own contents.
-// Where some access may run code that nobody knows the answer stays as it is: it lists the accesses, and gettersRunOnOperandAt() says of it what it has said here.
+// A read of a callee may find a getter, which then runs with the operand as `this`.
 void FatesAtCalls::enterGetters(const Function& caller, const Value& user, uint32_t operandIndex, LinkedFate& fate) const
 {
     // Each round but the last adds a flag, a bit or a key, and more than a few keys count as any.

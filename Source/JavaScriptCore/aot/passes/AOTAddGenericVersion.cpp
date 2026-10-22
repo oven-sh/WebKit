@@ -481,7 +481,6 @@ bool GenericVersionBuilder::isOnlyComparedByBits(ValueID check) const
 }
 
 // A value that is only handed on, as an argument of a call by value or into a position of any type, is the same value in both versions of the function.
-// Its check would buy a test at each call and a copy of the code behind it for nothing.
 bool GenericVersionBuilder::dropChecksNobodyReliesOn()
 {
     // A build that reports mismatches reports them where the check stands.
@@ -492,8 +491,7 @@ bool GenericVersionBuilder::dropChecksNobodyReliesOn()
     Vector<ValueID, 8> erasedCasts;
     const CompactList<ValueID>& entryParameters = m_function.at(entryBlock).parameters;
     for (const CheckSite& site : m_sites) {
-        // Only the check of a parameter. The check of what a call returns goes by itself where the callee proves its result, and till then it keeps the join with the call by name narrow:
-        // without it the next callee tests at its head what the typed code had proven.
+        // Only the check of a parameter.
         Vector<ValueID, 8> casts;
         if (isOnlyComparedByBits(site.check))
             casts.append(site.check);
@@ -901,8 +899,7 @@ static TypeID typeOfKind(TypeArena& types, OperandKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// An operation that takes one kind of value has no form for any other. Its operand is the compiler's own, like `this` of an initializer, which is an object whatever else it is,
-// or the operand of an intrinsic. Only Bun's own modules name an intrinsic, and their authors answer for its operands, as they do in plain Bun.
+// An operation that takes one kind of value has no form for any other.
 bool GenericVersionBuilder::assumeOperandKinds()
 {
     TypeArena& types = m_context.types;
@@ -949,8 +946,7 @@ void GenericVersionBuilder::insertAssumedTypes(std::span<const OperandOfOtherKin
     m_analyses.didChangeValues();
 }
 
-// The slot of an object is written without a test. storeUnprovenInitialValues() has dealt with what an allocation writes,
-// but for a field of which flow says that nothing outside its type is ever stored: that holds for the generic version too.
+// The slot of an object is written without a test. storeUnprovenInitialValues() has dealt with what an allocation writes, but for a field of which flow says that nothing outside its type is ever stored.
 static bool writesSlotOfObjectWithoutProof(const Program& program, const Value& value, uint32_t operandIndex)
 {
     switch (value.opcode) {
@@ -973,9 +969,7 @@ static bool writesSlotOfObjectWithoutProof(const Program& program, const Value& 
     }
 }
 
-// Flow follows what a check turns away through the same operations, so what it has proven of a position holds for the generic version too. The types there start from `anything` and know less:
-// `this.side * this.side` is number|bigint by its operands, and a number by all that flow has seen arrive.
-// A position that may take the very value that a check has turned away is not proven: the run of GuardTaintedPositions after flow sees to that. Where it has not, the store is left for the verifier.
+// Flow follows what a check turns away through the same operations, so what it has proven of a position holds for the generic version too.
 bool GenericVersionBuilder::assumeTypesOfProvenPositions()
 {
     TypeArena& types = m_context.types;
@@ -983,7 +977,6 @@ bool GenericVersionBuilder::assumeTypesOfProvenPositions()
     BitVector mayBeTurnedAway = computeValuesTurnedAway(m_function, m_analyses.cfg(), m_valuesTurnedAway.span());
     Vector<OperandOfOtherKind, 8> found;
     // A literal is born with the storage that fits the types of its elements: one whose element is not known to be a number gets the storage that holds everything.
-    // Flow has named the storage from all that it has seen arrive in the literal, and whoever takes the array at the position reads that storage without a test.
     BitVector literalsSeen;
     auto assumeElementsOfLiteral = [&](ValueID array, TypeID required) {
         const ClassPart* part = types.at(required).singleBuiltinClass();
@@ -1083,8 +1076,7 @@ void GenericVersionBuilder::finishTyping()
 bool GenericVersionBuilder::tryCreateGenericVersion()
 {
     uint64_t maxBlocks = m_context.limit(LimitID::MaxBlocksInGenericVersion);
-    // An access to a checked receiver runs unknown code in the copy alone: in the typed code it becomes a load. A copy that came back behind it would end there what the typed code knows about the heap.
-    // What the program hands to the modules of the run time fails their checks again and again. A check of the program's own seldom fails, and a join behind each call costs the typed code what it knows.
+    // An access to a checked receiver runs unknown code in the copy alone: in the typed code it becomes a load.
     bool comesBackBehindCalls = isLibraryCode(m_program, m_function);
     Vector<ProgramPoint> rejoinPoints = findRejoinPoints(m_analyses, [&](ValueID value) {
         if (!comesBackBehindCalls)
@@ -1157,7 +1149,6 @@ bool GenericVersionBuilder::tryCreateGenericVersion()
     }
 
     // A value of the copy that is live where the copy comes back gets a parameter at each join, and SSARepair looks at every block for each such value.
-    // The body of a very large function, which mostly makes closures once, is not worth that.
     uint64_t numberOfPlannedValues = 0;
     for (BlockID block : copy.plannedBlocks())
         numberOfPlannedValues += m_function.at(block).values.size();
@@ -1482,13 +1473,7 @@ static void appendIllTypedStores(const TypingContext& typing, FunctionID id, std
 
 namespace {
 
-// In flow every read of a property may answer undefined, also the read of a field that flow's results then call always filled. So `step(options.dt)` and `return this.mass` leave a parameter
-// and a result that are typed number only expected, with every caller seen. The types of the values know better: a parameter, a `this` or a result is proven where the type of all that arrives there fits.
-// All of them are taken to hold at first, which is what the types behind their checks say already. One that takes a value which does not fit, or which rests on a check that may still fail,
-// is given up, its own checks may fail from then on, and so on until nothing changes. The first value that breaks a type would have to be made by code for which all of them still hold.
-// A module variable and a field of an environment are proven the same way where every writer is an operation that names them: `pos = position`, `pos++` and `pos = savedPos` are all that `pos` ever takes.
-// Such a variable starts as `undefined`, which stays in its type for as long as a read may give it back to a store: `const saved = flags; .. flags = saved`. Where flow says that a store comes before every read,
-// nobody sees that `undefined`: the variable is first taken to hold its type without it, then its type, and only then is it given up.
+// In flow every read of a property may answer undefined, also the read of a field that flow's results then call always filled.
 class PositionsProvenByTypes {
     WTF_MAKE_NONCOPYABLE(PositionsProvenByTypes);
 public:
@@ -1720,8 +1705,6 @@ static bool isTypedWithoutOperands(const Function& function, const Value& value)
 namespace {
 
 // The types that values of a body have without its checks: what TypePropagation finds where every check and every cast behind one lets everything through and all that rests on a check starts over.
-// A body stores three values and rests on five checks with most of what it computes. So nothing is typed but what a value that is asked about is typed from, and of that only what rests on a check.
-// The types are written into the body itself, which is left as it was where this ends.
 class TypesWithoutChecks {
     WTF_MAKE_NONCOPYABLE(TypesWithoutChecks);
 public:
@@ -1928,8 +1911,7 @@ private:
 
 } // anonymous namespace
 
-// After flow only the very value that a check has turned away counts. Of what an operation makes of such a value, flow has seen all that there is: see assumeTypesOfProvenPositions().
-// The body is typed without its checks in `bodyToTypeInPlace`, which is the body itself and is left as it was, or else in a copy.
+// After flow only the very value that a check has turned away counts.
 static void collectTaintedStores(const Program& program, FunctionID id, Function* bodyToTypeInPlace, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, Vector<Position>& positions)
 {
     const Function& function = program.at(id);
@@ -2090,8 +2072,7 @@ static bool readsMarkedPosition(const Program& program, FunctionID id, const Rea
     });
 }
 
-// Which bodies read a position of an owner: a variable, the fields of a layout, the results of a function. Made once from the lists of reads, so that a round looks at the bodies that may read
-// what it has marked and not at every body of the program. It names a body that reads another position of the owner too: whoever asks goes on to the body's own list.
+// Which bodies read a position of an owner: a variable, the fields of a layout, the results of a function.
 class ReadersByOwner {
 public:
     ReadersByOwner(const Program& program, const ParallelLoops& loops, std::span<const ReadsOfBody> readsOfBodies)
@@ -2272,8 +2253,7 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
     }
     builder.applyInsertions();
 
-    // A check has the type that its read had, so most of what is typed from the read keeps its types, and nothing behind such a value needs a look. One kind of value is not typed as its rule types it:
-    // a Convert is typed and then becomes an Upcast with the types it has. The first typing that comes to such an Upcast moves what it is expected to be, and this one comes to all that is typed from a changed value.
+    // A check has the type that its read had, so most of what is typed from the read keeps its types, and nothing behind such a value needs a look.
     if (!analyses.cfg().hasCycle()) {
         BitVector isTypedFromChangedValue = computeTaintedValues(function, analyses.cfg(), changedValues.span());
         for (ValueID changed : changedValues)
@@ -2331,7 +2311,6 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
         {
             ProgramCaches caches(program, build);
             // No task reads the values of another task's body: typing a call reads the record of the callee.
-            // What the body reads is listed in the same visit, while the body is at hand: whoever is visited here is new or was edited in the round before.
             forEachIndexInParallel(loops, worklist.size(), [&](unsigned index) {
                 collectTaintedStores(program, worklist[index], &program.at(worklist[index]), build, run, proofs, storesByFunction[index]);
                 listReadsOf(worklist[index]);
@@ -2834,8 +2813,7 @@ bool PositionsProvenByTypes::solve()
             found.append(WTF::move(body));
     });
 
-    // What a body gives up hangs on the candidates that its links, its copies and its checks rest on, and on nothing else. So behind the first round a body is looked at again only when one of those was given up:
-    // the first two rounds give up nine candidates in ten, and seven more rounds went through all the bodies for the rest.
+    // What a body gives up hangs on the candidates that its links, its copies and its checks rest on, and on nothing else.
     struct BodyRestingOnCandidate {
         // Twice the number of the position, and one more for the candidate without its start.
         uint32_t candidate;

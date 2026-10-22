@@ -391,7 +391,6 @@ static bool allowsOnEveryExit(const FunctionSummaryView& summary, const Effects&
 }
 
 // A caller keeps what it has proven about the storage of an array across a call by the summary of the callee, and the summaries were made of the bodies without the conversions.
-// The parts of the summary are asked as summarizeBody() would fill them.
 static bool summaryAllowsConversion(FunctionPassContext& context, const FunctionSummaryView& summary, bool functionMaySuspend, ValueID array)
 {
     if (!allowsOnEveryExit(summary, effectsBesideConvertedArray))
@@ -460,8 +459,7 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
     return failedTests;
 }
 
-// The code behind a failing edge is generic as a rule and relies on no proof about an array. Where it comes back into typed code without another test,
-// a proof about an array that may be the converted one would no longer hold there.
+// The code behind a failing edge is generic as a rule and relies on no proof about an array.
 static void findConversionsEndingProofs(FunctionPassContext& context, Vector<PlacedConversion, 4>& conversions)
 {
     const Function& function = context.function;

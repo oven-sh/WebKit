@@ -22,8 +22,7 @@
 
 namespace JSC { namespace AOT {
 
-// Compiled code comes here for what it does not evaluate by itself: a module of the library, data, code outside the image, a module with work for a link below it,
-// a module that waits for a promise, and a module whose export "module.exports" is what require() answers.
+// Compiled code comes here for what it does not evaluate by itself.
 JSValue Modules::require(ModuleID target)
 {
     VM& vm = *m_instance.vm;
@@ -167,7 +166,6 @@ void Modules::setCommonJSExports(ModuleID module, JSValue exports)
 }
 
 // `bun run` gives the id "." to the first CommonJS file that its loader of ES modules fetches: the entry point, or the first such file in the graph of an entry point that is an ES module.
-// The CommonJS files of a graph stand in front of everything else that its root requests.
 std::optional<ModuleID> Modules::mainCommonJSModule() const
 {
     if (!m_firstModuleRequestedByHost)
@@ -241,7 +239,6 @@ JSValue Modules::requireFunction(ModuleID module)
 }
 
 // What only time knows, for a program that looks: which require() came to a module first, and which of the calls in functions and branches have run.
-// The objects that show it are made when somebody reads them, so nothing is allocated in the heap here.
 void Modules::recordRequire(ModuleID target, ModuleID referrer)
 {
     if (data(target).kind != ModuleKind::CommonJs) {
@@ -423,8 +420,7 @@ static ASCIILiteral nameOf(RequireOverride location)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A request that is resolved at run time asks the two functions, as under plain Bun. A `require` with a constant name is the module that the build has found, and asks nobody.
-// A loader for an extension would have to be handed the text of a module of the image, which is not there.
+// A request that is resolved at run time asks the two functions, as under plain Bun.
 void Modules::willChangeRequireOverride(RequireOverride location, bool isOverridden)
 {
     if (isOverridden && location == RequireOverride::Extensions)

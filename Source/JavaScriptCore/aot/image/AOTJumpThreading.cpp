@@ -303,9 +303,7 @@ static constexpr uint8_t prefixWithoutMeaning = 0x3e;
 static constexpr uint8_t prefixWithoutMeaning = 0;
 #endif
 
-// Tests in front of a body: where all of them pass, a jump to the body, which lies next. Behind that jump, out of the way, stands what a test that fails goes on with, and that ends in jumps to other functions.
-// With that part in front of the entry the jump to the body is the last instruction, and a jump to what lies next is not needed.
-// Returns by how much the entry, and a head that lies in front of it, have moved.
+// Tests in front of a body: where all of them pass, a jump to the body, which lies next.
 static uint32_t endInJumpToNextBody(CompiledCode& code, FunctionID next)
 {
     CodeBody& body = code.body;
@@ -316,8 +314,7 @@ static uint32_t endInJumpToNextBody(CompiledCode& code, FunctionID next)
         return 0;
     uint32_t endOfJump = safeCast<uint32_t>(jump.offset + sizeOfJump);
     uint32_t sizeBehindJump = safeCast<uint32_t>(body.bytes.size()) - endOfJump;
-    // The entry of the entrance and the entry of the body are both aligned. Where the tests between them have an odd size, the missing byte is a prefix without meaning
-    // on the first instruction, which costs nothing, and not an instruction more behind the last.
+    // The entry of the entrance and the entry of the body are both aligned.
     uint32_t sizeOfPrefix = 0;
 #if CPU(X86_64)
     static_assert(imageFunctionAlignment == 2);

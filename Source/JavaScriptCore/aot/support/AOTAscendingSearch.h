@@ -12,9 +12,7 @@
 
 namespace JSC { namespace AOT {
 
-// What std::upper_bound answers, as an index: the first element that the key lies before, or the size of the list. For keys that mostly ascend.
-// The search begins at `position`, where the last search in the same list ended, and leaves its answer there. An answer that lies n elements further on takes about 2 log n comparisons,
-// and one that lies further back a search through all that lies in front of `position`.
+// What std::upper_bound answers, as an index: the first element that the key lies before, or the size of the list.
 template<typename T, typename Key, typename IsBefore>
 size_t upperBoundFrom(size_t& position, std::span<const T> ascending, const Key& key, const IsBefore& isBefore)
 {

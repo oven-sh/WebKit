@@ -48,7 +48,6 @@ public:
     // Only the engine stores a brand. What it stores is a class token, which is no JavaScript value, so no type describes it.
     bool fieldAccepts(const FieldData& field, JSValue value) const { return field.isBrand() || valueHasType(typeOf(field), value); }
     // A slot holds undefined or null wherever it has a marker for it, whatever the type of its field says.
-    // The slot of an accessor field takes a GetterSetter whose getter has the type of the field and nothing else, which accept() sees to.
     bool slotAdmits(const FieldData& field, JSValue value) const
     {
         if (field.isAccessor())
@@ -108,7 +107,6 @@ private:
     const ProgramTables& m_tables;
     CachedField* m_cachedFields { nullptr };
     // By the index of a layout plus one: where each name of a wide layout lies among its fields, made at the first lookup of a name without a column.
-    // Columns go to the names that compiled code looks up. The fields of a well typed object are read by their slots, so only a copy or a listing asks for them by name.
     UncheckedKeyHashMap<uint32_t, Vector<uint16_t>> m_fieldsByName;
     // By the index of a layout plus one.
     UncheckedKeyHashMap<uint32_t, BodyAtBirth> m_bodiesAtBirth;

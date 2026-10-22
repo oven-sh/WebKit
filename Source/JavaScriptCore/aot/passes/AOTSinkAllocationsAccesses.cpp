@@ -454,8 +454,7 @@ bool ObjectInterpreter::fitsTypeWithoutCasts(VirtualObjectID object, TypeID type
     return fitsWithoutCasts(m_sinking, object, *state, type);
 }
 
-// A block parameter that carries the cell of a join has the type of the join. A test or a cast that was interpreted on the
-// virtual object may have given an alias a narrower one.
+// A block parameter that carries the cell of a join has the type of the join.
 void ObjectInterpreter::assumeTypeOfAlias(VirtualObjectID object, TypeID type)
 {
     if (!isWithin(program(), typeOfCell(m_sinking, object), type))

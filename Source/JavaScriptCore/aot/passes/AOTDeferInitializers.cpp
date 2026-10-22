@@ -87,7 +87,6 @@ struct VariableFacts {
 
 struct ScanContext {
     // Whether the body of the one module has run to its end when the body of the other begins: the other imports it, directly or not, and no circle of imports holds both.
-    // What a module requires runs where the `require` stands, if it runs at all.
     bool hasRunBefore(ModuleID finished, ModuleID beginning, BitVector& importedByBeginning) const;
 
     const Program& program;
@@ -1385,7 +1384,6 @@ bool MovableCode::definitionByDescriptorMayMove(FunctionAnalyses& analyses, cons
 }
 
 // What the records say of the memory that a built-in touches does not tell the clock, the random numbers or the stack of calls from bookkeeping.
-// These answer by their operands and by what the operands hold, and leave a trace nowhere else.
 bool MovableCode::dependsOnOperandsAlone(const BuiltinOverload& overload) const
 {
     static constexpr BuiltinID builtins[] = {
@@ -1976,8 +1974,7 @@ void BodyScanner::noteWhatVariablesHold()
     }
 }
 
-// An object that several operations take ties them together, and one of them that stays keeps them all. With a variable of its own, those that do not look into it,
-// or look into what never changes, only read that variable.
+// An object that several operations take ties them together, and one of them that stays keeps them all.
 void BodyScanner::noteWhatAddedVariablesMayHold()
 {
     for (uint32_t index = 0; index < m_items.size(); ++index) {
@@ -1999,7 +1996,6 @@ void BodyScanner::noteWhatAddedVariablesMayHold()
 }
 
 // A constant, a read of a variable that holds one value, and a cast of either.
-// The test for the dead zone of a variable that is stored once stays where it is. Behind it the variable holds its value for good.
 bool BodyScanner::givesTheSameWheneverDone(ValueID id) const
 {
     for (;; id = m_function.at(id).operand(0)) {

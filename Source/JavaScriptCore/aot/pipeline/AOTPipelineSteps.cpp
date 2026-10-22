@@ -536,8 +536,7 @@ void Pipeline::collectRegExpsAndElideStackChecks(const CallGraph& callGraph)
         m_output->startCompilingRegExps(m_program, m_build);
 }
 
-// Of a placement, the choice of representations asks for slots, for the field access of an operation and for the statics. All else that is numbered reads no body,
-// much of it on one thread: it is numbered beside the loop that chooses. The words that wait for it are written behind both.
+// Of a placement, the choice of representations asks for slots, for the field access of an operation and for the statics.
 void Pipeline::numberBesideChoosingRepresentations(NOESCAPE const ScopedLambda<void(ASCIILiteral)>& didFinish)
 {
     bool wasRunning = !m_runner.isStopped();

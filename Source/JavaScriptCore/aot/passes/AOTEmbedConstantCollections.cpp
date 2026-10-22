@@ -23,7 +23,9 @@
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
+#include "ArrayConventions.h"
 #include "PureNaN.h"
+#include "Structure.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -267,8 +269,6 @@ static bool isNeverStoredInto(const FlowResults& flow, const Value& allocation)
 }
 
 // The arrays of a literal of constants that the optimizer has left in the heap, and that no store of the program reaches, are cells around one storage: it lies in the image unless it holds strings.
-// Whoever writes to one all the same, native code or code that nobody has seen, gets a copy of the storage first.
-// The readers of the arrays, here and elsewhere, go by the kind of storage that the literal would have allocated.
 static std::optional<DataNode> tryReadUnwrittenLiteral(const AnalysisContext& context, const Function& function, const Value& literal)
 {
     if (literal.storage() != AllocationStorage::Heap || literal.capacityOperand() || !literal.holes().empty() || !context.flow || !isNeverStoredInto(*context.flow, literal))
@@ -296,8 +296,7 @@ static bool namesGuard(const auto& user)
     return result;
 }
 
-// What completes a literal, the elements behind a spread for one, is no store for flow. It writes to the storage that the literal has allocated.
-// A guard on an array, and the literal as a guard, last across unknown code while nothing else holds the array. That is known of a literal and not of constant data.
+// What completes a literal, the elements behind a spread for one, is no store for flow.
 static bool hasToStayLiteral(FunctionAnalyses& analyses, ValueID literal)
 {
     const Function& function = analyses.function();
@@ -363,9 +362,6 @@ public:
     }
 
     // `{ "+1": "a", smile: "b", .. }` where the type names no keys: an ordinary object that is filled name by name behind its allocation.
-    // Nobody else has the object while it is filled, and a definition on it runs no code: what is defined with constants may as well be there from the start.
-    // The first member that is no constant ends what is taken, so the names keep their order: compiled code makes a list or a record in fewer instructions than the run time does from data.
-    // An index is listed in front of every name whenever it is defined: its definition stays where it is.
     std::optional<DictionaryLiteral> tryReadDictionary(ValueID dictionary)
     {
         ValueLocation location = m_analyses.useLists().locationOf(dictionary);
@@ -750,8 +746,6 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
 }
 
 // Objects with the same names in the same order share their Structures: the first pays for them, and a place that reads a name from all of them finds one Structure there.
-// An object from data has a Structure of its own. So the literal is taken where nothing would be shared: it is made once and no other literal of the program has its names,
-// or it has more names than a line of Structures may have, and the engine would make the object a dictionary on the way.
 static void keepDictionariesThatShareNothing(Vector<FunctionSites>& found)
 {
     UncheckedKeyHashMap<uint64_t, Vector<const DictionaryLiteral*, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> literalsByNames;

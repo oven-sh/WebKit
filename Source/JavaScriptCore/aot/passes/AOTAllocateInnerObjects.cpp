@@ -80,7 +80,6 @@ bool runsAtMostOneOf(const CFG& cfg, BlockID blockOfObject, std::span<const Bloc
 }
 
 // A result of a function that is, at every return, an object that this activation has made and that no allocation of the function has listed on the way there.
-// So a caller may treat the result of a direct call as an object of its own making.
 struct FreshResult {
     FunctionID function;
     uint32_t index { 0 };
@@ -685,7 +684,6 @@ BitVector findLayoutsMadeOtherwise(const Program& program, BuildContext& build)
         bool mayCopy = mayHoldValueWith(program, FunctionID(index), { Opcode::CopyObject });
         forEachListedValue(program, FunctionID(index), mayCopy ? mayMakeOrCopyObjects : mayMakeObjects, [&](BlockID, uint32_t, ValueID id, const Value& value) {
             // The copy of a record has the layout of the record, a cell of its own, and in its fields what the fields of the record hold.
-            // The run time makes no such copy of a record whose layout is not found here: LayoutData::holdsInnerObjectsInPlace.
             bool narrowsCopy = value.opcode == Opcode::AssumeType && function.at(value.valueOperand()).opcode == Opcode::CopyObject;
             if (value.opcode == Opcode::CopyObject || narrowsCopy) {
                 if (LayoutSetID copied = program.typeOf(function, narrowsCopy ? id : value.sourceOperand()).layouts) {

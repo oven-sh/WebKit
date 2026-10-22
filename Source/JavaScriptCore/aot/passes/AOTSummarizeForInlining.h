@@ -110,8 +110,7 @@ public:
     bool contains(FunctionID id) const { return id.index() < m_summaries.size(); }
     const InliningSummary& of(const Program&, FunctionID id) const LIFETIME_BOUND { return contains(id) ? m_summaries[id.index()] : m_unknown; }
     bool neverReturns(const Program& program, FunctionID id) const { return of(program, id).neverReturns; }
-    // What returnsFreshAggregate() says of a function that can be inlined. The answer takes an escape analysis of the body, and the inliner asks about few functions:
-    // it is made at the first question, once, whichever thread asks. For a program whose bodies are as they were when the summaries were made.
+    // What returnsFreshAggregate() says of a function that can be inlined.
     bool returnsFreshAggregate(const Program&, FunctionID) const;
 
     void dump(PrintStream&, const Program&) const;

@@ -18,7 +18,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // The rewrites of these rules write the root, what they have made themselves and the branch that takes a copy of the root, and ask for no analysis meanwhile.
-// All of that stands in blocks that the rewriter and the session name, so the use lists outlive the session.
 static constexpr bool writesOnlyNamedBlocks(SelectionRuleID rule)
 {
     switch (rule) {

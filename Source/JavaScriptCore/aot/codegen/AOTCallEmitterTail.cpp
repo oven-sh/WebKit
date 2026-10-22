@@ -107,9 +107,7 @@ bool CallEmitter::hasStackWordsOfCaller(uint32_t numberOfWords) const
     return !numberOfWords || (hasStackArgumentAreaOf(m_function.role) && numberOfWords <= inputs().conventions.stackWordsReservedByCallersOf(m_program, m_id));
 }
 
-// The check is the poll of a cycle of tail calls. Callers cover only what is in no cycle. An entrypoint that leaves its check to its callees enters functions
-// with a check of their own, and a cycle goes on from there through one of their tail calls. Where a poll is one load that faults, a tail call on a path without
-// a frame polls with that load and sets up none, unless what it enters leaves its check to its callers.
+// The check is the poll of a cycle of tail calls.
 void CallEmitter::didEmitTailCall()
 {
     if (inputs().stackChecks.of(m_id) == StackCheck::Required)
@@ -232,7 +230,6 @@ void CallEmitter::tailCallByConvention(const OperationContext& context, const Co
 }
 
 // The stub that calls finds out too late that there is nothing to call: the frame that the error names is gone by then.
-// Only fast code knows every kind of function in line. Elsewhere a closure that is as it was created passes in line, and the stub knows the others.
 void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context, Boxed callee)
 {
     ClosureTestEmitter& closures = emitter<ClosureTestEmitter>();

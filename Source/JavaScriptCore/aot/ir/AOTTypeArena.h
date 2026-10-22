@@ -255,10 +255,7 @@ public:
         return SharedTypeMemo::keyOf(relation, first, second);
     }
 
-    // What `compute` answers. With a key, the answer follows from the key and from what that kind of answer may follow from, whichever arena computes it.
-    // The memo takes an answer only where this arena gave nothing of its own to the computation: no record that the table does not hold for good, and nothing out of a memo,
-    // which says no more what it left behind when it was filled. Every other arena would then have found the same ids in the table,
-    // so whoever finds the answer in the memo has missed no first use of a record.
+    // What `compute` answers.
     TypeID sharedAnswer(SharedAnswers answers, std::optional<SharedTypeMemo::Key> key, NOESCAPE const Invocable<TypeID()> auto& compute)
     {
         SharedTypeMemo* shared = key ? m_table.sharedMemo(answers) : nullptr;
@@ -278,8 +275,7 @@ public:
         return answer;
     }
 
-    // The answers that are being computed stay with this arena, because there is more to computing them than they show:
-    // something was reported, or a memo of the caller's stood in for work that may have left records here.
+    // The answers that are being computed stay with this arena, because there is more to computing them than they show: something was reported, or a memo of the caller's stood in for work that may have left records here.
     void markCurrentAnswersUnshareable() { ++m_unshareableEventCount; }
     // It stands still while this arena gives nothing of its own to what is computed, as for sharedAnswer().
     uint64_t unshareableEventCount() const { return m_unshareableEventCount; }

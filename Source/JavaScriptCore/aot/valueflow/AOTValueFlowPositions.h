@@ -25,8 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class TypeArena;
 
-// Only the start of a location puts `absent` into its set. No read sees it where a store comes before every read.
-// A variable of `var` starts as `undefined` instead, which a store may put there as well: the last one says that none does.
+// Only the start of a location puts `absent` into its set.
 enum class DeadZone : uint8_t { MayBeObserved, IsNeverObserved, UndefinedAtStartIsNeverObserved, UndefinedAtStartMayBeObserved };
 
 enum class ValueFlowProof : uint8_t {
@@ -73,8 +72,7 @@ struct ValueFlowSharedTypeOfSet {
     Type withoutLayoutsAndInstances;
     // Sorted, each once.
     Vector<LayoutID> layouts;
-    // The instances of built-in classes after which the union says something else than before, ascending. A union of contents interns types, and the order in which a task interns decides the numbers of the types
-    // of the program. So every task makes these unions again: its arena is asked for the same types in the same order as by a walk over all the members. The union with any other instance asks for a type that is there.
+    // The instances of built-in classes after which the union says something else than before, ascending.
     Vector<Instance> instances;
     // How many of them come before the first member that makes the type any object.
     uint32_t numberOfInstancesBeforeAnyObject { std::numeric_limits<uint32_t>::max() };
@@ -145,9 +143,7 @@ struct ValueFlowLayoutsOfSites {
 // It walks every object, every statement and every node on one thread. It reads the program and the solution alone, so it is the same for all the steps behind one solve.
 ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs&);
 
-// The one reader of the sets of positions, of values and of operands. Nothing else lists, counts or compares the members of such a set: a raw set may hold a placeholder, and may or may not list what that placeholder covers.
-// The set of an operand is what ValueFlowResultInputs::valueOf() answers.
-// The subject of the switches is the variable, the layout or the function that the positions belong to.
+// The one reader of the sets of positions, of values and of operands.
 class ValueFlowPositions {
     WTF_MAKE_NONCOPYABLE(ValueFlowPositions);
 public:
@@ -160,7 +156,6 @@ public:
     ValueSetMaker& maker();
 
     // The primitives of the family are taken on trust, and the proof speaks for the objects.
-    // The numbers, where given, bound the numbers among the values that arrive.
     ValueFlowPositionResult resultAt(const Type& family, ValueSetID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
     // Nothing checks an expected position: there the proof speaks for the primitives too.
     ValueFlowPositionResult resultAt(const DeclaredType&, ValueSetID, DeadZone = DeadZone::MayBeObserved);

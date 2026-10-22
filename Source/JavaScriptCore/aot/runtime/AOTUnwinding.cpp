@@ -231,8 +231,7 @@ bool isCaughtByCompiledCode(VM&, CompiledFrameIterator frames)
     return !saved || saved->kind() == CoroutineKind::AsyncFunction;
 }
 
-// Asked before every error of a throw site is created. It looks at the frames in the order of unwindCompiledFrames, which stops at the same one
-// and asks the call site cache about the same return addresses: what this walk puts into the cache, that one finds there. False is always right.
+// Asked before every error of a throw site is created.
 bool nearestHandlerIgnoresValue(VM& vm, const Instance&, CallFrame* stubFrame)
 {
     const VMState& state = vm.aotState();

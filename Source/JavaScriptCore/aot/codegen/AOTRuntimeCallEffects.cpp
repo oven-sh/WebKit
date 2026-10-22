@@ -56,7 +56,6 @@ static bool mayBeAddressInFrame(const B3::Value* value, unsigned depth)
 }
 
 // What a cell is never changes, so no effect speaks of the words that say it, and a function that only asks what it was given has no effects at all.
-// A cell in the frame gets those words from stores of this procedure, at an address that is the same in every round of a loop: nothing else would keep B3 from moving the call in front of them.
 void RuntimeCallEmitter::keepBehindBirthOfFrameCells(B3::PatchpointValue* patchpoint)
 {
     constexpr unsigned maxDepth = 3;
@@ -108,7 +107,6 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
         break;
     }
     // B3 takes the reads of a value that exits sideways as everything that is read after the exit.
-    // A list of heaps given to the repository would replace this set when the ranges are computed.
     if (exitsSideways)
         patchpoint->effects.reads = B3::HeapRange::top();
     else if (!reads.isEmpty())

@@ -149,8 +149,7 @@ bool flattenOnce(VM&, JSObject*);
 
 enum class OutOfLineStorageChange : uint8_t { Unsupported, Stays, IsFirst, Doubled, GrowsBesideIndexingHeader };
 
-// A literal adds its properties at once, and their Structure comes behind that of the empty object. Whoever adds the same names one by one gets there with the last of them, by an alias in the table of the Structure in front:
-// what the Structure lists is what the chain in front of the addition lists and this name behind it, at the offsets that the chain would have given.
+// A literal adds its properties at once, and their Structure comes behind that of the empty object.
 bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);
 
 // leadsToStructureOfRun: isLastAdditionOfRun() holds, so the Structure does not name the one in front of the addition as its predecessor.

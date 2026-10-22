@@ -23,6 +23,7 @@
 #include <compare>
 #include <optional>
 #include <tuple>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

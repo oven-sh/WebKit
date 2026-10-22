@@ -30,8 +30,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A method of arrays that is called on a list which the program writes out for that call alone. Nobody else ever has the list, so it is what its literal says.
-// So is a list of constants that a variable of a module holds for good and that nothing ever changes.
+// A method of arrays that is called on a list which the program writes out for that call alone.
 
 namespace {
 

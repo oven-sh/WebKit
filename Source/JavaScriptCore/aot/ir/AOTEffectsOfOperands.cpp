@@ -236,7 +236,6 @@ static bool isFreeOfSettersAndTraps(const Type& operand)
 }
 
 // An array makes a number of what is stored as its length, and a typed array of what is stored under an index.
-// A host class inherits native setters, which no pristine aspect speaks of, and each makes a string or a number of what it takes.
 static bool convertsStoredValues(const BuiltinTable& table, BuiltinClassID builtinClass)
 {
     return table.isSameOrSubclassOf(builtinClass, BuiltinClasses::Array)
@@ -936,8 +935,7 @@ static OperandSummary summarizeCallOperand(const EffectContext& context, const T
 
     CalleeList callees = calleesOfCall(context.program, call);
     bool isCalledValue = behavior.uses.containsAny(callingUses);
-    // Only a function that takes its callee gets hold of the closure it is entered through. Whoever made the closure knows its function, and applies what that does
-    // with its callee and its captures wherever the closure is called. A construction hands the called value on as new.target.
+    // Only a function that takes its callee gets hold of the closure it is entered through.
     if (isCalledValue && call.opcode == Opcode::Call && !callees.isComplete)
         return summarizeDeclaredUses(behavior);
     if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode))

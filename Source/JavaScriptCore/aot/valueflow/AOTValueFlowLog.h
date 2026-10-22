@@ -29,7 +29,6 @@ enum class ValueFlowMadeNodeKind : uint8_t {
     // Holds the objects that have one mark.
     Marked,
     // Holds all that is written through a set under the names of one kind; hands on to all that is read through a set under the names of one kind.
-    // Names of different kinds that may be the same meet here, so a read of every property is linked set by set and not name by name.
     WrittenUnderKind,
     ReadUnderKind,
     // What a node of a body holds for some of the calls of its function, and the markers of those calls: see ValueFlowInstancedFunctions.
@@ -82,9 +81,7 @@ struct ValueFlowNodeKey {
     static ValueFlowNodeKey hub(ValueFlowBehaviorID behavior) { return { ValueFlowMadeNodeKind::Hub, 0, behavior.index(), { } }; }
     static ValueFlowNodeKey masked(ValueFlowNodeID node, ValueSetID mask, ValueFlowMaskKind kind = ValueFlowMaskKind::Plain) { return { ValueFlowMadeNodeKind::Masked, static_cast<uint8_t>(kind), node.index(), mask }; }
     static ValueFlowNodeKey marked(ObjectMutation mutation) { return { ValueFlowMadeNodeKind::Marked, 0, static_cast<uint32_t>(mutation), { } }; }
-    // Two marks that only rules ask after; no result reads them. Their payloads lie above those of the mutations.
-    // The objects of the program that are more than their properties: somebody has written an accessor, a deletion, another form of a property or a copy through a set that lists them,
-    // or has given them the mark DeleteField, RedefineProperty or ChangePrototype. No placeholder: see ValueFlowRuleContext::isPlainSoFar().
+    // Two marks that only rules ask after; no result reads them.
     static ValueFlowNodeKey objectsThatAreNotPlain() { return { ValueFlowMadeNodeKind::Marked, 0, 1u << 16, { } }; }
     // Those through which somebody has stored or defined under a key that the analysis does not know.
     static ValueFlowNodeKey objectsWrittenUnderUnknownKey() { return { ValueFlowMadeNodeKind::Marked, 0, (1u << 16) + 1, { } }; }
@@ -127,8 +124,7 @@ inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first)
     return { at(0), at(1), at(6), at(2), at(5), at(3), at(4) };
 }
 
-// What the rules that one thread has run in one round have added. Nothing in it depends on what the other threads did.
-// Most nodes that no earlier turn has made are made where a rule asks for them: ValueFlowSolver::makeNodesWhereAskedFor(). One that is not gets a number of the log's own, and its number in the graph at the end of the turn.
+// What the rules that one thread has run in one round have added.
 class ValueFlowRoundLog {
     WTF_MAKE_NONCOPYABLE(ValueFlowRoundLog);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowRoundLog);
@@ -146,7 +142,6 @@ public:
     };
 
     // Numbers in a row that are this thread's to give, so that no two threads take theirs from one counter or write side by side, and what one statement asks for stands in a row.
-    // What is left of them at the end of a turn is given in the next one.
     struct NumbersToGive {
         uint32_t next { 0 };
         uint32_t end { 0 };

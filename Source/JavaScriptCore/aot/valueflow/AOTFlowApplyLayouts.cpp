@@ -241,8 +241,7 @@ static Vector<TypeOfPlaceholder> findTypesOfPlaceholders(const Program& program,
     return found;
 }
 
-// A store is tested against the type of the field. The run time fills the members of constant data without a test,
-// so a field that data fills with a value outside the type that the families declare does not take that type.
+// A store is tested against the type of the field.
 static void dropTypesThatDataLiesOutside(const Program& program, const Vector<FlowLayoutUpdate>& updates, Vector<Vector<std::optional<Type>>>& types)
 {
     auto baseOf = [&](LayoutID id) {
@@ -277,8 +276,7 @@ static void applyTypeDeclaredInFamily(const Program& program, TypeArena& arena, 
         return;
     const Type& proven = program.at(field.declared.type);
     bool fitsDeclaredType = proven.isSubsetOf(declared->withPrimitives(Primitive::Absent), program);
-    // Nothing is ever stored that lies outside `anything`. So where all writers are known and what they store is not proven, that says nothing against the type that the families declare:
-    // the field takes it, and a store is tested against it, as where the writers are not known.
+    // Nothing is ever stored that lies outside `anything`.
     if (field.flow.stability.contains(FieldStability::IsNeverStoredWithOtherType)) {
         if (fitsDeclaredType)
             return;

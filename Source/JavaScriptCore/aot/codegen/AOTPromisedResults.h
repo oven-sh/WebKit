@@ -17,8 +17,6 @@ namespace JSC { namespace AOT { namespace Typed {
 class CallingConventions;
 
 // The type of a result is declared, and nothing checks what the rare paths of a function return, so every caller tests what it gets.
-// A function that promises its result tests for itself what it cannot prove, on the paths that return it. What fails leaves through the stub ReturnMisfit,
-// which goes on at the landing that the call site has for it. So a return says that the result has the type, and a caller that relies on it tests nothing.
 class PromisedResults {
 public:
     PromisedResults() = default;

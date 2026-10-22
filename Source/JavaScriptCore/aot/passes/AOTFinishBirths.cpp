@@ -35,8 +35,7 @@ static_assert(OperandIndex::PutSlot::object == OperandIndex::PutSlotOrAdd::objec
 
 namespace {
 
-// An object is born with the mark that its fields are not all stored. Behind the store by slot that fills the last of the fields that every constructor fills, the mark is taken off
-// if no other code has run since somebody else could reach the object. Otherwise the run time looks at the slots: there, before other code may see the object, and where the object leaves.
+// An object is born with the mark that its fields are not all stored.
 class BirthFinisher {
 public:
     explicit BirthFinisher(FunctionPassContext& context)
@@ -273,8 +272,7 @@ private:
         return result;
     }
 
-    // The constructor of the parent class has run in front of the initializer of a derived class. Every layout of `this` is the class of the initializer or lies below it,
-    // so one without a parent is that class.
+    // The constructor of the parent class has run in front of the initializer of a derived class.
     bool initializerMayMeetObjectSeenByOthers() const
     {
         LayoutSetID layouts = m_function.thisType.type ? m_context.types.at(m_function.thisType.type).layouts : LayoutSetID();

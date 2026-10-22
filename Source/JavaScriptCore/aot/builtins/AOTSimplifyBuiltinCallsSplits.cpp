@@ -34,8 +34,7 @@ struct LastPiece {
 
 } // anonymous namespace
 
-// split takes its matches from the left, each after the end of the one before: "a:::b" split at "::" ends in ":b". The last match is the last occurrence only where no two occurrences overlap,
-// which is where no proper prefix of the separator is also its suffix.
+// split takes its matches from the left, each after the end of the one before: "a:::b" split at "::" ends in ":b".
 static bool canOverlapItself(StringView separator)
 {
     unsigned length = separator.length();

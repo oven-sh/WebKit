@@ -159,8 +159,7 @@ static RenumberedSites renumberSites(const CodeRecords& records, LinkBuffer& lin
         return recorded[recordedNumber - 1];
     };
 
-    // One operation of the program is often several calls in a row. A return address that says nothing but what the one in front of it says shares its site:
-    // the image finds the site at or in front of a return address.
+    // One operation of the program is often several calls in a row.
     struct LastSite {
         const RecordedSite* record { nullptr };
         const SiteLandingPad* landingPad { nullptr };

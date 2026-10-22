@@ -504,7 +504,6 @@ void BuiltinCells::didCreateMember(JSObject* holder, UniquedStringImpl* key, JSO
 }
 
 // A host creates some of its objects at their first use, by code the program can observe: it loads a module, or sets up the queue behind process.nextTick.
-// Such a cell waits for its first use, and a value for its first read.
 void BuiltinCells::fillCellsOfEngine()
 {
     const BuiltinTable& table = BuiltinTable::singleton();

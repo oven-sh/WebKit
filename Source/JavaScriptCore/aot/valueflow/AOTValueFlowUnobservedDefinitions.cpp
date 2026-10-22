@@ -440,7 +440,6 @@ static bool returnsOnlyConstructedObject(const Program& program, BuildContext& b
 }
 
 // Whether super() in the constructor of the class hands back an ordinary object that was allocated for this construction, as long as the class keeps its declared parent.
-// Anything else may be a proxy, may be non-extensible or may have been through this initializer before: a definition on it can run code or throw.
 static bool superReturnsNewObject(const Program& program, BuildContext& build, LayoutID classLayout)
 {
     LayoutID current = classLayout;

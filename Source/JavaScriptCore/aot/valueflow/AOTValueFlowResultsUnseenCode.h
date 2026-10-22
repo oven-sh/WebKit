@@ -14,9 +14,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // The events of the solved program, in the order of the program: each operation of a reached function that lets in code the build has not seen, or that names a module at run time.
-// Behind them, in the order of the table, each built-in whose application is an event and that is applied where no operation spells the call out: as a callback or an accessor, through a built-in that passes the call on,
-// or by a caller that nobody follows, because it has escaped or the analysis has stopped following it.
-// A call of `callee` loads machine code: an N-API addon, a library, or C that bun:ffi compiles on the spot. `named` is what a program names to get there.
 struct LoaderOfMachineCode {
     BuiltinID callee;
     BuiltinID named;
@@ -39,8 +36,7 @@ bool unseenCodeHasLoader(const ValueFlowSolution&);
 bool modulesAreLoadedByName(const ValueFlowSolution&);
 // A load of the program's own takes a name that nobody knows. Nothing else names a file of the program: the run time refuses evaluated text an import(), and code from outside the image the files of the image.
 bool filesOfProgramAreLoadedByName(const ValueFlowSolution&);
-// In ascending order. Code that nobody compiles holds the closure of each of these through what a module of the library exports, and the solve has not let that code call it.
-// Such a function is in the image only if something else enters it, so a call of it by value may throw the error of a function that was not compiled.
+// In ascending order.
 Vector<FunctionID> functionsHeldButNotCalled(const ValueFlowSolution&);
 
 } } } // namespace JSC::AOT::Typed

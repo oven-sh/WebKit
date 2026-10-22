@@ -35,8 +35,6 @@ struct ProgramSymbol {
 };
 
 // The identifiers that are no atoms of the image, by number: symbols and private names, which are made at run time, and the empty text, whose atom is the engine's.
-// The entry of a number is at entries[number & mask] or behind it, in front of the first entry that is not in use. At most half of the mask + 1 places are taken,
-// and half as many entries again follow them, so that a search never has to go back to the start.
 struct ProgramSymbols {
     static constexpr uint32_t numberOfEntriesFor(uint32_t numberOfPlaces) { return numberOfPlaces + numberOfPlaces / 2 + 1; }
 

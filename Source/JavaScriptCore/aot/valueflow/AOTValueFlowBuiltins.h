@@ -32,7 +32,6 @@ struct ValueFlowBuiltinCall {
     // The operation that spells the call out. None for what all calls of one set of callees share, and for a call by native code.
     const ValueFlowStatement* operation { nullptr };
     // The built-in is one of many that the callee may be, and whoever applies it lets the operands escape and answers the unknown value, which is all that a row could say of them.
-    // Left to say: that the built-in runs, and whether it calls a value nobody knows.
     bool saysOnlyWhatIsCalled { false };
 };
 
@@ -58,20 +57,15 @@ inline ValueFlowName cellOfDroppedResults(const BuiltinTable& builtins)
 ValueFlowNodeID nodeWrittenToNativeCell(ValueFlowRuleContext&, BuiltinName cell);
 ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext&, BuiltinName cell);
 
-// What native code does where no call of a built-in is under way. What it allocates for that is the second object of the built-in on whose behalf it acts.
-// With a value that it got hold of by itself: an export of a module of the library, the object of a function of the library, what a call of its own answered.
+// What native code does where no call of a built-in is under way.
 void applyHostUses(BuiltinID onBehalfOf, const ValueFlowOperand& value, const BuiltinHostUses&, ValueFlowRuleContext&);
 void callFromHost(BuiltinID onBehalfOf, const ValueFlowOperand& callees, const BuiltinHostCall&, ValueFlowRuleContext&);
 
 // The records of the overload say what a call does with each operand and what it answers.
 bool doRecordsDescribe(const BuiltinTable&, const BuiltinOverload&);
-// A function of the library that runs only for calls which the records of a built-in or a model describe: the code behind such built-ins, what is written inside it,
-// and the traversal that FuseArrayChains puts in the place of such calls. What it does with the operands of a call is applied where the call is.
-// A call that no overload declares (`Array.from.call(List, items)`) enters the code with its own operands, and says itself what an operand nobody knows among them means.
+// A function of the library that runs only for calls which the records of a built-in or a model describe: the code behind such built-ins, what is written inside it, and the traversal that FuseArrayChains puts in the place of such calls.
 bool standsBehindDescribedBuiltins(const Program&, FunctionID);
-// What stands in the key of a group for a callee nobody knows that such code calls, by itself or through a built-in that it applies. It is an operand of a call that records describe:
-// they say where that call is what is called with what, also that code runs which nobody compiles. So the group lets its operands escape, answers a value nobody knows, and raises nothing.
-// No value holds the object: nothing applies the entry whose second object it is before the passes run.
+// What stands in the key of a group for a callee nobody knows that such code calls, by itself or through a built-in that it applies.
 ValueFlowObjectID calleeOfDescribedCall(const ValueFlowUniverse&);
 // Such a function, or a function that only such functions can name: one that its file does not export, in a file of the library where every function that the table names is such a function.
 bool isCodeThatRecordsDescribe(const ValueFlowUniverse&, FunctionID);
@@ -83,16 +77,13 @@ bool bindsNoArgument(const Program&, const ValueFlowUniverse&, ValueFlowObjectID
 // Such a target goes through a group of callees all the same: see applyEventsOfCall().
 bool raisesEventWhenCalled(const BuiltinTable&, BuiltinID);
 
-// `new Object(value)` answers the value or wraps it. Where new.target is another function than Object itself, the language ignores the value and makes an ordinary object below what new.target has as
-// `prototype`: `class Below extends Object { constructor(value) { super(value) } }`, Reflect.construct(Object, [value], Other). The rows of the table tell the operands apart and have no word for new.target.
-// Answers the overload that holds for another new.target whatever is passed, and none for any call but a construction of Object.
+// `new Object(value)` answers the value or wraps it.
 BuiltinOverloadID overloadForAnotherNewTarget(const BuiltinTable&, BuiltinID, ValueFlowCallKind);
 // What the entries do not say about iteration. next, return and throw of a built-in iterator or a generator answer what that object hands out: true where the call is one of these, and the entry is then not applied.
 bool applyStepOfBuiltinIterator(BuiltinID, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 // The iterator that a call makes over its receiver hands out what the receiver holds.
 void holdContentsIteratedByResult(BuiltinID, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 // `new Promise(executor)`: the promise and the function that resolves it are objects of the call, where the constructor of the library would make one promise for the whole program.
-// True where the call is one, and the entry is then not applied.
 bool applyConstructionOfPromise(BuiltinID, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 // A call of what may be a function that was made for the executor of a promise.
 void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
@@ -100,13 +91,11 @@ void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall&, V
 void adoptRejectionOf(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID reason);
 // `call` is a Call, CallList, Construct, ConstructList, SuperConstruct or SuperConstructList. `receivers` is what of its second operand the built-in may be called on.
 void applyBuiltin(BuiltinID, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&, ValueSetID receivers = ValueSets::anything);
-// `x.key(..)` where the built-in is what the read of the key from the unknown object may have answered. So the unknown object is its receiver: an object that the sets list among the receivers
-// has answered what its own lookup says, and the row of this built-in says nothing about it. The caller lets the operands escape: see ValueFlowBuiltinCall::saysOnlyWhatIsCalled.
+// `x.key(..)` where the built-in is what the read of the key from the unknown object may have answered.
 void applyBuiltinFoundThroughUnknownObject(BuiltinID, const ValueFlowStatement& call, ValueFlowRuleContext&);
 // For a built-in that is called together with others, or by native code: with what all calls of the group pass. What it allocates is the same two objects for all of them.
 void applyBuiltin(BuiltinID, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
-// A call of a function of the library that an entry describes (ValueFlowBuiltinTables::closuresThatEntriesDescribe): the overloads of the entry are applied with the operands of the call,
-// and none of the operands goes into the function.
+// A call of a function of the library that an entry describes (ValueFlowBuiltinTables::closuresThatEntriesDescribe): the overloads of the entry are applied with the operands of the call, and none of the operands goes into the function.
 void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&);
 void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
 // The function runs for callers that nobody follows into it. Every operand is any primitive or one object of which nothing is known and to which nothing happens: it stands for what the callers pass.

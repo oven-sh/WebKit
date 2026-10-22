@@ -11,17 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// type Row = { id: number }; type Page = { items: Row[]; total: number }; type Changed = { list: number[] }
-// function parse(text) { return JSON.parse(text) as Page }
-// function describe(text) {
-//     const page = parse(text); show(page.total);
-//     if (page.items === undefined) return show(page);
-//     show(page.items.length); show(page.items[1]); show(page)
-// }
-// function change(text) {
-//     const value = JSON.parse(text) as Changed; value.list[4] = 6; value.list.named = 6;
-//     show(value.list.length); show(value.list.named); show(value.list[2]); show(value)
-// }
 static constexpr ASCIILiteral recordsWithArrayMembers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Row" fields=[{key="id" declared={type=number}}]
@@ -140,11 +129,6 @@ static void testRecordsWithArrayMembers()
     checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { "disable=flow-results"_s }, showsValuesAsJSON);
 }
 
-// type Row = { id: number }; type Page = { items: Row[]; total: number }
-// function describe(page) { show(page.items.length); show(page.items[1]); show(page) }
-// const given = make(), validated = validate<Page>(given); describe(validated); show(validated.items === given.items);
-// describe(JSON.parse<Page>(..)); describe(JSON.parse<Page>(..))
-// The helpers that take over where compiled code gives up return undefined in the shell, so the program only gets through if it never does.
 static constexpr ASCIILiteral validatedRecordsWithArrayMembers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 expectedresult x0 type=L1 layouts=[L0, L1] validation=[{shape=Object{layout=L1 members=[{key="items" node=1 field=0}, {key="total" node=3 field=1}]} type=L1}, {shape=Array{element=2} type=Array<L0>}, {shape=Object{layout=L0 members=[{key="id" node=3 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]

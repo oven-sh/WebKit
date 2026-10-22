@@ -76,8 +76,7 @@ static void assumeCheckedType(Value& check)
     check.setCastType(castType);
 }
 
-// An Upcast tests nothing: what goes in comes out. One that stands behind such a check was written for the type that was expected there, and its type is what the value and that type have in common:
-// of an object that the type does not expect, nothing. So it takes in what arrives.
+// An Upcast tests nothing: what goes in comes out.
 static void admitWhatArrivesBehind(const FlowBodyApplication& body, std::span<const ValueID> replacedChecks)
 {
     Function& function = body.function;
@@ -295,8 +294,7 @@ static ValueID assumeRequiredType(RequiredTypeCasts& casts, ProgramPoint point, 
     return cast;
 }
 
-// Where nobody answers for the value, it is tested. What fails the test goes on in the generic version, and the run of GuardTaintedPositions behind flow finds the position that takes it there.
-// A test finds no more than the testable part of the type. What an object of that part holds is what flow has proven of the objects that arrive.
+// Where nobody answers for the value, it is tested.
 static ValueID checkRequiredType(RequiredTypeCasts& casts, ProgramPoint point, Origin origin, ValueID operand, TypeID required)
 {
     const TypingContext& typing = casts.typing;
@@ -320,8 +318,6 @@ static ValueID checkRequiredType(RequiredTypeCasts& casts, ProgramPoint point, O
 }
 
 // Whether whatever an allocation writes into the slot of the field lies inside the type that the field has now.
-// The proof of a field's position speaks for the objects: a store tests the primitives. An allocation tests nothing, so the proof covers what it writes only where that value was
-// inside the type of the field as read. The type of a field that was only expected to hold it bounded nothing.
 static bool hasProvenInitialValues(const FlowBodyApplication& body, FieldReference reference)
 {
     FieldReference declaration = declarationOf(body.program, reference);
@@ -333,9 +329,7 @@ static bool hasProvenInitialValues(const FlowBodyApplication& body, FieldReferen
     return declaration.field < updates.size() && updates[declaration.field].position.isProven;
 }
 
-// What enters a position was inside the type of the position as read. Where flow has made that type narrower, it has looked at whatever enters, so the narrower type may be assumed.
-// The slot of an object is written without a test, and a value outside the type of its field corrupts it. Where flow does not answer for what is written, the value has to be proven
-// to lie inside the type.
+// What enters a position was inside the type of the position as read.
 static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& user, uint32_t operandIndex)
 {
     if (provesEverythingIn(body))
@@ -357,7 +351,6 @@ static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& 
 }
 
 // Where a store comes before every read of a binding, the type of its field has lost `absent`, and nothing sees what the allocation of the environment puts there.
-// The allocation leaves such a field out: `absent` is no value of the type, and to assume that it is one says that the code behind the allocation never runs.
 static void dropDeadZonesThatNothingReads(const TypingContext& typing, Value& allocation)
 {
     if (allocation.opcode != Opcode::NewObject || !typing.program.at(allocation.layout()).isEnvironment())
@@ -427,8 +420,7 @@ static void assumeTailCallResult(RequiredTypeCasts& casts, BlockID block)
     TypeArena& types = typing.types;
     Terminator& terminator = casts.insertion.body.function.edit(block).terminator;
 
-    // A call by value of one known function has the type of that function's result, which holds only as long as the result is proven: the run of GuardTaintedPositions behind flow
-    // may take that away. What flow has proven of this function's own result stands by itself.
+    // A call by value of one known function has the type of that function's result, which holds only as long as the result is proven: the run of GuardTaintedPositions behind flow may take that away.
     bool isCallByValue = typing.function.at(terminator.callOperand()).opcode == Opcode::Call;
     Type returned = isCallByValue ? Type::anything() : typing.typeOf(terminator.callOperand());
     Vector<TailCast, 2> tailCasts;
@@ -551,7 +543,6 @@ static void insertFirstRunTest(const FlowCastInsertion& insertion)
 }
 
 // A pass may use a proof up: it folds a test, resolves a callee or removes a read, and the cast or the stamp that stated the proof goes.
-// These operations read the value from before the cast and no pass removes them.
 void insertRuntimeValidation(const FlowCastInsertion& insertion)
 {
     const FlowBodyApplication& body = insertion.body;

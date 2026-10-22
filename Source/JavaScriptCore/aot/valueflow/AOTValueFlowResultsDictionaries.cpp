@@ -65,8 +65,7 @@ static bool isLayoutOfLiteralWithoutFields(const Layout& layout, const FlowLayou
         && update.appendedFields.isEmpty() && (isOfCreatedObject || !update.flow.impossibleMutations.contains(ObjectMutation::AddProperty));
 }
 
-// `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name. Where a name may be added to such an object, or taken from it, it is used as the type allows:
-// the names that come lie in a second object behind a compiled one, and each costs more there than in an ordinary object. Where none can, it is a record like any other.
+// `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name.
 static bool isLayoutOfLiteralUsedAsDictionary(const Layout& layout, const FlowLayoutUpdate& update)
 {
     return layout.kind == LayoutKind::Record && layout.flags == OptionSet<LayoutFlags> { LayoutFlags::IsWrittenUnderDictionaryType } && layout.staticFields.isEmpty() && layout.supertypes.isEmpty()
@@ -196,9 +195,6 @@ static void createTypesBehindDictionaries(const Program& program, const BitVecto
 }
 
 // A compiled object without a slot has nothing that an ordinary object lacks, and every name that is stored into it lies in a second object behind it.
-// So a literal `{}` whose layout has got no field, because all that is stored into its objects goes under keys that nobody knows, makes an ordinary object.
-// One that stays empty keeps its layout: every name is known to be absent from it.
-// Only where no record and no operation but the literals names the layout. A type that names it names Object in its place from here on: nothing rests on a layout without a field but that names are absent.
 BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
 {
     const Program& program = inputs.program;

@@ -114,7 +114,6 @@ static void returnAnswer(StubAssembler& jit, ObjectLookupQuestion question, bool
 }
 
 // object has no lookup of its own, and structure is its Structure: what the Structure's property table lists is all that the object has under a name.
-// The table is complete, so a name that is not in it is absent, and nothing has to have been asked before.
 void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown)
 {
     constexpr unsigned maxProbes = 4;
@@ -162,7 +161,6 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
 }
 
 // A read returns the value of a data property and what a getter answers.
-// The call of a getter takes the register of the uid. beforeGetter runs while it still has the uid, and cannotCallGetter is left for behind it.
 template<typename Functor>
 static void answerByPropertyTableAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown, JumpList& cannotCallGetter, const Functor& beforeGetter)
 {

@@ -144,8 +144,7 @@ bool ConcatenationFuser::isConversionOfPrimitive(const Value& value) const
     return value.opcode == Opcode::ToString && !hasObjectOperand(value) && !hasSymbolOperand(value);
 }
 
-// A key is looked up by its parts, and no string is made of a number among them. Any other concatenation converts each part in line, which takes more code than the ToString did.
-// Whether a string that is returned is a key is known later (MarkResultsUsedAsKeys).
+// A key is looked up by its parts, and no string is made of a number among them.
 bool ConcatenationFuser::mayBecomeKey(ValueID string) const
 {
     const Value& value = m_function.at(string);
@@ -296,9 +295,7 @@ bool ConcatenationFuser::hasObservableEffectsBetween(BlockID id, uint32_t begin,
     return false;
 }
 
-// Tests of the parts stand between the concatenations of one expression, each with an edge to code for the part it did not expect. One edge alone leads into every block on the way from the
-// inner concatenation to the outer one, so the outer one runs only behind the inner one, and whoever leaves the way with the inner string makes it on the edge.
-// A block beside the way that reads the inner string makes it at its head, if the string is one that may be made at any later time.
+// Tests of the parts stand between the concatenations of one expression, each with an edge to code for the part it did not expect.
 bool ConcatenationFuser::canAbsorbFromEarlierBlock(ProgramPoint outerPoint, ValueID operand, size_t numberOfOtherParts, Copies& copies)
 {
     const Value& inner = m_function.at(operand);
@@ -633,7 +630,6 @@ Vector<MergedString, 4> ConcatenationFuser::findMergedStrings()
 }
 
 // An access that fails its test reads the property by name and comes back, so the start of a key, `a.id + ","`, reaches the rest of the expression as a parameter of the block where the ways meet.
-// There the numbers come in instead, and the string is made of them, where the concatenation that takes it in can see its parts.
 bool ConcatenationFuser::makeStringsBehindMerges(IRBuilder& builder)
 {
     Vector<MergedString, 4> merged = findMergedStrings();
@@ -733,7 +729,6 @@ bool ConcatenationFuser::makeStringsBehindMerges(IRBuilder& builder)
 }
 
 // `${a.id},${b.id}`: an access that fails its test reads the property by name and comes back, so each number reaches the template converted, as a parameter of the block where the ways meet.
-// On the edges that pass the conversion of a primitive, the primitive goes instead: the concatenation, which alone reads the parameter, converts whatever is no string.
 bool ConcatenationFuser::passPrimitivesToConcatenations(IRBuilder& builder)
 {
     struct Passed {

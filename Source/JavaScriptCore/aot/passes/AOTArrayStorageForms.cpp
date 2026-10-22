@@ -18,8 +18,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The answer is a prediction, and the creator and the readers of an array take the same one. A NaN, an undefined or a null that is stored at run time
-// converts an array of numbers to Contiguous: canStoreWithoutConversion() says which stores have to test for that.
+// The answer is a prediction, and the creator and the readers of an array take the same one.
 ArrayStorage arrayStorageHolding(const Type& elements)
 {
     if (elements.hasObjects() || !elements.isJavaScriptValue())
@@ -67,7 +66,6 @@ ArrayStorage arrayStorageOfLiteral(const Program& program, const Type& array, Ar
     if (parts.hasHoles)
         return ArrayStorage::Contiguous;
     // A literal without an element has the declared kind, or a more general one that the arrays of its site have turned into, and none is more general than Contiguous.
-    // Where nothing is declared, what is pushed onto it decides when code is generated.
     if (!parts.hasElements)
         return arrayStorageDeclaredBy(program, array) == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
     // A list of numbers that does not fit its kind is found when code is generated or when the literal runs.

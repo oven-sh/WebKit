@@ -38,8 +38,7 @@ namespace JSC { namespace AOT {
 
 struct State;
 
-// The names of one run of identifiers in the image, which a rest pattern leaves out. The program's table of identifiers keeps them alive.
-// A list is made at the first copy that names its run and stays where it is, so the address of its names stands for the run.
+// The names of one run of identifiers in the image, which a rest pattern leaves out.
 class ExcludedNameList {
     WTF_MAKE_NONCOPYABLE(ExcludedNameList);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ExcludedNameList);
@@ -188,7 +187,6 @@ struct AssignmentPlan {
     // The plan serves definitions only, or no prototype intercepts a store under any of its names: a store and a definition do the same.
     bool storesAreDefinitions { false };
     // Every property comes from a field whose values always fit the field that takes them, and none becomes an extra property.
-    // A run that found every slot empty has shown what the run does to each target with that order word: see tryFillEmptySlotsAsBefore.
     bool storesOnlyFieldsThatFit { false };
     bool mayStoreCells { false };
     bool readsOutOfLineFields { false };
@@ -207,7 +205,6 @@ struct AssignmentPlan {
 };
 
 // `{ ...first, ...second }` where the first is no compiled object: a new ordinary object that gets what the two hold at once, all of it in its cell.
-// One behind the other they cost a copy of the first, storage that grows for the names of the second, and two Structures.
 struct CopyOfTwoPlan {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CopyOfTwoPlan);
 
@@ -239,7 +236,6 @@ struct CopyOfTwoPlan {
 };
 
 // Where each field of one layout goes in an object of another, whichever of the fields a source holds and in whichever order: what the plans for all those orders have in common.
-// An entry is made when a copy first meets its field, by the index of the field in the layout of the source.
 struct FieldMap {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FieldMap);
 
@@ -257,8 +253,7 @@ struct FieldMap {
     Vector<uint16_t> entries;
 };
 
-// What a copy by a map makes of a target and a source with these order and shape words. The words say which fields each of them has, in which order, so the outcome is the same each time.
-// It names no cell: the numbers of shapes and orders stay what they are for as long as the program runs.
+// What a copy by a map makes of a target and a source with these order and shape words.
 struct MappedCopy {
     // What is read, how an empty slot is told, and what becomes of the bits on their way.
     enum class MoveKind : uint8_t {
@@ -430,12 +425,10 @@ private:
     // A plan stays where it is for as long as the cache does. One that has been made anew for another copy, or emptied, does not pass for the plan it was.
     std::array<AssignmentPlan*, numberOfRecentPlans> m_recentPlans { };
     // A plan is in one of the first places from its hash on, and keeps its place for as long as pairs ask for it.
-    // With one place for a hash, two kinds of pairs that shared theirs and came in turns were planned anew each time, which costs more than the two copies.
     static constexpr unsigned numberOfCopiesOfTwo = 64;
     static constexpr unsigned numberOfPlacesForCopyOfTwo = 4;
     std::array<std::unique_ptr<CopyOfTwoPlan>, numberOfCopiesOfTwo> m_copiesOfTwo;
-    // No places, or a power of two of them, which doubles when half of them are taken. A copy is in one of the first places from its hash on, with none that is free in front of it.
-    // With one or two fixed places for a hash, a fifth of the kinds that came in turns shared theirs with others and were described anew each time.
+    // No places, or a power of two of them, which doubles when half of them are taken.
     Vector<std::unique_ptr<MappedCopy>> m_mappedCopies;
     unsigned m_shiftForMappedCopies { 0 };
     unsigned m_numberOfMappedCopiesTaken { 0 };
@@ -508,7 +501,6 @@ ALWAYS_INLINE void AssignmentPlanCache::didFillEmptySlots(AssignmentPlan& plan)
 enum class RepeatedCopy : uint8_t { IsNotDone, ByWordsOrMoves, ByMap, ByMapForTheFirstTime, AsThePlanDidBefore };
 RepeatedCopy tryRepeatAssignment(VM&, State&, JSObject* target, JSValue source, uint32_t excludedRunNumberPlusOne);
 // Defines plain properties one behind the other on an object without an integrity level, under any names but indexes: the way of a copy that has no plan.
-// Names in a row that are no fields go to the extra properties together. False where a kept field has refused its value and thrown.
 bool definePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values);
 // As Object::tryAssignPropertiesOf for a copy that defines each property, as a spread and a rest pattern do. A definition asks no prototype.
 bool tryDefinePropertiesOf(VM&, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, Object::PlanCreation);
@@ -516,8 +508,7 @@ bool tryDefinePropertiesOf(VM&, Object& target, JSObject* source, std::span<Uniq
 bool tryDefinePropertiesOnOrdinaryObject(VM&, State&, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, Object::PlanCreation);
 // The whole of `{ ...first, ...second }` by a plan, which runs no code of the program. Null, with nothing done that anybody sees, where the two have to be copied one behind the other.
 JSFinalObject* tryCopyTwoObjects(VM&, State&, JSGlobalObject*, JSValue first, JSValue second);
-// As tryDefinePropertiesOf where an earlier copy has made the plan. Otherwise it does nothing.
-// GaveUp: the run of a plan has met a value that its field does not take. What it stored before that stays, and whoever copies in its place stores it again.
+// As tryDefinePropertiesOf where an earlier copy has made the plan.
 enum class PlannedAssignment : uint8_t { HasNoPlan, IsDone, GaveUp };
 PlannedAssignment tryAssignPropertiesByExistingPlan(VM&, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 

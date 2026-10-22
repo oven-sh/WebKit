@@ -443,7 +443,6 @@ static void printObject(PrintStream& out, ValueFlowSolution& solution, ValueFlow
 namespace {
 
 // How an object has escaped: the statement that logged the last edge of a shortest way into `escaped`, and where the edge comes out of what is written into an escaped object, that object.
-// The root of an object is where the walk from holder to holder ends: an object that has escaped in another way.
 class WaysOfEscape {
 public:
     struct Step {
@@ -514,7 +513,6 @@ private:
     }
 
     // The graph retires a node all of whose members end up in `escaped`, and gives each node with an edge into it an edge of its own straight into `escaped`, which nobody has logged.
-    // Whoever has logged the edge into the retired node has let the object escape: the call that hands an operand to a group of callees with the unknown object among them.
     ValueFlowStatementID loggerOfEdgeIntoRetiredNode(ValueFlowNodeID from)
     {
         if (!std::exchange(m_hasLookedForRetiredNodes, true)) {
@@ -564,7 +562,6 @@ private:
 } // anonymous namespace
 
 // An object that has escaped because an escaped object holds it is counted for that holder, and so on up to an object that a statement other than Escape has let escape.
-// Prints those objects by the number of closures that have escaped behind them, each with its own way into `escaped`.
 static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
 {
     constexpr size_t numberOfRootsPrinted = 30;
@@ -639,7 +636,6 @@ static void printValue(PrintStream& out, ValueFlowSolution& solution, ValueSetID
 enum class EscapeIsCountedFor : uint8_t { ObjectItself, Root };
 
 // For each counted object that has escaped, the statement that logged the last edge of a shortest way into `escaped`: who lets how many objects escape, and how many closures among them.
-// Counted for the root: the statement that has let the root of the object escape, and the sorts are those of the roots.
 static void printWhoLetsEscape(PrintStream& out, ValueFlowSolution& solution, WaysOfEscape& ways, EscapeIsCountedFor countedFor, NOESCAPE const Invocable<bool(ValueFlowObjectID)> auto& isCounted)
 {
     struct Line {
@@ -735,7 +731,6 @@ static void printWhoLetsEscape(PrintStream& out, ValueFlowSolution& solution, Wa
 }
 
 // Where the unknown object in the first operand of the counted operations of reached functions was born: by what the rule that made it has named as its source, then the operations behind the most operands.
-// The walk is the one that gives the report on sites its witnesses.
 static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solution, BuildContext& build, NOESCAPE const Invocable<bool(Opcode)> auto& isCounted)
 {
     constexpr size_t numberOfBirthsPrinted = 40;
@@ -890,10 +885,6 @@ constexpr ASCIILiteral namesOfCallersOfCheckedFunctions[numberOfCallersOfChecked
 } // anonymous namespace
 
 // checks: the checks of the reached functions, by what arrives at them: a placeholder; no placeholder and every member is sure to fit the type; no placeholder and some member is not.
-// "Some do not fit" is an upper bound on what a build keeps: the sets know no integer ranges and no element types here, and a build also folds a check behind the proof cast of its operand.
-// Then the same by the kind of the site of the check's type, and what the members are that do not fit.
-// Then the functions of the program with a check of a parameter at their head, by who enters them, each once; where the unknown object in the parameters of the functions that have not escaped was born;
-// and who has let the closures of the others escape.
 static void printChecks(PrintStream& out, ValueFlowSolution& solution, BuildContext& build)
 {
     constexpr size_t numberOfSiteKinds = numberOfEnumerators<TypeSiteKind>;
@@ -1162,9 +1153,7 @@ static void printPlaceOfNode(PrintStream& out, ValueFlowSolution& solution, Valu
     }
 }
 
-// choke-points: the dominators of the graph along which the unknown object flows. The root stands for every constant that holds the object, so its children are the nodes at which a rule or a body has brought it into being,
-// and the nodes at which the object arrives on ways that share no node. Each node counts the checks of the program, and the receivers of accesses and callees of calls of the program, to which the object comes through that node alone:
-// they are rid of it once the node is. A rule that makes the object because it has seen it in an operand is a birth like any other here, so the answer is exact where only sources run that need no unknown object: see without=.
+// choke-points: the dominators of the graph along which the unknown object flows.
 static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, BuildContext& build)
 {
     constexpr size_t numberOfChildrenPrinted = 40;
@@ -1586,7 +1575,6 @@ static void printWhatIsAskedFor(PrintStream& out, ValueFlowSolution& solution, V
 }
 
 // The statements that have brought the unknown object into being, or would have if their source were not left out: in the order of the rounds, each once for each source, with what the statement was made for by name.
-// Then the closures that have escaped, each with the statement that logged the last edge of a shortest way into `escaped`.
 static void printSeeds(PrintStream& out, ValueFlowSolution& solution)
 {
     const ValueFlowSolver& solver = solution.solver();
@@ -1949,30 +1937,6 @@ static std::optional<uint32_t> numberAfter(StringView word, size_t start)
     return parseInteger<uint32_t>(word.substring(start, end - start));
 }
 
-// valueflow-why reached=fN | escaped=fN | lost=fN | unknown=fN:vM | untracked=fN:vM | values=fN:vM | flag=hN | held=nN | asks=fN:vM (what the operation has asked the heap for, and what those statements have asked for) | askers=kN:oM (who has asked for a lookup under key N from a set that holds object M) | hubs | escapes | evaluators ..: why a function is reached; how its closure has escaped, or how the analysis
-// has stopped following it; how the unknown object, or the untracked object, has come into the first operand of an operation; what the operands and the result of an operation hold; how the unknown object has come into a node of the host,
-// into any node, into each hub that holds it; who lets how many objects escape, by kind of statement; how each built-in that lets unseen code in has escaped.
-// untracked-in=hN: how the untracked object has come into a node of the host.
-// escaped-builtin=Token | lost-builtin=Token | used-builtin=Token | written-builtin=Token: how the object of a built-in has escaped, how the analysis has stopped following it, or how it has come to count as used, or as written.
-// escaped-layout=L1 | lost-layout=L1: the same for every object that is allocated with the layout.
-// escape-roots: the objects that a statement other than Escape has let escape, by the number of closures that have escaped because those objects hold them, directly or not.
-// callee-births | receiver-births: where the unknown object in the callees of calls, or in the receivers of property and element accesses, was born: by source, then the operations that reach the most.
-// saturated | outside-families: the nodes whose sets were given up, and those at which an object arrives that lies outside the type of the node.
-// escaped-object=#N | lost-object=#N: the same for the object with that number, as the key of a node prints the members of a small set.
-// order: the functions in the order of the rounds in which they were reached, each with the statement that reached it and, for a function of the library, the used built-ins behind it.
-// seeds: the statements that have brought the unknown object into being, in the order of the rounds, and the closures that have escaped, each with who let it. without=Source,Source: the solve in which no rule brings it into being for these reasons.
-// timeline: in the order of the rounds, the edges into the flags of the host and the first edges into `escaped` and `lost` from a node that holds a built-in that lets in unseen code.
-// group-askers=oN: the statements that have asked for a call group with the object N among its callees, each with the key of the group and all its callees.
-// raisers=hN: every statement that has logged an edge into the node N of the host out of a node that holds something.
-// groups=dN: the call groups of the kind of call N, as the key of a group prints it behind `detail`, each with all its callees.
-// large=N: the nodes that hold more than N members. holds=nN:#M: how the object with the number M has come into the node N.
-// late=N: for each of the last N rounds, which statements logged the most edges for the first time.
-// falsifiers=L1,L2: every statement that writes into an object with one of the layouts: F | the layout | store, delete, redefine, getter, setter, copy or link | the name, or - under a key nobody knows | listed, or through which placeholder | the statement | where | what it brings.
-// In front of them, B: the built-ins that the solve has used and that change an operand.
-// rounds=N: every other word answers for the state after N rounds. A way that is printed is a shortest one in that state, so the first cause of something is found with the first N at which it holds.
-// unguarded: without the pass that a build runs between the read stage and the analysis, which guards the positions that a check taints: it puts a check behind each read of them.
-// split: see prepareAsInFrontOfFlow(). leaves=fN: what each test of a function that tests its arguments, and each check and read of a typed body, turns away. checks: see printChecks(). choke-points: see printChokePoints(). receiver-layouts: see printLayoutsOfReceivers().
-// Without a word: who reached how many functions, by kind of statement.
 void runValueFlowWhyTestCommand(TestCommandContext& context)
 {
     prepareForFlow(context);
@@ -2352,8 +2316,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             }
             continue;
         }
-        // asked=dN:oM: the statements that have asked for a node of the name kind N over a set of at most eight members that holds the object M. asked=lN:oM: for a lookup alone, which goes up the chain and hands out
-        // what it finds through a placeholder; a read does neither. asked=gN:oM: for a call group of the kind N.
+        // asked=dN:oM: the statements that have asked for a node of the name kind N over a set of at most eight members that holds the object M. asked=lN:oM.
         if (word.startsWith("asked=d"_s) || word.startsWith("asked=l"_s) || word.startsWith("asked=g"_s)) {
             bool asksForGroups = word.startsWith("asked=g"_s);
             bool asksForLookupsAlone = word.startsWith("asked=l"_s);

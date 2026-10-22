@@ -197,8 +197,7 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
     auto overlapsAnyFunction = [&](const ClassPart& part, const Type& type) {
         return !(a.anyFunction && b.anyFunction) && type.anyFunction && isFunctionClass(builtins, part.builtinClass);
     };
-    // An object may be in the two types through parts of two classes. Where one class extends the other, the result lists it under the subclass.
-    // Otherwise the result names it as the second type does, so that a cast stays inside the cast type.
+    // An object may be in the two types through parts of two classes.
     auto isListedUnder = [&](const ClassPart& part, const Type& other) {
         return std::ranges::any_of(other.classes, [&](const ClassPart& otherPart) {
             return otherPart.builtinClass != part.builtinClass
@@ -278,8 +277,7 @@ static void intersectListedObjects(Type& result, const Type& a, const Type& b, T
     result.layouts = arena.intersectionOf(a.layouts, b.layouts);
 }
 
-// What a cast gives lies inside the cast type. An object without a layout that only the source lists may be one of the members the family does not list,
-// so the result says of it what the family says.
+// What a cast gives lies inside the cast type.
 static void castToFamilyWithUnlistedMembers(Type& result, const Type& source, const Type& family, TypeArena& arena)
 {
     if (hasMembersWithoutLayout(arena.table(), source)) {

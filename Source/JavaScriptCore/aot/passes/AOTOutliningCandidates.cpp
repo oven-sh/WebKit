@@ -117,9 +117,6 @@ private:
 };
 
 // What another rule wants in the function where it stands.
-// JSONObjectFinish takes an object that its own function allocated, so neither of the two leaves without the other.
-// A guard on an allocation lasts across unknown code while nothing else holds the object, which is seen only where the allocation is.
-// The two copies of `{ ...first, ...second }` get their code together.
 static BitVector findValuesBoundToFunction(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
@@ -914,8 +911,7 @@ static bool canPayOff(FunctionScan& scan, const OutliningSite& site)
     return site.codeBytes > site.callBytes && !isOneCallOfStub(scan, site);
 }
 
-// What a call returns is a value of its own. Checks that hand on the object they were given would, as a call, cut the object in two:
-// a guard that a test has made about what comes out no longer speaks of what went in, and the function may reach the object from there again, by other casts, and name that guard.
+// What a call returns is a value of its own.
 static bool handsOnSubjectOfGuard(FunctionScan& scan, const OutliningSite& site, ValueID result)
 {
     if (!scan.hasOperationThatProves)
@@ -1139,9 +1135,7 @@ static void findParts(FunctionScan& scan, const OutliningSite& site, Vector<Outl
         findRuns(scan, { block, 0, static_cast<uint32_t>(scan.function.at(block).values.size()) }, BackwardExtension::ConstantsOnly, SitesThatCannotPayOff::AreDropped, parts);
 }
 
-// Whether a site is repeated is known when all functions have been looked at. Its parts are found at once, while the analyses of the function are there.
-// A part lies within its site and sites do not overlap, so the parts of one site are found without regard to any other site.
-// A site whose hash another splittable site had before it is repeated, whatever follows, and stays whole.
+// Whether a site is repeated is known when all functions have been looked at.
 static void findPartsOfSplittableSites(FunctionScan& scan, FunctionSites& found)
 {
     scan.valuesInSites.clearAll();

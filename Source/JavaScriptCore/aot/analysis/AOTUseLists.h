@@ -78,16 +78,14 @@ public:
     bool isBefore(const Use& a, const Use& b) const { return orderOf(a) < orderOf(b); }
     unsigned numberOfValues() const { return m_locations.size(); }
 
-    // What the lists say of a block they read from that block alone: its parameters, its subject, the arguments of its handler, which values it lists and in which order,
-    // the operands of those values, the operands of its terminator and the arguments of its targets. The graph adds which blocks are reached and in which order they stand.
+    // What the lists say of a block they read from that block alone.
     void didChangeBlock(BlockID);
     void didChangeOperandsOf(ValueID user);
     void didReplaceUses(ValueID from, ValueID to);
     void didAddValues() { fallBehind(); }
     void didChangeControlFlow();
     void didChangeEverything();
-    // For an edit of which a pass tells nobody. Lists that have been handed out since they were last made or brought up to date go on being handed out as they are, without the edit,
-    // until one of the members above is called or the silence ends. From then on the block counts as named. All other lists take the block as named at once.
+    // For an edit of which a pass tells nobody.
     void didChangeBlockSilently(BlockID);
     void endSilence();
     bool hasSilentChanges() const { return m_hasSilentChanges; }

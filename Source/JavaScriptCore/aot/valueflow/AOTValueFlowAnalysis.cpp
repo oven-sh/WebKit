@@ -37,9 +37,6 @@ static std::optional<unsigned> positionOfParameter(const Function& function, Val
 }
 
 // A parameter is a key where the body stores under it, where the body calls what it has read under it, or where the body hands it on to a function that takes a key there.
-// A function that only answers what it has read gains nothing: one node holds what it answers to all its callers.
-// Which function a call enters only flow knows. Here a callee is a function that a variable is bound to for good, or any function that some operation stores under the name that the call reads its callee from:
-// this decides for which functions instances are worth having, and nothing about what a call does.
 Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops)
 {
     struct Argument {

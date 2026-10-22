@@ -312,7 +312,6 @@ void Pipeline::runOptimizeStage()
     if (m_build.validates() && !m_runner.isStopped())
         checkDeclaredEffects(m_build.diagnostics());
     // What places, slots and the names of type tests are weighed with is read from the Optimize schedule on, and CallModules drops the heat in front of that.
-    // Whoever stops the pipeline at a pass or has one dumped may look at the heat itself.
     if (m_runner.mayRunAnalysesTogether())
         m_analyses.estimateHeatFor(HeatFor::Preparation);
     stage.run(PassID::PromoteEnvironmentsToVariables);

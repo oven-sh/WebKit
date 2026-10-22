@@ -40,8 +40,7 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// The keys that a copy leaves out. Those that the source text names lie in the image as a run, whose list of names is made once and is known by its address.
-// A key among the operands is a string or a symbol. A number stands for the identifier with that number.
+// The keys that a copy leaves out.
 class ExcludedKeys {
     WTF_MAKE_NONCOPYABLE(ExcludedKeys);
 public:
@@ -182,7 +181,6 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
 }
 
 // What has been read out of a source of any kind is put into an ordinary object, which gets the same Structure each time the names are the same.
-// So the copy from there has a plan, which adds the names that are no fields all at once. By name each of them would take a Structure of its own.
 static bool tryAssignCollectedProperties(JSGlobalObject* globalObject, VM& vm, Object& target, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
     constexpr size_t minNumberOfNames = 4;

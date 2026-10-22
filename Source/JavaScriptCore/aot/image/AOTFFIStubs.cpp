@@ -21,7 +21,6 @@
 namespace JSC { namespace AOT {
 
 // Whatever makes a foreign function or a callback is a member of Bun.FFI, which the module bun:ffi reads when it is loaded, or the native function behind cc().
-// What such a function calls is machine code, not JavaScript that nobody has seen, so a program that loads it need not admit any.
 bool mayUseFFI(const Typed::PipelineOutput& pipeline)
 {
     if (flagsForUnseenCode(pipeline).contains(ImageFlag::AdmitsUnknownJavaScript))

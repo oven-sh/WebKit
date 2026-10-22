@@ -69,17 +69,6 @@ ALWAYS_INLINE CharacterType* writeTwoDigits(CharacterType* cursor, uint32_t valu
     return cursor + 2;
 }
 
-template<typename CharacterType>
-ALWAYS_INLINE CharacterType* writeOneOrTwoDigits(CharacterType* cursor, uint32_t value)
-{
-    ASSERT(value < 100);
-    if (value < 10) {
-        *cursor = static_cast<CharacterType>('0' + value);
-        return cursor + 1;
-    }
-    return writeTwoDigits(cursor, value);
-}
-
 static constexpr unsigned maxISODateTimeLength = 27;
 
 template<typename CharacterType>

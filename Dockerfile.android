@@ -165,6 +165,8 @@ ENV WEBKIT_OUT_DIR=/webkitbuild
 # treat as a generic Linux cross-compile and pass --target/--sysroot in CFLAGS;
 # WebKit's source detects Android via __ANDROID__ (set by --target=*-android*),
 # and we set ANDROID=ON so cmake `if(ANDROID)` blocks fire.
+#
+# -k 0: the log of a lane that does not compile names every source that fails, not the first few.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export TARGET_TRIPLE="${ANDROID_ARCH}-unknown-linux-android${ANDROID_API}" && \
     export CROSS="--target=${TARGET_TRIPLE} --sysroot=${NDK_SYSROOT}" && \
@@ -205,7 +207,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot -- -k 0 && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \

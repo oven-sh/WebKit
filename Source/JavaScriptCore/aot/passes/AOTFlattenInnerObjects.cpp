@@ -43,8 +43,7 @@ static_assert(OperandIndex::GetSlotOrUndefined::object == OperandIndex::GetFlatt
 
 namespace {
 
-// How an allocation of the inner layout lists its fields. An object that is made late, out of the room in the outer object, is made as that allocation would have made it.
-// The outer object does not say which allocation it was, so all of them list the same fields, and the class is one that suits them all.
+// How an allocation of the inner layout lists its fields.
 struct Birth {
     Vector<uint32_t, 8> fields;
     AllocationClassID allocationClass;
@@ -135,8 +134,6 @@ bool isPlainDataField(const Field& field)
     return field.key && !field.computedKey && !field.flags.containsAny(excludedFlags) && field.form.isEmpty() && field.flow.location.deferral == ClosureDeferral::Unknown;
 }
 
-// Nothing puts a value into the field but the operation that allocates the object, nobody whom the compiler does not see holds such an object, and every read of the field is an operation
-// that a pass finds from the field and that does nothing with the value but access it.
 bool holdsObjectThatIsOnlyAccessed(const Layout& layout, const Field& field)
 {
     const LocationFlow& location = field.flow.location;
@@ -255,8 +252,7 @@ std::optional<uint32_t> fieldAccessedIn(const Program& program, const Value& use
     return program.at(innerLayout).findField(user.key());
 }
 
-// Walks a function once, in the order of its blocks, in which an operation stands behind what it uses. It knows which values are an inner object: what a read of the field gives, and casts of that.
-// `Visitor` hears of every place that has to do with a candidate.
+// Walks a function once, in the order of its blocks, in which an operation stands behind what it uses.
 template<typename Visitor>
 class Walk {
 public:
@@ -419,8 +415,7 @@ public:
     {
     }
 
-    // What the holder, an allocation or a store in `blockOfHolder`, takes was made for it alone: by an allocation of the inner layout in the same function, which goes nowhere but, through casts, to the holder,
-    // and which runs again before the holder does.
+    // What the holder, an allocation or a store in `blockOfHolder`, takes was made for it alone.
     ValueID findObjectMadeFor(const Candidate& candidate, BlockID blockOfHolder, ValueID held)
     {
         ValueID object = sameObjectThroughCasts(m_function, held);
@@ -825,10 +820,7 @@ struct HeatOfSlotKept {
     double made { 0 };
 };
 
-// For the fields that stay. What becomes of each place follows from what the function itself shows:
-// an allocation or a store that takes a fresh object fills the room in the outer object instead, and marks the slot;
-// what only borrows the inner object gets the outer object in its place while the slot is marked;
-// whatever else wants the inner object reads the slot with the operation that makes the object first.
+// For the fields that stay.
 class PlacesOfSlotsKept {
 public:
     using State = StateOfSlot;
@@ -839,8 +831,6 @@ public:
         uint32_t name { 0 };
     };
     // A value that stands for what the read gave: the read; a cast of a name; a parameter of a block that an edge gives a name.
-    // Where the block has one way in the parameter is that name, or, behind a test of it, the name with a narrower type.
-    // Where it has several, other values meet the name in the parameter. From there on nobody knows the outer object, so nobody can read the slot again.
     struct Name {
         ValueID value;
         uint32_t parent { 0 };
@@ -1129,8 +1119,7 @@ private:
             }
         }
 
-        // Each name by itself: what has happened to the slot since the run of the read whose value the name stands for. A parameter in which values meet goes on standing for it
-        // when the read runs again, and stands for something else as soon as an edge gives it something else.
+        // Each name by itself: what has happened to the slot since the run of the read whose value the name stands for.
         constexpr uint8_t standsForNothing = 0;
         auto carrying = [](State state) { return static_cast<uint8_t>(static_cast<uint8_t>(state) + 1); };
         using Carried = Vector<uint8_t, 8>;
@@ -1412,8 +1401,7 @@ private:
             ++m_counts.readsMakingObjects;
             return;
         }
-        // Only an operation says where the slots of a borrowed object lie. A name that the one edge into a block gives becomes a cast at the head of the block.
-        // Where several edges come in, the operation at the head stands for what they hand over beside the parameter.
+        // Only an operation says where the slots of a borrowed object lie.
         Vector<ValueID, 4> nameInUse;
         for (const Name& name : read.names) {
             ValueID parent = nameInUse.isEmpty() ? ValueID() : nameInUse[name.parent];
@@ -1587,8 +1575,7 @@ bool mayLieInOuterObject(const Program& program, FieldReference fieldOfOuterLayo
         && program.at(innerLayout).fields.size() <= maxFieldsOfObjectFlattenedUntilHeld;
 }
 
-// The estimate of heat says how often the source of a function runs. Where calls were taken into their callers the copies there run in place of the body, which is left to the calls
-// that still name it. A body that no such call reaches runs only for callers that nobody sees, by way of its entrypoint.
+// The estimate of heat says how often the source of a function runs.
 static BitVector findBodiesLeftToUnseenCallers(const Program& program, const BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
@@ -1652,7 +1639,6 @@ void flattenInnerObjects(ProgramEditor& editor, const FlowResults& flow, const H
     // For tests: every field that may keep its slot does, whatever the estimate of heat says, also where nobody holds the inner object.
     bool keepsSlotsWhereverLegal = build.recordedOptions().has(TestingSwitch::FlattenUntilHeldWhereverLegal);
     // The slot that says whether the object was made is a narrow reference.
-    // Off but for the tests, until every folder of test programs is right with the form taken wherever it is legal.
     bool mayKeepSlots = keepsSlotsWhereverLegal && !build.recordedOptions().useWideReferences();
     Candidates candidates = findCandidates(program, mayKeepSlots, logsDecisions);
     if (candidates.isEmpty())
@@ -1779,8 +1765,7 @@ void flattenInnerObjects(ProgramEditor& editor, const FlowResults& flow, const H
         Candidate& candidate = candidates.at(index);
         if (!candidate.keepsSlot)
             continue;
-        // In words of a slot: an object that is never made saves its header. One that is made has a cell with header and slots after all.
-        // An outer object that nothing is laid into has the room for nothing: it is born with null, or given an object that has a cell.
+        // In words of a slot: an object that is never made saves its header.
         constexpr double wordsOfHeader = 2;
         double wordsOfSlots = program.at(candidate.innerLayout).fields.size();
         const HeatOfSlotKept& estimate = heatOfCandidates[index];

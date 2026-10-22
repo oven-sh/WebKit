@@ -23,8 +23,7 @@ struct Type;
 // To the program a lookup of `prototype` is a read. See prototypePropertyMayEndGuards().
 Effects effectsOfCreatingPrototypeProperty(const Program&, const Type& functions);
 
-// The effect rule of an operation covers what its own stores and deletes run. A built-in stores with [[Set]] and deletes with [[Delete]],
-// and only the uses of its operands say so.
+// The effect rule of an operation covers what its own stores and deletes run.
 enum class OperandDeclarer : uint8_t { Operation, Builtin };
 
 struct OperandBehavior {
@@ -103,7 +102,6 @@ bool mayFailOnOperand(const Program&, const BuiltinParameter&, const Type& opera
 // The records of the entry say all that it does. A model stands in for records that leave code unnamed.
 bool isDescribedByModel(const BuiltinOverload&);
 // Every name that an operand may be searched for though the operation has no such key: what the protocols read, and what the operations and the built-ins list for their operands.
-// Ascending, each once.
 Vector<BuiltinName> namesReadFromOperands(const BuiltinTable&);
 
 void addOperandCode(const EffectContext&, const Type& operand, const OperandBehavior&, EffectsOnEdges&);

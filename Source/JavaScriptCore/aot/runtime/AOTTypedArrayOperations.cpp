@@ -367,8 +367,7 @@ static JSValue makeRangeWithoutMemory(JSGlobalObject* globalObject, Structure* s
     return range;
 }
 
-// The range as it would be by now, had it been made when its start was taken. The bytes had a fixed length then, so they still have it, unless their buffer has been transferred since:
-// then the range would have lost its memory with them.
+// The range as it would be by now, had it been made when its start was taken.
 static JSValue makeRangeOfBytes(JSGlobalObject* globalObject, JSValue view, int32_t start)
 {
     auto* bytes = uncheckedDowncast<JSUint8Array>(view.asCell());

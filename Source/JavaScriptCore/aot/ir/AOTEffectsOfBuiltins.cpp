@@ -66,7 +66,6 @@ static constexpr Effects readsOfReachableObjects = [] {
 }();
 
 // A helper of the compiler that reaches built-ins only through intrinsics and locked members runs what its operands bring and nothing else.
-// Its entry says so by the types of the operands, which the summary of its body does not know.
 static bool isHelperDescribedByEntry(const Program& program, const BuiltinOverload& overload)
 {
     return overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode) && program.builtins().at(overload.builtin).holder == Builtins::CompilerHelpers;
@@ -326,8 +325,7 @@ static bool createsValidatedResult(const Program& program, BuiltinOverloadID ove
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// SelectTypedResults has to replace such a call. Where the compiled parser gives up, what takes its place hands the value that the built-in made to the helper
-// that walks any value, and no type says that this one is plain data. The call says no less than what replaces it, so no test is placed across it that would not hold afterwards.
+// SelectTypedResults has to replace such a call.
 void describeTypedResult(const Program& program, BuiltinOverloadID overload, ExpectedResultID expectedResult, EffectDescription& description)
 {
     if (!createsValidatedResult(program, overload, expectedResult))

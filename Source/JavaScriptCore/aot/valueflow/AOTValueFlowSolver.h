@@ -67,7 +67,6 @@ struct ValueFlowSolverInput {
     // For tests that look at how a solve goes: it stops after this many rounds, and what it holds then is no result.
     uint32_t mostRounds { UINT32_MAX };
     // For tests that ask what a program would be like if the table described more: a rule that names one of these sources gets the primitives alone, and its edges keep the name of the source.
-    // With any source left out no seed of a body holds the unknown object and no rule raises a flag of the host: the edge into the flag is logged and brings nothing.
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
     // The build excludes evaluated text: the run time refuses eval, Function and its relatives every text, so a call of one throws and runs nothing.
     bool refusesEvaluatedText { false };
@@ -84,7 +83,6 @@ struct ValueFlowReachWitness {
 };
 
 // Pairs of numbers, each kept once.
-// A list that grows by room that holds nothing: whoever asks for the room writes every element of it, on whichever threads.
 template<typename T>
 class ListWithRoomToFill {
     WTF_MAKE_NONCOPYABLE(ListWithRoomToFill);
@@ -214,8 +212,7 @@ private:
     size_t m_size { 0 };
 };
 
-// The rounds. In a round every statement that is due runs on the frozen values, the logs are merged, and the values are brought up to date. A statement is due when something it read in its last run has moved.
-// The solve ends when no statement is due. Unless it is told otherwise it then runs every statement once more, to show that none was missed: that round must add nothing.
+// The rounds.
 class ValueFlowSolver {
     WTF_MAKE_NONCOPYABLE(ValueFlowSolver);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowSolver);
@@ -296,8 +293,7 @@ public:
     uint64_t numberOfRunsThatWereNotDueAndAdded() const { return m_numberOfRunsThatWereNotDueAndAdded; }
     // The first of them, by the number of the statement within each round.
     std::span<const ValueFlowStatementID> firstStatementsThatWereNotDueAndAdded() const LIFETIME_BOUND { return m_firstStatementsThatWereNotDueAndAdded.span(); }
-    // After a solve with Rounds::Due. At rest, every statement has run again with ValueFlowRuleContext::usesGeneralRulesOnly(), and the rounds have gone on to rest.
-    // Whatever that adds to what was there, a shorter way of some rule had left out.
+    // After a solve with Rounds::Due.
     struct AddedByGeneralRules {
         bool isAnything() const { return nodesThatHoldMore || functionsReached || builtinsUsedMore; }
 
@@ -318,8 +314,7 @@ public:
 
     // Among the statements that reached the function in the turn in which it was reached: a statement of a body before one that a rule has made, and the one with the lowest number, or content.
     ValueFlowReachWitness reachedBy(FunctionID function) const { return m_reachedBy[function.index()]; }
-    // How the member has come into the node: the node first, then a predecessor that holds the member, and so on, on a shortest way, to a node that holds it for ever. Empty if the node does not hold it.
-    // Where a mask has put the member in the place of a placeholder, the way goes on through the nodes that hold the placeholder.
+    // How the member has come into the node: the node first, then a predecessor that holds the member, and so on, on a shortest way, to a node that holds it for ever.
     Vector<ValueFlowNodeID> explain(ValueFlowNodeID, ValueFlowObjectID member) const;
     // None for an edge of a body, for one that the solver has made itself (from what is written to what is read, into a masked node, between groups of callees) and where the input did not ask for it.
     ValueFlowStatementID statementThatLogged(ValueFlowEdge) const;
@@ -356,7 +351,6 @@ public:
     // Nobody asks for what it was made for any more: whoever did asks for that of a bigger set, which covers it.
     bool isAtRest(ValueFlowStatementID) const;
     // What the last run of the statement got from read(), written(), lookup(), group(), hub() and masked(), each once, with the statement that was made with it, if any.
-    // Of a statement that is shown only what is new in a node: what all its runs got, where a node may come more than once.
     void forEachMadeNodeAskedForBy(ValueFlowStatementID statement, NOESCAPE const Invocable<void(const ValueFlowNodeKey&, ValueFlowStatementID)> auto& functor) const
     {
         if (statement.index() >= m_firstUseOfStatement.size())
@@ -525,7 +519,6 @@ private:
     }
     bool isKnownReader(ValueFlowNodeID node, ValueFlowStatementID statement) const { return !ValueFlowRoundLog::isNumberedByLog(node) && m_readerShards[readerShardOf(node)].known.contains(node.index(), statement.index()); }
     // Of a node's value, in the normal form: a set that holds a placeholder lists no object that the placeholder covers, and one that holds the kind of strings or symbols lists no key of that kind.
-    // Of a node that has readers it is what they were told of last, so a statement that runs again without being due sees what its last run saw.
     ValueSetID valueForReadersOf(ValueFlowNodeID, ValueSetMaker&) const;
     // All that the node held when the last run of the statement asked what was new in it. Nothing for a statement that has not asked, or that has been at rest since.
     ValueSetID valueShownTo(ValueFlowStatementID, ValueFlowNodeID) const;
@@ -559,8 +552,6 @@ private:
     void makeNodesOf(std::span<KeyToMake>);
     void takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>>, std::span<KeyToMake>);
     // While the rules of a turn run, the thread that is the first to ask for a key makes its nodes: it takes the next numbers, writes the record and lists it under the key, so every thread has the same numbers from then on.
-    // The graph and the lists beside the records hear of them at the end of the turn. Which numbers a key gets hangs on the threads; nothing but the numbers does.
-    // Not the key of a node that reads or writes many objects: what that is made of hangs on the order in which such keys come, so they wait in the logs for numberMadeNodes().
     std::optional<uint32_t> makeNodesWhereAskedFor(const ValueFlowNodeKey&, ValueFlowRoundLog&, ValueSetMaker&) const;
     void letRulesMakeNodes();
     void takeWhatRulesHaveMade();
@@ -656,12 +647,10 @@ private:
     // Without the numbers that threads hold and have not given.
     alignas(64) uint32_t m_numberOfNodesMade { 0 };
     // Two lists beside the records, for whoever looks at nothing else of them.
-    // The statements whose last run has asked for them. Without any, the nodes are at rest and their statement does not run: whoever asked for them asks for those of a bigger set now, which cover them.
     ListWithRoomToFill<uint32_t> m_numberOfUsers;
     // That a statement asks for what it was made with keeps nothing awake. Nor does anybody's asking for what stays at rest.
     ListWithRoomToFill<uint32_t> m_askerThatKeepsNothingAwake;
     // All threads add to these at once, so none shares a cache line with another or with anything that they read meanwhile.
-    // Whoever looks takes no lock: a slot is written once, after the record that it names, and a table that has been outgrown stays until the end of the turn. What such a look misses is looked for again under the lock.
     struct alignas(64) IndexOfMadeNodes {
         struct Table {
             WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Table);
@@ -756,7 +745,6 @@ private:
     BitVector m_hasStatementOfBodyRun;
     uint64_t m_numberOfTurn { 0 };
     // A read of a property, a call or a construction takes its first operand before it does anything, so while no value has arrived there all that its rule says is that it may throw.
-    // It is not run: it waits in a list at the node of the operand, and is due once the node holds something.
     ValueFlowNodeID nodeAwaitedBy(ValueFlowStatementID, const ValueFlowStatement&) const;
     static constexpr uint32_t doesNotWait = UINT32_MAX;
     static constexpr uint32_t hasWaitedAndNotRun = UINT32_MAX - 1;
@@ -794,8 +782,7 @@ private:
         ValueFlowNodeID node;
         ValueFlowStatementID statement;
     };
-    // The readers of a node are noted in the shard of the node, so that the shards are filled side by side. Which shard that is does not depend on the number of threads.
-    // Sixteen nodes in a row share a shard: what is kept for each node lies in one line of the cache for them.
+    // The readers of a node are noted in the shard of the node, so that the shards are filled side by side.
     struct ReaderShard {
         Vector<Reader> readers;
         ValueFlowPairSet known;
@@ -875,8 +862,7 @@ private:
         return node.index() / 64 % numberOfWatchShardsByNode;
     }
     std::array<WatchShard, numberOfWatchShards> m_watchShards;
-    // The sets watched at the escaped and the lost objects. By member; shorter than the objects are many where the last ones are in no set. A range of members has a chain of its own, and one writer.
-    // A chain names a set by its number in its shard times the number of such shards, plus the shard's.
+    // The sets watched at the escaped and the lost objects.
     Vector<uint32_t> m_firstSetWatchedForCoverOfMember;
     std::array<Vector<ChainedWatch>, numberOfRangesOfMembers> m_setsWatchedForCoverOfMembers;
     ValueSetID m_seenByWatchersOfEscaped;
@@ -891,8 +877,7 @@ private:
     bool m_haveLostObjectsEscaped { false };
     // Neither a placeholder nor a primitive nor a key.
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };
-    // The built-ins that let in unseen code. The analysis never stops following one: a set that is given up still lists it, and it is never among the lost objects.
-    // So a call through the untracked object is no call of eval, and a callee set holds eval only where that value arrives.
+    // The built-ins that let in unseen code.
     ValueSetID m_objectsAlwaysFollowed { ValueSets::nothing };
     // Those of them of which something says what they are.
     ValueSetID m_objectsSaidToBeSomething { ValueSets::nothing };
@@ -919,8 +904,7 @@ private:
         ValueFlowNodeID node;
         uint32_t next { UINT32_MAX };
     };
-    // The nodes of a name are linked in the shard of the name, so that the shards are linked side by side. Which shard that is does not depend on the number of threads.
-    // The nodes that stand for a kind of name have the last shards to themselves, by kind. They look at the lists of other kinds: where nodes are linked and put into the tables one by one, one task has all those shards.
+    // The nodes of a name are linked in the shard of the name, so that the shards are linked side by side.
     static constexpr unsigned numberOfLinkShardsOfNames = 64;
     static constexpr unsigned numberOfLinkShardsOfKinds = 8;
     static constexpr unsigned numberOfLinkShards = numberOfLinkShardsOfNames + numberOfLinkShardsOfKinds;

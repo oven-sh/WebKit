@@ -197,8 +197,7 @@ static bool canBecomeParameter(FunctionAnalyses& analyses, ValueID id)
     });
 }
 
-// In a stack trace the caller of the body stands at the step that runs it, not where the generator was made. A step that only ends the generator counts where no other step is.
-// Nothing: the steps stand at several positions. The copy of the body has one frame, and a frame has one position of its call.
+// In a stack trace the caller of the body stands at the step that runs it, not where the generator was made.
 static std::optional<Origin> findOriginOfSteps(const Function& function, const FusionCandidate& candidate)
 {
     std::optional<Origin> running;

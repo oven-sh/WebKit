@@ -151,8 +151,7 @@ protected:
     Condition isCellReference(NarrowReference value) { return Condition(m_out.above(value.value(), m_out.constInt32(undefinedCell32))); }
     // For a word that may be any word below minCell32: that of a literal string, an immediate in the table of a collection.
     Condition isCellReferenceAmongAllWords(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), m_out.constInt32(minCell32))); }
-    // What a load makes of the word in a narrow slot: the cell where the word is a reference, the word itself where it is none. Every cell lies above every word that is no reference,
-    // so a comparison with such a word has one answer on both, and the narrow word needs no decoding.
+    // What a load makes of the word in a narrow slot: the cell where the word is a reference, the word itself where it is none.
     std::optional<NarrowReference> narrowWordBehind(LiteralStringWord);
 
     Boxed boxInt32(Word32 value) { return Boxed(m_out.add(m_out.zeroExt(value.value(), B3::Int64), m_numberTag)); }

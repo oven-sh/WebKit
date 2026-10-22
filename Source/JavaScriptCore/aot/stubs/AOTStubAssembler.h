@@ -112,8 +112,7 @@ public:
     template<typename Functor> void preservingRegistersClobberedBy(StubCallee callee, bool hasResult, const Functor& functor) { preservingRegistersClobberedBy(callee, hasResult, { }, functor); }
     // What is in lostAnyway is neither stored nor loaded.
     template<typename Functor> void preservingRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, const Functor&);
-    // For a stub that has no frame record, with the stack as at its entry. On x86-64 it sets one up around the region: the caller of the stub may have none, and a walk over the stack from the operation finds it by the return address of the stub.
-    // functor takes the distance from the stack pointer to the return address of the stub.
+    // For a stub that has no frame record, with the stack as at its entry.
     template<typename Functor> void preservingCallerSavedRegisters(bool hasResult, const Functor&);
     template<typename Functor> void withSavedRegisters(const RegisterSet&, const Functor&);
     void callAndReturnPreservingRegisters(const PreservingCall&, const ScopedLambda<void()>& emitCall);

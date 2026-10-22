@@ -148,8 +148,6 @@ static std::optional<CounterCandidate> findCandidate(FunctionPassContext& contex
 static constexpr OpcodeSet orderComparisons { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 
 // A loop and the copy of its failed tests, which has a loop of its own, hand each other the counter: the way back gives the typed loop what the copy has counted up, and a failed test gives the copy what the typed loop has.
-// Neither starts from an integer then, and the loop of the copy, which is entered in two places, is no natural loop: no induction variable is found in it. But it compares the counter with an integer before it steps.
-// Where the comparison holds, a counter that is an integer is a bounded one, and the types are computed from never: the first value out of bounds would have to be made of values that are all within.
 static void appendComparedParametersOfCyclesWithSeveralEntries(FunctionPassContext& context, Vector<CounterCandidate, 4>& candidates)
 {
     constexpr uint32_t takenTargetIndex = 0;

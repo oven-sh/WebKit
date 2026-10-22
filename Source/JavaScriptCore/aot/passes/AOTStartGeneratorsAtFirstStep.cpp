@@ -166,8 +166,7 @@ static void applyDeferredStart(FunctionPassContext& pass, IRBuilder& builder, co
     }
 }
 
-// A generator that no loop could be fused with is still seldom looked at between its creation and its first step. There the body need not suspend at its start only to be resumed at once:
-// the first step calls it. A body that returns without a yield has then never saved its frame.
+// A generator that no loop could be fused with is still seldom looked at between its creation and its first step.
 PassOutcome startGeneratorsAtFirstStep(FunctionPassContext& pass)
 {
     bool hasGenerator = std::ranges::any_of(pass.function.blocks, [&](const Block& block) {

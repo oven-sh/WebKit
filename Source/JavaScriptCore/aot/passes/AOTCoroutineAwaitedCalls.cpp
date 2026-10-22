@@ -48,7 +48,6 @@ struct IteratorResultReads {
 };
 
 // The call stands in the block of the await or in a block from which lone jumps lead there. callIndex is the first index in the block of the await that may hold the call or a cast.
-// Without a callee the call is `next` of an async generator.
 struct AwaitedCall {
     ValueID call;
     ValueID await;
@@ -582,7 +581,6 @@ static void expandTypedAwait(FunctionPassContext& context, IRBuilder& builder, c
 }
 
 // The promise of a function that never suspends is settled when the function returns, so the caller awaits what it would have been settled with.
-// That takes as many turns of the job queue where the result is no thenable. For a thenable and for an error the promise is made after all.
 static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder, const AwaitedCall& site)
 {
     Function& function = context.function;
@@ -674,7 +672,6 @@ static void eraseValuesEverywhere(IRBuilder& builder, std::span<const ValueID> e
 }
 
 // `for await` is Await(Call(next)) as well, so the step that serves it takes as many turns of the job queue as the call and the await.
-// An await goes on under the async context that it was reached under, a step of a loop or of `yield*` under the one that is active where the step is finished: such a step names its driver, this one names none.
 static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& builder, const AwaitedCall& site)
 {
     Function& function = context.function;

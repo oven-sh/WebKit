@@ -10,6 +10,7 @@
 #include <JavaScriptCore/JSExportMacros.h>
 #include <wtf/Forward.h>
 #include <wtf/text/ASCIILiteral.h>
+#include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {
 
@@ -40,8 +41,7 @@ void makeBuiltinsImmutable(Instance&);
 void markOriginalStructuresPristine(VM&, JSGlobalObject*);
 void didInstallBuiltins(Instance&);
 JS_EXPORT_PRIVATE void hostDidCreateRealm(JSGlobalObject*);
-// Start-up locks the built-in objects that are there. The realm creates most of them at their first use, and whoever creates one reports it here before the program can reach it.
-// A class is reported with its Structure, and once more with its constructor if it has one.
+// Start-up locks the built-in objects that are there.
 void didCreateClass(JSGlobalObject*, const LazyClassStructure&, Structure*, JSObject* prototype, JSObject* constructorOrNull);
 void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue);
 // Whether the holder has not created the member yet and didCreateStaticProperty() will be told when it does.

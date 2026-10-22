@@ -129,8 +129,7 @@ BlockID ArrayCapacityPlanner::findPreheader(const NaturalLoop& loop)
     return preheader;
 }
 
-// The table of a Map or a Set grows by half, and each step leaves the table before it behind. In a counted loop a table that is full grows once, to what the loop is still to add.
-// An iteration may skip the addition: the run time goes by the share of them that have added an entry.
+// The table of a Map or a Set grows by half, and each step leaves the table before it behind.
 std::optional<GrowthPlan> ArrayCapacityPlanner::planCollectionGrowth(const NaturalLoop& loop, ProgramPoint point)
 {
     const Program& program = m_context.program;

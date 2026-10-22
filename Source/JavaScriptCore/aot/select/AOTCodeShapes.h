@@ -41,7 +41,6 @@ class CFG;
 inline constexpr double roundingOfFrequencySums = 1 + 1e-6;
 
 // Where no block is entered again, what enters the function is divided among the edges, so no block runs more often than the function is entered.
-// The shares of the edges of a block add up to one as long as its rare edges together stay under the largest share that they may have.
 bool runsNoBlockMoreOftenThanEntry(const CFG&);
 
 PassOutcome chooseCodeShapes(FunctionPassContext&, ChosenShapes);

@@ -145,7 +145,6 @@ void nameCreatedSymbols(Program& program, BuildContext& build)
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
 
     // They come in the order of the functions, so a key gets the same number on any number of threads.
-    // The copies of a function share the positions of its calls, and with them the keys: who may rely on a key counts the calls that it names.
     BitVector builtinsWhoseCallsGiveKeys = findBuiltinsWhoseCallsGiveKeys(program.builtins());
     Vector<PropertyKey> keys = collectInParallel<PropertyKey>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<PropertyKey>& found) {
         appendKeysOfSymbolsCreatedIn(program, FunctionID(index), builtinsWhoseCallsGiveKeys, found);

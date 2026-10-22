@@ -66,8 +66,7 @@ static BuiltinID findCalledBuiltin(const BuiltinTable& builtins, const Function&
     return overload.mode == BuiltinCallMode::Call ? builtins.canonicalID(overload.builtin) : BuiltinID();
 }
 
-// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)), where the descriptors go nowhere else: SimplifyBuiltinCalls makes one operation of the two calls
-// where it finds the first in the block of the second. A copy that came back between them would leave a block parameter in its place.
+// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)), where the descriptors go nowhere else: SimplifyBuiltinCalls makes one operation of the two calls where it finds the first in the block of the second.
 static std::optional<uint32_t> endOfDefinitionByDescriptors(const Program& program, const Function& function, const UseLists& useLists, ValueID description, BlockID block)
 {
     const BuiltinTable& builtins = program.builtins();
@@ -467,7 +466,6 @@ void GenericCopy::computeRegion(Extent extent)
 }
 
 // If the copy can reach a loop's copied header from outside the loop, an edge from the copy into the loop's body would bypass the header.
-// PlaceTypeTests rejoins on a block it has put on the back edge of a loop whose header is no rejoin block, and takes that block out of the loop itself.
 bool GenericCopy::addsLoopEntry(BlockID block) const
 {
     if (!m_analyses.isInCycle(block))
@@ -716,8 +714,7 @@ Vector<TypeID> GenericCopy::collectTypesOfOtherDefinitions() const
     return joinedTypes;
 }
 
-// Once a value enters the copy on a failed check, the types stored in the copy are no upper bound until SSA is repaired and the function is typed again:
-// a use in the copy still names the clone, not the value on the failing edge.
+// Once a value enters the copy on a failed check, the types stored in the copy are no upper bound until SSA is repaired and the function is typed again: a use in the copy still names the clone, not the value on the failing edge.
 TypeID GenericCopy::typeBoundInCopy(ValueID inTypedCode, ValueID inCopy, const RejoinTypes& rejoinTypes) const
 {
     TypeArena& types = m_context.types;

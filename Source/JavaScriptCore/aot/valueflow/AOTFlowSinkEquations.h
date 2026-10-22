@@ -61,7 +61,6 @@ struct SinkEquations {
     ParallelArray<OperandUses> base;
     ParallelArray<OperandUses> sinks;
     // A pointer into a frame may be in no cell, however soon that cell dies, and native code takes cells of the heap only.
-    // The second solution counts each store into a cell and each operand of native code as a use that retains. Empty where nobody asks for that solution.
     Vector<OperandUses> baseOfFramePointers;
     Vector<OperandUses> sinksOfFramePointers;
     Vector<uint32_t> offsets;

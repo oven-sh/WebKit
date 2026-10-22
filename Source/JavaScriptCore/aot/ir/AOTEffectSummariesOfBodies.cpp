@@ -218,10 +218,7 @@ public:
     }
 
 private:
-    // A reference that the body stores is read out again by whatever runs until the body returns: the closures over a scope that holds it, a callee that is handed
-    // the object it lies in. What they do to the object is memory that they reach other than through a parameter, which is with the exits. It need not outlive the call,
-    // so that the parameter may still count as borrowed, and a caller that alone holds the object then looks only at the memory of the parameter: what goes to the exits
-    // goes there too.
+    // A reference that the body stores is read out again by whatever runs until the body returns: the closures over a scope that holds it, a callee that is handed the object it lies in.
     bool mayBeReadOutOfMemory(uint32_t entryParameter)
     {
         ValueID parameter = m_function.at(entryBlock).parameters[entryParameter];
@@ -236,8 +233,7 @@ private:
         });
     }
 
-    // Which exits take an effect depends on which of them its block reaches: four cases, and a fifth for what is thrown out of a block without a handler. All is united,
-    // so an effect is merged once, into what its case has gathered, and handOverToExits() gives each exit and each parameter in memory what is theirs.
+    // Which exits take an effect depends on which of them its block reaches: four cases, and a fifth for what is thrown out of a block without a handler.
     void addToExits(BlockID block, const Effects& normal, const Effects& handler)
     {
         m_gatheredForExits[exitsOf(block)].merge(normal);
@@ -401,7 +397,6 @@ private:
     }
 
     // The exits hold memory reached other than through an entry parameter, so a caller that alone holds an object it passes looks only at the memory of the parameter.
-    // Nothing says which operand an unconfined entry writes, or which parameter of the code it runs takes which operand.
     void addMemoryOfOperands(const auto& entry, const EffectDescription& description)
     {
         bool writesObjects = description.own.normal.writes.containsAny(perObjectHeaps) || description.own.handler.writes.containsAny(perObjectHeaps);
@@ -523,13 +518,10 @@ private:
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
-        // A check stands for the generic version of the function, which AddGenericVersion makes of it. There the operations behind the check take a value of any kind
-        // and run whatever it brings along: a getter, a valueOf.
+        // A check stands for the generic version of the function, which AddGenericVersion makes of it.
         if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.castType()), program))
             description.callsUnknownCode = true;
-        // Each function that a value may run is some dependencies of this body. Where every one of N functions may call all N, as the members of the modules of a bundle do
-        // through its one helper, that is N times N. What so many functions do between them is seldom less than anything. It is more than unknown code does, which enters no
-        // function whose callers are all known and writes no variable whose writers are.
+        // Each function that a value may run is some dependencies of this body.
         constexpr size_t mostFunctionsFollowed = 64;
         if (description.functions.size() > mostFunctionsFollowed) {
             description.functions.clear();

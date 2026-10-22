@@ -158,8 +158,7 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
     return checks;
 }
 
-// The declared type of a parameter belongs to the variable, which the body may assign to. The value at the entrance is what callers pass.
-// Where all that the body does with that value is to check it for one type, a narrower one than is declared, the value is wanted with that type or not at all.
+// The declared type of a parameter belongs to the variable, which the body may assign to.
 static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& program, const Function& function, std::span<const EntryCheck> entryChecks)
 {
     struct EntryValue {
@@ -270,8 +269,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
     return result;
 }
 
-// The type of a parameter that holds a reference lists `undefined` and `null` whatever the program has written. What the program has left out goes to the generic version,
-// and the typed body holds a reference.
+// The type of a parameter that holds a reference lists `undefined` and `null` whatever the program has written.
 static void leaveOutOmittedNullish(const Program& program, const Function& function, std::span<const EntryCheck> entryChecks, Vector<CheckedEntryValue, 2>& checkedEntryValues)
 {
     for (size_t index = 0; index < entryChecks.size(); ++index) {
@@ -299,7 +297,6 @@ static void leaveOutOmittedNullish(const Program& program, const Function& funct
 }
 
 // A member of the declared type that some caller is seen to pass is an ordinary value of the parameter, and a test that turns it away would send ordinary calls into the generic version.
-// Of a value of any type, of a list of arguments and of a caller that nobody sees, nothing is known: those are what the test is for.
 static void keepWhereEveryKnownArrivalFits(const Program& program, const ParallelLoops& loops, Vector<Split>& splits)
 {
     static_assert(OperandIndex::Call::arguments == 2);
@@ -780,7 +777,6 @@ void skipAnsweredEntryChecks(ProgramEditor& editor, const Heat& heat, BuildConte
             if (caller.at(block).frequency != BlockFrequency::Normal || isCold(heat.of(program, call.function())))
                 return;
             // The typed body promises another result than its entrance, so a call that named it would have another type, and so would all that is computed from it.
-            // A caller that answers every test enters an entrance without tests, which is a jump that the linker threads.
             if (uint32_t answered = testsAnsweredBy(program, caller, call, *entranceOf(call.function())))
                 found.append({ id, value, call.function(), answered });
         });

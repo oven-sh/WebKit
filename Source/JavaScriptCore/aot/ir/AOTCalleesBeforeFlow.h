@@ -30,8 +30,7 @@ struct CalleesBeforeFlowInputs {
     const TypingContext& typing;
 };
 
-// In one function whose values are typed: which functions a call may enter and which members a read by name may find, as far as the program's own operations and the types
-// as read say it. A callee that arrives any other way is not listed.
+// In one function whose values are typed: which functions a call may enter and which members a read by name may find, as far as the program's own operations and the types as read say it.
 class CalleesBeforeFlow {
 public:
     explicit CalleesBeforeFlow(const CalleesBeforeFlowInputs& inputs)

@@ -195,8 +195,7 @@ void OverloadWalk::collectOverloadsBehind(BuiltinDispatchTarget target, Vector<B
         collectOverloadsBehind(branch.target, overloads);
 }
 
-// A special case is a faster form of a later overload, which is right for its operands too. A walk that cannot tell whether an operand is the special one passes the branch by,
-// as long as the branch leads to nothing else that the last branch, which takes everything, does not lead to.
+// A special case is a faster form of a later overload, which is right for its operands too.
 bool OverloadWalk::canPassBy(const BuiltinDispatchNode& node, const BuiltinDispatchBranch& branch) const
 {
     const BuiltinDispatchBranch& last = node.branches.back();

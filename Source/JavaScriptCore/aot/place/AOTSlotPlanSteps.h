@@ -134,9 +134,7 @@ struct StoreByNameUse {
 struct SlotRowUse {
     // Whether any code that was seen gives the field something, be it undefined.
     bool isStoredSomewhere() const { return fillHeat || initializingSites || storesOfConstructorWithValue || storesOfUndefined; }
-    // An estimate of the share of objects that get the field: how often it is stored against how often its holders are made. A store may run again and again for one object,
-    // so what is stored into an object that has just been made is counted by itself. A type may require a field that nothing stores.
-    // A little under a half, so that a half that was added up from parts is a half.
+    // An estimate of the share of objects that get the field: how often it is stored against how often its holders are made.
     bool isLikelyFilled() const { return isFilledBesideCreation() || (holderHeat && fillHeat >= holderHeat * 0.4999); }
     bool isFilledBesideCreation() const { return storesOfConstructorWithValue || (isRequiredByDeclaringType && isStoredSomewhere()); }
 
@@ -159,8 +157,7 @@ struct SlotRowUse {
     uint32_t environmentUses { 0 };
     uint32_t storesWithoutAllocation { 0 };
     uint32_t storesIntoFilledSlots { 0 };
-    // Slot stores into an object of exactly this layout that the same function has allocated. A pass that makes objects fills them so in place of the list of the allocation:
-    // a compiled parser stores the members that the text may leave out. Flow ran before that pass and says nothing of its stores.
+    // Slot stores into an object of exactly this layout that the same function has allocated.
     uint32_t storesIntoNewObjects { 0 };
     uint32_t privateDefinitionsByName { 0 };
 };

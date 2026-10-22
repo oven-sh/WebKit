@@ -109,8 +109,7 @@ void computeFieldAddress(StubAssembler& jit, const FieldAddressRegisters& r, boo
             decodeCell32(jit, r.address, r.address);
             jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), r.address);
         }
-        // The bit of the granule goes to the top and the bits of later granules drop out. What is left counts the granule and those before it,
-        // which is also the number of words from the start of the Extension to the granule. A shift takes its amount modulo 64.
+        // The bit of the granule goes to the top and the bits of later granules drop out.
         static_assert(offsetOfFirstExtensionSlot == extensionGranuleSize && extensionGranuleSize == 8 && maxExtensionGranules == 64);
         const GPRReg granuleBits = jit.scratchRegister();
         RELEASE_ASSERT(noOverlap(granuleBits, r.object, r.slotData, r.address, count));
@@ -484,9 +483,7 @@ static void loadAtLocation(StubAssembler& jit, GPRReg object, GPRReg location, G
     done.link(&jit);
 }
 
-// The two usual reads of a private name. A compiled object of the very class that declares the name, where the class is evaluated once, keeps it in the slot of its field.
-// An object that is no compiled object keeps it as a property, and the token knows where for the Structures it has met: see ClassToken::KnownStructureSlot.
-// Everything else, and every error, is the operation's.
+// The two usual reads of a private name.
 void generatePrivateGet(StubAssembler& jit)
 {
     constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));

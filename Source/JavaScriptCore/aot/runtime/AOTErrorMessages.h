@@ -48,8 +48,7 @@ enum class LoaderChange : uint8_t {
     ReplaceLoaderFunction,
 };
 
-// The engine's own errors, worded by the engine. Where it quotes the source of the expression that failed, a compiled frame has no source to quote:
-// it gets the part of the expression that the place knows anyway, the name of the member, behind the value that stood in front of it.
+// The engine's own errors, worded by the engine.
 JS_EXPORT_PRIVATE StringView quotedSourceOfFailedExpression();
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, StringView member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);

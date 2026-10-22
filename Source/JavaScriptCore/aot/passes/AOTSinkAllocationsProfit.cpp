@@ -187,7 +187,6 @@ bool AllocationSinking::paysToSink(const Candidate& candidate) const
 }
 
 // An object that several paths would build is not given up: it is built once, in front of the first branch it reaches, and keeps the stores that were folded until there.
-// What refers to it is judged again after that, because it is built as often as its holder.
 bool AllocationSinking::buildBeforeBranchesInsteadOfAbandoning()
 {
     uint64_t maxNumberOfBuilds = limit(LimitID::MaxMaterializations);

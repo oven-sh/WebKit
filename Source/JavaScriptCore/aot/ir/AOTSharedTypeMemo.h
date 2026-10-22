@@ -21,16 +21,11 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // What an answer follows from, beside the ids in its key.
-// AboutTypes: the records of those ids and the table of built-ins. It holds as long as the ids do.
-// AboutProgram: also layouts, variables and whatever else stays as it is while a ProgramCaches stands. It holds that long.
 enum class SharedAnswers : uint8_t { AboutTypes, AboutProgram };
 
 inline constexpr size_t numberOfSharedAnswerKinds = 2;
 
-// Types that follow from ids that the table holds for good, shared by all threads. A lookup takes no lock. Entries are never removed and never change.
-// Which thread adds an entry is a race. So an entry must be the same whoever computes it, and computing it must leave nothing behind in the arena that does
-// (TypeArena::sharedAnswer()): a thread that finds the entry then stands where it would stand had it computed the type, and which task uses a record first depends on no race.
-// A memo that is full takes no more. Nothing but time depends on what it holds.
+// Types that follow from ids that the table holds for good, shared by all threads.
 class SharedTypeMemo {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SharedTypeMemo);
     WTF_MAKE_NONCOPYABLE(SharedTypeMemo);

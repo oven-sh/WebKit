@@ -102,8 +102,7 @@ struct SinkingInputs {
     bool isLargeForItsWork { false };
 };
 
-// A name is a value that may stand for a candidate, for a guard of one, for its results or for a test of one: the candidates, and what an interpreter may bind to one. More values may be listed.
-// Whatever mentions no name leaves every object as it is, but for what it writes.
+// A name is a value that may stand for a candidate, for a guard of one, for its results or for a test of one: the candidates, and what an interpreter may bind to one.
 struct SinkingNames {
     BitVector names;
     BitVector valuesMentioningNames;
@@ -269,7 +268,6 @@ public:
             computeInputsOf(block);
     }
     // The indexes of the values that may change a state or that a handler has to see: those that mention a name, the candidates, what writes objects and, under a handler, what may throw.
-    // The highest bit marks a value that mentions no name and is no candidate: all it does to a state is to write.
     static constexpr uint32_t onlyWritesOrThrows = 1u << 31;
     std::span<const uint32_t> relevantValuesOf(BlockID block) const LIFETIME_BOUND
     {

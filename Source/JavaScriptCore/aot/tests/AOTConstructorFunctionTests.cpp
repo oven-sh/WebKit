@@ -21,13 +21,6 @@
 
 namespace JSC { namespace AOT {
 
-// const Point = function () { this.px = 1 };
-// Point.prototype.sum = function () { return this.px };
-// print(new Point().sum());
-// print(new Point() instanceof Point);
-// print(Object.getPrototypeOf(new Point()) === Point.prototype);
-// print(new Point().constructor === Point);
-// print(Point.prototype.constructor === Point);
 static constexpr ASCIILiteral functionExpression = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -78,17 +71,6 @@ function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
 entry module=m0
 )IR"_s;
 
-// function Declared() {}
-// Declared.prototype.m = function () { return 7 };
-// Declared.prototype.x = 3;
-// print(new Declared().m(), new Declared().x, Object.getPrototypeOf(new Declared()) === Declared.prototype);
-// const Expression = function () {};
-// Expression.prototype.m = function () { return 8 };
-// Expression.prototype.x = 4;
-// print(new Expression().m(), new Expression().x, Object.getPrototypeOf(new Expression()) === Expression.prototype);
-// Declared.prototype.valueOf = function () { return 5 };
-// Expression.prototype.toString = function () { return "text" };
-// print(new Declared() + 1, "" + new Expression());
 static constexpr ASCIILiteral bodiesWithoutThis = R"IR(layout L0 kind=Instance name="Declared" constructor=f1 flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -181,13 +163,6 @@ function f6 thisType={type=anything} results=[{type=string flags=[IsExpected]}] 
 entry module=m0
 )IR"_s;
 
-// const Point = function () { this.px = 1 };
-// Point.prototype.sum = function () { return this.px };
-// class Sub extends Point { constructor() { super(); this.py = 2 } both() { return this.sum() + this.py } }
-// print(Object.getPrototypeOf(Sub) === Point);
-// print(Object.getPrototypeOf(Sub.prototype) === Point.prototype);
-// print(new Sub().sum(), new Sub().both());
-// print(new Sub() instanceof Point, new Sub() instanceof Sub, new Point() instanceof Sub);
 static constexpr ASCIILiteral classBelowAFunctionExpression = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="Sub" constructor=f3 fields=[{key="py" declared={type=2 flags=[IsExpected]}}] flags=[HasHeritage]
 variable g0 declared={type=function} flags=[IsImmutable]
@@ -299,16 +274,6 @@ function f4 name="both" kind=Method flags=[HasThis, HasExplicitName] thisType={t
 entry module=m0
 )IR"_s;
 
-// var Point = (function () {
-//   function Point(x) { this.px = x }
-//   Point.prototype.sum = function () { return this.px + 1 };
-//   Point.prototype.clone = function () { return new Point(this.px) };
-//   Point.make = function (x) { return new Point(x) };
-//   return Point;
-// })();
-// print(new Point(1).sum(), Point.make(2).sum(), new Point(3).clone().sum());
-// print(new Point(3) instanceof Point, Point.make(4) instanceof Point, new Point(5).clone() instanceof Point);
-// print(Object.getPrototypeOf(Point.make(6)) === Point.prototype, new Point(7).constructor === Point);
 static constexpr ASCIILiteral declaredInAFunctionThatIsCalledAtOnce = R"IR(layout L0 kind=Instance name="Point" constructor=f2 fields=[{key="px" declared={type=anything}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -402,15 +367,6 @@ function f5 length=1 captures=[{type=function}] thisType={type=anything} paramet
 entry module=m0
 )IR"_s;
 
-// function Both(x) { if (!(this instanceof Both)) return new Both(x); this.v = x }
-// Both.prototype.get = function () { return this.v };
-// print(Both(1).get(), new Both(2).get(), Both(3) instanceof Both, Both(4).constructor === Both);
-// var Wrapped = (function () {
-//   function Wrapped(x) { if (!(this instanceof Wrapped)) return new Wrapped(x); this.v = x }
-//   Wrapped.prototype.get = function () { return this.v };
-//   return Wrapped;
-// })();
-// print(Wrapped(1).get(), new Wrapped(2).get(), Wrapped(3) instanceof Wrapped, Wrapped(4).constructor === Wrapped);
 static constexpr ASCIILiteral functionThatConstructsItself = R"IR(layout L0 kind=Instance name="Both" constructor=f1 fields=[{key="v" declared={type=anything}}] flags=[IsConstructorFunction]
 layout L1 kind=Environment fields=[{key=@"binding.0" declared={type=function} flags=[IsImmutable]}]
 layout L2 kind=Instance name="Wrapped" constructor=f4 fields=[{key="v" declared={type=anything}}] flags=[IsConstructorFunction]
@@ -528,20 +484,6 @@ function f5 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
 entry module=m0
 )IR"_s;
 
-// function once() {
-//   function Inner() { this.v = 1 }
-//   Inner.prototype.get = function () { return this.v };
-//   return Inner;
-// }
-// function twice() {
-//   function Inner() { this.v = 2 }
-//   Inner.prototype.get = function () { return this.v };
-//   return Inner;
-// }
-// const One = once();
-// const TwoA = twice(), TwoB = twice();
-// print(new One().get(), new TwoA().get(), new TwoB().get());
-// print(new One() instanceof One, new TwoA() instanceof TwoA, new TwoA() instanceof TwoB, TwoA === TwoB);
 static constexpr ASCIILiteral declaredInAFunctionCalledOnceAndTwice = R"IR(layout L0 kind=Instance name="Inner" constructor=f3 fields=[{key="v" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="Inner" constructor=f5 fields=[{key="v" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -618,14 +560,6 @@ function f6 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
 entry module=m0
 )IR"_s;
 
-// function make(tag) { return function P() { this.tag = tag } }
-// const A = make("a"), B = make("b");
-// A.prototype.who = function () { return "A" + this.tag };
-// B.prototype.who = function () { return "B" + this.tag };
-// print(new A().who(), new B().who());
-// print(new A() instanceof A, new A() instanceof B, new B() instanceof A, new B() instanceof B);
-// print(A.prototype === B.prototype, A === B);
-// print(Object.getPrototypeOf(new A()) === A.prototype, Object.getPrototypeOf(new B()) === B.prototype);
 static constexpr ASCIILiteral factoryWithACapture = R"IR(layout L0 kind=Instance name="P" constructor=f4 fields=[{key="tag" declared={type=anything}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -707,14 +641,6 @@ function f4 name="P" flags=[HasThis, HasExplicitName] captures=[{type=anything}]
 entry module=m0
 )IR"_s;
 
-// function make() { return function P() { this.tag = 1 } }
-// const A = make(), B = make();
-// A.prototype.who = function () { return "A" + this.tag };
-// B.prototype.who = function () { return "B" + this.tag };
-// print(new A().who(), new B().who());
-// print(new A() instanceof A, new A() instanceof B, new B() instanceof A, new B() instanceof B);
-// print(A.prototype === B.prototype, A === B);
-// print(Object.getPrototypeOf(new A()) === A.prototype, Object.getPrototypeOf(new B()) === B.prototype);
 static constexpr ASCIILiteral factoryWithoutCaptures = R"IR(layout L0 kind=Instance name="P" constructor=f4 fields=[{key="tag" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -795,14 +721,6 @@ function f4 name="P" flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[I
 entry module=m0
 )IR"_s;
 
-// const all = [];
-// for (let i = 0; i < 3; i++) {
-//   const P = function () { this.n = 10 };
-//   P.prototype.index = i;
-//   all[i] = P;
-// }
-// print(new all[0]().index, new all[1]().index, new all[2]().index);
-// print(new all[0]() instanceof all[0], new all[0]() instanceof all[1], all[0] === all[1]);
 static constexpr ASCIILiteral createdInALoop = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="n" declared={type=10 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -878,16 +796,6 @@ data d0 root=Array{contents=anything}
 entry module=m0
 )IR"_s;
 
-// const Point = function () { this.px = 1 };
-// Point.prototype = { sum() { return this.px + 10 } };
-// const first = new Point();
-// print(first.sum(), first instanceof Point, Object.getPrototypeOf(first) === Point.prototype);
-// Point.prototype = { sum() { return this.px + 20 } };
-// const second = new Point();
-// print(first.sum(), second.sum(), first instanceof Point, second instanceof Point);
-// print(Object.getPrototypeOf(first) === Point.prototype, Object.getPrototypeOf(second) === Point.prototype);
-// Point.prototype = 5;
-// print(Object.getPrototypeOf(new Point()) === Object.prototype);
 static constexpr ASCIILiteral prototypeReplacedBeforeTheFirstConstruction = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 fields=[{key="sum" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
 layout L2 fields=[{key="sum" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
@@ -969,12 +877,6 @@ function f3 name="sum" kind=Method flags=[HasThis, HasExplicitName] thisType={ty
 entry module=m0
 )IR"_s;
 
-// const Point = function () { this.px = 1 };
-// Point.prototype.sum = function () { return this.px };
-// const first = new Point();
-// Point.prototype = { sum() { return this.px + 20 } };
-// const second = new Point();
-// print(first.sum(), second.sum(), first instanceof Point, second instanceof Point);
 static constexpr ASCIILiteral prototypeReplacedAfterTheFirstConstruction = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 fields=[{key="sum" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -1025,17 +927,6 @@ function f3 name="sum" kind=Method flags=[HasThis, HasExplicitName] thisType={ty
 entry module=m0
 )IR"_s;
 
-// function main() {
-//   let count = 0;
-//   const Counter = function () { this.id = ++count };
-//   Counter.prototype.who = function () { return "c" + this.id };
-//   print(new Counter().who(), new Counter().who());
-//   print(new Counter() instanceof Counter, Object.getPrototypeOf(new Counter()) === Counter.prototype, new Counter().constructor === Counter);
-//   class Sub extends Counter { more() { return this.who() + "!" } }
-//   print(new Sub().more(), Object.getPrototypeOf(Sub) === Counter, new Sub() instanceof Counter);
-//   return count;
-// }
-// print(main());
 static constexpr ASCIILiteral constructorWithACapture = R"IR(layout L0 kind=Environment fields=[{key=@"binding.0" declared={type=number|absent flags=[IsExpected]} flags=[IsRequired]}]
 layout L1 kind=Instance constructor=f2 fields=[{key="id" declared={type=number flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L2 kind=Instance name="Sub" constructor=f4 flags=[HasHeritage]
@@ -1136,15 +1027,6 @@ function f5 name="more" kind=Method flags=[HasThis, HasExplicitName] thisType={t
 entry module=m0
 )IR"_s;
 
-// function setUp() {
-//   const registry = {};
-//   registry.Node = function (v) { this.v = v; this.owner = registry };
-//   registry.Node.prototype.get = function () { return this.v };
-//   return registry;
-// }
-// const r = setUp();
-// const n = new r.Node(5);
-// print(n.get(), n instanceof r.Node, n.owner === r, n.constructor === r.Node, Object.getPrototypeOf(n) === r.Node.prototype);
 static constexpr ASCIILiteral constructorThatCapturesItsHolder = R"IR(layout L0 kind=Instance constructor=f2 fields=[{key="v" declared={type=anything}}, {key="owner" declared={type=L1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 fields=[{key="Node" declared={type=function flags=[IsExpected]} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -1203,15 +1085,6 @@ data d0 root=Object{layout=L1}
 entry module=m0
 )IR"_s;
 
-// const ns = {};
-// ns.Point = function () { this.px = 1 };
-// ns.Point.prototype.sum = function () { return this.px };
-// const p = new ns.Point();
-// print(p.sum(), p instanceof ns.Point, Object.getPrototypeOf(p) === ns.Point.prototype, p.constructor === ns.Point);
-// const literal = { Point: function () { this.py = 2 } };
-// literal.Point.prototype.sum = function () { return this.py };
-// const q = new literal.Point();
-// print(q.sum(), q instanceof literal.Point, Object.getPrototypeOf(q) === literal.Point.prototype, q.constructor === literal.Point);
 static constexpr ASCIILiteral constructorInAProperty = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance constructor=f3 fields=[{key="py" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L2 fields=[{key="Point" declared={type=function flags=[IsExpected]} flags=[IsRequired]}]
@@ -1297,21 +1170,6 @@ data d0 root=Object{layout=L2}
 entry module=m0
 )IR"_s;
 
-// function Declared() {}
-// function DeclaredWithThis() { this.a = 1 }
-// const Expression = function () {};
-// const ExpressionWithThis = function () { this.a = 2 };
-// const all = [new Declared(), new DeclaredWithThis(), new Expression(), new ExpressionWithThis()];
-// print(all[0].x, all[1].x, all[2].x, all[3].x, typeof all[0].m, typeof all[1].m, typeof all[2].m, typeof all[3].m);
-// Declared.prototype.x = 10; DeclaredWithThis.prototype.x = 11; Expression.prototype.x = 12; ExpressionWithThis.prototype.x = 13;
-// Declared.prototype.m = function () { return "d" + this.x };
-// DeclaredWithThis.prototype.m = function () { return "dt" + this.x + this.a };
-// Expression.prototype.m = function () { return "e" + this.x };
-// ExpressionWithThis.prototype.m = function () { return "et" + this.x + this.a };
-// print(all[0].x, all[1].x, all[2].x, all[3].x, all[0].m(), all[1].m(), all[2].m(), all[3].m());
-// print(new Declared().m(), new DeclaredWithThis().m(), new Expression().m(), new ExpressionWithThis().m());
-// delete Declared.prototype.x; delete ExpressionWithThis.prototype.m;
-// print(all[0].x, new Declared().x, typeof all[3].m, typeof new ExpressionWithThis().m);
 static constexpr ASCIILiteral membersAddedAfterInstancesExist = R"IR(layout L0 kind=Instance name="Declared" constructor=f1 flags=[IsConstructorFunction]
 layout L1 kind=Instance name="DeclaredWithThis" constructor=f2 fields=[{key="a" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L2 kind=Instance constructor=f4 fields=[{key="a" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
@@ -1503,10 +1361,6 @@ function f8 flags=[HasThis] thisType={type=anything} results=[{type=string flags
 entry module=m0
 )IR"_s;
 
-// const P = function () { this.px = 1 };
-// const first = new P();
-// const Again = first.constructor;
-// print(Again === P, new Again() instanceof P, new Again().px);
 static constexpr ASCIILiteral closureReadFromAnInstance = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
@@ -1535,10 +1389,6 @@ function f1 name="P" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} resul
 entry module=m0
 )IR"_s;
 
-// function build() { return new Point() }
-// var Point = function () { this.px = 1 };
-// Point.prototype.sum = function () { return this.px };
-// print(build().sum(), build() instanceof Point, build().constructor === Point);
 static constexpr ASCIILiteral constructedInAFunctionDeclaredEarlier = R"IR(layout L0 kind=Instance constructor=f2 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 variable g0 name="Point" declared={type=function flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -1585,13 +1435,6 @@ function f3 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
 entry module=m0
 )IR"_s;
 
-// function construct(callee, a) { return new callee(a) }
-// const P = function (a) { this.p = a };
-// P.prototype.who = function () { return "P" + this.p };
-// function Q(a) { this.q = a }
-// Q.prototype.who = function () { return "Q" + this.q };
-// print(construct(P, 1).who(), construct(Q, 2).who(), new P(3).who(), new Q(4).who());
-// print(construct(P, 1) instanceof P, construct(Q, 2) instanceof Q, Object.getPrototypeOf(construct(P, 1)) === Object.getPrototypeOf(new P(1)));
 static constexpr ASCIILiteral constructedByValue = R"IR(layout L0 kind=Instance name="Q" constructor=f2 fields=[{key="q" declared={type=anything}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance constructor=f3 fields=[{key="p" declared={type=anything}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -1679,12 +1522,6 @@ function f5 flags=[HasThis] thisType={type=anything} results=[{type=string flags
 entry module=m0
 )IR"_s;
 
-// const P = function () { this.px = 1 };
-// const Q = function () { this.qx = 2 };
-// Q.prototype.who = function () { return "q" + this.px };
-// const made = Reflect.construct(P, [], Q);
-// print(made.who(), made instanceof Q, made instanceof P, Object.getPrototypeOf(made) === Q.prototype);
-// print(new P() instanceof P, new Q() instanceof Q);
 static constexpr ASCIILiteral otherNewTarget = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance constructor=f2 fields=[{key="qx" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -1744,20 +1581,6 @@ data d0 root=Array{contents=anything}
 entry module=m0
 )IR"_s;
 
-// function A() { this.a = 1 }
-// A.prototype.fromA = function () { return "A" + this.a };
-// function B() { this.a = 2; this.b = 3 }
-// B.prototype = new A();
-// B.prototype.constructor = B;
-// B.prototype.fromB = function () { return "B" + this.b };
-// const C = function () { this.a = 4; this.b = 5; this.c = 6 };
-// C.prototype = Object.create(B.prototype);
-// C.prototype.fromC = function () { return "C" + this.c };
-// const c = new C();
-// print(c.fromA(), c.fromB(), c.fromC(), c instanceof A, c instanceof B, c instanceof C, c.constructor === B);
-// class D extends C { fromD() { return "D" + this.fromC() } }
-// const d = new D();
-// print(d.fromA(), d.fromD(), d instanceof A, d instanceof C, Object.getPrototypeOf(D) === C, Object.getPrototypeOf(D.prototype) === C.prototype);
 static constexpr ASCIILiteral chainOfFunctionsAndAClass = R"IR(layout L0 kind=Instance name="A" constructor=f1 fields=[{key="a" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="B" constructor=f2 fields=[{key="a" declared={type=2 flags=[IsExpected]}}, {key="b" declared={type=3 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L2 kind=Instance constructor=f5 fields=[{key="a" declared={type=4 flags=[IsExpected]}}, {key="b" declared={type=5 flags=[IsExpected]}}, {key="c" declared={type=6 flags=[IsExpected]}}] flags=[IsConstructorFunction]
@@ -1893,11 +1716,6 @@ function f8 name="fromD" kind=Method flags=[HasThis, HasExplicitName] thisType={
 entry module=m0
 )IR"_s;
 
-// const o = { n: 0, [Symbol.hasInstance]: function (v) { this.n = (this.n | 0) + 1; return v === 1; } };
-// print(1 instanceof o, o.n, o[Symbol.hasInstance].name);
-// const key = "made" + "Up";
-// const p = { [key]: function () { this.z = 1 } };
-// print(p[key].name, new p[key]().z, new p[key]() instanceof p[key]);
 static constexpr ASCIILiteral nameSetAtRunTime = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="n" declared={type=number flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance constructor=f2 fields=[{key="z" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 layout L2 fields=[{key="n" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
@@ -1962,12 +1780,6 @@ function f2 flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type
 entry module=m0
 )IR"_s;
 
-// function Point(x) { this.px = x }
-// Point.prototype.sum = function () { return this.px };
-// var Other = function (x) { this.py = x };
-// Other.prototype.sum = function () { return this.py };
-// print(new Point(1).sum(), new Other(2).sum(), new Point(1) instanceof Point, new Other(2) instanceof Other, new Other(2).constructor === Other);
-// module.exports = Point;
 static constexpr ASCIILiteral commonJSModule = R"IR(layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="px" declared={type=anything}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance constructor=f3 fields=[{key="py" declared={type=anything}}] flags=[IsConstructorFunction]
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined

@@ -106,8 +106,7 @@ using NameSet = UncheckedKeyHashSet<UniquedStringImpl*>;
 static constexpr uint32_t starRuleSourceIsMarkedAsESModule = 1 << 2;
 static constexpr unsigned attributesOfStarBinding = PropertyAttribute::Accessor | PropertyAttribute::DontDelete;
 
-// What a star defines follows from its record alone, whatever has happened to the two objects since: a key order is never forgotten, so the order word of the source still names the fields
-// that it had, the stars of the source are a list that only grows at its end, and the target had every field of its layout.
+// What a star defines follows from its record alone, whatever has happened to the two objects since.
 class Star {
 public:
     Star() = default;
@@ -192,7 +191,6 @@ public:
     }
 
     // Stars get their bindings in the order in which they were recorded, so every star before one that has its bindings has them too.
-    // A star needs those of stars that were recorded before it and of no others, so this comes to an end where modules require each other.
     void bindStarsUpTo(Star last, const LayoutData& layoutOfTarget)
     {
         if (!last || last.bindings())
@@ -284,7 +282,6 @@ static InternalFieldTuple* pendingStarsOf(const Object& object)
 }
 
 // Nothing of the object changes but the cell in the hidden word: it had the bit and the Structure of an object with extra properties, and none of the names is a field of its layout.
-// Whoever asks for extra properties does not expect a collection.
 static JSObject* makePendingStars(Object& target, InternalFieldTuple* pendingStars)
 {
     VM& vm = target.vm();

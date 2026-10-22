@@ -63,14 +63,12 @@ public:
     const LayoutData* classData() const;
     bool isLazyClassObject() const;
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
-    // A built-in function that the library writes in JavaScript is a closure like those of the program. Like a native function it takes no call, apply, bind or Symbol.hasInstance of its own:
-    // compiled code finds the members of Function.prototype through it, whoever has had it in hand (BuiltinTable::isFunctionOfEngine). No store under one of the names is cached for any closure.
+    // A built-in function that the library writes in JavaScript is a closure like those of the program.
     static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);
     bool refusesOwnProperty(VM&, PropertyName) const;
     bool isBuiltinFunction() const;
     void ensureClassObject(VM&);
-    // Leaves the class object with `prototype` as its only property: what it owned before is the caller's to put back. A class that declares static members gets a Structure of its own,
-    // which they enter without transitions. The other classes with one parent share a Structure.
+    // Leaves the class object with `prototype` as its only property: what it owned before is the caller's to put back.
     void initializeClassObject(VM&, JSObject* parent, JSObject* prototype);
     void adoptBoundFunctionStructure(VM&);
     JSValue prototypeProperty(VM&);

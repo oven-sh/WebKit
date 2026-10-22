@@ -108,7 +108,6 @@ static void encodeLiteralStrings(TableEncoder& encoder)
 }
 
 // The atom tables of the process ask this table for the atom of the image before they make one of their own, so it lists each identifier that is found by its text.
-// The number of an identifier is also the number of its string header.
 static void encodeIdentifiersByHash(TableEncoder& encoder)
 {
     Vector<uint32_t> numbers;

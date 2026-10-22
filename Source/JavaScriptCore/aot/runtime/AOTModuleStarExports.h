@@ -94,7 +94,6 @@ public:
     // What a table of exports holds under the name. In the captured exports of a module the table itself stands for a deferred export: Modules::capturedValue() reads that one.
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
     // Reads every deferred export of the module.
-    // Without a value for a deferred export: listing the names reads none of them. Modules::capturedValue() reads one.
     static void forEachCapturedExport(Modules&, ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
 
 private:

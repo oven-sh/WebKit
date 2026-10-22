@@ -30,8 +30,6 @@ struct PlannedMove {
 };
 
 // A list that one operation alone takes is made in front of that operation, and what it alone holds in front of it.
-// `f.apply(this, arguments)` makes its object where the function begins, and a caller makes the list of surplus arguments in front of the call. Tests that are placed in between
-// get a path of their own that comes back behind them. That path makes the lists a second time, and what is one of two lists is not taken apart.
 class AllocationPlacer {
 public:
     explicit AllocationPlacer(FunctionPassContext& context)
@@ -80,8 +78,7 @@ private:
         return candidates;
     }
 
-    // Running out of memory is no event of the program, so it holds nothing in its place. An arguments object copies its rest list when it is made, and a rest parameter of the program
-    // is that list: what else takes the list may change it in between.
+    // Running out of memory is no event of the program, so it holds nothing in its place.
     bool canStandAnywhere(ValueID id)
     {
         const Value& value = m_function.at(id);

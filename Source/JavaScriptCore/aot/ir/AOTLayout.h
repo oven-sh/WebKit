@@ -12,6 +12,7 @@
 #include "AOTSchemaEnums.h"
 #include "AOTSchemaRecords.h"
 #include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
 
@@ -134,35 +135,29 @@ std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID,
 // The class whose prototype object the prototype object of this class is expected to inherit from.
 LayoutID expectedBaseOf(const Layout&);
 // The class that the heritage of a class is expected to name: the instances hold its fields, its constructor allocates them, and the class object inherits from its class object.
-// A constructor function has no heritage: `base` names the class to whose prototype object seen code links the prototype object of the function, and says nothing else.
 LayoutID predictedHeritageOf(const Layout&);
 // The built-in class at the end of the proven chain of bases. Its constructor makes the instances, so they are objects of that class and have no slots.
 BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
 // A built-in or unknown base class allocates the instances itself, and they have no slots.
 bool hasOnlyCompiledBases(const Program&, LayoutID);
-// Whether the run time knows the only class object. NewClass enters that of a class. No operation enters the closure of a constructor function:
-// the closure table creates it, and a closure with captures is one that only the program can create.
+// Whether the run time knows the only class object.
 bool isEvaluatedOnce(const Program&, const Layout&);
 // No operation defines the class of a constructor function. The first construction does, where the function is created once; the guards of any other constructor function are never set.
 bool guardsAreNeverSet(const Program&, const Layout&);
-// A function gets its prototype property at the first lookup of `prototype` or at its first construction. The guards of a constructor function describe the prototype object
-// of the first closure that got one, so a second closure that gets one ends them. A function that is created once has no second closure, and NewClass reports a class.
+// A function gets its prototype property at the first lookup of `prototype` or at its first construction.
 bool prototypePropertyMayEndGuards(const Program&, FunctionID);
 // The function object of such a constructor function is the cell of the closure table, whoever needs it first: NewClosure, an allocation site of its instances or a class below it.
 bool hasSingletonClosure(const Program&, FunctionID);
-// No new object: the cell of the closure table for the function, which the table fills where it is empty. So reads a method as a value: the run time makes the closure of a declared method
-// by the table, and a guard of a member that the program stored itself is set only once the table holds that closure.
+// No new object: the cell of the closure table for the function, which the table fills where it is empty.
 bool namesClosureOfTable(const Program&, const Value& closure);
 
-// A derived layout is a declared layout plus the names that the objects of some allocation classes get beside its fields. It has the declared layout as its proven base
-// and no class of its own: its objects have the prototype, the members and the brand of the layout it was derived from.
+// A derived layout is a declared layout plus the names that the objects of some allocation classes get beside its fields.
 Layout createDerivedLayout(const Program&, LayoutID base);
 LayoutID declaredLayoutOf(const Program&, LayoutID);
 
 // The object types that the program declares for the objects of the layout: what their class implements, and the `this` of their constructor function. Each entry holds the layouts below one of them.
 Vector<LayoutSetID, 2> declaredFamiliesOf(const Program&, LayoutID);
 // A type is a view: where nothing allocates it, it stands in no set of layouts, not even in its own, so the families do not hold the names that the types have.
-// The records whose sets list a layout, ascending: the views through which the program may see its objects. Answers by index, for the declared layouts whose bit is set.
 Vector<Vector<LayoutID>> declaredViewsOf(const Program&, const BitVector& declaredLayouts);
 
 // Leaves the tables of the program that go by class and by name to the caller: they leave out the layouts that are never allocated.
@@ -170,9 +165,7 @@ void initializeLayouts(Program&, BuildContext&);
 void initializeAddedLayout(Program&, LayoutID);
 void appendInheritedFields(Program&, LayoutID);
 
-// For a program as read. An object type that the program declares is a layout, and its family holds what the program allocates and converts to it. The layout itself has objects
-// only if something creates them: an operation, a constant or an expected result that names it, or a built-in that creates what its result is converted to.
-// The families keep the layouts that are marked here, and whoever goes through a family leaves them out.
+// For a program as read.
 void markUnallocatedLayouts(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

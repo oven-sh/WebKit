@@ -79,7 +79,6 @@ static std::optional<uint32_t> locationReadBy(const Locations& locations, const 
 }
 
 // What a CommonJS module exports as one value lies in a variable, and the run time reads the variable for an operation that answers the value of the module.
-// It also reads it where it takes the names of a module from that value.
 static VariableID exportsVariableReadBy(const Program& program, const Value& value)
 {
     switch (value.opcode) {

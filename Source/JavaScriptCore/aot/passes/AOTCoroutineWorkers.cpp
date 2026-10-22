@@ -26,7 +26,6 @@ static TypeID typeOfReturnedValues(const Function& function, TypeArena& types)
 }
 
 // Nothing in the function suspends, so its code stays as it is: a return is a return, and what it throws reaches the caller, which is the ramp or a function that awaits the call.
-// No driver is appended, so a rest parameter and a hidden rest keep their places.
 Function buildAsyncWorker(const AnalysisContext&, TypeArena& types, Function&& unsplit, const CoroutinePlan& plan)
 {
     const CreatorRecord::Coroutine& record = plan.record;

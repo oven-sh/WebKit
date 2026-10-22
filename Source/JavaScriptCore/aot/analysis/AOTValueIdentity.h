@@ -210,8 +210,7 @@ std::optional<ValueID> constantThroughCasts(const Program&, const Function&, Val
 std::optional<int64_t> integerConstantThroughCasts(const Program&, const Function&, ValueID);
 bool isRematerializable(const Value&);
 bool isDeferredClosure(const Function&, ValueID);
-// What a read gave that takes the outer object for an inner object which is not made yet. It has the type of the inner object. Only the operation that reads it knows where the slots lie,
-// so it stays in the function. Into a block with several ways in it goes beside a parameter, and BorrowedParameter at the head of the block stands for both.
+// What a read gave that takes the outer object for an inner object which is not made yet.
 bool isBorrowedInnerObject(const Function&, ValueID);
 // What such a value passes through and stays what it is. A test for undefined and null looks at the reference alone.
 constexpr bool handsOnBorrowedInnerObject(Opcode opcode)
@@ -223,8 +222,7 @@ constexpr bool handsOnBorrowedInnerObject(Opcode opcode)
 enum class UseOfBorrowedObject : uint8_t {
     // It hands on what it takes.
     HandsOn,
-    // It reads or writes a slot, or asks the cell for a state that an object which was never made is in. The outer object serves in place of such an object: it has the slots at the same distances,
-    // and where its own state is another the operation takes the way for an object in that state, which holds the object.
+    // It reads or writes a slot, or asks the cell for a state that an object which was never made is in.
     Borrows,
     // It wants the object itself.
     Holds,

@@ -120,7 +120,6 @@ static bool isSameMember(const MemberAnswer& a, const MemberAnswer& b)
 }
 
 // One bit says of every object of a class that it finds the member where the class definitions put it, and one object that hides the member or gets another prototype clears it for all of them.
-// What the prototype objects hold is then asked of the classes alone, and each receiver is asked whether it still inherits from them and has nothing of its own in front of them.
 static std::optional<TestedMemberUse> planWithTestsOfEachObject(FunctionPassContext& context, TestedMemberUse&& use)
 {
     const Program& program = context.program;
@@ -167,9 +166,7 @@ static std::optional<TestedMemberUse> planWithoutFailedTests(TestSiteReporter& r
 
 namespace {
 
-// A use of a member for which the plan without a failed test leads to no site, whoever uses what is read. Most reads of a program read fields, and the same few reads stand all over it.
-// planWithTestsOfEachObject() keeps the form and the member of the plan, so what is refused for them is refused behind a failed test of the conditions too.
-// It is not asked where a test of the receiver may have failed: there the plan is made for other receivers.
+// A use of a member for which the plan without a failed test leads to no site, whoever uses what is read.
 class RefusedMemberUse {
 public:
     RefusedMemberUse(TestSiteReporter& reporter, ValueID receiver, NOESCAPE const Invocable<std::optional<SiteContent>()> auto& contentOfUse)
@@ -238,7 +235,6 @@ static Effects effectsOfTestedCallee(TestSiteReporter& reporter, FunctionID memb
 }
 
 // What may come back says nothing about the time of the read, so the function that was read is tested itself: a closure kept in a field whose slot may be emptied and filled again.
-// Where the read stands under its own tests in the same stretch, it is the closure of the method, and this test folds.
 static bool reportTestOfMethodRead(TestSiteReporter& reporter, FunctionID method)
 {
     if (!mayBeCalledDirectly(reporter.program(), method))
@@ -294,7 +290,6 @@ static bool isCalleeOf(Opcode user, uint32_t operandIndex)
 }
 
 // The function that a call enters is read before its arguments are computed, so which function it is is decided where the read stands, whatever the arguments do.
-// What is only called may be another object than the one on the prototype. It stays only called where it goes on as an argument of an edge: the ways that have failed a test meet there.
 static bool canBecomeMethodClosure(FunctionPassContext& context, ValueID read)
 {
     const Function& function = context.function;

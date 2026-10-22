@@ -107,11 +107,4 @@ ALWAYS_INLINE void visitNarrowReference(Visitor& visitor, const HeapCell* holder
         visitor.appendUnbarriered(MarkedBlockCage::decode(cageBaseOf(holder), index));
 }
 
-template<typename Visitor>
-ALWAYS_INLINE void markNarrowAuxiliary(Visitor& visitor, const HeapCell* holder, uint32_t index)
-{
-    if (index >= MarkedBlockCage::minIndex)
-        visitor.markAuxiliary(MarkedBlockCage::decode(cageBaseOf(holder), index));
-}
-
 } // namespace JSC

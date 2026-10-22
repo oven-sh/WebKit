@@ -257,8 +257,7 @@ static void checkEffectFacts(Opcode opcode, const Effects& fresh)
     RELEASE_ASSERT(fresh.writes.heaps().containsAll(facts.writtenHeaps));
 }
 
-// An answer outlives a change of the function, so there may be answers where the effects do not count as computed. They are compared with the rules
-// themselves: another cache would share an answer among the values of an opcode as this one does.
+// An answer outlives a change of the function, so there may be answers where the effects do not count as computed.
 static void checkEffects(const EffectContext& context, const Function& function, const EffectsCache& cached)
 {
     auto checkValue = [&](ValueID id) {

@@ -20,11 +20,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Stands around a parallel loop that types functions or plans their accesses. While it stands, no layout, no variable and no result of flow changes, and all threads share
-// what they compute from the members of a family. The answers hold ids of scratch arenas, so it opens after the interning phase of the loop and closes before that phase ends.
-// Inside another one it does nothing: the answers of the outer one hold there too.
-// The threads also share the types that follow from ids that the table holds for good. What follows from those ids alone holds as long as they do:
-// while the functions are optimized, when each is typed again in one loop after the other, those answers go from one ProgramCaches to the next.
+// Stands around a parallel loop that types functions or plans their accesses.
 class ProgramCaches {
     WTF_MAKE_NONCOPYABLE(ProgramCaches);
     WTF_MAKE_NONMOVABLE(ProgramCaches);

@@ -261,8 +261,7 @@ Witness ValueFlowPlacesInProgram::whereNamed(BuiltinID builtin) const
 
 namespace {
 
-// A set knows a string by its kind alone unless the text is a key. So the tags are read off the operations: from the operand back through casts, parameters of blocks and constants of modules.
-// Nothing is computed: a tag is a String operation that is handed on as it is, or a text in a list that nobody but the call gets hold of.
+// A set knows a string by its kind alone unless the text is a key.
 class LocalesThatCallsName {
     WTF_MAKE_NONCOPYABLE(LocalesThatCallsName);
 public:

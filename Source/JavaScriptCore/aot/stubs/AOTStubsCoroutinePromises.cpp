@@ -260,9 +260,6 @@ void emitRunPromiseAllResolveJob(StubAssembler& jit, const HeadJobRegisters& hea
 }
 
 // The function of the frame pointer returns next, and the waiter is the one SavedFrame that waits for its result, which is no thenable.
-// If the function may continue and no job is queued, the job of the waiter would be the next thing to run, and nothing of the program runs before the frame has returned to the adapter.
-// So the adapter takes the waiter from the instance. Otherwise the job is queued. Every exit comes before beforeHandOver, which may overwrite registers.scratch.
-// loadAsyncContext loads what the waiter captured when it was suspended, and runs before beforeHandOver.
 static void emitHandOverToWaiter(StubAssembler& jit, GPRReg waiter, GPRReg value, const JobRegisters& registers, JumpList& needsOperation, const ScopedLambda<void(GPRReg)>& loadAsyncContext, const ScopedLambda<void()>& beforeHandOver)
 {
     const AwaitRegisters conditionRegisters { InvalidGPRReg, InvalidGPRReg, registers.queue, registers.slot };

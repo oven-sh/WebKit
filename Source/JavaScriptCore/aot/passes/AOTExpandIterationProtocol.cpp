@@ -204,8 +204,7 @@ static void emitOpenOfStringOrIterable(IterationExpansion& expansion, ArmState& 
     OpenedIterator opened = openSyncIterator(expansion, branch.provenOnNotTaken);
     builder.emitJump(merge, { opened.iterator });
 
-    // For a second parameter the builder looks for the edges into the block, which computes the control flow graph of the whole function at every open. SSARepair adds this one with all the others.
-    // A call is typed from the definition it names, before SSARepair picks the one that reaches it: it names the method that was read.
+    // For a second parameter the builder looks for the edges into the block, which computes the control flow graph of the whole function at every open.
     expansion.define(expansion.addVariable(opened.next), nextOfString);
 
     builder.moveToEndOf(merge);

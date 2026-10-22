@@ -152,11 +152,9 @@ struct Type {
     Type withOnlyObjects() const;
     Type withLiteralStringsWidened() const;
     Type withContentsProven(bool) const;
-    // import.meta, module, exports and require are one object per module, and a CommonJS module gets new ones each time it runs. Native code hands out what a native
-    // binding answers. No test finds such an object, so a type that names its built-in is a proof, and a test asks for a function or an object.
+    // import.meta, module, exports and require are one object per module, and a CommonJS module gets new ones each time it runs.
     Type withUntestableBuiltinsWidened() const;
     // The type a Check or a TypeTest may name: a test can find a layout, and nothing that is proven about an instance of a class.
-    // That an object is an instance of a class without an instance test is such a proof, and a test asks for an object.
     Type withoutClassProofs() const;
 
     void canonicalize();
@@ -182,8 +180,7 @@ Wire::Primitives toWire(uint16_t primitives);
 std::span<const LayoutID> membersOf(const Program&, const Type&);
 std::span<const LayoutID> membersOf(const TypeTable&, const Type&);
 
-// The program converts objects without a layout to the type: functions, instances of built-in and host classes, ordinary objects. The type lists the primitives it admits.
-// The questions of Type that take no table, mayBeFunction() and hasOnlyKnownCallees() among them, answer for the listed parts alone.
+// The program converts objects without a layout to the type: functions, instances of built-in and host classes, ordinary objects.
 bool hasMembersWithoutLayout(const Program&, const Type&);
 bool hasMembersWithoutLayout(const TypeTable&, const Type&);
 

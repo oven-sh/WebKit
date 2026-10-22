@@ -269,8 +269,7 @@ namespace {
 struct DeferrableLayouts {
     // A store may leave its closure unmade in an object of such a layout.
     BitVector all;
-    // The operations of the program make every object of such a layout, and each of them makes that layout and no other. Only here an allocation can answer for what every object holds:
-    // the run time allocates for a subclass and for a constructor function, and it lists nothing.
+    // The operations of the program make every object of such a layout, and each of them makes that layout and no other.
     BitVector allocatedOnlyByOperations;
 };
 
@@ -382,8 +381,7 @@ static std::optional<Value> tryCreatePlaceholder(const Program& program, FieldRe
     return tryCreatePlaceholder(program.at(slotTypeOf(program, field)));
 }
 
-// One closure for one object. A closure of another block is that of a function declaration, made where the function begins: its user runs at most once for each closure
-// where the closure's block dominates the user's and the user's lies in no cycle. A literal in a loop gives every object the same function object.
+// One closure for one object.
 static ValueID findClosureUsedOnce(const Program& program, const Function& function, FunctionAnalyses& analyses, BlockID block, ValueID stored)
 {
     const UseLists& uses = analyses.useLists();
@@ -774,8 +772,7 @@ private:
         ValueID stored = store.valueOperand();
         if (m_function.at(definitionThroughUpcasts(m_function, stored)).opcode != Opcode::NewClosure)
             return;
-        // Code that only expects the layout of its objects reads their members by name as well, and a read by name makes the closure in the run time,
-        // which costs as much as forty closures made beside the allocation.
+        // Code that only expects the layout of its objects reads their members by name as well, and a read by name makes the closure in the run time, which costs as much as forty closures made beside the allocation.
         if (store.level() != KnowledgeLevel::Proven)
             return;
         std::optional<FieldReference> declaration = findDeclarationInEveryReceiver(store);
@@ -1190,9 +1187,7 @@ void DeferralAnalysis::reject(Row row, Rejection rejection)
         m_states[row].rejection = rejection;
 }
 
-// A slot leaves the closures of one function unmade. Where a program gives a field closures of several, that is the function with the most places, and the closures of the others are made.
-// Among functions with as many places it is the one whose place stands in the function that fills the most fields of the layout: what builds the whole object rather than what replaces a member.
-// A closure over an environment is left unmade only where the field holds nothing else.
+// A slot leaves the closures of one function unmade.
 void DeferralAnalysis::findCandidates()
 {
     struct Place {
@@ -1518,8 +1513,7 @@ void DeferralAnalysis::rejectFieldsStoredOutsideInitialization()
     }
 }
 
-// What the slot cannot hold takes the property out of its slot. Where the accesses count on it that the property stays, no writer may store such a value,
-// and a writer that no scan finds may store whatever the type of the field admits.
+// What the slot cannot hold takes the property out of its slot.
 void DeferralAnalysis::rejectFieldsGivenOtherThanObjects()
 {
     for (FieldReference candidate : m_candidates) {
@@ -1584,7 +1578,6 @@ bool DeferralAnalysis::storesClosureOverReceiver(const Function& function, const
 }
 
 // Where every closure that comes into the field is made over the object that holds the field, whoever wants what the closure captures has it at hand: the object.
-// Anything else that gives the field a value ends that: another store, an allocation that lists a value, a copy of another object.
 void DeferralAnalysis::findFieldsGivenOtherClosures()
 {
     m_mayHoldOtherClosure.ensureSize(m_rows.count());
@@ -1768,7 +1761,6 @@ bool DeferralAnalysis::rejectFieldsNotInitializedByEveryAllocation()
 }
 
 // A read takes an empty slot for an absent property behind a test that no field of the object lies outside its slot, or without one where the property stays in its slot (staysInSlot()).
-// One reason for that goes with the deferral: the slot took every value, and now it holds a closure or nothing. Whatever else somebody gives the property (Reflect.set) lies outside the slot from then on.
 bool DeferralAnalysis::rejectFieldsReadWhereTheyMayHaveLeftTheSlot()
 {
     auto staysInSlot = [&](const Value& access) {
@@ -2692,7 +2684,6 @@ static void applyDeferrals(ProgramEditor& editor, BuildContext& build, const Def
 }
 
 // Every arm of a branch makes a closure of one function over the same values, and a parameter of the block behind the arms takes the one that was made.
-// One closure made behind the join is the same function object to the one user of the parameter. Where that is an allocation or a store of the block, it is given the NewClosure itself.
 class ClosuresOfArmsJoiner {
 public:
     ClosuresOfArmsJoiner(const AnalysisContext& context, Function& function, TypeArena& types)

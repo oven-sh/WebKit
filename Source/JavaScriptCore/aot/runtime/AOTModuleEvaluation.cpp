@@ -78,8 +78,7 @@ static bool isPassedOverByEvaluation(const ModuleData& data)
     return !data.needsEvaluation() || (data.isSimple() && data.isSynchronous() && !data.bodyFunction() && !data.hasDeferredRequest());
 }
 
-// An evaluation that goes by all requests comes from the importer to the required module through modules that are passed over, on the first such way in the order of the requests:
-// none of them can have been evaluated earlier, or the required module would have been too. Answers whether the candidate is on that way.
+// An evaluation that goes by all requests comes from the importer to the required module through modules that are passed over, on the first such way in the order of the requests.
 static bool isPassedOverBetween(const ModuleTable& table, ModuleID importer, ModuleID required, ModuleID candidate)
 {
     struct Step {

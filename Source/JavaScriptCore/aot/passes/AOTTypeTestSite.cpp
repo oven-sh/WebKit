@@ -38,7 +38,6 @@ static bool isUnexpanded(const Value& value)
 }
 
 // A test stays where it was placed, and an operation that ExpandIteration has yet to expand, later in the same round, is unknown code: in a cycle with one, no proof for a stretch lasts a turn.
-// The uses in such a cycle are planned in the round after the expansion. What the operation reads is planned now: the expansion goes by the tests of the call that made it.
 void TestSiteReporter::findUsesAwaitingExpansion()
 {
     const Function& function = this->function();
@@ -148,8 +147,7 @@ bool TestSiteReporter::canPlace(const Value& test) const
     return placeabilityOf(analyses(), test) == TestPlaceability::CanBePlaced;
 }
 
-// The tests of a site are made in order. A test that reads only its subject failed on an object that had passed the test of its type in front of it.
-// Behind a test for another type, one that has not failed, it is made on another object: the second layout of a site is tested in the copy that the tests of the first one enter.
+// The tests of a site are made in order.
 bool TestSiteReporter::hasFailedTest(std::span<const Value> tests) const
 {
     Vector<ValueID, 2> subjectsTestedForOtherType;
@@ -176,7 +174,6 @@ bool TestSiteReporter::isAboutSubjectOfFailedTest(std::span<const Value> tests) 
 }
 
 // `handle.flags`, `handle.end()`, where the handle is an object of the host or a record that stands in for one: no test of layouts lets the object of the host pass, and it is as expected as the record.
-// It would fail the test every time and take the rest of the function into its copy. Without the test the one operation goes by name where it stands.
 bool TestSiteReporter::refusesObjectsThatAreExpected(std::span<const Value> tests) const
 {
     return std::ranges::any_of(tests, [&](const Value& test) {
@@ -187,8 +184,7 @@ bool TestSiteReporter::refusesObjectsThatAreExpected(std::span<const Value> test
     });
 }
 
-// `compilerOptions.strict`: a record type of dozens of fields, every one of them optional, describes a bag of options. Such bags are merged, copied name by name and read from files,
-// so what arrives is mostly an ordinary object: it fails the test for the layout every time. Without the test the operation goes by name where it stands.
+// `compilerOptions.strict`: a record type of dozens of fields, every one of them optional, describes a bag of options.
 static constexpr size_t minFieldsOfBagOfOptions = 24;
 
 bool TestSiteReporter::asksForBagOfOptions(std::span<const Value> tests) const

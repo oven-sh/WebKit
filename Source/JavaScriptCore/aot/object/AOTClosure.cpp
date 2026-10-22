@@ -347,7 +347,6 @@ static bool canDefineStaticMemberWithoutTransition(VM& vm, Closure& classObject,
 namespace {
 
 // Between NewClass and the end of the definition no code of the program can name the class, so no object inherits from its holders and no cache has walked past them.
-// What such a holder gets is reported to nobody.
 class HolderThatNobodyHasSeen {
     WTF_MAKE_NONCOPYABLE(HolderThatNobodyHasSeen);
 public:
@@ -384,8 +383,7 @@ bool tryDefineClassMemberWithoutTransition(JSGlobalObject* globalObject, Closure
     if (isStatic ? !canDefineStaticMemberWithoutTransition(vm, classObject, key) : holder->type() != FinalObjectType)
         return false;
 
-    // The definition made a Structure for this object alone and has filled it in place. The one that lists the names kept off the prototype is in no table of transitions, so it is this object's alone too.
-    // After any other transition the object is treated like any other.
+    // The definition made a Structure for this object alone and has filled it in place.
     Structure* structure = holder->structure();
     bool isOwnStructure = structure->transitionKind() == TransitionKind::Unknown || structure->transitionKind() == TransitionKind::MakeListedPropertiesImmutable;
     if (!isOwnStructure || !structure->isPinnedPropertyTable() || structure->isDictionary())
@@ -445,7 +443,6 @@ CallData constructDataOfBoundClosure(FunctionID function)
 }
 
 // [[Construct]] of a bound function: the target is constructed with the bound arguments in front of the given ones, and stands for the bound function where that is new.target.
-// The closure holds no more bound arguments than the target has parameters, and such a target sees no others.
 JSC_DEFINE_HOST_FUNCTION(constructBoundClosure, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

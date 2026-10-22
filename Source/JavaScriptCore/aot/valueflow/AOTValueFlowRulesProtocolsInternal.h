@@ -75,7 +75,6 @@ inline bool holdsSomething(ValueFlowRuleContext& context, ClimbingSet set)
 }
 
 // A placeholder among the receivers of a protocol is looked at by itself: a method that is found through it would get every other receiver as `this`.
-// The unknown object stands for built-in containers, iterators and thenables too, so it finds the members of the table. The untracked object finds what lies under the name on any object of the program.
 void forEachPlaceholderAndOthers(ValueFlowRuleContext& context, ClimbingSet receivers, NOESCAPE const Invocable<void(ClimbingSet)> auto& functor)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -86,8 +85,7 @@ void forEachPlaceholderAndOthers(ValueFlowRuleContext& context, ClimbingSet rece
     functor(withoutPlaceholders(context, receivers));
 }
 
-// The nodes that hold what the objects among these hold under the name of a slot. An object that has escaped may hold what was stored through the unknown object, and one that the analysis has stopped following
-// what was stored through the untracked object. The untracked object itself may be any object of the program: it answers by the name alone. Nobody knows what the unknown object holds.
+// The nodes that hold what the objects among these hold under the name of a slot.
 void forEachNodeOfSlotReadThrough(ValueFlowRuleContext& context, ClimbingSet objects, ValueFlowName name, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
 {
     const ValueFlowUniverse& universe = context.universe();

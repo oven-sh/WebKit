@@ -492,7 +492,6 @@ static bool mayPassAtLaterTurn(const TestPlacementPlan& plan, FunctionPassContex
 }
 
 // A failed test costs one turn of a loop: at the end of the turn the generic copy makes the tests again that the head of the loop relies on.
-// The tests on an edge that enters the loop are made again by joining that edge.
 static void appendWaysBackIntoLoops(TestPlacementPlan& plan, FunctionPassContext& context, const PlacementResults& results, WantedProofs& wanted)
 {
     const Function& function = context.function;

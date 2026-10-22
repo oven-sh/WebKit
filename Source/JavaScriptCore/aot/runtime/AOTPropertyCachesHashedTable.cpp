@@ -141,10 +141,7 @@ void HashedSlotTable::erase(Entry& entry)
 
 void HashedSlotTable::evict(Entry& entry)
 {
-    // A set that overflows now and then while most of the table is empty is bad luck, and twice the memory is too much to pay for it:
-    // over the life of the table only what it evicts while it is at least half full counts toward its growth.
-    // A set that overflows again and again holds more keys in use than it has ways, and their accesses miss for as long as the process lives:
-    // what is evicted between two collections counts however full the table is.
+    // A set that overflows now and then while most of the table is empty is bad luck, and twice the memory is too much to pay for it: over the life of the table only what it evicts while it is at least half full counts toward its growth.
     ++m_evictionsSinceCollection;
     if (isAtLeastHalfFull())
         ++m_evictionsWhileHalfFull;
@@ -186,8 +183,7 @@ bool HashedSlotTable::shouldGrow() const
     return m_numberOfEntries < m_maxNumberOfEntries && (m_evictionsWhileHalfFull > m_numberOfEntries / 64 || m_evictionsSinceCollection > m_numberOfEntries / 4);
 }
 
-// The mask of a table of twice the size has one more bit. So a set stays where it is or lies higher by the size that the table had, and an entry that moves there keeps its way.
-// No two entries move to one place: nothing is evicted, and a page of the upper half is written without being read first, which would be a second fault.
+// The mask of a table of twice the size has one more bit.
 void HashedSlotTable::grow()
 {
     std::span<Entry> lowerHalf = allEntries();
@@ -196,7 +192,6 @@ void HashedSlotTable::grow()
     m_writtenRegions.didMoveTable(asByteSpan(allEntries()));
 #if OS(LINUX)
     // Of a table that is at least half full every page of the upper half gets entries now: one call into the kernel takes the place of a fault per page.
-    // A kernel older than 5.14 refuses, and the pages fault in one by one, as do the few that a table with few entries writes to.
     if (fillsEveryPage)
         madvise(lowerHalf.data() + lowerHalf.size(), lowerHalf.size_bytes(), populateForWriting);
 #endif

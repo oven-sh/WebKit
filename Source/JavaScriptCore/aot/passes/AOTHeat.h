@@ -78,9 +78,7 @@ struct HeatThresholds {
     bool callsInLoopsAreHot { true };
 };
 
-// Preparation: for the passes in front of the Optimize schedule, which ask for the classes of functions and of their blocks. The classes of a very large program are read off its structure,
-// so there the estimate of activations, which one thread makes, and all that is weighed with it are left out: estimatedActivationsOf(), allocationsOf(), isAllocatedIn(),
-// isStoredUnder() may not be asked, and hottestFirst() is empty.
+// Preparation: for the passes in front of the Optimize schedule, which ask for the classes of functions and of their blocks.
 enum class HeatFor : uint8_t { Preparation, Everything };
 
 class Heat {
@@ -98,8 +96,7 @@ public:
     // Whether some store, definition or literal of the program puts a value of the layout under the name. Only values whose type lists a few layouts count.
     bool isStoredUnder(LayoutID, PropertyKeyID) const;
     HeatClass of(const Program&, FunctionID) const;
-    // The third class of function, beside hot and cold: a cold function of which nothing in the structure of the program says that it may run. In its cold code an operation whose outcome is not proven
-    // stands in its general form alone: no test is placed for it, so there is no fast path and no copy behind a failed test, and values stay boxed from one operation to the next.
+    // The third class of function, beside hot and cold: a cold function of which nothing in the structure of the program says that it may run.
     bool isCompact(const Program&, FunctionID) const;
     // There the classes are read off the structure of the program, and only there are functions compact.
     bool isOfVeryLargeProgram() const { return m_valuesInAllFunctions; }
@@ -151,14 +148,12 @@ private:
     Vector<uint64_t> m_layoutsStoredUnderNames;
 };
 
-// summariesFromFlow is the result of createSummariesFromFlow() for the current program. When null, it is computed here.
-// The references are those that the call graph was made from, where no function has changed since. See buildHeatGraph().
+// summariesFromFlow is the result of createSummariesFromFlow() for the current program.
 Heat estimateHeat(const Program&, const CallGraph&, const FlowResults&, BuildContext&, const EffectSummaries* summariesFromFlow = nullptr, const BodyReferences* = nullptr, const BodyWeights* kept = nullptr, BodyWeights* made = nullptr, HeatFor = HeatFor::Everything);
 
 HeatClass heatClassOf(const Heat&, FunctionAnalyses&, BlockID);
 
-// By how often the code of the function is taken to run for its size. A hot function is never in the colder part, a cold one always.
-// Where all functions are taken to run equally often, or no order is known, none is.
+// By how often the code of the function is taken to run for its size.
 bool isInColderPartOfProgram(const Heat&, const Program&, FunctionID);
 HeatClass heatClassOf(FunctionPassContext&, BlockID);
 

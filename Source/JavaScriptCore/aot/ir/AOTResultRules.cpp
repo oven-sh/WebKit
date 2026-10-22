@@ -630,13 +630,11 @@ FunctionID onlyCalleeOf(const Program& program, const Type& callee)
     return returnsDeclaredResultWhenCalledByValue(recordOf(program, only)) ? only : FunctionID();
 }
 
-// Whichever way a function is entered, what it returns has passed the conversions in front of its returns. So the result of a call by value of one known function has the type
-// of a direct call of it, and needs no test of its own.
+// Whichever way a function is entered, what it returns has passed the conversions in front of its returns.
 Type ResultRules::unknown(const Value& value)
 {
     static_assert(OperandIndex::Call::callee == OperandIndex::CallResolved::callee);
     // A construction answers what the callee answers: compiled code an object, as the language has it, a function of the host whatever it likes (`new CString(pointer)` of bun:ffi: a string).
-    // Hardly any does, so an object is expected. Flow proves it where it knows the callees.
     if (value.opcode == Opcode::Construct || value.opcode == Opcode::ConstructList)
         return context.level == TypeLevel::Expected ? Type::object() : Type::anything();
     if (value.opcode != Opcode::Call && value.opcode != Opcode::CallResolved)
@@ -932,7 +930,6 @@ struct ResultRulesWithoutType {
 };
 
 // Who may share what a rule answers, by what the rule reads beside the value and the types of its operands.
-// None: the record of another function, which whoever edits that function may change while this one is typed, or the function that holds the value.
 struct AnswerSharingRules {
     using Result = std::optional<SharedAnswers>;
 

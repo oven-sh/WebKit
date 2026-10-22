@@ -256,8 +256,7 @@ void BodyDecoder::decodeValue(Block& block)
     block.values.append(id);
 }
 
-// A family begins at its allocations. Where the front end says that the families cover a conversion, the type lists the layout of a new object that is converted to it.
-// A conversion that breaks this becomes a check that fails, so nothing goes wrong but the speed.
+// A family begins at its allocations.
 void BodyDecoder::checkConvertedAllocation(const Value& conversion)
 {
     ValueID operand = conversion.valueOperand();

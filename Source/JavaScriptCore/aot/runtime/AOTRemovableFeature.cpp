@@ -67,8 +67,6 @@ void CustomGetterSetter::replaceRemovedFunctions()
 
 enum class AccessorFunction : bool { Getter, Setter };
 
-// A custom accessor gets its receiver and a custom value gets the object that has it, so the cell is found from there, except when the caller
-// chose the receiver (Reflect.get, super, the function of a property descriptor) or the receiver is a proxy.
 static std::optional<RemovableFeature> findRemovedAccessor(VM& vm, JSValue thisValue, PropertyName propertyName, AccessorFunction function)
 {
     for (JSObject* object = thisValue.getObject(); object; object = object->getPrototypeDirect().getObject()) {

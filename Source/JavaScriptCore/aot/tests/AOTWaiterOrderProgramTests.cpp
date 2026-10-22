@@ -11,10 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// async function waiter(promise, print) { await promise; print("waiter") }
-// async function awaitsNext(promise, print) { await null; resolve(promise, 1); await 2; print("resolver goes on") }
-// async function returnsNext(promise, print) { await null; resolve(promise, 1); print("resolver is over") }
-// async function drainsNext(promise, print, drain) { await null; resolve(promise, 1); drain(); print("resolver goes on") }
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {

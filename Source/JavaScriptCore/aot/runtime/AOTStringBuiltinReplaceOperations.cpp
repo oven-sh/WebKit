@@ -60,8 +60,7 @@ static JSString* replaceRanges(JSGlobalObject* globalObject, VM& vm, StringView 
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
-// A text that is sought as it stands and a replacement that stands for itself: the two literals of most calls. A piece of another string is searched where it lies,
-// a string without the text is its own result, and any other result is written once. Null without an exception: the texts are of another kind.
+// A text that is sought as it stands and a replacement that stands for itself: the two literals of most calls.
 static JSString* tryReplaceAllWithPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, JSString* search, JSString* replacement)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -117,8 +116,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance*
     OPERATION_RETURN(scope, replaceUsingStringSearch<StringReplaceMode::Global>(vm, globalObject, string, stringView, searchView, replacement));
 }
 
-// A text cut at a flat text that is not empty. The places are found where the characters lie, the array is made once, at its length, and is the program's to write to.
-// Null without an exception: the engine's way. It remembers the pieces of an atom.
+// A text cut at a flat text that is not empty.
 static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, JSString* separator, uint32_t limit)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

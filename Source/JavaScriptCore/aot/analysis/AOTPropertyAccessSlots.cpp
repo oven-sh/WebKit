@@ -64,8 +64,7 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
         state.isInContainer |= program.at(layout).kind == LayoutKind::Container;
         state.cannotMoveOut &= staysInSlot(program, *reference);
         state.mayLieOutOfLine |= program.at(layout).mayKeepFieldsOutOfLine() && flow.location.initialization != InitializationState::SetAtCreation;
-        // A lookup that always finds the slot filled never goes on to the prototypes. The store that fills the slot does.
-        // What lies above an object that anybody may hold is asked of the classes, under their conditions: nothing stops a name from arriving on a prototype.
+        // A lookup that always finds the slot filled never goes on to the prototypes.
         bool inheritsNothingUnderName = isPrivate || flow.prototypeName == PrototypeNameState::AbsentOnPrototypes;
         state.isAbsentOnPrototypes &= memberIsAlwaysFilled || inheritsNothingUnderName;
         state.inheritsNothingUnderName &= inheritsNothingUnderName;
@@ -152,16 +151,14 @@ static void requireFilledSlot(const FieldArmState& state, PropertyAccessPlan& pl
         plan.requiredProofs.add(Proof::SlotFilled);
 }
 
-// A store asks for no more than a filled slot. Where the slot holds a raw number or boolean it asks what the reads ask, so that `o.n += 1` tests the slot once.
-// A slot that holds the marker for undefined or null fails the test, and the store goes by name.
+// A store asks for no more than a filled slot.
 static void requireFilledSlotForStore(const FieldArmState& state, PropertyAccessPlan& plan)
 {
     plan.requiredProofs.add(Proof::SlotFilled);
     plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
 }
 
-// An empty slot says that the object has no such property only where the property has not left the slot. One that has is among the extra properties of the object.
-// That holds for a private name too: the name that a second evaluation of the class makes for itself is kept out by the condition that there is none.
+// An empty slot says that the object has no such property only where the property has not left the slot.
 static void requirePropertyInSlotOrNowhere(const FieldArmState& state, PropertyAccessPlan& plan)
 {
     if (!state.cannotMoveOut)
@@ -356,20 +353,16 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
         plan.form = AccessForm::ByName;
         return;
     }
-    // `if (this[kPending])` asks for a name that is stored late or never. Where the object has it nowhere else and nothing above the object has it, an empty slot reads as undefined.
-    // `if (Debug.isDebugging)` in a constructor: the object that is not finished there is `this`, not the namespace.
+    // `if (this[kPending])` asks for a name that is stored late or never.
     bool holdsUnfinishedObjects = !state.isInContainer && isInCodeThatHoldsUnfinishedObjects(context, query);
     // `(type as ObjectFlagsType).objectFlags` asks for a name that is stored late too, but for a number: undefined is what its type rules out, so its slot is expected to be filled like that of a required field.
-    // `props.color`, `props.bold`, `props.dim` ..: whoever places the tests has seen that the function reads many optional fields of such objects.
-    // Options are records that a literal makes. A constructor that leaves a field out on one of its ways mostly fills it later.
     bool isOptionAmongMany = query.expectsEmptySlot && !state.isRequired && state.isLeftOutAtConstruction && !state.hasConstructor && !state.isInContainer;
     bool isOftenEmpty = (state.isAddedLate && state.admitsUndefined && !state.isRequired) || holdsUnfinishedObjects || isOptionAmongMany;
     // Where the property cannot be elsewhere in the object and nothing has to be tested above it, the state of the slot is the whole answer: the read needs no test and has no side that fails.
     bool mayNeedNoTest = state.isAddedLate || state.cannotMoveOut;
     if ((isOftenEmpty || mayNeedNoTest) && !state.isAlwaysFilled && !query.isPrivate && state.form.isEmpty()) {
         std::optional<CreationTests> tests = testsThatEmptySlotReadsAsUndefined(context, query, arm, state);
-        // What a filled slot holds is the answer whatever lies above the object or beside the slot. So where tests are needed, a read of one such field tests the slot, and the other tests stand where it is empty:
-        // readOptionsLeftOutAsUndefined() puts them there.
+        // What a filled slot holds is the answer whatever lies above the object or beside the slot.
         bool testsSlotFirst = tests && !tests->isEmpty() && isStoredLateOrNever(state) && !isOptionAmongMany && !holdsUnfinishedObjects && query.mayTestSlotFirst;
         if (tests && (isOftenEmpty || tests->isEmpty()) && !testsSlotFirst) {
             plan.requiredProofs |= tests->proofs;
@@ -389,8 +382,7 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
     }
     setSlotOperation(plan, Opcode::GetSlot);
     requireFilledSlot(state, plan);
-    // The slot has markers for undefined and null whatever the type of the field says. One test for a value of a type without them gives the raw number or boolean,
-    // or one of the functions that a required member lists: a call of it needs no test of the callee.
+    // The slot has markers for undefined and null whatever the type of the field says.
     plan.testsDeclaredType = !state.isAlwaysFilled && (state.holdsRawNumberOrBoolean || (state.isRequired && state.holdsOnlyListedFunctions));
     plan.emptySlotMeansNoOwnProperty = !state.isAlwaysFilled && state.cannotMoveOut && !query.isPrivate;
 }
@@ -448,9 +440,7 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
         return;
     }
 
-    // Where a creating store has to be paid for with tests, the stores of a constructor and of what it calls pay. Any other store expects a filled slot, which is one test,
-    // and pays where that test has failed.
-    // What a store creates is writable, enumerable and configurable, so it creates no property of another form in the slot.
+    // Where a creating store has to be paid for with tests, the stores of a constructor and of what it calls pay.
     std::optional<CreationTests> tests = state.form.isEmpty() ? testsToCreateField(context, query, arm, state) : std::nullopt;
     // Nothing but a store creates a field that was added late, so one of the stores outside the constructor finds the slot empty in every object.
     if (tests && (tests->isEmpty() || query.expectsEmptySlot || state.isAddedLateInSomeMember || mayStoreIntoUnfinishedObject(context, query) || isInBodyOfModuleThatOwnsLayouts(context, query, arm))) {
@@ -469,7 +459,6 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
 }
 
 // The constructor of a class without a parent allocates the object, and the definitions of the class run on it once: none finds its name there, whatever happens to the object later.
-// Below a parent the object is what the parent returns, and that may have been here before.
 static bool definesPrivateNameOnceInEachObject(const Program& program, const PropertyAccessQuery& query)
 {
     return !program.at(query.declaringLayout).has(LayoutFlags::HasHeritage);

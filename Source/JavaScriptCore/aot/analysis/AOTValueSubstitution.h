@@ -42,7 +42,6 @@ private:
 void replaceReadWithValue(const Program&, Function&, ValueSubstitution&, ValueID read, ValueID replacement);
 
 // In a validating build a copy of a read that a pass replaces or moves stays where the read was, and ValidateSameValue compares it with what took the read's place.
-// No pass replaces or moves the copy. The insertions are left for the caller to apply.
 void keepReadForValidation(IRBuilder&, ProgramPoint read, ValueID replacement);
 void appendKeptReadForValidation(IRBuilder&, BlockValues&, ValueID movedRead);
 BitVector findReadsKeptForValidation(const Function&);

@@ -186,8 +186,7 @@ static std::span<const uint32_t> constantMembersOf(const BuiltinTable& table, co
     return { members.begin(), members.end() };
 }
 
-// A lookup by name may take a member for a constant although nothing in the program makes an object that inherits it. The objects of a feature that was removed
-// are not in the executable, so there is nothing to lock and nothing that could be changed.
+// A lookup by name may take a member for a constant although nothing in the program makes an object that inherits it.
 static bool isRemovedWithFeature(const BuiltinTable& table, BuiltinID holder)
 {
     return std::ranges::any_of(table.featureUsesOf(holder), [](const BuiltinFeatureUse& use) {
@@ -247,9 +246,7 @@ static bool isLockedByTable(const BuiltinTable& table, BuiltinID holder)
 
 namespace {
 
-// Locks a built-in object that the realm has created, and what hangs on it and is there already. Most programs never look at most built-ins, also at most of those that some
-// function of the executable relies on: what the realm creates later is locked when its creation is reported, before any code of the program can reach it.
-// Only a holder that the program relies on and whose creation nobody reports is created here.
+// Locks a built-in object that the realm has created, and what hangs on it and is there already.
 class BuiltinLocker {
 public:
     explicit BuiltinLocker(Instance& instance)
@@ -379,8 +376,7 @@ static bool isCreatedWithReportedStructure(const BuiltinTable& table, BuiltinID 
     });
 }
 
-// The creation of an object that the table locks is reported. What names lead to from the global object is locked with its holder or when its creation is reported.
-// No name leads to the others that this program relies on: those whose creation nobody reports are created now.
+// The creation of an object that the table locks is reported.
 static void lockHoldersOfProgram(BuiltinLocker& locker, JSGlobalObject* realm, const ProgramTables& tables, const BitVector& holdersThatTellOfWrites)
 {
     const BuiltinTable& table = BuiltinTable::singleton();

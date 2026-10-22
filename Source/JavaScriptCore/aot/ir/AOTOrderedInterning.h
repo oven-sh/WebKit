@@ -15,8 +15,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Interns a batch of canonical records on all threads. Every record gets the id that findOrAdd() would give it if it were called on the batch in order.
-// A record may refer to earlier records of the batch: classify those first, and refer to one by existingID() or, if it has none, by equivalenceClass().
+// Interns a batch of canonical records on all threads.
 template<typename Record, typename RecordID, typename Table>
 class OrderedInterning {
     WTF_MAKE_NONCOPYABLE(OrderedInterning);

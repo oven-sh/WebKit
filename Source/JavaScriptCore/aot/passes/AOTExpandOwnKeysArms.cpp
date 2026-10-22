@@ -104,7 +104,6 @@ static void forEachGuardOperand(Function& function, const Functor& functor)
 }
 
 // The list a walk makes is new, so an earlier pass may have named the call as the guard for what holds of a new array, and a value that was named as a guard has to stay one.
-// The expansion has made the call a parameter of the block behind the arms. That block takes a guard beside the list, for which every arm passes its own allocation.
 static void keepResultAsGuard(IRBuilder& builder, IRBuilder::Expansion& expansion)
 {
     if (expansion.results.size() != 1)

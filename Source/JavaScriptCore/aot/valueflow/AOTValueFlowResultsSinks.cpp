@@ -19,8 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// A set knows a string by its kind alone unless the text is a key. So the texts are read off the operations: from the operand back through casts, parameters of blocks and parameters of functions.
-// Nothing is computed: a text is a String operation that is handed on as it is.
+// A set knows a string by its kind alone unless the text is a key.
 class TextsThatArrive {
     WTF_MAKE_NONCOPYABLE(TextsThatArrive);
 public:

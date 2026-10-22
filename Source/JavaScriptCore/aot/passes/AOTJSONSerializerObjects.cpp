@@ -128,8 +128,6 @@ void JSONSerializerBuilder::appendObjectOfLayout(ValueID object, LayoutID layout
 }
 
 // An arm of its own is the fastest code for an order, so orders share an arm only where there are more of them than arms, and those first that differ least.
-// A key that an object does not have is not looked for, so only a member that is read from its slot may be missing.
-// A member that may be undefined is tested for it in every arm, so the object that has it pays nothing for the one that does not.
 auto JSONSerializerBuilder::groupKeyOrders(LayoutID layout, std::span<const KeyOrderFields> orders, uint64_t maxArms) const -> Vector<KeyOrderFamily, 4>
 {
     const Vector<Field>& fields = program().at(layout).fields;

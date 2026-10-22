@@ -33,7 +33,6 @@ void FunctionVerifier::verifyGuards()
                 continue;
 
             // Finding what an operation needs from its guards compares sets of layouts, so it is done once per operation.
-            // Where the types prove everything, no guard can be missing, too weak or ended. A function with only such operations never computes the facts and states of its guards.
             ProofSet neededFromGuard = proofsNeededFromGuard(m_program, m_function, value);
             if (neededFromGuard.isEmpty())
                 continue;

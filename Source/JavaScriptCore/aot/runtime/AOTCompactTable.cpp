@@ -645,8 +645,7 @@ void CompactTable::reserveForAdditions(JSGlobalObject* globalObject, JSObject* o
         return;
     }
 
-    // An addition that is skipped, or whose key is there, adds nothing. Where every one so far has added an entry, so will the rest, and the table is as large as that and no larger.
-    // Otherwise the share that has is an estimate, which only ever makes the step larger. Few entries say little about many iterations: the keys may be about to repeat.
+    // An addition that is skipped, or whose key is there, adds nothing.
     uint64_t alive = table->m_alive;
     uint64_t added = alive > sizeAtEntry ? alive - sizeAtEntry : 0;
     bool everyAdditionAddedAnEntry = added >= finished;
@@ -731,8 +730,7 @@ void CompactTable::clear(JSGlobalObject* globalObject, JSObject* owner)
     // What is added next is most likely of the kind that was there.
     JSCell* fresh = table->isHeapTable() ? tryCreate(globalObject, table->keyWidth(), table->m_valueWidth, initialCapacity) : CompactStorage::tryCreate(globalObject, table->hasValues());
     RETURN_IF_EXCEPTION(scope, void());
-    // Whoever stands in a cleared table goes on at the start of the table that the owner has by then. The table names the owner and not the next table:
-    // a table that something still holds would else hold every table that the collection has had since.
+    // Whoever stands in a cleared table goes on at the start of the table that the owner has by then.
     table->becomeObsolete(vm, Status::Cleared, owner);
     setStorage(vm, owner, fresh);
 }

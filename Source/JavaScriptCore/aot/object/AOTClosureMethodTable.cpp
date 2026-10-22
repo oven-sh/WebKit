@@ -59,8 +59,7 @@ static bool createsPlainDataProperty(const PropertyDescriptor& descriptor)
     return isPlainDataDescriptor(descriptor) && descriptor.writablePresent() && descriptor.enumerablePresent() && descriptor.configurablePresent();
 }
 
-// Defining what is already there changes nothing (ValidateAndApplyPropertyDescriptor). The name of a closure that nobody touched is in the image.
-// A name with a prefix is not the one that frames show, so a definition of it is still recorded.
+// Defining what is already there changes nothing (ValidateAndApplyPropertyDescriptor).
 static bool restatesInitialName(VM& vm, const Closure& closure, PropertyName name, const PropertyDescriptor& descriptor)
 {
     if (name != vm.propertyNames->name || closure.classData() || closure.kind().hasInitialNamePrefix())

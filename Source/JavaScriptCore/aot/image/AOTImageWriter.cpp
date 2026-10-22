@@ -240,7 +240,6 @@ static StatisticID statisticOf(ImageSection section)
 }
 
 // The statistics of the sections add up to TableBytesEmitted: the header and the padding count as other bytes.
-// CallSiteBytesEmitted and the other SideTableBytes are parts of SideTableBytesEmitted.
 static void countTableBytes(const ImageExtent& extent, BuildContext& context)
 {
     uint64_t sizeOfSections = 0;
@@ -456,7 +455,6 @@ static bool isEmptyPageRange(std::span<const uint8_t> code, const ReservedRange&
 }
 
 // The pages of an image are shared between processes: none is written, and none but those of the string headers holds an address (see ImageAddressPlaces).
-// What the run time writes is memory of its own, which may take the place of pages that hold nothing.
 static void checkImageIsReadOnly(std::span<const uint8_t> code, const ImageWriterInputs& inputs, BuildContext& context)
 {
     for (const ReservedRange& range : inputs.reservedRanges) {

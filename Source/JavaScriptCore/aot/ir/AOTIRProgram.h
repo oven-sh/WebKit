@@ -55,7 +55,6 @@ public:
     bool hasGuardedReads() const { return m_hasGuardedReads; }
     void setHasGuardedReads() { m_hasGuardedReads = true; }
     // While several threads replace functions at once, the record of one of them is in no state to be read: what a call of it returns, what it captures.
-    // Whoever replaces says which (ProgramEditor::ReplacedFunctions). Whoever reads the record of a function that a value names asks.
     bool isBeingReplaced(FunctionID id) const { return m_functionsBeingReplaced && m_functionsBeingReplaced->get(id.index()); }
     const BuiltinTable& builtins() const { return m_builtins; }
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
@@ -164,9 +163,7 @@ public:
     std::span<const LayoutID> layoutsWithName(PropertyKeyID) const LIFETIME_BOUND;
     // For each of them, in the same order, the layout that declares the field or the class that defines the member.
     std::span<const LayoutID> declarersOfName(PropertyKeyID) const LIFETIME_BOUND;
-    // Whether an allocation of the layout under a prototype may answer with another object. The definition of a class ties its prototype object to its layout,
-    // so the prototype object of any other class selects something else: an instance of that class, or an ordinary object where the class has no shape.
-    // The layout of a constructor function and of a literal stays under any prototype.
+    // Whether an allocation of the layout under a prototype may answer with another object.
     bool prototypeMaySelectOtherClass(LayoutID) const;
     void indexClasses();
     void indexNames();
@@ -252,12 +249,9 @@ bool isBundlerHelperModule(const Program&, const Module&);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 // The table lists the object that a module of the host answers as a built-in. Where the program holds that module as compiled code, the object is what its body makes. None for any other built-in.
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);
-// ES modules import a CommonJS file through a module of its own, the face, whose body evaluates the file. Where the names of the file are known only once it has run, the face has
-// an export rule, and the loader fills its synthetic exports from the object that the file's exports variable holds. None for every other module.
+// ES modules import a CommonJS file through a module of its own, the face, whose body evaluates the file.
 ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
-// Code of some file names, by binding, a way from one module object to another: `children`, `parent`, `require.main`, process.mainModule. The front end says so, whether or not that code is ever reached.
-// In a program without such a file the run time shows all four to nobody. What the program can observe there hangs on this alone: the pass that drops the records of `require`, the flag of the image
-// and the rules of flow for a module object in unknown hands all ask here.
+// Code of some file names, by binding, a way from one module object to another: `children`, `parent`, `require.main`, process.mainModule.
 bool namesWaysToModuleObjects(const Program&);
 
 class ProgramEditor {
@@ -317,8 +311,7 @@ public:
     Vector<FunctionID> functionsThatWereOnlyLowered() const;
     // Of a function with changed operations: atForStorage() alone gave it out.
     bool wasGivenOutOnlyForStorage(FunctionID) const;
-    // The layouts and variables that were there before and were given out. Nothing that was there before names one that was added.
-    // A layout that only got hidden fields is among them where it now may keep fields out of line, which every access to it goes by.
+    // The layouts and variables that were there before and were given out.
     Vector<LayoutID> changedLayouts() const;
     Vector<VariableID> changedVariables() const;
     // The fields that were given out by themselves. Ascending, each once.

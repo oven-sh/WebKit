@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <wtf/NeverDestroyed.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -59,8 +60,7 @@ ValueFlowName property(ValueFlowRuleContext& context, BuiltinName name)
     return ValueFlowName::property(context.program().keyOf(name));
 }
 
-// A walk that goes on from what it finds comes from the global object to `process`. What it reads from the global object holds the unknown object, and beside that the normal form leaves out whatever has escaped.
-// The table says which members of an object of the host are such objects themselves.
+// A walk that goes on from what it finds comes from the global object to `process`.
 static ClimbingSet withHostObjectsAmongMembers(ValueFlowRuleContext& context, ClimbingSet hostObjects)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -82,8 +82,6 @@ static ClimbingSet withHostObjectsAmongMembers(ValueFlowRuleContext& context, Cl
 }
 
 // The host defines these as not enumerable, so whoever goes over the enumerable properties of their holder passes them by: Object.keys, values, entries and assign, a spread, JSON.stringify.
-// Each is made by code of the library when it is first read: by its name, under a key nobody knows on the holder itself, or for a descriptor.
-// The host's formatter, behind console.log and Bun.inspect, shows what is not enumerable too, on the object and on what lies above it.
 static constexpr BuiltinID membersThatWalksPassBy[] { Builtins::Console_stdout, Builtins::Console_stderr };
 
 // What native code reads that goes over the own properties of objects of the table.
@@ -231,8 +229,7 @@ public:
         std::optional<BuiltinDispatchTarget> root = m_builtins.dispatchOf(m_builtin, modeOf(m_call.kind));
         if (!root) {
             throwValue(unknownObject(m_context, ValueFlowUnknownSource::ThrownByRunTime));
-            // A function that no row lets be constructed refuses `new`. But a module that native code makes puts each of its functions as its own constructor (putNativeFn in Bun's _NativeModule.h):
-            // `new (require("node:util/types").isDate)(value)` answers a boolean. A walk over the 1,560 functions that can be reached from the global object and the modules has found no other.
+            // A function that no row lets be constructed refuses `new`.
             if (isConstruction(m_call.kind) && isPutByNativeModule()) {
                 actWithoutOverload();
                 handToUndescribedNativeCode(BuiltinOperand::argumentsFrom(0));
@@ -312,8 +309,7 @@ public:
             connectFrom(field.value, m_context.written(self, elements));
             m_context.mark(self, ObjectMutation::AddProperty);
         }
-        // A field is named by its number, and one node holds what is stored under any number. Only what code of the library stores lies there: what native code puts into a field by itself, which no record lists, lies in a slot, where a read of the field finds it too.
-        // An object of which no record lists an internal field has none.
+        // A field is named by its number, and one node holds what is stored under any number.
         if (record.internalFields.empty())
             return;
         m_context.add(m_context.written(self, cellOfValueFromLibrary(m_builtins)), unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
@@ -436,8 +432,7 @@ private:
             });
     }
 
-    // No node stands for a result that the program drops: `setTimeout(callback, 0);`. Native code has the result all the same, and the timer is the `this` of the callback.
-    // Where the overload hands the result on, one cell on the built-in's own object stands for the dropped results of all its calls.
+    // No node stands for a result that the program drops: `setTimeout(callback, 0);`.
     bool keepsDroppedResult() const { return !m_call.result && m_handsOnResult; }
     ValueFlowNodeID nodeTakingResult() { return keepsDroppedResult() ? m_context.written(only(m_context, m_universe.objectOf(m_builtin)), cellOfDroppedResults(m_builtins)) : m_call.result; }
     ValueFlowNodeID nodeHoldingResult() { return keepsDroppedResult() ? m_context.read(only(m_context, m_universe.objectOf(m_builtin)), cellOfDroppedResults(m_builtins)) : m_call.result; }
@@ -543,8 +538,6 @@ private:
     }
 
     // What a spread or Object.assign has copied onto an object is written nowhere on it: it lies on the objects that it was copied from, and on those that something was copied from onto them.
-    // A lookup by name goes there as it goes to what the object inherits from. Whoever takes all that an object holds has to go there too.
-    // `state = { ...state, a }` copies from what it has made itself: the walk ends where a step finds no object that it has not seen. The answer holds every source, so it grows as the sets grow.
     ClimbingSet withSourcesOfCopies(ClimbingSet objects)
     {
         ClimbingSet all = objects;
@@ -562,7 +555,6 @@ private:
     }
 
     // An object that has escaped may hold what was stored through the unknown object, and one that flow has stopped following what was stored through the untracked object.
-    // The untracked object itself may be any of the latter.
     void forEachNodeReadThrough(ClimbingSet objects, ValueFlowName name, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
     {
         // A spread has values alone: the getters of a source have run when it was made. A definition by the descriptors of a source has its accessors too.
@@ -620,8 +612,7 @@ private:
         return argument.opcode == Opcode::Integer && argument.integer() >= range.minimum && argument.integer() <= range.maximum;
     }
 
-    // Among what the operand holds: what built-ins have allocated as instances of these classes and of no other. With the prototype object of one of them above it, it also behaves as it was made.
-    // The node that an allocation writes is asked itself: it is filled in the run that hands the object out, so before the object has come anywhere. What nothing is written about is sure of nothing.
+    // Among what the operand holds: what built-ins have allocated as instances of these classes and of no other.
     ValueSetID allocatedByBuiltinsAs(BuiltinOperand position, ValueSetID classes, bool hasPrototypeOfClass)
     {
         if (classes == ValueSets::nothing)
@@ -658,8 +649,7 @@ private:
         return refused;
     }
 
-    // The tests of a node run one after the other. What is sure to pass one never comes to the next.
-    // An operand that holds nothing yet lets no overload in. The statement runs again when the operand has moved.
+    // The tests of a node run one after the other.
     void select(BuiltinDispatchTarget target, Vector<BuiltinOverloadID, 4>& selected)
     {
         if (target.isOverload()) {
@@ -702,8 +692,7 @@ private:
         }
     }
 
-    // The getters of Temporal and of Intl. Each looks at its receiver first and throws for whatever is no instance of its class. Of an instance it answers what the engine keeps for it:
-    // it stores nothing that a program sees, keeps nothing and calls nothing.
+    // The getters of Temporal and of Intl.
     bool isGetterOfEngineWithoutRow(const BuiltinOverload& overload) const
     {
         const Builtin& entry = m_builtins.at(m_builtin);
@@ -813,9 +802,7 @@ private:
             letUndeclaredNativeCodeRun(m_context);
     }
 
-    // $toClass(function, name, base) puts the function below the base, and gives it a new prototype object below that of the base. The model of the table would make one object for all calls:
-    // every class of the library would have it, a store to `Readable.prototype` would be one to `EventEmitter.prototype`, and a name that two classes define would be known of neither.
-    // The object that the function was born with stands for the new one. Only the library names $toClass, and there the call stands in front of every read of `prototype`.
+    // $toClass(function, name, base) puts the function below the base, and gives it a new prototype object below that of the base.
     void makeClass()
     {
         std::span<const ValueFlowOperand> arguments = m_call.arguments;
@@ -831,8 +818,7 @@ private:
         throwValue(unknownObject(m_context, ValueFlowUnknownSource::ThrownByRunTime));
     }
 
-    // Object.entries makes a new array of new pairs, at the call: the model of the table would make one array and one pair for all calls. The own values of the operand go into the pairs and nowhere else.
-    // Whoever reads the own values runs the getters of this operand on this operand: in the hub of the behavior it would stand beside the operands of all other calls.
+    // Object.entries makes a new array of new pairs, at the call: the model of the table would make one array and one pair for all calls.
     void makeEntries()
     {
         ClimbingSet array = only(m_context, m_resultObject);
@@ -854,8 +840,7 @@ private:
         throwValue(unknownValue(m_context, ValueFlowUnknownSource::ThrownByRunTime));
     }
 
-    // The constructor of a Map takes element 0 of each entry for a key and element 1 for its value, and the records let all that an entry holds be either. Where every entry is a pair that Object.entries has made
-    // and that nobody has touched since, the two are what the pair was made with. Whatever arrives later, another entry, a store into a pair, a pair in unknown hands, brings the records back, which say more.
+    // The constructor of a Map takes element 0 of each entry for a key and element 1 for its value, and the records let all that an entry holds be either.
     bool takesKeysAndValuesFromPairs()
     {
         if (!isConstruction(m_call.kind) || m_builtins.canonicalID(m_builtin) != Builtins::Map || !m_resultObject)
@@ -878,8 +863,7 @@ private:
         return true;
     }
 
-    // Making a proxy runs no code. The proxy is the unknown object, and whoever holds it reaches the target and the handler through it: both are in unknown hands like the proxy.
-    // What is read, stored or called through the proxy is read, stored or called through the unknown object, by the statement that does it. Nobody holds a proxy that the program drops.
+    // Making a proxy runs no code.
     void makeProxy()
     {
         throwValue(unknownObject(m_context, ValueFlowUnknownSource::ThrownByRunTime));
@@ -902,8 +886,7 @@ private:
             m_context.add(m_call.result, m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_tables.heap().objectsThatLetInUnseenCode()));
     }
 
-    // Where an instance of a class may exist, native code does with it what hangs on the constructor and on the prototype object. So the rows of both count from the first overload that is applied
-    // and may answer such an instance. Nobody has named the two objects, so this is no use of them.
+    // Where an instance of a class may exist, native code does with it what hangs on the constructor and on the prototype object.
     void noteClassesOfResult(const BuiltinOverload& overload)
     {
         Vector<ValueFlowObjectID, 16> holdersOfRows;
@@ -1011,10 +994,7 @@ private:
         return std::ranges::any_of(condition.isOneOf, isWholeText) || std::ranges::any_of(condition.startsWith, isStartOfText);
     }
 
-    // The row is about one entry, so it takes a call whose receivers list that entry, however it came there. Beside the unknown object the normal form leaves out an object that has escaped,
-    // so the node is asked for the object itself. The untracked object stands for what the analysis has stopped following.
-    // That a method of some name is called on a receiver nobody knows says nothing about the entry: it is not taken for it. Should it be the entry at run time,
-    // what hangs on the row was not compiled and throws the error that names it where native code comes to call it.
+    // The row is about one entry, so it takes a call whose receivers list that entry, however it came there.
     bool mayBeCalledOn(BuiltinID entry)
     {
         if (!entry)
@@ -1031,8 +1011,7 @@ private:
         return mayBeUntrackedObject(valueAt(BuiltinOperand::receiver())) && m_context.holdsAnyOf(objects, ValueFlowProgramNodes::lost());
     }
 
-    // A row of the table may hold only for a call whose operand has a property, or is one of some texts. That some call passes such an operand is kept with the built-in, in a cell of native code
-    // that has the name of the property, or the first of the texts: the rules of the host and the results ask for it there.
+    // A row of the table may hold only for a call whose operand has a property, or is one of some texts.
     void notePropertiesThatRowsAskFor()
     {
         auto noteIn = [&](BuiltinName cell) {
@@ -1080,8 +1059,7 @@ private:
         });
     }
 
-    // The records of a declared overload say what a call does with the operands of that call. The function of the library that runs is one for all calls: through it every array that is
-    // mapped anywhere would meet every callback. Its body is followed only where the records say nothing about an operand or about the result.
+    // The records of a declared overload say what a call does with the operands of that call.
     RuntimeFunctionID functionThatSaysWhatCallDoes(const BuiltinOverload& overload) const
     {
         // What a construction makes is made at the call, with the prototype that new.target says. A model makes one object for all calls.
@@ -1091,7 +1069,6 @@ private:
     }
 
     // The body is one for all calls: an operand of this call stands there beside those of every other call, and beside the unknown object it is no longer listed once it has escaped.
-    // A read that the records declare holds for the operands of this very call, whenever the rule looks: `Reflect.get(process, "getBuiltinModule")`.
     void applyReadsIntoResult(const BuiltinOverload& overload)
     {
         if (overload.isUndeclared() || overload.code.model)
@@ -1122,8 +1099,7 @@ private:
         if (m_call.thrown)
             m_context.connect(group.thrown, m_call.thrown);
 
-        // The body calls what it was handed. Where it also runs for calls that records describe, its call of a callee nobody knows says nothing: see callOperandOfDescribedCall().
-        // No record speaks for this call, so it says here that code runs which nobody compiles.
+        // The body calls what it was handed.
         if (handsOverUnknownObject() && isCodeThatRecordsDescribe(m_universe, function))
             letUnknownCodeWrite(m_context);
     }
@@ -1234,15 +1210,12 @@ private:
                 keptByNativeCode = m_context.unite(keptByNativeCode, m_context.restrict(m_context.valueOf(group.result), m_universe.objects()));
             }
         });
-        // What is not returned native code goes on to work with: RegExp.prototype[@@matchAll] and [@@split] store `lastIndex` into it. No record says what it stores, or where.
-        // It defines no accessor there and leaves alone what lies above.
+        // What is not returned native code goes on to work with: RegExp.prototype[@@matchAll] and [@@split] store `lastIndex` into it.
         if (ClimbingSet kept = known(keptByNativeCode); m_context.meet(kept, m_universe.objects())) {
             m_context.mark(kept, { ObjectMutation::AddProperty, ObjectMutation::StoreAfterCreation, ObjectMutation::StoreOfOtherType });
             m_context.add(m_context.written(kept, unknownKey), unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));
         }
-        // A built-in constructor other than that of the class which the entry makes: `array.constructor = Map`. Nobody follows what it makes here.
-        // One that finds nothing under @@species is no species: above every array lies Object.prototype, whose `constructor` is Object, and Object[@@species] is undefined.
-        // It is the species where a getter of the program answers it: `static get [Symbol.species]() { return Object; }`, and `new Object(0)` is a Number.
+        // A built-in constructor other than that of the class which the entry makes: `array.constructor = Map`.
         auto findsSpeciesGetter = [&](BuiltinID constructor) {
             constexpr unsigned longestChain = 4;
             for (unsigned step = 0; constructor && step < longestChain; ++step) {
@@ -1269,8 +1242,7 @@ private:
         }
         m_context.mark(m_objectsMadeBySpecies, { ObjectMutation::AddProperty, ObjectMutation::StoreAfterCreation });
 
-        // Native code fills what the species constructor has made: it defines the elements one by one and stores the length, which may run a setter of the program. It does nothing else to the object:
-        // it deletes nothing, freezes nothing, and leaves alone the other names and what lies above. Where no record says with what it fills, anything may lie under an index.
+        // Native code fills what the species constructor has made: it defines the elements one by one and stores the length, which may run a setter of the program.
         auto goesIntoResult = [](const BuiltinTransfer& transfer) {
             return transfer.to.kind == BuiltinPlaceKind::ResultSlot || transfer.to.kind == BuiltinPlaceKind::ResultField;
         };
@@ -1368,8 +1340,7 @@ private:
         });
     }
 
-    // The library's code behind a described built-in is entered with operands nobody knows, and hands them on to other built-ins. That a call goes over its operand the records say where that call is,
-    // so a built-in that is applied in such code opens and steps no operand nobody knows: what it takes from there is a value nobody knows.
+    // The library's code behind a described built-in is entered with operands nobody knows, and hands them on to other built-ins.
     ClimbingSet iteratedOperand(ClimbingSet iterated, ValueSetID& constant)
     {
         if (!mayBeUnknownObject(iterated) || !m_call.operation || !isCodeThatRecordsDescribe(m_universe, m_call.operation->function))
@@ -1395,8 +1366,7 @@ private:
             readThrough(objectsAt(*place.operand), nameOf(place.slot));
             return;
         case BuiltinPlaceKind::Prototype: {
-            // No node holds the prototype that an object is created with. Of a placeholder the lookup answers the placeholder and all that is above what it covers.
-            // Above a primitive lies the prototype object of its wrapper: `"xyz".__proto__` is String.prototype.
+            // No node holds the prototype that an object is created with.
             ClimbingSet objects = objectsAt(*place.operand);
             ClimbingSet primitives = m_context.restrict(valueAt(*place.operand), ValueSets::complement(m_universe.objects()));
             ClimbingSet above = objectsRightAbove(m_context, m_context.unite(known(objects), primitives));
@@ -1706,9 +1676,7 @@ private:
         });
     }
 
-    // What native code makes or has at hand of the type. `fresh` stands for an object that this call allocates. One object stands for everything that is made to be put below it.
-    // None where the unknown object stands for what the call returns.
-    // "A new array, or whatever object the species constructor makes": the instance is what the entry makes by itself, and constructSpecies() answers the other.
+    // What native code makes or has at hand of the type.
     static bool listsWhatIsMadeWithoutSpecies(const BuiltinType& type)
     {
         return type.freshness == BuiltinFreshness::UnlessSpecies && std::ranges::contains(type.parts, BuiltinTypePartKind::Instance, &BuiltinTypePart::kind);
@@ -1743,8 +1711,7 @@ private:
         for (const BuiltinTypePart& part : type.parts) {
             switch (part.kind) {
             case BuiltinTypePartKind::Builtin:
-                // Of a built-in of which each module has an object of its own, native code may hand out any. The one that createRequire() makes is no module's,
-                // and the module objects hang together as the requests of the build say.
+                // Of a built-in of which each module has an object of its own, native code may hand out any.
                 m_context.use(part.builtin, BuiltinUse::Read);
                 objects.shrink(0);
                 if (m_builtins.canonicalID(part.builtin) == Builtins::ModuleObject)
@@ -1798,8 +1765,6 @@ private:
     }
 
     // Where the names in the text are the fields of a record that typed code takes, the parser makes an object with the layout of the record, so that the object passes the test at the entrance of that code.
-    // Only of a record of which nothing is claimed: an object of it has been in the hands of JavaScript that nobody has seen, and may have come back with anything that its slots accept.
-    // The run time makes the records that are listed here and no other: ObservedUse::ReachesTypedParse.
     ValueSetID recordsMadeByParsers()
     {
         Vector<ValueFlowObjectID, 8> made;
@@ -1813,8 +1778,7 @@ private:
         return m_context.maker().of(made.span());
     }
 
-    // Beside the data a row lists the primitives that the call itself may answer. It speaks of what lies INSIDE the data only where it lists all that a text in JSON can hold: null, booleans, numbers, strings.
-    // Any other plain data holds any primitive: `headers.toJSON()` answers an object and nothing else, and the object holds strings.
+    // Beside the data a row lists the primitives that the call itself may answer.
     ValueSetID primitivesInsidePlainData(ValueSetID listed) const
     {
         constexpr PrimitiveSet heldByJSON[] { PrimitiveSet::Null, PrimitiveSet::False, PrimitiveSet::True, PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber, PrimitiveSet::String };
@@ -1824,8 +1788,7 @@ private:
         return listsWhatJSONHolds ? listed : m_universe.anyPrimitive();
     }
 
-    // What a parser makes of a text: ordinary objects and arrays that hold primitives and more such objects. They hold no function and nothing that was there before the call, and nobody else has them.
-    // One object and one array of the call stand for all of them.
+    // What a parser makes of a text: ordinary objects and arrays that hold primitives and more such objects.
     ValueSetID plainDataHolding(ValueSetID primitives)
     {
         ValueSetMaker& maker = m_context.maker();
@@ -1860,7 +1823,6 @@ private:
     }
 
     // A row that names a class says "of that class or of one below it": what filter makes of bytes is a typed array, and Uint8Array.prototype lies above it, not the object that all typed arrays share.
-    // The constructor of a class makes instances of that very class, and so does a row that says so.
     void addPrototypesOfClassesBelow(BuiltinClassID named, ValueFlowNodeID prototype)
     {
         if (BuiltinID constructor = m_builtins.at(named).constructor; constructor && m_builtins.canonicalID(constructor) == m_builtins.canonicalID(m_builtin))
@@ -1902,8 +1864,7 @@ private:
                 }
             } else if (!m_overload->result.prototypeSource || fresh != m_resultObject)
                 m_context.add(prototype, unknownObject(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
-            // An unaliased result may have own properties that the table does not declare. A lookup that comes by the unknown object answers the unknown value for every name.
-            // Whoever takes all that the object holds makes no lookup, so the same is said of the object itself.
+            // An unaliased result may have own properties that the table does not declare.
             if (freshness == BuiltinFreshness::Unaliased && !listsOwnNamesOf(part.builtinClass, fresh)) {
                 m_context.add(prototype, unknownObject(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
                 m_context.add(m_context.written(object, unknownKey), unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
@@ -1911,8 +1872,7 @@ private:
             if (isConstruction(m_call.kind) && fresh == m_resultObject) {
                 // A class of the program that extends the built-in class hands down its own prototype object.
                 m_context.connect(m_context.lookup(m_context.valueOf(m_call.thisValue), property(m_context, BuiltinNames::prototype)), prototype);
-                // A constructor that runs JavaScript may call what it finds on the new object, as that of Map calls `set` for each entry. No record says which members, so native code has all that such a class hands down, and the class.
-                // A method that asks an instance for its constructor and that for its species says so itself.
+                // A constructor that runs JavaScript may call what it finds on the new object, as that of Map calls `set` for each entry.
                 ClimbingSet classesOfProgram = m_context.restrict(m_context.valueOf(m_call.thisValue), ValueSets::complement(m_universe.builtinObjects()));
                 bool mayCallMembersOfNewObject = m_overload->effects.capability == BuiltinCapability::JS && !m_builtins.at(part.builtinClass).constructorOnlyReadsPrototypeOfNewTarget;
                 if (holdsAnything(classesOfProgram) && mayCallMembersOfNewObject) {
@@ -1965,10 +1925,7 @@ private:
             m_context.add(m_context.written(object, property(m_context, own.name)), valueOfType(own.type, m_contentsObject));
     }
 
-    // `Object.keys(o)` and its relatives, where every object that `o` may be is a literal of the program that nobody else holds: its names are the fields of its layout
-    // and the names under which statements have added a property. So the list holds those constants, and a text nobody knows only where a name nobody knows was added. False for any other call.
-    // A literal of constants is a literal like any other: it has the members that its record lists, which need not all be fields.
-    // What the constructor of a base class allocates is no such literal: it has the layout, and so the fields, of whichever class is constructed.
+    // `Object.keys(o)` and its relatives, where every object that `o` may be is a literal of the program that nobody else holds: its names are the fields of its layout and the names under which statements have added a property.
     bool listOwnKeysIn(ValueFlowNodeID held)
     {
         BuiltinID builtin = m_builtins.canonicalID(m_builtin);
@@ -2331,7 +2288,6 @@ private:
     }
 
     // The names of an object literal that the call spells out at the position and that goes nowhere else: it holds what its own definitions put there, under those names, and nothing more.
-    // None where something else stands there, where a definition computes its name and the caller has no use for the other names alone, and where anything but the definitions and the call gets hold of the object.
     std::optional<Vector<PropertyKeyID, 16>> namesOfLiteralAt(BuiltinOperand position, bool* hasComputedNames = nullptr)
     {
         if (!m_call.operation || position.kind() != BuiltinOperand::Kind::Argument)
@@ -2501,7 +2457,6 @@ ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext& context, BuiltinNam
 static void applyEntryDescribing(ValueFlowObjectID closure, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 
 // Native code has put there what code of the library made, so that is what the program has in its hands: a read answers it and a call enters it, with the operands of the call.
-// The overloads of the entry sum up what the code of the library does, for a program that does not hold that code.
 static bool applyValueFromLibrary(BuiltinID builtin, const ValueFlowBuiltinCall& call, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -2686,7 +2641,6 @@ bool bindsNoArgument(const Program& program, const ValueFlowUniverse& universe, 
 }
 
 // A set that holds every one of the callees for which bindsNoArgument() holds, and beside them only objects that are none of the callees' or for which it holds too.
-// It follows from the object alone, and a group of the unknown object would ask it of all that has escaped in each of its runs. So each callee is asked once, by whoever meets it first.
 static ValueSetID boundFunctionsBindingNoArgumentAmong(ClimbingSet callees, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -2729,8 +2683,7 @@ BuiltinOverloadID overloadForAnotherNewTarget(const BuiltinTable& builtins, Buil
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Each argument of the call keeps its position. A function of the table is applied with the operands of this very call, as if the program had called it on the bound `this`:
-// `const define = Object.defineProperty.bind(Object); define(object, key, descriptor)` stores under that key and no other.
+// Each argument of the call keeps its position.
 static void callTargetsWithoutBoundArguments(ClimbingSet callees, const ValueFlowBuiltinCall& description, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -2921,8 +2874,7 @@ static void testAgainstConstructor(ValueFlowRuleContext& context, const ValueFlo
     ClimbingSet builtinFunctions = context.restrict(methods, universe.builtinFunctions());
     if (operation)
         applyEventsOfCall(*operation, context, builtinFunctions);
-    // A closure and a function of the table are no bound functions. The method that every function inherits asks such a function for its prototype property and walks the chain of what is tested:
-    // but for a getter under that name no code runs, and nobody keeps what is tested. No test for a class tells them from a bound function, so they are left out here.
+    // A closure and a function of the table are no bound functions.
     ClimbingSet otherConstructors = context.restrict(context.valueOf(constructor), ValueSets::complement(context.maker().unite(universe.builtinFunctions(), universe.closures())));
     ValueFlowBuiltinCall application;
     application.kind = ValueFlowCallKind::CallByNativeCode;
@@ -2960,10 +2912,7 @@ void runInstanceOf(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     testAgainstConstructor(context, operands[0], operands[1], statement.thrown, &statement);
 }
 
-// Whatever a behavior applies to anywhere in the program lies in one hub. Native code calls what it finds on a receiver with that receiver as `this`, and a function nobody knows keeps its `this`, as does a function of the table
-// that nothing describes. That one may be found on one receiver says nothing about the receivers beside it, so each object is handed to the functor by itself, with an operand that holds it alone.
-// What is looked up on it under a name is then the lookup of which there is one for each (object, name), whoever asks. Nothing tells apart what a primitive or a placeholder stands for: those come together.
-// With more objects than the analysis tells apart in one value only those past the limit come together: tellObjectsApart().
+// Whatever a behavior applies to anywhere in the program lies in one hub.
 static void forEachReceiverToldApart(ValueFlowRuleContext& context, ClimbingSet receivers, const ValueFlowOperand& holdingReceivers, NOESCAPE const Invocable<void(ClimbingSet, const ValueFlowOperand&)> auto& functor)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -3011,11 +2960,9 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     if (behavior.isTransitive && behavior.protocols.contains(Protocol::HasInstance))
         context.connect(context.read(objects, { ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionTarget.index() }), hub);
     // A walk that goes up the chain shows what a receiver inherits, as the formatter of console.log does: an object that lies on the objects above is looked through like one that lies on the receiver.
-    // Of a function up there, a method or the class under `constructor`, it shows the name at most.
     if (behavior.isTransitive && behavior.protocols.containsAll({ Protocol::OwnValues, Protocol::PrototypeChain }))
         context.add(hub, context.restrict(context.valueOf(context.read(chainOfProgramFrom(context, objects), everyProperty)), ValueSets::complement(universe.callables())));
     // The table knows what a built-in object holds, and the lookup reads the table: whoever walks a receiver that the program names reads every member, and one that the host makes at its first read is made.
-    // Beside the unknown object the normal form leaves out whatever has escaped, so the hub is asked for what it lists.
     ClimbingSet hostObjects = behavior.protocols.contains(Protocol::OwnValues) ? context.valueWithin(ClimbingSet(universe.builtinTables().heap().holdersOfMembersThatHostMakes()), hub) : ClimbingSet();
     if (behavior.isTransitive)
         hostObjects = withHostObjectsAmongMembers(context, hostObjects);
@@ -3041,8 +2988,7 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     }
 }
 
-// What native code finds under the name on the receivers and calls. The library's code behind a described built-in is entered with operands nobody knows, and an object that it makes holds them:
-// under a key nobody knows such an operand may lie under this name too. What a call of the built-in does with its operands the records say where the call is, so it is no callee here.
+// What native code finds under the name on the receivers and calls.
 static ClimbingSet membersToCall(ValueFlowRuleContext& context, ClimbingSet receivers, BuiltinName name)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -3059,8 +3005,7 @@ static ClimbingSet membersToCall(ValueFlowRuleContext& context, ClimbingSet rece
     return context.unite(found, context.valueOf(context.lookup(context.restrict(receivers, ValueSets::complement(madeInDescribedCode)), property(context, name))));
 }
 
-// The universe is made before anybody knows the callee of a call, so what a built-in allocates may be anything there, a function too. Each allocation leaves what stands for its class on the object:
-// what was allocated as an ordinary object or an array and as nothing else, as the data that JSON.parse makes, is called by nobody. See allocatedByBuiltinsAs().
+// The universe is made before anybody knows the callee of a call, so what a built-in allocates may be anything there, a function too.
 static ClimbingSet withoutWhatBuiltinsMadeAsNoFunction(ValueFlowRuleContext& context, ClimbingSet values)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -3088,15 +3033,12 @@ static bool passesOnlyPrimitives(const BuiltinTable& builtins, const BuiltinName
 }
 
 // The host loads a start-up module for a method that it finds under one of these names and calls, and for no other call: the table lists the names, and the records what is passed.
-// `next` on an iterator nobody knows gets nothing out of such a module.
 static bool isCalledWithFunctionsOfStartupModules(ValueFlowRuleContext& context, BuiltinName name)
 {
     return std::ranges::contains(context.program().builtins().namesOfHostMethodsCallingStartupLoads(), name);
 }
 
-// The host finds the method under its name. Of the names under which it passes a function of a start-up module the stores are followed: on an object nobody knows lies what some statement has stored
-// under the name, on whatever object, or the method of a class of the table of which an instance may exist. A class that the table does not have comes out of native code that nothing describes,
-// which says so by itself: see letUndeclaredNativeCodeRun().
+// The host finds the method under its name.
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName name)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -3204,11 +3146,6 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
 }
 
 // An object nobody knows may be an instance of a class of the table that no statement has made: a Buffer out of evaluated text, or out of a native function that answers anything.
-// What native code does to the object needs no rule. But the method that it calls there under the name of a protocol may be written in JavaScript, as Buffer.prototype.toJSON is,
-// and the image holds the code behind a member only where something uses it. A method in native code is there anyway.
-// Only where an instance of the class may exist: the prototype object counts as used from the first overload that may answer one (noteClassesOfResult) and from the first native result
-// that nobody describes (unknownValue), and unseen code has it in its hands.
-// The library's code behind a described built-in is entered with operands nobody knows, so every program has a hub that holds the unknown object.
 static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior)
 {
     const ValueFlowUniverse& universe = context.universe();

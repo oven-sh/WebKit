@@ -880,8 +880,6 @@ static void testMissingFieldsAnsweredByFieldTable()
     AOT_TEST_CHECK(reads.read(withClosure.address()).calledOperation);
 }
 
-// What a read by name of a field costs, by what the field holds: instructions of stubs, counted one by one, with nothing in any cache, as in code that comes by once.
-// A number here may fall. Where one has to rise, somebody has weighed it: a boolean, a double and a field that is missing once cost 150 to 230, unseen, because every answer was right.
 static void testInstructionsOfReadsByKindOfField()
 {
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS

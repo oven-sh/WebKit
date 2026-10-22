@@ -73,8 +73,7 @@ static_assert(sizeof(JSRopeString) == 4 * sizeof(uint64_t) && JSRopeString::offs
 static_assert(JSRopeString::CompactFibers::shiftOfFiber1LowerInLengthWord == 32 && JSRopeString::CompactFibers::widthOfFiber1LowerInLengthWord == 32);
 static_assert(JSRopeString::is8BitInPointer == StringImpl::flagIs8Bit() && JSString::MaxLength == static_cast<unsigned>(INT32_MAX));
 
-// Up to MarkedSpace::preciseCutoff every multiple of MarkedSpace::sizeStep is a size class, so Butterfly::optimalContiguousVectorLength()
-// rounds the indexing header and the elements up to two words.
+// Up to MarkedSpace::preciseCutoff every multiple of MarkedSpace::sizeStep is a size class, so Butterfly::optimalContiguousVectorLength() rounds the indexing header and the elements up to two words.
 inline constexpr unsigned maxLengthOfArrayLiteralAllocatedInline = (MarkedSpace::preciseCutoff - sizeof(IndexingHeader)) / sizeof(EncodedJSValue);
 static_assert(MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(IndexingHeader) == sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
 static_assert(maxLengthOfArrayLiteralAllocatedInline % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN_EMPTY % 2 == 1 && BASE_CONTIGUOUS_VECTOR_LEN_EMPTY <= maxLengthOfArrayLiteralAllocatedInline);
@@ -93,7 +92,6 @@ static_assert(ArrayWithUndecided < ArrayWithContiguous && ArrayWithInt32 < Array
 namespace Interpreter {
 
 // Each answers nothing in a realm that runs no compiled code, and the keyed ones for a key that the property caches take for no name.
-// For an object that is not compiled, a read by name answers only from a slot that is filed already. The interpreter does the lookup otherwise, and fills its own cache.
 std::optional<JSValue> tryGetById(JSGlobalObject*, JSCell* base, const Identifier&);
 std::optional<JSValue> tryGetByVal(JSGlobalObject*, JSCell* base, JSValue key);
 std::optional<bool> tryInById(JSGlobalObject*, JSObject* base, const Identifier&);
@@ -101,9 +99,7 @@ std::optional<bool> tryInByVal(JSGlobalObject*, JSObject* base, JSValue key);
 bool tryPutById(JSGlobalObject*, JSCell* base, const Identifier&, JSValue, bool isStrict);
 bool tryPutByVal(JSGlobalObject*, JSCell* base, JSValue key, JSValue, bool isStrict);
 
-// What the cache of a get_by_id holds for a field in the cell, whose slot may be empty. A boxed value: the offset that a property of an ordinary object at its place would have.
-// A narrow reference: narrowReferenceInSiteCache and its distance from the start of the cell. invalidOffset for anything else, and nothing as long as the name is not filed.
-// An extra property: extraPropertyInSiteCache, the distance of the hidden word from the start of the cell in the upper half and the word index of the property in the lower.
+// What the cache of a get_by_id holds for a field in the cell, whose slot may be empty.
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;
 inline constexpr uint32_t maxHiddenWordOffsetInSiteCache = (extraPropertyInSiteCache >> 16) - 1;
@@ -167,8 +163,6 @@ private:
     Vector<Entry> m_entries;
 };
 
-// In OpResolveScope::Metadata::m_resolveType, above the type, of a narrow resolve_scope that finds a closure variable and is followed at once by the narrow get_from_scope that reads the variable.
-// llint_aot_op_resolve_scope reads the variable itself and goes on behind the read, or behind the check_tdz of what was read.
 struct FusedClosureVariableRead {
     static constexpr unsigned typeBits = 8;
     static constexpr unsigned bytesToSkipBits = 8;

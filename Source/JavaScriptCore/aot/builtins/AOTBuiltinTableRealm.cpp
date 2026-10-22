@@ -620,7 +620,6 @@ static CellLookup checkFound(const BuiltinTable& table, BuiltinCellKey key, JSVa
             return makeUnexpected(BuiltinLookupFailure::HasOtherCallee);
     }
     // Compiled code takes a native function to have been born with the Structure of the host functions of its realm, for what that Structure refuses.
-    // A function that the library writes in JavaScript refuses the same as a closure. Where its code is not in the image another function stands for it, which nothing compiled calls.
     if (key.kind() == BuiltinCellKey::Kind::Object && table.isHostFunctionOfEngine(id)) {
         Structure* structure = value.asCell()->structure();
         if (structure->globalObject()->hostFunctionStructure()->mayHaveImmutableProperties() && !structure->mayHaveImmutableProperties())

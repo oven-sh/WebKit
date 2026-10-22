@@ -25,9 +25,7 @@ struct ContractedModuleRequests {
 
 JS_EXPORT_PRIVATE void computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests);
 
-// Both go by the flags that computeModuleFlags() sets. A link follows every request, an evaluation the imports alone.
-// A module that only passes a walk on to its requests is replaced in the lists of its importers by its own list, so that the walk never visits it.
-// A require() of a module whose requests are being evaluated answers at once, so a module that a require() names has to be visited.
+// Both go by the flags that computeModuleFlags() sets.
 JS_EXPORT_PRIVATE ContractedModuleRequests contractModuleRequests(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, const BitVector& modulesNamedByRequire, uint32_t maxContractedRequests);
 JS_EXPORT_PRIVATE Vector<LinkPlanStepData> planLinkOfEntryPoint(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, ModuleID entryPoint);
 
@@ -45,8 +43,7 @@ struct LinkPlansOfRoots {
     Vector<LinkPlanStepData> steps;
 };
 
-// What a walk of all the requests does while no module is linked. Whatever is linked by then, the steps that are left to do come in the order of the plan:
-// a module is linked together with everything it requests, so no way to a step that is left leads through a linked module.
+// What a walk of all the requests does while no module is linked.
 JS_EXPORT_PRIVATE LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, std::span<const ModuleImportSite>, std::optional<ModuleID> plannedEntryPoint);
 
 } } // namespace JSC::AOT

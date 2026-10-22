@@ -121,8 +121,6 @@ static VariableGroup zeroGroupOf(const PlacedVariable& placed)
         if (!traitsOf(placed.representation).holdsCell)
             return VariableGroup::ZeroWord8;
         // The words that the collector visits lie together, so the image lists them as a few ranges.
-        // A read that finds zero takes the closure of the declared function from the closure table and leaves the word as it is, so the word is written only where the program assigns to the name.
-        // Hardly any program does: these words lie apart from the ones that get filled, and their pages are never written.
         return placed.encoding == VariableEncoding::FunctionAsZero ? VariableGroup::ZeroFunction : VariableGroup::ZeroValue;
     case 4:
         return traitsOf(placed.representation).isNarrowReference ? VariableGroup::ZeroReference4 : VariableGroup::ZeroWord4;

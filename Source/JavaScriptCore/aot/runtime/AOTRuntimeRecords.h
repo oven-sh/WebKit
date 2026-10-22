@@ -106,12 +106,9 @@ struct alignas(16) Slot {
     static constexpr uint8_t inheritedIsOutOfLine = 1 << 7;
     // Of FieldCreation, which never has absentIsUndefined: the key order alone says that the field exists, and its slot admits undefined. A store of undefined that finds no granule lists the key and asks for none.
     static constexpr uint8_t undefinedNeedsNoStorage = absentIsUndefined;
-    // Of FieldCreation, for a field in the cell whose slot holds any value as it is and whose type is that of any value, so that the type has nothing to say:
-    // in its place stands the order word of the object for which the slot was made, as it was before the field was created, and the location is the number of the order that it had afterwards, with one key more.
-    // The Structure says how many extra keys there are, and transitions never change: an object of the Structure with that order word gets the same.
+    // Of FieldCreation, for a field in the cell whose slot holds any value as it is and whose type is that of any value, so that the type has nothing to say.
     static constexpr uint8_t remembersOrder = growsStorage;
     // Of Field and FieldOrInherited in a slot for reads, which never grow storage: the field may exist where its slot is empty, it is undefined then, and only the key order says whether it does.
-    // Of Field: nothing above the receiver has the name, so a read of the empty slot answers undefined either way. Of FieldOrInherited: the inherited value is the answer where it is undefined too.
     static constexpr uint8_t emptySlotMayBeUndefined = growsStorage;
     static constexpr uint8_t allFlags = UINT8_MAX;
 
@@ -119,8 +116,7 @@ struct alignas(16) Slot {
         SlotData slot;
         uint32_t type;
     };
-    // Where the slot of the field is empty, the property of the holder counts: the location and inheritedIsOutOfLine say where it is. The Structure of the receiver has the offset of the extension word.
-    // Of FieldOrInheritedField the holder is asked as that of InheritedField is, and the location is the offset of the receiver's extension word.
+    // Where the slot of the field is empty, the property of the holder counts: the location and inheritedIsOutOfLine say where it is.
     struct FieldAndHolderPayload {
         SlotData slot;
         uint32_t holder;
@@ -193,8 +189,7 @@ struct alignas(16) Slot {
         return slot;
     }
     static std::optional<Slot> tryCreateFieldAndHolder(StructureID, Kind, uint8_t flags, SlotData, JSCell* holder, PropertyOffset, uintptr_t cageBase);
-    // The holder is a compiled object above the receiver with a field of this name. The slot of that field holds the value in any representation, or it is empty and may be filled without a report.
-    // So each read asks the holder as for a property of its own. What it answers is a data property or nothing, which does not depend on the receiver.
+    // The holder is a compiled object above the receiver with a field of this name.
     static Slot createInheritedField(StructureID structureID, uint8_t flags, JSCell* holder)
     {
         ASSERT(holder && !(flags & (isOwn | isOutOfLine)));

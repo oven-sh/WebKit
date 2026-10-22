@@ -173,7 +173,6 @@ static bool consumesOnly8BitCharacters(const Yarr::PatternDisjunction& disjuncti
 }
 
 // A pattern that has to match its subject from end to end with characters of one byte matches no subject that holds a wider one: an address, a version, a name.
-// Letters that are the same but for their case may be wider.
 static bool matchesOnlyWhole8BitSubjects(const Yarr::YarrPattern& pattern)
 {
     if (pattern.multiline() || pattern.ignoreCase() || pattern.m_containsModifiers)

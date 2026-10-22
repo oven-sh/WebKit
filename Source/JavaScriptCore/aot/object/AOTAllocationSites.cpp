@@ -90,7 +90,6 @@ AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number)
     if (AllocationSiteRecord* record = words.allocationSite(number))
         return *record;
     // Nearly every record is the first of its shape, and then there is no other to find: no object has been made yet, so the shape has no Structure.
-    // (A record that a constructor filled with a Structure of its own goes unseen. That costs a second record.)
     uint32_t shape = m_tables.allocations()[number].shape;
     bool isFirstOfShape = shape < m_tables.firstEnvironmentShape && !m_structures[shape];
     AllocationSiteRecord* record = isFirstOfShape ? nullptr : recordOfSameAllocation(number);
@@ -132,8 +131,7 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
         ASSERT(kind == AllocatedCellKind::Object);
         ObjectModel& objects = *m_state.objects;
         FunctionID function(m_tables.constructorOfAllocation(number));
-        // Without a class object that the run time knows, the operation names the prototype. That is a constructor function that may have many closures, or captures something.
-        // It is also a class with captures whose definition was forgotten: its next definition empties this record again.
+        // Without a class object that the run time knows, the operation names the prototype.
         JSCell* constructor = objects.closures.hasSingletonClosure(function) ? objects.closures.closure(vm, function) : objects.closures.closureIfCreated(function);
         if (constructor)
             structure = objectStructure(vm, allocation.shape, objects.classes.prototypeForInstancesOf(vm, asObject(constructor)));

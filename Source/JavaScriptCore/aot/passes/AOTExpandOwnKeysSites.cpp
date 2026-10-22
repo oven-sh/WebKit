@@ -383,10 +383,7 @@ static bool assignsPrototype(const Program& program, const OwnKeyWalkPlan& plan)
     });
 }
 
-// A copy is an ordinary object with ordinary properties under the same names in the same order. An object of the source's layout is that where the layout is one of literals
-// and each field that the order lists is an ordinary enumerable property under a string.
-// The run time copies a record by its words, in about 280 instructions however many fields it has. An arm loads and stores field by field, the fields outside the cell by way of the Extension:
-// with 23 fields it took more instructions than the call, and a kilobyte of code.
+// A copy is an ordinary object with ordinary properties under the same names in the same order.
 static constexpr size_t maxFieldsCopiedByAllocation = 8;
 
 static bool isCopiedByAllocation(const Program& program, const OwnKeyWalkArm& arm)
@@ -456,7 +453,6 @@ static std::optional<Vector<Value, 2>> makeAssignCallsFromEachSource(FunctionPas
 }
 
 // The stores of a walked source add data properties to a literal that has no setter, so the next source finds it without one.
-// The original operation may run getters, and a key "__proto__" gives the target other setters: it takes every source that is left.
 std::optional<AssignPlan> planAssign(FunctionPassContext& context, const UnchangedAllocations& unchanged, const OwnKeyWalkSite& site)
 {
     RELEASE_ASSERT(site.walk == OwnKeyWalk::Assign);

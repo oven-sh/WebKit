@@ -73,8 +73,6 @@ function f6 name="setPrototype" parameters=[{type=anything}, {type=anything}] re
 }
 )IR"_s;
 
-// Each line walks fifty new objects. Objects of one Structure and one key order ask the run time for their enumerator once, and once more after each collection, whenever that comes: "found".
-// So do objects with extra properties, once their Structure names the Structure of those.
 static constexpr ASCIILiteral statements = R"JS(
 globalThis.publish = (makePair, makeReversedPair, walk, set, remove, setPrototype) => {
     const calls = () => Number(aotOperationCount("operationAOTGetPropertyEnumerator"));

@@ -23,7 +23,6 @@ class SSARepair;
 struct FunctionPassContext;
 
 // Loop headers, handler blocks, and the points after an operation that may call unknown code and the reads of its results.
-// Sorted by block in reverse post order, then by index, without duplicates.
 Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt);
 
 // A copy that comes back in front of the tests it has failed closes a cycle through them. The tested code never goes around it, so it is no loop to move a test out of.
@@ -69,8 +68,6 @@ public:
     std::span<const BlockID> copiedBlocks() const;
 
     // Step 3, once the caller has emitted its tests and rewritten the typed code, before SSA is repaired.
-    // What later passes prove of a value that rests on a narrowed one, the result of a call that is resolved in a later round for one, is what is expected of it now.
-    // A copy that came back with less would take that proof from the typed code behind the join.
     enum class TypesTestedOnWayBack : uint8_t { Proven, Expected };
     void addWaysBack(std::span<const ValueID> changedValues, TypesTestedOnWayBack = TypesTestedOnWayBack::Proven);
     unsigned numberOfWaysBack() const { return m_numberOfWaysBack; }

@@ -202,8 +202,7 @@ void generateStringBuilderAppendString(StubAssembler& jit)
     jit.loadPtr(Address(source, StringImpl::dataOffset()), source);
     characters.copy(nullptr);
 
-    // A short rope of flat 8-bit strings, as `first + " " + last` kept in a field is: its pieces are copied one after the other. The rope stays a rope and nothing is allocated.
-    // The position moves behind the last piece only, so whoever meets a piece that is itself a rope leaves with nothing done. Not into an empty builder, whose first string may be the whole result.
+    // A short rope of flat 8-bit strings, as `first + " " + last` kept in a field is: its pieces are copied one after the other.
     isRope.link(&jit);
     slowPath.append(jit.branchTestPtr(CCallHelpers::NonZero, source, TrustedImm32(JSRopeString::isSubstringInPointer)));
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, source, TrustedImm32(JSRopeString::is8BitInPointer)));

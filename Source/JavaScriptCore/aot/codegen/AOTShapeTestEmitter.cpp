@@ -161,7 +161,6 @@ Condition ShapeTestEmitter::passesBitSet(Word32 shapeWord, LayoutSetID tested, c
 }
 
 // No shape that reaches the test is out of reach of a set that has a bit for each of them, so the distance is the index as it is.
-// A program of few shapes has one such set per tested type, whatever is known at the site.
 std::optional<Condition> ShapeTestEmitter::passesBitSetThatHoldsEveryKnownShape(Word32 shapeWord, LayoutSetID tested, LayoutSetID known)
 {
     constexpr uint32_t maxNumberOfShapes = maxPagesInShortShapeSet * PagedBitSet::bitsPerPage;

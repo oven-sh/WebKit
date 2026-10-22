@@ -85,7 +85,6 @@ BlockID TestPlacer::ensureSplit(Edge edge)
 }
 
 // The generic copy of a turn of a loop leaves the copy on an edge that goes around the loop, where a block is put for it, and goes on from there to the block on an edge that enters the loop.
-// Entered at its head, the loop would take the blocks of the copy into itself.
 void TestPlacer::prepareLoops()
 {
     for (uint32_t index = 0; index < m_plan.waysBackIntoLoops.size(); ++index) {
@@ -343,7 +342,6 @@ bool TestPlacer::canComeBackInto(const PreparedLoop& loop) const
 }
 
 // Every test of such a stretch looks at a value of which layouts are expected and nobody has checked that: nothing is known of it but the names it is asked for, or the function is not a checked function of the program.
-// What is read from such an object is seldom known better than by name. Behind a test for a number, a string, an array or a typed array stands arithmetic that the copy would spoil where it came back.
 BitVector TestPlacer::findStretchesThatGuessLayouts() const
 {
     bool expectsCheckedTypes = m_context.function.has(FunctionFlags::IsChecked) && !isLibraryCode(m_context.program, m_context.function);
@@ -363,9 +361,7 @@ BitVector TestPlacer::findStretchesThatGuessLayouts() const
     return stretches;
 }
 
-// Behind the stretch the copy keeps apart what the code that passed the test has proven. Layouts that are guessed are often wrong, and then the copy runs: it holds the stretch alone and comes back behind it.
-// Cold code is most of a large program and runs little of its time: there what has been proven is not worth a second copy of the rest either, and whoever needs it behind the join tests again.
-// A loop multiplies what it is given, however seldom it is entered: what may reach one keeps its copy, but in a very large program.
+// Behind the stretch the copy keeps apart what the code that passed the test has proven.
 bool TestPlacer::goesOnBehindStretch(const StretchRange& range) const
 {
     bool isColdWithoutLoopBehind = m_stretchesInFrontOfLoops && !m_stretchesInFrontOfLoops->quickGet(range.stretch);
@@ -577,8 +573,6 @@ void TestPlacer::cloneGenericCopies()
 }
 
 // Every proof that the head of the loop relies on is made again on the way back in: here, or by the tests on the entering edge that the way back joins.
-// Where a test fails, the copy goes on for another turn. GenericCopy leads the copy into the blocks on the edges that go around the loop, behind tests for the types
-// that the values have in the tested code.
 void TestPlacer::addWayBackIntoLoop(const PreparedLoop& loop)
 {
     const PlannedWayBackIntoLoop& planned = plannedWayBackOf(loop);

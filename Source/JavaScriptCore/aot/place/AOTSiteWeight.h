@@ -26,8 +26,7 @@ inline constexpr SiteWeight maxSiteWeight = 1ull << 40;
 // In a function that is entered this often, a block that runs once per activation has the largest weight.
 inline constexpr double maxSiteActivations = static_cast<double>(maxSiteWeight >> siteWeightFractionBits);
 
-// The heat of a block is how often its function is entered times how often the block runs per activation. The limit is on the first factor, not on the product:
-// with a limit on the product every block of a hot function weighs the same, also one that hardly ever runs, and no two weights of that function compare.
+// The heat of a block is how often its function is entered times how often the block runs per activation.
 constexpr SiteWeight quantizeHeat(double activations, double frequency)
 {
     constexpr double scale = static_cast<double>(1u << siteWeightFractionBits);

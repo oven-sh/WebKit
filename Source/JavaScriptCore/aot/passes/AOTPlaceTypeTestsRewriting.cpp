@@ -44,8 +44,7 @@ private:
     Vector<ValueID> m_wrappers;
 };
 
-// The uses of everything that has the identity of a tested value are listed once for all tests. A replaced use stays in the list, under the value it named at first.
-// An insertion ends the life of the use lists, so the casts are inserted when every test has been looked at.
+// The uses of everything that has the identity of a tested value are listed once for all tests.
 class DominatedUseReplacer {
     WTF_MAKE_NONCOPYABLE(DominatedUseReplacer);
 public:
@@ -499,8 +498,7 @@ void TestPlacer::replaceDominatedUses()
     leaveOutBlocksOfUnusedProofs(replacer.provenValuesInUse());
 }
 
-// What a test proves where it fails is a parameter of a block on the failing edge. Most of the time nobody can use it: the copy has other ways in, or the type says no more than before.
-// Then the block only jumps, and SimplifyControlFlow would take it out in the same round.
+// What a test proves where it fails is a parameter of a block on the failing edge.
 void TestPlacer::leaveOutBlocksOfUnusedProofs(const BitVector& isUsed)
 {
     bool changed = false;

@@ -237,7 +237,6 @@ static bool wasMadeByEvaluation(VM& vm, State& state, const Object& object, cons
 }
 
 // The usual access: an object of compiled code that keeps the name in the slot of its field, in the evaluation of the class that made the object.
-// Null for everything else, which locate() looks for.
 static const FieldData* fieldOfEvaluation(VM& vm, State& state, const Object& object, JSCell* token, uint32_t fieldIndex)
 {
     const LayoutData& declaringLayout = declaringLayoutOf(state, object, token);

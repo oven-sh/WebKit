@@ -36,6 +36,7 @@ public:
     {
         expectArgumentsToBePresent(isCalledOnlyDirectly(inputs.program.builtins(), callee));
         expectArgumentsRefusedWhenAbsentToBePresent(inputs.program.builtins(), callee, mode);
+        expectArgumentsToBeWhatEveryOverloadTakes(inputs.program.builtins(), callee, mode);
         if (mode == BuiltinCallMode::Call)
             expectReceiverToBePresent(inputs.program.builtins(), callee);
     }
@@ -43,10 +44,7 @@ public:
     const BuiltinCallQuery& query() const LIFETIME_BOUND { return m_query; }
 
 private:
-    // The front end hands every reference type over with undefined and null beside it: a field or a variable that is declared a string is `undefined|null|string`. Half of that is inside what a
-    // parameter for strings accepts and half outside, so no overload would be chosen and no test placed. An argument that is a T, undefined or null is expected to be the T: the test is one comparison,
-    // and an argument that an overload accepts as it stands is passed as it stands, because that is tried first.
-    // A call that is made directly or not at all as a call of the built-in expects so of whatever may be missing, also where nothing else is known of it: a test costs a fraction of the difference.
+    // The front end hands every reference type over with undefined and null beside it: a field or a variable that is declared a string is `undefined|null|string`.
     void expectArgumentsToBePresent(bool isCalledOnlyDirectly)
     {
         TypeArena& types = m_typing.types;
@@ -90,8 +88,36 @@ private:
         }
     }
 
-    // A method that accepts neither undefined nor null as its receiver throws for them. So a receiver of which nothing is expected, and which may be either, is expected to be neither:
-    // `pattern ??= /../; exec.call(pattern, text)`, where the second read of the variable has forgotten the first. That is worth a test where the rest of the type is what an overload works on.
+    // `Object.create(base)`, where base may be anything, or an object or undefined.
+    void expectArgumentsToBeWhatEveryOverloadTakes(const BuiltinTable& table, BuiltinID callee, BuiltinCallMode mode)
+    {
+        TypeArena& types = m_typing.types;
+        for (size_t index = 0; index < m_expected.arguments.size() && index <= BuiltinOperand::maxArgumentIndex; ++index) {
+            BuiltinTypeID taken;
+            bool hasCodeInLine = false;
+            bool allTakeTheSame = std::ranges::all_of(table.overloadIDsOf(callee), [&](BuiltinOverloadID id) {
+                const BuiltinOverload& overload = table.at(id);
+                if (overload.mode != mode)
+                    return true;
+                const BuiltinParameter* parameter = table.parameterFor(overload, BuiltinOperand::argument(static_cast<unsigned>(index)));
+                if (overload.isUndeclared() || !parameter || parameter->mode != BuiltinParameterMode::Required || parameter->conversion != BuiltinConversion::None)
+                    return false;
+                if (taken && taken != parameter->accepted)
+                    return false;
+                taken = parameter->accepted;
+                hasCodeInLine |= overload.code.implementation.kind == BuiltinImplementationKind::Inline;
+                return true;
+            });
+            if (!allTakeTheSame || !hasCodeInLine || !taken || fitOf(m_typing, m_expected.arguments[index], taken).fit != TypeFit::Unknown)
+                continue;
+            // All that they take, not the part of it that is expected: the code in line asks for no more, and the wider test is the cheaper one and fails less.
+            Type expected = types.at(m_proven.arguments[index]).intersectWith(typeOfBuiltinType({ m_typing }, taken), types);
+            if (!expected.isNever())
+                m_expected.arguments[index] = types.intern(WTF::move(expected));
+        }
+    }
+
+    // A method that accepts neither undefined nor null as its receiver throws for them.
     void expectReceiverToBePresent(const BuiltinTable& table, BuiltinID callee)
     {
         TypeArena& types = m_typing.types;
@@ -298,7 +324,6 @@ static FunctionID findLibraryFunction(const Program& program, const BuiltinOverl
 }
 
 // The operation goes on calling or reading whatever the property holds: the entry may have no function object of its own.
-// A call with a typed result is expanded from its CallBuiltin.
 static bool staysGenericOperation(const BuiltinOverload& overload)
 {
     return overload.code.implementation.kind == BuiltinImplementationKind::Generic && !overload.hasTypedResult();

@@ -158,9 +158,7 @@ static void emitConvertEngineResumeMode(StubAssembler& jit, GPRReg mode, GPRReg 
     jit.and32(TrustedImm32(3), mode);
 }
 
-// When a coroutine has left its frame, the adapter goes on with the frame that would be entered next anyway: the waiter that an async function handed its result to,
-// the consumer that waits for what an async generator has yielded, or, if the job loop made this entry, the frame that the job at the head of the queue resumes.
-// It restores each one below its own frame, so the stack does not grow. Whoever entered the adapter finds in the instance which coroutine left last, and finishes what that one returned.
+// When a coroutine has left its frame, the adapter goes on with the frame that would be entered next anyway.
 void generateEnterSavedFrame(StubAssembler& jit)
 {
     const GPRReg scratch = jit.reuseScratch(StubRegister::T11);
@@ -458,8 +456,7 @@ static void emitLoadNumbersOfWords(StubAssembler& jit, GPRReg saved, GPRReg kept
     jit.add32(kept, inFrame);
 }
 
-// Checks the stack, pushes the frame record and copies the words kept to their place below it. Each of the three numbers of words is even and may be zero.
-// emitStoreResumerCalleeSaves writes the words skipped at the top. Those at the bottom are the outgoing arguments of calls to come.
+// Checks the stack, pushes the frame record and copies the words kept to their place below it.
 #if CPU(X86_64)
 static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
 {

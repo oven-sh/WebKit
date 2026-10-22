@@ -134,7 +134,6 @@ uint64_t* SavedFrame::addressOfWordAt(uint32_t location)
 }
 
 // A word that the map does not list is dead, or it is no reference: an integer, half a fraction, the header for the next closure, whatever compiled code keeps over the suspension.
-// So only a whole word is judged: nothing but a pointer has the bits of one. Half a word that reads like a 32-bit reference to a dead cell is as often an integer between two million and an eighth of the heap's size.
 void SavedFrame::poisonDeadUnlistedWords(VM& vm)
 {
     static_assert(locationHolding(2 * 3) == 3 && !isInUpperHalf(2 * 3) && locationHolding(2 * 3 - 1) == 3 && isInUpperHalf(2 * 3 - 1));

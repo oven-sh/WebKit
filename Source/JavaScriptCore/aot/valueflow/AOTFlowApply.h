@@ -25,7 +25,6 @@ class IRBuilder;
 // Ends with computeOperandSummaries().
 void applyFlowResults(Program&, FlowResults&, BuildContext&, LinkedFunctions = LinkedFunctions::All);
 // What becomes of the values that arrive at the entry parameters of the functions and of those that lie in the fields of environments.
-// Read off the operations of the program once the results are applied, with the callees and the types that the results have proven.
 void computeOperandSummaries(const Program&, FlowResults&, BuildContext&);
 void checkLockedBuiltinWrites(const Program&, const FlowResults&, BuildContext&);
 void validateFlowResults(const Program&, const FlowResults&, BuildContext&);

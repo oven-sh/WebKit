@@ -65,7 +65,6 @@ static bool mayInterceptStore(MemberKind kind)
 }
 
 // Until its definition has run, a store to a static field reaches the other members of the class and the classes above it.
-// The guard of the field is armed when the class is created, so it does not tell the two states apart.
 static MemberAnswer findMemberBeforeDefinition(const PropertyAccessContext& context, const MemberQuery& store)
 {
     MemberQuery read { MemberStart::ClassObject, store.layout, store.key, Access::Read, false };

@@ -21,8 +21,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// The order of execution is computed from who calls whom and which module loads which. A function has one instance, with the number of the function, and the host has the one after the last.
-// The members of objects are not followed, so every list about them is empty and no object is ever asked about.
+// The order of execution is computed from who calls whom and which module loads which.
 class OrderInputs final : public FlowOrderInputs {
 public:
     OrderInputs(const ValueFlowResultInputs&, const FlowResultTables&);
@@ -185,8 +184,7 @@ static FlowCallLinkKind linkKindOf(ValueFlowCallKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Every rule that enters a closure asks for the group of a set that holds it: a call for its callees, an access for the accessors that it finds, and any operation for what its protocols
-// or the built-ins that it calls enter. The closure is entered while the operation runs or later. A statement that a rule has made stands for operations that nobody can name here.
+// Every rule that enters a closure asks for the group of a set that holds it: a call for its callees, an access for the accessors that it finds, and any operation for what its protocols or the built-ins that it calls enter.
 void OrderInputs::collectCallsOfClosures()
 {
     const ValueFlowSolver& solver = m_inputs.solver();
@@ -224,7 +222,6 @@ void OrderInputs::collectCallsOfClosures()
 }
 
 // An entry by a statement that a rule has made, any entry of unsolved code or of a function with callers that nobody knows, and the entry of a closure that a placeholder among the callees of a call stands for.
-// Where and when it happens nobody says, so the host makes it.
 void OrderInputs::collectEntriesThatNobodyLists(const FlowResultTables& tables)
 {
     for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
@@ -308,8 +305,7 @@ OrderInputs::OrderInputs(const ValueFlowResultInputs& inputs, const FlowResultTa
     });
     collectModules();
 
-    // Whoever looks at a static field holds the class object or an object below it, whether an operation spells the look out or not. Where none does, the class counts as one that has escaped:
-    // the field is defined at every such look if it is defined when somebody else can first get hold of the class object.
+    // Whoever looks at a static field holds the class object or an object below it, whether an operation spells the look out or not.
     for (const ValueFlowAccessThroughObject& access : inputs.variablesOnObjects->accesses) {
         if (!inputs.program.at(access.variable).owner)
             continue;
@@ -331,7 +327,6 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
     FlowScopeOrders orders = computeScopeOrders(orderInputs, moduleOrder, accessesByFunction);
 
     // The order counts the function that a variable starts with as a store, and the flow of a location counts operations only.
-    // It follows an environment activation by activation, so it knows of stores that run once for each environment.
     auto apply = [&](LocationFlow& flow, FlowLocationOrder order, uint32_t switchSubject, bool startsAsFunction, bool isStaticField) {
         bool areWritersKnown = flow.writers == WriterState::AllKnown;
         if (!areWritersKnown && !isStaticField)

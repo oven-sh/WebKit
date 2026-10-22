@@ -241,8 +241,7 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
         fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
-    // A present element answers without the prototypes only in a named storage: no other kind rules out an accessor under an index. The test has found the position to be an index,
-    // so it may be any number. An access says in one way what its guard has found.
+    // A present element answers without the prototypes only in a named storage: no other kind rules out an accessor under an index.
     if (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent()) {
         if (value.isInBounds() || !hasArrayStorageForm(value.arrayStorage())) {
             fail(InternalErrorKind::PayloadOutOfRange, block, id);

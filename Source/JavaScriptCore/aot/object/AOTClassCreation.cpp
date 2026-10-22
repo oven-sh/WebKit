@@ -498,8 +498,7 @@ static void markFunctionPropertiesDeclaredAsFields(VM& vm, Closure* classObject,
     }
 }
 
-// Where the record says all that the definition does, the definition makes nothing. The class object stays the closure that it is until somebody looks at its properties,
-// classPrototype() makes the prototype object when it is first asked for, which comes before the first instance, and the guards of the class hold while their bits are clear.
+// Where the record says all that the definition does, the definition makes nothing.
 bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const LayoutData& classLayout, JSValue heritage, JSValue prototypeParent)
 {
     if (!leavesDefinitionToRecord(classLayout))
@@ -555,9 +554,7 @@ bool ClassTable::tryLeaveDefinitionToRecord(VM& vm, Closure* classObject, const 
     return true;
 }
 
-// A library makes a class for each of its kinds out of one text: `class Kind extends Parent {}` in a function. From the second evaluation on the guards of the class have ended, and an
-// earlier evaluation with these parents has left the two Structures. What is left to do is what the language asks for: a prototype object, and the two objects name each other.
-// A class whose record creates members, or that has a class of the program above it, goes the long way.
+// A library makes a class for each of its kinds out of one text: `class Kind extends Parent {}` in a function.
 bool ClassTable::tryDefineAgainWithKeptStructures(JSGlobalObject* globalObject, Closure* classObject, const LayoutData& classLayout, JSValue heritage, JSValue prototypeParent)
 {
     VM& vm = globalObject->vm();

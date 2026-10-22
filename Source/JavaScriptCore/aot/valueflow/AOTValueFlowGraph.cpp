@@ -344,9 +344,7 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
     return first;
 }
 
-// The arrays come from the system as pages that are not there yet. One that is read first becomes the page of zeros that everybody shares; the write that follows is a second fault,
-// which copies that page and interrupts every other thread to make it forget the shared one. Two thirds of the time that adding edges spent in the kernel went there.
-// So the system is asked for the page itself in front of the first look. Any number of threads may ask at once, and nothing that is there changes.
+// The arrays come from the system as pages that are not there yet.
 NEVER_INLINE void ValueFlowGraph::makePagesWritable(uint32_t page) const
 {
 #if OS(LINUX)

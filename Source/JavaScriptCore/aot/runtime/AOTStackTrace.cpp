@@ -297,7 +297,6 @@ static FunctionID compiledFunctionAt(const Vector<StackFrame>& frames, size_t in
 }
 
 // Every machine frame that StackVisitor shows has its return address where forEachReturnAddressIntoCompiledFunctions() says, in the same order.
-// Of the youngest frames only: a program may capture a trace in each frame of a deep recursion.
 static void validateReturnAddressWalk(VM& vm)
 {
     constexpr size_t maxNumberCompared = 64;

@@ -47,8 +47,7 @@ bool canCreateBoundFunction(const Program& program, FunctionID targetID)
     return canBeBound(target.kind) && !target.hasAny(flagsOfUnboundTargets) && mayBeCalledDirectly(program, targetID);
 }
 
-// instanceof asks the target of a bound function. Closures that capture nothing, keep their prototype link and never get a `prototype` or a Symbol.hasInstance of their own all give one answer,
-// so the run time asks the closure that it keeps for the target.
+// instanceof asks the target of a bound function.
 static bool answersInstanceOfWithAnyClosure(const Program& program, const FlowResults& flow, FunctionID targetID)
 {
     // Each closure of a function that constructs has a prototype object of its own, which `new` and instanceof on the bound function go by.

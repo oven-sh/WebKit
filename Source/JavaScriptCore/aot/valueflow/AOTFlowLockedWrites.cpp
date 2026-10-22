@@ -187,8 +187,7 @@ static bool writesOnlyTo(const LockedWriteContext& context, const Function& func
     return isOnly(context, function, receiver, holder);
 }
 
-// The lock's refusal throws, in sloppy code too. But some changes the language itself refuses, and of those sloppy code is not told: a store to a property that is read-only or has no setter,
-// a deletion of one that is not configurable. The table holds no attributes, so this goes by what the language says of kinds.
+// The lock's refusal throws, in sloppy code too.
 enum class RefusalInSloppyCode : uint8_t {
     Throws,
     MayThrow,
@@ -309,7 +308,6 @@ static std::optional<LiteralProperties> propertiesOfLiteralArgument(const Progra
 }
 
 // The run time accepts a definition that repeats what the member is, or that only takes from what it admits: a polyfill that defines what is there, and whoever writes out what Object.freeze() does.
-// A definition changes the member for sure only where its descriptor is known to hold another value or an accessor function: the call spells it out, or every object of the descriptor's layout has the field.
 static bool mayLeaveMemberAsItIs(const LockedWriteContext& context, const Function& function, const CFG& cfg, ValueID id, BuiltinID member)
 {
     const Program& program = context.program;

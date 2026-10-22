@@ -473,8 +473,7 @@ static bool isPrivateGlobal(JSGlobalObject* realm, JSObject* callee)
     return isFound;
 }
 
-// Where unseen code may run, an object that native code holds may change in any way, and no proof rests on the rule. A log still gets the mismatch.
-// The host makes what a native binding answers anew each time, so a function is told by its native code: the answer itself, or a property of it.
+// Where unseen code may run, an object that native code holds may change in any way, and no proof rests on the rule.
 static bool isAnsweredBy(JSGlobalObject* realm, BuiltinID binding, JSObject* callee)
 {
     auto* hook = realm->globalObjectMethodTable()->nativeBinding;

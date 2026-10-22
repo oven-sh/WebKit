@@ -94,8 +94,7 @@ static void reportUnprovenFlow(FunctionPassContext& context, const Flow& flow, c
     context.build.diagnostics().add(diagnostic);
 }
 
-// The types are asked first. They narrow what entered a promise without a proof to the int32s among what it could be, and the way to mend that flow,
-// `| 0`, gives any int32. So where a flow is reported, the flows after it that only that narrowing proves are reported in the same build.
+// The types are asked first.
 enum class Judge : uint8_t {
     FlowsThatTypesDoNotProve,
     FlowsThatTypesProve,

@@ -589,8 +589,7 @@ static Vector<uint8_t> findFunctionsReachableFromUnknownCode(const CallGraph& gr
     return isReachable;
 }
 
-// With unknown code as a node, almost every function is in one SCC, and Tarjan's algorithm is serial. So the ranks are computed without that node,
-// and its SCC is added here: the functions that reach unknown code and are reachable from it. Other functions that reach it rank above that SCC.
+// With unknown code as a node, almost every function is in one SCC, and Tarjan's algorithm is serial.
 static void addUnknownCodeComponent(const Vector<uint8_t>& isReachableFromUnknownCode, const ParallelLoops& loops, FunctionRanks& result)
 {
     uint32_t unknownCodeRank = result.numberOfRanks;
@@ -668,7 +667,6 @@ static void verifyRanks(const CallGraph& graph)
 }
 
 // Two-pass parallel counting sort of the edges by target: first into buckets of consecutive targets, then within each bucket.
-// Each chunk of sources writes to its own slice of a bucket, in chunk order, so every result list is ascending at any thread count.
 CallGraph::Adjacency CallGraph::Adjacency::inverse(const ParallelLoops& loops) const
 {
     constexpr unsigned maxBuckets = 256;

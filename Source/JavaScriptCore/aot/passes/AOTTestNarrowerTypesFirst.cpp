@@ -16,7 +16,6 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 // A value is tested for what flow expects of it (undefined|number), and what has passed is tested at once for what its use needs (number).
-// A value that passes the second test would have passed the first, so the second goes first, and the first moves to its failing side, where everything goes on as before.
 struct TestChain {
     BlockID wider;
     BlockID narrower;
@@ -96,7 +95,6 @@ private:
             isTaken.quickSet(id.index());
             isTaken.quickSet(next.index());
             // Where the first test admits nothing beside the second but undefined and null, flow expects `undefined|number` and the use needs a number: the rest is unlikely.
-            // Of a family of layouts nothing says which part arrives more often: the rest is as likely as the test.
             bool restIsNothing = widerType.withoutNullish().isSubsetOf(narrowerType, m_context.program);
             m_chains.append({ id, next, restIsNothing ? BlockFrequency::Unlikely : block.frequency });
         }

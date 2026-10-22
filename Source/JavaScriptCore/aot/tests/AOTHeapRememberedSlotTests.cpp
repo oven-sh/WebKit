@@ -292,8 +292,6 @@ static void testExternalCards()
     AOT_TEST_CHECK(!set.hasWrittenRegions() && regionsToSweep(set, CollectionScope::Eden).isEmpty() && cards[16] == RememberedSlotSet::writtenCard);
 }
 
-// The roots are visited at every stop of the mutator. A set lists the cards that record() writes, and whoever asks for the written ones reads the list and not the cards.
-// So a card that is stored to directly counts only in a set that says so: the cards of the statics, which compiled code writes.
 static void testWrittenCardsAreListed()
 {
     ByteTable<4 * regionSize> table;

@@ -28,7 +28,6 @@ struct LiteralSite {
 } // anonymous namespace
 
 // By site, not by allocation class: one class stands for all the lists of a program that nobody stores into, so one of them in unknown hands would speak for them all.
-// It rules out a change of the prototype and an own property too, so whoever iterates the list finds the iterator of Array.prototype.
 static bool isNeverChanged(const FlowResults& flow, AllocationSiteID site)
 {
     return site && flow.objectsNeverChange(site);

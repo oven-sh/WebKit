@@ -11,18 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// class C {
-//   constructor(v) { this.v = v }
-//   #m(a) { return this.v + a }
-//   onThis() { return this.#m(1) }
-//   onOther(other) { return other.#m(2) }
-//   static onArgument(o) { return o.#m(3) }
-//   inArrow() { return (() => this.#m(4))() }
-//   arrowField = () => this.#m(5)
-// }
-// class D extends C { }
-// const c = new C(10), d = new D(20)
-// print(c.onThis()); print(c.onOther(d)); print(C.onArgument(c)); print(c.inArrow()); print(c.arrowField()); print(d.onThis()); print(d.arrowField())
 static constexpr ASCIILiteral methodCalls = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="arrowField" declared={type=function flags=[IsExpected]} flags=[IsRequired]}, {key="v" declared={type=anything}}]
 layout L1 kind=Instance name="D" module=m0 base=L0 constructor=f7 supertypes=[L0] flags=[HasHeritage]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
@@ -226,16 +214,6 @@ function f10 name="arrowField" module=m0 kind=Arrow captures=[{type=L0 flags=[Is
 entry module=m0
 )IR"_s;
 
-// class C {
-//   constructor(v) { this.v = v }
-//   #m() { return this === undefined ? "no receiver" : this.v }
-//   bare() { const f = this.#m; return f() }
-//   held() { const holder = { v: "holder", f: this.#m }; return holder.f() }
-//   same(o) { return this.#m === o.#m }
-//   get() { return this.#m }
-// }
-// const c = new C(5), f = c.get()
-// print(c.bare()); print(c.held()); print(c.same(new C(6))); print(typeof f); print(f.name); print(f())
 static constexpr ASCIILiteral methodReadAsValue = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=anything}}]
 layout L1 module=m0 fields=[{key="v" declared={type=string flags=[IsExpected]} flags=[IsRequired]}, {key="f" declared={type=function flags=[IsExpected]} flags=[IsRequired]}]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
@@ -414,21 +392,6 @@ function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
 entry module=m0
 )IR"_s;
 
-// class Counter {
-//   total = 0
-//   #step(n) { this.total += n; return this.total }
-//   get #half() { return this.total >> 1 }
-//   set #reset(v) { this.total = v }
-//   run(times) {
-//     let last = 0
-//     for (let i = 0; i < times; i++) {
-//       last = this.#step(i & 3)
-//       if ((i & 1023) === 1023) this.#reset = this.#half
-//     }
-//     return last
-//   }
-// }
-// print(new Counter().run(100000))
 static constexpr ASCIILiteral methodsInAHotLoop = R"IR(layout L0 kind=Instance name="Counter" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="total" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
 variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
@@ -577,16 +540,6 @@ function f6 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
 entry module=m0
 )IR"_s;
 
-// class K {
-//   #p = 7
-//   a = 1
-//   #m() { return this.#p + this.a }
-//   read() { return this.#m() }
-//   static has(o) { return #m in o }
-// }
-// function make() { return class extends K { b = 2; get() { return this.b } } }
-// const First = make(), Second = make()
-// print(new First().get()); print(new First().read()); print(new Second().read()); print(K.has(new Second())); print(Object.keys(new Second()).length)
 static constexpr ASCIILiteral subclassMadeByAFunction = R"IR(layout L0 kind=Instance name="K" module=m0 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#p"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}, {key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 layout L1 kind=Instance module=m0 base=L0 constructor=f6 fields=[{key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage]
 variable g0 name="K" module=m0 declared={type=function|absent} flags=[IsImmutable]

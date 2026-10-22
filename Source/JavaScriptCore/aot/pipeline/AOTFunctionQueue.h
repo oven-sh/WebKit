@@ -31,9 +31,7 @@ struct QueuedFunction {
     uint32_t size { 0 };
 };
 
-// Functions that are each processed once, where processing one finds more. The threads share no list: a thread keeps what it
-// finds, and hands half of what it has to the pool whenever the build has a thread to spare. A thread that has run out takes
-// half of what another has, so nothing waits behind a function that takes long.
+// Functions that are each processed once, where processing one finds more.
 class FunctionQueue {
     WTF_MAKE_NONCOPYABLE(FunctionQueue);
 public:
@@ -46,10 +44,7 @@ public:
 
     void processEach(std::span<const QueuedFunction>, NOESCAPE const Process&);
 
-    // A speculative function starts before anything has found it, so a long function does not wait for the long function that
-    // names it. The functions it finds are queued only once a confirmed function finds it. One that is never confirmed is
-    // still processed, so anything Process reports about it (statistics, losses, declines) stays reported.
-    // DidConfirm runs once per speculative function that is confirmed, after Process has returned for it.
+    // A speculative function starts before anything has found it, so a long function does not wait for the long function that names it.
     void processEach(std::span<const QueuedFunction>, std::span<const QueuedFunction> speculativeFunctions, NOESCAPE const Process&, NOESCAPE const DidConfirm&);
 
     bool wasQueued(FunctionID) const;

@@ -25,8 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// What can be seen through a record. The top bit: something that whoever names the record sees.
-// Any other bit: a field that is seen only by looking for it. Fields share the bits, so a bit that is set says no more than "maybe".
+// What can be seen through a record.
 using Mark = uint64_t;
 
 constexpr unsigned numberOfKeyBits = 61;
@@ -334,8 +333,7 @@ Mark RecordUsers::markOfOperandsWhoseCodeRuns(const Function& function, const au
     return mark;
 }
 
-// As describeEffects() goes about it: an operation says which protocols run on each operand. A call hands its operands to the callees, of which only built-ins are described by what they are handed,
-// and a construction reads the prototype of new.target.
+// As describeEffects() goes about it: an operation says which protocols run on each operand.
 Mark RecordUsers::markOfOperandsWhoseCodeRuns(const Function& function, const Value& value) const
 {
     switch (effectRuleOf(value.opcode)) {
@@ -366,8 +364,7 @@ Mark RecordUsers::markOfOperandsWhoseCodeRuns(const Function& function, const Te
     });
 }
 
-// What is said of an operation comes from the record of a field in three ways. An access asks what it finds under its key, or under a key that is an operand.
-// An operation that names a layout may go by any of its fields, but for one that names the field as well. And a protocol or a built-in looks for names of its own.
+// What is said of an operation comes from the record of a field in three ways.
 bool RecordUsers::looksForMarkedField(const Function& function, const Value& value, bool looksAtCodeOfOperands) const
 {
     constexpr OpcodeSet accessesToOneFieldOfEnvironment { Opcode::GetEnvironmentField, Opcode::PutEnvironmentField };
@@ -442,9 +439,7 @@ bool RecordUsers::seesMarkedRecord(FunctionID id) const
     return (mark & seenWithoutKey) || looksForMarkedField(id, mark);
 }
 
-// Gives every node the marks of its sources, and of their sources, until nothing is added: the least marks that hold. The chains are long, a layout that stands for a set that holds a layout
-// and so on, and few nodes have a mark. So the edges are turned round once, and the marks go along them from the nodes that have one.
-// No source comes behind the last target.
+// Gives every node the marks of its sources, and of their sources, until nothing is added: the least marks that hold.
 void RecordUsers::addMarksOfSources(Node firstOfTargets, Node endOfTargets, const Invocable<void(Node, const ScopedLambda<void(Node)>&)> auto& forEachSourceOf)
 {
     unsigned count = endOfTargets;
@@ -495,7 +490,6 @@ void RecordUsers::addMarksOfSources(Node firstOfTargets, Node endOfTargets, cons
 }
 
 // What a field of a layout holds has a type of its own wherever a body reads it, so no layout is marked for the types of its fields.
-// First down, then up: the other layouts below a layout that stands for a marked one have nothing to do with the marked one.
 void RecordUsers::addRecordsNamingMarkedRecords()
 {
     Node firstLayoutSet = nodeOf(LayoutSetID(0u));
@@ -510,8 +504,7 @@ void RecordUsers::addRecordsNamingMarkedRecords()
             forEachSourceOf(m_program.at(LayoutSetID(node - firstLayoutSet)), functor);
     });
 
-    // The marks of the layouts and the sets stand now. A type takes them at once, and only the types of contents make a chain, which is as short as the types are deep:
-    // the few types that have contents are gone through again until nothing is added.
+    // The marks of the layouts and the sets stand now.
     auto addMarksOfSourcesTo = [&](unsigned index, bool& hasContents) {
         Mark known = m_types.at(index);
         Mark mark = known;

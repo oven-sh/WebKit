@@ -273,7 +273,6 @@ void AllocationSinking::rewriteBlock(BlockID block)
     if (!head)
         return;
     // The states at the heads only grow while they are computed: a block keeps the one it got over an edge that the final states decide the other way.
-    // A block without parameters for its head is filled by the one edge that enters it, from a block that comes before it. Where that edge is gone, nothing fills the block and nothing reaches it.
     bool isFilledByOneEdge = !head->objects.isEmpty() && !m_tables->blocksWithHeadParameters.get(block.index());
     if (isFilledByOneEdge && !m_tables->enteredBlocks.get(block.index()))
         return;

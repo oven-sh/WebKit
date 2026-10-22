@@ -53,7 +53,6 @@ struct StubBlob {
     Vector<StubPlacement> placements;
     Vector<StubReturnSite> returnSites;
     // The run time and the stubs know a frame of such a kind by its return address, and hold one address per kind: that of the first copy.
-    // So the calls in front of those sites run in the first copy only. In every other copy these entries, which are all the ways to them, are jumps to the first.
     Vector<StubEntryRange> entriesInFrontOfSingleReturnSites;
     WTF::BitSet<numberOfEntries> entriesUsed;
 };

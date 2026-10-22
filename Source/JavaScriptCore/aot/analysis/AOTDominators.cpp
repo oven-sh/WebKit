@@ -367,9 +367,7 @@ BlockID Dominators::nearestCommonDominator(BlockID a, BlockID b) const
     return a;
 }
 
-// A covered block may leave for its handler in front of its terminator, so the terminator dominates what the block dominates, less what the handler reaches
-// without coming through the block again. There is such a path only where the block dominates its handler. It stays below the block in the tree, and it enters
-// the subtree of a child of the block at that child. So the question is one about the children of the block, and a block is the child of one block: a bit a block.
+// A covered block may leave for its handler in front of its terminator, so the terminator dominates what the block dominates, less what the handler reaches without coming through the block again.
 const BitVector& Dominators::blocksReachedFromHandlerOfDominator() const
 {
     if (m_blocksReachedFromHandlerOfDominator)

@@ -525,7 +525,6 @@ ValueID CallResolver::appendCall(const CallArm& arm, ValueID thisValue, ValueID 
 {
     RELEASE_ASSERT(m_expansion.isOpen() && arm.kind == CallArmKind::DirectCall);
     // An arm of a dispatch may be for the method of a class that the receiver is known not to have: `this.describe()` of a base constructor, inlined under `new Base()`, has an arm for the method of the subclass.
-    // The conversion of the receiver says that the arm is never reached, and nothing may follow it. Only layouts are asked, whose sets are exact.
     const Function& callee = m_program.at(arm.callee);
     if (thisValue && callee.has(FunctionFlags::HasThis) && callee.thisType.type && !callee.thisType.flags.contains(PositionFlags::IsExpected)) {
         const Type& declared = m_program.at(callee.thisType.type);

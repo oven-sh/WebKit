@@ -141,10 +141,6 @@ static bool holdsValueFromLibrary(const BuiltinTable& builtins, BuiltinID entry)
 }
 
 // The engine, the host and the library make the built-in objects, so none is a closure of a function of the application.
-// The function object of an entry is a closure of a function of the library where the table says so: the record of the function lists the entry, an overload of the entry names the function,
-// or native code puts there what it got from the library.
-// Of every other entry the table does not say what its function object is. It is no member of a type that names functions: it gets there as a value, by a conversion that the program performs,
-// which puts it among the built-ins of the type. Otherwise every callback type of the library would hold `eval`, `require` and whatever else has a signature.
 bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID function, const RuntimeFunctionData* recordOfFunction)
 {
     const Program* program = types.program();

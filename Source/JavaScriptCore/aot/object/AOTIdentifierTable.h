@@ -20,9 +20,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-// The program table identifiersByHash. The hash of a text and the displacement of the bucket of that hash give one slot, and no two hashes of the table give the same: a search reads one slot,
-// whether it finds the text or not. An entry is the number of the identifier plus one and, above it, bits of the hash, so a text that is not in the table seldom costs a look at an identifier.
-// Words: the header, the slots, the displacements (16 bits each), then hash and number of each identifier whose hash another identifier has too, by hash.
+// The program table identifiersByHash.
 class IdentifierTable {
 public:
     struct Header {

@@ -40,10 +40,8 @@ public:
     // For nobody: the inputs hold effect summaries that know nothing, and those of the program stay as they are.
     OptimizationInputs inputs(const FlowResults&, OptionSet<ProgramResult> needed, EffectSummariesFor = EffectSummariesFor::Reader);
     // For a loop that rewrites nearly every body: until a body changes, the effect summaries say what flow says of the parameters and nothing of the bodies.
-    // They hold, and no body is read for summaries that are out of date when the loop ends.
     void summarizeNoBodiesUntilTheyChange() { m_summarizesNoBodies = !m_bodySummaries; }
-    // For a program pass that asks for heat, drops it and leaves most bodies as they are. What the heat that is made next takes from each body by itself is kept:
-    // how often the blocks run, and what the body does with its parameters. The heat after that takes it for the bodies that have not changed, and nothing is kept any longer.
+    // For a program pass that asks for heat, drops it and leaves most bodies as they are.
     void keepPartsOfBodiesForNextHeat() { m_keepsPartsOfBodies = !m_heat; }
     // Who reads the heat from here on. A heat that lacks what they read is dropped.
     void estimateHeatFor(HeatFor);

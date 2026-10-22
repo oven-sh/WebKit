@@ -176,8 +176,7 @@ StubSignature signatureOfAppendElements(StubKey)
     return signature;
 }
 
-// A short source, and a target that can hold what the source holds and has room or may be given room here. Everything else is the operation's.
-// Only contiguous storage holds undefined, so a hole on the way into an array of numbers leaves the target as it was.
+// A short source, and a target that can hold what the source holds and has room or may be given room here.
 void generateAppendElements(StubAssembler& jit)
 {
     const GPRReg array = jit.operand(0);

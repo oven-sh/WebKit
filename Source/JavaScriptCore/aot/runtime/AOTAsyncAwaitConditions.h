@@ -68,7 +68,6 @@ inline constexpr AwaitCondition awaitedIsFulfilled { { AwaitConditionBase::Await
 inline constexpr std::array<AwaitCondition, 2> awaitConditionsOnObject { awaitedHasPromiseStructure, awaitedIsFulfilled };
 
 // A pending promise without a reaction takes one in its own two words, with the async context, a cell, in the place that the reaction of another task has for its cell.
-// While the VM tracks no async context there is none to capture, to keep or to put in place.
 inline constexpr uint64_t pendingPromiseWithoutReactionBits = (static_cast<uint64_t>(JSPromise::isHandledFlag) | JSPromise::isFirstResolvingFunctionCalledFlag) << promiseFlagsShift;
 inline constexpr AwaitCondition tracksNoAsyncContext { { AwaitConditionBase::VM, OBJECT_OFFSETOF(VM, m_asyncContextTrackingEnabled), 1, false }, AwaitConditionTest::IsZero, 0, noWord };
 inline constexpr AwaitCondition awaitedTakesInlineReaction { { AwaitConditionBase::AwaitedPromise, JSPromise::offsetOfPacked(), 8, false }, AwaitConditionTest::HasNoBit, ~pendingPromiseWithoutReactionBits, noWord };

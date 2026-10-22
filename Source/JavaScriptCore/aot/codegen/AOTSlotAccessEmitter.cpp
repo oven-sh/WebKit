@@ -57,8 +57,7 @@ Operand SlotAccessEmitter::failRead(const ValueContext& value, InternalErrorKind
     return emitter<ConstantEmitter>().zeroOf(value.representation());
 }
 
-// A field gets no slot where nothing stores it and no allocation that is left lists it: those that did were inlined and taken apart. A test of such a slot never passes,
-// so no run reaches the read behind it.
+// A field gets no slot where nothing stores it and no allocation that is left lists it: those that did were inlined and taken apart.
 Operand SlotAccessEmitter::resultBehindTestThatNeverPasses(const ValueContext& value)
 {
     if (generator().validates())
@@ -96,7 +95,6 @@ Operand SlotAccessEmitter::inResultRepresentation(const ValueContext& value, Ope
 }
 
 // The table has an entry for every shape from the first to the last that a member with the field has, the last shape first: the shape word is 0 - shape.
-// The receiver is one of the members, so no entry between theirs is read.
 Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const FieldAccess& access)
 {
     static constexpr uint32_t maxEntries = 1024;
@@ -457,8 +455,7 @@ void SlotAccessEmitter::readDeferringSlot(const ValueContext& value, bool readsE
         define(value, readSlot(value, cell, access, readsEmptySlotAsUndefined));
         return;
     }
-    // A read of a filled slot has a guard that says so, and only a receiver that has the field passes it. Any other read may meet a receiver without the field,
-    // which has other bytes where the slot of the others lies.
+    // A read of a filled slot has a guard that says so, and only a receiver that has the field passes it.
     bool looksOutsideSlot = readsEmptySlotAsUndefined && mayHaveLeftDeferringSlot(value, access);
     if (!readsEmptySlotAsUndefined || access.coverage != FieldAccess::Coverage::SomeMembers) {
         define(value, looksOutsideSlot ? loadDeferringSlotOrFieldOutsideIt(value, cell, access) : loadDeferringSlot(value, cell, access, readsEmptySlotAsUndefined));
@@ -499,8 +496,7 @@ Operand SlotAccessEmitter::loadDeferringSlot(const ValueContext& value, CellPoin
     return decodeWordOfDeferringSlot(value, held);
 }
 
-// The slot took every value until it came to defer its closure. Since then a store of anything but an object, undefined or null moves the property out of it,
-// and a read that takes an empty slot for an absent property without a test has to look there.
+// The slot took every value until it came to defer its closure.
 bool SlotAccessEmitter::mayHaveLeftDeferringSlot(const ValueContext& value, const FieldAccess& access) const
 {
     bool mayHaveLeft = std::ranges::any_of(m_program.at(access.receivers).members, [&](LayoutID member) {
@@ -666,8 +662,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
         m_out.appendTo(done);
     };
 
-    // The key is listed first, while the slot still says whether the field is missing. No code of the program runs before the store.
-    // The order word alone says that the field is missing, so the slot is tested only where the step does not apply.
+    // The key is listed first, while the slot still says whether the field is missing.
     std::optional<KeyOrderStep> stepTestedFirst;
     if (isExpectedToCreate(value->accessSite())) {
         if (takeRememberedKeyOrderStepFirst(value, cell, access.membersWithField, createdKeys, listFieldIfMissing)) {
@@ -893,8 +888,7 @@ bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& s
     return true;
 }
 
-// The way back from the user to the allocation has no fork that leads in from elsewhere, and on it stand only tests, values without effects and stores by slot into the object itself:
-// nobody else has had the object, so it holds what the allocation and those stores put there.
+// The way back from the user to the allocation has no fork that leads in from elsewhere, and on it stand only tests, values without effects and stores by slot into the object itself.
 std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const ValueContext& user, ValueID operand)
 {
     static constexpr unsigned maxBlocksOnTheWay = 32;
@@ -955,7 +949,6 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const 
 }
 
 // The comparison is with the whole word: an object that is not extensible, or that has properties outside its slots, is left to the run time.
-// Placement lists the places with the most likely one of each layout first. The other steps are remembered at the store that takes them.
 std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPointer cell, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys)
 {
     struct Candidate {

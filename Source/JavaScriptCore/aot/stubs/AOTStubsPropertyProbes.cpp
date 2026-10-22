@@ -226,8 +226,7 @@ static Jump branchUnlessForm(StubAssembler& jit, GPRReg operand, FieldTableEntry
 // Takes the operand. Leaves the address of the Extension in extension and the offset of the slot in operand.
 static void locateOutOfLineValue(StubAssembler& jit, GPRReg receiver, GPRReg operand, GPRReg extension, JumpList& hasNoStorage)
 {
-    // The operand is the number of the granule and one more. Shifted left by its negative, the bit of the granule is the sign and the bits of later granules drop out: what is left counts
-    // the granule and those before it, which is the number of words from the start of the Extension to the granule. A shift takes its amount modulo 64.
+    // The operand is the number of the granule and one more.
     static_assert(offsetOfFirstExtensionSlot == extensionGranuleSize && extensionGranuleSize == sizeof(EncodedJSValue) && maxExtensionGranules == 64);
     const GPRReg granuleBits = jit.scratchRegister();
     RELEASE_ASSERT(noOverlap(receiver, operand, extension, granuleBits) && !jit.options().useWideReferences);
@@ -582,8 +581,7 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
     storeByRecord();
 }
 
-// Where a store through the table of fields goes on behind the form OutOfLineValue. The receiver is a compiled object that may be stored to, its layout has a field of the name,
-// and the field is stored without a type test. The third operand is what is left of the entry: one form and the operand of the form Field.
+// Where a store through the table of fields goes on behind the form OutOfLineValue.
 StubSignature signatureOfPutBooleanOrDoubleField(StubKey)
 {
     StubSignature signature;
@@ -594,8 +592,7 @@ StubSignature signatureOfPutBooleanOrDoubleField(StubKey)
     return signature;
 }
 
-// A boolean goes into the slot of a boolean and a number into the slot of a double. Into an empty slot they go by the stub that creates a field, which is told the record of the field and tests nothing twice.
-// Any other value and any other field are left to the stub that stores by the record.
+// A boolean goes into the slot of a boolean and a number into the slot of a double.
 void generatePutBooleanOrDoubleField(StubAssembler& jit)
 {
     static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1) && JSValue::ValueTrue <= UINT8_MAX);

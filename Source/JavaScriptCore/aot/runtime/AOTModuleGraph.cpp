@@ -232,7 +232,6 @@ static RoleInWalk roleInEvaluation(const ModuleGraph& graph, const BitVector& mo
 }
 
 // A module that only passes the walk on is alone in its component, so nothing it reaches requests it.
-// A walk that finds it visited therefore finds all of its list visited, and the modules that stay are visited in the order of the walk of all requests.
 template<typename RoleFunctor>
 static Vector<uint32_t> contractRequests(const ModuleGraph& graph, std::span<const uint32_t> modulesBehindTheirRequests, FollowedRequests followed, uint32_t maxContractedRequests, Number24 ModuleData::* firstRequest, Vector<uint32_t>& modulesOverLimit, const RoleFunctor& roleOf)
 {

@@ -14,9 +14,6 @@
 namespace JSC { namespace AOT {
 
 // Where a compiled object has the property of a name, found from the object's shape in read-only data: entries[rows[shape] + name].
-// One table holds both. The rows lie in front of the entries, that of the highest shape first: code holds the address of the first entry and indexes it with the word at offsetOfShapeWord,
-// which is 0 - shape, negative for a compiled object and for no other cell.
-// The rows lie over one another. An entry says which name it is for, and rows that differ begin at different entries, so the name says whose it is.
 struct FieldTableEntry {
     // In the order in which a lookup tests them.
     enum class Form : uint8_t {
@@ -24,13 +21,11 @@ struct FieldTableEntry {
         InlineValue,
         // A field in the cell that holds a 32-bit integer. A word below minInlineInt32 says something else, which the field's record explains. The operand is the index of the 32-bit word in the cell.
         InlineInt32,
-        // A field in the cell that holds a 32-bit reference. A word below minNarrowValue says that the slot is empty or that its closure is not made yet, any other word below minCell32 is the JSValue itself.
-        // The operand is the index of the 32-bit word in the cell.
+        // A field in the cell that holds a 32-bit reference.
         InlineNarrowCell,
         // A field in the Extension whose eight bytes are the JSValue, zero for an empty slot. The operand is the index of the 64-bit word in the Extension, whose reference is the first field of the cell.
         OutOfLineValue,
-        // Any other field. Its record says how it is read.
-        // An operand from firstNarrowCellInExtension on says more to a read: the place of a field of one of four kinds, which is read without its record.
+        // Any other field.
         Field,
     };
 

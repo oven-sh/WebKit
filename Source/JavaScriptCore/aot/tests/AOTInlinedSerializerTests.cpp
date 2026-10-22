@@ -11,11 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// function make(x) { return { a: x } }
-// function describe(o) { return JSON.stringify(o) + " " + o.b + " " + ("b" in o) }
-// const first = make(1), second = make(1), third = make(1);
-// first.b = 1; first.c = 1; second.c = 1; second.b = 1; third.c = 1;
-// print(describe(first)); print(describe(second)); print(describe(third))
 static constexpr ASCIILiteral everyObjectHasAppendedFields = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Named" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]

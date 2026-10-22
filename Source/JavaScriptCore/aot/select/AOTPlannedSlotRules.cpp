@@ -68,8 +68,7 @@ static bool findsOffsetByShape(Opcode opcode, const SlotAgreement& agreement)
     return operationsWithOffsetByShape.contains(opcode) && agreement.hasOffsetByShape(storedOf(opcode).has_value());
 }
 
-// The arms are tested in this order: first the groups with a layout of the module that the function is written in, for a library handles the objects that it makes;
-// then those whose layouts are allocated most often, then those with the most layouts. The first arm takes the members without a slot too.
+// The arms are tested in this order: first the groups with a layout of the module that the function is written in, for a library handles the objects that it makes.
 static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAgreement& agreement)
 {
     const Program& program = context.program();

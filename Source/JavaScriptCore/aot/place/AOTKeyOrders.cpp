@@ -307,9 +307,6 @@ static void collectPlacesBehind(const KeyOrderList& orders, FieldList created, a
 }
 
 // The places where the fields that a store, or a run of stores, creates may come next, the most likely place first.
-// Flow names the orders of a constructor. What a finished object gets comes behind one of them, and the order of the declarations is a guess about objects that other code fills.
-// Nothing but stores and definitions fills an object without a constructor, and the front end declares its names in the sequence in which the program first creates them:
-// the names that a module stores into its exports object, the names that an object literal gets later. As far as such an object gets in that order, the place in it comes first.
 static void collectPlaces(const CreationOrders& orders, FieldList created, auto& collector)
 {
     collectPlacesInside(orders.constructorOrders, created, collector);
@@ -322,8 +319,7 @@ static void collectPlaces(const CreationOrders& orders, FieldList created, auto&
     collectPlacesInside(orders.declaredOrders, created, collector);
 }
 
-// An object that has the keys of its allocation or of its constructor gets more keys from stores. With the order that a store continues in the image,
-// the code of the store changes one constant order word into another. The image has no more of them than that code can name.
+// An object that has the keys of its allocation or of its constructor gets more keys from stores.
 static KeyOrderList continueOrders(const CreationOrders& orders, std::span<const PlacedFieldCreation> creations)
 {
     KeyOrderList result;
@@ -334,8 +330,7 @@ static KeyOrderList continueOrders(const CreationOrders& orders, std::span<const
     return result;
 }
 
-// An object has what its allocation lists. From there it gets the keys of the order of the declarations one behind the other as far as something creates the next field:
-// a store, or a definition, which is all that creates a property that is not writable, enumerable and configurable data.
+// An object has what its allocation lists.
 static BitVector findCountsReachedAmongDeclarations(const PlacementContext& context, LayoutID layout, FieldList declaredOrder, const KeyOrderList& allocationOrders, std::span<const PlacedFieldCreation> creations)
 {
     const Program& program = context.program;
@@ -385,8 +380,7 @@ static CreationOrders collectCreationOrders(const PlacementContext& context, con
         return !fields.isEmpty();
     });
 
-    // Whatever fills an object that starts without keys, compiled or not, is expected to go by the declarations. An allocation that lists the first of them is what is left
-    // of such an object once its first stores are part of the allocation. Of its keys the image has as many as the stores behind the allocation go on to create.
+    // Whatever fills an object that starts without keys, compiled or not, is expected to go by the declarations.
     bool canStartWithoutKeys = allocations.empty()
         || std::ranges::any_of(orders.allocationOrders, [](const auto& fields) { return fields.isEmpty(); });
     if (canStartWithoutKeys || !creations.empty()) {

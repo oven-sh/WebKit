@@ -26,8 +26,7 @@ namespace {
 
 enum class ChainEnd : uint8_t { Unknown, MeetsClass, MissesClass };
 
-// What says that an object still inherits from the prototype object that its layout names: a bit of its class, which the run time clears when any object of the class gets another prototype,
-// or a test of the object itself. The bit costs a site nothing beside the other bits it asks for. The test is what is left once the bit is cleared.
+// What says that an object still inherits from the prototype object that its layout names: a bit of its class, which the run time clears when any object of the class gets another prototype, or a test of the object itself.
 enum class PrototypeKnownBy : uint8_t { BitOfClass, TestOfObject };
 
 struct ChainAnswers {
@@ -61,8 +60,6 @@ static bool inheritsFromObjectPrototype(const Program& program, const Layout& la
 }
 
 // Collects what has to hold for the prototype objects of the classes above the layout's own to be linked as the classes were defined, up to the tested class or to the end of the chain.
-// Object.prototype, where a class without a base ends, inherits from nothing for good. An object that was assigned as the prototype of a function may be the prototype of another one too,
-// so a chain with such an object in it, or a tested function with one, is not known to miss.
 static ChainEnd followChain(const Program& program, LayoutID layout, LayoutID tested, MemberConditions& conditions)
 {
     const Layout& start = program.at(layout);
@@ -88,7 +85,6 @@ static ChainEnd followChain(const Program& program, LayoutID layout, LayoutID te
         case ChainStep::CompiledClass:
             current = next.layout;
             // `function Meter() {}`, `Meter.prototype = first`, `class Fine extends Meter {}`, `Meter.prototype = second`: the class below is linked to the object that the property held when it was defined.
-            // The guard on the property begins when the function is first used as a class, which may be later: it says nothing about that object.
             if (program.at(current).has(LayoutFlags::IsConstructorFunction) && program.at(current).classFlow.prototypeProperty != MemberMutability::Fixed)
                 return ChainEnd::Unknown;
             break;
@@ -118,7 +114,6 @@ static ChainAnswers followChains(const Program& program, const LayoutList& layou
         ChainEnd end = followChain(program, layout, tested, conditions);
         bool testsObject = false;
         // The run time defines the class of a constructor function at the first construction that is carried out, with whatever the function has as its prototype property then.
-        // Until then the guards of that class speak of no object and stand in nobody's way, and an allocation that is never carried out defines nothing. So the object itself is asked.
         bool isMadeByConstructorFunction = program.at(layout).kind == LayoutKind::Instance && program.at(declaredLayoutOf(program, layout)).has(LayoutFlags::IsConstructorFunction);
         if (end != ChainEnd::Unknown && (isMadeByConstructorFunction || !neverChangesPrototype(program, layout))) {
             switch (knownBy) {

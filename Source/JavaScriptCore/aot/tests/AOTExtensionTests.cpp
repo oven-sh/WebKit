@@ -600,8 +600,6 @@ static void checkAReadOfAnEmptySlotIsCached(LoadedProgram& program)
     AOT_TEST_CHECK(listed->tryStore(vm, field, listed) && readByLeafLookup(listed) == JSValue(listed));
 }
 
-// Compiled code that finds the slot empty asks whether the order lists the field. The answer is remembered by shape, order and key.
-// What else the extra properties hold changes nothing about a field. A field that lies among them has left its slot, and nothing is remembered of such an object.
 static void checkWhetherTheOrderListsAFieldIsRememberedBesideExtraProperties(LoadedProgram& program)
 {
     Fixture fixture(program);

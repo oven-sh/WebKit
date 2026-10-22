@@ -79,7 +79,6 @@ enum class BuiltinLookupFailure : uint8_t {
 
 JS_EXPORT_PRIVATE std::expected<JSCell*, BuiltinLookupFailure> findInRealm(JSGlobalObject*, BuiltinCellKey);
 // What the holder makes under the name at its first read, out of its static table, for a name that somebody wrote to before anybody had read it.
-// Nobody has seen that object, so the one that is made now is the one.
 std::expected<JSCell*, BuiltinLookupFailure> makeMemberOfStaticTable(JSGlobalObject*, BuiltinCellKey, JSObject* holder);
 JS_EXPORT_PRIVATE std::expected<JSCell*, BuiltinLookupFailure> findInHolder(JSGlobalObject*, BuiltinCellKey, JSObject* holder);
 JS_EXPORT_PRIVATE std::expected<JSValue, BuiltinLookupFailure> findValueInHolder(JSGlobalObject*, JSObject* holder, const Identifier&);
@@ -105,9 +104,7 @@ public:
     virtual void willWrite(BuiltinID member, UniquedStringImpl* key) = 0;
 };
 
-// For a holder that is not locked as a whole: the members that the table locks, the members that a program took for constants (their numbers, ascending), and what the table closes
-// on the holder. A holder that locks its members also fixes the names that its instances own: Function.prototype is a function, with a name and a length of its own.
-// No name is listed or interned: a key is looked up in the table, which is read-only data, when somebody is about to write it.
+// For a holder that is not locked as a whole: the members that the table locks, the members that a program took for constants (their numbers, ascending), and what the table closes on the holder.
 JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr);
 
 } // namespace AOT

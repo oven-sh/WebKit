@@ -44,7 +44,6 @@ public:
     explicit BuiltinCells(State&);
 
     // Compiled code asks for a cell wherever it stands, also in the handler of a stack overflow, and has no place for an exception there.
-    // A host may run JavaScript to create the object: it sets up a queue or loads a module. So the program never gets the last part of the stack, and the creation may use it.
     static constexpr size_t stackKeptFromProgram = (ASAN_ENABLED ? 3 : 1) * 256 * KB;
 
     JSCell* cell(uint32_t number);
@@ -52,29 +51,23 @@ public:
     // The key of a cell that is filled with the object. A cell holds what the realm was created with, whatever the program has put in its place since. For a validating build: it looks at every cell.
     std::optional<BuiltinCellKey> keyOfCellHolding(JSCell*) const;
     JSCell* readMember(JSGlobalObject*, JSObject* holder, BuiltinID member);
-    // What the host makes at the first read of a member, and only a write replaces. It may be a number, so the values have words of their own, empty until that read.
-    // Compiled code reads a word only where nothing writes the member.
+    // What the host makes at the first read of a member, and only a write replaces.
     EncodedJSValue* addressOfValue(BuiltinCellKey);
     JSValue fillValue(JSGlobalObject*, BuiltinCellKey);
     void forgetValuesNamed(UniquedStringImpl* key);
-    // A cell holds what the realm was created with, and is filled at its first use: nothing is looked up before the program runs. Where the program may put something else,
-    // the holder tells of a write before it is made, and the first one fills the cells of the member with what is still there. It stands in the middle of the engine's write, so it makes nothing:
-    // a member that the holder has not made yet is made at the first use of its cell, out of the static table of the holder.
+    // A cell holds what the realm was created with, and is filled at its first use: nothing is looked up before the program runs.
     void willWrite(BuiltinID member, UniquedStringImpl* key) final;
     // Not every write that is announced is made. The holder makes a member only where nobody has put anything, so what it makes is what the realm was created with.
     void didMakeMember(BuiltinID member, JSObject*);
     // The holder is known and nobody but the realm has reached it yet.
     void cannotHearOfWritesTo(BuiltinID holder);
-    // The exports of a built-in module tell of nothing. Nobody can put anything into a module that is not loaded: the cells under a module with source are filled when the host has made it,
-    // before anybody else sees its exports, and those under any other module before the program runs. There a member that the host creates at its first use, by code the program can observe,
-    // is not created for that: its cell is filled when the creation is reported.
+    // The exports of a built-in module tell of nothing.
     void fillCellsUnderModules();
     void didLoadModule(RuntimeModuleID, JSObject* exports);
     void didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* member);
     void fillCellsOfEngine();
 
     // The program may replace a step of the path to a locked object, such as the global `Response`, so a cell is looked for in the object that was locked when the realm created it.
-    // Whether the object is new to the cells.
     bool didLock(BuiltinID, JSObject*);
     // A validating build asks each of these behind every collection, and to lock an object allocates. So an object is listed once it is locked.
     void didLockEveryPropertyOf(JSObject* object) { m_objectsWithEveryPropertyLocked.append(object); }
@@ -142,8 +135,7 @@ private:
     BitVector m_namespaces;
 };
 
-// The table says of a property that the host makes at the first read that only a write replaces it. A host that stores to such a property of its own accord says so afterwards,
-// and compiled code reads the property anew.
+// The table says of a property that the host makes at the first read that only a write replaces it.
 JS_EXPORT_PRIVATE void hostDidReplaceProperty(JSGlobalObject*, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE void hostDidLoadBuiltinModule(JSGlobalObject*, uint32_t module, JSValue exports);
 

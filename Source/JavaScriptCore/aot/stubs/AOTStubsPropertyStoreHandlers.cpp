@@ -397,8 +397,7 @@ static void emitFieldStore(StoreSlotBody& body)
     slot.loadSecondPayloadWord(jit, r.type);
     Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
     computeFieldAddress(jit, r.field, false, hasNoStorage);
-    // Slot::remembersOrder: nothing is asked of the value. An object with the order word that the slot remembers has none of the bits that forbid a new field, and gets the order that the slot remembers.
-    // With any other order word the field is created as by a slot that remembers nothing.
+    // Slot::remembersOrder: nothing is asked of the value.
     if (createsField && slot.form() == SlotForm::Slot) {
         const GPRReg orderWordBefore = r.type;
         const GPRReg orderAfter = r.scratch;

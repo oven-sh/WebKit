@@ -128,11 +128,7 @@ static bool hasOwnStaticMember(const Program& program, const Layout& layout, Pro
     });
 }
 
-// A constructor function is there, and a program may change it, long before its first construction defines the class. A site that constructs tests what the function has as its prototype
-// property, so it allocates by the class only once the class is defined.
-// What a class object does not have itself is looked for in the class objects above it. Those may be there, and a program may change them, while nothing has created this one:
-// compiled code answers `Below.name` without it.
-// A guard that holds from the start waits for nothing: whoever changes a class above reaches it through the records, defined or not.
+// A constructor function is there, and a program may change it, long before its first construction defines the class.
 bool isAwaitedBeforeClassExists(const Program& program, const PlacedGuardBit& placed)
 {
     if (placed.side != ClassSide::Static || placed.holdsWhileClear)

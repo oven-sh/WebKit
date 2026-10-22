@@ -131,8 +131,7 @@ static bool reportsCreationOf(const Object& object, const FieldData& field)
     return object.hasExtraProperties() && !object.layout().keysAreNeverEnumerated && !(field.flags & fieldMayExistWithoutStorage);
 }
 
-// A slot that gets filled holds a property of the form that the layout gives the field. Where that is a writable data property, a store below it creates a property of the receiver,
-// as it does where the name is absent, and what a read of it answers does not depend on the receiver.
+// A slot that gets filled holds a property of the form that the layout gives the field.
 static StepResult passEmptySlot(const ChainWalkStart& start, Object& object, const FieldData& field, ChainWalk& walk)
 {
     if (field.slot.representation() == SlotRepresentation::DeferredClosure || field.flags & (fieldIsReadOnly | fieldIsAccessor))
@@ -185,8 +184,7 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
     return passEmptySlot(start, object, *field, walk);
 }
 
-// Compiled code stores to a filled slot without a report, so the walk names the word of the slot and never its value. Only the run time empties a slot, moves its property
-// elsewhere, changes its attributes or changes the extra properties, and it reports each of these for an object that may be a prototype.
+// Compiled code stores to a filled slot without a report, so the walk names the word of the slot and never its value.
 static StepResult lookUpInCompiledObject(const ChainWalkStart& start, UniquedStringImpl* uid, Object& object, ChainWalk& walk)
 {
     if (object.isInFrame() || PropertyName(uid).isPrivateName())

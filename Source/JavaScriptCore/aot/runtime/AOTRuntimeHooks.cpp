@@ -45,7 +45,6 @@ public:
 } // anonymous namespace
 
 // Compiled code takes `f.call`, `f.apply`, `f.bind` and `x instanceof f` on a function of the engine for the members of Function.prototype (BuiltinTable::isFunctionOfEngine).
-// One list for all the native ones, on the Structure they share: nothing is done per function. A built-in function that the library writes in JavaScript refuses the names by itself: Closure::put().
 Structure* structureOfHostFunctions(JSGlobalObject* realm, Structure* structure)
 {
     if (!locksBuiltins(realm))

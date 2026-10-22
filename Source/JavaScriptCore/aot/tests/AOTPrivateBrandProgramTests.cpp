@@ -11,17 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// class C {
-//   #m() { return "called" }
-//   get #g() { return "got" }
-//   set #s(x) { }
-//   static invoke(o) { try { return o.#m() } catch (e) { return e instanceof TypeError } }
-//   static read(o) { try { return o.#g } catch (e) { return e instanceof TypeError } }
-//   static write(o) { try { o.#s = 1; return "stored" } catch (e) { return e instanceof TypeError } }
-// }
-// class Other { #m() { return "other" } }
-// const receivers = [{}, new Other(), C, Object.create(new C()), 1, null, undefined, new C()]
-// for (let i = 0; i < receivers.length; i++) print(C.invoke(receivers[i]) + " " + C.read(receivers[i]) + " " + C.write(receivers[i]))
 static constexpr ASCIILiteral receiversWithoutBrand = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
 layout L1 kind=Instance name="Other" module=m0 constructor=f8 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
 layout L2 module=m0
@@ -265,21 +254,6 @@ data d0 root=Object{layout=L2} module=m0
 entry module=m0
 )IR"_s;
 
-// class Base {
-//   constructor() { this.early = this.hook() }
-// }
-// class Derived extends Base {
-//   #m() { return "private" }
-//   hook() { try { return this.#m() } catch (e) { return e instanceof TypeError } }
-//   has() { return #m in this }
-//   constructor() { super(); this.late = this.#m() }
-// }
-// class Tested extends Base {
-//   #m() { }
-//   hook() { return #m in this }
-// }
-// const d = new Derived(), t = new Tested()
-// print(d.early); print(d.late); print(d.hook()); print(t.early); print(t.hook())
 static constexpr ASCIILiteral beforeSuperReturns = R"IR(layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="early" declared={type=anything}}]
 layout L1 kind=Instance name="Derived" module=m0 base=L0 constructor=f2 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="late" declared={type=string flags=[IsExpected]}}] supertypes=[L0] flags=[HasHeritage]
 layout L2 kind=Instance name="Tested" module=m0 base=L0 constructor=f6 fields=[{key=#"#"@L2 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}] supertypes=[L0] flags=[HasHeritage]
@@ -527,20 +501,6 @@ function f10 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] t
 entry module=m0
 )IR"_s;
 
-// class Base { constructor(o) { return o } }
-// class Stamper extends Base {
-//   #m() { return "stamped " + this.tag }
-//   static invoke(o) { try { return o.#m() } catch (e) { return e instanceof TypeError } }
-//   static has(o) { return #m in o }
-// }
-// class Point { constructor() { this.tag = "point" } }
-// const plain = { tag: "plain" }, point = new Point()
-// print(Stamper.invoke(plain)); print(Stamper.has(plain))
-// print(new Stamper(plain) === plain)
-// print(Stamper.invoke(plain)); print(Stamper.has(plain))
-// try { new Stamper(plain) } catch (e) { print(e instanceof TypeError) }
-// new Stamper(point)
-// print(Stamper.invoke(point)); print(Stamper.invoke(new Point()))
 static constexpr ASCIILiteral returnOverride = R"IR(layout L0 kind=Instance name="Base" module=m0 constructor=f1
 layout L1 kind=Instance name="Stamper" module=m0 base=L0 constructor=f2 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}] supertypes=[L0] flags=[HasHeritage]
 layout L2 kind=Instance name="Point" module=m0 constructor=f6 fields=[{key="tag" declared={type="point" flags=[IsExpected]}}]

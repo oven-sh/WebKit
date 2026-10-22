@@ -247,7 +247,6 @@ private:
     }
 
     // `stream.emit === emit`: the program makes one closure of the function, so whatever is a closure of it is that object.
-    // A side that may also hold a primitive, as a variable that a module fills late, is asked which of the two it holds.
     bool foldComparisonOfOneClosure(ValueID id, const Value& comparison)
     {
         for (unsigned i = 0; i < 2; ++i) {
@@ -345,8 +344,7 @@ private:
         return function;
     }
 
-    // In a locale that the call names, and without options, the text depends on the number and on the data of ICU. An executable is a copy of the Bun that builds it, data included.
-    // On Darwin the data are the system's, and the user's system is another one. The locale and the time zone of the host are never asked.
+    // In a locale that the call names, and without options, the text depends on the number and on the data of ICU.
     bool formatsNumberInNamedLocale(BuiltinID function, const Value& value) const
     {
         static const bool isSwitchedOff = !!getenv("BUN_AOT_KEEP_LOCALE_CALLS");
@@ -493,7 +491,6 @@ private:
         if (exceedsLimitOfFoldedString(id, bytes))
             return false;
         // An entry with an error of its own may fail for the length of its answer, which a number among its operands sets: a count, a length.
-        // The limit is asked before the answer is made. Padding has an overload for the lengths that cannot fail, a gigabyte among them.
         bool pads = function == Builtins::StringPrototypePadStart || function == Builtins::StringPrototypePadEnd;
         if (pads || !m_program.builtins().at(value.overload()).onlyPropagatesErrors()) {
             double bytesOfAnswer = static_cast<double>(bytes) * largestNumber;
@@ -671,7 +668,6 @@ private:
     const Program& m_program;
     Function& m_function;
     // Few bodies ask who uses a value: the users of a text that is too long to fold, which come later in the walk than the text, and the users of a RegExp literal.
-    // A fold takes uses away from values that stand in front of the folded one. So lists that are made in the middle of the walk say of those values what lists made in front of it say.
     const UseLists& useLists() const
     {
         if (!m_useLists)

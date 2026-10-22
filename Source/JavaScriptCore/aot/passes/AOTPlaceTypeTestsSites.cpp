@@ -83,7 +83,6 @@ static auto orderOf(const MemberConditionRecord& condition)
 }
 
 // Placement gives each set of conditions one bit, so a test costs the same however many conditions it lists.
-// One test in front of the first site leaves no branch between the allocation of a constructor and its stores, nor between two of the stores.
 static void shareConditionsTest(FunctionPassContext& context, TestSites& sites, BlockID block, const ConditionsTestsOfObject& group)
 {
     if (group.tests.size() < 2)
@@ -191,9 +190,7 @@ static Value makeTestOfConditionsOf(const Value& test)
     return copy;
 }
 
-// A test that has passed answers for each condition that it lists, and placement knows a test by all that it lists. `a.symbol = s; a.locals = t; b.symbol = s`: the stores into `a` share a test,
-// and the store into `b` asks for less than that test has answered. So a site whose conditions are all listed by a test that stands in front of it on every way asks for that test:
-// where what it has proven still holds the site gets none, and where it has ended a test costs the same however many conditions it lists. The test may be of an earlier run of the pass.
+// A test that has passed answers for each condition that it lists, and placement knows a test by all that it lists.
 static void askForConditionsTestsInFront(FunctionPassContext& context, TestSites& sites)
 {
     auto hasConditionsTest = [&](const TestSite& site) {
@@ -360,9 +357,7 @@ TestSites collectTestSites(FunctionPassContext& context)
     TestSites sites = reporter.takeSites();
     for (const TestSite& site : sites.sites)
         RELEASE_ASSERT(testSiteOpcodes.contains(context.function.at(site.use).opcode));
-    // A test buys a fast path and costs a copy of what stands behind it. Code that runs once cannot win that back.
-    // In the cold code of a cold function the general form of some operations is smaller than a test and no slower. A loop there keeps its tests.
-    // Nothing says of a compact function that it runs at all, so there that goes for every operation. What is expected of a value stays with the value, for the record that the general form looks into first.
+    // A test buys a fast path and costs a copy of what stands behind it.
     bool isColdFunction = isCold(context.inputs.heat.of(context.program, context.id));
     sites.sites.removeAllMatching([&](const TestSite& site) {
         HeatClass heatClass = heatClassOf(context, site.point.block);

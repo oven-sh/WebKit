@@ -111,8 +111,6 @@ public:
     static CompactTable* tryCreate(JSGlobalObject*, Width key, Width value, uint32_t minCapacity);
     static CompactTable* tryCreateForFirstEntry(JSGlobalObject*, bool hasValues, JSValue key, JSValue value);
     // In front of an addition in a loop that the collection entered with `sizeAtEntry` entries, that has come by `finished` additions and has `remaining` ones left, this one among them.
-    // A full table is replaced by one with room for as many of those as have added an entry so far. Where nothing is known yet, where there is no memory, or where the usual growth gives
-    // as much as that estimate, the table stays. No step multiplies the entries by more than largestStepInLoop.
     static constexpr uint32_t largestStepInLoop = 8;
     static void reserveForAdditions(JSGlobalObject*, JSObject* owner, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry);
     static void ensureInitialTableAllocators(VM&);

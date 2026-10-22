@@ -88,7 +88,6 @@ static bool hasCodeBehindNeverValue(const Function& function, const Block& block
 }
 
 // A pass, or whoever built the function, may leave a conversion that always fails, or a value of whose type nothing is left, in the middle of a block.
-// What stands behind it is never reached, and nothing may stand there. No pass has to look for that itself.
 static bool cutCodeBehindNeverValues(FunctionPassContext& context, const BodyContents& contents)
 {
     if (!contents.traits.contains(BodyTrait::NeverValues))
@@ -170,8 +169,7 @@ static constexpr PassSet optionalPassesOfGenericVersions {
 
 static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
 
-// An async function waits between its steps, so what it costs is seldom its own code. Where nothing says that it runs often it keeps its tests and makes no object that it need not make, and nothing else is tried on it.
-// Nothing says of a compact function that it runs at all. No test is placed in it, so it is general code as a generic version is, and goes the same way.
+// An async function waits between its steps, so what it costs is seldom its own code.
 static const PassSet* optionalPassesOfShortScheduleFor(const Function& function, bool hasNoWarmCode, bool isCompact)
 {
     if (function.role == FunctionRole::GenericVersion || isCompact)
@@ -672,7 +670,6 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
     if (!inputs.effects)
         inputs.effects = &context.inputs.effects;
     // A program pass that is given no summaries simplifies functions which the Optimize loop has left: their guards stand across calls that only the summaries call harmless.
-    // The verifier behind the program pass has summaries of its own and judges them.
     inputs.cannotJudgeGuards = context.inputs.effects.isEmpty() && m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID());
     Vector<InternalError> errors;
     if (canVerify(form) && !descriptor.isVerifiedAfterNextPass)

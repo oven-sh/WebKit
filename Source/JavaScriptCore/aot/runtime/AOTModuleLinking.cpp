@@ -185,7 +185,6 @@ static void throwUnresolvedName(Modules& modules, const UnresolvedName& unresolv
 }
 
 // JavaScriptCore's loader creates a module of the run time when it fetches it, in an earlier job than the one that links and evaluates the importing graph.
-// Returns whether a module ran.
 bool Modules::loadRuntimeModules(ModuleID root)
 {
     return loadRuntimeModules(ModuleLinkWalk(*this, root));
@@ -372,8 +371,7 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         didLinkEntryPoint();
         return;
     }
-    // No status says of the modules between the root and the steps that they are linked, as none says so of a module without work in a link. They are evaluated next, which every walk sees.
-    // A walk that comes by before that finds the steps done.
+    // No status says of the modules between the root and the steps that they are linked, as none says so of a module without work in a link.
     if (walk.hasPlan()) {
         setStatus(walk.root(), ModuleStatus::Linked);
         if (isUnlinked(*walk.memberOfCycle()))
@@ -396,7 +394,6 @@ bool Modules::didCaptureExports(ModuleID module) const
 }
 
 // An ES importer gets copies of what the file exports when an ES graph first links it, and the file runs where that graph has it: in front of the ES modules, in the order of the imports.
-// With a record, the code that comes to evaluate the module asks the run time, which evaluates it and captures behind that.
 void Modules::captureExportsBehindEvaluation(ModuleID module)
 {
     if (didCaptureExports(module))
@@ -481,8 +478,7 @@ void Modules::captureExports(ModuleID module)
     RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 }
 
-// The host lists the own properties of what a CommonJS module exports and reads each of them: Bun's populateESMExports(). Of a compiled object that has nothing but data in its fields
-// that runs no code of the program, so all that has to happen now is that the values are kept. An importer binds a few of the names, which capturedField() finds by the host's rules.
+// The host lists the own properties of what a CommonJS module exports and reads each of them: Bun's populateESMExports().
 bool Modules::tryCaptureFields(ModuleID module, JSValue value)
 {
     VM& vm = *m_instance.vm;
@@ -540,8 +536,7 @@ bool Modules::tryCaptureFields(ModuleID module, JSValue value)
     return true;
 }
 
-// Nothing where the host would not have listed the name. In plain Bun such an exports object is an ordinary object with nothing but data properties, of which the host takes every own name,
-// whether or not it can be listed. One with stars has accessors there: of that the host leaves out `constructor` and, behind the mark, what cannot be listed.
+// Nothing where the host would not have listed the name.
 JSValue Modules::capturedField(const LoadedModule& loaded, UniquedStringImpl* name) const
 {
     VM& vm = *m_instance.vm;
@@ -648,7 +643,6 @@ bool Modules::findsItsNamesInLibraryAlone(ModuleID module) const
 }
 
 // The host reads a deferred export when it links a module that binds the name, and later importers get what it read then: SyntheticModuleRecord::materializeLazyExport().
-// A run that links no such module does not load what the getter loads.
 void Modules::fillDeferredExports(ModuleID importer)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);

@@ -196,9 +196,7 @@ static const Target& destinationOf(const Function& function, const Target& targe
     return *current;
 }
 
-// A test asks for every bit that those tests of the same object ask for that stand above and below it in the dominator tree and fail to the same place. They are then one value to B3,
-// which decides each later one by the first wherever nothing has written the byte between them. An object that fails one of them gets where it got before, a little earlier.
-// An object that may be unfinished has the bit of its birth set, and its prototype is asked for all the same.
+// A test asks for every bit that those tests of the same object ask for that stand above and below it in the dominator tree and fail to the same place.
 void GuardEmitter::planTestsOfFlags()
 {
     struct Test {
@@ -419,7 +417,6 @@ Condition GuardEmitter::belongsToInstance(CellPointer cell)
 Condition GuardEmitter::isClosureAsCreated(CellPointer cell)
 {
     // A new property, another prototype and a change of integrity each give a closure another Structure.
-    // Closures of async functions and generators inherit from other prototypes, and so may a class object.
     constexpr FunctionKindData plainFunction { };
     Word32 structureID = loadStructureID(cell);
     Condition isFullClosure = equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(closures.closureHeaders) + plainFunction.closureStructure * sizeof(uint64_t)));

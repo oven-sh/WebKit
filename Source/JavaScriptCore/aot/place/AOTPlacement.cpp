@@ -319,9 +319,7 @@ static void remapFieldAccesses(const ParallelLoops& loops, const TypeRemap& type
     });
 }
 
-// The rows of the field access table need new types and layout sets. An interning phase keeps the tables as they are while the other steps read them.
-// They need no new string, and the table of strings has no phase: somebody beside these steps may give it strings.
-// The chain that runs beside them interns nothing.
+// The rows of the field access table need new types and layout sets.
 static ShapeInputs prepareShapeInputs(const StepRunner& steps, ProgramEditor& editor, const PlacementContext& context, const PlacedSites& sites, NOESCAPE const ScopedLambda<void()>& chainBeside)
 {
     ShapeInputs result;

@@ -22,11 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// The accesses that a callee makes to an object, asked of what the caller knows of the object. Every answer is "no" unless each step of each lookup is proven for the whole life of the object:
-// by flow, which has seen every definition, deletion and change of a prototype in the program, wherever and whenever it runs, or by the run time, which locks the built-in prototypes.
-// A condition that a guard watches and a proof that a test gives are worth nothing here: nobody tests anything in the callee.
-// What the type itself proves of an instance of a built-in class has to hold as long as the accesses go on. What flow has proven does: it stands in the types of the positions at which the object arrives,
-// an entry parameter of the callee for one, and not in the type of the operation that makes the object.
+// The accesses that a callee makes to an object, asked of what the caller knows of the object.
 class AccessesToObject {
 public:
     AccessesToObject(const Program& program, const FlowResults& flow, const LinkedFate& fate, GettersOfProgram* getters = nullptr)
@@ -103,10 +99,6 @@ bool AccessesToObject::allKeysRunNoCode(NOESCAPE const Invocable<bool(PropertyKe
 }
 
 // What a lookup above the object itself ends at.
-// Nothing: a read answers undefined, a store creates the property or is refused. A method of a class: a read answers the function, and a store passes a writable property by or is refused.
-// A member of a built-in prototype: the chains that get here hold Object.prototype, Array.prototype, Map.prototype, Set.prototype and Function.prototype, whose members start-up locks.
-// Their accessors are the engine's, call nothing of the program and keep nothing of `this`: `size` of a Map or a Set, `caller` and `arguments` of Function.prototype.
-// `__proto__` of Object.prototype is not among the answers: nobody answers a lookup under that name by name.
 bool AccessesToObject::endsWithoutCode(const MemberAnswer& answer, Access access) const
 {
     if (!answer.needsNoTest())
@@ -139,7 +131,6 @@ bool AccessesToObject::endsWithoutCode(const MemberAnswer& answer, Access access
 }
 
 // The program puts nothing of its own on the built-in object, and replaces nothing there: under a key that nobody knows a lookup finds what the table lists or passes.
-// Start-up locks the members of Array.prototype and leaves it open to other names, so `Object.defineProperty(Array.prototype, "last", { get() { .. } })` is for flow to rule out.
 bool AccessesToObject::gainsNoMember(BuiltinID holder) const
 {
     const Builtin& object = m_table.at(holder);
@@ -209,10 +200,7 @@ bool AccessesToObject::accessRunsNoCodeOnLayout(LayoutID layout, PropertyKeyID k
     FieldReference field { found.holder, found.field };
     if (fieldAt(m_program, field).form.contains(FieldForm::IsAccessor) || !isNeverRedefined(m_program, field))
         return false;
-    // Every allocation fills it and nobody deletes it: no read gets past the object. That is said of the reads of the program, and the callee's are among them.
-    // It is not said of the stores: the one that fills the field finds it empty, and so does any other that gets hold of an object whose constructors have not finished.
-    // A constructor fills by a store, which a setter above the object takes. Flow has looked at what it knows to lie above the objects. Where they may be born below something else,
-    // `F[key] = spy` with a key that may be "prototype", it says so of the link and not of the field.
+    // Every allocation fills it and nobody deletes it: no read gets past the object.
     bool isFilledByStores = !!m_program.at(declaredLayoutOf(m_program, layout)).constructor;
     bool mayBeEmpty = isFilledByStores && (access == Access::Store || !receiverStateOf(m_program, layout).cannot(ObjectMutation::ChangePrototype));
     if (staysFilled(m_program, field) && !mayBeEmpty)
@@ -278,8 +266,7 @@ bool AccessesToObject::runNoCodeOnLayouts(LayoutSetID layouts) const
     });
 }
 
-// The method under Symbol.iterator and the `next` of its iterators are what the realm was created with. The iterator reads the length and the elements, or the entries of the table.
-// Closing such an iterator looks for `return` on the iterator, not on the object.
+// The method under Symbol.iterator and the `next` of its iterators are what the realm was created with.
 bool AccessesToObject::iterationRunsNoCodeOn(const ClassPart& part) const
 {
     BuiltinID next = Builtins::ArrayIteratorPrototypeNext;
@@ -293,8 +280,6 @@ bool AccessesToObject::iterationRunsNoCodeOn(const ClassPart& part) const
 }
 
 // Names: the instance has gained no name, nothing on it was redefined, it has the prototype of its class, and no code that nobody has seen got hold of it.
-// Storage, of an array: no access under a number meets an accessor, in the array or above it. So a hole reads through prototypes that are closed to indexes.
-// An array that may be frozen or sealed has neither proof.
 bool AccessesToObject::runNoCodeOnInstances(const ClassPart& part) const
 {
     bool isArray = part.builtinClass == BuiltinClasses::Array;
@@ -317,8 +302,7 @@ bool AccessesToObject::runNoCodeOnInstances(const ClassPart& part) const
             return true;
         return hasNames && endsWithoutCode(findBuiltinInstanceMember(m_context, part.builtinClass, key, access), access);
     }, [&](Access) {
-        // `array[i]`, mostly. The key may as well be a name: then it finds `length`, or what the table lists on the prototypes, or nothing. Under "__proto__" it finds the accessor of Object.prototype,
-        // which is the engine's. A store under a key that may be a name costs the array the proof of its names, so the stores that reach this one are stores of elements.
+        // `array[i]`, mostly.
         return isArray && hasNamesAndElements && chainGainsNoMember(m_table.at(part.builtinClass).prototype);
     });
 }
@@ -388,9 +372,7 @@ bool AccessesToObject::allStoresLand(NOESCAPE const Invocable<bool(PropertyKeyID
     });
 }
 
-// A store that runs no code may still do nothing: a frozen object refuses it, one that is not extensible refuses to create the property, a read-only property refuses it under its name,
-// and so does a read-only property of that name anywhere above an object that has none of its own. In sloppy code nobody hears of it.
-// A method of a class that a store passes by is not among the answers: the lookup has gone on above it. What lies on a built-in prototype under the name is taken to refuse.
+// A store that runs no code may still do nothing.
 bool AccessesToObject::storeLandsOnLayout(LayoutID layout, PropertyKeyID key) const
 {
     if (builtinBaseClassOf(m_program, layout) || !hasOnlyCompiledBases(m_program, layout) || !receiverStateOf(m_program, layout).cannot(ObjectMutation::ChangeIntegrity))
@@ -519,7 +501,6 @@ static Type partsThatMayBeOperand(const Type& arriving, const Type& operand)
 }
 
 // The caller has two descriptions of the object that it passes: the type of the operand, and what flow has proven of everything that arrives at the entry parameter which the operand becomes.
-// Only the second has what flow proves of an array, a Map or a Set, and the layout of an instance whose class is one of several. Whichever callee is entered, the object is among what arrives there.
 static bool runsNoOtherCodeOnOperandAt(const Program& program, const FlowResults& flow, const Function& caller, const Value& call, uint32_t operandIndex, const LinkedFate& fate, GettersOfProgram* getters)
 {
     const Type& operand = program.typeOf(caller, call.operand(operandIndex));

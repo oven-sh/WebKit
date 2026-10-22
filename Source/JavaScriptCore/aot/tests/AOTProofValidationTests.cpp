@@ -12,8 +12,6 @@
 
 namespace JSC { namespace AOT {
 
-// Flow analyzes a built-in that has a model through the model in the text, and the shell runs the native function. Each program has a model that says
-// something false, so flow proves something false, and a pass uses the proof up: no value with the false type is left when code is generated.
 
 // The model answers the integer in a field, the native function a string. The sum with 1 folds.
 static constexpr ASCIILiteral foldedConstant = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
@@ -267,8 +265,6 @@ function f2 name="once" results=[{type=anything}] {
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The holder has a function of the shell as its toString. The model of toLocaleString reads toString and k and calls nothing, the native function calls toString on the holder.
-// So an object that never escapes reaches the script of the shell, as this.k. The read of x after the call is replaced by the value x was created with.
 static constexpr ASCIILiteral leakedObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
@@ -345,8 +341,6 @@ function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThi
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The model reads toString and runs nothing, the native function calls it: a function of the shell that stores into "a". The object is in a global,
-// so only the effects of the call let the second read of "a" be replaced by the first.
 static constexpr ASCIILiteral effectsOfCall = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
@@ -530,8 +524,6 @@ function f2 name="plain" results=[{type=anything}] {
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The program deletes a field of one object of the layout, freezes it and gives another an indexed accessor, so every access to a third object stands under guards.
-// The model of toLocaleString runs nothing, the native function calls toString, a function of the shell: only the effects of the call let the guards of the first read stand for the second.
 static constexpr ASCIILiteral guardKeptAcrossCall = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
@@ -720,8 +712,6 @@ static void testUnreachableBlockIsEntered()
     checkOutputOfProgramInShell(unreachableBlock, "went on\n"_s, { "validate"_s }, "globalThis.enters = false;"_s);
 }
 
-// The function has lost its body. No code that the compiler has not seen can run in this program, so whatever enters the function all the same shows a proof that does not hold.
-// Where such code can run the entry throws the error of a function that was not compiled, in a validating build as in any other: the compatibility page describes it.
 static void testFunctionThatIsNeverReached()
 {
     checkValidationFails(functionThatIsNeverReached, ValidationFailureKind::UnreachableValue);
@@ -897,8 +887,6 @@ static void testNameOutsideCompleteListOfAddedNames()
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n"_s, optionWords, "globalThis.sink = function () { this.k.p = 1; };"_s);
 }
 
-// What flow proves about the members of a class answers each of the three reads without a lookup. The read that a test looks at keeps its lookup,
-// and the prototype object of a class that lists all its names gets no other.
 static void testMembersOfClassChange()
 {
     checkValidationFails(leakedInstance, ValidationFailureKind::LookupDiffers, "globalThis.sink = function () { Object.getPrototypeOf(this.k).method = () => 'replaced'; };"_s);

@@ -26,9 +26,7 @@ BitVector computeTaintedValues(const Function&, const UseLists&, std::span<const
 // The same values, for whoever has no use lists: to make them costs ten times what it costs to walk the body in the order in which the marks are handed on.
 BitVector computeTaintedValues(const Function&, const CFG&, std::span<const ValueID> checks);
 
-// Flow gives a position back where it sees no value outside the type arrive. Where a check that flow has left in place still feeds such a position,
-// the generic version stores there what the check has turned away, so the run after flow takes the position back.
-// That run first proves what the types of the values prove and flow does not: see PositionsProvenByTypes.
+// Flow gives a position back where it sees no value outside the type arrive.
 enum class TaintedPositionsRun : uint8_t { BeforeFlow, AfterFlow };
 void guardTaintedPositions(Program&, BuildContext&, TaintedPositionsRun);
 void guardTaintedPositionsAfterFlow(Program&, const FlowResults&, BuildContext&);

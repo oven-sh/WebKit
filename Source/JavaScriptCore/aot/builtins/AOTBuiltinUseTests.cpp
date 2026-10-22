@@ -32,7 +32,6 @@ void reportBuiltinUseTests(TestSiteReporter& reporter)
         if (!plan || plan.isProven())
             return;
         // A CallBuiltin is no tail call, and the rewrite runs while insertions are queued, when a ReturnCall can no longer be demoted.
-        // A direct call of the function of the library that stands behind the entry is a tail call like the call that it takes the place of.
         bool staysTailCall = plan.kind == BuiltinUseKind::LibraryCall && !plan.assumedResult;
         if (tailCallRequirementOf(reporter.function(), reporter.point().block, reporter.use()) && !staysTailCall)
             return;

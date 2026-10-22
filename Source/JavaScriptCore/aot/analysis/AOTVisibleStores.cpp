@@ -189,7 +189,6 @@ struct GraphPart {
 };
 
 // A node holds the kinds that reach one place (a field, a variable, a parameter, a result, the stores under a name) or one value of a function.
-// Each function is read once, which gives the edges. Then the kinds follow the edges.
 class StoreGraph {
 public:
     StoreGraph(const Program&, const ParallelLoops&);
@@ -945,9 +944,7 @@ void StoreGraph::solve()
     });
 }
 
-// Against the edges, from the uses to the places that the values come from. A bit operation cuts a fraction off, so what it gives says nothing about what it gets,
-// and the stores under a name are those of unrelated objects. A function that hands a parameter on as its result does so for every caller: a use of the result of one call
-// says nothing about the arguments of another, so what has come down through a result does not go up through a parameter.
+// Against the edges, from the uses to the places that the values come from.
 void StoreGraph::findUsesAsIntegers()
 {
     constexpr uint8_t mayReachCallers = 1 << 0;

@@ -98,9 +98,7 @@ void Object::copyFieldsOfSameLayout(VM& vm, const Object& source)
     vm.writeBarrier(this);
 }
 
-// The copy holds the function objects of the source, so a closure that the source has not made yet is made first. Then its slot is copied like any other, as compiled code does it.
-// False where a field is neither plain nor such a closure. That some closures are made by then shows nowhere.
-// The words of a field that is stored once are its one store where the copy is made by them.
+// The copy holds the function objects of the source, so a closure that the source has not made yet is made first.
 enum class CopyOfWords : bool { FillsObject, MakesObject };
 static bool tryMakeClosuresForCopyOfWords(VM& vm, Object& source, CopyOfWords copy)
 {
@@ -198,8 +196,7 @@ Object* Object::tryCreateCopyOfFields(VM& vm, const Object& source)
     return createCopyOfWords(vm, source, source.structure());
 }
 
-// A field that has left its slot lies beside the slots under its own name. An object of the same layout that takes it over gets no name that the layout does not have,
-// and the source has answered for what took the field out of its slot.
+// A field that has left its slot lies beside the slots under its own name.
 static void validateCopyOfExtraProperties(VM& vm, const Object& target, JSObject* extraProperties)
 {
     if (!vm.aotState().validatesRuntime)
@@ -678,8 +675,6 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryField(AssignmentPlan& plan, const
 }
 
 // The Structures of the target and of its extra properties and its order word say which keys it has and in which order, and those of the source say the same of the source.
-// So a target like an earlier one ends with the order word and the Structures that the earlier one ended with, and no field is created or listed by itself.
-// False, with the target as it was, where a value does not go where the earlier one went.
 bool FieldStoreRun::tryRunAsBefore(AssignmentPlan& plan, const AssignmentSource& source)
 {
     ASSERT(plan.orderWordBeforeRun == m_target.orderWord());
@@ -697,9 +692,7 @@ bool FieldStoreRun::tryRunAsBefore(AssignmentPlan& plan, const AssignmentSource&
     return true;
 }
 
-// The first run for an order word. The values go to their slots, the extra properties get their Structure, and the keys that the run adds are listed in one step, in the order of the source:
-// one by one, each would look for the order that follows, and a field behind an added name would count the extra properties first.
-// False, with the target as it was, where a value does not go to its slot.
+// The first run for an order word.
 bool FieldStoreRun::tryRunListingOnce(AssignmentPlan& plan, const AssignmentSource& source)
 {
     const LayoutData& layout = m_target.layout();
@@ -783,6 +776,9 @@ static void rememberRun(VM& vm, Object& target, AssignmentPlan& plan, const Assi
     constexpr uint32_t flagsOfOtherRuns = orderWordHasFieldOutsideSlot | orderWordIntegrityBits;
     if (!plan.isUsable || (orderWordBefore | orderWordAfter) & flagsOfOtherRuns || isOrderStoredOutOfLine(orderWordBefore) || isOrderStoredOutOfLine(orderWordAfter))
         return;
+    // A store to a field that is absent asks the prototypes. Compiled code lists no field that it creates where nothing lists the keys, so the order word does not say that a field is there.
+    if (!plan.storesAreDefinitions)
+        return;
     if (plan.extraPropertyStores.isEmpty()) {
         if (target.structureID() != plan.target)
             return;
@@ -802,8 +798,6 @@ static void rememberRun(VM& vm, Object& target, AssignmentPlan& plan, const Assi
 }
 
 // A target that has the order word of an earlier one, and whose slots are as empty as that one's were, ends with the order word that the earlier one ended with.
-// Where a slot of the target is filled already, or a field of the source holds nothing to store, the slots are emptied again and the target is as it was.
-// A slot that cannot be empty belongs to a field that every object of the layout has. Whatever runs instead stores to it again.
 static bool tryFillEmptySlotsAsBefore(VM& vm, Object& target, State& state, const AssignmentPlan& plan, const Object& source)
 {
     ASSERT(plan.storesOnlyFieldsThatFit && plan.orderWordBeforeFillingAll == target.orderWord());
@@ -926,8 +920,6 @@ static MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentat
 }
 
 // The first copy between objects with these words: which fields the map serves, where each of them goes, which granules they fill, and which keys the target ends with.
-// It touches neither object: the copy that it describes may still find a value that does not fit.
-// False where no map serves the copy, which the place remembers unless that may change.
 static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source, uint32_t excludedRunNumberPlusOne)
 {
     AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
@@ -1108,8 +1100,7 @@ static ALWAYS_INLINE void storeBitsOfWidth(unsigned width, uint8_t* slot, uint64
         *reinterpret_cast<uint16_t*>(slot) = static_cast<uint16_t>(bits);
 }
 
-// A copy between two objects of the program without extra properties, each field of which is a load and a store. The values are read first, in the form of the slots that take them,
-// so a source that lacks one leaves the target as it was.
+// A copy between two objects of the program without extra properties, each field of which is a load and a store.
 static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object& target, const Object& source, uint32_t excludedRunNumberPlusOne)
 {
     uint32_t orderWordOfTarget = target.orderWord();
@@ -1402,9 +1393,7 @@ bool tryDefinePropertiesOf(VM& vm, Object& target, JSObject* source, std::span<U
 
 using ValuesThatLeaveTheirSlots = Vector<std::pair<const FieldData*, EncodedJSValue>, 4>;
 
-// The place of a field among the keys is in the order word wherever its value lies. So a field whose slot cannot take its value is listed at its place, and the value goes to the extra properties
-// behind the last store of the run: until then the object is what the plan expects, and the stores behind this one go on as fast as those in front of it.
-// False, with nothing done, for a value that the slot would take: the run also fails to store where it may create no field.
+// The place of a field among the keys is in the order word wherever its value lies.
 static NEVER_INLINE bool tryListFieldWhoseValueLeavesItsSlot(Object& target, State& state, const AssignmentPlan& plan, const AssignmentPlan::FieldStore& store, JSValue value, ValuesThatLeaveTheirSlots& values)
 {
     if (!plan.storesAreDefinitions)
@@ -1433,9 +1422,7 @@ static bool mayFinishByName(const AssignmentPlan& plan)
     return plan.storesAreDefinitions && plan.storesInSourceOrder.size() == plan.fieldStores.size() + plan.extraPropertyStores.size();
 }
 
-// The run has stored the fields in front of firstFieldStoreLeft, and all extra properties or none. What is left is stored in the order of the source.
-// Only the values that their fields do not take, and the extra properties, are defined by name. The first field left is one that the run could not store.
-// A definition by name can drop the plan, so the stores are copied first; a dropped plan creates no field.
+// The run has stored the fields in front of firstFieldStoreLeft, and all extra properties or none.
 static NEVER_INLINE void finishByName(VM& vm, Object& target, State& state, FieldStoreRun& run, const AssignmentPlan& plan, size_t firstFieldStoreLeft, bool didStoreExtraProperties, const AssignmentSource& source, ValuesThatLeaveTheirSlots& valuesThatLeaveTheirSlots)
 {
     ASSERT(plan.storesAreDefinitions);
@@ -1557,7 +1544,6 @@ static bool assignByPlan(VM& vm, Object& target, State& state, AssignmentPlan& p
     }
     run.writeBarrierIfNeeded();
     // One value that its field does not take does not undo what the run has stored in front of it.
-    // Where the store to a field has failed, the loop has counted past it. Where the stores to the extra properties have failed, the loop was left at once and nothing goes on from there.
     bool isLeftUnfinished = didStoreEveryProperty ? numberOfFieldStoresInRun != fieldStores.size() : !didFailAtExtraProperties;
     if (isLeftUnfinished) [[unlikely]] {
         size_t firstFieldStoreLeft = didStoreEveryProperty ? numberOfFieldStoresInRun : index - 1;

@@ -199,8 +199,7 @@ MemberAnswer findSuperMember(const PropertyAccessContext&, const HomeObject&, Pr
 
 CallArm createDirectCallArm(FunctionID closureFunction);
 
-// What `value instanceof C` is under tests. The tests of the class object alone leave the walk up the chain of the value. Where the value is also tested for the layouts it is expected to have,
-// each under the prototype object of its class, the layout answers.
+// What `value instanceof C` is under tests.
 struct TestedInstanceOf {
     bool walksChain { false };
     AccessTests tests;

@@ -506,8 +506,7 @@ public:
     void setExpected(TypeID expected) { m_expected = expected; }
     TypeID expectedOrType() const { return m_expected && !isExpectedNever() ? m_expected : type; }
 
-    // No value is expected here: the failing side of a test that is expected to pass, and what is computed from it. To a pass that says nothing. A join behind it leaves it out,
-    // so whoever types that join again has to find it.
+    // No value is expected here: the failing side of a test that is expected to pass, and what is computed from it.
     bool isExpectedNever() const { return !m_expected.index(); }
     TypeID expectedForTyping() const { return m_expected; }
     TypeID expectedOrTypeForTyping() const { return m_expected ? m_expected : type; }

@@ -566,8 +566,7 @@ static void emitFillWords(StubAssembler& jit, GPRReg to, GPRReg end, int32_t wor
     isDone.link(&jit);
 }
 
-// The owner's table is full and lacks the key. What CompactTable::add() does with a plan: a larger table takes the entries and the new one, and the full one names it to whoever still holds it.
-// Nothing is stored outside the larger table before the last exit to the operation.
+// The owner's table is full and lacks the key.
 void generateGrowCompactTable(StubAssembler& jit)
 {
     using ShortSlots = CompactTable::SlotFormat<CompactTable::SlotKind::Short>;
@@ -809,7 +808,6 @@ StubSignature signatureOfMapNextFrontEnd(StubKey) { return operationFrontEndSign
 StubSignature signatureOfSetNextFrontEnd(StubKey) { return operationFrontEndSignature(4); }
 
 // The operands are those of the operation: the owner, the table the walk stands in, the entry to go on at, and where the key and the value go.
-// A step in the table that the owner still has, unless the table lies in the image. Everything else is the operation's.
 static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry rawOperation)
 {
     static_assert(JSMap::Helper::capacityIndex() == JSSet::Helper::capacityIndex() && JSMap::Helper::hashTableStartIndex() == JSSet::Helper::hashTableStartIndex());

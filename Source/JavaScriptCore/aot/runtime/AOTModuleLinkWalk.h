@@ -17,10 +17,7 @@
 
 namespace JSC { namespace AOT {
 
-// The modules that a link reaches from a root and that have work in it, in the order of the requests. No code of the program runs while they are recorded.
-// A module leaves ModuleStatus::Unlinked together with everything it requests and never returns to it while it is linked,
-// so each step of the link, in this job or a later one, replays the record and passes over what another link has finished since.
-// The build recorded the walk from the entry point the process starts at, and the walks that go round a large cycle of modules: their steps are read from the image, and nothing is allocated for them.
+// The modules that a link reaches from a root and that have work in it, in the order of the requests.
 class ModuleLinkWalk {
     WTF_MAKE_NONCOPYABLE(ModuleLinkWalk);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModuleLinkWalk);
@@ -36,7 +33,6 @@ public:
     std::optional<ModuleID> memberOfCycle() const { return m_memberOfCycle; }
 
     // shouldEnter(module) answers for a module with requests, visitLeaf(leaf, module) may throw, didLeave(module, resolvesNames) follows the requests of an entered module.
-    // Returns whether the root was entered.
     template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
     bool replay(ThrowScope&, const ShouldEnterFunctor&, const VisitLeafFunctor&, const DidLeaveFunctor&) const;
 

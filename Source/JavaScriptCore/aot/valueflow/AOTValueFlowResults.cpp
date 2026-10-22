@@ -21,6 +21,7 @@
 #include <wtf/Function.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -55,8 +56,7 @@ static ValueFlowObjectID builtinInstanceAllocatedBy(const ValueFlowUniverse& uni
     return object;
 }
 
-// One class for each built-in class: what holds for it holds for every instance that an operation of the program allocates. The arrays that no store reaches have a class of their own.
-// An array is allocated with the storage that fits what its type says it holds, so each allocation hears what the types say of its array.
+// One class for each built-in class: what holds for it holds for every instance that an operation of the program allocates.
 static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -351,10 +351,7 @@ private:
 
 } // anonymous namespace
 
-// Much of a step runs on one thread. A step begins as soon as the steps are through whose results it reads. Steps run beside each other where neither reads what the other writes AND NONE OF THEM OPENS A PHASE OF THE TYPE TABLE
-// WHILE ANOTHER HOLDS AN ARENA OF IT, also none that it throws away: a phase may be opened only while nobody else holds an arena of the table, and an arena that is attached while a phase is open belongs to that phase.
-// THE END OF A PHASE LETS THE TABLE GROW, AND WHOEVER READS A TYPE, A SET OF LAYOUTS OR OF CALLEES OR A KEY MEANWHILE MAY READ MEMORY THAT THE TABLE HAS GIVEN BACK: beside a step that opens a phase (calls; contents to the stamps of accesses)
-// runs only a step that asks the table nothing: the literal key orders.
+// Much of a step runs on one thread.
 FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, Vector<String>* setsOutsideTypes)
 {
     RELEASE_ASSERT(&types == &program.types);

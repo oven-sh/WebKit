@@ -190,7 +190,6 @@ bool PaddingWidener::isCandidate(const Unit& unit) const
     if (!everyRowIsNarrow)
         return false;
     // Where undefined or null is a value of the field, a read takes the marker along, and the markers of the narrow slot are turned into those of the wide form and back at each access.
-    // A field of integers alone is read and stored as its raw word behind one compare with a 32-bit constant: there more bytes only make the constant wider.
     if (m_kind == WidenedRepresentations::Numbers && !holdsUndefinedOrNull(unit))
         return false;
     auto widened = widenedRepresentationOf(unit);

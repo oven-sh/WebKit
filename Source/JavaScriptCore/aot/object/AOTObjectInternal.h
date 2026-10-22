@@ -77,8 +77,7 @@ ALWAYS_INLINE void willLeaveStateOfBirth(VM& vm, const Object& object, const Fie
 
 void failIfKeysMustNotBeListed(VM&, const Object&);
 
-// The loader lists the own keys of what a CommonJS module exports, for the names that importers bind and for a namespace object, whose names are sorted: nobody sees the order of the keys,
-// which is what the proof that they are never listed is used for. Which properties the object has, flow knows the loader to see: it has it read every own property.
+// The loader lists the own keys of what a CommonJS module exports, for the names that importers bind and for a namespace object, whose names are sorted.
 class KeyListingThatShowsNoOrder {
     WTF_MAKE_NONCOPYABLE(KeyListingThatShowsNoOrder);
 public:

@@ -506,8 +506,7 @@ static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegister
     jit.store64(word, Address(promise, JSPromise::offsetOfPacked()));
 }
 
-// registers.awaited is a cell that a call without a promise returned. Leaves in it the cell that now refers to the waiter.
-// Unless the callee returned a promise or its SavedFrame, it has finished and the cell is its result.
+// registers.awaited is a cell that a call without a promise returned.
 static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& isResultOfCallee, JumpList& needsOperation)
 {
     using Continuation = SavedFrame::Continuation;

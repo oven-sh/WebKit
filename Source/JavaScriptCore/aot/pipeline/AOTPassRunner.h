@@ -30,8 +30,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The passes whose changes may give this pass something to do. PassID::None stands for a change that the runner makes itself.
-// The table stands beside the pass table.
+// The passes whose changes may give this pass something to do.
 const PassSet& passesEnabling(PassID);
 const PassSet& passesThatCanWaitBehind(PassID changer);
 

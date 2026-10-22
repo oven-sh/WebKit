@@ -255,9 +255,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfInt32, size_t, (Instan
     return found ? found - data : static_cast<size_t>(-1);
 }
 
-// `list.indexOf(text, from)` and `list.includes(text, from)`, which the code in line leaves to the general form: a string equals every string with its characters. An array whose elements lie
-// one behind the other as values, a string that is searched, and a start that is left out or lies at or behind the first element: the elements are compared here. A hole is passed by: it equals
-// no string, and an array that would ask its prototypes for one is not taken. Everything else is the engine's function's.
+// `list.indexOf(text, from)` and `list.includes(text, from)`, which the code in line leaves to the general form: a string equals every string with its characters.
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySearchOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedSearched, EncodedJSValue encodedFromIndex, uint32_t answersIndex))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySearchOfAnyValue);

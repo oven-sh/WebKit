@@ -87,8 +87,7 @@ InstanceOfAnswer instanceOfAnswerFor(const BuiltinLookupContext&, const Type& su
 Vector<BuiltinInstanceOfSite> planBuiltinInstanceOfSites(FunctionPassContext&);
 void rewriteBuiltinInstanceOfSites(FunctionPassContext&, std::span<const BuiltinInstanceOfSite>);
 
-// Once the requirements hold the call reads its arguments from the array. The list and the spread that fills it go away with the call: a call that passes an array as it is has neither.
-// The plan is for a callee that is a built-in function with a list form. Any other callee stays what it is.
+// Once the requirements hold the call reads its arguments from the array.
 struct ListCallSite {
     ValueSite site;
     ValueID list;

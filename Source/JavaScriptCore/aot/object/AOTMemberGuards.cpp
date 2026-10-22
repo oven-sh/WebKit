@@ -41,8 +41,7 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// A class record is asked for a name by its number, an object by its identifier. The identifier is made when the first object is asked,
-// so the guards of a class whose members do not exist yet make none.
+// A class record is asked for a name by its number, an object by its identifier.
 class MemberName {
 public:
     MemberName(VM& vm, uint32_t key)
@@ -188,8 +187,7 @@ static bool isClosureOfMethod(const JSCell* cell, const MethodData& method)
     return functionOf(cell) == FunctionID(method.function);
 }
 
-// Compiled code that reads the member as a value takes the closure from the table. The program has made this one itself, so the table learns of it here. A function that is evaluated twice has
-// two closures: the second is not what compiled code would answer.
+// Compiled code that reads the member as a value takes the closure from the table.
 static bool isClosureThatTableHolds(State& state, JSCell* closure, const MethodData& method)
 {
     ClosureTable& closures = state.objects->closures;
@@ -364,9 +362,7 @@ static void noteSetsContaining(State& state, const LayoutData& layout, const Mem
     noteSets(state, layout.aggregatesOf(guard));
 }
 
-// One site has one set for all the classes that may come to it. A class that is defined late comes with guards of stores that nobody has looked at, and takes the set from all the others.
-// It may make one object and never store by name twice, so nobody would look: the set would stay clear for good. So a set that held is read again at once, and the guard in its way is looked at.
-// Not behind the report of a change, which may come before the change.
+// One site has one set for all the classes that may come to it.
 enum class SetsThatHeld : bool { StayClear, AreReadAgain };
 
 static void clearSetsContaining(State& state, const LayoutData& layout, const MemberGuardData& guard, SetsThatHeld setsThatHeld = SetsThatHeld::StayClear)
@@ -439,8 +435,7 @@ static void end(State& state, const LayoutData& layout, const MemberGuardData& g
     clearSetsContaining(state, layout, guard);
 }
 
-// A store of a default is reported like any other change under the name, and the report may come before the change. So the guard is clear until somebody has looked again, which is no end:
-// both sides of its test do what the program says, and the side that passed holds until something runs that may clear the bit.
+// A store of a default is reported like any other change under the name, and the report may come before the change.
 static void leaveForLater(State& state, const LayoutData& layout, const MemberGuardData& guard, SetsThatHeld setsThatHeld = SetsThatHeld::StayClear)
 {
     ASSERT(guard.kind() == MemberGuardKind::PassedByStores);
@@ -613,7 +608,6 @@ static bool lacksMember(VM& vm, State& state, JSObject* object, MemberName& name
 }
 
 // A program puts objects of its own into a chain: between the prototype objects of two constructor functions, above the last one, between an instance and its class.
-// The lookup comes to `end` as the compiler expects if none of them has the name.
 static bool passOtherObjects(VM& vm, State& state, JSValue first, JSObject* end, MemberName& name, ChainObjects& passed)
 {
     for (JSValue next = first; next != JSValue(end); next = asObject(next)->getPrototypeDirect()) {
@@ -626,8 +620,7 @@ static bool passOtherObjects(VM& vm, State& state, JSValue first, JSObject* end,
 
 namespace {
 
-// What a lookup finds out about the classes on its way up that has nothing to do with the name. Whoever looks up all the names that the guards of a class speak of asks each class once.
-// It lives no longer than one run through the guards: nothing that such a run does gives a class another holder or another base.
+// What a lookup finds out about the classes on its way up that has nothing to do with the name.
 class ClassesAbove {
 public:
     struct Level {
@@ -743,7 +736,6 @@ static bool tryWatchDeclarer(VM& vm, State& state, const LayoutData& layout, Cla
     if (side == ClassSide::Static && ClassTable::isDefinedByClass(*declarer) && !declaresMember(*declarer, side, name.key()))
         return true;
     // Whoever stores to the prototype property of a constructor function, defines it or deletes it comes through the functions of the closure, which report it and let no cache remember the store.
-    // Closures share their Structures too: one function that gets a property of its own ends the watch for all that have the Structure.
     if (side == ClassSide::Static && watchpointsOf(state).implicitMemberKeys().prototype == name.key() && !declaresMember(*declarer, side, name.key()))
         return true;
     return watchpointsOf(state).tryWatch(vm, *declarer, side, holder, name.uid());
@@ -1326,8 +1318,7 @@ std::span<const uint64_t> ClassTable::classesBelowWithGuardsNamed(NamedGuardsBel
 // A definition changes what its own name finds, in the class and below it. The watchpoints of the other members follow the holder to its next Structure by themselves.
 void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
 {
-    // Most members are spoken of by no guard: none of the class, and there is no class below that could have one. Compiled code that reads a method as a value takes the closure
-    // out of the closure table, with a guard or on a proof, so the table learns of every closure that it has a cell for.
+    // Most members are spoken of by no guard: none of the class, and there is no class below that could have one.
     std::optional<FunctionID> defined = functionOf(function);
     bool isNamedByClosureTable = defined && m_state.objects->closures.hasCellFor(*defined);
     if (!isNamedByClosureTable && holdsFromStart(layout) && !layout.classData().subclassesOffset && m_classSidesByHolder.contains(holder)) {
@@ -1443,7 +1434,6 @@ void ClassTable::didChangeInstancePrototype(const LayoutData& instanceLayout)
 }
 
 // No object of the layout hides a member while each of them comes to the prototype object of the class past objects without the name.
-// A guard that is not set yet would be set without a look at these objects.
 void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLayout, JSValue prototype)
 {
     MemberGuardWatchpoints::MethodTableUpdate update(m_state);
@@ -1530,9 +1520,7 @@ MemberGuardWatchpoints::MethodTableUpdate::~MethodTableUpdate()
         m_watchpoints.updateMethodTable();
 }
 
-// The bit of a set of guards is set with the last of its members. A guard of a class that does not exist yet speaks of no object, so it stands in nobody's way.
-// The static side of a constructor function speaks of the function, which is there before the class.
-// One site has one set for all the classes that may come to it. A store by name arms the guard of its own class. The others are classes that make no such store, or none yet.
+// The bit of a set of guards is set with the last of its members.
 bool MemberGuardWatchpoints::tryArmGuardOfStoresInTheWay(uint32_t listEntry, bool setHeldBefore)
 {
     // The definition of a class sets guards too, and nobody has asked for its sets yet.

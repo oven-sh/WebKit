@@ -118,8 +118,7 @@ struct Function : FunctionRecord {
     const Value& at(ValueID id) const { ASSERT(id.index() < values.size()); return values.span().data()[id.index()]; }
     const Block& at(BlockID id) const { ASSERT(id.index() < blocks.size()); return blocks.span().data()[id.index()]; }
 
-    // The only ways to write to a body. Each says to the log what it has handed out. Whoever names the edits writes nothing else through the reference.
-    // The reference is good for writing until somebody reads the log or asks an analysis.
+    // The only ways to write to a body.
     Value& edit(ValueID id, OptionSet<ValueEdit> edits = anyValueEdit)
     {
         ASSERT(id.index() < values.size());

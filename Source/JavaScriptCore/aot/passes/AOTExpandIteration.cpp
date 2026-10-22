@@ -118,7 +118,6 @@ PassOutcome expandIteration(FunctionPassContext& pass)
 }
 
 // Until an iteration is expanded its steps are unknown code, to the function and, through its effect summary, to every caller.
-// An iteration that needs no test has nothing to wait for: no pass can place its tests better or prove more about it.
 PassOutcome expandProvenIterations(FunctionPassContext& pass)
 {
     if (!findStepsWithWork(pass).contains(ExpansionStep::Iterations))

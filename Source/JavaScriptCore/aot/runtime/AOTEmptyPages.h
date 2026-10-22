@@ -45,8 +45,7 @@ inline void decommitPagesOfZeros(void* pages, size_t size)
 #endif
 }
 
-// Where the entries of a table died it holds zeros, on pages that stay the process's own. A page with nothing else on it goes back to the system,
-// and its regions count as never written. Nothing may write the table meanwhile. Returns the number of bytes that went back.
+// Where the entries of a table died it holds zeros, on pages that stay the process's own.
 inline size_t decommitEmptyPages(std::span<uint8_t> table, RememberedSlotSet& writtenRegions)
 {
     size_t sizeOfPage = pageSize();

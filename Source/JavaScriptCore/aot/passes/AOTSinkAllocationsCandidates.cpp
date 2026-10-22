@@ -123,8 +123,7 @@ public:
     ScreeningResult run();
     // Bit k: the allocation with that index, or something that it is held by, holds or meets. For the others nothing is gained whatever becomes of these.
     BitVector allocationsThatMayPay();
-    // For each allocation a number for all that was seen of it and of what it holds, is held by or meets, in the order of the blocks. It names no value and no block:
-    // while the number stays, the function still does the same with these objects, whatever has changed around them.
+    // For each allocation a number for all that was seen of it and of what it holds, is held by or meets, in the order of the blocks.
     Vector<uint64_t> tracesOfAllocations();
     // The first use in the order of the blocks that makes the allocation necessary. Found for whoever collects the reasons why allocations stay.
     std::optional<Use> firstBuilderOf(uint32_t allocation) const { return m_objects[allocation].firstBuilder; }
@@ -936,8 +935,7 @@ static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeA
     }
 }
 
-// One value carries a field for every variant of a join. After a test has left one variant, that value is read, stored and
-// passed on at the type the variant's own description gives the field, and no cast states what the tag proves.
+// One value carries a field for every variant of a join.
 static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const VirtualFamily& family)
 {
     std::span<const VirtualObjectDescription> descriptions = family.descriptions();
@@ -1487,7 +1485,6 @@ void AllocationSinking::refuseUnprovenValues(VirtualObjectID object)
 }
 
 // A store by name waits for PlaceTypeTests: the value that fits then goes on as a value of the field's type, and only the rare arm keeps the store by name.
-// An object that takes such a value is carried further. Where one sweep over the function may already cost more than its share of the work, that tips the analysis over its limit, and it starts over.
 bool AllocationSinking::storesByNameWaitIn(BlockID block) const
 {
     return !m_inputs.hasOperationsOnSlots || m_inputs.isLargeForItsWork || m_function.at(block).frequency == BlockFrequency::Normal;

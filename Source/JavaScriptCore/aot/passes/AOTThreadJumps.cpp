@@ -616,8 +616,7 @@ private:
         return m_firstInSubtree[block] >= m_firstInSubtree[candidate] && m_firstInSubtree[block] <= m_lastInSubtree[candidate];
     }
 
-    // The block dominates its users, so a way to a user that does not pass through the block leads only through what the block dominates. An edge that this pass has redirected stands for
-    // a way through another candidate, which led through the same blocks.
+    // The block dominates its users, so a way to a user that does not pass through the block leads only through what the block dominates.
     UsersBelow findUsersBelow(BlockID candidate, BlockID start)
     {
         const IndexSet<BlockID>& users = m_usersOutsideBlock[candidate];
@@ -692,8 +691,7 @@ private:
         }
     }
 
-    // The edge goes through a block of its own with the parameters of the block that it skips: each is one more definition of what the parameter stands for,
-    // and the joins below get parameters for the two. The block holds no code.
+    // The edge goes through a block of its own with the parameters of the block that it skips: each is one more definition of what the parameter stands for, and the joins below get parameters for the two.
     void passParametersAlongSkippingEdges()
     {
         Vector<PassedParameters, 4> passed;
@@ -780,8 +778,6 @@ static bool hasTwoFunctionTestsForOneType(const FunctionPassContext& context)
 }
 
 // Two ways part at a test of a value for a type, come together again, and the same test of the same value follows: `f(f(x))` where f may be one of the functions that its type lists or any other.
-// Each way knows how the test ends. It gets a copy of the block with the test, which the first test then dominates, so that PropagateBranchConditions decides the copy,
-// and what the ways computed in between is no longer merged.
 class RepeatedTestThreader : public EdgeThreader {
 public:
     using EdgeThreader::EdgeThreader;

@@ -111,7 +111,6 @@ struct RowOfBody {
 };
 
 // The records that a function names: in its own record, as the type or the expected type of a value, listed by a block or not, in the words of a value or of a terminator.
-// Each list ascends and holds each id once.
 struct NamesInBody {
     std::span<const TypeID> types;
     std::span<const LayoutID> layouts;
@@ -155,13 +154,7 @@ static_assert(sizeof(RecordFacts) <= 8);
 // Whether the ids in a body are those that it will have when the loop or the edit that changes it has ended.
 enum class BodyIDs : bool { MayBeProvisional, Final };
 
-// A program pass looks through all bodies, often several times, for a few kinds of operations, and finds them in a few bodies. A body is two lines of memory for each block
-// and half a line for each value, so such a walk waits for memory. This holds, for each function, which kinds it holds and a word for each listed value.
-// Program::bodyIndex() gives it while somebody keeps it.
-//
-// A row is made when it is first asked for. ProgramEditor drops the row of a function when it hands the function out, and nothing is made for that function until whoever keeps
-// the index hears that the edits have ended. Whoever has an edited body at hand behind its last edit writes the row, which counts from the end of the edits.
-// A loop that changes bodies without an editor says so first.
+// A program pass looks through all bodies, often several times, for a few kinds of operations, and finds them in a few bodies.
 class BodyIndex {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodyIndex);
     WTF_MAKE_NONCOPYABLE(BodyIndex);
@@ -366,8 +359,7 @@ private:
     Vector<uint8_t> m_states;
 };
 
-// Hands the functor (BlockID, uint32_t indexInBlock, ValueID, const Value&) for each value of the function that a block lists and whose opcode is wanted:
-// block by block as the function lists them, the values of a block in the order of its list. With a row of the index no block is read, and of the values only those that are handed out.
+// Hands the functor (BlockID, uint32_t indexInBlock, ValueID, const Value&) for each value of the function that a block lists and whose opcode is wanted.
 template<typename Functor>
 void forEachListedValue(const Program& program, FunctionID id, const OpcodeSet& wanted, const Functor& functor)
 {
@@ -402,7 +394,6 @@ void forEachListedValue(const Program& program, FunctionID id, const OpcodeSet& 
 }
 
 // Hands the functor (BlockID, ValueID, Opcode, NameKind, uint32_t index) for each name of each value that a block lists and whose opcode is wanted: see IndexedName.
-// The values come in the order of forEachListedValue(). With a row of the index the body is not read.
 template<typename Functor>
 void forEachListedName(const Program& program, FunctionID id, const OpcodeSet& wanted, const Functor& functor)
 {
@@ -435,7 +426,6 @@ void forEachListedName(const Program& program, FunctionID id, const OpcodeSet& w
 }
 
 // Hands the functor (BlockID, ValueID, const Value&) for each value that a block lists, whose opcode is wanted, and one of whose names the filter (NameKind, uint32_t index) accepts.
-// The values come in the order of forEachListedValue(). With a row of the index only the values that are handed out are read.
 template<typename Filter, typename Functor>
 void forEachListedValueNaming(const Program& program, FunctionID id, const OpcodeSet& wanted, const Filter& filter, const Functor& functor)
 {
@@ -460,7 +450,6 @@ void forEachDirectCall(const Program& program, FunctionID id, const Functor& fun
 }
 
 // Hands the functor (ValueID, const Value&) for each value of the function whose opcode is wanted, listed by a block or not, in the order of their numbers.
-// No parameter of a block is wanted.
 template<typename Functor>
 void forEachValueListedOrNot(const Program& program, FunctionID id, const OpcodeSet& wanted, const Functor& functor)
 {

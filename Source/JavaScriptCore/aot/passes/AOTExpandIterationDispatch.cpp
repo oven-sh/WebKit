@@ -774,8 +774,6 @@ static bool isAsyncGenerator(const Function& function)
 }
 
 // %AsyncFromSyncIteratorPrototype%.next rejects its promise with what the step throws, and the loop awaits that promise: the exception arrives one turn of the job queue later.
-// It resolves its promise in a reaction to the value, done or not: the value arrives one turn later than from an await of the value itself.
-// Closing the iterator of such an arm has no effect, so nobody can tell that a value which rejects closes it a turn before the loop hears of the rejection.
 void ArmDispatcher::emitStepOfWrappedIterator(ArmState& state)
 {
     BlockFrequency frequency = m_function.at(m_builder.currentBlock()).frequency;
@@ -920,7 +918,6 @@ ValueID ArmDispatcher::appendUnspecifiedLike(ValueID model)
 }
 
 // The iterations of a function that have no block in common are expanded together: the analyses are computed a fixed number of times for all of them, and SSA is repaired once.
-// The blocks in which an iterator is live hold the iterations nested in it, so an iteration waits for the rounds that expand those, and its copies hold no open.
 class IterationRound {
     WTF_MAKE_NONCOPYABLE(IterationRound);
 public:

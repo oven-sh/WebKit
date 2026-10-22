@@ -261,8 +261,7 @@ JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejecte
         return resolution;
     saved->setStepStatus(done.asBoolean() ? AsyncGeneratorStepStatus::Completed : AsyncGeneratorStepStatus::Yielded);
     JSValue value = result->getDirect(iteratorResultObjectValuePropertyOffset);
-    // While nobody has put a "then" where a result object finds it, the object is the one that the producer keeps for its next step (settleDriverWithIteratorResult in JSMicrotask.cpp),
-    // and nobody else has seen it. It would keep the value alive until that step.
+    // While nobody has put a "then" where a result object finds it, the object is the one that the producer keeps for its next step (settleDriverWithIteratorResult in JSMicrotask.cpp), and nobody else has seen it.
     if (result->realm()->promiseThenWatchpointSet().isStillValid()) [[likely]]
         result->putDirectOffset(result->vm(), iteratorResultObjectValuePropertyOffset, jsUndefined());
     return value;

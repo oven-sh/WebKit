@@ -56,13 +56,11 @@ static_assert(Int32Shape < DoubleShape && DoubleShape < ContiguousShape);
 
 void reviewArrayAllocationProfile(ArrayAllocationProfile&, JSArray* lastArrayOrNull);
 
-// An array on the heap is born as one cell: the cell of the array, the indexing header and the elements, one behind the other. An array that outgrows the elements gets storage of its own, like any array.
-// An array that is about to get named properties has room for the first of them between its cell and the indexing header, where they lie in any storage.
+// An array on the heap is born as one cell: the cell of the array, the indexing header and the elements, one behind the other.
 inline constexpr unsigned propertyRoomOfArray = 4 * sizeof(uint64_t);
 constexpr size_t sizeOfArrayWithStorage(unsigned capacity, unsigned propertyRoom = 0) { return (3 + capacity) * sizeof(uint64_t) + propertyRoom; }
 
 // One cell holds the array and its first storage, which is filled with holes, with `propertyRoom` bytes in front of the indexing header.
-// Null where such a cell would be too large, or there is no memory. See isStorageInOwnCell().
 JSArray* tryCreateArrayWithStorage(VM&, Structure*, unsigned publicLength, unsigned vectorLength, unsigned propertyRoom = 0);
 // In the count that NewArray takes: the storage is an allocation of its own.
 inline constexpr uint32_t storageOfItsOwnInArrayLiteralCount = 1u << 26;

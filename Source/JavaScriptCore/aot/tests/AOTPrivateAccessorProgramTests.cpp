@@ -11,19 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// class C {
-//   v = 1
-//   get #g() { return this.v + 100 }
-//   set #s(x) { this.v = x * 2 }
-//   get #p() { return this.v }
-//   set #p(x) { this.v = x }
-//   read() { return this.#g }
-//   write(x) { this.#s = x; return this.v }
-//   increment() { const before = this.#p++; return before + ":" + this.v }
-//   add() { return (this.#p += 10) + ":" + this.v }
-//   static read(o) { return o.#g }
-// }
-// print(new C().read()); print(new C().write(4)); print(new C().increment()); print(new C().add()); print(C.read(new C()))
 static constexpr ASCIILiteral accessors = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="v" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
 variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
@@ -252,22 +239,6 @@ function f11 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] t
 entry module=m0
 )IR"_s;
 
-// class C {
-//   #m() { return 1 }
-//   get #g() { return 2 }
-//   set #s(x) { }
-//   run(which) {
-//     try {
-//       if (which === 0) this.#m = 1
-//       else if (which === 1) this.#g = 1
-//       else if (which === 2) return this.#s
-//       else if (which === 3) this.#g++
-//       return this.#m() + this.#g
-//     } catch (e) { return e instanceof TypeError }
-//   }
-// }
-// const c = new C()
-// for (let i = 0; i < 5; i++) print(c.run(i))
 static constexpr ASCIILiteral storesThatThrow = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
 variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
@@ -461,16 +432,6 @@ function f6 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
 entry module=m0
 )IR"_s;
 
-// class C {
-//   #m() { }
-//   get #g() { return 1 }
-//   static has(o) { return #m in o }
-//   static hasGetter(o) { return #g in o }
-// }
-// class D extends C { }
-// class Other { #m() { } }
-// print(C.has(new C())); print(C.hasGetter(new C())); print(C.has(new D())); print(C.has({})); print(C.has(new Other())); print(C.has(C))
-// try { C.has(1) } catch (e) { print(e instanceof TypeError) }
 static constexpr ASCIILiteral inOperator = R"IR(layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
 layout L1 kind=Instance name="D" module=m0 base=L0 constructor=f6 supertypes=[L0] flags=[HasHeritage]
 layout L2 kind=Instance name="Other" module=m0 constructor=f7 fields=[{key=#"#"@L2 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
@@ -683,18 +644,6 @@ data d0 root=Object{layout=L3} module=m0
 entry module=m0
 )IR"_s;
 
-// function make(tag) {
-//   return class {
-//     #m() { return tag }
-//     get #g() { return "get " + tag }
-//     static invoke(o) { try { return o.#m() } catch (e) { return e instanceof TypeError } }
-//     static read(o) { try { return o.#g } catch (e) { return e instanceof TypeError } }
-//     static has(o) { return #m in o }
-//   }
-// }
-// const A = make("a"), B = make("b"), a = new A(), b = new B()
-// print(A.invoke(a)); print(B.invoke(b)); print(A.invoke(b)); print(B.invoke(a))
-// print(A.read(a)); print(A.read(b)); print(A.has(a)); print(A.has(b)); print(B.has(a)); print(B.has(b))
 static constexpr ASCIILiteral classEvaluatedTwice = R"IR(layout L0 kind=Instance module=m0 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {

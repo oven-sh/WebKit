@@ -59,8 +59,7 @@ static bool isHardEdge(const AllocationSinking& sinking, VirtualObjectID holder,
     return canStoreLate(sinking.objectContext(), description, family.fieldAt(field)) == LateStore::Unknown;
 }
 
-// A property that holds an object which is built after its holder, because it refers to the holder, is stored late. Where the store
-// has to create the property, the properties that were created after it are stored behind it, so that the keys keep their order.
+// A property that holds an object which is built after its holder, because it refers to the holder, is stored late.
 static Vector<PlannedProperty, 8> planProperties(const AllocationSinking& sinking, const SinkingState& state, VirtualObjectID object, const FreshResultVariant& variant)
 {
     const VirtualFamily& family = sinking.familyOf(object);
@@ -490,8 +489,7 @@ ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
     if (m_enteredEdge.edge && m_enteredEdge.edge->edge.isHandlerEdge())
         return cell;
 
-    // The casts went while the object was virtual. Their proofs are about the object, so they hold for its cell. Each use gets
-    // casts of its own: the code around it may be one arm of a branch that this pass emits.
+    // The casts went while the object was virtual.
     for (TypeID assumedType : state.assumedTypes) {
         if (program().typeOf(function(), cell).isSubsetOf(program().at(assumedType), program()))
             continue;

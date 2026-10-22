@@ -329,9 +329,7 @@ private:
     unsigned m_firstStored { 0 };
 };
 
-// The summary of a function that is called. Of a function that was made after the summaries nothing is known, unless its role says what it does:
-// a serializer does no more than JSON.stringify does with an object of its layout, a parser no more than JSON.parse does with a string,
-// the step of an array chain calls the traversal it was made from, and a bound function calls its target.
+// The summary of a function that is called.
 class CalleeSummary {
 public:
     CalleeSummary(const EffectContext&, FunctionID);
@@ -351,19 +349,16 @@ private:
 };
 
 // What is known before a body is summarized: nothing of what a function does elsewhere, and of a parameter what the table says where the function borrows it, else what flow says.
-// Without a table it computes the one of the program as it is.
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, BuildContext&);
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, const BorrowedParameters&, BuildContext&);
 EffectSummaries computeEffectSummaries(const Program&, const FlowResults&, BuildContext&);
-// Brings the summaries up to date with the program. They are the ones that were computed with what is kept, or none. They name no witnesses, which nothing but a dump reads.
-// What the bodies it reads name goes to the references, if there are any.
+// Brings the summaries up to date with the program.
 void updateEffectSummaries(const Program&, const FlowResults&, BuildContext&, BodySummaries& kept, EffectSummaries&, BodyReferences* = nullptr);
 FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&);
 
 // Differs, but for a collision, where what callers read of the record of the function differs.
 uint64_t stampOfRecord(const Function&);
-// The same of what describeEffects() reads of the record of a function that an operation may run. It asks for no capability and not for who created the function.
-// A function that tests its arguments and goes on in its typed body or its fallback is to it the function as it was written, unless that was a coroutine.
+// The same of what describeEffects() reads of the record of a function that an operation may run.
 uint64_t stampOfRecordForCallers(const Function&);
 // The same of what says which operand of a call is which entry parameter, what the parameters hold and whether there is a body: what a dependency on the function means.
 uint64_t stampOfEntry(const Function&);
@@ -381,9 +376,7 @@ OperandSummary summarizeEntryParameter(FunctionAnalyses&, uint32_t entryParamete
 OperandSummary publishedParameterSummary(const FlowResults&, FunctionID, uint32_t entryParameter);
 CallerState callerStateOf(const FlowResults&, FunctionID);
 bool runsAtMostOnce(const FlowResults&, FunctionID);
-// The callbacks, handlers, accessors and protocol methods that flow linked. Their callers may all be known to flow, and the operation that enters one may
-// still read as unknown code here: the type of its operand does not name the function, or a built-in that runs code of no operand calls a handler that
-// native code holds (one drains the jobs, another closes a socket).
+// The callbacks, handlers, accessors and protocol methods that flow linked.
 BitVector functionsCalledIndirectly(const FlowResults&, size_t numberOfFunctions);
 
 } } } // namespace JSC::AOT::Typed

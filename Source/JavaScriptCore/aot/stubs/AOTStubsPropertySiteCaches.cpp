@@ -288,8 +288,7 @@ void generatePutByIdAtSite(StubAssembler& jit)
 
     jit.linkToStub(jit.branchIfNotCell(registers.receiver), slotExit(table, SlotExit::Miss));
     isNotInFieldTable.append(branchIfSiteIsFilled(jit, registers.site));
-    // What the table of fields answers is never filed. Its own forms are the shortest way of all. For a field that is stored by its record a filled site is the shorter way:
-    // so one such store in 256 at the empty sites goes the way of the caches, and a site that comes again and again gets filled.
+    // What the table of fields answers is never filed.
     JumpList isSampled;
     storeFieldByTable(jit, { registers.receiver, registers.identifierNumber, registers.structureID, registers.header, std::nullopt, false, true }, jit.operand(1), registers.payload, operationFor(mode), isNotInFieldTable, &isSampled);
     isNotInFieldTable.link(&jit);

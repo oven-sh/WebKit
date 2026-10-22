@@ -39,7 +39,6 @@ static void emitLoadAddressOfJob(StubAssembler& jit, GPRReg queue, GPRReg indexA
 }
 
 // awaitMustSuspend is set unless JSGlobalObject::queueMicrotask goes straight to MicrotaskQueue::enqueue: it stands for !canFastQueueMicrotask() and for a cross-task token.
-// What is left of enqueue is Deque::append where the ring has room, which an empty buffer has not: its mask is zero.
 void emitReserveJob(StubAssembler& jit, const JobRegisters& registers, JumpList& needsOperation)
 {
     const auto [queue, slot, next, scratch] = registers;
@@ -97,7 +96,6 @@ void emitPublishJob(StubAssembler& jit, InternalMicrotask task, JSPromise::Statu
 }
 
 // MicrotaskQueue::drainImpl takes a job out of the queue before it runs it, and asks afterwards whether the queue is empty, so it does not notice a job that is gone.
-// While awaitMustSuspend is clear it would run the job at once: the realm's jobs are runnable and nobody is told about the end of a job.
 void emitLoadHeadJob(StubAssembler& jit, const HeadJobRegisters& registers, JumpList& noJob)
 {
     const auto [queue, slot, word] = registers;

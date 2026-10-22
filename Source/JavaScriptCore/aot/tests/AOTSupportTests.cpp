@@ -391,8 +391,6 @@ static void checkFunctionQueue(unsigned width)
     AOT_TEST_CHECK(ordinals.bitCount() == count && ordinals.get(0) && ordinals.get(count - 1));
 }
 
-// The first function finds one that takes long and many small ones. The long one begins first, on the thread that holds a part of the small ones,
-// and does not end before all of them have been processed.
 static void testFunctionQueueBehindLongFunction()
 {
     constexpr uint32_t numberOfSmallFunctions = 64;

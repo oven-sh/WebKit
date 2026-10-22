@@ -396,9 +396,6 @@ function f8 name="Right" kind=DerivedConstructor flags=[HasRestParameter, HasNew
 }
 )IR"_s;
 
-// class First { m() { return "First.m" } }  class A { constructor() { this.seen = this.m() } m() { return "A.m" } }  class B extends First { m() { return "B.m" } }  Object.setPrototypeOf(B, A)
-// class Stranger { #q = 6; q() { return this.#q } m() { return "Stranger.m" } }  const b = new B(), odd = Reflect.construct(A, [], Stranger);  let thrown = "none";  try { odd.q() } catch (e) { thrown = e.name }
-// print(new A().seen, b.seen, b instanceof A, b instanceof First, odd.seen, odd instanceof A, thrown, new Stranger().q())
 static constexpr ASCIILiteral classesNotBelowConstructorText = R"IR(layout L0 kind=Instance name="First" module=m0 constructor=f1
 layout L1 kind=Instance name="A" module=m0 constructor=f3 fields=[{key="seen" declared={type=string flags=[IsExpected]}}]
 layout L2 kind=Instance name="B" module=m0 base=L0 constructor=f5 supertypes=[L0] flags=[HasHeritage]
@@ -683,9 +680,6 @@ static void checkPrivateFieldsMoveToTheSubclassInstance(LoadedProgram& program)
     }
 }
 
-// class A { x = 1; y = 2 }  class B extends A { y = 20; z; x = 10; m() { return "B.m" } }  const o = Reflect.construct(A, [], B)
-// print(o.x, o.y, o.z, Object.hasOwn(o, "z"), o.m(), o instanceof B, new A().x)
-// Nobody constructs B, so it has no shape, and its prototype object still selects what A allocates: an ordinary object, which has the fields of A.
 static constexpr ASCIILiteral subclassNeverConstructedText = R"IR(layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 layout L1 kind=Instance name="B" module=m0 base=L0 constructor=f2 fields=[{key="y" declared={type=number flags=[IsExpected]} flags=[IsRequired] originLayout=L0 originField=1}, {key="z" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
@@ -807,9 +801,6 @@ data d0 root=Array{contents=anything} module=m0
 entry module=m0
 )IR"_s;
 
-// class A { constructor() { this.x = 1; delete this.x; this.seen = this.x } }  class B extends A { }  B.prototype.x = "proto x"
-// const o = Reflect.construct(A, [], B);  print(o.seen, o.x, Object.hasOwn(o, "x"), o instanceof B)
-// new.target of A is unknown, so `this` is the unknown value beside an instance of A, and at run time it is an instance of B: what A does to it by name counts for B too.
 static constexpr ASCIILiteral deleteInBaseConstructorText = R"IR(layout L0 kind=Instance name="A" module=m0 constructor=f1 fields=[{key="x" declared={type=1 flags=[IsExpected]}}, {key="seen" declared={type=undefined flags=[IsExpected]}}]
 layout L1 kind=Instance name="B" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
@@ -905,9 +896,6 @@ data d0 root=Array{contents=anything} module=m0
 entry module=m0
 )IR"_s;
 
-// TypeScript without useDefineForClassFields: class Base { n = 0; constructor() { (this as unknown as Heir).y = 5 } }  class Heir extends Base { y: number | undefined; z = 1 }
-// print(Object.keys(new Heir()).join(), JSON.stringify(new Heir()))
-// Nobody enumerates an instance of Base, so its slot for y has no absent state. Heir declares the name again, with an absent state: the placeholder of the object that Base allocates creates no field of the instance.
 static constexpr ASCIILiteral fieldOfBaseDeclaredAgainText = R"IR(typesite w0 module=m0 kind=Field
 typesite w1 module=m0 kind=CallResult
 typesite w2 module=m0 kind=CallResult
@@ -1022,10 +1010,6 @@ function f4 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStac
 entry module=m0
 )IR"_s;
 
-// class WithSetter { constructor(stores) { this.caught = "nothing"; if (stores) this.guarded = "stored" }  set guarded(value) { this.caught = "caught " + value }  get guarded() { return "from the getter" } }
-// class DefinesOverSetter extends WithSetter { guarded = "defined" }  const first = new DefinesOverSetter(true), second = new DefinesOverSetter(false)
-// print(first.caught, first.guarded, Object.keys(first).join(), second.caught, second.guarded, Object.keys(second).join())
-// The store of the base constructor runs before the definition of the field, finds no own property and runs the setter.
 static constexpr ASCIILiteral storeBeforeDefinitionText = R"IR(layout L0 kind=Instance name="WithSetter" module=m0 constructor=f1 fields=[{key="caught" declared={type="nothing" flags=[IsExpected]}}]
 layout L1 kind=Instance name="DefinesOverSetter" module=m0 base=L0 constructor=f4 fields=[{key="guarded" declared={type=string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage]
 variable g0 module=m0 declared={type=function} flags=[IsImmutable]
@@ -1171,10 +1155,6 @@ function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
 entry module=m0
 )IR"_s;
 
-// let seen = ""  function Base(v) { this.tag = v }  class Logged extends Base { set tag(v) { seen = seen + "setter " + v } }  new Logged(1); new Base(2)
-// class Valued { constructor(v) { this.value = v } }  const observable = Parent => class extends Parent { set value(v) { this.stored = v + v }  get value() { return this.stored } }
-// const Watched = observable(Valued); new Valued(1); const watched = new Watched(21); print(seen, watched.value, watched.stored, Object.keys(watched).join())
-// The instances of the classes below have the slot of the field that the base constructor stores, and the store runs their setter: the slot stays empty. Nobody reads the fields.
 static constexpr ASCIILiteral storeRunsSetterOfSubclassText = R"IR(layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="tag" declared={type=anything}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="Logged" module=m0 constructor=f2 flags=[HasHeritage]
 layout L2 kind=Instance name="Valued" module=m0 constructor=f4 fields=[{key="value" declared={type=anything}}]

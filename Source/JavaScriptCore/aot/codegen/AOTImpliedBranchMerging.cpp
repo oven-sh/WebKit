@@ -499,8 +499,7 @@ public:
         return false;
     }
 
-    // The first pages of the cage of cells are never mapped, and a marker is a small word. So a read that stands for a null check faults through what a marker decodes to as it does through the marker:
-    // it goes through the pointer, whatever the word is, and behind it the word is a reference.
+    // The first pages of the cage of cells are never mapped, and a marker is a small word.
     void readThroughPointers(B3::Procedure& proc) const
     {
         Reads reads;

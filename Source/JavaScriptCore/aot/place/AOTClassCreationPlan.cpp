@@ -135,8 +135,6 @@ static bool isClassWithConstantNames(const Layout& layout)
 }
 
 // Nothing can come between such a class and what the program text says of it but a change to an object that exists, and that change is reported.
-// A constructor function is there, and can be changed, before its class is. The records say nothing of what a built-in parent or a parent nobody knows has, so a name that is looked for there gets no guard.
-// Where the parent is only expected, the definition compares: with another parent it breaks the link guards of the class and what they carry, before the class has an object.
 static bool definitionMakesWhatRecordsSay(const Program& program, LayoutID id)
 {
     LayoutID current = id;

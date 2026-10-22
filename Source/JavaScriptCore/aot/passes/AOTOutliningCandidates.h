@@ -56,8 +56,7 @@ public:
     OutliningSiteFinder(const Program&, const OptimizationInputs&, BuildContext&);
     ~OutliningSiteFinder();
 
-    // Once for a function, from any thread, while the caches of the program and an interning phase of its types are open. The body holds no provisional id.
-    // False where the function has no site, so that outlining leaves it as it is.
+    // Once for a function, from any thread, while the caches of the program and an interning phase of its types are open.
     bool findIn(FunctionID);
     // By function, as many as the program had when the finder was made.
     std::span<const uint8_t> hasSites() const LIFETIME_BOUND;

@@ -902,8 +902,7 @@ void RelationsOfFunction::checkTerminator(const Terminator& terminator)
         fail(RelationsRule::ResultIsListed, m_block, { }, "undefined is returned"_str);
 }
 
-// The rows into a listed Allocation are all that is written to it. So what it holds from birth besides its operands has rows too:
-// a copy holds what is read out of each thing that its source may be, or something that is not listed; a literal of constants the latter.
+// The rows into a listed Allocation are all that is written to it.
 void RelationsOfFunction::checkWhatItIsBornWith(const Value& made)
 {
     uint32_t subjectIndex = m_ownSubject[m_user.index()];

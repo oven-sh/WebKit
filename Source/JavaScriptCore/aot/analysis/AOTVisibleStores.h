@@ -29,7 +29,6 @@ enum class StoredKind : uint8_t {
 };
 
 // What the stores that the program shows put into each field, followed through variables, parameters, results and other fields.
-// It proves nothing: code that nobody sees, a computed key or a receiver of another type may store anything. It says which values a slot is worth making for.
 class VisibleStores {
 public:
     // Called for each function with a body, on the thread that is about to read it. A function for which it answers false is not read.
@@ -44,11 +43,9 @@ public:
     OptionSet<StoredKind> kindsPassedTo(FunctionID function, unsigned parameter) const { return m_parameterKinds.isEmpty() ? OptionSet<StoredKind> { } : m_parameterKinds[function.index()][parameter]; }
     // Whether each of those calls passes, for a parameter of type number, a value whose own type lies in int32. A sum of two int32s is of the kind and not of the type.
     bool typesPassedLieInInt32(FunctionID function, unsigned parameter) const { return !m_parametersPassedOtherTypes.isEmpty() && !m_parametersPassedOtherTypes[function.index()].get(parameter); }
-    // Whether something that the program reads from the field goes where only an integer makes sense: it is the index of an element of an array or of a character of a string,
-    // or the argument that a built-in function takes for a position, a length or an index. An operand of a bit operation says nothing: `x | 0` is how a fraction is cut off.
+    // Whether something that the program reads from the field goes where only an integer makes sense.
     bool isUsedAsInteger(LayoutID layout, uint32_t field) const { return !m_fieldsUsedAsIntegers.isEmpty() && m_fieldsUsedAsIntegers[layout.index()].get(field); }
-    // Whether each allocation that the program shows starts the field with a value whose own type fits a slot of four bytes, undefined and null aside. A counter is of the kind and not of the type,
-    // and `x | 0` may be one of the few int32s that such a slot keeps for its markers.
+    // Whether each allocation that the program shows starts the field with a value whose own type fits a slot of four bytes, undefined and null aside.
     bool typesOfInitialValuesFitInt32Slot(LayoutID layout, uint32_t field) const { return m_fieldsStartedWithOtherTypes.isEmpty() || !m_fieldsStartedWithOtherTypes[layout.index()].get(field); }
 
 private:

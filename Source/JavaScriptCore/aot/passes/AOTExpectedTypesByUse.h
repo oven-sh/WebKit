@@ -16,8 +16,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What the uses of a value say about it, for the tests that are about to be planned. No rule of typing says it again: where no test came of it, it is taken back,
-// or every round of a fixpoint would see it go when the values are typed and come again here.
+// What the uses of a value say about it, for the tests that are about to be planned.
 class ExpectedTypesByUse {
     WTF_MAKE_NONCOPYABLE(ExpectedTypesByUse);
 public:
@@ -36,7 +35,6 @@ public:
     }
 
     // The names that a value is asked for are all that speaks for the layouts expected of it: nobody has checked that, and no analysis has seen them arrive.
-    // A built-in class or a primitive type is expected of the receiver of a method for the sake of the call, which stands behind the read of the method.
     void didGuessFromNames(ValueID id) { m_valuesGuessedFromNames.set(id.index()); }
     bool isGuessedFromNames(ValueID id) const { return m_valuesGuessedFromNames.get(id.index()); }
 

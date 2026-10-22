@@ -254,10 +254,7 @@ struct alignas(FieldAsProperty) FieldList {
 
 } // anonymous namespace
 
-// The orders of a layout form a tree. A walk from its root starts in order 0 and stays in an order for as long as the order lists what the walk looks for.
-// Where the order lists something else or ends, a Continuation names the order to go on in. An order enters the tree with one Continuation, at the place where a walk along it first finds nothing.
-// So a list of entries has one place in the tree, however many orders start with it, and a walk to it takes a comparison per entry and a probe per change of order.
-// The order word of an object may name its entries by another order that starts with them: the image has such words. Where such a word has to leave its order, a Continuation remembers the way into the tree.
+// The orders of a layout form a tree.
 struct KeyOrderTable::Storage {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Storage);
     WTF_MAKE_NONCOPYABLE(Storage);
@@ -594,7 +591,6 @@ std::optional<uint32_t> KeyOrderTable::orderStartingWith(const LayoutData& layou
 }
 
 // No two slots of a layout overlap, and a field without storage has no slot key: one field at the most has the key.
-// A wide layout has hundreds of fields, and they are mostly created in the order of its record, one behind the other. So the walk begins behind the field that it found last.
 const FieldData* KeyOrderTable::fieldAt(const LayoutData& layout, uint32_t slotKey)
 {
     if (slotKey == noSlotKey)

@@ -263,8 +263,7 @@ uint32_t DerivedFunctions::PhaseState::add(const DerivedFunctionKey& key)
     return ordinal;
 }
 
-// The thread that takes a certain one of the last entries creates the next ones, so that nobody waits for them, not even when that thread loses
-// its processor meanwhile.
+// The thread that takes a certain one of the last entries creates the next ones, so that nobody waits for them, not even when that thread loses its processor meanwhile.
 void DerivedFunctions::PhaseState::createEntriesAheadOf(uint32_t ordinal)
 {
     uint32_t numberCreated = numberOfCreatedEntries.load(std::memory_order_relaxed);

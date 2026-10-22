@@ -54,8 +54,7 @@ FieldTypeState fieldTypeStateOf(const Program& program, FieldReference reference
     return hasProvenType(flowOf(program, reference)) ? FieldTypeState::Proven : FieldTypeState::Unknown;
 }
 
-// What a read by name finds. The type of a field bounds what its slot holds: a store of another value, a deletion and a redefinition move the property out of the slot,
-// and the generic code behind a failed test of the slot reads it by name from a receiver of the same proven type.
+// What a read by name finds.
 static std::optional<Type> tryTypeOfField(const TypingContext& context, FieldReference reference)
 {
     const Field& field = fieldAt(context.program, reference);
@@ -131,7 +130,6 @@ std::optional<Type> tryTypeOfSlotContents(const TypingContext& context, std::spa
 }
 
 // What a read finds that looks for a deferred closure: the closure, made by now, or whatever else the program has stored.
-// One receiver with such a slot makes the read one of this kind, and the slots of its other receivers are ordinary ones.
 std::optional<Type> tryTypeOfDeferringSlotContents(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     return tryTypeOfSlotContents(context, receivers, key);

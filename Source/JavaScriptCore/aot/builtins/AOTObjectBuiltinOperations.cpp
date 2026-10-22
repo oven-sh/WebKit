@@ -322,8 +322,7 @@ static JSValue listOwnProperties(Instance* instance, JSValue value, OwnPropertyL
     return entries;
 }
 
-// `Object.prototype.toString.call(value)`. The engine's function makes a wrapper object of a string, a number or a boolean to ask it for Symbol.toStringTag. In a compiled program nobody can put
-// that name on String.prototype, Number.prototype, Boolean.prototype or Object.prototype: the answer is known, and nothing is made for it.
+// `Object.prototype.toString.call(value)`.
 JSC_DEFINE_JIT_OPERATION(operationAOTObjectToStringOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
 {
     JSValue value = JSValue::decode(encodedValue);
@@ -569,9 +568,7 @@ static bool tryReadBySlots(VM& vm, JSObject* cell, PropertiesInSlots& properties
 
 namespace {
 
-// Defines one property after the other on the target. An object of ours takes two kinds without validation, because nothing can refuse them:
-// a plain value for a plain field that is in its slot, and a name that it does not have yet and that is no field. The plain ones among the
-// new names wait for each other: they get their storage at once, and the Structure of the object follows that of its extra properties once.
+// Defines one property after the other on the target.
 class PropertyDefiner {
 public:
     PropertyDefiner(VM& vm, JSGlobalObject* globalObject, JSObject* target)
@@ -653,9 +650,7 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__ownEntriesFlat(JS
     return JSC::JSValue::encode(JSC::AOT::listOwnProperties(JSC::AOT::Instance::of(globalObject), JSC::JSValue::decode(encodedObject), JSC::AOT::OwnPropertyList::FlatEntries));
 }
 
-// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its
-// call stood. Nobody sees an ordinary object being described: the first half hands it on. Anything else it describes, and hands the descriptors on in
-// a cell that no program ever has.
+// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood.
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__describeUnlessOrdinary(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource)
 {
     using namespace JSC;
@@ -670,8 +665,7 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__describeUnlessOrd
     return JSValue::encode(InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), descriptors, jsUndefined()));
 }
 
-// The language describes every property before it defines the first. With two ordinary objects nobody can tell, also where they are one object: to
-// define a property as it stands changes nothing.
+// The language describes every property before it defines the first.
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__definePropertiesFrom(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedTarget, JSC::EncodedJSValue encodedDescribed, JSC::EncodedJSValue)
 {
     using namespace JSC;

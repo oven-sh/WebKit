@@ -87,8 +87,7 @@ struct ArrayWrites {
         IsLiteral = 1 << 1,
         // Object.entries makes it with a key and a value. The key is a string, so whoever makes the pair gives it the one storage that holds everything.
         IsPairOfEntries = 1 << 2,
-        // An array in the tree of a constant. The record lists what it holds when it is made. Whoever makes it out of the record picks its storage by the record, so nothing is said about that.
-        // A small tree of arrays and constants alone, `[]` for one, is never made out of its record: ExpandData makes literals of its arrays, and they count as literals here.
+        // An array in the tree of a constant.
         IsInData = 1 << 3,
         // A hole is made, or something writes of which nobody knows where.
         MayGetHole = 1 << 4,
@@ -708,7 +707,6 @@ static const BuiltinTypePart* findArrayMadeBy(const BuiltinTable& builtins, cons
 }
 
 // The table says of a new array that every index below its length holds a value, and of an operand that its holes are copied: `list.slice()` has the holes of the list and no others.
-// Which overload a call selects depends on its operands, so every overload of the mode that makes an array has to say it.
 void ContainerAnalysis::noteArrayMadeBy(Walker& walker, const ValueFlowBuiltinApplication& application)
 {
     ValueSetMaker& maker = walker.maker;
@@ -736,8 +734,7 @@ void ContainerAnalysis::noteArrayMadeBy(Walker& walker, const ValueFlowBuiltinAp
         const BuiltinTypePart* made = overload.mode == application.mode() ? findArrayMadeBy(builtins(), overload) : nullptr;
         if (!made)
             continue;
-        // An array that is never built, because only its first elements are read (`text.split(",")[0]`), is worth more than the proof: behind the proof those reads ask whether they are in bounds,
-        // and SinkAllocations answers that of no array whose length it does not know.
+        // An array that is never built, because only its first elements are read (`text.split(",")[0]`), is worth more than the proof.
         if (!made->pristine.contains(PristineAspects::Dense) || overload.code.prefixForm) {
             m_arrayWrites[*array].add(ArrayWrites::MayBeMadeWithHoles);
             continue;
@@ -753,8 +750,7 @@ void ContainerAnalysis::noteArrayMadeBy(Walker& walker, const ValueFlowBuiltinAp
     walker.arraysMadeByBuiltins.append({ *array, copied, mayRunCode });
 }
 
-// An array that copies holes has none where the arrays that it copies have none. They may copy each other: `list = list.slice()` in a loop. So all are taken for dense, and those that copy one that is not are taken out
-// until none is left: whichever array of a circle was made first has copied from outside the circle.
+// An array that copies holes has none where the arrays that it copies have none.
 void ContainerAnalysis::settleWhichResultsAreCreatedDense()
 {
     for (const ArrayMadeByBuiltin& made : m_arraysMadeByBuiltins)
@@ -938,8 +934,7 @@ void ContainerAnalysis::convertLevel(std::span<const uint32_t> containers)
     ValueFlowResultInputs inputsWithContainers = m_inputs;
     inputsWithContainers.containers = &m_results;
 
-    // The containers of a level say nothing of each other. The new types of the tasks are committed in the order of the tasks, which is that of the containers.
-    // A task makes its own ValueFlowPositions, which remembers what it has worked out: few tasks work less out twice.
+    // The containers of a level say nothing of each other.
     constexpr size_t containersPerTask = 1024;
     unsigned numberOfTasks = static_cast<unsigned>((containers.size() + containersPerTask - 1) / containersPerTask);
     TypeInterningPhase phase(m_types, numberOfTasks);
@@ -996,8 +991,7 @@ void ContainerAnalysis::noteSetOfArrays(Walker& walker, ValueSetID set)
     });
 }
 
-// Compiled code takes an array out of a value of a body or out of a position of the program. A node that a rule has made has no reader of that sort:
-// the chain of a lookup lists its receivers beside Array.prototype, which is an array, and all the receivers of a built-in meet in its group.
+// Compiled code takes an array out of a value of a body or out of a position of the program.
 void ContainerAnalysis::findComponents()
 {
     const ValueFlowSolver& solver = m_inputs.solver();
@@ -1024,7 +1018,6 @@ static bool mayGetDoubleStorage(ArrayStorage storage, const Type& elements)
 }
 
 // A creator allocates the storage that fits what the type of its array says the array holds, so all the arrays of a component get one type for their elements.
-// The storage is proven where no store converts it: no NaN goes into an array of fractions, and nothing but an int32 into an array of those.
 void ContainerAnalysis::listMembersOfComponents()
 {
     m_membersOfComponent = Vector<Vector<uint32_t>>(m_containers.size());
@@ -1077,8 +1070,7 @@ void ContainerAnalysis::shareStorageWithinComponents()
             m_facts[array].arrayStorage = storage;
         }
     }
-    // The arrays of a component share a kind because a test for numbers that fails may convert the array that it was asked of. Nothing converts the storage that holds everything while no number lies in it:
-    // a literal that is born with it for what it holds itself, never holds a number and keeps it, has it whatever it meets. Where it meets an array of which less is known, the type of the place names no kind and its readers test.
+    // The arrays of a component share a kind because a test for numbers that fails may convert the array that it was asked of.
     for (uint32_t index = 0; index < m_containers.size(); ++index) {
         if (!isArray(index) || m_facts[index].arrayStorage != ArrayStorage::Other || !m_facts[index].contentsAreProven || !m_arrayWrites[index].keepsStorageOfLiteral())
             continue;
@@ -1173,7 +1165,6 @@ bool ContainerAnalysis::inheritsUnchangedMembers(ValueSetMaker& maker, uint32_t 
     // Where the property that is asked for a prototype holds no object, the instance gets the prototype object of its class.
     ValueSetID link = maker.intersect(m_writtenPrototypeLinks[index], m_inputs.universe().objects());
     // Between a generator and the prototype object of its class lies the prototype property of the function, which the program can fill or replace.
-    // One object stands for the generators of a function and for the object that the property holds at first, so the marks of the container cover both. The link holds whatever the property may hold.
     if (isGeneratorClass(container.builtinClass))
         return sets().isSubset(link, instance);
 
@@ -1199,8 +1190,7 @@ bool ContainerAnalysis::keepsPatternAndNumericLastIndex(ValueSetMaker& maker, co
     return sets().isSubset(stored, m_inputs.universe().builtinTables().heap().numberKinds());
 }
 
-// Storage says that the elements lie as the storage kind says and that no access under a number meets an accessor. A data property under a name like "-1" leaves both true,
-// so an array may have lost the mark of its structure and keep the proof. The prototype chain of the instance is covered, as it is by the test at run time.
+// Storage says that the elements lie as the storage kind says and that no access under a number meets an accessor.
 OptionSet<PristineAspects> ContainerAnalysis::provenPristineAspects(ValueSetMaker& maker, uint32_t index) const
 {
     const Container& container = m_containers[index];

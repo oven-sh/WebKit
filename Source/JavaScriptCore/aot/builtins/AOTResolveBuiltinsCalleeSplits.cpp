@@ -127,8 +127,7 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
         return std::nullopt;
     if (hasCalleesToDispatchOver(program, call))
         return std::nullopt;
-    // Which function the receiver is expected to be does not say what it inherits. The call that is passed on has that function as its callee, and the expectation with it.
-    // The method that is read from a proven function is tested by the planner of tests, which leaves every tail call alone.
+    // Which function the receiver is expected to be does not say what it inherits.
     const Type& receiverType = program.typeOf(function, receiver);
     bool knowsReceiver = !knowsNothingAbout(function, receiverType, receiver);
     if (!receiverType.anyObject && !tailCallRequirementOf(function, site.block, site.value))
@@ -181,8 +180,7 @@ Vector<CalleeSplit> planCalleeSplits(FunctionPassContext& context)
     return splits;
 }
 
-// Whoever finds the method under the name of the call is as a rule an instance of a class that has it. Nothing where no test finds the instances of one of these classes:
-// they would take the arm of the receivers that are not expected.
+// Whoever finds the method under the name of the call is as a rule an instance of a class that has it.
 static std::optional<Type> testedReceiverTypeOf(const Program& program, TypeArena& types, const MemberOfClasses& method)
 {
     Type tested = Type::never();

@@ -28,6 +28,8 @@
 // repository that links the archives against the vendored mimalloc-obj (the jsc shell, testFFI)
 // supplies those entry points here, in terms of the vendored API.
 
+#include "config.h"
+
 #include <bmalloc/mimalloc.h>
 
 // The consumer's hook for a thread that goes idle: collect the heap, discard the free runs inside

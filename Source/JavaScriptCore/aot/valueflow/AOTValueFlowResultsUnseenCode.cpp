@@ -107,8 +107,7 @@ static bool staysOutsideImage(const Program& program, ModuleID module)
     return program.at(module).kind == ModuleKind::External && program.at(module).externalKind == ExternalKind::UncompiledCode;
 }
 
-// No operation spells out the call where a built-in applies its callback or a protocol finds a method. One record for each built-in that has raised an event and that no record of a site names.
-// The modules have objects of their own for some of these, and the one with the lowest number speaks for all of them.
+// No operation spells out the call where a built-in applies its callback or a protocol finds a method.
 static void appendRecordsOfApplicationsWithoutOperation(const ValueFlowSolution& solution, ValueSetMaker& maker, ValueSetID eventFunctions, Vector<UnseenCodeRecord>& records)
 {
     const BuiltinTable& builtins = solution.program().builtins();

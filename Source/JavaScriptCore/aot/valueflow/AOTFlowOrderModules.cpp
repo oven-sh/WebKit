@@ -243,7 +243,6 @@ Vector<uint32_t> numberModuleComponents(const StronglyConnectedComponents& compo
 }
 
 // An import has run its target to the end before the body of the importer starts, also a target that lies on a cycle of its own.
-// Behind a `require` the target has run to its end if the request says so, unless the operation has found it running: then the target lies on a cycle.
 bool completesBeforeRequester(const ModuleRequest& request, const BitVector& modulesInCycles)
 {
     if (!request.completes || !evaluatesTarget(request.phase))

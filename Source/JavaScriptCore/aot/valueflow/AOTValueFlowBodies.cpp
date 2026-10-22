@@ -28,8 +28,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Where a check fails, the generic version of the function goes on with what the check has turned away, through the same operations. One node holds what a value is in both versions.
-// So wherever the type of a value rests on what a check lets through, the type keeps nothing out here. It still says what an untracked object among the members is.
+// Where a check fails, the generic version of the function goes on with what the check has turned away, through the same operations.
 BitVector findValuesBehindChecks(const Program& program, const Function& function, const CFG& cfg, const BitVector* checksThatTestNothing)
 {
     BitVector isBehindCheck;
@@ -57,7 +56,6 @@ BitVector findValuesBehindChecks(const Program& program, const Function& functio
                 continue;
             }
             // What a test lets by is typed by all that the test reads: behind `x === k` by the type of k too.
-            // Behind `i < n` it takes the bounds of the integers of n and nothing else, and a `number` has none to give: a counter does not rest on the check of its limit.
             const EdgeResult& result = edgeResultAt(function, incoming.result);
             bool takesTypeFromTest = isNoted(result.test);
             if (takesTypeFromTest && !isNoted(result.subject)) {
@@ -974,9 +972,7 @@ private:
         addSource(id, producerID, maskInside(value.type, kindOfResultMask(producer.opcode)));
     }
 
-    // `function F(..) { if (!(this instanceof F)) return new F(..); .. this[key] = value; .. }`: a constructor function that may be called without `new`. Called so in sloppy code its `this` is the global object,
-    // which is an instance of no function of the program: the test sends it away, and whatever else the body does with `this` lies behind the test.
-    // F.prototype = Object.prototype would let it pass. Then the body writes the global object behind the analysis, and start-up has locked what compiled code relies on there.
+    // `function F(..) { if (!(this instanceof F)) return new F(..); .. this[key] = value; .. }`: a constructor function that may be called without `new`.
     bool isUsedOnlyAsInstanceOfOwnFunction(ValueID thisValue)
     {
         auto isThis = [&](ValueID id) {
@@ -1218,8 +1214,7 @@ private:
             setConstant(id, constantOf(addSiteFor(id)));
             return;
         }
-        // The types of the operands say which boolean a test answers, which text `typeof` and which numbers a conversion. Behind a check those types hold only while the check passes:
-        // the generic version of the function asks the same of what the check has turned away, and one node holds the answers of both.
+        // The types of the operands say which boolean a test answers, which text `typeof` and which numbers a conversion.
         if (rule == ResultRule::Natural && isBehindCheck(id) && !type.hasObjects() && type.isJavaScriptValue() && !answersByKindsOfOperands(value.opcode)) {
             uint16_t kinds = kindsOf(type.primitives);
             for (uint16_t group : { Primitive::Boolean, Primitive::Number }) {
@@ -1230,7 +1225,6 @@ private:
             return;
         }
         // Where the type leaves open whether an operator answers a number, a string or a bigint, the kinds of its operands decide.
-        // So do they where the type is a number that may have a fraction and the operator makes none of operands that have none: the types know a variable and a result as numbers, flow knows what arrives there.
         bool mayTurnOutWithoutFraction = type.primitives & Primitive::FractionalNumber && makesNoFraction(value.opcode);
         bool isOfOneKind = (type.hasOnlyPrimitives(Primitive::Number) && !mayTurnOutWithoutFraction) || type.hasOnlyPrimitives(Primitive::AnyString) || type.hasOnlyPrimitives(Primitive::BigInt);
         if (!type.hasObjects() && type.isJavaScriptValue() && !isTypedByChecks(id) && (isOfOneKind || !answersByKindsOfOperands(value.opcode))) {
@@ -1542,8 +1536,7 @@ private:
         }
     }
 
-    // The step that finds the end answers undefined as its value. A for..of reads the value in the block that the branch on `done` goes to while the step has not found the end, and nowhere else:
-    // there the value is what the iterator has handed out. What a step of a pattern answers the rule says, which knows what the pattern goes over.
+    // The step that finds the end answers undefined as its value.
     bool readsValueOfStepThatFindsEnd(BlockID block, ValueID step)
     {
         const Value& operation = m_function.at(step);
@@ -1900,8 +1893,7 @@ private:
         return forms.isEmpty() ? Form { } : forms[0];
     }
 
-    // Through a receiver and through a callee a rule looks things up member by member. Where the type of the value lists what it may be, it says what an untracked object among the members is.
-    // What is only handed on needs no such mask: the position that takes it has a type of its own.
+    // Through a receiver and through a callee a rule looks things up member by member.
     Form operandFormOf(const Value& operation, uint32_t index, ValueID value)
     {
         Form form = operandFormOf(value);

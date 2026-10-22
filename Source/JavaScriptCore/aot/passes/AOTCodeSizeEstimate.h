@@ -23,7 +23,6 @@ unsigned estimatedDirectCallBytes(unsigned numberOfOperands);
 unsigned estimatedCodeBytes(const Program&, const Function&, const Block&);
 
 // `{ ...first, ...second }`: the CopyDataProperties right behind a CopyObject that copies all that its source holds into the copy of all that the first holds.
-// The two get their code together: one operation is asked for the copy of both first. So they stay in one function, one behind the other.
 ValueID findCopyIntoCopy(const Function&, const Block&, ValueID copyObject);
 
 } } } // namespace JSC::AOT::Typed

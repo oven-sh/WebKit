@@ -44,8 +44,7 @@ static TypeID testedTypeContaining(const Type& expected)
     return { };
 }
 
-// Whoever asks whether a value is truthy reckons with undefined and null: `if (props.bold)` with `bold?: boolean`. Where one of them is expected, both pass the test.
-// So it is with `===` on a value that is expected to be null or an object: the bits are compared either way, and a test for an object alone would fail on what is expected.
+// Whoever asks whether a value is truthy reckons with undefined and null: `if (props.bold)` with `bold?: boolean`.
 static TypeID admitExpectedNullish(TestSiteReporter& reporter, ValueID operand, TypeID tested)
 {
     TypeArena& types = reporter.types();

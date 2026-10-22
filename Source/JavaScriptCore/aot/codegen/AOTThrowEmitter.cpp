@@ -488,8 +488,7 @@ static bool throwWhereTrapIsCertain(B3::Procedure& proc, CodeRecords& records, c
     return changed;
 }
 
-// The handler of a fault reads the tested value out of the base register of the access that faulted. Once the back end has found out on some path that the value is null or undefined,
-// nothing is left to test there, and an address that is a constant may be computed from any other constant. So on that path the test becomes the throw.
+// The handler of a fault reads the tested value out of the base register of the access that faulted.
 B3::ClientPhase throwWhereTrapsAreCertain(CodeRecords& records, const StubCatalog& catalog)
 {
     return {

@@ -29,8 +29,7 @@ static bool isDefinedByClass(const Layout& layout)
 
 namespace {
 
-// The constructor of a base class allocates the instances of the classes below it too: the run time answers with an instance of the class whose prototype object the allocation is given
-// (ClassTable::instanceWithPrototype). In the universe each class has one object for the instances that such allocations make of it, and each allocation one for what it makes under any other prototype.
+// The constructor of a base class allocates the instances of the classes below it too: the run time answers with an instance of the class whose prototype object the allocation is given (ClassTable::instanceWithPrototype).
 class LayoutPicks {
 public:
     LayoutPicks(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
@@ -156,8 +155,7 @@ bool LayoutPicks::isBelow(LayoutID layout, LayoutID base) const
     return false;
 }
 
-// The prototype object of the class itself and an object that is the prototype object of no class leave the allocation as it is. For a class that the tables of the image do not put below the
-// allocated one the run time makes an ordinary object.
+// The prototype object of the class itself and an object that is the prototype object of no class leave the allocation as it is.
 void LayoutPicks::notePicksOf(const Allocation& allocation)
 {
     const Program& program = m_inputs.program;
@@ -184,8 +182,6 @@ void LayoutPicks::notePicksOf(const Allocation& allocation)
 }
 
 // The closures that the rule of a group finds in the set: those it lists, and behind the untracked object those that the analysis has stopped following.
-// Behind the unknown object the rule finds none. As a callee it enters no function of the program: native code enters a function that has escaped, with the unknown object as `this` (runCallGroup()).
-// As new.target it hands the function the unknown object and the instance of no class (AllocatedInstances::collect()). A set only grows, so a closure that a run of the rule has ever seen in it is still listed.
 ValueSetID LayoutPicks::closuresIn(ValueSetID set)
 {
     const ValueFlowUniverse& universe = m_inputs.universe();
@@ -196,8 +192,7 @@ ValueSetID LayoutPicks::closuresIn(ValueSetID set)
     return m_maker.intersect(found, universe.closures());
 }
 
-// ClassTable::createThis() walks up from the layout of new.target. It gives that layout where it meets the layout of the function or a class whose base the image does not name.
-// The image names a base only where the heritage is one closure whatever happens.
+// ClassTable::createThis() walks up from the layout of new.target.
 bool LayoutPicks::getsOwnLayoutFromEach(LayoutID newTarget, std::span<const LayoutID> sortedConstructorFunctions) const
 {
     const Program& program = m_inputs.program;
@@ -216,8 +211,7 @@ bool LayoutPicks::getsOwnLayoutFromEach(LayoutID newTarget, std::span<const Layo
     return true;
 }
 
-// For a new.target that is not below the constructor function the run time makes an ordinary object. What the rules have handed the function is the instance of new.target all the same,
-// so from there on that instance stands for an ordinary object too.
+// For a new.target that is not below the constructor function the run time makes an ordinary object.
 void LayoutPicks::findInstancesMadeForOtherConstructorFunctions()
 {
     const Program& program = m_inputs.program;
@@ -401,8 +395,7 @@ bool ValueFlowPositions::isSurelyInside(ValueSetID set, const Type& type)
     return isInside;
 }
 
-// A check tells what the type expects from all else, which goes on by name behind it. Where flow has seen all that arrives, objects are among it, and nothing of it but undefined, null and the dead zone
-// is what the type expects, the check fails whenever it has something to tell, and what stands behind it is written for values that never come. The type of what arrives says more than the type that was expected.
+// A check tells what the type expects from all else, which goes on by name behind it.
 std::optional<Type> ValueFlowPositions::typeWhereNothingPasses(ValueSetID set, const Type& type)
 {
     const Program& program = m_inputs.program;
@@ -673,8 +666,7 @@ Type ValueFlowPositions::typeOfMembers(ValueSetID set)
     return finish(WTF::move(type), layouts.span());
 }
 
-// The instances are united by themselves, in a type that holds nothing else. A union looks at two more things, and that type is given both as typeOfMembers() would have them at that member:
-// a type that is still empty becomes the instance as it is, and in a type that is any object the union leaves no classes.
+// The instances are united by themselves, in a type that holds nothing else.
 Type ValueFlowPositions::typeOfMembersToShare(ValueSetID set)
 {
     const ValueFlowUniverse& universe = m_inputs.universe();
@@ -1007,9 +999,7 @@ static bool throwsBeforeEntry(const Function& callee, bool isConstruction)
     return callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
 }
 
-// A bound function, a proxy and whatever else can be called enter code that nobody lists, so an object that is neither a closure nor a built-in function leaves the set open. So does a placeholder.
-// Beside a placeholder a set may or may not list what the placeholder covers, and at a callee that nobody knows it lists hundreds of functions and built-ins that have escaped.
-// A list that is not complete stands for the code that nobody knows, a function that has escaped or is lost is a part of that code, and each entry costs every later pass time and memory.
+// A bound function, a proxy and whatever else can be called enter code that nobody lists, so an object that is neither a closure nor a built-in function leaves the set open.
 ValueSetID ValueFlowPositions::withoutWhatPlaceholdersCover(ValueSetID set)
 {
     const ValueFlowUniverse& universe = m_inputs.universe();
@@ -1032,7 +1022,6 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
     ValueSetID arriving = expand(set, family);
     ValueSetID listed = withoutWhatPlaceholdersCover(arriving);
     // The pass that hands the object it has allocated to the constructor above tests the link to that constructor at run time, and it finds in the list which version of the constructor is entered.
-    // So a construction keeps the few constructors that the solve has followed to it, although they have escaped.
     if (isConstruction && m_inputs.sets().size(arriving) - m_inputs.sets().size(listed) <= m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
         listed = arriving;
 
@@ -1057,7 +1046,6 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
 }
 
 // What a call of JSON.parse or its like has made: a built-in whose row answers plain data is among the callees of the call that the object stands for.
-// Flow follows such an object like any other, so at a type it is a stranger with a shape outside the family. To whoever reads a report it is data from outside.
 static bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
     const ValueFlowUniverse& universe = inputs.universe();

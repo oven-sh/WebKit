@@ -24,15 +24,12 @@ struct Int32ParameterCandidate {
 Vector<Int32ParameterCandidate> narrowFieldTypes(Program&, BuildContext&);
 void expectInt32ParametersWithRemainingChecks(Program&, std::span<const Int32ParameterCandidate>, BuildContext&);
 
-// The slot of a field whose type is only expected is boxed. The rule of TypingContext::typeIDOf() at TypeLevel::Proven.
-// The slot of an accessor holds its GetterSetter: Field::slotType is the type of the getter.
+// The slot of a field whose type is only expected is boxed.
 TypeID slotTypeOf(const Program&, const Field&);
 
 // The slot of a number or a boolean keeps the markers for undefined and null whatever the type of its field says, until flow proves that nothing outside the type is stored.
-// Either stays in the slot: it is no value of another type. A read that has not tested the slot finds them.
 bool slotHoldsUndefinedAndNull(const Program&, FieldReference);
-// A number or a boolean that every constructor stores before the object leaves its hands. Whoever puts a marker into such a slot sets the mark of the cell,
-// so while the mark is off the slot holds the raw value.
+// A number or a boolean that every constructor stores before the object leaves its hands.
 bool holdsRawValueFromBirth(const Program&, FieldReference);
 
 bool canBeStoredBehindAllocation(const Field&);

@@ -16,7 +16,6 @@
 namespace JSC { namespace AOT {
 
 // A thread gets back the storage it had before, so a lease writes no memory that another thread reads.
-// Storage is constructed from its number, with `std::atomic<bool> isLeased { true }`.
 template<typename Storage, uint32_t capacity>
 class StoragePool {
     WTF_MAKE_NONCOPYABLE(StoragePool);

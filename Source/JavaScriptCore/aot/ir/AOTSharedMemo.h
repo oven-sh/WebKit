@@ -23,9 +23,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Answers shared by all threads while the tables they are computed from do not change. A lookup takes no lock. Entries are never removed and never move.
-// Which thread adds an entry is a race, so an entry must be the same whoever computes it. What computing it interns goes into a scratch arena, and every reader
-// adopts the ids (TypeArena::adopt), the thread that added the entry too: otherwise which task uses a record first would depend on the race.
+// Answers shared by all threads while the tables they are computed from do not change.
 template<typename Entry>
 class SharedMemo {
     WTF_MAKE_NONCOPYABLE(SharedMemo);
@@ -143,8 +141,7 @@ inline uint32_t hashOfLayouts(std::span<const LayoutID> layouts)
     return static_cast<uint32_t>(hash >> 32);
 }
 
-// A number for a list of layouts, to go into the key of an entry. Equal numbers stand for the same layouts in the same order.
-// Which list gets which number is a race, so the numbers may only be compared and hashed.
+// A number for a list of layouts, to go into the key of an entry.
 class SharedLayoutLists {
     WTF_MAKE_NONCOPYABLE(SharedLayoutLists);
 public:

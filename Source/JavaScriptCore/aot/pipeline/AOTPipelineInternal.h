@@ -140,8 +140,7 @@ public:
     OptimizationInputs inputsFor(FunctionSchedule schedule) { return createInputs(inputsOf(schedule), readsEffectSummaries(schedule) ? EffectSummariesFor::Reader : EffectSummariesFor::Nobody); }
 
 private:
-    // To bring the effect summaries up to date is to read every body that has changed and to solve the program again. That pays where functions are optimized, where objects are
-    // put into frames, where operations are selected and where code is made. To every other program pass and loop a call is unknown code, whatever state the summaries are in.
+    // To bring the effect summaries up to date is to read every body that has changed and to solve the program again.
     static bool readsEffectSummaries(PassID id)
     {
         return descriptorOf(id).scope == PassScope::Function || id == PassID::AllocateInFrames || id == PassID::OutlineColdOperations;

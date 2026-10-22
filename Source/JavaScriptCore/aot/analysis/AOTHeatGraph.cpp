@@ -223,8 +223,7 @@ private:
         return estimateCallbackCalls(analyses.effectContext().summaries.of(m_id).operand(static_cast<uint32_t>(parameter)).uses) > 1;
     }
 
-    // Code that nobody knows is expected to call a closure once each time it is handed the closure. Only a function with callers that nobody knows has the one call
-    // of the host, and this edge takes its place. A closure that is called once after the return has its edge from flow.
+    // Code that nobody knows is expected to call a closure once each time it is handed the closure.
     void addHandOver(ValueID operand, double weight)
     {
         CalleeList callees = calleesOf(m_program, m_program.typeOf(m_function, operand));
@@ -321,7 +320,6 @@ private:
     }
 
     // The walk and flow count the same calls, each by what it knows: the walk by how often the block of the site runs, flow by how often a built-in calls what it is handed.
-    // So the two are not added up, and the larger count stands.
     void addIndirectCalls()
     {
         FunctionID idAsRead = findFunctionAsRead(&m_program, m_id);
@@ -420,8 +418,7 @@ private:
 
 } // anonymous namespace
 
-// The one call of the host stands for calls that nobody sees. An edge of the program takes its place where flow proves that the callee runs at most once,
-// and where the edge hands the callee to the code that nobody sees. Functions that have such edges from each other alone are entered first in a way that nobody sees.
+// The one call of the host stands for calls that nobody sees.
 static WeightedCallList collectHostCalls(const Program& program, const CallGraph& callGraph, const HeatGraph& graph, const ParallelArray<WeightedCallList>& callsOfProgram, const BitVector& isCalledPerEvent, const Vector<uint8_t>& isCountedByProgram, const ParallelLoops& loops)
 {
     Vector<FunctionID> callees;

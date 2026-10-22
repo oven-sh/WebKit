@@ -266,8 +266,6 @@ static JSValue throwWithoutRunningCode(Realms& realms)
     return JSValue();
 }
 
-// Object.getPrototypeOf does not throw, and runs what its operand runs. A proxy whose trap is no function throws by itself: nothing has run.
-// The compiler takes a call on what may be a proxy for unknown code, so no proof rests on the entry there.
 static void testProxyThatAnEntryUsesByProtocolThrowsByItself()
 {
     Realms realms(RuntimeValidation::On);

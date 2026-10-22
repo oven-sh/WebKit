@@ -490,8 +490,7 @@ bool ObjectPacker::hasVisibleStore(LayoutID id, SlotRow row) const
     return declarationAt(id, row).flags.containsAny(privateNameFlags);
 }
 
-// `this.original = undefined` in the constructor of every node of a tree gives the objects one shape and fills nothing. Where the type of `this` leaves the member optional too,
-// how often a store of it runs elsewhere says nothing about how many objects get one. A few makers among many may give it a value.
+// `this.original = undefined` in the constructor of every node of a tree gives the objects one shape and fills nothing.
 bool ObjectPacker::isOnlyDeclaredByMakers(SlotRow row) const
 {
     constexpr uint64_t placesGivingUndefinedForEachGivingValue = 16;
@@ -537,7 +536,6 @@ ObjectPacker::RowsOutOfLine ObjectPacker::countInheritedRowsOutOfLine(LayoutID i
 }
 
 // The members of a family agree on one offset for a row, and with a granule for each row there is one that all of them have free.
-// A layout by itself places its rows wherever they fit, and an area takes a row only where the rows that are left still fit. So what fits the empty Extension finds its place.
 bool ObjectPacker::hasRoomInExtension(LayoutID id, const RowsOutOfLine& outOfLine, unsigned logSize) const
 {
     if (m_context.inheritedRows.isInFamily(id))
@@ -634,8 +632,7 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
     if (cellSizeFor(everything) <= maxInlineSizeAtCreation && m_context.isMadeSeldom(id))
         return;
 
-    // Neither estimate says how many objects get a field. How often its stores run misses the field that is stored once and read ever after, and puts first what is stored again and again
-    // or with undefined. How often it is accessed misses what is filled and seldom looked at. They fail in different places, so a row is as good as the better of its two ranks.
+    // Neither estimate says how many objects get a field.
     SlotRow firstRow = m_context.rows.firstRowOf(id);
     Vector<uint32_t, 32> betterRanks(FillWith { }, optionalRows.last() - firstRow + 1, std::numeric_limits<uint32_t>::max());
     auto rankBy = [&](auto&& estimateOf) {
@@ -708,8 +705,6 @@ void ObjectPacker::moveIntoCell(SlotRow row)
 }
 
 // One load reads a field that several layouts share only where it lies in the cell of all of them or in the Extension of all of them, and each layout has chosen by itself.
-// The heaviest set first, the rows that are out of line come into the cell. Some find spare bytes in the size class of their cell. Where cells grow, by the estimates
-// the accesses that are spared a dispatch must run this many times for each byte that the objects take.
 void ObjectPacker::agreeOnStorage()
 {
     constexpr double accessesForEachByte = 256;
@@ -830,8 +825,7 @@ void ObjectPacker::appendSteps(std::span<const MemberRow> rows, StepRank rank, S
 
 static constexpr SlotRow noRow = std::numeric_limits<SlotRow>::max();
 
-// Two rows of four bytes share a granule of the Extension, and an object has the granule as soon as it has one of the two. So the rows that the program stores together lie together:
-// an object that gets both pays for one granule. Only for rows that are placed by themselves: nobody else has a say in where they lie.
+// Two rows of four bytes share a granule of the Extension, and an object has the granule as soon as it has one of the two.
 Vector<SlotRow> ObjectPacker::matchRowsStoredTogether(const BitVector& isInStep) const
 {
     const SlotRows& slotRows = m_context.rows;
@@ -853,7 +847,6 @@ Vector<SlotRow> ObjectPacker::matchRowsStoredTogether(const BitVector& isInStep)
 }
 
 // A field lies where it lies in the class that declares it, so a base is placed before the layouts below it: then what is free in one member of a family is free in all.
-// At one depth come first the rows that several families or layouts have to agree on, the heaviest set first. A family by itself finds a place wherever its members have room.
 Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFirst)
 {
     const SlotRows& slotRows = m_context.rows;
@@ -1024,7 +1017,6 @@ void ObjectPacker::forgetLocations()
 }
 
 // The heaviest set takes the lowest offset that its members have free, which may be the only one that a small member of a lighter set has.
-// So the sets that found no room go first in a second round, which counts if it leaves less weight without one location.
 void ObjectPacker::placeSharedRowsInBestOrder()
 {
     placeSharedRows({ });

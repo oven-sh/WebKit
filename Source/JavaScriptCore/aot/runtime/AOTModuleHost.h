@@ -50,8 +50,7 @@ enum class RequireOverride : uint8_t {
 };
 
 struct ModuleHost {
-    // What `module` and `require` are in a CommonJS file of the image. The engine asks when the program first uses one of them as a value, and once for each file.
-    // The host asks the engine for the parent and the children of the module object when somebody reads them.
+    // What `module` and `require` are in a CommonJS file of the image.
     void (*createModuleObject)(JSGlobalObject*, JSString* path, ModuleID, OptionSet<ModuleObjectTrait>, ModuleObjects&);
     // The same for a file of any other kind, where only `require` has a name.
     void (*createRequirer)(JSGlobalObject*, JSObject* importMeta, ModuleObjects&);
@@ -80,12 +79,9 @@ JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*);
-// A file whose loader answers an object of the host, a database or a page. The code of the image may name one. Under a name that the build did not follow a load finds plain data and nothing else:
-// the analysis takes what such a load answers for a module of the image or for data without a function in it.
+// A file whose loader answers an object of the host, a database or a page.
 JS_EXPORT_PRIVATE bool refusesHostObjectsOutsideImage(JSGlobalObject*);
-// The next three lead from one module object to another. They answer null, null and false in a program whose code names no such way (ImageFlag::ShowsWaysBetweenModuleObjects):
-// whoever asks finds undefined, as in an executable that is bundled and not compiled ahead of time.
-// What process.mainModule and `require.main` answer: the module object of the entry point, made now. Null where the entry point is no CommonJS module.
+// The next three lead from one module object to another.
 JS_EXPORT_PRIVATE JSObject* mainModuleObject(JSGlobalObject*);
 
 // For the module objects that createModuleObject() made.
@@ -94,14 +90,10 @@ JS_EXPORT_PRIVATE void setModuleExports(JSGlobalObject*, ModuleID, JSValue);
 // The module object of the file whose require() came to the module first. Null where the program recorded none.
 JS_EXPORT_PRIVATE JSObject* parentModuleObject(JSGlobalObject*, ModuleID);
 // Calls the functor with the module object of each CommonJS file that the module has required since the last call, in the order of the first require() of each.
-// False, with nothing shown, where one of them is a file whose module object the build took for out of reach: the list is undefined then.
 JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLambda<void(JSObject*)>&);
-// Compiled code writes down by itself what it requires under a constant name. The host calls this where a name that it has resolved for a file of the image is another file of the image, before that file runs.
-// It calls this again once that file has run. True: forEachNewChild() lists the target from then on.
+// Compiled code writes down by itself what it requires under a constant name.
 JS_EXPORT_PRIVATE bool recordRequire(JSGlobalObject*, ModuleID target, ModuleID referrer);
 // The host calls this with every name that a function object of the program is given to load: require, module.require, Module._load, process.getBuiltinModule.
-// It throws in a program whose build followed every name, whatever this one resolves to: no proof in the code allows for a module that is found by name.
-// A specifier that names a module the build was told is external admits code outside the image from then on.
 enum class LoadByName : uint8_t { Require, Import };
 JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadByName = LoadByName::Require);
 // The host calls this with the file of the image that such a name has resolved to, before it looks into a cache of its own. It throws for a file that is no entry point.
@@ -115,7 +107,6 @@ JS_EXPORT_PRIVATE JSObject* moduleNamespace(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID);
 
 // A module of the image runs at most once and is in no module cache, and the code calls the module that each constant name stood for in the build.
-// The host calls one of these two before a store that would change what a later require() answers. They throw: the first for every entry that require() would take, the second for every function.
 JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);
 JS_EXPORT_PRIVATE void willChangeRequireOverride(JSGlobalObject*, RequireOverride, bool isOverridden);
 // A loader for an extension that no file of the image has changes nothing that the build has bound.

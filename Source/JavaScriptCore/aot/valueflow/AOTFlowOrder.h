@@ -195,8 +195,7 @@ Vector<ModuleID> indexModuleBodies(const Program&);
 // The object of a module of the host that is written in JavaScript is what the body of the module makes. The table only lists its names.
 RuntimeModuleID findCompiledModuleWithObject(const Program&, BuiltinID);
 
-// CompletesBefore: the first module has run to its end, or has thrown for good, before any code of the second one reads a variable of it. An import runs its target in front of the body of the importer.
-// A `require` runs it where the operation stands, and whoever names a variable of the target stands behind such an operation or behind a check of what it has initialized.
+// CompletesBefore: the first module has run to its end, or has thrown for good, before any code of the second one reads a variable of it.
 enum class FlowModuleOrdering : uint8_t {
     Unknown,
     CompletesBefore,
@@ -296,8 +295,7 @@ using FlowScopeAccessesByFunction = Vector<std::unique_ptr<FlowScopeAccesses, Fl
 
 FlowScopeOrders computeScopeOrders(const FlowOrderInputs&, const FlowModuleOrder&, FlowScopeAccessesByFunction&);
 
-// Whether the order of execution is followed for the named properties of the object. An object of the program counts once it is the prototype of another,
-// and of its properties only the lookups that start below it are listed.
+// Whether the order of execution is followed for the named properties of the object.
 enum class FlowMemberHolder : uint8_t { No, WhenPrototype, Always };
 FlowMemberHolder memberHolderKindOf(FlowObjectKind);
 bool followsMembersOf(const FlowOrderInputs&, FlowObjectID);

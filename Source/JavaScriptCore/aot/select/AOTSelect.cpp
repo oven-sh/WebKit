@@ -60,8 +60,7 @@ static PassOutcome clearExpectedTypes(Function& function)
     return outcome;
 }
 
-// A call is matched with an overload by the types of its operands. Where an operand no longer has the type that the overload takes, no form of the overload may be
-// compiled: each of them reads the operand as what it is declared to be. The built-in is called there as a function is, with whatever arrives.
+// A call is matched with an overload by the types of its operands.
 static PassOutcome callWithAnyReceiverWhereTypesAreLost(FunctionPassContext& pass)
 {
     Function& function = pass.function;

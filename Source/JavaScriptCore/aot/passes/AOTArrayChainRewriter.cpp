@@ -192,8 +192,7 @@ static void sortConsumersFirst(FunctionPassContext& context, Vector<ArrayChain>&
     });
 }
 
-// The traversal is library code. Its summary knows none of the types of a chain, so it may say more than the calls of the chain do.
-// Callers have placed their tests by the summary of this function, which the body may not exceed.
+// The traversal is library code.
 static bool traversalStaysWithinSummary(const FunctionPassContext& context, FunctionID traversal)
 {
     const EffectContext& effects = context.analyses.effectContext();

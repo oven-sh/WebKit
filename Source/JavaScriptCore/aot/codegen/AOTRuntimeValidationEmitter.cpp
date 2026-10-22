@@ -221,7 +221,6 @@ Integer RuntimeValidationEmitter::wordBehindHeaderAt(Pointer address)
 }
 
 // B3 keeps what it has loaded from the header of a cell, and from the word behind it, across a call of which AOTHeaps::mayConvertCells() says no.
-// That rests on the effects of the operation and of its callee. Where they are too narrow, the run time converts an operand under a test that generated code does not repeat.
 RuntimeValidationEmitter::OperandCells RuntimeValidationEmitter::captureOperandCells(const OperationContext& context)
 {
     OperandCells result;

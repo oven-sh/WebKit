@@ -21,9 +21,7 @@ namespace JSC { namespace AOT {
 
 static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2) && gprOf(StubRegister::A3) == operationArgumentGPR(3));
 
-// What JSObject::putByIndex does for an index inside the vector of an array whose storage is its own and has one of the three kinds: no such array has an accessor, a read-only element
-// or a fixed length, on itself or on its prototypes. Everything else is the operation's: growth, a value that does not fit the kind, shared storage, sparse storage.
-// Falls through behind the store. No register for numbers is lost.
+// What JSObject::putByIndex does for an index inside the vector of an array whose storage is its own and has one of the three kinds: no such array has an accessor, a read-only element or a fixed length, on itself or on its prototypes.
 static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butterfly, GPRReg length, JumpList& callsOperation)
 {
     const GPRReg array = jit.operand(0);

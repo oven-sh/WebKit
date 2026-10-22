@@ -302,9 +302,7 @@ void AllocationSinking::giveUpOnEveryCandidate()
     giveUpForLackOfWork(candidates.span());
 }
 
-// The work grows with the number of objects that are followed and with the blocks that each is carried through. The allocations in the rarer blocks stay where they are,
-// as many as the work that was done says are too many, and the others are followed from the start with the whole limit.
-// Where the work runs out only with the joins that were set aside, the result without them stands instead.
+// The work grows with the number of objects that are followed and with the blocks that each is carried through.
 bool AllocationSinking::startOverWithFewerCandidates()
 {
     if (!m_setsAsideJoins)
@@ -458,8 +456,7 @@ void AllocationSinking::tagVariants(BlockID block, VirtualObjectID object, Objec
         if (variant.tagBit)
             continue;
 
-        // A head inside a loop is first reached with the one shape of the object and then, over the back edge, with that shape
-        // under a tag. One bit stands for both, or every such head would take a bit of its own.
+        // A head inside a loop is first reached with the one shape of the object and then, over the back edge, with that shape under a tag.
         size_t taggedVariant = state.variants.findIf([&](const ObjectVariant& other) {
             return other.tagBit && other.shape == variant.shape;
         });
@@ -669,7 +666,6 @@ bool SinkingProblem::mergeAliases(State& into, const State& from)
         if (!isHeadMerge)
             return;
         // An alias that reaches a head is used behind it, where the name stands for no object from here on: it has to be a value.
-        // An early visit may leave a cast in place that a later one, with more variants, interprets, and the head keeps what the early visit said.
         Opcode opcode = function.at(entry.value).opcode;
         if (opcode == Opcode::Parameter || opcode == Opcode::AllGuards || interpretedCasts.contains(opcode))
             m_sinking.decisions().holdCells(entry.value, entry.object);

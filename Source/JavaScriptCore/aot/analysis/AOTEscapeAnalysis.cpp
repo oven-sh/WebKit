@@ -103,11 +103,7 @@ struct SolveOfEntryParameters {
 
 } // anonymous namespace
 
-// What the solve and the history of a body cost at most whose only objects are entry parameters that the caller knows. Nothing where the body may have another object.
-//
-// The solver counts an object that arrives at a value, once for the two, and an application that meets an entry of a container, once for the two.
-// An entry is an object in a slot of a container. An operand of a value makes it, and the operand and the container name the slot: at most the square of the objects for each operand.
-// An application to the contents of an entry parameter is for all its slots. It is the one for contents that leak, or has the uses that the summary of some operand names: at most one more than there are operands.
+// What the solve and the history of a body cost at most whose only objects are entry parameters that the caller knows.
 static std::optional<SolveOfEntryParameters> describeSolveOfEntryParameters(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
@@ -585,7 +581,6 @@ BitVector EscapeAnalysis::objectsSharingValuesWith(ObjectID object) const
 }
 
 // An object gets to a value that defines none and is no parameter of a block from an operand of the value: the value may be the operand, refer to it, or be read out of it.
-// So where all that a value is computed from begins at entry parameters and at operations without operands, it names an entry parameter, or what stands in one, or what stands in that.
 bool mayNameUnescapedAllocation(const Function& function, ValueID value)
 {
     constexpr size_t maxDefinitions = 32;

@@ -314,7 +314,6 @@ bool IntegerRelations::isEnteredOverEdgeOfComparison(BlockID block) const
 }
 
 // The nearest block above this one in the tree of dominators that is entered over the edge of a comparison and over no other.
-// The last block of a function of thousands of statements has thousands of blocks above it, and few of them say anything: each is looked at once, not once for each question.
 BlockID IntegerRelations::nextBlockBehindComparison(BlockID block)
 {
     constexpr uint32_t notAsked = UINT32_MAX;
@@ -342,8 +341,7 @@ BlockID IntegerRelations::nextBlockBehindComparison(BlockID block)
     return next == noBlock ? BlockID() : BlockID(next);
 }
 
-// Behind a row of a thousand loops a thousand edges of comparisons stand above a place, each about the counter of its own loop. relationshipsOfEdge() answers nothing for a comparison that is not about the base:
-// whether it is, is worked out once for each edge, not once for each step of each proof.
+// Behind a row of a thousand loops a thousand edges of comparisons stand above a place, each about the counter of its own loop. relationshipsOfEdge() answers nothing for a comparison that is not about the base.
 bool IntegerRelations::comparisonOnEdgeIntoIsAbout(BlockID block, const Value& comparison, ValueID base)
 {
     if (m_comparedBases.size() != m_function.blocks.size()) {

@@ -289,7 +289,6 @@ void RangeMatcher::classifyComparison(const StringRangeSource& source, const Use
         if (!comparesOneUnit)
             return;
         // -1 stands for an empty range: it is below every code unit, as the empty string is below the literal.
-        // No relation holds for undefined: read as an unsigned number, -1 is above every code unit.
         bool isGreaterComparison = opcode == Opcode::Greater || opcode == Opcode::GreaterEq;
         bool rangeIsOnLeft = OperandPosition::left(opcode) == use.operandIndex;
         bool holdsForMinusOne = isGreaterComparison != rangeIsOnLeft;
@@ -740,7 +739,6 @@ void selectSubstringView(SelectionContext& context)
         return;
 
     // The effects of a comparison depend on its operand types, so a range becomes a code unit before the comparisons that share the unit are rewritten.
-    // A session rewrites from the last position to the first, so the comparisons of a narrowed string are rewritten before its test drops the string.
     Vector<Match> sharedUnitComparisons;
     Vector<Match> otherMatches;
     for (Match& match : RangeMatcher(context, WTF::move(ranges)).run()) {

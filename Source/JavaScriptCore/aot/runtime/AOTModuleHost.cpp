@@ -104,7 +104,6 @@ bool refusesCodeOutsideImage(JSGlobalObject* realm)
     if (Modules* modules = modulesOf(realm))
         return modules->refusesCodeOutsideImage();
     // The build folds what loads code at run time out of the host's modules unless it admits the inspector or names an external module.
-    // That the program evaluates text (ImageFlag::AdmitsUnknownJavaScript) brings none of it back.
     const Image* image = Image::current();
     return image && !hasFlag(image->header().options.admitted(), AdmittedCode::Inspector);
 }

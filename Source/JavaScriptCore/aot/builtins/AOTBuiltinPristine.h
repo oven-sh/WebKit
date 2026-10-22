@@ -16,9 +16,6 @@ namespace JSC { namespace AOT { namespace Typed {
 class FunctionAnalyses;
 
 // MayPass: start-up marks the Structure of new instances, whose prototypes are locked, and a change of an instance clears the mark.
-// ClosureAsCreated: a closure of the program has no mark. It keeps the Structure it is created with until it gains a property, gets another prototype or is made
-// non-extensible, so the test compares with the Structures that plain functions are created with. A closure that passes is out of the way of a lookup, which goes on
-// at Function.prototype. The test says nothing about what lies there, and every other function fails it: a host function, a class object, the closure of a coroutine.
 enum class PristineTest : uint8_t { NeverPasses, MayPass, ClosureAsCreated };
 
 PristineTest pristineTestOf(const BuiltinTable&, BuiltinClassID);

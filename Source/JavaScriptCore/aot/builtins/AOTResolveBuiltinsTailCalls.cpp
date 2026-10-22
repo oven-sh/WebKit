@@ -63,7 +63,6 @@ static std::optional<uint32_t> indexOfCalledOperand(const Program& program, cons
 }
 
 // `call` and Reflect.apply throw an error of their own for a callee that is no function, so they pass the call on for a proven function only.
-// The planner of tests leaves a tail call alone, and a call that has to stay one is never demoted: the test stands here, and both of its arms end in a tail call.
 Vector<CalledOperandTest> planTestsOfCalledOperands(FunctionPassContext& context)
 {
     const Program& program = context.program;
@@ -115,7 +114,6 @@ void emitTestsOfCalledOperands(FunctionPassContext& context, std::span<const Cal
 }
 
 // A CallBuiltin is no tail call, so a call that has to stay one would go on calling the function object of the built-in.
-// The body of Function.prototype.apply is such a call of apply itself, and the call that apply and call pass on is a tail call by the language.
 Vector<ForwardedTailCall> planForwardedTailCalls(FunctionPassContext& context)
 {
     const Function& function = context.function;
@@ -185,8 +183,6 @@ static BitVector blocksThatLeadTo(const CFG& cfg, BlockID block)
 }
 
 // On every way to the call nothing but reads of the object and lists made from it have taken it, so no element and no length of it was changed.
-// What takes it behind the call, or on a path that does not come to the call, finds the object as it would have been.
-// A read hands the object to no code: what the object does not hold itself is looked for in Object.prototype, to which a compiled program adds no accessor.
 static bool holdsWhatWasPassed(FunctionPassContext& context, ValueID arguments, const ValueSite& call)
 {
     const Function& function = context.function;
@@ -241,8 +237,7 @@ Vector<CallOfOwnArguments> planCallsOfOwnArguments(FunctionPassContext& context)
     return calls;
 }
 
-// Nothing but calls of apply takes the object, so nobody misses it where none of them needs it. The object holds what its rest list held when it was made:
-// a rest parameter of the program is that list, and what else takes it may have changed it by the time of the call.
+// Nothing but calls of apply takes the object, so nobody misses it where none of them needs it.
 static bool isTakenByApplyAlone(FunctionPassContext& context, ValueID arguments)
 {
     if (context.analyses.useLists().useCount(context.function.at(arguments).restOperand()) != 1)
@@ -253,8 +248,6 @@ static bool isTakenByApplyAlone(FunctionPassContext& context, ValueID arguments)
 }
 
 // Where no more arguments were passed than there are parameters, they all have names, and the call takes them without the object and without a list of them.
-// In the last arm every parameter was passed and the hidden rest list holds what came behind them. Where apply alone takes the object, its list is made of the two, without the object.
-// Otherwise the last arm is the call as it was and no arm reads the hidden rest list: SinkAllocations builds the object late only while nothing but the object takes that list.
 static void passOnOwnArgumentsByCount(SiteExpansion& expansion, const CallOfOwnArguments& call, bool isTakenByApplyAlone)
 {
     IRBuilder& builder = expansion.builder();

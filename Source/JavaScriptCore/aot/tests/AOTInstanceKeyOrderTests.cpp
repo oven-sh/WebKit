@@ -17,6 +17,7 @@
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "JSCJSValueInlines.h"
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
@@ -24,13 +25,6 @@
 
 namespace JSC { namespace AOT {
 
-// class C { a = x; constructor(x) { this.b = x + 1 } }
-// class B { constructor(x) { this.q = x + 1; this.p = x } }
-// class D extends B { constructor(x) { super(x); this.c = x + 2; this.d = x + 3 } }
-// class E { constructor(x, flag) { if (flag) { this.y = x + 1; this.x = x } else { this.x = x; this.y = x + 1 } } }
-// class H { constructor(x) { this.n = x; helper(this, x); this.m = x + 2; this.n = x + 9 } bump(x) { this.k = x + 20 } }, helper(h, x) { h.k = x + 1 }
-// function F(x) { this.u = x; this.v = x + 1 }
-// The layouts of B, D, H and F declare the fields in another order than the constructors create them.
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="C" constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]

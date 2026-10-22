@@ -34,8 +34,7 @@ public:
     Boxed boxInteger(Integer, Range);
     Number toNumber(Integer, Range);
     Integer toInteger(Number);
-    // The result, without rounding, of the integer arithmetic that made a number. It is the number, with 0 for -0,
-    // or both lie beyond 2^52 on the same side of zero: a sum of integers and at most one product of two is rounded nowhere else.
+    // The result, without rounding, of the integer arithmetic that made a number.
     std::optional<Integer> exactIntegerBehind(Number);
     Integer widen(Word32, Range);
     Word32 narrow(Integer);

@@ -36,8 +36,7 @@ struct InstanceLayout {
     static constexpr size_t offsetOfStringCells = 384 * KB;
     // Between the instance and the string cells.
     static constexpr size_t offsetOfKeyOrderSteps = 32 * KB;
-    // Small tables of which compiled code reads one word at a time. Here it reaches the word from the instance, without the address of the table.
-    // A table that has no room here lies elsewhere, and compiled code goes through its address.
+    // Small tables of which compiled code reads one word at a time.
     static constexpr size_t offsetOfBuiltinLocationStates = 64 * KB;
     static constexpr size_t offsetOfGlobalBindings = 80 * KB;
     static constexpr size_t offsetOfBuiltinCells = 128 * KB;

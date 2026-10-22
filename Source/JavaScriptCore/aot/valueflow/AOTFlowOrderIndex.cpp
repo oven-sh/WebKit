@@ -177,8 +177,7 @@ static void markEvalBindingsOpaque(FlowScopeIndex& index)
 
 namespace {
 
-// Puts the accesses of members into the lists of the index. Only a store that has certainly written the member when it completes is listed.
-// An access in an instance that stands for the calls of one site happens while that call runs, so it is listed as the call.
+// Puts the accesses of members into the lists of the index.
 class MemberAccessMerger {
 public:
     explicit MemberAccessMerger(FlowScopeIndex& index)
@@ -240,7 +239,6 @@ void MemberAccessMerger::collectStoredHolders()
 }
 
 // Nobody ever holds the prototype object a function was created with when another object is stored into the prototype property before the first read of it.
-// The order of that property decides, and it is computed with the order of the members, so a store that counts on it names it.
 void MemberAccessMerger::collectReplacedPrototypes()
 {
     PropertyKeyID prototypeKey = m_index.program().keyOf(BuiltinNames::prototype);

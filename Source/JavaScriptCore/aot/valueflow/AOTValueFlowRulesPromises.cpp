@@ -64,7 +64,6 @@ void runAwait(const ValueFlowStatement& statement, ValueFlowRuleContext& context
 }
 
 // A promise whose `constructor` is not Promise is settled through Promise.prototype.then, which constructs the species of that constructor.
-// The getter of a built-in constructor under @@species answers its receiver, so a class of the program that extends Promise is its own species.
 static void constructSpeciesOfPromises(ValueFlowRuleContext& context, ClimbingSet promises)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -89,7 +88,6 @@ static void constructSpeciesOfPromises(ValueFlowRuleContext& context, ClimbingSe
 }
 
 // A promise of the realm finds the built-in `then` on its prototype, which is locked, unless something of that name was put on the promise itself, properties were copied onto it or it was given another prototype.
-// What was done through the untracked object may have been done to a promise that the analysis has stopped following.
 static bool mayLackBuiltinThen(ValueFlowRuleContext& context, ClimbingSet promises)
 {
     if (!holdsSomething(context, promises))
@@ -128,8 +126,7 @@ static void askThenables(ValueFlowRuleContext& context, ClimbingSet thenables, V
     context.add(result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
 }
 
-// As far as its layout says, an instance of a class that extends something may be a promise. Only the built-in `then` constructs a species, and an object that does not find it is never handed to it.
-// Each is asked by itself, so that a promise beside it does not answer for it.
+// As far as its layout says, an instance of a class that extends something may be a promise.
 static ClimbingSet instancesFindingBuiltinThen(ValueFlowRuleContext& context, ClimbingSet instances)
 {
     const ValueFlowUniverse& universe = context.universe();

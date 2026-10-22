@@ -163,8 +163,7 @@ static bool mayBeBoundFunction(const Program& program, const Type& receivers)
     });
 }
 
-// With a function that is not bound the ordinary method reads `prototype`, which is a key of the protocol, and walks up from the tested value, which the entry
-// that runs the protocol declares for that operand. With a bound function it starts over at the target.
+// With a function that is not bound the ordinary method reads `prototype`, which is a key of the protocol, and walks up from the tested value, which the entry that runs the protocol declares for that operand.
 static void addHasInstanceMethod(const Program& program, const Type& receivers, ProvenAccess&& read, CalleeList& result)
 {
     const BuiltinTable& table = program.builtins();

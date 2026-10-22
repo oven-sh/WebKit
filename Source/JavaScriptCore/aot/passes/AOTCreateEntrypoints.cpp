@@ -48,7 +48,6 @@ void emitReturnOfEntrypointCall(IRBuilder& builder, ValueID call)
     }
 
     // The frame stays only where the callee returns its result in another form than the entrypoint.
-    // A callee on a cycle of tail calls that leads back through the entrypoint returns it in the same form.
     Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { call });
     terminator.setRequirement(TailCallRequirement::Allowed);
     builder.emitTerminator(WTF::move(terminator));

@@ -52,9 +52,7 @@ static ClosureUse closureUseOf(const Function& function, const FlowResults& flow
     return flow.closureUseOfBoundFunction(record.target, record.numberOfBoundArguments);
 }
 
-// A closure of either form is a complete function object, whoever gets hold of it. The slim one allocates storage with its first own property, so it is for functions that
-// are not expected to get one: a function that cannot construct has no `prototype`, and nothing in the program constructs or extends a plain function that has no class of
-// instances. Native code of the run time casts the functions of its own modules.
+// A closure of either form is a complete function object, whoever gets hold of it.
 static bool isExpectedToHaveNoProperties(const Program& program, const FlowResults& flow, FunctionID id)
 {
     auto& function = program.at(id);

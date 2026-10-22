@@ -37,9 +37,7 @@ using Failure = std::optional<InternalError>;
 
 template<typename External> bool isValidExternal(uint32_t word, const BuiltinTable&);
 
-// A field whose type lists nothing but integers, or nothing but strings, besides undefined and null. Two layouts that have one under the same name, with nothing in common,
-// are the layouts of different objects: `kind: 80` and `kind: 245`. No conversion of the program makes one pass for the other, not even an assertion.
-// The types have not been read when this is asked, so nothing about them has been checked.
+// A field whose type lists nothing but integers, or nothing but strings, besides undefined and null.
 class TellingFields {
 public:
     TellingFields(const ParallelLoops&, const Wire::Sections& checkedSections);

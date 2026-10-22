@@ -63,10 +63,8 @@ enum class ValueFlowNameKind : uint8_t {
     ResolvedPromises,
     RejectedPromises,
     // Of an object that a built-in has allocated: the prototype object of each class as whose instance one has allocated it, and the object itself where an allocation names no such class.
-    // One object stands for all that the callees of a call allocate, so this moves while the callees do.
     AllocatedAs,
     // Not places in an object but what a protocol gives: only lookup() takes them.
-    // What opening an iteration over the set gives, and the values that such an iteration hands out. The payload is the IteratorKind.
     OpenedIterators,
     IteratedValues,
     // What the methods of the iterators in the set answer. The payload is the ResumeMode.
@@ -76,18 +74,15 @@ enum class ValueFlowNameKind : uint8_t {
     MemberWritten,
     EveryMemberWritten,
     EveryMemberRead,
-    // Of the array of a rest parameter that its function only spreads into one call: what the callers have passed, by the index at which it lies in the array. The payload is that index;
-    // numberOfGroupedArguments for what lies further back, and one more for what lies at an index nobody knows. No code reads it out of the array.
+    // Of the array of a rest parameter that its function only spreads into one call: what the callers have passed, by the index at which it lies in the array.
     RestArgument,
     // The names under which a store or a definition has added a property to an object of the program that its layout does not declare: key constants, and the kinds of strings and symbols where nobody knows the name.
     AddedNames,
-    // No value, and only lookup() takes it: the statement does what code that nobody compiles does with what it finds above the escaped instances in the set. The set is all that one class or one constructor function
-    // of the program constructs, and the payload is the object that stands for those: see runEscape().
+    // No value, and only lookup() takes it: the statement does what code that nobody compiles does with what it finds above the escaped instances in the set.
     FoundThroughEscapedInstances,
 };
 
-// A store under a name of the first kind may be what a read under a name of the second kind finds although the two names differ: the read takes whatever lies under any name of that sort,
-// or the store does not know its name. Names of one kind are the same only if their payloads are.
+// A store under a name of the first kind may be what a read under a name of the second kind finds although the two names differ: the read takes whatever lies under any name of that sort, or the store does not know its name.
 constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind read)
 {
     switch (read) {
@@ -159,7 +154,6 @@ struct ValueFlowName {
 };
 
 // Hidden slots that are no slots of the table, whose numbers count up from zero.
-// Of a pair that Object.entries has made: the key and the value that it was made with, which lie together under the indexes of the pair as in any array, and the objects whose own values those values are.
 inline constexpr ValueFlowName keyOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xffffffff };
 inline constexpr ValueFlowName valueOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffe };
 inline constexpr ValueFlowName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
@@ -171,13 +165,10 @@ enum class ValueFlowMaskKind : uint8_t {
     // A set that a rule asks for. Whatever it does not list is left out.
     Plain,
     // A test at run time stands behind it: the arm of a type test, an operation that goes on only with what passes its test.
-    // Whatever it does not list is left out. Where the type names objects of the program alone, those objects take the place of a placeholder.
     Checked,
-    // The type of a position or of a value with no test in front of it. It keeps nothing out: primitives, objects that the analysis follows and the unknown object pass untouched.
-    // Where the type names objects of the program alone, those objects take the place of the untracked object.
+    // The type of a position or of a value with no test in front of it.
     Declared,
-    // The type that a value has while the checks in front of it pass: of a Check, and of what is typed by the result of one. It does what Declared does.
-    // What a check turns away goes on through the same operations in the generic version of the function, so a stranger here is no fault of anybody's.
+    // The type that a value has while the checks in front of it pass: of a Check, and of what is typed by the result of one.
     Expected,
 };
 
@@ -262,8 +253,7 @@ enum class ValueFlowStatementKind : uint8_t {
     ModuleEvaluation,
     // What goes between the body of an async function or a generator and the promise or the generator that its callers get: the statement lies in that body.
     Coroutine,
-    // In a function that only tests its arguments, and in the typed body that it calls. What fits the types goes on in typed code. Each operand is what one of the tests, or one of the checks
-    // of the typed body, turns away: once one of them holds something, the generic version of the function runs too.
+    // In a function that only tests its arguments, and in the typed body that it calls.
     EntryChecks,
     // In the host's body, one of each.
     HostRoots,

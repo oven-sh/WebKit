@@ -136,7 +136,6 @@ static bool storesIntoNamedField(Opcode opcode)
 }
 
 // DeferClosuresInFields leaves the closure of a field unmade until the field is read, but only where the allocation is given the NewClosure itself.
-// After a split the worker makes every closure on every call, and the wrapper's allocation is given a ResultAt.
 static bool givesFieldsClosuresMadeOnDemand(FunctionAnalyses& analyses, const FreshResultShape& shape)
 {
     const AnalysisContext& context = analyses.context();

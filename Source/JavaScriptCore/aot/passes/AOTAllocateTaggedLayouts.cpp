@@ -157,8 +157,7 @@ static BitVector findFunctionsCalledDirectly(const Program& program, const Paral
     return isCalledDirectly;
 }
 
-// The one parameter of the function that it stores under the key of the tag in the object it constructs. The layout is chosen before the store,
-// so what is stored has to be there at the entry.
+// The one parameter of the function that it stores under the key of the tag in the object it constructs.
 static ValueID findParameterStoredAsTag(const Program& program, const Function& function, ValueID object, PropertyKeyID tagKey)
 {
     const auto& entryParameters = function.at(entryBlock).parameters;
@@ -272,8 +271,7 @@ static void removeConversionsOfThis(IRBuilder& builder, ValueID thisValue)
     substitution.apply(function, nullptr);
 }
 
-// [[Construct]] answers with what the function returns if that is an object, and with the object it allocated otherwise. No call is in tail position before that test.
-// Answers whether the function may return another object.
+// [[Construct]] answers with what the function returns if that is an object, and with the object it allocated otherwise.
 static bool returnConstructedObject(IRBuilder& builder, ValueID object)
 {
     Function& function = builder.function();
@@ -349,8 +347,7 @@ bool TaggedLayoutAllocator::isCalledDirectly(FunctionID function)
     return m_isCalledDirectly->quickGet(function.index());
 }
 
-// Whether new.target is a closure of the constructor: then its prototype property belongs to the layout of the constructor. The type of new.target decides the test
-// wherever the construction is known: a call passes undefined, and a direct construction passes the closure.
+// Whether new.target is a closure of the constructor: then its prototype property belongs to the layout of the constructor.
 ValueID TaggedLayoutAllocator::appendTestOfNewTarget(IRBuilder& builder, FunctionID constructor, ValueID newTarget)
 {
     Value test = IRBuilder::make(Opcode::TypeTest, { newTarget });
@@ -415,7 +412,6 @@ Function TaggedLayoutAllocator::createAllocatingCopy(const TaggedFamily& family,
 }
 
 // The function keeps its body for a `this` that somebody hands in: a call, and a construction for another new.target.
-// A construction by value hands in an object too, which the run time allocated. It goes unused, and the caller takes the one that is returned.
 void TaggedLayoutAllocator::enterAllocatingCopy(FunctionID constructor, FunctionID copyID)
 {
     Function& function = m_program.at(constructor);
@@ -487,7 +483,6 @@ bool TaggedLayoutAllocator::allocateInConstructorFunction(const TaggedFamily& fa
 }
 
 // Under the prototype of a class below this one the run time answers with an instance of that class, whatever the allocation names.
-// So the layout of the tag is allocated only where new.target is the class itself.
 bool TaggedLayoutAllocator::allocateInClassConstructor(const TaggedFamily& family)
 {
     FunctionID constructor = m_program.at(family.maker).constructor;

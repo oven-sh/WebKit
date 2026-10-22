@@ -31,9 +31,7 @@ inline constexpr uint16_t primitivesWithoutJSONText = Primitive::Undefined | Pri
 JSONSupport jsonSupportOf(const Program&, const FlowResults&, LayoutID);
 JSONMemberSupport jsonMemberSupportOf(const Program&, const FlowResults&, LayoutID, uint32_t field);
 
-// How likely objects of a layout are the data that a program writes as JSON, the likeliest first. It goes by what the layout is and where it was born, never by its number,
-// which another line anywhere in the program changes: what the program's code makes before what Bun's library makes, a record before an instance of a class,
-// members that all have a text before members that have none (a function, a symbol), few members before many.
+// How likely objects of a layout are the data that a program writes as JSON, the likeliest first.
 struct JSONLikelihood {
     bool isOfLibrary { false };
     bool isInstance { false };

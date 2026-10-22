@@ -319,7 +319,6 @@ Condition TypeTestEmitter::isOneOfStringLiterals(CellPointer string, const TypeT
 Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, const TypeTestPlan& plan)
 {
     // Two literals or more are the cases of a switch, which compares and branches, or tests a bit where four or more numbers lie within 64.
-    // The number of a literal is its word without the tag; no other word that gets here, a string cell, gives so small a number.
     static constexpr size_t minLiteralsForSwitch = 2;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Vector<uint32_t, 8> numbers;

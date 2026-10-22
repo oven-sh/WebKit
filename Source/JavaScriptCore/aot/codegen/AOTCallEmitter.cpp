@@ -374,7 +374,6 @@ NativeCallExpectation CallEmitter::expectationOf(const OperationContext& context
                 }
             });
             // The analysis never saw a call that a pass made out of an operation: it followed the operation by a rule of its own, and handed no operand to native code there.
-            // A step of an iteration calls whatever `next` the iterator has. Such a callee is held to its own entry.
             if (PayloadWord::accessSite(call.opcode) && !call.accessSite())
                 expectation.namesMoreBuiltins = true;
             // The copy of a call that runs with what a check has turned away has lost the callees that the analysis found for it.

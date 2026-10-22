@@ -133,9 +133,7 @@ static bool needsCell(const Program& program, const Function& function, const Ob
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// `function count(...args)`: the caller builds the list for the call alone. The summary of a callee says that it retains a parameter as soon as one general read in its rare code may hand
-// the list to a getter. Its body says more: where all that its likely code does with the list is answered by a virtual object, the allocation goes away there, and sinks into the
-// unlikely code that takes a cell. A list for each turn of a loop is what pays for a copy of the callee.
+// `function count(...args)`: the caller builds the list for the call alone.
 class CalleeOfCall {
 public:
     CalleeOfCall(FunctionPassContext& context, BlockID block, ValueID call)
@@ -250,7 +248,6 @@ static bool maySendObjectOn(FunctionAnalyses& analyses, const Use& use)
 }
 
 // What needsCellOnlyFor() finds, seen without the solve: from the uses of the value that makes the object, and of the values that it is handed on to.
-// That it holds is seen only where every name of the object is: each of its uses is understood, and none puts it where it could be read out again.
 static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, ValueID call, CalleeOfCall& callee)
 {
     constexpr size_t maxNames = 12;

@@ -143,8 +143,7 @@ CallInliner::CallInliner(FunctionPassContext& context)
 {
 }
 
-// A copied body has calls of its own. They are decided in the same run, so that the passes that follow see a call's code together with what it calls:
-// an object that the caller allocates is still untested when the last of the code that fills it arrives.
+// A copied body has calls of its own.
 PassOutcome CallInliner::run()
 {
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -335,8 +334,7 @@ PassOutcome CallInliner::markCallsClosingCycles(std::span<const InlineSite> site
     return outcome;
 }
 
-// The type of the parameter lists the functions that it is seen to receive, and each may get a copy of the callee. A helper that the whole program hands its callbacks to
-// would be there a hundred times, and most of the copies would never run: one copy serves all of its callers.
+// The type of the parameter lists the functions that it is seen to receive, and each may get a copy of the callee.
 bool CallInliner::wouldHaveTooManyCopies(const InlineSite& site, uint32_t entryParameter)
 {
     const Function& callee = m_program.at(m_caller.at(site.call).function());
@@ -436,8 +434,7 @@ void CallInliner::copyAcceptedSites(std::span<const InlineSite> sites)
 PassOutcome inlineCalls(FunctionPassContext& context)
 {
     PassOutcome outcome = CallInliner(context).run();
-    // Every analysis is dropped behind a copied body, those that look into a call behind the choice of a callee version, the frequencies behind the mark on a block. No analysis reads the mark on a call that closes a cycle.
-    // The effects begin a new round all the same, and what is made from them goes with them: a later pass that asks for effects in the middle of its own edits goes by the answers that the round holds.
+    // Every analysis is dropped behind a copied body, those that look into a call behind the choice of a callee version, the frequencies behind the mark on a block.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;
     return outcome;

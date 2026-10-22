@@ -12,6 +12,7 @@
 #include "AOTWire.h"
 #include <memory>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
@@ -71,7 +72,6 @@ private:
 };
 
 // Outlining merges equal operations of many sites into one body, so the sites are observed before it runs.
-// From selection on, a body that gets no code says nothing.
 AccessSiteObservations observeAccessSites(const Program&, const FlowResults&, BuildContext&);
 
 // The same, one function at a time, so that whoever has a function in the cache can have it observed there.
@@ -90,17 +90,13 @@ private:
     struct State;
     std::unique_ptr<State> m_state;
 };
-// Indexed by AccessSiteID. A site has the level of the operations that get code. Reads no body.
-// The level says what flow knows about the receivers. The cost says what the code of the access itself does: a test is charged to the access it was made for while it is right in front of it, and every other access that relies on it is free.
+// Indexed by AccessSiteID.
 Vector<FlowSiteLevel> gradeAccessSites(const FlowResults&, AccessSiteObservations&&, BuildContext&);
 
-// The checks that are in the program, and the tests of arguments that some caller may fail. Empty unless the flow report is collected.
-// AddGenericVersion makes a test and a branch of every check, so the ones that flow leaves are collected before it runs.
+// The checks that are in the program, and the tests of arguments that some caller may fail.
 Vector<Wire::RemainingCheckRecord> collectRemainingChecks(const Program&, BuildContext&);
 
-// Under --aot-check=functions-get-past-entry. Where flow holds that nothing arrives at a parameter, a read or a call's result, what comes behind it cannot be reached, and the code there is a trap.
-// That is right of dead code. It is also the form in which a source that no rule names shows first. A function whose first block ends so, and by no throw that the program spells out, is entered for nothing.
-// They are looked for once the bodies are prepared and simplified and nothing is inlined: an inlined body has no first block. `isReachable` is findReachableFunctions().
+// Under --aot-check=functions-get-past-entry.
 Vector<InternalError> findFunctionsThatEndInFirstBlock(const Program&, const BitVector& isReachable, BuildContext&);
 // Behind the optimizations and the removal of what nothing names any more: each whose body still gets code, or lies inlined in one, is an error. The others were dead code.
 void reportFunctionsThatEndInFirstBlock(const Program&, Vector<InternalError>&&, BuildContext&);

@@ -208,8 +208,7 @@ static Vector<Vector<LayoutID>> findLayoutsNamedBelow(const SlotPlanContext& con
 
 namespace {
 
-// `constructor() { this.update = options => { this.options = options; }; this.update({}); }`, `constructor() { this.reset(); }`: what a constructor calls at nearly every activation
-// with the object as receiver, as argument, or in a closure over it that the constructor has made, goes on filling the object.
+// `constructor() { this.update = options => { this.options = options.
 class ConstructionFollower {
 public:
     ConstructionFollower(const SlotPlanContext& context, FunctionID id, std::span<const ObjectUnderConstruction> handedOver)
@@ -452,8 +451,7 @@ BlockID FunctionScanner::blockOf(ValueID id)
     return m_blockOfValue[id.index()];
 }
 
-// A test that passes hands the object on as a parameter of the block behind it. Where several edges meet, the objects that arrive go on together,
-// so from there on how often a block runs says the same about each of them. Says whether the value can be nothing else than the objects found.
+// A test that passes hands the object on as a parameter of the block behind it.
 bool FunctionScanner::collectFreshObjects(ValueID value, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<FreshObject, 4>& objects)
 {
     ValueID root = definitionThroughSameValues(m_function, value);
@@ -614,8 +612,7 @@ void FunctionScanner::scanStoreByName(const Site& site)
         noteStoreBehindStore(definitionThroughSameValues(m_function, store.operand(*receiver)), store, m_weights.weightOf(site.block));
 }
 
-// What a function stores into nearly every object that it is called to construct, that it allocates itself, or that it gets from the function that has made it. The blocks of the function are compared.
-// Every object of a class passes its constructor. Any other place is one of several that make objects of the layout, so it counts by its heat among them.
+// What a function stores into nearly every object that it is called to construct, that it allocates itself, or that it gets from the function that has made it.
 void FunctionScanner::scanStoreOfConstructor(const Site& site)
 {
     const Value& store = site.value;
@@ -990,7 +987,6 @@ static Vector<LayoutID> findLayoutsOfFreshResults(const Program& program, std::s
 }
 
 // A function that is called by name from a place in a loop, from a function that calls itself again by name, or from such a function, and a callback that a built-in calls for each element.
-// Such code may fill an array with any number of objects, however seldom it is taken to run.
 static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std::span<const FunctionUses> functions)
 {
     unsigned numberOfFunctions = context.program.functions.size();
@@ -1028,9 +1024,7 @@ static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std
 static void countStoresOfFactories(const SlotPlanContext& context, std::span<const FunctionUses> functions, SlotUses& uses)
 {
     const Program& program = context.program;
-    // A factory stores what the objects that it makes get as a constructor does. Each place that makes counts with its own heat, and so does a place that goes on to fill: they are one place, on one scale,
-    // which the heat of a constructor and that of the function that calls it are not. The arm of a construction that seldom runs, and a second factory that makes a few objects without the field, weigh little.
-    // Room in the cell that every other object leaves empty costs less than an Extension for the others.
+    // A factory stores what the objects that it makes get as a constructor does.
     Vector<double> heatOfPlacesThatMake(FillWith { }, program.layouts.size(), 0.0);
     Vector<double> heatOfPlacesThatFill(FillWith { }, uses.rows.size(), 0.0);
     for (const FunctionUses& function : functions) {
@@ -1121,8 +1115,7 @@ static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std
             SlotRowUse& use = rows[row];
             use.holderHeat = uses.layouts[index].creationHeat;
             use.hasHoldersMadeInLoop = uses.layouts[index].isMadeInLoop;
-            // No more objects are filled than are made. Far more says that the two heats are not on one scale: a constructor that is called through a variable is taken to run seldom,
-            // whatever the heat of the code that calls it.
+            // No more objects are filled than are made.
             if (use.heatFilledBesideCreation && use.heatFilledBesideCreation >= use.holderHeat * 0.4999 && use.heatFilledBesideCreation <= use.holderHeat * 2)
                 ++use.storesOfConstructorWithValue;
             OptionSet<FieldFlags> flags = layout.fields[field].flags;

@@ -467,7 +467,6 @@ static bool holdsAmongSeveralResults(const Program& program, const CandidateType
 }
 
 // An environment that a function has made and hands back among its results is the caller's from there on: nobody else has it, but for those who have marked it.
-// A function that returns what a call of another function answered says nothing about who made it.
 static void findResultsMadeHere(const AnalysisContext& context, const CandidateTypes& types, FunctionPlan& plan)
 {
     RecordFacts facts = recordFactsOf(context.program, context.id);

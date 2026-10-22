@@ -157,8 +157,7 @@ bool StarExportResolver::join(StarCandidates& candidates, UniquedStringImpl* nam
     return true;
 }
 
-// `export *` lists the names and binds none of them, so a deferred export stays unread: the build compiled its getter only if something binds the name or makes a namespace object.
-// capturedValueOf() finds such an export by a binding that names the source. Under any other binding the value is read here: a variable has bound the name already, or another record stands for the same host value.
+// `export *` lists the names and binds none of them, so a deferred export stays unread.
 void StarExportResolver::addCapturedCandidates(ModuleID source, StarCandidates& candidates, ExportedNames exportedNames)
 {
     Instance& instance = m_modules.instance();

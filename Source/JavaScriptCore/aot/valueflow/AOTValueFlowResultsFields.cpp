@@ -530,8 +530,7 @@ ValueSetID ValueFlowHeapView::chainOf(ValueSetID objects)
     return chain;
 }
 
-// A link that may hold one of several objects says of none of them that the program puts it there. In a large program such a link holds hundreds: one helper that hangs `superCtor.prototype`
-// above `ctor.prototype` for callers that nobody knows ties every prototype object to every other. Only a link that holds one object counts.
+// A link that may hold one of several objects says of none of them that the program puts it there.
 void ValueFlowHeapView::indexStoresIntoPrototypeLinks()
 {
     m_hasIndexedStoresIntoPrototypeLinks = true;
@@ -740,7 +739,6 @@ static void findOperandsOf(const ValueFlowResultInputs& inputs, const ValueFlowH
     application.thisValue = heap.valueOf(maker, operands[hasSecondOperand ? 1 : 0]);
     if (passesList(call.opcode)) {
         // A list that unseen code has made, or has got hold of, holds what unseen code has got hold of: the unknown object stands for that, and no object that has stayed with followed code is in it.
-        // So only the lists that are listed beside the unknown object are asked what they hold.
         ValueSetID lists = heap.valueOf(maker, operands[2]);
         bool mayBeListOfUnseenCode = inputs.sets().contains(lists, ValueFlowUniverse::unknownObject());
         if (mayBeListOfUnseenCode)
@@ -878,8 +876,7 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     });
 }
 
-// A protocol of the language applies what it finds under one of these names. What the table has there steps iterators and settles promises: the rules follow that with operands that no node keeps,
-// also where the program has put such a function somewhere else. Any other built-in function that a protocol finds is called through a group: callInProtocol().
+// A protocol of the language applies what it finds under one of these names.
 static ValueSetID builtinFunctionsOfProtocolsThatProgramHasStored(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker)
 {
     const Program& program = inputs.program;
@@ -953,8 +950,7 @@ struct BuiltinsToApply {
     ValueSetID objects;
 };
 
-// The calls of built-ins that operations spell out, function by function, then those that the groups of callees share. A task is a stretch of them that any thread may run:
-// what a task finds comes in that order, and the tasks stand in that order.
+// The calls of built-ins that operations spell out, function by function, then those that the groups of callees share.
 class BuiltinApplicationTasks {
 public:
     BuiltinApplicationTasks(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, BuiltinsToApply among)
@@ -1231,8 +1227,7 @@ ValueSetID setAt(const SetsByNumber& sets, uint32_t number)
     return found == sets.end() ? ValueSets::nothing : found->value;
 }
 
-// An allocation in the constructor of a class answers with an instance of the class whose prototype object it is given, so one object of the universe stands for the instances of a class
-// and of the classes below it. Every other object with a layout has the one that its site names.
+// An allocation in the constructor of a class answers with an instance of the class whose prototype object it is given, so one object of the universe stands for the instances of a class and of the classes below it.
 class LayoutsOfObjects {
 public:
     LayoutsOfObjects(const ValueFlowResultInputs&, ValueFlowHeapView&);
@@ -1350,8 +1345,7 @@ bool LayoutsOfObjects::selectsLayoutByPrototype(ValueFlowObjectID object) const
     return site->origin == ValueFlowSiteOrigin::Operation && allocation.opcode == Opcode::NewObject && allocation.prototypeOperand();
 }
 
-// The classes whose layout the prototype that an allocation of another class is given may select. The run time gives the shape of another class only where that class is or may be below
-// the one that allocates, and an ordinary object under the prototype object of any other: ClassTable::instanceWithPrototype(). A class without a parent is below nothing.
+// The classes whose layout the prototype that an allocation of another class is given may select.
 ValueSetID LayoutsOfObjects::collectClassLayouts(ValueFlowHeapView& heap)
 {
     const Program& program = m_inputs.program;
@@ -1499,13 +1493,11 @@ struct StoredUnderKey {
     // By something else than the operation that allocates the object.
     bool isStoredAfterCreation { false };
     bool mayBeAccessor { false };
-    // What the operations of the program do, for a guess at what the property is. What code that nobody sees may do to an object that has escaped is left out.
-    // The values that they store, the getters of the accessors that they define, and the forms of those accessors as bits of AccessorForms.
+    // What the operations of the program do, for a guess at what the property is.
     ValueSetID valueFromOperations { ValueSets::nothing };
     ValueSetID getters { ValueSets::nothing };
     uint8_t accessorForms { 0 };
-    // An operation puts a value there itself: a store, or an allocation that lists the field. Then undefined is a value like any other: `exports.name = void 0`.
-    // Where a built-in applies a descriptor, undefined is also what a descriptor without `value` reads as.
+    // An operation puts a value there itself: a store, or an allocation that lists the field.
     bool isGivenValueByOperation { false };
     // An operation of the program stores under the key and spells it, or computes a key that can be no other. The code of a built-in and a store under a key that may be one of several do not count.
     bool isNamedByOperation { false };
@@ -1750,8 +1742,7 @@ private:
         }
     };
 
-    // What hangs on the statement and the name of a write, whatever set it goes through. A statement whose receivers have grown from round to round has asked for a node for each set that they were,
-    // all under one name, and forEachWriteAmong() hands those out side by side.
+    // What hangs on the statement and the name of a write, whatever set it goes through.
     struct StoreUnderName {
         const ValueFlowStatement* statement { nullptr };
         ValueFlowName name;
@@ -1987,8 +1978,7 @@ std::optional<Vector<LayoutID, 4>> StoresByLayout::layoutsCopiedOnto(LayoutID ta
     return layouts;
 }
 
-// The rules let the target of a copy find what the source holds as it finds what it inherits. Where every name that the sources may hold is listed, the copy is a store under each of them.
-// A source that is itself the target of a copy has its turn first.
+// The rules let the target of a copy find what the source holds as it finds what it inherits.
 void StoresByLayout::followCopiedProperties()
 {
     Vector<LayoutID> targets;
@@ -2757,7 +2747,6 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
     StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
     ValueFlowName name = writes.name();
     // A parser puts a member that the layout declares into its field: a required one as it allocates the object, any other behind the allocation, if the text has it.
-    // What it stores under a key nobody knows lies under the names that the layout does not declare.
     if (writes.fillsTypedResult) {
         if (name.kind == ValueFlowNameKind::UnknownKey) {
             stores.isStoredUnderIndex = true;
@@ -3022,11 +3011,7 @@ auto StoresByLayout::countAccessesThroughTypesOfFewLayouts(const BitVector& keys
     return counts;
 }
 
-// A placeholder names no layout, but the type of the receiver does: the object is expected to have one of the layouts that it lists. So the store names them, as a store through a known receiver
-// names the layout of the receiver. What is stored is in the table of the placeholder, which counts for each of these layouts.
-// Where the layouts are too many to give each of them room for the name, a layout that has the name anyway needs none. Of the others those get room on which the program names it through a type of
-// few layouts, the most named first, up to the limit. A layout on which nothing names it gets none: it would hold the names of other objects.
-// What a constructor function stores into its `this` is stored into every object that passes it: `EventEmitter.call(this)` runs for the objects of a hundred classes, and each of them gets the few names.
+// A placeholder names no layout, but the type of the receiver does: the object is expected to have one of the layouts that it lists.
 void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
 {
     Vector<NameStoredThroughDeclaredReceiver> names = std::exchange(m_namesStoredThroughDeclaredReceivers, { });
@@ -3383,8 +3368,7 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
 
 bool StoresByLayout::getsAccessorsUnderKeysNobodyKnows(LayoutID layout) const
 {
-    // The guess is for an object that is born empty and filled by a loop. A helper that defines an accessor on whatever it is handed reaches every object of the program that has escaped,
-    // and a name that such an object lacks is read too often to be looked for in a slot first.
+    // The guess is for an object that is born empty and filled by a loop.
     if (!m_inputs.program.at(layout).fields.isEmpty())
         return false;
     // What is known under a key comes on top of this, so what fails here fails under every key.
@@ -3644,7 +3628,6 @@ SetsByNumber UsesOfObjects::takeExpanded(ValueSetMakers& makers, Vector<PartOfNu
 }
 
 // A walk over the keys of an object may go on to the keys that it inherits, as for-in and the formatter of console.log do, and so does a test of a name that is not a test of an own property.
-// A node that reads lists what lies above the receivers by itself.
 void UsesOfObjects::goOnToPrototypes(ValueSetMakers& makers)
 {
     runTasksInParallel(m_inputs.loops(), {
@@ -3799,7 +3782,6 @@ static BitVector findValuesOnlyAccessed(const Function& function)
 }
 
 // A location that is only read as a callee loses its value once the operations that read it are gone, so a pass has to find each of them from the location.
-// The receivers of an access are the objects that the lookup starts at: they do not name the layout of an object above them on which it ends.
 void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader reader, ValueSetID startOfLookup)
 {
     switch (key.name().kind) {
@@ -3820,10 +3802,6 @@ void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader re
 }
 
 // Every read of a value goes through a node that is keyed by the objects it looks into: those that the lookup starts at and all that lies above them.
-// An operation that reads by name asks for a lookup, which all reads of the name from the same receivers share, and the statement of the lookup asks for the node.
-// A node that no statement asks for any more is covered by the node of a bigger set, which somebody asks for.
-// What is noted for a statement depends on the statement and on its reader alone, and a statement that a rule has made is followed once for each reader that reaches it. So all threads follow,
-// and which of them comes to a statement first makes no difference.
 void UsesOfObjects::noteReads(ValueSetMakers& makers)
 {
     struct Visit {
@@ -3861,8 +3839,7 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
     };
     Vector<Vector<Visit>> visitsListedBy(loops.width());
     Vector<NodesLookedAt> nodesLookedAtBy(loops.width());
-    // A number stands for one made node or for several that were made together. Only the groups that ValueFlowSolver::recordGroupsOfClosuresEnteredWithoutGroup() puts down share the nodes of one group,
-    // so there may be more numbers than nodes: the bits begin with this many and grow for a number beyond them.
+    // A number stands for one made node or for several that were made together.
     uint32_t numberOfMadeNodes = solver.graph().numberOfNodes() - solver.input().numberOfNodes;
     auto follow = [&](unsigned worker, ValueFlowStatementID statement, Reader reader, ValueSetID startOfLookup) {
         Noter noter = noterOf(makers, worker);
@@ -3937,7 +3914,6 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
     });
     followMadeStatements();
     // Whatever is reached from here on is reached by a reader that takes the value: no made statement is an operation, and only an operation brings another reader up.
-    // So a statement that has no reader by now gets this one, whether it is come to here or from another statement.
     forEachIndexInParallel(loops, (numberOfMadeStatements + madeStatementsPerIndex - 1) / madeStatementsPerIndex, [&](unsigned run, unsigned worker) {
         uint32_t first = static_cast<uint32_t>(statements.size()) + run * madeStatementsPerIndex;
         for (uint32_t index = first; index < std::min(first + madeStatementsPerIndex, numberOfStatements); ++index) {
@@ -4153,11 +4129,7 @@ void UsesOfObjects::findHostFunctionsThatProgramHasStored(ValueSetMakers& makers
     }
 }
 
-// A function of the host names a value that it refuses in the message of its error: `Received an instance of Point`, `Received {}`, `Received [Object]`. It runs no code of the program for that,
-// and it shows whether the object has properties of its own. What no overload is sure to take at its place may be refused.
-// So it does with a receiver. In `o.m()` the function runs on what answers it under `m`: an object of the program does where the program has stored the function on it or above it.
-// One that the program has put below the holder of the function finds `constructor` there, and is named by that. A receiver that comes through `call` or `apply` is an operand of that function,
-// which is a use of its own.
+// A function of the host names a value that it refuses in the message of its error: `Received an instance of Point`, `Received {}`, `Received [Object]`.
 void UsesOfObjects::noteRefusedOperands(Noter noter, const ValueFlowBuiltinApplication& application)
 {
     const BuiltinTable& builtins = m_inputs.program.builtins();
@@ -4490,8 +4462,7 @@ struct AllocatingOperation {
 
 } // anonymous namespace
 
-// The objects of a layout hold the fields of the layouts above it too. A layout that was derived from another has copies of them. A class gets those of the class that it extends once the results are applied,
-// but for a field whose name it declares itself.
+// The objects of a layout hold the fields of the layouts above it too.
 static void forEachFieldOfObjectsWith(const Program& program, const FlowApplication& application, LayoutID id, NOESCAPE const Invocable<void(FieldReference declaration, const Field&)> auto& functor)
 {
     Vector<LayoutID, 4> layoutsBelow;
@@ -4599,8 +4570,7 @@ static void noteFieldsMissingAtCreation(const FieldResults& results, std::span<c
             isMissingAtCreation[declaration.layout.index()].quickSet(declaration.field);
     };
 
-    // A constructor that the analysis has followed fills a field before the object leaves its hands, or it does not. Of any other class the constructor of the base makes the object without the fields
-    // of the class, and the instance of a constructor function is made without any.
+    // A constructor that the analysis has followed fills a field before the object leaves its hands, or it does not.
     noteMissing(collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned index, Vector<FieldReference>& missing) {
         LayoutID id(index);
         const Layout& layout = program.layouts[index];
@@ -4786,8 +4756,7 @@ bool ObjectsOfLayoutInHeap::mayFindNameAbove(PropertyKeyID key)
     return mayHoldMore;
 }
 
-// A store through an object that inherits from this one ends its walk at the field. It is refused where the field is read-only, as the fields of a frozen object are,
-// and it reaches no setter and no read-only property of the name further up. Without the field the walk would go on.
+// A store through an object that inherits from this one ends its walk at the field.
 bool ObjectsOfLayoutInHeap::isObservedByStoresOfHeirs(PropertyKeyID key)
 {
     OptionSet<ObjectMutation> possible = m_results.possibleMutationsOf(m_id);
@@ -4892,8 +4861,7 @@ static ValueFlowFieldContents computeDeclaredFields(const FieldResults& results,
     noteFieldsMissingAtCreation(results, allocatingOperations, isMissingAtCreation);
     ValueSetMakers makers(inputs);
 
-    // What happens to the objects of a layout happens to every field that they hold. The objects of several layouts may hold one field, so each thread puts down what the layouts that it takes say,
-    // and that is brought together below, in the order of the layouts.
+    // What happens to the objects of a layout happens to every field that they hold.
     Vector<Vector<HeldField>> fieldsHeldByObjectsWith(numberOfLayouts);
     Vector<ObjectsOfLayoutInHeap::Chains> chainsOfWorker(loops.width());
     forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
@@ -5140,7 +5108,6 @@ struct ProvenHierarchy {
 } // anonymous namespace
 
 // One object of the universe stands for the instances of a class and of the classes below it, so what a class below stores into its own field seems to be stored into the instances of this class too.
-// The same holds for a layout that was derived from this one.
 static Vector<Vector<PropertyKeyID>> collectKeysDeclaredBelow(const Program& program, const BitVector& isCandidate)
 {
     Vector<Vector<PropertyKeyID>> keysDeclaredBelow(program.layouts.size());
@@ -5184,10 +5151,6 @@ static LayoutsByKey collectLayoutsWithFields(const Program& program, const BitVe
 }
 
 // A store that finds an accessor above the object runs the setter, or does nothing where there is none: it fills no slot.
-// Nobody follows whether the accessor is defined before the first store. A store that comes first adds an extra property.
-// Above an object that has escaped, unknown code may hang every other object that has escaped, and a definition on an object that nobody knows may hit every prototype that has escaped,
-// so one accessor anywhere in the program would take the name from every such layout. Only a definition that names an object which the program puts above these counts.
-// The field is right whatever hangs there: a store that creates it and a read that finds it empty test that the object inherits nothing under the name.
 static bool findsAccessorAbove(const FieldResults& results, ValueSetMaker& maker, LayoutID id, PropertyKeyID key)
 {
     const ValueSets& sets = results.inputs.sets();
@@ -5232,8 +5195,7 @@ static void removeKeysWithoutRoom(const FieldResults& results, ValueSetMaker& ma
     });
 }
 
-// The names that the program mentions least go to the extra properties. What a constructor function stores into its `this` stays, however seldom it is mentioned: every object has it, and one extra
-// property fails each test that the object has none.
+// The names that the program mentions least go to the extra properties.
 static void keepMostAccessedKeys(const FieldResults& results, AccessCounts& counts, LimitID limit, LayoutID layout, uint64_t numberOfOtherFields, Vector<PropertyKeyID>& keys)
 {
     BuildContext& build = results.inputs.build;
@@ -5251,8 +5213,7 @@ static void keepMostAccessedKeys(const FieldResults& results, AccessCounts& coun
     std::ranges::sort(keys);
 }
 
-// The names of the accessors that the objects of the layout get. Where the definitions stand in a loop over names nobody knows, the names that matter are those that the program reads:
-// a definition under one of them finds the field by its name at run time, and one under any other name makes an extra property.
+// The names of the accessors that the objects of the layout get.
 static Vector<PropertyKeyID> keysOfAccessorsIn(const FieldResults& results, ValueSetMaker& maker, LayoutID id)
 {
     Vector<PropertyKeyID> keys = results.stores.keysOfAccessorsDefinedIn(maker, id);
@@ -5306,7 +5267,6 @@ static Vector<Vector<PropertyKeyID>> chooseAppendedKeys(const FieldResults& resu
         if (!canAppendFieldsTo(results, LayoutID(index)))
             return;
         // What only a store through a placeholder, the code of a built-in or a store under a key that may be one of several puts there goes to the extra properties.
-        // An accessor is defined once, by a built-in or in a loop over the names as often as under its name.
         Vector<PropertyKeyID> accessors = keysOfAccessorsIn(results, makers.of(worker), LayoutID(index));
         // What Object.create makes stays an ordinary object unless it is made to hold accessors.
         if (accessors.isEmpty() && program.layouts[index].has(LayoutFlags::IsOfCreatedObject))
@@ -5387,7 +5347,6 @@ static Vector<Vector<PropertyKeyID>> chooseAppendedKeys(const FieldResults& resu
 }
 
 // A name that followed code stores into the objects of a layout and that the layout does not declare becomes a field that no allocation fills.
-// The objects of the layouts below hold it too, so what happens to them happens to it.
 static void appendFields(const FieldResults& results, const ProvenHierarchy& hierarchy, std::span<const Vector<PropertyKeyID>> keysByLayout, ValueFlowFieldContents& contents)
 {
     BuildContext& build = results.inputs.build;
@@ -5476,8 +5435,7 @@ static BitVector findLayoutsConstructedByNativeCode(const FieldResults& results)
     return layouts;
 }
 
-// The rules mark an object as soon as something is stored into it under a name that the layout of its site does not declare. After the application the objects have every field of the proven chain
-// and the appended ones, and a store to one of those adds nothing.
+// The rules mark an object as soon as something is stored into it under a name that the layout of its site does not declare.
 static void computeAddedKeys(const FieldResults& results, std::span<const Vector<PropertyKeyID>> appendedKeys)
 {
     const Program& program = results.program();
@@ -5613,7 +5571,6 @@ static void computeFieldCreations(const FieldResults& results)
 }
 
 // The orders in which the allocations and the constant data of a layout without a constructor list its fields: those that a finished object may have come first, and of them the most frequent.
-// Whoever has room for a few orders takes them from the front.
 static void computeInitialFieldOrders(const FieldResultsWithoutStores& results, std::span<const AllocatingOperation> operations)
 {
     struct CountedOrder {
@@ -5674,8 +5631,6 @@ static void computeInitialFieldOrders(const FieldResultsWithoutStores& results, 
     }
 }
 
-// A field that no allocation lists, that every construction has stored when the object leaves the hands of the constructor, and that one operation alone stores, which stands in the constructor of the class
-// or in an initializer, outside every cycle. Such code runs once for each object. A helper that the constructor calls may run again on an object that exists already.
 static void computeFieldsStoredOnceByConstructors(const FieldResults& results)
 {
     // The one operation that stores by name, as far as somebody has looked.
@@ -5982,8 +5937,7 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
                     fields[field].position.type = arena.intern(*result.narrowed);
                     fields[field].position.isProven = true;
                 }
-                // Nothing is ever stored that lies outside `anything`. But a field of which nothing is proven takes the type that the families declare for its key when the results are applied
-                // (applyTypeDeclaredInFamily()), and a store is tested against that: so nobody may say of it, or of its layout, that no value of another type is ever stored.
+                // Nothing is ever stored that lies outside `anything`.
                 bool takesDeclaredType = !fields[field].position.isProven && isDeclaredInFamilies[index].get(field);
                 // Which getters the slot of an accessor takes is a guess: a pair with another getter, or with a setter alone, is turned away and lies beside the slots.
                 if (inputs.build.isEnabled(FlowResultKind::HolderMutations, index) && !fields[field].accessor.isAccessor() && !takesDeclaredType)
@@ -6035,9 +5989,7 @@ static bool leavesReadsToBeFound(ReadState reads)
     return reads == ReadState::OnlyCalled || reads == ReadState::OnlyAccessed;
 }
 
-// A field that is only called goes away once the reads that are left in the program do not reach it. A pass finds a read by name from the field where the stamp of the read lists the layouts of all its receivers.
-// So does the pass that takes the object in a field apart, whose reads do nothing but access that object.
-// `stores` is none where no read has a stamp.
+// A field that is only called goes away once the reads that are left in the program do not reach it.
 static void keepFieldsOnlyCalledWhoseReadsHaveStamps(const ValueFlowResultInputs& inputs, FlowApplication& application, ValueFlowHeapView* heap, StoresByLayout* stores)
 {
     const Program& program = inputs.program;

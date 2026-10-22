@@ -30,8 +30,7 @@ namespace AOT {
 
 struct Instance;
 
-// A frame of compiled code is named by the place of its frame record, the word below its return address, whether it has a record or not.
-// stackPointer and framePointer are what the two registers hold in the frame at the return site.
+// A frame of compiled code is named by the place of its frame record, the word below its return address, whether it has a record or not. stackPointer and framePointer are what the two registers hold in the frame at the return site.
 ALWAYS_INLINE CallFrame* frameAtReturnSite(const ImageFrame& frame, const void* stackPointer, CallFrame* framePointer)
 {
     if (frame.hasFrameRecord())

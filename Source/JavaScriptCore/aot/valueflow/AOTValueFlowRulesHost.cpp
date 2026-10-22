@@ -29,8 +29,7 @@ static ClimbingSet only(ValueFlowRuleContext& context, ValueFlowObjectID object)
     return ClimbingSet(context.maker().of(object));
 }
 
-// The host makes the module object of a CommonJS module for whoever asks for it. An operation that names one gives it a number. `children`, `parent` and `require.main` lead to others,
-// and only to modules that hold what they export in one variable, which the `exports` of the module object shows.
+// The host makes the module object of a CommonJS module for whoever asks for it.
 static void nameModuleObjects(const Program& program, ValueFlowBody& body)
 {
     ValueFlowBody::Constant moduleObjects;
@@ -66,8 +65,7 @@ enum class NativeCaller : uint8_t {
 
 } // anonymous namespace
 
-// The host's native code passes what the function's own annotations say: there is no second list of types. A validating build tests each parameter at the head of the function, so a wrong annotation aborts there.
-// Only an annotation counts that the checker has held the body against. A type that was inferred from what the body does with the parameter says nothing about the caller.
+// The host's native code passes what the function's own annotations say: there is no second list of types.
 static bool isKeptByHost(const Function& callee, unsigned index, const DeclaredType& declared)
 {
     return callee.entryParameterKind(index) == EntryParameter::Parameter && declared.site && !declared.flags.contains(PositionFlags::IsFromCompiler) && callee.has(FunctionFlags::IsChecked);
@@ -85,12 +83,10 @@ static void passFromNativeCode(ValueFlowRuleContext& context, FunctionID functio
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowNodeID parameter = context.nodes().entryParameter(function, index);
     // Of a function that is gone through once for each key, `args[1]` answers what the calls of the instance have passed at that position and never looks at the array: HeapRule::readsRestArgumentOfInstance().
-    // Native code enters the instance of the other calls, and what it passes may lie at any index.
     bool isRestParameter = callee.has(FunctionFlags::HasRestParameter) && index == callee.firstParameterIndex() + callee.numberOfPositionalParameters();
     if (ValueFlowNodeID passedAtAnyIndex = isRestParameter ? context.restArgumentEntered(function, numberOfGroupedArguments) : ValueFlowNodeID())
         context.add(passedAtAnyIndex, unknown);
-    // Whoever calls, the function itself makes the array of its rest parameter and the list behind `arguments`, and counts what it was passed. The caller chooses what lies in the array, as in passArguments():
-    // under the last name for the one call into which a function spreads an array that it does nothing else with.
+    // Whoever calls, the function itself makes the array of its rest parameter and the list behind `arguments`, and counts what it was passed.
     if (isRestParameter || callee.hiddenRestParameterIndex() == index) {
         ClimbingSet rest = only(context, universe.restArrayOf(function));
         context.add(parameter, rest);
@@ -137,9 +133,7 @@ static void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID functi
         else if (callee.entryParameterKind(index) != EntryParameter::Capture)
             passFromNativeCode(context, function, callee, index, caller, unknown);
     }
-    // One node holds what a function returns to all its callers. Were it to escape, whatever any caller of the program passes through `identity` would have escaped because native code holds `identity`.
-    // A function that tests its arguments has a generic version, which does what the function does with any operands. Entered with the unknown value as every operand it stands for every call
-    // that native code makes, so what it returns and throws is what native code gets. The typed body takes what fits of the same operands, and keeps what it returns to the callers of the program.
+    // One node holds what a function returns to all its callers.
     if (callee.role == FunctionRole::EntryChecks) {
         enterFromNativeCode(context, universe.genericVersionOf(function), caller, closure);
         return;
@@ -155,8 +149,7 @@ static void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID functi
     if (!callee.isUnsplitCoroutine())
         return;
 
-    // Each call of an async function makes a promise of its own. The one that native code gets from its call is an object that the program has never seen: the unknown object stands for it,
-    // and what it holds has escaped above. The object of the function stands for the promises that the callers of the program get, to which native code does nothing unless one of them escapes.
+    // Each call of an async function makes a promise of its own.
     if (!callee.has(FunctionFlags::IsGenerator))
         return;
     context.add(escaped, only(context, universe.coroutineResultOf(function)));
@@ -221,9 +214,7 @@ bool mayCallWhateverHasEscaped(ValueFlowRuleContext& context)
     return isRaised(context, ValueFlowHostNode::ValueNobodyKnowsIsCalled) || isRaised(context, ValueFlowHostNode::UnseenCodeRuns);
 }
 
-// The run time refuses whoever tries to change a locked object of the table, native code too. Of the other objects of the realm it locks the members that compiled code relies on,
-// so only unseen code that reaches the realm changes one of those behind the back of the analysis. A new name on one of their prototype objects is for the lookup that passes it:
-// HeapRule::holdersOfUndeclaredPropertiesUnder().
+// The run time refuses whoever tries to change a locked object of the table, native code too.
 void letAnythingHappenTo(ValueFlowRuleContext& context, ClimbingSet escaped)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -240,8 +231,7 @@ void letAnythingHappenTo(ValueFlowRuleContext& context, ClimbingSet escaped)
     context.add(context.written(context.restrict(objects, ValueSets::complement(universe.objectsWithLockedPrototypeLink())), { ValueFlowNameKind::PrototypeLink, 0 }), unknown);
 }
 
-// What a function of the library calls that only native code leads to has come from native code, and the table lists built-in by built-in what native code calls,
-// or from seen code, which has a statement of its own that hands it over.
+// What a function of the library calls that only native code leads to has come from native code, and the table lists built-in by built-in what native code calls, or from seen code, which has a statement of its own that hands it over.
 void letUndeclaredNativeCodeRun(ValueFlowRuleContext& context)
 {
     FunctionID caller = context.functionOfStatement();
@@ -338,8 +328,7 @@ static void handToBuiltin(ValueFlowRuleContext& context, const HostRead& read, c
     context.connect(group.thrown, escaped);
 }
 
-// The host starts a server for a value under whose `fetch` it finds a function, or anything at all under `app` (isServerConfig() in Bun's BunCompiledEntryPoint.cpp). `routes` is here for a host that learns to look there.
-// It waits for a promise, and for whatever else has a `then`, and asks the same of what that is fulfilled with, which nobody follows.
+// The host starts a server for a value under whose `fetch` it finds a function, or anything at all under `app` (isServerConfig() in Bun's BunCompiledEntryPoint.cpp).
 static bool mayBeServerConfiguration(ValueFlowRuleContext& context, const ValueFlowSources& value)
 {
     const Program& program = context.program();
@@ -375,8 +364,7 @@ static void applyHostRead(ValueFlowRuleContext& context, ModuleID module, const 
     handToBuiltin(context, read, *value);
 }
 
-// The load of an entry point answers a promise for its namespace object. With a function under `then` that object is a thenable: the promise calls the function,
-// and what the function hands to its first argument stands in the place of the namespace. Nobody follows that value to the host, which reads the same names off it.
+// The load of an entry point answers a promise for its namespace object.
 static void applyHostReadsOfThenable(ValueFlowRuleContext& context, const Entry& entry)
 {
     std::optional<ValueFlowSources> then = namedExportOf(context, entry.module, context.program().stringOf(BuiltinNames::then));
@@ -398,9 +386,7 @@ static bool mayHold(const BuiltinCondition* condition)
     return !condition || !condition->buildAdmitsRuntimeCode;
 }
 
-// A row with a condition speaks of a call, so it takes one: `typeof setTimeout` and `const later = setTimeout` run nothing. A read or a store of what is no object is the call.
-// Whoever applies a built-in says what the row asks for: whether an overload that runs other code may take the call, whether an operand may have a property or be a text. Something then lies in a cell of native code
-// on the built-in's own object. Nobody says what a caller passes that nobody follows.
+// A row with a condition speaks of a call, so it takes one: `typeof setTimeout` and `const later = setTimeout` run nothing.
 static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const BuiltinCondition* condition)
 {
     if (!condition)
@@ -659,9 +645,7 @@ static bool isLibraryRole(FunctionRole role)
     return role == FunctionRole::Library || role == FunctionRole::Model;
 }
 
-// What native code holds and does not call. A caller that nobody follows has loaded a module of the library by name: what the module exports is in its hands with the object that holds the exports.
-// To whoever gets such an object back it is the unknown object, so it is read and written like an object that has escaped. But no function among these is entered with operands nobody knows, and
-// no code of the library comes into the image for them: a call by value of a function that nothing has entered throws an error that names the function.
+// What native code holds and does not call.
 static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
@@ -779,8 +763,6 @@ static bool someCallPassesPropertyThatRunsUnseenCode(ValueFlowRuleContext& conte
 }
 
 // Once something has escaped and a value nobody knows is called, what the library keeps in its own objects is a value nobody knows, and nearly every store in the library goes through the unknown object.
-// The library puts a new name on a built-in object of the realm only where seen code hands it the object: util._extend(target, source), EventEmitter.call(target).
-// The object is then an operand of the function that stores. A built-in that writes into an operand writes into its receiver or into its first argument.
 static bool storesIntoOperandOfItsFunction(ValueFlowRuleContext& context, FunctionID writer)
 {
     ValueID site = context.siteOfStatement();
@@ -872,8 +854,7 @@ static bool isWrittenByProgram(const Program& program, const Module& module)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The modules that a load by a name nobody knows may answer. It evaluates only what the program wrote.
-// A file of the program with code that is in the image because another file names it by a constant. Data runs nothing and answers to its name.
+// The modules that a load by a name nobody knows may answer.
 static bool isInnerFile(const Program& program, ModuleID id)
 {
     ModuleKind kind = program.at(id).kind;
@@ -898,9 +879,7 @@ static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE 
         const Module& module = program.modules[index];
         if (!mayAnswerToName(program, ModuleID(index)))
             continue;
-        // A load under a name nobody knows brings nothing into the image and runs no module that nothing else runs. Of the program's files the name finds the entry points, as in an executable
-        // that `bun build --compile` makes without --aot: Modules::refusesRequestFromHost() turns every other file of the image away. Of the library it finds a module that is in the image
-        // because reached code names it by a constant. A native module has no code to run: its object is there whether or not anybody has asked for it.
+        // A load under a name nobody knows brings nothing into the image and runs no module that nothing else runs.
         bool isOfProgram = isWrittenByProgram(program, module);
         if (module.body ? !context.isReached(module.body) : !isOfProgram && module.kind != ModuleKind::Runtime)
             continue;
@@ -939,7 +918,6 @@ static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
 }
 
 // node:vm and ShadowRealm compile text too: a script or a function in the global scope of this realm, or code in a realm of its own, which has of this one what it is handed.
-// Bun.Transpiler makes text of text. It runs code only for a macro, through a few lines of its own that import the macro's file, and the loader refuses a file that is not in the image.
 static constexpr BuiltinID textEvaluatorsOfHost[] {
     Builtins::NodeVMBindingScript, Builtins::NodeVMBindingModule, Builtins::NodeVMBindingCompileFunction, Builtins::ShadowRealmPrototypeEvaluate, Builtins::BunTranspiler,
 };
@@ -965,9 +943,7 @@ static void raiseEvent(ValueFlowRuleContext& context, BuiltinID builtin, UnseenC
     }
 }
 
-// The analysis follows a built-in that lets in unseen code as a value, from the read that names it, and never stops: a set that is given up still lists it. The event is raised where the value is applied.
-// A read under a key nobody knows hands out no such built-in, no placeholder and no family of a type stands for one, and one that has come into unknown hands is a value like any other: a mention, no call.
-// Should a callee that nobody knows be `eval` at run time, the run time refuses it in an image whose build saw no application of an evaluator.
+// The analysis follows a built-in that lets in unseen code as a value, from the read that names it, and never stops: a set that is given up still lists it.
 void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -1020,7 +996,6 @@ void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entr
 {
     const ValueFlowProgramNodes& nodes = context.nodes();
     // The module object of a file that the host has loaded from outside the image, and one that the program has made with `new Module()`, is no module's.
-    // `require.main` and process.mainModule are never one of those in an executable.
     bool answersMainModule = entry == Builtins::ModuleRequireMain || entry == Builtins::ProcessMainModule;
     if (!answersMainModule)
         objects.append(context.universe().objectOf(Builtins::ModuleObject));
@@ -1045,10 +1020,6 @@ void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entr
 }
 
 // Native code looks up no member of a built-in object of the realm that no entry declares, and a lookup by name through the unknown object finds the member in the table.
-// Code that the build has not seen takes whatever the object holds, and so does whoever holds an object that belongs to one module.
-// Such code has all of the language. Of the host it has what the program's own code names: the code of the library behind a member of a realm object that nobody names is not in the image,
-// and whoever finds the member at run time gets the error that names it. So that it is found is no use of it, and nobody has handed it over: runUnseenCode() opens the host's objects where they are.
-// Were they among what has escaped, each `unknown.send` and `unknown.channel` of the program would be a read of process.send and process.channel.
 static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID holderObject, BuiltinID holder, Vector<BuiltinID, 4>& waysBetweenModuleObjectsAnswered)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -1109,7 +1080,6 @@ bool isFoundByNameAlone(BuiltinID member)
 }
 
 // No module of the image is in the module cache, so nothing that is done to the cache changes what a constant name loads or how often a body runs.
-// A name nobody knows may find what the program has put there. The run time refuses a store to a function of the loader and to the table of extensions, whoever makes it.
 void applyEventsOfStore(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet receivers, PropertyKeyID)
 {
     if (!statement.function || !context.contains(receivers, context.universe().objectOf(Builtins::ModuleCache)))
@@ -1140,8 +1110,7 @@ static void exposeModuleObjects(ValueFlowRuleContext& context)
     }
 }
 
-// process.mainModule starts in the global scope, so whoever reads globals by a name that the build does not see finds there what the program finds, the module object of an entry point:
-// machine code that the program has loaded, a read under a key nobody knows, text that nobody has seen.
+// process.mainModule starts in the global scope, so whoever reads globals by a name that the build does not see finds there what the program finds, the module object of an entry point.
 static void exposeModuleObjectsOfEntryPoints(ValueFlowRuleContext& context)
 {
     for (const Entry& entryPoint : context.program().entries) {
@@ -1163,9 +1132,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
     // What has escaped is held, and a call whose callee nobody knows calls it: see mayCallWhateverHasEscaped().
     bool callsWhateverHasEscaped = mayCallWhateverHasEscaped(context);
     ClimbingSet run = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
-    // The code behind a built-in of the host is in the image for a use that names the built-in. That the object has come into unknown hands is no such use.
-    // A function that the program has taken from its holder, by name (`const escape = Bun.escapeHTML`) or with all the others (`Object.assign(copied, Blob.prototype)`), is in those hands as a value
-    // that the program handed over or keeps beside a value nobody knows: beside the unknown object no call lists it any more, so a call of a value nobody knows is a call of it.
+    // The code behind a built-in of the host is in the image for a use that names the built-in.
     ClimbingSet takenFromHolders = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders));
     Vector<ValueFlowObjectID, 64> escapedObjectsOfLanguage;
     Vector<ValueFlowObjectID, 16> calledFunctionsOfHost;
@@ -1217,8 +1184,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         attachments.addStartupModules();
     attachments.enter();
 
-    // Whoever reads a way to the module objects is answered what the requests of the build lead to, and that is followed like any other value: see appendModuleObjectsAnsweredBy().
-    // process.mainModule is the one way that starts in the global scope. The host answers undefined there in a program that names no way.
+    // Whoever reads a way to the module objects is answered what the requests of the build lead to, and that is followed like any other value.
     if (namesWaysToModuleObjects(program))
         exposeModuleObjectsOfEntryPoints(context);
     Vector<BuiltinID, 4> waysBetweenModuleObjectsAnswered;
@@ -1233,9 +1199,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
     });
 }
 
-// One more caller without types, not a second world. It reaches the global scope: the global object escapes, and the rule of what has escaped lets everything happen to it.
-// It names the modules of the library, and holds what those in the image export. It reaches no variable of a module, no closure and no object that nothing global leads to:
-// the run time refuses it every name that leads to a file of the image, unless the program itself loads by a name nobody knows.
+// One more caller without types, not a second world.
 void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
     if (!isRaised(context, ValueFlowHostNode::UnseenCodeRuns))
@@ -1269,8 +1233,7 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
     // It makes calls that nothing describes.
     context.use(Builtins::UndeclaredNativeCode, BuiltinUse::Read);
 
-    // Text in the global scope finds no module object unless the program names a way to one: runUsedBuiltins(). Nor does a module that stays outside the image: the host gives it a stand-in
-    // for the file that has required it, and the module cache lists no module of the image.
+    // Text in the global scope finds no module object unless the program names a way to one: runUsedBuiltins().
     if (isRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
         exposeModuleObjects(context);
 }

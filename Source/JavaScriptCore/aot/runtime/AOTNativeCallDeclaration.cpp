@@ -297,8 +297,7 @@ NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallEx
         return declaration;
     }
 
-    // A spy of bun:test stands in the realm where the function stood that it spies on, under the name of that function, and runs what the program gave it. It is no JSFunction:
-    // of the table only a constructor is something else.
+    // A spy of bun:test stands in the realm where the function stood that it spies on, under the name of that function, and runs what the program gave it.
     auto mayBe = [&](BuiltinID candidate) {
         return call.callee->inherits<JSFunction>() || table.at(candidate).kind == BuiltinKind::Constructor;
     };

@@ -447,7 +447,6 @@ std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& progra
     site.describedByRecord.append(head.constructorOperand());
 
     // The heritage is proven to be a class, whose prototype property is a data property that holds an object: the look at it finds that and does nothing else.
-    // Flow may say so with a cast behind the look, which does nothing either. A validating build looks at what the cast says, and that goes with the cast.
     for (ValueID current = head.prototypeParentOperand(); current;) {
         const Value& value = function.at(current);
         bool isCastThatDoesNothing = value.opcode == Opcode::AssumeType || value.opcode == Opcode::Upcast;

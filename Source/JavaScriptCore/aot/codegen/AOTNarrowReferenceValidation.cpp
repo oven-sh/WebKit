@@ -32,9 +32,7 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// A word is a value whose low 32 bits are a narrow reference, or differ from one by a constant. A pointer is a 64-bit value that points into a cell.
-// Instruction selection may fold the sum that decodes a word into every access through it, so an access through a sum is a use of the word.
-// Wherever the collector can run, a word that is used as a reference afterwards needs a live pointer to the same cell.
+// A word is a value whose low 32 bits are a narrow reference, or differ from one by a constant.
 class NarrowReferenceValidation {
 public:
     NarrowReferenceValidation(B3::Procedure& proc, const HeapsOfCollection& heaps, const NarrowReferenceOrigins& origins, NarrowReferenceFindings& findings)
@@ -51,9 +49,7 @@ public:
             analyze();
     }
 
-    // Gives every word that run() would report a pointer: an opaque copy of the sum that decodes it, right behind its definition. Every such sum
-    // becomes that pointer, so the word is dead where it is decoded, and whatever else uses the word as a reference is followed by a use of the pointer.
-    // Dead code goes first. A pointer that only a dead value uses behind a safepoint counts as live over it, and is gone from the code that is emitted.
+    // Gives every word that run() would report a pointer: an opaque copy of the sum that decodes it, right behind its definition.
     uint32_t insertGuards()
     {
         if (!mayHaveWords())

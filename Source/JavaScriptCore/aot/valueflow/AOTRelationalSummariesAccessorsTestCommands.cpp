@@ -55,10 +55,7 @@ static PropertyKeyID findKey(const Program& program, const String& word)
     return program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }).value_or(PropertyKeyID());
 }
 
-// runs-no-code <key>..: flow's results are applied, then one line for each operation that makes an object and for each entry parameter at which only objects arrive: the type, and what runsNoCodeOn()
-// answers for it (or the getters that gettersRunOn() lists) and a callee that reads | writes under each of the keys and under a key nobody knows, lists the keys, iterates, converts the object to a primitive, deletes or defines a member,
-// reads members that its fate does not list, or only calls the object. Below it what storesLandInOwnFields() answers for a store under each of the keys and under a key nobody knows. Then the same for what each operation makes and each call answers, as runsNoCodeOnObjectMadeBy() answers
-// (with the fate "returned" where the value is an operand of a Return), and for each argument of a call that is an object, as runsNoCodeOnOperandAt() answers.
+// runs-no-code <key>..: flow's results are applied, then one line for each operation that makes an object and for each entry parameter at which only objects arrive.
 void runRunsNoCodeTestCommand(TestCommandContext& context)
 {
     Program& program = *context.program;

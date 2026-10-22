@@ -175,8 +175,7 @@ void JSONSerializerBuilder::leaveAfterUnknownCode()
     block.frequency = moreFrequentOf(block.frequency, frequency);
 }
 
-// The host and a serializer run for a value what JSON.stringify runs for it. Where its type says that this is no code at all, the call that is expanded here says so too,
-// and tests have been placed across it: what takes its place may not read the array or the object around the value as if code had run.
+// The host and a serializer run for a value what JSON.stringify runs for it.
 void JSONSerializerBuilder::leaveIfWritingRunsCode(ValueID written)
 {
     EffectDescription description;

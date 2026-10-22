@@ -21,6 +21,7 @@
 #include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -64,7 +65,6 @@ private:
 };
 
 // The statements that rules have made, by their number among such statements.
-// One of them acts for whoever has asked for what it was made with: a lookup calls the accessors that it finds for every operation that looks up, and the group of some callees applies the built-ins among them for every call of them.
 class StatementsMadeByRules {
 public:
     explicit StatementsMadeByRules(const ValueFlowResultInputs&);
@@ -117,7 +117,6 @@ struct BindCall {
 } // anonymous namespace
 
 // The solve enters the body of a module where something reached loads the module, and a function of the library where something reached uses its built-in.
-// Where the image has no compiled function of the library, the host creates its ordinary one.
 static bool isEnteredOnDemand(const Function& function)
 {
     if (function.role == FunctionRole::Library || function.role == FunctionRole::Model)
@@ -289,7 +288,6 @@ static BuiltinCallbackTimes mergeTimes(BuiltinCallbackTimes first, BuiltinCallba
 }
 
 // The solve does not keep which row of the table has entered which closure, so every function that a call of built-ins enters counts as called as often as the rows of those built-ins say together.
-// A call without such a row goes through a bound function, or enters the function of the library that a built-in is.
 static BuiltinCallbackTimes timesOfCallbacks(const BuiltinTable& builtins, const CalleeSet* stamp)
 {
     std::optional<BuiltinCallbackTimes> times;
@@ -409,9 +407,7 @@ void EntriesFromFunction::add(const ValueFlowStatement& statement, const Entered
     const ValueFlowUniverse& universe = m_inputs.universe();
     if (ValueSets::isComplement(group.callees))
         return;
-    // A group is what the statement was shown when it last ran, and a statement runs again only when it is shown more. So whether a closure that has escaped since is still in the group hangs on the order of the rounds.
-    // No function whose closure has escaped is said to have known callers, so nobody needs the entry. Up to as many callees as are told apart it says how hot the callee is.
-    // Past that it says nothing: one site would make a hundred functions as hot as itself, under one order and not under another.
+    // A group is what the statement was shown when it last ran, and a statement runs again only when it is shown more.
     bool namesNoEscapedClosure = m_inputs.sets().size(group.callees) > m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
     ValueSetID escaped = m_inputs.solver().valueOf(ValueFlowProgramNodes::escaped());
     m_inputs.sets().forEachMember(group.callees, [&](ValueFlowObjectID callee) {
@@ -480,8 +476,7 @@ static void setFunctionsOfClosuresIn(const ValueFlowResultInputs& inputs, ValueF
     });
 }
 
-// An operation names its function and its site as the caller. What a statement enters for which nobody can name an operation, the host enters, at a time nobody knows.
-// The closures that a placeholder covers are in no list: no function of theirs is said to have known callers.
+// An operation names its function and its site as the caller.
 static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& inputs, const FlowApplication& application)
 {
     const Program& program = inputs.program;
@@ -741,7 +736,6 @@ static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand&
 }
 
 // A pass turns a call of bind that spells out its arguments into the creation of a closure, of one function for each target and number of bound arguments.
-// A target that the solve has lost sight of may be bound where nobody sees it.
 static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto)
 {
     const Program& program = inputs.program;
@@ -821,10 +815,7 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
     return uses;
 }
 
-// By function: the statement that has handed a closure of it, or something that holds one, to code that nobody compiles. Only where the solver remembers who logged each edge.
-// For all closures at once: ONE walk against the edges from the node of escaped values, level by level, with the SET of closures that are still looked for at each node.
-// An edge that a statement of some function has logged gives its witness to the closures that it brings: the nearest such edge, the lowest node first. The others go on to the node the edge comes from.
-// The node of escaped values has an edge for every statement that hands something over: a search a closure lists, sorts and asks them all.
+// By function: the statement that has handed a closure of it, or something that holds one, to code that nobody compiles.
 static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
 {
     const ValueFlowSolver& solver = inputs.solver();
@@ -886,8 +877,7 @@ static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& input
     return witnesses;
 }
 
-// The table names these. Native code enters one on behalf of a built-in, and a pass calls one in code that it makes behind the analysis, with whatever the annotations of the function admit.
-// Neither is a call that the analysis has seen, so what it has seen arrive at a parameter is not all that arrives there.
+// The table names these.
 static BitVector findFunctionsNamedByTable(const Program& program)
 {
     BitVector functions(program.functions.size());
@@ -968,8 +958,6 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
 }
 
 // What a built-in does with an operand that cannot tell one closure from another of the same function: it calls it, keeps it, hands it back.
-// One that calls or keeps the operand looks at it to see what kind of value it is: whether it can be called, which storage holds it. What it keeps as a key lies in a slot of keys, which is read off the heap.
-// One that looks at an operand and neither calls nor keeps it may look for it: includes, indexOf, Object.is, the key of get | has | delete.
 static bool mayTellClosuresApart(const BuiltinParameter& parameter)
 {
     constexpr OperandUses usesThatDoNotLook { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::Retains, OperandUse::Returns };
@@ -978,10 +966,7 @@ static bool mayTellClosuresApart(const BuiltinParameter& parameter)
     return !others.isEmpty() && (others != OperandUses { OperandUse::Inspects } || !parameter.uses.containsAny(callsOrKeeps));
 }
 
-// Two closures of one function are two objects. Who can tell: `==` and `===` with such a closure on both sides (a `switch` over values is a row of them); a built-in that looks at an operand
-// (includes, indexOf, Object.is, the key of get | has | delete); a Map, a Set, a WeakMap or a WeakSet that has one as a key, however it got there;
-// a WeakRef or a FinalizationRegistry that holds one, however it got there: whether the object is still there tells, and one closure in the place of all never goes.
-// A closure that has escaped, is lost or is held by native code is compared by whoever has it: nobody asks this of such a function.
+// Two closures of one function are two objects.
 void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -1061,8 +1046,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
     forEachBuiltinApplicationOnAllThreads(inputs, heap, makers, builtinsThatLook, closures, [&](unsigned worker, const ValueFlowBuiltinApplication& application) {
         ValueSetMaker& maker = makers.of(worker);
         auto note = [&](ValueSetID value) {
-            // A function of a protocol comes once more with anything at every operand, for what the language may hand it. That is no set of the solve:
-            // a closure that has not left flow's sight is listed wherever it arrives.
+            // A function of a protocol comes once more with anything at every operand, for what the language may hand it.
             if (value != ValueSets::anything)
                 keep(worker, closuresIn(worker, value), { application.function, application.builtin, { } });
         };

@@ -328,8 +328,7 @@ void generateEqual(StubAssembler& jit)
     Jump areNotBothCells = jit.branchIfNotCell(leftValue);
     Jump notStrings;
     if (isStrict) {
-        // Two cells that are not one cell. Only strings and BigInts have content to compare: a symbol or an object is strictly equal to nothing else.
-        // One comparison of the left type decides among the three.
+        // Two cells that are not one cell.
         static_assert(StringType + 1 == HeapBigIntType && HeapBigIntType == LastValueCompareCellType);
         exits.isFalse.append(jit.branch8(CCallHelpers::Above, Address(left, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType)));
         notStrings = jit.branchOnFlags(CCallHelpers::Equal);

@@ -313,8 +313,7 @@ StubSignature signatureOfNewArrayFrontEnd(StubKey)
     return operationFrontEndSignature(2);
 }
 
-// The operands are those of the operation: the count and where the values are. An array of at least one value that lies in one cell with its storage. An empty array, one
-// that asks for storage of its own and one that is too long are the operation's: their counts are zero or have high bits.
+// The operands are those of the operation: the count and where the values are.
 void generateNewArrayFrontEnd(StubAssembler& jit)
 {
     static_assert(arrayLiteralVectorLength(2) == 3 && arrayLiteralVectorLength(3) == 3 && maxHoleArrayCapacity & 1);

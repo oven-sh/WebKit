@@ -565,8 +565,7 @@ EffectSummaries createSummariesFromFlow(const Program& program, const FlowResult
     return createSummariesFromFlow(program, flow, computeBorrowedParameters(program, build), build);
 }
 
-// Flow names each use, also of what is read through the parameter, as the program was when flow looked at it. The table knows fewer uses, of the program as it is.
-// A use of flow that says that what is read through the parameter leaves comes with RetainsContents.
+// Flow names each use, also of what is read through the parameter, as the program was when flow looked at it.
 static OperandSummary withoutUsesThatTableExcludes(OperandUses usesByFlow, const BorrowedParameters& borrowedParameters, FunctionID id, uint32_t borrowedParameter)
 {
     OperandUses uses = usesByFlow - OperandUses { OperandUse::Retains, OperandUse::Returns, OperandUse::PassesToUserCode };
@@ -578,8 +577,6 @@ static OperandSummary withoutUsesThatTableExcludes(OperandUses usesByFlow, const
 }
 
 // The table has one answer for a call of a parameter and a call of what is read through it.
-// The escape analysis takes a call of a cell that is no closure for a call of unknown code that is handed the cell.
-// A call of a value that is no function throws and keeps nothing, so of such a parameter the answer says that the values it holds may be called: they count as retained.
 FunctionSummary createSummaryFromFlow(const Program& program, const FlowResults& flow, const BorrowedParameters& borrowedParameters, BuildContext& build, FunctionID id)
 {
     bool asksTable = build.isEnabled(FlowResultKind::OperandSummaries, id.index());

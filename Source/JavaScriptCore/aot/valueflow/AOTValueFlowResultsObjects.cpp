@@ -486,7 +486,6 @@ static void noteAllocatingOperations(const ValueFlowResultInputs& inputs, const 
             continue;
         objects.isAllocated.quickSet(index);
         // Whoever constructs a plain function without the solve seeing it, native code or an unknown callee, gets an instance that the solve knows as the unknown object.
-        // It is in unknown hands from its birth, so it suffers what an object suffers that has escaped, and no more.
         bool isConstructedUnseen = program.layouts[index].has(LayoutFlags::IsConstructorFunction) && (!layoutsWithInstances.quickGet(index) || inputs.hasEscaped(inputs.universe().closureOf(constructor)));
         if (isUnsolved || isConstructedUnseen)
             objects.possibleMutations[index] = isUnsolved ? allObjectMutations : escapedObjectMutations(inputs) | mutationsWithoutMark;
@@ -629,9 +628,7 @@ static Witness witnessAt(const Program& program, FunctionID function, ValueID va
 
 namespace {
 
-// The statement that has put a mark on an object, for all objects that are asked about: one walk over the edges into the node of the mark, lowest node first:
-// an edge that a statement at some operation has logged is the witness of the objects that it brings and that have none yet.
-// The node has an edge for every statement that marks something: a search an object lists, sorts and asks them all.
+// The statement that has put a mark on an object, for all objects that are asked about.
 class MarkWitnesses {
 public:
     MarkWitnesses(const ValueFlowResultInputs& inputs, PrototypeLinks& links)

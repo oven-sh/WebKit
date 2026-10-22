@@ -289,9 +289,7 @@ constexpr std::array prepareSteps {
     ScheduleStep::include(FunctionSchedule::Simplify),
 };
 
-// InlineCalls pastes a body as it stands when the Optimize schedule begins. An access that is proven there takes its proof along as a slot operation.
-// By name it would count as unknown code in the caller, where a guard may be held across the call on the word of the callee's summary.
-// The program passes behind the Prepare schedule match accesses by name, so this comes behind them.
+// InlineCalls pastes a body as it stands when the Optimize schedule begins.
 constexpr std::array resolveSteps {
     ScheduleStep::run(ResolveAccesses),
 };

@@ -27,8 +27,7 @@ static constexpr ProofSet proofsUnitedOverOrigins {
     Proof::KeyOrder,
 };
 
-// On the way into a block a parameter takes the place of the value passed for it: what held for that value holds for the parameter,
-// and what held for the value a parameter had before says nothing about the value it has now.
+// On the way into a block a parameter takes the place of the value passed for it: what held for that value holds for the parameter, and what held for the value a parameter had before says nothing about the value it has now.
 GuardFacts GuardAvailability::factsAfterEdge(const GuardFacts& factsBeforeEdge, Edge edge) const
 {
     if (factsBeforeEdge.facts.isEmpty())

@@ -197,9 +197,7 @@ bool mayName(ValueFlowName name, const VariableOnObject& variable)
     }
 }
 
-// Every read of a value goes through a node that is keyed by the objects it looks into: those that the lookup starts at and all that lies above them. Every store goes through a node that is keyed by the receivers.
-// An operation that reads asks for a lookup, which all reads of the name from the same receivers share, and the statement of the lookup asks for the node. So a read belongs to whoever asks for the lookup.
-// A test of a name asks for no such node: it belongs to the operation that tests, or that calls the built-in which does.
+// Every read of a value goes through a node that is keyed by the objects it looks into: those that the lookup starts at and all that lies above them.
 class AccessCollector {
 public:
     AccessCollector(const ValueFlowResultInputs&, const FollowedObjects&, ValueFlowVariablesOnObjects&);

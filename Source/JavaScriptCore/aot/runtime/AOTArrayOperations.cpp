@@ -182,8 +182,7 @@ static unsigned countLeadingNumbersAndHoles(const Butterfly* values, bool& holds
     return publicLength;
 }
 
-// General code makes an array with storage for any value, also where all that it stores are numbers. An array in which no number lies stays as it is: flow proves the storage of arrays that never hold one.
-// The numbers get storage of their own: a marker that is reading the old storage goes on reading values.
+// General code makes an array with storage for any value, also where all that it stores are numbers.
 static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSArray* array)
 {
     constexpr uint32_t costOfLook = 16;
@@ -303,9 +302,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instan
     OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, structure, butterfly));
 }
 
-// JSObject::ensureLengthSlow() for a full vector with nothing in front of it: the same new length, the same rounding,
-// and a vector with an allocation of its own is reallocated, so a grown array takes the memory it takes in JSArray::push().
-// Nobody counts the holes first: below MIN_SPARSE_ARRAY_INDEX an element behind the last one stays in a vector in plain JSC too.
+// JSObject::ensureLengthSlow() for a full vector with nothing in front of it: the same new length, the same rounding, and a vector with an allocation of its own is reallocated, so a grown array takes the memory it takes in JSArray::push().
 static bool growFullVector(VM& vm, JSArray* array, unsigned length)
 {
     static_assert(2 * MIN_SPARSE_ARRAY_INDEX <= MAX_STORAGE_VECTOR_LENGTH);
@@ -401,8 +398,7 @@ static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* arra
     if (count > maxLengthForElementwiseCopy)
         return JSArray::fastSlice(globalObject, array, from, count);
     unsigned vectorLength = static_cast<unsigned>(count) | 1;
-    // The stub that makes room for named properties and the one that makes none end up here when their allocator has no cell left. Nothing says which of them it was but the allocators:
-    // the one without a cell is served, so that the stub finds cells again.
+    // The stub that makes room for named properties and the one that makes none end up here when their allocator has no cell left.
     auto hasCellsFor = [&](unsigned propertyRoom) {
         Allocator allocator = vm.cellSpace().allocatorFor(sizeOfArrayWithStorage(vectorLength, propertyRoom), AllocatorForMode::AllocatorIfExists);
         return allocator && !std::bit_cast<FreeList*>(std::bit_cast<char*>(allocator.localAllocator()) + LocalAllocator::offsetOfFreeList())->allocationWillFail();

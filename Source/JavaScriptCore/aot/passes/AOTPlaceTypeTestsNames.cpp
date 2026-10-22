@@ -76,7 +76,6 @@ static bool isOrdinaryText(const Program& program, PropertyKeyID key)
 }
 
 // A private name is found on the objects of its class alone, and a symbol that the program makes on the objects that the program puts it on.
-// A name that arrays, functions, all objects or an object of the host may answer to tells no layout from them.
 static bool tellsLayoutsApart(const Program& program, PropertyKeyID key)
 {
     switch (program.at(key).kind) {
@@ -237,8 +236,7 @@ static bool isCalledInPlace(FunctionPassContext& context, ValueID read)
     return false;
 }
 
-// No instance of a built-in class holds data under the name: they have nothing there, or a method. Whoever stores under such a name, or reads it and never calls what he got, has a field in mind:
-// `node.return`, `hook.next`, `fiber.ref`. The one object that a namespace or a constructor is comes by a way that flow follows.
+// No instance of a built-in class holds data under the name: they have nothing there, or a method.
 static bool isFieldWhereBuiltinsHaveMethods(FunctionPassContext& context, ValueID access, PropertyKeyID key)
 {
     const BuiltinTable& builtins = context.program.builtins();
@@ -355,7 +353,6 @@ static void forEachSubject(std::span<NamedUse> usesBySubject, NOESCAPE const Inv
 }
 
 // An object that takes the other path is never asked for a name that one path alone asks for, so such a name tells nothing about the objects that arrive.
-// The paths are those from the place that every use of the value lies behind.
 static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse> usesBySubject)
 {
     struct BranchingSubject {
@@ -426,11 +423,7 @@ static LayoutID declarerOf(const Program& program, LayoutID layout, PropertyKeyI
     return program.declarersOfName(name)[holder - holders.begin()];
 }
 
-// A class and the layouts below it have an inherited field in one slot, and a test for all of them is one test. So they count once.
-// Where a name has more declarations among the layouts than the limit, the layouts that the function meets elsewhere bring theirs in first: the parent, the sibling and the twin of a node are nodes.
-// Behind them come the layouts of the module that the function is written in: a library handles the objects that it makes, whatever else in the program has a member of that name.
-// Then those that are allocated most often. An object of a layout that is left out fails the test.
-// In front of them all: `child.style.position`: what is read under `style` is what somebody has stored under `style`, the rest of the props in `<box style={rest}>` among it.
+// A class and the layouts below it have an inherited field in one slot, and a test for all of them is one test.
 static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, const LayoutList& layouts, std::span<const NamedUse> uses, size_t maxDeclarations, const LayoutList& layoutsMetElsewhere)
 {
     if (layouts.size() <= maxDeclarations)
@@ -489,8 +482,7 @@ static LayoutList layoutsWithAnyOf(const Program& program, const NameList& names
     return layouts;
 }
 
-// The object is expected to have every name that the uses that count ask it for. Where no layout has them all, the names that an object may lack count no longer.
-// Where that leaves no layout either, each access expects a layout that has its own name.
+// The object is expected to have every name that the uses that count ask it for.
 static LayoutList layoutsExpectedFrom(const Program& program, std::span<const NamedUse> uses, CountedUses countedUses, const NameLimits& limits)
 {
     NameList names;
@@ -531,8 +523,7 @@ static bool resolvesSomeUse(FunctionPassContext& context, std::span<const NamedU
         query->receivers.level = KnowledgeLevel::Expected;
         query->receivers.predicted = layouts;
         PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
-        // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there. That the classes with such a method answer fast is no
-        // reason to expect one of them.
+        // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there.
         bool readsMethodAsValue = plan.form == AccessForm::Method && !query->isOnlyCalled;
         return plan.isResolved() && !readsMethodAsValue;
     });
@@ -553,8 +544,7 @@ static bool holdsOnlyFunctionsUnder(const Program& program, LayoutID layout, Pro
     return !slotType.isUndefinedOrNull() && !(slotType.primitives & ~Primitive::UndefinedOrNull) && slotType.withOnlyObjects().isSubsetOf(Type::function(), program);
 }
 
-// `node.return = parent`: an iterator written as a literal has a `return` too, and it is a method. Whoever stores under a name, or reads it and neither calls nor looks into what he got,
-// means an object that keeps data there. With the other among the receivers, the store would ask its value to be that method.
+// `node.return = parent`: an iterator written as a literal has a `return` too, and it is a method.
 static LayoutList withoutLayoutsWithMethodsWhereDataIsMeant(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layouts)
 {
     LayoutList kept = layouts;
@@ -670,8 +660,7 @@ static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::s
     return true;
 }
 
-// `twin.index`, and nothing else is asked of the twin. An array of matches has that name too, so the name alone says nothing. Where nothing is expected of the object either,
-// the objects that the function handles elsewhere are the likeliest to be meant, if they hold every name that is asked for.
+// `twin.index`, and nothing else is asked of the twin.
 static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layoutsMet)
 {
     const Program& program = context.program;
@@ -828,8 +817,7 @@ static ValueID receiverOfMethodCall(TestSiteReporter& reporter, const Value& use
     return { };
 }
 
-// `handle.flags`, `handle.onabort = undefined`, where the handle is the native object or its stand-in written in JavaScript: the accessor of a locked prototype is entered
-// without a lookup once the receiver is known to be the native one, so the union is worth telling apart for a read and a store as it is for a call.
+// `handle.flags`, `handle.onabort = undefined`, where the handle is the native object or its stand-in written in JavaScript.
 static bool reachesLockedMemberOfBuiltinPart(TestSiteReporter& reporter, PropertyKeyID key, const Type& expected, BuiltinKind kind)
 {
     const Program& program = reporter.program();
@@ -873,8 +861,7 @@ static ValueID receiverOfAccessorAccess(TestSiteReporter& reporter, const Value&
     return expected && reachesLockedMemberOfBuiltinPart(reporter, use.key(), *expected, BuiltinKind::Accessor) ? receiver : ValueID();
 }
 
-// `req.headers`, where the request is expected to be the one of the host's library, which makes its headers in a getter, or a stand-in that keeps them in a field. A plan for expected receivers takes one arm,
-// and a test for that arm alone fails for the other every time and takes the rest of the function into its copy. Behind one test for all of them the read is a read of a union, which is split where it stands.
+// `req.headers`, where the request is expected to be the one of the host's library, which makes its headers in a getter, or a stand-in that keeps them in a field.
 static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter& reporter, const Value& use)
 {
     if (use.opcode != Opcode::PropGet || !use.key())

@@ -54,7 +54,6 @@ struct WeightOfBlock {
 class HeatGraph;
 
 // All that a heat graph takes from the graph, the cycles and the frequencies of a body: the blocks that can be reached, in reverse post order, each with its weight.
-// Kept from one heat graph to the next. Whoever keeps this says which functions changed, and which see a record that changed.
 class BodyWeights {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodyWeights);
     WTF_MAKE_NONCOPYABLE(BodyWeights);
@@ -114,8 +113,7 @@ private:
     ParallelArray<Vector<HeatBlockGroup, 4>> m_blockGroups;
 };
 
-// The references are those that the call graph was made from, of the program as it is. Without them every operation that may run code is described here.
-// The weights of a body that are kept are taken as they are. Those of every body go to `made`, which comes empty.
+// The references are those that the call graph was made from, of the program as it is.
 HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences* = nullptr, const BodyWeights* kept = nullptr, BodyWeights* made = nullptr);
 Vector<double> estimateActivations(HeatGraph&);
 

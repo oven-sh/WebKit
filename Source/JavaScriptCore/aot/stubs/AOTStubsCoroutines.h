@@ -93,8 +93,7 @@ enum class PairsSavedInFrame : uint8_t { AreRestored, AreStored };
 void emitMovePairsSavedInFrame(StubAssembler&, GPRReg word, unsigned shift, PairsSavedInFrame);
 #endif
 
-// AOTStubsCoroutineSuspension.cpp
-// A condition names the registers that it reads by its words. The others may be InvalidGPRReg.
+// AOTStubsCoroutineSuspension.cpp A condition names the registers that it reads by its words.
 struct AwaitRegisters {
     GPRReg savedFrame;
     GPRReg awaited;
@@ -115,21 +114,16 @@ struct NewSavedFrameRegisters {
     GPRReg allocator;
     GPRReg scratch;
 };
-// What SavedFrame::create does for the frame of the frame pointer, and for an async function what saveAsyncFunction does with its promise. The stack is as at the entry of the stub.
-// The words behind the header stay unwritten: a SavedFrame lists none of them until a frame is saved in it.
-// The caller emits the refill behind an exit of its fast path. Nothing is allocated before the last exit.
+// What SavedFrame::create does for the frame of the frame pointer, and for an async function what saveAsyncFunction does with its promise.
 [[nodiscard]] AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler&, CoroutineKind, GPRReg siteWord, const NewSavedFrameRegisters&, JumpList& needsOperation);
 struct JobRegisters;
 // JSPromise::resolveWithInternalMicrotaskForAsyncAwait(awaited, task, generator) for a pending promise of the realm and for a value that is settled as it is: registers.savedFrame is the generator.
-// Leaves the sentinel in the place of the awaited value: what a body returns that has seen to its own resumption. Stores nothing before the last branch to isLeftToEngine.
-// The barrier on a promise overwrites the register of a site word, which is kept for whoever names it. For the others such a promise is left to the engine.
 void emitRunGeneratorJobWhenSettled(StubAssembler&, InternalMicrotask task, const AwaitRegisters&, const JobRegisters&, std::optional<GPRReg> siteWord, JumpList& isLeftToEngine);
 
 // AOTStubsCoroutinePromises.cpp
 void emitBranchIfMayBeThenable(StubAssembler&, GPRReg value, GPRReg structure, GPRReg scratch, JumpList& mayBeThenable);
 struct JobRegisters;
-// JSPromise::resolvePromise for a pending promise of the realm and a value that is no thenable, where the promise has no reaction, or one in its own two words whose job is queued:
-// a handler for its fulfillment, or a coroutine of compiled code that waits for it. Stores nothing before the last branch to needsEngine.
+// JSPromise::resolvePromise for a pending promise of the realm and a value that is no thenable, where the promise has no reaction, or one in its own two words whose job is queued.
 void emitFulfillPromise(StubAssembler&, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters&, JumpList& needsEngine);
 struct HeadJobRegisters;
 struct PromiseAllJobRegisters {
@@ -152,8 +146,7 @@ struct YieldDeliveryRegisters {
 };
 // For a producer that the job loop entered and that has just suspended at a yield. Stores nothing before the last branch to slowPath.
 void emitDeliverYieldToSuspendedConsumer(StubAssembler&, const YieldDeliveryRegisters&, JumpList& slowPath);
-// What asyncGeneratorDispatchSuspend does with the value of a yield that nobody could take at once: it is awaited, and the job behind the await finishes the step.
-// registers.savedFrame is the generator. Leaves the sentinel in the place of the value. Stores nothing before the last branch to isLeftToEngine.
+// What asyncGeneratorDispatchSuspend does with the value of a yield that nobody could take at once: it is awaited, and the job behind the await finishes the step. registers.savedFrame is the generator.
 void emitAwaitYieldedValue(StubAssembler&, const AwaitRegisters&, const JobRegisters&, JumpList& isLeftToEngine);
 struct GeneratorJobRegisters {
     GPRReg queue;
@@ -164,9 +157,7 @@ struct GeneratorJobRegisters {
     GPRReg mode;
     GPRReg value;
 };
-// Each one is for the job at the head of the queue, as emitLoadHeadJob has left it, once its first word has named it. It takes the job and leaves what is entered in its place:
-// the generator or the SavedFrame of the async function as the driver, the SavedFrame to restore, and the value. Where it leaves the job to the job loop, nothing is stored.
-// The caller has the mode of a body call. The other two resume with ResumeMode::Next.
+// Each one is for the job at the head of the queue, as emitLoadHeadJob has left it, once its first word has named it.
 void emitTakeBodyCallJob(StubAssembler&, const GeneratorJobRegisters&, JumpList& isLeftToJobLoop);
 void emitTakeDriverResumeJob(StubAssembler&, const GeneratorJobRegisters&, JumpList& isLeftToJobLoop);
 // Behind other jobs the driver gets its job at the end of the queue, and nothing is left to enter.
@@ -202,8 +193,7 @@ struct HeadJobRegisters {
 // For whoever runs the job at the head of the queue in the place of the job loop. Leaves the queue, the address of the job and its first word, which names the task, the status and the realm. Takes nothing.
 void emitLoadHeadJob(StubAssembler&, const HeadJobRegisters&, JumpList& noJob);
 Address argumentOfJob(GPRReg slot, unsigned index);
-// A job runs under the async context that it has captured: what AsyncContextSwapScope does at its start. Whoever entered the adapter has such a scope of its own, which puts back at its end what was there
-// in front of its job, whatever the jobs behind it have left. Without an address the job has captured nothing. The last thing in front of the taking of a job: stores nothing before its last branch.
+// A job runs under the async context that it has captured: what AsyncContextSwapScope does at its start.
 void emitPutAsyncContextOfJobInPlace(StubAssembler&, std::optional<Address> contextOfJob, GPRReg scratch, GPRReg other, JumpList& isLeftToJobLoop);
 void emitDequeueHeadJob(StubAssembler&, GPRReg queue, GPRReg scratch);
 // For a job whose four arguments the caller has stored in the reserved place.

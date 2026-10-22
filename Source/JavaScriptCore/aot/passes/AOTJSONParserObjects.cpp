@@ -62,7 +62,6 @@ static StringView plainTextOf(const EmissionInputs& inputs, StringID string)
 }
 
 // Flow fills the fields of a typed result with the arrays its parsers create, and those of an unvalidated result with the plain data of the generic parser too.
-// What the type of a field proves about their classes holds for them, and nothing but the parser reaches them before they are stored.
 static Emission::ProofsByOrigin proofsByOriginOf(Emission& emission, const ResultMember& member)
 {
     if (!member.node.isValidated())
@@ -446,7 +445,6 @@ ParsedValue JSONParserBuilder::emitObjectClosing(const ObjectParse& parse)
 }
 
 // A field exists when its slot is filled, so the slot of a member that the text leaves out stays as the allocation made it: absent.
-// The store records no key: JSONObjectFinish gives the object the order of the text.
 void JSONParserBuilder::emitStoreOfMemberIfSeen(const ObjectParse& parse, size_t index, const ObjectState& state, ValueID object)
 {
     const ResultMember& member = *parse.members[index].member;

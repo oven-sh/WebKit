@@ -474,8 +474,7 @@ IRBuilder::BranchBlocks IRBuilder::emitBranch(ValueID condition, BlockFrequency 
     return blocks;
 }
 
-// What stands behind a test need not name what the test found: the body of the one function that the callee may be needs nothing of the callee. Passes move, merge and remove tests and the jumps
-// that lead past them. So in a validating build the code behind a test of a value begins with one operation that asks the value again. No pass counts or weighs that operation.
+// What stands behind a test need not name what the test found: the body of the one function that the callee may be needs nothing of the callee.
 void IRBuilder::appendValidationOfTestedValue(ValueID test)
 {
     if (!context().build.validates())

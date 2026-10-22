@@ -225,8 +225,7 @@ bool KillQuery::reachesObjects(WrittenLocations& written)
     return mayWriteBeyondOperands(written) || !operandsWrittenThrough(written).empty();
 }
 
-// An object from outside is confined nowhere, and two values from outside may name one object wherever their types allow it. Most proofs are about such objects,
-// and where that settles the answer for all of them nobody has to find out which objects the function makes and where they go. Nothing where it does not settle it.
+// An object from outside is confined nowhere, and two values from outside may name one object wherever their types allow it.
 std::optional<bool> KillQuery::mayEndProofJudgedByDefinitions(ValueID subject, WrittenLocations& written)
 {
     if (m_lastSubjectJudgedByDefinition != subject) {
@@ -817,7 +816,6 @@ void GuardAvailability::solveFor(ValueID guard) const
 }
 
 // Every solve walks over the whole function, and solving all guards also asks every writer about every class.
-// A guard is solved alone as long as the walks for single guards cost less than that, so asking one by one costs at most twice as much as it has to.
 bool GuardAvailability::isWorthSolvingAlone(uint32_t guardIndex) const
 {
     const Solution& solution = m_solution;
@@ -975,8 +973,7 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
         dependedOn.merge(m_dependedLocations[m_killClasses[killClass].locations].masks);
     }
 
-    // What a writer writes of some locations is the same for all classes that depend on them, and so is the answer wherever it does not hang on the object:
-    // nearly every writer is unknown code, which reaches every object from outside.
+    // What a writer writes of some locations is the same for all classes that depend on them, and so is the answer wherever it does not hang on the object: nearly every writer is unknown code, which reaches every object from outside.
     struct ClassesOfLocations {
         uint32_t locations { 0 };
         bool hasSubjects { false };
@@ -1562,10 +1559,7 @@ std::optional<BitVector> GuardAvailability::componentsHeldSinceDefinition(ValueI
     return componentsHeldAt(guard, point, BehindTerminator::No, 0);
 }
 
-// A guard holds what it is given where it is defined, whatever held in front of that, and nothing else gives it anything. So a fact holds at a point where every way to the point comes past
-// the definition, the definition gives it, and nothing on any way from there to the point ends it. That part of the function is walked backwards from the point, and only its writers are asked:
-// a call on what an operation shortly in front of it has made or tested. Nothing where a handler is entered on the way, where guards stand behind guards too deep,
-// and where the walks for the guard have cost as much as solving for it.
+// A guard holds what it is given where it is defined, whatever held in front of that, and nothing else gives it anything.
 std::optional<BitVector> GuardAvailability::componentsHeldAt(ValueID guard, ProgramPoint point, BehindTerminator behindTerminator, unsigned depth) const
 {
     constexpr unsigned maxDepth = 3;

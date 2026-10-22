@@ -334,7 +334,6 @@ struct SiteResolutionInputs {
 
 ResolvedSites resolveSites(ProgramEditor&, const PlacementContext&, const SiteResolutionInputs&);
 // The same in two parts, for a caller that has the bodies changed between them by somebody who asks for field accesses, adds values and blocks, and leaves every value its number.
-// The first part writes the field accesses of one function, from any thread, and lists the values with other words to write, in the order of the blocks.
 void resolveFieldAccesses(const PlacementContext&, const SiteResolutionInputs&, FunctionID, Function&, Vector<ValueID>& valuesWithOtherWords);
 // By function.
 ResolvedSites resolveOtherWords(ProgramEditor&, const PlacementContext&, const SiteResolutionInputs&, std::span<const Vector<ValueID>> valuesWithOtherWords);

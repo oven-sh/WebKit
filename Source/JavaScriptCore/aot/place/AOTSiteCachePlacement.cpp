@@ -130,7 +130,6 @@ std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Pl
         if (!declaration.form.isEmpty() || declaration.flags.contains(FieldFlags::IsPrivate) || !slot.hasStorage() || slot.representation == SlotRepresentation::DeferredClosure || !slot.indexInLayoutRecord)
             return std::nullopt;
         // A definition mostly creates the field, asks nothing of what is above the object, and has no site: told the record, a stub does in half the instructions what the way by name does.
-        // A store that finds the slot empty may find a setter above, and its site remembers that.
         bool isDefinitionOfBoxedValue = store.opcode == Opcode::PropDefine && slot.representation == SlotRepresentation::JSValue && !slot.isOutOfLine();
         if ((nameHasColumn == NameHasColumn::Yes && !isDefinitionOfBoxedValue && isStoredThroughTableOfFields(program, declaration, slot.representation)) || (index && *index != *slot.indexInLayoutRecord))
             return std::nullopt;

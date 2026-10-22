@@ -239,7 +239,6 @@ size_t StringKeyCache::removeDeadIntegerKeys(VM& vm)
         ++removedCount;
     }
     // A text that died is found no more, so the table has to hold what is alive and what will be entered until the next sweep, which is taken to be as much as since the last one.
-    // Integers that never come back, each with a text that dies young, would otherwise leave the table at its largest: a place in memory that is cold at every entry, and all of it to sweep.
     size_t wantedSize = std::max(minIntegerKeyTableSize, roundUpToPowerOfTwo((aliveCount + m_integerKeysEnteredSinceSweep) * 2));
     m_integerKeysEnteredSinceSweep = 0;
     if (wantedSize < m_integerKeys.size())

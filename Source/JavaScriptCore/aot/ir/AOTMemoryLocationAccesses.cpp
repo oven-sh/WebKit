@@ -207,8 +207,7 @@ LocationStability stabilityOf(const Program& program, const Value& access, const
     case AbstractHeap::EnvironmentFields: {
         FieldReference reference { location.environmentLayout(), location.environmentFieldIndex() };
         const LocationFlow& flow = flowOf(program, reference).location;
-        // The flag promises at most one store after the creation. A closure that exists before that store can read on both sides of it,
-        // with a call or an await in between.
+        // The flag promises at most one store after the creation.
         if (fieldAt(program, reference).flags.contains(FieldFlags::IsImmutable) && flow.initialization == InitializationState::StoredBeforeEveryRead)
             return LocationStability::ChangedByOwnStores;
         return stabilityOfFlow(flow, CreationStore::Counted);

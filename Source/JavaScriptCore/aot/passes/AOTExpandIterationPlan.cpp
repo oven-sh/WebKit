@@ -34,8 +34,7 @@ struct PlannedValue {
 
 } // anonymous namespace
 
-// An async iteration over an object without @@asyncIterator wraps the iterator that @@iterator makes. The wrapper closes a generator whose value rejects
-// one turn of the job queue before the loop hears of the rejection, which an await in the loop cannot do: a generator keeps its wrapper.
+// An async iteration over an object without @@asyncIterator wraps the iterator that @@iterator makes.
 static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, BuiltinClassID id, IteratorKind kind)
 {
     switch (kind) {
@@ -495,7 +494,6 @@ static bool hasNoObservableEffectBetween(FunctionPassContext& pass, ValueID call
 }
 
 // A string never changes, so its substrings are the same whenever they are cut: each step searches for the next separator, and nobody needs the array.
-// A pattern without a rest element reads a prefix of the array, which the call delivers at once.
 static std::optional<IterationPlan> planSplitString(FunctionPassContext& pass, const Iteration& iteration)
 {
     static_assert(!OperandIndex::IteratorOpen::iterable, "findSingleUseCastChain starts at operand 0.");
@@ -567,8 +565,7 @@ static bool isWalkedByLayout(FunctionPassContext& pass, ValueID call, ValueID ob
     return planOwnKeyWalk(pass, unchanged, site).has_value();
 }
 
-// `for (const [key, value] of Object.entries(object))`: the loop alone has the list, so nobody sees how it holds the pairs. Each step makes its
-// pair in compiled code, where a pattern that takes it apart leaves nothing of it.
+// `for (const [key, value] of Object.entries(object))`: the loop alone has the list, so nobody sees how it holds the pairs.
 static std::optional<IterationPlan> planOwnEntries(FunctionPassContext& pass, const Iteration& iteration)
 {
     static_assert(!OperandIndex::IteratorOpen::iterable, "findSingleUseCastChain starts at operand 0.");

@@ -179,7 +179,6 @@ static bool needsLoaderItself(const Program& program, const Module& module)
 }
 
 // What the loader does for a module before it evaluates it: ownPropertiesOf() in AOTModuleGraph.cpp finds the same in the tables.
-// The rule of a CommonJS file of the program says how an importer reads `default`, and the front end has read it.
 static bool hasLinkWorkItself(const Program& program, const Module& module)
 {
     if (!module.syntheticExports.isEmpty() || !module.requiredNames.isEmpty())
@@ -265,8 +264,7 @@ static std::optional<SiteKind> siteKindOf(const Value& value)
     }
 }
 
-// The front end says which sites are bare, and the passes between it and this one move code. A site that has lost its place counts as late.
-// Of two blocks that lie on every way to every return one comes before the other on all of them, and so it does in reverse post-order.
+// The front end says which sites are bare, and the passes between it and this one move code.
 static void appendFlaggedSites(const Function& function, Vector<std::pair<BlockID, Site>, 8>& flagged, Vector<Site>& found)
 {
     if (flagged.isEmpty())
@@ -401,10 +399,6 @@ static Vector<uint32_t> computeImmediateDominators(const Vector<ModuleList>& suc
 }
 
 // Something starts the evaluation of a module: the host, for an entry point; an operation that names the module and is no bare site; the loader, on its way through a module that it evaluates itself.
-// From there the walk goes along the imports of a module, which run in front of its body, and then along the bare sites of the body, which run where they stand.
-// A module that every way from a start passes another module to get to is evaluated by the walk of that module and by nothing else, and that walk comes to it first at a place that is known here.
-// A bare site has no handler, so what a body throws leaves every body up to the module with a state above them, which is never entered again.
-// So it has no state: it is a function that the module above calls.
 static BitVector findModulesWithoutState(const EvaluationPlan& plan, BitVector& isStart)
 {
     size_t numberOfModules = plan.program.modules.size();
@@ -454,9 +448,7 @@ static BitVector findModulesWithoutState(const EvaluationPlan& plan, BitVector& 
     }
 }
 
-// What happens from the module on, in its order. To come to a module is to come to everything it imports, then to run its body, which comes to a module at each bare site.
-// A module that the walk has come to before has run or is running, and nothing is done for it: there a cycle ends. A module that has a state of its own looks at it and walks on by itself.
-// The calls for what a module imports stand in front of the call of its body: in the function that starts the first module, or at the bare site that the walk came through.
+// What happens from the module on, in its order.
 static void walkFrom(EvaluationPlan& plan, ModuleID first)
 {
     constexpr uint32_t stepsOfFirst = UINT32_MAX;
@@ -553,8 +545,7 @@ static Value makeModuleOperation(Opcode opcode, ModuleID module)
     return value;
 }
 
-// To evaluate a module with a state is to call this function: it evaluates what the module imports, in the order of the requests, and then runs the code of the module. It does so once.
-// A module that is being evaluated counts as done, so the calls end in a cycle where the specification's walk ends, and whoever requires a CommonJS module that is running goes on with what it has exported so far.
+// To evaluate a module with a state is to call this function: it evaluates what the module imports, in the order of the requests, and then runs the code of the module.
 static void buildStart(const AnalysisContext& context, Function& start, const ModuleToStart& module, const Callees& steps, TypeArena& types)
 {
     const Function& code = context.program.at(module.code);
@@ -572,8 +563,7 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
     for (FunctionID callee : steps.span().first(module.numberOfStepsBeforeItBegins))
         appendCallOfModule(builder, callee);
     ValueID begins = module.beginsInCode ? ValueID() : builder.append(makeModuleOperation(Opcode::BeginModuleEvaluation, module.module));
-    // Whoever has required the module may catch what its evaluation throws and go on. The module has failed by then, and everybody who asks for it later gets the same error.
-    // An error that nobody catches comes to the loader, which finds what was left in evaluation by itself.
+    // Whoever has required the module may catch what its evaluation throws and go on.
     BlockID threw;
     if (module.mayBeLeftByCaughtError) {
         threw = builder.addHandlerBlock(BlockRole::CleanupHandler, ValueID());
@@ -610,8 +600,7 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
     builder.emitReturn(builder.appendUndefined());
 }
 
-// A CommonJS module begins behind the stack check of the frame of its code. Where the stack ends there, no statement of the body has run and the module is as it was:
-// the next require() evaluates it, as under `bun run`. An ES module keeps such an error like any other.
+// A CommonJS module begins behind the stack check of the frame of its code.
 static void beginEvaluationInCode(const AnalysisContext& context, Function& code, ModuleID module, TypeArena& types)
 {
     IRBuilder builder(context, code, types);
@@ -654,7 +643,6 @@ static bool spellsKey(const Value& value, PropertyKeyID key)
 }
 
 // Behind the evaluation, require() marks the namespace object of a module that has no export `__esModule`: everybody who holds that object reads `true` under the name from then on.
-// Of a namespace object that is only read by name, code that spells the name is all that can tell.
 static bool isMarkOfRequireSpelled(const Program& program, const ParallelLoops& loops)
 {
     PropertyKeyID marker = program.keyOf(BuiltinNames::__esModule);
@@ -677,8 +665,7 @@ static bool isMarkOfRequireSpelled(const Program& program, const ParallelLoops& 
     }).isEmpty();
 }
 
-// `children` and `parent` of a module object say which `require` came first and which has run at all. In a program that names no way between module objects the run time has nothing to show to anybody:
-// namesWaysToModuleObjects(). In any other, a record goes only where nobody can look.
+// `children` and `parent` of a module object say which `require` came first and which has run at all.
 static bool somebodyAsksWhoRequiredWhom(const Program& program, const FlowResults& flow)
 {
     if (!namesWaysToModuleObjects(program))
@@ -707,9 +694,7 @@ static bool recordsNothingThatIsSeen(const Program& program, const FlowResults& 
     return nobodySeesMarkOfRequire(flow, traces, target);
 }
 
-// Every site becomes what it does. A bare site: the calls that the walk has found for it, which are none where the module has run or is running.
-// A late site: a call of the function that starts the module, which looks at the state.
-// A RequireModule stays with the loader whole: what it answers for an ES module that is running hangs on whether a require() or an import has begun the evaluation, which only the loader knows.
+// Every site becomes what it does.
 static void replaceSites(const EvaluationPlan& plan, const FlowResults& flow, const TracesOfRequire& traces, ModuleID evaluated, Function& function, IRBuilder& builder)
 {
     const Program& program = plan.program;
@@ -883,7 +868,6 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         isStart.quickSet(target);
     }
     // `bun run` runs a CommonJS file that is imported while it links the importer, which has not begun by then: a `require` of the importer in that file evaluates the importer there and then, once.
-    // So the CommonJS files that such an importer imports are evaluated before it begins, and each looks at a state of its own when the importer comes by again.
     auto importsCommonJSBeforeItBegins = [&](size_t index) {
         return isAskedOfLoader.quickGet(index) && modules[index].kind == ModuleKind::SourceText;
     };

@@ -207,8 +207,7 @@ struct TypeInterningPhase::Merge {
     size_t numberOfProvisionalRecords { 0 };
 };
 
-// Gives every record the id that Merge::commitTask() gives it. One thread finds the order in which the records are first committed, which takes no look at
-// most of them. The rest is a batch per kind of record.
+// Gives every record the id that Merge::commitTask() gives it.
 struct TypeInterningPhase::ParallelMerge {
     static constexpr uint32_t notCommitted = UINT32_MAX;
     static constexpr size_t recordsPerTask = 256;
@@ -340,8 +339,7 @@ struct TypeInterningPhase::ParallelMerge {
 
     enum class Kind : uint8_t { PropertyKey, LayoutSet, CalleeSet, Type };
 
-    // A task lists a record that an earlier task has listed too, and committing it again does nothing. So all threads find the first place at which each record is listed,
-    // and one thread goes through those places in order.
+    // A task lists a record that an earlier task has listed too, and committing it again does nothing.
     void findCommitOrder(std::span<const unsigned> taskOrder)
     {
         constexpr size_t tasksPerChunk = 256;

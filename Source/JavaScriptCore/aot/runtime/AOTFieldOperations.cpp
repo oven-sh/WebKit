@@ -60,7 +60,6 @@ static void storeInPresentField(VM& vm, Object* object, const FieldData& field, 
 }
 
 // A constructor that stores by name asks for one granule at a time, in the sequence of its stores, and an Extension is copied for each granule that has no room behind the others.
-// So whoever comes here for a granule gets the granules with it that the constructor fills in every object.
 static void ensureGranules(VM& vm, Object* object, uint64_t granuleBits)
 {
     object->ensureExtensionGranules(vm, granuleBits | object->layout().granulesFilledByConstructor());

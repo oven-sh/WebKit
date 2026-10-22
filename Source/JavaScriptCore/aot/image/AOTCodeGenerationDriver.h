@@ -54,7 +54,6 @@ class CodeGenerationJob {
     WTF_MAKE_NONCOPYABLE(CodeGenerationJob);
 public:
     // Takes the bodies out of the program, so no other thread may be reading its functions.
-    // The last goes by function, as PipelineOutput has it, or is empty.
     CodeGenerationJob(const Typed::CodeGenerationInputs&, Typed::Program&, BuildContext&, std::span<const Vector<FunctionID>> calledFunctions = { });
     ~CodeGenerationJob();
 

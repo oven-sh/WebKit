@@ -449,7 +449,6 @@ static std::optional<Vector<AssignedProperty, 16>> listAssignedProperties(VM& vm
 }
 
 // Where stores by name have made the Structures that lead from name to name, the last of them is the one that other objects with these names have.
-// Otherwise an object that gets all the names at once gets its Structure in one step, with no chain behind it: a Structure for each name costs 1,700 instructions.
 static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::span<UniquedStringImpl* const> names, bool addsAllAtOnce)
 {
     PropertyOffset offset = invalidOffset;

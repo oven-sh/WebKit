@@ -34,8 +34,6 @@ function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[
 }
 )IR"_s;
 
-// A hundred accesses in a row call the run time at most three times where a cache answers: a site is written at its second miss, and an object is flattened at one.
-// Where no cache answers and the stub asks the object itself, one miss in MissesOfPairs::missesBetweenFilings calls it.
 #define MEASURE_ACCESSES R"JS(
 const operations = ["GetByIdAndCache", "GetById", "PutByIdAndCache", "PutById"];
 const calls = () => {

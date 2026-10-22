@@ -85,7 +85,6 @@ struct FunctionTables {
     }
     static constexpr bool canConstruct(FunctionKindData kind) { return executableKind(kind) == ExecutableKind::Constructible || executableKind(kind) == ExecutableKind::Class; }
     // JavaScriptCore creates a built-in function written in JavaScript without a prototype property (JSFunction::mayHaveNonReifiedPrototype), and the definition of a class adds one.
-    // A property that exists from creation is a data property that nothing can delete or turn into an accessor.
     static constexpr bool hasPrototypePropertyAtCreation(FunctionKindData kind)
     {
         if (kind.isConstructor)

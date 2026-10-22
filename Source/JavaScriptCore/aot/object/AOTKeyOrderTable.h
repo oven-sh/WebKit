@@ -67,8 +67,7 @@ public:
         }
         return std::nullopt;
     }
-    // Two questions that fall on one place may be asked in turns for ever: a server asks the same few at every request. Throwing each other out, both would be worked out anew each time.
-    // So a place holds two answers, and a new one takes the room of the older.
+    // Two questions that fall on one place may be asked in turns for ever: a server asks the same few at every request.
     void rememberWhetherOrderLists(uint32_t shape, uint32_t orderAndCount, uint32_t key, bool lists)
     {
         size_t newer = indexOfListedField(shape, orderAndCount, key) & ~static_cast<size_t>(1);

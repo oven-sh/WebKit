@@ -35,7 +35,6 @@ static bool isRequiredTailCall(const Function& function, const ValueSite& site)
 }
 
 // A function that cannot count its arguments sees no more of a list than its parameters name, and undefined past the end of the list either way.
-// What it can see is whether the call happens: a list that does not fit the stack throws a RangeError in its place. A list no longer than the arguments a call can name takes no more of the stack than such a call.
 PlanOrDecline<ListCallPlan> CallResolver::planListCall(const CallSite& site)
 {
     // The call that stays for a list that is too long stands in a rare block.
@@ -273,8 +272,7 @@ bool CallResolver::isSeenByNobodyElse(const CallSite& site, const RestHandoverPl
     return true;
 }
 
-// An array that is only read may lie in the frame of whoever made it, and f may be one that keeps its rest array. Then the array is a cell in every call of this function.
-// That is the one cell f needs anyway where every likely way through this function comes to the call. Where another way leaves without it, the list stays: a copy on that way alone.
+// An array that is only read may lie in the frame of whoever made it, and f may be one that keeps its rest array.
 bool CallResolver::liesOnEveryLikelyWay(BlockID siteBlock)
 {
     const CFG& cfg = m_context.analyses.cfg();
@@ -293,10 +291,6 @@ bool CallResolver::liesOnEveryLikelyWay(BlockID siteBlock)
     return true;
 }
 
-// f(a, b, ...rest), where f is one known function that takes as many values by name as stand in front of the spread and the others in a rest parameter, cannot count its arguments in another way,
-// and `rest` is the rest array of this frame, which nobody else has seen. The list would be made of a, b and the elements and spread over the stack, and f's entry would make a third array of what it finds there.
-// That array would hold what `rest` holds, and nobody could tell them apart: `rest` is handed over in its place, and f may do with it whatever it likes.
-// An array that is not as it was made, or too long for the stack (see planListCall()), takes the way it took before.
 PlanOrDecline<RestHandoverPlan> CallResolver::planRestHandover(const CallSite& site)
 {
     // The call that stays stands in a rare block.
@@ -327,7 +321,6 @@ PlanOrDecline<RestHandoverPlan> CallResolver::planRestHandover(const CallSite& s
     if (!typeOf(plan.spreadName).isSubsetOf(m_program.at(required), m_program))
         return std::unexpected(CallDeclineReason::None);
     // And the other way round: f does with its rest array what it likes, and where f is taken in, its code finds the array under the type that it has here.
-    // What is proven of this array, its contents, its storage, that it has no hole, was proven of an array that f never sees.
     if (!m_program.at(required).isSubsetOf(typeOf(plan.spreadName), m_program))
         return std::unexpected(CallDeclineReason::None);
 

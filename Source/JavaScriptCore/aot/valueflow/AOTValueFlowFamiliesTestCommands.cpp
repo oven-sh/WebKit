@@ -70,7 +70,6 @@ public:
     }
 
     // What has escaped is left out where the unknown object arrives, which stands for it: native code hands every escaped object to every position it can reach.
-    // Likewise what the analysis has stopped following where the untracked object arrives.
     void count(const Position&, const DeclaredType&, ValueSetID arrived);
     void print(PrintStream&, size_t numberOfPairs);
 
@@ -356,8 +355,7 @@ static ExpectedReceiver expectedReceiverOf(const Program& program, const ValueFl
     return ExpectedReceiver::LayoutsNeverAllocated;
 }
 
-// The reads and stores by name in reached functions, by what the receiver may be. Each access is counted once, under the first heading that fits.
-// Those whose receiver may be the unknown object are counted again by what is expected of the receiver.
+// The reads and stores by name in reached functions, by what the receiver may be.
 static void printReceivers(PrintStream& out, ValueFlowSolution& solution)
 {
     struct ReceiverCounts {
@@ -592,8 +590,7 @@ static ASCIILiteral describeObjectsIn(ValueFlowSolution& solution, ValueSetID se
     return first ? "one-layout"_s : "no-object"_s;
 }
 
-// One line for each call in a reached function whose callee may be the unknown object, its parts set apart by tabs: application or library, the module, the position of the call in it, the function,
-// the operation that the callee comes from, then for a read by name the key and what the receiver may be, for a variable its name, for a parameter its number.
+// One line for each call in a reached function whose callee may be the unknown object, its parts set apart by tabs.
 static void printCalleeSites(PrintStream& out, ValueFlowSolution& solution)
 {
     const Program& program = solution.program();
@@ -646,9 +643,6 @@ static void printCalleeSites(PrintStream& out, ValueFlowSolution& solution)
 }
 
 // valueflow-families [receivers] [callees] [callee-sites] [pairs=<n>]: for every declared position whose type names layouts, whether an object arrives there whose layout is outside that family.
-// The unknown object, the untracked object and objects without a layout are counted apart. Then the heaviest pairs (a layout that the position names, the layout that arrives), each with the number of positions and the first of them.
-// With `receivers`: the accesses by name, by what their receiver may be. With `callees`: the calls whose callee may be the unknown object, by what is expected of the callee;
-// with `callee-sites`: one line for each of them.
 void runValueFlowFamiliesTestCommand(TestCommandContext& context)
 {
     size_t numberOfPairs = 40;

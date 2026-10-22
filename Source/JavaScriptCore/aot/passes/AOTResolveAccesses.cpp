@@ -313,12 +313,7 @@ AccessResolver::AccessResolver(FunctionPassContext& context)
 {
 }
 
-// `{ __proto__: null, first: f(), second() { } }`, and `const made = { }; made.first = f(); made.second = g();`. From its allocation on an object is in nobody's hands but the function's,
-// until the function hands it on: it is not frozen, its prototype is the one it was born with, and a name that has not been written lies nowhere in it. Nobody can tell when it was allocated either.
-// So the allocation moves down behind the values of the first stores and lists them, in the order in which the stores would have created the properties, and the stores are gone.
-// A value that the slot may not admit is left to the run time: the allocation lists something that fits in its place, as storeUnprovenInitialValues() does, and the definition comes behind the allocation.
-// It ends at the first use that is none of these: a spread, a computed key, an accessor, a name for the second time, a value that the slot may not admit where nothing can stand in for it,
-// a store below another prototype (which may find a setter), and whatever may hand the object on.
+// `{ __proto__: null, first: f(), second() { } }`, and `const made = { }; made.first = f(); made.second = g();`.
 bool AccessResolver::listFirstStoresAtAllocation(BlockID block, uint32_t allocationIndex)
 {
     Function& function = m_context.function;
@@ -748,8 +743,7 @@ void AccessResolver::expandReadsOfFieldsThatMayBeEmpty()
         }
 
         m_builder.moveToEndOf(branch.notTaken);
-        // The lookup starts over at the object. A slot that holds undefined or null fails the test for a value of the field's type as an empty slot does.
-        // And of a lookup that starts at the object its type says what it may find: it runs no more code than the read in whose place it stands, which the callers of this function have relied on.
+        // The lookup starts over at the object.
         Value lookup = IRBuilder::make(Opcode::SuperGet, { object, object });
         lookup.setKey(stamp.key);
         expansion.finishArm(expansion.append(WTF::move(lookup)));

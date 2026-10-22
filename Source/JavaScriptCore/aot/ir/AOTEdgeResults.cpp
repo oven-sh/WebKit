@@ -207,7 +207,6 @@ static Type withMembersWithoutLayout(const TypingContext& context, Type&& type)
 }
 
 // No test tells the object of a built-in without a cell in the realm from other objects, so it fails a test that names it.
-// Nor does a test find the members of a family that have no layout: they fail a test of layouts, whichever it lists.
 static Type narrowByFailedTest(const TypingContext& context, const Type& source, const Type& tested)
 {
     const BuiltinTable& builtins = context.program.builtins();

@@ -334,8 +334,7 @@ static std::optional<BuiltinOperand> builtinOperandOf(const Function& function, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A library function that implements a built-in takes every call of it. Overloads are listed from the most specific to the most general,
-// so the first one says which operand types to expect.
+// A library function that implements a built-in takes every call of it.
 static bool expectOperandTypesOfFirstOverload(FunctionPassContext& context)
 {
     const Program& program = context.program;

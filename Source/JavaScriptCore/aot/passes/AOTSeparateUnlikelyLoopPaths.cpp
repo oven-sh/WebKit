@@ -26,12 +26,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// An edge of a hot loop to an unlikely path that runs other code or writes leaves for the same place in a copy of the loop, so the loop keeps the types
-// of its likely paths. The copy runs to the end of the turn, tests what goes around the loop for the types the loop has given it, and comes back.
-// An unlikely path that only computes stays: it is one more form of the likely path.
-// A likely path leaves as well if it may write a variable that every turn reads, and the loop turns without it: what is left carries the variable as a value.
-// Such a loop is entered through its copy: the first turn runs as it was written, and the variables are read and tested on the way from the end of a turn into the loop.
-// So a loop that ends at its first test, or in its first turn, does what it did before.
+// An edge of a hot loop to an unlikely path that runs other code or writes leaves for the same place in a copy of the loop, so the loop keeps the types of its likely paths.
 
 namespace {
 
@@ -117,8 +112,6 @@ PassOutcome LoopPathSeparator::run()
 }
 
 // Cutting the code behind a value of type never renumbers blocks and values, so it waits until the last loop is done.
-// Typing starts from never and widens a range that grows around a cycle no further than the type the value had before. What a value had while the copy was half connected
-// is no such bound, so each typing starts from the types that held before the separation: a path less never adds a value.
 void LoopPathSeparator::retypeValues()
 {
     restoreRememberedTypes();
@@ -209,9 +202,7 @@ BitVector LoopPathSeparator::findLeavingBlocks(const NaturalLoop& loop, const Bi
     return leaves;
 }
 
-// The copy pays where an operation reads a parameter that is wider only for what a leaving path passes. The types that the parameters have without
-// those paths are the least ones that hold what the other edges pass. A parameter that is only passed on says nothing: the block through which a
-// separated loop is entered has such parameters.
+// The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
 bool LoopPathSeparator::narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
 {
     const CFG& cfg = m_analyses.cfg();
@@ -376,8 +367,7 @@ void LoopPathSeparator::separate(const SeparationPlan& plan)
         const Target& target = targetOf(m_function, edge);
         builder.redirectEdge(edge, cloner.cloneOf(target.block), Arguments(target.arguments));
     }
-    // A path that has left is unreachable in the loop. What it defines is listed before it is emptied: a block behind the loop may name it, and only the copy reaches that block.
-    // The repair runs when every edge into the copy is there: until then whatever the loop defines in front of the leaving edges dominates the copy.
+    // A path that has left is unreachable in the loop.
     SSARepair repair(builder, m_analyses);
     cloner.addVariablesTo(repair, m_analyses);
     builder.emptyUnreachableBlocks();
@@ -400,8 +390,7 @@ void LoopPathSeparator::separate(const SeparationPlan& plan)
     retypeValues();
 }
 
-// A value that goes around the loop and is tested in every turn, with the copy on the failing edge, is tested where it is made instead: the parameter of the
-// header then has the tested type, and an edge that passes a value of that type passes no test.
+// A value that goes around the loop and is tested in every turn, with the copy on the failing edge, is tested where it is made instead.
 Vector<TypeID> LoopPathSeparator::findTestsOfEveryTurn(const NaturalLoop& loop, const BitVector& leavesLoop)
 {
     const CFG& cfg = m_analyses.cfg();
@@ -452,7 +441,6 @@ Vector<TypeID> LoopPathSeparator::findTestsOfVariables(const NaturalLoop& loop, 
     }
 
     // What a test has proven, or a cast has passed on, is the same value: the narrowest of the types it is tested for in every turn is what the loop needs.
-    // The copy makes the same tests, so it is the place to go on in wherever a failing test went: also where undefined or null would have thrown.
     const Block& header = m_function.at(loop.header());
     PropertyAccessContext accessContext { m_program, &m_context.inputs.flow };
     Vector<TypeID> tested(header.parameters.size());

@@ -46,7 +46,6 @@ static auto withInsertionAtEnd(IRBuilder& builder, const Functor& functor)
 }
 
 // Whoever asks knows that the value has the type, where the types of the operations do not show it: flow narrows a parameter from every call that reaches it, and a pass gives what the operation it replaces gave.
-// A function that takes whatever arrives declares that, and tests it in its own body.
 ValueID convertTo(const ValueInsertion& insertion, ValueID value, const DeclaredType& target)
 {
     TypeID required = requiredTypeOf(insertion, target);

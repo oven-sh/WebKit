@@ -143,8 +143,7 @@ static DescribedObject describeArguments(FunctionAnalyses& analyses, const Value
     if (description.numberOfParameters > analyses.context().build.limit(LimitID::MaxVirtualArrayLength))
         return unsupported(VirtualObjectSupport::ExceedsLimit, LimitID::MaxVirtualArrayLength);
 
-    // The object copies the list when it is created, and the list may be the function's own rest parameter. Of a list that may have changed since,
-    // nothing is read later: the count and the parameters are all that is known of the object, and it is built where it is created or not at all.
+    // The object copies the list when it is created, and the list may be the function's own rest parameter.
     description.restListStaysAsCreated = staysAsCreated(analyses.escape(), value.restOperand());
     description.canBeBuilt = description.restListStaysAsCreated;
     return supported(description);

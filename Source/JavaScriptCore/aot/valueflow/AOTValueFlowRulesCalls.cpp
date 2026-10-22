@@ -49,8 +49,6 @@ static ClimbingSet unknownObject(ValueFlowRuleContext& context, ValueFlowUnknown
 static PropertyKeyID keyReadFromReceiver(const Program&, const ValueFlowStatement&);
 
 // The entry of a built-in and a bound function are applied with the operands of this call, whatever else may be called beside them.
-// In `o.m(..)` a built-in runs with a receiver as `this` only where the read of `m` from that receiver answers it, as a function of the program does: see passKnownReceiversToTheirCallees().
-// Array.prototype.map never sees a function or a record that the sets list beside the arrays. A read that answers a placeholder may have answered whatever the placeholder covers.
 static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees, ValueFlowCallKind kind)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -167,9 +165,7 @@ static bool isClassConstructor(const Function& function)
     return function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor;
 }
 
-// One group holds what the callees answer to all who construct them. A constructor that answers only what it constructs answers an instance of the class that is new.target:
-// the constructor of the base class allocates under the prototype object of that class. So a construction takes only the instances of its own classes out of the group.
-// It takes everything where a callee or a constructor above one may answer something else, and where new.target may be something else than a class.
+// One group holds what the callees answer to all who construct them.
 static ValueSetID objectsAnsweredTo(ValueFlowRuleContext& context, ClimbingSet callees, ClimbingSet newTargets)
 {
     const Program& program = context.program();
@@ -272,10 +268,7 @@ static void takeResultThroughSummary(ValueFlowRuleContext& context, const ValueF
     }
 }
 
-// A call that knows its callees one by one takes from each what that callee gives to this call, where that is less than what the callee gives to all its callers together. False where the call
-// has to take what the group of the callees answers.
-// A function whose arguments are tested at its entry runs its typed body for a caller whose operands pass the tests, so that caller gets what the typed body returns. What the generic version
-// returns goes to the callers that may fail a test. A function that returns a parameter as it came gives each caller its own operand back.
+// A call that knows its callees one by one takes from each what that callee gives to this call, where that is less than what the callee gives to all its callers together.
 static bool takesResultOfEachCallee(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet callees)
 {
     const Program& program = context.program();
@@ -320,8 +313,7 @@ static bool takesResultOfEachCallee(ValueFlowRuleContext& context, const ValueFl
     return true;
 }
 
-// A call whose operands pass all the tests of all its callees runs their typed bodies and nothing else. Its operands go to the typed bodies and not to the functions that test:
-// what arrives there is what may fail, and that alone is what the generic versions are handed.
+// A call whose operands pass all the tests of all its callees runs their typed bodies and nothing else.
 static bool callsTypedBodies(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet callees, const ReceiversOfEveryCallee& passedReceivers)
 {
     const Program& program = context.program();
@@ -387,8 +379,7 @@ static constexpr ValueFlowName restArgument(unsigned index)
 static constexpr ValueFlowName laterRestArguments = restArgument(numberOfGroupedArguments);
 static constexpr ValueFlowName otherRestArguments = restArgument(numberOfGroupedArguments + 1);
 
-// The call into which the function spreads the array of its rest parameter, where it does nothing else with the array: `constructor(...args) { super(...args) }`. None for any other function.
-// Nobody else gets hold of such an array, so it holds at each index what the caller has passed at that position.
+// The call into which the function spreads the array of its rest parameter, where it does nothing else with the array: `constructor(...args) { super(...args) }`.
 static ValueID findCallThatAloneTakesRestArray(const Function& function)
 {
     if (!function.has(FunctionFlags::HasRestParameter) || !function.hasBody())
@@ -447,8 +438,7 @@ static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement
 {
     if (kind == ValueFlowCallKind::Call && callsTypedBodies(context, statement, callees, passedReceivers))
         return;
-    // Without the operand the callee is new.target: each callee its own, and none that of another. One group for `new (which ? Derived : Other)()` would enter the constructor of Derived
-    // with Other as new.target too, and what it stores into `this` would be stored into an Other.
+    // Without the operand the callee is new.target: each callee its own, and none that of another.
     if (kind == ValueFlowCallKind::Construct && !context.program().at(statement.function).at(statement.site).operand(1)) {
         Vector<ValueFlowObjectID, 8> members;
         context.forEachMember(callees, [&](ValueFlowObjectID callee) {
@@ -575,8 +565,6 @@ static PropertyKeyID keyOfMemberCalledOnItsHolder(const Program& program, const 
 }
 
 // In `o.m(..)` a function runs with a receiver as `this` only where the read of `m` from that receiver answers the function: a method of one class never sees an instance of a class that overrides it.
-// There is one lookup for each (object, key), whoever asks. Answers the receivers that are left to be passed to every callee: a primitive and a placeholder, which no lookup tells apart,
-// and the objects past those that the analysis tells apart in one value. On undefined and null the read of the callee has thrown.
 static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures)
 {
     const Program& program = context.program();
@@ -612,7 +600,6 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
 }
 
 // Beside a placeholder a set does not list what the placeholder covers: a function that has escaped beside the unknown object, one that the analysis has stopped following beside the untracked object.
-// So the placeholder among the callees also stands for such a function, which the read from a receiver answers by itself.
 static bool standsForAnswerOf(ValueFlowRuleContext& context, ValueFlowObjectID placeholder, ClimbingSet answered)
 {
     if (context.contains(answered, placeholder))
@@ -629,8 +616,6 @@ static void callPlaceholder(const ValueFlowStatement& statement, ValueFlowRuleCo
 }
 
 // One function of the library runs for all calls of a built-in, so it is entered with operands nobody knows, and the callback that it calls is one of them.
-// What a call of the built-in does with its callback the records say where that call is, also that code runs which nobody compiles if the callback there is one nobody knows.
-// So this call is no sign of such code. What it hands over is in the hands of the callback: a function that the library has written for it is compiled.
 static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     for (const ValueFlowOperand& operand : context.operandsOf(statement).subspan(1))
@@ -655,7 +640,6 @@ ClimbingSet escapedMembersUnder(ValueFlowRuleContext& context, PropertyKeyID key
 }
 
 // On an object that only the program has in its hands, and above it, lies what the program has stored, under whatever name it likes: `table.run = unknown[key]`.
-// A value nobody knows among that may be anything that has escaped. An object that has escaped is itself one that nobody knows.
 static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& context, ClimbingSet receivers, PropertyKeyID key)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -669,8 +653,7 @@ static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& cont
     return context.contains(context.valueOf(context.read(inHandsOfProgram, ValueFlowName::property(key))), ValueFlowUniverse::unknownObject());
 }
 
-// `x.key(..)` where nobody knows what the read of the key has answered. Code that nobody compiles may run, as in every call of the unknown object: it keeps the operands and answers what it likes.
-// Of the built-ins that have escaped the callee is a member under the key, and no other. Beside the unknown object a set does not list what has escaped, so those members are applied here.
+// `x.key(..)` where nobody knows what the read of the key has answered.
 static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key)
 {
     context.forEachMember(context.restrict(escapedMembersUnder(context, key), context.universe().builtinFunctions()), [&](ValueFlowObjectID member) {
@@ -808,7 +791,6 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
     }
     callListedBuiltins(statement, context, callees, kind);
     // Beside the unknown object the normal form leaves out a function that has escaped, and of what the unknown object covers no rule applies a function of the host: see runUsedBuiltins().
-    // A call whose operations lead to the entry by themselves names it, whatever else may lie there by then and however late the analysis comes to the call.
     if (context.contains(callees, ValueFlowUniverse::unknownObject())) {
         const Function& function = context.program().at(statement.function);
         ValueID callee = function.at(statement.site).operand(0);
@@ -949,8 +931,6 @@ private:
             ValueFlowObjectID instance = layout ? universe.instanceOf(layout) : universe.constructedObjectOf(constructor);
             instances.append(instance);
             // `Object.setPrototypeOf(Circle, function () {})`, `Reflect.construct(function () {}, [], Circle)`: a function that is no class makes the Circle, and no constructor above Circle runs.
-            // One object stands for every Circle, and the tables say what the allocation in the base class creates it with: ValueFlowHeapTables::holdersThatAnswerUnder(), objectsStoredToAtCreationUnder().
-            // This one has none of it, like an object that all of it was deleted from.
             if (layout && isAllocatedByBaseClassOfProgram(program, layout))
                 m_context.add(m_context.written(only(m_context, instance), ValueFlowName::of(ValueFlowNameKind::DeletedMemberUnderUnknownKey)), universe.undefinedValue());
             ValueFlowNodeID held = m_context.lookup(only(m_context, newTarget), prototypeProperty(m_context));
@@ -1061,15 +1041,13 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     ClimbingSet lost = context.contains(key, ValueFlowUniverse::untrackedObject()) ? callablesIn(ValueFlowProgramNodes::lost()) : ClimbingSet();
     bool callsUnknownObject = context.contains(key, ValueFlowUniverse::unknownObject());
 
-    // A call that an operation spells out brings the functions of the program here and has said itself whether seen code calls them. A built-in comes here from a call that another built-in passes on.
-    // Of what the untracked object stands for no caller has said anything. A function that has escaped is entered by native code anyway, and a built-in that has escaped has raised its event when it did.
+    // A call that an operation spells out brings the functions of the program here and has said itself whether seen code calls them.
     bool isSpelledOut = kind == ValueFlowCallKind::Call || kind == ValueFlowCallKind::Construct;
     if (kind != ValueFlowCallKind::CallByHost)
         applyEventsOfCall(statement, context, context.unite(isSpelledOut ? context.restrict(listed, universe.builtinFunctions()) : listed, lost));
 
     ClimbingSet callees = context.unite(listed, lost);
-    // The operands of such a call escape and its result is unknown, which is all that the entry of a built-in could say. That an escaped built-in may be the callee is no use of it.
-    // A function of the program that has escaped is entered by native code with the unknown value as every operand, and that stands for the operands of this call.
+    // The operands of such a call escape and its result is unknown, which is all that the entry of a built-in could say.
     if (callsUnknownObject)
         callees = context.unite(callees, context.valueWithin(ClimbingSet(universe.otherCallables()), ValueFlowProgramNodes::escaped()));
     AllocatedInstances allocated(context, group);

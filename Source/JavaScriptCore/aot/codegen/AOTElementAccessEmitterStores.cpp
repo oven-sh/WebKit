@@ -410,8 +410,7 @@ void ElementAccessEmitter::generateReserveArrayCapacity(const ValueContext& valu
     callVoidOperation(value, RuntimeOperation::ReserveArrayCapacity, { in<CellPointer>(value->arrayOperand()), integerOf(value->additionalOperand()) });
 }
 
-// An array of integers, or one that has held nothing yet, is converted: any other array that comes by pays one compare and no call. None with Double storage comes by.
-// Where the type says that the array holds numbers and nothing else, one with storage for any value is looked through: general code has made it. Not in a frame: whoever made it there reads it as it was made.
+// An array of integers, or one that has held nothing yet, is converted: any other array that comes by pays one compare and no call.
 void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& value)
 {
     static_assert(UndecidedShape + 2 == Int32Shape && !(IndexingShapeMask & 1));

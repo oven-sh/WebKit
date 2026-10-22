@@ -40,9 +40,7 @@ struct TaggedFamily {
 void appendTaggedLayouts(Program&, std::span<const TaggedFamily>);
 void appendFieldsOfTaggedLayouts(Program&, std::span<const TaggedFamily>);
 
-// The pass AllocateTaggedLayouts, for a program as read. A constructor function that is the maker of a family gets a copy of its body that allocates `this` itself,
-// with the layout of the tag, and enters the copy where new.target is one of its own closures. Its own body stays as it is, for a `this` that somebody hands in.
-// A base class constructor that is a maker chooses the layout where it allocates. The members of a family whose maker can do neither are never allocated.
+// The pass AllocateTaggedLayouts, for a program as read.
 void allocateTaggedLayouts(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

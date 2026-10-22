@@ -152,8 +152,6 @@ OperandSnapshot capture(JSObject*);
 Vector<OperandDifference> differencesBetween(VM&, JSObject*, const OperandSnapshot& before, const OperandSnapshot& after);
 
 // What compiled code calls in the place of an operation does to the operands no more than the operation is said to do: the passes and B3 keep whatever lies in a heap that the call does not write.
-// In a validated image each operand that may be an object is photographed in front of such a call and compared behind it. `written`: the heaps that the call may write through that operand.
-// The photograph at position 0 is the first of a call. An object that is handed over twice may change as either operand may.
 JS_EXPORT_PRIVATE void photographOperand(VM&, JSValue operand, AbstractHeaps written, unsigned position);
 JS_EXPORT_PRIVATE void compareOperandWithPhotograph(VM&, JSValue operand, uint32_t positionAndCallee, FunctionID, Typed::ValueID);
 

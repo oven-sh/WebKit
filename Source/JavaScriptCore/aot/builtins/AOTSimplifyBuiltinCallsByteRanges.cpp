@@ -209,7 +209,6 @@ static BuiltinCallStamps stampsOf(const Value& call)
 }
 
 // `target = view.subarray(written); counts = encoder.encodeInto(text, target)`: a view is made for every piece of text that is written, and is dead behind the call.
-// In its place travel the view it is a range of and the place where the range starts, -1 where the value is what it is. See %CompilerHelpers% in the table of built-ins.
 unsigned leaveRangesOfBytesUnmade(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;

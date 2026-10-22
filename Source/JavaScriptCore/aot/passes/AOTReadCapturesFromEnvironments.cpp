@@ -135,7 +135,6 @@ static std::optional<uint32_t> findClosureInFrontOf(const Function& function, co
 }
 
 // The values of a function that are the closure in a candidate field: the reads, the closure where it is made, their casts, and the block parameters that such values reach.
-// Some of them are needed as objects: something else than GetCapture takes them, or they share a block parameter with another value.
 class ClosureWebs {
 public:
     struct Cause {
@@ -367,7 +366,6 @@ struct Plan {
 };
 
 // A field that stands for a capture is right only as long as the closure in the environment is the one that was stored first.
-// So a place that stores a closure must get an environment that this activation has made, and must not get the same one twice.
 class EnvironmentOrigins {
 public:
     explicit EnvironmentOrigins(const Function& function)
@@ -897,8 +895,7 @@ void Planner::planGroup(LayoutID layout, std::span<const Run> runsOfLayout, std:
         return true;
     };
 
-    // A field serves the captures that every run fills with one value and that are declared alike. It is stored behind the first of their closures:
-    // from there on somebody may call the function.
+    // A field serves the captures that every run fills with one value and that are declared alike.
     struct FieldOfGroup {
         uint32_t field;
         uint32_t firstCapture;
@@ -1217,7 +1214,6 @@ namespace {
 constexpr uint32_t noField = UINT32_MAX;
 
 // A claim about a function: entry parameter `environment` is an environment of the layout, and entry parameter k holds what lies in field fields[k] of that environment.
-// The fields are the ones that the pass has added. They are stored once, in front of everything that can run the function.
 struct OwnCaptures {
     LayoutID layout;
     uint32_t environment { 0 };
@@ -1364,8 +1360,7 @@ static OwnCapturesTable claimOwnCaptures(const Program& program, const Candidate
     return table;
 }
 
-// Whether every way to the point leads over a store of the value into the field. The field is stored once in the life of an environment, so whoever has passed the store finds the value there:
-// a way on which the value is made again leads over the store again, and with it over the allocation.
+// Whether every way to the point leads over a store of the value into the field.
 static bool isStoredInFrontOf(const Function& function, ProgramPoint point, Roots& roots, ValueID environment, FieldReference field, ValueID stored)
 {
     std::optional<CFG> cfg;
@@ -1583,8 +1578,7 @@ static void readOwnCaptures(const Program& program, const OwnCaptures& own, IRBu
     Roots roots(function);
     ValueSubstitution substitution(function);
     BitVector replacedReads(function.values.size());
-    // Reads with a wider type than the entry parameter has. What is computed from such a read has its type, and its form, from the type of the read: only calls and closures, whose types
-    // do not come from what they are given, take the entry parameter.
+    // Reads with a wider type than the entry parameter has.
     Vector<std::pair<ValueID, ValueID>, 8> widerReads;
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
@@ -1653,9 +1647,7 @@ static void readOwnCaptures(const Program& program, const OwnCaptures& own, IRBu
     substitution.apply(function, nullptr);
 }
 
-// A function that lies in an environment runs with that environment among its captures, so what it would read there for a call of itself, or of a function beside it, it has at hand:
-// with the types that the tests at its own entrance have proven. Then every call of the program that passes the tests of the function it goes to goes past them: the inliner has taken in
-// the tests that it saw passed, and has not seen these, or was not to take the call in.
+// A function that lies in an environment runs with that environment among its captures, so what it would read there for a call of itself, or of a function beside it, it has at hand.
 static void passOwnCaptures(ProgramEditor& editor, const FlowResults& flow, BuildContext& build, const CandidateTable& candidates, const Plan& plan)
 {
     const Program& program = editor.program();

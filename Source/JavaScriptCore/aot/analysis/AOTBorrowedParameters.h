@@ -40,10 +40,7 @@ inline constexpr OperandUses usesOfBorrowedParameter {
     OperandUse::WritesContents,
 };
 
-// A function borrows an entry parameter if nobody holds the pointer any more when the call returns: it is stored in no cell that outlives the call, not returned or thrown,
-// native code does no more than look at it, and every function it is handed to borrows it too. Captures come first among the entry parameters.
-// A closure in the function's own frame may hold it: the cell goes with the frame, and whoever is handed the cell has to borrow what he reads through it. Only wordOfBody() knows such closures.
-// The table names functions and entry parameters as they are when it is computed, and says of a function that is made later that it borrows nothing.
+// A function borrows an entry parameter if nobody holds the pointer any more when the call returns.
 class BorrowedParameters {
 public:
     BorrowedParameters() = default;
@@ -52,12 +49,10 @@ public:
     // The same of every reference that is read through the parameter.
     bool borrowsContents(FunctionID, uint32_t entryParameter) const;
     // Whether the function, or one it hands the parameter to, may call the parameter or a reference that is read through it.
-    // A call of what an environment holds does not count: what becomes of a value in a field of an environment is known by the field.
     bool mayBeCalled(FunctionID, uint32_t entryParameter) const;
     OperandSummary summaryOf(FunctionID, uint32_t entryParameter) const;
 
-    // All that the table says of the function. Bit i: entry parameter i is borrowed. Bit maxBorrowedParameters + i: so is what it holds.
-    // Bit 2 * maxBorrowedParameters + i: nothing of it is called.
+    // All that the table says of the function.
     uint64_t wordOf(FunctionID) const;
     // What the body says where a plan puts these closures into the frame of the function, less what the callees lose by this table. Whatever it says beyond wordOf() holds as well.
     uint64_t wordOfBody(const Program&, BuildContext&, FunctionID, const BitVector& closuresPlannedInFrame) const;

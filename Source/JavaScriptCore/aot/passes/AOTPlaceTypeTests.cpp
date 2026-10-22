@@ -125,8 +125,7 @@ struct PropertyRead {
 
 } // anonymous namespace
 
-// What nobody could follow is in an expected type beside whatever else reached the place. A part on which another access of the same value is not resolved is not
-// expected: an index finds nothing in the slots of a layout.
+// What nobody could follow is in an expected type beside whatever else reached the place.
 static TypeID narrowExpectedTypeByUses(FunctionPassContext& context, std::span<const ValueID> values, TypeID expected)
 {
     const Type& expectedType = context.types.at(expected);
@@ -368,7 +367,6 @@ static PassOutcome markArmsOfAbsentElements(FunctionPassContext& context)
 }
 
 // What a test in a cold function buys, it buys at run time: the passes of the rounds gain little from it, and they would carry its arm and its join: a twentieth of the build of a very large program.
-// In any other program a function that is taken for cold may be the kernel, whose calls are resolved behind their tests and then inlined.
 static bool placesTestsBehindRounds(FunctionPassContext& context)
 {
     const Heat& heat = context.inputs.heat;
@@ -395,8 +393,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
         expectations.takeBack();
         context.analyses.didChangeTypes();
     }
-    // Whoever edits blocks, operands or edges here drops what that makes stale. The declared type of an entry parameter changes without a drop, and no analysis of the second set reads a type.
-    // Where only an arm was marked the effects begin a new round all the same, and what is made from them goes with them: a later pass that asks for effects in the middle of its own edits goes by the answers that the round holds.
+    // Whoever edits blocks, operands or edges here drops what that makes stale.
     context.keptAnalyses = outcome == PassOutcome::Unchanged ? allAnalyses - FunctionAnalysis::Effects : controlFlowAnalyses | analysesThatReadNoTypes;
     return outcome | marked;
 }

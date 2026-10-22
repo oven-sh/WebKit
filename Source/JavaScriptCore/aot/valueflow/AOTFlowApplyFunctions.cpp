@@ -79,8 +79,7 @@ void removeUnreachedBodies(const FlowApplyContext& context, ProgramEditor& edito
     });
 }
 
-// The tests at the head of a function stand in a function of their own when flow runs. Where flow sees no value fail them it never enters the generic version, and that loses its body,
-// but the position that is tested may stay expected, and then no type folds the test. Flow has proven that the call is not reached, so the block ends in front of it.
+// The tests at the head of a function stand in a function of their own when flow runs.
 void cutCallsOfUnreachedVersions(const FlowApplyContext& context)
 {
     Program& program = context.program;

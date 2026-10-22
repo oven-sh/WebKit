@@ -54,9 +54,7 @@ std::optional<Type> CalleesBeforeFlow::tryTypeOfResultOfOnlyClosure(const Value&
     return m_typing.typeOf(callee.results[0]);
 }
 
-// The receiver is an instance of a built-in class, a primitive or a built-in object by its type, and start-up locks the member under the name. The instance is taken to be
-// as its class created it. One that is not (an own property under the name, a subclass with a method or a species of its own) may give another kind of object, so the
-// answer says what to expect and proves nothing.
+// The receiver is an instance of a built-in class, a primitive or a built-in object by its type, and start-up locks the member under the name.
 std::optional<Type> CalleesBeforeFlow::tryTypeOfResultOfLockedBuiltin(const Value& call) const
 {
     PropertyKeyID key = call.calleeKey();

@@ -14,8 +14,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Nobody can say whether a construction by value ever finds a constructor function. What its entrypoint for that allocates and stores is a copy of what the constructions by name do,
-// and says nothing about how the objects of the layout are made and used: the run time made these objects before, and was not counted.
+// Nobody can say whether a construction by value ever finds a constructor function.
 static double activationsThatCount(const Program& program, const Heat& heat, FunctionID id)
 {
     const Function& function = program.at(id);

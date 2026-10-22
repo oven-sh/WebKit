@@ -365,6 +365,7 @@ static JSValue resolveSpecifier(JSGlobalObject* globalObject, JSObject*, JSValue
     RETURN_IF_EXCEPTION(scope, { });
     switch (form) {
     case ResolvedSpecifierForm::Path:
+    case ResolvedSpecifierForm::PathForRequire:
         return jsString(vm, text);
     case ResolvedSpecifierForm::URL:
         return jsString(vm, makeString("file://"_s, text));

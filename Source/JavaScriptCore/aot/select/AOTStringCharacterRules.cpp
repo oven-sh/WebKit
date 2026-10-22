@@ -260,8 +260,7 @@ static bool runsRightBehind(SelectionContext& context, BlockID block, BlockID fo
     return predecessors.size() == 1 && predecessors[0] == block && function.at(follower).frequency == function.at(block).frequency && function.at(follower).handler == function.at(block).handler;
 }
 
-// The first reader that resolves ropes leaves the string flat for every reader it dominates. A length in front of the read that it bounds is the first reader too:
-// the read follows in its block, or in a block as likely that only its block enters.
+// The first reader that resolves ropes leaves the string flat for every reader it dominates.
 static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>& pairs, Vector<Match>& readers)
 {
     auto isUnpaired = [](const Match& reader) {

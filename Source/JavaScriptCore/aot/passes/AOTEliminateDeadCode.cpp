@@ -157,10 +157,7 @@ private:
     Vector<uint64_t, 16> m_words;
 };
 
-// ONE WALK BACKWARD, block by block against the reverse post order and value by value against the order in the block. The users of a value stand behind it, so they have been seen when the walk comes to it:
-// it is live by then, or it stays for what it does, or it is dead as far as anybody knows. A live value marks its operands on the spot: no list of work.
-// What the walk cannot see in time comes round a loop: a parameter of a block that turns live after an edge into the block has been passed. Every value that the walk leaves behind as dead,
-// every parameter that an edge has found dead and every object that a store waits for needs attention when it is marked after all: only those go through the list of work.
+// ONE WALK BACKWARD, block by block against the reverse post order and value by value against the order in the block.
 class DeadCodeEliminator {
 public:
     explicit DeadCodeEliminator(FunctionPassContext& context)
@@ -175,8 +172,7 @@ public:
     {
     }
 
-    // A store into an object that does not escape is live once a live value may be the object. Its receiver is such a value, so most stores are live
-    // before anybody has to know which object they write. Only those whose receiver stays dead wait for the escape analysis.
+    // A store into an object that does not escape is live once a live value may be the object.
     PassOutcome run()
     {
         walkBackward();
@@ -284,8 +280,7 @@ private:
 
     bool staysUnused(ValueID id, const Value& value, const OpcodeRules& rules, Position position)
     {
-        // The host makes such a member when it is first read, with code of the library, and what that code does can be seen:
-        // the first read of process.nextTick makes the tick queue, and whether the queue is there decides where the first tick runs.
+        // The host makes such a member when it is first read, with code of the library, and what that code does can be seen.
         if (value.opcode == Opcode::Builtin && isMadeWithCodeOfLibrary(m_context.program.builtins(), value.builtin()))
             return true;
 

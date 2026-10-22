@@ -48,8 +48,7 @@ class EffectsCache {
     WTF_MAKE_NONCOPYABLE(EffectsCache);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EffectsCache);
 public:
-    // An answer is given a second time in a round without a look at the value. Whoever edits a value, tells nobody and asks gets the old answer if somebody had asked before, and the new one if not.
-    // A cache that verifies its answers stops there.
+    // An answer is given a second time in a round without a look at the value.
     EffectsCache(const EffectContext&, const Function&, bool verifiesAnswers);
 
     const EffectsOnEdges& of(ValueID) LIFETIME_BOUND;

@@ -11,8 +11,6 @@
 
 namespace JSC { namespace AOT {
 
-// Each case makes an object or a closure that never leaves its function and gives it to a function that stays out of line. The callee collects while it
-// holds the cell in an array, captures it, lists its keys, reads it under a computed key, reads what it holds, or captures it in a closure that is called.
 static constexpr ASCIILiteral cellsGivenToCallees = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Point" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
@@ -193,9 +191,6 @@ static void testCellsGivenToCalleesUnderContinuousCollection()
     checkOutputOfProgramInShell(cellsGivenToCallees, sumsOfCellsGivenToCallees, { "disable=pass:InlineCalls"_s }, defineCollectAndKey, { "--collectContinuously=1"_s });
 }
 
-// function countTrue(item, test) { if (item === undefined) return 0; return (test(item) ? 1 : 0) + countTrue(item.next, test) }
-// print(countTrue(items, item => item.id > 2) + countTrue(items, () => true) * 100)
-// The closures lie in the frame of the module body, and countTrue hands `test` on to itself.
 static constexpr ASCIILiteral closureHandedToPartCutOff = R"IR(layout L0 name="Item" fields=[{key="id" declared={type=anything} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="countTrue" declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -268,12 +263,6 @@ static void testClosureHandedToPartCutOff()
         checkOutputOfProgramInShell(closureHandedToPartCutOff, "201\n"_s, { option });
 }
 
-// function attempt(compute) { try { print(compute()) } catch (error) { print("threw") } }  const record = { name: "n", items: 3 }
-// await { then(resolve) { resolve(1) } }
-// attempt(() => "first " + record.name); attempt(() => "second " + record.items); attempt(() => "third " + Object.keys(record).join())
-// await (async () => { await null })()
-// print("after the second await " + record.items)
-// The three closures lie in the frame of the module body, which is saved at the second await and comes back at another address.
 static constexpr ASCIILiteral closuresBetweenTwoAwaits = R"IR(layout L0 fields=[{key="name" declared={type=string flags=[IsExpected]} flags=[IsRequired]}, {key="items" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
 layout L1 fields=[{key="then" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
 variable g0 name="record" declared={type=L0|absent flags=[IsExpected]} flags=[IsImmutable]

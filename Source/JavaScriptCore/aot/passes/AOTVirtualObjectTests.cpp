@@ -221,8 +221,7 @@ static KnownBoolean evaluateTestOfConstant(const ShapeContext& context, VirtualC
     case Opcode::TypeTest:
         return evaluateTypeTest(program, known, program.at(test.testedType()));
     case Opcode::StrictEq: {
-        // The sinker asks again while it rewrites the function, after it has given the casts it keeps new operands. Constants and
-        // types are what it leaves alone, so they give one answer every time.
+        // The sinker asks again while it rewrites the function, after it has given the casts it keeps new operands.
         const Function& function = context.objects.function;
         ValueID other = operandIndex == OperandIndex::StrictEq::left ? test.rightOperand() : test.leftOperand();
         if (std::optional<VirtualConstant> otherConstant = virtualConstantOf(program, function, other))
@@ -281,7 +280,6 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
         return KnownBoolean::Unknown;
 
     // The array is built as the literal of a later shape: a store that leaves the proof of the test alone may have filled a hole or added an element by then.
-    // A literal whose contents ask for Contiguous has that kind with any elements, and one that has an element keeps one.
     const Program& program = context.objects.program;
     const Type& array = program.at(description.type);
     if (arrayStorageAtAllocation(program, array) != ArrayStorage::Contiguous)

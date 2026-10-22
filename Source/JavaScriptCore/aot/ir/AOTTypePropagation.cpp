@@ -280,8 +280,7 @@ bool TypePropagation::isParameterToSweep(TypeLevel level, BlockID block, uint32_
     return false;
 }
 
-// Null where nothing narrower than the type is expected. What is proven may leave nothing of what was expected: then the expectation was wrong and says nothing,
-// which is another thing than to expect no value.
+// Null where nothing narrower than the type is expected.
 TypeID TypePropagation::partOfExpectedTypeInside(TypeID type, TypeID expected)
 {
     expected = m_inputs.types.intersectionOf(type, expected);
@@ -506,8 +505,7 @@ void TypePropagation::propagate(TypeLevel level, Direction direction)
         if (level == TypeLevel::Expected)
             computed = meetWithPreviousExpectation(id, computed);
 
-        // Whatever is typed from a restarted value is restarted too, and all that is restarted waits in the list at first. So what is typed from a value that is taken for the first time
-        // still waits there, unless it was taken before that value.
+        // Whatever is typed from a restarted value is restarted too, and all that is restarted waits in the list at first.
         if (!update(level, direction, id, computed))
             continue;
         if (isTakenAgain || m_hasUserThatWasTakenFirst.quickGet(id.index())) {
@@ -598,8 +596,7 @@ void TypePropagation::solve(TypeLevel level)
     enqueueRestartedValues();
     propagate(level, Direction::Ascending);
 
-    // Where the ascent stopped every type holds, so whatever the rules give from here on holds too: it takes back what widening added without need,
-    // and what a rule answered for a narrower operand and no longer answers.
+    // Where the ascent stopped every type holds, so whatever the rules give from here on holds too: it takes back what widening added without need, and what a rule answered for a narrower operand and no longer answers.
     for (ValueID value : m_valuesAboveTheirRules)
         enqueue(value);
     m_valuesAboveTheirRules.shrink(0);
@@ -838,7 +835,6 @@ void TypePropagation::giveUpOnRounds(TypeLevel level, Direction direction)
     };
 
     // The last sweep changes nothing: every join is inside its parameter and every other type is what its rule gives.
-    // A sweep that only retypes a value is not the last one: the value may go around a loop into a parameter the sweep has passed.
     for (bool didChange = true; didChange;) {
         didChange = false;
         for (BlockID id : m_cfg.reversePostOrder()) {
@@ -910,8 +906,7 @@ TypePropagationOutcome TypePropagation::finish()
 
 TypePropagationOutcome TypePropagation::finishWithoutCompacting(Vector<ValueID>& parametersBehindRemovedEdges)
 {
-    // A join is widened where its list has grown past a limit, and a list grows where one side of the join gets narrower: a family joined with one of its members is the family,
-    // the rest of the family joined with that member is longer than either. What an upcast of the join said still holds; the types no longer show it, so it is assumed.
+    // A join is widened where its list has grown past a limit, and a list grows where one side of the join gets narrower.
     Function& function = m_inputs.function;
     const TypeArena& types = m_inputs.types;
     for (ValueID id : m_rememberedValues) {
@@ -1124,8 +1119,7 @@ void TypePropagation::enqueueParametersOf(BlockID blockID)
     }
 }
 
-// What the log of changes has named since types were last propagated. A value that was edited is computed again. Where what is typed from it was typed from other types than it has now,
-// that follows. The parameters of a block are joins over its incoming edges.
+// What the log of changes has named since types were last propagated.
 void TypePropagation::enqueuePendingValues(PendingTyping& pending)
 {
     const Function& function = m_inputs.function;
@@ -1214,9 +1208,7 @@ void TypePropagation::typePendingValues(PendingTyping& pending)
         typeQueuedValues();
 }
 
-// Every value in the list is computed from the types that its sources have now, and what is typed from it follows where its types come out different. In which order does not matter
-// where no value is typed from itself: the last time a value is computed, its sources have the types they keep.
-// From its current type a value that depends on itself only confirms that type. So the values that are typed from one another start over together.
+// Every value in the list is computed from the types that its sources have now, and what is typed from it follows where its types come out different.
 void TypePropagation::typeQueuedValues()
 {
     const Function& function = m_inputs.function;
@@ -1276,8 +1268,7 @@ void TypePropagation::typeQueuedValues()
     }
 }
 
-// The values of a cycle of blocks that are typed from themselves. Such a value is typed, by way of others, from a parameter of a block that an edge from further down leads to, and that
-// parameter from it. So a walk from those parameters to what they are typed from, and no further than the cycle, meets them all.
+// The values of a cycle of blocks that are typed from themselves.
 uint32_t TypePropagation::componentOf(ValueID id, unsigned cycle)
 {
     if (m_componentOfValue.isEmpty())
