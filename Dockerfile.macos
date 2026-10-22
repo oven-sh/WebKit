@@ -92,9 +92,9 @@ ENV AR=llvm-ar-${LLVM_VERSION}
 ENV RANLIB=llvm-ranlib-${LLVM_VERSION}
 
 # Bun — only used to run the vendored xmac tool below.
-ADD --checksum=sha256:${BUN_SHA256} \
-    https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip /tmp/bun.zip
-RUN unzip -q /tmp/bun.zip -d /tmp && \
+RUN wget -q "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" -O /tmp/bun.zip && \
+    echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c - && \
+    unzip -q /tmp/bun.zip -d /tmp && \
     install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun && \
     rm -rf /tmp/bun.zip /tmp/bun-linux-x64 && \
     bun --version

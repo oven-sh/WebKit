@@ -43,9 +43,11 @@ ENV LD lld
 # (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
 ARG ZSTD_VERSION=1.5.7
 ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
-ADD --checksum=sha256:${ZSTD_SHA256} \
-    https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz /tmp/zstd.tar.gz
-RUN tar xzf /tmp/zstd.tar.gz -C /tmp \
+RUN curl -fsSL --retry 5 --retry-connrefused \
+        "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
+        -o /tmp/zstd.tar.gz \
+    && echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/zstd.tar.gz -C /tmp \
     && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
     && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
     && mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h \

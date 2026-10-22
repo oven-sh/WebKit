@@ -112,8 +112,9 @@ ADD --checksum=sha256:${XWIN_SHA256} \
     https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-x86_64-unknown-linux-musl.tar.gz /xwin.tar.gz
 RUN tar -xzf /xwin.tar.gz -C /usr/local/bin --strip-components=1 xwin-${XWIN_VERSION}-x86_64-unknown-linux-musl/xwin && \
     rm /xwin.tar.gz && xwin --version
-ADD --checksum=sha256:${VS_CHANNEL_MANIFEST_SHA256} ${VS_CHANNEL_MANIFEST_URL} /vs.chman
-RUN xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache --http-retry 5 --manifest /vs.chman \
+RUN curl -fsSL --retry 5 --retry-all-errors "${VS_CHANNEL_MANIFEST_URL}" -o /vs.chman && \
+    echo "${VS_CHANNEL_MANIFEST_SHA256}  /vs.chman" | sha256sum -c - && \
+    xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache --http-retry 5 --manifest /vs.chman \
          --crt-version ${MSVC_CRT_VERSION} --sdk-version ${WIN_SDK_VERSION} \
       download && \
     echo "${VS_PACKAGE_MANIFEST_SHA256}  $(echo /xwin-cache/dl/pkg_manifest_*.vsman)" | sha256sum -c - && \
@@ -219,17 +220,19 @@ ARG ZSTD_VERSION=1.5.7
 ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 ARG NODE_VERSION=24.22.1
 ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
-ADD --checksum=sha256:${ZSTD_SHA256} \
-    https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz /tmp/zstd.tar.gz
-ADD --checksum=sha256:${NODE_SHA256} \
-    https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz /tmp/node.tar.xz
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL --retry 5 --retry-connrefused \
+      "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" -o /tmp/zstd.tar.gz && \
+    echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c - && \
     tar xzf /tmp/zstd.tar.gz -C /tmp && \
     make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=clang-${LLVM_VERSION} && \
     cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
     mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h && \
     rm -rf /tmp/zstd-${ZSTD_VERSION} /tmp/zstd.tar.gz && \
     zstd --version && \
+    curl -fsSL --retry 5 --retry-connrefused \
+      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
     tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
     rm /tmp/node.tar.xz && \
     node --version
