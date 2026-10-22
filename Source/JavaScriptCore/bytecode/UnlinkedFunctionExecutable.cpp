@@ -83,7 +83,9 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     if (error.isValid())
         return nullptr;
+#if !USE(BUN_JSC_ADDITIONS)
     vm.codeCache()->updateCache(executable, source, kind, result);
+#endif
     return result;
 }
 
@@ -273,6 +275,46 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         }
 #endif
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // Code is generated for a mode: with or without the debug hooks, the type profiler's instructions, the control
+    // flow profiler's. One unlinked executable is shared by every linked one made from it, and those do not all ask
+    // for the same mode: a debugger is attached to one global object at a time
+    // (JSGlobalObject::defaultCodeGenerationMode). A global object with a debugger has to get code with the debug
+    // hooks, or its breakpoints are never reached, and one without has to get code without them. So the code held
+    // here is given only to the callers that ask for its mode (codeGenerationModeForSharing()).
+    WriteBarrier<UnlinkedFunctionCodeBlock>& slot = specializationKind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct;
+    if (UnlinkedFunctionCodeBlock* held = slot.get()) {
+        OptionSet<CodeGenerationMode> heldMode = codeGenerationModeForSharing(held->codeGenerationMode());
+        OptionSet<CodeGenerationMode> askedMode = codeGenerationModeForSharing(codeGenerationMode);
+        if (heldMode == askedMode)
+            return held;
+        // A private builtin gets no debug hooks. Generated for a debugger, its code differs from the rest in one
+        // thing: it is marked, so that its scope register counts as used everywhere and the optimizing tiers keep
+        // the scope where a debugger reads it and inline nothing (DFG::Graph::hasDebuggerEnabled). Marked code
+        // runs right for a global object without a debugger too, so that one shares it. The other way round a
+        // global object with a debugger gets its own.
+        if (heldMode == (askedMode | CodeGenerationMode::Debugger) && isPrivateBuiltinFunction(isBuiltinFunction(), source))
+            return held;
+    }
+
+    UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(
+        vm, this, source, specializationKind, codeGenerationMode, 
+        isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, 
+        error, parseMode, optimize);
+    
+    if (error.isValid())
+        return nullptr;
+
+    // The code held stays where it is: the slot holds what it would hold if no caller asked for another mode. The
+    // new code is not this executable's. The CodeBlock of the caller keeps it (and, for the body of a generator or an
+    // async function, the linked executable: FunctionExecutable::codeOfStartedBody()). It is not counted as generated
+    // code to clear, and the source provider is not told of it.
+    if (slot)
+        return result;
+
+    slot.set(vm, this, result);
+    vm.codeCache()->updateCache(this, source, specializationKind, result);
+#else
     switch (specializationKind) {
     case CodeSpecializationKind::CodeForCall:
         if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get())
@@ -300,6 +342,7 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         m_unlinkedCodeBlockForConstruct.set(vm, this, result);
         break;
     }
+#endif
     // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
     vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;

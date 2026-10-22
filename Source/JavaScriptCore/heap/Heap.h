@@ -1245,6 +1245,8 @@ public:
     DYNAMIC_SPACE_AND_SET_DEFINE_MEMBER(evalExecutableSpace, ScriptExecutableSpaceAndSets)
     DYNAMIC_SPACE_AND_SET_DEFINE_MEMBER(moduleProgramExecutableSpace, ScriptExecutableSpaceAndSets)
     ScriptExecutableSpaceAndSets functionExecutableSpaceAndSet;
+    // The executables that have a FunctionExecutable::codeOfStartedBody().
+    IsoCellSet functionExecutablesWithCodeOfStartedBody;
     ScriptExecutableSpaceAndSets programExecutableSpaceAndSet;
 
     template<typename Func>

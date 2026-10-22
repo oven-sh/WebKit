@@ -2,12 +2,12 @@
 //@ runDefault("--useDollarVM=1", "--useJIT=0")
 //@ runDefault("--useDollarVM=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForFTLOptimizeAfterWarmUp=200")
 
-// The body of a generator or an async function keeps the code generation mode it first ran in, because it only resumes
-// in code generated the same way (ScriptExecutable::newCodeBlockFor). A body that starts while a profiler is on
-// therefore has the profiler's instructions for as long as it lives. When the profiler is turned off all code is
-// deleted, and the body's code is generated again with those instructions: it is linked against a profiler, and it
-// writes into that profiler in every tier. So turning a profiler off does not destroy it. It goes with the code that
-// is deleted, and code for it that is linked afterwards makes it again (VM::typeProfilerForInstrumentedCode).
+// The body of a generator or an async function that is suspended keeps the code it first ran in, because it only
+// resumes in the code that suspended it (ScriptExecutable::newCodeBlockFor). A body that starts while a profiler is on
+// therefore still has the profiler's instructions after the profiler is turned off. All code is deleted then, and the
+// body is linked again from its code with those instructions: it is linked against a profiler, and it writes into that
+// profiler in every tier. So turning a profiler off does not destroy it. It goes with the code that is deleted, and
+// code for it that is linked afterwards makes it again (VM::typeProfilerForInstrumentedCode).
 
 function check(what, actual, expected) {
     if (actual !== expected)
