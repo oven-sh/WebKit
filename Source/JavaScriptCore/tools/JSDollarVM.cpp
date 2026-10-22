@@ -90,6 +90,7 @@
 #include "WasmCapabilities.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "BufferAccessorRegistry.h"
+#include "JSArrayBuffer.h"
 #include "JSArrayBufferView.h"
 #include "JSBigInt.h"
 #include "MathCommon.h"
@@ -2358,6 +2359,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionFFIWrite);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICString);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIArenaDepth);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICompileCounts);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateArrayBufferWithExternalWriters);
+static JSC_DECLARE_HOST_FUNCTION(functionCanBeWrittenConcurrently);
 #endif
 
 const ClassInfo JSDollarVM::s_info = { "DollarVM"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDollarVM) };
@@ -5433,6 +5436,39 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIArenaDepth, (JSGlobalObject* globalObject, C
     return JSValue::encode(jsNumber(globalObject->ffiContext().arena().depth()));
 }
 
+// Makes a zeroed ArrayBuffer with ArrayBufferExternalWriters::Yes, as an embedder does over memory that another process also writes.
+// Usage: $vm.createArrayBufferWithExternalWriters(byteLength)
+JSC_DEFINE_HOST_FUNCTION(functionCreateArrayBufferWithExternalWriters, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint32_t byteLength = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    // At least a byte: null data is a detached buffer.
+    void* data = Gigacage::tryZeroedMalloc(Gigacage::Primitive, std::max<size_t>(byteLength, 1));
+    if (!data) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(data), byteLength }, ArrayBuffer::primitiveGigacageDestructor(), ArrayBufferExternalWriters::Yes);
+    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(buffer)));
+}
+
+// Returns canBeWrittenConcurrently() of an ArrayBuffer or of a view, and undefined for anything else.
+// Usage: $vm.canBeWrittenConcurrently(arrayBufferOrView)
+JSC_DEFINE_HOST_FUNCTION(functionCanBeWrittenConcurrently, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSValue value = callFrame->argument(0);
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
+        return JSValue::encode(jsBoolean(view->canBeWrittenConcurrently()));
+    if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
+        return JSValue::encode(jsBoolean(buffer->impl()->canBeWrittenConcurrently()));
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFFIFixture, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -6148,6 +6184,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "ffiCString"_s, functionFFICString, 1);
     addFunction(vm, allowIfNotFuzz, "ffiArenaDepth"_s, functionFFIArenaDepth, 0);
     addFunction(vm, allowIfNotFuzz, "ffiCompileCounts"_s, functionFFICompileCounts, 0);
+    addFunction(vm, allowIfNotFuzz, "createArrayBufferWithExternalWriters"_s, functionCreateArrayBufferWithExternalWriters, 1);
+    addFunction(vm, alwaysAllow, "canBeWrittenConcurrently"_s, functionCanBeWrittenConcurrently, 1);
 #endif
 
     if (allowIfNotFuzz) {

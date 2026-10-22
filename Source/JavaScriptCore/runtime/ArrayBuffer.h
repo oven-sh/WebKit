@@ -131,12 +131,17 @@ private:
     Mode m_mode : 1 { Mode::Default };
 };
 
+// Whether something that JavaScript does not run also writes the bytes of an ArrayBuffer that is not shared:
+// another process, or a thread outside the engine, that has the same memory. A file mapping is such memory.
+// JavaScript sees an ordinary ArrayBuffer either way.
+enum class ArrayBufferExternalWriters : bool { No, Yes };
+
 class ArrayBufferContents final {
     WTF_MAKE_NONCOPYABLE(ArrayBufferContents);
 public:
     ArrayBufferContents() = default;
-    ArrayBufferContents(void* data, size_t sizeInBytes, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&&);
-    ArrayBufferContents(std::span<const uint8_t> data, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&&);
+    ArrayBufferContents(void* data, size_t sizeInBytes, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&&, ArrayBufferExternalWriters = ArrayBufferExternalWriters::No);
+    ArrayBufferContents(std::span<const uint8_t> data, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&&, ArrayBufferExternalWriters = ArrayBufferExternalWriters::No);
     ArrayBufferContents(Ref<SharedArrayBufferContents>&&, bool forceFixedLengthIfWasm = true);
     ArrayBufferContents(void* data, size_t sizeInBytes, size_t maxByteLength, Ref<BufferMemoryHandle>&&);
 
@@ -185,6 +190,10 @@ public:
     std::span<const uint8_t> span() const LIFETIME_BOUND { return { static_cast<const uint8_t*>(data()), sizeInBytes() }; }
     
     bool isShared() const { return m_shared; }
+    // The bytes can change while native code reads them and no JavaScript runs: another thread writes a
+    // SharedArrayBuffer, and see ArrayBufferExternalWriters. Code that reads a byte twice and counts on
+    // what it was reads a copy of such bytes.
+    bool canBeWrittenConcurrently() const { return m_shared || m_hasExternalWriters; }
     bool isResizableOrGrowableShared() const { return m_hasMaxByteLength; }
     bool isGrowableShared() const { return isResizableOrGrowableShared() && isShared(); }
     bool isResizableNonShared() const { return isResizableOrGrowableShared() && !isShared(); }
@@ -201,6 +210,7 @@ public:
         swap(m_sizeInBytes, other.m_sizeInBytes);
         swap(m_maxByteLength, other.m_maxByteLength);
         swap(m_hasMaxByteLength, other.m_hasMaxByteLength);
+        swap(m_hasExternalWriters, other.m_hasExternalWriters);
     }
 
     ArrayBufferContents detach()
@@ -222,6 +232,7 @@ private:
         m_sizeInBytes = 0;
         m_maxByteLength = 0;
         m_hasMaxByteLength = false;
+        m_hasExternalWriters = false;
     }
 
     friend class ArrayBuffer;
@@ -244,6 +255,8 @@ private:
     size_t m_sizeInBytes { 0 };
     size_t m_maxByteLength { 0 };
     bool m_hasMaxByteLength { false };
+    // It goes where the bytes go: a transfer moves it, and a copy of the bytes does not have it.
+    bool m_hasExternalWriters { false };
 };
 
 class ArrayBuffer final : public GCIncomingRefCounted<ArrayBuffer> {
@@ -253,7 +266,7 @@ public:
     JS_EXPORT_PRIVATE static Ref<ArrayBuffer> create(std::span<const uint8_t> = { });
     JS_EXPORT_PRIVATE static Ref<ArrayBuffer> create(ArrayBufferContents&&);
     JS_EXPORT_PRIVATE static Ref<ArrayBuffer> createAdopted(std::span<const uint8_t>);
-    JS_EXPORT_PRIVATE static Ref<ArrayBuffer> createFromBytes(std::span<const uint8_t> data, ArrayBufferDestructorFunction&&);
+    JS_EXPORT_PRIVATE static Ref<ArrayBuffer> createFromBytes(std::span<const uint8_t> data, ArrayBufferDestructorFunction&&, ArrayBufferExternalWriters = ArrayBufferExternalWriters::No);
     JS_EXPORT_PRIVATE static Ref<ArrayBuffer> createShared(Ref<SharedArrayBufferContents>&&, bool forceFixedLengthIfWasm = true);
     JS_EXPORT_PRIVATE static RefPtr<ArrayBuffer> tryCreate(size_t numElements, unsigned elementByteSize, std::optional<size_t> maxByteLength = std::nullopt);
     JS_EXPORT_PRIVATE static RefPtr<ArrayBuffer> tryCreate(ArrayBuffer&);
@@ -275,6 +288,7 @@ public:
     void makeShared();
     void setSharingMode(ArrayBufferSharingMode);
     inline bool isShared() const;
+    inline bool canBeWrittenConcurrently() const { return m_contents.canBeWrittenConcurrently(); }
     inline ArrayBufferSharingMode sharingMode() const { return isShared() ? ArrayBufferSharingMode::Shared : ArrayBufferSharingMode::Default; }
     inline bool isResizableOrGrowableShared() const { return m_contents.isResizableOrGrowableShared(); }
     inline bool isFixedLength() const { return !isResizableOrGrowableShared(); }
