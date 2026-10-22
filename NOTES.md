@@ -209,3 +209,21 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   * WebKit#838 body updated with all of this (bench/wk838-body.md). Still draft until the pushback result is in.
   * TODO: pushback result (run 49c2ef2e6e00) -> address; mark WebKit#838 ready; head's ASAN probes (/tmp/asan2-probes.txt) into the body; wrap-up; delete scratch + wip
     branches (robobun/c4a0b0aa/scratch, robobun/c4a0b0aa/marker-wakeups-wip in oven-sh/WebKit; robobun/c4a0b0aa/marker-wakeups-prerebase is local only in bun).
+- 2026-10-22 05:55 UTC: WINDOWS x64 verify-baseline (Intel SDE) lane.
+  * It failed twice on this PR (builds 130658, 130668): "JPEG codec > flat grey" of test/js/bun/jsc-stress/fixtures/simd-baseline.test.ts over its 5 s. NOT a flake:
+    survey of 105 builds of other branches (/tmp/survey-vb.py): flat grey 2299..4590 ms, never over 5 s (one "gradient" 5101 fail on another branch);
+    on this PR's build 3 of 17 default-protocol runs were >= 5000 (slow mode = +1.5 s), the rest 2914..3698.
+  * The crash at exit seen in the diagnostics is NOT ours: mimalloc scavenger, WakeByAddressSingle after ExitProcess killed the scavenger thread
+    (mi_scav_wake_one <- mi_arena_schedule_purge <- Rust TLS destructors <- ExitProcess). Open PR oven-sh/bun#46016 (another session). It is in ~45% of the
+    verify-baseline runs of every branch, exit code stays 0, +27 s per crashing run.
+  * HYPOTHESIS for the slow mode: Bun's GC controller asks for an idle FULL collection after 10 quiet 1 s ticks (BUN_IDLE_GC_SECONDS=10,...). The run takes ~21 s
+    under SDE, so that lands near the JPEG tests in some runs. With the new protocol that collection (heap ~0.5 MB visited) is ONE pause on the JS thread, and under
+    SDE (Pin translates every new code path) the first eden collection already pauses 916 ms. Upstream does it with helpers while the JS thread runs.
+    Native (Linux, this host, /tmp/idlegc): idle full GC of the same test heap: PR p=3.43 ms in one pause; main first pause 0.60 ms, then collector thread 30.7 ms.
+  * FIX CANDIDATE (WebKit, not pushed yet, in /workspace/WebKit working tree): Options::maximumSmallGCPauseMS = 10: Collector::staysPausedWhileSmall() is false
+    once the pause has lasted that long; then the scheduler decides and the resume wakes one helper. Syntax check passes.
+    Bun tests then: "stay out of a collection that marks little" must pin the limit high (a preempted pause of 13 ms was seen natively: would be mw=1);
+    new test pair with BUN_JSC_minimumGCPauseMS=0.01 BUN_JSC_gcPauseScale=0 ring(4096): limit 0 -> wake-ups, limit 60000 -> none.
+  * Diagnostic v3 = bun commit e7f50a50c8 ("[skip tests]" in the subject: builds + verify-baseline only), build 130728: forced idle full GCs (BUN_IDLE_GC_SECONDS=3,3,3)
+    x default / upstream (option 0) / price 32 KB, then natural default runs with GC log. Result -> /tmp/vb-diag.log (wait-vb.py).
+  * The temporary commit on the bun branch MUST go before the PR is ready (return to d20afca6a2 + new pin).
