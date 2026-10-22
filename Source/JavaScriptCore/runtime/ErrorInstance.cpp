@@ -60,6 +60,9 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
 #endif // ENABLE(WEBASSEMBLY)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_stackStringIsFramesOnly(false)
+#endif
 {
 }
 
@@ -137,11 +140,12 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
 
     Locker locker { cellLock() };
     m_stackTrace = WTF::move(stackTrace);
-    // These frames replace whatever the stack would have been made from.
+    // A collection may already have formatted the frames these replace.
     m_stackString = String();
     m_hasErrorInfo = false;
 #if USE(BUN_JSC_ADDITIONS)
-    m_stackTraceSnapshot = nullptr;
+    m_stackStringIsFramesOnly = false;
+    m_collectedStackFrames = nullptr;
 #endif
     vm.writeBarrier(this);
 }
@@ -158,8 +162,8 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
         if (!errorInstance->m_stackString.isEmpty())
             size += errorInstance->m_stackString.impl()->costDuringGC();
 #if USE(BUN_JSC_ADDITIONS)
-        if (errorInstance->m_stackTraceSnapshot)
-            size += errorInstance->m_stackTraceSnapshot->sizeInBytes();
+        if (errorInstance->m_collectedStackFrames)
+            size += errorInstance->m_collectedStackFrames->sizeInBytes();
 #endif
     }
 
@@ -174,9 +178,6 @@ void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size
         size_t limit = globalObject->stackTraceLimit().value_or(0);
         std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
         vm.interpreter.getStackTrace(this, *stackTrace, framesToSkip, limit);
-#if USE(BUN_JSC_ADDITIONS)
-        m_stackTraceSnapshot = nullptr;
-#endif
 
         if (!m_stackTrace || !append) {
             m_stackTrace = WTF::move(stackTrace);
@@ -294,14 +295,14 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     {
         Locker locker { cellLock() };
         m_stackTrace = nullptr;
-#if USE(BUN_JSC_ADDITIONS)
-        m_stackTraceSnapshot = nullptr;
-#endif
     }
     m_lineColumn = lineColumn;
     m_sourceURL = WTF::move(sourceURL);
     m_stackString = WTF::move(stackString);
     m_hasErrorInfo = !m_stackString.isNull();
+#if USE(BUN_JSC_ADDITIONS)
+    m_stackStringIsFramesOnly = false;
+#endif
 }
 
 // Based on ErrorPrototype's errorProtoFuncToString(), but is modified to
@@ -409,26 +410,6 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
         m_capturedStackTrace->clear();
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (m_stackTraceSnapshot)
-        m_stackTraceSnapshot->reconcileWeakReferencesAtGCEnd(vm);
-
-    // The embedder makes more than a string from the frames (call sites for Error.prepareStackTrace), and what it
-    // makes is decided when the stack is read.
-    if (auto& snapshotStackTrace = vm.onSnapshotStackTrace()) {
-        if (m_stackTrace && hasUnmarkedFrame(vm, *m_stackTrace)) {
-            ASSERT(!m_errorInfoMaterialized);
-            ASSERT(!m_stackTraceSnapshot);
-            auto snapshot = snapshotStackTrace(vm, *m_stackTrace, globalObject());
-            ASSERT(snapshot);
-            Locker locker { cellLock() };
-            m_stackTrace = nullptr;
-            m_stackTraceSnapshot = WTF::move(snapshot);
-        }
-        return;
-    }
-#endif
-
     if (m_stackTrace && hasUnmarkedFrame(vm, *m_stackTrace))
         computeErrorInfo(vm, false);
 }
@@ -442,10 +423,21 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     UNUSED_PARAM(allocationAllowed);
 
     if (m_stackTrace && !m_stackTrace->isEmpty()) {
+        auto& fn = vm.onComputeErrorInfo();
         WTF::String stackString;
-        getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
-        if (!m_stackPropertyProvidedByCapturedStackTrace)
-            stackString = Interpreter::stackTraceAsString(vm, *m_stackTrace.get());
+        std::unique_ptr<Vector<CollectedStackFrame>> collectedStackFrames;
+        if (fn) {
+            if (!m_stackPropertyProvidedByCapturedStackTrace) {
+                // Possibly the end of a collection: the hook formats the frames, and stackWithHeader() prepends the header.
+                collectedStackFrames = makeUnique<Vector<CollectedStackFrame>>();
+                stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, *collectedStackFrames);
+                m_stackStringIsFramesOnly = true;
+            }
+        } else {
+            getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
+            if (!m_stackPropertyProvidedByCapturedStackTrace)
+                stackString = Interpreter::stackTraceAsString(vm, *m_stackTrace.get());
+        }
         m_hasErrorInfo = true;
 
         {
@@ -454,10 +446,34 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
             // Otherwise m_stackString is the captured stack trace's, if a collection had to format it.
             if (!m_stackPropertyProvidedByCapturedStackTrace)
                 m_stackString = WTF::move(stackString);
+            m_collectedStackFrames = WTF::move(collectedStackFrames);
         }
 
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// "name: message" in front of the frames a collection formatted, as a stack materialized on access
+// begins. undefined if reading the name or the message throws, which is what the hook that
+// materializes a stack on access leaves.
+JSValue ErrorInstance::stackWithHeader(VM& vm, String&& frames)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSGlobalObject* globalObject = this->globalObject();
+    String name = sanitizedNameString(globalObject);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    String message = sanitizedMessageString(globalObject);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    // The name and the message come from JS: past String::MaxLength makeString() calls CRASH().
+    ASCIILiteral separator = name.isEmpty() || message.isEmpty() ? ""_s : ": "_s;
+    String stack = tryMakeString(name, separator, message, frames);
+    if (stack.isNull())
+        stack = tryMakeString(name, separator, message);
+    if (stack.isNull())
+        stack = WTF::move(message);
+    return jsString(vm, WTF::move(stack));
+}
+#endif
 
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 {
@@ -468,24 +484,20 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
 
     auto& fn = vm.onComputeErrorInfoJSValue();
-    bool hasFrames = m_stackTrace && !m_stackTrace->isEmpty();
-    if (fn && (hasFrames || m_stackTraceSnapshot)) {
+    if (fn && m_stackTrace && !m_stackTrace->isEmpty()) {
         m_errorInfoMaterialized = true;
         DeferGCForAWhile deferGC(vm);
 
         JSValue stack;
-        if (!m_stackPropertyProvidedByCapturedStackTrace) {
-            if (hasFrames)
-                stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
-            else
-                stack = m_stackTraceSnapshot->computeErrorInfo(vm, m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
-        }
+        if (!m_stackPropertyProvidedByCapturedStackTrace)
+            stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
 
         {
             Locker locker { cellLock() };
+            m_stackTrace->clear();
             m_stackTrace = nullptr;
-            m_stackTraceSnapshot = nullptr;
             m_stackString = String();
+            m_collectedStackFrames = nullptr;
         }
 
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
@@ -520,12 +532,34 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         if (!m_stackPropertyProvidedByCapturedStackTrace) {
             WTF::String stackString;
+#if USE(BUN_JSC_ADDITIONS)
+            std::unique_ptr<Vector<CollectedStackFrame>> collectedStackFrames;
+#endif
             {
                 Locker locker { cellLock() };
                 stackString = WTF::move(m_stackString);
+#if USE(BUN_JSC_ADDITIONS)
+                collectedStackFrames = WTF::move(m_collectedStackFrames);
+#endif
             }
+            // The value is made before the scope opens: stackWithHeader() reads this error's name and message.
+            JSValue stackValue;
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_stackStringIsFramesOnly) {
+                if (auto& fn = vm.onComputeCollectedErrorInfoJSValue(); fn && collectedStackFrames) {
+                    // The hook can run script, as the one for frames that are alive, which runs with this set too.
+                    m_errorInfoMaterialized = true;
+                    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                    stackValue = fn(vm, stackString, *collectedStackFrames, this);
+                    EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || stackValue);
+                }
+                if (!stackValue)
+                    stackValue = stackWithHeader(vm, WTF::move(stackString));
+            } else
+#endif
+                stackValue = jsString(vm, WTF::move(stackString));
             AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-            putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
+            putDirect(vm, vm.propertyNames->stack, stackValue, attributes);
         }
         m_errorInfoMaterialized = true;
     }

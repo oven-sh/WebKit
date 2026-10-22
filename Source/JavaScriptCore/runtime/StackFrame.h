@@ -135,16 +135,18 @@ private:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
-// An ErrorInstance holds the cells of its frames weakly. This is what the embedder keeps of the frames when a
-// collection finds one of those cells dead.
-class StackTraceSnapshot {
-public:
-    virtual ~StackTraceSnapshot() = default;
-    // This does for the snapshot what VM::onComputeErrorInfoJSValue() does for frames.
-    virtual JSValue computeErrorInfo(VM&, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance) = 0;
-    virtual size_t sizeInBytes() const = 0;
-    // A snapshot may go on referring, weakly, to cells that were alive when it was made.
-    virtual void reconcileWeakReferencesAtGCEnd(VM&) = 0;
+// What VM::onComputeErrorInfo() keeps of a frame beside the line it writes for it in the string it returns.
+struct CollectedStackFrame {
+    // Where the line has them. The length is 0 when the line has a placeholder instead.
+    unsigned functionNameOffset { 0 };
+    unsigned functionNameLength { 0 };
+    unsigned sourceURLOffset { 0 };
+    unsigned sourceURLLength { 0 };
+    // The line is 0 when the frame has no position.
+    LineColumn lineColumn;
+    SourceID sourceID { 0 };
+    // The embedder's.
+    unsigned flags { 0 };
 };
 #endif
 

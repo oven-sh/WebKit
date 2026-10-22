@@ -142,7 +142,6 @@ class MicrotaskQueue;
 class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
 class QueuedTask;
-class StackTraceSnapshot;
 enum class InternalMicrotask : uint8_t;
 namespace FFI { class CallbackEntryScope; }
 #endif
@@ -178,9 +177,11 @@ constexpr bool validateDFGDoesGC = ENABLE_DFG_DOES_GC_VALIDATION;
 
 #if USE(BUN_JSC_ADDITIONS)
 using StackTraceAppenderFunction = WTF::Function<void(VM&, JSCell* owner, Vector<StackFrame>& stackTrace, size_t maxToAppend)>;
+struct CollectedStackFrame;
+using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, Vector<CollectedStackFrame>&)>;
 using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*)>;
-// This runs at the end of a collection, so it can neither allocate in the heap nor run script. It never returns null.
-using StackTraceSnapshotFunction = WTF::Function<std::unique_ptr<StackTraceSnapshot>(VM&, const Vector<StackFrame>& stackTrace, JSGlobalObject* globalObjectOfError)>;
+// Takes what ErrorInfoFunction gave. The empty value, which it never returns when it throws, stands for the error's name and message followed by stackString.
+using CollectedErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, const String& stackString, const Vector<CollectedStackFrame>&, JSC::JSObject*)>;
 #endif
 
 #if ENABLE(FTL_JIT)
@@ -1200,18 +1201,21 @@ public:
     const StackTraceAppenderFunction& onAppendStackTrace() const { return m_onAppendStackTrace; }
     StackTraceAppenderFunction& onAppendStackTrace() { return m_onAppendStackTrace; }
     
+    const ErrorInfoFunction& onComputeErrorInfo() const { return m_onComputeErrorInfo; }
+    ErrorInfoFunction& onComputeErrorInfo() { return m_onComputeErrorInfo; }
+    
     const ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() const { return m_onComputeErrorInfoJSValue; }
     ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() { return m_onComputeErrorInfoJSValue; }
 
-    const StackTraceSnapshotFunction& onSnapshotStackTrace() const { return m_onSnapshotStackTrace; }
-    
+    const CollectedErrorInfoFunctionJSValue& onComputeCollectedErrorInfoJSValue() const { return m_onComputeCollectedErrorInfoJSValue; }
+
     const WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() const { return m_computeLineColumnWithSourcemap; }
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() { return m_computeLineColumnWithSourcemap; }
 
     void setOnAppendStackTrace(StackTraceAppenderFunction&& function) { m_onAppendStackTrace = WTF::move(function); }
-    // An embedder that sets one of these two sets both.
+    void setOnComputeErrorInfo(ErrorInfoFunction&& function) { m_onComputeErrorInfo = WTF::move(function); }
     void setOnComputeErrorInfoJSValue(ErrorInfoFunctionJSValue&& function) { m_onComputeErrorInfoJSValue = WTF::move(function); }
-    void setOnSnapshotStackTrace(StackTraceSnapshotFunction&& function) { m_onSnapshotStackTrace = WTF::move(function); }
+    void setOnComputeCollectedErrorInfoJSValue(CollectedErrorInfoFunctionJSValue&& function) { m_onComputeCollectedErrorInfoJSValue = WTF::move(function); }
     void setComputeLineColumnWithSourcemap(WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
 #endif
     
@@ -1459,8 +1463,9 @@ private:
 
     WTF::Function<void(VM&)> m_onEachMicrotaskTick;
 #if USE(BUN_JSC_ADDITIONS)
+    ErrorInfoFunction m_onComputeErrorInfo;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
-    StackTraceSnapshotFunction m_onSnapshotStackTrace;
+    CollectedErrorInfoFunctionJSValue m_onComputeCollectedErrorInfoJSValue;
     StackTraceAppenderFunction m_onAppendStackTrace;
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)> m_computeLineColumnWithSourcemap;
 #endif

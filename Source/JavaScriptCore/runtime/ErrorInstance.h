@@ -110,7 +110,6 @@ public:
     unsigned column() const { return m_lineColumn.column; }
     void setColumn(unsigned column) { m_lineColumn.column = column; }
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
-    StackTraceSnapshot* stackTraceSnapshot() LIFETIME_BOUND { return m_stackTraceSnapshot.get(); }
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
 
 #endif
@@ -166,16 +165,16 @@ protected:
     SourceAppender m_sourceAppender { nullptr };
     // Frames captured by the constructor
     std::unique_ptr<Vector<StackFrame>> m_stackTrace;
-#if USE(BUN_JSC_ADDITIONS)
-    // This replaces m_stackTrace when a collection finds one of its frames dead. An error never has both.
-    std::unique_ptr<StackTraceSnapshot> m_stackTraceSnapshot;
-#endif
     // Frames captured by Error.captureStackTrace()
     std::unique_ptr<Vector<StackFrame>> m_capturedStackTrace;
 
     LineColumn m_lineColumn;
     String m_sourceURL;
     String m_stackString;
+#if USE(BUN_JSC_ADDITIONS)
+    // Goes with m_stackString when a collection made it of m_stackTrace.
+    std::unique_ptr<Vector<CollectedStackFrame>> m_collectedStackFrames;
+#endif
     RuntimeType m_runtimeTypeForCause { TypeNothing };
     ErrorType m_errorType { ErrorType::Error };
     bool m_stackOverflowError : 1;
@@ -187,6 +186,10 @@ protected:
     bool m_parseError : 1;
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_stackStringIsFramesOnly : 1;
+    JSValue stackWithHeader(VM&, String&& frames);
 #endif
 };
 
