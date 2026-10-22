@@ -1,0 +1,13 @@
+main string-regexp-methods-cross-realm-dfg.js: 279.385 real 104.775 user 23.940 sys
+main string-regexp-methods-cross-realm-dfg.js: exit 0
+pr string-regexp-methods-cross-realm-dfg.js: 388.095 real 221.510 user 8.827 sys
+pr string-regexp-methods-cross-realm-dfg.js: exit 0
+pr0 string-regexp-methods-cross-realm-dfg.js: 573.205 real 344.661 user 42.710 sys
+pr0 string-regexp-methods-cross-realm-dfg.js: exit 0
+main string-regexp-methods-cross-realm-dfg.js: 320.204 real 124.749 user 44.600 sys
+main string-regexp-methods-cross-realm-dfg.js: exit 0
+pr string-regexp-methods-cross-realm-dfg.js: 415.267 real 236.348 user 28.127 sys
+pr string-regexp-methods-cross-realm-dfg.js: exit 0
+pr0 string-regexp-methods-cross-realm-dfg.js: 532.285 real 298.735 user 52.646 sys
+pr0 string-regexp-methods-cross-realm-dfg.js: exit 0
+DONE

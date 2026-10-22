@@ -34,6 +34,13 @@ the mutator stopped that long, for every scheduler, unless
 minimumGCPauseMS is 0. A collection of collectContinuously is never
 small: that option is there to have the marking overlap the mutator.
 
+With the option at 0 none of this runs
+(Collector::helpersJoinEveryCycle): the helpers join every cycle at its
+start, park in it, and every donation wakes all of them. That is the
+upstream protocol, and SlotVisitor::drainFromShared keeps its upstream
+body for it. It is there to go back to, and the tests for races in the
+marking use it to have a small heap marked by several threads at once.
+
 SlotVisitor::drain gets nothing per cell. It reads the clock, looks at
 what the visitor owes and counts the cells that were visited again once
 per round, and once per minimumNumberOfScansBetweenRebalance cells in a

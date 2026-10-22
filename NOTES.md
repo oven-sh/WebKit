@@ -144,3 +144,14 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   Drafts: bench/wk838-body-draft.md, bench/bun-pr-body-draft.md (placeholders PRICE_SWEEP, ASAN_SAMPLE_TIMEOUTS, SWITCHES_MAIN).
   NEXT: asan-trio result (is option 0 slow in collectContinuously?), price sweep (bench/price-sweep.sh final3 final3), PATCH WebKit#838 (title, body, ready),
   open bun PR (base robobun/6d0d11d3/lazy-parallel-markers), status comment, issue comment, pushback self-review on oven-sh/WebKit#838, wrap-up.
+- 2026-10-22 01:40 UTC: WebKit head is now 20c0b1bc2e (force-pushed; 618674ce is kept in robobun/c4a0b0aa/marker-wakeups-wip). Change vs 618674ce:
+  the option at 0 = Collector::helpersJoinEveryCycle() = the UPSTREAM protocol (helpers join at the start, park in the cycle, notifyAll on every donation);
+  SlotVisitor::drainFromShared keeps its upstream body and dispatches to drainFromSharedWithHelpersOnRequest() otherwise. Why: with "0 = no payment" a
+  tree-shaped 100 MB full GC took 309 ms (main 176, default 110), Debug+ASAN collectContinuously tests were 1.9x slower than main, and the race tests
+  that set the option to 0 did not get the concurrency they were written for. Price sweep (bench/results/final3-P-*.txt): repro ns/op 0:140 512K:97 1M:81
+  2M:74 4M:65 8M:70 one:89; wide eden 8 MB ms/MB 0:1.92 512K:1.55 1M:1.40 2M:1.44 4M:1.84 8M:2.71; 32 MB: 0.95/0.86/0.65/0.77/1.02/1.23; churn RSS 770-835 at every price.
+  collectContinuously: a small heap's cycle is one pause now, so more cycles run per second: release jsc runs cc tests 4-7x faster; Debug+ASAN with verifyGC
+  1.3-1.4x slower (388-415 s vs 279-320 s on string-regexp-methods-cross-realm-dfg.js); cycles in 100 s: main 1527 (1.85 stops each), PR 2756 (1.13 stops each).
+  Local compile check without a build: bench/syntax-check.sh <prebuilt dir> heap/SlotVisitor.cpp heap/Collector.cpp (passes for 20c0b1bc).
+  NEXT: wait for preview autobuild-preview-pr-838-20c0b1bc; build-arm.sh final4; verify option 0 == main (repro vcs ~60k, tree), default unchanged, bun tests,
+  objdump; ASAN sample with the new debug-asan tarball; update pin in bun branch; PR bodies (drafts in bench/); open bun PR; issue comment; pushback.
