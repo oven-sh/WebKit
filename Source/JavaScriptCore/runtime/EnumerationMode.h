@@ -29,9 +29,18 @@
 
 namespace JSC {
 
+// Which own keys a PropertyNameArrayBuilder takes.
+// Strings is two bits. The second one asks for the index keys an object enumerates from its
+// own storage: the elements of an array or a typed array, the characters of a String object,
+// the mapped arguments. A caller that has no use for them (a completer, an inspector) passes
+// NonIndexStrings, and the loops that build one Identifier for each of them do not run.
+// Only those loops test the bit. A key that comes from anywhere else is added as it is: a
+// name an ownKeys trap returns, an export of a module namespace that is named "0".
 enum class PropertyNameMode : uint8_t {
     Symbols = 1 << 0,
-    Strings = 1 << 1,
+    NonIndexStrings = 1 << 1,
+    NonIndexStringsAndSymbols = Symbols | NonIndexStrings,
+    Strings = NonIndexStrings | 1 << 2,
     StringsAndSymbols = Symbols | Strings,
 };
 
