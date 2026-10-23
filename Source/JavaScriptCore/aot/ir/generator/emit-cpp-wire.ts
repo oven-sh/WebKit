@@ -197,7 +197,7 @@ function wireSectionsHeader(schema: Schema): string[] {
     ],
   );
   return cppHeader(
-    ['"AOTWire.h"', "<expected>", "<span>", "<wtf/StdLibExtras.h>", "<wtf/Vector.h>"],
+    ['"AOTVector.h"', '"AOTWire.h"', "<expected>", "<span>", "<wtf/StdLibExtras.h>"],
     inNamespace("Wire", body),
   );
 }

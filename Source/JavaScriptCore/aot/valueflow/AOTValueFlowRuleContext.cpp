@@ -61,7 +61,7 @@ void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
     m_madeNodesOfStatement = m_solver.isMadeByRule(statement) && statement.index() < m_solver.numberOfStatements() ? m_solver.m_madeNodesOfStatement[statement.index() - m_solver.m_input.statements.size()] : UINT32_MAX;
     ++m_runEpoch;
     m_isFirstRunOfStatementOfBody = m_solver.hasStatementOfBodyNeverRun(statement);
-    m_filtersKnownEdges = !m_isFirstRunOfStatementOfBody;
+    m_filtersKnownEdges = !m_isFirstRunOfStatementOfBody || m_solver.m_isFullRound;
     m_firstEdgeOfRun = m_log.edges.size();
     m_firstNodeReadOfRun = m_log.nodesRead.size();
     m_firstNodeAskedWhetherEmptyOfRun = m_log.nodesAskedWhetherEmpty.size();
@@ -80,7 +80,7 @@ void ValueFlowRuleContext::beginWhereMade(ValueFlowStatementID statement, const 
     begin(statement);
     m_madeNodesOfStatement = madeNodes;
     m_keyOfStatementOfThisTurn = &key;
-    m_filtersKnownEdges = false;
+    m_filtersKnownEdges = m_solver.m_isFullRound;
     m_rememberedByStatementOfThisTurn = { };
 }
 
@@ -665,6 +665,11 @@ bool ValueFlowRuleContext::mayFindSomethingWritten(ClimbingSet objects, ValueFlo
     if (!write || !m_solver.m_input.nodes || !m_solver.m_input.universe || ValueSets::isComplement(objects.m_set) || meet(objects, universe().placeholdersAlone()))
         return true;
     return holdsAnyOf(objects, rareWriteNode(*write));
+}
+
+bool ValueFlowRuleContext::usesGeneralRulesOnly() const
+{
+    return m_solver.m_usesGeneralRulesOnly;
 }
 
 ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName name)

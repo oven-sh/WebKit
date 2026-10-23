@@ -90,7 +90,7 @@ public:
             for (unsigned index = 0; index < block->size(); ++index) {
                 while (next < m_sunk.size() && m_sunk[next].position.block == block && m_sunk[next].position.index == index)
                     values.append(m_sunk[next++].value);
-                if (Value* value = block->at(index))
+                if (Value* value = block->at(index); !m_moved.contains(value))
                     values.append(value);
             }
             block->values() = WTF::move(values);
@@ -441,7 +441,7 @@ private:
 
     Position move(Value* value, Position from, Position to)
     {
-        from.block->at(from.index) = nullptr;
+        m_moved.add(value);
         m_changedBlocks.add(from.block);
         insertAt(value, to);
         return to;
@@ -482,6 +482,7 @@ private:
     std::optional<DominatorJumpPointers> m_jumpPointers;
     IndexMap<BasicBlock*, bool> m_isOrdered;
     std::optional<CycleForest> m_cycles;
+    IndexSet<Value*> m_moved;
     IndexSet<BasicBlock*> m_changedBlocks;
     IndexSet<BasicBlock*> m_blocksBelowClones;
     Vector<SunkValue> m_sunk;

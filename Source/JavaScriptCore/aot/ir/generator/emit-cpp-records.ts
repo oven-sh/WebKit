@@ -21,6 +21,7 @@ const recordIncludes = [
   '"AOTBuiltinIDTypes.h"',
   '"AOTSchemaEnums.h"',
   '"AOTSchemaIDs.h"',
+  '"AOTVector.h"',
   '"AOTWireRecords.h"',
   '"IterationKind.h"',
   '"TypedArrayType.h"',
@@ -29,8 +30,10 @@ const recordIncludes = [
   "<span>",
   "<wtf/OptionSet.h>",
   "<wtf/Variant.h>",
-  "<wtf/Vector.h>",
 ];
+
+// Without AOTVector.h in front, `Vector` would name the class of WTF here and the compiler's own in whoever reads a record.
+const listsAreOfTheCompiler = "static_assert(std::is_same_v<Vector<uint32_t>, AOT::Vector<uint32_t>>);";
 
 function fieldDecl(field: Field): string {
   return `${engineTypeOf(field.kind, field.isOptional)} ${field.name}${engineInitializerOf(field)};`;
@@ -112,7 +115,7 @@ function definitionsOf(types: readonly SchemaType[]): string[] {
     if (type.tag === "Variant") return engineVariant(type.variant);
     return engineStruct(engineRecordNameOf(type.record), engineFieldsOf(type.record), isComparable(type));
   });
-  return inNamespace("Typed", blocks(declarations, ...definitions));
+  return inNamespace("Typed", blocks([listsAreOfTheCompiler], declarations, ...definitions));
 }
 
 function schemaFileOf(type: SchemaType): string {

@@ -127,6 +127,7 @@ private:
             return;
         for (BasicBlock* block : m_proc) {
             for (Value* value : *block) {
+                RELEASE_ASSERT(value);
                 if (isLoopPoll(value)) {
                     m_isPoll[block] = true;
                     break;

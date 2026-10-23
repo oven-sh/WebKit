@@ -24,13 +24,13 @@ inline void forEachDataNodeInPreorder(const DataNode& root, NOESCAPE const Invoc
         functor(ordinal++, node);
         switch (node.kind()) {
         case DataNode::Kind::Array: {
-            const Vector<DataNode>& elements = node.as<DataNode::Array>().elements;
+            const auto& elements = node.as<DataNode::Array>().elements;
             for (size_t index = elements.size(); index--;)
                 stack.append(&elements[index]);
             break;
         }
         case DataNode::Kind::Object: {
-            const Vector<DataMember>& members = node.as<DataNode::Object>().members;
+            const auto& members = node.as<DataNode::Object>().members;
             for (size_t index = members.size(); index--;)
                 stack.append(&members[index].value);
             break;

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <cstring>
@@ -16,7 +17,6 @@
 #include <utility>
 #include <wtf/Compiler.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/VectorTraits.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

@@ -115,7 +115,7 @@ public:
     ClimbingSet objectsAbove(ClimbingSet start);
 
     // For a rule that is a function of what holds now: see readWhereWritten().
-    void askWithoutNodesWhereNothingIsWritten() { m_asksWithoutNodes = true; }
+    void askWithoutNodesWhereNothingIsWritten() { m_asksWithoutNodes = !m_context.usesGeneralRulesOnly(); }
 
 private:
     using Members = Vector<ValueFlowObjectID, 8>;

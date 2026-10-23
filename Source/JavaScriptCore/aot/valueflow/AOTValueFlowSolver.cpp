@@ -139,11 +139,12 @@ static Vector<std::unique_ptr<ValueSetMaker>> makeMakers(ValueSets& sets, const 
     return makers;
 }
 
-ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& sets, ValueFlowRule rule, const ParallelLoops& loops)
+ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& sets, ValueFlowRule rule, const ParallelLoops& loops, Rounds rounds)
     : m_input(input)
     , m_sets(sets)
     , m_rule(rule)
     , m_loops(loops)
+    , m_rounds(rounds)
     , m_makers(makeMakers(sets, loops))
     , m_graph(loops, m_makers.span())
 {
@@ -408,6 +409,13 @@ void ValueFlowSolver::makeStatementsDue(uint32_t first, uint32_t end)
         m_due.reserveCapacity(std::max<size_t>({ 1024, m_due.capacity() * 2, m_due.size() + (end - first) }));
     for (uint32_t statement = first; statement < end; ++statement)
         makeDue(ValueFlowStatementID(statement));
+}
+
+void ValueFlowSolver::makeEveryStatementDue()
+{
+    for (uint32_t body = 0; body + 1 < m_input.ranges.size(); ++body)
+        makeStatementsDue(m_input.ranges[body].statement, m_isReached.quickGet(body) ? m_input.ranges[body + 1].statement : m_input.ranges[body].statementLeavingBody);
+    makeStatementsDue(m_input.statements.size(), numberOfStatements());
 }
 
 bool ValueFlowSolver::reach(uint32_t firstBody, ValueFlowReachWitness witness)
@@ -2611,6 +2619,7 @@ void ValueFlowSolver::countRunsAndEdges()
     struct CountsOfLog {
         Vector<RunsAndEdges> runsAndEdges;
         Vector<std::pair<ValueFlowStatementID, bool>> statementsThatTurnDearOrCheap;
+        Vector<ValueFlowStatementID> statementsThatWereNotDueAndAdded;
     };
     Vector<CountsOfLog> countsOfLog(m_threads.size());
     forEachIndexInParallel(m_loops, m_threads.size(), [&](unsigned number) {
@@ -2645,6 +2654,9 @@ void ValueFlowSolver::countRunsAndEdges()
             bool hasMade = std::exchange(made, run.endOfMade) != run.endOfMade;
             bool hasAdded = hasReached || hasMade || edge != run.endOfEdges;
             row.runsThatAddedNothing += !hasAdded;
+            row.runsThatWereNotDueAndAdded += hasAdded && m_isFullRound;
+            if (hasAdded && m_isFullRound)
+                counts.statementsThatWereNotDueAndAdded.append(run.statement);
             row.connections += run.numberOfConnections;
             bool isDear = run.numberOfConnections > fewestConnectionsOfDearStatement;
             if (m_isDear.get(run.statement.index()) != isDear)
@@ -2657,6 +2669,7 @@ void ValueFlowSolver::countRunsAndEdges()
             const RunsAndEdges& row = counts.runsAndEdges[index];
             m_runsAndEdges[index].runs += row.runs;
             m_runsAndEdges[index].runsThatAddedNothing += row.runsThatAddedNothing;
+            m_runsAndEdges[index].runsThatWereNotDueAndAdded += row.runsThatWereNotDueAndAdded;
             m_runsAndEdges[index].connections += row.connections;
             m_runsAndEdges[index].edgesLogged += row.edgesLogged;
         }
@@ -2671,6 +2684,15 @@ void ValueFlowSolver::countRunsAndEdges()
                 m_dearStatements.removeFirst(statement);
         }
     }
+
+    constexpr size_t mostStatementsKept = 16;
+    Vector<ValueFlowStatementID> statementsOfRound;
+    for (const CountsOfLog& counts : countsOfLog)
+        statementsOfRound.appendVector(counts.statementsThatWereNotDueAndAdded);
+    AOT::sort(statementsOfRound);
+    m_numberOfRunsThatWereNotDueAndAdded += statementsOfRound.size();
+    size_t room = mostStatementsKept - m_firstStatementsThatWereNotDueAndAdded.size();
+    m_firstStatementsThatWereNotDueAndAdded.append(statementsOfRound.span().first(std::min(room, statementsOfRound.size())));
 }
 
 static uint64_t numberOf(ValueFlowEdge edge)
@@ -3182,7 +3204,8 @@ bool ValueFlowSolver::isMadeForUnknownObject(ValueFlowNodeID node) const
         return false;
     switch (key->kind) {
     default:
-        return key->set && m_sets.contains(key->set, m_input.placeholders.unknown);
+        // What is read, looked up or called through a set that holds known objects too may come out of one of those.
+        return key->set && m_sets.onlyMember(key->set) == m_input.placeholders.unknown;
     case ValueFlowMadeNodeKind::Constant:
     case ValueFlowMadeNodeKind::Hub:
     case ValueFlowMadeNodeKind::Masked:
@@ -3615,10 +3638,17 @@ bool ValueFlowSolver::solve()
         }
     }
 
+    Vector<ValueSetID> heldAtRest;
+    Vector<OptionSet<BuiltinUse>> usesAtRest;
+    uint32_t functionsReachedAtRest = 0;
+
     Vector<ValueFlowNodeID> moved;
+    bool isFullRound = m_rounds == Rounds::Full;
     m_stepTimes.isOn = m_input.build && m_input.build->options().logging.logsPhaseTimes;
     for (;;) {
         ++m_counters.rounds;
+        m_counters.fullRounds += isFullRound;
+        m_isFullRound = isFullRound;
         Counters before = m_counters;
         ValueFlowGraph::Counters graphBefore = m_graph.counters();
         size_t numberOfEdgesBefore = m_graph.numberOfEdges();
@@ -3626,7 +3656,8 @@ bool ValueFlowSolver::solve()
         MonotonicTime start = MonotonicTime::now();
         m_stepTimes.begin();
         m_numberOfNodesBeforeRound = m_numberOfNodesMade;
-        if (m_seedOfSchedule)
+        // Not in the round that runs every statement once more to see that nothing moves.
+        if (m_seedOfSchedule && !isFullRound)
             letSomeDueStatementsWait();
         if (!runRules())
             return false;
@@ -3660,6 +3691,7 @@ bool ValueFlowSolver::solve()
             dataLogLn("AOT flow round ", m_counters.rounds, " | rules ", (afterRules - start).milliseconds(), " ms | merge ", (afterMerge - afterRules).milliseconds(), " ms | values ", (MonotonicTime::now() - afterMerge).milliseconds(), " ms | turns ", m_turnsOfRound, " | statement runs ", m_counters.statementRuns - before.statementRuns, " | nodes ", m_numberOfNodesMade - m_numberOfNodesBeforeRound, " | edges ", m_graph.numberOfEdges() - numberOfEdgesBefore, " | moved ", moved.size(), " | waves ", m_graph.counters().waves - graphBefore.waves, " | evaluations ", m_graph.counters().evaluations - graphBefore.evaluations);
 
         m_roundsDone.append(Round {
+            isFullRound,
             m_turnsOfRound,
             static_cast<uint32_t>(m_counters.statementRuns - before.statementRuns),
             m_counters.functionsReached - before.functionsReached,
@@ -3671,8 +3703,37 @@ bool ValueFlowSolver::solve()
         });
 
         bool isQuiet = !hasAdded && moved.isEmpty() && m_due.isEmpty() && m_dueStatementsThatWait.isEmpty() && m_edgesOfRound.isEmpty() && m_readToLink.isEmpty() && m_writtenToLink.isEmpty() && m_bodiesReachedInRound.isEmpty();
-        if (isQuiet || m_counters.rounds >= m_input.mostRounds)
+        if (isQuiet && isFullRound && m_rounds == Rounds::Due && !m_usesGeneralRulesOnly) {
+            m_usesGeneralRulesOnly = true;
+            heldAtRest.appendRange(m_graph.values().begin(), m_graph.values().end());
+            // A node at rest takes nothing, and a number that a thread holds is given to a new node: what either holds later says nothing.
+            for (uint32_t index = 0; index < heldAtRest.size(); ++index) {
+                if (m_graph.isAtRest(ValueFlowNodeID(index)) || (index >= m_input.numberOfNodes && m_madeNodesOfNode[index - m_input.numberOfNodes] == noSolverIndex))
+                    heldAtRest[index] = ValueSetID();
+            }
+            usesAtRest = m_usesOfBuiltin;
+            functionsReachedAtRest = m_counters.functionsReached;
+            isFullRound = false;
+            makeEveryStatementDue();
+            continue;
+        }
+        if ((isQuiet && (isFullRound || m_rounds == Rounds::DueWithoutCheck)) || m_counters.rounds >= m_input.mostRounds)
             break;
+        isFullRound = isQuiet || m_rounds == Rounds::Full;
+        if (isFullRound)
+            makeEveryStatementDue();
+    }
+    if (m_usesGeneralRulesOnly) {
+        constexpr size_t mostNodesNamed = 8;
+        for (uint32_t index = 0; index < heldAtRest.size(); ++index) {
+            if (!heldAtRest[index] || m_graph.valueOf(ValueFlowNodeID(index)) == heldAtRest[index])
+                continue;
+            if (m_addedByGeneralRules.nodesThatHoldMore++ < mostNodesNamed)
+                m_addedByGeneralRules.firstNodesThatHoldMore.append(ValueFlowNodeID(index));
+        }
+        m_addedByGeneralRules.functionsReached = m_counters.functionsReached - functionsReachedAtRest;
+        for (size_t index = 0; index < m_usesOfBuiltin.size(); ++index)
+            m_addedByGeneralRules.builtinsUsedMore += index < usesAtRest.size() ? m_usesOfBuiltin[index] != usesAtRest[index] : !m_usesOfBuiltin[index].isEmpty();
     }
     m_stepTimes.dump();
     fillNumbersThatNobodyGave();

@@ -437,7 +437,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
     : m_program(program)
     , m_bodies(reduceBodiesTimed(program, build, m_positionOfKey, m_timeToReduceBodies))
     , m_maker(m_bodies.sets())
@@ -477,7 +477,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Witn
         m_input.instancedFunctions = m_instancedFunctions.get();
     times.didFinish("solve: instanced functions"_s);
     MonotonicTime start = MonotonicTime::now();
-    m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops());
+    m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
     m_hasResult = m_solver->solve();
     times.didFinish("solve: rounds"_s);

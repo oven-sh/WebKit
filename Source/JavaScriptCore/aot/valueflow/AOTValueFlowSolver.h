@@ -246,6 +246,7 @@ class ValueFlowSolver {
 public:
     struct Counters {
         uint32_t rounds { 0 };
+        uint32_t fullRounds { 0 };
         uint64_t statementRuns { 0 };
         uint64_t edgesLogged { 0 };
         uint64_t testsWhetherSetsMeet { 0 };
@@ -261,6 +262,7 @@ public:
 
     // What one round has done.
     struct Round {
+        bool isFull { false };
         uint32_t turns { 0 };
         uint32_t statementRuns { 0 };
         uint32_t functionsReached { 0 };
@@ -275,12 +277,23 @@ public:
         uint64_t runs { 0 };
         // Runs that asked for no edge, node or function that was not there: they need not have been due.
         uint64_t runsThatAddedNothing { 0 };
+        // Runs in a round of every statement that did add something: they should have been due before.
+        uint64_t runsThatWereNotDueAndAdded { 0 };
         // The edges asked for, and those among them that no earlier round had added.
         uint64_t connections { 0 };
         uint64_t edgesLogged { 0 };
     };
 
-    ValueFlowSolver(const ValueFlowSolverInput&, ValueSets&, ValueFlowRule, const ParallelLoops&);
+    enum class Rounds : uint8_t {
+        // A statement runs when it is due.
+        Due,
+        // The same without the round at the end in which every statement runs once more. That round is a quarter to a third of all runs, and on no program has it added anything.
+        DueWithoutCheck,
+        // Every statement runs in every round. The results are the same.
+        Full,
+    };
+
+    ValueFlowSolver(const ValueFlowSolverInput&, ValueSets&, ValueFlowRule, const ParallelLoops&, Rounds = Rounds::Due);
     ~ValueFlowSolver();
 
     // False if the solve has stopped at a limit: then nothing that it holds is a result. That happens only where the input names no node for what is given up.
@@ -300,6 +313,21 @@ public:
     bool holdsObjectOutsideFamily(ValueFlowNodeID node) const { return m_holdsObjectOutsideFamily.get(node.index()); }
     // The set of the node was given up.
     bool isSaturated(ValueFlowNodeID node) const { return m_isSaturated.get(node.index()); }
+
+    // After a solve with Rounds::Due. The runs that added something in a round of every statement: each should have been due before. The solve has gone on from there, so what it holds is at rest all the same.
+    uint64_t numberOfRunsThatWereNotDueAndAdded() const { return m_numberOfRunsThatWereNotDueAndAdded; }
+    // The first of them, by the number of the statement within each round.
+    std::span<const ValueFlowStatementID> firstStatementsThatWereNotDueAndAdded() const LIFETIME_BOUND { return m_firstStatementsThatWereNotDueAndAdded.span(); }
+    // After a solve with Rounds::Due.
+    struct AddedByGeneralRules {
+        bool isAnything() const { return nodesThatHoldMore || functionsReached || builtinsUsedMore; }
+
+        uint64_t nodesThatHoldMore { 0 };
+        uint32_t functionsReached { 0 };
+        uint32_t builtinsUsedMore { 0 };
+        Vector<ValueFlowNodeID> firstNodesThatHoldMore;
+    };
+    const AddedByGeneralRules& addedByGeneralRules() const LIFETIME_BOUND { return m_addedByGeneralRules; }
 
     const ValueFlowSolverInput& input() const LIFETIME_BOUND { return m_input; }
     uint32_t numberOfStatements() const { return m_input.statements.size() + m_madeStatements.size(); }
@@ -567,6 +595,7 @@ private:
     void makeDue(ValueFlowStatementID);
     void listIfItMayBecomeDue(ValueFlowStatementID, Vector<ValueFlowStatementID>&) const;
     void makeStatementsDue(uint32_t first, uint32_t end);
+    void makeEveryStatementDue();
     bool reach(uint32_t body, ValueFlowReachWitness);
     void takeReachedFunctions();
     void countRunsAndEdges();
@@ -676,6 +705,7 @@ private:
     ValueSets& m_sets;
     const ValueFlowRule m_rule;
     const ParallelLoops& m_loops;
+    const Rounds m_rounds;
 
     Vector<std::unique_ptr<ValueSetMaker>> m_makers;
     ValueFlowGraph m_graph;
@@ -816,6 +846,10 @@ private:
     ListWithRoomToFill<uint32_t> m_nextStatementWaiting;
     Vector<ValueFlowReachWitness> m_reachedBy;
     Vector<RunsAndEdges> m_runsAndEdges;
+    uint64_t m_numberOfRunsThatWereNotDueAndAdded { 0 };
+    bool m_usesGeneralRulesOnly { false };
+    AddedByGeneralRules m_addedByGeneralRules;
+    Vector<ValueFlowStatementID> m_firstStatementsThatWereNotDueAndAdded;
     HashMap<uint64_t, ValueFlowStatementID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_statementOfEdge;
     Vector<LoggedEdge> m_edgesInOrderLogged;
     Vector<uint32_t> m_bodiesReachedInRound;
@@ -836,6 +870,7 @@ private:
     ListWithRoomToFill<ValueSetID> m_seenByReadersOfNode;
     // A byte a node, so that each has one writer.
     ListWithRoomToFill<uint8_t> m_isWaitedForToHoldSomething;
+    bool m_isFullRound { false };
     struct NodeRead {
         ValueFlowNodeID node;
         ValueFlowStatementID statement;

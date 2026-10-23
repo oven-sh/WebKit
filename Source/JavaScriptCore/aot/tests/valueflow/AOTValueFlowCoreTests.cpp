@@ -1272,11 +1272,15 @@ static void valueFlowRoundsAgreeWithAnAnalysisObjectByObject()
         input.ranges = program.ranges.span();
         input.remembersWhoLoggedEachEdge = true;
 
-        for (unsigned numberOfThreads : { 1u, 4u }) {
-            ParallelLoops loops(numberOfThreads);
+        struct Way {
+            unsigned numberOfThreads;
+            ValueFlowSolver::Rounds rounds;
+        };
+        for (Way way : { Way { 1, ValueFlowSolver::Rounds::Due }, Way { 4, ValueFlowSolver::Rounds::Due }, Way { 3, ValueFlowSolver::Rounds::Full } }) {
+            ParallelLoops loops(way.numberOfThreads);
             ValueSets sets(program.numberOfObjects);
             makeToyFunctions(sets, program);
-            ValueFlowSolver solver(input, sets, runToyRule, loops);
+            ValueFlowSolver solver(input, sets, runToyRule, loops, way.rounds);
             AOT_TEST_CHECK(solver.solve());
             for (uint32_t node = 0; node < program.numberOfNodes(); ++node)
                 AOT_TEST_CHECK(holdsTheSame(sets, solver.valueOf(ValueFlowNodeID(node)), expected.values[node]));
@@ -1284,6 +1288,7 @@ static void valueFlowRoundsAgreeWithAnAnalysisObjectByObject()
                 AOT_TEST_CHECK(solver.isReached(FunctionID(function)) == expected.isReached[function]);
             for (uint32_t object = 0; object < program.numberOfObjects; ++object)
                 AOT_TEST_CHECK(solver.marksOf(ValueFlowObjectID(object)).contains(ObjectMutation::StoreAfterCreation) == expected.isStoredInto[object]);
+            AOT_TEST_CHECK(solver.counters().fullRounds >= 1);
 
             // Every function is reached by a call group that holds its closure, and every member of a set can be followed back to where it was made.
             for (uint32_t function = 0; function < program.numberOfFunctions; ++function) {
@@ -1451,11 +1456,59 @@ static void valueFlowSolverFindsObjectsOutsideDeclaredTypes()
     AOT_TEST_CHECK(solver.counters().nodesHoldingObjectsOutsideFamily == 1);
 }
 
+static void whatAShorterWayOfARuleLeavesOutIsFound()
+{
+    ValueFlowStatement statements[2];
+    statements[0].function = statements[1].function = FunctionID(0u);
+    statements[0].result = ValueFlowNodeID(0u);
+    statements[1].result = ValueFlowNodeID(1u);
+    ValueFlowBodyRange ranges[2];
+    ranges[1].statement = ranges[1].statementLeavingBody = 2;
+
+    ValueFlowSolverInput input;
+    input.numberOfNodes = 2;
+    input.statements = statements;
+    input.ranges = ranges;
+
+    ValueFlowRule addsTheSameOnBothWays = [](const ValueFlowStatement& statement, ValueFlowRuleContext& context) {
+        context.add(statement.result, context.maker().of(ValueFlowObjectID(1u)));
+    };
+    ValueFlowRule leavesOutTheFirstResult = [](const ValueFlowStatement& statement, ValueFlowRuleContext& context) {
+        if (statement.result.index() || context.usesGeneralRulesOnly())
+            context.add(statement.result, context.maker().of(ValueFlowObjectID(1u)));
+    };
+    for (unsigned numberOfThreads : { 1u, 4u }) {
+        ParallelLoops loops(numberOfThreads);
+        {
+            ValueSets sets(4);
+            ValueFlowSolver solver(input, sets, addsTheSameOnBothWays, loops, ValueFlowSolver::Rounds::Due);
+            AOT_TEST_CHECK(solver.solve());
+            AOT_TEST_CHECK(!solver.addedByGeneralRules().isAnything());
+            AOT_TEST_CHECK(!solver.numberOfRunsThatWereNotDueAndAdded());
+        }
+        {
+            ValueSets sets(4);
+            ValueFlowSolver solver(input, sets, leavesOutTheFirstResult, loops, ValueFlowSolver::Rounds::Due);
+            AOT_TEST_CHECK(solver.solve());
+            AOT_TEST_CHECK(solver.addedByGeneralRules().nodesThatHoldMore == 1);
+            AOT_TEST_CHECK(solver.addedByGeneralRules().firstNodesThatHoldMore.size() == 1 && solver.addedByGeneralRules().firstNodesThatHoldMore[0] == statements[0].result);
+            AOT_TEST_CHECK(!solver.numberOfRunsThatWereNotDueAndAdded());
+        }
+        {
+            ValueSets sets(4);
+            ValueFlowSolver solver(input, sets, leavesOutTheFirstResult, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
+            AOT_TEST_CHECK(solver.solve());
+            AOT_TEST_CHECK(!solver.addedByGeneralRules().isAnything());
+            AOT_TEST_CHECK(solver.valueOf(statements[0].result) == ValueSets::nothing);
+        }
+    }
+}
+
 #define FOR_EACH_AOT_VALUE_FLOW_CORE_TEST(v) \
     v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(workOfTheGraphDoesNotHangOnTheOrderOfTheEdges) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
-    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes)
+    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound)
 
 std::span<const NativeTest> valueFlowCoreTests()
 {

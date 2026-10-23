@@ -186,7 +186,7 @@ for (let i = 0; i < testLoopCount; ++i)
     }
 })();
 
-// A leading lookbehind, forward reference or lookahead, and a group nested more than eight deep, are
+// Bun: from here on the fork's own. A leading lookbehind, forward reference or lookahead, and a group nested more than eight deep, are
 // filterable since the bitmap comes from the first sets of the pattern's alternatives. Where an
 // assertion decides the match, a byte that passes the filter must still reach the matcher.
 (function () {

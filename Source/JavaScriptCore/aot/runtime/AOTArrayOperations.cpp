@@ -92,6 +92,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, 
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendElements);
     JSArray* source = cellArgument<JSArray>(sourceCell, Entry::operationAOTAppendElements);
+    // No dense storage holds more, and element by element the rest would go into a sparse map.
+    if (static_cast<uint64_t>(target->length()) + source->length() > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope);
+    }
     if (isFrameArray(source) ? tryAppendFrameArray(globalObject, vm, target, source) : tryAppendArray(globalObject, vm, target, source))
         OPERATION_RETURN(scope);
     OPERATION_RETURN_IF_EXCEPTION(scope);

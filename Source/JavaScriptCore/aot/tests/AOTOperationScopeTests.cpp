@@ -123,6 +123,17 @@ static void checkViolationCrashes(ASCIILiteral test, ValidationFailureKind kind)
     AOT_TEST_CHECK(result.output.contains(makeString("AOT validation: "_s, nameOf(kind))));
 }
 
+static NEVER_INLINE bool JIT_OPERATION_ATTRIBUTES frameRecordHoldsReturnAddress()
+{
+    CallerFrameAndPC* frameRecord = AOT_OPERATION_FRAME_RECORD();
+    return removeCodePtrTag(frameRecord->returnPC) == OUR_RETURN_ADDRESS;
+}
+
+static void testFrameRecordHoldsReturnAddress()
+{
+    AOT_TEST_CHECK(frameRecordHoldsReturnAddress());
+}
+
 static void testPermissionsFollowDeclaredEffects()
 {
     AOT_TEST_CHECK(!permissionsOf(readOnlyOperation).mayCollect && !permissionsOf(readOnlyOperation).mayEnterVM);
@@ -189,6 +200,7 @@ static void testUndeclaredVMEntryCrashes()
 std::span<const NativeTest> operationScopeTests()
 {
     static constexpr NativeTest tests[] = {
+        { "operation-scope/the-frame-record-holds-the-return-address"_s, testFrameRecordHoldsReturnAddress },
         { "operation-scope/permissions-follow-declared-effects"_s, testPermissionsFollowDeclaredEffects },
         { "operation-scope/declared-effects-are-accepted"_s, testDeclaredEffectsAreAccepted },
         { "operation-scope/vm-entry-stays-recorded"_s, testVMEntryStaysRecorded },

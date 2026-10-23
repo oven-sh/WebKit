@@ -161,6 +161,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
 {
     prepareForFlow(context);
     const Program& program = *context.program;
+    bool runsEveryStatementInEveryRound = false;
     bool printsTimes = false;
     bool printsCalls = false;
     bool printsPrimitives = false;
@@ -170,7 +171,9 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsProtocols = false;
     bool printsViews = false;
     for (const String& word : context.arguments) {
-        if (word == "times"_s)
+        if (word == "full"_s)
+            runsEveryStatementInEveryRound = true;
+        else if (word == "times"_s)
             printsTimes = true;
         else if (word == "calls"_s)
             printsCalls = true;
@@ -190,7 +193,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             return printBadArgument(context.out, word);
     }
 
-    ValueFlowSolution solution(*context.program, context.build);
+    ValueFlowSolution solution(*context.program, context.build, runsEveryStatementInEveryRound ? ValueFlowSolver::Rounds::Full : ValueFlowSolver::Rounds::Due);
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
     if (!solution.hasResult()) {
@@ -291,7 +294,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     context.out.println("escaped ", solution.sets().size(escaped), " objects ", bodies.universe().numberOfObjects(), " reached-functions-escaped ", reachedAndEscaped);
     context.out.println("used-builtins ", sizeOf(ValueFlowHostNode::UsedBuiltins), " written-builtins ", sizeOf(ValueFlowHostNode::WrittenBuiltins), " unseen-code ", sizeOf(ValueFlowHostNode::UnseenCodeRuns), " required-by-name ", sizeOf(ValueFlowHostNode::ModulesAreRequiredByName), " imported-by-name ", sizeOf(ValueFlowHostNode::ModulesAreImportedByName));
     context.out.println("nodes-of-bodies ", bodies.nodes().numberOfNodes(), " edges-of-bodies ", bodies.edges().size(), " statements ", bodies.statements().size(), " statements-made ", solver.numberOfStatements() - bodies.statements().size());
-    context.out.println("rounds ", counters.rounds, " statement-runs ", counters.statementRuns, " edges-logged ", counters.edgesLogged, " sets ", solution.sets().numberOfStoredSets());
+    context.out.println("rounds ", counters.rounds, " full-rounds ", counters.fullRounds, " statement-runs ", counters.statementRuns, " edges-logged ", counters.edgesLogged, " sets ", solution.sets().numberOfStoredSets());
     if (printsTimes) {
         context.out.println("seconds bodies ", solution.timeToReduceBodies().seconds(), " solve ", solution.timeToSolve().seconds(), " rules ", counters.rules.seconds(), " merge ", counters.merge.seconds(), " values ", counters.values.seconds());
         context.out.println("bytes solver ", solver.memoryInBytes(), " sets ", solution.sets().memoryInBytes());
@@ -312,22 +315,23 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             Opcode opcode;
             uint64_t runs;
             uint64_t runsThatAddedNothing;
+            uint64_t runsThatWereNotDueAndAdded;
             uint64_t connections;
             uint64_t edgesLogged;
         };
         Vector<Line> lines;
         solver.forEachKindOfStatementRun([&](ValueFlowStatementKind kind, Opcode opcode, const auto& counts) {
-            lines.append({ kind, opcode, counts.runs, counts.runsThatAddedNothing, counts.connections, counts.edgesLogged });
+            lines.append({ kind, opcode, counts.runs, counts.runsThatAddedNothing, counts.runsThatWereNotDueAndAdded, counts.connections, counts.edgesLogged });
         });
         AOT::sort(lines, std::greater { }, &Line::connections);
         for (const Line& line : lines.span().first(std::min<size_t>(lines.size(), 16))) {
             if (line.kind == ValueFlowStatementKind::Operation)
-                context.out.println("  ", line.opcode, " runs ", line.runs, " added-nothing ", line.runsThatAddedNothing, " connections ", line.connections, " edges ", line.edgesLogged);
+                context.out.println("  ", line.opcode, " runs ", line.runs, " added-nothing ", line.runsThatAddedNothing, " not-due-and-added ", line.runsThatWereNotDueAndAdded, " connections ", line.connections, " edges ", line.edgesLogged);
             else
-                context.out.println("  statement-kind ", static_cast<unsigned>(line.kind), " runs ", line.runs, " added-nothing ", line.runsThatAddedNothing, " connections ", line.connections, " edges ", line.edgesLogged);
+                context.out.println("  statement-kind ", static_cast<unsigned>(line.kind), " runs ", line.runs, " added-nothing ", line.runsThatAddedNothing, " not-due-and-added ", line.runsThatWereNotDueAndAdded, " connections ", line.connections, " edges ", line.edgesLogged);
         }
         for (const ValueFlowSolver::Round& round : solver.rounds())
-            context.out.println("  round turns ", round.turns, " runs ", round.statementRuns, " functions-reached ", round.functionsReached, " nodes-made ", round.nodesMade, " edges-added ", round.edgesAdded, " nodes-moved ", round.nodesMoved, " waves ", round.waves, " evaluations ", round.evaluations);
+            context.out.println("  round", round.isFull ? " full" : "", " turns ", round.turns, " runs ", round.statementRuns, " functions-reached ", round.functionsReached, " nodes-made ", round.nodesMade, " edges-added ", round.edgesAdded, " nodes-moved ", round.nodesMoved, " waves ", round.waves, " evaluations ", round.evaluations);
     }
 }
 

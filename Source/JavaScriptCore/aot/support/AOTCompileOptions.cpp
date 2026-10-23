@@ -365,6 +365,7 @@ void WireOptionsReader::readChecks(CompileOptions& options)
     options.recorded.validates = hasFlag(checks, CheckSet::Validate);
     options.verifiesProgram = options.verifiesAfterEveryStage || options.recorded.validates || Options::verifyAOTProgram();
     options.validatesBackEnd = hasFlag(checks, CheckSet::ValidateBackEnd);
+    options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
     options.checksThatFunctionsGetPastEntry = hasFlag(checks, CheckSet::FunctionsGetPastEntry);
     options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
     options.validatesReferences = options.validatesReferenceGuards || hasFlag(checks, CheckSet::ValidateReferences);

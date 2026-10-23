@@ -141,6 +141,8 @@ public:
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
     // False while read(objects, a name of the kind) could only answer a node that holds nothing.
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
+    // In the check of a solve with Rounds::Due: a rule that has a shorter way for a common case leaves it alone.
+    bool usesGeneralRulesOnly() const;
     ValueFlowNodeID notPlain();
     ValueFlowNodeID writtenUnderUnknownKey();
     // The result of a statement of kind Lookup that is made once for each (set, name).

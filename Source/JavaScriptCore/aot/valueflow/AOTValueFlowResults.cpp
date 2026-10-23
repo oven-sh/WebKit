@@ -185,6 +185,40 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
     });
 }
 
+// A build of the product ends the solve where no rule is due. A rule that adds something all the same has read what nobody has told it of: the sets of that build are too small, and a set that is too small is a false proof.
+static void reportRulesThatWereNotDue(const ValueFlowSolver& solver, BuildContext& build)
+{
+    if (const ValueFlowSolver::AddedByGeneralRules& added = solver.addedByGeneralRules(); added.isAnything()) {
+        StringBuilder detail;
+        detail.append("with every rule on its general way: "_s, added.nodesThatHoldMore, " sets that were there hold more, "_s, added.functionsReached, " functions reached, "_s, added.builtinsUsedMore, " built-ins used in more ways; the first nodes:"_s);
+        for (ValueFlowNodeID node : added.firstNodesThatHoldMore) {
+            detail.append(' ', node.index());
+            if (const ValueFlowNodeKey* key = solver.keyOfMadeNode(node))
+                detail.append(" (made: kind "_s, static_cast<unsigned>(key->kind), ", detail "_s, key->detail, ')');
+        }
+        build.diagnostics().add(InternalError { .kind = InternalErrorKind::FlowEndedTooEarly, .count = static_cast<uint32_t>(std::min<uint64_t>(added.nodesThatHoldMore + added.functionsReached + added.builtinsUsedMore, UINT32_MAX)), .detail = detail.toString() });
+    }
+    uint64_t runs = solver.numberOfRunsThatWereNotDueAndAdded();
+    if (!runs)
+        return;
+    ValueFlowSolver::Round added;
+    for (const ValueFlowSolver::Round& round : solver.rounds()) {
+        if (!round.isFull)
+            continue;
+        added.functionsReached += round.functionsReached;
+        added.nodesMade += round.nodesMade;
+        added.edgesAdded += round.edgesAdded;
+        added.nodesMoved += round.nodesMoved;
+    }
+    String whatWasAdded = makeString(added.functionsReached, " functions reached, "_s, added.nodesMade, " nodes made, "_s, added.edgesAdded, " edges added, "_s, added.nodesMoved, " sets moved"_s);
+    build.diagnostics().add(InternalError { .kind = InternalErrorKind::FlowEndedTooEarly, .count = static_cast<uint32_t>(std::min<uint64_t>(runs, UINT32_MAX)), .detail = WTF::move(whatWasAdded) });
+    for (ValueFlowStatementID id : solver.firstStatementsThatWereNotDueAndAdded()) {
+        const ValueFlowStatement& statement = solver.statementAt(id);
+        String detail = statement.kind == ValueFlowStatementKind::Operation ? makeString(nameOf(statement.opcode)) : makeString("a statement of kind "_s, static_cast<unsigned>(statement.kind), " that the solve has made"_s);
+        build.diagnostics().add(InternalError { .kind = InternalErrorKind::FlowRuleWasNotDue, .function = statement.function, .value = statement.site, .detail = WTF::move(detail) });
+    }
+}
+
 namespace {
 
 class ResultSteps final : public ThreadSafeRefCounted<ResultSteps> {
@@ -331,13 +365,16 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     if (build.options().admitsUnseenCode())
         return FlowResults(createUnknownResultTables(program, build));
 
+    bool runsEveryRuleOnceMore = build.options().verifiesAfterEveryStage || build.options().checksFlowFixpoint;
     // How the unknown object at a site has come into being is a word of the reports. To every pass one source is like another.
     ReportSet reports = build.options().reports;
     bool showsCauses = setsOutsideTypes || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || hasFlag(reports, ReportSet::Arrivals);
-    auto solution = makeUnique<ValueFlowSolution>(program, build, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
+    auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
         showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor);
     times.didFinish("solve"_s);
     RELEASE_ASSERT(solution->hasResult());
+    if (build.options().checksFlowFixpoint)
+        reportRulesThatWereNotDue(solution->solver(), build);
 
     FlowResultTables tables;
     ValueFlowResultInputs inputs { program, *solution, build };

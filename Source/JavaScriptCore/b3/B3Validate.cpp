@@ -97,6 +97,7 @@ public:
             blocks.add(block);
             for (unsigned i = 0; i < block->size(); ++i) {
                 Value* value = block->at(i);
+                VALIDATE(value, ("At ", *block, ", index ", i));
                 valueInBlock.add(value, 0).iterator->value++;
                 valueOwner.add(value, block);
                 valueIndex.add(value, i);

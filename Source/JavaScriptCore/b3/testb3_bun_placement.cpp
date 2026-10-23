@@ -439,6 +439,94 @@ static void testSinkValuesMovesInductionStepToFirstUse()
     CHECK_EQ(invoke<int64_t>(*code, 1, elements), 1);
 }
 
+// Whether a cycle with two entries is ordered is asked in the middle of the phase, and the answer reads every value of every block.
+static void testSinkValuesMovesInductionStepBeforeAskingAboutIrreducibleCycle()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* first = proc.addBlock();
+    BasicBlock* rare = proc.addBlock(0.001);
+    BasicBlock* second = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+    Value* entersAtFirst = arguments[0];
+    Value* iterations = arguments[1];
+    Value* factor = arguments[2];
+    Value* leftAtFirst = graph.phi(first, Int64);
+    Value* sumAtFirst = graph.phi(first, Int64);
+    Value* leftAtSecond = graph.phi(second, Int64);
+    Value* sumAtSecond = graph.phi(second, Int64);
+
+    graph.emptyPatchpoint(root);
+    for (Value* left : { leftAtFirst, leftAtSecond })
+        graph.upsilon(root, iterations, left);
+    for (Value* sum : { sumAtFirst, sumAtSecond })
+        graph.upsilon(root, graph.int64(root, 0), sum);
+    graph.branch(root, graph.make(root, Equal, entersAtFirst, graph.int64(root, 1)), first, second);
+
+    Value* product = graph.make(first, Mul, factor, leftAtFirst);
+    Value* step = graph.make(first, Add, leftAtFirst, graph.int64(first, 7));
+    Value* lowBits = graph.make(first, BitAnd, leftAtFirst, graph.int64(first, 3));
+    Value* sumInFirst = graph.make(first, BitXor, sumAtFirst, step);
+    graph.upsilon(first, leftAtFirst, leftAtSecond);
+    graph.upsilon(first, sumInFirst, sumAtSecond);
+    graph.branch(first, lowBits, FrequentedBlock(second), rarely(rare));
+
+    graph.upsilon(rare, leftAtFirst, leftAtSecond);
+    graph.upsilon(rare, graph.make(rare, BitXor, sumInFirst, product), sumAtSecond);
+    graph.jump(rare, second);
+
+    Value* left = graph.make(second, Sub, leftAtSecond, graph.int64(second, 1));
+    Value* sum = graph.make(second, BitXor, sumAtSecond, left);
+    graph.upsilon(second, left, leftAtFirst);
+    graph.upsilon(second, sum, sumAtFirst);
+    graph.branch(second, graph.make(second, GreaterThan, left, graph.int64(second, 0)), first, exit);
+    graph.ret(exit, sum);
+    proc.resetReachability();
+    validate(proc);
+    CHECK(first->values().find(step) + 1 < first->values().find(sumInFirst));
+
+    CHECK(sinkValues(proc));
+    validate(proc);
+    CHECK_EQ(first->values().find(step) + 1, first->values().find(sumInFirst));
+    CHECK_EQ(numberOfValues(first, Mul), 0u);
+    CHECK_EQ(numberOfValues(rare, Mul), 1u);
+    auto code = compileProc(proc);
+    for (int64_t entersAtFirst : { 0, 1 }) {
+        for (int64_t iterations : { 1, 4, 9 }) {
+            int64_t expected = 0;
+            bool isInFirst = entersAtFirst;
+            for (int64_t remaining = iterations;;) {
+                if (isInFirst) {
+                    expected ^= remaining + 7;
+                    if (!(remaining & 3))
+                        expected ^= 5 * remaining;
+                }
+                isInFirst = true;
+                expected ^= --remaining;
+                if (remaining <= 0)
+                    break;
+            }
+            CHECK_EQ(invoke<int64_t>(*code, entersAtFirst, iterations, 5), expected);
+        }
+    }
+}
+
+static void testValidateRefusesNullEntryInBlock()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    Value* first = graph.int64(root, 1);
+    graph.ret(root, graph.int64(root, 2));
+    CHECK(!findViolatedRule(proc));
+    root->at(0) = nullptr;
+    CHECK(findViolatedRule(proc) == ValidationRule::Upstream);
+    root->at(0) = first;
+    CHECK(!findViolatedRule(proc));
+}
+
 static void testSinkValuesLeavesInductionStepAboveAccessThatTakesItAsAddress()
 {
     Procedure proc;
@@ -1206,6 +1294,8 @@ void addBunPlacementTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSinkValuesDoesNotSinkIntoLoop());
     RUN(testSinkValuesDoesNotSinkFromPreHeaderIntoLoop());
     RUN(testSinkValuesMovesInductionStepToFirstUse());
+    RUN(testSinkValuesMovesInductionStepBeforeAskingAboutIrreducibleCycle());
+    RUN(testValidateRefusesNullEntryInBlock());
     RUN(testSinkValuesLeavesInductionStepAboveAccessThatTakesItAsAddress());
     RUN(testSinkValuesLeavesAtMostEightLoops());
     RUN(testSinkValuesSinksAfterAndBetweenIrreducibleCycles());

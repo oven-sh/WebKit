@@ -129,6 +129,8 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     FlowMembersInvalid(AnalyzeFlow, "members of {layout} do not ascend or are not allocated")
     FlowRemovedCheckNotProven(AnalyzeFlow, "{value} in {function}: operand type outside the checked type and no flow proof")
     MaskCutKnownValue(AnalyzeFlow, "{function}: the type of {value} removed a value flow knows arrives")
+    FlowEndedTooEarly(AnalyzeFlow, "the flow analysis was at rest, and {count} of its rules still add something when they run once more over the solved sets")
+    FlowRuleWasNotDue(AnalyzeFlow, "{value} in {function}: the rule was not due, and run once more over the solved sets it adds something")
 
     EffectsExceedReplacedGroup(Select, "a selected operation has effects beyond those of the group it replaced")
     EffectsOfPreparedTooNarrow(Select, "an operation was selected into a form with effects it does not declare")

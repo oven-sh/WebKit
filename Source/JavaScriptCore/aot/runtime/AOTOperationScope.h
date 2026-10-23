@@ -58,7 +58,16 @@ private:
     bool m_isOpen { false };
 };
 
+#if OS(WINDOWS) && CPU(X86_64)
+// There __builtin_frame_address(0) is the low end of the frame. DECLARE_CALL_FRAME says why rbp is named.
+#define AOT_OPERATION_FRAME_RECORD() \
+    ({ \
+        asm volatile("" : : : "rbp"); \
+        std::bit_cast<JSC::CallerFrameAndPC*>(static_cast<void**>(_AddressOfReturnAddress()) - 1); \
+    })
+#else
 #define AOT_OPERATION_FRAME_RECORD() std::bit_cast<JSC::CallerFrameAndPC*>(__builtin_frame_address(0))
+#endif
 
 #define AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecordOfOperation, entry) \
     JSGlobalObject* globalObject = (instance)->globalObject; \
