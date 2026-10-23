@@ -1069,7 +1069,9 @@ namespace JSC {
         RegisterID* emitConstructImpl(RegisterID* dst, RegisterID* func, RegisterID* lazyThis, ExpectedFunction, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isDefaultDerivedConstructorCall);
 
     public:
-        enum class ScopeType : uint8_t { CatchScope, CatchScopeWithSimpleParameter, LetConstScope, FunctionNameScope, ClassScope };
+        // FunctionEvalVarScope is the scope that holds |this| and new.target for arrow functions, in a function whose
+        // parameter expressions have a sloppy direct eval. It is also where that eval declares its vars.
+        enum class ScopeType : uint8_t { CatchScope, CatchScopeWithSimpleParameter, LetConstScope, FunctionNameScope, ClassScope, FunctionEvalVarScope };
 
         void restoreScopeRegister();
         void restoreScopeRegister(int lexicalScopeIndex);
@@ -1327,8 +1329,13 @@ namespace JSC {
         void initializeParameters(FunctionParameters&);
         void initializeVarLexicalEnvironment(int symbolTableConstantIndex, SymbolTable* functionSymbolTable, bool hasCapturedVariables);
         void initializeDefaultParameterValuesAndSetupFunctionScopeStack(FunctionParameters&, bool isSimpleParameterList, FunctionNode*, SymbolTable*, int symbolTableConstantIndex, NOESCAPE const ScopedLambda<bool(UniquedStringImpl*)>& captures, bool shouldCreateArgumentsVariableInParameterScope);
-        void initializeArrowFunctionContextScopeIfNeeded(SymbolTable* functionSymbolTable = nullptr, bool canReuseLexicalEnvironment = false);
+        void initializeArrowFunctionContextScopeIfNeeded(SymbolTable* functionSymbolTable = nullptr, bool canReuseLexicalEnvironment = false, ScopeType = ScopeType::LetConstScope);
         bool LEGACY_NODELETE needsDerivedConstructorInArrowFunctionLexicalEnvironment();
+
+        // Interpreter::executeEval() declares the vars of sloppy eval code in the first VarScope up the scope chain.
+        bool evalInParametersDeclaresVars(const FunctionParameters& parameters) const { return m_usesSloppyEval && parameters.usesEval(); }
+        bool hasVarScopeForSloppyEval() const;
+        void pushVarScopeForEvalInParameters();
 
         enum class TDZNecessityLevel {
             NotNeeded,
