@@ -35,6 +35,7 @@
 namespace JSC {
 
 class Collector;
+class JSWeakMap;
 class GCThreadSharedData;
 class HeapCell;
 class HeapAnalyzer;
@@ -55,6 +56,9 @@ class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisit
 
     friend class SetCurrentCellScope;
     friend class Heap;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class Collector;
+#endif
 
 public:
     class ReferrerContext {
@@ -125,6 +129,12 @@ public:
     void appendHiddenUnbarriered(JSCell*) final;
 
     bool isFirstVisit() const final { return m_isFirstVisit; }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // WeakMapImpl::visitChildrenImpl calls this once the collector resolves WeakMap entries
+    // through its key-to-values table (Collector::buildPendingEphemeronsIfNeeded).
+    void visitWeakMapInLinearMode(JSWeakMap*);
+#endif
 
     bool isMarked(const void*) const final;
     bool isMarked(MarkedBlock&, HeapCell*) const final;
@@ -210,6 +220,12 @@ private:
     void noteLiveAuxiliaryCell(HeapCell*);
     
     void visitChildren(const JSCell*);
+#if USE(BUN_JSC_ADDITIONS)
+    void visitPendingEphemerons(const JSCell*);
+    enum class LateWeakMapPass { StacksRanDry, Termination };
+    bool revisitLateWeakMaps(LateWeakMapPass);
+    bool revisitLateWeakMapsIfSharedStacksAreEmpty();
+#endif
 
     void propagateExternalMemoryVisitedIfNecessary();
     ALWAYS_INLINE void noteBytesMarked(JSC::Heap&, size_t);
@@ -243,6 +259,17 @@ private:
 
     JSCell* m_currentCell { nullptr };
     bool m_isFirstVisit { false };
+#if USE(BUN_JSC_ADDITIONS)
+    // WeakMaps this visitor walked in linear mode that still had unmarked keys. It walks them
+    // again once when its stacks run dry (then they move to m_lateWeakMapsRevisited), and
+    // once more when marking reaches termination. The ones that still have unmarked keys
+    // then go to m_weakMapsToEnrol, as do maps that a write barrier greyed again, and the
+    // collector lists their entries before the next round
+    // (Collector::buildPendingEphemeronsIfNeeded).
+    Vector<JSWeakMap*> m_lateWeakMaps;
+    Vector<JSWeakMap*> m_lateWeakMapsRevisited;
+    Vector<JSWeakMap*> m_weakMapsToEnrol;
+#endif
     bool m_mutatorsAreStopped { false };
     bool m_isInParallelMode { false };
 

@@ -70,8 +70,13 @@ ALWAYS_INLINE void WeakMapImpl<WeakMapBucket>::add(VM& vm, JSCell* key, JSValue 
     AssertNoGC assertNoGC;
     ASSERT_WITH_MESSAGE(jsWeakMapHash(key) == hash, "We expect hash value is what we expect.");
 
-    if (m_buffer == emptyBuffer()) [[unlikely]]
+    if (m_buffer == emptyBuffer()) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+        // visitValuesOfMarkedKeys() may walk the buckets from a marking thread while the mutator runs.
+        Locker locker { cellLock() };
+#endif
         makeAndSetNewBuffer(initialCapacity);
+    }
 
     addInternal(vm, key, value, hash);
     if (shouldRehashAfterAdd())
@@ -134,6 +139,10 @@ void WeakMapImpl<WeakMapBucket>::rehash(RehashMode mode)
     // function must not touch any GC related features. This is why we do not allocate WeakMapBuffer
     // in auxiliary buffer.
 
+#if USE(BUN_JSC_ADDITIONS)
+    // visitValuesOfMarkedKeys() may walk the buckets from a marking thread while the mutator runs.
+    Locker locker { cellLock() };
+#endif
     uint32_t oldCapacity = m_capacity;
     WeakMapBufferType* oldBuffer = m_buffer;
 

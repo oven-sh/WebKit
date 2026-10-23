@@ -109,6 +109,7 @@
 #include "UnlinkedEvalCodeBlock.h"
 #include "VM.h"
 #include "VerifierSlotVisitor.h"
+#include "VisitCounter.h"
 #include "WasmCallee.h"
 #include "WeakMapImplInlines.h"
 #include "WeakSetInlines.h"
@@ -3175,7 +3176,33 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
             }
             if (m_weakMapSpace) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::WeakMapSpace);
+#if USE(BUN_JSC_ADDITIONS)
+                // The count of rounds in which a WeakMap produces work decides when the collector
+                // switches to its key-to-values table (Collector::buildPendingEphemeronsIfNeeded).
+                RefPtr<SharedTask<void(decltype(visitor)&)>> task = m_weakMapSpace->template forEachMarkedCellInParallel<decltype(visitor)>(
+                    [] (auto& visitor, HeapCell* heapCell, HeapCell::Kind) {
+                        SetRootMarkReasonScope rootScope(visitor, RootMarkReason::Output);
+                        JSCell* cell = static_cast<JSCell*>(heapCell);
+                        VisitCounter visitCounter(visitor);
+                        cell->methodTable()->visitOutputConstraints(cell, visitor);
+                        if (visitCounter.visitCount()) {
+                            Collector& collector = visitor.collector();
+                            // Test before the store: the markers share this line.
+                            if (!collector.m_weakMapOutputConstraintDidVisit.load(std::memory_order_relaxed))
+                                collector.m_weakMapOutputConstraintDidVisit.store(true, std::memory_order_relaxed);
+                            if constexpr (std::is_same_v<std::decay_t<decltype(visitor)>, SlotVisitor>) {
+                                // The table lists a large map only once it has produced work. One that does so
+                                // for the first time after the build is not in the table yet.
+                                auto* weakMap = static_cast<JSWeakMap*>(cell);
+                                if (weakMap->size() > Collector::alwaysListedWeakMapSize && collector.m_productiveWeakMaps.add(weakMap) && collector.m_ephemeronLinearMode)
+                                    visitor.m_weakMapsToEnrol.append(weakMap);
+                            }
+                        }
+                    });
+                visitor.addParallelConstraintTask(WTF::move(task));
+#else
                 add(*m_weakMapSpace);
+#endif
             }
         })),
         ConstraintVolatility::GreyedByMarking,
