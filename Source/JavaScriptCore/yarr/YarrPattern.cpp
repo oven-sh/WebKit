@@ -436,12 +436,27 @@ public:
         if (m_compileMode != CompileMode::UnicodeSets)
             return;
 
-        latin1Op(rhsMatches8, rhsRanges8);
-        // Sort the incoming non-Latin-1 matches, since Unicode case folding canonicalization may cause
-        // characters to be added to rhsMatches32 out of code point order.
+        // A union with an operand that has nothing in one half of the tables, and a subtraction of one, leave that
+        // half as it is.
+        bool isIntersection = m_setOp == CharacterClassSetOp::Intersection;
+        bool hasLatin1 = !rhsMatches8.isEmpty() || !rhsRanges8.isEmpty();
+        bool hasNonLatin1 = !rhsMatches32.isEmpty() || !rhsRanges32.isEmpty();
+
+        if (isIntersection || hasLatin1)
+            latin1Op(rhsMatches8, rhsRanges8);
+
+        if (!isIntersection && !hasNonLatin1)
+            return;
+
+        // Unicode case folding canonicalization may cause characters to be added to rhsMatches32 out of code
+        // point order.
+        if (std::ranges::is_sorted(rhsMatches32)) {
+            nonLatin1OpSorted(rhsMatches32, rhsRanges32);
+            return;
+        }
+
         Vector<char32_t> rhsSortedMatches32(rhsMatches32);
         std::ranges::sort(rhsSortedMatches32);
-
         nonLatin1OpSorted(rhsSortedMatches32, rhsRanges32);
     }
 
@@ -888,170 +903,140 @@ private:
         m_ranges8.swap(resultRanges);
     }
 
-    void nonLatin1OpSorted(const Vector<char32_t>& rhsMatches32, const Vector<CharacterRange>& rhsRanges32)
-    {
-        Vector<char32_t> resultMatches;
-        Vector<CharacterRange> resultRanges;
-
-        constexpr size_t chunkSize = 2048;
-        WTF::BitSet<chunkSize> lhsChunkBitSet;
-        WTF::BitSet<chunkSize> rhsChunkBitSet;
-
-        char32_t chunkLo = INT_MAX, chunkHi;
-
-        size_t lhsMatchIndex = 0;
-        size_t lhsRangeIndex = 0;
-        size_t rhsMatchIndex = 0;
-        size_t rhsRangeIndex = 0;
-
-        auto lhsHasMore = [&] {
-            return lhsMatchIndex < m_matches32.size() || lhsRangeIndex < m_ranges32.size();
-        };
-        auto rhsHasMore = [&] {
-            return rhsMatchIndex < rhsMatches32.size() || rhsRangeIndex < rhsRanges32.size();
-        };
-        auto canProduceMore = [&] {
-            switch (m_setOp) {
-            case CharacterClassSetOp::Default:
-            case CharacterClassSetOp::Union:
-                return lhsHasMore() || rhsHasMore();
-            case CharacterClassSetOp::Intersection:
-                return lhsHasMore() && rhsHasMore();
-            case CharacterClassSetOp::Subtraction:
-                return lhsHasMore();
-            }
-            RELEASE_ASSERT_NOT_REACHED();
-            return false;
-        };
-
-        if (!m_matches32.isEmpty())
-            chunkLo = std::min(chunkLo, m_matches32[0]);
-
-        if (!m_ranges32.isEmpty())
-            chunkLo = std::min(chunkLo, m_ranges32[0].begin);
-
-        if (!rhsMatches32.isEmpty())
-            chunkLo = std::min(chunkLo, rhsMatches32[0]);
-
-        if (!rhsRanges32.isEmpty())
-            chunkLo = std::min(chunkLo, rhsRanges32[0].begin);
-
-        while (canProduceMore()) {
-            chunkHi = chunkLo + chunkSize - 1;
-
-            for (; lhsMatchIndex < m_matches32.size(); ++lhsMatchIndex) {
-                char32_t ch = m_matches32[lhsMatchIndex];
-                if (ch > chunkHi)
-                    break;
-
-                ASSERT(ch >= chunkLo);
-                lhsChunkBitSet.set(ch - chunkLo);
-            }
-
-            for (; lhsRangeIndex < m_ranges32.size(); ++lhsRangeIndex) {
-                auto range = m_ranges32[lhsRangeIndex];
-                if (range.begin > chunkHi)
-                    break;
-
-                auto begin = std::max(chunkLo, range.begin);
-                auto end = std::min(range.end, chunkHi);
-
-                for (char32_t ch = begin; ch <= end; ch++) {
-                    ASSERT(ch >= chunkLo);
-                    lhsChunkBitSet.set(ch - chunkLo);
-                }
-
-                if (range.end > chunkHi)
-                    break;
-            }
-
-            for (; rhsMatchIndex < rhsMatches32.size(); ++rhsMatchIndex) {
-                char32_t ch = rhsMatches32[rhsMatchIndex];
-                if (ch > chunkHi)
-                    break;
-
-                ASSERT(ch >= chunkLo);
-                rhsChunkBitSet.set(ch - chunkLo);
-            }
-
-            for (; rhsRangeIndex < rhsRanges32.size(); ++rhsRangeIndex) {
-                auto range = rhsRanges32[rhsRangeIndex];
-                if (range.begin > chunkHi)
-                    break;
-
-                auto begin = std::max(chunkLo, range.begin);
-                auto end = std::min(range.end, chunkHi);
-
-                for (char32_t ch = begin; ch <= end; ch++) {
-                    ASSERT(ch >= chunkLo);
-                    rhsChunkBitSet.set(ch - chunkLo);
-                }
-
-                if (range.end > chunkHi)
-                    break;
-            }
-
-            switch (m_setOp) {
-            case CharacterClassSetOp::Default:
-            case CharacterClassSetOp::Union:
-                lhsChunkBitSet.merge(rhsChunkBitSet);
-                break;
-
-            case CharacterClassSetOp::Intersection:
-                lhsChunkBitSet.filter(rhsChunkBitSet);
-                break;
-
-            case CharacterClassSetOp::Subtraction:
-                lhsChunkBitSet.exclude(rhsChunkBitSet);
-                break;
-            }
-
-            bool firstCharUnset = true;
-            char32_t lo = 0;
-            char32_t hi = 0;
-
-            auto addCharToResults = [&]() {
-                if (lo == hi)
-                    resultMatches.append(lo);
-                else {
-                    // Coalesce the prior range with the new (lo, hi) range if they are adjacent.
-                    if (resultRanges.size() > 0) {
-                        auto lastIndex = resultRanges.size() - 1;
-                        if (resultRanges[lastIndex].end + 1 == lo) {
-                            resultRanges[lastIndex].end = hi;
-                            return;
-                        }
-                    }
-
-                    resultRanges.append(CharacterRange(lo, hi));
-                }
-            };
-
-            for (auto setVal : lhsChunkBitSet) {
-                char32_t ch = static_cast<char32_t>(setVal) + chunkLo;
-                if (firstCharUnset) {
-                    lo = hi = ch;
-                    firstCharUnset = false;
-                } else {
-                    if (ch == hi + 1)
-                        hi = ch;
-                    else {
-                        addCharToResults();
-                        lo = hi = ch;
-                    }
-                }
-            }
-
-            if (!firstCharUnset)
-                addCharToResults();
-
-            chunkLo = chunkHi + 1;
-            lhsChunkBitSet.clearAll();
-            rhsChunkBitSet.clearAll();
+    // One operand of a set operation, as items in ascending order of first code point: a match is [ch, ch], a range
+    // is [begin, end]. The matches and the ranges are each sorted, but a match can be repeated, and it can be inside
+    // a range or next to one, so two items can overlap or touch.
+    class SortedItems {
+    public:
+        SortedItems(const Vector<char32_t>& matches, const Vector<CharacterRange>& ranges)
+            : m_match(matches.begin())
+            , m_matchesEnd(matches.end())
+            , m_range(ranges.begin())
+            , m_rangesEnd(ranges.end())
+        {
+            advance();
         }
 
-        m_matches32.swap(resultMatches);
-        m_ranges32.swap(resultRanges);
+        explicit operator bool() const { return m_hasItem; }
+        const CharacterRange* operator->() const { return &m_item; }
+
+        void advance()
+        {
+            ASSERT(m_hasItem);
+            char32_t previousBegin = m_item.begin;
+            if (m_match != m_matchesEnd && (m_range == m_rangesEnd || *m_match < m_range->begin)) {
+                m_item = CharacterRange(*m_match, *m_match);
+                ++m_match;
+            } else if (m_range != m_rangesEnd)
+                m_item = *m_range++;
+            else
+                m_hasItem = false;
+            ASSERT_UNUSED(previousBegin, m_item.begin >= previousBegin);
+        }
+
+    private:
+        Vector<char32_t>::const_iterator m_match;
+        Vector<char32_t>::const_iterator m_matchesEnd;
+        Vector<CharacterRange>::const_iterator m_range;
+        Vector<CharacterRange>::const_iterator m_rangesEnd;
+        CharacterRange m_item { 0, 0 };
+        bool m_hasItem { true };
+    };
+
+    struct SortedTables {
+        Vector<char32_t> matches;
+        Vector<CharacterRange> ranges;
+    };
+
+    // The union, the intersection or the difference of two operands, by one merge of their sorted tables. The cost
+    // follows the number of matches and ranges, not the number of code points they cover: [^b] is one range above
+    // U+00FF, U+0100 to U+10FFFF. The result is sorted runs that do not overlap or touch.
+    static SortedTables setOpSorted(CharacterClassSetOp setOp, const Vector<char32_t>& lhsMatches, const Vector<CharacterRange>& lhsRanges, const Vector<char32_t>& rhsMatches, const Vector<CharacterRange>& rhsRanges)
+    {
+        SortedTables result;
+
+        // The pieces of the result arrive in ascending order of first code point, and can overlap or touch.
+        std::optional<CharacterRange> run;
+        auto flushRun = [&] {
+            if (!run)
+                return;
+            if (run->begin == run->end)
+                result.matches.append(run->begin);
+            else
+                result.ranges.append(*run);
+        };
+        auto addToResult = [&](char32_t begin, char32_t end) {
+            if (run && begin <= run->end + 1) {
+                run->end = std::max(run->end, end);
+                return;
+            }
+            flushRun();
+            run = CharacterRange(begin, end);
+        };
+
+        SortedItems lhs(lhsMatches, lhsRanges);
+        SortedItems rhs(rhsMatches, rhsRanges);
+
+        switch (setOp) {
+        case CharacterClassSetOp::Default:
+        case CharacterClassSetOp::Union:
+            while (lhs || rhs) {
+                auto& next = !rhs || (lhs && lhs->begin <= rhs->begin) ? lhs : rhs;
+                addToResult(next->begin, next->end);
+                next.advance();
+            }
+            break;
+
+        case CharacterClassSetOp::Intersection:
+            while (lhs && rhs) {
+                char32_t begin = std::max(lhs->begin, rhs->begin);
+                char32_t end = std::min(lhs->end, rhs->end);
+                if (begin <= end)
+                    addToResult(begin, end);
+                if (lhs->end < rhs->end)
+                    lhs.advance();
+                else
+                    rhs.advance();
+            }
+            break;
+
+        case CharacterClassSetOp::Subtraction: {
+            // The parser accepts an operator after two operands, as in [\p{L}\p{Lu}--x], and builds its left side
+            // like a plain union. An item of lhs can then repeat code points of an earlier one: the code points
+            // below `settled` are decided.
+            char32_t settled = 0;
+            for (; lhs; lhs.advance()) {
+                char32_t begin = std::max(lhs->begin, settled);
+                char32_t end = lhs->end;
+                if (begin > end)
+                    continue;
+                settled = end + 1;
+
+                for (; rhs && rhs->begin <= end; rhs.advance()) {
+                    if (rhs->begin > begin)
+                        addToResult(begin, rhs->begin - 1);
+                    begin = std::max<char32_t>(begin, rhs->end + 1);
+                    if (begin > end)
+                        break; // This item of rhs can reach the next item of lhs.
+                }
+                if (begin <= end)
+                    addToResult(begin, end);
+            }
+            break;
+        }
+        }
+        flushRun();
+
+        return result;
+    }
+
+    // Upstream sets and scans one bit for each code point of each operand here:
+    // https://bugs.webkit.org/show_bug.cgi?id=320619
+    void nonLatin1OpSorted(const Vector<char32_t>& rhsMatches32, const Vector<CharacterRange>& rhsRanges32)
+    {
+        auto result = setOpSorted(m_setOp, m_matches32, m_ranges32, rhsMatches32, rhsRanges32);
+        m_matches32 = WTF::move(result.matches);
+        m_ranges32 = WTF::move(result.ranges);
     }
 
     void nonLatin1Invert()
