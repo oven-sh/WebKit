@@ -532,8 +532,35 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
         }
 
         if (!propertyName.isSymbol() && baseCell->inherits<JSModuleNamespaceObject>() && !slot.isUnset()) {
-            if (auto moduleNamespaceSlot = slot.moduleNamespaceSlot())
-                newCase = ModuleNamespaceAccessCase::create(vm, codeBlock, propertyName, uncheckedDowncast<JSModuleNamespaceObject>(baseCell), moduleNamespaceSlot->environment, ScopeOffset(moduleNamespaceSlot->scopeOffset));
+            if (auto moduleNamespaceSlot = slot.moduleNamespaceSlot()) {
+                auto* moduleNamespaceObject = uncheckedDowncast<JSModuleNamespaceObject>(baseCell);
+                ScopeOffset scopeOffset(moduleNamespaceSlot->scopeOffset);
+                // A case for one namespace object is what the DFG can fold into a closure variable load or a constant,
+                // so that is what the first namespace object gets. A second one means the code reads the name from
+                // whichever namespace object it is given, as code that module loaders share does with each loader's
+                // own: from then on the cases go by export layout, and one serves every such object.
+                bool hasSeenAnotherNamespaceObject = false;
+                if (Options::useModuleNamespaceLoadByExportLayout()) {
+                    for (AccessCase* listedCase : propertyCache.listedAccessCases(locker)) {
+                        if (listedCase->type() != AccessCase::ModuleNamespaceLoad)
+                            continue;
+                        auto& listed = listedCase->as<ModuleNamespaceAccessCase>();
+                        if (listed.moduleNamespaceObject() == moduleNamespaceObject)
+                            continue;
+                        hasSeenAnotherNamespaceObject = true;
+                        // The object of a case for one namespace object gets its slot for the name filled in as well.
+                        // The case by layout is tried first from now on. With an empty slot it would send that
+                        // object on to its own case on every read, and never to the slow path that fills the slot.
+                        if (listed.moduleNamespaceObject() && listed.identifier() == propertyName)
+                            listed.moduleNamespaceObject()->noteExportSlot(vm, propertyName.uid(), listed.moduleEnvironment(), listed.scopeOffset());
+                    }
+                }
+                if (hasSeenAnotherNamespaceObject) {
+                    unsigned exportIndex = moduleNamespaceObject->noteExportSlot(vm, propertyName.uid(), moduleNamespaceSlot->environment, scopeOffset);
+                    newCase = ModuleNamespaceAccessCase::createForExportLayout(vm, codeBlock, propertyName, moduleNamespaceObject->exportLayout(), exportIndex);
+                } else
+                    newCase = ModuleNamespaceAccessCase::create(vm, codeBlock, propertyName, moduleNamespaceObject, moduleNamespaceSlot->environment, scopeOffset);
+            }
         }
 
         if (!propertyName.isPrivateName() && baseCell->inherits<ProxyObject>()) {

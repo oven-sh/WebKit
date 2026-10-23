@@ -33,6 +33,7 @@
 #include "InlineCacheCompiler.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
+#include "ModuleNamespaceExportLayout.h"
 #include "PropertyInlineCache.h"
 
 namespace JSC {
@@ -45,9 +46,30 @@ ModuleNamespaceAccessCase::ModuleNamespaceAccessCase(VM& vm, JSCell* owner, Cach
     m_moduleEnvironment.set(vm, owner, moduleEnvironment);
 }
 
+ModuleNamespaceAccessCase::ModuleNamespaceAccessCase(VM& vm, JSCell* owner, CacheableIdentifier identifier, ModuleNamespaceExportLayout* exportLayout, unsigned exportIndex)
+    : Base(vm, owner, AccessType::ModuleNamespaceLoad, identifier, invalidOffset, nullptr, ObjectPropertyConditionSet(), nullptr)
+    , m_exportIndex(exportIndex)
+{
+    ASSERT(exportLayout->names()[exportIndex] == identifier.uid());
+    m_exportLayout.set(vm, owner, exportLayout);
+}
+
 Ref<AccessCase> ModuleNamespaceAccessCase::create(VM& vm, JSCell* owner, CacheableIdentifier identifier, JSModuleNamespaceObject* moduleNamespaceObject, JSModuleEnvironment* moduleEnvironment, ScopeOffset scopeOffset)
 {
     return adoptRef(*new ModuleNamespaceAccessCase(vm, owner, identifier, moduleNamespaceObject, moduleEnvironment, scopeOffset));
+}
+
+Ref<AccessCase> ModuleNamespaceAccessCase::createForExportLayout(VM& vm, JSCell* owner, CacheableIdentifier identifier, ModuleNamespaceExportLayout* exportLayout, unsigned exportIndex)
+{
+    return adoptRef(*new ModuleNamespaceAccessCase(vm, owner, identifier, exportLayout, exportIndex));
+}
+
+void ModuleNamespaceAccessCase::dumpImpl(PrintStream& out, CommaPrinter& comma, Indenter&) const
+{
+    if (m_exportLayout)
+        out.print(comma, "exportLayout = "_s, RawPointer(m_exportLayout.get()), comma, "exportIndex = "_s, m_exportIndex);
+    else
+        out.print(comma, "moduleNamespaceObject = "_s, RawPointer(m_moduleNamespaceObject.get()), comma, "moduleEnvironment = "_s, RawPointer(m_moduleEnvironment.get()), comma, "scopeOffset = "_s, m_scopeOffset);
 }
 
 } // namespace JSC
