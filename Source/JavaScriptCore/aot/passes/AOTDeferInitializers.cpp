@@ -214,6 +214,7 @@ private:
     bool isCollectionAsMade(const Function&, const Knowledge&, ValueID) const;
     bool matchMayMove(const Function&, const Knowledge&, const BuiltinOverload&, const BuiltinCall&) const;
     bool freezeMayMove(FunctionAnalyses&, const Knowledge&, ValueID call, ValueID frozen) const;
+    bool holdsWhatLiteralLists(FunctionAnalyses&, ValueID list, ValueID reader) const;
     bool throwsOnlyForOperandsOfOtherTypes(const Function&, const Knowledge&, const BuiltinOverload&, const BuiltinCall&) const;
     bool hasOnlyObjectsThatNeverChange(const Type&) const;
     bool isKnownToStayPlain(const Type&) const;
@@ -1579,6 +1580,31 @@ bool MovableCode::freezeMayMove(FunctionAnalyses& analyses, const Knowledge& kno
     return true;
 }
 
+// No operation of the function but the reader writes to the list.
+bool MovableCode::holdsWhatLiteralLists(FunctionAnalyses& analyses, ValueID list, ValueID reader) const
+{
+    const Function& function = analyses.function();
+    const UseLists& useLists = analyses.useLists();
+    Vector<ValueID, 4> names { allocationOf(function, list) };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : useLists.usesOf(names[index])) {
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            if (use.user == reader)
+                continue;
+            const Value& user = function.at(use.user);
+            if (isCast(user.opcode)) {
+                names.append(use.user);
+                continue;
+            }
+            OperandSummary summary = summarizeOperand(analyses.effectContext(), function, user, use.operandIndex);
+            if (summary.uses.containsAny(operandWritingUses | unconfinedUses | callingUses) || isWrittenOperand(user.opcode, std::min(use.operandIndex, numberOfNamedOperandsOf(user.opcode))))
+                return false;
+        }
+    }
+    return true;
+}
+
 // A built-in touches what it is handed and what that leads to. It may write to what the initializer has made and read from what does not change.
 bool MovableCode::builtinCallMayMove(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)
 {
@@ -1613,7 +1639,7 @@ bool MovableCode::builtinCallMayMove(FunctionAnalyses& analyses, const Knowledge
             if (overload.builtin == Builtins::Set)
                 return true;
             const Value& literal = function.at(allocationOf(function, entries));
-            bool holdsPairs = literal.opcode == Opcode::NewArray && std::ranges::all_of(literal.elementsOperands(), [&](ValueID pair) {
+            bool holdsPairs = literal.opcode == Opcode::NewArray && literal.holes().empty() && holdsWhatLiteralLists(analyses, entries, id) && std::ranges::all_of(literal.elementsOperands(), [&](ValueID pair) {
                 return pair && known.mayReadFrom(pair) && isPristineArray(function, known, pair);
             });
             if (holdsPairs)

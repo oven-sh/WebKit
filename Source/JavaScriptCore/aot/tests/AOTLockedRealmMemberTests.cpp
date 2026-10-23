@@ -792,6 +792,32 @@ void checkNamesGivenTwice(Realms& realms)
     AOT_TEST_CHECK(isFixed("UTC"_s) && isFixed("now"_s) && isFixed("parse"_s) && isFixed("call"_s) && !isFixed("7"_s) && !isFixed("nameNobodyHas"_s));
 }
 
+// Whoever has found a fixed name keeps its offset, also where a name below it is deleted and the storage of the holder is packed anew.
+void checkFixedNamesKeepOffsetsWhenFlattened(Realms& realms)
+{
+    VM& vm = realms.vm();
+    JSGlobalObject* realm = realms.plain();
+    JSObject* object = realms.object(realm, "({ nameNobodyHas: 1, otherNameNobodyHas: 2, now: 3, parse: 4 })"_s);
+    const uint32_t fixed[] = { Builtins::DateNow.index() };
+    AOT_TEST_CHECK(object->makePropertiesImmutable(vm, immutablePropertyNamesOf(vm, Builtins::Date, fixed).get()));
+    Identifier now = Identifier::fromString(vm, "now"_s);
+    PropertyOffset offset = object->structure()->get(vm, now);
+    AOT_TEST_CHECK(isValidOffset(offset) && object->structure()->isImmutableProperty(now.impl()));
+
+    object->convertToUncacheableDictionary(vm);
+    AOT_TEST_CHECK(JSCell::deleteProperty(object, realm, Identifier::fromString(vm, "nameNobodyHas"_s)));
+    AOT_TEST_CHECK(object->structure()->isUncacheableDictionary());
+    object->flattenDictionaryObject(vm);
+    AOT_TEST_CHECK(!object->structure()->isDictionary());
+    AOT_TEST_CHECK(object->structure()->get(vm, now) == offset && object->getDirect(offset) == jsNumber(3));
+    AOT_TEST_CHECK(object->getDirect(vm, Identifier::fromString(vm, "otherNameNobodyHas"_s)) == jsNumber(2) && object->getDirect(vm, Identifier::fromString(vm, "parse"_s)) == jsNumber(4));
+    AOT_TEST_CHECK(!object->getDirect(vm, Identifier::fromString(vm, "nameNobodyHas"_s)));
+
+    object->putDirect(vm, Identifier::fromString(vm, "thirdNameNobodyHas"_s), jsNumber(5));
+    AOT_TEST_CHECK(object->structure()->get(vm, now) == offset && object->getDirect(offset) == jsNumber(3));
+    AOT_TEST_CHECK(object->getDirect(vm, Identifier::fromString(vm, "thirdNameNobodyHas"_s)) == jsNumber(5));
+}
+
 bool isPristine(JSObject* object)
 {
     AOT_TEST_CHECK(object->structure()->isPristine() == object->isPristine());
@@ -926,6 +952,7 @@ std::span<const NativeTest> lockedRealmMemberTests()
         { "locked-realm-members/function-prototype"_s, withoutImage<checkFunctionPrototype> },
         { "locked-realm-members/prototypes-of-function-kinds"_s, withoutImage<checkPrototypesOfFunctionKinds> },
         { "locked-realm-members/names-given-twice"_s, withoutImage<checkNamesGivenTwice> },
+        { "locked-realm-members/fixed-names-keep-their-offsets-when-the-holder-is-flattened"_s, withoutImage<checkFixedNamesKeepOffsetsWhenFlattened> },
         { "locked-realm-members/pristine-instances"_s, withoutImage<checkPristineInstances> },
         { "locked-realm-members/writes-to-string-prototype"_s, withoutImage<checkStatementsOf<statementsAboutStringPrototype>> },
         { "locked-realm-members/writes-to-regexp-prototype"_s, withoutImage<checkStatementsOf<statementsAboutRegExpPrototype>> },

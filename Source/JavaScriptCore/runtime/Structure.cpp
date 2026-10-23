@@ -1806,7 +1806,9 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     PropertyTable* table = nullptr;
     size_t beforeOutOfLineCapacity = this->outOfLineCapacity();
     size_t afterOutOfLineCapacity = beforeOutOfLineCapacity;
-    if (isUncacheableDictionary()) {
+    // Whoever has found an immutable property keeps its offset.
+    bool renumbersOffsets = isUncacheableDictionary() && !mayHaveImmutableProperties();
+    if (renumbersOffsets) {
         table = propertyTableOrNull();
         ASSERT(table);
         PropertyOffset maxOffset = invalidOffset;
@@ -1824,7 +1826,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     object->setStructureIDDirectly(id().nuke());
     WTF::storeStoreFence();
 
-    if (isUncacheableDictionary()) {
+    if (renumbersOffsets) {
         size_t propertyCount = table->size();
 
         // Holds our values compacted by insertion order. This is OK since GC is deferred.
