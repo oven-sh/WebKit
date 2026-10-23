@@ -196,6 +196,13 @@
 #define HAVE_PTHREAD_SETSCHEDPARAM 1
 #endif
 
+/* pthread_condattr_setclock() can put a condition variable's timed waits on CLOCK_MONOTONIC, and
+   CLOCK_MONOTONIC is the clock MonotonicTime::now() reads on these systems. Darwin has neither; it
+   has pthread_cond_timedwait_relative_np() instead. */
+#if OS(LINUX) || OS(FREEBSD) || OS(OPENBSD) || OS(NETBSD)
+#define HAVE_PTHREAD_CONDATTR_SETCLOCK 1
+#endif
+
 #if OS(DARWIN)
 #define HAVE_DISPATCH_H 1
 #endif
