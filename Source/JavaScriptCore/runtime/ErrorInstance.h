@@ -110,7 +110,20 @@ public:
     unsigned column() const { return m_lineColumn.column; }
     void setColumn(unsigned column) { m_lineColumn.column = column; }
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
+    // The line, the column and the sourceURL are own properties, or there are none to make. It says nothing about "stack".
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
+
+    // "stack" is composed (VM::onComputeErrorInfoJSValue() is asked for ErrorInfoRequest::Stack, which can run JavaScript)
+    // only in a [[Get]] of it. Anything else that needs the error's own properties puts the host's accessor in its place,
+    // and that accessor's getter calls composeStackForAccessor(): unlike a read of an untouched error it composes a stack
+    // with no frames too, which is the header alone.
+    JS_EXPORT_PRIVATE void composeStackForAccessor(VM&);
+    // The hook is running for ErrorInfoRequest::Stack: the frames are in use, and what it returns becomes "stack".
+    bool isComposingStack() const { return m_isComposingStack; }
+    // There are frames, or what a collection made of them, that "stack" has not been composed from yet.
+    bool hasStackToCompose() const { return (m_stackTrace && !m_stackTrace->isEmpty()) || m_stackStringIsFramesOnly; }
+    // "stack" was given another value, so it is not composed. The host's accessor calls this from its setter.
+    JS_EXPORT_PRIVATE void discardStackToCompose();
 
 #endif
 
@@ -185,7 +198,12 @@ protected:
 #endif
 #if USE(BUN_JSC_ADDITIONS)
     bool m_stackStringIsFramesOnly : 1;
-    JSValue stackWithHeader(VM&, String&& frames);
+    bool m_isComposingStack : 1;
+    bool m_stackReplacedWhileComposing : 1;
+    void composeStack(VM&);
+    bool stackIsHostAccessor(VM&);
+    void putStackAccessorIfAbsent(VM&, JSValue stackAccessor);
+    void discardStackToComposeIfReplaced(VM&);
 #endif
 };
 
