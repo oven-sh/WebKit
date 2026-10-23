@@ -1,5 +1,5 @@
 # What three built-ins put into what they make.
-# Object.values(Object.fromEntries(pairs))[0]: the first of the values of the new object is not `undefined` alone. The flow goes through the model of the built-in (J:aot/builtins/models/Objects.ts, as the front end
+# Object.values(Object.fromEntries(pairs))[0]: the first of the values of the new object is not `undefined` alone. The flow goes through the model of the built-in (aot/builtins/models/Objects.ts, as the front end
 # emits it), which defines each value under its key.
 # Object.groupBy(items, key).all[0].double(): the groups hold the items, whatever kind of iterable they come out of: the model again. (await Promise.race([Promise.resolve(item)])).double(): the race settles with what
 # the promise among its elements holds, not with the promise. A method that is called only on such a value is reached. The method of a class whose instances go nowhere is not.

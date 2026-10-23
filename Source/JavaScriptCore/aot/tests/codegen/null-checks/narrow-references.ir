@@ -1,7 +1,7 @@
 # The first pages of the cage of cells are never mapped, and a marker in a narrow reference is a small word. So the null check of a narrow reference is the read behind it, `[cage + 8 * word + offset]`:
 # no compare, no branch, no pointer (f0 to f2). Where somebody asks for the pointer it is made, and where only a block that is seldom entered asks, it is made there (f3, f8).
 # A loop variable that is read before anything else is done with it takes the pointer whatever the word is, and `=== null` asks the word (f5: two markers; f4: one, where the test decides the decoding).
-# The fault's record names the register of the word, so the error names null or undefined as it did (f6, f7: B:test/aot/programs/typed-objects/null-checks-of-narrow-references.ts runs them)
+# The fault's record names the register of the word, so the error names null or undefined as it did (f6, f7: Bun's test/aot/programs/typed-objects/null-checks-of-narrow-references.ts runs them)
 # FORM: Selected
 # OPTIONS: heat=everything-is-hot check=validate-back-end references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: generate-code NullChecksFoldedIntoAccesses

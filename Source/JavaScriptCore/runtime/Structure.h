@@ -944,7 +944,9 @@ public:
 
     uint8_t& markingStamp() { return m_markingStamp; }
     CellVisitKind cellVisitKind() const { return m_cellVisitKind; }
-    static constexpr uint8_t markingStampFor(HeapVersion markingVersion) { return (markingVersion & 1) + 1; }
+    // Never zero, and never the same for two marking versions in a row. The versions wrap from the last one to MarkedSpace::initialVersion
+    // and their number is odd, so two stamps are not enough.
+    static constexpr uint8_t markingStampFor(HeapVersion markingVersion) { return markingVersion % 3 + 1; }
 
     static_assert(s_bitWidthOfTransitionKind <= sizeof(TransitionKind) * 8);
 

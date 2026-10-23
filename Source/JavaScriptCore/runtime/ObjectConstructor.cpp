@@ -1399,7 +1399,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsFrozen, (JSGlobalObject* globalObjec
     JSObject* object = asObject(obj);
 
     // Quick check for final objects.
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
+    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties())
         return JSValue::encode(jsBoolean(object->isFrozen(vm)));
 #if ENABLE(AOT)
     if (object->structure()->isCompiledStructure()) {

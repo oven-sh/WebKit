@@ -27,6 +27,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+static_assert(Structure::markingStampFor(MarkedSpace::nextVersion(std::numeric_limits<HeapVersion>::max())) != Structure::markingStampFor(std::numeric_limits<HeapVersion>::max()));
+
 // Pass an appender only to functions that are always inlined: once its address escapes, the cursor and the counts leave registers.
 // x86-64 has too few registers to hold them through the visits anyway. There the test of the mark is in line, and what follows for a cell without a mark is one function for all visits.
 class FastMarkAppender {
