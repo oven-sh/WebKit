@@ -21,18 +21,18 @@ function agent() {
     const f = new Function("count", `"use strict"; return function many(x, rare) { if (rare) { const a = [${chunk.join(",")}]; return count(${Array(spreads).fill("...a").join(",")}); } return x + 1; }`)(count);
     noInline(f);
 
-    let report = "ok";
-
     // Once below the FTL, so that the call site has a profile.
     if (f(3, true) !== chunk.length * spreads)
-        report = "wrong count before the FTL";
+        throw new Error("wrong count before the FTL");
     for (let i = 0; i < testLoopCount; i++)
         f(i, false);
 
     // Down to the stack limit, then the call from each frame on the way back
-    // up until there is room for it.
+    // up until there is room for it. The frames above catch whatever is thrown
+    // here, so a failure is kept for later.
     let overflows = 0;
     let done = false;
+    let failure = null;
     function recurse() {
         try {
             recurse();
@@ -41,25 +41,33 @@ function agent() {
             return;
         try {
             if (f(3, true) !== chunk.length * spreads)
-                report = "wrong count from the FTL";
+                failure = "wrong count from the FTL";
             done = true;
         } catch (e) {
             if (!(e instanceof RangeError))
-                report = "unexpected " + e;
+                failure = "unexpected " + e;
             overflows++;
         }
     }
     noInline(recurse);
     recurse();
 
+    if (failure)
+        throw new Error(failure);
     if (!overflows)
-        report = "the call never ran out of stack";
+        throw new Error("the call never ran out of stack");
     if (!done)
-        report = "the call never had room";
-    $.agent.report(report);
+        throw new Error("the call never had room");
 }
 
-$.agent.start(`(${agent})()`);
+$.agent.start(`
+    try {
+        (${agent})();
+        $.agent.report("ok");
+    } catch (e) {
+        $.agent.report(String(e));
+    }
+`);
 
 let report;
 while (!(report = $.agent.getReport()))

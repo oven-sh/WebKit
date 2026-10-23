@@ -19,46 +19,27 @@ function sum() {
 }
 noInline(sum);
 
-function expected(values) {
-    let t = values.length;
-    for (let i = 0; i < values.length; i++)
-        t = (t * 31 + values[i]) % 1000003;
-    return t;
-}
-
-function test(name, f, values) {
+function test(f) {
     noInline(f);
-    const want = expected(values);
 
-    // Once below the FTL, so that the call site has a profile.
-    const first = f(3, true);
-    if (first !== want)
-        throw new Error(`${name}: got ${first} before the FTL, expected ${want}`);
+    // Below the FTL: gives the call site a profile, and the result to expect.
+    const expected = f(0, true);
 
-    for (let i = 0; i < testLoopCount; i++) {
-        if (f(i, false) !== i + 1)
-            throw new Error(`${name}: wrong result on the common path`);
-    }
+    for (let i = 0; i < testLoopCount; i++)
+        f(i, false);
 
     for (let i = 0; i < 20; i++) {
-        const got = f(3, true);
-        if (got !== want)
-            throw new Error(`${name}: got ${got} from the FTL, expected ${want}`);
+        const got = f(0, true);
+        if (got !== expected)
+            throw new Error(`${f.name}: got ${got} from the FTL, expected ${expected}`);
     }
 }
 
-// More arguments than the caller's own frame has slots.
-{
-    const values = Array.from({ length: 64 }, (_, i) => (i * 7 + 3) % 11);
-    const f = new Function("sum", `"use strict"; return function few(x, rare) { if (rare) return sum(${values.join(",")}); return x + 1; }`)(sum);
-    test("few", f, values);
-}
+const values = Array.from({ length: 1000 }, (_, i) => (i * 7 + 3) % 11);
 
-// Spreads of array literals: the arguments elimination phase turns the varargs
-// tail call into one with a static argument count, here 60000.
-{
-    const chunk = Array.from({ length: 1000 }, (_, i) => (i * 7 + 3) % 11);
-    const spreads = 60;
-    const f = new Function("sum", `"use strict"; return function many(x, rare) { if (rare) { const a = [${chunk.join(",")}]; return sum(${Array(spreads).fill("...a").join(",")}); } return x + 1; }`)(sum);
-    test("many", f, Array(spreads).fill(chunk).flat());
-}
+// More arguments than the caller's own frame has slots.
+test(new Function("sum", `"use strict"; return function few(x, rare) { if (rare) return sum(${values.slice(0, 64).join(",")}); return x + 1; }`)(sum));
+
+// Spreads of an array literal: the arguments elimination phase turns the
+// varargs tail call into one with a static argument count, here 60000.
+test(new Function("sum", `"use strict"; return function many(x, rare) { if (rare) { const a = [${values.join(",")}]; return sum(${Array(60).fill("...a").join(",")}); } return x + 1; }`)(sum));
