@@ -83,7 +83,7 @@ static constexpr size_t smallestStructureHeapSize = MB;
 // mimalloc refuses a range that holds none of its 32 MB chunks, and the first block of the structure heap isn't handed to it.
 static constexpr size_t smallestStructureHeapSizeForMimalloc = 64 * MB;
 
-// Only processes with Options::useAOT() keep to the budget: they also reserve the cages.
+// Only processes with Options::runsCompiledImage() keep to the budget: they also reserve the cages.
 inline size_t structureHeapSizeWithinBudget(size_t preferredSize)
 {
     size_t budget = addressSpaceToReserve() / addressSpaceDivisorForStructures;

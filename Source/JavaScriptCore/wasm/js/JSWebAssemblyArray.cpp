@@ -49,7 +49,7 @@ JSWebAssemblyArray::JSWebAssemblyArray(VM& vm, WebAssemblyGCStructure* structure
     , m_size(size)
 {
 #if ENABLE(AOT)
-    if (Options::useAOT()) [[unlikely]]
+    if (Options::runsCompiledImage()) [[unlikely]]
         zeroShapeWord();
 #endif
     if (elementsAreRefTypes())

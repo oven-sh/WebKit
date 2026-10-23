@@ -100,10 +100,12 @@ private:
             }
             if (terminator.kind == TerminatorKind::SwitchOnShape)
                 return leadsTo(terminator.otherwise().block, place, mostStepsBehindFailure);
-            if (!terminator.isConditionalBranch() || provesOf(m_function.at(terminator.conditionOperand()).opcode) == Proof::None)
+            if (!terminator.isConditionalBranch())
                 return false;
             if (leadsTo(terminator.notTaken().block, place, mostStepsBehindFailure))
                 return true;
+            if (provesOf(m_function.at(terminator.conditionOperand()).opcode) == Proof::None)
+                return false;
             block = terminator.taken().block;
         }
         return false;

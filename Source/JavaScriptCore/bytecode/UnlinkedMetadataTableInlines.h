@@ -38,7 +38,7 @@ namespace JSC {
 // The handlers of LowLevelInterpreterAOT.asm read the 32-bit offset without a look at the 16-bit one, and do not round what they compute from it.
 ALWAYS_INLINE bool metadataTablesAlwaysHave32BitOffsets()
 {
-    return Options::useAOT();
+    return Options::runsCompiledImage();
 }
 
 // Every Metadata is aligned here, so all that follow are: they lie in the order of their alignments.

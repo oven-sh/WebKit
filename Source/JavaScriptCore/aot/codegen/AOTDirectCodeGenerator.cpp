@@ -639,7 +639,6 @@ private:
     bool writeClobbers(uint32_t written, uint32_t other);
     uint32_t findWeb(uint32_t home);
     bool tryCoalesce(uint32_t, uint32_t);
-    bool websInterfere(uint32_t, uint32_t);
     void coalescePhis();
     void findBlocksWithoutCode();
     void orderEmission();
@@ -753,6 +752,13 @@ private:
     }
     CodeUnit::Kind kindOfFrameAccess(int32_t offset) const { return isAddressedOffStackPointer(offset) ? CodeUnit::Kind::PlainOffStackPointer : CodeUnit::Kind::Plain; }
     int32_t takeLateHome();
+    // Webs of other forms share a slot where their lives do not meet, and a source may die where its phi is born. A value of 32 bits leaves the high half of its slot as it was.
+    static bool liesInHomeOf(const ValueState& source, const ValueState& phi)
+    {
+        if (source.form != ValueForm::Plain || !(source.flags & NeedsHome) || source.home != phi.home || ((source.flags ^ phi.flags) & IsDouble))
+            return false;
+        return (source.flags & (IsWide | IsReadWide)) || !(phi.flags & (IsWide | IsReadWide));
+    }
     void storeToFrame(Reg, const ValueState&, int32_t offset);
     void loadFromFrame(Reg, const ValueState&, int32_t offset);
     void writeBack(Reg);
@@ -804,6 +810,17 @@ private:
         UNUSED_PARAM(operand);
         UNUSED_PARAM(size);
         UNUSED_PARAM(isStore);
+#endif
+    }
+
+    void checkASANShadow(const MemoryOperand& operand, const B3::Value* access)
+    {
+#if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
+        const B3::MemoryValue* memory = access->as<B3::MemoryValue>();
+        checkASANShadow(operand, memory->accessByteSize(), memory->isStore());
+#else
+        UNUSED_PARAM(operand);
+        UNUSED_PARAM(access);
 #endif
     }
 
@@ -3114,19 +3131,6 @@ uint32_t DirectCodeGenerator::findWeb(uint32_t home)
     return home;
 }
 
-bool DirectCodeGenerator::websInterfere(uint32_t first, uint32_t second)
-{
-    if (!m_hasLiveness)
-        return true;
-    for (uint32_t a = first + 1; a; a = m_homes[a - 1].nextInWeb) {
-        for (uint32_t b = second + 1; b; b = m_homes[b - 1].nextInWeb) {
-            if (writeClobbers(a - 1, b - 1) || writeClobbers(b - 1, a - 1))
-                return true;
-        }
-    }
-    return false;
-}
-
 bool DirectCodeGenerator::tryCoalesce(uint32_t first, uint32_t second)
 {
     constexpr uint32_t maxWebSize = 24;
@@ -3230,7 +3234,7 @@ void DirectCodeGenerator::findBlocksWithoutCode()
                 const ValueState& sourceState = stateOf(resolve(value->child(0)));
                 if (phiState.form != ValueForm::Plain)
                     continue;
-                if (phiState.arrival == arrivesInHome && sourceState.form == ValueForm::Plain && (sourceState.flags & NeedsHome) && sourceState.home == phiState.home)
+                if (phiState.arrival == arrivesInHome && liesInHomeOf(sourceState, phiState))
                     continue;
             }
             hasCode = true;
@@ -3334,7 +3338,7 @@ void DirectCodeGenerator::layOutFrame()
                 const HomeState& root = m_homes[web];
                 bool overlaps = false;
                 for (uint32_t other : taken)
-                    overlaps |= root.start <= m_homes[other].end && m_homes[other].start <= root.end && websInterfere(web, other);
+                    overlaps |= root.start <= m_homes[other].end && m_homes[other].start <= root.end;
                 if (overlaps)
                     continue;
                 taken.append(web);
@@ -3383,10 +3387,7 @@ void DirectCodeGenerator::layOutFrame()
         uint32_t accesses;
         uint32_t number;
         bool holdsArgument;
-        Vector<uint32_t, 4> webs;
     };
-    constexpr unsigned maxWebsPackedExactly = 256;
-    bool packsExactly = m_hasLiveness && webs.size() <= maxWebsPackedExactly;
     Vector<Slot, 32> slots;
     for (uint32_t web : webs) {
         HomeState& root = m_homes[web];
@@ -3394,24 +3395,12 @@ void DirectCodeGenerator::layOutFrame()
             continue;
         unsigned slot = 0;
         unsigned limit = std::min<unsigned>(slots.size(), maxSlotsSearched);
-        auto fits = [&](const Slot& candidate) {
-            if (candidate.freeAt <= root.start)
-                return true;
-            if (!packsExactly)
-                return false;
-            for (uint32_t other : candidate.webs) {
-                if (root.start <= m_homes[other].end && m_homes[other].start <= root.end && websInterfere(web, other))
-                    return false;
-            }
-            return true;
-        };
-        while (slot < limit && !fits(slots[slot]))
+        while (slot < limit && slots[slot].freeAt > root.start)
             ++slot;
         if (slot == limit) {
             slot = slots.size();
-            slots.append(Slot { 0, 0, slot, false, { } });
+            slots.append(Slot { 0, 0, slot, false });
         }
-        slots[slot].webs.append(web);
         slots[slot].freeAt = std::max(slots[slot].freeAt, root.end + 1);
         slots[slot].accesses += root.accesses;
         slots[slot].holdsArgument |= root.holdsArgument;
@@ -4227,7 +4216,7 @@ void DirectCodeGenerator::emitLoad(B3::Value* value)
         operand = MemoryOperand { address };
     }
 #endif
-    checkASANShadow(operand, value->as<B3::MemoryValue>()->accessByteSize(), false);
+    checkASANShadow(operand, value);
     Label begin = jit.labelIgnoringWatchpoints();
     withAddress(operand, [&](auto address) {
         switch (value->opcode()) {
@@ -4290,7 +4279,7 @@ void DirectCodeGenerator::emitStore(B3::Value* value)
         int64_t constant = 0;
         constantOf(stored, constant);
         TrustedImm32 immediate(static_cast<int32_t>(constant));
-        checkASANShadow(operand, memory->accessByteSize(), true);
+        checkASANShadow(operand, value);
         withAddress(operand, [&](auto address) {
             switch (opcode) {
             case B3::Store8:
@@ -4311,7 +4300,7 @@ void DirectCodeGenerator::emitStore(B3::Value* value)
         return;
     }
     Reg source = registerFor(stored);
-    checkASANShadow(operand, memory->accessByteSize(), true);
+    checkASANShadow(operand, value);
     withAddress(operand, [&](auto address) {
         switch (opcode) {
         case B3::Store8:
@@ -4514,7 +4503,7 @@ MacroAssembler::Jump DirectCodeGenerator::branchOn(const B3::Value* condition, b
 #if CPU(X86_64)
             MacroAssembler::ResultCondition result = whenTrue ? MacroAssembler::NonZero : MacroAssembler::Zero;
             MemoryOperand operand = operandForLoad(condition);
-            checkASANShadow(operand, condition->as<B3::MemoryValue>()->accessByteSize(), false);
+            checkASANShadow(operand, condition);
             return withAddress(operand, [&](auto address) {
                 switch (condition->opcode()) {
                 case B3::Load8Z:
@@ -5155,7 +5144,7 @@ void DirectCodeGenerator::passPhiArguments(bool terminatorReadsValues)
         const B3::Value* source = resolve(upsilon->child(0));
         const ValueState& sourceState = stateOf(source);
         if (phiState.arrival == arrivesInHome) {
-            if (sourceState.form == ValueForm::Plain && (sourceState.flags & NeedsHome) && sourceState.home == phiState.home)
+            if (liesInHomeOf(sourceState, phiState))
                 continue;
             if (phiState.home > 0) {
                 Reg home = decode(static_cast<uint8_t>(phiState.home));
@@ -5203,27 +5192,12 @@ void DirectCodeGenerator::passPhiArguments(bool terminatorReadsValues)
             RELEASE_ASSERT(transfer.destination != other.destination || transfer.value == other.value);
     }
 
-    auto isOverwritten = [&](const B3::Value* source, const Copy* own) {
+    // The copies of a block happen at once: none reads a home behind the store of another into it.
+    auto homeRead = [&](const B3::Value* source) -> int32_t {
         const ValueState& state = stateOf(source);
-        if (state.form != ValueForm::Plain || locate(source) || !state.home)
-            return false;
-        for (const Copy& copy : copies) {
-            if (&copy != own && copy.destination == state.home)
-                return true;
-        }
-        return false;
+        return state.form == ValueForm::Plain && !locate(source) ? state.home : 0;
     };
-    if (copies.size() > 1 || (!copies.isEmpty() && !transfers.isEmpty())) {
-        for (const Copy& copy : copies) {
-            if (isOverwritten(copy.source, &copy))
-                registerFor(copy.source, destinations);
-        }
-        for (const Transfer& transfer : transfers) {
-            if (isOverwritten(transfer.value, nullptr))
-                registerFor(transfer.value, destinations);
-        }
-    }
-    for (const Copy& copy : copies) {
+    auto makeCopy = [&](const Copy& copy) {
         const ValueState& phiState = *copy.phi;
         int64_t constant;
         bool mustClearHighBits = (phiState.flags & IsReadWide) && !(phiState.flags & IsWide);
@@ -5233,7 +5207,7 @@ void DirectCodeGenerator::passPhiArguments(bool terminatorReadsValues)
             else
                 m_jit->store32(TrustedImm32(static_cast<int32_t>(constant)), addressOfHome(copy.destination));
             finishUnit(kindOfFrameAccess(copy.destination));
-            continue;
+            return;
         }
         Reg reg = locate(copy.source);
         if (!reg) {
@@ -5241,7 +5215,37 @@ void DirectCodeGenerator::passPhiArguments(bool terminatorReadsValues)
             materialize(copy.source, reg);
         }
         storeToFrame(reg, phiState, copy.destination);
+    };
+    uint64_t lockedBefore = m_locked;
+    Vector<const Copy*, 8> pending;
+    for (const Copy& copy : copies) {
+        pending.append(&copy);
+        if (Reg reg = locate(copy.source))
+            lock(reg);
     }
+    for (const Transfer& transfer : transfers) {
+        int32_t home = homeRead(transfer.value);
+        if (home && copies.containsIf([&](const Copy& copy) { return copy.destination == home; }))
+            lock(registerFor(transfer.value, destinations));
+        else if (Reg reg = locate(transfer.value))
+            lock(reg);
+    }
+    while (!pending.isEmpty() && !m_hasFailed) {
+        auto isStillRead = [&](const Copy* copy) {
+            return pending.containsIf([&](const Copy* other) { return other != copy && homeRead(other->source) == copy->destination; });
+        };
+        size_t next = pending.findIf([&](const Copy* copy) { return !isStillRead(copy); });
+        if (next == notFound) {
+            for (const Copy* other : pending) {
+                if (other != pending[0] && homeRead(other->source) == pending[0]->destination)
+                    lock(registerFor(other->source, destinations));
+            }
+            continue;
+        }
+        makeCopy(*pending[next]);
+        pending.removeAt(next);
+    }
+    m_locked = lockedBefore;
 
     if (!transfers.isEmpty()) {
         preserveValuesIn(destinations, destinations, terminatorReadsValues);

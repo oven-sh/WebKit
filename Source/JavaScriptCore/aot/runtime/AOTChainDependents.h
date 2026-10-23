@@ -147,6 +147,18 @@ public:
 
 private:
     using DependentSet = UncheckedKeyHashSet<ChainDependent, ChainDependentHash, ChainDependentHashTraits>;
+    struct NameIndex {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NameIndex);
+        void add(const ChainDependent&);
+
+        UncheckedKeyHashMap<UniquedStringImpl*, Vector<ChainDependent, 1>> named;
+        Vector<ChainDependent> unnamed;
+    };
+    struct ObjectDependents {
+        DependentSet set;
+        std::unique_ptr<NameIndex> index;
+    };
+    static constexpr unsigned maxSizeWithoutIndex = 64;
     class StructureStateOwner;
 
     ChainDependentOwner& ownerOf(const ChainDependent& dependent) { return *m_owners[dependent.owner.index()]; }
@@ -155,7 +167,7 @@ private:
     Vector<ChainDependentOwner*, 8> m_owners;
     std::unique_ptr<StructureStateOwner> m_structureState;
     ChainDependentOwnerID m_structureStateOwner;
-    UncheckedKeyHashMap<JSObject*, DependentSet> m_dependentsByObject;
+    UncheckedKeyHashMap<JSObject*, ObjectDependents> m_dependentsByObject;
     size_t m_numberOfDependentsAddedSinceOwnersWereAsked { 0 };
     size_t m_numberOfDependentsLeftWhenOwnersWereAsked { 0 };
     RememberedSlotSet m_writtenSinceCollection;

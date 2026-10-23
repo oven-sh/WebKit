@@ -34,6 +34,10 @@ public:
     Boxed boxInteger(Integer, Range);
     Number toNumber(Integer, Range);
     Integer toInteger(Number);
+#if CPU(ARM64)
+    // NaN is 0, and a number beyond int64 is the nearest int64.
+    Integer toNearestInteger(Number);
+#endif
     // The result, without rounding, of the integer arithmetic that made a number.
     std::optional<Integer> exactIntegerBehind(Number);
     Integer widen(Word32, Range);

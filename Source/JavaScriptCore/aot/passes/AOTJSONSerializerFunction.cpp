@@ -34,6 +34,7 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
     JSONSerializerBuilder serializer(builder, inputs, head.parameters[1]);
 
     BlockID differs = builder.addBlock(BlockFrequency::Rare);
+    builder.emitFailureOfPredictions(Target { differs, { }, { } });
     serializer.emitJumpUnless(builder.append(Opcode::JSONHasStackSpace, { }), differs);
     serializer.appendObjectOfLayout(head.parameters[0], layout, differs);
     builder.emitReturn(serializer.appendOutcome(JSONOutcome::Parsed));

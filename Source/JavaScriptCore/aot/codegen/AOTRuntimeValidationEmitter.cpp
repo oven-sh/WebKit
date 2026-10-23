@@ -44,6 +44,8 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
             checkGuardIsAvailable(context, operand, operandIndex);
             return;
         }
+        if (operand != ownedValue && generator().mayBeUnspecified(operand) && user.operandUses(operandIndex).contains(OperandUse::Inspects))
+            checkIsSpecified(operand);
         if (operand == ownedValue || generator().mayBeUnspecified(operand) || isDeferredClosure(m_function, operand) || generator().mayBeBorrowedInnerObject(operand))
             return;
         // The bits of a value are those it was made with, and they were looked at there. What its type says about the heap may have changed since.

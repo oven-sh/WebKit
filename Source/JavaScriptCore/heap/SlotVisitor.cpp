@@ -515,7 +515,7 @@ void SlotVisitor::visitChildrenThroughMethodTable(const JSCell* cell)
 void SlotVisitor::visitAsConstraint(const JSCell* cell)
 {
     m_isFirstVisit = false;
-    if (Options::useAOT()) {
+    if (Options::runsCompiledImage()) {
         FastMarkAppender appender(*this);
         visitChildren<false>(appender, cell);
         return;
@@ -707,7 +707,7 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
                 // one next cell while accessing the current cell to make memory fetching in flight while handling
                 // the current cell.
                 unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
-                if (Options::useAOT()) {
+                if (Options::runsCompiledImage()) {
                     UnlimitedDrainBudget budget;
                     drainStack(stack, countdown, budget);
                     return IterationStatus::Done;
@@ -769,7 +769,7 @@ size_t SlotVisitor::performIncrementOfDraining(size_t bytesRequested)
                 m_isFirstVisit = (&stack == &m_collectorStack);
 
                 unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
-                if (Options::useAOT()) {
+                if (Options::runsCompiledImage()) {
                     ByteDrainBudget budget { bytesRequested, cellBytesVisited };
                     drainStack(stack, countdown, budget);
                     cellBytesVisited = budget.cellBytesVisited;
@@ -822,7 +822,7 @@ bool SlotVisitor::hasWork(const AbstractLocker&)
 
 bool SlotVisitor::defersRootRegions() const
 {
-    return Options::useAOT() && !m_isAnalyzingHeap;
+    return Options::runsCompiledImage() && !m_isAnalyzingHeap;
 }
 
 void SlotVisitor::deferRootRegion(const DeferredRootRegion& region)

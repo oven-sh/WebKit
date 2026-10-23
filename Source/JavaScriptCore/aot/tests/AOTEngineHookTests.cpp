@@ -442,6 +442,51 @@ static void testCreateWithProperties(LoadedProgram& program)
     AOT_TEST_CHECK(!Structure::createWithProperties(vm, created, present));
 }
 
+// Structures for one set of names in very many orders are made and die: now many, now few, now none. What remembers them grows and shrinks at the collections in between.
+static void testStructuresWithPropertiesComeAndGo(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Structure* empty = program.realm()->objectStructureForObjectConstructor();
+    WTF::Vector<Identifier> identifiers(8, [&](size_t index) {
+        return Identifier::fromString(vm, makeString("turning"_s, index));
+    });
+    auto namesInOrder = [&](unsigned number) {
+        WTF::Vector<UniquedStringImpl*> left(identifiers.size(), [&](size_t index) {
+            return identifiers[index].impl();
+        });
+        WTF::Vector<UniquedStringImpl*> names;
+        for (size_t size = left.size(); size; --size) {
+            names.append(left[number % size]);
+            left.removeAt(number % size);
+            number /= size;
+        }
+        return names;
+    };
+    auto isRemembered = [&](unsigned number) {
+        auto names = namesInOrder(number);
+        Structure* created = Structure::createWithProperties(vm, empty, names.span());
+        return created && Structure::createWithProperties(vm, empty, names.span()) == created;
+    };
+
+    PropertyAdditionCache& cache = vm.propertyRuns.additionCache();
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    unsigned sizeAtRest = cache.size();
+    unsigned first = 0;
+    for (unsigned count : { 100u, 5000u, 10u, 2000u, 0u, 300u, 20000u, 1u, 128u, 1024u, 8192u, 1024u, 128u }) {
+        for (unsigned index = 0; index < count; ++index)
+            AOT_TEST_CHECK(isRemembered(first + index));
+        vm.heap.collectNow(Sync, CollectionScope::Eden);
+        for (unsigned index = 0; index < count; index += 7)
+            AOT_TEST_CHECK(isRemembered(first + index));
+        vm.heap.collectNow(Sync, CollectionScope::Full);
+        // The stack may still hold a few.
+        AOT_TEST_CHECK(cache.size() <= sizeAtRest + 16);
+        for (unsigned index = 0; index < count; index += 11)
+            AOT_TEST_CHECK(isRemembered(first + index));
+        first += count;
+    }
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<engineHookTests, programText, body>;
 
@@ -458,6 +503,7 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },
         { "engine-hooks/instance-class-infos"_s, withProgram<testInstanceClassInfos> },
         { "engine-hooks/create-with-properties"_s, withProgram<testCreateWithProperties> },
+        { "engine-hooks/structures-with-properties-come-and-go-between-collections"_s, withProgram<testStructuresWithPropertiesComeAndGo> },
     };
     return tests;
 }

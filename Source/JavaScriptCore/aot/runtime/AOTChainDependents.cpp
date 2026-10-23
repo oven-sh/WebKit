@@ -29,6 +29,17 @@ namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ChainDependents);
 
+void ChainDependents::NameIndex::add(const ChainDependent& dependent)
+{
+    if (!dependent.uidOrNull) {
+        unnamed.append(dependent);
+        return;
+    }
+    named.ensure(dependent.uidOrNull, [] {
+        return Vector<ChainDependent, 1>();
+    }).iterator->value.append(dependent);
+}
+
 class ChainDependents::StructureStateOwner final : public ChainDependentOwner {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(StructureStateOwner);
 public:
@@ -89,9 +100,14 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
         m_structureState->add(std::bit_cast<StructureID>(dependent.subject));
     for (JSObject* object : chainObjects) {
         ASSERT(object->mayBePrototype());
-        m_numberOfDependentsAddedSinceOwnersWereAsked += m_dependentsByObject.ensure(object, [] {
-            return DependentSet();
-        }).iterator->value.add(dependent).isNewEntry;
+        ObjectDependents& dependents = m_dependentsByObject.ensure(object, [] {
+            return ObjectDependents();
+        }).iterator->value;
+        if (!dependents.set.add(dependent).isNewEntry)
+            continue;
+        ++m_numberOfDependentsAddedSinceOwnersWereAsked;
+        if (dependents.index)
+            dependents.index->add(dependent);
     }
     m_writtenSinceCollection.recordAll();
 }
@@ -110,20 +126,33 @@ void ChainDependents::didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
     };
 
     if (!uidOrNull) {
-        DependentSet dependents = m_dependentsByObject.take(iterator);
-        for (const ChainDependent& dependent : dependents)
+        ObjectDependents dependents = m_dependentsByObject.take(iterator);
+        for (const ChainDependent& dependent : dependents.set)
             drop(dependent);
         return;
     }
 
+    ObjectDependents& all = iterator->value;
     Vector<ChainDependent, 8> dependents;
-    iterator->value.removeIf([&](const ChainDependent& dependent) {
-        if (dependent.uidOrNull && dependent.uidOrNull != uidOrNull)
-            return false;
-        dependents.append(dependent);
-        return true;
-    });
-    if (iterator->value.isEmpty())
+    if (!all.index && all.set.size() <= maxSizeWithoutIndex) {
+        all.set.removeIf([&](const ChainDependent& dependent) {
+            if (dependent.uidOrNull && dependent.uidOrNull != uidOrNull)
+                return false;
+            dependents.append(dependent);
+            return true;
+        });
+    } else {
+        if (!all.index) {
+            all.index = makeUnique<NameIndex>();
+            for (const ChainDependent& dependent : all.set)
+                all.index->add(dependent);
+        }
+        dependents.appendVector(std::exchange(all.index->unnamed, { }));
+        dependents.appendVector(all.index->named.take(uidOrNull));
+        for (const ChainDependent& dependent : dependents)
+            all.set.remove(dependent);
+    }
+    if (all.set.isEmpty())
         m_dependentsByObject.remove(iterator);
     for (const ChainDependent& dependent : dependents)
         drop(dependent);
@@ -137,7 +166,7 @@ bool ChainDependents::hasDependents(JSObject* object) const
 size_t ChainDependents::numberOfDependents(JSObject* object) const
 {
     auto iterator = m_dependentsByObject.find(object);
-    return iterator == m_dependentsByObject.end() ? 0 : iterator->value.size();
+    return iterator == m_dependentsByObject.end() ? 0 : iterator->value.set.size();
 }
 
 size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
@@ -151,16 +180,18 @@ size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
     m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {
         m_dependentsByObject.removeIf([&](auto& entry) {
             if (!vm.heap.isMarked(entry.key)) {
-                numberOfDependentsOfDeadObjects += entry.value.size();
+                numberOfDependentsOfDeadObjects += entry.value.set.size();
                 return true;
             }
             if (!dropsEvictedDependents)
                 return false;
-            entry.value.removeIf([&](const ChainDependent& dependent) {
+            bool removedAny = entry.value.set.removeIf([&](const ChainDependent& dependent) {
                 return !ownerOf(dependent).hasChainDependent(vm, dependent.subject, dependent.uidOrNull);
             });
-            numberOfDependentsLeft += entry.value.size();
-            return entry.value.isEmpty();
+            if (removedAny)
+                entry.value.index = nullptr;
+            numberOfDependentsLeft += entry.value.set.size();
+            return entry.value.set.isEmpty();
         });
     });
     if (dropsEvictedDependents) {

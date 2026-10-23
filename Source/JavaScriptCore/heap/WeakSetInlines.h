@@ -56,7 +56,7 @@ inline void WeakBlock::finalize(WeakImpl* weakImpl)
     if (!weakHandleOwner)
         return;
 #if ASAN_ENABLED
-    if (JSCell* cell = weakImpl->jsValue().asCell(); Options::useAOT() && !cell->isPreciseAllocation())
+    if (JSCell* cell = weakImpl->jsValue().asCell(); Options::runsCompiledImage() && !cell->isPreciseAllocation())
         __asan_unpoison_memory_region(cell, cell->cellSize());
 #endif
     weakHandleOwner->finalize(Handle<Unknown>::wrapSlot(&const_cast<JSValue&>(weakImpl->jsValue())), weakImpl->context());

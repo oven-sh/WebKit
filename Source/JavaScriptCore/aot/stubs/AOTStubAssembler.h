@@ -241,10 +241,8 @@ private:
         size_t remaining = sizeof...(Arguments);
         auto check = [&]<typename Argument>(const Argument& argument) {
             --remaining;
-            if constexpr (std::is_same_v<Argument, Address> || std::is_same_v<Argument, BaseIndex>) {
-                recordUse(Entry::operationAOTReportPoisonedAccess);
+            if constexpr (std::is_same_v<Argument, Address> || std::is_same_v<Argument, BaseIndex>)
                 emitASANShadowCheck(*this, argument, size, access == MemoryAccess::Write || (access == MemoryAccess::Update && !remaining));
-            }
         };
         (check(arguments), ...);
     }

@@ -470,7 +470,7 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
 
     constexpr unsigned wordSize = sizeof(WTF::BitSet<atomsPerBlock>::WordType) * 8;
     constexpr int minMarkCountForWordScan = 48;
-    if (marksMode == MarksNotStale && Options::useAOT() && m_atomsPerCell < wordSize && header.m_biasedMarkCount - header.m_markCountBias >= minMarkCountForWordScan) {
+    if (marksMode == MarksNotStale && Options::runsCompiledImage() && m_atomsPerCell < wordSize && header.m_biasedMarkCount - header.m_markCountBias >= minMarkCountForWordScan) {
         if (destructionMode == BlockHasNoDestructors || !wasUnswept)
             sweepBlock.template operator()</* needsDestruction */ false, /* scansByWord */ true>();
         else

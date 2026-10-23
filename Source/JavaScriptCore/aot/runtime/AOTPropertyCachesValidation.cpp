@@ -89,14 +89,38 @@ static JSObject* findUnregisteredChainObject(const ChainDependents& dependents, 
     return nullptr;
 }
 
+bool VMPropertyCaches::isBelowUnreportedChange(Structure* structure) const
+{
+    if (m_objectsWithUnreportedChange.isEmpty()) [[likely]]
+        return false;
+    while (structure->isObject() && structure->hasMonoProto()) {
+        JSObject* prototype = structure->storedPrototypeObject();
+        if (!prototype)
+            return false;
+        if (m_objectsWithUnreportedChange.contains(prototype))
+            return true;
+        structure = prototype->structure();
+    }
+    return false;
+}
+
 static void validateSlotAnswer(VM& vm, const Slot& slot, SlotAccess access, UniquedStringImpl* uid, const ChainDependents* dependents)
 {
     // The prototype of a string, symbol or BigInt comes from a realm, so its Structure alone says nothing.
     Structure* structure = slot.structureID.decode();
     if (!structure->isObject())
         return;
+    if (slot.has(Slot::dependsOnChain) && vm.aotState().propertyCaches->isBelowUnreportedChange(structure))
+        return;
     if (!slotAgreesWithStructures(vm, slot, access, uid)) {
         dataLogLn("AOT validation: a row of the property caches does not agree with the Structure it is filed under: name ", uid ? String(uid) : "(none)"_str, ", kind of row ", static_cast<unsigned>(slot.kind), ", access ", static_cast<unsigned>(access), ", kind of dictionary ", static_cast<unsigned>(structure->dictionaryKind()), ", flattened before ", structure->hasBeenFlattenedBefore(), ", may be a prototype ", structure->mayBePrototype(), ", properties up to offset ", structure->maxOffset());
+        if (slot.kind == Slot::Kind::Transition) {
+            Structure* newStructure = slot.transition.newStructureID.decode();
+            Structure* named = newStructure->previousID();
+            PropertyOffset offsetByTable = invalidOffset;
+            Structure* reached = structure->isDictionary() ? nullptr : Structure::addPropertyTransitionToExistingStructure(structure, uid, 0, offsetByTable);
+            dataLogLn("AOT validation: the addition: offset in the row ", slot.offsetInStorage(), ", in the new Structure ", newStructure->getConcurrently(uid), ", in the old one ", structure->getConcurrently(uid), "; the new Structure names ", named == structure ? "the old one" : named ? "another" : "none", " as its predecessor, kind of its transition ", static_cast<unsigned>(newStructure->transitionKind()), ", by this name ", newStructure->transitionPropertyName() == uid, ", table pinned ", newStructure->isPinnedPropertyTable(), ", kind of dictionary ", static_cast<unsigned>(newStructure->dictionaryKind()), ", properties up to offset ", newStructure->maxOffset(), "; the old one's table pinned ", structure->isPinnedPropertyTable(), ", kind of its transition ", static_cast<unsigned>(structure->transitionKind()), ", it leads by this name to ", reached == newStructure ? "the new one" : reached ? "another" : "none");
+        }
         crashOnValidationFailure(vm, { ValidationFailureKind::CacheHitDiffers, { }, { }, structure });
     }
     if (!dependents || !slot.has(Slot::dependsOnChain) || !requiresFinishedWalk(slot.kind))

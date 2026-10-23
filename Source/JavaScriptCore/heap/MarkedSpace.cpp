@@ -226,7 +226,7 @@ void MarkedSpace::lastChanceToFinalize()
     // Must call stopAllocatingForGood first.
     ASSERT(!isIterating());
 #if ASAN_ENABLED
-    if (Options::useAOT()) {
+    if (Options::runsCompiledImage()) {
         forEachBlock([&](MarkedBlock::Handle* handle) {
             handle->unpoisonCells();
         });

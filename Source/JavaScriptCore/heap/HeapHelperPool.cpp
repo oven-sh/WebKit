@@ -45,7 +45,7 @@ ParallelHelperPool& heapHelperPool()
             constexpr auto threadName = "Heap Helper Thread"_s;
 #endif
             Ref pool = ParallelHelperPool::create(threadName);
-            if (!Options::useAOT())
+            if (!Options::runsCompiledImage())
                 pool->ensureThreads(Options::numberOfGCMarkers() - 1);
             helperPool.construct(WTF::move(pool));
         });

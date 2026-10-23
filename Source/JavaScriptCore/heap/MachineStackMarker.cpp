@@ -103,7 +103,7 @@ static void LEGACY_NODELETE copyMemory(void* dst, const void* src, size_t size)
     const CPURegister* srcPtr = reinterpret_cast<const CPURegister*>(src);
     size /= sizeof(CPURegister);
 #if JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS
-    if (Options::useAOT()) {
+    if (Options::runsCompiledImage()) {
         // ConservativeRoots::genericAddSpanOfCompiledProcess scans the copy, and the addressable half of a poisoned word may hold a narrow reference.
         while (size--) {
             *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? addressableHalvesForConservativeScan(srcPtr) : *srcPtr;

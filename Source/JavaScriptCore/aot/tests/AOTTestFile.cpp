@@ -60,6 +60,7 @@ private:
         std::optional<Architecture> requiredArchitecture { };
         bool hasRequiredArchitecture { false };
         bool requiresUnsanitizedCode { false };
+        bool requiresOtherThanWindows { false };
     };
 
     void collectDirectiveLines();
@@ -390,6 +391,13 @@ void TestFileParser::parseRun(const DirectiveLine& directive)
 
 // Under AddressSanitizer compiled code asks the shadow memory in front of an access: a run that expects sizes, faults or the direct generator finds other code there.
 static constexpr ASCIILiteral unsanitizedCode = "unsanitized-code"_s;
+// For Windows the direct generator is left out, and the code of x86-64 follows another calling convention.
+static constexpr ASCIILiteral notWindows = "not-windows"_s;
+#if OS(WINDOWS)
+static constexpr bool isForWindows = true;
+#else
+static constexpr bool isForWindows = false;
+#endif
 
 void TestFileParser::parseRequires(const DirectiveLine& directive)
 {
@@ -406,12 +414,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode)
+        if (word == unsanitizedCode || word == notWindows)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -628,7 +636,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE) || (group.requiresOtherThanWindows && isForWindows)) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

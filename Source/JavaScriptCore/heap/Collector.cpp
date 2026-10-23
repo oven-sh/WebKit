@@ -209,7 +209,7 @@ void Collector::assertMarkStacksEmpty()
         ok = false;
     }
 
-    if (Options::useAOT()) {
+    if (Options::runsCompiledImage()) {
         Locker locker { m_markingMutex };
         if (!m_deferredRootRegions.isEmpty()) {
             dataLog("FATAL: ", m_deferredRootRegions.size(), " deferred root regions were not visited.\n");
@@ -535,7 +535,7 @@ bool Collector::isNotRunning() const
 
 bool Collector::canSkipMarking()
 {
-    if (!Options::useAOT())
+    if (!Options::runsCompiledImage())
         return false;
     bool result = true;
     forEachHeap([&](Heap& heap) {
@@ -607,7 +607,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
         m_scheduler->didExecuteConstraints();
 
-        if (Options::useAOT()) {
+        if (Options::runsCompiledImage()) {
             Locker locker { m_markingMutex };
             if (!m_deferredRootRegions.isEmpty()) {
                 startHelpers();

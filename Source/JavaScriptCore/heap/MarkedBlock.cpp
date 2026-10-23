@@ -250,7 +250,7 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
     // allocated from our free list are not currently marked, so we need another
     // way to tell what's live vs dead. 
     
-    if (Options::useAOT()) {
+    if (Options::runsCompiledImage()) {
         rebuildNewlyAllocatedByWord(freeList);
         m_isFreeListed = false;
         directory()->didFinishUsingBlock(this);
@@ -756,7 +756,7 @@ void MarkedBlock::Handle::recommitPages()
 #if ASAN_ENABLED
 void MarkedBlock::Handle::poisonDeadCells()
 {
-    if (!Options::useAOT() || m_isFreeListed)
+    if (!Options::runsCompiledImage() || m_isFreeListed)
         return;
     size_t size = cellSize();
     char* begin = nullptr;
@@ -781,7 +781,7 @@ void MarkedBlock::Handle::poisonDeadCells()
 void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
 {
     m_directory->assertWorldIsStopped();
-    if (!Options::useAOT() || !m_directory->isUnswept(index()))
+    if (!Options::runsCompiledImage() || !m_directory->isUnswept(index()))
         return;
     bool hasNewlyDeadCells = false;
     forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
@@ -799,7 +799,7 @@ void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
 
 void MarkedBlock::Handle::unpoisonCells()
 {
-    if (Options::useAOT())
+    if (Options::runsCompiledImage())
         __asan_unpoison_memory_region(&block(), blockSize);
 }
 #endif

@@ -69,9 +69,10 @@ enum class ValidationFailureKind : uint8_t {
     FunctionCellInFrameGotProperties,
     OperationConvertedCell,
     OperationWroteHeap,
+    UnspecifiedValueInspected,
 };
 
-static constexpr unsigned numberOfValidationFailureKinds = 47;
+static constexpr unsigned numberOfValidationFailureKinds = 48;
 
 ASCIILiteral nameOf(ValidationFailureKind);
 

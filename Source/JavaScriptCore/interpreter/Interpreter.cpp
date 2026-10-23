@@ -492,7 +492,7 @@ Interpreter::Interpreter()
     static std::once_flag assertOnceKey;
     std::call_once(assertOnceKey, [] {
         // The handlers that LLInt::initialize() installs under useAOT have no embedded OpcodeID.
-        if (g_jscConfig.vmEntryDisallowed || Options::useAOT())
+        if (g_jscConfig.vmEntryDisallowed || Options::runsCompiledImage())
             return;
         for (unsigned i = 0; i < NUMBER_OF_BYTECODE_IDS; ++i) {
             OpcodeID opcodeID = static_cast<OpcodeID>(i);

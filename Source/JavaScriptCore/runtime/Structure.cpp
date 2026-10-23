@@ -830,11 +830,7 @@ static Structure* findCachedPropertyAdditions(VM& vm, Structure* base, const Pro
     PropertyAdditionCache& cache = vm.propertyRuns.additionCache();
     if (cache.isEmpty())
         return nullptr;
-    unsigned propertyHash = base->propertyHash();
-    for (UniquedStringImpl* name : additions.names)
-        propertyHash ^= name->existingSymbolAwareHash();
-    unsigned numberOfProperties = numberOfSlotsForMaxOffset(base->maxOffset(), base->inlineCapacity()) + additions.names.size();
-    return cache.find(base, PropertyAdditionCache::computeHash(propertyHash, numberOfProperties), additions);
+    return cache.find(base, additions);
 }
 
 static Structure* findCachedPropertyAddition(VM& vm, Structure* structure, UniquedStringImpl* name, unsigned attributes)
@@ -843,8 +839,7 @@ static Structure* findCachedPropertyAddition(VM& vm, Structure* structure, Uniqu
     if (cache.isEmpty())
         return nullptr;
     unsigned numberOfProperties = numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity()) + 1;
-    unsigned hash = PropertyAdditionCache::computeHash(structure->propertyHash() ^ name->existingSymbolAwareHash(), numberOfProperties);
-    if (!cache.containsHash(hash))
+    if (!cache.mayContainUnorderedHash(PropertyAdditionCache::computeUnorderedHash(structure->propertyHash() ^ name->existingSymbolAwareHash(), numberOfProperties)))
         return nullptr;
 
     Vector<UniquedStringImpl*, 16> names;
@@ -852,7 +847,7 @@ static Structure* findCachedPropertyAddition(VM& vm, Structure* structure, Uniqu
     Structure* base = collectPropertyAdditions(structure, names, attributesList);
     names.append(name);
     attributesList.append(attributes);
-    return cache.find(base, hash, PropertyAdditionList { names.span(), attributesList.span() });
+    return cache.find(base, PropertyAdditionList { names.span(), attributesList.span() });
 }
 
 Structure* Structure::addPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset)
@@ -1353,7 +1348,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         && !transition->propertyTableOrNull()->isEmpty())
         transition->setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
     
-    if (structure->isDictionary() || (transitionKind == TransitionKind::BecomePrototype && structure->isPinnedPropertyTable() && Options::useAOT())) {
+    if (structure->isDictionary() || (transitionKind == TransitionKind::BecomePrototype && structure->isPinnedPropertyTable() && Options::runsCompiledImage())) {
         PropertyTable* table = transition->ensurePropertyTable(vm);
         transition->pin(Locker { transition->m_lock }, vm, table);
     }
@@ -1657,7 +1652,7 @@ Structure* Structure::createWithPropertyAdditions(VM& vm, Structure* base, const
     structure->checkOffsetConsistency();
 
     vm.setMayHaveUncacheableTransitions();
-    vm.propertyRuns.additionCache().add(vm, base, PropertyAdditionCache::computeHash(structure->propertyHash(), numberOfProperties), structure);
+    vm.propertyRuns.additionCache().add(vm, base, names, PropertyAdditionCache::computeUnorderedHash(structure->propertyHash(), numberOfProperties), structure);
     return structure;
 }
 
@@ -1723,7 +1718,7 @@ bool Structure::restoreTransitionChain(Structure* previous)
 
 bool Structure::canDropTransitionChain()
 {
-    return Options::useAOT()
+    return Options::runsCompiledImage()
         && variant() == StructureVariant::Normal
         && !hasBeenDictionary()
         && !protectPropertyTableWhileTransitioning()
@@ -1746,7 +1741,7 @@ bool Structure::dropTransitionChain(const AbstractLocker&, VM& vm, PropertyTable
     setIsPinnedPropertyTable(true);
     clearPreviousID();
     vm.setMayHaveUncacheableTransitions();
-    vm.propertyRuns.additionCache().add(vm, base, PropertyAdditionCache::computeHash(propertyHash(), table->size()), this);
+    vm.propertyRuns.additionCache().add(vm, base, names.span(), PropertyAdditionCache::computeUnorderedHash(propertyHash(), table->size()), this);
     return true;
 }
 
@@ -2534,7 +2529,7 @@ void Structure::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectio
 {
     m_transitionTable.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
 
-    if (!Options::useAOT()) [[likely]]
+    if (!Options::runsCompiledImage()) [[likely]]
         return;
     PropertyTable* table = propertyTableOrNull();
     if (!table || !canDropTransitionChain())

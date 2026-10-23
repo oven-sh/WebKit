@@ -91,7 +91,7 @@ namespace JSC {
             if (m_type == GeneratorForward) {
                 m_savedTarget = m_generator->m_writer.position();
                 // Without a JIT a target that does not fit its instruction is looked up in a table at every jump, so a forward jump starts with 16 bits.
-                return Options::useAOT() ? std::numeric_limits<int8_t>::max() + 1 : 0;
+                return Options::runsCompiledImage() ? std::numeric_limits<int8_t>::max() + 1 : 0;
             }
 
             m_savedTarget = target();

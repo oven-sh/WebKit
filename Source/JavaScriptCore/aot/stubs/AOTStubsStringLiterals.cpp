@@ -432,7 +432,8 @@ void generateShortStringOfValue(StubAssembler& jit)
     // An eight-byte load at the first character could reach into the next page, which may not be mapped.
     jit.and32(TrustedImm32(smallestPageSize - 1), characters, result);
     Jump isNearEndOfPage = jit.branch32(CCallHelpers::Above, result, TrustedImm32(smallestPageSize - static_cast<int32_t>(sizeof(uint64_t))));
-    jit.load64(Address(characters), result);
+    // Both loads read bytes around the string on purpose, so they skip the check of AddressSanitizer's shadow.
+    jit.CCallHelpers::load64(Address(characters), result);
     jit.lshift64(shift, result);
     jit.lshift64(TrustedImm32(8), result);
     jit.add32(TrustedImm32(8 - shortStringLengthBits), shift);
@@ -441,7 +442,7 @@ void generateShortStringOfValue(StubAssembler& jit)
     jit.returnToCaller();
 
     isNearEndOfPage.link(&jit);
-    jit.load64(BaseIndex(characters, length, CCallHelpers::TimesOne, -static_cast<int32_t>(sizeof(uint64_t))), result);
+    jit.CCallHelpers::load64(BaseIndex(characters, length, CCallHelpers::TimesOne, -static_cast<int32_t>(sizeof(uint64_t))), result);
     jit.urshift64(shift, result);
     jit.urshift64(TrustedImm32(8), result);
     jit.lshift64(TrustedImm32(shortStringLengthBits), result);

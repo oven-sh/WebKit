@@ -76,6 +76,7 @@ private:
     Boxed reportedValueOf(Operand found);
 
     void checkValue(ValueID, Operand);
+    void checkIsSpecified(ValueID);
     void checkHasType(ValueID, Operand, const Type&, ValidationFailureKind);
     Condition hasShapeAmong(CellPointer, LayoutSetID, std::span<const uint32_t> ascendingShapes);
     void checkReceiverOfSlotAccess(const OperationContext&, const Value&);

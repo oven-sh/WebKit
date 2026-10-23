@@ -74,6 +74,17 @@ static void testRequiresSelectsRuns()
         expectRunLines(exactCode, Architecture::X86_64, { });
     else
         expectRunLines(exactCode, Architecture::X86_64, { 1, 2 });
+
+    static constexpr ASCIILiteral codeOfOtherSystems =
+        "# RUN: print\n"
+        "# RUN(X64): print\n"
+        "# REQUIRES(X64): x86_64 not-windows\n"
+        "# X64: a\n"_s;
+#if OS(WINDOWS)
+    expectRunLines(codeOfOtherSystems, Architecture::X86_64, { 1 });
+#else
+    expectRunLines(codeOfOtherSystems, Architecture::X86_64, { 1, 2 });
+#endif
 }
 
 static void testRequiresMalformed()
@@ -82,6 +93,7 @@ static void testRequiresMalformed()
     expectErrorLines("# RUN: print\n# REQUIRES:\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: x86_64 arm64\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: unsanitized-code unsanitized-code\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REQUIRES: not-windows not-windows\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES(OTHER): arm64\n"_s, { 2 });
     expectErrorLines("# RUN(ONLY): print\n# ONLY: x\n# REQUIRES: arm64\n"_s, { 3 });
     expectErrorLines("# RUN: print\n# REQUIRES: arm64\n# REQUIRES: x86_64\n"_s, { 3 });

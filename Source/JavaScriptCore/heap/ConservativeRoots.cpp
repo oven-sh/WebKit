@@ -355,7 +355,7 @@ template<typename MarkHook>
 SUPPRESS_ASAN
 void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHook)
 {
-    if (Options::useAOT()) {
+    if (Options::runsCompiledImage()) {
         genericAddSpanOfCompiledProcess(begin, end, markHook);
         return;
     }

@@ -292,6 +292,24 @@ static void testMaterializeSplitsSharedSlotBase()
     AOT_TEST_CHECK(findViolations(SlotBases::OnePerUse, Materializes::Yes).isEmpty());
 }
 
+static void testPureFunctionAtSuspensionIsNoSuspension()
+{
+    B3::Procedure proc;
+    B3::BasicBlock* root = proc.addBlock();
+    appendSuspension(proc, root);
+    B3::Value* base = appendSlotBase(proc, root, proc.addStackSlot(8), firstAddressOrigin);
+    B3::PatchpointValue* conversion = root->appendNew<B3::PatchpointValue>(proc, B3::Void, originOf(suspensionOrigin));
+    conversion->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+    conversion->effects = B3::Effects::none();
+    conversion->pureFunction = B3::PureFunction { 1 };
+    appendStore(proc, root, base);
+    appendReturn(proc, root);
+    AOT_TEST_CHECK(findFrameAddressViolations(proc).isEmpty());
+
+    conversion->pureFunction = std::nullopt;
+    AOT_TEST_CHECK(findFrameAddressViolations(proc).size() == 1);
+}
+
 static void appendBranch(B3::Procedure& proc, B3::BasicBlock* block, B3::BasicBlock* taken, B3::BasicBlock* notTaken)
 {
     B3::Value* condition = block->appendNew<B3::ArgumentRegValue>(proc, originOf(otherOrigin), GPRInfo::argumentGPR0);
@@ -1068,6 +1086,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "materialize-nothing"_s, testMaterializeNothing },
         { "materialize-unused-slot-base"_s, testMaterializeUnusedSlotBase },
         { "materialize-splits-shared-slot-base"_s, testMaterializeSplitsSharedSlotBase },
+        { "pure-function-at-suspension-is-no-suspension"_s, testPureFunctionAtSuspensionIsNoSuspension },
         { "materialize-phi-of-one-slot"_s, testMaterializePhiOfOneSlot },
         { "materialize-phi-of-one-distance-into-slot"_s, testMaterializePhiOfOneDistanceIntoSlot },
         { "materialize-phi-that-goes-around-loop"_s, testMaterializePhiThatGoesAroundLoop },

@@ -305,7 +305,8 @@ const lanes = platforms.flatMap(platform =>
         LTO_FLAG: v.lto ? (platform.lto ?? LTO) : "",
         USE_MIMALLOC: v.mimalloc ? "ON" : "OFF",
         USE_EXTERNAL_MIMALLOC: v.mimalloc ? "ON" : "OFF",
-        ...(platform.testPrograms ? { TEST_PROGRAMS: test ? platform.testPrograms.join(" ") : "" } : {}),
+        // Not without the compiler: testb3 and testair set the policies that only the compiler sets.
+        ...(platform.testPrograms ? { TEST_PROGRAMS: test && v.aot !== false ? platform.testPrograms.join(" ") : "" } : {}),
         ...platform.args(arch, v, variant),
       };
       // wtf/PlatformEnable.h turns it on wherever the FTL is on, unless it is defined. Every Dockerfile hands MARCH_FLAG to
@@ -323,6 +324,7 @@ const lanes = platforms.flatMap(platform =>
         test_runner: platform.tested?.[arch]?.on,
         test_quick: platform.tested?.[arch]?.quick ?? false,
         programs: programs(platform, arch, variant, test).join(" "),
+        aot: v.aot === false ? 0 : 1,
         image: imageRef(platform, arch, buildArgs),
         build_args: buildArgs,
       };
@@ -393,7 +395,7 @@ if (command === "build") {
   docker(image.lane, ["--target=base", "--tag", image.image, "--provenance=false", "--push"], args.includes("--dry-run"));
 } else if (command === "plan") {
   const matrix = include => JSON.stringify({ include });
-  const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs });
+  const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
   console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);

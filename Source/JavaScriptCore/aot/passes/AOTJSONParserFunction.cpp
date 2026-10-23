@@ -54,8 +54,10 @@ static Function buildParserOf(ResultNodeRef ref, FunctionRole role, DerivedFunct
     BlockID rejected = builder.addBlock(BlockFrequency::Rare);
     BlockID unknown = builder.addBlock(BlockFrequency::Rare);
 
-    if (node.isContainer())
+    if (node.isContainer()) {
+        builder.emitFailureOfPredictions(Target { unknown, { }, { } });
         parser.emitRequireStackSpace(unknown);
+    }
     ParsedValue parsed = emitOwnNode(parser, ref, cursor, { rejected, unknown });
     parser.emitReturnOf({ parser.appendOutcome(JSONOutcome::Parsed), parsed.value, parsed.next });
 

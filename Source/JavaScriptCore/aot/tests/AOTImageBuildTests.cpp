@@ -583,6 +583,8 @@ static void testManySharedCodeCopies()
     constexpr uint32_t numberOfBodies = 400;
     static_assert(bodySize < loweredSharedCodeReach);
     static_assert(numberOfBodies * bodySize >= leastNumberOfCopies * 2 * loweredSharedCodeReach, "One copy serves less than the reach on either side.");
+    if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)
+        return;
 
     TestBuild build(numberOfBodies + 1, sharedCodeReachOptions());
     TestImage image = builtImage(build, bodiesCallingStub(numberOfBodies, bodySize));

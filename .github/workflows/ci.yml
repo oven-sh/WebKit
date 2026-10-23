@@ -253,6 +253,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
           TEST: ${{ matrix.test }}
           PROGRAMS: ${{ matrix.programs }}
+          AOT: ${{ matrix.aot }}
           SOURCES: ${{ matrix.sources }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -268,6 +269,10 @@ jobs:
           node .github/scripts/lanes.mjs build "$LABEL" --output "$RUNNER_TEMP/bun-webkit" --base-image "$IMAGE"
           cd "$RUNNER_TEMP"
           echo "#define BUN_WEBKIT_VERSION \"$BUILD_REF\"" >> bun-webkit/include/cmakeconfig.h
+          # ENABLE_AOT stands on the lane's command line alone (lanes.mjs), and it changes the layout of classes in the
+          # headers. Whoever links these libraries and says nothing reads the headers as they were compiled here; bun
+          # compares BUN_WEBKIT_ENABLE_AOT with what it was told to build.
+          printf '#define BUN_WEBKIT_ENABLE_AOT %s\n#if !defined(ENABLE_AOT)\n#define ENABLE_AOT %s\n#endif\n' "$AOT" "$AOT" >> bun-webkit/include/cmakeconfig.h
           echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
           # Which programs this lane ships: `programs` in lanes.mjs.

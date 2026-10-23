@@ -926,7 +926,7 @@ static void testInstructionsOfReadsByKindOfField()
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(read.expected) && run.instructionsInStubs);
         if (*run.instructionsInStubs != read.budget)
             dataLogLn("a read by name of ", read.what, ": ", *run.instructionsInStubs, " instructions, the budget is ", read.budget);
-        isWithinBudget &= *run.instructionsInStubs <= read.budget;
+        isWithinBudget &= *run.instructionsInStubs <= read.budget || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
     }
     AOT_TEST_CHECK(isWithinBudget);
 #endif
@@ -970,7 +970,7 @@ static void testInstructionsOfReadsOfFiledFields()
         AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(read.value) && run.instructionsInStubs);
         if (*run.instructionsInStubs != read.budget)
             dataLogLn("a read by name of a filed field, ", nameOf(read.representation), ": ", *run.instructionsInStubs, " instructions, the budget is ", read.budget);
-        isWithinBudget &= *run.instructionsInStubs <= read.budget;
+        isWithinBudget &= *run.instructionsInStubs <= read.budget || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
     }
     AOT_TEST_CHECK(isWithinBudget);
 #endif

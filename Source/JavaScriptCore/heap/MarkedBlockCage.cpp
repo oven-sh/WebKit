@@ -118,7 +118,7 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
 {
     std::call_once(s_initializeOnce, [] {
         RELEASE_ASSERT(!g_jscConfig.initializeHasBeenCalled);
-        if (!Options::useAOT() || !Options::markedBlockCageSizeInMB())
+        if (!Options::runsCompiledImage() || !Options::markedBlockCageSizeInMB())
             return;
         size_t size = static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB;
         if (!hasOneBitSet(size) || size > maxSize) {

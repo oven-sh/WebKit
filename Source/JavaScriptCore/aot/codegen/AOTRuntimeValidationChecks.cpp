@@ -19,6 +19,7 @@
 #include "AOTIdentifierNumbering.h"
 #include "AOTPlacement.h"
 #include "AOTRepresentation.h"
+#include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotAccessEmitter.h"
@@ -94,6 +95,16 @@ void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const T
     m_out.appendTo(doesNotHold);
     reportFailure(kind, operand, id);
     m_out.appendTo(continuation);
+}
+
+void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
+{
+    if (!hasRegister(representationOf(id)) || isDeferredClosure(m_function, id))
+        return;
+    Operand operand = get(id);
+    if (!mayHoldPointer(operand) || typeOf(id).primitives & Primitive::Absent)
+        return;
+    failUnless(Condition(m_out.notZero64(operand.value)), ValidationFailureKind::UnspecifiedValueInspected, { }, id);
 }
 
 bool RuntimeValidationEmitter::hasTestableBits(ValueID id)

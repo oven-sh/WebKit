@@ -94,6 +94,7 @@ ValueID TypedResultExpander::appendOriginalCall(const TypedResultSite&)
 
 ValueID TypedResultExpander::emitParseOf(const TypedResultSite& site, ValueID textOrBytes, BlockID generic)
 {
+    builder().emitFailureOfPredictions(Target { generic, { }, { } });
     ValueID open = builder().append(Opcode::JSONSourceOpen, { textOrBytes });
     IRBuilder::ProvenBranch opened = builder().emitBranchWithProof(open, 0, BlockFrequency::Normal, BlockFrequency::Rare);
     builder().moveToEndOf(opened.notTaken);

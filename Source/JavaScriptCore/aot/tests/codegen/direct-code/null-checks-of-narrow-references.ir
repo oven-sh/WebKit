@@ -4,7 +4,7 @@
 # FORM: Selected
 # OPTIONS: heat=everything-is-hot references=narrow testing=NoLayoutIsMadeSeldom testing=GenerateAllCodeDirectly
 # RUN: generate-code FunctionsGeneratedDirectly
-# REQUIRES: unsanitized-code
+# REQUIRES: unsanitized-code not-windows
 # CHECK: f0: size={{*}} faults=1
 # CHECK: f1: size={{*}} faults=2
 # CHECK: f2: size={{*}} faults=1

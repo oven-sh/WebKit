@@ -740,6 +740,39 @@ static void testEvictedDependentsAreDroppedWhenTheTableHasDoubled(LoadedProgram&
     AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == numberStillFiled);
 }
 
+static void testNamedChangesOfAnObjectWithManyDependents(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    ObjectBelowPrototype fixture(program);
+    ChainDependents& dependents = *program.state().chainDependents;
+    constexpr unsigned numberOfNames = 500;
+    auto nameAt = [&](unsigned index) {
+        return Identifier::fromString(vm, makeString("indexed"_s, index));
+    };
+    for (unsigned index = 0; index < numberOfNames; ++index)
+        fixture.file(nameAt(index));
+    size_t numberLeft = dependents.numberOfDependents(fixture.prototype);
+    AOT_TEST_CHECK(numberLeft == numberOfNames);
+
+    for (unsigned index = 0; index < numberOfNames; index += 2) {
+        uint64_t numberDroppedBefore = valueOf(vm, RuntimeCounterID::ChainDependentsDropped);
+        fixture.prototype->putDirect(vm, nameAt(index), jsNumber(index));
+        AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::ChainDependentsDropped) == numberDroppedBefore + 1);
+        AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == --numberLeft);
+        AOT_TEST_CHECK(!fixture.find(nameAt(index)));
+    }
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    for (unsigned index = 1; index < numberOfNames; index += 2) {
+        size_t numberBefore = dependents.numberOfDependents(fixture.prototype);
+        bool wasFiled = fixture.isFiledAsAbsent(nameAt(index));
+        fixture.prototype->putDirect(vm, nameAt(index), jsNumber(index));
+        AOT_TEST_CHECK(!fixture.find(nameAt(index)));
+        AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) + wasFiled <= numberBefore);
+    }
+    didChangeChainObject(vm, fixture.prototype, nullptr);
+    AOT_TEST_CHECK(!dependents.hasDependents(fixture.prototype));
+}
+
 static void testNamelessChangeDropsEveryName(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1401,6 +1434,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/leaf-operations-answer-by-index"_s, withProgram<testLeafOperationsAnswerByIndex> },
         { "property-lookup/named-change-drops-only-that-name"_s, withProgram<testNamedChangeDropsOnlyThatName> },
         { "property-lookup/evicted-dependents-are-dropped-when-the-table-has-doubled"_s, withProgram<testEvictedDependentsAreDroppedWhenTheTableHasDoubled> },
+        { "property-lookup/named-changes-of-an-object-with-many-dependents"_s, withProgram<testNamedChangesOfAnObjectWithManyDependents> },
         { "property-lookup/nameless-change-drops-every-name"_s, withProgram<testNamelessChangeDropsEveryName> },
         { "property-lookup/fields-of-compiled-prototype"_s, withProgram<testFieldsOfCompiledPrototype> },
         { "property-lookup/unboxed-fields-of-compiled-prototype"_s, withProgramAddingProperties<testUnboxedFieldsOfCompiledPrototype> },

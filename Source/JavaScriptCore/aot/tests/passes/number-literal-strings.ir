@@ -1,11 +1,13 @@
-# Which literal strings get a word and in which order
+# Which literal strings get a word and in which order. Of a variable that no code names and the run time cannot find, only a text that code holds as a constant anyway
 # FORM: Prepared
 # RUN: pass NumberLiteralStrings
-# STATISTIC: LiteralStringsNumbered >= 9
+# STATISTIC: LiteralStringsNumbered >= 10
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Arrow" fields=[{key="direction" declared={type="left"|"right"}}]
 variable g0 name="mode" module=m0 declared={type="top"}
+variable g1 name="namedByNothing" module=m0 declared={type="bottom"}
+variable g2 name="foldedIntoItsReaders" module=m0 declared={type="kept"}
 function f0 name="first" parameters=[{type="south"|"north"}] results=[{type=undefined}] {
   b0(v0: "south"|"north"):
     Return
@@ -50,15 +52,30 @@ function f5 name="switched" parameters=[{type="south"|"north"}] results=[{type=u
   b3():
     Return
 }
+
+function f6 name="readsVariable" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+
+function f7 name="holdsConstant" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = String string="kept"
+    v2 = Call v0, -, v1
+    Return v2
+}
 # CHECK: 0 ""
 # CHECK-NEXT: 1 "left"
 # CHECK-NEXT: 2 "right"
 # CHECK-NEXT: 3 "top"
-# CHECK-NEXT: 4 "south"
-# CHECK-NEXT: 5 "north"
-# CHECK-NEXT: 6 "east"
-# CHECK-NEXT: 7 "center"
-# CHECK-NEXT: 8 "far"
+# CHECK-NEXT: 4 "kept"
+# CHECK-NEXT: 5 "south"
+# CHECK-NEXT: 6 "north"
+# CHECK-NEXT: 7 "east"
+# CHECK-NEXT: 8 "center"
+# CHECK-NEXT: 9 "far"
+# CHECK-NOT: "bottom"
 # CHECK-NOT: "west"
 # CHECK-NOT: "up"
 # CHECK: outcome: Unchanged

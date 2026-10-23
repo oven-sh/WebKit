@@ -1055,7 +1055,7 @@ void Heap::prepareForAllocation()
 
     m_objectSpace.prepareForAllocation();
 #if ASAN_ENABLED
-    if (Options::useAOT()) {
+    if (Options::runsCompiledImage()) {
         m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
             handle->poisonDeadCellsIfUnswept();
         });
@@ -2113,7 +2113,7 @@ bool Heap::stopIfNecessarySlow(unsigned oldState)
     // prevent us from polling this so much. Ideally, stopIfNecessary would ignore the mutatorHasConnBit
     // and there would be some other bit indicating whether we were in some GC phase other than the
     // NotRunning or Concurrent ones.
-    if ((oldState & mutatorHasConnBit) && !(Options::useAOT() && m_collector->isNotRunning()))
+    if ((oldState & mutatorHasConnBit) && !(Options::runsCompiledImage() && m_collector->isNotRunning()))
         collectInMutatorThread();
     
     return false;
@@ -2151,7 +2151,7 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         m_mutatorDidRun = true;
         // FIXME: We wouldn't need this if stopIfNecessarySlow() had a mode where it knew to just
         // do the collection.
-        if (!Options::useAOT())
+        if (!Options::runsCompiledImage())
             relinquishConn();
         else if (relinquishConn(oldState))
             continue;
@@ -2334,7 +2334,7 @@ void Heap::sweepAndClearCachesInEpilogue()
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
         vm().jsonCache().clearStrings();
         // Compiled code reads these tables itself. They have a fixed size, so what they keep is bounded.
-        if (!Options::useAOT())
+        if (!Options::runsCompiledImage())
             vm().numericStrings.clearOnGarbageCollection();
         vm().stringReplaceCache.clear();
     }
@@ -2598,7 +2598,7 @@ void Heap::updateAllocationLimits()
 #endif
     m_nonOversizedBytesAllocatedThisCycle = 0;
     m_oversizedBytesAllocatedThisCycle = 0;
-    m_hasAllocatedSinceLastCollection = !Options::useAOT();
+    m_hasAllocatedSinceLastCollection = !Options::runsCompiledImage();
     m_lastOversizedAllocationThisCycle = 0;
 
     dataLogIf(Options::logGC(), "=> ", currentHeapSize / 1024, "kb, ");
@@ -2761,7 +2761,7 @@ void Heap::disableStopIfNecessaryTimer()
 bool Heap::shouldSweepSynchronously()
 {
     // updateAllocationLimits() updates info that overCriticalMemoryThreshold() needs.
-    return (ASAN_ENABLED && Options::useAOT()) || overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
+    return (ASAN_ENABLED && Options::runsCompiledImage()) || overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
 }
 
 #if USE(BUN_JSC_ADDITIONS)

@@ -113,7 +113,7 @@ public:
         RELEASE_ASSERT(hasOneBitSet(preferredStructureHeapSize));
 
         uintptr_t mappedHeapSize = preferredStructureHeapSize;
-        if (Options::useAOT() && !Options::structureHeapSizeInKB())
+        if (Options::runsCompiledImage() && !Options::structureHeapSizeInKB())
             mappedHeapSize = structureHeapSizeWithinBudget(mappedHeapSize);
         for (unsigned i = 0; i < 8; ++i) {
             // We need to align the address range to mappedHeapSize to ensure that the range does not span
@@ -153,7 +153,7 @@ public:
         // Don't use the first page because zero is used as the empty StructureID and the first allocation will conflict.
         m_useSystemHeap = !bmalloc::api::isEnabled();
 #if USE(MIMALLOC)
-        if (Options::useAOT() && mappedHeapSize < smallestStructureHeapSizeForMimalloc)
+        if (Options::runsCompiledImage() && mappedHeapSize < smallestStructureHeapSizeForMimalloc)
             m_useSystemHeap = true;
 #endif
 #if USE(LIBPAS)
@@ -197,7 +197,7 @@ public:
     void* tryMallocStructureBlock()
     {
         void* block = tryMallocStructureBlockWithoutReserve();
-        if (block && Options::useAOT())
+        if (block && Options::runsCompiledImage())
             keepReserve();
         return block;
     }

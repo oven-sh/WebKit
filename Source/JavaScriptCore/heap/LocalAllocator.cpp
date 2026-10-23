@@ -160,7 +160,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
 #endif
     
 #if USE(BUN_JSC_ADDITIONS)
-    if (Options::useAOT() && m_directory->m_blocks.isEmpty() && !m_directory->m_subspace->isIsoSubspace()) {
+    if (Options::runsCompiledImage() && m_directory->m_blocks.isEmpty() && !m_directory->m_subspace->isIsoSubspace()) {
         if (void* result = static_cast<CompleteSubspace*>(m_directory->m_subspace)->tryAllocateInLargerCell(heap, *m_directory, deferralContext))
             return result;
     }

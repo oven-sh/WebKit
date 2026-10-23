@@ -40,7 +40,7 @@
 
 namespace JSC { namespace AOT {
 
-static_assert(static_cast<unsigned>(ValidationFailureKind::OperationWroteHeap) + 1 == numberOfValidationFailureKinds);
+static_assert(static_cast<unsigned>(ValidationFailureKind::UnspecifiedValueInspected) + 1 == numberOfValidationFailureKinds);
 
 ASCIILiteral nameOf(ValidationFailureKind kind)
 {
@@ -139,6 +139,8 @@ ASCIILiteral nameOf(ValidationFailureKind kind)
         return "OperationConvertedCell"_s;
     case ValidationFailureKind::OperationWroteHeap:
         return "OperationWroteHeap"_s;
+    case ValidationFailureKind::UnspecifiedValueInspected:
+        return "UnspecifiedValueInspected"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

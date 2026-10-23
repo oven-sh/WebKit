@@ -839,7 +839,7 @@ LLINT_SLOW_PATH_DECL(slow_path_create_lexical_environment)
     ASSERT(initialValue == jsUndefined() || initialValue == jsTDZValue());
     JSScope* newScope = JSLexicalEnvironment::create(vm, globalObject, currentScope, symbolTable, initialValue);
 #if ENABLE(AOT)
-    if (Options::useAOT())
+    if (Options::runsCompiledImage())
         AOT::Interpreter::checkPlacesInSymbolTable(*symbolTable);
 #endif
     LLINT_RETURN(newScope);

@@ -494,6 +494,21 @@ Integer ConversionEmitter::toInteger(Number value)
     return Integer(patchpoint);
 }
 
+#if CPU(ARM64)
+Integer ConversionEmitter::toNearestInteger(Number value)
+{
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int64);
+    patchpoint->append(value.value(), B3::ValueRep::SomeRegister);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->pureFunction = pureFunction(PureOperation::TruncateToInt64, 1, true);
+    patchpoint->setRunsWithoutFrame(true);
+    patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+    });
+    return Integer(patchpoint);
+}
+#endif
+
 struct ConversionEmitter::ExactInteger {
     Integer value;
     Range range;

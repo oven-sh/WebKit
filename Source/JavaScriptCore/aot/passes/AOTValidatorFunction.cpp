@@ -33,8 +33,10 @@ Function buildValidator(const DerivedFunctionKey& key, DerivedFunctionInputs& de
     ValidatorBuilder validator(builder, inputs);
     ValidationExits exits { builder.addBlock(BlockFrequency::Rare), builder.addBlock(BlockFrequency::Rare) };
 
-    if (node.isContainer())
+    if (node.isContainer()) {
+        builder.emitFailureOfPredictions(Target { exits.unknown, { }, { } });
         validator.emitJumpUnless(builder.append(Opcode::JSONHasStackSpace, { }), exits.unknown);
+    }
 
     bool isInterpreted = decideNodeCode({ inputs.program, inputs.flow, inputs.build }, ref, NodeUse::CopiedFromValue).code == NodeCode::Interpreted;
     ValueID input = head.parameters[0];

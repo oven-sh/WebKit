@@ -1001,7 +1001,7 @@ static Ref<NativeJITCode> jitCodeForCallTrampoline(Intrinsic intrinsic)
 #endif
 #if ENABLE(AOT) && !ENABLE(C_LOOP)
     case CharCodeAtIntrinsic: {
-        if (!Options::useAOT())
+        if (!Options::runsCompiledImage())
             return jitCodeForCallTrampoline(NoIntrinsic);
         static LazyNeverDestroyed<Ref<NativeJITCode>> result;
         static std::once_flag onceKey;

@@ -8,6 +8,7 @@
 #include <JavaScriptCore/JSExportMacros.h>
 #include <JavaScriptCore/WeakGCHashTable.h>
 #include <span>
+#include <wtf/FastBitVector.h>
 #include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -61,24 +62,26 @@ public:
     PropertyAdditionCache() = default;
     JS_EXPORT_PRIVATE ~PropertyAdditionCache() final;
 
-    static unsigned computeHash(unsigned propertyHash, unsigned numberOfProperties);
+    static unsigned computeHash(Structure* base, std::span<UniquedStringImpl* const> names);
+    static unsigned computeUnorderedHash(unsigned propertyHash, unsigned numberOfProperties);
     static bool matches(Structure*, Structure* base, const PropertyAdditionList&);
 
     bool isEmpty() const { return m_entries.isEmpty(); }
     unsigned size() const { return m_entries.size(); }
-    bool containsHash(unsigned hash) const;
-    JS_EXPORT_PRIVATE Structure* find(Structure* base, unsigned hash, const PropertyAdditionList&) const;
-    void add(VM&, Structure* base, unsigned hash, Structure*);
+    bool mayContainUnorderedHash(unsigned unorderedHash) const { return m_unorderedHashes.numBits() && m_unorderedHashes.at(unorderedHash & (m_unorderedHashes.numBits() - 1)); }
+    JS_EXPORT_PRIVATE Structure* find(Structure* base, const PropertyAdditionList&) const;
+    void add(VM&, Structure* base, std::span<UniquedStringImpl* const> names, unsigned unorderedHash, Structure*);
 
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) final;
 
 private:
     struct Entry {
         Entry() = default;
-        Entry(Structure* base, Structure* structure, unsigned hash)
+        Entry(Structure* base, Structure* structure, unsigned hash, unsigned unorderedHash)
             : base(base)
             , structure(structure)
             , hash(hash)
+            , unorderedHash(unorderedHash)
         {
         }
         Entry(WTF::HashTableDeletedValueType)
@@ -93,16 +96,23 @@ private:
         Structure* base { nullptr };
         mutable Structure* structure { nullptr };
         unsigned hash { 0 };
+        unsigned unorderedHash { 0 };
     };
     struct EntryHash {
         static unsigned hash(const Entry& entry) { return entry.hash; }
         static bool equal(const Entry& a, const Entry& b) { return a == b; }
         static constexpr bool safeToCompareToEmptyOrDeleted = true;
     };
-    struct HashTranslator;
     struct AdditionsTranslator;
 
+    static constexpr size_t bitsForEachEntry = 8;
+    static constexpr size_t fewestBits = 1024;
+
+    void rebuildUnorderedHashes();
+
     HashSet<Entry, EntryHash, SimpleClassHashTraits<Entry>> m_entries;
+    // One bit for the names of an entry in whatever order. It may say yes where there is nothing, never no where there is something.
+    FastBitVector m_unorderedHashes;
     VM* m_vm { nullptr };
 };
 

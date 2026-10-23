@@ -671,7 +671,7 @@ ALWAYS_INLINE void Structure::visitFields(Structure* thisObject, Visitor& visito
     } else if (isAnalyzingHeap)
         visitor.append(thisObject->m_propertyTableUnsafe);
     else if (thisObject->m_propertyTableUnsafe) {
-        if (Options::useAOT() && thisObject->canDropTransitionChain()) [[unlikely]]
+        if (Options::runsCompiledImage() && thisObject->canDropTransitionChain()) [[unlikely]]
             visitor.append(thisObject->m_propertyTableUnsafe);
         else
             thisObject->m_propertyTableUnsafe.clear();

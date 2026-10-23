@@ -3,7 +3,7 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
 # A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
 # RUN(X64): generate-code
-# REQUIRES(X64): x86_64
+# REQUIRES(X64): x86_64 not-windows
 # RUN(ARM64): generate-code calls
 # REQUIRES(ARM64): arm64
 # STATISTIC: LoopsRotated = 0

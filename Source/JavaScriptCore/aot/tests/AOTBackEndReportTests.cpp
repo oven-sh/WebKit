@@ -350,6 +350,41 @@ static void testFrameAddressUpsilonBeforeTerminalSuspension()
     });
 }
 
+static void testFrameAddressWrittenToPhiOnAnotherWay()
+{
+    checkNoViolation([](B3::Procedure& proc, Suspends suspends) {
+        B3::BasicBlock* root = proc.addBlock();
+        B3::BasicBlock* withAddress = proc.addBlock();
+        B3::BasicBlock* withSuspension = proc.addBlock();
+        B3::BasicBlock* join = proc.addBlock();
+        B3::Value* phi = appendPhi(proc, join, addressOrigin);
+        appendBranch(proc, root, withAddress, withSuspension);
+        appendUpsilon(proc, withAddress, appendSlotBase(proc, withAddress, otherOrigin), phi);
+        appendJump(proc, withAddress, join);
+        appendUpsilon(proc, withSuspension, withSuspension->appendNew<B3::Const64Value>(proc, originOf(otherOrigin), 0), phi);
+        appendSuspension(proc, withSuspension, suspends);
+        appendJump(proc, withSuspension, join);
+        appendReturn(proc, join, phi);
+    });
+
+    checkOneViolation([](B3::Procedure& proc, Suspends suspends) {
+        B3::BasicBlock* root = proc.addBlock();
+        B3::BasicBlock* withAddress = proc.addBlock();
+        B3::BasicBlock* withoutAddress = proc.addBlock();
+        B3::BasicBlock* suspending = proc.addBlock();
+        B3::BasicBlock* join = proc.addBlock();
+        B3::Value* phi = appendPhi(proc, join, addressOrigin);
+        appendBranch(proc, root, withAddress, withoutAddress);
+        appendUpsilon(proc, withAddress, appendSlotBase(proc, withAddress, otherOrigin), phi);
+        appendJump(proc, withAddress, suspending);
+        appendUpsilon(proc, withoutAddress, withoutAddress->appendNew<B3::Const64Value>(proc, originOf(otherOrigin), 0), phi);
+        appendJump(proc, withoutAddress, suspending);
+        appendSuspension(proc, suspending, suspends);
+        appendJump(proc, suspending, join);
+        appendReturn(proc, join, phi);
+    });
+}
+
 static void testFrameAddressPhiReadAfterUpsilon()
 {
     checkOneViolation([](B3::Procedure& proc, Suspends suspends) {
@@ -757,6 +792,7 @@ std::span<const NativeTest> backEndReportTests()
         { "frame-address-select"_s, testFrameAddressSelect },
         { "frame-address-loop"_s, testFrameAddressLoop },
         { "frame-address-upsilon-before-terminal-suspension"_s, testFrameAddressUpsilonBeforeTerminalSuspension },
+        { "frame-address-written-to-phi-on-another-way"_s, testFrameAddressWrittenToPhiOnAnotherWay },
         { "frame-address-phi-read-after-upsilon"_s, testFrameAddressPhiReadAfterUpsilon },
         { "frame-address-derived-in-later-round"_s, testFrameAddressDerivedInLaterRound },
         { "frame-address-late-argument"_s, testFrameAddressLateArgument },

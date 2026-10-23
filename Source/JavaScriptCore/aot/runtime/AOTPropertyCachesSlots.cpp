@@ -12,6 +12,7 @@
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include <limits>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT {
 
@@ -299,6 +300,33 @@ static bool slotInStorageAgrees(const Slot& slot, SlotAccess access, const Struc
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A Structure that has dropped its chain takes the first like chain that comes to it for its own: other objects built that one anew, name by name, while an object or a cache kept the end of the old one.
+// It no longer names the Structure of the slot then. The store replays the addition by the offset and the StructureID alone, so all that these two rely on is compared.
+static bool hasPropertiesOfAndOneMore(Structure* structure, Structure* newStructure, UniquedStringImpl* uid)
+{
+    if (structure->isDictionary() || newStructure->isDictionary() || newStructure->typeInfoBlob() != structure->typeInfoBlob() || newStructure->inlineCapacity() != structure->inlineCapacity())
+        return false;
+    if (newStructure->classInfoForCells() != structure->classInfoForCells() || newStructure->realm() != structure->realm() || !structure->hasMonoProto() || !newStructure->hasMonoProto() || newStructure->storedPrototype() != structure->storedPrototype())
+        return false;
+    if (newStructure->mayBePrototype() != structure->mayBePrototype() || newStructure->isStructureExtensible() != structure->isStructureExtensible() || newStructure->mayHaveImmutableProperties() != structure->mayHaveImmutableProperties())
+        return false;
+    // Each list is taken under the lock of the Structure that has the table, which may be one and the same for both.
+    Vector<PropertyTableEntry> properties = structure->getPropertiesConcurrently();
+    Vector<PropertyTableEntry> newProperties = newStructure->getPropertiesConcurrently();
+    if (newProperties.size() != properties.size() + 1)
+        return false;
+    UncheckedKeyHashMap<UniquedStringImpl*, std::pair<PropertyOffset, unsigned>> placesInNewStructure;
+    for (const PropertyTableEntry& entry : newProperties)
+        placesInNewStructure.add(entry.key(), std::pair { entry.offset(), entry.attributes() });
+    for (const PropertyTableEntry& entry : properties) {
+        auto place = placesInNewStructure.find(entry.key());
+        if (place == placesInNewStructure.end() || place->value != std::pair { entry.offset(), entry.attributes() })
+            return false;
+    }
+    auto added = placesInNewStructure.find(uid);
+    return added != placesInNewStructure.end() && !added->value.second;
+}
+
 static bool transitionSlotAgrees(const Slot& slot, SlotAccess access, const StructureLookupResult& found, UniquedStringImpl* uid)
 {
     if (found.outcome == StructureLookup::Own)
@@ -307,7 +335,9 @@ static bool transitionSlotAgrees(const Slot& slot, SlotAccess access, const Stru
         return false;
     Structure* structure = slot.structureID.decode();
     Structure* newStructure = slot.transition.newStructureID.decode();
-    return (newStructure->isTransitionFrom(structure) || isLastAdditionOfRun(structure, newStructure, uid)) && newStructure->getConcurrently(uid) == slot.offsetInStorage();
+    if (newStructure->getConcurrently(uid) != slot.offsetInStorage())
+        return false;
+    return newStructure->isTransitionFrom(structure) || isLastAdditionOfRun(structure, newStructure, uid) || hasPropertiesOfAndOneMore(structure, newStructure, uid);
 }
 
 bool slotAgreesWithStructures(VM& vm, const Slot& slot, SlotAccess access, UniquedStringImpl* uid)

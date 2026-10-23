@@ -182,16 +182,23 @@ static_assert(numberOfSwitches <= 64);
 
 constexpr ASCIILiteral nameOf(PolicySwitch policySwitch) { return enumName(policySwitch); }
 
+// Only the ahead-of-time compiler sets these. Without it they are constants, so the phases that hang on them are not in the binary.
+#if ENABLE(AOT)
+#define B3_POLICY_OF_CLIENT(Type, name) Type name
+#else
+#define B3_POLICY_OF_CLIENT(Type, name) static constexpr Type name { }
+#endif
+
 struct Policy {
-    AddressingPolicy addressing;
-    AllocationPolicy allocation;
+    B3_POLICY_OF_CLIENT(AddressingPolicy, addressing);
+    B3_POLICY_OF_CLIENT(AllocationPolicy, allocation);
     UpstreamPolicy upstream;
-    OptimizationPolicy optimization;
-    SelectionPolicy selection;
-    LoopPolicy loops;
-    SwitchLoweringPolicy switchLowering;
-    KnownPropertyPolicy knownProperties;
-    ValidationPolicy validation;
+    B3_POLICY_OF_CLIENT(OptimizationPolicy, optimization);
+    B3_POLICY_OF_CLIENT(SelectionPolicy, selection);
+    B3_POLICY_OF_CLIENT(LoopPolicy, loops);
+    B3_POLICY_OF_CLIENT(SwitchLoweringPolicy, switchLowering);
+    B3_POLICY_OF_CLIENT(KnownPropertyPolicy, knownProperties);
+    B3_POLICY_OF_CLIENT(ValidationPolicy, validation);
     LimitValues limits;
     CPUFeatureSet targetFeatures { CPUFeatureSet::host() };
     Air::Policy air;

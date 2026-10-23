@@ -321,7 +321,7 @@ RegisterID* ResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
     else {
 #if ENABLE(AOT)
         // Nobody reads a temporary behind a check that has thrown.
-        RefPtr<RegisterID> uncheckedResult = Options::useAOT() && finalDest->isTemporary() ? finalDest : generator.newTemporary();
+        RefPtr<RegisterID> uncheckedResult = Options::runsCompiledImage() && finalDest->isTemporary() ? finalDest : generator.newTemporary();
 #else
         RefPtr<RegisterID> uncheckedResult = generator.newTemporary();
 #endif
@@ -683,7 +683,7 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
     }
 
 #if ENABLE(AOT)
-    if (!newObject && Options::useAOT()) {
+    if (!newObject && Options::runsCompiledImage()) {
         constexpr unsigned maxNumberOfValues = 16;
         Vector<PropertyNode*, maxNumberOfValues> properties;
         bool canEvaluateValuesFirst = true;

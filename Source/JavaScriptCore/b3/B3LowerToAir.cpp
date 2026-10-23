@@ -810,7 +810,7 @@ private:
             return Arg::addr(tmp(address), offset);
         };
         
-        if (address->opcode() == SlotBase)
+        if (address->opcode() == SlotBase && m_procedure.policy().selection.extendsInstructionSelection)
             return Arg::stack(address->as<SlotBaseValue>()->slot(), offset);
 
         static constexpr unsigned lotsOfUses = 10; // This is arbitrary and we should tune it eventually.
@@ -862,6 +862,9 @@ private:
 
         case FramePointer:
             return Arg::addr(Tmp(GPRInfo::callFrameRegister), offset);
+
+        case SlotBase:
+            return Arg::stack(address->as<SlotBaseValue>()->slot(), offset);
 
         case WasmAddress: {
             WasmAddressValue* wasmAddress = address->as<WasmAddressValue>();
@@ -3097,7 +3100,7 @@ private:
         if (!canBeInternal(condition))
             return false;
 
-        if (!isSelectedAsCompareChain(m_procedure, condition, [&] (Value* value) { return canBeInternal(value); }))
+        if (m_procedure.policy().selection.extendsInstructionSelection && !isSelectedAsCompareChain(m_procedure, condition, [&] (Value* value) { return canBeInternal(value); }))
             return false;
 
         dataLogLnIf(B3LowerToAirInternal::verbose, "Attempting ccmp optimization for branch");

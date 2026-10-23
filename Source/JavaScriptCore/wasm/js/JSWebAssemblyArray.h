@@ -125,7 +125,7 @@ public:
     static ptrdiff_t paddingOverShapeWord(size_t elementSize)
     {
 #if ENABLE(AOT)
-        if (alignedOffsetOfData(elementSize) < offsetPastShapeWord && Options::useAOT()) [[unlikely]]
+        if (alignedOffsetOfData(elementSize) < offsetPastShapeWord && Options::runsCompiledImage()) [[unlikely]]
             return offsetPastShapeWord - alignedOffsetOfData(elementSize);
 #else
         UNUSED_PARAM(elementSize);

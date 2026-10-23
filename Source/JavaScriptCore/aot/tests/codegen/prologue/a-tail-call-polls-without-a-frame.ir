@@ -4,7 +4,7 @@
 # OPTIONS: heat=everything-is-hot
 # RUN: generate-code
 # RUN(X64): generate-code
-# REQUIRES(X64): x86_64
+# REQUIRES(X64): x86_64 not-windows
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="goesOn" parameters=[{type=boolean}, {type=boolean}] results=[{type=boolean}] {

@@ -10,6 +10,7 @@
 #include "JSCInlines.h"
 #include "PropertyTable.h"
 #include <wtf/HashFunctions.h>
+#include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
@@ -98,11 +99,6 @@ bool PropertyAdditionList::hasAttributes() const
     });
 }
 
-struct PropertyAdditionCache::HashTranslator {
-    static unsigned hash(unsigned hash) { return hash; }
-    static bool equal(const Entry& entry, unsigned hash) { return entry.structure && entry.hash == hash; }
-};
-
 struct PropertyAdditionCache::AdditionsTranslator {
     struct Query {
         Structure* base;
@@ -124,7 +120,16 @@ PropertyAdditionCache::~PropertyAdditionCache()
         m_vm->heap.unregisterWeakGCHashTable(this);
 }
 
-unsigned PropertyAdditionCache::computeHash(unsigned propertyHash, unsigned numberOfProperties)
+// The order of the names is part of the key, and so every order of one set of names has a place of its own. Addresses, not texts: whoever sends the names cannot choose the places.
+unsigned PropertyAdditionCache::computeHash(Structure* base, std::span<UniquedStringImpl* const> names)
+{
+    unsigned hash = PtrHash<Structure*>::hash(base);
+    for (UniquedStringImpl* name : names)
+        hash = WTF::pairIntHash(hash, PtrHash<UniquedStringImpl*>::hash(name));
+    return hash;
+}
+
+unsigned PropertyAdditionCache::computeUnorderedHash(unsigned propertyHash, unsigned numberOfProperties)
 {
     return WTF::pairIntHash(propertyHash, numberOfProperties);
 }
@@ -146,26 +151,34 @@ bool PropertyAdditionCache::matches(Structure* structure, Structure* base, const
     return true;
 }
 
-bool PropertyAdditionCache::containsHash(unsigned hash) const
+Structure* PropertyAdditionCache::find(Structure* base, const PropertyAdditionList& additions) const
 {
-    return m_entries.contains<HashTranslator>(hash);
-}
-
-Structure* PropertyAdditionCache::find(Structure* base, unsigned hash, const PropertyAdditionList& additions) const
-{
-    auto iterator = m_entries.find<AdditionsTranslator>(AdditionsTranslator::Query { base, hash, additions });
+    auto iterator = m_entries.find<AdditionsTranslator>(AdditionsTranslator::Query { base, computeHash(base, additions.names), additions });
     return iterator == m_entries.end() ? nullptr : iterator->structure;
 }
 
-void PropertyAdditionCache::add(VM& vm, Structure* base, unsigned hash, Structure* structure)
+void PropertyAdditionCache::add(VM& vm, Structure* base, std::span<UniquedStringImpl* const> names, unsigned unorderedHash, Structure* structure)
 {
-    ASSERT(!m_entries.contains(Entry { base, structure, hash }));
+    Entry entry { base, structure, computeHash(base, names), unorderedHash };
+    ASSERT(!m_entries.contains(entry));
     if (!m_vm) {
         m_vm = &vm;
         vm.heap.registerWeakGCHashTable(this);
     }
-    m_entries.add(Entry { base, structure, hash });
+    m_entries.add(entry);
+    if (m_entries.size() * bitsForEachEntry > m_unorderedHashes.numBits())
+        rebuildUnorderedHashes();
+    else
+        m_unorderedHashes.at(unorderedHash & (m_unorderedHashes.numBits() - 1)) = true;
     markDirty(vm);
+}
+
+void PropertyAdditionCache::rebuildUnorderedHashes()
+{
+    FastBitVector unorderedHashes(m_entries.isEmpty() ? 0 : std::max<size_t>(fewestBits, roundUpToPowerOfTwo(m_entries.size() * bitsForEachEntry * 2)));
+    for (const Entry& entry : m_entries)
+        unorderedHashes.at(entry.unorderedHash & (unorderedHashes.numBits() - 1)) = true;
+    m_unorderedHashes = unorderedHashes;
 }
 
 void PropertyAdditionCache::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
@@ -174,7 +187,8 @@ void PropertyAdditionCache::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionSco
         return !entry.structure || !vm.heap.isMarked(entry.base) || !vm.heap.isMarked(entry.structure);
     };
     if (collectionScope == CollectionScope::Full) {
-        m_entries.removeIf(isDead);
+        if (m_entries.removeIf(isDead))
+            rebuildUnorderedHashes();
         return;
     }
     for (const Entry& entry : m_entries) {

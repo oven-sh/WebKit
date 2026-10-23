@@ -76,7 +76,7 @@ static NEVER_INLINE void installBytecodeInterpreter(JSC::Opcode* opcodeMap, JSC:
 {
     llint_bytecode_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
 #if ENABLE(AOT)
-    if (Options::useAOT())
+    if (Options::runsCompiledImage())
         llint_aot_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
 #endif
     g_opcodeConfig.bytecodePCRangeStart = untagCodePtr<uintptr_t, CFunctionPtrTag>(llintBytecodePCRangeStart);

@@ -810,7 +810,7 @@ static void applyCompiledCodeDefaults()
 #else
     Options::useAOT() = false;
 #endif
-    if (!Options::useAOT())
+    if (!Options::runsCompiledImage())
         return;
     Options::useJIT() = false;
     Options::sizeClassProgression() = Options::sizeClassProgressionWithAOT();

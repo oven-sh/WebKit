@@ -7,17 +7,24 @@
 
 #if ENABLE(AOT)
 
+#include "AOTChildProcess.h"
 #include "AOTInstance.h"
 #include "AOTPropertyLookupTableTestSupport.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTVector.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include <array>
 #include <bit>
 #include <memory>
+#include <stdlib.h>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
+
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -906,6 +913,149 @@ void validatorRejectsSlotsThatDisagree()
     AOT_TEST_CHECK(!agrees(absentNumber, SlotAccess::Store, transitionSlot(owner, unrelatedTarget, offsets[0])));
 }
 
+// What a Structure looks like to a slot when it has dropped its chain and taken the like chain of other objects for its own: it adds the name to the same names at the same offsets, and names another predecessor.
+void validatorAcceptsAnAdditionToALikeChain()
+{
+    constexpr uint32_t numberOfProperties = JSFinalObject::defaultInlineCapacity + 3;
+    constexpr uint32_t addedNumber = numberOfProperties + 1;
+    constexpr uint32_t otherNumber = numberOfProperties + 2;
+    TableFixture fixture;
+    VM& vm = fixture.vm();
+    PropertyOffset offset = invalidOffset;
+    auto buildChain = [&](uint32_t leftOut, uint32_t readOnly) {
+        Structure* structure = fixture.createStructure();
+        for (uint32_t number = 1; number <= numberOfProperties; ++number) {
+            if (number != leftOut)
+                structure = fixture.addProperty(structure, number, offset, number == readOnly ? static_cast<unsigned>(PropertyAttribute::ReadOnly) : 0);
+        }
+        return structure;
+    };
+    Structure* kept = buildChain(0, 0);
+    Structure* like = buildChain(0, 0);
+    AOT_TEST_CHECK(kept != like);
+    PropertyOffset addedOffset = invalidOffset;
+    Structure* target = fixture.addProperty(like, addedNumber, addedOffset);
+    AOT_TEST_CHECK(!target->isTransitionFrom(kept));
+    auto agrees = [&](Structure* before, Structure* after, uint32_t number, PropertyOffset offsetOfSlot) {
+        return slotAgreesWithStructures(vm, transitionSlot(before, after, offsetOfSlot), SlotAccess::Store, fixture.uid(number));
+    };
+    AOT_TEST_CHECK(agrees(like, target, addedNumber, addedOffset));
+    AOT_TEST_CHECK(agrees(kept, target, addedNumber, addedOffset));
+    fixture.caches().set(kept, fixture.nameWithoutNumber(addedNumber), SlotAccess::Store, transitionSlot(kept, target, addedOffset));
+    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
+    fixture.caches().validate(vm);
+
+    AOT_TEST_CHECK(!agrees(kept, target, addedNumber, addedOffset + 1));
+    AOT_TEST_CHECK(!agrees(kept, target, otherNumber, addedOffset));
+    AOT_TEST_CHECK(!agrees(buildChain(2, 0), target, addedNumber, addedOffset));
+    AOT_TEST_CHECK(!agrees(buildChain(numberOfProperties, 0), target, addedNumber, addedOffset));
+    AOT_TEST_CHECK(!agrees(buildChain(0, 3), target, addedNumber, addedOffset));
+    AOT_TEST_CHECK(!agrees(kept, fixture.addProperty(target, otherNumber, offset), addedNumber, addedOffset));
+    Structure* belowAnother = fixture.createStructure(fixture.createPrototype());
+    for (uint32_t number = 1; number <= numberOfProperties; ++number)
+        belowAnother = fixture.addProperty(belowAnother, number, offset);
+    AOT_TEST_CHECK(!agrees(belowAnother, target, addedNumber, addedOffset));
+    ensureStillAliveHere(kept);
+    ensureStillAliveHere(target);
+
+    // The two hang on one Structure, and that one has the property table of both.
+    Structure* common = buildChain(0, 0);
+    Structure* left = fixture.addProperty(common, otherNumber, offset);
+    Structure* right = fixture.addProperty(fixture.addProperty(common, otherNumber + 1, offset), addedNumber, offset);
+    fixture.sweep(CollectionScope::Full);
+    AOT_TEST_CHECK(isValidOffset(common->get(vm, fixture.identifier(1))));
+    AOT_TEST_CHECK(!agrees(left, right, addedNumber, offset));
+    ensureStillAliveHere(left);
+    ensureStillAliveHere(right);
+}
+
+// The object above has the name already and has not said so yet.
+void validatorLeavesWhatAnUnreportedChangeIsAboutToDrop()
+{
+    constexpr uint32_t number = 1;
+    TableFixture fixture;
+    VM& vm = fixture.vm();
+    JSObject* changing = fixture.createPrototype();
+    JSObject* between = constructEmptyObject(vm, fixture.createStructure(changing));
+    between->didBecomePrototype(vm);
+    Structure* owner = fixture.createStructure(between);
+    Structure* unrelatedOwner = fixture.createStructure(fixture.createPrototype());
+    fixture.caches().set(owner, fixture.nameWithoutNumber(number), SlotAccess::Read, absentSlot(owner));
+    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
+    fixture.caches().validate(vm);
+    AOT_TEST_CHECK(!fixture.caches().isBelowUnreportedChange(owner));
+    {
+        VMPropertyCaches::UnreportedChange change(fixture.caches(), changing);
+        changing->putDirect(vm, fixture.identifier(number), jsNull());
+        AOT_TEST_CHECK(!slotAgreesWithStructures(vm, absentSlot(owner), SlotAccess::Read, fixture.uid(number)));
+        AOT_TEST_CHECK(fixture.caches().isBelowUnreportedChange(owner) && !fixture.caches().isBelowUnreportedChange(unrelatedOwner));
+        fixture.caches().validate(vm);
+        fixture.caches().remove(owner->id(), fixture.nameWithoutNumber(number), SlotAccess::Read);
+    }
+    AOT_TEST_CHECK(!fixture.caches().isBelowUnreportedChange(owner));
+    fixture.caches().validate(vm);
+    ensureStillAliveHere(owner);
+    ensureStillAliveHere(unrelatedOwner);
+}
+
+constexpr const char* staleRowVariable = "TESTAOT_STALE_ROW";
+
+static void setStaleRowRequest(const char* whichOrNull)
+{
+#if OS(WINDOWS)
+    SetEnvironmentVariableA(staleRowVariable, whichOrNull);
+#else
+    if (whichOrNull)
+        setenv(staleRowVariable, whichOrNull, 1);
+    else
+        unsetenv(staleRowVariable);
+#endif
+}
+
+// The controls of the two tests above: the same rows, one step further, stop the run.
+void validatorStopsAtStaleRows()
+{
+    const char* requested = getenv(staleRowVariable);
+    if (!requested) {
+        for (const char* which : { "unreported", "addition" }) {
+            ChildProcessLauncher launcher(String(programPath()), { });
+            Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), "property-lookup-table/validator-stops-at-stale-rows"_s };
+            setStaleRowRequest(which);
+            ChildProcessResult result = launcher.run(arguments.span());
+            setStaleRowRequest(nullptr);
+            AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
+            AOT_TEST_CHECK(result.output.contains("AOT validation: a row of the property caches does not agree with the Structure it is filed under"_s));
+            AOT_TEST_CHECK(result.output.contains(makeString("AOT validation: "_s, nameOf(ValidationFailureKind::CacheHitDiffers))));
+        }
+        return;
+    }
+
+    constexpr uint32_t number = 1;
+    constexpr uint32_t otherNumber = 2;
+    TableFixture fixture;
+    VM& vm = fixture.vm();
+    if (!strcmp(requested, "unreported")) {
+        JSObject* changing = fixture.createPrototype();
+        Structure* owner = fixture.createStructure(changing);
+        fixture.caches().set(owner, fixture.nameWithoutNumber(number), SlotAccess::Read, absentSlot(owner));
+        AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
+        {
+            VMPropertyCaches::UnreportedChange change(fixture.caches(), changing);
+            changing->putDirect(vm, fixture.identifier(number), jsNull());
+            fixture.caches().validate(vm);
+        }
+        fixture.caches().validate(vm);
+        return;
+    }
+    PropertyOffset offset = invalidOffset;
+    Structure* kept = fixture.addProperty(fixture.createStructure(), number, offset);
+    Structure* unlike = fixture.addProperty(fixture.createStructure(), otherNumber, offset);
+    Structure* target = fixture.addProperty(unlike, number + 2, offset);
+    fixture.caches().set(kept, fixture.nameWithoutNumber(number + 2), SlotAccess::Store, transitionSlot(kept, target, offset));
+    AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
+    fixture.caches().validate(vm);
+}
+
 } // namespace
 
 std::span<const NativeTest> propertyLookupTableTests()
@@ -938,6 +1088,9 @@ std::span<const NativeTest> propertyLookupTableTests()
         { "property-lookup-table/validator-accepts-own-entries"_s, validatorAcceptsOwnEntries },
         { "property-lookup-table/validator-accepts-inherited-entries"_s, validatorAcceptsInheritedEntries },
         { "property-lookup-table/validator-rejects-slots-that-disagree"_s, validatorRejectsSlotsThatDisagree },
+        { "property-lookup-table/validator-accepts-an-addition-to-a-like-chain"_s, validatorAcceptsAnAdditionToALikeChain },
+        { "property-lookup-table/validator-leaves-what-an-unreported-change-is-about-to-drop"_s, validatorLeavesWhatAnUnreportedChangeIsAboutToDrop },
+        { "property-lookup-table/validator-stops-at-stale-rows"_s, validatorStopsAtStaleRows },
     };
     return tests;
 }

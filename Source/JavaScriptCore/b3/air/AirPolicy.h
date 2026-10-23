@@ -13,17 +13,24 @@
 
 namespace JSC { namespace B3 { namespace Air {
 
+// Only the ahead-of-time compiler sets these. Without it they are constants, so what hangs on them is not in the binary.
+#if ENABLE(AOT)
+#define AIR_POLICY_OF_CLIENT(type, name, value) type name { value }
+#else
+#define AIR_POLICY_OF_CLIENT(type, name, value) static constexpr type name { value }
+#endif
+
 struct RegisterPolicy {
     bool randomizesRegisterOrder { false };
     std::optional<unsigned> registerOrderSeed;
     double rareBlockPenalty { 0.001 };
     bool spillsEverything { false };
 
-    bool chargesForCalleeSaves { false };
-    bool discountsPreferredRegisterMoves { false };
-    bool hintsTwoAddressOperands { false };
-    bool usesSecondPreferredRegister { false };
-    bool evictsHolderOfPreferredRegister { false };
+    AIR_POLICY_OF_CLIENT(bool, chargesForCalleeSaves, false);
+    AIR_POLICY_OF_CLIENT(bool, discountsPreferredRegisterMoves, false);
+    AIR_POLICY_OF_CLIENT(bool, hintsTwoAddressOperands, false);
+    AIR_POLICY_OF_CLIENT(bool, usesSecondPreferredRegister, false);
+    AIR_POLICY_OF_CLIENT(bool, evictsHolderOfPreferredRegister, false);
 
     RegisterSet unsavedCalleeSaves;
     RegisterSet savedByCallee;
@@ -36,54 +43,54 @@ struct LiveRangeSplitPolicy {
     double splitMultiplier { 2.0 };
     double maxLoopFractionOfLiveRange { 0.75 };
 
-    bool splitsAroundClobbersEarly { false };
-    bool spansStretchesOfClobbers { false };
-    bool limitsClobberSitesPerSplit { false };
-    bool splitsIntoClustersOverBlocks { false };
-    bool splitsAroundFrame { false };
+    AIR_POLICY_OF_CLIENT(bool, splitsAroundClobbersEarly, false);
+    AIR_POLICY_OF_CLIENT(bool, spansStretchesOfClobbers, false);
+    AIR_POLICY_OF_CLIENT(bool, limitsClobberSitesPerSplit, false);
+    AIR_POLICY_OF_CLIENT(bool, splitsIntoClustersOverBlocks, false);
+    AIR_POLICY_OF_CLIENT(bool, splitsAroundFrame, false);
 };
 
 struct FramePolicy {
     bool coalescesSpillSlots { true };
 
-    bool emitsFrame { false };
-    bool shrinkWraps { false };
+    AIR_POLICY_OF_CLIENT(bool, emitsFrame, false);
+    AIR_POLICY_OF_CLIENT(bool, shrinkWraps, false);
     // With shrinkWraps: a function of which no path needs a frame has none, and a frame that some path needs is set up at the entry.
-    bool setsUpFrameAtEntry { false };
-    unsigned maxBytesAllocatedBeforeStackCheck { 0 };
+    AIR_POLICY_OF_CLIENT(bool, setsUpFrameAtEntry, false);
+    AIR_POLICY_OF_CLIENT(unsigned, maxBytesAllocatedBeforeStackCheck, 0);
     RegisterSet registersClobberedByFrameSetup;
 
-    bool mayPlaceSlotsAboveFrameRecord { false };
-    bool mayPushCalleeSaves { false };
-    bool mayPushSpillsAtFrameSetup { false };
-    bool ordersSlotsByUse { false };
-    bool prefersStackPointerAddresses { false };
-    bool mayOmitFrameRecord { false };
+    AIR_POLICY_OF_CLIENT(bool, mayPlaceSlotsAboveFrameRecord, false);
+    AIR_POLICY_OF_CLIENT(bool, mayPushCalleeSaves, false);
+    AIR_POLICY_OF_CLIENT(bool, mayPushSpillsAtFrameSetup, false);
+    AIR_POLICY_OF_CLIENT(bool, ordersSlotsByUse, false);
+    AIR_POLICY_OF_CLIENT(bool, prefersStackPointerAddresses, false);
+    AIR_POLICY_OF_CLIENT(bool, mayOmitFrameRecord, false);
     // A frame without a record saves instructions each time it is set up, and its addresses are a byte longer. For a function that sets its frame up at most entries.
-    unsigned maxBytesAddedWithoutFrameRecord { 0 };
+    AIR_POLICY_OF_CLIENT(unsigned, maxBytesAddedWithoutFrameRecord, 0);
 };
 
 struct LayoutPolicy {
-    bool movesBlocksWithoutSuccessorsToEnd { false };
-    bool placesRareBlocksInGaps { false };
-    bool placesRareBlocksAfterGuards { false };
-    bool makesGapsForRareBlocks { false };
-    bool ordersBlocksByEdgeFrequency { false };
-    bool recordsRareCodeStart { false };
-    bool mergesIdenticalBlocks { false };
-    bool duplicatesReturns { false };
+    AIR_POLICY_OF_CLIENT(bool, movesBlocksWithoutSuccessorsToEnd, false);
+    AIR_POLICY_OF_CLIENT(bool, placesRareBlocksInGaps, false);
+    AIR_POLICY_OF_CLIENT(bool, placesRareBlocksAfterGuards, false);
+    AIR_POLICY_OF_CLIENT(bool, makesGapsForRareBlocks, false);
+    AIR_POLICY_OF_CLIENT(bool, ordersBlocksByEdgeFrequency, false);
+    AIR_POLICY_OF_CLIENT(bool, recordsRareCodeStart, false);
+    AIR_POLICY_OF_CLIENT(bool, mergesIdenticalBlocks, false);
+    AIR_POLICY_OF_CLIENT(bool, duplicatesReturns, false);
 };
 
 struct PeepholePolicy {
     bool pairsSpillAccesses { true };
 
-    bool forwardsRegisterCopies { false };
-    bool hoistsCommonMoves { false };
-    bool reusesConditionFlags { false };
-    bool pairsMemoryAccesses { false };
-    bool resequencesMovesBeforePatches { false };
-    bool emitsShufflesInPairOrder { false };
-    uint32_t trapReach { 0 };
+    AIR_POLICY_OF_CLIENT(bool, forwardsRegisterCopies, false);
+    AIR_POLICY_OF_CLIENT(bool, hoistsCommonMoves, false);
+    AIR_POLICY_OF_CLIENT(bool, reusesConditionFlags, false);
+    AIR_POLICY_OF_CLIENT(bool, pairsMemoryAccesses, false);
+    AIR_POLICY_OF_CLIENT(bool, resequencesMovesBeforePatches, false);
+    AIR_POLICY_OF_CLIENT(bool, emitsShufflesInPairOrder, false);
+    AIR_POLICY_OF_CLIENT(uint32_t, trapReach, 0);
 };
 
 struct Policy {

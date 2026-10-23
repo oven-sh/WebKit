@@ -1745,6 +1745,13 @@ public:
             m_function.edit(saved.id, ValueEdit::Type).type = saved.type;
             m_function.edit(saved.id, ValueEdit::Type).setExpected(saved.expected);
         }
+        for (const SavedTypes& saved : m_typesBeforeRounds) {
+            const Value& value = m_function.at(saved.id);
+            if (value.type == saved.type && value.expected() == saved.expected)
+                continue;
+            m_function.edit(saved.id, ValueEdit::Type).type = saved.type;
+            m_function.edit(saved.id, ValueEdit::Type).setExpected(saved.expected);
+        }
     }
 
     void type(std::span<const ValueID> asked)
@@ -1755,6 +1762,10 @@ public:
             return;
         letEverythingThroughCasts();
         if (isTypedFromItself()) {
+            // Rounds that do not end within their limit type every value of the body.
+            m_typesBeforeRounds = Vector<SavedTypes>(m_function.values.size(), [&](size_t index) {
+                return SavedTypes { ValueID(index), m_function.values[index].type, m_function.values[index].expected() };
+            });
             m_propagation.restartListedValues(m_valuesToType.span());
             m_propagation.solveTypes();
             return;
@@ -1923,6 +1934,7 @@ private:
     Vector<ValueID, 64> m_sources;
     Vector<ValueID, 32> m_valuesToType;
     Vector<SavedTypes, 32> m_types;
+    Vector<SavedTypes> m_typesBeforeRounds;
     Vector<SavedCast, 16> m_casts;
     Vector<PlaceOfParameter> m_placesOfParameters;
 };

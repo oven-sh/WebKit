@@ -362,6 +362,8 @@ static void testOneCopy()
 
 static void testSeveralCopies()
 {
+    if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)
+        return;
     Steps steps(largeStubCallers(), sharedCodeReachOptions());
     steps.layOut();
     AOT_TEST_CHECK(steps.layout.sharedCodeSize < loweredSharedCodeReach / 2);

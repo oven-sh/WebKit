@@ -172,6 +172,15 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (holdsAnything(holdersOfExports))
             connect(m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports), m_statement.result);
     }
+    // The unknown object answers with no member of Bun: see isMemberOfBun(). Where the text names a function of Bun, as in `(await import("bun")).peek`, a call of what is read applies it: see runCall(). Whoever hands it on,
+    // as `peek.call()` does, has it listed.
+    if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_statement.function && m_statement.site && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
+        BuiltinID named = entryNamedByOperations(m_program, m_program.at(m_statement.function), m_statement.site);
+        if (named && isMemberOfBun(named) && m_context.sets().contains(m_universe.builtinFunctions(), m_universe.objectOf(named))) {
+            use(named, BuiltinUse::Read);
+            add(m_statement.result, only(m_universe.objectOf(named)));
+        }
+    }
     // And for whoever goes on to a prototype object: `globalThis[name].prototype` answers the prototype object of a constructor that the operand lists, though the constructor has escaped.
     if (key.keyClass == HeapKeyClass::Name && key.name == m_tables.prototypeKey() && object.node && mayBeUnknownObject(receivers)) {
         ClimbingSet listed = m_context.valueWithin(ClimbingSet(m_tables.under(key.name).holders), object.node);

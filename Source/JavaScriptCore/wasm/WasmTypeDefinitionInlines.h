@@ -41,7 +41,7 @@ static constexpr unsigned structPayloadOffsetPastShapeWord = sizeof(uint64_t);
 inline unsigned offsetOfFirstStructFieldInPayload()
 {
 #if ENABLE(AOT)
-    if (Options::useAOT()) [[unlikely]]
+    if (Options::runsCompiledImage()) [[unlikely]]
         return structPayloadOffsetPastShapeWord;
 #endif
     return 0;

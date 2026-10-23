@@ -76,7 +76,7 @@ void AccessRewriter::becomeSlotOperation(const NamedAccessSite& site, const Acce
     SlotStamp stamp = createSlotStamp(m_context, value, plan);
 
     ASSERT(program.typeOf(function, operands.receiver).isSubsetOf(Type::object(), program));
-    ASSERT(operands.guard || program.typeOf(function, operands.receiver).hasOnlyLayouts(program));
+    ASSERT(operands.guard || program.typeOf(function, operands.receiver).isNever() || program.typeOf(function, operands.receiver).hasOnlyLayouts(program));
     ASSERT(!plan.stores() || isInsideStoredType(program, program.typeOf(function, operands.stored), plan.receivers.span(), stamp.key));
 
     value.become(plan.operation);

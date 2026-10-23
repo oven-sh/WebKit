@@ -14,6 +14,7 @@
 #include "AOTClosureTable.h"
 #include "AOTInstance.h"
 #include "AOTObjectModel.h"
+#include "AOTPropertyCaches.h"
 #include "AOTState.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
@@ -66,6 +67,7 @@ void ClassPrototype::createMembers(JSObject* object)
     ClassTable& classes = state.objects->classes;
     const LayoutData& classLayout = *classes.classWithIndex(uncheckedDowncast<ClassPrototype>(object)->classIndex());
     Closure* classObject = uncheckedDowncast<Closure>(state.objects->closures.closure(vm, FunctionID(classLayout.classData().classConstructor)));
+    VMPropertyCaches::UnreportedChange change(*vm.aotState().propertyCaches, object);
     classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::PrototypeMembers);
     RELEASE_ASSERT(object->type() == FinalObjectType);
     state.chainDependents->didChange(object, nullptr);

@@ -372,8 +372,10 @@ Integer StringEmitter::truncateToInteger(Number position)
     position = select(equal(position, position), position, number(0));
     position = select(greaterThan(position, limit), limit, position);
     position = select(lessThan(position, negativeLimit), negativeLimit, position);
-#endif
     return emitter<ConversionEmitter>().toInteger(position);
+#else
+    return emitter<ConversionEmitter>().toNearestInteger(position);
+#endif
 }
 
 StringPosition StringEmitter::truncatedPositionOf(Number position, StringRangeMethod method)

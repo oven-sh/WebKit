@@ -28,6 +28,7 @@ struct LiveValueNumbers {
     {
         values.merge(other.values);
         phiShadows.merge(other.phiShadows);
+        phiShadowsReadBehindSuspension.merge(other.phiShadowsReadBehindSuspension);
     }
 
     bool operator==(const LiveValueNumbers&) const = default;
@@ -38,10 +39,17 @@ struct LiveValueNumbers {
             phiShadows.add(number);
     }
 
-    bool killPhiShadow(size_t phiNumber) { return phiShadows.remove(phiNumber); }
+    bool killPhiShadow(size_t phiNumber)
+    {
+        phiShadows.remove(phiNumber);
+        return phiShadowsReadBehindSuspension.remove(phiNumber);
+    }
+
+    void didReachSuspension() { phiShadowsReadBehindSuspension.merge(phiShadows); }
 
     BitVector values;
     BitVector phiShadows;
+    BitVector phiShadowsReadBehindSuspension;
 };
 
 bool isLateUse(B3::ValueRep::Kind constraint)
@@ -82,18 +90,27 @@ public:
         if (m_derivedValues.isEmpty())
             return;
         computeLiveness();
+        m_lastSuspensionOfShadow.fill(B3::Origin(), m_derivedValues.size());
+        BitVector shadowsWrittenWithAddress;
         for (B3::BasicBlock* block : m_proc) {
             LiveValueNumbers live;
             visitBlockBackwards(block, live, [&](const B3::PatchpointValue& suspension, const LiveValueNumbers& liveAfterSuspension) {
                 appendViolations(suspension, liveAfterSuspension);
+            }, [&](size_t phiNumber) {
+                shadowsWrittenWithAddress.add(phiNumber);
             });
+        }
+        for (size_t number : shadowsWrittenWithAddress) {
+            if (!m_valuesReported.get(number))
+                m_violations.append(FrameAddressViolation { m_derivedValues[number]->origin(), m_lastSuspensionOfShadow[number] });
         }
     }
 
 private:
     bool isSuspension(const B3::Value* value) const
     {
-        if (value->opcode() != B3::Patchpoint)
+        const auto* patchpoint = value->as<B3::PatchpointValue>();
+        if (!patchpoint || patchpoint->pureFunction)
             return false;
         Typed::ValueID origin = Typed::valueOfOrigin(value->origin());
         return origin && m_originsOfSuspensions.get(origin.index());
@@ -169,7 +186,7 @@ private:
             changed = false;
             for (B3::BasicBlock* block : blocksInPostOrder) {
                 LiveValueNumbers live;
-                visitBlockBackwards(block, live, [](const B3::PatchpointValue&, const LiveValueNumbers&) { });
+                visitBlockBackwards(block, live, [](const B3::PatchpointValue&, const LiveValueNumbers&) { }, [](size_t) { });
                 if (live == m_liveAtHead[block->index()])
                     continue;
                 m_liveAtHead[block->index()] = WTF::move(live);
@@ -178,8 +195,8 @@ private:
         }
     }
 
-    template<typename Functor>
-    void visitBlockBackwards(B3::BasicBlock* block, LiveValueNumbers& live, const Functor& functor)
+    template<typename SuspensionFunctor, typename ShadowFunctor>
+    void visitBlockBackwards(B3::BasicBlock* block, LiveValueNumbers& live, const SuspensionFunctor& functor, const ShadowFunctor& didWriteAddressReadBehindSuspension)
     {
         for (B3::BasicBlock* successor : block->successorBlocks())
             live.merge(m_liveAtHead[successor->index()]);
@@ -187,13 +204,15 @@ private:
         for (unsigned index = block->size(); index--;) {
             B3::Value* value = block->at(index);
             if (auto* upsilon = value->as<B3::UpsilonValue>()) {
-                if (isDerived(upsilon->phi()))
-                    live.killPhiShadow(m_numberOf[upsilon->phi()]);
+                if (isDerived(upsilon->phi()) && live.killPhiShadow(m_numberOf[upsilon->phi()]) && isDerived(upsilon->child(0)))
+                    didWriteAddressReadBehindSuspension(m_numberOf[upsilon->phi()]);
             } else if (isDerived(value))
                 live.killValue(m_numberOf[value], *value);
 
-            if (isSuspension(value))
+            if (isSuspension(value)) {
                 functor(*value->as<B3::PatchpointValue>(), live);
+                live.didReachSuspension();
+            }
 
             for (B3::Value* child : value->children()) {
                 if (isDerived(child))
@@ -205,9 +224,10 @@ private:
     void appendViolations(const B3::PatchpointValue& suspension, const LiveValueNumbers& live)
     {
         BitVector reported = live.values;
-        reported.merge(live.phiShadows);
         for (size_t number : reported)
             appendViolation(suspension, number);
+        for (size_t number : live.phiShadows)
+            m_lastSuspensionOfShadow[number] = suspension.origin();
 
         for (unsigned index = 0; index < suspension.numChildren(); ++index) {
             B3::Value* child = suspension.child(index);
@@ -221,6 +241,7 @@ private:
     void appendViolation(const B3::PatchpointValue& suspension, size_t number)
     {
         m_violations.append(FrameAddressViolation { m_derivedValues[number]->origin(), suspension.origin() });
+        m_valuesReported.add(number);
     }
 
     B3::Procedure& m_proc;
@@ -230,6 +251,8 @@ private:
     Vector<B3::Value*> m_derivedValues;
     IndexMap<B3::Value*, unsigned> m_numberOf;
     Vector<LiveValueNumbers> m_liveAtHead;
+    Vector<B3::Origin> m_lastSuspensionOfShadow;
+    BitVector m_valuesReported;
 };
 
 } // anonymous namespace

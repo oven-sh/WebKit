@@ -44,6 +44,7 @@ Policy Policy::fromProcessOptions()
 
 void Policy::disable(PolicySwitch policySwitch)
 {
+#if ENABLE(AOT)
     switch (policySwitch) {
     case PolicySwitch::MemoryNumbering:
         optimization.redundancyElimination = RedundancyElimination::CommonSubexpressions;
@@ -113,6 +114,7 @@ void Policy::disable(PolicySwitch policySwitch)
         air.peepholes.trapReach = 0;
         break;
     }
+#endif
     m_disabledSwitches |= maskOf(policySwitch);
 }
 

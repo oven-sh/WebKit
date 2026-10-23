@@ -490,7 +490,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
         metadata.m_objectAllocationProfile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
 #if ENABLE(AOT)
-        if (Options::useAOT())
+        if (Options::runsCompiledImage())
             AOT::Interpreter::didLinkNewObject(metadata.m_objectAllocationProfile);
 #endif
     };
@@ -875,7 +875,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 #undef LINK
 
 #if ENABLE(AOT)
-    if (Options::useAOT())
+    if (Options::runsCompiledImage())
         AOT::Interpreter::fuseReadsOfClosureVariables(*this);
 #endif
 

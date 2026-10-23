@@ -83,6 +83,23 @@ public:
 
     void validate(VM&) const;
 
+    // An object of some chain that is changed first and reports behind that. A collection may end in between. No compiled code runs there, so validation leaves alone what the report is about to drop.
+    class UnreportedChange {
+        WTF_MAKE_NONCOPYABLE(UnreportedChange);
+    public:
+        UnreportedChange(VMPropertyCaches& caches, JSObject* changing)
+            : m_caches(caches)
+        {
+            m_caches.m_objectsWithUnreportedChange.append(changing);
+        }
+
+        ~UnreportedChange() { m_caches.m_objectsWithUnreportedChange.removeLast(); }
+
+    private:
+        VMPropertyCaches& m_caches;
+    };
+    bool isBelowUnreportedChange(Structure*) const;
+
 private:
     using ColumnsByNameAddress = UncheckedKeyHashMap<UniquedStringImpl*, uint16_t, WTF::PtrHash<UniquedStringImpl*>>;
 
@@ -106,6 +123,7 @@ private:
     std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64> m_namesOfObjectPrototypes { };
     std::array<uint8_t, MissesOfPairs::numberOfCounters> m_missesOfPairs { };
     std::array<NameOfText, NameOfText::numberOfEntries> m_namesOfTexts { };
+    Vector<JSObject*, 2> m_objectsWithUnreportedChange;
     bool m_hasInstance { false };
     bool m_isSharedByInstances { false };
 };
