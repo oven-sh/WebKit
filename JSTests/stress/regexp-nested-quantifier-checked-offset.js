@@ -1,6 +1,6 @@
-//@ skip if not $jitTests
 //@ runDefault
-// Only with the JIT: the interpreter rejects some of these patterns.
+//@ runDefault("--useRegExpJIT=0")
+//@ runDefault("--useLazyRegExpPatternConstruction=0")
 
 // Each alternative claims at most INT_MAX characters, but a nested one claims on top of the ones around it.
 
