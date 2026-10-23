@@ -41,13 +41,19 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeCache);
 void CodeCacheMap::pruneSlowCase()
 {
     m_minCapacity = std::max(m_size - m_sizeAtLastPrune, static_cast<int64_t>(0));
+#if !USE(BUN_JSC_ADDITIONS)
     m_sizeAtLastPrune = m_size;
+#endif
     m_timeAtLastPrune = ApproximateTime::now();
 
     if (m_capacity < m_minCapacity)
         m_capacity = m_minCapacity;
 
+#if USE(BUN_JSC_ADDITIONS)
+    while (m_size > m_capacity) {
+#else
     while (m_size > m_capacity || !canPruneQuickly()) {
+#endif
         // Not begin(): it walks past every empty bucket in front of the first entry, and evicting that entry each
         // time empties the front of the table, so one eviction costs a walk over a large part of the table.
         // The least recently used of a few random entries instead, so a source that is used again and again stays.
@@ -60,9 +66,16 @@ void CodeCacheMap::pruneSlowCase()
 
         writeCodeBlock(it->key, it->value);
 
-        m_size -= it->key.length();
+        m_size -= weight(it->key);
         m_map.remove(it);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // What is left after the eviction, not what there was before it: the next window admits
+    // Options::codeCacheWorkingSetMaxBytes on top of this, so a stream of sources that never repeat peaks at two windows.
+    // Recorded before the eviction, each window would start where the last one peaked, and the peaks would grow without
+    // bound.
+    m_sizeAtLastPrune = m_size;
+#endif
 }
 
 void CodeCacheMap::removeIfHolds(const SourceCodeKey& key, JSCell* cell)
@@ -81,10 +94,30 @@ void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
         if (!codeBlock || !codeBlock->cachedPayloadIndex())
             return false;
         writeCodeBlock(entry.key, entry.value); // as clear() and removeIfHolds() do for what they drop
-        m_size -= entry.key.length();
+        m_size -= weight(entry.key);
         return true;
     });
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void CodeCacheMap::removeEntriesNotUsedInCurrentFullCollectionCycle()
+{
+    m_map.removeIf([&](auto& entry) {
+        if (entry.value.age >= m_ageAtLastFullCollection)
+            return false;
+        writeCodeBlock(entry.key, entry.value);
+        m_size -= weight(entry.key);
+        return true;
+    });
+    // The working set starts over from what is left: the capacity a busy period grew to does not outlive it, and the
+    // next sources admitted are a new window, as after pruneSlowCase(). What is left is in use, so hits on it must not
+    // shrink the capacity below it (they would, down to a minimum of 0, and the next pruneSlowCase() would evict it).
+    m_capacity = m_size;
+    m_minCapacity = m_size;
+    m_sizeAtLastPrune = m_size;
+    m_timeAtLastPrune = ApproximateTime::now();
+}
+#endif
 
 static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {

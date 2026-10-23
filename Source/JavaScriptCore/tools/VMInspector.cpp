@@ -29,6 +29,7 @@
 #include "CachedBytecode.h"
 #include "CodeBlock.h"
 #include "CodeBlockSet.h"
+#include "CodeCache.h"
 #include "HeapInlines.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
@@ -632,7 +633,8 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 // Counts of live linked and unlinked code, and the bytes of the out-of-line parts that dominate them:
 // { llint, baseline, dfg, ftl, function, module, program, eval, metadataBytes, jitBytes,
 //   unlinkedFunction, unlinkedModule, unlinkedProgram, unlinkedEval, unlinkedBytes, cachedExecutables, regExpsWithCode,
-//   moduleExecutablesWithLinkedCode, moduleExecutablesWithUnlinkedCode, and what PersistentBytecodePayloads holds on to }
+//   moduleExecutablesWithLinkedCode, moduleExecutablesWithUnlinkedCode, codeCacheEntries, codeCacheBytes,
+//   and what PersistentBytecodePayloads holds on to }
 JSObject* VMInspector::codeBlockCensus(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -721,6 +723,10 @@ JSObject* VMInspector::codeBlockCensus(JSGlobalObject* globalObject)
     put("regExpsWithCode"_s, regExpsWithCode);
     put("moduleExecutablesWithLinkedCode"_s, moduleExecutablesWithLinkedCode);
     put("moduleExecutablesWithUnlinkedCode"_s, moduleExecutablesWithUnlinkedCode);
+#if USE(BUN_JSC_ADDITIONS)
+    put("codeCacheEntries"_s, vm.codeCache()->numberOfEntries());
+    put("codeCacheBytes"_s, vm.codeCache()->weightOfEntries());
+#endif
     // What stays behind for code that can be decoded again from a bytecode cache payload.
     PersistentBytecodePayloads::Statistics payloads;
     if (auto* existing = vm.persistentBytecodePayloadsIfExists())

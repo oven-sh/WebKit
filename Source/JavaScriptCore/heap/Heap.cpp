@@ -30,6 +30,7 @@
 #include "CachedTypes.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
+#include "CodeCache.h"
 #include "CollectingScope.h"
 #include "CompleteSubspaceInlines.h"
 #include "CollectorInlines.h"
@@ -2370,6 +2371,9 @@ void Heap::willStartCollection(CollectionScope scope)
         m_externalMemorySize = 0;
 #endif
         m_shouldDoOpportunisticFullCollection = false;
+#if USE(BUN_JSC_ADDITIONS)
+        vm().codeCache()->didStartFullCollection();
+#endif
         if (m_fullActivityCallback)
             m_fullActivityCallback->willCollect();
     } else {
