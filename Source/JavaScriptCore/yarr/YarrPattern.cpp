@@ -2181,6 +2181,46 @@ public:
         return m_error;
     }
 
+    // A quantified group needs a context per iteration only when a later failure can backtrack into
+    // an earlier iteration and find a different way to match it. A group like (?:ab)* or ([0-9a-f]{2})+
+    // has no such way: its one alternative always consumes the same number of characters and none of
+    // its terms can match differently. Backtracking into such a group only ever gives an iteration
+    // back, which is a step of the body's width. The capture of the group, when it has one, is the
+    // last iteration, so it follows from the position too. Without this the engine keeps one context
+    // per iteration and gives up on long inputs (about two million iterations) that it could match.
+    static bool isFixedWidthLoop(const PatternTerm& term)
+    {
+        ASSERT(term.type == PatternTerm::Type::ParenthesesSubpattern);
+        if (term.quantityType == QuantifierType::FixedCount || term.parentheses.isCopy || term.matchDirection() != Forward)
+            return false;
+
+        PatternDisjunction* disjunction = term.parentheses.disjunction;
+        if (disjunction->m_alternatives.size() != 1 || !disjunction->m_hasFixedSize || !disjunction->m_minimumSize)
+            return false;
+
+        // A capture inside the body would have to be recomputed when an iteration is given back.
+        unsigned firstNestedSubpatternId = term.parentheses.subpatternId + (term.capture() ? 1 : 0);
+        if (term.parentheses.lastSubpatternId >= firstNestedSubpatternId)
+            return false;
+
+        for (auto& bodyTerm : disjunction->m_alternatives[0]->m_terms) {
+            switch (bodyTerm.type) {
+            case PatternTerm::Type::AssertionBOL:
+            case PatternTerm::Type::AssertionEOL:
+            case PatternTerm::Type::AssertionWordBoundary:
+                break;
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass:
+                if (bodyTerm.quantityType != QuantifierType::FixedCount)
+                    return false;
+                break;
+            default:
+                return false;
+            }
+        }
+        return true;
+    }
+
     [[nodiscard]] ErrorCode setupAlternativeOffsets(PatternAlternative* alternative, CheckedUint32 currentCallFrameSize, unsigned initialInputPosition, CheckedUint32& newCallFrameSize)
     {
         if (!isSafeToRecurse()) [[unlikely]]
@@ -2289,12 +2329,16 @@ public:
                     error = setupDisjunctionOffsets(term.parentheses.disjunction, currentCallFrameSize, currentInputPosition, currentCallFrameSize);
                     if (hasError(error))
                         return error;
-                    // The JIT saves this group's interior frame slots [base+4, m_callFrameSize) into a
-                    // ParenContext using indices relative to base+4, so the saved-frame area only needs to
-                    // hold the max size across all repeating groups.
-                    unsigned innerFrameBase = term.frameLocation + YarrStackSpaceForBackTrackInfoParentheses;
-                    ASSERT(term.parentheses.disjunction->m_callFrameSize >= innerFrameBase);
-                    m_pattern.m_maxParenContextFrameSize = std::max(m_pattern.m_maxParenContextFrameSize, term.parentheses.disjunction->m_callFrameSize - innerFrameBase);
+                    if (isFixedWidthLoop(term))
+                        term.parentheses.isFixedWidthLoop = true;
+                    else {
+                        // The JIT saves this group's interior frame slots [base+4, m_callFrameSize) into a
+                        // ParenContext using indices relative to base+4, so the saved-frame area only needs to
+                        // hold the max size across all repeating groups.
+                        unsigned innerFrameBase = term.frameLocation + YarrStackSpaceForBackTrackInfoParentheses;
+                        ASSERT(term.parentheses.disjunction->m_callFrameSize >= innerFrameBase);
+                        m_pattern.m_maxParenContextFrameSize = std::max(m_pattern.m_maxParenContextFrameSize, term.parentheses.disjunction->m_callFrameSize - innerFrameBase);
+                    }
                 }
                 // Fixed count of 1 could be accepted, if they have a fixed size *AND* if all alternatives are of the same length.
                 alternative->m_hasFixedSize = false;
@@ -4203,6 +4247,9 @@ void PatternTerm::dump(PrintStream& out, YarrPattern* thisPattern, unsigned nest
 
         if (parentheses.isStringList)
             out.print(",string-list");
+
+        if (parentheses.isFixedWidthLoop)
+            out.print(",fixed-width-loop");
 
         out.println(",frame location ", frameLocation);
 
