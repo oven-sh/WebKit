@@ -146,6 +146,8 @@ void JITStubRoutineSet::deleteUnmarkedJettisonedStubRoutines(VM& vm)
         // If the stub is already jettisoned, and if it is not executed right now, then we can safely destroy this right now
         // since this is not reachable from dead CodeBlock (in CodeBlock's destructor), plus, this will not be executed later.
         if (stub->m_isJettisoned) {
+            if (stub->m_type == JITStubRoutine::Type::GCAwareJITStubRoutineWithExceptionHandlerType)
+                static_cast<GCAwareJITStubRoutineWithExceptionHandler*>(stub)->removeExceptionHandler();
             stub->deleteFromGC();
             return true;
         }
