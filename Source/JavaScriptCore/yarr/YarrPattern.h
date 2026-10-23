@@ -724,6 +724,25 @@ struct YarrPattern {
         return CompileMode::Legacy;
     }
 
+    // Whether the interpreter can memoize failed match states for this pattern ("Match memoization" in
+    // YarrInterpreter.cpp): what follows a cache point has to depend on the input position alone. It
+    // does not with back references, which depend on what was captured, nor when a multiline ^ leads a
+    // DotStarEnclosure, which depends on where the wrapped expression began (matchDotStarEnclosure()).
+    bool canMemoizeMatches() const
+    {
+        if (m_containsBackreferences)
+            return false;
+        if (multiline()) {
+            for (auto& alternative : m_body->m_alternatives) {
+                for (auto& term : alternative->m_terms) {
+                    if (term.type == PatternTerm::Type::DotStarEnclosure && term.anchors.bolAnchor)
+                        return false;
+                }
+            }
+        }
+        return true;
+    }
+
     bool m_containsBackreferences : 1;
     bool m_containsBOL : 1;
     bool m_containsLookbehinds : 1;
