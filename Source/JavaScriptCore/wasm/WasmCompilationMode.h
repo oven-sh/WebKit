@@ -115,4 +115,25 @@ inline constexpr bool isAnyWasmToJS(CompilationMode compilationMode)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+// A frame the JSPI stack slicers (EvacuatedStack.cpp) move as one more Wasm frame: a Wasm
+// function at any tier, or the RestoreFrame a tail call leaves in place of its caller. The
+// stubs between JS and Wasm are not: each slicer gives those their own arm.
+inline constexpr bool isSliceableWasmFrame(CompilationMode compilationMode)
+{
+    switch (compilationMode) {
+    case CompilationMode::IPIntMode:
+    case CompilationMode::BBQMode:
+    case CompilationMode::OMGMode:
+    case CompilationMode::OMGForOSREntryMode:
+    case CompilationMode::RestoreFrameMode:
+        return true;
+    case CompilationMode::JSToWasmMode:
+    case CompilationMode::JSToWasmICMode:
+    case CompilationMode::WasmToJSMode:
+    case CompilationMode::WasmBuiltinMode:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
 } } // namespace JSC::Wasm
