@@ -3,15 +3,15 @@ ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG LLVM_VERSION="23"
 ARG LLVM_DEBS_SHA256="993eba8b8ca23ea4d6074643d52ff9397b411e6ac5af6b7b2ca09dca2b351011"
-ARG NDK_VERSION="r27c"
-ARG NDK_SHA256="59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc"
+ARG NDK_VERSION="r30"
+ARG NDK_SHA256="753611f410d002cfcd3f3dc2ef49aad532089d3180b436c060a90bf0fcb64df2"
 ARG ANDROID_API="28"
 ARG ANDROID_ARCH="aarch64"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
