@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
+#include "AOTVector.h"
 #include <array>
 #include <bit>
 #include <wtf/MathExtras.h>
@@ -16,7 +17,6 @@
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
-#include <wtf/Vector.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringHasherInlines.h>
 #include <wtf/text/StringImpl.h>

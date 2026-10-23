@@ -4,6 +4,7 @@
 # OPTIONS: check=validate-back-end
 # RUN: pass ChooseRepresentations
 # RUN(CODE): generate-code calls
+# REQUIRES(CODE): x86_64
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="testedNumberReturned" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {

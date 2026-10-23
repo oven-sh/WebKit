@@ -9,8 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTSelectionContext.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTStringRuleSupport.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
@@ -140,7 +142,7 @@ static SelectionGroup groupWithRanges(SelectionContext& context, ValueID append,
         if (part.range)
             definitions.append(part.value);
     }
-    std::ranges::sort(definitions, { }, [&](ValueID definition) {
+    AOT::sort(definitions, { }, [&](ValueID definition) {
         return uses.locationOf(definition).index;
     });
 

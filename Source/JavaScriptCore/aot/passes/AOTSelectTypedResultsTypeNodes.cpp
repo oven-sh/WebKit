@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTExpandOwnKeysOrders.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <span>
@@ -119,7 +121,7 @@ static Vector<FamilyOfMembers> familiesOf(const Program& program, std::span<cons
     Vector<FamilyOfMembers> families(members.size(), [&](size_t index) {
         return FamilyOfMembers { program.declaredMembersOf(members[index]), members[index] };
     });
-    std::ranges::sort(families, { }, [](const FamilyOfMembers& family) {
+    AOT::sort(families, { }, [](const FamilyOfMembers& family) {
         return std::pair { family.family, family.owner };
     });
     size_t numberOfFamilies = 0;
@@ -130,7 +132,7 @@ static Vector<FamilyOfMembers> familiesOf(const Program& program, std::span<cons
             families[numberOfFamilies++] = family;
     }
     families.shrink(numberOfFamilies);
-    std::ranges::sort(families, std::ranges::greater { }, [&](const FamilyOfMembers& family) {
+    AOT::sort(families, std::ranges::greater { }, [&](const FamilyOfMembers& family) {
         return std::pair { program.at(family.family).members.size(), family.family };
     });
     return families;

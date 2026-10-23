@@ -12,6 +12,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 

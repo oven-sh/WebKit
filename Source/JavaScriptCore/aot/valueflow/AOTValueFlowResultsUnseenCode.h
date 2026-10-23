@@ -9,7 +9,7 @@
 
 #include "AOTBuiltinIDTypes.h"
 #include "AOTValueFlowAnalysis.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

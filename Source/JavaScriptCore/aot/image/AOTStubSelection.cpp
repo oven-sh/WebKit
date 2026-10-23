@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTStubDescriptor.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <expected>

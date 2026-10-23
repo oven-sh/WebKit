@@ -9,11 +9,11 @@
 
 #include "AOTCodeTemplates.h"
 #include "AOTRelocation.h"
+#include "AOTVector.h"
 #include <expected>
 #include <optional>
 #include <span>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

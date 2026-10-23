@@ -19,8 +19,10 @@
 #include "AOTIntegerRelations.h"
 #include "AOTKnownValue.h"
 #include "AOTRuleSupport.h"
+#include "AOTSort.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -28,7 +30,6 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -683,7 +684,7 @@ unsigned narrowStorageOfLocalArrays(FunctionPassContext& context)
     Rewriter rewriter(context);
     rewriteAccesses(rewriter, rewrites.span(), dropped);
 
-    std::ranges::sort(rewrites, std::ranges::greater { }, [](const ArrayRewrite& rewrite) {
+    AOT::sort(rewrites, std::ranges::greater { }, [](const ArrayRewrite& rewrite) {
         return std::pair { rewrite.construction.block, rewrite.construction.index };
     });
     for (const ArrayRewrite& rewrite : rewrites)

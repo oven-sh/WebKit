@@ -10,8 +10,8 @@
 #include "AOTModuleData.h"
 #include "AOTModuleGraph.h"
 #include "AOTNativeTest.h"
+#include "AOTVector.h"
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

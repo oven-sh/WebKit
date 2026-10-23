@@ -12,7 +12,9 @@
 #include "AOTFieldValueNarrowing.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRulesInternal.h"
+#include "AOTSort.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 #include <tuple>
@@ -378,7 +380,7 @@ void TypePropagation::listRestartedValuesInOrder()
             uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
             positions.append({ static_cast<uint64_t>(m_cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index, id });
         }
-        std::ranges::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
+        AOT::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
         for (auto [position, id] : positions)
             m_restartedValuesFromLastToFirst.append(id);
         return;
@@ -1408,7 +1410,7 @@ void TypePropagation::typeComponent(uint32_t component)
         uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
         positions.append({ static_cast<uint64_t>(m_cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index, id });
     }
-    std::ranges::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
+    AOT::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
 
     m_restartedValuesFromLastToFirst.shrink(0);
     m_mayBeQueued.ensureSize(function.values.size());

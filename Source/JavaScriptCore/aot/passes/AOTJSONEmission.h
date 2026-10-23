@@ -12,10 +12,10 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
+#include "AOTVector.h"
 #include <initializer_list>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {

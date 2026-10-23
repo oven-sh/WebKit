@@ -10,6 +10,7 @@
 #include "AOTCompiledCode.h"
 #include "AOTIR.h"
 #include "AOTRelocation.h"
+#include "AOTVector.h"
 #include "CCallHelpers.h"
 
 namespace JSC {

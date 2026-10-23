@@ -10,10 +10,12 @@
 
 #include "AOTBuiltinMembers.h"
 #include "AOTFlowStamps.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTValueFlowPositions.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -396,7 +398,7 @@ static const ListedReceivers& listedReceiversOf(AccessesOfFunction& accesses, Va
             }
         }
     }
-    std::ranges::sort(listed->layouts);
+    AOT::sort(listed->layouts);
     listed->layouts.shrinkToFit();
     const ListedReceivers& kept = accesses.listedReceiversOfSets.add(held.index(), WTF::move(listed));
     accesses.listedReceivers.set(held.index(), &kept);
@@ -513,7 +515,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             if (hasReceiverStamp(statement))
                 stampAccess(accesses, statement);
         }
-        std::ranges::sort(accesses.update.accesses, { }, &FlowAccessStamp::value);
+        AOT::sort(accesses.update.accesses, { }, &FlowAccessStamp::value);
         inputs.build.statistics().count(StatisticID::FlowAccessesOfUnknownReceivers, accesses.numberOfUnknownReceivers);
     });
     TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());

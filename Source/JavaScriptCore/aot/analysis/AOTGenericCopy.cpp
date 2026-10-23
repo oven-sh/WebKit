@@ -17,7 +17,9 @@
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTSinkAllocations.h"
+#include "AOTSort.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 #include <utility>
@@ -174,7 +176,7 @@ Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const
         }
     }
 
-    std::ranges::sort(points, { }, [&](ProgramPoint point) {
+    AOT::sort(points, { }, [&](ProgramPoint point) {
         return std::pair { cfg.reversePostOrderIndex(point.block), point.index };
     });
     return points;
@@ -950,7 +952,7 @@ void GenericCopy::keepWaysBackWithinSizeOfCopy(Vector<RejoinPlan, 4>& rejoins) c
         const RejoinPlan& rejoin = rejoins[index];
         return Candidate { rejoin.depthOfLoop, rejoin.tests.size(), index };
     });
-    std::ranges::sort(candidates, [](const Candidate& a, const Candidate& b) {
+    AOT::sort(candidates, [](const Candidate& a, const Candidate& b) {
         if (a.depthOfLoop != b.depthOfLoop)
             return a.depthOfLoop > b.depthOfLoop;
         return std::pair { a.numberOfTests, a.index } < std::pair { b.numberOfTests, b.index };
@@ -1058,10 +1060,10 @@ void GenericCopy::addVariablesTo(SSARepair& repair)
         values.append(ValueID(index));
     for (const OtherDefinition& other : m_otherDefinitions)
         values.append(other.inTypedCode);
-    std::ranges::sort(values);
+    AOT::sort(values);
     removeRepeatedElements(values);
 
-    std::ranges::stable_sort(m_otherDefinitions, { }, &OtherDefinition::inTypedCode);
+    AOT::stableSort(m_otherDefinitions, { }, &OtherDefinition::inTypedCode);
     std::span<const OtherDefinition> remaining = m_otherDefinitions.span();
     for (ValueID value : values) {
         std::optional<SSARepair::Variable> variable = repair.findVariable(value);

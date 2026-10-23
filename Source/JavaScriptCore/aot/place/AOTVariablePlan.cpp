@@ -12,7 +12,9 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTRepresentation.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -156,7 +158,7 @@ void findUncheckedVariableReads(FunctionAnalyses& analyses, const BitVector& can
         }
     }
     auto added = unchecked.mutableSpan().subspan(numberBefore);
-    std::ranges::sort(added);
+    AOT::sort(added);
     unchecked.shrink(unchecked.size() - std::ranges::unique(added).size());
 }
 

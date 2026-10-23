@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTLayoutData.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

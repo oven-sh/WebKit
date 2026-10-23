@@ -12,6 +12,7 @@
 #include "AOTJSONVerificationCapacity.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringBuilderCursor.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>

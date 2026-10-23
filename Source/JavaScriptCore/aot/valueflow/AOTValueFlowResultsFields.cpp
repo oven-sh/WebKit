@@ -19,6 +19,7 @@
 #include "AOTLayout.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTValueFlowBuiltins.h"
@@ -27,6 +28,7 @@
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <wtf/Atomics.h>
@@ -226,7 +228,7 @@ void ValueFlowHeapIndex::indexNodesWrittenUnder(const ValueFlowResultInputs& inp
             entry.nodesOfMembers.append({ member.index(), index });
         });
     }
-    std::ranges::sort(entry.nodesOfMembers);
+    AOT::sort(entry.nodesOfMembers);
     entry.writtenThroughUnknownObject = maker.get().uniteAll(throughUnknownObject.span());
     entry.writtenThroughUntrackedObject = maker.get().uniteAll(throughUntrackedObject.span());
     entry.isIndexed = true;
@@ -348,7 +350,7 @@ ValueSetID ValueFlowHeapView::findWrittenUnder(ValueSetMaker& maker, ValueSetID 
         for (; first != entry.nodesOfMembers.end() && first->member == member.index(); ++first)
             parts.append(entry.nodes[first->node].value);
     });
-    std::ranges::sort(parts);
+    AOT::sort(parts);
     removeRepeatedElements(parts);
     return maker.uniteAll(parts.span());
 }
@@ -1151,7 +1153,7 @@ public:
 private:
     void removeRepeats()
     {
-        std::ranges::sort(m_parts);
+        AOT::sort(m_parts);
         removeRepeatedElements(m_parts);
     }
 
@@ -1405,7 +1407,7 @@ auto LayoutsOfObjects::layoutsSelectedBy(ValueSetID prototypes, LayoutID named, 
     sets.forEachMember(heap.maker().intersect(prototypes, prototypeObjectsOfClasses), [&](ValueFlowObjectID prototype) {
         selected.listed.append(m_inputs.universe().classLayoutOf(prototype));
     });
-    std::ranges::sort(selected.listed);
+    AOT::sort(selected.listed);
     removeRepeatedElements(selected.listed);
     selected.listed.removeFirst(named);
     selected.everyEscapedClass = !m_escapedClasses.isEmpty() && sets.contains(prototypes, ValueFlowUniverse::unknownObject());
@@ -1870,7 +1872,7 @@ static Vector<PropertyKeyID> sortedKeysOf(const StoresIntoObjects& stores)
     keys.reserveInitialCapacity(stores.underKey.size());
     for (const auto& [key, stored] : stores.underKey)
         keys.append(PropertyKeyID(key));
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     return keys;
 }
 
@@ -1936,7 +1938,7 @@ void StoresByLayout::noteListedWrites()
     m_keysThroughPlaceholders.appendVector(m_keysIntoEveryObject);
     m_keysThroughPlaceholders.appendVector(m_keysIntoEveryEscapedClass);
     m_keysThroughPlaceholders.appendVector(m_keysIntoEveryLostClass);
-    std::ranges::sort(m_keysThroughPlaceholders);
+    AOT::sort(m_keysThroughPlaceholders);
     removeRepeatedElements(m_keysThroughPlaceholders);
     times.didFinish("stores by layout: keys sorted"_s);
     followCopiedProperties();
@@ -1962,7 +1964,7 @@ std::optional<Vector<LayoutID, 4>> StoresByLayout::layoutsCopiedOnto(LayoutID ta
     });
     if (!holdOnlyWhatIsWritten)
         return std::nullopt;
-    std::ranges::sort(layouts);
+    AOT::sort(layouts);
     removeRepeatedElements(layouts);
 
     for (LayoutID layout : layouts) {
@@ -2167,7 +2169,7 @@ auto StoresByLayout::findObjectsOf(ValueSetID set) const -> ObjectsOfSet
     });
     objects.holdsObjectOfEveryEscapedClass = lists.everyEscapedClass;
     objects.holdsObjectOfEveryLostClass = lists.everyLostClass;
-    std::ranges::sort(objects.layouts);
+    AOT::sort(objects.layouts);
     removeRepeatedElements(objects.layouts);
     return objects;
 }
@@ -2243,7 +2245,7 @@ const Vector<LayoutID>& StoresByLayout::layoutsAdmittedBy(LayoutSetID familyOfRe
             admitted.append(layout);
             worklist.appendVector(m_layoutsExpectedDirectlyBelow[layout.index()]);
         }
-        std::ranges::sort(admitted);
+        AOT::sort(admitted);
         return admitted;
     }).iterator->value;
 }
@@ -3022,7 +3024,7 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
     Vector<NameStoredThroughDeclaredReceiver> names = std::exchange(m_namesStoredThroughDeclaredReceivers, { });
     if (names.isEmpty())
         return;
-    std::ranges::sort(names, { }, &NameStoredThroughDeclaredReceiver::order);
+    AOT::sort(names, { }, &NameStoredThroughDeclaredReceiver::order);
     removeRepeatedElements(names, [](const NameStoredThroughDeclaredReceiver& a, const NameStoredThroughDeclaredReceiver& b) {
         return a.order() == b.order();
     });
@@ -3085,7 +3087,7 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
                 firstLayoutWithoutRoom = layout;
         }
         if (layoutsGivenRoom.size() > mostLayoutsGivenRoom) {
-            std::ranges::sort(layoutsGivenRoom, [&](LayoutID a, LayoutID b) {
+            AOT::sort(layoutsGivenRoom, [&](LayoutID a, LayoutID b) {
                 return std::pair { countOf(b), a } < std::pair { countOf(a), b };
             });
             LayoutID firstLayoutPastLimit = *std::ranges::min_element(layoutsGivenRoom.span().subspan(mostLayoutsGivenRoom));
@@ -3243,7 +3245,7 @@ Vector<PropertyKeyID> StoresByLayout::keysNamedByStoresIntoKnownObjects(LayoutID
         if (stored.isNamedByOperation)
             keys.append(PropertyKeyID(key));
     }
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     return keys;
 }
 
@@ -3366,7 +3368,7 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
             m_keysReadFrom[found.layout.index()].append(found.key);
     }
     for (Vector<PropertyKeyID>& keys : m_keysReadFrom) {
-        std::ranges::sort(keys);
+        AOT::sort(keys);
         removeRepeatedElements(keys);
     }
 }
@@ -3389,7 +3391,7 @@ Vector<PropertyKeyID> StoresByLayout::keysOfAccessorsDefinedIn(ValueSetMaker& ma
         if (stored.getters != ValueSets::nothing && accessorDefinedUnder(maker, layout, PropertyKeyID(key)).isAccessor())
             keys.append(PropertyKeyID(key));
     }
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     return keys;
 }
 
@@ -3668,7 +3670,7 @@ void UsesOfObjects::findObjectsObservedUnderKeys(ValueSetMakers& makers)
         starts[position] = m_heap.expand(makers.of(worker), startsOfTests.unionAt(position, makers.of(worker)));
     });
     Vector<ValueSetID> distinctStarts = starts;
-    std::ranges::sort(distinctStarts);
+    AOT::sort(distinctStarts);
     removeRepeatedElements(distinctStarts);
     Vector<ValueSetID> chains(distinctStarts.size());
     forEachIndexInParallel(loops, distinctStarts.size(), [&](unsigned index, unsigned worker) {
@@ -4116,7 +4118,7 @@ void UsesOfObjects::findHostFunctionsThatProgramHasStored(ValueSetMakers& makers
         if (PropertyKeyID key = program.at(statement.function).at(statement.site).calleeKey())
             keys.append(key.index());
     }
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     removeRepeatedElements(keys);
 
     Vector<ValueSetID> stored(FillWith { }, keys.size(), ValueSets::nothing);
@@ -4644,7 +4646,7 @@ static void noteFieldsMissingAtCreation(const FieldResults& results, std::span<c
             return;
         layouts.append(site.layout);
     });
-    std::ranges::sort(layoutsOfOtherObjects);
+    AOT::sort(layoutsOfOtherObjects);
     removeRepeatedElements(layoutsOfOtherObjects);
     for (LayoutID layout : layoutsOfOtherObjects) {
         forEachFieldOfObjectsWith(program, results.application, layout, [&](FieldReference declaration, const Field&) {
@@ -5131,7 +5133,7 @@ static Vector<Vector<PropertyKeyID>> collectKeysDeclaredBelow(const Program& pro
         }
     }
     for (Vector<PropertyKeyID>& keys : keysDeclaredBelow) {
-        std::ranges::sort(keys);
+        AOT::sort(keys);
         removeRepeatedElements(keys);
     }
     return keysDeclaredBelow;
@@ -5215,7 +5217,7 @@ static void keepMostAccessedKeys(const FieldResults& results, AccessCounts& coun
         return std::pair { rankOf(b), a } < std::pair { rankOf(a), b };
     });
     keys.shrink(numberOfKeysKept);
-    std::ranges::sort(keys);
+    AOT::sort(keys);
 }
 
 // The names of the accessors that the objects of the layout get.
@@ -5308,7 +5310,7 @@ static Vector<Vector<PropertyKeyID>> chooseAppendedKeys(const FieldResults& resu
         if (!keysByLayout[index].isEmpty())
             layoutsWithKeys.append(index);
     }
-    std::ranges::stable_sort(layoutsWithKeys, std::greater { }, [&](uint32_t index) {
+    AOT::stableSort(layoutsWithKeys, std::greater { }, [&](uint32_t index) {
         return keysByLayout[index].size();
     });
     forEachIndexInParallel(loops, layoutsWithKeys.size(), [&](unsigned position, unsigned worker) {
@@ -5425,7 +5427,7 @@ static BitVector findLayoutsConstructedByNativeCode(const FieldResults& results)
     if (resultsOfConstructions.isEmpty())
         return layouts;
 
-    std::ranges::sort(resultsOfConstructions);
+    AOT::sort(resultsOfConstructions);
     removeRepeatedElements(resultsOfConstructions);
     ValueSetMaker& maker = results.heap.maker();
     ValueSetID made = maker.intersect(results.heap.expand(maker.uniteAll(resultsOfConstructions.span())), results.inputs.universe().knownObjects());
@@ -5624,7 +5626,7 @@ static void computeInitialFieldOrders(const FieldResultsWithoutStores& results, 
         Vector<CountedOrder>& orders = ordersOfLayout[index];
         if (orders.isEmpty() || !inputs.build.isEnabled(FlowResultKind::ConstructorFieldOrders, index))
             continue;
-        std::ranges::sort(orders, [](const CountedOrder& a, const CountedOrder& b) {
+        AOT::sort(orders, [](const CountedOrder& a, const CountedOrder& b) {
             if (a.isOrderOfFinishedObjects != b.isOrderOfFinishedObjects)
                 return a.isOrderOfFinishedObjects;
             if (a.numberOfSites != b.numberOfSites)
@@ -5787,7 +5789,7 @@ static void computeFieldsStoredOnceByConstructors(const FieldResults& results)
             return true;
         }
     });
-    std::ranges::sort(candidates, { }, [](const Candidate& candidate) {
+    AOT::sort(candidates, { }, [](const Candidate& candidate) {
         return std::tuple { candidate.function, candidate.layout, candidate.field };
     });
     for (size_t first = 0; first < candidates.size();) {
@@ -6081,7 +6083,7 @@ static void keepFieldsOnlyCalledWhoseReadsHaveStamps(const ValueFlowResultInputs
     Vector<ValueSetID> setsOfReceivers(readsWithoutStamp.size(), [&](size_t position) {
         return ValueSetID(readsWithoutStamp[position].receivers);
     });
-    std::ranges::sort(setsOfReceivers, { }, [](ValueSetID set) { return set.index(); });
+    AOT::sort(setsOfReceivers, { }, [](ValueSetID set) { return set.index(); });
     removeRepeatedElements(setsOfReceivers);
     stores->lookAt(setsOfReceivers.span());
 
@@ -6203,7 +6205,7 @@ void computeStoreNamingResults(const ValueFlowResultInputs& inputs, ValueFlowUse
             forEachFieldOfObjectsWith(program, application, layout, [&](FieldReference declaration, const Field& field) {
                 entry.fields.append({ field.key ? field.key.index() : UINT32_MAX, declaration });
             });
-            std::ranges::stable_sort(entry.fields, { }, &FieldUnderKey::key);
+            AOT::stableSort(entry.fields, { }, &FieldUnderKey::key);
             entry.isListed.store(true, std::memory_order_release);
         }
         return entry.fields;

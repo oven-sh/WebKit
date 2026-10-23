@@ -19,8 +19,10 @@
 #include "AOTModuleTable.h"
 #include "AOTProgramTables.h"
 #include "AOTSlimClosure.h"
+#include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
+#include "AOTVector.h"
 #include "BlockDirectory.h"
 #include "FreeList.h"
 #include "JSCInlines.h"
@@ -303,7 +305,7 @@ static void dumpLines(PrintStream& out, ASCIILiteral firstWord, const Vector<Lin
     lines.reserveInitialCapacity(unsorted.size());
     for (const Line& line : unsorted)
         lines.append(&line);
-    std::ranges::sort(lines, [](const Line* a, const Line* b) {
+    AOT::sort(lines, [](const Line* a, const Line* b) {
         if (a->bytes != b->bytes)
             return a->bytes > b->bytes;
         if (a->cells != b->cells)
@@ -353,7 +355,7 @@ void ExactAllocationCounts::dump(const Instance& instance, PrintStream& out)
             continue;
         lines.append({ kind == kindOfCompiledCode() ? "code"_str : makeString("stub:"_s, descriptorOf(static_cast<StubFamily>(kind)).name), cells, bytes });
     }
-    std::ranges::sort(lines, [](const Counted& a, const Counted& b) {
+    AOT::sort(lines, [](const Counted& a, const Counted& b) {
         if (a.bytes != b.bytes)
             return a.bytes > b.bytes;
         if (a.cells != b.cells)

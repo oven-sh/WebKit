@@ -13,13 +13,14 @@
 #include "AOTIRBuilder.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTRuleSupport.h"
+#include "AOTSort.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTSplitUnions.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <utility>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -207,7 +208,7 @@ static void emitForwardWalks(FunctionPassContext& context, IRBuilder& builder, s
         if (!piece.reverseSearchLiteral)
             walks.append({ context.analyses.useLists().pointOf(piece.read.value), &piece });
     }
-    std::ranges::sort(walks, std::ranges::greater { }, [](const auto& walk) {
+    AOT::sort(walks, std::ranges::greater { }, [](const auto& walk) {
         return std::pair { walk.first.block, walk.first.index };
     });
     for (const auto& [read, piece] : walks)

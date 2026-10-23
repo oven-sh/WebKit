@@ -12,6 +12,7 @@
 #include "AOTFlowSiteData.h"
 #include "AOTNameCreatedSymbols.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTTypeRelations.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowBodies.h"
@@ -20,6 +21,7 @@
 #include "AOTValueFlowRulesModules.h"
 #include "AOTValueFlowTypedResults.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -779,12 +781,8 @@ private:
         for (const BuiltinPropertyAction& action : overload.flow.propertyActions)
             applyPropertyAction(action);
         m_plainDataOfResult = { };
-        if (ValueFlowNodeID result = nodeTakingResult()) {
+        if (ValueFlowNodeID result = nodeTakingResult())
             m_context.add(result, answersObjectsOfNativeCell(overload) ? m_tables.primitivesOf(overload.result.type) : valueOfType(overload.result.type, m_resultObject));
-            // What is declared is what is expected. Native code may hand back anything else.
-            if (overload.resultIsDeclaredOnly())
-                m_context.add(result, unknownValue(m_context, ValueFlowUnknownSource::DeclaredNativeResult));
-        }
         if (m_call.operation)
             allocateTypedResult(overload, *m_call.operation, m_call, m_resultObject, m_plainDataOfResult, m_context);
         // A constructor whose answer nobody follows, as that of `Function`. What it makes for a class of the program has the prototype object of that class above it, and the unknown object stands only for what has escaped.
@@ -2380,7 +2378,7 @@ private:
                     return std::nullopt;
             }
         }
-        std::ranges::sort(names);
+        AOT::sort(names);
         names.shrink(names.size() - std::ranges::unique(names).size());
         return names;
     }

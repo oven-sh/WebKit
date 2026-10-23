@@ -10,6 +10,7 @@
 
 #include "AOTProgramFile.h"
 #include "AOTRuntimeTable.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <expected>
 #include <wtf/ASCIICType.h>

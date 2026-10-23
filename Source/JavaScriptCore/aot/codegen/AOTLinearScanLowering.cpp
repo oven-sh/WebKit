@@ -11,7 +11,9 @@
 #include "AOTLinearScanOperations.h"
 #include "AOTRelocation.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "AirFrameEmission.h"
 #include "AirStackSlot.h"
 #include "B3BasicBlockInlines.h"
@@ -1878,7 +1880,7 @@ void LinearScanCodeGenerator::lowerCheck(NodeID id)
         }
     }
     noteStackmap<pass>(check);
-    Vector<B3::ValueRep> reps;
+    WTF::Vector<B3::ValueRep> reps;
     for (unsigned index = 1; index < check->numChildren(); ++index) {
         B3::ConstrainedValue child = check->constrainedChild(index);
         if (child.rep().kind() == B3::ValueRep::Register || child.rep().kind() == B3::ValueRep::StackArgument || child.rep().kind() == B3::ValueRep::SomeRegisterWithClobber) {
@@ -1931,7 +1933,7 @@ void LinearScanCodeGenerator::lowerCheckedArithmetic(NodeID id)
     B3::CheckValue* check = b3ValueOf(id)->as<B3::CheckValue>();
     bool isWide = n.isWide();
     noteStackmap<pass>(check);
-    Vector<B3::ValueRep> reps;
+    WTF::Vector<B3::ValueRep> reps;
     for (unsigned index = 2; index < check->numChildren(); ++index) {
         B3::ConstrainedValue child = check->constrainedChild(index);
         B3::ValueRep constraint = child.rep();
@@ -2134,7 +2136,7 @@ void LinearScanCodeGenerator::lowerPatchpoint(NodeID id)
             params.m_gpScratch.append(scratch);
         for (FPRReg scratch : doubleScratches)
             params.m_fpScratch.append(scratch);
-        Vector<Box<Label>> labels;
+        WTF::Vector<Box<Label>> labels;
         if (isTerminal) {
             for (unsigned index = 0; index < block.numberOfSuccessors; ++index) {
                 labels.append(sharedLabelOfEdge(m_currentBlock, index));
@@ -2301,7 +2303,7 @@ bool LinearScanCodeGenerator::planBitTests(std::span<const CaseOfSwitch> cases, 
         }
         tests[position].mask |= static_cast<uint64_t>(1) << (cases[index].value - first);
     }
-    std::ranges::stable_sort(tests, std::ranges::greater { }, [](const BitTestOfSwitch& test) {
+    AOT::stableSort(tests, std::ranges::greater { }, [](const BitTestOfSwitch& test) {
         return std::popcount(test.mask);
     });
     unsigned costOfTree = 4;
@@ -2455,7 +2457,7 @@ void LinearScanCodeGenerator::lowerSwitch(NodeID id)
         for (unsigned index = 0; index < value->numCaseValues(); ++index)
             cases.append(CaseOfSwitch { value->caseValue(index), index });
     }
-    std::ranges::sort(cases, { }, &CaseOfSwitch::value);
+    AOT::sort(cases, { }, &CaseOfSwitch::value);
     GPRReg subject = use<pass>(n.a).gpr();
     GPRReg index = InvalidGPRReg;
     GPRReg table = InvalidGPRReg;

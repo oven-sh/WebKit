@@ -12,6 +12,7 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 
 namespace JSC { namespace AOT {

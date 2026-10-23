@@ -12,6 +12,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {

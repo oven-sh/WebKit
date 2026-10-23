@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -16,7 +17,6 @@
 #include <wtf/Lock.h>
 #include <wtf/Locker.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

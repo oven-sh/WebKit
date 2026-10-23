@@ -8,12 +8,12 @@
 #if ENABLE(AOT)
 
 #include "AOTPropertyList.h"
+#include "AOTVector.h"
 #include "RememberedSlot.h"
 #include "StructureID.h"
 #include <array>
 #include <memory>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

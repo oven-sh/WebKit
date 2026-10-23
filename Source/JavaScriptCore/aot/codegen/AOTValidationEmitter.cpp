@@ -11,7 +11,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTFlowResults.h"
 #include "AOTPlacement.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

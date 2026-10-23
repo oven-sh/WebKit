@@ -17,6 +17,7 @@
 #include "AOTIR.h"
 #include "AOTLargeVectors.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -452,6 +453,10 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::BoundFunction:
         description.addFunction(function.creator.as<CreatorRecord::BoundFunction>().target);
         return true;
+    // Until its body is summarized: the body of the constructor, on an object that the caller has made.
+    case FunctionRole::AllocatedThisVersion:
+        description.addFunction(function.derivation.source);
+        return true;
     default:
         return false;
     }
@@ -466,7 +471,9 @@ static FunctionSummary summarizeByRole(const EffectContext& context, const Funct
         effects.handler.reads.merge(LocationMasks { perObjectHeaps });
 
     ParameterSummary parameter;
-    parameter.memory.writes = effects.onAnyEdge().writes.restrictedTo(perObjectHeaps);
+    // What the constructor does to the object it makes is no effect of the constructor.
+    if (function.role != FunctionRole::AllocatedThisVersion)
+        parameter.memory.writes = effects.onAnyEdge().writes.restrictedTo(perObjectHeaps);
     Vector<ParameterSummary> parameters(function.numberOfEntryParameters(), [&](size_t) {
         return parameter;
     });

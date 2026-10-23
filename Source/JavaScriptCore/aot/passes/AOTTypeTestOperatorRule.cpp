@@ -8,9 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTable.h"
+#include "AOTBuiltinTypes.h"
+#include "AOTInductionVariables.h"
 #include "AOTOperatorForms.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTValueIdentity.h"
+#include "AOTVector.h"
+#include <algorithm>
 #include <array>
+#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -23,6 +30,15 @@ struct OperatorTests {
     TestedOperands isTested { };
     Effects effectsWhenPassed;
 };
+
+// A counter, and the comparison that keeps it on this side of a bound while the loop goes on.
+struct BoundedCounter {
+    ValueID parameter;
+    ValueID comparison;
+    Edge stayingEdge;
+};
+
+using BoundedCounters = Vector<BoundedCounter, 2>;
 
 } // anonymous namespace
 
@@ -53,8 +69,22 @@ static TypeID admitExpectedNullish(TestSiteReporter& reporter, ValueID operand, 
     return types.intern(types.at(tested).withPrimitives(Primitive::UndefinedOrNull));
 }
 
+static constexpr OpcodeSet bitwiseOperators { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift, Opcode::BitNot };
+static constexpr OpcodeSet numericOperators = bitwiseOperators | relationalOperators | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::Sub, Opcode::Mul, Opcode::Negate };
+
+// A counter, for one. It is held as an integer, and of that a bitwise operator takes the low half, whatever its range. What comes out of memory or out of a call is a value, which the test is the cheapest way to look at.
+static bool isIntegerCarriedBetweenBlocks(TestSiteReporter& reporter, ValueID operand)
+{
+    if (!reporter.typeOf(operand).isInteger())
+        return false;
+    ValueLocation location = reporter.analyses().useLists().locationOf(reporter.analyses().identityOf(operand));
+    return location.placement == ValuePlacement::Parameter && location.block != entryBlock;
+}
+
 static TypeID testedTypeFor(TestSiteReporter& reporter, const Value& user, ValueID operand)
 {
+    if (bitwiseOperators.contains(user.opcode) && isIntegerCarriedBetweenBlocks(reporter, operand))
+        return { };
     std::optional<Type> expected = reporter.expectedPartOf(operand);
     if (!expected)
         return { };
@@ -131,6 +161,115 @@ static std::optional<OperatorTests> findFewestTests(TestSiteReporter& reporter, 
     return OperatorTests { *chosen, best.effects.normal };
 }
 
+static constexpr OpcodeSet operationsOnElementsOfViews { Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement, Opcode::IsInsideView };
+static constexpr OpcodeSet operationsOnElements { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
+static constexpr uint32_t collectionOperandIndex = 0;
+static constexpr uint32_t positionOperandIndex = 1;
+static constexpr size_t maxNamesOfCounter = 16;
+
+static bool findsElementOfView(TestSiteReporter& reporter, const Use& use)
+{
+    const Value& user = reporter.function().at(use.user);
+    if (use.operandIndex != positionOperandIndex)
+        return false;
+    if (operationsOnElementsOfViews.contains(user.opcode))
+        return true;
+    if (!operationsOnElements.contains(user.opcode))
+        return false;
+    const Type& collection = reporter.program().expectedOrTypeOf(reporter.function(), user.operand(collectionOperandIndex));
+    return typedArrayTypeOf(BuiltinTable::singleton(), collection.withoutPrimitives(Primitive::UndefinedOrNull)) != NotTypedArray;
+}
+
+// Whether typed code does nothing with the counter but reckon, compare and find elements of views. A call, a store or a return wants a value, and to make one of an integer beyond int32 takes more code than the test does. An array counts its elements in 32 bits, so it wants an int32 too.
+static bool isOnlyReckonedWith(TestSiteReporter& reporter, ValueID counter)
+{
+    const Function& function = reporter.function();
+    const UseLists& useLists = reporter.analyses().useLists();
+    Vector<ValueID, maxNamesOfCounter> names { counter };
+    auto follow = [&](ValueID name) {
+        if (names.contains(name))
+            return true;
+        if (names.size() == maxNamesOfCounter)
+            return false;
+        names.append(name);
+        return true;
+    };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : useLists.usesOf(names[index])) {
+            if (function.at(use.block).frequency != BlockFrequency::Normal)
+                continue;
+            switch (use.kind) {
+            case Use::Kind::Operand: {
+                Opcode opcode = function.at(use.user).opcode;
+                if (isCastWithoutTest(opcode)) {
+                    if (!follow(use.user))
+                        return false;
+                    continue;
+                }
+                if (opcode == Opcode::TypeTest || numericOperators.contains(opcode) || findsElementOfView(reporter, use))
+                    continue;
+                if (opcode == Opcode::Add && reporter.typeOf(use.user).isNumber())
+                    continue;
+                return false;
+            }
+            case Use::Kind::EdgeArgument: {
+                const Block& target = function.at(targetOf(function, use.edge()).block);
+                if (target.frequency == BlockFrequency::Normal && (use.operandIndex >= target.parameters.size() || !follow(target.parameters[use.operandIndex])))
+                    return false;
+                continue;
+            }
+            case Use::Kind::TerminatorOperand:
+            case Use::Kind::HandlerArgument:
+            case Use::Kind::BlockSubject:
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// `i < bytes.length; i++`. On this side of a bound that is an integer the counter is one, which ConvertCountersToIntegers finds out behind the rounds. A bound for which a rule in front of this one has just asked for tests may be an integer behind them. Below an int32 a test for int32 does no harm: it is proven then, and goes.
+static BoundedCounters findBoundedCounters(TestSiteReporter& reporter)
+{
+    BoundedCounters counters;
+    for (const LoopInduction& loop : reporter.analyses().inductionVariables().loops()) {
+        for (const InductionVariable& variable : loop.variables) {
+            if (variable.step.kind != InductionStepKind::Constant || !variable.start || !reporter.typeOf(variable.start).isInteger())
+                continue;
+            std::optional<bool> isEligible;
+            for (const InductionTest& test : variable.tests) {
+                if (test.tested != TestedValue::BeforeStep || !isBoundingRelation(test.relation, variable.direction))
+                    continue;
+                const Type& bound = reporter.typeOf(test.bound);
+                if (!(bound.isInteger() && !bound.isInt32()) && !reporter.isClaimed(reporter.analyses().identityOf(test.bound)))
+                    continue;
+                if (!isEligible)
+                    isEligible = isOnlyReckonedWith(reporter, variable.parameter);
+                if (*isEligible)
+                    counters.append({ variable.parameter, test.comparison, test.stayingEdge });
+            }
+        }
+    }
+    return counters;
+}
+
+// An operator takes an integer as it is, so none of these needs a test. One for int32 that is placed here stays in the loop for good: a view may be longer than that, and nothing proves that this one is not.
+static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& value, const TestedOperands& isTested, std::optional<BoundedCounters>& boundedCounters)
+{
+    // Behind the rounds the counters that could be converted have been.
+    if (reporter.context().isBehindRounds || !reporter.analyses().blockCycles().innermostCycleOf(reporter.point().block))
+        return false;
+    if (!boundedCounters)
+        boundedCounters = findBoundedCounters(reporter);
+    return std::ranges::any_of(*boundedCounters, [&](const BoundedCounter& counter) {
+        for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+            if (isTested[operandIndex] && reporter.analyses().identityOf(value.operand(operandIndex)) != counter.parameter)
+                return false;
+        }
+        return reporter.use() == counter.comparison || dominatesAfterSplit(reporter.analyses(), counter.stayingEdge, reporter.point().block);
+    });
+}
+
 // The one rule behind this one looks at tests of a type, so a site that is left out here is claimed from nobody.
 static_assert(!hasOperatorForm(Opcode::TypeTest));
 
@@ -139,6 +278,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
     TypingContext typing { reporter.program(), reporter.function(), reporter.types() };
     OperatorSite site { typing, reporter.analyses().effectContext(), CodeShape::Fast };
 
+    std::optional<BoundedCounters> boundedCounters;
     reporter.forEachCandidate([&](const Value& value) {
         if (!hasOperatorForm(value.opcode) || reporter.takesAwaySitesInColdCode())
             return;
@@ -162,6 +302,10 @@ void reportOperatorTests(TestSiteReporter& reporter)
         std::optional<OperatorTests> found = findFewestTests(reporter, site, value, tested);
         if (!found)
             return;
+        if (testsOnlyBoundedCounter(reporter, value, found->isTested, boundedCounters)) {
+            reporter.putOffUse();
+            return;
+        }
 
         Vector<Value, 2> tests;
         for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex) {

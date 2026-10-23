@@ -17,13 +17,13 @@
 #include "AOTPrimitives.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeType.h"
+#include "AOTVector.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "Symbol.h"
 #include <cmath>
 #include <limits>
 #include <optional>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

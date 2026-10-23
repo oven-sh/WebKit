@@ -18,6 +18,7 @@
 #include "AOTTruthinessEmitter.h"
 #include "AOTTypeTable.h"
 #include "AOTTypeTestPlan.h"
+#include "AOTVector.h"
 #include "JSType.h"
 
 namespace JSC { namespace AOT { namespace Typed {

@@ -18,7 +18,9 @@
 #include "AOTPass.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/PrintStream.h>
@@ -691,9 +693,9 @@ void FrameAllocation::finish()
 {
     applyPendingStorage(m_pendingCells, m_layoutsInFrames, m_layoutsOnHeap);
     applyPendingStorage(m_pendingClosures, m_closuresInFrames, m_closuresOnHeap);
-    std::ranges::sort(m_fieldsHoldingFramePointers);
+    AOT::sort(m_fieldsHoldingFramePointers);
     removeRepeatedElements(m_fieldsHoldingFramePointers);
-    std::ranges::sort(m_capturesHoldingFramePointers);
+    AOT::sort(m_capturesHoldingFramePointers);
     removeRepeatedElements(m_capturesHoldingFramePointers);
     m_isFinished = true;
 }

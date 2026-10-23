@@ -10,11 +10,11 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTCFG.h"
 #include "AOTEdgeResults.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/StackCheck.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

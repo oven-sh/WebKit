@@ -12,11 +12,11 @@
 #include "AOTPrimitives.h"
 #include "AOTRepresentation.h"
 #include "AOTType.h"
+#include "AOTVector.h"
 #include "ArrayBufferSharingMode.h"
 #include "JSType.h"
 #include <optional>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

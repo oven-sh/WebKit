@@ -11,7 +11,9 @@
 #include "AOTConversionEmitter.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStringEmitter.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/HashMap.h>
 
@@ -376,7 +378,7 @@ bool StringSwitchEmitter::shouldDispatchOnWord(const CaseGroup& cases)
     Vector<unsigned, 8> lengths = cases.map<Vector<unsigned, 8>>([](const SwitchCase* switchCase) {
         return switchCase->text.length();
     });
-    std::sort(lengths.begin(), lengths.end());
+    AOT::sort(lengths);
     for (size_t first = 0; first + minStringsForWordDispatch <= lengths.size(); ++first) {
         if (lengths[first] == lengths[first + minStringsForWordDispatch - 1])
             return true;
@@ -438,7 +440,7 @@ auto StringSwitchEmitter::findDistinguishingWord(std::span<const TextBytes> grou
     for (size_t offset = 0; offset + width <= length && mostWords < group.size(); ++offset) {
         for (size_t i = 0; i < group.size(); ++i)
             words[i] = littleEndianWordAt(group[i].span(), offset, width);
-        std::sort(words.begin(), words.end());
+        AOT::sort(words);
         size_t distinctWords = std::unique(words.begin(), words.end()) - words.begin();
         if (distinctWords > mostWords) {
             mostWords = distinctWords;

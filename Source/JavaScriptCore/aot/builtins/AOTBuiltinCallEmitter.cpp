@@ -23,6 +23,7 @@
 #include "AOTStringBuiltinOperationData.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallHost.h"
+#include "AOTVector.h"
 #include "CodeSpecializationKind.h"
 #include "JSCJSValueInlines.h"
 #include "NativeExecutable.h"
@@ -63,6 +64,18 @@ static std::optional<StubKey> stubKeyFor(const BuiltinTable& builtins, const Bui
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static std::optional<uint32_t> hostFunctionEntryOf(const BuiltinTable& builtins, const BuiltinOverload& called)
+{
+    for (BuiltinOverloadID id : builtins.overloadIDsOf(called.builtin)) {
+        if (builtins.at(id).mode != called.mode)
+            continue;
+        std::optional<uint32_t> number = BuiltinBindings::directFunctionNumberOf(id);
+        if (number && BuiltinBindings::directFunctionAt(*number).entersHostFunction())
+            return number;
+    }
+    return std::nullopt;
+}
+
 static std::optional<URICoding> uriCodingOf(BuiltinID builtin)
 {
     if (builtin == Builtins::DecodeURI)
@@ -100,7 +113,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
     };
     auto callFunction = [&] {
         std::optional<uint32_t> number = value->builtinCallForm() == BuiltinCallForm::Whole ? BuiltinBindings::directFunctionNumberOf(id, arguments.size()) : std::nullopt;
-        if (number && !(generator().validates() && BuiltinBindings::directFunctionAt(*number).takesFrame())) {
+        if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !(generator().validates() && BuiltinBindings::directFunctionAt(*number).takesFrame())) {
             defineResult(callDirectFunction(value, *number));
             return;
         }
@@ -181,6 +194,10 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return answerOrCallFunction(RuntimeOperation::ObjectToStringOfAnyValue, { *boxedReceiver });
         if (builtin == Builtins::BufferByteLength && isCall && (arguments.size() == 1 || arguments.size() == 2))
             return answerOrCallFunction(RuntimeOperation::ByteLengthOfAnyValue, { boxedArguments[0], argumentOrUndefined(1) });
+        if (std::optional<uint32_t> entry = hostFunctionEntryOf(m_builtins, overload); entry && receiver && !generator().validates()) {
+            defineResult(callDirectFunction(value, *entry));
+            return;
+        }
         defineResult(callBuiltinFunction(value, id, boxedReceiver, boxedArguments.span()));
     };
 

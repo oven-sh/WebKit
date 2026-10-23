@@ -17,6 +17,7 @@
 #include "AOTStubsCalls.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CheckedArithmetic.h>
 

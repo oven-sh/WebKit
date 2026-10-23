@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <array>
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>

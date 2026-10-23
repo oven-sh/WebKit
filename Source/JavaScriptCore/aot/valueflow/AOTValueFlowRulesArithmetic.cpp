@@ -10,6 +10,7 @@
 
 #include "AOTSchemaOperations.h"
 #include "AOTValueFlowBuiltinTables.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

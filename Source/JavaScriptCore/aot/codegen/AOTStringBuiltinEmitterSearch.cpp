@@ -11,7 +11,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinFamilyEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT { namespace Typed {

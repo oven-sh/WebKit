@@ -10,6 +10,7 @@
 
 #include "AOTFrameAllocationPointers.h"
 #include "AOTGenericCopy.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 

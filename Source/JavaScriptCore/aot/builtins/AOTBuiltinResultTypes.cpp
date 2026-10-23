@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCallPlan.h"
 #include "AOTBuiltinTypes.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -106,7 +107,7 @@ static Type applyRangeRule(const TypingContext& context, const BuiltinResult& re
 static Type wholeResultType(const TypingContext& context, BuiltinOverloadID id, const BuiltinOperandTypes* operands)
 {
     const BuiltinOverload& overload = context.program.builtins().at(id);
-    if (overload.isUndeclared() || (overload.resultIsDeclaredOnly() && context.level == TypeLevel::Proven))
+    if (overload.isUndeclared())
         return Type::anything();
     Type declared = typeOfBuiltinType({ context, operands }, overload.result.type);
     return applyRangeRule(context, overload.result, operands, WTF::move(declared));

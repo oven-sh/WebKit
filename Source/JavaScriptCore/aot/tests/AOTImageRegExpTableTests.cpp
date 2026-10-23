@@ -16,6 +16,7 @@
 #include "AOTStringConstantNumbering.h"
 #include "AOTStringUses.h"
 #include "AOTTextEncoder.h"
+#include "AOTVector.h"
 #include "JSLock.h"
 #include "VM.h"
 #include "YarrPattern.h"

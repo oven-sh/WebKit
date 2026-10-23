@@ -23,6 +23,7 @@
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "FunctionPrototype.h"
 #include "JSCInlines.h"
@@ -30,7 +31,6 @@
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 

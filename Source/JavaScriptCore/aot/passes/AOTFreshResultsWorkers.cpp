@@ -13,10 +13,10 @@
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTSinkAllocationsInterpreter.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <utility>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

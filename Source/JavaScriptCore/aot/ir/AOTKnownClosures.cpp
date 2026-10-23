@@ -12,6 +12,7 @@
 #include "AOTCFG.h"
 #include "AOTSchemaResultRules.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <utility>

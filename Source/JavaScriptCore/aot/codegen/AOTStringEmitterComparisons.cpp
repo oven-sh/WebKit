@@ -10,6 +10,7 @@
 
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStrings.h"
+#include "AOTVector.h"
 #include "B3IntRange.h"
 #include "B3MemoryValue.h"
 #include "JSGlobalObjectFunctions.h"

@@ -14,6 +14,7 @@
 #include "AOTPass.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {

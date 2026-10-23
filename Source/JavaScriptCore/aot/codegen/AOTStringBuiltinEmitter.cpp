@@ -13,10 +13,10 @@
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentation.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include "JSString.h"
 #include "PureNaN.h"
 #include "SmallStrings.h"
-#include <wtf/Vector.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT { namespace Typed {

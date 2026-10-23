@@ -11,10 +11,10 @@
 #include "AOTRegExpRecord.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRegExpSummary.h"
+#include "AOTVector.h"
 #include <array>
 #include <memory>
 #include <optional>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC {

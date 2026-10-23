@@ -14,6 +14,7 @@
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/HashMap.h>

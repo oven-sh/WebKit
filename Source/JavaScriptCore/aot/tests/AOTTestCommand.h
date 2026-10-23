@@ -9,13 +9,13 @@
 
 #include "AOTBuildContext.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include "AOTWire.h"
 #include <memory>
 #include <optional>
 #include <span>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>

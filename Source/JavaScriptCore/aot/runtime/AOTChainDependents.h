@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTPropertyWalk.h"
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "JSObject.h"
 #include "PropertyOffset.h"
@@ -20,7 +21,6 @@
 #include <wtf/HashTraits.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {

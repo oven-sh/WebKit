@@ -9,11 +9,11 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTRegExpRecord.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
@@ -34,7 +34,7 @@ struct RegExpEntrypoints {
 struct RegExpNamedGroups {
     unsigned numDuplicateNamedCaptureGroups { 0 };
     FixedVector<AtomString> captureGroupNames;
-    UncheckedKeyHashMap<String, Vector<unsigned>> namedGroupToParenIndices;
+    UncheckedKeyHashMap<String, WTF::Vector<unsigned>> namedGroupToParenIndices;
 };
 
 struct RegExpNamedGroupWords {

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <array>
 #include <limits>
 #include <unicode/uchar.h>

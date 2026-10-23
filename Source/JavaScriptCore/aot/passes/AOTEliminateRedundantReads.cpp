@@ -19,11 +19,13 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTMemoryLocation.h"
+#include "AOTSort.h"
 #include "AOTTypePropagation.h"
 #include "AOTTypeRelations.h"
 #include "AOTUseEffectHistory.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -34,7 +36,6 @@
 #include <tuple>
 #include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -427,7 +428,7 @@ private:
         Vector<uint32_t> order(m_accesses.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
         });
-        std::ranges::sort(order, { }, [&](uint32_t index) {
+        AOT::sort(order, { }, [&](uint32_t index) {
             const Access& access = m_accesses[index];
             return std::tuple { access.location, access.base, index };
         });
@@ -1204,7 +1205,7 @@ private:
             if (!m_states[block.index()].accesses.isEmpty())
                 blocks.append(block);
         }
-        std::ranges::sort(blocks, { }, [&](BlockID block) {
+        AOT::sort(blocks, { }, [&](BlockID block) {
             return m_cfg.reversePostOrderIndex(block);
         });
 

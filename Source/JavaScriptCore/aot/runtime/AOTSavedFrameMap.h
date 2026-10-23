@@ -7,12 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <stdint.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

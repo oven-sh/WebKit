@@ -21,8 +21,10 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
+#include "AOTVector.h"
 #include "FunctionPrototype.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
@@ -1305,7 +1307,7 @@ std::span<const uint64_t> ClassTable::classesBelowWithGuardsNamed(NamedGuardsBel
             }
             return IterationStatus::Continue;
         });
-        std::ranges::sort(list);
+        AOT::sort(list);
         list.shrink(std::ranges::unique(list).begin() - list.begin());
         list.shrinkToFit();
     }
@@ -1527,7 +1529,7 @@ bool MemberGuardWatchpoints::tryArmGuardOfStoresInTheWay(uint32_t listEntry, boo
     if ((!m_aStoreByNameHasAsked && !setHeldBefore) || m_classesWithClearGuardsOfStores.isEmpty())
         return false;
     if (!std::exchange(m_classesWithClearGuardsOfStoresAreSorted, true))
-        std::ranges::sort(m_classesWithClearGuardsOfStores);
+        AOT::sort(m_classesWithClearGuardsOfStores);
     uint32_t number = MemberGuardAggregates::numberInListEntry(listEntry);
     auto above = std::ranges::upper_bound(m_classesWithClearGuardsOfStores, number, { }, [](const auto& entry) {
         return entry.first;
@@ -1612,7 +1614,7 @@ auto MemberGuardWatchpoints::namesLookedUpBelow(const LayoutData& classLayout) -
 
 void MemberGuardWatchpoints::didArmWholePrototypeSide(const LayoutData& classLayout, Names&& names)
 {
-    std::ranges::sort(names);
+    AOT::sort(names);
     names.shrink(std::ranges::unique(names).begin() - names.begin());
     NamesOnHolder namesOnHolder;
     namesOnHolder.verdicts.fill(MemberVerdict::NotLookedAt, names.size());

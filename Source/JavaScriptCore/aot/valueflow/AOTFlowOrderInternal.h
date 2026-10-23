@@ -11,6 +11,7 @@
 #include "AOTFlowOrder.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGrouping.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <compare>
 #include <memory>
@@ -22,7 +23,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

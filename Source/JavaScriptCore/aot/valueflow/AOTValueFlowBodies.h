@@ -10,6 +10,7 @@
 #include "AOTValueFlow.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowUnobservedDefinitions.h"
+#include "AOTVector.h"
 #include <memory>
 #include <span>
 #include <utility>
@@ -19,7 +20,7 @@
 #include <atomic>
 #include <memory>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
+#include <wtf/MallocSpan.h>
 
 namespace JSC { namespace AOT {
 
@@ -671,7 +672,7 @@ public:
     std::span<const ValueFlowEdge> edges() const LIFETIME_BOUND { return m_edges.span(); }
     std::span<const ValueFlowNodeMask> masks() const LIFETIME_BOUND { return m_masks.span(); }
     std::span<const ValueFlowStatement> statements() const LIFETIME_BOUND { return m_statements.span(); }
-    std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_operands.subspan(statement.firstOperand, statement.operandCount); }
+    std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_operands.span().subspan(statement.firstOperand, statement.operandCount); }
     std::span<const ValueFlowOperand> operands() const LIFETIME_BOUND { return m_operands.span(); }
     std::span<const ValueFlowEdge> edgesOnceReached() const LIFETIME_BOUND { return m_edgesOnceReached.span(); }
     std::span<const ValueFlowNodeSet> seedsOnceReached() const LIFETIME_BOUND { return m_seedsOnceReached.span(); }
@@ -687,8 +688,8 @@ public:
     // The host's body comes after the last function.
     uint32_t numberOfBodies() const { return m_ranges.size() - 1; }
     uint32_t hostBody() const { return numberOfBodies() - 1; }
-    std::span<const ValueFlowStatement> statementsOf(uint32_t body) const LIFETIME_BOUND { return m_statements.subspan(m_ranges[body].statement, m_ranges[body + 1].statement - m_ranges[body].statement); }
-    std::span<const ValueFlowStatement> statementsStayingInside(uint32_t body) const LIFETIME_BOUND { return m_statements.subspan(m_ranges[body].statement, m_ranges[body].statementLeavingBody - m_ranges[body].statement); }
+    std::span<const ValueFlowStatement> statementsOf(uint32_t body) const LIFETIME_BOUND { return m_statements.span().subspan(m_ranges[body].statement, m_ranges[body + 1].statement - m_ranges[body].statement); }
+    std::span<const ValueFlowStatement> statementsStayingInside(uint32_t body) const LIFETIME_BOUND { return m_statements.span().subspan(m_ranges[body].statement, m_ranges[body].statementLeavingBody - m_ranges[body].statement); }
     std::span<const ValueFlowEdge> edgesOnceReached(uint32_t body) const LIFETIME_BOUND { return m_edgesOnceReached.subspan(m_ranges[body].edgeOnceReached, m_ranges[body + 1].edgeOnceReached - m_ranges[body].edgeOnceReached); }
     std::span<const ValueFlowNodeSet> seedsOnceReached(uint32_t body) const LIFETIME_BOUND { return m_seedsOnceReached.subspan(m_ranges[body].seedOnceReached, m_ranges[body + 1].seedOnceReached - m_ranges[body].seedOnceReached); }
     std::span<const FunctionID> functionsEnteredOnceReached(uint32_t body) const LIFETIME_BOUND { return m_functionsEnteredOnceReached.subspan(m_ranges[body].functionEntered, m_ranges[body + 1].functionEntered - m_ranges[body].functionEntered); }
@@ -701,8 +702,9 @@ private:
     ValueFlowProgramNodes m_nodes;
     Vector<ValueFlowEdge> m_edges;
     Vector<ValueFlowNodeMask> m_masks;
-    Vector<ValueFlowStatement> m_statements;
-    Vector<ValueFlowOperand> m_operands;
+    // Each body writes its own stretch of the two, and nobody writes them before that.
+    MallocSpan<ValueFlowStatement> m_statements;
+    MallocSpan<ValueFlowOperand> m_operands;
     Vector<ValueFlowEdge> m_edgesOnceReached;
     Vector<ValueFlowNodeSet> m_seedsOnceReached;
     Vector<FunctionID> m_functionsEnteredOnceReached;

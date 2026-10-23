@@ -10,6 +10,7 @@
 
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/EnumTraits.h>
 

@@ -10,11 +10,11 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
 #include "AOTRawWordCheck.h"
+#include "AOTVector.h"
 #include <compare>
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

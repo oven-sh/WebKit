@@ -9,6 +9,7 @@
 
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowRuleContext.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

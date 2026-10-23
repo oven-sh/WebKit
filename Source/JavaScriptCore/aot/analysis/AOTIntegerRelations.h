@@ -9,11 +9,11 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTPrimitives.h"
+#include "AOTVector.h"
 #include <optional>
 #include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

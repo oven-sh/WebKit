@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTResolveBuiltinsInternal.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/ScopedLambda.h>
 

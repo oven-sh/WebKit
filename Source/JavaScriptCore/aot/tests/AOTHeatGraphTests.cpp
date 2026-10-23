@@ -18,6 +18,7 @@
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramFile.h"
+#include "AOTVector.h"
 #include <memory>
 #include <optional>
 #include <wtf/DataLog.h>

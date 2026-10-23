@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTConvention.h"
 #include "AOTStronglyConnectedComponents.h"
+#include "AOTVector.h"
 #include "CallFrame.h"
 #include <algorithm>
 #include <optional>

@@ -12,6 +12,7 @@
 #include "AOTFlattenInnerObjects.h"
 #include "AOTSinkAllocationsInternal.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <iterator>
 #include <utility>

@@ -11,6 +11,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "StackAlignment.h"
 #include <wtf/MathExtras.h>

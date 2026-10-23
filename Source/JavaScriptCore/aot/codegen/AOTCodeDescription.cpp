@@ -11,7 +11,9 @@
 #include "AOTCodeGenerator.h"
 #include "AOTCodeRecords.h"
 #include "AOTEntryEmitter.h"
+#include "AOTSort.h"
 #include "AOTStackCheckEmitter.h"
+#include "AOTVector.h"
 #include "AirCode.h"
 #include "B3Procedure.h"
 #include "LinkBuffer.h"
@@ -25,7 +27,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static Vector<CodeEntry, 1> describeEntries(CodeRecords& records, LinkBuffer& linkBuffer)
 {
     Vector<RecordedEntry, 1>& recorded = records.entries;
-    std::ranges::sort(recorded, { }, &RecordedEntry::id);
+    AOT::sort(recorded, { }, &RecordedEntry::id);
     RELEASE_ASSERT(!recorded.isEmpty() && recorded[0].id == primaryEntry);
     RELEASE_ASSERT(std::ranges::adjacent_find(recorded, { }, &RecordedEntry::id) == recorded.end());
 

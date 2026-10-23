@@ -17,6 +17,7 @@
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <optional>
 #include <tuple>
 #include <wtf/HashMap.h>

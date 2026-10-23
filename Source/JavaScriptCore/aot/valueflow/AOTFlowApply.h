@@ -13,9 +13,9 @@
 #include "AOTIR.h"
 #include "AOTRelationalSummaries.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

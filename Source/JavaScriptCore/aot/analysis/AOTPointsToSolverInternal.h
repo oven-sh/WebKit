@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTPointsToSolver.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -21,7 +22,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

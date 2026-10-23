@@ -13,6 +13,7 @@
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
 #include "AOTVarint.h"
+#include "AOTVector.h"
 #include <array>
 #include <limits>
 #include <wtf/Lock.h>

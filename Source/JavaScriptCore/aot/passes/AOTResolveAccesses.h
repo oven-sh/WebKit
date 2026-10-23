@@ -11,9 +11,9 @@
 #include "AOTPropertyAccessElements.h"
 #include "AOTRefusedContents.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

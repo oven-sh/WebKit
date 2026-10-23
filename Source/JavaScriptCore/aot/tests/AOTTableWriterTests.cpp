@@ -11,6 +11,7 @@
 #include "AOTProgramTableEncoder.h"
 #include "AOTShapeTest.h"
 #include "AOTTableWriter.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

@@ -10,6 +10,7 @@
 #include "AOTImageSiteTestBodies.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPolls.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <initializer_list>

@@ -17,12 +17,12 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsRegExpFrames.h"
+#include "AOTVector.h"
 #include "JSCJSValueInlines.h"
 #include "JSString.h"
 #include "RegExp.h"
 #include "RegExpObject.h"
 #include <optional>
-#include <wtf/Vector.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {

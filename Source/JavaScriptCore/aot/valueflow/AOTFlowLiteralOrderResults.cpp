@@ -11,14 +11,15 @@
 #include "AOTCFG.h"
 #include "AOTNameClass.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTUseLists.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Deque.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -184,7 +185,7 @@ static void collectLiteralsOf(const ValueFlowResultInputs& inputs, FunctionID id
         }
     }
     std::span<Literal> literalsOfFunction = literals.mutableSpan().subspan(first);
-    std::ranges::sort(literalsOfFunction, { }, &Literal::allocation);
+    AOT::sort(literalsOfFunction, { }, &Literal::allocation);
     if (literalsOfFunction.empty())
         return;
 
@@ -226,7 +227,7 @@ CopiedObjects LiteralOrderSolver::objectsCopiedBy(FunctionID function, ValueID c
         if (layout && hasObjectsThatCodeAlters(program().at(layout).kind))
             copied.layouts.append(layout);
     });
-    std::ranges::sort(copied.layouts);
+    AOT::sort(copied.layouts);
     removeRepeatedElements(copied.layouts);
     return copied;
 }
@@ -497,7 +498,7 @@ Vector<KeyOrder> LiteralOrderSolver::sortedOrdersOf(LayoutID id) const
         for (const KeyOrder& order : m_creations[creation].orders)
             listedOrders.append(&order);
     }
-    std::ranges::sort(listedOrders, [](const KeyOrder* a, const KeyOrder* b) {
+    AOT::sort(listedOrders, [](const KeyOrder* a, const KeyOrder* b) {
         return std::ranges::lexicographical_compare(*a, *b);
     });
 
@@ -507,7 +508,7 @@ Vector<KeyOrder> LiteralOrderSolver::sortedOrdersOf(LayoutID id) const
             countedOrders.append({ order, 0 });
         ++countedOrders.last().numberOfCreations;
     }
-    std::ranges::sort(countedOrders, [](const CountedKeyOrder& a, const CountedKeyOrder& b) {
+    AOT::sort(countedOrders, [](const CountedKeyOrder& a, const CountedKeyOrder& b) {
         if (a.numberOfCreations != b.numberOfCreations)
             return a.numberOfCreations > b.numberOfCreations;
         if (a.order->size() != b.order->size())

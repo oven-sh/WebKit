@@ -12,6 +12,7 @@
 #include "AOTConvention.h"
 #include "AOTPureOperations.h"
 #include "AOTStubsCalls.h"
+#include "AOTVector.h"
 #include <array>
 
 namespace JSC { namespace AOT { namespace Typed {

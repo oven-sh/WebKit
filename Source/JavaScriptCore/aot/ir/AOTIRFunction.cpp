@@ -14,6 +14,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <utility>
 #include <wtf/BitVector.h>
 

@@ -16,8 +16,10 @@
 #include "AOTPhaseTimes.h"
 #include "AOTPrimitiveKeyTexts.h"
 #include "AOTSchemaOperandPositions.h"
+#include "AOTSort.h"
 #include "AOTValueFlowResultsPlaces.h"
 #include "AOTValueFlowResultsUnseenCode.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/HashMap.h>
@@ -274,7 +276,7 @@ Vector<BuiltinID> BuiltinHolders::holdersIn(ValueSetMaker& maker, ValueSetID set
     m_inputs.sets().forEachMember(maker.intersect(set, m_inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
         found.append(m_builtins.canonicalID(m_inputs.universe().builtinOf(object)));
     });
-    std::ranges::sort(found);
+    AOT::sort(found);
     removeRepeatedElements(found);
     return found;
 }
@@ -457,8 +459,8 @@ static BitVector findNamespacesOfModules(const BuiltinTable& builtins)
     return namespaces;
 }
 
-// A literal, a coroutine and a rest parameter make an instance of a class without naming the constructor.
-static void addConstructorsOfAllocatedClasses(const ValueFlowResultInputs& inputs, BitVector& builtinsWhoseCodeRuns)
+// A literal, a coroutine and a rest parameter create an instance without running the constructor. The prototype's entry lists the features every instance needs.
+static void addPrototypesOfAllocatedClasses(const ValueFlowResultInputs& inputs, BitVector& builtinsWhoseCodeRuns)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
     const ValueFlowUniverse& universe = inputs.universe();
@@ -498,8 +500,9 @@ static void addConstructorsOfAllocatedClasses(const ValueFlowResultInputs& input
     for (const BitVector& classes : allocatedClassesOfWorker)
         allocatedClasses.merge(classes);
     for (size_t index : allocatedClasses) {
-        if (BuiltinID constructor = builtins.at(BuiltinClassID(index)).constructor)
-            builtinsWhoseCodeRuns.quickSet(builtins.canonicalID(constructor).index());
+        const BuiltinClass& builtinClass = builtins.at(BuiltinClassID(index));
+        if (BuiltinID entry = builtinClass.prototype ? builtinClass.prototype : builtinClass.constructor)
+            builtinsWhoseCodeRuns.quickSet(builtins.canonicalID(entry).index());
     }
 }
 
@@ -517,7 +520,7 @@ static BitVector findBuiltinsWhoseCodeRuns(const ValueFlowResultInputs& inputs)
         if (inputs.solver().usesOf(builtin).containsAny(enteringUses))
             builtinsWhoseCodeRuns.quickSet(builtins.canonicalID(builtin).index());
     }
-    addConstructorsOfAllocatedClasses(inputs, builtinsWhoseCodeRuns);
+    addPrototypesOfAllocatedClasses(inputs, builtinsWhoseCodeRuns);
     return builtinsWhoseCodeRuns;
 }
 
@@ -685,7 +688,7 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
                 uses.append(FeatureUseRecord { static_cast<uint32_t>(line.feature), static_cast<uint32_t>(index), noWitness });
         }
     }
-    std::ranges::sort(uses, { }, orderOf);
+    AOT::sort(uses, { }, orderOf);
     uses.shrink(std::ranges::unique(uses, { }, orderOf).begin() - uses.begin());
     return uses;
 }
@@ -714,7 +717,7 @@ static Vector<UnseenCodeRecord> collectUnseenCode(const ValueFlowResultInputs& i
     auto orderOf = [](const UnseenCodeRecord& record) {
         return std::tuple(record.cause, record.builtin, record.witness.function, record.witness.value);
     };
-    std::ranges::sort(records, { }, orderOf);
+    AOT::sort(records, { }, orderOf);
     records.shrink(std::ranges::unique(records, { }, orderOf).begin() - records.begin());
     return records;
 }
@@ -776,7 +779,7 @@ static auto orderOfLocation(const BuiltinLocationFlow& location)
 // Two entries may describe one location. It is constant if both say so.
 static void sortAndMergeLocations(Vector<BuiltinLocationFlow>& locations)
 {
-    std::ranges::stable_sort(locations, { }, orderOfLocation);
+    AOT::stableSort(locations, { }, orderOfLocation);
     size_t size = 0;
     for (const BuiltinLocationFlow& location : locations) {
         if (!size || orderOfLocation(locations[size - 1]) != orderOfLocation(location)) {
@@ -1127,7 +1130,7 @@ void WritesOfLockedLocations::collect()
                         noteOperation(notes, statement);
                 }
             }
-            std::ranges::sort(found.callsOfBuiltinFunctionsAlone);
+            AOT::sort(found.callsOfBuiltinFunctionsAlone);
         });
     }
     for (FoundInFunctions& found : foundInTask) {
@@ -1354,7 +1357,7 @@ static void recordPlacesOfUnseenCode(const ValueFlowResultInputs& inputs, const 
     auto orderOf = [](const UnseenCodeRecord& record) {
         return std::tuple(record.cause, record.builtin, record.witness.function, record.witness.value);
     };
-    std::ranges::sort(records, { }, orderOf);
+    AOT::sort(records, { }, orderOf);
     records.shrink(std::ranges::unique(records, { }, orderOf).begin() - records.begin());
 }
 
@@ -1382,7 +1385,7 @@ static void recordPlaces(const ValueFlowResultInputs& inputs, FlowResultTables& 
     for (FeatureUseRecord& use : tables.builtins.featureUses)
         use.witness = whereNamed(use.builtin);
     // The first record of a feature speaks for it: one with a place in the program, the first in the program.
-    std::ranges::sort(tables.builtins.featureUses, { }, [](const FeatureUseRecord& use) {
+    AOT::sort(tables.builtins.featureUses, { }, [](const FeatureUseRecord& use) {
         return std::tuple(use.feature, use.witness.location.module, use.witness.location.position, use.builtin);
     });
     for (FlowLocaleUse& use : tables.builtins.localeUses) {

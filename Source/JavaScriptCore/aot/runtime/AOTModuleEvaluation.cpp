@@ -13,6 +13,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTState.h"
 #include "AOTStronglyConnectedComponents.h"
+#include "AOTVector.h"
 #include "Error.h"
 #include "Exception.h"
 #include "JSCInlines.h"

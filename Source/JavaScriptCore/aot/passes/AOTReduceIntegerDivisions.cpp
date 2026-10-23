@@ -16,8 +16,8 @@
 #include "AOTResultRules.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <optional>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

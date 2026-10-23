@@ -15,6 +15,7 @@
 #include "AOTTypeTable.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowLog.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <memory>
@@ -421,7 +422,6 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
 {
     switch (source) {
     case ValueFlowUnknownSource::UndescribedNativeResult:
-    case ValueFlowUnknownSource::DeclaredNativeResult:
         return UnprovenCause::UndescribedNativeResult;
     case ValueFlowUnknownSource::UnseenCode:
         return UnprovenCause::UnseenCode;

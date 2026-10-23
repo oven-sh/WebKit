@@ -10,10 +10,12 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTBuiltinTable.h"
+#include "AOTSort.h"
 #include "AOTSplitBehindEntryChecks.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowResultsUnseenCode.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -321,7 +323,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
         solver.forEachKindOfStatementRun([&](ValueFlowStatementKind kind, Opcode opcode, const auto& counts) {
             lines.append({ kind, opcode, counts.runs, counts.runsThatAddedNothing, counts.runsThatWereNotDueAndAdded, counts.connections, counts.edgesLogged });
         });
-        std::ranges::sort(lines, std::greater { }, &Line::connections);
+        AOT::sort(lines, std::greater { }, &Line::connections);
         for (const Line& line : lines.span().first(std::min<size_t>(lines.size(), 16))) {
             if (line.kind == ValueFlowStatementKind::Operation)
                 context.out.println("  ", line.opcode, " runs ", line.runs, " added-nothing ", line.runsThatAddedNothing, " not-due-and-added ", line.runsThatWereNotDueAndAdded, " connections ", line.connections, " edges ", line.edgesLogged);

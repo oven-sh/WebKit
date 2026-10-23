@@ -12,9 +12,11 @@
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
@@ -522,7 +524,7 @@ UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, B
     Vector<InitializerCall> calls = collectInParallel<InitializerCall>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<InitializerCall>& found) {
         collectCallsOfInitializers(program, build, FunctionID(index), found);
     });
-    std::ranges::stable_sort(calls, { }, &InitializerCall::initializer);
+    AOT::stableSort(calls, { }, &InitializerCall::initializer);
 
     for (size_t first = 0; first < calls.size();) {
         size_t end = first + 1;
@@ -547,7 +549,7 @@ UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, B
                 m_definitions.append({ initializer, definition.definition, classLayout, definition.key });
         }
     }
-    std::ranges::sort(m_definitions, { }, [](const UnobservedFieldDefinition& definition) {
+    AOT::sort(m_definitions, { }, [](const UnobservedFieldDefinition& definition) {
         return std::pair { definition.initializer, definition.definition };
     });
 }

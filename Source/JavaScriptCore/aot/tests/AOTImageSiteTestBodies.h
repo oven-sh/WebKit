@@ -9,10 +9,10 @@
 
 #include "AOTImageTestSupport.h"
 #include "AOTStubsBarriers.h"
+#include "AOTVector.h"
 #include <array>
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC::AOT::ImageTests {
 

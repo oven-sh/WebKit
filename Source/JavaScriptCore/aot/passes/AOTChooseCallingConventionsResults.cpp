@@ -14,6 +14,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <compare>
 #include <ranges>

@@ -11,6 +11,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTResolveCallsCallees.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 

@@ -14,6 +14,8 @@
 #include "AOTFlowResults.h"
 #include "AOTOperationData.h"
 #include "AOTReuseEnvironments.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <utility>
@@ -403,7 +405,7 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
             return { WTF::move(builder.plan), WTF::move(builder.literals) };
         }
     }
-    std::ranges::sort(builder.plan.roots);
+    AOT::sort(builder.plan.roots);
     builder.plan.size = static_cast<uint32_t>(WTF::roundUpToMultipleOf<wordSize>(builder.allocator.end()));
     return { WTF::move(builder.plan), WTF::move(builder.literals) };
 }

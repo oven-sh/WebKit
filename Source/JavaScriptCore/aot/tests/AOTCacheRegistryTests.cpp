@@ -13,6 +13,7 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
 #include "VM.h"
@@ -22,7 +23,6 @@
 #include <type_traits>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 #if OS(WINDOWS)

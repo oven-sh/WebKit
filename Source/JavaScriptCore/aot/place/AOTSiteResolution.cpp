@@ -16,12 +16,12 @@
 #include "AOTRegExpRequests.h"
 #include "AOTSchemaOperations.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Variant.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

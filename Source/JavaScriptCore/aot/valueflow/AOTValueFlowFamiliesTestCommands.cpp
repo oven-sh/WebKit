@@ -10,9 +10,11 @@
 
 #include "AOTIRPrinter.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowLog.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
@@ -257,7 +259,7 @@ void FamilyCounter::print(PrintStream& out, size_t numberOfPairs)
     out.println("all positions ", total.positions, " layout-outside ", total.withLayoutOutside, " unknown-object ", total.withUnknownObject, " object-without-layout ", total.withObjectWithoutLayout,
         " no-object ", total.withoutArrival, " pairs ", m_pairs.size(), " untracked-object ", total.withUntrackedObject);
 
-    std::ranges::sort(m_pairs, [](const Pair& a, const Pair& b) {
+    AOT::sort(m_pairs, [](const Pair& a, const Pair& b) {
         return std::tuple(b.positions, a.named.index(), a.arriving.index()) < std::tuple(a.positions, b.named.index(), b.arriving.index());
     });
     for (const Pair& pair : m_pairs.span().first(std::min(numberOfPairs, m_pairs.size()))) {

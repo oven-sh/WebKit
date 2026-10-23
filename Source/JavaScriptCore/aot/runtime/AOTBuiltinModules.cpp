@@ -18,6 +18,7 @@
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "BuiltinExecutables.h"
 #include "ConstructData.h"
 #include "Error.h"

@@ -14,6 +14,7 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsStrings.h"
+#include "AOTVector.h"
 #include "JSCJSValueInlines.h"
 #include "JSCell.h"
 #include "JSString.h"
@@ -23,7 +24,6 @@
 #include <initializer_list>
 #include <utility>
 #include <wtf/MathExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {

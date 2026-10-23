@@ -14,6 +14,7 @@
 #include "AOTEffectsOfProtocols.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTIRBuilder.h"
+#include "AOTVector.h"
 #include <array>
 #include <utility>
 

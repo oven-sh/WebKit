@@ -11,6 +11,7 @@
 #include "AOTImageTestBodies.h"
 #include "AOTImageText.h"
 #include "AOTTextEncoder.h"
+#include "AOTVector.h"
 #include <array>
 #include <cstring>
 #include <initializer_list>

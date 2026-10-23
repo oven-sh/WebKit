@@ -17,6 +17,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "HeapInlines.h"
 #include "JSCInlines.h"

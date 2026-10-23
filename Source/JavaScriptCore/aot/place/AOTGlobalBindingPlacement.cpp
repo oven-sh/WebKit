@@ -16,7 +16,9 @@
 #include "AOTIRPrinter.h"
 #include "AOTPlacementSteps.h"
 #include "AOTProgramTableEncoder.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <tuple>
@@ -92,7 +94,7 @@ static Vector<FirstUse> findFirstUses(const PlacementContext& context, std::span
     removeRepeatedElements(uses, [](const FirstUse& a, const FirstUse& b) {
         return a.key == b.key;
     });
-    std::ranges::sort(uses, [](const FirstUse& a, const FirstUse& b) {
+    AOT::sort(uses, [](const FirstUse& a, const FirstUse& b) {
         return std::tie(a.functionRank, a.siteIndex) < std::tie(b.functionRank, b.siteIndex);
     });
     return uses;
@@ -170,7 +172,7 @@ GlobalBindingTable placeGlobalBindings(ProgramEditor& editor, const PlacementCon
     Vector<NumberedBinding> ascendingBindings(count, [&](size_t index) {
         return NumberedBinding { firstUses[index].key, GlobalBindingID(static_cast<uint32_t>(index)) };
     });
-    std::ranges::sort(ascendingBindings, { }, &NumberedBinding::key);
+    AOT::sort(ascendingBindings, { }, &NumberedBinding::key);
 
     if (exceedsLimit) {
         Vector<BindingSite> sitesWithoutBinding;

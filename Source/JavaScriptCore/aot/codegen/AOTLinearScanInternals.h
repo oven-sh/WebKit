@@ -11,6 +11,7 @@
 #include "AOTCodeRecords.h"
 #include "AOTLinearScanCodeGenerator.h"
 #include "AOTFunctionCodeGenerator.h"
+#include "AOTVector.h"
 #include "AirCode.h"
 #include "AirGenerationContext.h"
 #include "B3BasicBlock.h"
@@ -26,7 +27,6 @@
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/Box.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

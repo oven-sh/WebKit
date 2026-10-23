@@ -10,6 +10,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTIRProgram.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include "AOTWasmModuleCompiler.h"
 #include "AOTWasmSection.h"
 #include "WasmCodeInImage.h"
@@ -133,7 +135,7 @@ static Vector<DeclineCount, 2> collectDeclines(const CompiledModule& module)
         else
             declines.append({ reason, 1 });
     }
-    std::ranges::sort(declines, { }, &DeclineCount::first);
+    AOT::sort(declines, { }, &DeclineCount::first);
     return declines;
 }
 

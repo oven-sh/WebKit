@@ -15,7 +15,9 @@
 #include "AOTPass.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTSort.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -427,7 +429,7 @@ PassOutcome makeDescriptorLiteralsBehindJoins(FunctionPassContext& pass)
         function.edit(found.call, ValueEdit::Definition).setOperand(found.operandIndex, finished);
         builder.applyInsertions();
 
-        std::ranges::sort(dead, [](ProgramPoint a, ProgramPoint b) {
+        AOT::sort(dead, [](ProgramPoint a, ProgramPoint b) {
             return std::pair { a.block, a.index } < std::pair { b.block, b.index };
         });
         for (size_t first = 0; first < dead.size();) {

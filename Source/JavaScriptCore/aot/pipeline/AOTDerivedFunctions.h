@@ -10,6 +10,7 @@
 #include "AOTDerivedFunctionList.h"
 #include "AOTIR.h"
 #include "AOTProvisionalFunctions.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <compare>
@@ -27,7 +28,6 @@
 #include <wtf/ScopedLambda.h>
 #include <wtf/Threading.h>
 #include <wtf/UniqueArray.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

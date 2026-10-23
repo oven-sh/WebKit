@@ -10,9 +10,9 @@
 
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

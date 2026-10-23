@@ -13,10 +13,10 @@
 #include "AOTSplitUnions.h"
 #include "AOTStringPositions.h"
 #include "AOTStringRanges.h"
+#include "AOTVector.h"
 #include "PureNaN.h"
 #include <ranges>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

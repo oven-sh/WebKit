@@ -9,8 +9,8 @@
 
 #include "AOTID.h"
 #include "AOTLayout.h"
+#include "AOTVector.h"
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

@@ -9,12 +9,12 @@
 
 #include "AOTCodeRecords.h"
 #include "AOTOperationEmitter.h"
+#include "AOTVector.h"
 #include "B3Policy.h"
 #include "B3StackmapValue.h"
 #include "RegisterSet.h"
 #include <optional>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

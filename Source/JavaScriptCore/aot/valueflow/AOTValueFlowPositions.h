@@ -9,6 +9,7 @@
 
 #include "AOTValueFlowResultsInternal.h"
 #include "AOTValueSets.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <limits>
@@ -18,7 +19,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT { namespace Typed {

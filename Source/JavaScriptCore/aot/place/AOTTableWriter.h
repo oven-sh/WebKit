@@ -9,6 +9,7 @@
 
 #include "AOTLimits.h"
 #include "AOTSectionWriter.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -17,7 +18,6 @@
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

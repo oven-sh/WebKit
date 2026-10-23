@@ -25,6 +25,7 @@
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsClosures.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
 #include "JSString.h"

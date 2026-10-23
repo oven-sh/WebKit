@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTModuleGraph.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <wtf/BitVector.h>
 #include <wtf/FastBitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

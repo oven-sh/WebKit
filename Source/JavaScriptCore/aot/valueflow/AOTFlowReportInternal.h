@@ -10,8 +10,8 @@
 #include "AOTCompileOptions.h"
 #include "AOTFlowReport.h"
 #include "AOTFlowResults.h"
+#include "AOTVector.h"
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

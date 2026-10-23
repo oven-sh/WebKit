@@ -9,9 +9,10 @@
 
 #include "AOTBuiltinMembers.h"
 #include "AOTFlowResults.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -41,7 +42,7 @@ inline Vector<BuiltinID> constantBuiltinMembersToLock(const Program& program, co
         if (member && canLockAtStartUp(builtins, member))
             members.append(member);
     }
-    std::ranges::sort(members, { }, [&](BuiltinID member) {
+    AOT::sort(members, { }, [&](BuiltinID member) {
         return std::pair { builtins.at(member).holder, member };
     });
     return members;

@@ -15,6 +15,8 @@
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -298,7 +300,7 @@ static Vector<Cut, 4> findCuts(FunctionAnalyses& analyses, std::span<const Value
         }
         cuts.append(WTF::move(cut));
     }
-    std::ranges::sort(cuts, std::ranges::greater { }, [](const Cut& cut) {
+    AOT::sort(cuts, std::ranges::greater { }, [](const Cut& cut) {
         return std::tuple(cut.point.block, cut.point.index);
     });
     return cuts;

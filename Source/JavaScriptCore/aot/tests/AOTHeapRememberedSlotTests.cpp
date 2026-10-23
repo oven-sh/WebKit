@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTHeapCacheRegistry.h"
+#include "AOTVector.h"
 #include "HeapInlines.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
@@ -23,7 +24,6 @@
 #include <type_traits>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

@@ -10,6 +10,7 @@
 #include "AOTConvention.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubTestSupport.h"
+#include "AOTVector.h"
 #include "CPU.h"
 #include <algorithm>
 #include <array>

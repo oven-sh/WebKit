@@ -16,6 +16,7 @@
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/BitVector.h>

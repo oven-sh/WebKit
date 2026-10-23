@@ -13,8 +13,10 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardAvailability.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 
@@ -187,7 +189,7 @@ static void sortConsumersFirst(FunctionPassContext& context, Vector<ArrayChain>&
 {
     const CFG& cfg = context.analyses.cfg();
     const UseLists& useLists = context.analyses.useLists();
-    std::ranges::sort(chains, std::ranges::greater { }, [&](const ArrayChain& chain) {
+    AOT::sort(chains, std::ranges::greater { }, [&](const ArrayChain& chain) {
         return std::pair { cfg.reversePostOrderIndex(chain.block), useLists.locationOf(chain.lastCall).index };
     });
 }

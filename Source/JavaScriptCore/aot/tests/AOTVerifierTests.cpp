@@ -17,6 +17,7 @@
 #include "AOTReaderFixture.h"
 #include "AOTTypeRelations.h"
 #include "AOTTypeTestPlan.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include "AOTVerifierInternal.h"
 #include <memory>

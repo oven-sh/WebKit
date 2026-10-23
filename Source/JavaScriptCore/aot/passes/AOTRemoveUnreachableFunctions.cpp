@@ -12,13 +12,13 @@
 #include "AOTCallGraph.h"
 #include "AOTPhaseTimes.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <memory>
 #include <numeric>
 #include <span>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

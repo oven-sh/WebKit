@@ -10,11 +10,11 @@
 #include "AOTEffects.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <array>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

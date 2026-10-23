@@ -11,6 +11,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTReaderInternal.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include "AOTVerifierInternal.h"
 #include "LineColumn.h"
 #include "PureNaN.h"

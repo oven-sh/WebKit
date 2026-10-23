@@ -15,6 +15,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTSchemaResultRules.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 

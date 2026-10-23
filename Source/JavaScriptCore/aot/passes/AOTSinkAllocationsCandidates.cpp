@@ -12,6 +12,8 @@
 #include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <utility>
@@ -1480,7 +1482,7 @@ void AllocationPrefilter::partition()
         if (find(object) == object && !m_objects[object].isDecided)
             roots.append({ firstPositionOfComponent[findComponent(object)], findComponent(object), object });
     }
-    std::ranges::sort(roots);
+    AOT::sort(roots);
 
     for (size_t first = 0; first < roots.size();) {
         size_t end = first;
@@ -1510,14 +1512,14 @@ void AllocationPrefilter::partition()
         link.chunk = m_objects[link.source].chunk;
     for (ObjectUse& use : m_uses)
         use.chunk = m_objects[use.object].chunk;
-    std::ranges::sort(m_events, { }, [](const Event& event) {
+    AOT::sort(m_events, { }, [](const Event& event) {
         return std::tuple { event.chunk, event.position, event.index, event.kind };
     });
-    std::ranges::sort(m_parameterLinks, { }, [](const ParameterLink& link) {
+    AOT::sort(m_parameterLinks, { }, [](const ParameterLink& link) {
         return std::tuple { link.chunk, link.position, link.edge.targetIndex, link.parameter, link.source };
     });
     if (m_chunks.size() > 1)
-        std::ranges::sort(m_uses, { }, &ObjectUse::chunk);
+        AOT::sort(m_uses, { }, &ObjectUse::chunk);
     auto spanOfChunk = [](auto& list, uint32_t chunk) {
         auto range = std::ranges::equal_range(list, chunk, { }, [](const auto& entry) {
             return entry.chunk;
@@ -1888,7 +1890,7 @@ void AllocationSinking::addTracesOfFruitlessAllocations(Vector<uint64_t>& traces
         if (!tracesWithSurvivors.contains(trace) && !std::ranges::binary_search(traces.span().first(sizeBefore), trace))
             traces.append(trace);
     }
-    std::ranges::sort(traces);
+    AOT::sort(traces);
     removeRepeatedElements(traces);
 }
 

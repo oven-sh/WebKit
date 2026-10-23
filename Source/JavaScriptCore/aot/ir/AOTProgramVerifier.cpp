@@ -14,6 +14,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTVerifierInternal.h"
 #include <algorithm>
 #include <functional>

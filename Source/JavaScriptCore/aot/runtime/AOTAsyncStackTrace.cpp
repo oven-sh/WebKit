@@ -13,6 +13,7 @@
 #include "AOTImage.h"
 #include "AOTSavedFrame.h"
 #include "AOTStackTrace.h"
+#include "AOTVector.h"
 #include "DeferGC.h"
 #include "InternalFieldTuple.h"
 #include "JSCInlines.h"
@@ -44,7 +45,7 @@ static SuspendedAsyncFunction findSuspendedAsyncFunction(JSCell* cell)
     return { saved, promise ? promise : saved->promiseOfCombinator(), saved->waiter() };
 }
 
-static void appendFrames(VM& vm, const SuspendedAsyncFunction& suspended, Vector<StackFrame>& results)
+static void appendFrames(VM& vm, const SuspendedAsyncFunction& suspended, WTF::Vector<StackFrame>& results)
 {
     if (!suspended.coroutine)
         return;
@@ -97,12 +98,12 @@ Vector<JSPromise*, 4> promisesSettledBy(JSCell* coroutine)
     return promises;
 }
 
-void appendSuspendedAsyncFunction(VM& vm, JSCell*, Vector<StackFrame>& results, JSCell* coroutine)
+void appendSuspendedAsyncFunction(VM& vm, JSCell*, WTF::Vector<StackFrame>& results, JSCell* coroutine)
 {
     appendFrames(vm, findSuspendedAsyncFunction(coroutine), results);
 }
 
-JSCell* appendDirectAsyncCallers(VM& vm, JSCell*, Vector<StackFrame>& results, JSCell* coroutine, size_t maxStackSize)
+JSCell* appendDirectAsyncCallers(VM& vm, JSCell*, WTF::Vector<StackFrame>& results, JSCell* coroutine, size_t maxStackSize)
 {
     constexpr uint16_t mask = JSPromise::stateMask | JSPromise::inlineReactionKindMask | JSPromise::inlineReactionMicrotaskMask;
     constexpr uint16_t isAwaitedByCompiledCode = static_cast<uint16_t>(JSPromise::Status::Pending)

@@ -9,10 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowStamps.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTValueFlowPositions.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 
@@ -124,7 +126,7 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
             if (callsValue(statement))
                 stampCall(calls, statement);
         }
-        std::ranges::sort(calls.update.calls, { }, &FlowCallStamp::value);
+        AOT::sort(calls.update.calls, { }, &FlowCallStamp::value);
         inputs.build.statistics().count(StatisticID::FlowCallsOfUnknownCallees, calls.numberOfUnknownCallees);
     });
     TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());

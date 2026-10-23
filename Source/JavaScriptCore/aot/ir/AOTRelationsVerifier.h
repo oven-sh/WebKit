@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTVector.h"
 #include <wtf/Forward.h>
 
 namespace JSC { namespace AOT {

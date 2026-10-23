@@ -13,11 +13,11 @@
 #include "AOTRefusedContents.h"
 #include "AOTResolveCallsCallees.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTVector.h"
 #include <expected>
 #include <optional>
 #include <wtf/Noncopyable.h>
 #include <wtf/Variant.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

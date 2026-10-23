@@ -12,11 +12,11 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTSplitUnions.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

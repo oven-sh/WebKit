@@ -28,6 +28,7 @@
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubAssembler.h"
 #include "AOTThrowEmitter.h"
+#include "AOTVector.h"
 #include "AirCode.h"
 #include "AirLimits.h"
 #include "B3Generate.h"

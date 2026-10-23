@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -53,7 +55,7 @@ static bool canDescribe(const Program& program, PropertyKeyID key)
 static bool hasRepeatedKey(std::span<const PropertyKeyID> keys)
 {
     Vector<PropertyKeyID, 8> sortedKeys(keys);
-    std::ranges::sort(sortedKeys);
+    AOT::sort(sortedKeys);
     return std::ranges::adjacent_find(sortedKeys) != sortedKeys.end();
 }
 

@@ -11,8 +11,10 @@
 #include "AOTBuildContext.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTPropertyAccessMembers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 
@@ -106,8 +108,8 @@ MethodTableFunctions collectMethodTableFunctions(const PlacementContext& context
         else if (function.role == FunctionRole::TableLookup)
             functions.lookups.append({ selectorOfTableFunction(function), FunctionID(index) });
     }
-    std::ranges::sort(functions.entrypoints);
-    std::ranges::sort(functions.lookups);
+    AOT::sort(functions.entrypoints);
+    AOT::sort(functions.lookups);
     return functions;
 }
 
@@ -156,7 +158,7 @@ static Vector<Row> createRows(const PlacementContext& context, const PlacedSites
         appendEntriesOf(context, use, functions, shapes, guardBits, rows.last());
     }
     for (Row& row : rows) {
-        std::ranges::stable_sort(row.entries, { }, &RowEntry::shape);
+        AOT::stableSort(row.entries, { }, &RowEntry::shape);
         row.entries.shrink(row.entries.size() - std::ranges::unique(row.entries, { }, &RowEntry::shape).size());
     }
     return rows;
@@ -178,7 +180,7 @@ MethodTable placeMethodTable(const PlacementContext& context, const PlacedSites&
     Vector<uint32_t> order(rows.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::stable_sort(order, [&](uint32_t a, uint32_t b) {
+    AOT::stableSort(order, [&](uint32_t a, uint32_t b) {
         return rows[a].entries.size() > rows[b].entries.size();
     });
 
@@ -208,7 +210,7 @@ MethodTable placeMethodTable(const PlacementContext& context, const PlacedSites&
                 table.dependents.append({ entry.guard, position, index });
         }
     }
-    std::ranges::sort(table.dependents);
+    AOT::sort(table.dependents);
 
     Statistics& statistics = context.build.statistics();
     statistics.count(StatisticID::MethodTableSelectors, table.selectors.size());

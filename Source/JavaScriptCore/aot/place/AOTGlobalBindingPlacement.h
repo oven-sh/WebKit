@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <compare>
 #include <wtf/PrintStream.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

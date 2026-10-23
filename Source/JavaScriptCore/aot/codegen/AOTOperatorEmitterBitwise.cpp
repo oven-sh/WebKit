@@ -12,6 +12,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTStubsArithmetic.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

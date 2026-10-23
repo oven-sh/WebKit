@@ -10,6 +10,7 @@
 #include "AOTImageTestSupport.h"
 #include "AOTSectionLinker.h"
 #include "AOTUnitPlacement.h"
+#include "AOTVector.h"
 #include "GPRInfo.h"
 #include <algorithm>
 #include <expected>
@@ -19,7 +20,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace ImageTests {
 

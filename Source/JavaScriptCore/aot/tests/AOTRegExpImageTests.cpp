@@ -12,6 +12,7 @@
 #include "AOTRegExpInProcessLoader.h"
 #include "AOTRegExpSection.h"
 #include "AOTRegExpTestSupport.h"
+#include "AOTVector.h"
 #include "JSLock.h"
 #include "VM.h"
 #include "YarrInterpreter.h"

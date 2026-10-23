@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImageBuildSteps.h"
+#include "AOTVector.h"
 
 #include "AOTCodeLinker.h"
 #include "AOTInstanceLayout.h"

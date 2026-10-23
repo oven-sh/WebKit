@@ -12,6 +12,7 @@
 #include "AOTPropertyCachesWords.h"
 #include "AOTRuntimeType.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTVector.h"
 #include "ArrayAllocationProfile.h"
 #include "ArrayConventions.h"
 #include "CompleteSubspace.h"
@@ -29,7 +30,6 @@
 #include <optional>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {

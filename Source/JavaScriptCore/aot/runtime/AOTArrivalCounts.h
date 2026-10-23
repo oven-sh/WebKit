@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "JSCJSValue.h"
 #include "JSExportMacros.h"
 #include <utility>
@@ -15,7 +16,6 @@
 #include <wtf/Hasher.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 

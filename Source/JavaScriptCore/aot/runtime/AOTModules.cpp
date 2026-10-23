@@ -23,6 +23,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGCInlines.h"
 #include "DisallowVMEntry.h"

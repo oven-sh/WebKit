@@ -13,6 +13,7 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include "Butterfly.h"
 #include "JSObject.h"
 #include "JSPropertyNameEnumerator.h"

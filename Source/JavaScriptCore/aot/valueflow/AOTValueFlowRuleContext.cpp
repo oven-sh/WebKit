@@ -29,6 +29,8 @@ static ValueSetID maskOf(const ValueFlowOperand& operand)
 ValueFlowRuleContext::ValueFlowRuleContext(const ValueFlowSolver& solver, ValueFlowRoundLog& log, ValueSetMaker& maker)
     : m_solver(solver)
     , m_log(log)
+    , m_instancedFunctions(solver.m_input.instancedFunctions)
+    , m_skipsRedundantAdds(!solver.m_input.isAskedHowValuesCame && !solver.m_input.remembersWhoLoggedEachEdge)
     , m_maker(maker)
 {
 }
@@ -56,6 +58,7 @@ uint64_t ValueFlowRuleContext::mostMembersToldApart() const
 void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
 {
     m_statement = statement;
+    ++m_runEpoch;
     m_isFirstRunOfStatementOfBody = m_solver.hasStatementOfBodyNeverRun(statement);
     m_firstEdgeOfRun = m_log.edges.size();
     m_firstNodeReadOfRun = m_log.nodesRead.size();
@@ -87,13 +90,10 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
 {
     constexpr size_t mostAtOnce = 32;
     const ValueFlowGraph& graph = m_solver.graph();
-    uint32_t numberOfNodes = graph.numberOfNodes();
     bool mayBeKnown = !hasNeverRun();
     size_t endOfEdges = m_log.edges.size();
     size_t endOfNodesRead = m_log.nodesRead.size();
     size_t endOfNodesAskedWhetherEmpty = m_log.nodesAskedWhetherEmpty.size();
-    for (size_t index = m_firstEdgeOfRun; index < std::min(endOfEdges, m_firstEdgeOfRun + mostAtOnce); ++index)
-        graph.prefetchLinksThatHold(m_log.edges[index]);
     if (mayBeKnown) {
         size_t kept = m_firstNodeReadOfRun;
         for (size_t first = m_firstNodeReadOfRun; first < endOfNodesRead; first += mostAtOnce) {
@@ -120,21 +120,29 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
         m_log.nodesAskedWhetherEmpty.shrink(kept);
     }
     size_t kept = m_firstEdgeOfRun;
+    std::span<ValueFlowEdge> edges = m_log.edges.mutableSpan();
     for (size_t first = m_firstEdgeOfRun; first < endOfEdges; first += mostAtOnce) {
-        size_t end = std::min(endOfEdges, first + mostAtOnce);
-        for (size_t index = first; index < end; ++index)
-            graph.prefetchWhereEdgeIsListed(m_log.edges[index]);
-        for (size_t index = end; index < std::min(endOfEdges, end + mostAtOnce); ++index)
-            graph.prefetchLinksThatHold(m_log.edges[index]);
-        for (size_t index = first; index < end; ++index) {
-            ValueFlowEdge edge = m_log.edges[index];
-            if (edge.to.index() < numberOfNodes && graph.hasAdded(edge))
+        std::span<ValueFlowEdge> batch = edges.subspan(first, std::min(endOfEdges - first, mostAtOnce));
+        static_assert(mostAtOnce <= 32);
+        uint32_t present = 0;
+        uint32_t undecided = 0;
+        for (size_t index = 0; index < batch.size(); ++index) {
+            ValueFlowGraph::EdgeLookup lookup = graph.lookUpInInlineLinks(batch[index]);
+            present |= static_cast<uint32_t>(lookup == ValueFlowGraph::EdgeLookup::Present) << index;
+            undecided |= static_cast<uint32_t>(lookup == ValueFlowGraph::EdgeLookup::NeedsHasAdded) << index;
+        }
+        for (; undecided; undecided &= undecided - 1) {
+            unsigned index = std::countr_zero(undecided);
+            present |= static_cast<uint32_t>(graph.hasAdded(batch[index])) << index;
+        }
+        for (size_t index = 0; index < batch.size(); ++index) {
+            if (present >> index & 1)
                 continue;
             if (kept >= m_log.mostEdges) [[unlikely]] {
                 m_log.hasDroppedEdges = true;
                 break;
             }
-            m_log.edges[kept++] = edge;
+            edges[kept++] = batch[index];
         }
     }
     m_log.edges.shrink(kept);
@@ -186,7 +194,7 @@ std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFl
 
 const ValueFlowInstancedFunctions* ValueFlowRuleContext::instancedFunctions() const
 {
-    return m_solver.m_input.instancedFunctions;
+    return m_instancedFunctions;
 }
 
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function)
@@ -218,18 +226,23 @@ ValueFlowNodeID ValueFlowRuleContext::instanceOf(ValueFlowNodeID node, ValueFlow
     return nodeFor(ValueFlowNodeKey::instance(node, m_maker.of(marker)));
 }
 
-ValueFlowNodeID ValueFlowRuleContext::nodeRead(ValueFlowNodeID node)
+ALWAYS_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeRead(ValueFlowNodeID node)
 {
     if (!node || node.index() < m_firstNodeOfInstance || node.index() >= m_endOfNodesOfInstance)
         return node;
     return instanceOf(node, m_markerOfRun);
 }
 
-ValueFlowNodeID ValueFlowRuleContext::nodeHandedTo(ValueFlowNodeID node)
+ALWAYS_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeHandedTo(ValueFlowNodeID node)
 {
-    const ValueFlowInstancedFunctions* instanced = instancedFunctions();
-    if (!instanced || !node || !instanced->holdsNode(node))
+    if (!m_instancedFunctions || !m_instancedFunctions->holdsNode(node)) [[likely]]
         return node;
+    return instanceHandedTo(node);
+}
+
+NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::instanceHandedTo(ValueFlowNodeID node)
+{
+    const ValueFlowInstancedFunctions* instanced = m_instancedFunctions;
     if (node.index() >= m_firstNodeOfInstance && node.index() < m_endOfNodesOfInstance)
         return instanceOf(node, m_markerOfRun);
     const ValueFlowInstancedFunction* function = instanced->find(nodes().functionOf(node));
@@ -265,6 +278,7 @@ ValueFlowRuleContext::InstanceOfRun::InstanceOfRun(ValueFlowRuleContext& context
     : m_context(context)
 {
     RELEASE_ASSERT(!context.m_markerOfRun);
+    ++context.m_runEpoch;
     context.m_firstNodeOfInstance = context.nodes().firstNodeOf(function);
     context.m_endOfNodesOfInstance = context.nodes().endOfNodesOf(function);
     context.m_markerOfRun = marker;
@@ -272,6 +286,7 @@ ValueFlowRuleContext::InstanceOfRun::InstanceOfRun(ValueFlowRuleContext& context
 
 ValueFlowRuleContext::InstanceOfRun::~InstanceOfRun()
 {
+    ++m_context.m_runEpoch;
     m_context.m_firstNodeOfInstance = 0;
     m_context.m_endOfNodesOfInstance = 0;
     m_context.m_markerOfRun = { };
@@ -281,10 +296,12 @@ ValueFlowRuleContext::InstanceEntered::InstanceEntered(ValueFlowRuleContext& con
     : m_context(context)
     , m_before(std::exchange(context.m_markerEntered, marker))
 {
+    ++context.m_runEpoch;
 }
 
 ValueFlowRuleContext::InstanceEntered::~InstanceEntered()
 {
+    ++m_context.m_runEpoch;
     m_context.m_markerEntered = m_before;
 }
 
@@ -424,12 +441,23 @@ bool ValueFlowRuleContext::holdsAnyOf(ClimbingSet within, ValueFlowNodeID named)
 {
     if (within.m_set == ValueSets::nothing)
         return false;
+    uint64_t key = static_cast<uint64_t>(named.index()) << 32 | within.m_set.index();
+    RunCacheEntry& cached = runCacheEntry(m_holdsAnyOfCache, key);
+    if (cached.key == key && cached.epochAndValue >> 1 == m_runEpoch)
+        return cached.epochAndValue & 1;
+    cached.key = key;
+    cached.epochAndValue = m_runEpoch << 1;
     ValueFlowNodeID node = nodeRead(named);
-    if (std::optional<ValueSetID> constant = setOfConstantOfThisTurn(node))
-        return meet(ClimbingSet(*constant), within.m_set);
+    if (std::optional<ValueSetID> constant = setOfConstantOfThisTurn(node)) {
+        bool result = meet(ClimbingSet(*constant), within.m_set);
+        cached.epochAndValue |= result;
+        return result;
+    }
     // A node of this round holds nothing yet.
-    if (!ValueFlowRoundLog::isNumberedByLog(node) && meet(ClimbingValues(m_solver.graph().values()).at(node), within.m_set))
+    if (!ValueFlowRoundLog::isNumberedByLog(node) && meet(ClimbingValues(m_solver.graph().values()).at(node), within.m_set)) {
+        cached.epochAndValue |= 1;
         return true;
+    }
     if (hasNeverRun() || !m_solver.isKnownWatcher(node, within.m_set, m_statement))
         m_log.partsWatched.append(ValueFlowNodeSet { node, within.m_set });
     return false;
@@ -493,26 +521,33 @@ bool ValueFlowRuleContext::isReached(FunctionID function)
     return false;
 }
 
-ValueFlowNodeID ValueFlowRuleContext::nodeFor(const ValueFlowNodeKey& key)
+ALWAYS_INLINE void ValueFlowRuleContext::logNodeAskedFor(const ValueFlowNodeKey& key, ValueFlowNodeID node)
 {
-    bool namesNodeOfThisRound = key.kind == ValueFlowMadeNodeKind::Masked && ValueFlowRoundLog::isNumberedByLog(key.maskedNode());
-    KnownNode& known = m_knownNodes[key.hash() % m_knownNodes.size()];
-    uint64_t payloadAndSet = static_cast<uint64_t>(key.payload) << 32 | key.set.index();
-    uint32_t kindAndDetail = static_cast<uint32_t>(key.kind) << 8 | key.detail;
-    ValueFlowNodeID node;
-    if (known.node && known.payloadAndSet == payloadAndSet && known.kindAndDetail == kindAndDetail)
-        node = known.node;
-    else {
-        std::optional<uint32_t> existing = namesNodeOfThisRound ? std::nullopt : m_solver.findOrMakeNodesWhereAskedFor(key, m_log, m_maker);
-        node = existing ? m_solver.m_madeNodes[*existing].first : m_log.nodeFor(key);
-        // A constant of this turn is not remembered: the next run that asks for it has to hear that it is one.
-        if (existing && key.kind == ValueFlowMadeNodeKind::Constant && m_solver.m_madeNodes[*existing].isOfThisTurn)
-            m_constantsOfThisTurn.add(node.index(), key.set);
-        else if (existing)
-            known = { payloadAndSet, kindAndDetail, node };
-    }
     if (key.kind != ValueFlowMadeNodeKind::Constant && key.kind != ValueFlowMadeNodeKind::Marked && key.kind != ValueFlowMadeNodeKind::Instance)
         m_log.nodesAskedFor.append(node);
+}
+
+ValueFlowNodeID ValueFlowRuleContext::nodeFor(const ValueFlowNodeKey& key)
+{
+    KnownNode& known = m_knownNodes[key.hash() % m_knownNodes.size()];
+    if (known.payloadAndSet != (static_cast<uint64_t>(key.payload) << 32 | key.set.index()) || known.kindAndDetail != (static_cast<uint32_t>(key.kind) << 8 | key.detail) || !known.node) [[unlikely]]
+        return nodeForUncached(key, known);
+    ValueFlowNodeID node = known.node;
+    logNodeAskedFor(key, node);
+    return node;
+}
+
+NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeForUncached(const ValueFlowNodeKey& key, KnownNode& known)
+{
+    bool namesNodeOfThisRound = key.kind == ValueFlowMadeNodeKind::Masked && ValueFlowRoundLog::isNumberedByLog(key.maskedNode());
+    std::optional<uint32_t> existing = namesNodeOfThisRound ? std::nullopt : m_solver.findOrMakeNodesWhereAskedFor(key, m_log, m_maker);
+    ValueFlowNodeID node = existing ? m_solver.m_madeNodes[*existing].first : m_log.nodeFor(key);
+    // A constant of this turn is not remembered: the next run that asks for it has to hear that it is one.
+    if (existing && key.kind == ValueFlowMadeNodeKind::Constant && m_solver.m_madeNodes[*existing].isOfThisTurn)
+        m_constantsOfThisTurn.add(node.index(), key.set);
+    else if (existing)
+        known = { static_cast<uint64_t>(key.payload) << 32 | key.set.index(), static_cast<uint32_t>(key.kind) << 8 | key.detail, node };
+    logNodeAskedFor(key, node);
     return node;
 }
 
@@ -691,7 +726,13 @@ void ValueFlowRuleContext::connectAsNamed(ValueFlowNodeID from, ValueFlowNodeID 
     if (!from || !to || from == to)
         return;
     ++m_log.numberOfConnectionsOfRun;
+    uint64_t key = static_cast<uint64_t>(from.index()) << 32 | to.index();
+    RunCacheEntry& cached = runCacheEntry(m_edgeCache, key);
+    if (cached.key == key && cached.epochAndValue == m_runEpoch)
+        return;
+    cached = { key, m_runEpoch };
     // Whether it is there already: leaveOutWhatIsKnown().
+    m_solver.graph().prefetchLinksThatHold(ValueFlowEdge { from, to });
     m_log.edges.append(ValueFlowEdge { from, to });
     constexpr size_t mostEdgesThatWait = 1 << 16;
     if (m_log.edges.size() - m_firstEdgeOfRun >= mostEdgesThatWait) [[unlikely]] {
@@ -720,10 +761,34 @@ void ValueFlowRuleContext::connect(const ValueFlowOperand& operand, ValueFlowNod
         add(to, throughMaskOf(operand, constant, m_solver, m_maker));
 }
 
+ALWAYS_INLINE bool ValueFlowRuleContext::isRedundantAdd(ValueFlowNodeID node, ValueSetID set)
+{
+    if (!m_skipsRedundantAdds || node.index() >= m_solver.graph().numberOfNodes())
+        return false;
+    if (m_instancedFunctions && m_instancedFunctions->holdsNode(node))
+        return false;
+    ValueSetID held = m_solver.graph().valueOf(node);
+    return held == set || (held != ValueSets::nothing && !m_maker.meet(set, ValueSets::complement(held)));
+}
+
 void ValueFlowRuleContext::add(ValueFlowNodeID node, ClimbingSet set)
 {
-    if (set.m_set != ValueSets::nothing)
-        connect(nodeFor(keyOfConstant(set.m_set)), node);
+    if (set.m_set == ValueSets::nothing)
+        return;
+    if (isRedundantAdd(node, set.m_set)) {
+        ++m_log.numberOfConnectionsOfRun;
+        return;
+    }
+    uint64_t key = static_cast<uint64_t>(node.index()) << 32 | set.m_set.index();
+    uint64_t epoch = addEpoch();
+    RunCacheEntry& cached = runCacheEntry(m_addCache, key);
+    if (cached.key == key && cached.epochAndValue >> 1 == epoch) {
+        m_log.numberOfConnectionsOfRun += cached.epochAndValue & 1;
+        return;
+    }
+    ValueFlowNodeID constant = nodeFor(keyOfConstant(set.m_set));
+    cached = { key, epoch << 1 | (node && node != constant) };
+    connect(constant, node);
 }
 
 void ValueFlowRuleContext::addUnlessHeld(ValueFlowNodeID node, ValueFlowObjectID object)
@@ -745,9 +810,17 @@ void ValueFlowRuleContext::mark(ClimbingSet objects, OptionSet<ObjectMutation> m
     if (objects.m_set == ValueSets::nothing)
         return;
     // A mark on the unknown object brings no unknown object into being.
-    ValueFlowNodeID holdingObjects = nodeFor(ValueFlowNodeKey::constant(objects.m_set));
-    for (ObjectMutation mutation : mutations)
-        connect(holdingObjects, nodeFor(ValueFlowNodeKey::marked(mutation)));
+    ValueFlowNodeID holdingObjects;
+    for (ObjectMutation mutation : mutations) {
+        ValueFlowNodeID marked = nodeFor(ValueFlowNodeKey::marked(mutation));
+        if (isRedundantAdd(marked, objects.m_set)) {
+            ++m_log.numberOfConnectionsOfRun;
+            continue;
+        }
+        if (!holdingObjects)
+            holdingObjects = nodeFor(ValueFlowNodeKey::constant(objects.m_set));
+        connect(holdingObjects, marked);
+    }
     if (m_solver.m_input.nodes && m_solver.m_input.universe && mutations.containsAny({ ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype }))
         addObjectsOfProgram(notPlain(), objects);
 }

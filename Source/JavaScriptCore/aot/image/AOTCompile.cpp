@@ -25,6 +25,7 @@
 #include "AOTRegExpCompiler.h"
 #include "AOTTextEncoder.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWasmModules.h"
 #include "JSLock.h"
 #include "VM.h"

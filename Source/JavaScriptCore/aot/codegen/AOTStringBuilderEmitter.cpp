@@ -12,12 +12,12 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringBuilderStorage.h"
+#include "AOTVector.h"
 #include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3VariableValue.h"
 #include "CCallHelpers.h"
 #include <algorithm>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

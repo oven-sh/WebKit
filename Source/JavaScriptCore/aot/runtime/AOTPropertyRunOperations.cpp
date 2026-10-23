@@ -17,6 +17,7 @@
 #include "AOTRuntimeRecords.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "PropertyRun.h"
 #include <algorithm>

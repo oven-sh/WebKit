@@ -14,6 +14,7 @@
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include <algorithm>
 #include <array>

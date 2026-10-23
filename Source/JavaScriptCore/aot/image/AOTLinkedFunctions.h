@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTCompiledCode.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

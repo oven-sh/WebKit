@@ -11,6 +11,7 @@
 #include "AOTCFG.h"
 #include "AOTStringBuilderCursor.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Noncopyable.h>
 

@@ -13,6 +13,7 @@
 #include "AOTIRPrinter.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
+#include "AOTVector.h"
 #include <array>
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>

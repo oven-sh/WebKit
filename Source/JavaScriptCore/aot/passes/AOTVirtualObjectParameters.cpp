@@ -22,6 +22,7 @@
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTVirtualObjectShapes.h"
 #include <algorithm>
 #include <optional>

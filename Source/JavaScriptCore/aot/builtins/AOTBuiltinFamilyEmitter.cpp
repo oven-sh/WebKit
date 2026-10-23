@@ -13,8 +13,8 @@
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
 #include "AOTResultRules.h"
+#include "AOTVector.h"
 #include "JSObject.h"
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -11,6 +11,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTNativeTest.h"
 #include "AOTOperationScope.h"
+#include "AOTVector.h"
 #include "Completion.h"
 #include "JSLock.h"
 #include "SourceCode.h"

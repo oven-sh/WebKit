@@ -7,12 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/UniqueArray.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

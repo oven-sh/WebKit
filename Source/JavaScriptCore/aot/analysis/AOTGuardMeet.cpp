@@ -11,6 +11,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTSchemaOperationColumns.h"
+#include "AOTSort.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -362,7 +363,7 @@ bool GuardAvailability::tryWiden(GuardFact& fact, const GuardFacts& factsOnOther
         if (!fact.dependsOn.contains(location))
             fact.dependsOn.append(location);
     }
-    std::ranges::sort(fact.dependsOn);
+    AOT::sort(fact.dependsOn);
     return true;
 }
 

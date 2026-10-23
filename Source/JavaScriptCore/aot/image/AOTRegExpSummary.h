@@ -9,6 +9,7 @@
 
 #include "AOTImageForward.h"
 #include "AOTLimits.h"
+#include "AOTVector.h"
 #include "RegExpKey.h"
 #include "Yarr.h"
 #include "YarrCharacterSetBits.h"
@@ -21,7 +22,6 @@
 #include <wtf/OptionSet.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 

@@ -25,13 +25,13 @@
 #include "AOTUseEffectHistory.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <array>
 #include <optional>
 #include <span>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

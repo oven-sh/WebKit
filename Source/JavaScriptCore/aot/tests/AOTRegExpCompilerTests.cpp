@@ -11,6 +11,7 @@
 #include "AOTRegExpCodeAddressing.h"
 #include "AOTRegExpTestSupport.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "YarrClassTable.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"

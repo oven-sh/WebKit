@@ -18,9 +18,11 @@
 #include "AOTGuardFactDetails.h"
 #include "AOTKnownClosures.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/Atomics.h>
@@ -788,9 +790,9 @@ FunctionUses FunctionScanner::run()
     }
     if (m_readsZeroEncodingCandidate)
         findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, m_uses.variablesWithUncheckedReads);
-    std::ranges::sort(m_uses.accesses, isOrderedBefore);
+    AOT::sort(m_uses.accesses, isOrderedBefore);
     foldEqualAccesses(m_uses.accesses);
-    std::ranges::sort(m_uses.variablesNamed);
+    AOT::sort(m_uses.variablesNamed);
     removeRepeatedElements(m_uses.variablesNamed);
     if (m_inputs.runsBeforeEntry.quickGet(m_id.index()))
         m_uses.variablesUsedBeforeProgramEntry = m_uses.variablesNamed;

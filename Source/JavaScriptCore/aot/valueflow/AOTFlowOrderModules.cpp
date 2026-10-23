@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <utility>
@@ -223,7 +225,7 @@ Vector<uint32_t> sortModulesByComponent(const StronglyConnectedComponents& compo
     modules.reserveInitialCapacity(numberOfModules);
     for (unsigned module = 0; module < numberOfModules; ++module)
         modules.append(module);
-    std::ranges::sort(modules, [&](uint32_t left, uint32_t right) {
+    AOT::sort(modules, [&](uint32_t left, uint32_t right) {
         return std::pair(componentOf[left], left) < std::pair(componentOf[right], right);
     });
     return modules;

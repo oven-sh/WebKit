@@ -25,6 +25,7 @@
 #include "AOTState.h"
 #include "AOTTableInImage.h"
 #include "AOTUnwinding.h"
+#include "AOTVector.h"
 #include "ButterflyInlines.h"
 #include "CommonSlowPaths.h"
 #include "CompleteSubspaceInlines.h"

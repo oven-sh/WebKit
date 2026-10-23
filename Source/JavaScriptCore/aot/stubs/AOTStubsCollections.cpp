@@ -20,6 +20,7 @@
 #include "AOTStubRegisters.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsHashTables.h"
+#include "AOTVector.h"
 #include "CompleteSubspace.h"
 #include "JSCellButterfly.h"
 #include "JSMap.h"

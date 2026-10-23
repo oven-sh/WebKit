@@ -12,6 +12,7 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTIRTestSupport.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <algorithm>
 #include <array>

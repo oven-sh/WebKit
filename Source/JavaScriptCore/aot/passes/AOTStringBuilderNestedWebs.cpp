@@ -15,6 +15,7 @@
 #include "AOTRuleSupport.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <utility>
 #include <wtf/BitVector.h>
 

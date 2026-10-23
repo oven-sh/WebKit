@@ -11,6 +11,8 @@
 #include "AOTIR.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <concepts>
 #include <span>
@@ -19,7 +21,6 @@
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
@@ -317,7 +318,7 @@ void forEachFunctionReferenceAmong(const Program& program, const Function& funct
         walkReferences(entry, visitNamed);
     });
 
-    std::ranges::sort(calleeSets);
+    AOT::sort(calleeSets);
     removeRepeatedElements(calleeSets);
     for (CalleeSetID set : calleeSets) {
         for (FunctionID callee : program.at(set).functions)
@@ -328,7 +329,7 @@ void forEachFunctionReferenceAmong(const Program& program, const Function& funct
     const auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
     if (LayoutID constructed = entrypoint ? program.at(entrypoint->target).constructedClass : LayoutID())
         layouts.append(declaredLayoutOf(program, constructed));
-    std::ranges::sort(layouts);
+    AOT::sort(layouts);
     removeRepeatedElements(layouts);
     for (LayoutID id : layouts)
         forEachFunctionInClassRecord(program, program.at(id), functor);

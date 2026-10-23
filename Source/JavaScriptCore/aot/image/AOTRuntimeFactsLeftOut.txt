@@ -1,4 +1,4 @@
-# An expression of the compiler's half that aot/image/AOTRuntimeFacts.def cannot evaluate, and why. scripts/build/aot-runtime-facts.ts in Bun's tree reads the part in front of the bar.
+# An expression of the compiler's half that aot/image/AOTRuntimeFacts.def cannot evaluate, and why. aot/image/generator/runtime-facts.ts reads the part in front of the bar.
 AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator) | use of undeclared identifier 'kind'; did you mean 'find'?
 AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header) | use of undeclared identifier 'kind'; did you mean 'find'?
 ExactAllocationCounts::offsetOfCellsOfAllocations() | use of undeclared identifier 'ExactAllocationCounts'

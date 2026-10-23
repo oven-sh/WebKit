@@ -383,6 +383,26 @@ static void testMul64ByImmediate()
     }
 }
 
+static void testStoreOfIncrementedAddressAtAddress()
+{
+    constexpr int32_t increment = 152;
+    for (int32_t offsetOfStore : { 0, increment }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        Value* base = cCallArgumentValues<intptr_t>(proc, root)[0];
+        Value* address = graph.make(root, Add, base, graph.int64(root, increment));
+        root->appendNew<MemoryValue>(proc, Store, Origin(), address, base, offsetOfStore);
+        graph.ret(root, address);
+        auto code = compileProc(proc);
+
+        std::array<intptr_t, increment / sizeof(intptr_t) + 1> words { };
+        intptr_t expected = std::bit_cast<intptr_t>(words.data()) + increment;
+        CHECK_EQ(invoke<intptr_t>(*code, std::bit_cast<intptr_t>(words.data())), expected);
+        CHECK_EQ(words[offsetOfStore / sizeof(intptr_t)], expected);
+    }
+}
+
 enum class IncrementedSelect : uint8_t {
     IncrementIsThen,
     IncrementIsElse,
@@ -1052,6 +1072,7 @@ void addBunSelectionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSelectOnInt64WithZeroLowHalf());
     RUN(testDeclaredWidthsOf64BitSources());
     RUN(testMul64ByImmediate());
+    RUN(testStoreOfIncrementedAddressAtAddress());
     RUN(testSelectOfIncrementedValue());
     RUN(testBranchOnLoad16());
     RUN(testPinnedRegisterIsNamedDirectly());

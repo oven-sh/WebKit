@@ -15,7 +15,9 @@
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTResolveCallsCallees.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -103,7 +105,7 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
         forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
             if (chunks[chunk].isEmpty())
                 return;
-            std::ranges::sort(chunks[chunk][0].*list);
+            AOT::sort(chunks[chunk][0].*list);
             removeRepeatedElements(chunks[chunk][0].*list);
         });
         size_t size = 0;

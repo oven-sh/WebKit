@@ -23,6 +23,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
 #include "AOTUnwinding.h"
+#include "AOTVector.h"
 #include "ButterflyInlines.h"
 #include "DeferGC.h"
 #include "GCDeferralContextInlines.h"

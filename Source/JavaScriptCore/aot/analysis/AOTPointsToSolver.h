@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTEscapeAnalysis.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -72,6 +72,8 @@ PointsToResults solvePointsTo(const EscapeAnalysisInputs&);
 
 // The solver takes a value of no other opcode for an object of its own. In a body that holds none of them, and no terminator whose result may be fresh, the objects are the entry parameters.
 const OpcodeSet& opcodesThatMayDefineObjects();
+// Of those, the ones whose result is an object of its own though it may be an operand, or what the parent has made.
+const OpcodeSet& opcodesThatDefineObjectsThatNeedNotBeFresh();
 
 } } } // namespace JSC::AOT::Typed
 

@@ -12,6 +12,7 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTTemporaryFile.h"
+#include "AOTVector.h"
 #include "FunctionPrototype.h"
 #include "JSCInlines.h"
 #include "Options.h"

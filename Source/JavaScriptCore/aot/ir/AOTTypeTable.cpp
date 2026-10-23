@@ -8,8 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -220,7 +222,7 @@ static void canonicalizeList(Vector<T>& values)
 {
     if (std::ranges::adjacent_find(values, std::ranges::greater_equal { }) == values.end())
         return;
-    std::ranges::sort(values);
+    AOT::sort(values);
     removeRepeatedElements(values);
 }
 

@@ -11,6 +11,7 @@
 #include "AOTInstance.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStubsExceptions.h"
+#include "AOTVector.h"
 #include "VM.h"
 #include <algorithm>
 

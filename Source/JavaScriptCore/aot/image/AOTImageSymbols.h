@@ -8,8 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTImageForward.h"
+#include "AOTVector.h"
 #include <span>
-#include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 

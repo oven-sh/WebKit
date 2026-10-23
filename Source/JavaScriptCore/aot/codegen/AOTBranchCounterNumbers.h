@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <optional>
 #include <wtf/Forward.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

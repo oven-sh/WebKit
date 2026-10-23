@@ -12,6 +12,7 @@
 #include "AOTBuiltinTableRealm.h"
 #include "AOTNameClass.h"
 #include "AOTTypeRelations.h"
+#include "AOTVector.h"
 #include "ArgList.h"
 #include "BuiltinNames.h"
 #include "DeferTermination.h"

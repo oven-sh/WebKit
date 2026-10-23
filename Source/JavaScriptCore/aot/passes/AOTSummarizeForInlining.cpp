@@ -19,6 +19,7 @@
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <limits>

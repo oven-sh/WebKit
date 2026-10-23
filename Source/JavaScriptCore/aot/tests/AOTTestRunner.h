@@ -9,9 +9,9 @@
 
 #include "AOTTestCommand.h"
 #include "AOTTestFile.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {

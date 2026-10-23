@@ -11,6 +11,8 @@
 #include "AOTInductionVariables.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <tuple>
@@ -89,7 +91,7 @@ static Vector<SharedOrder> findSharedOrders(SelectionContext& context)
 
     FunctionAnalyses& analyses = context.analyses();
     const CFG& cfg = analyses.cfg();
-    std::ranges::sort(comparisons, { }, [&](const StringComparison& comparison) {
+    AOT::sort(comparisons, { }, [&](const StringComparison& comparison) {
         return std::tuple { operandPairOf(comparison), cfg.reversePostOrderIndex(comparison.point.block), comparison.point.index };
     });
 

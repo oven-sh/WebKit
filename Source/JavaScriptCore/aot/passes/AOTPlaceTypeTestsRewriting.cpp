@@ -10,8 +10,10 @@
 
 #include "AOTFlowApply.h"
 #include "AOTSSARepair.h"
+#include "AOTSort.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -361,7 +363,7 @@ void DominatedUseReplacer::collectUses()
                 m_uses.append(NarrowableUse { identity, alias, use });
         }
     }
-    std::ranges::stable_sort(m_uses, { }, &NarrowableUse::identity);
+    AOT::stableSort(m_uses, { }, &NarrowableUse::identity);
 }
 
 auto DominatedUseReplacer::narrowingOf(TypeID replacedType, const Type& provenType) -> Narrowing&

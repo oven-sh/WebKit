@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <iterator>
 #include <limits>
@@ -167,7 +169,7 @@ void TestPlacer::collectCuts()
         for (const Cut& cut : m_cuts)
             pointsOfTests.append(cut.key());
         pointsOfTests.shrink(numberOfCutsForTests);
-        std::ranges::sort(pointsOfTests);
+        AOT::sort(pointsOfTests);
     }
     auto mattersToCopy = [&](ProgramPoint point) {
         return goesOnBehindStretches || std::ranges::binary_search(pointsOfTests, PointKey { point.block, point.index });
@@ -190,7 +192,7 @@ void TestPlacer::collectCuts()
             addCut(point);
     }
 
-    std::ranges::sort(m_cuts, { }, &Cut::key);
+    AOT::sort(m_cuts, { }, &Cut::key);
     removeRepeatedElements(m_cuts, [](const Cut& a, const Cut& b) {
         return a.point == b.point;
     });
@@ -474,7 +476,7 @@ void TestPlacer::checkStretches()
             for (BlockID block : regions[stretch].blocks)
                 stretchesByBlock.append({ block.index(), stretch });
         }
-        std::ranges::sort(stretchesByBlock);
+        AOT::sort(stretchesByBlock);
         removeRepeatedElements(stretchesByBlock);
         auto stretchesOf = [&](BlockID block) {
             return std::ranges::equal_range(stretchesByBlock, block.index(), { }, &BlockAndStretch::first);

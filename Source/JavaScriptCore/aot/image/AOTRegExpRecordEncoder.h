@@ -9,7 +9,7 @@
 
 #include "AOTRegExpRecord.h"
 #include "AOTRegExpSection.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT {
 

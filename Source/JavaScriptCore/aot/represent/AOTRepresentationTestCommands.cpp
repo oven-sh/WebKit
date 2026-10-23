@@ -13,6 +13,7 @@
 #include "AOTPlacementTestSupport.h"
 #include "AOTRepresentationRules.h"
 #include "AOTSupportTestCommands.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

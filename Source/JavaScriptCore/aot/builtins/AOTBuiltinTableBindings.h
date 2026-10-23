@@ -84,6 +84,7 @@ struct BuiltinDirectFunctionBinding {
     static constexpr bool takesArgument(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::FrameOfValues || (parameter != BuiltinDirectValue::Realm && !takesReceiver(parameter)); }
     bool takesReceiver() const { return std::ranges::any_of(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) { return takesReceiver(parameter); }); }
     bool takesFrame() const { return std::ranges::contains(std::span(parameters).first(parameterCount), BuiltinDirectValue::FrameOfValues); }
+    bool entersHostFunction() const { return parameterCount == 2 && parameters[0] == BuiltinDirectValue::Realm && parameters[1] == BuiltinDirectValue::FrameOfValues; }
     // A call with fewer arguments is not made directly. The function does not see those behind the last that it takes.
     size_t minArgumentCount() const
     {

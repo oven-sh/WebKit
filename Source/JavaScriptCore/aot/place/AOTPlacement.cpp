@@ -14,6 +14,7 @@
 #include "AOTPlacementSteps.h"
 #include "AOTRegExpRequests.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <initializer_list>

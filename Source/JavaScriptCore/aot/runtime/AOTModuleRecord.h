@@ -8,19 +8,19 @@
 #if ENABLE(AOT)
 
 #include "AOTRecordTypes.h"
+#include "AOTVector.h"
 #include "CyclicModuleRecord.h"
 #include <optional>
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
 class Modules;
 struct Instance;
 
-using ModuleEvaluationStack = Vector<AbstractModuleRecord*, 8>;
-using ModuleLinkingStack = Vector<CyclicModuleRecord*, 8>;
+using ModuleEvaluationStack = WTF::Vector<AbstractModuleRecord*, 8>;
+using ModuleLinkingStack = WTF::Vector<CyclicModuleRecord*, 8>;
 using VisitedModuleRecords = UncheckedKeyHashSet<AbstractModuleRecord*>;
 
 class ModuleRecord final : public CyclicModuleRecord {
@@ -63,7 +63,7 @@ public:
     void executeAsync(JSGlobalObject*);
 
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
-    void collectExportedNames(JSGlobalObject*, Vector<Identifier>&);
+    void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);

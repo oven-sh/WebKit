@@ -9,9 +9,9 @@
 
 #include "AOTArgumentLocations.h"
 #include "AOTPass.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/Forward.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

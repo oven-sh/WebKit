@@ -15,6 +15,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "NumberPrototype.h"
 #include <algorithm>

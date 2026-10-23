@@ -16,10 +16,10 @@
 #include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <optional>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

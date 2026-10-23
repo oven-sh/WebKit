@@ -12,9 +12,9 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

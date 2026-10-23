@@ -9,12 +9,12 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

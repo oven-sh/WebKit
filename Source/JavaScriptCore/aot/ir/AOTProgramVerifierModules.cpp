@@ -11,9 +11,11 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFlowSiteData.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -22,7 +24,6 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -138,7 +139,7 @@ static bool hasDuplicateRequests(const Vector<ModuleRequest>& requests)
     auto keys = WTF::map(requests, [](const ModuleRequest& request) {
         return std::tuple { request.target, request.phase, request.kind };
     });
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     return std::ranges::adjacent_find(keys) != keys.end();
 }
 
@@ -349,7 +350,7 @@ void FunctionVerifier::verifyRequestsOfEvaluations()
 {
     if (hasFailed() || m_moduleEvaluations.isEmpty())
         return;
-    std::ranges::sort(m_moduleEvaluations, { }, [](const ModuleEvaluationSite& site) {
+    AOT::sort(m_moduleEvaluations, { }, [](const ModuleEvaluationSite& site) {
         return std::tuple { site.referrer, site.target, site.value };
     });
     ModuleID referrer;
@@ -362,7 +363,7 @@ void FunctionVerifier::verifyRequestsOfEvaluations()
                 if (request.kind == ModuleRequestKind::Require)
                     requiredModules.append(request.target);
             }
-            std::ranges::sort(requiredModules);
+            AOT::sort(requiredModules);
         }
         if (!std::ranges::binary_search(requiredModules, site.target))
             return fail(InternalErrorKind::InvalidModuleEvaluation, site.block, site.value, static_cast<uint32_t>(EvaluationRule::ReferrerRequestsTarget));
@@ -405,7 +406,7 @@ static Vector<uint32_t> findUnreachedNames(const Vector<Module>& modules)
     Vector<uint32_t> modulesByComponent(numberOfModules, [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::sort(modulesByComponent, { }, [&](uint32_t module) {
+    AOT::sort(modulesByComponent, { }, [&](uint32_t module) {
         return componentOf[module];
     });
 
@@ -536,7 +537,7 @@ static bool hasValidMembers(const Program& program, const DataNode::Object& obje
             return false;
         keys.append(member.key);
     }
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     return std::ranges::adjacent_find(keys) == keys.end();
 }
 

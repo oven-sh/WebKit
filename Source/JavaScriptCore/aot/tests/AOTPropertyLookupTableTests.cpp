@@ -9,6 +9,7 @@
 
 #include "AOTInstance.h"
 #include "AOTPropertyLookupTableTestSupport.h"
+#include "AOTVector.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include <array>

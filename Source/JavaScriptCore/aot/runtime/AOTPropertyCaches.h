@@ -16,6 +16,7 @@
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTPropertyCachesWatchedValues.h"
 #include "AOTSiteCaches.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <optional>
@@ -25,7 +26,6 @@
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 

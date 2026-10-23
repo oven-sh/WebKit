@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <limits>
 #include <optional>
 #include <wtf/MathExtras.h>

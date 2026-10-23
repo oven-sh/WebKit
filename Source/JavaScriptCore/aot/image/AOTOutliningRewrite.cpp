@@ -13,7 +13,9 @@
 #include "AOTCodeIndex.h"
 #include "AOTCodeTemplates.h"
 #include "AOTCodeUnits.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "CPU.h"
 #include "MacroAssembler.h"
 #include <algorithm>
@@ -158,7 +160,7 @@ static Vector<Vector<uint32_t, 0>> collectAliasOffsets(size_t numberOfFunctions,
             aliasOffsetsByBody[*index.indexOf(alias.body)].append(alias.start);
     }
     for (auto& offsets : aliasOffsetsByBody) {
-        std::ranges::sort(offsets);
+        AOT::sort(offsets);
         removeRepeatedElements(offsets);
     }
     return aliasOffsetsByBody;

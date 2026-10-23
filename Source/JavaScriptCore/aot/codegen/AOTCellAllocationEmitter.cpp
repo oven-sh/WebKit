@@ -20,6 +20,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsArrays.h"
+#include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "ArrayConventions.h"
 #include "B3PatchpointValue.h"
@@ -95,7 +96,7 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::opti
             jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(params[0].gpr(), static_cast<int32_t>(ExactAllocationCounts::offsetOfCells(kind))));
             jit.add64(params.gpScratch(0), CCallHelpers::Address(params[0].gpr(), static_cast<int32_t>(ExactAllocationCounts::offsetOfBytes(kind))));
         }
-        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
         CCallHelpers::JumpList slowCases;
         std::optional<CCallHelpers::FreeListRefill> refill;
         if (forcesSlowPath)

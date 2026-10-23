@@ -15,6 +15,7 @@
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSupportTestCommands.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <algorithm>
 #include <ranges>

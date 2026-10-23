@@ -12,9 +12,11 @@
 #include "AOTFlowResults.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRemoveUnreadFields.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTValidatorBuilder.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <cmath>
 
@@ -179,7 +181,7 @@ auto JSONParserBuilder::resolveMembers(const ResultNode& node) -> Vector<MemberP
     ExpectedKeyOrders expected = expectedKeyOrdersOf(program(), node.layout, KeyOrderLimits { 1, program().at(node.layout).fields.size() });
     bool isCreatedByProgram = !expected.orders.isEmpty() && !expected.orders.first().isEmpty();
     std::span<const uint32_t> order = isCreatedByProgram ? expected.orders.first().span() : program().at(node.layout).declaredOrder.span();
-    std::ranges::stable_sort(members, { }, [&](const MemberParse& parse) {
+    AOT::stableSort(members, { }, [&](const MemberParse& parse) {
         return parse.member->field ? static_cast<size_t>(std::ranges::find(order, *parse.member->field) - order.begin()) : order.size();
     });
     return members;

@@ -14,6 +14,7 @@
 #include "AOTInductionVariables.h"
 #include "AOTPlacement.h"
 #include "AOTRepresentationRules.h"
+#include "AOTVector.h"
 #include "B3InductionRecords.h"
 #include "B3KnownProperties.h"
 #include "JSCell.h"

@@ -23,6 +23,7 @@
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "ArrayConventions.h"
 #include "PureNaN.h"
 #include "Structure.h"

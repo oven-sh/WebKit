@@ -15,6 +15,7 @@
 #include "AOTStringArena.h"
 #include "AOTValidationPlanText.h"
 #include "AOTValidationRules.h"
+#include "AOTVector.h"
 #include "RegularExpression.h"
 #include <wtf/DataLog.h>
 #include <wtf/JSONValues.h>

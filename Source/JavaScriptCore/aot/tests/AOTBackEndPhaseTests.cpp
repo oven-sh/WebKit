@@ -14,6 +14,7 @@
 #include "AOTIntegerUpdatesInMemory.h"
 #include "AOTPhiNarrowing.h"
 #include "AOTPureOperations.h"
+#include "AOTVector.h"
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"

@@ -16,11 +16,11 @@
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -67,22 +67,7 @@ static std::optional<uint32_t> findTestedOperand(FunctionAnalyses& analyses, con
     return isLeftBound ? 1 : 0;
 }
 
-// FunctionAnalyses::dominates(Edge, BlockID) holds only for the single edge into a block. A staying edge into a shared block is split before it is used.
-static bool dominatesAfterSplit(FunctionAnalyses& analyses, Edge edge, BlockID block)
-{
-    const CFG& cfg = analyses.cfg();
-    if (!cfg.isReachable(edge.from) || !cfg.isReachable(block))
-        return false;
-
-    const Dominators& dominators = analyses.dominators();
-    BlockID target = targetOf(analyses.function(), edge).block;
-    if (!dominators.dominates(target, block))
-        return false;
-    return std::ranges::all_of(cfg.incomingEdges(target), [&](Edge incoming) {
-        return incoming == edge || dominators.dominates(target, incoming.from);
-    });
-}
-
+// A staying edge into a shared block is split before it is used.
 static bool dominatesEveryStep(FunctionAnalyses& analyses, Edge edge, const InductionVariable& variable)
 {
     const UseLists& useLists = analyses.useLists();

@@ -14,6 +14,7 @@
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

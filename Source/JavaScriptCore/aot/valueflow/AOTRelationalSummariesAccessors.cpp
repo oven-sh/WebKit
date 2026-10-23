@@ -15,6 +15,8 @@
 #include "AOTEffectsOfProtocols.h"
 #include "AOTFlowResults.h"
 #include "AOTPropertyAccessInternal.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 
@@ -567,7 +569,7 @@ ProofsBehindValues::ProofsBehindValues(const Function& function)
                 m_proofs.append({ value.operand(0), value.type });
         }
     }
-    std::ranges::stable_sort(m_proofs, { }, &Proof::value);
+    AOT::stableSort(m_proofs, { }, &Proof::value);
 }
 
 TypeID ProofsBehindValues::find(ValueID value) const

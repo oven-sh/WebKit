@@ -9,13 +9,13 @@
 
 #include "AOTCFG.h"
 #include "AOTFlowIDs.h"
+#include "AOTVector.h"
 #include <memory>
 #include <optional>
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/Forward.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

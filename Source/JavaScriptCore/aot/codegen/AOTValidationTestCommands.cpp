@@ -15,6 +15,7 @@
 #include "AOTIRPrinter.h"
 #include "AOTSchemaEnums.h"
 #include "AOTStatistics.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/StringPrintStream.h>
 

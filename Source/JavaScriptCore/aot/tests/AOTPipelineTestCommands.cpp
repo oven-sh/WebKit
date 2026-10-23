@@ -25,6 +25,7 @@
 #include "AOTSupportTestCommands.h"
 #include "AOTTemporaryFile.h"
 #include "AOTTestRunner.h"
+#include "AOTVector.h"
 #include <wtf/ASCIICType.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>

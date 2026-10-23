@@ -18,6 +18,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "MarkedBlockCage.h"

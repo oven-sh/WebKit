@@ -12,7 +12,9 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFlowRecords.h"
 #include "AOTFlowStamps.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -118,7 +120,7 @@ static Vector<FeatureUseRecord> listEveryFeatureOfBuiltins(const BuiltinTable& b
         for (const BuiltinFeatureUse& line : builtins.featureUsesOf(BuiltinID(index)))
             features.append(static_cast<uint32_t>(line.feature));
     }
-    std::ranges::sort(features);
+    AOT::sort(features);
     removeRepeatedElements(features);
     return features.map([](uint32_t feature) {
         return FeatureUseRecord { .feature = feature };

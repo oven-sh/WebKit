@@ -13,8 +13,8 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTTypedArrayKinds.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "RememberedSlot.h"
 #include <cstring>
@@ -14,7 +15,6 @@
 #include <wtf/NotFound.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

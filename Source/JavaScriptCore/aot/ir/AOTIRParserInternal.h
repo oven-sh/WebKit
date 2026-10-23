@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIRLexer.h"
 #include "AOTIRParser.h"
+#include "AOTVector.h"
 #include "AOTWireSections.h"
 #include <array>
 #include <memory>
@@ -21,7 +22,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/StackCheck.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

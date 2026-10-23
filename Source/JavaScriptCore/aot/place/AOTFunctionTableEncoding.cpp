@@ -12,6 +12,8 @@
 #include "AOTCreateEntrypoints.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTFunctionKinds.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <iterator>
@@ -195,7 +197,7 @@ static Vector<FunctionWithText> collectFunctionsWithText(const TableEncoder& enc
 
 static void mergeTextRanges(Vector<RetainedTextRange>& ranges)
 {
-    std::ranges::sort(ranges, [](const RetainedTextRange& a, const RetainedTextRange& b) {
+    AOT::sort(ranges, [](const RetainedTextRange& a, const RetainedTextRange& b) {
         return a.start != b.start ? a.start < b.start : a.end > b.end;
     });
     size_t count = 0;
@@ -240,7 +242,7 @@ static void appendFunctionTexts(TableEncoder& encoder)
         uint32_t start = range.textOffset + function.text.start - range.start;
         return FunctionTextEntry { functions[index].entrypoint.index(), start, start + function.text.end - function.text.start };
     });
-    std::ranges::sort(entries, { }, &FunctionTextEntry::function);
+    AOT::sort(entries, { }, &FunctionTextEntry::function);
 
     uint32_t entriesOffset = encoder.writer.append(entries);
     uint32_t textOffset = encoder.writer.append(text);
@@ -324,14 +326,14 @@ NumberedFunctionRecords numberFunctionRecords(std::span<const FunctionRecordData
     Vector<uint32_t> sortedBits(recordsOfFunctions.size(), [&](size_t index) {
         return std::bit_cast<uint32_t>(recordsOfFunctions[index]);
     });
-    std::ranges::sort(sortedBits);
+    AOT::sort(sortedBits);
     Vector<DistinctRecord> distinct;
     for (uint32_t bits : sortedBits) {
         if (distinct.isEmpty() || distinct.last().bits != bits)
             distinct.append({ bits, 0, 0 });
         ++distinct.last().count;
     }
-    std::ranges::stable_sort(distinct, std::ranges::greater { }, &DistinctRecord::count);
+    AOT::stableSort(distinct, std::ranges::greater { }, &DistinctRecord::count);
     for (uint32_t number = 0; number < distinct.size(); ++number)
         distinct[number].number = number;
 
@@ -339,7 +341,7 @@ NumberedFunctionRecords numberFunctionRecords(std::span<const FunctionRecordData
     result.records = Vector<FunctionRecordData>(std::min<size_t>(distinct.size(), functionRecordIsListedByFunction), [&](size_t number) {
         return std::bit_cast<FunctionRecordData>(distinct[number].bits);
     });
-    std::ranges::sort(distinct, { }, &DistinctRecord::bits);
+    AOT::sort(distinct, { }, &DistinctRecord::bits);
     result.numbers = Vector<uint8_t>(recordsOfFunctions.size(), [&](size_t index) {
         uint32_t number = std::ranges::lower_bound(distinct, std::bit_cast<uint32_t>(recordsOfFunctions[index]), { }, &DistinctRecord::bits)->number;
         if (number < functionRecordIsListedByFunction)

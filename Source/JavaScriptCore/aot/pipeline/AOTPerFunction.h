@@ -9,6 +9,7 @@
 
 #include "AOTIR.h"
 #include "AOTProvisionalFunctions.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

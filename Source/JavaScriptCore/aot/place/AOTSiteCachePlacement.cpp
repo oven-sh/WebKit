@@ -19,11 +19,11 @@
 #include "AOTPlacementSteps.h"
 #include "AOTSiteWeight.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
 #include <tuple>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

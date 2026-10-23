@@ -9,10 +9,10 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTRegExpRecord.h"
+#include "AOTVector.h"
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

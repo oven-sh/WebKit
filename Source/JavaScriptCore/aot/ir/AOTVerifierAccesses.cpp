@@ -13,6 +13,7 @@
 #include "AOTGuardFactDetails.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTStringBuilderAnalysis.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <limits>

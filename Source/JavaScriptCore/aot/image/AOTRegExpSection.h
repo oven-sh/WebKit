@@ -9,10 +9,10 @@
 
 #include "AOTCodeTemplates.h"
 #include "AOTRegExpCompiler.h"
+#include "AOTVector.h"
 #include <array>
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC::AOT {
 

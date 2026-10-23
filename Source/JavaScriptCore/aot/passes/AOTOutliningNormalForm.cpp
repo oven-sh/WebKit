@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Hasher.h>
 

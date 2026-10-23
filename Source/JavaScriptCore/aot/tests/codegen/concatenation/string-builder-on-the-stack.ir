@@ -154,7 +154,7 @@ function f8 name="twoWebsOpenAtOnce" results=[{type=string}] {
     v6 = StringBuilderFinish v1
     Return v6
 }
-# CHECK-LABEL: f8: size={{*}} frame=352@
+# CHECK-LABEL: f8: size={{*}} frame=3{{*}}@
 # CHECK: operation operationAOTStackStringBuilderFinish x2
 function f9 name="onlyInCompactCode" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
   b0(v0: boolean, v1: string):

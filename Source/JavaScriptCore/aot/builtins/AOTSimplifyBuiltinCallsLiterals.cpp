@@ -16,17 +16,18 @@
 #include "AOTIRBuilder.h"
 #include "AOTKnownValue.h"
 #include "AOTResolveCallsCallees.h"
+#include "AOTSort.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTSplitUnions.h"
 #include "AOTStringArena.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "AOTWholeLiterals.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <span>
 #include <utility>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -277,7 +278,7 @@ unsigned simplifySearchesOfLiterals(FunctionPassContext& context)
         return 0;
 
     // The last first: what stands in front of a cut stays where it is.
-    std::ranges::sort(searches, std::ranges::greater { }, [](const auto& search) {
+    AOT::sort(searches, std::ranges::greater { }, [](const auto& search) {
         return std::pair { search.first.block, search.first.index };
     });
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);

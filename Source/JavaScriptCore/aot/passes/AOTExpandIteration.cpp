@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/OptionSet.h>
 

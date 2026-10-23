@@ -17,6 +17,7 @@
 #include "AOTRealmStartup.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "DeferTermination.h"
 #include "GetterSetter.h"
 #include "GlobalObjectMethodTable.h"

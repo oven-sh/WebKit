@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
 #include <wtf/PrintStream.h>

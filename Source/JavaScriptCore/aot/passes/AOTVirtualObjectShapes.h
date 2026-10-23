@@ -8,13 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTKnownValue.h"
+#include "AOTVector.h"
 #include "AOTVirtualObject.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

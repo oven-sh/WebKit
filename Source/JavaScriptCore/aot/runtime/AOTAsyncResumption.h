@@ -8,9 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTRecordTypes.h"
+#include "AOTVector.h"
 #include "JSCJSValue.h"
 #include "StackFrame.h"
-#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -61,8 +61,8 @@ void settlePromiseOfHandler(VM&, JSCell* promise, JSValue returned, JSValue erro
 JS_EXPORT_PRIVATE bool isSuspendedAsyncFunction(JSCell*);
 JS_EXPORT_PRIVATE JSPromise* asyncFunctionPromise(JSCell* coroutine);
 JS_EXPORT_PRIVATE Vector<JSPromise*, 4> promisesSettledBy(JSCell* coroutine);
-JS_EXPORT_PRIVATE void appendSuspendedAsyncFunction(VM&, JSCell* owner, Vector<StackFrame>&, JSCell* coroutine);
-JS_EXPORT_PRIVATE JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>&, JSCell* coroutine, size_t maxStackSize);
+JS_EXPORT_PRIVATE void appendSuspendedAsyncFunction(VM&, JSCell* owner, WTF::Vector<StackFrame>&, JSCell* coroutine);
+JS_EXPORT_PRIVATE JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, WTF::Vector<StackFrame>&, JSCell* coroutine, size_t maxStackSize);
 
 } // namespace AOT
 } // namespace JSC

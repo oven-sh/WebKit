@@ -10,6 +10,7 @@
 #include "AOTEffectSummaries.h"
 #include "AOTEffectSummariesInternal.h"
 #include "AOTNativeTest.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {

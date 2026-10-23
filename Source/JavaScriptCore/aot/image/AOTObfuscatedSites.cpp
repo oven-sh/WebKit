@@ -12,6 +12,7 @@
 #include "AOTIRProgram.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/FastBitVector.h>
 #include <wtf/text/CString.h>

@@ -10,6 +10,7 @@
 
 #include "AOTInstance.h"
 #include "AOTModuleRecord.h"
+#include "AOTVector.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
@@ -189,15 +190,15 @@ void StarExportResolver::addCapturedCandidates(ModuleID source, StarCandidates& 
 }
 
 // GetExportedNames() of the specification.
-static Vector<Identifier> exportedNamesOf(JSGlobalObject* realm, AbstractModuleRecord* root)
+static WTF::Vector<Identifier> exportedNamesOf(JSGlobalObject* realm, AbstractModuleRecord* root)
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Vector<Identifier> names;
+    WTF::Vector<Identifier> names;
     UncheckedKeyHashSet<UniquedStringImpl*> listedNames;
     UncheckedKeyHashSet<AbstractModuleRecord*> exportStarSet;
-    Vector<AbstractModuleRecord*, 8> pending;
+    WTF::Vector<AbstractModuleRecord*, 8> pending;
     pending.append(root);
     while (!pending.isEmpty()) {
         AbstractModuleRecord* record = pending.takeLast();
@@ -210,7 +211,7 @@ static Vector<Identifier> exportedNamesOf(JSGlobalObject* realm, AbstractModuleR
                 names.append(name);
         };
         if (auto* compiled = dynamicDowncast<ModuleRecord>(record)) {
-            Vector<Identifier> compiledNames;
+            WTF::Vector<Identifier> compiledNames;
             compiled->collectExportedNames(realm, compiledNames);
             RETURN_IF_EXCEPTION(scope, { });
             for (const Identifier& name : compiledNames)
@@ -258,7 +259,7 @@ void StarExportResolver::addUncompiledCandidates(ModuleID source, StarCandidates
         join(candidates, name.impl(), { binding, JSValue(), namespaceObject });
     }
     // A name that is ambiguous in one target of `export *` is ambiguous in the exporter, and it is no key of the namespace object.
-    Vector<Identifier> exported = exportedNamesOf(realm, record);
+    WTF::Vector<Identifier> exported = exportedNamesOf(realm, record);
     RETURN_IF_EXCEPTION(scope, void());
     for (const Identifier& name : exported) {
         if (namespaceKeys.contains(name.impl()))

@@ -16,8 +16,10 @@
 #include "AOTIRBuilder.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -204,7 +206,7 @@ static Vector<uint32_t> findLargestFirst(unsigned count, const Invocable<const F
         if (numberOfValues >= fewestValues)
             keys.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | position);
     }
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     return keys.map([](uint64_t key) {
         return static_cast<uint32_t>(key);
     });
@@ -215,7 +217,7 @@ static Vector<FunctionID> findCallersOf(const CallGraph& callGraph, const BitVec
     Vector<FunctionID> callers;
     for (size_t callee : callees)
         callers.append(callGraph.callersOf(FunctionID(callee)));
-    std::ranges::sort(callers);
+    AOT::sort(callers);
     removeRepeatedElements(callers);
     return callers;
 }

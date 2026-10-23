@@ -11,6 +11,7 @@
 #include "AOTExpectedTypesByUse.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 

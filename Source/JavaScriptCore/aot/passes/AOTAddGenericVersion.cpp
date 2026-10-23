@@ -26,10 +26,12 @@
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTSimplifyBuiltinCallsInternal.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <compare>
@@ -41,7 +43,6 @@
 #include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -505,7 +506,7 @@ bool GenericVersionBuilder::dropChecksNobodyReliesOn()
         return false;
 
     // What an operation makes of the value does not depend on its type, so nothing but the casts changes.
-    std::ranges::sort(erasedCasts);
+    AOT::sort(erasedCasts);
     removeRepeatedElements(erasedCasts);
     for (ValueID cast : erasedCasts)
         eraseProof(cast, ExpectedTypes::Kept);
@@ -592,7 +593,7 @@ void GenericVersionBuilder::splitBlocks(std::span<const ProgramPoint> rejoinPoin
         if (point.index && !isAfterTailCall(m_function, point))
             m_cuts.append(Cut { point, { }, { } });
     }
-    std::ranges::sort(m_cuts, isBefore, &Cut::point);
+    AOT::sort(m_cuts, isBefore, &Cut::point);
     removeRepeatedElements(m_cuts, [](const Cut& a, const Cut& b) {
         return a.point == b.point;
     });
@@ -2038,7 +2039,7 @@ static ReadsOfBody listReads(const Program& program, const Function& function)
                 reads.typedReadsByName.append(id);
         }
     }
-    std::ranges::sort(reads.positions);
+    AOT::sort(reads.positions);
     removeRepeatedElements(reads.positions);
     reads.positions.shrinkToFit();
     reads.typedReadsByName.shrinkToFit();
@@ -2322,7 +2323,7 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
         Vector<Position> marked = std::exchange(assignedByEvaluatedText, { });
         for (Vector<Position>& stores : storesByFunction)
             marked.appendVector(WTF::move(stores));
-        std::ranges::sort(marked);
+        AOT::sort(marked);
         removeRepeatedElements(marked);
         marked.removeAllMatching([&](Position position) {
             return !markExpected(program, position);
@@ -2458,7 +2459,7 @@ void PositionsProvenByTypes::findCandidates()
     });
 
     Vector<Position> assignedByEvaluatedText = findPositionsAssignedByEvaluatedText(m_program);
-    std::ranges::sort(assignedByEvaluatedText);
+    AOT::sort(assignedByEvaluatedText);
     for (uint32_t index = 0; index < m_program.variables.size(); ++index) {
         if (m_program.variables[index].initialization != VariableInitialization::Function)
             addVariableIfOpen({ Position::Kind::Variable, index, 0 }, m_program.variables[index].flow, assignedByEvaluatedText.span());
@@ -2470,8 +2471,8 @@ void PositionsProvenByTypes::findCandidates()
         for (uint32_t field = 0; field < layout.fields.size(); ++field)
             addVariableIfOpen({ Position::Kind::Field, index, field }, layout.fields[field].flow.location, assignedByEvaluatedText.span());
     }
-    std::ranges::sort(m_assumed);
-    std::ranges::sort(m_assumedWithoutStart);
+    AOT::sort(m_assumed);
+    AOT::sort(m_assumedWithoutStart);
     noteCandidates();
 }
 
@@ -2852,8 +2853,8 @@ bool PositionsProvenByTypes::solve()
         Vector<Position> mayHoldUndefined = collectInParallel<Position>(loops, bodiesToLookAt.size(), [&](unsigned index, Vector<Position>& found) {
             found.appendVector(std::exchange(m_bodies[bodiesToLookAt[index]].variablesThatMayHoldUndefined, { }));
         });
-        std::ranges::sort(givenUp);
-        std::ranges::sort(mayHoldUndefined);
+        AOT::sort(givenUp);
+        AOT::sort(mayHoldUndefined);
         Vector<uint32_t> candidatesGivenUp;
         m_assumed.removeAllMatching([&](Position position) {
             if (!std::ranges::binary_search(givenUp, position))
@@ -2877,7 +2878,7 @@ bool PositionsProvenByTypes::solve()
                 for (; first != bodiesRestingOnCandidates.end() && first->candidate == candidate; ++first)
                     bodiesToLookAt.append(first->body);
             }
-            std::ranges::sort(bodiesToLookAt);
+            AOT::sort(bodiesToLookAt);
             removeRepeatedElements(bodiesToLookAt);
         }
 

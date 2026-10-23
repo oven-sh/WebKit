@@ -126,8 +126,8 @@ public:
 
     void forEachMember(ClimbingSet set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const { sets().forEachMember(set.m_set, functor); }
     bool contains(ClimbingSet set, ValueFlowObjectID member) const { return sets().contains(set.m_set, member); }
-    bool meet(ClimbingSet first, ClimbingSet second) const { return sets().meet(first.m_set, second.m_set); }
-    bool meet(ClimbingSet set, ValueSetID constant) const { return sets().meet(set.m_set, constant); }
+    bool meet(ClimbingSet first, ClimbingSet second) const { return m_maker.meet(first.m_set, second.m_set); }
+    bool meet(ClimbingSet set, ValueSetID constant) const { return m_maker.meet(set.m_set, constant); }
     ClimbingSet unite(ClimbingSet first, ClimbingSet second) { return ClimbingSet(m_maker.unite(first.m_set, second.m_set)); }
     // The mask is a constant; it may be a complement. No member stands for another here.
     ClimbingSet restrict(ClimbingSet set, ValueSetID mask) { return ClimbingSet(m_maker.intersect(set.m_set, mask)); }
@@ -235,6 +235,9 @@ private:
     bool hasNeverRun() const { return m_keyOfStatementOfThisTurn || m_isFirstRunOfStatementOfBody; }
     void leaveOutWhatIsKnown();
     ValueFlowNodeID nodeFor(const ValueFlowNodeKey&);
+    struct KnownNode;
+    ValueFlowNodeID nodeForUncached(const ValueFlowNodeKey&, KnownNode&);
+    void logNodeAskedFor(const ValueFlowNodeKey&, ValueFlowNodeID);
     void addObjectsOfProgram(ValueFlowNodeID, ClimbingSet objects);
     ValueFlowNodeKey keyOfConstant(ValueSetID) const;
     ValueFlowNodeID holdingNothing();
@@ -255,11 +258,27 @@ private:
     // The node that a rule reads where it names this one, and the node that it hands to.
     ValueFlowNodeID nodeRead(ValueFlowNodeID);
     ValueFlowNodeID nodeHandedTo(ValueFlowNodeID);
+    ValueFlowNodeID instanceHandedTo(ValueFlowNodeID);
     void makeInstance(const ValueFlowInstancedFunction&, ValueFlowObjectID marker);
     void connectAsNamed(ValueFlowNodeID from, ValueFlowNodeID to);
+    bool isRedundantAdd(ValueFlowNodeID, ValueSetID);
 
+    struct RunCacheEntry {
+        uint64_t key { 0 };
+        uint64_t epochAndValue { 0 };
+    };
+    using RunCache = std::array<RunCacheEntry, 64>;
+    static RunCacheEntry& runCacheEntry(RunCache& cache, uint64_t key) { return cache[key * 0x9e3779b97f4a7c15ull >> 58]; }
+    uint64_t addEpoch() const { return m_runEpoch << 8 | (m_unknownSource ? static_cast<uint64_t>(*m_unknownSource) + 1 : 0); }
+
+    uint64_t m_runEpoch { 0 };
+    RunCache m_edgeCache { };
+    RunCache m_addCache { };
+    RunCache m_holdsAnyOfCache { };
     const ValueFlowSolver& m_solver;
     ValueFlowRoundLog& m_log;
+    const ValueFlowInstancedFunctions* const m_instancedFunctions;
+    const bool m_skipsRedundantAdds;
     struct KnownNode {
         uint64_t payloadAndSet { 0 };
         uint32_t kindAndDetail { 0 };

@@ -14,7 +14,9 @@
 #include "AOTJSONSupport.h"
 #include "AOTKnownValue.h"
 #include "AOTPropertyAccessReceivers.h"
+#include "AOTSort.h"
 #include "AOTTypeTestCoverage.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <ranges>
@@ -183,7 +185,7 @@ UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::sp
     }
 
     const CFG& cfg = context.analyses.cfg();
-    std::ranges::sort(m_uses, { }, [&](const AllocationAtPoint& use) {
+    AOT::sort(m_uses, { }, [&](const AllocationAtPoint& use) {
         return std::pair { cfg.reversePostOrderIndex(use.point.block), use.point.index };
     });
 }

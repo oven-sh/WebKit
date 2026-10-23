@@ -10,6 +10,7 @@
 #include "AOTJSONKeyOrder.h"
 #include "AOTJSONSource.h"
 #include "AOTJSONValueParser.h"
+#include "AOTVector.h"
 #include "JSCJSValue.h"
 #include "Structure.h"
 #include <array>
@@ -17,7 +18,6 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {

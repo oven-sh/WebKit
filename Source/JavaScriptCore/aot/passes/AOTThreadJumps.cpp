@@ -16,13 +16,14 @@
 #include "AOTKnownValue.h"
 #include "AOTRegionCloner.h"
 #include "AOTSSARepair.h"
+#include "AOTSort.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -832,7 +833,7 @@ private:
                 m_tests.append({ test->valueOperand(), test->testedType(), block });
         }
         // The identities of values are asked for only where two tests are for one type.
-        std::ranges::stable_sort(m_tests, { }, &Test::testedType);
+        AOT::stableSort(m_tests, { }, &Test::testedType);
         Vector<Test> repeated;
         for (size_t index = 0; index < m_tests.size(); ++index) {
             bool equalsPrevious = index && m_tests[index - 1].testedType == m_tests[index].testedType;
@@ -843,7 +844,7 @@ private:
         m_tests = WTF::move(repeated);
         for (Test& test : m_tests)
             test.subject = m_analyses.identityOf(test.subject);
-        std::ranges::stable_sort(m_tests, { }, &Test::key);
+        AOT::stableSort(m_tests, { }, &Test::key);
 
         m_positionOfBlock = IndexMap<BlockID, uint32_t>(m_function.blocks.size());
         for (uint32_t position = 0; position < m_tests.size(); ++position)

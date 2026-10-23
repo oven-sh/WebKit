@@ -9,12 +9,12 @@
 
 #include "AOTCFG.h"
 #include "AOTNaturalLoops.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -33,6 +33,8 @@ enum class EntryRelation : uint8_t { Unknown, Holds };
 enum class LoopExits : uint8_t { Unknown, AlsoElsewhere, OnlyAtTest };
 
 bool isBoundingRelation(Opcode relationalOperator, InductionDirection);
+// FunctionAnalyses::dominates(Edge, BlockID) holds only for the single edge into a block. This holds where it would once the edge has a block of its own.
+bool dominatesAfterSplit(FunctionAnalyses&, Edge, BlockID);
 
 struct InductionStep {
     InductionStepKind kind { InductionStepKind::Unknown };

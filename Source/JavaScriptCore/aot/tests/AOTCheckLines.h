@@ -7,9 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 

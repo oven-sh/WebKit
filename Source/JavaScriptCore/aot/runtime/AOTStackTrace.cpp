@@ -15,6 +15,7 @@
 #include "AOTModuleHost.h"
 #include "AOTReturnAddressWalk.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTVector.h"
 #include "DeferGC.h"
 #include "ExecutableBaseInlines.h"
 #include "Interpreter.h"
@@ -289,7 +290,7 @@ static bool isSameFrame(const StackFrame& expected, const StackFrame& actual)
     return !expected.hasBytecodeIndex() || expected.bytecodeIndex() == actual.bytecodeIndex();
 }
 
-static FunctionID compiledFunctionAt(const Vector<StackFrame>& frames, size_t index)
+static FunctionID compiledFunctionAt(const WTF::Vector<StackFrame>& frames, size_t index)
 {
     if (index >= frames.size() || !frames[index].isCompiledFrame())
         return { };
@@ -328,13 +329,13 @@ static void validateReturnAddressWalk(VM& vm)
     });
 }
 
-static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrace& trace, const Vector<StackFrame>* otherFrames, size_t maxStackSize, JSCell* lastConstructorToSkip)
+static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrace& trace, const WTF::Vector<StackFrame>* otherFrames, size_t maxStackSize, JSCell* lastConstructorToSkip)
 {
     validateReturnAddressWalk(vm);
-    Vector<StackFrame> expected;
+    WTF::Vector<StackFrame> expected;
     vm.interpreter.getStackTrace(owner, expected, 0, maxStackSize, lastConstructorToSkip);
 
-    Vector<StackFrame> actual;
+    WTF::Vector<StackFrame> actual;
     size_t firstOtherFrame = trace.numberOfFramesOnTop;
     if (firstOtherFrame)
         actual.append(otherFrames->span().first(firstOtherFrame));
@@ -385,7 +386,7 @@ static std::optional<RunStart> findRunAtTop(VM& vm)
     return RunStart { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), vm.topEntryFrame, false, false };
 }
 
-static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, Vector<StackFrame>& framesOnTop, size_t maxStackSize)
+static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize)
 {
     std::optional<CompiledFrameIterator> frames;
     vm.interpreter.appendStackTrace(owner, framesOnTop, { .callFrame = vm.topCallFrame, .compiledFramesBelow = &frames }, maxStackSize);
@@ -422,13 +423,13 @@ static bool mayHaveFramesBelow(VM& vm, const RunWalk& walk, EntryFrame* entryFra
     return context && Interpreter::asyncFunctionIn(context);
 }
 
-ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip)
+ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip)
 {
     if (!vm.hasCompiledCode() || !vm.topCallFrame || !maxStackSize)
         return nullptr;
     std::optional<AssertNoGC> assertNoGC { std::in_place };
 
-    Vector<StackFrame> results;
+    WTF::Vector<StackFrame> results;
     FramesAboveRun framesAbove;
     std::optional<RunStart> start = findRunAtTop(vm);
     if (!start) {
@@ -469,7 +470,7 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
     }
     if (!results.isEmpty()) {
         results.shrinkToFit();
-        otherFrames = makeUnique<Vector<StackFrame>>(WTF::move(results));
+        otherFrames = makeUnique<WTF::Vector<StackFrame>>(WTF::move(results));
     }
 
     if (validatesRuntime(vm)) [[unlikely]]

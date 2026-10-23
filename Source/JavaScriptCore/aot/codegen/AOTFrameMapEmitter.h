@@ -9,6 +9,7 @@
 
 #include "AOTFrameMaps.h"
 #include "AOTOperationEmitter.h"
+#include "AOTVector.h"
 #include <optional>
 
 namespace JSC {

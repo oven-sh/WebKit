@@ -10,6 +10,7 @@
 
 #include "AOTFamilyTables.h"
 #include "AOTIRProgram.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 

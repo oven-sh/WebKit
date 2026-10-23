@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -19,7 +20,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/SegmentedVector.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <wtf/Atomics.h>
@@ -317,7 +319,7 @@ Vector<uint32_t> TaggedLayoutPlanner::collectTypesWithLiterals(const Wire::Layou
                 types.append(below.index());
         }
     }
-    std::ranges::sort(types);
+    AOT::sort(types);
     removeRepeatedElements(types);
     return types;
 }
@@ -328,7 +330,7 @@ uint32_t TaggedLayoutPlanner::chooseTagKey(const Wire::Layout& maker, std::span<
     Vector<LiteralField, 32> literals;
     for (uint32_t type : types)
         literals.append(literalFieldsOf(type));
-    std::sort(literals.begin(), literals.end(), [](const LiteralField& a, const LiteralField& b) {
+    AOT::sort(literals, [](const LiteralField& a, const LiteralField& b) {
         return a.key != b.key ? a.key < b.key : a.tag < b.tag;
     });
     removeRepeatedElements(literals, [](const LiteralField& a, const LiteralField& b) {
@@ -359,7 +361,7 @@ Vector<uint32_t> TaggedLayoutPlanner::collectDeclaredNames(const TaggedLayout& m
                 names.append(field.key);
         }
     }
-    std::ranges::sort(names);
+    AOT::sort(names);
     removeRepeatedElements(names);
     return names;
 }
@@ -404,7 +406,7 @@ void TaggedLayoutPlanner::planFamily(uint32_t makerIndex)
         }
         family.members[position].declaringTypes.append(LayoutID(type));
     }
-    std::sort(family.members.begin(), family.members.end(), [](const TaggedLayout& a, const TaggedLayout& b) {
+    AOT::sort(family.members, [](const TaggedLayout& a, const TaggedLayout& b) {
         return a.tags[0] < b.tags[0];
     });
     joinMembersWithSameNames(family);
@@ -456,7 +458,7 @@ void TaggedLayoutPlanner::applyAdditions()
         membersOfLayout.removeAllMatching([&](LayoutID member) {
             return makersToLeaveOut.contains(member);
         });
-        std::ranges::sort(membersOfLayout);
+        AOT::sort(membersOfLayout);
         removeRepeatedElements(membersOfLayout);
     });
 }

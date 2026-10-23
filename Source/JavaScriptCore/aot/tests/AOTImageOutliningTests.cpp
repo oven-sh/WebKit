@@ -11,6 +11,7 @@
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPolls.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/StdLibExtras.h>
 #include <wtf/WeakRandom.h>

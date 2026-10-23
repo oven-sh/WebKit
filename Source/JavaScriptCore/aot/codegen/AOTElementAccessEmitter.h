@@ -10,11 +10,11 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTMemoryLocation.h"
 #include "AOTOperationEmitter.h"
+#include "AOTVector.h"
 #include "TypedArrayType.h"
 #include <optional>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

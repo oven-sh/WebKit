@@ -8,6 +8,7 @@
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
 #include "AOTRelocation.h"
+#include "AOTVector.h"
 #include "YarrClassTable.h"
 #include "YarrSharedRoutines.h"
 #include "YarrSharedTables.h"
@@ -15,7 +16,6 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/Hasher.h>
 #include <wtf/Variant.h>
-#include <wtf/Vector.h>
 
 namespace JSC::AOT {
 

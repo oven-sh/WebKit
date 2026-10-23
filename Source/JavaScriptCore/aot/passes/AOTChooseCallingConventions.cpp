@@ -15,6 +15,7 @@
 #include "AOTPassRunner.h"
 #include "AOTRelocation.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <wtf/CommaPrinter.h>

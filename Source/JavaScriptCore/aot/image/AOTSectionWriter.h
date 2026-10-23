@@ -7,11 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <span>
 #include <type_traits>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

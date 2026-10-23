@@ -11,6 +11,7 @@
 #include "AOTChangeLog.h"
 #include "AOTSchemaRecords.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include <optional>
 #include <wtf/OptionSet.h>

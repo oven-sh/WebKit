@@ -16,6 +16,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTTemporaryFile.h"
+#include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "ErrorInstance.h"
 #include "HeapInlines.h"

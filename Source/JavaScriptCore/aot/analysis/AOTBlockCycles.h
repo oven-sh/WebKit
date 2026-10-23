@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCFG.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/CycleForest.h>
 #include <wtf/FastMalloc.h>

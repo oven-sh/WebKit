@@ -16,6 +16,7 @@
 #include "AOTRelocation.h"
 #include "AOTSchemaRecords.h"
 #include "AOTStubCalls.h"
+#include "AOTVector.h"
 #include "AirInstObserver.h"
 #include "CCallHelpers.h"
 #include "HandlerInfo.h"
@@ -23,7 +24,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/Box.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -69,7 +69,7 @@ struct SiteLandingPad {
 };
 
 struct ExceptionRecords {
-    Vector<Box<CCallHelpers::Label>> landingPads;
+    WTF::Vector<Box<CCallHelpers::Label>> landingPads;
     Vector<SiteLandingPad> sites;
 };
 

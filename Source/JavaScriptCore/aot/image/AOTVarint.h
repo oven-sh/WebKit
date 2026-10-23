@@ -7,8 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <bit>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

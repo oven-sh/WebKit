@@ -11,6 +11,7 @@
 #include "AOTImage.h"
 #include "AOTImageText.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTVector.h"
 #include "VM.h"
 #include <algorithm>
 #include <wtf/StdLibExtras.h>

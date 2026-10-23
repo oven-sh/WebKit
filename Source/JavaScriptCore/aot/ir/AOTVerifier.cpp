@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCalls.h"
 #include "AOTFlowResults.h"
+#include "AOTVector.h"
 #include "AOTVerifierInternal.h"
 #include <algorithm>
 #include <utility>

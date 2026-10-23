@@ -13,6 +13,7 @@
 #include "AOTPassTriggers.h"
 #include "AOTProgramAnalyses.h"
 #include "AOTResultRuleMonotonicity.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <array>
 #include <atomic>

@@ -11,10 +11,10 @@
 #include "AOTLayoutData.h"
 #include "AOTObjectVisiting.h"
 #include "AOTProgramTables.h"
+#include "AOTVector.h"
 #include "JSCell.h"
 #include "VM.h"
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

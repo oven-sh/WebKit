@@ -11,6 +11,8 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
@@ -170,7 +172,7 @@ auto JSONSerializerBuilder::groupKeyOrders(LayoutID layout, std::span<const KeyO
 
         KeyOrderFamily merged = WTF::move(families[best.longer]);
         merged.descendingCounts.appendVector(families[best.shorter].descendingCounts);
-        std::ranges::sort(merged.descendingCounts, std::ranges::greater { });
+        AOT::sort(merged.descendingCounts, std::ranges::greater { });
         // Flow lists the most common order first. The arms are tested in list order, and the limit cuts off the end of the list.
         families[std::min(best.shorter, best.longer)] = WTF::move(merged);
         families.removeAt(std::max(best.shorter, best.longer));

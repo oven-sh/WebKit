@@ -13,6 +13,7 @@
 #include "AOTStubAssembler.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
+#include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include <wtf/HashMap.h>
 
@@ -128,7 +129,7 @@ std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext& 
     readTagsFromInstance(jit);
     AllowMacroScratchRegisterUsage allowScratch(jit);
     HashMap<uint64_t, uint32_t> indexOfKey;
-    Vector<CCallHelpers::Label> labels;
+    WTF::Vector<CCallHelpers::Label> labels;
     labels.reserveInitialCapacity(all.size());
     for (auto* moves : all) {
         auto& words = *moves;

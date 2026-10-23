@@ -11,6 +11,7 @@
 #include "AOTModuleRecord.h"
 #include "AOTModuleTable.h"
 #include "AOTModuleWords.h"
+#include "AOTVector.h"
 #include "ArgList.h"
 #include "Identifier.h"
 #include "JSPromise.h"
@@ -30,7 +31,6 @@
 #include <wtf/ScopedLambda.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

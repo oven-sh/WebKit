@@ -15,6 +15,8 @@
 #include "AOTIR.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
@@ -135,7 +137,7 @@ FrameMaps computeFrameMaps(const Program& program, const Function& function, Fun
         }
     }
 
-    std::ranges::sort(maps.m_suspensions, { }, &SuspensionRoots::suspension);
+    AOT::sort(maps.m_suspensions, { }, &SuspensionRoots::suspension);
     analyses.context().build.statistics().count(StatisticID::SuspensionRoots, numberOfRoots);
     return maps;
 }

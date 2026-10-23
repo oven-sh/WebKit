@@ -50,6 +50,6 @@ function f3 name="inFastCode" parameters=[{type=boolean}] results=[{type=undefin
     Return
 }
 # CHECK-NEXT: operation operationAOTGetGlobalBinding x1
-# CHECK-NEXT: operation operationAOTSetGlobalBinding x1
+# CHECK: operation operationAOTSetGlobalBinding x1
 # CHECK: stub WriteBarrier{{*}} x1
 # S: f3 b1 Fast

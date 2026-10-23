@@ -20,6 +20,7 @@
 #include "AOTProgramTables.h"
 #include "AOTRuntimeType.h"
 #include "AOTTableInImage.h"
+#include "AOTVector.h"
 #include "IndexingType.h"
 #include <algorithm>
 #include <bit>
@@ -30,7 +31,6 @@
 #include <utility>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

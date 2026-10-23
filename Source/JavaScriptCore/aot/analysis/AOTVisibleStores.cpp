@@ -13,8 +13,10 @@
 #include "AOTEdgeResults.h"
 #include "AOTFlowSiteData.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -548,7 +550,7 @@ void StoreGraph::indexFieldsByKey()
     forEachIndexInParallel(m_loops, numberOfKeys, [&](unsigned key) {
         std::span<FieldWithKey> fields = m_fieldsWithKey.mutableSpan().subspan(m_firstFieldWithKey[key], m_firstFieldWithKey[key + 1] - m_firstFieldWithKey[key]);
         if (fields.size() > 1)
-            std::ranges::sort(fields);
+            AOT::sort(fields);
     });
 }
 
@@ -601,7 +603,7 @@ AccessedFields StoreGraph::findAccessedFields(GraphPart& part, LayoutSetID recei
                 add(*first);
         }
     }
-    std::ranges::sort(declarations);
+    AOT::sort(declarations);
     removeRepeatedElements(declarations);
 
     if (declarations.isEmpty())
@@ -657,7 +659,7 @@ void StoreGraph::indexMethods()
 {
     for (GraphPart& part : m_parts)
         m_methods.appendVector(std::exchange(part.methods, { }));
-    std::ranges::sort(m_methods);
+    AOT::sort(m_methods);
     removeRepeatedElements(m_methods);
 }
 
@@ -693,7 +695,7 @@ Callees StoreGraph::findCalledMethods(LayoutSetID receivers, PropertyKeyID key) 
         for (const MethodDefinition& method : methods)
             callees.functions.append(method.function);
     }
-    std::ranges::sort(callees.functions);
+    AOT::sort(callees.functions);
     removeRepeatedElements(callees.functions);
     if (callees.functions.isEmpty() || callees.functions.size() > maxCalleesOfCall)
         return { };

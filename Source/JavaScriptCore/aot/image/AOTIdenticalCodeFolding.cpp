@@ -13,7 +13,9 @@
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <compare>
 #include <cstring>
@@ -115,7 +117,7 @@ static Vector<AppendedEntryList> collectAppendedEntries(const Vector<EntryAlias>
         appendedEntriesOf[*body].append({ alias.start, alias.prefixSize, alias.placement });
     }
     for (auto& appendedEntries : appendedEntriesOf)
-        std::ranges::sort(appendedEntries);
+        AOT::sort(appendedEntries);
     return appendedEntriesOf;
 }
 

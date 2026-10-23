@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

@@ -14,6 +14,8 @@
 #include "AOTPlacementTestSupport.h"
 #include "AOTReuseEnvironments.h"
 #include "AOTSlotPlanSteps.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <memory>
 #include <span>
@@ -233,7 +235,7 @@ static void printAccesses(const SlotPlanViewContext& view)
     IRPrinter printer(out, program);
     SlotUses uses = collectSlotUsesFor(view);
     Vector<AccessRequest> requests = mergeDirections(uses.accesses.span());
-    std::ranges::sort(requests, [](const AccessRequest& a, const AccessRequest& b) {
+    AOT::sort(requests, [](const AccessRequest& a, const AccessRequest& b) {
         return std::tuple(b.weight, a.key, a.receivers) < std::tuple(a.weight, b.key, b.receivers);
     });
     for (const AccessRequest& request : requests) {
@@ -341,7 +343,7 @@ static void printColumns(const SlotPlanViewContext& view)
         if (weights[key])
             keys.append(key);
     }
-    std::ranges::sort(keys, [&](uint32_t a, uint32_t b) {
+    AOT::sort(keys, [&](uint32_t a, uint32_t b) {
         return weights[a] != weights[b] ? weights[a] > weights[b] : a < b;
     });
     for (uint32_t key : keys) {

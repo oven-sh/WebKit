@@ -10,6 +10,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTRegionCloner.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -123,7 +125,7 @@ Vector<BlockID> AllocationSinking::collectLiveRange(VirtualObjectID object, Bloc
         }
     }
 
-    std::ranges::sort(region, { }, [&](BlockID block) {
+    AOT::sort(region, { }, [&](BlockID block) {
         return cfg.reversePostOrderIndex(block);
     });
     return region;

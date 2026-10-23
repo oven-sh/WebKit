@@ -11,7 +11,9 @@
 #include "AOTBuildContext.h"
 #include "AOTIRProgram.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 
@@ -130,7 +132,7 @@ static void groupColumnsByFunction(std::span<NameCandidate> namesWithColumn)
         return;
     static_assert(FunctionID(0u) < FunctionID(), "a name that no function looks up in the table sorts last");
     auto remainingNamesWithColumn = namesWithColumn.subspan(hotNameCount);
-    std::stable_sort(remainingNamesWithColumn.begin(), remainingNamesWithColumn.end(), [](const NameCandidate& a, const NameCandidate& b) {
+    AOT::stableSort(remainingNamesWithColumn, [](const NameCandidate& a, const NameCandidate& b) {
         return a.firstTableLookupFunction < b.firstTableLookupFunction;
     });
 }

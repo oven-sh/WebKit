@@ -11,6 +11,7 @@
 #include "AOTSortedSet.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/StdLibExtras.h>
 

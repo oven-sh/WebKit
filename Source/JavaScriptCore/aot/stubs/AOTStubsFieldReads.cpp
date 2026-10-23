@@ -16,11 +16,11 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "JSCellButterfly.h"
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

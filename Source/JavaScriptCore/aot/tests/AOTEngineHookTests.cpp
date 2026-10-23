@@ -20,6 +20,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSavedFrame.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
 #include "InternalFunction.h"
@@ -415,7 +416,7 @@ static void testCreateWithProperties(LoadedProgram& program)
 {
     VM& vm = program.vm();
     Structure* empty = program.realm()->objectStructureForObjectConstructor();
-    Vector<Identifier> identifiers(6, [&](size_t index) {
+    WTF::Vector<Identifier> identifiers(6, [&](size_t index) {
         return Identifier::fromString(vm, makeString("created"_s, index));
     });
     Vector<UniquedStringImpl*> names(identifiers.size(), [&](size_t index) {

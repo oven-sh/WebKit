@@ -13,6 +13,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTPureOperations.h"
 #include "AOTRepresentationRules.h"
+#include "AOTVector.h"
 #include "B3ComputeDivisionMagic.h"
 #include "B3StackmapGenerationParams.h"
 #include "CCallHelpers.h"

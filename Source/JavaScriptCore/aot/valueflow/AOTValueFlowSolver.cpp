@@ -10,7 +10,9 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
+#include "AOTSort.h"
 #include "AOTValueFlowBodies.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/CPUTime.h>
@@ -236,8 +238,8 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
     m_hasStatementOfBodyRun.ensureSize(m_input.statements.size());
     m_statementsWait = m_input.universe && m_input.nodes && m_input.placeholders.unknown;
     if (m_statementsWait) {
-        m_firstStatementWaitingForNode.fill(0, m_input.numberOfNodes);
-        m_nextStatementWaiting.fill(doesNotWait, m_input.statements.size());
+        growAndFill(m_firstStatementWaitingForNode, m_input.numberOfNodes, 0u);
+        growAndFill(m_nextStatementWaiting, m_input.statements.size(), doesNotWait);
     }
 }
 
@@ -284,48 +286,55 @@ void ListThatStaysInPlace<T>::takeMemoryFor(size_t size)
     m_numberWithMemory.store(end, std::memory_order_release);
 }
 
-ValueFlowSolver::IndexOfMadeNodes::Table::Table(size_t numberOfSlots)
-    : slots(MallocSpan<std::atomic<uint64_t>>::malloc(numberOfSlots * sizeof(std::atomic<uint64_t>)))
+ValueFlowSolver::IndexOfMadeNodes::~IndexOfMadeNodes()
 {
-    // Written, not asked for as zeroes: a page that is read before it is written costs a second fault, which stops every thread.
-    zeroSpan(slots.mutableSpan());
+    for (Table table : tables)
+        fastFree(table.slots());
 }
 
-void ValueFlowSolver::IndexOfMadeNodes::add(uint32_t hash, uint32_t number, size_t fewestSlots)
+void ValueFlowSolver::IndexOfMadeNodes::add(std::atomic<Table>& current, uint32_t hash, uint32_t number, size_t fewestSlots)
 {
-    auto put = [](Table& table, uint64_t slot) {
-        std::span<std::atomic<uint64_t>> slots = table.slots.mutableSpan();
+    auto slotsOf = [](Table table) {
+        return unsafeMakeSpan(table.slots(), table.numberOfSlots());
+    };
+    auto put = [&](Table table, uint64_t slot) {
+        std::span<Slot> slots = slotsOf(table);
         size_t mask = slots.size() - 1;
         size_t index = (slot >> 32) & mask;
         while (slots[index].load(std::memory_order_relaxed))
             index = (index + 1) & mask;
         slots[index].store(slot, std::memory_order_release);
     };
-    if (tables.isEmpty() || (size + 1) * 2 > tables.last()->slots.span().size()) {
-        auto larger = makeUnique<Table>(tables.isEmpty() ? fewestSlots : tables.last()->slots.span().size() * 2);
+    if (tables.isEmpty() || (size + 1) * 2 > tables.last().numberOfSlots()) {
+        size_t numberOfSlots = tables.isEmpty() ? fewestSlots : tables.last().numberOfSlots() * 2;
+        Table larger { static_cast<Slot*>(fastAlignedMalloc(64, numberOfSlots * sizeof(Slot))), static_cast<unsigned>(std::countr_zero(numberOfSlots)) };
+        // Written, not asked for as zeroes: a page that is read before it is written costs a second fault, which stops every thread.
+        zeroSpan(slotsOf(larger));
         if (!tables.isEmpty()) {
-            for (const std::atomic<uint64_t>& slot : tables.last()->slots.span()) {
+            for (const Slot& slot : slotsOf(tables.last())) {
                 if (uint64_t taken = slot.load(std::memory_order_relaxed))
-                    put(*larger, taken);
+                    put(larger, taken);
             }
         }
-        tables.append(WTF::move(larger));
-        current.store(tables.last().get(), std::memory_order_release);
+        tables.append(larger);
+        current.store(larger, std::memory_order_release);
     }
-    put(*tables.last(), static_cast<uint64_t>(hash) << 32 | (number + 1));
+    put(tables.last(), static_cast<uint64_t>(hash) << 32 | (number + 1));
     ++size;
 }
 
 void ValueFlowSolver::IndexOfMadeNodes::freeOutgrownTables()
 {
-    if (tables.size() > 1)
-        tables.removeAt(0, tables.size() - 1);
+    while (tables.size() > 1) {
+        fastFree(tables.first().slots());
+        tables.removeAt(0);
+    }
 }
 
 ALWAYS_INLINE std::optional<uint32_t> ValueFlowSolver::findNumberOfMadeNodes(const ValueFlowNodeKey& key) const
 {
     uint32_t hash = key.hash();
-    return indexOfMadeNodesWith(hash).find(hash, [&](uint32_t candidate) {
+    return findInIndexOfMadeNodes(hash, [&](uint32_t candidate) {
         return m_madeNodes[candidate].key == key;
     });
 }
@@ -605,7 +614,7 @@ void ValueFlowSolver::takeReachedFunctions()
             reached.append(Reached { log.reached[next], log.whoReached[next].statement, log.whoReached[next].content });
         thread->numberOfReachedTaken = log.reached.size();
     }
-    std::ranges::sort(reached, [&](const Reached& first, const Reached& second) {
+    AOT::sort(reached, [&](const Reached& first, const Reached& second) {
         return std::tuple { first.function, first.content } < std::tuple { second.function, second.content };
     });
     for (const Reached& entry : reached)
@@ -1121,7 +1130,7 @@ void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>
             uint32_t hash = made.key.hash();
             IndexOfMadeNodes& madeNodes = indexOfMadeNodesWith(hash);
             Locker locker { madeNodes.lock };
-            madeNodes.add(hash, number, m_fewestSlotsOfIndexOfMadeNodes);
+            madeNodes.add(tableOfMadeNodesWith(hash), hash, number, m_fewestSlotsOfIndexOfMadeNodes);
         }
         for (size_t position = 0; position < maker.madeStatements.size(); ++position) {
             MadeStatement made = maker.madeStatements[position];
@@ -1397,7 +1406,7 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     uint32_t number;
     {
         Locker locker { index.lock };
-        std::optional<uint32_t> existing = index.find(hash, [&](uint32_t candidate) {
+        std::optional<uint32_t> existing = findInIndexOfMadeNodes(hash, [&](uint32_t candidate) {
             return m_madeNodes[candidate].key == key;
         });
         if (existing)
@@ -1414,7 +1423,7 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
             made.hasStatementRunWhereMade = true;
         }
         m_madeNodes[number] = made;
-        index.add(hash, number, m_fewestSlotsOfIndexOfMadeNodes);
+        index.add(tableOfMadeNodesWith(hash), hash, number, m_fewestSlotsOfIndexOfMadeNodes);
     }
     ++log.numberMadeWhereAskedFor;
     log.madeWhereAskedFor.append(number);
@@ -2065,7 +2074,7 @@ void ValueFlowSolver::linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOE
         m_counters.testsWhetherSetsMeet += linked.testsWhetherSetsMeet;
         listsMostlyAtRest.appendVector(linked.listsMostlyAtRest);
     }
-    std::ranges::sort(listsMostlyAtRest);
+    AOT::sort(listsMostlyAtRest);
     removeRepeatedElements(listsMostlyAtRest);
     for (Vector<NodeOfSet>* list : listsMostlyAtRest)
         removeNodesAtRestFrom(*list);
@@ -2668,7 +2677,7 @@ void ValueFlowSolver::countRunsAndEdges()
     Vector<ValueFlowStatementID> statementsOfRound;
     for (const CountsOfLog& counts : countsOfLog)
         statementsOfRound.appendVector(counts.statementsThatWereNotDueAndAdded);
-    std::ranges::sort(statementsOfRound);
+    AOT::sort(statementsOfRound);
     m_numberOfRunsThatWereNotDueAndAdded += statementsOfRound.size();
     size_t room = mostStatementsKept - m_firstStatementsThatWereNotDueAndAdded.size();
     m_firstStatementsThatWereNotDueAndAdded.append(statementsOfRound.span().first(std::min(room, statementsOfRound.size())));
@@ -2693,7 +2702,7 @@ void ValueFlowSolver::rememberWhoLoggedTheEdges()
                 logged.append(Logged { numberOf(ValueFlowEdge { thread->numberInGraph(thread->log.edges[edge].from), thread->numberInGraph(thread->log.edges[edge].to) }), run.statement });
         }
     }
-    std::ranges::sort(logged, [](const Logged& first, const Logged& second) {
+    AOT::sort(logged, [](const Logged& first, const Logged& second) {
         return std::tuple { first.edge, first.statement } < std::tuple { second.edge, second.statement };
     });
     for (const Logged& entry : logged) {
@@ -2738,7 +2747,7 @@ Vector<ValueFlowNodeID> ValueFlowSolver::explain(ValueFlowNodeID start, ValueFlo
         m_graph.forEachPredecessor(step.node, [&](ValueFlowNodeID predecessor) {
             predecessors.append(predecessor);
         });
-        std::ranges::sort(predecessors);
+        AOT::sort(predecessors);
         auto goOnThroughHoldersOf = [&](ValueFlowObjectID lookedFor) {
             bool hasHolder = false;
             for (ValueFlowNodeID predecessor : predecessors) {
@@ -2806,7 +2815,7 @@ bool ValueFlowSolver::merge()
     });
 
     m_stepTimes.didFinish("merge: edges of the logs copied"_s);
-    std::ranges::sort(m_bodiesReachedInRound);
+    AOT::sort(m_bodiesReachedInRound);
     Vector<ValueFlowNodeSet> seeds;
     Vector<KeyToMake> constantsToMake;
     // By the set: the node that holds it; none until it is made.
@@ -2832,7 +2841,7 @@ bool ValueFlowSolver::merge()
         }
     }
     m_bodiesReachedInRound.shrink(0);
-    std::ranges::sort(constantsToMake, [](const KeyToMake& first, const KeyToMake& second) {
+    AOT::sort(constantsToMake, [](const KeyToMake& first, const KeyToMake& second) {
         return std::tuple { first.hashOfMembers, first.key.set.index() } < std::tuple { second.hashOfMembers, second.key.set.index() };
     });
     constantsToMake.shrink(std::unique(constantsToMake.begin(), constantsToMake.end(), [](const KeyToMake& first, const KeyToMake& second) {
@@ -3146,15 +3155,15 @@ void ValueFlowSolver::prepareSaturation()
     m_saturates = true;
     uint32_t numberOfLayouts = m_input.program->layouts.size();
     uint32_t numberOfClasses = m_input.program->builtins().classCount();
-    m_layoutOrCalleeOfMember.fill(0u, universe.numberOfObjects());
+    m_layoutOrCalleeOfMember.makeRoomToFill(universe.numberOfObjects());
     constexpr uint32_t membersInStretch = 1 << 14;
     forEachIndexInParallel(m_loops, (universe.numberOfObjects() + membersInStretch - 1) / membersInStretch, [&](unsigned stretch) {
         uint32_t end = std::min(universe.numberOfObjects(), (stretch + 1) * membersInStretch);
         for (uint32_t index = stretch * membersInStretch; index < end; ++index) {
             ValueFlowObjectID member(index);
             if (!universe.isObject(member) || member == m_input.placeholders.unknown || member == m_input.placeholders.untracked)
-                continue;
-            if (LayoutID layout = universe.layoutOf(member))
+                m_layoutOrCalleeOfMember[index] = 0;
+            else if (LayoutID layout = universe.layoutOf(member))
                 m_layoutOrCalleeOfMember[index] = 1 + layout.index();
             else if (BuiltinClassID builtinClass = universe.closureFunction(member) ? BuiltinClassID() : universe.classOf(member))
                 m_layoutOrCalleeOfMember[index] = 1 + numberOfLayouts + builtinClass.index();
@@ -3162,7 +3171,7 @@ void ValueFlowSolver::prepareSaturation()
                 m_layoutOrCalleeOfMember[index] = 1 + numberOfLayouts + numberOfClasses + index;
         }
     });
-    m_lastCountThatSaw.fill(0u, 1 + numberOfLayouts + numberOfClasses + universe.numberOfObjects());
+    growAndFill(m_lastCountThatSaw, 1 + numberOfLayouts + numberOfClasses + universe.numberOfObjects(), 0u);
 }
 
 bool ValueFlowSolver::maySaturate(ValueFlowNodeID node) const
@@ -3315,7 +3324,7 @@ void ValueFlowSolver::findObjectsOutsideFamilies()
         });
         m_objectsOutsideFamilies.appendVector(found);
     }
-    std::ranges::sort(m_objectsOutsideFamilies, { }, &ObjectOutsideFamily::node);
+    AOT::sort(m_objectsOutsideFamilies, { }, &ObjectOutsideFamily::node);
     for (const ObjectOutsideFamily& entry : m_objectsOutsideFamilies)
         m_holdsObjectOutsideFamily.set(entry.node.index());
     m_counters.nodesHoldingObjectsOutsideFamily = m_objectsOutsideFamilies.size();
@@ -3325,7 +3334,7 @@ void ValueFlowSolver::findObjectsOutsideFamilies()
 void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& whatRunsBesideTheWalk)
 {
     ValueFlowObjectID unknownObject = m_input.placeholders.unknown;
-    if (!unknownObject) {
+    if (!unknownObject || !m_input.isAskedHowValuesCame) {
         whatRunsBesideTheWalk();
         return;
     }
@@ -3418,7 +3427,7 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
                 if (holdsUnknownObject.quickGet(successor.index()))
                     successors[next++] = successor.index();
             });
-            std::ranges::sort(successors.mutableSpan().subspan(firstSuccessor[node], next - firstSuccessor[node]));
+            AOT::sort(successors.mutableSpan().subspan(firstSuccessor[node], next - firstSuccessor[node]));
         });
     });
 
@@ -3550,11 +3559,18 @@ bool ValueFlowSolver::solve()
     if (m_input.build)
         m_seedOfSchedule = m_input.build->recordedOptions().has(TestingSwitch::DelayFlowRules) + 2 * m_input.build->recordedOptions().has(TestingSwitch::DelayOtherFlowRules);
     m_graph.addNodes(m_input.numberOfNodes);
-    for (const ValueFlowNodeMask& mask : m_input.masks)
-        m_graph.setMask(mask.node, mask.mask, mask.kind, mask.familyObjects);
-    if (m_input.lost)
-        m_graph.setMask(m_input.lost, ValueSets::complement(m_objectsAlwaysFollowed));
-    m_graph.addInitialEdges(m_input.edges);
+    // A mask stands at the gate of a node and an edge in the links of two: whoever sets the one looks at nothing of the other.
+    runTasksInParallel(m_loops, {
+        [&] {
+            for (const ValueFlowNodeMask& mask : m_input.masks)
+                m_graph.setMask(mask.node, mask.mask, mask.kind, mask.familyObjects);
+            if (m_input.lost)
+                m_graph.setMask(m_input.lost, ValueSets::complement(m_objectsAlwaysFollowed));
+        },
+        [&] {
+            m_graph.addInitialEdges(m_input.edges);
+        },
+    });
 
     uint32_t numberOfBodies = m_input.ranges.size() - 1;
     for (uint32_t body = 0; body < numberOfBodies; ++body)
@@ -3694,7 +3710,7 @@ bool ValueFlowSolver::solve()
 void ValueFlowSolver::releaseRoundState()
 {
     m_memoryInBytesAtEndOfRounds = memoryInBytes();
-    m_graph.releaseSolvingState();
+    m_graph.releaseSolvingState(m_input.isAskedHowValuesCame || m_input.remembersWhoLoggedEachEdge ? ValueFlowGraph::Predecessors::AreKept : ValueFlowGraph::Predecessors::AreReleased);
     // Millions of small blocks: they are freed beside the results, as the rest of the solver is freed beside Optimize.
     auto release = [&](auto& state) {
         auto taken = std::exchange(state, { });

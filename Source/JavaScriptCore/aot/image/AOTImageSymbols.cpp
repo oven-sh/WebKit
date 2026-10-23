@@ -18,7 +18,9 @@
 #include "AOTProgramTables.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSort.h"
 #include "AOTStubDescriptor.h"
+#include "AOTVector.h"
 #include "AOTWasmModules.h"
 #include <algorithm>
 #include <tuple>
@@ -154,7 +156,7 @@ static void appendSharedCodeCopies(Vector<ImageSymbol>& symbols, const CodeLayou
 static void appendStubs(Vector<ImageSymbol>& symbols, const StubBlob& blob)
 {
     Vector<StubPlacement> placements = blob.placements;
-    std::ranges::sort(placements, [](const StubPlacement& a, const StubPlacement& b) {
+    AOT::sort(placements, [](const StubPlacement& a, const StubPlacement& b) {
         return std::tie(a.offset, a.key) < std::tie(b.offset, b.key);
     });
 
@@ -386,7 +388,7 @@ Vector<uint8_t> encodeSymbols(std::span<const ImageSymbol> symbols, std::span<co
     const ImageHeader& header = headerOf(image);
 
     Vector<SymbolTableEntry> entries = collectTableEntries(symbols);
-    std::ranges::stable_sort(entries, { }, &SymbolTableEntry::offset);
+    AOT::stableSort(entries, { }, &SymbolTableEntry::offset);
     entries.shrink(std::ranges::unique(entries, { }, &SymbolTableEntry::offset).begin() - entries.begin());
 
     Vector<uint8_t> names;
@@ -487,7 +489,7 @@ static void printTables(PrintStream& out, std::span<const uint8_t> image, const 
     if (range.size) {
         auto& tables = *reinterpret_cast<const ProgramTables*>(image.subspan(range.offset, range.size).data());
         Vector<uint32_t> typeOffsets(tables.types().subspan(1 + ProgramTables::numberOfTypeGroupWords(tables.numberOfTypes())));
-        std::ranges::sort(typeOffsets);
+        AOT::sort(typeOffsets);
         for (size_t i = 0; i < typeOffsets.size(); ++i)
             describedTypes += typeOffsets[i] && (!i || typeOffsets[i] != typeOffsets[i - 1]);
     }

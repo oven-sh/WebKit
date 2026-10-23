@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCompactTable.h"
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "Identifier.h"
 #include "JSString.h"
@@ -19,7 +20,6 @@
 #include <utility>
 #include <wtf/Noncopyable.h>
 #include <wtf/UnalignedAccess.h>
-#include <wtf/Vector.h>
 #include <wtf/text/RapidHash.h>
 
 namespace JSC { namespace AOT {

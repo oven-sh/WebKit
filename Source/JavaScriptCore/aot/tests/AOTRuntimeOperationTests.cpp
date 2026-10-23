@@ -17,6 +17,7 @@
 #include "AOTSchemaOperations.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTTemporaryFile.h"
+#include "AOTVector.h"
 #include "ClonedArguments.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"

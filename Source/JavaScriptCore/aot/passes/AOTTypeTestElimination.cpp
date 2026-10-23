@@ -14,7 +14,9 @@
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
+#include "AOTSort.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <utility>
@@ -314,10 +316,10 @@ void ConditionCoverage::collectProofs(std::span<const ExistingProof> proofs)
         m_pointProofs.append(PointProof { location.block, location.placement == ValuePlacement::Parameter, location.placement == ValuePlacement::Parameter ? 0 : location.index, index });
         m_blocksWithPointProofs.quickSet(location.block.index());
     }
-    std::ranges::stable_sort(m_edgeProofs, { }, [](const EdgeProof& proof) {
+    AOT::stableSort(m_edgeProofs, { }, [](const EdgeProof& proof) {
         return proof.edge.from.index();
     });
-    std::ranges::stable_sort(m_pointProofs, { }, [](const PointProof& proof) {
+    AOT::stableSort(m_pointProofs, { }, [](const PointProof& proof) {
         return std::tuple { proof.block.index(), !proof.isParameter, proof.index };
     });
 }

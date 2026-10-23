@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImageTestSupport.h"
+#include "AOTVector.h"
 
 #include "AOTB3Policy.h"
 #include "AOTInstance.h"

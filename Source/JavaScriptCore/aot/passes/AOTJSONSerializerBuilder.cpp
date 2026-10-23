@@ -14,8 +14,10 @@
 #include "AOTEffectsDescription.h"
 #include "AOTKnownValue.h"
 #include "AOTPropertyAccessReceivers.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/text/StringBuilder.h>
@@ -315,7 +317,7 @@ auto JSONSerializerBuilder::planLayouts(const Type& objects, TypeCertainty certa
         Vector<std::pair<JSONLikelihood, LayoutID>, 8> ranked(plan.layouts.size(), [&](size_t index) {
             return std::pair { jsonLikelihoodOf(program(), inputs().flow, plan.layouts[index]), plan.layouts[index] };
         });
-        std::ranges::sort(ranked);
+        AOT::sort(ranked);
         for (size_t index = 0; index < ranked.size(); ++index)
             plan.layouts[index] = ranked[index].second;
     }

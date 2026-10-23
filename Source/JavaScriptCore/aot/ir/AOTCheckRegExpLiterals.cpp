@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpSummary.h"
+#include "AOTVector.h"
 #include "YarrFlags.h"
 #include <wtf/text/StringView.h>
 

@@ -15,13 +15,13 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubCalls.h"
 #include "AOTStubKey.h"
+#include "AOTVector.h"
 #include "HandlerInfo.h"
 #include "RegisterAtOffsetList.h"
 #include <optional>
 #include <span>
 #include <wtf/BitSet.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC::AOT {

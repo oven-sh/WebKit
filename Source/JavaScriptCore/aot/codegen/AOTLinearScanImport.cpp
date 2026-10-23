@@ -10,6 +10,8 @@
 
 #include "AOTLinearScanOperations.h"
 #include "AOTRelocation.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3CheckValue.h"
@@ -196,7 +198,7 @@ void LinearScanCodeGenerator::setUpRegisters()
         m_registerOrder.append(static_cast<uint8_t>(reg.index()));
         m_doubleRegisters |= bitOf(reg);
     }
-    std::ranges::stable_sort(m_registerOrder, { }, [&](uint8_t reg) {
+    AOT::stableSort(m_registerOrder, { }, [&](uint8_t reg) {
         return !!(m_calleeSaves >> reg & 1);
     });
     const B3::Air::LayoutPolicy& layout = m_code.policy().layout;
@@ -711,7 +713,7 @@ void LinearScanCodeGenerator::findLoops()
 {
     if (m_backEdges.isEmpty())
         return;
-    std::ranges::sort(m_backEdges, [](const auto& a, const auto& b) {
+    AOT::sort(m_backEdges, [](const auto& a, const auto& b) {
         return a.first != b.first ? a.first < b.first : a.second > b.second;
     });
     Vector<uint32_t, 8> open;

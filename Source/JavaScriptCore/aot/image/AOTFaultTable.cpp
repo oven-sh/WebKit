@@ -14,6 +14,7 @@
 #include "AOTSectionWriter.h"
 #include "AOTThreads.h"
 #include "AOTVarint.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <functional>

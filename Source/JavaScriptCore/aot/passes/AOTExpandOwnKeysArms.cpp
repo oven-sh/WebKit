@@ -12,6 +12,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
 #include "AOTTypeTestCoverage.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

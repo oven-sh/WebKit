@@ -14,6 +14,7 @@
 #include "AOTStubsBarriers.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include "AOTWasmSection.h"
 #include "CPU.h"
 #include <algorithm>

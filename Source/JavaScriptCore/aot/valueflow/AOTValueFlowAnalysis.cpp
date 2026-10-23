@@ -13,7 +13,9 @@
 #include "AOTKnownClosures.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTValueFlowRules.h"
+#include "AOTVector.h"
 #include <wtf/MonotonicTime.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -430,7 +432,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
     : m_program(program)
     , m_bodies(reduceBodiesTimed(program, build, m_positionOfKey, m_timeToReduceBodies))
     , m_maker(m_bodies.sets())
@@ -458,6 +460,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
         // The report names the statement and the position behind each site that is not proven.
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
+        .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
         .refusesEvaluatedText = build.options().excludesEvaluatedText(),
@@ -590,7 +593,7 @@ void printAwaits(PrintStream& out, ValueFlowSolution& solution)
     Vector<std::pair<uint32_t, uint32_t>> functions;
     for (auto [function, count] : awaitsOfFunction)
         functions.append({ count, function });
-    std::ranges::sort(functions, std::greater { });
+    AOT::sort(functions, std::greater { });
     out.println("async functions that return the unknown object or whose promise has escaped, by awaits: ", functions.size());
     for (size_t index = 0; index < std::min(functions.size(), numberOfFunctionsPrinted); ++index) {
         const Function& function = program.functions[functions[index].second];

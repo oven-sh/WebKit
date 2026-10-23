@@ -11,6 +11,8 @@
 #include "AOTBuildContext.h"
 #include "AOTRegExpCodeAddressing.h"
 #include "AOTSectionLinker.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include "MacroAssembler.h"
 #include "YarrClassTable.h"
 #include <algorithm>
@@ -534,7 +536,7 @@ RegExpSection SectionBuilder::createSection(LinkedSection&& linked) const
         if (seenBodies.set(body.number))
             section.items.append({ Kind::DuplicateBody, offset, sizeOf(unit), body.regExp });
     }
-    std::ranges::stable_sort(section.items, { }, &RegExpSectionItem::offset);
+    AOT::stableSort(section.items, { }, &RegExpSectionItem::offset);
     return section;
 }
 

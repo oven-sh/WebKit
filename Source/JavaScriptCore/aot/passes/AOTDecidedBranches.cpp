@@ -13,6 +13,8 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTPropertyAccessCache.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <wtf/HashMap.h>
@@ -88,7 +90,7 @@ auto TypeTestBranches::branchesOn(ValueID value) const -> std::span<const Branch
 void TypeTestBranches::keepValuesThatSeveralBranchesName()
 {
     Vector<BranchOnValue, 32>& branches = m_branchesByOperand;
-    std::ranges::stable_sort(branches, { }, [](const BranchOnValue& branch) {
+    AOT::stableSort(branches, { }, [](const BranchOnValue& branch) {
         return branch.operand.index();
     });
     size_t end = 0;
@@ -193,7 +195,7 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
     }
     keepValuesThatSeveralBranchesName();
     // The identities of values are asked for only where two tests are for one type.
-    std::ranges::stable_sort(m_branches, { }, [](const TestedBranch& branch) {
+    AOT::stableSort(m_branches, { }, [](const TestedBranch& branch) {
         return branch.testedType.index();
     });
     auto isOnlyTestForItsType = [&](const TestedBranch& branch) {
@@ -210,7 +212,7 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
     m_branches = WTF::move(repeated);
     for (TestedBranch& branch : m_branches)
         branch.subject = analyses.identityOf(branch.subject);
-    std::ranges::stable_sort(m_branches, { }, &TestedBranch::test);
+    AOT::stableSort(m_branches, { }, &TestedBranch::test);
 
     // A test that no other branch repeats has nothing to learn from the table.
     size_t end = 0;
@@ -353,10 +355,10 @@ SlotValueTests::SlotValueTests(FunctionAnalyses& analyses, TypeArena& types, std
     }
     if (testedObjects.isEmpty())
         return;
-    std::ranges::sort(testedObjects);
+    AOT::sort(testedObjects);
     for (BlockID block : analyses.cfg().reversePostOrder())
         collectTestedReads(testedObjects.span(), block);
-    std::ranges::stable_sort(m_reads, { }, &TestedRead::object);
+    AOT::stableSort(m_reads, { }, &TestedRead::object);
 }
 
 static bool declareSameType(const Program& program, std::span<const LayoutID> layouts, PropertyKeyID key)

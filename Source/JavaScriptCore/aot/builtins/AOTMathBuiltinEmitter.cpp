@@ -12,6 +12,7 @@
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include "MathCommon.h"
 #include <algorithm>
 #include <limits>

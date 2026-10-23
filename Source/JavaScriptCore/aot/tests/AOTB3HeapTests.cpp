@@ -10,6 +10,7 @@
 #include "AOTHeaps.h"
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
+#include "AOTVector.h"
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3CompilationScratch.h"
@@ -634,7 +635,7 @@ public:
     B3::AbstractHeap endOfChain { &middleOfChain, "endOfChain" };
 
 private:
-    void appendGrownClientHeaps(Vector<GrownHeap, 16>& grownHeaps) final
+    void appendGrownClientHeaps(WTF::Vector<GrownHeap, 16>& grownHeaps) final
     {
         for (auto [heap, numberOfKeptChildren] : m_grown)
             grownHeaps.append({ heap, numberOfKeptChildren });

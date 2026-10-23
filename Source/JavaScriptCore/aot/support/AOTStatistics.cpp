@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <wtf/PrintStream.h>
 #include <wtf/Threading.h>
 

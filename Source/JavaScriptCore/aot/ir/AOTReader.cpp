@@ -10,6 +10,7 @@
 
 #include "AOTNarrowFieldTypes.h"
 #include "AOTTypeClosure.h"
+#include "AOTVector.h"
 #include "AOTVerifierInternal.h"
 #include <algorithm>
 #include <compare>

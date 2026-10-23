@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTVector.h"
 #include "AOTWatchpoints.h"
 #include "Identifier.h"
 #include "JSType.h"
@@ -22,7 +23,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashTraits.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -102,7 +102,7 @@ private:
     // The holders, the keys and the objects are kept alive for as long as the instance lives: a static table has a few hundred entries at the most.
     using Location = std::pair<JSObject*, UniquedStringImpl*>;
     UncheckedKeyHashMap<Location, JSObject*> m_objectsMadeByHost;
-    Vector<Identifier> m_keysOfObjectsMadeByHost;
+    WTF::Vector<Identifier> m_keysOfObjectsMadeByHost;
     // The bindings are a sorted list. Each place holds the getter that was asked for last among those that share it.
     std::array<CustomGetter, 64> m_customGetters;
 };

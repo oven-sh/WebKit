@@ -16,6 +16,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

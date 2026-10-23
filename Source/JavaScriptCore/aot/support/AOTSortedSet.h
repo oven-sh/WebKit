@@ -8,13 +8,14 @@
 #if ENABLE(AOT)
 
 #include "AOTCompactList.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <concepts>
 #include <initializer_list>
 #include <span>
 #include <type_traits>
 #include <wtf/Hasher.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
@@ -65,7 +66,7 @@ template<typename T, size_t inlineCapacity>
 SortedSet<T, inlineCapacity>::SortedSet(std::span<const T> unsortedValues)
     : m_values(unsortedValues)
 {
-    std::sort(m_values.begin(), m_values.end());
+    AOT::sort(m_values);
     m_values.shrink(std::unique(m_values.begin(), m_values.end()) - m_values.begin());
 }
 

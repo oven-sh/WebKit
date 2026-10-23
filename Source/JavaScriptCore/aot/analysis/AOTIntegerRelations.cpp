@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CheckedArithmetic.h>
 
@@ -394,7 +396,7 @@ void IntegerRelations::indexComparisonsByBase()
             add(bases.right);
     }
     for (auto& entry : m_blocksBehindComparisonsAbout) {
-        std::ranges::sort(entry.value, [&](BlockID first, BlockID second) {
+        AOT::sort(entry.value, [&](BlockID first, BlockID second) {
             return std::pair { m_depthInDominatorTree[second.index()], second.index() } < std::pair { m_depthInDominatorTree[first.index()], first.index() };
         });
     }

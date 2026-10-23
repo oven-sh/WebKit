@@ -13,9 +13,11 @@
 #include "AOTBuiltinTable.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowRulesHeap.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 
@@ -264,7 +266,7 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
         definition.theCreationRunsAtMostOnce = true;
     }
     for (ClassDefinition& definition : classes) {
-        std::ranges::sort(definition.functionsHandedOnAtDefinition);
+        AOT::sort(definition.functionsHandedOnAtDefinition);
         removeRepeatedElements(definition.functionsHandedOnAtDefinition);
     }
     return classes;
@@ -613,7 +615,7 @@ static Vector<ClassMember> listMembersInDefinitionOrder(Vector<Definition>&& def
     auto orderOf = [](const Definition& definition) {
         return std::tuple { definition.index, memberOrderOf(definition.member) };
     };
-    std::ranges::sort(definitions, { }, orderOf);
+    AOT::sort(definitions, { }, orderOf);
     definitions.shrink(std::ranges::unique(definitions, { }, orderOf).begin() - definitions.begin());
 
     Vector<ClassMember> members;
@@ -687,7 +689,7 @@ static void listWhatIsStoredOverMembers(const ValueFlowResultInputs& inputs, std
         });
     }
     if (namedMembers.size() != numberOfDefinedMembers)
-        std::ranges::sort(namedMembers, { }, memberOrderOf);
+        AOT::sort(namedMembers, { }, memberOrderOf);
 }
 
 static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID id, ClassDefinition&& definition, const ClosuresTakenOutOfMembers& taken, const WritesToPrototypeObjects& writes)
@@ -733,7 +735,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
         if (entry.member.key)
             namedMembers.append(entry.member);
     }
-    std::ranges::sort(namedMembers, { }, memberOrderOf);
+    AOT::sort(namedMembers, { }, memberOrderOf);
     namedMembers.shrink(std::ranges::unique(namedMembers, { }, memberOrderOf).begin() - namedMembers.begin());
     if (followsMutations && isOnlyStoredToUnderNames)
         listWhatIsStoredOverMembers(inputs, writes.of(id), namedMembers);

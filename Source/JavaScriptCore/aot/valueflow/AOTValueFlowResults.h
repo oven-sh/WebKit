@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowResults.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT {
 

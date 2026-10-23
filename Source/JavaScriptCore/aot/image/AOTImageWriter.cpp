@@ -15,6 +15,7 @@
 #include "AOTProgramTables.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "MarkedBlockCage.h"
 #include <algorithm>
 #include <array>

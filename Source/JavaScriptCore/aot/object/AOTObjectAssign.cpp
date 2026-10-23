@@ -16,6 +16,7 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramStrings.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "DeferGC.h"
 #include "GCMemoryOperations.h"
 #include "JSCInlines.h"

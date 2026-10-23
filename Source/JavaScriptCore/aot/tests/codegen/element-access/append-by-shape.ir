@@ -28,7 +28,7 @@ function f1 name="fast" parameters=[{type=Array<anything>}, {type=anything}, {ty
 }
 # The barrier of the store in line remembers the element. The stub is the slow path.
 # S: f1 b1 Fast
-# CHECK-NEXT: stub ArrayPush x1
+# CHECK: stub ArrayPush x1
 # CHECK-NEXT: stub PollAtPrologue
 # CHECK-NEXT: stub RememberElement x1
 

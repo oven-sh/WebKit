@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeRecords.h"
+#include "AOTVector.h"
 #include "AirCode.h"
 #include "CCallHelpers.h"
 #include <optional>

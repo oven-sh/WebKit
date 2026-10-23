@@ -11,6 +11,7 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSONObject.h"
 #include "NumberPrototype.h"
@@ -19,7 +20,6 @@
 #include <wtf/MathExtras.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/UnalignedAccess.h>
-#include <wtf/Vector.h>
 #include <wtf/text/EscapedFormsForJSON.h>
 #include <wtf/text/StringBuilderJSON.h>
 

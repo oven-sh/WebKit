@@ -10,6 +10,8 @@
 
 #include "AOTDiagnosticMessages.h"
 #include "AOTIR.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <utility>
@@ -113,7 +115,7 @@ static auto orderKey(const InternalError& error)
 template<typename Record>
 static void sortRecords(Vector<Record>& records)
 {
-    std::ranges::sort(records, { }, [](const Record& record) {
+    AOT::sort(records, { }, [](const Record& record) {
         return orderKey(record);
     });
 }

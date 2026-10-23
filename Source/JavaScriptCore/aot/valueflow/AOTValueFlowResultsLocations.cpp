@@ -11,10 +11,12 @@
 #include "AOTBlockCycles.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <atomic>
 #include <wtf/Atomics.h>
 
@@ -226,7 +228,7 @@ static void noteAccessesThroughObjects(const ValueFlowResultInputs& inputs, Loca
     }
 
     // The uses of the values of a function are listed once for all its reads.
-    std::ranges::sort(reads, { }, &ValueFlowAccessThroughObject::function);
+    AOT::sort(reads, { }, &ValueFlowAccessThroughObject::function);
     for (size_t index = 0; index < reads.size();) {
         FunctionID id = reads[index].function;
         const Function& function = inputs.program.at(id);

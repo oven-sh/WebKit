@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/EnumSet.h>
 
@@ -206,7 +208,7 @@ static bool isLateEdge(const VirtualObjectContext& context, const VirtualFamily&
 
 static void canonicalizeVariants(ObjectState& state)
 {
-    std::ranges::sort(state.variants);
+    AOT::sort(state.variants);
     removeRepeatedElements(state.variants);
     state.normalize();
 }

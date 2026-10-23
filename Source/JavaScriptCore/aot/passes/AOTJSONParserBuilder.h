@@ -10,9 +10,9 @@
 #include "AOTJSONEmission.h"
 #include "AOTSelectTypedResultsNodes.h"
 #include "AOTValidationRules.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

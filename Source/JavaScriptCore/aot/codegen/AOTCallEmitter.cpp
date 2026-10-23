@@ -21,6 +21,7 @@
 #include "AOTStubCatalog.h"
 #include "AOTStubsCalls.h"
 #include "AOTThrowEmitter.h"
+#include "AOTVector.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
@@ -173,7 +174,7 @@ PatchpointValue* CallEmitter::emitCall(const OperationContext& context, const Ca
         patchpoint->append(ConstrainedValue(target.calledAddress, ValueRep::reg(valueEntryGPR)));
 
     uint32_t stackWordsToReserve = placed.stackWordsToReserve;
-    Vector<ValueRep, 1> resultConstraints;
+    WTF::Vector<ValueRep, 1> resultConstraints;
     for (const ArgumentLocation& result : results) {
         switch (result.kind) {
         case ArgumentLocation::Kind::None:

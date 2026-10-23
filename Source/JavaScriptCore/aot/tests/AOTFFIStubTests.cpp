@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTNativeTest.h"
+#include "AOTVector.h"
 #include "FFIStubs.h"
 
 #if FFI_STUBS_SUPPORTED

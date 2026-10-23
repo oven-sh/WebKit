@@ -11,9 +11,9 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTModuleTable.h"
 #include "AOTNativeTest.h"
+#include "AOTVector.h"
 #include "Identifier.h"
 #include "JSCInlines.h"
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {

@@ -21,6 +21,7 @@
 #include "AOTShapeTestEmitter.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include "JSTypeInfo.h"
 
 namespace JSC { namespace AOT { namespace Typed {

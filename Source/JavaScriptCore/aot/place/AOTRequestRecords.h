@@ -9,12 +9,12 @@
 
 #include "AOTIR.h"
 #include "AOTSlotPlan.h"
+#include "AOTVector.h"
 #include "IndexingType.h"
 #include "JSExportMacros.h"
 #include <optional>
 #include <span>
 #include <wtf/Variant.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

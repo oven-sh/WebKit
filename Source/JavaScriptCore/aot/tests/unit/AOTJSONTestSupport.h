@@ -14,6 +14,7 @@
 #include "AOTOperationCallScope.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTStringBuilderStorage.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"
 #include "JSGenericTypedArrayViewInlines.h"
@@ -29,7 +30,6 @@
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
-#include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

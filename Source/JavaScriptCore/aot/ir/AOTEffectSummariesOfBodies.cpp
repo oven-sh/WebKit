@@ -15,6 +15,8 @@
 #include "AOTExactBuffer.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <numeric>
@@ -158,7 +160,7 @@ static uint64_t sortKeyOf(const SummaryNode& node)
 
 static void removeRepeatedDependencies(Vector<SummaryDependency>& dependencies)
 {
-    std::ranges::sort(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {
+    AOT::sort(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {
         return std::pair(sortKeyOf(a.source), sortKeyOf(a.target)) < std::pair(sortKeyOf(b.source), sortKeyOf(b.target));
     });
     removeRepeatedElements(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {

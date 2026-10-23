@@ -11,6 +11,7 @@
 #include "AOTBlockCycles.h"
 #include "AOTNameCreatedSymbols.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {

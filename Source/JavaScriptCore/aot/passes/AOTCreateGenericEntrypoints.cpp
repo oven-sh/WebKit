@@ -18,6 +18,7 @@
 #include "AOTResultRules.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {

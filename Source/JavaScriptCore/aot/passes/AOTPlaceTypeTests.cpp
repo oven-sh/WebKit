@@ -14,8 +14,10 @@
 #include "AOTHeat.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
+#include "AOTSort.h"
 #include "AOTSplitUnions.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <tuple>
@@ -208,7 +210,7 @@ static void settleExpectedTypesByUses(FunctionPassContext& context, ExpectedType
             settleExpectedTypeOf(context, singleElementSpan(id), expectations);
     }
 
-    std::ranges::sort(reads, { }, [](const PropertyRead& read) {
+    AOT::sort(reads, { }, [](const PropertyRead& read) {
         return std::tuple { read.object, read.key, read.expected, read.read };
     });
     Vector<ValueID, 4> readsOfOnePlace;

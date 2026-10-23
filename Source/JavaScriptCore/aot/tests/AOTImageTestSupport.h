@@ -20,6 +20,7 @@
 #include "AOTRelocation.h"
 #include "AOTStubCalls.h"
 #include "AOTStubCatalog.h"
+#include "AOTVector.h"
 #include "AssemblerPolicy.h"
 #include "CCallHelpers.h"
 #include "ExecutableAllocator.h"
@@ -34,7 +35,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/PtrTag.h>
 #include <wtf/RefPtr.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

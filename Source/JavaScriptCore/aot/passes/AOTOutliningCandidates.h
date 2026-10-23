@@ -9,11 +9,11 @@
 
 #include "AOTIR.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <memory>
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

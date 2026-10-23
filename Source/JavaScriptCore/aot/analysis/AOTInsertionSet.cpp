@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Insertion.h>
 
@@ -20,7 +22,7 @@ void InsertionSet::insert(ProgramPoint point, ValueID value)
 
 void InsertionSet::execute(Function& function, NOESCAPE const ScopedLambda<void(BlockID, std::span<const ValueID>)>& didInsert)
 {
-    std::stable_sort(m_insertions.begin(), m_insertions.end(), [](const QueuedInsertion& a, const QueuedInsertion& b) {
+    AOT::stableSort(m_insertions, [](const QueuedInsertion& a, const QueuedInsertion& b) {
         if (a.block != b.block)
             return a.block < b.block;
         return a.index < b.index;

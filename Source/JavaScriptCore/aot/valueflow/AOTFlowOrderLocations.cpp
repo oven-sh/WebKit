@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/PrintStream.h>
 
@@ -380,7 +382,7 @@ FlowScopeOrders computeScopeOrders(const FlowOrderInputs& inputs, const FlowModu
     Vector<FlowReadOfLocation> readsAfterInitialization;
     for (Vector<FlowReadOfLocation>& reads : readsAfterInitializationOfOwners)
         readsAfterInitialization.appendVector(reads);
-    std::ranges::sort(readsAfterInitialization);
+    AOT::sort(readsAfterInitialization);
     computeSyntheticExportOrders(index, orders.mutableSpan());
     for (auto [location, assumed] : index.assumedStores) {
         if (orders[assumed].initialization != InitializationState::StoredBeforeEveryRead)

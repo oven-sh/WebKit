@@ -15,6 +15,7 @@
 #include "AOTInstanceLayout.h"
 #include "AOTOperand.h"
 #include "AOTOperationContext.h"
+#include "AOTVector.h"
 #include <bit>
 #include <memory>
 #include <optional>
@@ -23,7 +24,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

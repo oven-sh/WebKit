@@ -30,10 +30,12 @@
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
 #include "AOTSlotPlan.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <memory>
 #include <optional>
@@ -42,7 +44,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/DataLog.h>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -450,7 +451,7 @@ static VariableFacts collectVariableFacts(const Program& program, const FlowResu
                 note(layout);
         });
     });
-    std::ranges::sort(fieldsStoredByName);
+    AOT::sort(fieldsStoredByName);
     removeRepeatedElements(fieldsStoredByName);
 
     Vector<uint8_t> numberOfStores;
@@ -1241,7 +1242,7 @@ CalleeAnswer MovableCode::answerFor(FunctionID id, const CallContext& context)
     }
     m_beingAnswered.removeLast();
     answer.variablesTakenToBeSet.append(m_variablesTakenToBeSet.subspan(numberTakenBefore));
-    std::ranges::sort(answer.variablesTakenToBeSet);
+    AOT::sort(answer.variablesTakenToBeSet);
     removeRepeatedElements(answer.variablesTakenToBeSet);
     m_answers.ensure(id.index(), [] {
         return Vector<std::pair<CallContext, CalleeAnswer>, 1> { };
@@ -1932,7 +1933,7 @@ bool BodyScanner::findItems()
             for (BlockID successor : cfg.successors(interior))
                 visit(successor);
         }
-        std::ranges::sort(region.blocks, { }, [&](BlockID interior) {
+        AOT::sort(region.blocks, { }, [&](BlockID interior) {
             return cfg.reversePostOrderIndex(interior);
         });
         uint32_t item = m_items.size();
@@ -2852,7 +2853,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
             Vector<uint32_t> longestFirst(bodies.size(), [](size_t index) {
                 return static_cast<uint32_t>(index);
             });
-            std::ranges::sort(longestFirst, std::ranges::greater { }, [&](uint32_t index) {
+            AOT::sort(longestFirst, std::ranges::greater { }, [&](uint32_t index) {
                 return std::pair { program.functions[bodies[index]].values.size(), index };
             });
             plan.units = collectInParallel<Unit>(loops, bodies.size(), longestFirst.span(), [&](unsigned index, Vector<Unit>& found) {
@@ -2933,7 +2934,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
             variable.flow.isUnchangedDuringActivation = false;
         }
     }
-    std::ranges::sort(plan.byVariable);
+    AOT::sort(plan.byVariable);
     build.statistics().count(StatisticID::InitializersDeferred, created.size());
     build.statistics().count(StatisticID::VariablesFilledByInitializers, plan.byVariable.size());
     build.statistics().count(StatisticID::VariablesAddedForInitializers, program.variables.size() - numberOfVariablesBefore);
@@ -2953,7 +2954,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
     });
     for (const Unit& unit : plan.units)
         functions.append(unit.body);
-    std::ranges::sort(functions);
+    AOT::sort(functions);
     removeRepeatedElements(functions);
     editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
         IRBuilder builder(AnalysisContext { build, program, &flow, nullptr, id }, function, arenas.types);

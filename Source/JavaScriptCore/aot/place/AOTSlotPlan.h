@@ -10,6 +10,7 @@
 #include "AOTFormsExpectedOfNames.h"
 #include "AOTIR.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <compare>
 #include <memory>
@@ -18,7 +19,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

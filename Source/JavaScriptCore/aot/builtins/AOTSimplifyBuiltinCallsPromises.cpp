@@ -13,7 +13,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTSplitUnions.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

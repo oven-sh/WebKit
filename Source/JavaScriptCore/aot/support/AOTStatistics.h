@@ -10,6 +10,7 @@
 #include "AOTLimits.h"
 #include "AOTPassID.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <atomic>
 #include <memory>
@@ -17,7 +18,6 @@
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Seconds.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

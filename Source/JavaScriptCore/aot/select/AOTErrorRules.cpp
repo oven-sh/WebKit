@@ -12,6 +12,7 @@
 #include "AOTKnownValue.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 

@@ -8,8 +8,8 @@
 #if ENABLE(AOT) && ENABLE(WEBASSEMBLY_OMGJIT)
 
 #include "AOTRelocation.h"
+#include "AOTVector.h"
 #include <expected>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

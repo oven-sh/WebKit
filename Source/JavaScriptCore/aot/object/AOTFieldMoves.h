@@ -9,12 +9,12 @@
 
 #include "AOTLayoutData.h"
 #include "AOTRuntimeType.h"
+#include "AOTVector.h"
 #include "JSCJSValue.h"
 #include "PropertyOffset.h"
 #include <optional>
 #include <wtf/FastMalloc.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

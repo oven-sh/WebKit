@@ -16,6 +16,7 @@
 #include "AOTStubFrames.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsCallFrames.h"
+#include "AOTVector.h"
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Generate.h"

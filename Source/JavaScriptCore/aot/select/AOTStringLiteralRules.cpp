@@ -18,6 +18,7 @@
 #include "AOTSelectionContext.h"
 #include "AOTStringArena.h"
 #include "AOTStringRuleSupport.h"
+#include "AOTVector.h"
 #include "JSGlobalObjectFunctions.h"
 #include "YarrFlags.h"
 #include <array>

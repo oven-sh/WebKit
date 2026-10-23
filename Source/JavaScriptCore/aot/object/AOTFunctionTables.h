@@ -10,13 +10,13 @@
 #include "AOTClosureWord.h"
 #include "AOTImage.h"
 #include "AOTProgramTables.h"
+#include "AOTVector.h"
 #include "Strong.h"
 #include "Weak.h"
 #include <array>
 #include <atomic>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {

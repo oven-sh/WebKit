@@ -10,7 +10,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTIR.h"
 #include "AOTIRForm.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

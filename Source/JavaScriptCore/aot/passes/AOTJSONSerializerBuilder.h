@@ -11,10 +11,10 @@
 #include "AOTJSONEmission.h"
 #include "AOTJSONSupport.h"
 #include "AOTStringBuilderCursor.h"
+#include "AOTVector.h"
 #include <climits>
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

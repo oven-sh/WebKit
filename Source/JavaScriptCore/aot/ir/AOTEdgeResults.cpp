@@ -11,7 +11,9 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
 #include "AOTResultRulesInternal.h"
+#include "AOTSort.h"
 #include "AOTTypeRelations.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 
@@ -457,7 +459,7 @@ static Type withoutIntegerCases(const Type& source, PayloadListView<int64_t> cas
     Vector<int64_t, 16> ascendingCases;
     for (int64_t value : cases)
         ascendingCases.append(value);
-    std::ranges::sort(ascendingCases);
+    AOT::sort(ascendingCases);
 
     Range integers = source.integers;
     for (int64_t value : ascendingCases) {

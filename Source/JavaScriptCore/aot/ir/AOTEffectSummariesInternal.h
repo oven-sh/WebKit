@@ -11,6 +11,7 @@
 #include "AOTCompactList.h"
 #include "AOTEffectSummaries.h"
 #include "AOTStronglyConnectedComponents.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
@@ -18,7 +19,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/MallocPtr.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

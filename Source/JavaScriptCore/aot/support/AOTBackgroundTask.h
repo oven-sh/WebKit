@@ -8,13 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <atomic>
 #include <initializer_list>
 #include <wtf/Condition.h>
 #include <wtf/Function.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

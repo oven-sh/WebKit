@@ -13,6 +13,7 @@
 #include "AOTIdentifierNumbering.h"
 #include "AOTSectionWriter.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/ASCIICType.h>
 #include <wtf/StdLibExtras.h>

@@ -13,7 +13,9 @@
 #include "AOTIRBuilder.h"
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -89,7 +91,7 @@ static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAg
     Vector<size_t, 4> likeliestFirst(agreement.groups.size(), [](size_t index) {
         return index;
     });
-    std::ranges::stable_sort(likeliestFirst, std::ranges::greater { }, [&](size_t index) {
+    AOT::stableSort(likeliestFirst, std::ranges::greater { }, [&](size_t index) {
         return likelihoods[index];
     });
 

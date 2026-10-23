@@ -16,6 +16,7 @@
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTStaticFields.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "MarkedBlockCage.h"
 #include "Options.h"

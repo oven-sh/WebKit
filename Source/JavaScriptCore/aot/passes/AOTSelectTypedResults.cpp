@@ -10,6 +10,7 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTSplitUnions.h"
+#include "AOTVector.h"
 #include <ranges>
 
 namespace JSC { namespace AOT { namespace Typed {

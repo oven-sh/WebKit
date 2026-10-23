@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTableWords.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include <wtf/HexNumber.h>

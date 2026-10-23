@@ -9,6 +9,7 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTVector.h"
 #include "JSCJSValue.h"
 #include "LineColumn.h"
 #include <memory>
@@ -17,7 +18,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 

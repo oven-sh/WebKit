@@ -11,13 +11,14 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTExactBuffer.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <tuple>
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -830,7 +831,7 @@ static void assignOwnedLocations(FlowScopeIndex& index)
         }
     }
     for (FlowScopeOwner& owner : index.owners)
-        std::ranges::sort(owner.exports);
+        AOT::sort(owner.exports);
 }
 
 FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleOrder& moduleOrder, const FlowScopeAccessesByFunction& bodies, FlowScopeLocationNumbering&& numbering)

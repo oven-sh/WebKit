@@ -16,13 +16,13 @@
 #include "AOTElementEmitterAllocation.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTStubsArrays.h"
+#include "AOTVector.h"
 #include "IndexingType.h"
 #include "JSType.h"
 #include <algorithm>
 #include <optional>
 #include <ranges>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

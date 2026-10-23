@@ -8,11 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
@@ -401,7 +402,7 @@ LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std
     }
 
     Vector<ModuleImportSite> importSites(unsortedImportSites);
-    std::ranges::sort(importSites, { }, [](const ModuleImportSite& site) {
+    AOT::sort(importSites, { }, [](const ModuleImportSite& site) {
         return std::pair { site.target, site.importer };
     });
     BitVector isRequested(graph.size());

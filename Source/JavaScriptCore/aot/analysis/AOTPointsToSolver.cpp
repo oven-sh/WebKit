@@ -15,6 +15,8 @@
 #include "AOTResultRules.h"
 #include "AOTEffectsCache.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -76,6 +78,20 @@ const OpcodeSet& opcodesThatMayDefineObjects()
         for (Opcode member : allMembersOf<Opcode>) {
             const OpcodeObjectFacts& facts = objectFactsOf(member);
             if (resultMayBeFresh(member) || facts.allocatesOrReturnsOperand || facts.isSuperConstruct)
+                result.add(member);
+        }
+        return result;
+    }();
+    return opcodes;
+}
+
+const OpcodeSet& opcodesThatDefineObjectsThatNeedNotBeFresh()
+{
+    static const OpcodeSet opcodes = [] {
+        OpcodeSet result;
+        for (Opcode member : allMembersOf<Opcode>) {
+            const OpcodeObjectFacts& facts = objectFactsOf(member);
+            if (facts.allocatesOrReturnsOperand || facts.isSuperConstruct)
                 result.add(member);
         }
         return result;
@@ -503,7 +519,7 @@ void PointsToSolver::findNarrowedCopies()
         else
             addCopiesOfOperandsOf(terminator);
     }
-    std::ranges::sort(m_narrowedCopies);
+    AOT::sort(m_narrowedCopies);
     removeRepeatedElements(m_narrowedCopies);
 }
 
@@ -1092,7 +1108,7 @@ UseSeenAlone classifyUseAlone(FunctionAnalyses& analyses, const Use& use)
 static Vector<SolvedUse> sortedByObjectAndUse(const Vector<SolvedUse>& uses)
 {
     Vector<SolvedUse> sorted = uses;
-    std::ranges::sort(sorted, { }, [](const SolvedUse& solved) {
+    AOT::sort(sorted, { }, [](const SolvedUse& solved) {
         const Use& use = solved.use;
         return std::tuple { solved.object, use.kind, use.block, use.user, use.operandIndex, use.targetIndex };
     });

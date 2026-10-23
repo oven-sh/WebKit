@@ -13,8 +13,10 @@
 #include "AOTGrouping.h"
 #include "AOTLiveness.h"
 #include "AOTPointsToSolver.h"
+#include "AOTSort.h"
 #include "AOTTypeRelations.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <utility>
@@ -34,7 +36,7 @@ static Vector<Containment> collectLeakedContainments(const PointsToResults& resu
         if (entry.isLeaked)
             leaked.append({ entry.container, entry.object });
     }
-    std::ranges::sort(leaked);
+    AOT::sort(leaked);
     removeRepeatedElements(leaked);
     return leaked;
 }
@@ -383,7 +385,7 @@ void EscapeAnalysis::computeContents(const PointsToResults& results)
     containments.reserveInitialCapacity(results.contents.size());
     for (const SolvedContents& entry : results.contents)
         containments.append({ entry.container, entry.object });
-    std::ranges::sort(containments);
+    AOT::sort(containments);
     removeRepeatedElements(containments);
 
     groupByIndex(numberOfObjects(), m_firstContent, m_contents, [&](const auto& visit) {
@@ -490,7 +492,7 @@ void EscapeAnalysis::listUses() const
     for (unsigned object = 0; object < m_objects.size(); ++object) {
         auto positionsOfObject = positions.mutableSpan().subspan(m_firstUse[object], m_firstUse[object + 1] - m_firstUse[object]);
         if (!std::ranges::is_sorted(positionsOfObject, { }, &ListPosition::order))
-            std::ranges::sort(positionsOfObject, { }, &ListPosition::order);
+            AOT::sort(positionsOfObject, { }, &ListPosition::order);
     }
     m_uses.reserveInitialCapacity(positions.size());
     for (const ListPosition& position : positions)
@@ -685,7 +687,7 @@ void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLis
     if (candidates.isEmpty())
         return;
 
-    std::ranges::sort(candidates, { }, [](const AllocationInCycle& candidate) {
+    AOT::sort(candidates, { }, [](const AllocationInCycle& candidate) {
         return std::pair { candidate.block, candidate.index };
     });
 

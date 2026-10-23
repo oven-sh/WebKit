@@ -19,6 +19,8 @@
 #include "AOTInlineBuiltinForms.h"
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <tuple>
@@ -220,7 +222,7 @@ unsigned applyGrowthPlans(FunctionPassContext& context, std::span<const GrowthPl
     for (const GrowthPlan& plan : plans)
         locatedPlans.append({ context.analyses.useLists().pointOf(plan.append), &plan });
     // An expansion moves only the values after its point.
-    std::ranges::sort(locatedPlans, [](const auto& a, const auto& b) {
+    AOT::sort(locatedPlans, [](const auto& a, const auto& b) {
         return std::tie(a.first.block, a.first.index) > std::tie(b.first.block, b.first.index);
     });
 
@@ -549,7 +551,7 @@ unsigned applyCollectionGrowthPlans(FunctionPassContext& context, std::span<cons
     for (const GrowthPlan& plan : plans)
         located.append({ context.analyses.useLists().pointOf(plan.append), &plan, context.analyses.identityOf(plan.array), { } });
     // An expansion moves only the values after its point.
-    std::ranges::sort(located, [](const LocatedGrowth& a, const LocatedGrowth& b) {
+    AOT::sort(located, [](const LocatedGrowth& a, const LocatedGrowth& b) {
         return std::tie(a.point.block, a.point.index) > std::tie(b.point.block, b.point.index);
     });
 

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLimits.h"
+#include "AOTVector.h"
 #include <wtf/Locker.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringHasherInlines.h>

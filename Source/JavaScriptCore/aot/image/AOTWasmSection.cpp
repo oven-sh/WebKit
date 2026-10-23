@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTSectionLinker.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <wtf/MathExtras.h>
@@ -238,7 +239,7 @@ static Wasm::ModuleForImage createModuleForImage(WasmModuleCode&& module, const 
             result.interpretedFunctions.append({ index, function.declineReason });
     }
 
-    result.code = WTF::move(section.bytes);
+    result.code = static_cast<WTF::Vector<uint8_t>&&>(WTF::move(section.bytes));
     result.savedRegisters = WTF::move(module.savedRegisters);
     return result;
 }

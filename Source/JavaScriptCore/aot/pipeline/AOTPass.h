@@ -18,6 +18,7 @@
 #include "AOTPassList.h"
 #include "AOTRefusedSites.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <array>
 #include <optional>
 #include <span>

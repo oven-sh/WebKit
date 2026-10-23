@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTBlockFrequencies.h"
 #include "AOTBodyIndex.h"
@@ -20,6 +21,7 @@
 #include "AOTPass.h"
 #include "AOTPhaseTimes.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -608,7 +610,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
                     heat.m_modulesThatAllocate.append(allocationKeyOf(site.layout, module));
             }
         }
-        std::ranges::sort(heat.m_modulesThatAllocate);
+        AOT::sort(heat.m_modulesThatAllocate);
         removeRepeatedElements(heat.m_modulesThatAllocate);
 
         runTasksInParallel(loops, {

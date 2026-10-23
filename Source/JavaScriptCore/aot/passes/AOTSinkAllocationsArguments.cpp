@@ -15,6 +15,7 @@
 #include "AOTForwardedCalls.h"
 #include "AOTResultRules.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "Interpreter.h"
 #include <array>
 #include <utility>

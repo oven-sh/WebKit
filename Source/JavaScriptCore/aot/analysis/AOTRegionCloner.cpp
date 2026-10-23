@@ -13,6 +13,7 @@
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 

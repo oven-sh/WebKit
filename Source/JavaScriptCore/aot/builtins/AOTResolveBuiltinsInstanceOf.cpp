@@ -12,6 +12,7 @@
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <ranges>
 
 namespace JSC { namespace AOT { namespace Typed {

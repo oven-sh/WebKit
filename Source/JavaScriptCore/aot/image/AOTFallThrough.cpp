@@ -12,6 +12,7 @@
 #include "AOTCallSiteTable.h"
 #include "AOTCodeTemplates.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>

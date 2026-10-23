@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <utility>
@@ -95,7 +97,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
     m_accesses.removeAllMatching([&](const Access& access) {
         return !access.numberOfRows || setOf(rowsOf(access)[0]) == noSet;
     });
-    std::ranges::stable_sort(m_accesses, { }, [&](const Access& access) {
+    AOT::stableSort(m_accesses, { }, [&](const Access& access) {
         return setOf(rowsOf(access)[0]);
     });
     for (uint32_t index = 0; index < m_accesses.size(); ++index) {
@@ -122,7 +124,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
         m_rows[joined.firstRow + joined.numberOfRows++] = row;
     }
 
-    std::ranges::sort(m_sets, [](const Set& a, const Set& b) {
+    AOT::sort(m_sets, [](const Set& a, const Set& b) {
         return std::tuple(b.weight, a.firstRow) < std::tuple(a.weight, b.firstRow);
     });
 }

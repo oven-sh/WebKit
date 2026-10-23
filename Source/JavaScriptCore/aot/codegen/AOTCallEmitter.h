@@ -12,10 +12,10 @@
 #include "AOTOperationEmitter.h"
 #include "AOTRelocation.h"
 #include "AOTStubsConstruct.h"
+#include "AOTVector.h"
 #include "B3ConstrainedValue.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

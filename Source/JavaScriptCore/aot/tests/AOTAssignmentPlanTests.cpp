@@ -17,6 +17,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
@@ -88,11 +89,11 @@ static Object* allocate(LoadedProgram& program, ASCIILiteral layoutName)
     failNativeTest(__FILE__, __LINE__, "no allocation of the layout");
 }
 
-static Vector<Identifier> enumerableKeysOf(LoadedProgram& program, JSObject* object)
+static WTF::Vector<Identifier> enumerableKeysOf(LoadedProgram& program, JSObject* object)
 {
     PropertyNameArrayBuilder names(program.vm(), PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, program.realm(), names, DontEnumPropertiesMode::Exclude);
-    return Vector<Identifier>(names.size(), [&](size_t index) {
+    return WTF::Vector<Identifier>(names.size(), [&](size_t index) {
         return names[index];
     });
 }
@@ -133,7 +134,7 @@ static void addName(LoadedProgram& program, Object* object, ASCIILiteral name, i
 
 static bool hasKeys(LoadedProgram& program, JSObject* object, std::initializer_list<ASCIILiteral> expected)
 {
-    Vector<Identifier> keys = enumerableKeysOf(program, object);
+    WTF::Vector<Identifier> keys = enumerableKeysOf(program, object);
     return std::ranges::equal(keys, expected, [](const Identifier& key, ASCIILiteral name) {
         return key.string() == name;
     });
@@ -141,7 +142,7 @@ static bool hasKeys(LoadedProgram& program, JSObject* object, std::initializer_l
 
 static bool holdsPropertiesOf(LoadedProgram& program, JSObject* target, JSObject* source)
 {
-    Vector<Identifier> keys = enumerableKeysOf(program, source);
+    WTF::Vector<Identifier> keys = enumerableKeysOf(program, source);
     if (keys != enumerableKeysOf(program, target))
         return false;
     return std::ranges::all_of(keys, [&](const Identifier& key) {

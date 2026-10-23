@@ -18,10 +18,10 @@
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpSection.h"
 #include "AOTTextEncoder.h"
+#include "AOTVector.h"
 #include <array>
 #include <span>
 #include <wtf/BitSet.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

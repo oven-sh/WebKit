@@ -10,6 +10,7 @@
 #include "AOTHostEntriesTestSupport.h"
 #include "AOTIRParser.h"
 #include "AOTReaderTestSupport.h"
+#include "AOTVector.h"
 #include "AOTWireBody.h"
 #include <array>
 #include <utility>

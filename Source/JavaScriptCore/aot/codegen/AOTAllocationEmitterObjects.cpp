@@ -13,7 +13,7 @@
 #include "AOTRegExpFlags.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStubsRegExp.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

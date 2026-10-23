@@ -12,8 +12,10 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFlowRecords.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSort.h"
 #include "AOTValueFlowPositions.h"
 #include "AOTValueFlowResultsInternal.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/Condition.h>
@@ -130,7 +132,7 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
             bool hasElements = facts && function.at(operation).opcode == Opcode::NewArray && indexOfElements < facts->contents.size();
             stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID() });
         }
-        std::ranges::sort(stamps, { }, &FlowAllocationStamp::value);
+        AOT::sort(stamps, { }, &FlowAllocationStamp::value);
     });
 
     classOfBuiltinClass.append(classOfUnwrittenArrays);
@@ -157,7 +159,7 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
     };
     Vector<FlowBodyUpdate>& bodies = tables.application->bodies;
     Vector<AllocationSiteID> sitesOfStamps = collectInParallel<AllocationSiteID>(loops, bodies.size(), [&](unsigned index, Vector<AllocationSiteID>& found) {
-        std::ranges::sort(bodies[index].allocations, { }, &FlowAllocationStamp::value);
+        AOT::sort(bodies[index].allocations, { }, &FlowAllocationStamp::value);
         for (const FlowAllocationStamp& stamp : bodies[index].allocations)
             found.append(stamp.site);
     });
@@ -189,7 +191,7 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
         renumber(node.rootSite);
         renumber(node.stamp.site);
     }
-    std::ranges::sort(tables.sites.dataNodes, { }, [](const FlowDataNode& node) {
+    AOT::sort(tables.sites.dataNodes, { }, [](const FlowDataNode& node) {
         return std::tuple(node.rootSite, node.ordinal);
     });
 }
@@ -375,7 +377,11 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         return FlowResults(createUnknownResultTables(program, build));
 
     bool runsEveryRuleOnceMore = build.options().verifiesAfterEveryStage || build.options().checksFlowFixpoint;
-    auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck);
+    // How the unknown object at a site has come into being is a word of the reports. To every pass one source is like another.
+    ReportSet reports = build.options().reports;
+    bool showsCauses = setsOutsideTypes || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || hasFlag(reports, ReportSet::Arrivals);
+    auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
+        showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor);
     times.didFinish("solve"_s);
     RELEASE_ASSERT(solution->hasResult());
     if (build.options().checksFlowFixpoint)

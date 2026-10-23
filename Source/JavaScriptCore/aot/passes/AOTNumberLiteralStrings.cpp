@@ -15,6 +15,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/FastBitVector.h>
 #include <wtf/PrintStream.h>

@@ -13,9 +13,9 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTSplitUnions.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

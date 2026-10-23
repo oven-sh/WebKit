@@ -9,6 +9,7 @@
 
 #include "AOTStoragePool.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <optional>

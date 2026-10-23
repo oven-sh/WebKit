@@ -9,8 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTBackgroundTask.h"
+#include "AOTSort.h"
 #include "AOTStoragePool.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -110,7 +112,7 @@ static bool sortsLikeStandardSort(const ParallelLoops& loops, size_t count)
         return random.getUint32();
     });
     Vector<uint32_t> expected = list;
-    std::sort(expected.begin(), expected.end());
+    AOT::sort(expected);
     parallelSort(loops, list.mutableSpan(), std::less<uint32_t>());
     return list == expected;
 }
@@ -153,7 +155,7 @@ static bool sortsLikeMergesOfWholeRuns(const ParallelLoops& loops, size_t count,
         return all.subspan(start, count * (run + 1) / runs - start);
     };
     for (size_t run = 0; run < numberOfRuns; ++run)
-        std::ranges::sort(runOf(from, run, numberOfRuns), isLess);
+        AOT::sort(runOf(from, run, numberOfRuns), isLess);
     for (size_t runs = numberOfRuns; runs > 1; runs /= 2) {
         for (size_t pair = 0; pair < runs / 2; ++pair)
             std::ranges::merge(runOf(from, 2 * pair, runs), runOf(from, 2 * pair + 1, runs), runOf(to, pair, runs / 2).begin(), isLess);
@@ -182,7 +184,7 @@ static bool sortsAndRemovesDuplicates(const ParallelLoops& loops, unsigned count
         return random.getUint32(count / 4);
     });
     Vector<uint32_t> expected = list;
-    std::sort(expected.begin(), expected.end());
+    AOT::sort(expected);
     expected.shrink(std::unique(expected.begin(), expected.end()) - expected.begin());
     sortAndRemoveDuplicates(loops, list);
     return list == expected;

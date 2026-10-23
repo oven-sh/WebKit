@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeSizeEstimate.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/UnionFind.h>

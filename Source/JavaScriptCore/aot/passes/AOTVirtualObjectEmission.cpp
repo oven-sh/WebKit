@@ -10,6 +10,7 @@
 
 #include "AOTNarrowFieldTypes.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {

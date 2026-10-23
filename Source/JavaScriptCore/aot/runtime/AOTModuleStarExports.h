@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTModules.h"
+#include "AOTVector.h"
 #include "Identifier.h"
 #include <optional>
 #include <span>
@@ -15,7 +16,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/Variant.h>
-#include <wtf/Vector.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC { namespace AOT {

@@ -18,10 +18,10 @@
 #include "AOTRegExpSummary.h"
 #include "AOTStringArena.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "YarrFlags.h"
 #include <optional>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {

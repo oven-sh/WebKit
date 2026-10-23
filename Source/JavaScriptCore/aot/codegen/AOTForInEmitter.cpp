@@ -12,6 +12,7 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTVector.h"
 #include "IndexingType.h"
 #include "JSPropertyNameEnumerator.h"
 #include "StructureRareData.h"

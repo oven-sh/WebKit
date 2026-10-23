@@ -14,6 +14,7 @@
 #include "AOTForwardDataflow.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayout.h"
+#include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
@@ -21,6 +22,7 @@
 #include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <memory>
 #include <optional>
@@ -30,7 +32,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -763,7 +764,7 @@ private:
             if (m_storesValue[index])
                 m_events[index].nameOfValue = summary.indexOf(nameOfValue(*m_nameOfEvent[index]));
         }
-        std::ranges::sort(m_events, { }, orderOfEvent);
+        AOT::sort(m_events, { }, orderOfEvent);
         removeRepeatedElements(m_events);
         summary.events = WTF::move(m_events);
         summary.isTracked = true;
@@ -809,7 +810,7 @@ static std::unique_ptr<FunctionConstruction> buildFunctionConstruction(const Val
     result->summaries.reserveInitialCapacity(roots.size());
     for (const ConstructionRoot& root : roots)
         result->summaries.append(ConstructionEventCollector(program, *result->analyses, root).collect());
-    std::ranges::sort(result->summaries, { }, [](const ConstructionSummary& summary) {
+    AOT::sort(result->summaries, { }, [](const ConstructionSummary& summary) {
         return summary.root.definition;
     });
     // Whoever solves a node asks for the control flow alone. The effects, the escape analysis and the use lists of every function that takes an object under construction are gigabytes in a large program.
@@ -819,7 +820,7 @@ static std::unique_ptr<FunctionConstruction> buildFunctionConstruction(const Val
         if (statement.kind == ValueFlowStatementKind::Operation)
             result->statements.append(&statement);
     }
-    std::ranges::sort(result->statements, { }, &ValueFlowStatement::site);
+    AOT::sort(result->statements, { }, &ValueFlowStatement::site);
     return result;
 }
 
@@ -1020,7 +1021,7 @@ private:
                 resolveCall(construction, event, resolved);
             break;
         }
-        std::ranges::sort(resolved.callees);
+        AOT::sort(resolved.callees);
         removeRepeatedElements(resolved.callees);
         return resolved;
     }
@@ -1487,7 +1488,7 @@ private:
     {
         for (const ResolvedConstructionEvent& event : node.resolvedEvents)
             node.callees.appendVector(event.callees);
-        std::ranges::sort(node.callees);
+        AOT::sort(node.callees);
         removeRepeatedElements(node.callees);
     }
 
@@ -2089,7 +2090,7 @@ static void solveConstructions(ConstructionGraph& graph)
     Vector<uint32_t> calleesFirst(graph.nodes.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::sort(calleesFirst, { }, [&](uint32_t node) {
+    AOT::sort(calleesFirst, { }, [&](uint32_t node) {
         return std::pair(components.componentOf[node], node);
     });
 
@@ -2357,7 +2358,7 @@ static void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowR
                 if (PropertyKeyID key = layout.fields[field].key)
                     keys.append(key);
             }
-            std::ranges::sort(keys);
+            AOT::sort(keys);
             keepCommonKeys(keysOfWorker[worker], value.layout(), WTF::move(keys));
         }
     });
@@ -2414,7 +2415,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             if (!construction.orders.contains(own.order))
                 construction.orders.append(WTF::move(own.order));
         }
-        std::ranges::sort(construction.orders, [](const FieldOrder& a, const FieldOrder& b) {
+        AOT::sort(construction.orders, [](const FieldOrder& a, const FieldOrder& b) {
             return std::ranges::lexicographical_compare(a.fields, b.fields);
         });
 
@@ -2431,8 +2432,8 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             else
                 construction.fieldsStoredBeforeObjectLeaks.append(name.field);
         }
-        std::ranges::sort(construction.keysStoredBeforeObjectLeaks);
-        std::ranges::sort(construction.fieldsStoredBeforeObjectLeaks);
+        AOT::sort(construction.keysStoredBeforeObjectLeaks);
+        AOT::sort(construction.fieldsStoredBeforeObjectLeaks);
     }
 
     // The constructor of a class that is not followed, or another function in its place (Reflect.construct(Base, [], Derived)), still hands the object to the constructors above, and they store by name.
@@ -2450,7 +2451,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             }
             above = predictedHeritageOf(program.at(above));
         }
-        std::ranges::sort(keys);
+        AOT::sort(keys);
     }
 
     ConstructionGraph graphUnderGuards = ConstructionGraphBuilder(inputs, heap, functions, UnknownChains::HoldNothingUnderName).build();
@@ -2478,9 +2479,9 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             else
                 construction.fieldsStoredAtBirth.append(name.field);
         }
-        std::ranges::sort(construction.keysStoredWithValueAtBirth);
-        std::ranges::sort(construction.keysStoredAtBirth);
-        std::ranges::sort(construction.fieldsStoredAtBirth);
+        AOT::sort(construction.keysStoredWithValueAtBirth);
+        AOT::sort(construction.keysStoredAtBirth);
+        AOT::sort(construction.fieldsStoredAtBirth);
     }
     addBirthsOfLiterals(inputs, tables, result);
     // The copy of a maker's body that allocates by the tag does to its object what the maker does to `this`.

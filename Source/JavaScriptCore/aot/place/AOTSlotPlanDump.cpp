@@ -11,6 +11,7 @@
 #include "AOTIRPrinter.h"
 #include "AOTPlacementTestCommands.h"
 #include "AOTSlotPlanSteps.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

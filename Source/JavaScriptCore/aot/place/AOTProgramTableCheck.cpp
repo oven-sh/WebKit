@@ -17,6 +17,7 @@
 #include "AOTRuntimeType.h"
 #include "AOTThreads.h"
 #include "AOTTypeTestPlan.h"
+#include "AOTVector.h"
 #include "IndexingType.h"
 #include <algorithm>
 #include <bit>

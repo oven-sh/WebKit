@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTDominators.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/FastMalloc.h>
 #include <wtf/NaturalLoops.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

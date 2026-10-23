@@ -11,7 +11,9 @@
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
 #include "AOTReuseEnvironments.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "CPU.h"
 #include "JSCell.h"
 #include <algorithm>
@@ -93,7 +95,7 @@ void EnvironmentPacker::setInlineLimit()
 
 void EnvironmentPacker::packWidestFirst()
 {
-    std::ranges::stable_sort(m_order, [&](unsigned a, unsigned b) {
+    AOT::stableSort(m_order, [&](unsigned a, unsigned b) {
         return sizeOfField(a) > sizeOfField(b);
     });
     uint32_t offset = offsetOfFirstEnvironmentVariable;
@@ -106,7 +108,7 @@ void EnvironmentPacker::packWidestFirst()
 
 void EnvironmentPacker::packMostUsedFirst()
 {
-    std::ranges::stable_sort(m_order, [&](unsigned a, unsigned b) {
+    AOT::stableSort(m_order, [&](unsigned a, unsigned b) {
         return useCountOf(a) > useCountOf(b);
     });
     Vector<std::pair<uint32_t, uint32_t>> holes;

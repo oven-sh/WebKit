@@ -10,6 +10,7 @@
 
 #include "AOTDerivedFunctions.h"
 #include "AOTFlowResults.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

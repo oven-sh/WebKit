@@ -15,11 +15,12 @@
 #include "AOTIRBuilder.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
+#include "AOTSort.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -98,7 +99,7 @@ static LoopClobbers findClobbers(FunctionPassContext& context, const BitVector& 
             addClobbers(context, id, clobbers);
         addEffects(context.analyses.effectsOfTerminator(block), clobbers);
     }
-    std::ranges::sort(clobbers.locations);
+    AOT::sort(clobbers.locations);
     return clobbers;
 }
 
@@ -221,7 +222,7 @@ static Vector<const NaturalLoop*> findLoopsInnermostFirst(FunctionPassContext& c
     loops.reserveInitialCapacity(naturalLoops.numLoops());
     for (unsigned i = 0; i < naturalLoops.numLoops(); ++i)
         loops.append(&naturalLoops.loop(i));
-    std::ranges::sort(loops, [&](const NaturalLoop* a, const NaturalLoop* b) {
+    AOT::sort(loops, [&](const NaturalLoop* a, const NaturalLoop* b) {
         return cfg.reversePostOrderIndex(a->header()) > cfg.reversePostOrderIndex(b->header());
     });
     return loops;

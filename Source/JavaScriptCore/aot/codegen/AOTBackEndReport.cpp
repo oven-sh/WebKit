@@ -12,6 +12,7 @@
 #include "AOTCodeGenerator.h"
 #include "AOTFrameAddressValidation.h"
 #include "AOTNarrowReferenceValidation.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT {
 

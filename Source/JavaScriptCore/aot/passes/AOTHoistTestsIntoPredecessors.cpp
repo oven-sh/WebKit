@@ -14,6 +14,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

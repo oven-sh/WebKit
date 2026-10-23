@@ -7,8 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <span>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {

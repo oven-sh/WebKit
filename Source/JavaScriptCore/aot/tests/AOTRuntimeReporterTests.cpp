@@ -14,6 +14,7 @@
 #include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTTemporaryFile.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "Options.h"
 #include <stdlib.h>

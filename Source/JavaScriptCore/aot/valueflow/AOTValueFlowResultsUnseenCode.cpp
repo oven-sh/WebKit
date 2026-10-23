@@ -11,8 +11,10 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowIDs.h"
+#include "AOTSort.h"
 #include "AOTValueFlowResultsInternal.h"
 #include "AOTValueFlowRulesModules.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 
@@ -126,7 +128,7 @@ static void appendRecordsOfApplicationsWithoutOperation(const ValueFlowSolution&
         if (cause && !isListed.quickSet(builtin.index()))
             records.append(UnseenCodeRecord { *cause, builtin.index(), noWitness });
     });
-    std::ranges::sort(records.mutableSpan().subspan(first), { }, &UnseenCodeRecord::builtin);
+    AOT::sort(records.mutableSpan().subspan(first), { }, &UnseenCodeRecord::builtin);
 }
 
 static ValueSetID functionsWhoseCallIsEvent(const ValueFlowSolution& solution, ValueSetMaker& maker)

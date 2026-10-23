@@ -10,9 +10,9 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTTableInImage.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <optional>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>

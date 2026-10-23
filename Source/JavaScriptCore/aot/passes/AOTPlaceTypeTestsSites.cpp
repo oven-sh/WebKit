@@ -11,6 +11,8 @@
 #include "AOTBuildContext.h"
 #include "AOTCodeShapes.h"
 #include "AOTHeat.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <ranges>
@@ -93,7 +95,7 @@ static void shareConditionsTest(FunctionPassContext& context, TestSites& sites, 
         for (MemberConditionRecord condition : sites.tests[test].conditions())
             conditions.append(condition);
     }
-    std::ranges::sort(conditions, { }, orderOf);
+    AOT::sort(conditions, { }, orderOf);
     conditions.shrink(conditions.size() - std::ranges::unique(conditions).size());
 
     Value shared = IRBuilder::make(Opcode::AreMembersUnchanged);
@@ -267,7 +269,7 @@ static Vector<WeightedCondition> computeConditionWeights(FunctionPassContext& co
 
 static BitVector findHeaviestConditions(Vector<WeightedCondition>&& conditions, size_t count)
 {
-    std::ranges::sort(conditions, [](const WeightedCondition& a, const WeightedCondition& b) {
+    AOT::sort(conditions, [](const WeightedCondition& a, const WeightedCondition& b) {
         if (a.weight != b.weight)
             return a.weight > b.weight;
         return a.condition < b.condition;
@@ -364,7 +366,7 @@ TestSites collectTestSites(FunctionPassContext& context)
         return heatClass == HeatClass::RunsOnce || (isColdFunction && heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode(site.rule)));
     });
     const CFG& cfg = context.analyses.cfg();
-    std::ranges::sort(sites.sites, { }, [&](const TestSite& site) {
+    AOT::sort(sites.sites, { }, [&](const TestSite& site) {
         return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index };
     });
     shareConditionsTests(context, sites);

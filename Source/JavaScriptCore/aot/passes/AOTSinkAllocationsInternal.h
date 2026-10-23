@@ -14,13 +14,13 @@
 #include "AOTLiveness.h"
 #include "AOTSinkAllocations.h"
 #include "AOTSinkAllocationsState.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

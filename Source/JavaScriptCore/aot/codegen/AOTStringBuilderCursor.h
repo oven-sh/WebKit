@@ -9,8 +9,8 @@
 
 #include "AOTIR.h"
 #include "AOTStringBuilderReservation.h"
+#include "AOTVector.h"
 #include <span>
-#include <wtf/Vector.h>
 #include <wtf/text/Latin1Character.h>
 
 namespace JSC { namespace AOT { namespace Typed {

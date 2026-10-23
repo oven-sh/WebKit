@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/HashSet.h>

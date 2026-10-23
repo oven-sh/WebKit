@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTObject.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 
 namespace JSC { namespace AOT {

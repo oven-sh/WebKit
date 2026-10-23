@@ -13,11 +13,13 @@
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFlowStamps.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowPositions.h"
 #include "AOTValueFlowTypedResults.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -116,7 +118,7 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
             tables.sites.allocationSites.append(AllocationSite { call->function, layout, { }, classes[0], function.locationOf(call->site) });
         }
     }
-    std::ranges::sort(tables.sites.typedResultCalls, { }, &FlowTypedResultCall::call);
+    AOT::sort(tables.sites.typedResultCalls, { }, &FlowTypedResultCall::call);
     inputs.build.statistics().count(StatisticID::FlowAllocationSites, tables.sites.allocationSites.size() - numberOfOtherSites);
 }
 
@@ -258,7 +260,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
             tables.sites.dataNodes[numberOfOtherNodes + (stamp.site.index() - numberOfOtherSites)] = { rootSite, node.ordinal, stamp };
         }
         if (stamps.size() != numberOfOtherStamps)
-            std::ranges::sort(stamps, { }, &FlowAllocationStamp::value);
+            AOT::sort(stamps, { }, &FlowAllocationStamp::value);
     });
 
     for (AllocationClassID classOfArrays : classesOfArrays) {

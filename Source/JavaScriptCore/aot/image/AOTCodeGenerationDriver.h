@@ -16,6 +16,7 @@
 #include "AOTPromisedResults.h"
 #include "AOTStringConstantNumbering.h"
 #include "AOTStringUses.h"
+#include "AOTVector.h"
 #include <memory>
 #include <wtf/BitSet.h>
 #include <wtf/Noncopyable.h>

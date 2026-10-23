@@ -14,6 +14,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

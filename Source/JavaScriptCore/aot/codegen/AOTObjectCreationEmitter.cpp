@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConstantEmitter.h"
+#include "AOTVector.h"
 #include <bit>
 
 namespace JSC { namespace AOT { namespace Typed {

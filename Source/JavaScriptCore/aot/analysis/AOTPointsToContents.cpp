@@ -13,7 +13,9 @@
 #include "AOTEffectsCache.h"
 #include "AOTFlowResults.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 
@@ -426,7 +428,7 @@ void PointsToSolver::collectContents()
         forEachOverlappingSlot(*state, std::nullopt, [&](SlotState& slot) {
             m_results.contents.appendVector(slot.contents);
         });
-        std::ranges::sort(m_results.contents.mutableSpan().subspan(first), isOrderedBefore);
+        AOT::sort(m_results.contents.mutableSpan().subspan(first), isOrderedBefore);
     }
     ASSERT(std::ranges::is_sorted(m_results.contents, isOrderedBefore));
 }

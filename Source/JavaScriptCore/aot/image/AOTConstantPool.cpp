@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTSectionWriter.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <compare>
 #include <optional>
 #include <span>

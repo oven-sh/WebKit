@@ -14,8 +14,8 @@
 #include "AOTIRBuilder.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTVector.h"
 #include <optional>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

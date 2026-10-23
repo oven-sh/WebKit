@@ -13,6 +13,8 @@
 #include "AOTFunctionKinds.h"
 #include "AOTLayoutData.h"
 #include "AOTRepresentation.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 
@@ -125,7 +127,7 @@ static void collectMemberGuards(TableEncoder& encoder, LayoutID id, ClassRecordP
         guard.bit = placed.bit;
         guards.append({ guard, appendAggregatesOf(encoder, GuardBitID(static_cast<size_t>(&placed - table.bits.begin()))) });
     }
-    std::ranges::sort(guards, { }, [](const auto& entry) {
+    AOT::sort(guards, { }, [](const auto& entry) {
         const MemberGuardData& guard = entry.first;
         return std::tuple<uint32_t, uint32_t, uint32_t> { guard.sideBits, guard.kindBits, guard.name };
     });
@@ -213,7 +215,7 @@ void encodeConstructors(TableEncoder& encoder)
         if (FunctionID entrypoint = encoder.findEntrypoint(program.layouts[i].constructor))
             constructors.append({ entrypoint.index(), i });
     }
-    std::ranges::sort(constructors, [](const ConstructorData& a, const ConstructorData& b) {
+    AOT::sort(constructors, [](const ConstructorData& a, const ConstructorData& b) {
         return std::tie(a.function, a.layoutIndex) < std::tie(b.function, b.layoutIndex);
     });
     encoder.setTable(ProgramTableIndex::constructors, constructors);
@@ -267,7 +269,7 @@ void encodeBoundFunctions(TableEncoder& encoder)
         }
         boundFunctions.append(data);
     }
-    std::ranges::sort(boundFunctions, { }, &BoundFunctionData::function);
+    AOT::sort(boundFunctions, { }, &BoundFunctionData::function);
     encoder.setTable(ProgramTableIndex::boundFunctions, boundFunctions);
 }
 

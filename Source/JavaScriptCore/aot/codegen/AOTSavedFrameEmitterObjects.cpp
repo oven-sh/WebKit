@@ -14,6 +14,7 @@
 #include "AOTCoroutines.h"
 #include "AOTGenerator.h"
 #include "AOTTypeTestEmitter.h"
+#include "AOTVector.h"
 #include "FunctionRareData.h"
 #include "JSFunction.h"
 #include "MarkedSpace.h"

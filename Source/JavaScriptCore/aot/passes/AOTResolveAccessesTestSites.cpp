@@ -14,6 +14,7 @@
 #include "AOTPropertyAccessCache.h"
 #include "AOTResolveAccesses.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 
@@ -76,7 +77,7 @@ static std::optional<TestedAccess> planAccessUnderTests(TestSiteReporter& report
     AccessOperands operands = operandsOfNamedAccess(access);
     // The rule of calls has asked the same of a read or a store that it left alone.
     std::optional<PlannedAccess> planned;
-    if (receivers == ReceiversOfQuery::AsExpected && !query.expectsEmptySlot && !query.mayTestSlotFirst)
+    if (receivers == ReceiversOfQuery::AsExpected && !query.expectsEmptySlot && !query.mayTestSlotFirst && !query.storesWhatWasMadeOfField)
         planned = reporter.takePlanOfUse(false);
     while (true) {
         TestedAccess tested;
@@ -247,6 +248,36 @@ static bool storesFieldThatAllocationLeftOut(TestSiteReporter& reporter, const V
     return field && !std::ranges::contains(allocation.fields(), *field);
 }
 
+static bool readsField(const Program& program, const Function& function, const Value& value, ValueID object, PropertyKeyID key)
+{
+    switch (value.opcode) {
+    case Opcode::PropGet:
+        return keyOfNamedAccess(program, value) == key && sameObjectThroughCasts(function, value.objectOperand()) == object;
+    case Opcode::GetSlot:
+        return value.key() == key && sameObjectThroughCasts(function, value.objectOperand()) == object;
+    default:
+        return false;
+    }
+}
+
+static bool storesWhatWasMadeOfField(const Program& program, const Function& function, const Value& store, PropertyKeyID key)
+{
+    static constexpr size_t maxValuesWalked = 8;
+    ValueID object = sameObjectThroughCasts(function, store.operand(*receiverOf(store.opcode)));
+    Vector<ValueID, maxValuesWalked> walked;
+    walked.append(store.operand(*storedOf(store.opcode)));
+    for (size_t next = 0; next < walked.size(); ++next) {
+        const Value& value = function.at(walked[next]);
+        if (readsField(program, function, value, object, key))
+            return true;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            if (operand && walked.size() < maxValuesWalked && !walked.contains(operand))
+                walked.append(operand);
+        });
+    }
+    return false;
+}
+
 // `{ wrap: "nowrap", ...style }`, `const { children, ...rest } = props`: what is copied key by key, whichever keys it has. An arm for one order of its keys asks for that order.
 static ValueID objectWhoseKeysAreWalked(const Value& value)
 {
@@ -315,6 +346,7 @@ void reportPropertyAccessTests(TestSiteReporter& reporter)
         if (query->access == Access::Store && storesFieldThatAllocationLeftOut(reporter, access, query->key))
             query->expectsEmptySlot = true;
         query->mayTestSlotFirst = mayTestSlotFirst(reporter.context(), *query);
+        query->storesWhatWasMadeOfField = query->access == Access::Store && storesWhatWasMadeOfField(reporter.program(), reporter.function(), access, query->key);
         std::optional<TestedAccess> tested = planAccessUnderTests(reporter, access, *query);
         if (tested && claimsAbsenceOfNameOnInstalledPrototype(reporter, tested->plan, query->key)) {
             PropertyAccessPlan refused = WTF::move(tested->plan);
@@ -587,6 +619,7 @@ void rewriteTestedPropertyAccess(TestSiteRewriter& rewriter)
     std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, rewriter.function(), access, ExpectedClassObjects::Tested);
     RELEASE_ASSERT(query);
     query->mayTestSlotFirst = mayTestSlotFirst(context, *query);
+    query->storesWhatWasMadeOfField = query->access == Access::Store && storesWhatWasMadeOfField(program, rewriter.function(), access, query->key);
 
     AccessOperands operands = operandsOfNamedAccess(access);
     operands.guard = rewriter.guard();

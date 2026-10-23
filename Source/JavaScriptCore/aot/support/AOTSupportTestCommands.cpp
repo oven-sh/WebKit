@@ -13,6 +13,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTLimits.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include <utility>
 #include <wtf/ListDump.h>

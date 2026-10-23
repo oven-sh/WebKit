@@ -17,6 +17,7 @@
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "JSCJSValueInlines.h"
 #include <initializer_list>
 #include <stdlib.h>

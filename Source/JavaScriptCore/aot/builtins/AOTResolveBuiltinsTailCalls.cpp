@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 

@@ -25,6 +25,7 @@
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "TypeofType.h"
 #include <algorithm>

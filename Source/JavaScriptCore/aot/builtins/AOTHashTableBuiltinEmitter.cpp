@@ -11,7 +11,7 @@
 #include "AOTCompactTable.h"
 #include "AOTConversionEmitter.h"
 #include "AOTRepresentation.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

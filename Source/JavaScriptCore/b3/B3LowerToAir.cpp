@@ -5339,7 +5339,7 @@ private:
                 if (!isValidForm(opcode, Arg::PreIndex, Arg::Tmp) || !m_index)
                     return false;
                 Value* address = m_block->at(m_index - 1);
-                if (address->opcode() != Add || address->type() != Int64 || m_locked.contains(address))
+                if (address->opcode() != Add || address->type() != Int64 || m_locked.contains(address) || address == value)
                     return false;
 
                 Value* base1 = address->child(0);

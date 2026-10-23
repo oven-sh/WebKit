@@ -14,6 +14,7 @@
 #include "AOTClosureWord.h"
 #include "AOTConvention.h"
 #include "AOTFlowResults.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

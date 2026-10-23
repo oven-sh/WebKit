@@ -25,15 +25,16 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTSiteWeight.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <ranges>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -1436,7 +1437,7 @@ private:
 
     void removeParametersWithoutUse()
     {
-        std::ranges::sort(m_parametersWithoutUse, { }, [](const ParameterWithoutUse& parameter) {
+        AOT::sort(m_parametersWithoutUse, { }, [](const ParameterWithoutUse& parameter) {
             return parameter.block.index();
         });
         for (size_t begin = 0; begin < m_parametersWithoutUse.size();) {

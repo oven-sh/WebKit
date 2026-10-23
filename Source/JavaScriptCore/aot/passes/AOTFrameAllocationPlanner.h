@@ -10,11 +10,11 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLosses.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT { namespace Typed {

@@ -9,9 +9,9 @@
 
 #include "AOTImageForward.h"
 #include "AOTStringUses.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

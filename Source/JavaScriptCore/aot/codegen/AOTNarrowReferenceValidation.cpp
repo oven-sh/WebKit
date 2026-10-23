@@ -12,6 +12,7 @@
 #include "AOTHeaps.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlock.h"
 #include "B3Const32Value.h"

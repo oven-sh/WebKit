@@ -15,6 +15,7 @@
 #include "AOTImageFormat.h"
 #include "AOTPipeline.h"
 #include "AOTRelocation.h"
+#include "AOTVector.h"
 #include "FFIStubEmitters.h"
 #include <wtf/MathExtras.h>
 
@@ -45,7 +46,7 @@ FFIStubs generateFFIStubs(BuildContext& context)
     auto moveContextAddress = [&](CCallHelpers&, GPRReg destination) {
         recorder.moveAddress(callbackContextSymbol, destination, PCRelativeReach::Far);
     };
-    Vector<CCallHelpers::Label> entries = FFI::emitCallbackEntries(jit, numberOfEntries, moveContextAddress);
+    WTF::Vector<CCallHelpers::Label> entries = FFI::emitCallbackEntries(jit, numberOfEntries, moveContextAddress);
 
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
     if (buffer.didFailToAllocate()) {

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTNativeTest.h"
+#include "AOTVector.h"
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 

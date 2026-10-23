@@ -18,6 +18,7 @@
 #include "AOTResolveCalls.h"
 #include "AOTResultRules.h"
 #include "AOTStatistics.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

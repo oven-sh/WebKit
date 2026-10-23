@@ -20,10 +20,12 @@
 #include "AOTPlacement.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaEnums.h"
+#include "AOTSort.h"
 #include "AOTStatistics.h"
 #include "AOTStubDescriptor.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
@@ -277,7 +279,7 @@ static void printCalls(PrintStream& out, const CodeBody& body)
         if (std::optional<String> callee = describeCallee(body, relocation))
             callees.append(WTF::move(*callee));
     }
-    std::ranges::sort(callees, codePointCompareLessThan);
+    AOT::sort(callees, codePointCompareLessThan);
     for (size_t begin = 0; begin < callees.size();) {
         size_t end = begin + 1;
         while (end < callees.size() && callees[end] == callees[begin])

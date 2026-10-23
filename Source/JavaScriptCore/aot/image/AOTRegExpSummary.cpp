@@ -9,8 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTRegExpRecord.h"
+#include "AOTSort.h"
 #include "AOTStringTable.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "RegExp.h"
 #include "YarrPattern.h"
 #include "YarrSyntaxChecker.h"
@@ -88,7 +90,7 @@ static Vector<RegExpNamedGroupSummary> sortedNamedGroups(const Yarr::YarrPattern
     groups.reserveInitialCapacity(pattern.m_namedGroupToParenIndices.size());
     for (auto& [name, parenIndices] : pattern.m_namedGroupToParenIndices)
         groups.append({ name, parenIndices });
-    std::ranges::sort(groups, [](const RegExpNamedGroupSummary& a, const RegExpNamedGroupSummary& b) {
+    AOT::sort(groups, [](const RegExpNamedGroupSummary& a, const RegExpNamedGroupSummary& b) {
         return codePointCompareLessThan(a.name, b.name);
     });
     return groups;

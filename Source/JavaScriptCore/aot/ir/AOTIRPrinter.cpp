@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTEdgeResults.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <climits>
 #include <cmath>

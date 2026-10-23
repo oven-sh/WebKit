@@ -14,7 +14,9 @@
 #include "AOTIRBuilder.h"
 #include "AOTKnownValue.h"
 #include "AOTParameterReplacement.h"
+#include "AOTSort.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -23,7 +25,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Scope.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -476,7 +477,7 @@ private:
             }
         }
 
-        std::ranges::sort(erased, { }, [](const ValueLocation& location) {
+        AOT::sort(erased, { }, [](const ValueLocation& location) {
             return std::tuple(location.block, location.placement, location.index);
         });
         for (size_t first = 0; first < erased.size();) {

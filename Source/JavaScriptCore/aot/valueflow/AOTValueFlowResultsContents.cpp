@@ -21,6 +21,7 @@
 #include "AOTIntegerRelations.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTTypeArena.h"
@@ -28,6 +29,7 @@
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowPositions.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -36,7 +38,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -869,7 +870,7 @@ Vector<Vector<uint32_t>> ContainerAnalysis::scheduleConversions()
                         dependencies[index].append(dependency);
                     });
                 }
-                std::ranges::sort(dependencies[index]);
+                AOT::sort(dependencies[index]);
                 removeRepeatedElements(dependencies[index]);
             }
         });
@@ -881,7 +882,7 @@ Vector<Vector<uint32_t>> ContainerAnalysis::scheduleConversions()
     Vector<uint32_t> byComponent(m_containers.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::sort(byComponent, { }, [&](uint32_t index) {
+    AOT::sort(byComponent, { }, [&](uint32_t index) {
         return std::pair { components.componentOf[index], index };
     });
     Vector<uint32_t> levelOfComponent;

@@ -17,6 +17,7 @@
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTSplitUnions.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>

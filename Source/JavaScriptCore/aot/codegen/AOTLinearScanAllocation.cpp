@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT) && (CPU(X86_64) || CPU(ARM64)) && !OS(WINDOWS)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -285,10 +287,10 @@ void LinearScanCodeGenerator::buildIntervals()
         }
     }
 
-    std::ranges::sort(m_clobbers, { }, &ClobberEvent::from);
+    AOT::sort(m_clobbers, { }, &ClobberEvent::from);
     for (const ClobberEvent& event : m_clobbers)
         m_everClobbered |= event.registers;
-    std::ranges::sort(m_probes);
+    AOT::sort(m_probes);
 }
 
 bool LinearScanCodeGenerator::isBlockStart(Position position) const
@@ -636,7 +638,7 @@ unsigned LinearScanCodeGenerator::collectHints(const Interval& interval, std::ar
                 }
             }
         });
-        std::ranges::stable_sort(arrivals, std::ranges::greater { }, [](const auto& arrival) { return arrival.second; });
+        AOT::stableSort(arrivals, std::ranges::greater { }, [](const auto& arrival) { return arrival.second; });
         for (const auto& arrival : arrivals)
             add(arrival.first);
     }
@@ -942,7 +944,7 @@ void LinearScanCodeGenerator::meanCalleeSavesForValuesThatCrossCalls()
         if (!v.isDouble)
             candidates.append(Candidate { vreg, uses });
     }
-    std::ranges::stable_sort(candidates, std::ranges::greater { }, &Candidate::weight);
+    AOT::stableSort(candidates, std::ranges::greater { }, &Candidate::weight);
     if (candidates.size() > maxCandidates)
         candidates.shrink(maxCandidates);
     std::array<Vector<uint32_t, 4>, numberOfRegisters> holders;
@@ -1153,7 +1155,7 @@ void LinearScanCodeGenerator::insertMoves()
         if (defining.place == Place::Register)
             m_moves.append(Move { v.definition & 3 ? (v.definition | 1) + 1 : v.definition, v.node, v.node, defining.reg, locationInSlot, 1 });
     }
-    std::ranges::stable_sort(m_moves, { }, &Move::position);
+    AOT::stableSort(m_moves, { }, &Move::position);
     for (const Move& move : m_moves)
         m_numberOfSlotAccesses += move.from == locationInSlot || move.to == locationInSlot;
 }

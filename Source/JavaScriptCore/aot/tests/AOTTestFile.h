@@ -12,10 +12,10 @@
 #include "AOTID.h"
 #include "AOTLimits.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/Variant.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>

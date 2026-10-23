@@ -15,7 +15,9 @@
 #include "AOTNameClass.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
@@ -246,7 +248,7 @@ void LayoutPicks::findInstancesMadeForOtherConstructorFunctions()
         });
         if (constructorFunctions.isEmpty() && !constructsFunctionWithoutLayout)
             continue;
-        std::ranges::sort(constructorFunctions);
+        AOT::sort(constructorFunctions);
         constructorFunctions.shrink(constructorFunctions.size() - std::ranges::unique(constructorFunctions).size());
 
         m_inputs.sets().forEachMember(m_maker.intersect(closuresIn(solver.valueOf(group.newTarget)), newTargetsFromOperands), [&](ValueFlowObjectID newTarget) {
@@ -705,7 +707,7 @@ Type ValueFlowPositions::typeOfMembersToShare(ValueSetID set)
     listTexts(type, texts.span());
     type.canonicalize();
     if (!type.anyObject) {
-        std::ranges::sort(layouts);
+        AOT::sort(layouts);
         shared->layouts.append(layouts.span().first(layouts.size() - std::ranges::unique(layouts).size()));
     }
 

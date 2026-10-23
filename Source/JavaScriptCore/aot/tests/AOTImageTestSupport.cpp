@@ -19,6 +19,7 @@
 #include "AOTProgramTableEncoder.h"
 #include "AOTRegExpRequests.h"
 #include "AOTTextEncoder.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "CPUFeatureSet.h"
 #include "ExecutableAllocator.h"

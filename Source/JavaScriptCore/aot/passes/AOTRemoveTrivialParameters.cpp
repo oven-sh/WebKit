@@ -14,10 +14,10 @@
 #include "AOTKnownValue.h"
 #include "AOTResultRules.h"
 #include "AOTParameterReplacement.h"
+#include "AOTVector.h"
 #include <optional>
 #include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -12,6 +12,7 @@
 #include "AOTResultRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTVector.h"
 #include "JSCellButterfly.h"
 #include "JSMap.h"
 #include "JSSet.h"

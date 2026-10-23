@@ -9,11 +9,11 @@
 
 #include "AOTProgramTables.h"
 #include "AOTRuntimeType.h"
+#include "AOTVector.h"
 #include "JSCJSValue.h"
 #include <optional>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTForwardDataflow.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 
@@ -62,7 +64,7 @@ static Vector<FailingEdge> collectFailingEdges(const Function& function, const C
         else if (terminator.kind == TerminatorKind::SwitchOnShape && leavesNormalCode(terminator.otherwise()))
             appendFailingEdgeOfSwitch(function, conditions, block, failingEdges);
     }
-    std::ranges::sort(failingEdges, { }, &FailingEdge::key);
+    AOT::sort(failingEdges, { }, &FailingEdge::key);
     return failingEdges;
 }
 

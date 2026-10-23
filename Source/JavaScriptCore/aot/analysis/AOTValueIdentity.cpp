@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTUseLists.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

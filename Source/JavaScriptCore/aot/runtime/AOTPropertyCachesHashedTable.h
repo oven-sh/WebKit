@@ -8,13 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTPropertyCachesWords.h"
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "RememberedSlot.h"
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

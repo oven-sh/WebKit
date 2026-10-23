@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTPhaseTimes.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <limits>
@@ -655,6 +656,87 @@ void forEachIndexInParallelWithOrderedCommit(const ParallelLoops& loops, unsigne
     }, [&] {
         return nextBlock.load(std::memory_order_relaxed) < numberOfBlocks;
     });
+}
+
+ChunksOfIndices divideIntoChunks(unsigned count, std::span<const uint32_t> longestFirst)
+{
+    constexpr unsigned chunkSize = 256;
+    Vector<uint32_t> ascending(longestFirst);
+    AOT::sort(ascending);
+    Vector<uint32_t> firstIndexOf;
+    firstIndexOf.reserveInitialCapacity(count / chunkSize + 2 * ascending.size() + 2);
+    Vector<uint32_t> chunkOfLongIndex;
+    chunkOfLongIndex.reserveInitialCapacity(ascending.size());
+    uint32_t nextIndex = 0;
+    auto addChunksUpTo = [&](uint32_t end) {
+        for (; nextIndex < end; nextIndex = std::min(end, nextIndex + chunkSize))
+            firstIndexOf.append(nextIndex);
+    };
+    for (uint32_t longIndex : ascending) {
+        addChunksUpTo(longIndex);
+        chunkOfLongIndex.append(firstIndexOf.size());
+        addChunksUpTo(longIndex + 1);
+    }
+    addChunksUpTo(count);
+    firstIndexOf.append(count);
+
+    Vector<uint32_t> longestChunksFirst(longestFirst.size(), [&](size_t position) {
+        size_t rank = std::ranges::lower_bound(ascending, longestFirst[position]) - ascending.begin();
+        return chunkOfLongIndex[rank];
+    });
+    return { WTF::move(firstIndexOf), WTF::move(longestChunksFirst) };
+}
+
+void sortRunsAndMerge(const ParallelLoops& loops, const SortSteps& steps, char* list, size_t count)
+{
+    constexpr size_t numberOfRuns = 16;
+    size_t elementSize = steps.elementSize;
+    size_t numberOfWords = (count * elementSize + sizeof(uint64_t) - 1) / sizeof(uint64_t);
+    Vector<uint64_t> scratchBuffer = createVectorWithCapacityInParallel<uint64_t>(loops, numberOfWords);
+    scratchBuffer.grow(numberOfWords);
+    char* from = list;
+    char* to = reinterpret_cast<char*>(scratchBuffer.mutableSpan().data());
+    auto startOf = [&](size_t run, size_t runs) {
+        return count * run / runs;
+    };
+    forEachIndexInParallel(loops, numberOfRuns, [&](unsigned run) {
+        size_t start = startOf(run, numberOfRuns);
+        sortLongRange(steps, from + start * elementSize, startOf(run + 1, numberOfRuns) - start);
+    });
+    // The last round merges two runs: one thread would go through the whole list, and two through the round in front of it.
+    constexpr size_t partsPerRound = 4 * numberOfRuns;
+    for (size_t runs = numberOfRuns; runs > 1; runs /= 2) {
+        size_t partsPerMerge = partsPerRound / (runs / 2);
+        forEachIndexInParallel(loops, partsPerRound, [&](unsigned index) {
+            size_t pair = index / partsPerMerge;
+            size_t startOfFirst = startOf(2 * pair, runs);
+            size_t startOfSecond = startOf(2 * pair + 1, runs);
+            size_t sizeOfFirst = startOfSecond - startOfFirst;
+            size_t sizeOfSecond = startOf(2 * pair + 2, runs) - startOfSecond;
+            char* first = from + startOfFirst * elementSize;
+            char* second = from + startOfSecond * elementSize;
+            auto beginOf = [&](size_t part) {
+                if (part == partsPerMerge)
+                    return std::pair { sizeOfFirst, sizeOfSecond };
+                size_t inFirst = sizeOfFirst * part / partsPerMerge;
+                size_t inSecond = 0;
+                for (size_t length = part ? sizeOfSecond : 0; length;) {
+                    size_t half = length / 2;
+                    if (steps.isLess(steps.order, second + (inSecond + half) * elementSize, first + inFirst * elementSize)) {
+                        inSecond += half + 1;
+                        length -= half + 1;
+                    } else
+                        length = half;
+                }
+                return std::pair { inFirst, inSecond };
+            };
+            auto [firstBegin, secondBegin] = beginOf(index % partsPerMerge);
+            auto [firstEnd, secondEnd] = beginOf(index % partsPerMerge + 1);
+            steps.merge(steps.order, first + firstBegin * elementSize, first + firstEnd * elementSize, second + secondBegin * elementSize, second + secondEnd * elementSize, to + (startOfFirst + firstBegin + secondBegin) * elementSize);
+        });
+        std::swap(from, to);
+    }
+    static_assert(numberOfRuns == 16, "an even number of rounds of merging leaves the result in the list");
 }
 
 } } // namespace JSC::AOT

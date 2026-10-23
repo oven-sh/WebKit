@@ -10,8 +10,8 @@
 #include "AOTLimits.h"
 #include "AOTNativeTest.h"
 #include "AOTStackTrace.h"
+#include "AOTVector.h"
 #include <bit>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

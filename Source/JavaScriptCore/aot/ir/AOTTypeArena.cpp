@@ -13,6 +13,7 @@
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <concepts>

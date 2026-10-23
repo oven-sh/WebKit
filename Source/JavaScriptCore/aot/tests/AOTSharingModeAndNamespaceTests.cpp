@@ -23,6 +23,7 @@
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
 #include "AOTErrorMessages.h"
+#include "AOTVector.h"
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
 #include <array>
@@ -30,7 +31,6 @@
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

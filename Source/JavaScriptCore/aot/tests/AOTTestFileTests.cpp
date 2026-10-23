@@ -11,6 +11,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTTestFile.h"
 #include "AOTTestRunner.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <initializer_list>
 #include <wtf/text/MakeString.h>

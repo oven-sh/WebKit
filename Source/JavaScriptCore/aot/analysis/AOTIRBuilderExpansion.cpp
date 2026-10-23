@@ -11,8 +11,10 @@
 #include "AOTBlockFrequencies.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <wtf/BitVector.h>
@@ -255,7 +257,7 @@ IRBuilder::DeferredResultReads::DeferredResultReads(IRBuilder& builder, std::spa
                 m_reads.append(Read { producer, use.user });
         }
     }
-    std::ranges::stable_sort(m_reads, { }, &Read::producer);
+    AOT::stableSort(m_reads, { }, &Read::producer);
 }
 
 auto IRBuilder::DeferredResultReads::readsOf(ValueID producer) const -> std::span<const Read>

@@ -11,9 +11,9 @@
 #include "AOTOutput.h"
 #include "AOTRepresentation.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTVector.h"
 #include "JSCJSValue.h"
 #include <type_traits>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

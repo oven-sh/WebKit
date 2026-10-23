@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTEdgeResults.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <wtf/IterationStatus.h>
@@ -58,7 +60,7 @@ static Vector<NarrowedOperandUse> collectNarrowedOperandUses(const Function& fun
             uses.append(NarrowedOperandUse { subject, block });
         });
     }
-    std::ranges::sort(uses);
+    AOT::sort(uses);
     removeRepeatedElements(uses);
     return uses;
 }
@@ -78,7 +80,7 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
         if (m_cfg.isReachable(edge.first) && m_cfg.isReachable(edge.second))
             m_additionalEdges.append(edge);
     }
-    std::ranges::sort(m_additionalEdges);
+    AOT::sort(m_additionalEdges);
 
     Vector<InteriorPointer> interiorPointers;
     if (!options.opcodesOfValues || options.opcodesOfValues->intersects(opcodesWithBase))
@@ -125,7 +127,7 @@ Vector<Liveness::InteriorPointer> Liveness::collectInteriorPointers() const
             });
         }
     }
-    std::ranges::sort(interiorPointers);
+    AOT::sort(interiorPointers);
     return interiorPointers;
 }
 

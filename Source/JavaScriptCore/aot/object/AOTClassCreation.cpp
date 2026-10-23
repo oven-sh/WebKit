@@ -21,6 +21,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "FunctionRareData.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"

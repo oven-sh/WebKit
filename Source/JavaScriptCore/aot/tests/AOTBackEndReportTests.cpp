@@ -14,6 +14,7 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTFrameAddressValidation.h"
 #include "AOTIRTestSupport.h"
+#include "AOTVector.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"
 #include "B3Const64Value.h"

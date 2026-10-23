@@ -8,13 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeRecords.h"
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "RememberedSlot.h"
 #include <optional>
 #include <tuple>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

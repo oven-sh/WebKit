@@ -12,6 +12,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "JSString.h"
 #include <limits>
 #include <optional>

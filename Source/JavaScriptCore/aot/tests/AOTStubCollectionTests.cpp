@@ -14,6 +14,7 @@
 #include "AOTStubRunner.h"
 #include "AOTStubsCollections.h"
 #include "AOTTableInImage.h"
+#include "AOTVector.h"
 #include "CompleteSubspace.h"
 #include "HashMapHelper.h"
 #include "JSCInlines.h"
@@ -29,7 +30,6 @@
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 

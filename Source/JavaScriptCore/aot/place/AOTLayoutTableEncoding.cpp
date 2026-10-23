@@ -12,6 +12,8 @@
 #include "AOTLayoutData.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTObjectVisiting.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -240,7 +242,7 @@ static Vector<uint32_t>& listFor(ReferenceOffsets& offsets, const PlacedSlot& sl
 
 static void appendAscending(Vector<uint32_t>& references, Vector<uint32_t>& offsets)
 {
-    std::ranges::sort(offsets);
+    AOT::sort(offsets);
     references.appendVector(offsets);
 }
 
@@ -600,7 +602,7 @@ static void encodeRemovedFields(TableEncoder& encoder)
         if (everyObjectHadRemovedField)
             removedFields.append({ id.index(), RemovedFieldData::everyObjectHadOne });
     }
-    std::ranges::sort(removedFields);
+    AOT::sort(removedFields);
     encoder.setTable(ProgramTableIndex::removedFields, removedFields);
 }
 
@@ -636,7 +638,7 @@ static void encodeAddedNames(TableEncoder& encoder)
         for (PropertyKeyID key : *sharedKeys)
             addedNames.append({ AddedNameData::layoutOfSharedNames, *encoder.identifiers.numberOf(key) });
     }
-    std::ranges::sort(addedNames);
+    AOT::sort(addedNames);
     encoder.setTable(ProgramTableIndex::addedNames, addedNames);
 }
 
@@ -665,7 +667,7 @@ static void encodeClassPrototypeNames(TableEncoder& encoder)
         else
             names.shrink(sizeBefore);
     }
-    std::ranges::sort(names);
+    AOT::sort(names);
     encoder.setTable(ProgramTableIndex::classPrototypeNames, names);
 }
 
@@ -695,7 +697,7 @@ static bool appendMembersForValidators(TableEncoder& encoder, Vector<ParsedRecor
                 continue;
             if (names.isEmpty() || names.size() > ParsedRecordFieldData::maxRequiredMembers)
                 return false;
-            std::ranges::sort(names);
+            AOT::sort(names);
             validatedObjects.appendIfNotContains(WTF::move(names));
         }
     }
@@ -734,7 +736,7 @@ static void encodeParsedRecordFields(TableEncoder& encoder)
     }
     if (!rows.isEmpty() && !appendMembersForValidators(encoder, rows))
         rows.clear();
-    std::ranges::sort(rows);
+    AOT::sort(rows);
     encoder.setTable(ProgramTableIndex::parsedRecordFields, rows);
 }
 

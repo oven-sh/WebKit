@@ -12,6 +12,7 @@
 #include "AOTTemporaryFile.h"
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
+#include "AOTVector.h"
 #include <stdlib.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>

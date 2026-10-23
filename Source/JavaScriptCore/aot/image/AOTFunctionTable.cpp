@@ -15,7 +15,9 @@
 #include "AOTImage.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTSectionWriter.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "RegisterAtOffsetList.h"
 #include "RegisterSet.h"
 #include <algorithm>
@@ -304,7 +306,7 @@ std::optional<uint32_t> Image::imageFunctionOf(FunctionID id) const
         m_functionsByID = Vector<uint32_t>(header().counts.functions, [](size_t function) {
             return static_cast<uint32_t>(function);
         });
-        std::ranges::sort(m_functionsByID, { }, [&](uint32_t function) {
+        AOT::sort(m_functionsByID, { }, [&](uint32_t function) {
             return this->function(function).function();
         });
     });

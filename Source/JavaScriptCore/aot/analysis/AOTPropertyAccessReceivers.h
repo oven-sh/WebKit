@@ -11,12 +11,12 @@
 #include "AOTGuardAvailability.h"
 #include "AOTIR.h"
 #include "AOTSortedSet.h"
+#include "AOTVector.h"
 #include <compare>
 #include <limits>
 #include <span>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -13,9 +13,9 @@
 #include "AOTInsertObjectCoercibleChecks.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <optional>
 #include <utility>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

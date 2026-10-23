@@ -15,6 +15,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {

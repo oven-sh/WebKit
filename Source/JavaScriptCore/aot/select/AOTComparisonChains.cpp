@@ -11,7 +11,9 @@
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
 #include "AOTRuleSupport.h"
+#include "AOTSort.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
@@ -100,7 +102,7 @@ static void removeRepeatedCases(Vector<ChainCase, 8>& cases)
     Vector<uint32_t, 8> order(cases.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::stable_sort(order, { }, constantOf);
+    AOT::stableSort(order, { }, constantOf);
     BitVector isRepeated(cases.size());
     for (size_t i = 1; i < order.size(); ++i) {
         if (constantOf(order[i]) == constantOf(order[i - 1]))

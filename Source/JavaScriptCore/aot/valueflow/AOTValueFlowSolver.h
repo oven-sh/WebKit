@@ -10,6 +10,7 @@
 #include "AOTValueFlowGraph.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueFlowRuleContext.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/EnumSet.h>
@@ -64,6 +65,8 @@ struct ValueFlowSolverInput {
     uint64_t mostEdgesLogged { UINT64_MAX };
     // For each edge that a rule has logged the solver remembers the statement that logged it first. It costs 20 bytes an edge: for tests and reports.
     bool remembersWhoLoggedEachEdge { false };
+    // Somebody asks unknownSourceOf() of a node, explain(), or the graph for the predecessors of a node once the solve is over. It costs a walk over all that holds the unknown object and a copy of all edges, and only reports and tests ask.
+    bool isAskedHowValuesCame { true };
     // For tests that look at how a solve goes: it stops after this many rounds, and what it holds then is no result.
     uint32_t mostRounds { UINT32_MAX };
     // For tests that ask what a program would be like if the table described more: a rule that names one of these sources gets the primitives alone, and its edges keep the name of the source.
@@ -314,7 +317,7 @@ public:
 
     // Among the statements that reached the function in the turn in which it was reached: a statement of a body before one that a rule has made, and the one with the lowest number, or content.
     ValueFlowReachWitness reachedBy(FunctionID function) const { return m_reachedBy[function.index()]; }
-    // How the member has come into the node: the node first, then a predecessor that holds the member, and so on, on a shortest way, to a node that holds it for ever.
+    // How the member has come into the node: the node first, then a predecessor that holds the member, and so on, on a shortest way, to a node that holds it for ever. After the solve only where the input has asked for it.
     Vector<ValueFlowNodeID> explain(ValueFlowNodeID, ValueFlowObjectID member) const;
     // None for an edge of a body, for one that the solver has made itself (from what is written to what is read, into a masked node, between groups of callees) and where the input did not ask for it.
     ValueFlowStatementID statementThatLogged(ValueFlowEdge) const;
@@ -327,7 +330,7 @@ public:
     std::span<const LoggedEdge> edgesInOrderLogged() const LIFETIME_BOUND { return m_edgesInOrderLogged.span(); }
     // Of an edge along which a rule has brought the unknown object into being: what the rule has named as its source.
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
-    // After the solve, of a node that holds the unknown object: the source at the far end of a shortest way on which it has come. None where it has come from the seeds of bodies alone.
+    // After the solve, of a node that holds the unknown object: the source at the far end of a shortest way on which it has come. None where it has come from the seeds of bodies alone, and where the input did not ask for it.
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowNodeID) const;
     // None for a node of a body.
     const ValueFlowNodeKey* keyOfMadeNode(ValueFlowNodeID) const LIFETIME_BOUND;
@@ -652,45 +655,61 @@ private:
     ListWithRoomToFill<uint32_t> m_askerThatKeepsNothingAwake;
     // All threads add to these at once, so none shares a cache line with another or with anything that they read meanwhile.
     struct alignas(64) IndexOfMadeNodes {
-        struct Table {
-            WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Table);
+        // The hash in the upper half, one more than the number of the record in the lower. Zero for a free slot.
+        using Slot = std::atomic<uint64_t>;
 
-            explicit Table(size_t numberOfSlots);
+        // The slots lie at a cache line, so the low bits of their address hold the binary logarithm of their number.
+        class Table {
+        public:
+            Table() = default;
+            Table(Slot* slots, unsigned bits)
+                : m_bits(reinterpret_cast<uintptr_t>(slots) | bits)
+            {
+            }
 
-            // The hash in the upper half, one more than the number of the record in the lower. Zero for a free slot.
-            MallocSpan<std::atomic<uint64_t>> slots;
+            explicit operator bool() const { return m_bits; }
+            Slot* slots() const { return reinterpret_cast<Slot*>(m_bits & ~static_cast<uintptr_t>(63)); }
+            size_t numberOfSlots() const { return static_cast<size_t>(1) << (m_bits & 63); }
+
+        private:
+            uintptr_t m_bits { 0 };
         };
 
-        std::optional<uint32_t> find(uint32_t hash, NOESCAPE const Invocable<bool(uint32_t number)> auto& isEqual) const
-        {
-            const Table* table = current.load(std::memory_order_acquire);
-            if (!table)
-                return std::nullopt;
-            std::span<const std::atomic<uint64_t>> slots = table->slots.span();
-            size_t mask = slots.size() - 1;
-            for (size_t index = hash & mask;; index = (index + 1) & mask) {
-                uint64_t slot = slots[index].load(std::memory_order_acquire);
-                if (!slot)
-                    return std::nullopt;
-                if (slot >> 32 == hash && isEqual(static_cast<uint32_t>(slot) - 1))
-                    return static_cast<uint32_t>(slot) - 1;
-            }
-        }
+        ~IndexOfMadeNodes();
+
         // Under the lock.
-        void add(uint32_t hash, uint32_t number, size_t fewestSlots);
+        void add(std::atomic<Table>& current, uint32_t hash, uint32_t number, size_t fewestSlots);
         // While nobody looks.
         void freeOutgrownTables();
 
-        std::atomic<const Table*> current { nullptr };
-        // Every maker writes what follows; everybody reads what stands above.
-        alignas(64) Lock lock;
+        Lock lock;
         size_t size { 0 };
         // The last one is the current one.
-        Vector<std::unique_ptr<Table>, 2> tables;
+        Vector<Table, 2> tables;
     };
     // By the ten highest bits of the hash of the key: many, so that two threads seldom meet at one lock. A table begins with room for what a solve of this input usually makes: nobody waits while one grows.
     static constexpr unsigned numberOfIndicesOfMadeNodes = 1024;
     IndexOfMadeNodes& indexOfMadeNodesWith(uint32_t hash) const LIFETIME_BOUND { return m_madeNodesByKey[hash >> 22]; }
+    std::atomic<IndexOfMadeNodes::Table>& tableOfMadeNodesWith(uint32_t hash) const LIFETIME_BOUND { return m_tablesOfMadeNodes[hash >> 22]; }
+    ALWAYS_INLINE std::optional<uint32_t> findInIndexOfMadeNodes(uint32_t hash, NOESCAPE const Invocable<bool(uint32_t number)> auto& isEqual) const
+    {
+        IndexOfMadeNodes::Table table = tableOfMadeNodesWith(hash).load(std::memory_order_acquire);
+        if (!table)
+            return std::nullopt;
+        const IndexOfMadeNodes::Slot* slots = table.slots();
+        size_t mask = table.numberOfSlots() - 1;
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        for (size_t index = hash & mask;; index = (index + 1) & mask) {
+            uint64_t slot = slots[index].load(std::memory_order_acquire);
+            if (!slot)
+                return std::nullopt;
+            if (slot >> 32 == hash && isEqual(static_cast<uint32_t>(slot) - 1))
+                return static_cast<uint32_t>(slot) - 1;
+        }
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    }
+    // Everybody reads these and only a table that grows writes one: they share no line with the locks.
+    alignas(64) mutable std::array<std::atomic<IndexOfMadeNodes::Table>, numberOfIndicesOfMadeNodes> m_tablesOfMadeNodes { };
     mutable std::array<IndexOfMadeNodes, numberOfIndicesOfMadeNodes> m_madeNodesByKey;
     size_t m_fewestSlotsOfIndexOfMadeNodes { 64 };
     ListWithRoomToFill<MadeStatement> m_madeStatements;
@@ -750,8 +769,8 @@ private:
     static constexpr uint32_t hasWaitedAndNotRun = UINT32_MAX - 1;
     bool m_statementsWait { false };
     // By node of the bodies: one more than the number of the first statement that waits for it. By statement of the bodies: one more than the number of the next one in the list.
-    Vector<uint32_t> m_firstStatementWaitingForNode;
-    Vector<uint32_t> m_nextStatementWaiting;
+    ListWithRoomToFill<uint32_t> m_firstStatementWaitingForNode;
+    ListWithRoomToFill<uint32_t> m_nextStatementWaiting;
     Vector<ValueFlowReachWitness> m_reachedBy;
     Vector<RunsAndEdges> m_runsAndEdges;
     uint64_t m_numberOfRunsThatWereNotDueAndAdded { 0 };
@@ -890,8 +909,8 @@ private:
     bool m_saturates { false };
     ValueSetID m_untrackedObjectAlone;
     // By member: zero for what does not count, else a number that members of one layout or one built-in class share.
-    Vector<uint32_t> m_layoutOrCalleeOfMember;
-    Vector<uint32_t> m_lastCountThatSaw;
+    ListWithRoomToFill<uint32_t> m_layoutOrCalleeOfMember;
+    ListWithRoomToFill<uint32_t> m_lastCountThatSaw;
     uint32_t m_numberOfCounts { 0 };
     HashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_isTooLarge;
     BitVector m_isSaturated;

@@ -11,12 +11,12 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTChildProcess.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "Options.h"
 #include <algorithm>
 #include <span>
 #include <wtf/DataLog.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
 

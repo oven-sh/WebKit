@@ -16,12 +16,13 @@
 #include "AOTIRBuilder.h"
 #include "AOTInlineCopy.h"
 #include "AOTInlineCostModel.h"
+#include "AOTSort.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -303,7 +304,7 @@ void CallInliner::spendCallerBudget(Vector<InlineSite>& sites)
             sites[index].heat = heat > 0 ? heat : 0;
         }
     }
-    std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
+    AOT::sort(order, [&](uint32_t a, uint32_t b) {
         const InlineSite& first = sites[a];
         const InlineSite& second = sites[b];
         if (first.heat != second.heat)

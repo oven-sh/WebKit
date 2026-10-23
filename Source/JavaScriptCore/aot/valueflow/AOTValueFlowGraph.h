@@ -10,6 +10,7 @@
 #include "AOTThreads.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueSets.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <bit>
@@ -20,7 +21,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Seconds.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -67,6 +67,7 @@ public:
     void forEachPredecessor(ValueFlowNodeID node, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor) const
     {
         if (m_hasReleasedSolvingState) {
+            RELEASE_ASSERT(m_keepsPredecessors);
             for (uint32_t index = m_firstPredecessorInRows[node.index()]; index < m_firstPredecessorInRows[node.index() + 1]; ++index)
                 functor(ValueFlowNodeID(m_predecessorsInRows[index]));
             return;
@@ -151,37 +152,35 @@ public:
         return false;
     }
 
-    // Ahead of hasAdded(): first the one for all edges that will be asked after, then the other.
-    void prefetchLinksThatHold(ValueFlowEdge edge) const
+    ALWAYS_INLINE void prefetchLinksThatHold(ValueFlowEdge edge) const
     {
-        if (edge.from.index() >= m_numberOfNodes)
+        if (edge.from.index() >= m_numberOfNodes || edge.to.index() >= m_numberOfNodes)
             return;
-        if (!isConstant(edge.from.index()))
-            __builtin_prefetch(&m_successors[edge.from.index()]);
-        else if (edge.to.index() < m_numberOfNodes)
-            __builtin_prefetch(&m_predecessors[edge.to.index()]);
+        __builtin_prefetch(isConstant(edge.from.index()) ? &m_predecessors[edge.to.index()] : &m_successors[edge.from.index()]);
     }
-    void prefetchWhereEdgeIsListed(ValueFlowEdge edge) const
+    // NeedsHasAdded: what hasAdded() will read has been prefetched.
+    enum class EdgeLookup : uint8_t { Absent, Present, NeedsHasAdded };
+    ALWAYS_INLINE EdgeLookup lookUpInInlineLinks(ValueFlowEdge edge) const
     {
-        if (edge.from.index() >= m_numberOfNodes)
-            return;
-        if (isConstant(edge.from.index())) {
-            if (edge.to.index() >= m_numberOfNodes)
-                return;
-            willUse(edge.to.index());
-            const Links& predecessors = m_predecessors[edge.to.index()];
-            if (predecessors.count > mostPredecessorsScanned)
-                m_shards[shardOf(edge.to.index())]->edgesOutOfConstantsIntoNodesWithManyPredecessors.prefetch(edge);
-            else if (predecessors.count > 2)
-                __builtin_prefetch(predecessors.block);
-            return;
-        }
-        willUse(edge.from.index());
-        const Links& successors = m_successors[edge.from.index()];
-        if (successors.count > mostSuccessorsScanned)
-            m_shards[shardOf(edge.from.index())]->edgesOfNodesWithManySuccessors.prefetch(edge);
-        else if (successors.count > 2)
-            __builtin_prefetch(successors.block);
+        uint32_t from = edge.from.index();
+        uint32_t to = edge.to.index();
+        if (from >= m_numberOfNodes || to >= m_numberOfNodes)
+            return EdgeLookup::Absent;
+        bool isOutOfConstant = isConstant(from);
+        uint32_t node = isOutOfConstant ? to : from;
+        uint32_t other = isOutOfConstant ? from : to;
+        willUse(node);
+        const Links& links = isOutOfConstant ? m_predecessors[node] : m_successors[node];
+        if (links.count <= 2)
+            return (links.count && links.two[0] == other) || (links.count == 2 && links.two[1] == other) ? EdgeLookup::Present : EdgeLookup::Absent;
+        static_assert(mostPredecessorsScanned == mostSuccessorsScanned);
+        if (links.count <= mostSuccessorsScanned)
+            __builtin_prefetch(links.block);
+        else if (isOutOfConstant)
+            m_shards[shardOf(node)]->edgesOutOfConstantsIntoNodesWithManyPredecessors.prefetch(edge);
+        else
+            m_shards[shardOf(node)]->edgesOfNodesWithManySuccessors.prefetch(edge);
+        return EdgeLookup::NeedsHasAdded;
     }
 
     // Brings the values up to date with what has been added since the last call, and lists the nodes whose value has moved, in ascending order.
@@ -198,8 +197,9 @@ public:
     bool hasNodesJustRetired() const;
     void connectPredecessorsOfNodesJustRetired();
 
-    // Behind the last solve.
-    void releaseSolvingState();
+    // Behind the last solve. Whoever is to ask for the predecessors of a node after that says so here.
+    enum class Predecessors : bool { AreReleased, AreKept };
+    void releaseSolvingState(Predecessors);
     void releaseRows();
 
     const Counters& counters() const { return m_counters; }
@@ -393,6 +393,7 @@ private:
     // The shard whose thread adds the edge.
     unsigned shardThatKeeps(ValueFlowEdge edge) const { return shardOf(isConstant(edge.from.index()) ? edge.to.index() : edge.from.index()); }
     void countRecentEdgesAsOlder();
+    void layPredecessorsInRows();
 
     bool passesEverythingOn(uint32_t node) const { return !m_gates[node].mask && !(m_gates[node].flags & IsAtRest); }
     bool takesNoMore(uint32_t node) const;
@@ -452,6 +453,7 @@ private:
     bool m_hasLeftMessagesWithShards { false };
     bool m_hasSolved { false };
     bool m_hasReleasedSolvingState { false };
+    bool m_keepsPredecessors { false };
     size_t m_memoryInBytesBeforeRelease { 0 };
 
     Vector<std::unique_ptr<Worker>> m_workers;

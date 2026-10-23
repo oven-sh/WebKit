@@ -9,6 +9,7 @@
 
 #include "AOTID.h"
 #include "AOTIRForm.h"
+#include "AOTVector.h"
 #include <wtf/Forward.h>
 
 namespace JSC { namespace AOT {

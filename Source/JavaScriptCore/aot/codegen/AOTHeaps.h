@@ -12,6 +12,7 @@
 #include "AOTEffects.h"
 #include "AOTInstance.h"
 #include "AOTMemoryLocation.h"
+#include "AOTVector.h"
 #include "B3AbstractHeapRepository.h"
 #include "JSArrayBuffer.h"
 #include "JSGlobalObject.h"
@@ -20,7 +21,6 @@
 #include <memory>
 #include <optional>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -107,7 +107,7 @@ private:
 
     void removeTemporaryClientHeaps() final;
     bool hasTemporaryClientHeaps() const final;
-    void appendGrownClientHeaps(Vector<GrownHeap, 16>&) final;
+    void appendGrownClientHeaps(WTF::Vector<GrownHeap, 16>&) final;
 
     void initializeEntireHeaps();
     void initializeBuckets();

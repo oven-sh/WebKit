@@ -13,7 +13,9 @@
 #include "AOTObject.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <algorithm>
 #include <array>
@@ -70,7 +72,7 @@ static bool hasLeftShape(const Object& object)
 static String describeNamesOf(Structure* structure)
 {
     Vector<PropertyTableEntry> properties = structure->getPropertiesConcurrently();
-    std::ranges::sort(properties, { }, [](const PropertyTableEntry& property) {
+    AOT::sort(properties, { }, [](const PropertyTableEntry& property) {
         return property.offset();
     });
 
@@ -174,7 +176,7 @@ String ArrivalCounts::describe(const ArrivalKey& key) const
 
 static void sortBySiteThenByCount(Vector<ArrivalLine>& lines)
 {
-    std::ranges::sort(lines, [](const ArrivalLine& a, const ArrivalLine& b) {
+    AOT::sort(lines, [](const ArrivalLine& a, const ArrivalLine& b) {
         if (a.site != b.site)
             return a.site < b.site;
         if (a.count != b.count)

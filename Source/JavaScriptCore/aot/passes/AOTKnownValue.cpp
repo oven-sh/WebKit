@@ -12,13 +12,13 @@
 #include "AOTStringArena.h"
 #include "AOTStringTable.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "MathCommon.h"
 #include "PureNaN.h"
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <optional>
-#include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT { namespace Typed {

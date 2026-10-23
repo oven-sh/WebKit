@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIRPrinter.h"
 #include "AOTResultRulesInternal.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 #include <wtf/Scope.h>

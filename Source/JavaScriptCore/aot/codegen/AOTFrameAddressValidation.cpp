@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeGenerator.h"
+#include "AOTVector.h"
 #include "B3BasicBlock.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"

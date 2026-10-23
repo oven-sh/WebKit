@@ -10,6 +10,7 @@
 #include "AOTFlowResults.h"
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

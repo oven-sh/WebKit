@@ -13,13 +13,13 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "CallFrame.h"
 #include "JSCJSValue.h"
 #include "RegisterSet.h"
 #include "StackAlignment.h"
 #include "VM.h"
 #include <wtf/MathExtras.h>
-#include <wtf/Vector.h>
 
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyInstance.h"

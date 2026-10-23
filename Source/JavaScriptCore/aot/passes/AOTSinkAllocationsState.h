@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "AOTVirtualObjectShapes.h"
 #include <compare>
 #include <optional>
@@ -14,7 +15,6 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -41,8 +41,10 @@ struct ObjectState {
     Vector<TypeID, 1> assumedTypes;
     // On some way here a test has left only variants that store nothing, and that way carries no fields.
     bool lacksFieldsOnSomeWay { false };
+    // Some way into a block in front of here does not have the object, and hands on unspecified values for its fields. No name reaches it behind that block: it is there where the tag of its holder says so.
+    bool isMissingOnSomeWay { false };
 
-    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false }; }
+    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false, false }; }
 
     bool hasCell() const;
     bool isCell() const { return variants.size() == 1 && variants[0].shape == cellShape; }

@@ -503,6 +503,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
     cp /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
     cp -r /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
     cp -r /webkit/Source/JavaScriptCore/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
     cp /webkit/Source/JavaScriptCore/aot/builtins/verified-overloads.txt /output/Source/JavaScriptCore/aot/builtins && \
     cp -r /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \

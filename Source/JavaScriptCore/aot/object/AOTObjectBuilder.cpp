@@ -16,6 +16,7 @@
 #include "AOTRuntimeType.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "PureNaN.h"
 #include <algorithm>

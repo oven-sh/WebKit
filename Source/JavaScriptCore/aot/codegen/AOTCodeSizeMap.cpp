@@ -18,8 +18,10 @@
 #include "AOTIR.h"
 #include "AOTIRPrinter.h"
 #include "AOTRelocation.h"
+#include "AOTSort.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "B3PCToOriginMap.h"
 #include "LinkBuffer.h"
 #include <algorithm>
@@ -134,7 +136,7 @@ static void printTotals(PrintStream& out, const Program& program, const Function
     Vector<std::pair<uint64_t, LabelTotal>> sorted;
     for (auto& entry : totals)
         sorted.append({ entry.key, entry.value });
-    std::ranges::sort(sorted, { }, &std::pair<uint64_t, LabelTotal>::first);
+    AOT::sort(sorted, { }, &std::pair<uint64_t, LabelTotal>::first);
     for (auto& [key, total] : sorted) {
         out.print("\t");
         total.label.print(out, program);
@@ -186,7 +188,7 @@ static void printShapes(PrintStream& out, const Function& function, const UseLis
         if (block)
             bytesByOperationAndShape.append({ static_cast<uint32_t>(function.at(range.value).opcode) << shapeBits | static_cast<uint32_t>(function.at(block).shape), range.size });
     }
-    std::ranges::sort(bytesByOperationAndShape);
+    AOT::sort(bytesByOperationAndShape);
     out.print("\nH");
     for (size_t first = 0; first < bytesByOperationAndShape.size();) {
         uint32_t key = bytesByOperationAndShape[first].first;

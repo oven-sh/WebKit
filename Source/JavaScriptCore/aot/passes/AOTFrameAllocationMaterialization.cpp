@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSSARepair.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 

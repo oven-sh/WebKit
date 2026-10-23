@@ -13,6 +13,7 @@
 #include "AOTIRProgram.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

@@ -13,6 +13,7 @@
 #include "AOTPassID.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSelectionRules.h"
+#include "AOTVector.h"
 #include "B3Policy.h"
 #include "CPUFeatureSet.h"
 #include "Options.h"
@@ -20,7 +21,6 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/BitSet.h>
 #include <wtf/NumberOfCores.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
 

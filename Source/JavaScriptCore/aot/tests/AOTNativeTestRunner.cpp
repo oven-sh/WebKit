@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/Assertions.h>
 #include <wtf/HashSet.h>

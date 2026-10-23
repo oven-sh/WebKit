@@ -24,12 +24,12 @@
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
 #include "AOTErrorMessages.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "Options.h"
 #include <memory>
 #include <optional>
 #include <wtf/DataLog.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

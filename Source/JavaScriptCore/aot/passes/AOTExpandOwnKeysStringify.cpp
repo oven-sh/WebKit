@@ -12,6 +12,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTJSONSerializerBuilder.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

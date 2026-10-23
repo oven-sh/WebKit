@@ -12,12 +12,12 @@
 #include "AOTLimits.h"
 #include "AOTShownFrameFilter.h"
 #include "AOTTraceFrame.h"
+#include "AOTVector.h"
 #include <bit>
 #include <memory>
 #include <span>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -87,7 +87,7 @@ static_assert(defaultLimitValue(LimitID::CodeBytes, hostArchitecture()) <= Retur
 static_assert(static_cast<uint32_t>(ReturnAddressTrace::Flag::IsAtFirstReadSite) <= ReturnAddressTrace::flagsMask);
 static_assert(!(sizeof(ReturnAddressTrace) % sizeof(uint32_t)));
 
-JS_EXPORT_PRIVATE ReturnAddressTrace* tryCaptureStackTrace(VM&, JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip = nullptr);
+JS_EXPORT_PRIVATE ReturnAddressTrace* tryCaptureStackTrace(VM&, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip = nullptr);
 JS_EXPORT_PRIVATE void forEachShownFrame(const ReturnAddressTrace&, const ScopedLambda<void(const TraceFrame&)>&);
 JS_EXPORT_PRIVATE void forEachShownFrame(CompiledFunctionID, const CallSiteRecord&, ShownFrameFilter&, const ScopedLambda<void(const TraceFrame&)>&);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> positionOf(const TraceFrame&);

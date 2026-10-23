@@ -14,6 +14,7 @@
 #include "AOTEffectsOfProtocols.h"
 #include "AOTSelectionContext.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 

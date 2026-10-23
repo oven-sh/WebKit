@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/ASCIICType.h>
 #include <wtf/SetForScope.h>
@@ -101,7 +103,7 @@ static Wire::Span appendSortedWords(WireProgramBuilder& builder, Vector<uint32_t
 {
     if (words.isEmpty())
         return { };
-    std::ranges::sort(words);
+    AOT::sort(words);
     removeRepeatedElements(words);
     return builder.appendWords(words.span());
 }

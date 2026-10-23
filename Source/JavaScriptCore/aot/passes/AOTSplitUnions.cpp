@@ -17,8 +17,10 @@
 #include "AOTMethodDispatch.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveCalls.h"
+#include "AOTSort.h"
 #include "AOTTypeRelations.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 
@@ -337,7 +339,7 @@ Vector<PlannedSplit> UnionSplitter::planSplits()
     });
 
     const CFG& cfg = m_context.analyses.cfg();
-    std::ranges::stable_sort(plans, { }, [&](const PlannedSplit& plan) {
+    AOT::stableSort(plans, { }, [&](const PlannedSplit& plan) {
         return std::pair { cfg.reversePostOrderIndex(plan.site.block), plan.site.index };
     });
     return plans;
@@ -450,7 +452,7 @@ std::optional<PlannedSplit> UnionSplitter::planSplitByParts(const ValueSite& sit
     }
     // What is expected is tested first, then the part that serves most of what the function does with the value.
     bool isAccessedByNumber = evidence.numberOfResolvableElementAccesses;
-    std::ranges::stable_sort(chosen, [&](const ChosenPart& a, const ChosenPart& b) {
+    AOT::stableSort(chosen, [&](const ChosenPart& a, const ChosenPart& b) {
         if (a.isLikely != b.isLikely)
             return a.isLikely;
         if (a.numberOfResolvedAccesses != b.numberOfResolvedAccesses)

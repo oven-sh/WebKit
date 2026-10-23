@@ -9,9 +9,9 @@
 
 #include "AOTIR.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

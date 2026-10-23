@@ -10,6 +10,7 @@
 #include "AOTImageOutliningTestBodies.h"
 #include "AOTStubsPolls.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <cstring>
 #include <optional>
@@ -28,8 +29,8 @@ namespace {
 
 struct SiteEmitter {
     bool emitsCalls { false };
-    Vector<Label> starts;
-    Vector<Label> ends;
+    WTF::Vector<Label> starts;
+    WTF::Vector<Label> ends;
 };
 
 struct Rewritten {

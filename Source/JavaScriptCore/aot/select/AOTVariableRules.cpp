@@ -10,6 +10,7 @@
 
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

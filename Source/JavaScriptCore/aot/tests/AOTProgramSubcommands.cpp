@@ -20,6 +20,7 @@
 #include "AOTReaderInternal.h"
 #include "AOTSchemaEnums.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <expected>
 #include <wtf/ASCIICType.h>

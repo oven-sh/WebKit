@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTNameClass.h"
+#include "AOTVector.h"
 #include <limits>
 #include <type_traits>
 #include <wtf/MathExtras.h>

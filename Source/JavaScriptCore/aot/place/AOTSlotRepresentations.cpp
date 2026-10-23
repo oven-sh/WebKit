@@ -15,7 +15,9 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTRepresentation.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -520,7 +522,7 @@ void ClaimSharer::collectUnits(const JoinedRows::Set& joined)
         if (m_claims[row].hasStorage)
             m_rowsByFamily.append(row);
     }
-    std::ranges::sort(m_rowsByFamily, { }, [&](SlotRow row) {
+    AOT::sort(m_rowsByFamily, { }, [&](SlotRow row) {
         return std::pair(inheritedRows.declaringRowOf(row), row);
     });
     std::span<const SlotRow> rows = m_rowsByFamily.span();
@@ -569,7 +571,7 @@ bool ClaimSharer::isWorthSharing(const JoinedRows::Set& joined, std::span<const 
         for (SlotRow row : unit.rows)
             unitsByRow.append({ row, &unit });
     }
-    std::ranges::sort(unitsByRow);
+    AOT::sort(unitsByRow);
 
     SiteWeight weightSaved = 0;
     SiteWeight weightSpent = 0;

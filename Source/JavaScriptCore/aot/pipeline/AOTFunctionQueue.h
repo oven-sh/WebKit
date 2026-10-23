@@ -9,6 +9,7 @@
 
 #include "AOTID.h"
 #include "AOTProvisionalFunctions.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <span>
@@ -18,7 +19,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/UniqueArray.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

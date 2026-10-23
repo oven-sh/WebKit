@@ -57,6 +57,7 @@
 #include "AOTSummarizeForInlining.h"
 #include "AOTTaggedLayouts.h"
 #include "AOTValueFlowResults.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include "AOTVirtualObjectParameters.h"
 #include <algorithm>

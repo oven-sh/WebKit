@@ -10,6 +10,7 @@
 
 #include "AOTEffectSummaries.h"
 #include "AOTForwardDataflow.h"
+#include "AOTVector.h"
 #include <wtf/EnumTraits.h>
 
 namespace JSC { namespace AOT { namespace Typed {

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <JavaScriptCore/AOTRecordTypes.h>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/Identifier.h>
@@ -16,7 +17,6 @@
 #include <wtf/IterationStatus.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC {
@@ -57,11 +57,11 @@ struct ModuleHost {
     JSValue (*requireSpecifier)(JSGlobalObject*, JSObject* requirer, JSValue specifier);
     JSValue (*resolveSpecifier)(JSGlobalObject*, JSObject* requirerOrImportMeta, JSValue specifier, ResolvedSpecifierForm);
     // An empty value stands for an export that is read from the returned object, under its name, when something first binds it. Null: every value is there.
-    JSObject* (*captureSyntheticExports)(JSGlobalObject*, SyntheticExportRule, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
+    JSObject* (*captureSyntheticExports)(JSGlobalObject*, SyntheticExportRule, JSValue value, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
     // What require() returns for a built-in module that has no JavaScript source. Null in a host without such modules.
     JSValue (*requireNativeModule)(JSGlobalObject*, JSString* specifier);
     // What an import of such a module gets, with empty values and a result as above. The host lists the exports itself: they need not be the properties of what require() returns. Null in a host without such modules.
-    JSObject* (*captureNativeModuleExports)(JSGlobalObject*, uint32_t registryID, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
+    JSObject* (*captureNativeModuleExports)(JSGlobalObject*, uint32_t registryID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
     // The object that `require.cache` answers in every module of the realm. Null in a host without one.
     JSObject* (*requireCache)(JSGlobalObject*);
     // The same for `require.extensions`.

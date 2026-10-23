@@ -21,6 +21,7 @@
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsOperations.h"
+#include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"

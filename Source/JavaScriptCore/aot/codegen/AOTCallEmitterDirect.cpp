@@ -16,6 +16,7 @@
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTPlacement.h"
 #include "AOTShapeTestEmitter.h"
+#include "AOTVector.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include <array>

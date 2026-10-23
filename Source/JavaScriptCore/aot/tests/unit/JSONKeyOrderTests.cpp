@@ -14,6 +14,7 @@
 #include "AOTObjectModel.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTVector.h"
 #include "PropertyNameArray.h"
 #include <algorithm>
 #include <initializer_list>

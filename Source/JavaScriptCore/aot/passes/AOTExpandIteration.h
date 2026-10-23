@@ -12,13 +12,13 @@
 #include "AOTPass.h"
 #include "AOTSSARepair.h"
 #include "AOTUseLists.h"
+#include "AOTVector.h"
 #include "IterationKind.h"
 #include "TypedArrayType.h"
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

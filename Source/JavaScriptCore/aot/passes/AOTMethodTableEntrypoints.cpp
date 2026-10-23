@@ -13,6 +13,7 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTFlowApply.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

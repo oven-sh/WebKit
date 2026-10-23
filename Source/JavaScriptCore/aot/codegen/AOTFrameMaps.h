@@ -9,11 +9,11 @@
 
 #include "AOTID.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Forward.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

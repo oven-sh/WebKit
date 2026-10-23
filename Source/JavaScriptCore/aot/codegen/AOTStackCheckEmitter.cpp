@@ -11,10 +11,12 @@
 #include "AOTConvention.h"
 #include "AOTElideStackChecks.h"
 #include "AOTInstance.h"
+#include "AOTSort.h"
 #include "AOTStubBodyConvention.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPolls.h"
+#include "AOTVector.h"
 #include "AirGenerationContext.h"
 #include "B3Procedure.h"
 #include "LinkBuffer.h"
@@ -126,7 +128,7 @@ Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer& linkBuffer, FunctionID id, 
         RELEASE_ASSERT(labels.call.isSet() && labels.resume.isSet());
         checks.append({ id.index(), linkBuffer.offsetOf(labels.call), linkBuffer.offsetOf(labels.resume) });
     }
-    std::ranges::sort(checks, { }, &PrologueCheck::callOffset);
+    AOT::sort(checks, { }, &PrologueCheck::callOffset);
     return checks;
 }
 

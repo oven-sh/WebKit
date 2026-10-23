@@ -23,6 +23,7 @@
 #include "AOTStringTable.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsConstants.h"
+#include "AOTVector.h"
 #include "JSCJSValueInlines.h"
 #include "JSCellButterfly.h"
 #include "PureNaN.h"

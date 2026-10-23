@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTVector.h"
 #include <cstdint>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

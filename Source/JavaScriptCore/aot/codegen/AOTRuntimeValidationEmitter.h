@@ -10,6 +10,7 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTOperationEmitter.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTVector.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {

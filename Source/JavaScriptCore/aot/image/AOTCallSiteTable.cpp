@@ -13,9 +13,11 @@
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
 #include "AOTLinkedFunctions.h"
+#include "AOTSort.h"
 #include "AOTStubKey.h"
 #include "AOTThreads.h"
 #include "AOTVarint.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Atomics.h>
 #include <wtf/StdLibExtras.h>
@@ -118,7 +120,7 @@ static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
         returnSites.append({ returnOffset, *site, false });
     });
     RELEASE_ASSERT(firstReadSites.empty());
-    std::ranges::stable_sort(returnSites, { }, &SiteWithCode::returnOffset);
+    AOT::stableSort(returnSites, { }, &SiteWithCode::returnOffset);
     // Return addresses in a row may share a site. The first of them stands for all.
     returnSites.shrink(std::ranges::unique(returnSites, { }, &SiteWithCode::site).begin() - returnSites.begin());
     return returnSites;

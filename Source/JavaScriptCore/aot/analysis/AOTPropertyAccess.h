@@ -9,6 +9,7 @@
 
 #include "AOTLimits.h"
 #include "AOTPropertyAccessMembers.h"
+#include "AOTVector.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -34,6 +35,7 @@ struct PropertyAccessQuery {
     bool isLeftOutByUnfinishedAllocation { false };
     // A test on the way here found the slot of the field empty, or may have.
     bool expectsEmptySlot { false };
+    bool storesWhatWasMadeOfField { false };
     // The read stands in hot code where addEmptySlotCases() works: the tests of what lies above the object and beside the slot may stand behind the test of the slot.
     bool mayTestSlotFirst { false };
     LayoutID declaringLayout;

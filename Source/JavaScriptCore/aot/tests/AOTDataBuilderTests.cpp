@@ -17,6 +17,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTPropertyWalk.h"
 #include "AOTTemporaryFile.h"
+#include "AOTVector.h"
 #include "JSArrayInlines.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
@@ -25,7 +26,6 @@
 #include "TopExceptionScope.h"
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 

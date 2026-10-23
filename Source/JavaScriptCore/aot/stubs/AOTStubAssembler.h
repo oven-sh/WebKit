@@ -14,6 +14,7 @@
 #include "AOTStubDescriptor.h"
 #include "AOTStubFrames.h"
 #include "AOTStubRecording.h"
+#include "AOTVector.h"
 #include "CCallHelpers.h"
 #include "StackAlignment.h"
 #include <array>
@@ -26,7 +27,6 @@
 #include <wtf/MathExtras.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/Variant.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

@@ -22,6 +22,7 @@
 #include "AOTPlacement.h"
 #include "AOTSlimClosure.h"
 #include "AOTStubsClosures.h"
+#include "AOTVector.h"
 #include "MarkedSpace.h"
 #include <algorithm>
 

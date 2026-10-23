@@ -10,10 +10,10 @@
 #include "AOTCodeIndex.h"
 #include "AOTCodeTemplates.h"
 #include "AOTLinkedFunctions.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <utility>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

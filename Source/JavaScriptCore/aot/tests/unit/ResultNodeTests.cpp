@@ -17,6 +17,7 @@
 #include "AOTSelectTypedResultsTypeNodes.h"
 #include "AOTValidationRules.h"
 #include "AOTValidatorBuilder.h"
+#include "AOTVector.h"
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>

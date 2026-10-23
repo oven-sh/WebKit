@@ -11,7 +11,9 @@
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPlanner.h"
+#include "AOTSort.h"
 #include "AOTStatistics.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -210,12 +212,12 @@ void AllocationSinking::abandonJoinsThatOnlyFeedAbandonedJoins()
 {
     auto indexOfJoin = [](const EntryIntoJoin& entry) { return entry.join.index(); };
     auto indexOfSource = [](const EntryIntoJoin& entry) { return entry.source.index(); };
-    std::ranges::sort(m_entriesIntoJoins, { }, [](const EntryIntoJoin& entry) {
+    AOT::sort(m_entriesIntoJoins, { }, [](const EntryIntoJoin& entry) {
         return std::pair { entry.join.index(), entry.source.index() };
     });
     removeRepeatedElements(m_entriesIntoJoins);
     Vector<EntryIntoJoin> entriesBySource = m_entriesIntoJoins;
-    std::ranges::stable_sort(entriesBySource, { }, indexOfSource);
+    AOT::stableSort(entriesBySource, { }, indexOfSource);
 
     auto goesOnlyIntoAbandonedJoins = [&](VirtualObjectID object) {
         const Candidate& candidate = at(object);

@@ -15,6 +15,7 @@
 #include "AOTTestCommand.h"
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include "AOTWire.h"
 #include <algorithm>

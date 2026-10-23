@@ -15,8 +15,10 @@
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTResultRules.h"
 #include "AOTRuntimeReporter.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeTestReport.h"
+#include "AOTVector.h"
 #include "IntlObject.h"
 #include <algorithm>
 #include <array>
@@ -79,7 +81,7 @@ void appendLocaleUses(const Program& program, const FlowResults& flow, FlowRepor
     for (const FlowLocaleUse& use : flow.localeUses())
         uses.append(canonicalLocaleUseOf(program, use));
 
-    std::ranges::sort(uses, [](const CanonicalLocaleUse& a, const CanonicalLocaleUse& b) {
+    AOT::sort(uses, [](const CanonicalLocaleUse& a, const CanonicalLocaleUse& b) {
         std::strong_ordering order = compareKindAndTag(a, b);
         return order != 0 ? order < 0 : isLowerWitness(a.witness, b.witness);
     });

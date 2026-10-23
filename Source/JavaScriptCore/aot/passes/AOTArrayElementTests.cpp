@@ -21,6 +21,7 @@
 #include "AOTInlineBuiltinForms.h"
 #include "AOTIntegerRelations.h"
 #include "AOTResolveAccesses.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>

@@ -9,9 +9,9 @@
 
 #include "AOTFunctionData.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

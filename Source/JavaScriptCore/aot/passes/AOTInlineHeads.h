@@ -8,8 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTVector.h"
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

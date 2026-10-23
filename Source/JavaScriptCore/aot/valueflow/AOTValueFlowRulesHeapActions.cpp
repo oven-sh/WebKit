@@ -9,6 +9,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 // The target finds what the source holds as it finds what it inherits.

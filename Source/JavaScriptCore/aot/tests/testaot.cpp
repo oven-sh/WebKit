@@ -26,6 +26,7 @@
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "InitializeThreading.h"
 #include "JSCConfig.h"
@@ -34,7 +35,6 @@
 #include <wtf/FilePrintStream.h>
 #include <wtf/FileSystem.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT {

@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <utility>
@@ -54,7 +56,7 @@ Vector<GuardUse, 4> guardsOf(PayloadListView<MemberConditionRecord> conditions)
     Vector<GuardUse, 4> guards(conditions.size(), [&](size_t index) {
         return guardOf(conditions[index]);
     });
-    std::ranges::sort(guards, { }, keyOf);
+    AOT::sort(guards, { }, keyOf);
     guards.shrink(guards.size() - std::ranges::unique(guards, { }, keyOf).size());
     return guards;
 }
@@ -84,7 +86,7 @@ Vector<GuardUse, 4> guardsOf(std::span<const MemberCondition> conditions)
         const MemberCondition& condition = conditions[index];
         return guardOf(MemberConditionRecord { .kind = recordKindOf(condition.kind), .layout = condition.layout, .side = condition.side, .key = condition.key });
     });
-    std::ranges::sort(guards, { }, keyOf);
+    AOT::sort(guards, { }, keyOf);
     guards.shrink(guards.size() - std::ranges::unique(guards, { }, keyOf).size());
     return guards;
 }
@@ -104,7 +106,7 @@ static bool findMembers(const GuardBitTable& table, std::span<const GuardUse> gu
 
 static void indexSetsByMember(Vector<Membership>&& memberships, GuardBitTable& table)
 {
-    std::ranges::sort(memberships);
+    AOT::sort(memberships);
     table.firstSetOfClassBit = Vector<uint32_t>(FillWith { }, table.numberOfClassBits + 1, 0u);
     table.setsOfClassBits.reserveInitialCapacity(memberships.size());
     for (const Membership& membership : memberships) {

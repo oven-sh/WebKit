@@ -14,6 +14,7 @@
 #include "AOTIdentifierNumbering.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

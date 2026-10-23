@@ -14,6 +14,7 @@
 #include "AOTRelocation.h"
 #include "AOTRelocationLowering.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWasmStubs.h"
 #include "B3CompilationReport.h"
 #include "B3Policy.h"

@@ -19,6 +19,7 @@
 #include "AOTPipeline.h"
 #include "AOTSinkAllocationsInternal.h"
 #include "AOTTestRunner.h"
+#include "AOTVector.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
 

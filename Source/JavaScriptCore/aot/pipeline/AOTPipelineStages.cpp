@@ -41,6 +41,7 @@
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWholeLiterals.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>

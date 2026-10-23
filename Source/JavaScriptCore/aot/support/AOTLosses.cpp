@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTProvisionalFunctions.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <tuple>
@@ -230,7 +232,7 @@ static AllocationRemark mergeCopiesOfSite(std::span<const AllocationRemark> wors
 
 static void mergeCopies(Vector<AllocationRemark>& remarks)
 {
-    std::ranges::sort(remarks, { }, remarkOrderKey);
+    AOT::sort(remarks, { }, remarkOrderKey);
 
     size_t numberOfSites = 0;
     for (size_t begin = 0; begin < remarks.size();) {
@@ -331,7 +333,7 @@ Vector<Wire::DeclineRecord> Losses::takeDeclines(const Typed::Program* program)
     Vector<Wire::DeclineRecord> declines = takeRecords(&Stripe::declines);
     for (Wire::DeclineRecord& decline : declines)
         convertToIDsAsRead(decline.witness, program);
-    std::ranges::sort(declines, { }, declineOrderKey);
+    AOT::sort(declines, { }, declineOrderKey);
     removeRepeatedElements(declines, [](const Wire::DeclineRecord& a, const Wire::DeclineRecord& b) {
         return a.kind == b.kind && a.reason == b.reason && a.witness == b.witness;
     });

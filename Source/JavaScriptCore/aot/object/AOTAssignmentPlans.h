@@ -12,6 +12,7 @@
 #include "AOTObject.h"
 #include "AOTObjectCopy.h"
 #include "AOTSlotAccess.h"
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "PropertyOffset.h"
 #include "RememberedSlot.h"
@@ -30,7 +31,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
-#include <wtf/Vector.h>
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>
 

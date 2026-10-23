@@ -11,11 +11,12 @@
 #include "AOTDecidedBranches.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTSort.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/Hasher.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -102,7 +103,7 @@ private:
         }
         if (blocksByTarget.size() < 2)
             return;
-        std::ranges::sort(blocksByTarget);
+        AOT::sort(blocksByTarget);
         for (size_t index = 0; index < blocksByTarget.size(); ++index) {
             auto [target, block] = blocksByTarget[index];
             bool isOnlyOneWithTarget = (!index || blocksByTarget[index - 1].first != target) && (index + 1 == blocksByTarget.size() || blocksByTarget[index + 1].first != target);
@@ -110,7 +111,7 @@ private:
                 continue;
             m_candidates.append({ target, m_analyses.dominators().dominates(target, block), hashOf(block), block });
         }
-        std::ranges::sort(m_candidates, [](const Candidate& a, const Candidate& b) {
+        AOT::sort(m_candidates, [](const Candidate& a, const Candidate& b) {
             return std::tie(a.target, a.isLatch, a.hash, a.block) < std::tie(b.target, b.isLatch, b.hash, b.block);
         });
     }

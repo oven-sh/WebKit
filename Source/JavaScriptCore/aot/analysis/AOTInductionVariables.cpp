@@ -11,6 +11,8 @@
 #include "AOTAnalysisDump.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIntegerRelations.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/EnumTraits.h>
@@ -122,6 +124,21 @@ bool isBoundingRelation(Opcode relation, InductionDirection direction)
         return relation == Opcode::Greater || relation == Opcode::GreaterEq;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool dominatesAfterSplit(FunctionAnalyses& analyses, Edge edge, BlockID block)
+{
+    const CFG& cfg = analyses.cfg();
+    if (!cfg.isReachable(edge.from) || !cfg.isReachable(block))
+        return false;
+
+    const Dominators& dominators = analyses.dominators();
+    BlockID target = targetOf(analyses.function(), edge).block;
+    if (!dominators.dominates(target, block))
+        return false;
+    return std::ranges::all_of(cfg.incomingEdges(target), [&](Edge incoming) {
+        return incoming == edge || dominators.dominates(target, incoming.from);
+    });
 }
 
 namespace {
@@ -476,7 +493,7 @@ Vector<BlockID, 4> InductionFinder::findTestingBlocks() const
         if (relationalOperators.contains(m_function.at(terminator.conditionOperand()).opcode))
             blocks.append(block);
     }
-    std::ranges::sort(blocks, { }, [&](BlockID block) {
+    AOT::sort(blocks, { }, [&](BlockID block) {
         return m_cfg.reversePostOrderIndex(block);
     });
     return blocks;

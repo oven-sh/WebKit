@@ -13,6 +13,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTInlineCopy.h"
 #include "AOTSummarizeForInlining.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <wtf/BitVector.h>

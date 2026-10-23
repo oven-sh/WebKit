@@ -10,6 +10,7 @@
 
 #include "AOTKnownValue.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>

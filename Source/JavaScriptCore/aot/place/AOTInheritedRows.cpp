@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <utility>
@@ -77,7 +79,7 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
         add(rows.extensionWordOf(id), root, rows.extensionWordOf(root));
         add(rows.extraPropertiesWordOf(id), root, rows.extraPropertiesWordOf(root));
     }
-    std::ranges::sort(members);
+    AOT::sort(members);
 
     m_rows.reserveInitialCapacity(members.size());
     for (auto [depth, declaringRow, row] : members) {
@@ -87,7 +89,7 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
         m_rows.append(row);
     }
 
-    std::ranges::sort(rowsInUnallocatedBases);
+    AOT::sort(rowsInUnallocatedBases);
     m_rowsInUnallocatedBases = WTF::map(rowsInUnallocatedBases, [](const std::pair<SlotRow, SlotRow>& entry) {
         return entry.second;
     });

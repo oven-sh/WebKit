@@ -7,9 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

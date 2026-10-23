@@ -13,6 +13,8 @@
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
 #include "AOTPropertyAccessMembers.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <iterator>
 
@@ -296,7 +298,7 @@ Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable& table, BuiltinName n
         }
         existing->classes.append(builtinClass);
     }
-    std::ranges::sort(methods, { }, &MemberOfClasses::member);
+    AOT::sort(methods, { }, &MemberOfClasses::member);
     return methods;
 }
 

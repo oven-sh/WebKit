@@ -9,11 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <memory>
@@ -175,7 +177,7 @@ private:
 void FollowedObjects::finish(ValueSetMaker& maker)
 {
     m_setOfObjects = maker.of(m_objects.span());
-    std::ranges::stable_sort(m_variables, { }, &VariableOnObject::object);
+    AOT::stableSort(m_variables, { }, &VariableOnObject::object);
     m_hasEscaped.ensureSize(m_inputs.universe().numberOfObjects());
     for (ValueFlowObjectID object : m_escapedObjects)
         m_hasEscaped.quickSet(object.index());

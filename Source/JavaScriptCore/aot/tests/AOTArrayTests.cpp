@@ -15,6 +15,7 @@
 #include "AOTIRTestSupport.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTVector.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include <wtf/HashSet.h>

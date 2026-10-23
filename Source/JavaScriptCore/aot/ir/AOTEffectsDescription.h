@@ -9,6 +9,7 @@
 
 #include "AOTEffectsOfOperands.h"
 #include "AOTEffectsOfProtocols.h"
+#include "AOTVector.h"
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {

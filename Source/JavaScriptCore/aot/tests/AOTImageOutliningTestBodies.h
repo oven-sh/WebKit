@@ -9,7 +9,7 @@
 
 #include "AOTImageBuildSteps.h"
 #include "AOTStubsBarriers.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC::AOT::ImageTests {
 

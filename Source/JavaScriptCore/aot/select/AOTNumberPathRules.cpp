@@ -13,6 +13,7 @@
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <optional>

@@ -13,6 +13,7 @@
 #include "AOTLosses.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "AssemblerPolicy.h"
 #include "CPUFeatureSet.h"
@@ -24,7 +25,6 @@
 #include <wtf/Nonmovable.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

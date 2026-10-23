@@ -13,6 +13,7 @@
 #include "AOTStubTestSupport.h"
 #include "AOTStubsRegExp.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "Butterfly.h"
 #include "CompleteSubspace.h"
 #include "JSArray.h"
@@ -32,7 +33,6 @@
 #include <memory>
 #include <span>
 #include <wtf/FixedVector.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringImpl.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

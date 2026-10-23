@@ -13,7 +13,9 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTPassRunner.h"
 #include "AOTProgramCaches.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 
@@ -28,7 +30,7 @@ static Vector<uint32_t> findLargestFirst(const Program& program, const ParallelL
         if (numberOfValues >= fewestValues)
             found.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | index);
     });
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     return keys.map([](uint64_t key) {
         return static_cast<uint32_t>(key);
     });

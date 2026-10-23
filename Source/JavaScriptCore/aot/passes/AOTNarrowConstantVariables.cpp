@@ -13,10 +13,11 @@
 #include "AOTFlowResults.h"
 #include "AOTIR.h"
 #include "AOTKnownValue.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWholeLiterals.h"
 #include <algorithm>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -110,7 +111,7 @@ static ConstantLists collectListsStoredAlone(const Program& program, Vector<Stor
         if (store.list && numberOfStores[store.variable.index()] == 1)
             lists.entries.append({ store.variable, Vector<KnownValue>(store.list->span()) });
     }
-    std::ranges::sort(lists.entries, { }, &ConstantLists::Entry::variable);
+    AOT::sort(lists.entries, { }, &ConstantLists::Entry::variable);
     return lists;
 }
 

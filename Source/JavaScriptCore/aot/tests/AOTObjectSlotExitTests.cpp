@@ -13,6 +13,7 @@
 #include "AOTObjectModel.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTVector.h"
 #include "CustomGetterSetter.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
@@ -21,7 +22,6 @@
 #include <algorithm>
 #include <array>
 #include <numeric>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 

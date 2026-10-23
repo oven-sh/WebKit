@@ -12,7 +12,9 @@
 #include "AOTInterningPhases.h"
 #include "AOTPipelineInternal.h"
 #include "AOTPlaceTypeTestsPlan.h"
+#include "AOTSort.h"
 #include "AOTTypeTestReport.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 
@@ -103,7 +105,7 @@ static TestSites reportRequestedSites(FunctionPassContext& pass, std::span<const
 
     TestSites sites = reporter.takeSites();
     const CFG& cfg = pass.analyses.cfg();
-    std::ranges::sort(sites.sites, { }, [&](const TestSite& site) {
+    AOT::sort(sites.sites, { }, [&](const TestSite& site) {
         return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index };
     });
     return sites;

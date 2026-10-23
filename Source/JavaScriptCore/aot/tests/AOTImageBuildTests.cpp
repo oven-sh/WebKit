@@ -18,6 +18,7 @@
 #include "AOTSectionWriter.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsExceptions.h"
+#include "AOTVector.h"
 #include "FFIStubs.h"
 #include "RegisterAtOffsetList.h"
 #include <algorithm>

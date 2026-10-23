@@ -13,6 +13,7 @@
 #include "AOTRelationalSummaries.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowResults.h"
+#include "AOTVector.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {

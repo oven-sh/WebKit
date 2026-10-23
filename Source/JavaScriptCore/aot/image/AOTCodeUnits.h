@@ -9,6 +9,7 @@
 
 #include "AOTCompactList.h"
 #include "AOTRelocation.h"
+#include "AOTVector.h"
 #include "AirInstObserver.h"
 #include "B3Origin.h"
 #include "MacroAssembler.h"
@@ -16,7 +17,6 @@
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
@@ -151,7 +151,7 @@ private:
     Vector<std::pair<MacroAssembler::Label, MacroAssembler::Label>> m_hotBlockRanges;
     Vector<std::pair<MacroAssembler::Label, MacroAssembler::Label>> m_rangesOfColdBlocksThatMayRun;
     Vector<Range> m_ranges;
-    Vector<MacroAssembler::Label> m_boundaries;
+    WTF::Vector<MacroAssembler::Label> m_boundaries;
     Vector<std::pair<MacroAssembler::Label, MacroAssembler::Label>> m_pins;
     Vector<RecordedTrap> m_traps;
     uint32_t m_sizeOfHotBlocks { 0 };

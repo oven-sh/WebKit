@@ -110,7 +110,8 @@ const HARDENED = ["hardened", "lto-hardened"];
 //                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
 //                   on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
-//   linked          per architecture, the variants bun's CI links (ltoDefault in bun's scripts/build/config.ts). See `programs`.
+//   bunTests        per architecture, the variants bun's CI links and then runs bun's tests with (buildPlatforms and
+//                   testPlatforms in bun's .buildkite/ci.ts, ltoDefault in its scripts/build/config.ts). See `programs`.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -124,7 +125,7 @@ const platforms = [
       arm64: { on: "linux-arm64-gh", variants: ["lto"] },
     },
     testPrograms: ["testb3", "testair", "TestWTF"],
-    linked: () => ["lto", "asan"],
+    bunTests: arch => (arch === "arm64" ? ["lto"] : ["lto", "asan"]),
     image: () => "linux-glibc",
     args: (arch, v) => ({
       ...ICU,
@@ -149,7 +150,7 @@ const platforms = [
     packageOS: "linux",
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
     buildType: v => (v.buildType === "Release" ? "MinSizeRel" : v.buildType),
-    linked: () => ["lto"],
+    bunTests: () => ["lto"],
     image: () => "linux-musl",
     args: arch => ({
       ...ICU,
@@ -165,7 +166,7 @@ const platforms = [
     // ASAN is arm64 only: the darwin sanitizer runtime (mirrored at the compiler-rt-darwin-* release tag, a Linux LLVM
     // install doesn't ship it) is extracted from the official LLVM macOS release, which is published for arm64 only.
     lanes: { arm64: ALL, amd64: NO_ASAN },
-    linked: () => ["lto"],
+    bunTests: () => ["lto"],
     image: arch => `macos-${arch}`,
     imageInputs: ["macos-cross"],
     args: (arch, v, variant) => ({
@@ -193,7 +194,7 @@ const platforms = [
       arm64: ["release", "debug"],
     },
     lto: LTO_WINDOWS,
-    linked: arch => [arch === "arm64" ? "release" : "lto"],
+    bunTests: arch => [arch === "arm64" ? "release" : "lto"],
     image: () => "windows",
     args: (arch, v) => ({
       ...ICU,
@@ -211,7 +212,6 @@ const platforms = [
     dockerfile: "Dockerfile.freebsd",
     packageOS: "freebsd",
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
-    linked: () => ["release"],
     image: arch => `freebsd-${arch}`,
     args: arch => ({
       ...ICU,
@@ -226,7 +226,6 @@ const platforms = [
     dockerfile: "Dockerfile.android",
     packageOS: "android",
     lanes: { arm64: NO_ASAN, amd64: NO_ASAN },
-    linked: () => ["release"],
     image: () => "android",
     args: arch => ({
       ...ICU,
@@ -239,13 +238,13 @@ const platforms = [
 
 // Every lane links jsc, testFFI and testaot, which checks that they link. Each is a full copy of JavaScriptCore, so a lane
 // only ships the ones something downloads it for:
-//   all three  in the lanes bun's CI links, which packs them next to bun for bun's tests (packageAndUpload in bun's
-//              scripts/build/ci.ts), and in the lanes the `test` job here runs
-//   testaot    in "debug-asan", for bun's "AoT cargo test" job; it runs the jsc next to it
+//   all three  in the lanes bun's CI tests, which packs them next to bun (packageAndUpload in bun's scripts/build/ci.ts),
+//              and in the lanes the `test` job here runs
+//   testaot    in linux-amd64-debug-asan, for bun's "AoT cargo test" job; it runs the jsc next to it
 //   jsc        everywhere
 function programs(platform, arch, variant, test) {
-  if (test || platform.linked(arch).includes(variant)) return ["jsc", "testFFI", "testaot"];
-  return variant === "debug-asan" ? ["jsc", "testaot"] : ["jsc"];
+  if (test || platform.bunTests?.(arch).includes(variant)) return ["jsc", "testFFI", "testaot"];
+  return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan" ? ["jsc", "testaot"] : ["jsc"];
 }
 
 // A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage (less

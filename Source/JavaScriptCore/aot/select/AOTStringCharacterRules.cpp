@@ -12,7 +12,9 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTLoopEntry.h"
 #include "AOTSelectionContext.h"
+#include "AOTSort.h"
 #include "AOTStringRuleSupport.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <tuple>
@@ -290,7 +292,7 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
 
     std::optional<bool> functionSuspends;
     for (auto& remaining : readersOfString.values()) {
-        std::ranges::sort(remaining, { }, [&](const PlacedReader& placed) {
+        AOT::sort(remaining, { }, [&](const PlacedReader& placed) {
             return std::pair { cfg.reversePostOrderIndex(placed.point.block), placed.point.index };
         });
         while (remaining.size() > 1) {
@@ -371,7 +373,7 @@ static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs
             placedPairs.append(PlacedPair { index, placeOf(context, pairs[index]) });
     }
     // What dominates a place comes before it.
-    std::ranges::sort(placedPairs, { }, [&](const PlacedPair& placed) {
+    AOT::sort(placedPairs, { }, [&](const PlacedPair& placed) {
         return std::tuple { cfg.reversePostOrderIndex(placed.place.block), placed.place.index, placed.pair };
     });
 

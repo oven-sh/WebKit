@@ -16,6 +16,7 @@
 #include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
+#include "AOTVector.h"
 #include "JSString.h"
 #include "NumericStrings.h"
 #include <algorithm>
@@ -25,7 +26,6 @@
 #include <span>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
-#include <wtf/Vector.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/StringImpl.h>
 

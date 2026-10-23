@@ -11,6 +11,8 @@
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTSelectionContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <utility>
@@ -92,7 +94,7 @@ Vector<uint32_t> RewriteSession::takeOrder()
     Vector<uint32_t> order(m_groups.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::stable_sort(order, std::ranges::greater { }, [&](uint32_t index) {
+    AOT::stableSort(order, std::ranges::greater { }, [&](uint32_t index) {
         return std::pair { m_groups[index].blockOrder, m_groups[index].index };
     });
     return order;

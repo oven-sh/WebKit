@@ -11,11 +11,11 @@
 #include "AOTIRBuilder.h"
 #include "AOTInductionVariables.h"
 #include "AOTPass.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

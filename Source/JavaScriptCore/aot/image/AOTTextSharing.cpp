@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <compare>
@@ -20,7 +21,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

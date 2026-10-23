@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -105,7 +107,7 @@ public:
             if (requirement.requiredType)
                 requirement.requiredType = types.intern(withoutClassProofs(types.at(requirement.requiredType)));
         }
-        std::ranges::sort(m_requirements, precedes, &OperandRequirement::operand);
+        AOT::sort(m_requirements, precedes, &OperandRequirement::operand);
         return std::exchange(m_requirements, { });
     }
 

@@ -16,6 +16,7 @@
 #include "AOTNarrowReferenceValidation.h"
 #include "AOTRelocationLowering.h"
 #include "AOTStackCheckEmitter.h"
+#include "AOTVector.h"
 #include "B3Procedure.h"
 #include <memory>
 #include <wtf/BitVector.h>

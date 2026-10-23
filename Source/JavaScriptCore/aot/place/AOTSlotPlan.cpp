@@ -13,7 +13,9 @@
 #include "AOTFlowResults.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSlotPlanSteps.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "IndexingHeader.h"
 #include "JSArray.h"
 #include "MarkedBlock.h"
@@ -573,7 +575,7 @@ SlotGroup SlotAgreement::groupOfAllOffsets() const
     all.members.clear();
     for (const SlotGroup& group : groups)
         all.members.append(group.members.span());
-    std::ranges::sort(all.members);
+    AOT::sort(all.members);
     return all;
 }
 

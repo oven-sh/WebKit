@@ -9,11 +9,11 @@
 
 #include "AOTEffectsOfOperands.h"
 #include "AOTID.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

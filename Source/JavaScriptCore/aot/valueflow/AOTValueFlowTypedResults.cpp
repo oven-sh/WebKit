@@ -13,9 +13,11 @@
 #include "AOTCFG.h"
 #include "AOTSelectTypedResultsTargets.h"
 #include "AOTSelectTypedResultsTypeNodes.h"
+#include "AOTSort.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
@@ -83,7 +85,7 @@ void followTypes(const Program& program, ValueFlowTypedResult& result, bool layo
             }
         }
     }
-    std::ranges::sort(result.typesWithArrays);
+    AOT::sort(result.typesWithArrays);
 
     for (size_t index = 0; index < result.layouts.size(); ++index) {
         if (!layoutsStandOnlyWhereTypesNameThem || !isNamed.get(index))
@@ -234,7 +236,7 @@ ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuil
         result.type = expected.type;
         result.isValidated = !expected.validation.isEmpty();
         result.layouts.appendRange(expected.layouts.begin(), expected.layouts.end());
-        std::ranges::sort(result.layouts);
+        AOT::sort(result.layouts);
         result.layouts.shrink(std::ranges::unique(result.layouts).begin() - result.layouts.begin());
         layoutsStandOnlyWhereTypesNameThem = placesLayoutsWhereTypesNameThem(expected);
     } else {

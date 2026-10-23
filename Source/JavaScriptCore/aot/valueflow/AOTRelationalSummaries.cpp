@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRPrinter.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/PrintStream.h>
 #include <wtf/TZoneMallocInlines.h>

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
+#include "AOTVector.h"
 #include <wtf/MathExtras.h>
 
 namespace JSC::AOT {
@@ -181,7 +182,7 @@ Yarr::ReturnAddressSite ImageCodeAddressing::storeReturnAddress(MacroAssembler::
     return { { }, site };
 }
 
-void ImageCodeAddressing::linkReturnAddresses(Vector<Yarr::ReturnAddressRecord>&& records)
+void ImageCodeAddressing::linkReturnAddresses(WTF::Vector<Yarr::ReturnAddressRecord>&& records)
 {
     if (records.isEmpty())
         return;

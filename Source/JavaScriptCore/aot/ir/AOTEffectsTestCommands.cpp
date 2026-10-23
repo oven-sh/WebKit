@@ -18,6 +18,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowResults.h"
+#include "AOTVector.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
 

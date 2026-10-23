@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowApply.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 #include <utility>
@@ -31,6 +32,13 @@ struct PlannedProperty {
 static bool isStoredInAnyVariant(const VirtualFamily& family, const ObjectState& state, uint32_t field)
 {
     return std::ranges::any_of(state.variants, [&](const ObjectVariant& variant) {
+        return hasStored(family.at(variant.shape), field);
+    });
+}
+
+static bool isStoredInEveryVariant(const VirtualFamily& family, const ObjectState& state, uint32_t field)
+{
+    return std::ranges::all_of(state.variants, [&](const ObjectVariant& variant) {
         return hasStored(family.at(variant.shape), field);
     });
 }
@@ -198,14 +206,60 @@ Vector<VirtualObjectID, 4> ObjectInterpreter::collectVirtualMembers(VirtualObjec
     return members;
 }
 
+// In front of the switch on the tag of the holder the fields of such an object are unspecified on some way. An arm that stores the object is entered only where it is there.
+bool ObjectInterpreter::isBuiltInArmsOf(VirtualObjectID holder, const HeldObject& held) const
+{
+    const ObjectState& state = *stateOf(holder);
+    return stateOf(held.object)->isMissingOnSomeWay && state.needsTag() && !hasBothAllocationOutcomes(holder)
+        && !isStoredInEveryVariant(m_sinking.familyOf(holder), state, held.field);
+}
+
+// Behind the arms nobody can ask for what only some of them have built.
+bool ObjectInterpreter::isReachedOnlyThrough(VirtualObjectID holder, VirtualObjectID held) const
+{
+    Vector<VirtualObjectID, 4> members = collectVirtualMembers(held);
+    if (members.contains(holder))
+        return false;
+    for (VirtualObjectID member : members) {
+        if (!stateOf(member)->isMissingOnSomeWay)
+            return false;
+    }
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (members.contains(entry.object))
+            continue;
+        for (const HeldObject& other : entry.state.heldObjects) {
+            if (!members.contains(other.object))
+                continue;
+            if (entry.object != holder || other.object != held || !isBuiltInArmsOf(holder, other))
+                return false;
+        }
+    }
+    return !m_state.aliases.containsIf([&](const AliasEntry& alias) {
+        return members.contains(alias.object);
+    }) && !m_state.tests.containsIf([&](const TestEntry& test) {
+        return members.contains(test.object);
+    });
+}
+
 void ObjectInterpreter::buildMembers(std::span<const VirtualObjectID> members, const BuildCause& cause)
 {
     Vector<LateFieldStore, 2> late;
     Vector<MemberVisit, 4> visits;
     BitVector membersBeingVisited;
+    BitVector membersBuiltInArms;
+    if (isRewriting()) {
+        for (VirtualObjectID member : members) {
+            for (const HeldObject& held : stateOf(member)->heldObjects) {
+                if (stateOf(held.object)->isCell() || !isBuiltInArmsOf(member, held))
+                    continue;
+                for (VirtualObjectID memberOfArms : collectVirtualMembers(held.object))
+                    membersBuiltInArms.set(memberOfArms.index());
+            }
+        }
+    }
 
     auto beginVisit = [&](VirtualObjectID member) {
-        if (stateOf(member)->isCell())
+        if (stateOf(member)->isCell() || membersBuiltInArms.get(member.index()))
             return;
         membersBeingVisited.set(member.index());
         visits.append(MemberVisit { member, 0 });
@@ -214,7 +268,7 @@ void ObjectInterpreter::buildMembers(std::span<const VirtualObjectID> members, c
     auto emitCell = [&](VirtualObjectID member) {
         bool isAsAllocated = hasBothAllocationOutcomes(member);
         if (stateOf(member)->needsTag() && !isAsAllocated) {
-            buildByTag(member, late);
+            buildByTag(member, late, cause);
             return;
         }
         ValueID cell = isAsAllocated
@@ -253,6 +307,10 @@ void ObjectInterpreter::buildMembers(std::span<const VirtualObjectID> members, c
             HeldObject held = state.heldObjects[position];
             if (stateOf(held.object)->isCell() || !isStoredInAnyVariant(m_sinking.familyOf(member), state, held.field))
                 continue;
+            if (isBuiltInArmsOf(member, held) && !isReachedOnlyThrough(member, held.object)) {
+                RELEASE_ASSERT(!isRewriting());
+                m_sinking.abandon(held.object);
+            }
             if (!isHardEdge(m_sinking, member, state, held.field) && m_state.canReach(held.object, member)) {
                 if (m_mode == SinkingMode::Count)
                     m_sinking.at(held.object).isStoredLate = true;
@@ -342,10 +400,29 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     return cell;
 }
 
-void ObjectInterpreter::buildByTag(VirtualObjectID object, Vector<LateFieldStore, 2>& late)
+void ObjectInterpreter::buildByTag(VirtualObjectID object, Vector<LateFieldStore, 2>& late, const BuildCause& cause)
 {
+    struct MemberOfArms {
+        VirtualObjectID member;
+        ObjectState state;
+        ObjectValues values;
+    };
+
     IRBuilder& builder = cursor().builder();
     const ObjectState& state = *stateOf(object);
+    Vector<HeldObject, 2> heldObjectsOfArms;
+    Vector<MemberOfArms, 2> membersOfArms;
+    for (const HeldObject& held : state.heldObjects) {
+        if (stateOf(held.object)->isCell() || !isBuiltInArmsOf(object, held))
+            continue;
+        heldObjectsOfArms.append(held);
+        for (VirtualObjectID member : collectVirtualMembers(held.object)) {
+            if (membersOfArms.containsIf([&](const MemberOfArms& known) { return known.member == member; }))
+                continue;
+            const ObjectValues* carried = values().find(member);
+            membersOfArms.append(MemberOfArms { member, *stateOf(member), carried ? *carried : ObjectValues { } });
+        }
+    }
     bool needsGuard = m_sinking.at(object).needsGuard;
     size_t numberOfLateStores = late.size();
     ValueID carriedTag = values().find(object)->tag;
@@ -377,6 +454,14 @@ void ObjectInterpreter::buildByTag(VirtualObjectID object, Vector<LateFieldStore
     for (size_t index = 0; index < arms.size(); ++index) {
         const ObjectVariant& variant = state.variants[index];
         cursor().moveTo(arms[index]);
+        for (const MemberOfArms& member : membersOfArms) {
+            *stateOf(member.member) = member.state;
+            values().ensure(member.member) = member.values;
+        }
+        for (const HeldObject& held : heldObjectsOfArms) {
+            if (hasStored(shapeOf(object, variant), held.field) && !stateOf(held.object)->isCell())
+                buildMembers(collectVirtualMembers(held.object).span(), cause);
+        }
         Arguments arguments { emitValueOfVariant(object, variant, late) };
         if (needsGuard) {
             ValueID guard;
@@ -395,6 +480,10 @@ void ObjectInterpreter::buildByTag(VirtualObjectID object, Vector<LateFieldStore
         builder.emitJump(continuation, WTF::move(arguments));
     }
     RELEASE_ASSERT(late.size() == numberOfLateStores);
+    for (const MemberOfArms& member : membersOfArms) {
+        m_state.remove(member.member);
+        values().remove(member.member);
+    }
 
     cursor().moveTo(continuation);
     ObjectValues& carried = values().ensure(object);

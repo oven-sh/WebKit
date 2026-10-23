@@ -18,6 +18,7 @@
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSelectionRules.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "B3Policy.h"
 #include "CPUFeatureSet.h"

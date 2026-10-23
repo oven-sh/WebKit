@@ -11,6 +11,7 @@
 #include "AOTBuiltinFormRules.h"
 #include "AOTRuleSupport.h"
 #include "AOTStringBuilderAnalysis.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>

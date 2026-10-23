@@ -19,6 +19,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "StructureRareDataInlines.h"
 #include <bit>

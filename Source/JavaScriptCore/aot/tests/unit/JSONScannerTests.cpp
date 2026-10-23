@@ -12,6 +12,7 @@
 #include "AOTJSONScanner.h"
 #include "AOTJSONValueParser.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTVector.h"
 #include <initializer_list>
 #include <string>
 #include <wtf/FastFloat.h>

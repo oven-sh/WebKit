@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

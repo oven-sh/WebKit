@@ -15,6 +15,7 @@
 #include "AOTFrameMapEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubCatalog.h"
+#include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"

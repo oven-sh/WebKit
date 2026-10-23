@@ -12,6 +12,7 @@
 #include "AOTIR.h"
 #include "AOTInsertionSet.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <initializer_list>
 #include <optional>
 #include <span>
@@ -20,7 +21,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

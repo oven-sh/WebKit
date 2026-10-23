@@ -26,6 +26,7 @@
 #include "AOTRuntimeType.h"
 #include "AOTSchemaEnums.h"
 #include "AOTStringTable.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "Options.h"
 #include "StackVisitor.h"

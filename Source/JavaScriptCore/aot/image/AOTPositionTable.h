@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTImageForward.h"
+#include "AOTVector.h"
 #include "CallFrame.h"
 #include "LineColumn.h"
 #include <optional>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

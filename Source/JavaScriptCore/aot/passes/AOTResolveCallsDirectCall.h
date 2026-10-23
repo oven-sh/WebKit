@@ -8,9 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTIRBuilder.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

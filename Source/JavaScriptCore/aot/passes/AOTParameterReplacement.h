@@ -10,7 +10,7 @@
 #include "AOTIR.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

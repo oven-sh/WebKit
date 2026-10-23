@@ -23,11 +23,14 @@
 #include "AOTHeat.h"
 #include "AOTOutliningNormalForm.h"
 #include "AOTPass.h"
+#include "AOTPointsToSolver.h"
 #include "AOTProgramCaches.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <optional>
@@ -1222,7 +1225,7 @@ static void appendChosenSites(FunctionSites& function, Vector<OutliningSite*>& r
     }
     if (!didSplit)
         return;
-    std::ranges::sort(result.mutableSubspan(firstSiteOfFunction), { }, [](const OutliningSite* site) {
+    AOT::sort(result.mutableSubspan(firstSiteOfFunction), { }, [](const OutliningSite* site) {
         return std::pair { site->orderOfEntryBlock, site->firstIndex };
     });
 }
@@ -1253,20 +1256,6 @@ static OpcodeSet findOpcodesThatMayDefineObjects()
     return opcodes;
 }
 
-static OpcodeSet findOpcodesThatDefineObjectsThatNeedNotBeFresh()
-{
-    OpcodeSet opcodes;
-    for (Opcode opcode : allMembersOf<Opcode>) {
-        bool returnsOperand = false;
-        uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
-        for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex)
-            returnsOperand |= operandUsesOf(opcode, operandIndex).contains(OperandUse::Returns);
-        if ((returnsOperand && resultRuleOf(opcode) == ResultRule::Allocation) || OperandPosition::parent(opcode))
-            opcodes.add(opcode);
-    }
-    return opcodes;
-}
-
 static OpcodeSet findOpcodesThatProve()
 {
     OpcodeSet opcodes;
@@ -1282,7 +1271,7 @@ struct OutliningSiteFinder::State {
 
     State(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
         : hashesOfSplittableSites(build.parallelLoops(), program.functions.size())
-        , finder { program, inputs, build, findOpcodesThatMayDefineObjects(), findOpcodesThatDefineObjectsThatNeedNotBeFresh(), findOpcodesThatProve(), hashesOfSplittableSites }
+        , finder { program, inputs, build, findOpcodesThatMayDefineObjects() | opcodesThatMayDefineObjects(), opcodesThatDefineObjectsThatNeedNotBeFresh(), findOpcodesThatProve(), hashesOfSplittableSites }
         , functions(build.parallelLoops(), program.functions.size(), [](unsigned) { return FunctionSites(); })
         , hasSites(FillWith { }, program.functions.size(), static_cast<uint8_t>(0))
     {

@@ -12,6 +12,7 @@
 #include "AOTModuleNamespace.h"
 #include "AOTModuleStarExports.h"
 #include "AOTModules.h"
+#include "AOTVector.h"
 #include "Error.h"
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
@@ -218,7 +219,7 @@ auto ModuleRecord::resolveExport(JSGlobalObject* globalObject, const Identifier&
     return { Resolution::Type::Resolved, this, exportName };
 }
 
-void ModuleRecord::collectExportedNames(JSGlobalObject* globalObject, Vector<Identifier>& names)
+void ModuleRecord::collectExportedNames(JSGlobalObject* globalObject, WTF::Vector<Identifier>& names)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

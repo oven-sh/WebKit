@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/MathExtras.h>
 
@@ -108,7 +110,7 @@ private:
             if (lists[i].numberOfLayouts > 1)
                 listsByWeight.append(i);
         }
-        std::ranges::sort(listsByWeight, [&](uint32_t a, uint32_t b) {
+        AOT::sort(listsByWeight, [&](uint32_t a, uint32_t b) {
             if (lists[a].weight != lists[b].weight)
                 return lists[a].weight > lists[b].weight;
             if (lists[a].numberOfLayouts != lists[b].numberOfLayouts)

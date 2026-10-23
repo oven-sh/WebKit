@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -253,7 +255,7 @@ void UnitPlacer::placeCopiesBeforeUsers()
         Run run = findRun(first);
         // The copy with the shortest reach lies next to its user.
         Vector<CopyableUse, 8> usesByReach(usesOfRun(run));
-        std::ranges::stable_sort(usesByReach, std::ranges::greater { }, &CopyableUse::reach);
+        AOT::stableSort(usesByReach, std::ranges::greater { }, &CopyableUse::reach);
         bool didPlaceCopy;
         do {
             didPlaceCopy = false;
@@ -305,7 +307,7 @@ void UnitPlacer::bindOrWait(uint32_t useIndex, size_t unitStart)
 
 void UnitPlacer::flush()
 {
-    std::ranges::sort(m_waitedFor);
+    AOT::sort(m_waitedFor);
     for (uint32_t copyable : m_waitedFor) {
         if (!isInBatch(copyable))
             placeCopy(copyable);

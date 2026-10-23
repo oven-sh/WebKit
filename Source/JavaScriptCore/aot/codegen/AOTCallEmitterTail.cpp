@@ -19,6 +19,7 @@
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsValues.h"
+#include "AOTVector.h"
 #include "AirCode.h"
 #include "AirFrameEmission.h"
 #include "AirGenerationContext.h"

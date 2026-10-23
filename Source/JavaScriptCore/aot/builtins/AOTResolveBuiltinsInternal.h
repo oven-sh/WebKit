@@ -11,10 +11,10 @@
 #include "AOTForwardedCalls.h"
 #include "AOTIRBuilder.h"
 #include "AOTSplitUnions.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

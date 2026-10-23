@@ -13,7 +13,9 @@
 #include "AOTDiagnostics.h"
 #include "AOTEdgeResults.h"
 #include "AOTIR.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <wtf/BitVector.h>
@@ -361,7 +363,7 @@ private:
                 m_reads.append(Row { subject(index).index, subject(index).source, index, 0 });
         }
         for (Vector<Row>* rows : { &m_stores, &m_handed, &m_operands, &m_reads })
-            std::ranges::sort(*rows);
+            AOT::sort(*rows);
     }
 
     bool hasStore(uint32_t source, uint32_t target, PropertyKeyID key, std::optional<uint32_t> creationOperand) const

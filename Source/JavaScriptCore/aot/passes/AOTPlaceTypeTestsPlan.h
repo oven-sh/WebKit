@@ -9,11 +9,11 @@
 
 #include "AOTBuiltinUses.h"
 #include "AOTTypeTestStretches.h"
+#include "AOTVector.h"
 #include <memory>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

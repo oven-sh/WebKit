@@ -11,10 +11,10 @@
 #include "AOTNativeTest.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include <initializer_list>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC::AOT {

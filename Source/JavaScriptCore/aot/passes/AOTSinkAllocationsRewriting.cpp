@@ -8,9 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 
@@ -96,7 +98,7 @@ bool AllocationSinking::splitEdgesNeedingCode(IRBuilder& builder)
     if (m_edgesNeedingCode.isEmpty())
         return false;
 
-    std::ranges::sort(m_edgesNeedingCode, { }, [](const Edge& edge) {
+    AOT::sort(m_edgesNeedingCode, { }, [](const Edge& edge) {
         return std::pair { edge.from, edge.targetIndex };
     });
     for (Edge edge : m_edgesNeedingCode)

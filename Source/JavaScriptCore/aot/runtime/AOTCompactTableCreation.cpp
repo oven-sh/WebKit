@@ -13,6 +13,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "AOTTableInImage.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"

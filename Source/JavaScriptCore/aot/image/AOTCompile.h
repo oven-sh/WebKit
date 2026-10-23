@@ -16,6 +16,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaEnums.h"
 #include "AOTStatistics.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "JSExportMacros.h"
 #include <array>
@@ -24,7 +25,6 @@
 #include <utility>
 #include <wtf/BitSet.h>
 #include <wtf/FastMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

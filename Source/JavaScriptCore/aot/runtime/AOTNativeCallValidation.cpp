@@ -17,6 +17,7 @@
 #include "AOTOperandSnapshot.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSFunctionWithFields.h"
 #include "DeferGCInlines.h"
 #include "ErrorInstance.h"

@@ -16,6 +16,7 @@
 #include "AOTObjectModel.h"
 #include "AOTShellProgramTestSupport.h"
 #include "AOTStructureTable.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 

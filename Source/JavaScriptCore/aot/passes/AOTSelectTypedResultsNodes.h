@@ -9,12 +9,12 @@
 
 #include "AOTDerivedFunctions.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

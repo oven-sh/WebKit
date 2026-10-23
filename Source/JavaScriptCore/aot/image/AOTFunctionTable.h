@@ -9,9 +9,9 @@
 
 #include "AOTImageFormat.h"
 #include "AOTImageForward.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

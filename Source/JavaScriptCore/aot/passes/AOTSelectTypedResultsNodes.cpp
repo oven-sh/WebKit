@@ -11,6 +11,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTSelectTypedResultsTypeNodes.h"
 #include "AOTValidationRules.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

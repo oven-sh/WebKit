@@ -10,6 +10,7 @@
 #include "AOTBuiltinTableArrays.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT {
 

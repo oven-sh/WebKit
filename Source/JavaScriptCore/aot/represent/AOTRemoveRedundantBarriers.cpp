@@ -16,6 +16,7 @@
 #include "AOTPlacement.h"
 #include "AOTRepresentationRules.h"
 #include "AOTSlotEmitter.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>

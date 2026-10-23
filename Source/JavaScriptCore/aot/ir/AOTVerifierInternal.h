@@ -14,12 +14,12 @@
 #include "AOTIR.h"
 #include "AOTResultRules.h"
 #include "AOTSharedMemo.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

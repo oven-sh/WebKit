@@ -11,6 +11,7 @@
 #include "AOTAnalysisDump.h"
 #include "AOTBuildContext.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <wtf/StdLibExtras.h>

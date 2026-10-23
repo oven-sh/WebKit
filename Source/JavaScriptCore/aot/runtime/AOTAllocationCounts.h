@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "Options.h"
 #include "VM.h"
 #include <array>
@@ -15,7 +16,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 

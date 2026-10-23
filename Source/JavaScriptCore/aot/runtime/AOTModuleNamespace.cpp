@@ -15,6 +15,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTProgramTables.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "JSCInlines.h"
 #include "SlotVisitorInlines.h"

@@ -10,6 +10,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTSectionWriter.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <span>
@@ -149,7 +151,7 @@ RegExpSections encodeRegExpRecords(const RegExpRecordInputs& inputs, BuildContex
     if (details.didOverflow())
         return { };
 
-    std::ranges::sort(hashes, { }, [](const ImageRegExpHash& entry) {
+    AOT::sort(hashes, { }, [](const ImageRegExpHash& entry) {
         return std::pair { entry.hash, entry.record };
     });
     return { bytesOf(records), bytesOf(hashes), details.takeBytes(), maxOutputSize };

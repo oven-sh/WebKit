@@ -20,7 +20,9 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
 #include "AOTLargeVectors.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <numeric>
@@ -64,7 +66,7 @@ static FunctionsCalledAfterReturn findFunctionsCalledAfterReturn(const FlowResul
 
 static void mergeEdges(WeightedCallList& calls)
 {
-    std::stable_sort(calls.begin(), calls.end(), [](const WeightedCall& a, const WeightedCall& b) {
+    AOT::stableSort(calls, [](const WeightedCall& a, const WeightedCall& b) {
         return a.node < b.node;
     });
     size_t mergedSize = 0;
@@ -192,7 +194,7 @@ private:
 
     void mergeBlockGroups()
     {
-        std::ranges::sort(m_blockGroups, std::ranges::greater { }, &HeatBlockGroup::frequency);
+        AOT::sort(m_blockGroups, std::ranges::greater { }, &HeatBlockGroup::frequency);
         size_t mergedSize = 0;
         for (const HeatBlockGroup& group : m_blockGroups) {
             if (mergedSize && m_blockGroups[mergedSize - 1].frequency == group.frequency)
@@ -332,7 +334,7 @@ private:
             if (double calls = estimateIndirectCalls(call))
                 countedByFlow.append({ call.callee, calls });
         }
-        std::ranges::stable_sort(countedByFlow, { }, [](const auto& entry) {
+        AOT::stableSort(countedByFlow, { }, [](const auto& entry) {
             return entry.first.index();
         });
 
@@ -458,7 +460,7 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
         reached.addWithCallees(graph.nodeOf(callee).index());
     }
     if (calls.size() > numberOfSortedCalls)
-        std::ranges::sort(calls, { }, &WeightedCall::node);
+        AOT::sort(calls, { }, &WeightedCall::node);
     return calls;
 }
 

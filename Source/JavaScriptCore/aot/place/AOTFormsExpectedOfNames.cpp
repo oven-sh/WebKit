@@ -10,6 +10,7 @@
 
 #include "AOTHeat.h"
 #include "AOTSlotPlan.h"
+#include "AOTVector.h"
 #include <array>
 
 namespace JSC { namespace AOT { namespace Typed {

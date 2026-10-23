@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 ParsedValue JSONParserBuilder::emitArray(const ResultNode& node, ValueID cursor, const ParseExits& exits)

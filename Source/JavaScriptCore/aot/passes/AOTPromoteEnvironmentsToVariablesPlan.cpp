@@ -12,8 +12,10 @@
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <tuple>
@@ -574,7 +576,7 @@ void PromotionPlanner::findClosureFunctions()
         return m_plan.closureFunctions[index].index() != index;
     }))
         m_versions.append({ m_plan.closureFunctions[index], FunctionID(index) });
-    std::ranges::sort(m_versions);
+    AOT::sort(m_versions);
     m_plan.captures.grow(m_program.functions.size());
 }
 
@@ -658,7 +660,7 @@ void PromotionPlanner::promote(const EnvironmentAllocation& allocation)
 void PromotionPlanner::promoteLayouts()
 {
     m_plan.firstVariables.grow(m_program.layouts.size());
-    std::ranges::sort(m_scan.allocations, { }, [](const EnvironmentAllocation& allocation) {
+    AOT::sort(m_scan.allocations, { }, [](const EnvironmentAllocation& allocation) {
         return std::tuple(allocation.layout, allocation.function);
     });
 
@@ -790,7 +792,7 @@ bool PromotionPlanner::readCapturesFromVariables(FunctionID closureFunction, Sup
 
 void PromotionPlanner::promoteCapturedValues()
 {
-    std::ranges::sort(m_scan.suppliers, { }, [&](const CaptureSupplier& supplier) {
+    AOT::sort(m_scan.suppliers, { }, [&](const CaptureSupplier& supplier) {
         return std::tuple(m_plan.closureFunctionOf(supplier.callee), supplier.function, supplier.site);
     });
 
@@ -800,7 +802,7 @@ void PromotionPlanner::promoteCapturedValues()
             didChange |= readCapturesFromVariables(closureFunction, suppliers);
         });
     }
-    std::ranges::sort(m_plan.storedValues, { }, [](const StoredValue& stored) {
+    AOT::sort(m_plan.storedValues, { }, [](const StoredValue& stored) {
         return std::tuple(stored.function, stored.value);
     });
 }

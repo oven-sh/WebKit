@@ -18,6 +18,7 @@
 #include "AOTRepresentation.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <compare>
 #include <functional>

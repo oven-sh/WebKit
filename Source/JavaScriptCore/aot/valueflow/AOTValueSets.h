@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTValueFlow.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <bit>
@@ -18,7 +19,6 @@
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -670,7 +670,7 @@ public:
             return first;
         if (first == ValueSets::nothing)
             return second;
-        return uniteDifferentSets(first, second);
+        return ValueSets::complement(intersectDifferentSets(ValueSets::complement(first), ValueSets::complement(second)));
     }
     ValueSetID intersect(ValueSetID first, ValueSetID second)
     {
@@ -682,29 +682,23 @@ public:
             return ValueSets::nothing;
         return intersectDifferentSets(first, second);
     }
-    void prefetchUnite(ValueSetID, ValueSetID);
-    void prefetchIntersect(ValueSetID, ValueSetID);
+    bool meet(ValueSetID first, ValueSetID second)
+    {
+        if (first == ValueSets::nothing || second == ValueSets::nothing)
+            return false;
+        return nonEmptySetsMeet(first, second);
+    }
     // What a place with a mask takes of a value that arrives there.
     ValueSetID pass(ValueSetID value, ValueSetID mask, ValueSetID familyObjects, ValueFlowMaskKind, const ValueFlowPlaceholders&, const ValueFlowCoveredObjects& = { });
     ValueSetID uniteAll(std::span<const ValueSetID>);
     // The set as the union of smaller sets, in ascending order: its blocks, or the words of its one block.
     void appendParts(ValueSetID, Vector<ValueSetID>&);
 
-    struct Counters {
-        uint64_t answeredAtOnce { 0 };
-        uint64_t remembered { 0 };
-        uint64_t rememberedByAll { 0 };
-        uint64_t computed { 0 };
-        uint64_t blocksRemembered { 0 };
-        uint64_t blocksComputed { 0 };
-    };
-    const Counters& counters() const { return m_counters; }
-
 private:
     enum class Operation : uint8_t { Unite, Intersect, Subtract };
 
     struct Remembered {
-        // Of sets: the operation lies in the highest bit of the one and of the other. Of blocks: in the two highest bits of the second.
+        // Of sets: the two operands of an intersection, in ascending order. Of blocks: the operation lies in the two highest bits of the second.
         uint32_t first { 0 };
         uint32_t second { 0 };
         uint32_t result { 0 };
@@ -736,11 +730,12 @@ private:
         uint64_t bits { 0 };
     };
 
-    ValueSetID uniteDifferentSets(ValueSetID, ValueSetID);
+    static constexpr uint32_t intersectionIsNotEmpty = UINT32_MAX - 1;
     ValueSetID intersectDifferentSets(ValueSetID, ValueSetID);
+    ValueSetID intersectUncached(ValueSetID, ValueSetID, Remembered&);
+    bool nonEmptySetsMeet(ValueSetID, ValueSetID);
+    bool meetUncached(ValueSetID, ValueSetID, Remembered&);
     uint32_t combine(Operation, uint32_t first, uint32_t second);
-    void prefetchCombine(Operation, uint32_t first, uint32_t second);
-    Remembered& rememberedAt(Operation, uint32_t first, uint32_t second, uint32_t& firstKey, uint32_t& secondKey) LIFETIME_BOUND;
     uint32_t combineByForm(Operation, uint32_t first, uint32_t second);
     uint32_t combineShortSets(Operation, uint32_t first, uint32_t second);
     uint32_t combineShortSetWithList(Operation, uint32_t first, uint32_t second);
@@ -773,7 +768,7 @@ private:
     ValueSets::InternedRuns::Room m_roomForBlocks;
     ValueSets::InternedRuns::Room m_roomForGroups;
     ValueSets::InternedRuns::Room m_roomForLists;
-    Vector<Remembered> m_rememberedSets;
+    std::array<Remembered, 1u << bitsOfRememberedSets> m_rememberedSets { };
     Vector<RememberedEntries> m_rememberedEntries;
     Vector<Remembered> m_rememberedBlocks;
     HashMap<uint64_t, ValueSetID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_setOfRange;
@@ -795,7 +790,6 @@ private:
     Vector<uint64_t> m_scatteredMembers;
     Vector<uint64_t> m_wordsTouchedAtPlace;
     Vector<uint64_t> m_placesTouched;
-    Counters m_counters;
 };
 
 } } } // namespace JSC::AOT::Typed

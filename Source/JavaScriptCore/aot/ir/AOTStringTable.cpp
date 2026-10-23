@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <unicode/utf16.h>
 #include <utility>

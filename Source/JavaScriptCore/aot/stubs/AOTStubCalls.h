@@ -11,12 +11,12 @@
 #include "AOTRecordTypes.h"
 #include "AOTRelocation.h"
 #include "AOTStubKey.h"
+#include "AOTVector.h"
 #include "CCallHelpers.h"
 #include <expected>
 #include <optional>
 #include <span>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

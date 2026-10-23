@@ -12,13 +12,14 @@
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
 #include "AOTIRProgram.h"
+#include "AOTSort.h"
 #include "AOTStringBuilderAnalysis.h"
 #include "AOTThreads.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -209,7 +210,7 @@ void markResultsUsedAsKeys(ProgramEditor& editor, BuildContext& build)
     Vector<ResultUse> uses = collectInParallel<ResultUse>(build.parallelLoops(), numberOfFunctions, [&](unsigned index, Vector<ResultUse>& found) {
         collectUsesOfResults(program, FunctionID(index), isCandidate, found);
     });
-    std::ranges::stable_sort(uses, { }, [](const ResultUse& use) {
+    AOT::stableSort(uses, { }, [](const ResultUse& use) {
         return use.callee.index();
     });
 

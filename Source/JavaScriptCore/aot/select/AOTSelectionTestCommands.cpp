@@ -11,6 +11,7 @@
 #include "AOTAnalysisTestCommands.h"
 #include "AOTRawWordCheck.h"
 #include "AOTRawWordWebs.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

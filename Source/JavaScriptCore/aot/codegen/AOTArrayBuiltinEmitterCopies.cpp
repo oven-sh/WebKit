@@ -16,6 +16,7 @@
 #include "AOTElementEmitterAllocation.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTKnownValue.h"
+#include "AOTVector.h"
 #include "IndexingHeader.h"
 #include <algorithm>
 #include <optional>

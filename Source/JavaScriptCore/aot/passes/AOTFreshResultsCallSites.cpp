@@ -13,8 +13,10 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTSinkAllocations.h"
+#include "AOTSort.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <iterator>
@@ -54,7 +56,7 @@ static Vector<LocatedCall, 4> locateCallsInReverseOrder(FunctionAnalyses& analys
             continue;
         calls.append(LocatedCall { sites[siteIndex], { location.block, location.index }, siteIndex });
     }
-    std::ranges::sort(calls, [](const LocatedCall& a, const LocatedCall& b) {
+    AOT::sort(calls, [](const LocatedCall& a, const LocatedCall& b) {
         if (a.point.block != b.point.block)
             return a.point.block > b.point.block;
         return a.point.index > b.point.index;

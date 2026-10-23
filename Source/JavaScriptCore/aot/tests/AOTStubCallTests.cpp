@@ -12,6 +12,7 @@
 #include "AOTStubRunner.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
+#include "AOTVector.h"
 #include "CallFrame.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"

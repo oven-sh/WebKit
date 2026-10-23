@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
 #include "AOTRepresentation.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include <algorithm>
@@ -466,7 +467,7 @@ static void canonicalizeClasses(ClassParts& classes)
     };
     if (std::ranges::adjacent_find(classes, isOutOfOrder) == classes.end())
         return;
-    std::ranges::stable_sort(classes, [](const ClassPart& a, const ClassPart& b) {
+    AOT::stableSort(classes, [](const ClassPart& a, const ClassPart& b) {
         return a.builtinClass < b.builtinClass;
     });
     size_t size = 1;

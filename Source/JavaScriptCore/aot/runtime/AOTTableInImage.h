@@ -9,9 +9,9 @@
 
 #include "AOTCompactTable.h"
 #include "AOTImage.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

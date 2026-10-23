@@ -9,6 +9,7 @@
 
 #include "AOTImageForward.h"
 #include "AOTRegExpCode.h"
+#include "AOTVector.h"
 #include "YarrCodeAddressing.h"
 #include <expected>
 #include <memory>
@@ -33,7 +34,7 @@ public:
     bool tryLoadConstant(uint64_t, GPRReg dest) final;
     void callRoutine(const Yarr::SharedRoutine&) final;
     Yarr::ReturnAddressSite storeReturnAddress(MacroAssembler::Address slot) final;
-    void linkReturnAddresses(Vector<Yarr::ReturnAddressRecord>&&) final;
+    void linkReturnAddresses(WTF::Vector<Yarr::ReturnAddressRecord>&&) final;
     void emitLocalRoutines() final;
 
     std::expected<std::unique_ptr<RegExpCode>, Yarr::JITFailureReason> takeCode();

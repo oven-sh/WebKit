@@ -16,6 +16,8 @@
 #include "AOTEffectsOfAccesses.h"
 #include "AOTIR.h"
 #include "AOTPropertyAccessReceivers.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 
@@ -190,7 +192,7 @@ Vector<BuiltinName> namesReadFromOperands(const BuiltinTable& table)
             addNamesOfParameter(parameter);
     }
 
-    std::ranges::sort(names, { }, &BuiltinName::index);
+    AOT::sort(names, { }, &BuiltinName::index);
     removeRepeatedElements(names);
     return names;
 }
@@ -1200,7 +1202,7 @@ static ResultFreshness freshnessOfDeclaredResult(const Program& program, const F
 {
     const BuiltinTable& table = program.builtins();
     BuiltinTypeID resultType = table.at(overload).result.type;
-    if (!table.contains(resultType) || table.at(overload).resultIsDeclaredOnly())
+    if (!table.contains(resultType))
         return ResultFreshness::Unknown;
 
     switch (table.at(resultType).freshness) {

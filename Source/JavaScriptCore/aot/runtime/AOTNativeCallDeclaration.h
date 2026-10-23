@@ -8,7 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTNativeCallValidation.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {

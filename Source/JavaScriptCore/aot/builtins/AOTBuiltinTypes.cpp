@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCallPlan.h"
 #include "AOTTypeRelations.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/StdLibExtras.h>

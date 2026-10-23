@@ -13,6 +13,8 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTInlineBuiltinForms.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -393,7 +395,7 @@ BlockID ArrayCapacityPlanner::chainSuccessorOf(BlockID block, unsigned numberOfB
 bool ArrayCapacityPlanner::tryAddLoopSites(CapacityPlan& plan, const PlannedLiteral& literal, Vector<AppendSite, 2>& sites)
 {
     const CFG& cfg = m_analyses.cfg();
-    std::sort(sites.begin(), sites.end(), [&](const AppendSite& a, const AppendSite& b) {
+    AOT::sort(sites, [&](const AppendSite& a, const AppendSite& b) {
         return cfg.reversePostOrderIndex(loopOf(m_analyses, a).header()) < cfg.reversePostOrderIndex(loopOf(m_analyses, b).header());
     });
 

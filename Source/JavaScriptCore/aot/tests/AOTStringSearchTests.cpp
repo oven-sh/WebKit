@@ -10,10 +10,10 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <algorithm>
 #include <type_traits>
-#include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringView.h>

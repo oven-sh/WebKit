@@ -12,11 +12,11 @@
 #include "AOTInstance.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubsCollections.h"
+#include "AOTVector.h"
 #include "JSMap.h"
 #include "JSSet.h"
 #include "JSString.h"
 #include <wtf/MathExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {

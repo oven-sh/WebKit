@@ -17,7 +17,9 @@
 #include "AOTPlacementCheck.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <tuple>
@@ -174,20 +176,20 @@ static void foldEqualUses(Vector<Use>& sorted)
 template<typename Use>
 static void sortAndFold(Vector<Use>& uses)
 {
-    std::ranges::sort(uses, isOrderedBefore<Use>);
+    AOT::sort(uses, isOrderedBefore<Use>);
     foldEqualUses(uses);
 }
 
 template<typename T>
 static void sortAndRemoveDuplicates(Vector<T>& list)
 {
-    std::ranges::sort(list, std::less<T> { });
+    AOT::sort(list, std::less<T> { });
     removeRepeatedElements(list);
 }
 
 static void sortAndRemoveDuplicates(Vector<BuiltinCellKey>& cells)
 {
-    std::ranges::sort(cells, { }, &BuiltinCellKey::encoded);
+    AOT::sort(cells, { }, &BuiltinCellKey::encoded);
     removeRepeatedElements(cells);
 }
 

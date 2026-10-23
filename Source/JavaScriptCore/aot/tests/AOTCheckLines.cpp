@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <compare>
 #include <expected>
 #include <wtf/ASCIICType.h>

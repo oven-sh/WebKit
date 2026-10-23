@@ -11,6 +11,7 @@
 #include "AOTID.h"
 #include "AOTLimits.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "JSExportMacros.h"
 #include <array>
@@ -19,7 +20,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Variant.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

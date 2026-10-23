@@ -13,6 +13,7 @@
 #include "AOTBuiltinTypes.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <cmath>
 #include <wtf/CheckedArithmetic.h>

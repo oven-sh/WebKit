@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "MacroAssembler.h"
 #include <algorithm>
 #include <optional>

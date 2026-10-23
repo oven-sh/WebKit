@@ -14,6 +14,7 @@
 #include "AOTInstance.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "FastMarkAppender.h"

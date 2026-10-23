@@ -16,6 +16,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <wtf/DataLog.h>
 
 namespace JSC { namespace AOT { namespace Typed {

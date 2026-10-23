@@ -12,6 +12,7 @@
 #include "AOTNativeTest.h"
 #include "AOTStringTable.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <utility>

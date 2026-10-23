@@ -8,13 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTIRBuilder.h"
+#include "AOTVector.h"
 #include <memory>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

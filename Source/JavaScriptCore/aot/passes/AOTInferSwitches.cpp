@@ -15,11 +15,11 @@
 #include "AOTIRBuilder.h"
 #include "AOTTypePropagation.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

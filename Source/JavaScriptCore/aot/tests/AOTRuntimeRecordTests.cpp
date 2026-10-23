@@ -15,13 +15,13 @@
 #include "AOTObjectWords.h"
 #include "AOTRuntimeRecords.h"
 #include "AOTRuntimeWords.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include <array>
 #include <bit>
 #include <optional>
 #include <wtf/HashSet.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

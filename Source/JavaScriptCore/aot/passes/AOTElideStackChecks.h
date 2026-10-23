@@ -8,9 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTVector.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT {

@@ -10,13 +10,13 @@
 #include "AOTLimits.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTStringBuilderWords.h"
+#include "AOTVector.h"
 #include "JSString.h"
 #include <array>
 #include <optional>
 #include <span>
 #include <wtf/MathExtras.h>
 #include <wtf/UnalignedAccess.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {

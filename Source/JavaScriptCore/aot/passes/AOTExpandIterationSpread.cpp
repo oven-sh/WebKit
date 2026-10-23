@@ -13,8 +13,10 @@
 #include "AOTEffectsCheck.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -298,7 +300,7 @@ static std::optional<DerivedFunctionKey> findOutlinedLoop(FunctionPassContext& p
         if (arm.builtinClass && arm.builtinClass != BuiltinClasses::Array && expectedClasses.size() < maxExpectedClassesInKey)
             expectedClasses.append(arm.builtinClass);
     }
-    std::ranges::sort(expectedClasses, { }, &BuiltinClassID::index);
+    AOT::sort(expectedClasses, { }, &BuiltinClassID::index);
     return keyOfAppendIterable(expectedClasses.span());
 }
 
@@ -352,7 +354,7 @@ PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, Vector<
     if (sites.isEmpty())
         return PassOutcome::Unchanged;
 
-    std::ranges::sort(sites, std::ranges::greater { }, [](const SpreadSite& site) {
+    AOT::sort(sites, std::ranges::greater { }, [](const SpreadSite& site) {
         return std::pair { site.point.block, site.point.index };
     });
     Vector<SpreadLoop> loops;

@@ -13,6 +13,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTVector.h"
 #include "AirStackSlot.h"
 #include "AirCode.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -89,7 +90,7 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
             emitStoresOfKeptRegisters(jit, *check);
         }
         siteGenerator->run(jit, params);
-        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
         if (mayReturn && !params.fallsThroughToSuccessor(0)) {
             params.addLatePath([jump = jit.jump(), returnTarget = labels[0]](CCallHelpers& jit) {
                 jump.linkTo(*returnTarget, &jit);
@@ -141,7 +142,7 @@ LBasicBlock ExceptionEmitter::attachLandingOfMisfit(B3::PatchpointValue* patchpo
     patchpoint->effects.terminal = true;
     patchpoint->setGenerator([records = &m_records.exceptions, siteGenerator = patchpoint->generator(), site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         siteGenerator->run(jit, params);
-        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
         if (!params.fallsThroughToSuccessor(0)) {
             params.addLatePath([jump = jit.jump(), returnTarget = labels[0]](CCallHelpers& jit) {
                 jump.linkTo(*returnTarget, &jit);

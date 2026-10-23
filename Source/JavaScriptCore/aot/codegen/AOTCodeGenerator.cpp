@@ -27,6 +27,7 @@
 #include "AOTSlotAccessEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "B3UpsilonValue.h"
 #include <algorithm>
 

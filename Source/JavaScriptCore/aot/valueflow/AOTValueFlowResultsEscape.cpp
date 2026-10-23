@@ -21,6 +21,7 @@
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <memory>
 #include <optional>
 #include <wtf/Atomics.h>

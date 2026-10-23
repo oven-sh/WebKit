@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
+#include "AOTSort.h"
 #include "AOTTypeRelations.h"
 #include "AOTTypeTable.h"
 #include <algorithm>
@@ -321,7 +322,7 @@ static void fillPlan(TypeTestPlan& plan, const Program& program, const Type& fro
     Type fromObjects = from.withOnlyObjects();
     plan.objects = computeObjectsVerdict(program, from, to, fromObjects);
     appendObjectTests(plan, program, from, to, fromObjects);
-    std::ranges::stable_sort(plan.cellTests, { }, [](const CellTest& test) {
+    AOT::stableSort(plan.cellTests, { }, [](const CellTest& test) {
         return std::tuple { orderOf(test.kind), subjectOf(test) };
     });
     settleVerdict(plan);

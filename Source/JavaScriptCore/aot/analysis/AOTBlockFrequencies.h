@@ -10,11 +10,11 @@
 #include "AOTAnalysisContext.h"
 #include "AOTBlockCycles.h"
 #include "AOTCFG.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/FastMalloc.h>
 #include <wtf/FrequencyEstimator.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

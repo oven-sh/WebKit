@@ -9,13 +9,13 @@
 
 #include "AOTDiagnostics.h"
 #include "AOTLimits.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "B3CompilationReport.h"
 #include "B3Limits.h"
 #include "B3Origin.h"
 #include "JSExportMacros.h"
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

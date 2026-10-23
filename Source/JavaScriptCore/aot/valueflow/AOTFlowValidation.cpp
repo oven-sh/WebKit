@@ -15,11 +15,11 @@
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

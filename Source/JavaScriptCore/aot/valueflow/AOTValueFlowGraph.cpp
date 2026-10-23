@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #if OS(LINUX)
@@ -450,7 +452,7 @@ void ValueFlowGraph::takeNodesAtWhichPlaceholdersStopped(Vector<StoppedPlacehold
         }
         shard->placeholdersStopped.shrink(0);
     }
-    std::ranges::sort(stopped, [](const StoppedPlaceholder& a, const StoppedPlaceholder& b) {
+    AOT::sort(stopped, [](const StoppedPlaceholder& a, const StoppedPlaceholder& b) {
         return std::pair { a.node.index(), a.placeholder.index() } < std::pair { b.node.index(), b.placeholder.index() };
     });
 }
@@ -992,7 +994,7 @@ void ValueFlowGraph::retireNodes(Team& team, std::span<const ValueFlowNodeID> mo
             retire(covering.nodesToLookAt[index]);
         covering.nodesToLookAt.shrink(0);
 
-        std::ranges::sort(retired);
+        AOT::sort(retired);
         m_counters.nodesRetired += retired.size();
         ASSERT(covering.nodesJustRetired.isEmpty());
         std::swap(covering.nodesJustRetired, retired);
@@ -1059,7 +1061,7 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
             lowInNoSet |= arrival.low;
     }
     if (setsArrived.size() > 2) {
-        std::ranges::sort(setsArrived, { }, &ValueSetID::index);
+        AOT::sort(setsArrived, { }, &ValueSetID::index);
         removeRepeatedElements(setsArrived);
     }
     ValueSetID set = setsArrived.isEmpty() ? ValueSets::nothing : setsArrived.size() == 1 ? setsArrived[0] : maker.uniteAll(setsArrived.span());
@@ -1294,7 +1296,7 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
                 moved.append(ValueFlowNodeID(node));
             }
         }
-        std::ranges::sort(moved);
+        AOT::sort(moved);
     } else {
         constexpr size_t nodesPerRange = 1 << 16;
         size_t numberOfRanges = (m_numberOfNodes + nodesPerRange - 1) / nodesPerRange;
@@ -1333,14 +1335,45 @@ void ValueFlowGraph::releaseRows()
     m_rows.release(*m_team);
 }
 
-void ValueFlowGraph::releaseSolvingState()
+void ValueFlowGraph::releaseSolvingState(Predecessors predecessors)
 {
     m_memoryInBytesBeforeRelease = memoryInBytes();
     m_rows.release(*m_team);
     m_successors.release(*m_team);
     for (const std::unique_ptr<Shard>& shard : m_shards)
         shard->blocksOfSuccessors.release();
+    m_keepsPredecessors = predecessors == Predecessors::AreKept;
+    if (m_keepsPredecessors)
+        layPredecessorsInRows();
+    m_predecessors.release(*m_team);
 
+    m_hasReleasedSolvingState = true;
+    m_hasMoved = { };
+    m_isNewEdge = { };
+    m_edgesNotInLists = { };
+    m_edgesOfSolve = { };
+    m_indicesBySource = { };
+    m_edgesByTarget = { };
+    m_messages = { };
+    m_arrivals = { };
+    m_nodesWoken = { };
+    m_foundInShare = { };
+    m_found = { };
+    for (const std::unique_ptr<Shard>& shard : m_shards) {
+        shard->blocksOfPredecessors.release();
+        shard->edgesOfNodesWithManySuccessors = { };
+        shard->edgesOutOfConstantsIntoNodesWithManyPredecessors = { };
+        shard->listedEdgesOutOfConstants = { };
+        shard->arrivals = { };
+        shard->messages = { };
+        shard->nodesWithRecentSuccessors = { };
+        shard->nodesWithRecentPredecessors = { };
+    }
+    m_workers.clear();
+}
+
+void ValueFlowGraph::layPredecessorsInRows()
+{
     constexpr uint32_t nodesPerShare = 1 << 16;
     unsigned numberOfShares = (m_numberOfNodes + nodesPerShare - 1) / nodesPerShare;
     auto forEachNodeOfShare = [&](unsigned share, const auto& functor) {
@@ -1373,31 +1406,6 @@ void ValueFlowGraph::releaseSolvingState()
             first += m_predecessors[node].count;
         });
     });
-    m_predecessors.release(*m_team);
-
-    m_hasReleasedSolvingState = true;
-    m_hasMoved = { };
-    m_isNewEdge = { };
-    m_edgesNotInLists = { };
-    m_edgesOfSolve = { };
-    m_indicesBySource = { };
-    m_edgesByTarget = { };
-    m_messages = { };
-    m_arrivals = { };
-    m_nodesWoken = { };
-    m_foundInShare = { };
-    m_found = { };
-    for (const std::unique_ptr<Shard>& shard : m_shards) {
-        shard->blocksOfPredecessors.release();
-        shard->edgesOfNodesWithManySuccessors = { };
-        shard->edgesOutOfConstantsIntoNodesWithManyPredecessors = { };
-        shard->listedEdgesOutOfConstants = { };
-        shard->arrivals = { };
-        shard->messages = { };
-        shard->nodesWithRecentSuccessors = { };
-        shard->nodesWithRecentPredecessors = { };
-    }
-    m_workers.clear();
 }
 
 size_t ValueFlowGraph::memoryInBytes() const

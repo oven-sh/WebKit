@@ -11,6 +11,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTIR.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

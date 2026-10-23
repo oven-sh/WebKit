@@ -21,6 +21,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTStaticFields.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "MarkedBlockCage.h"
 #include "Options.h"

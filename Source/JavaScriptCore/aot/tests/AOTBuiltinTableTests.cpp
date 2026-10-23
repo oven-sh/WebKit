@@ -16,6 +16,7 @@
 #include "AOTResultRules.h"
 #include "AOTRuntimeDescription.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include "IdentifierInlines.h"
 #include "JSLock.h"
 #include "VM.h"
@@ -126,9 +127,15 @@ static void testMarks()
         for (const BuiltinMarkedEntry& entry : marked)
             AOT_TEST_CHECK(entry.mark == mark && table().contains(entry.builtin) && table().has(mark, entry.builtin));
     }
-    AOT_TEST_CHECK(std::ranges::any_of(table().loadersOfMachineCode(), [](const BuiltinLoaderOfMachineCode& loader) {
-        return loader.callee == Builtins::ProcessDlopen && loader.named == Builtins::ProcessDlopen;
-    }));
+    auto isReportedAs = [](BuiltinID callee, BuiltinID named) {
+        return std::ranges::any_of(table().loadersOfMachineCode(), [&](const BuiltinLoaderOfMachineCode& loader) {
+            return loader.callee == callee && loader.named == named;
+        });
+    };
+    AOT_TEST_CHECK(table().loadersOfMachineCode().size() == 5 && isReportedAs(Builtins::ProcessDlopen, Builtins::ProcessDlopen));
+    AOT_TEST_CHECK(isReportedAs(hostBuiltin("NativeFunctionsFfiRsBun__FFI__cc"_s), hostBuiltin("BunFfiCc"_s)));
+    AOT_TEST_CHECK(isReportedAs(hostBuiltin("BunFFIDlopen"_s), hostBuiltin("BunFfiDlopen"_s)) && isReportedAs(hostBuiltin("BunFFILinkSymbols"_s), hostBuiltin("BunFfiLinkSymbols"_s)));
+    AOT_TEST_CHECK(isReportedAs(hostBuiltin("BunFFICfunction"_s), hostBuiltin("BunFfiCFunction"_s)));
 }
 
 static void testGlobalThisIsFirst()

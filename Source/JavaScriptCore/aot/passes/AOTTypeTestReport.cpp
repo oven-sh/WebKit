@@ -11,6 +11,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTDiagnostics.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/SaturatingArithmetic.h>

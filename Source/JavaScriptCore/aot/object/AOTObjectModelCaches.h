@@ -12,11 +12,11 @@
 #include "AOTFieldMovePlanCache.h"
 #include "AOTMemberGuards.h"
 #include "AOTPropertyListCache.h"
+#include "AOTVector.h"
 #include <array>
 #include <memory>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

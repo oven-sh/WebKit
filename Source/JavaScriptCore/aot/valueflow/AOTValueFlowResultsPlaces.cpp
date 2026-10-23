@@ -13,9 +13,11 @@
 #include "AOTFlowUnseenCode.h"
 #include "AOTRemovableFeature.h"
 #include "AOTSchemaOperandPositions.h"
+#include "AOTSort.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowRuleContext.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "IntlObject.h"
 #include <algorithm>
 #include <tuple>
@@ -224,7 +226,7 @@ ValueFlowPlacesInProgram::ValueFlowPlacesInProgram(const ValueFlowResultInputs& 
     }
 
     // Breadth first, so that the nearest statement of the program speaks for a function. All that one round enters is entered before the next round begins: among equals the first place in the text stays.
-    std::ranges::sort(entriesFromLibrary, { }, [](const EntryIntoLibrary& entry) {
+    AOT::sort(entriesFromLibrary, { }, [](const EntryIntoLibrary& entry) {
         return std::tuple(entry.from, entry.entered);
     });
     while (!entered.isEmpty()) {
@@ -547,7 +549,7 @@ Vector<FlowLocaleUse> collectLocaleUses(const ValueFlowResultInputs& inputs, Val
     auto orderOf = [](const FlowLocaleUse& use) {
         return std::tuple(use.kind, use.tag, use.builtin, !hasFunction(use.witness), use.witness.function, use.witness.value);
     };
-    std::ranges::sort(locales.uses, { }, orderOf);
+    AOT::sort(locales.uses, { }, orderOf);
     locales.uses.shrink(std::ranges::unique(locales.uses, [](const FlowLocaleUse& a, const FlowLocaleUse& b) {
         return a.kind == b.kind && a.tag == b.tag && a.builtin == b.builtin;
     }).begin() - locales.uses.begin());

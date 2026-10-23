@@ -10,6 +10,7 @@
 
 #include "AOTCodeGenerator.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTVector.h"
 #include "B3BasicBlockInlines.h"
 #include "AOTFaultTable.h"
 #include "AOTPureOperations.h"

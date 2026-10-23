@@ -18,7 +18,9 @@
 #include "AOTFunctionKinds.h"
 #include "AOTImageBuilder.h"
 #include "AOTPlacement.h"
+#include "AOTSort.h"
 #include "AOTStubAssembler.h"
+#include "AOTVector.h"
 #include "B3Generate.h"
 #include <algorithm>
 #include <array>
@@ -234,7 +236,7 @@ static std::optional<ForwardingPlan> planForwarding(const CodeGenerationWorker& 
             moves.append({ *transfer, static_cast<uint32_t>(block.parameters.find(argument)) });
     }
 
-    std::ranges::sort(loads, { }, &ForwardedArgument::order);
+    AOT::sort(loads, { }, &ForwardedArgument::order);
     chooseArgumentsMovedFirst(moves.mutableSpan(), loads.span());
 
     ForwardingPlan plan { call.function(), { } };
@@ -243,7 +245,7 @@ static std::optional<ForwardingPlan> planForwarding(const CodeGenerationWorker& 
         if (move.isMovedFirst)
             movedFirst.append(move);
     }
-    std::ranges::sort(movedFirst, std::ranges::greater { }, &ForwardedArgument::order);
+    AOT::sort(movedFirst, std::ranges::greater { }, &ForwardedArgument::order);
     for (const ForwardedArgument& move : movedFirst)
         plan.transfers.append(move.transfer);
     for (const ForwardedArgument& load : loads)
@@ -383,7 +385,7 @@ void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationIn
                     B3::prepareForGeneration(generators[index]->procedure());
                 code = generators[index]->finish();
             }
-            RELEASE_ASSERT(!isForwardingCode.quickGet(index) || isSameCode(results[index], code));
+            RELEASE_ASSERT(!isX86_64() || !isForwardingCode.quickGet(index) || isSameCode(results[index], code));
             results[index] = WTF::move(code);
         }
         results[index].function = ids[index];

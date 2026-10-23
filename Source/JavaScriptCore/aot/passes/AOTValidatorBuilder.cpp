@@ -11,6 +11,7 @@
 #include "AOTTypeArena.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValidationPlanText.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 

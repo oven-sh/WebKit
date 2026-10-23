@@ -12,8 +12,10 @@
 #include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -26,7 +28,7 @@ static Vector<FunctionID, 4> collectMembers(const FunctionPassContext& context, 
             members.append(member);
     }
     // The value of a provisional id depends on which thread asked for the function first.
-    std::ranges::sort(members, [&](FunctionID a, FunctionID b) {
+    AOT::sort(members, [&](FunctionID a, FunctionID b) {
         return context.inputs.derivedFunctions->compare(a, b) < 0;
     });
     return members;

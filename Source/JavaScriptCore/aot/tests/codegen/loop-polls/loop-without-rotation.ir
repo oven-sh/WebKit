@@ -1,9 +1,15 @@
 # Without rotation the test stays at the head of each of the two loops, and so does its poll
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
-# RUN: generate-code
+# A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# RUN(ARM64): generate-code calls
+# REQUIRES(ARM64): arm64
 # STATISTIC: LoopsRotated = 0
-# CHECK: f1: size={{*}} polls=2
+# X64: f1: size={{*}} polls=2
+# ARM64-LABEL: f1: size=
+# ARM64: operation operationAOTPollSlow x2
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -22,9 +22,11 @@
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
+#include "AOTSort.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStubsAllocation.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "CCallHelpers.h"
@@ -545,7 +547,7 @@ Vector<AllocationEmitter::WordOfEmptyObject, 8> AllocationEmitter::wordsOfEmptyO
         if (!isZeroWhileEmpty(slot.representation))
             words.append({ slot.offset, slot.representation });
     });
-    std::ranges::sort(words, { }, &WordOfEmptyObject::offset);
+    AOT::sort(words, { }, &WordOfEmptyObject::offset);
     return words;
 }
 

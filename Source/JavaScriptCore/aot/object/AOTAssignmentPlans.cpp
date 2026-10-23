@@ -14,7 +14,9 @@
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <algorithm>
 #include <atomic>
@@ -178,7 +180,7 @@ void AssignmentPlanCache::dumpCopies(PrintStream& out) const
         Vector<std::tuple<uint32_t, String, uint64_t, uint64_t>> lines;
         for (auto& [kind, count] : counts)
             lines.append({ count.copies, kind, count.names, count.instructions });
-        std::ranges::sort(lines, [](const auto& a, const auto& b) {
+        AOT::sort(lines, [](const auto& a, const auto& b) {
             return std::get<0>(a) != std::get<0>(b) ? std::get<0>(a) > std::get<0>(b) : codePointCompareLessThan(std::get<1>(a), std::get<1>(b));
         });
         for (auto& [copies, kind, names, instructions] : lines.span().first(std::min(lines.size(), limit)))
@@ -194,7 +196,7 @@ void AssignmentPlanCache::dumpCopies(PrintStream& out) const
     Vector<std::tuple<uint64_t, String, uint32_t, uint64_t>> kindsByInstructions;
     for (auto& [kind, count] : m_copyCounts->byWayAndObjects)
         kindsByInstructions.append({ count.instructions, kind, count.copies, count.names });
-    std::ranges::sort(kindsByInstructions, [](const auto& a, const auto& b) {
+    AOT::sort(kindsByInstructions, [](const auto& a, const auto& b) {
         return std::get<0>(a) != std::get<0>(b) ? std::get<0>(a) > std::get<0>(b) : codePointCompareLessThan(std::get<1>(a), std::get<1>(b));
     });
     for (auto& [instructions, kind, copies, names] : kindsByInstructions.span().first(std::min<size_t>(kindsByInstructions.size(), 100)))

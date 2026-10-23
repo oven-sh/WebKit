@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
 #include <wtf/PrintStream.h>
@@ -127,6 +129,7 @@ void ObjectState::becomeCell()
     fieldsValidInCell.clearAll();
     cellJoinedAt = { };
     lacksFieldsOnSomeWay = false;
+    isMissingOnSomeWay = false;
 }
 
 void ObjectState::normalize()
@@ -195,7 +198,7 @@ void SinkingState::set(std::span<ObjectEntry> movedEntries)
     if (addedEntries.isEmpty())
         return;
 
-    std::ranges::sort(addedEntries, { }, &ObjectEntry::object);
+    AOT::sort(addedEntries, { }, &ObjectEntry::object);
     size_t source = objects.size();
     size_t destination = source + addedEntries.size();
     objects.grow(destination);

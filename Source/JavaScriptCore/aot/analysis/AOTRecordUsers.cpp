@@ -14,7 +14,9 @@
 #include "AOTIR.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <atomic>
 #include <numeric>
 #include <wtf/Atomics.h>
@@ -179,7 +181,7 @@ void RecordUsers::add(std::span<const FieldReference> fields)
         m_isKeyOfMarkedField[key.index()] = 1;
         m_layouts.add(reference.layout.index(), isReadFromOperands[key.index()] ? bitOf(key) | seenByCodeOfOperands : bitOf(key));
     }
-    std::ranges::sort(m_fieldsOfEnvironments);
+    AOT::sort(m_fieldsOfEnvironments);
 }
 
 Mark RecordUsers::markAt(Node node) const
@@ -606,7 +608,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
     functions.appendVector(users.findFunctionsWhere([&](unsigned index) {
         return followsFields(index) && users.namesMarkedRecord(FunctionID(index));
     }));
-    std::ranges::sort(functions);
+    AOT::sort(functions);
     return functions;
 }
 

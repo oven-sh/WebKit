@@ -166,16 +166,20 @@ def main():
         units = translation_units(set(arguments.directories))
         with concurrent.futures.ThreadPoolExecutor(arguments.jobs) as pool:
             found = [collision for collisions in pool.map(check, units.items()) for collision in collisions]
-        colliding = {source for source, _ in found if source}
-        print(f"{len(units)} translation units checked, {len(colliding)} sources collide", flush=True)
+        colliding = sorted({source for source, _ in found if source})
+        with concurrent.futures.ThreadPoolExecutor(arguments.jobs) as pool:
+            broken = {source for source, errors in zip(colliding, pool.map(check, ((f"alone-{i}", [source]) for i, source in enumerate(colliding)))) if errors}
+        colliding = set(colliding) - broken
+        print(f"{len(units)} translation units checked, {len(colliding)} sources collide, {len(broken)} do not compile on their own", flush=True)
         for message in sorted({message for _, message in found}):
             print("  " + message)
         if not found:
             return 0
+        for source in sorted(broken):
+            print(f"does not compile on its own: {source}")
         if not arguments.write or not colliding:
-            print("--write would move these in aot/AOT.cmake:")
             for source in sorted(colliding):
-                print("    " + source)
+                print(f"--write would move in aot/AOT.cmake: {source}")
             return 1
         write_lists(updated_lists(colliding))
 

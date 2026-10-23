@@ -22,6 +22,7 @@
 #include "AOTProgramCaches.h"
 #include "AOTLargeVectors.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <functional>

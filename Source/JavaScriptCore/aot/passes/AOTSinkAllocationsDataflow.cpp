@@ -10,6 +10,8 @@
 
 #include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 
@@ -315,7 +317,7 @@ bool AllocationSinking::startOverWithFewerCandidates()
     }
     if (mostFrequentFirst.size() < 2)
         return false;
-    std::ranges::stable_sort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t index) {
+    AOT::stableSort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t index) {
         return frequencies.frequencyOf(m_candidates[index].block);
     });
 
@@ -470,7 +472,7 @@ void AllocationSinking::tagVariants(BlockID block, VirtualObjectID object, Objec
             return;
         }
     }
-    std::ranges::sort(state.variants);
+    AOT::sort(state.variants);
     removeRepeatedElements(state.variants);
 }
 
@@ -546,16 +548,26 @@ bool SinkingProblem::mergeObjects(State& into, const State& from)
 {
     bool changed = false;
     size_t index = 0;
+    auto isMissingInSource = [&](ObjectState& target) {
+        if (!target.isCell())
+            changed |= !std::exchange(target.isMissingOnSomeWay, true);
+    };
     for (const ObjectEntry& source : from.objects) {
-        while (index < into.objects.size() && into.objects[index].object < source.object)
-            ++index;
+        for (; index < into.objects.size() && into.objects[index].object < source.object; ++index)
+            isMissingInSource(into.objects[index].state);
         if (index < into.objects.size() && into.objects[index].object == source.object) {
             changed |= mergeObject(into, source.object, into.objects[index].state, source.state);
+            ++index;
             continue;
         }
         into.objects.insert(index, source);
+        if (!source.state.isCell())
+            into.objects[index].state.isMissingOnSomeWay = true;
+        ++index;
         changed = true;
     }
+    for (; index < into.objects.size(); ++index)
+        isMissingInSource(into.objects[index].state);
     return changed;
 }
 
@@ -568,6 +580,7 @@ bool SinkingProblem::mergeObject(State& into, VirtualObjectID object, ObjectStat
     ObjectState before = target;
     target.keepAssumedTypesOf(source);
     target.lacksFieldsOnSomeWay |= source.lacksFieldsOnSomeWay;
+    target.isMissingOnSomeWay |= source.isMissingOnSomeWay;
     if (into.isAtHead && willSolveAgainWithCell(m_sinking, into.block, object)) {
         target.becomeCell();
         return target != before;
@@ -634,7 +647,7 @@ bool SinkingProblem::mergeHeldObjects(VirtualObjectID object, ObjectState& targe
         if (!target.objectHeldIn(entry.field))
             fields.append(entry.field);
     }
-    std::ranges::sort(fields);
+    AOT::sort(fields);
 
     bool changed = false;
     for (uint32_t field : fields) {

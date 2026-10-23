@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeCounters.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <wtf/FastMalloc.h>
 

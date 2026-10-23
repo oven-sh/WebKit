@@ -7,8 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "JSExportMacros.h"
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

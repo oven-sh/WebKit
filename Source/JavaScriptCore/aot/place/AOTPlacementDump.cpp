@@ -11,6 +11,7 @@
 #include "AOTIRPrinter.h"
 #include "AOTPlacementTestCommands.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <cinttypes>
 #include <wtf/BitVector.h>

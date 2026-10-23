@@ -18,6 +18,8 @@
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <ranges>
@@ -445,7 +447,7 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
         LayoutID layout = layouts.span()[index];
         return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module)), heat.allocationsOf(layout) }, layout };
     });
-    std::ranges::stable_sort(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
+    AOT::stableSort(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
 
     Vector<LayoutID, 16> kept;
     Vector<LayoutList, 8> declarersOfNames(names.size());
@@ -969,7 +971,7 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     Vector<ValueID> subjects = findSubjects(context);
     for (NamedUse& use : uses)
         use.subject = subjects[use.receiver.index()];
-    std::ranges::stable_sort(uses, { }, &NamedUse::subject);
+    AOT::stableSort(uses, { }, &NamedUse::subject);
     findUsesOnEveryPath(context, uses.mutableSpan());
 
     Vector<ExpectedValue> expectedValues;

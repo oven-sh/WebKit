@@ -23,7 +23,9 @@
 #include "AOTResultRules.h"
 #include "AOTSchemaOperationColumns.h"
 #include "AOTSchemaValueEffects.h"
+#include "AOTSort.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -88,7 +90,7 @@ struct ReadCollector {
             // A test that reads nothing else depends on its bookkeeping reads, so its proof ends where those are written.
             locations = WTF::move(bookkeepingLocations);
         }
-        std::ranges::sort(locations);
+        AOT::sort(locations);
         return WTF::move(locations);
     }
 
@@ -1001,7 +1003,7 @@ Vector<LayoutID, 4> layoutsProvenBy(const Program& program, const Function& func
             layouts.append(layoutsTestedBy(program, function, origin));
     }
     if (fact.origins.size() > 1) {
-        std::ranges::sort(layouts);
+        AOT::sort(layouts);
         removeRepeatedElements(layouts);
     }
     return layouts;

@@ -9,11 +9,11 @@
 
 #include "AOTCFG.h"
 #include "AOTKnownValue.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <tuple>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

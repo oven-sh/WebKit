@@ -14,8 +14,8 @@
 #include "AOTStubDescriptor.h"
 #include "AOTStubFrontEnds.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include <algorithm>
-#include <wtf/Vector.h>
 
 #if OS(UNIX)
 #include <errno.h>

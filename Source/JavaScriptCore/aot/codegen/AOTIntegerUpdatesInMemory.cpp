@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"
 #include "B3DominatingConditions.h"
@@ -22,7 +23,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/SharedTask.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

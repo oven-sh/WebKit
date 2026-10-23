@@ -11,12 +11,12 @@
 #include "AOTJSONSource.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include <algorithm>
 #include <span>
 #include <string>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/Latin1Character.h>
 #include <wtf/text/StringView.h>

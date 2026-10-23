@@ -10,6 +10,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTEffects.h"
 #include "AOTStubDescriptor.h"
+#include "AOTVector.h"
 #include "CPUFeatureSet.h"
 #include "RegisterSet.h"
 #include <array>
@@ -17,7 +18,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

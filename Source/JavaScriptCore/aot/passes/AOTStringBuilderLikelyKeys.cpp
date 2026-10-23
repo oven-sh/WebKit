@@ -13,6 +13,7 @@
 #include "AOTPass.h"
 #include "AOTSchemaInlineBuiltins.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {

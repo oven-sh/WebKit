@@ -11,6 +11,7 @@
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramTables.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "PropertyRun.h"
 

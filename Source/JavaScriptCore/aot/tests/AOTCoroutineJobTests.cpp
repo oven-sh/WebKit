@@ -13,6 +13,7 @@
 #include "AOTRelocation.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsCoroutines.h"
+#include "AOTVector.h"
 #include "AsyncContextSwapScope.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
@@ -32,7 +33,6 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

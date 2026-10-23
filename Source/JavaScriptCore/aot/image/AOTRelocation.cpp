@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTImageFormat.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>

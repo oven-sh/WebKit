@@ -12,6 +12,8 @@
 #include "AOTLoopEntry.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -165,7 +167,7 @@ static Vector<LoopBounds> findLoopBounds(SelectionContext& context)
 
     const Function& function = context.function();
     const CFG& cfg = context.analyses().cfg();
-    std::ranges::sort(candidates, { }, [&](const LoopComparison& candidate) {
+    AOT::sort(candidates, { }, [&](const LoopComparison& candidate) {
         return std::tuple { cfg.reversePostOrderIndex(candidate.header), cfg.reversePostOrderIndex(candidate.point.block), candidate.point.index };
     });
 

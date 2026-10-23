@@ -12,6 +12,8 @@
 #include "AOTFlowUnseenCode.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTRelationalSummaries.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/TZoneMallocInlines.h>
@@ -106,7 +108,7 @@ static Vector<AllocationClassID> sortClosureClassesByFunction(const Vector<Alloc
         if (classes[index].closureFunction)
             closureClasses.append(AllocationClassID(index));
     }
-    std::ranges::stable_sort(closureClasses, { }, [&](AllocationClassID id) {
+    AOT::stableSort(closureClasses, { }, [&](AllocationClassID id) {
         return classes[id.index()].closureFunction;
     });
     return closureClasses;

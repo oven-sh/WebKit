@@ -16,6 +16,7 @@
 #include "AOTRegExpCompiler.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubsOperations.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <cstring>

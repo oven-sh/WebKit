@@ -14,7 +14,9 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTForwardDataflow.h"
 #include "AOTGuardFactDetails.h"
+#include "AOTSort.h"
 #include "AOTTypeRelations.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <utility>
@@ -537,7 +539,7 @@ void GuardAvailability::leaveOutGuardsInRarerBlocks()
     Vector<uint32_t> mostFrequentFirst(m_guards.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::stable_sort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t guardIndex) {
+    AOT::stableSort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t guardIndex) {
         BlockID block = useLists.blockOf(m_guards[guardIndex]);
         return block ? frequencies.frequencyOf(block) : 0;
     });
@@ -619,7 +621,7 @@ void GuardAvailability::numberComponents()
     m_killClassesBySubject.reserveInitialCapacity(m_killClasses.size());
     for (uint32_t killClass = 0; killClass < m_killClasses.size(); ++killClass)
         m_killClassesBySubject.append(killClass);
-    std::ranges::sort(m_killClassesBySubject, { }, [&](uint32_t killClass) {
+    AOT::sort(m_killClassesBySubject, { }, [&](uint32_t killClass) {
         return std::pair { m_killClasses[killClass].subject, killClass };
     });
 }

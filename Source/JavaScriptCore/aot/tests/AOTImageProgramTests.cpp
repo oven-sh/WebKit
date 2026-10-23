@@ -18,6 +18,7 @@
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpRequests.h"
 #include "AOTStringArena.h"
+#include "AOTVector.h"
 #include "AOTWasmModules.h"
 #include "ErrorInstance.h"
 #include "GlobalObjectMethodTable.h"

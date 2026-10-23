@@ -9,6 +9,7 @@
 
 #include "AOTDiagnostics.h"
 #include "AOTImageForward.h"
+#include "AOTVector.h"
 #include "YarrFlags.h"
 #include <compare>
 #include <span>
@@ -16,7 +17,6 @@
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

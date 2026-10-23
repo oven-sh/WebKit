@@ -10,6 +10,8 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTCheckTypesAtEntry.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include "AOTVerifierInternal.h"
 #include <algorithm>
 #include <wtf/StdLibExtras.h>
@@ -360,7 +362,7 @@ Vector<Failure> Reader::readFunctions()
             bodies.functionsThatNameObjectCreate.appendVector(seen.functionsThatNameObjectCreate);
             bodies.functionsCalledDirectly.merge(seen.functionsCalledDirectly);
         }
-        std::ranges::sort(bodies.functionsThatNameObjectCreate);
+        AOT::sort(bodies.functionsThatNameObjectCreate);
         m_program.setBodiesAsRead(WTF::move(bodies));
     }
     return failures;
@@ -387,7 +389,7 @@ static void readRecordWithIDsOfUnit(RecordChecker& checker, const Wire::Function
     auto orderOf = [](const StoredInto& store) {
         return std::tuple { store.source, store.target, store.key ? store.key.index() + 1 : 0, store.creationOperand ? static_cast<uint64_t>(*store.creationOperand) + 1 : 0 };
     };
-    std::ranges::sort(record.relations.stores, std::less { }, orderOf);
+    AOT::sort(record.relations.stores, std::less { }, orderOf);
 }
 
 Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& seen) const

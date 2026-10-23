@@ -23,6 +23,7 @@
 #include "AOTStubsPolls.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTStubsValues.h"
+#include "AOTVector.h"
 #include "CPU.h"
 #include <algorithm>
 #include <initializer_list>
@@ -552,7 +553,7 @@ static AssembledCalls assembleCalls(const StubCatalog& catalog, const Emit& emit
     RelocationRecorder relocations(jit, AssemblerPolicy::forImage(catalog.options().targetFeatures));
     CodeUnitRecorder units;
     StubCalls calls(catalog, relocations, units);
-    Vector<CCallHelpers::Label> labels;
+    WTF::Vector<CCallHelpers::Label> labels;
     emit(jit, calls, [&] { labels.append(jit.label()); });
 
     ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);

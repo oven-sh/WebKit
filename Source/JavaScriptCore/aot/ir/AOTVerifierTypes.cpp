@@ -17,6 +17,7 @@
 #include "AOTThreads.h"
 #include "AOTTypeClosure.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

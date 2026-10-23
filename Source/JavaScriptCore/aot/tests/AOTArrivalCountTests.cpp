@@ -12,6 +12,7 @@
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <wtf/StringPrintStream.h>
 

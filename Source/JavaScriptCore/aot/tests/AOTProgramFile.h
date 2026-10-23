@@ -9,11 +9,11 @@
 
 #include "AOTBuildContext.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <memory>
 #include <optional>
 #include <span>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT { namespace Typed {

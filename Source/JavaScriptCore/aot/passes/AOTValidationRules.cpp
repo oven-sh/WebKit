@@ -12,6 +12,7 @@
 #include "AOTRegExpSummary.h"
 #include "AOTStringArena.h"
 #include "AOTValidationPlanText.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

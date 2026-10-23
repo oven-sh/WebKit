@@ -17,7 +17,9 @@
 #include "AOTObjectModel.h"
 #include "AOTPendingStars.h"
 #include "AOTProgramStatics.h"
+#include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCellButterfly.h"
 #include "Error.h"
 #include "ExceptionHelpers.h"
@@ -449,7 +451,7 @@ void Modules::captureExports(ModuleID module)
     if (hasCapturedFields)
         RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 
-    Vector<Identifier, 4> names;
+    WTF::Vector<Identifier, 4> names;
     MarkedArgumentBuffer values;
     KeyListingThatShowsNoOrder listing(value.getObject());
     auto* captureNativeModuleExports = host().captureNativeModuleExports;
@@ -732,7 +734,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         }
     }
 
-    std::sort(result.begin(), result.end(), [](const DynamicExport& a, const DynamicExport& b) {
+    AOT::sort(result, [](const DynamicExport& a, const DynamicExport& b) {
         return codePointCompare(StringView(*a.name.impl()), StringView(*b.name.impl())) < 0;
     });
     return result;

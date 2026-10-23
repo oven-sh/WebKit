@@ -20,6 +20,7 @@
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"

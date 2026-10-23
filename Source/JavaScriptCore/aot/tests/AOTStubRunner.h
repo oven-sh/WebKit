@@ -16,6 +16,7 @@
 #include "AOTInstanceLayout.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrame.h"
 #include "JSCJSValueInlines.h"

@@ -11,6 +11,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTRuleSupport.h"
 #include "AOTSplitUnions.h"
+#include "AOTVector.h"
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {

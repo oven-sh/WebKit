@@ -13,8 +13,10 @@
 #include "AOTCFG.h"
 #include "AOTFlowResults.h"
 #include "AOTRelationalSummariesInternal.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/DataLog.h>
 #include <wtf/HashMap.h>
@@ -129,7 +131,7 @@ std::optional<Record> recordOf(const Function& function)
         record.handed.append(Handing { handed.source, ValueID(handed.call), handed.argument });
     }
     // The rows of one call stand together, in the order in which they were listed.
-    std::ranges::stable_sort(record.handed, { }, [](const Handing& handing) {
+    AOT::stableSort(record.handed, { }, [](const Handing& handing) {
         return handing.call.index();
     });
     return record;
@@ -207,7 +209,7 @@ public:
             if (record.subjects[index].kind == SubjectKind::Allocation || record.subjects[index].kind == SubjectKind::CallResult)
                 m_subjectsOfValues.append({ record.subjects[index].index, index });
         }
-        std::ranges::sort(m_subjectsOfValues);
+        AOT::sort(m_subjectsOfValues);
         m_closuresCapturedBy.grow(record.subjects.size());
         m_hasTooManyRows = hadTooManyRows;
         m_rowStates.grow(record.handed.size());
@@ -1191,7 +1193,7 @@ std::unique_ptr<RelationalSummaries> linkRelationalSummaries(const Program& prog
             if (made.opcode == Opcode::NewClosure && made.function() && made.function().index() < numberOfFunctions)
                 found.append(made.function().index());
         }
-        std::ranges::sort(found);
+        AOT::sort(found);
         found.shrink(std::ranges::unique(found).begin() - found.begin());
         return found;
     };
@@ -1326,7 +1328,7 @@ std::unique_ptr<RelationalSummaries> linkRelationalSummaries(const Program& prog
                 if (auto callers = callersInCycle.find(toVisit[position]); callers != callersInCycle.end())
                     next.appendVector(callers->value);
             }
-            std::ranges::sort(next);
+            AOT::sort(next);
             next.shrink(std::ranges::unique(next).begin() - next.begin());
             toVisit = WTF::move(next);
         }

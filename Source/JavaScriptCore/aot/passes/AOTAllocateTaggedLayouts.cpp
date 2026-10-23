@@ -13,10 +13,12 @@
 #include "AOTIRBuilder.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
+#include "AOTSort.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
@@ -229,8 +231,8 @@ static void emitSwitchOnTag(IRBuilder& builder, const TaggedFamily& family, Valu
                 });
         }
     }
-    std::ranges::sort(integerCases, { }, &std::pair<int64_t, Target>::first);
-    std::ranges::sort(stringCases, { }, &std::pair<StringID, Target>::first);
+    AOT::sort(integerCases, { }, &std::pair<int64_t, Target>::first);
+    AOT::sort(stringCases, { }, &std::pair<StringID, Target>::first);
 
     if (integerCases.isEmpty()) {
         builder.moveToEndOf(start);

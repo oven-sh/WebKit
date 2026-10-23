@@ -10,6 +10,7 @@
 
 #include "AOTJSONHooks.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTVector.h"
 #include "JSONCache.h"
 #include "PropertyNameArray.h"
 #include <wtf/Noncopyable.h>

@@ -10,12 +10,12 @@
 
 #include "AOTEmptyPages.h"
 #include "AOTSiteCaches.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <array>
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
-#include <wtf/Vector.h>
 
 #if OS(LINUX)
 #include <sys/mman.h>

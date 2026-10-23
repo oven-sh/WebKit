@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImageTestBodies.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <cstring>

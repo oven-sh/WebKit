@@ -20,6 +20,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <bit>
 #include <numeric>
 #include <utility>

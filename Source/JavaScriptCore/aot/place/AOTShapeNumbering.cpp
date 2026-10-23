@@ -10,7 +10,9 @@
 
 #include "AOTBuildContext.h"
 #include "AOTPQTree.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -121,7 +123,7 @@ private:
             if (m_context.isCompiledObject(LayoutID(i)) && !m_leafOfLayout[i])
                 m_layoutsTestedAlone.append(i);
         }
-        std::ranges::stable_sort(m_layoutsTestedAlone, [&](uint32_t a, uint32_t b) {
+        AOT::stableSort(m_layoutsTestedAlone, [&](uint32_t a, uint32_t b) {
             return m_candidates.singleLayoutTestWeight[a] > m_candidates.singleLayoutTestWeight[b];
         });
     }
@@ -180,7 +182,7 @@ private:
             groups.append(Group { static_cast<uint32_t>(frontier.size()), 1, m_candidates.singleLayoutTestWeight[layout] });
             frontier.append(layout);
         }
-        std::ranges::stable_sort(groups, [](const Group& a, const Group& b) {
+        AOT::stableSort(groups, [](const Group& a, const Group& b) {
             return static_cast<UInt128>(a.weight) * static_cast<UInt128>(b.count) > static_cast<UInt128>(b.weight) * static_cast<UInt128>(a.count);
         });
         m_groupOf.fill(0, m_numberOfLayouts);
@@ -277,7 +279,7 @@ private:
                 for (uint32_t shape = first; shape < first + numberOfShapesOf(layout); ++shape)
                     shapes.append(shape);
             }
-            std::ranges::sort(shapes);
+            AOT::sort(shapes);
             estimatedInstructions = saturatedSum(estimatedInstructions, saturatedProduct(weight, instructionsFor(chooseShapeTestForm(shapes.span(), assigned))));
         };
         for (uint32_t index : m_candidates.listsByWeight) {

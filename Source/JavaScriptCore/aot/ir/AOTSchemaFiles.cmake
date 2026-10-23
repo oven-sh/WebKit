@@ -1,0 +1,92 @@
+# What aot/ir/generator/index.ts reads and writes. Both builds of the engine read these lists before anything is generated,
+# so people keep them. The generator compares them with what it reads and writes, and names each difference.
+
+set(JavaScriptCore_AOT_SCHEMA_INPUTS
+    aot/ir/AOTSchema.def
+    aot/ir/schema/types.def
+    aot/ir/schema/program-records.def
+    aot/ir/schema/flow-records.def
+    aot/ir/schema/function-records.def
+    aot/ir/schema/natural-types.def
+    aot/ir/schema/operations.def
+    aot/ir/schema/language-operations.def
+    aot/ir/schema/intrinsic-operations.def
+    aot/ir/schema/prepared-operations.def
+    aot/ir/schema/typed-data-operations.def
+    aot/ir/schema/selected-operations.def
+    aot/ir/schema/placed-operations.def
+    aot/ir/schema/inline-builtins.def
+    aot/ir/schema/runtime-records.def
+    aot/ir/schema/runtime-operations.def
+    aot/ir/schema/runtime-property-operations.def
+    aot/ir/schema/runtime-builtin-operations.def
+    aot/ir/schema/limits.def
+    aot/ir/schema/passes.def
+    aot/ir/schema/statistics.def
+    aot/ir/schema/diagnostics.def
+    aot/ir/schema/compile-call.def
+)
+
+set(JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaDeclaredEnums.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEffects.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryEffects.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryEnums.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryMacros.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEnums.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaFlagMasks.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaIDs.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaInlineBuiltinDispatch.inc"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaInlineBuiltinEffects.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaInlineBuiltins.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperandIndexes.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperandPositions.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperationColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperationDispatch.inc"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperations.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaParser.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPayloadPositions.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPayloadWords.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPrinter.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaReader.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecords.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaResultRules.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaResultRulesInlines.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeOperationEffects.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeOperations.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaTerminatorAccessors.inc"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaTerminatorDispatch.inc"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaTypeRecords.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaValueAccessors.inc"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaValueEffects.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaValueOperandAccessors.inc"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaVariadicOperandPositions.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaVerifier.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaWalkers.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaWalkersInlines.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWire.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireDiagnosticColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireEnumColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireEnums.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireLimitColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireRecords.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireSections.h"
+)
+
+set(JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaBodyDecoder.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryParser.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryPrinter.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEnumNames.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaInlineBuiltins.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperations.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordParser.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordPrinter.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordReader.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecords.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaResultRules.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeOperations.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaVerifier.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWire.cpp"
+)

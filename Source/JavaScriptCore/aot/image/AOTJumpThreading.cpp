@@ -12,7 +12,9 @@
 #include "AOTCallSiteTable.h"
 #include "AOTCodeIndex.h"
 #include "AOTCodeTemplates.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -341,7 +343,7 @@ static uint32_t endInJumpToNextBody(CompiledCode& code, FunctionID next)
         if (!MacroAssembler::setRelocationDistance(site.kind, bytes.mutableSpan().subspan(site.offset, size), static_cast<int64_t>(site.target) - static_cast<int64_t>(site.offset)))
             return 0;
     }
-    std::ranges::sort(localSites, { }, &LinkedSite::offset);
+    AOT::sort(localSites, { }, &LinkedSite::offset);
 
     body.bytes = WTF::move(bytes);
     body.paddingStart = safeCast<uint32_t>(body.bytes.size());

@@ -9,11 +9,11 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTRecordTypes.h"
+#include "AOTVector.h"
 #include "IndexingType.h"
 #include "JSCJSValue.h"
 #include "JSType.h"
 #include <wtf/RefPtr.h>
-#include <wtf/Vector.h>
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>
 

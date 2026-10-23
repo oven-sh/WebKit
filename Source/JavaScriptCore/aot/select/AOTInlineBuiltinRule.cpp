@@ -10,6 +10,7 @@
 
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -13,13 +13,13 @@
 #include "AOTResultRules.h"
 #include "AOTSelectionGroup.h"
 #include "AOTSelectionRules.h"
+#include "AOTVector.h"
 #include <array>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

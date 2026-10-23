@@ -18,8 +18,10 @@
 #include "AOTFlowUnseenCode.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
@@ -294,7 +296,7 @@ static void appendFlaggedSites(const Function& function, Vector<std::pair<BlockI
             return dominators.dominates(block, end);
         });
     };
-    std::ranges::stable_sort(flagged, { }, [&](const std::pair<BlockID, Site>& entry) {
+    AOT::stableSort(flagged, { }, [&](const std::pair<BlockID, Site>& entry) {
         return cfg.isReachable(entry.first) ? cfg.reversePostOrderIndex(entry.first) : UINT32_MAX;
     });
     for (auto& [block, site] : flagged) {
@@ -727,7 +729,7 @@ static void replaceSites(const EvaluationPlan& plan, const FlowResults& flow, co
         const Vector<BareSite>& sites = plan.bareSites[evaluated.index()];
         for (uint32_t index = 0; index < sites.size(); ++index)
             bareSites.append({ sites[index].value, index });
-        std::ranges::sort(bareSites);
+        AOT::sort(bareSites);
     }
     auto calleesAtBareSite = [&](ValueID id) -> const Callees* {
         auto found = std::ranges::lower_bound(bareSites, id, { }, &std::pair<ValueID, uint32_t>::first);

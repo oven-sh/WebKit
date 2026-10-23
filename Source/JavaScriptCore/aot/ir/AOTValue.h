@@ -13,6 +13,7 @@
 #include "AOTOpcode.h"
 #include "AOTSchemaRecords.h"
 #include "AOTSchemaSupport.h"
+#include "AOTVector.h"
 #include "IterationKind.h"
 #include "TypedArrayType.h"
 #include <algorithm>
@@ -24,7 +25,6 @@
 #include <wtf/Hasher.h>
 #include <wtf/OptionSet.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

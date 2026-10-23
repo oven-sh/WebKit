@@ -14,8 +14,8 @@
 #include "AOTSplitUnions.h"
 #include "AOTStringArena.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

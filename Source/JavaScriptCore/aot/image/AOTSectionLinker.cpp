@@ -10,6 +10,7 @@
 
 #include "AOTLimits.h"
 #include "AOTUnitPlacement.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <iterator>
 #include <wtf/BitVector.h>

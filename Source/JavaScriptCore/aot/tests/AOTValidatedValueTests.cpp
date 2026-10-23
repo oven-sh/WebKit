@@ -18,6 +18,7 @@
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <array>
 #include <stdlib.h>
 #include <wtf/DataLog.h>

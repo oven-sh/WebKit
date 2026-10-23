@@ -14,12 +14,12 @@
 #include "AOTSupportTestCommands.h"
 #include "AOTTestCommand.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <optional>
 #include <type_traits>
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

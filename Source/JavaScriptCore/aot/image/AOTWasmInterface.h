@@ -14,7 +14,7 @@
 #include <optional>
 #include <utility>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC {
 
@@ -175,7 +175,7 @@ struct ModuleForImage {
     uint32_t functionsEnd { 0 };
     Vector<uint32_t> importStubs;
     Vector<JSEntrypointInImage> jsEntrypoints;
-    Vector<SavedRegistersInImage> savedRegisters;
+    WTF::Vector<SavedRegistersInImage> savedRegisters;
     Vector<std::pair<uint32_t, ImageDeclineReason>> interpretedFunctions;
 };
 

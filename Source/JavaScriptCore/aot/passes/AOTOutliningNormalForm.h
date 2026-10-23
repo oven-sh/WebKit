@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOutliningCandidates.h"
+#include "AOTVector.h"
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {

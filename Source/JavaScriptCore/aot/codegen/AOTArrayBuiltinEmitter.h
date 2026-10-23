@@ -11,10 +11,10 @@
 #include "AOTBuiltinFamilyEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTInlineCall.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

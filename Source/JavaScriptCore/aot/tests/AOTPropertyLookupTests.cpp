@@ -20,6 +20,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTSlowPaths.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"

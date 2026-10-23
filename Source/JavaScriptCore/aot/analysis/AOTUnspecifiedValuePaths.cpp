@@ -12,8 +12,9 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLiveness.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -306,7 +307,7 @@ void PathWalker::enter(BlockID target, Facts&& facts)
     facts.removeAllMatching([&](const Fact& fact) {
         return !fact.testedType && !block.parameters.contains(fact.value) && !liveness.isLiveAtHead(fact.value, target);
     });
-    std::ranges::sort(facts, [](const Fact& left, const Fact& right) {
+    AOT::sort(facts, [](const Fact& left, const Fact& right) {
         if (left.value != right.value)
             return left.value.index() < right.value.index();
         return (left.testedType ? left.testedType.index() + 1 : 0) < (right.testedType ? right.testedType.index() + 1 : 0);

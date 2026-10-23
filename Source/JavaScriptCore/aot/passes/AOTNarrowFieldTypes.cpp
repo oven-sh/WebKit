@@ -20,8 +20,10 @@
 #include "AOTProgramCaches.h"
 #include "AOTRepresentation.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include "AOTVisibleStores.h"
 #include <algorithm>
 #include <atomic>
@@ -29,7 +31,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -128,7 +129,7 @@ static Vector<Vector<StoredKinds>> collectConstantDataKinds(const Program& progr
     };
     constexpr size_t maxRepeatedEntries = 16384;
     auto removeRepeatedEntries = [](Vector<KindInField>& found) {
-        std::ranges::sort(found);
+        AOT::sort(found);
         removeRepeatedElements(found);
     };
     // What the threads find is united, so it does not matter which thread looks at which data.
@@ -301,10 +302,10 @@ bool BodyScanner::scan(FunctionID id, unsigned worker)
                 noteKept(operand, returned);
         });
     }
-    std::ranges::sort(kept);
+    AOT::sort(kept);
     removeRepeatedElements(kept);
     scan.layoutSetsKept.appendVector(kept);
-    std::ranges::sort(returned);
+    AOT::sort(returned);
     removeRepeatedElements(returned);
     for (LayoutSetID set : returned)
         scan.layoutSetsReturned.append({ id, set });
@@ -321,7 +322,7 @@ template<typename IDType>
 static Vector<IDType> uniteLists(const ParallelLoops& loops, Vector<BodyScan>& scans, Vector<IDType> BodyScan::* list)
 {
     forEachIndexInParallel(loops, scans.size(), [&](unsigned worker) {
-        std::ranges::sort(scans[worker].*list);
+        AOT::sort(scans[worker].*list);
         removeRepeatedElements(scans[worker].*list);
     });
     Vector<IDType> united;

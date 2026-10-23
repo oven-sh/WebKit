@@ -11,12 +11,12 @@
 #include "AOTCompiledCode.h"
 #include "AOTImageBuilder.h"
 #include "AOTRelocation.h"
+#include "AOTVector.h"
 #include "AOTWasmInterface.h"
 #include <array>
 #include <expected>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
@@ -59,7 +59,7 @@ struct WasmModuleCode {
     Vector<Vector<uint8_t>> importStubs;
     Vector<WasmJSEntrypointCode> jsEntrypoints;
     Vector<WasmFunctionCode> functions;
-    Vector<Wasm::SavedRegistersInImage> savedRegisters;
+    WTF::Vector<Wasm::SavedRegistersInImage> savedRegisters;
 };
 
 JS_EXPORT_PRIVATE std::expected<Wasm::ModuleForImage, Wasm::ImageDeclineReason> linkWasmModule(WasmModuleCode&&, const CodeTemplates&, BuildContext&);

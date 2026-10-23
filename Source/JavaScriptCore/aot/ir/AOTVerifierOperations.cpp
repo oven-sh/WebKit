@@ -16,8 +16,10 @@
 #include "AOTLimits.h"
 #include "AOTRawWordCheck.h"
 #include "AOTRegExpFlags.h"
+#include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "JSGlobalObjectFunctions.h"
 #include <algorithm>
 #include <cmath>
@@ -391,7 +393,7 @@ void FunctionVerifier::verifyMethodIndexes()
     auto classAndIndexOf = [](const MethodDefinitionSite& site) {
         return std::pair { site.classObject, site.index };
     };
-    std::ranges::sort(m_methodDefinitions, { }, classAndIndexOf);
+    AOT::sort(m_methodDefinitions, { }, classAndIndexOf);
     auto repeated = std::ranges::adjacent_find(m_methodDefinitions, { }, classAndIndexOf);
     if (repeated != m_methodDefinitions.end())
         fail(InternalErrorKind::PayloadOutOfRange, repeated->block, repeated->value, repeated->index);

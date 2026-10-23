@@ -13,6 +13,7 @@
 #include "AOTExceptionEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStaticsEmitter.h"
+#include "AOTVector.h"
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {

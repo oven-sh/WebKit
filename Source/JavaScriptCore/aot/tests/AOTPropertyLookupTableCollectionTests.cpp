@@ -9,6 +9,7 @@
 
 #include "AOTCollectionTestSupport.h"
 #include "AOTPropertyLookupTableTestSupport.h"
+#include "AOTVector.h"
 #include <wtf/SetForScope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

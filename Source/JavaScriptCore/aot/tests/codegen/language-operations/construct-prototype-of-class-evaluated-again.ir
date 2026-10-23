@@ -9,7 +9,7 @@
 # CHECK-NOT: stub GetById
 # CHECK-LABEL: f3: size=
 # CHECK: operation operationAOTGetConstructPrototype x1
-# CHECK-NEXT: operation operationAOTSetConstructPrototype x1
+# CHECK: operation operationAOTSetConstructPrototype x1
 # CHECK: stub GetById
 # CHECK-LABEL: f4: size=
 

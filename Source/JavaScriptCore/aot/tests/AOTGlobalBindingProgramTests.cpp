@@ -15,6 +15,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

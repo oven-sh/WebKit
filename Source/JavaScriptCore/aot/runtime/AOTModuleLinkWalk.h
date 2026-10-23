@@ -8,12 +8,12 @@
 #if ENABLE(AOT)
 
 #include "AOTModules.h"
+#include "AOTVector.h"
 #include "ThrowScope.h"
 #include <span>
 #include <type_traits>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

@@ -12,6 +12,7 @@
 #include "AOTConversions.h"
 #include "AOTIRPrinter.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/StringPrintStream.h>
 

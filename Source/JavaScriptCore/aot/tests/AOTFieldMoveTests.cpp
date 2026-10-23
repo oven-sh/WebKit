@@ -25,6 +25,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "Options.h"
@@ -34,7 +35,6 @@
 #include <memory>
 #include <optional>
 #include <wtf/DataLog.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -393,7 +393,7 @@ static void checkPropertyOfOrdinaryObjectToEveryRepresentation(LoadedProgram& pr
     Fixture fixture(program);
     VM& vm = fixture.vm();
     JSObject* source = constructEmptyObject(program.realm());
-    Vector<Identifier> names;
+    WTF::Vector<Identifier> names;
     for (unsigned index = 0; index < 12; ++index) {
         names.append(Identifier::fromString(vm, makeString('p', index)));
         source->putDirect(vm, names.last(), jsNumber(index));

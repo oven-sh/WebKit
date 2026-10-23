@@ -16,6 +16,7 @@
 #include "AOTStringTable.h"
 #include "AOTTaggedLayouts.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include "LineColumn.h"
 #include <initializer_list>
 #include <memory>
@@ -26,7 +27,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

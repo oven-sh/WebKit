@@ -96,7 +96,8 @@ export default b.declarations(
           args: { ...keyedArguments, receiver: b.any },
           returns: b.any,
           throws: true,
-          uses: { target: [b.everything], receiver: [b.everything] },
+          // The getter that is found on the target runs with the receiver as `this`: it is called on what it does not hang above.
+          uses: { target: [b.everything, b.accessorReadByKey("Getter", key, b.nativeMemory)], receiver: [b.everything] },
           implementation: b.compiled("ReflectObject", "get"),
         },
       ],
@@ -175,7 +176,12 @@ export default b.declarations(
           args: { ...keyedArguments, value: b.any, receiver: b.any },
           returns: b.bool,
           throws: true,
-          uses: { target: [b.everything], value: [b.everything], receiver: [b.everything] },
+          // As in `get`: the setter that is found on the target runs with the receiver as `this`.
+          uses: {
+            target: [b.everything, b.accessorReadByKey("Setter", key, b.nativeMemory)],
+            value: [b.everything],
+            receiver: [b.everything],
+          },
           implementation: b.hostCall,
         },
       ],

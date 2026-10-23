@@ -19,6 +19,7 @@
 #include "AOTTestRunner.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestPlan.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

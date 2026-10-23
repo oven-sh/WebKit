@@ -13,9 +13,11 @@
 #include "AOTLayout.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/HashMap.h>
@@ -649,14 +651,14 @@ public:
                 continue;
             objects.append(ValueFlowUniverse::unknownObject());
             objects.append(ValueFlowUniverse::untrackedObject());
-            std::ranges::sort(objects);
+            AOT::sort(objects);
             objects.shrink(std::ranges::unique(objects).begin() - objects.begin());
             ValueSetID remaining = maker.intersect(maker.of(objects.span()), solver.valueOf(markNode));
             Vector<ValueFlowNodeID> predecessors;
             solver.graph().forEachPredecessor(markNode, [&](ValueFlowNodeID predecessor) {
                 predecessors.append(predecessor);
             });
-            std::ranges::sort(predecessors);
+            AOT::sort(predecessors);
             for (ValueFlowNodeID predecessor : predecessors) {
                 if (remaining == ValueSets::nothing)
                     break;

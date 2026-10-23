@@ -23,12 +23,14 @@
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
+#include "AOTSort.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
 #include "AOTTypeTestEmitter.h"
 #include "AOTTypeTestPlan.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "VM.h"
@@ -167,7 +169,7 @@ void RuntimeValidationEmitter::checkShapeBehindGuard(const OperationContext& con
     }
     if (shapes.isEmpty())
         return;
-    std::ranges::sort(shapes);
+    AOT::sort(shapes);
     CellPointer cell = in<CellPointer>(object);
     failUnless(hasShapeAmong(cell, { }, shapes.span()), ValidationFailureKind::GuardNoLongerHolds, cell, context.valueID());
 }

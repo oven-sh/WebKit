@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -46,7 +48,7 @@ static Vector<InitialWord> collectInitialWords(const TableEncoder& encoder)
         RELEASE_ASSERT(width == wordSize || !(placed.initialWord >> (bitsPerByte * width)));
         parts.append({ placed.offset / wordSize, placed.initialWord << (bitsPerByte * (placed.offset % wordSize)) });
     }
-    std::ranges::sort(parts, { }, &InitialWord::index);
+    AOT::sort(parts, { }, &InitialWord::index);
 
     Vector<InitialWord> initialWords;
     for (const InitialWord& part : parts) {
@@ -83,7 +85,7 @@ static void encodeFunctionVariables(TableEncoder& encoder)
             continue;
         functionVariables.append({ placed.offset, encoder.entrypointOf(placed.function) });
     }
-    std::ranges::sort(functionVariables, { }, &FunctionVariableData::offset);
+    AOT::sort(functionVariables, { }, &FunctionVariableData::offset);
     encoder.setTable(ProgramTableIndex::functionVariables, functionVariables);
 }
 
@@ -108,7 +110,7 @@ static Vector<uint32_t> collectNarrowRoots(const StaticsPlan& statics)
         if (placed.hasWordInStatics() && traitsOf(placed.representation).isNarrowReference)
             offsets.append(placed.offset);
     }
-    std::ranges::sort(offsets);
+    AOT::sort(offsets);
     return offsets;
 }
 

@@ -11,6 +11,7 @@
 #include "AOTProvisionalFunctions.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/Nonmovable.h>

@@ -11,6 +11,7 @@
 #include "AOTKnownValue.h"
 #include "AOTPass.h"
 #include "AOTStringRanges.h"
+#include "AOTVector.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {

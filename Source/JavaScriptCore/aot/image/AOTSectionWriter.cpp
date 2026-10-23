@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/MathExtras.h>

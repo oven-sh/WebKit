@@ -12,6 +12,7 @@
 #include "AOTJSONTextWriter.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStringBuilderCursor.h"
+#include "AOTVector.h"
 #include "DateInstance.h"
 #include <array>
 #include <cstring>

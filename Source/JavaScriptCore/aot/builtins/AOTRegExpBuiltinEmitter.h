@@ -9,7 +9,7 @@
 
 #include "AOTBuiltinFamilyEmitter.h"
 #include "AOTStringEmitter.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

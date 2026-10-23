@@ -23,6 +23,7 @@
 #include "AOTShapeTestEmitter.h"
 #include "AOTStubsValues.h"
 #include "AOTTypeRelations.h"
+#include "AOTVector.h"
 #include "JSTypeInfo.h"
 #include <utility>
 

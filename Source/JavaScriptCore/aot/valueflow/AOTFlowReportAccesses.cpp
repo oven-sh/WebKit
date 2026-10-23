@@ -18,8 +18,10 @@
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -122,7 +124,7 @@ void TestsMadeForAccesses::collectTests()
             });
         });
     }
-    std::ranges::stable_sort(m_tests, { }, [](const PassedTest& test) {
+    AOT::stableSort(m_tests, { }, [](const PassedTest& test) {
         return test.proof.index();
     });
 }
@@ -397,7 +399,7 @@ static void gradeSlowHalvesOfUnstampedOperations(const FlowResults& flow, const 
     }
     if (slowHalves.isEmpty())
         return;
-    std::ranges::sort(slowHalves, { }, [](const SlowHalf& half) {
+    AOT::sort(slowHalves, { }, [](const SlowHalf& half) {
         return orderKey(half.location);
     });
 

@@ -14,7 +14,9 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRPrinter.h"
 #include "AOTKnownClosures.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 
@@ -195,7 +197,7 @@ void dumpClosureObservers(PrintStream& out, const Program& program, const FlowRe
         if (!detail.site.isReadOfDeclaration)
             printDetail(out, printer, detail);
     }
-    std::ranges::sort(sites);
+    AOT::sort(sites);
     for (size_t first = 0; first < sites.size();) {
         size_t end = first;
         while (end < sites.size() && sites[end] == sites[first])

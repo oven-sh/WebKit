@@ -9,6 +9,7 @@
 
 #include "AOTChainDependents.h"
 #include "AOTLayoutData.h"
+#include "AOTVector.h"
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 #include <array>
 #include <memory>
@@ -19,7 +20,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

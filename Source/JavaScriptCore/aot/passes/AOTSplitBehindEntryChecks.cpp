@@ -18,9 +18,11 @@
 #include "AOTIRBuilder.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
@@ -345,7 +347,7 @@ static void keepWhereEveryKnownArrivalFits(const Program& program, const Paralle
             }
         });
     });
-    std::ranges::sort(misfits);
+    AOT::sort(misfits);
     for (Split& split : splits) {
         split.checkedEntryValues.removeAllMatching([&](const CheckedEntryValue& checked) {
             return std::ranges::binary_search(misfits, Misfit { split.id, checked.entryParameter });
@@ -516,7 +518,7 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         if (!checks.isEmpty() || !checkedEntryValues.isEmpty())
             found.append(Split { id, WTF::move(checks), WTF::move(checkedEntryValues) });
     });
-    std::ranges::sort(splits, { }, &Split::id);
+    AOT::sort(splits, { }, &Split::id);
     keepWhereEveryKnownArrivalFits(program, loops, splits);
     for (Split& split : splits)
         takeInChecksOfEntryValues(program.at(split.id), split);
@@ -787,7 +789,7 @@ void skipAnsweredEntryChecks(ProgramEditor& editor, const Heat& heat, BuildConte
     Vector<ShorterEntrance> keys = WTF::map(calls, [](const AnsweredCall& call) {
         return ShorterEntrance { call.entrance, call.answered };
     });
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     removeRepeatedElements(keys);
 
     unsigned count = static_cast<unsigned>(keys.size());

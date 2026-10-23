@@ -11,11 +11,11 @@
 #include "AOTOperationEmitter.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubDescriptor.h"
+#include "AOTVector.h"
 #include "B3ValueRep.h"
 #include "RegisterSet.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

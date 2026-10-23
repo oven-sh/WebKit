@@ -9,8 +9,8 @@
 
 #include "AOTDiagnostics.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <algorithm>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

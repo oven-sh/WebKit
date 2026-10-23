@@ -9,8 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowNamespaces.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -529,7 +530,7 @@ void FlowScopeOwnerAnalysis::recordOutsideReaders()
 
 void FlowScopeOwnerAnalysis::recordReadsOfStoredFunctions()
 {
-    std::ranges::sort(m_storedFunctions, { }, &StoredFunction::location);
+    AOT::sort(m_storedFunctions, { }, &StoredFunction::location);
     m_functionsTakenOut = m_storedFunctions;
     auto recordReader = [&](const FlowScopeLocationAccess& read, uint32_t first, uint32_t count) {
         FlowScopeFrame* frame = findFrame(read.function);
@@ -564,7 +565,7 @@ void FlowScopeOwnerAnalysis::recordReadsOfStoredFunctions()
         }
         first += count;
     }
-    std::ranges::stable_sort(runsOfExporters, { }, &Run::exporter);
+    AOT::stableSort(runsOfExporters, { }, &Run::exporter);
     for (size_t position = 0; position < runsOfExporters.size();) {
         ModuleID exporter = runsOfExporters[position].exporter;
         uint32_t first = m_functionsTakenOut.size();
@@ -574,7 +575,7 @@ void FlowScopeOwnerAnalysis::recordReadsOfStoredFunctions()
         for (const FlowModuleValueRead& read : valueReadsOf(m_index, exporter))
             recordReader(FlowScopeLocationAccess { m_functionsTakenOut[first].location, read.function, read.value }, first, count);
     }
-    std::ranges::sort(m_storedFunctionReaders, { }, [](const StoredFunctionReader& read) {
+    AOT::sort(m_storedFunctionReaders, { }, [](const StoredFunctionReader& read) {
         return std::tuple(read.reader, read.first);
     });
 }
@@ -613,7 +614,7 @@ void FlowScopeOwnerAnalysis::refineEntriesByCalls()
         m_queue.append(entry.key);
     }
     // First come, first served, and nobody waits twice.
-    std::ranges::sort(m_queue, std::greater { });
+    AOT::sort(m_queue, std::greater { });
     HashSet<FunctionID> waiting;
     for (FunctionID function : m_queue)
         waiting.add(function);
@@ -654,7 +655,7 @@ void FlowScopeOwnerAnalysis::computeEntries()
     recordReadsOfStoredFunctions();
     runFixpoint();
     refineEntriesByCalls();
-    std::ranges::sort(m_definitions);
+    AOT::sort(m_definitions);
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -14,7 +14,9 @@
 #include "AOTIR.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <tuple>
@@ -157,7 +159,7 @@ ArrivalSiteNumbers numberArrivalSites(const Program& program, BuildContext& buil
             if (!sites.inOrder[ordinal].part)
                 sites.firstOrdinalsByValue.append(ordinal);
         }
-        std::ranges::sort(sites.firstOrdinalsByValue, { }, [&](uint32_t ordinal) {
+        AOT::sort(sites.firstOrdinalsByValue, { }, [&](uint32_t ordinal) {
             return sites.inOrder[ordinal].value;
         });
     });
@@ -288,7 +290,7 @@ static Vector<FastArm> findFastArms(const Function& function)
         }
         addArmsOf(block.terminator, accessClassOf(block.terminator.kind), LayoutSetID());
     }
-    std::ranges::sort(arms, { }, [](const FastArm& arm) {
+    AOT::sort(arms, { }, [](const FastArm& arm) {
         return std::tuple { arm.site, arm.inlineFrame, arm.receivers };
     });
     return arms;

@@ -9,11 +9,11 @@
 
 #include "AOTIR.h"
 #include "AOTRepresentation.h"
+#include "AOTVector.h"
 #include "Reg.h"
 #include <algorithm>
 #include <span>
 #include <wtf/Forward.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

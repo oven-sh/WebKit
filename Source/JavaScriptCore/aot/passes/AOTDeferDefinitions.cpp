@@ -18,15 +18,16 @@
 #include "AOTIR.h"
 #include "AOTIRBuilder.h"
 #include "AOTKnownClosures.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <ranges>
 #include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -296,7 +297,7 @@ static NamedByRecords findWhatRecordsName(const Program& program)
                 named.environmentFields.append({ binding.layout, *binding.field });
         }
     }
-    std::ranges::sort(named.environmentFields);
+    AOT::sort(named.environmentFields);
     return named;
 }
 
@@ -501,7 +502,7 @@ void BodyScanner::scanClassDefinition(ValueID id)
     Vector<ValueID, 16> formerUsers;
     formerUsers.appendVector(deferral.removed);
     formerUsers.appendVector(deferral.storesThatEndDeadZone);
-    std::ranges::sort(formerUsers);
+    AOT::sort(formerUsers);
     Vector<ValueID, 2> unused;
     auto isLeftWithoutUse = [&](ValueID holder) {
         return std::ranges::all_of(useLists().usesOf(holder), [&](const Use& use) {
@@ -708,9 +709,9 @@ static void changeVariables(ProgramEditor& editor, Plan& plan)
             }
         }
     }
-    std::ranges::sort(plan.movedFields, { }, &MovedField::field);
-    std::ranges::sort(plan.splitVariables, { }, &SplitVariable::deadZone);
-    std::ranges::sort(plan.regExps, { }, &DeferredRegExp::variable);
+    AOT::sort(plan.movedFields, { }, &MovedField::field);
+    AOT::sort(plan.splitVariables, { }, &SplitVariable::deadZone);
+    AOT::sort(plan.regExps, { }, &DeferredRegExp::variable);
 }
 
 static Vector<FunctionID> findFunctionsToEdit(const Program& program, const ParallelLoops& loops, const Plan& plan)
@@ -737,7 +738,7 @@ static Vector<FunctionID> findFunctionsToEdit(const Program& program, const Para
     }
     for (const Deferral& deferral : plan.deferrals)
         functions.append(deferral.body);
-    std::ranges::sort(functions);
+    AOT::sort(functions);
     removeRepeatedElements(functions);
     return functions;
 }

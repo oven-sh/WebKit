@@ -11,9 +11,9 @@
 #include "AOTIR.h"
 #include "AOTResultRules.h"
 #include "AOTStringBuiltinOperationData.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

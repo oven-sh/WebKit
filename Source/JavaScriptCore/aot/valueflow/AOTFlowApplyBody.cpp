@@ -13,8 +13,8 @@
 #include "AOTIRBuilder.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <algorithm>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

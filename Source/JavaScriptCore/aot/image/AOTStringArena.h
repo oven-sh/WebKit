@@ -9,6 +9,7 @@
 
 #include "AOTStoragePool.h"
 #include "AOTStringTable.h"
+#include "AOTVector.h"
 #include <atomic>
 #include <optional>
 #include <span>
@@ -18,7 +19,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {

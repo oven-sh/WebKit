@@ -23,7 +23,9 @@
 #include "AOTLargeVectors.h"
 #include "AOTLiveness.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -227,7 +229,7 @@ static void findSites(const Program& program, const FrameAllocation& frameAlloca
     sites.removeAllMatching([&](const EnvironmentSite& site) {
         return !cfg.isReachable(site.block);
     });
-    std::ranges::sort(sites);
+    AOT::sort(sites);
     removeRepeatedElements(sites);
 }
 
@@ -424,10 +426,10 @@ void HolderClassifier::markAcrossSuspensions()
 
 void HolderClassifier::removeRepeatedEntries()
 {
-    std::ranges::sort(m_plan.disqualifiedLayouts);
+    AOT::sort(m_plan.disqualifiedLayouts);
     removeRepeatedElements(m_plan.disqualifiedLayouts);
 
-    std::ranges::sort(m_plan.marks, { }, [](const EscapeMark& mark) {
+    AOT::sort(m_plan.marks, { }, [](const EscapeMark& mark) {
         return std::tuple { mark.point.block, mark.environment, mark.point.index };
     });
     removeRepeatedElements(m_plan.marks, [](const EscapeMark& a, const EscapeMark& b) {
@@ -530,7 +532,7 @@ static void findSitesOfResults(const Program& program, const CandidateTypes& typ
     sites.removeAllMatching([&](const EnvironmentSite& site) {
         return !cfg.isReachable(site.block);
     });
-    std::ranges::sort(sites);
+    AOT::sort(sites);
     removeRepeatedElements(sites);
 }
 
@@ -779,7 +781,7 @@ static void resolveEdgeReleases(IRBuilder& builder, Vector<ReleasePoint>& releas
     }
     if (edgeReleases.isEmpty())
         return;
-    std::ranges::sort(edgeReleases, { }, [](const ReleasePoint* release) {
+    AOT::sort(edgeReleases, { }, [](const ReleasePoint* release) {
         return std::pair { release->edge->from, release->edge->targetIndex };
     });
 

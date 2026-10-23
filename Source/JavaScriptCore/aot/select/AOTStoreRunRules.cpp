@@ -13,11 +13,11 @@
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

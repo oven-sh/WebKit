@@ -12,6 +12,7 @@
 #include "AOTHeat.h"
 #include "AOTTypeTestConditions.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

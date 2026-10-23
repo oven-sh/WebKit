@@ -20,11 +20,11 @@
 #include "AOTRuleSupport.h"
 #include "AOTStringArena.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include "YarrFlags.h"
 #include <optional>
 #include <span>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {

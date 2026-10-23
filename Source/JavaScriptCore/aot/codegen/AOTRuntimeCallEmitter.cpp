@@ -19,6 +19,7 @@
 #include "AOTStubsCallHost.h"
 #include "AOTStubsOperations.h"
 #include "AOTThrowEmitter.h"
+#include "AOTVector.h"
 #include "AirFrameEmission.h"
 #include "AirStackSlot.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -185,7 +186,7 @@ void CallGenerator::emitBranchOnFlags(CCallHelpers& jit, const B3::StackmapGener
     CCallHelpers::Jump taken;
     if (!jumpsIfTaken && !params.fallsThroughToSuccessor(1))
         taken = jit.jump();
-    Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+    WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
     params.addLatePath([=](CCallHelpers& jit) {
         leaves.linkTo(*labels[jumpsIfTaken], &jit);
         if (taken.isSet())
@@ -598,9 +599,11 @@ LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, u
 
     Vector<LValue, 8> argumentsWithHostFrame;
     if (hostFrame && !isLeaf) {
-        RELEASE_ASSERT(arguments.size() == directThisArgumentIndex || arguments.size() == directCalleeArgumentIndex);
+        RELEASE_ASSERT(arguments.size() <= directCalleeArgumentIndex);
         argumentsWithHostFrame.append(arguments);
-        if (arguments.size() == directThisArgumentIndex)
+        while (argumentsWithHostFrame.size() < directThisArgumentIndex)
+            argumentsWithHostFrame.append(m_out.constIntPtr(0));
+        if (argumentsWithHostFrame.size() == directThisArgumentIndex)
             argumentsWithHostFrame.append(hostFrame->thisValue);
         argumentsWithHostFrame.append(hostFrame->callee);
         arguments = argumentsWithHostFrame.span();

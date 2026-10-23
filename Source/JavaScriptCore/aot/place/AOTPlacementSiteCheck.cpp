@@ -18,6 +18,8 @@
 #include "AOTRegExpRecord.h"
 #include "AOTRegExpRequests.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <tuple>
@@ -144,7 +146,7 @@ public:
                 checkSite(value);
             checkTerminator(block.terminator);
         }
-        std::ranges::sort(m_closuresStoredInDeferredSlots);
+        AOT::sort(m_closuresStoredInDeferredSlots);
         for (ValueID closure : m_deferredClosures) {
             if (!std::ranges::binary_search(m_closuresStoredInDeferredSlots, closure))
                 fail(closure, PlacementRule::DeferredClosureStore);

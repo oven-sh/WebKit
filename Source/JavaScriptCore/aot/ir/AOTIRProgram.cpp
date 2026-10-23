@@ -12,8 +12,10 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFamilyTables.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <wtf/Atomics.h>
@@ -289,7 +291,7 @@ void Program::indexNames(const ParallelLoops& loops)
             inheritsFields &= layout.flow.baseState == BaseState::Layout;
         }
         std::span<Holder> ofLayout = found.mutableSpan().subspan(firstOfLayout);
-        std::ranges::stable_sort(ofLayout, { }, &Holder::key);
+        AOT::stableSort(ofLayout, { }, &Holder::key);
         found.shrink(firstOfLayout + (std::ranges::unique(ofLayout, { }, &Holder::key).begin() - ofLayout.begin()));
     });
     parallelSort(loops, holders.mutableSpan(), [&](const Holder& a, const Holder& b) {
@@ -540,7 +542,7 @@ Vector<uint32_t> largeFunctions(const Program& program, const ParallelLoops& loo
         if (numberOfValues >= fewestValues)
             found.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | index);
     });
-    std::ranges::sort(keys);
+    AOT::sort(keys);
     return keys.map([](uint64_t key) {
         return static_cast<uint32_t>(key);
     });
@@ -896,7 +898,7 @@ Vector<FieldReference> ProgramEditor::changedFields() const
 {
     Locker locker { m_changedFieldsLock };
     Vector<FieldReference> fields = m_changedFields;
-    std::ranges::sort(fields);
+    AOT::sort(fields);
     removeRepeatedElements(fields);
     return fields;
 }

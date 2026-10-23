@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <climits>
 #include <tuple>
@@ -302,7 +304,7 @@ void IRPrinter::printPrimitives(const Type& type, CommaPrinter& bar)
 void IRPrinter::printStringLiterals(const Type& type, CommaPrinter& bar)
 {
     Vector<StringID, 8> literals(type.stringLiterals.span());
-    std::ranges::sort(literals, [&](StringID a, StringID b) {
+    AOT::sort(literals, [&](StringID a, StringID b) {
         return isPrintedBefore(m_program.strings, a, b);
     });
     for (StringID literal : literals) {
@@ -322,7 +324,7 @@ void IRPrinter::printSymbolLiterals(const Type& type, CommaPrinter& bar)
         return isInTable(types, literal, types.numberOfPropertyKeys());
     });
     if (areAllInTable) {
-        std::ranges::sort(literals, [&](PropertyKeyID a, PropertyKeyID b) {
+        AOT::sort(literals, [&](PropertyKeyID a, PropertyKeyID b) {
             return isPrintedBefore(m_program.strings, types.at(a), types.at(b));
         });
     }
@@ -387,7 +389,7 @@ void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
         print(part.contentsAt(index));
     }
     if (printsEngineParts) {
-        std::ranges::sort(literals, [&](RegExpLiteralInType a, RegExpLiteralInType b) {
+        AOT::sort(literals, [&](RegExpLiteralInType a, RegExpLiteralInType b) {
             return isPrintedBefore(m_program.strings, a, b);
         });
         for (RegExpLiteralInType literal : literals) {

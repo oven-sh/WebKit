@@ -15,6 +15,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

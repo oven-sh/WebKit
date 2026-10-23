@@ -21,6 +21,7 @@
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
+#include "AOTVector.h"
 #include "DeferGC.h"
 #include "JSCInlines.h"
 #include "TopExceptionScope.h"

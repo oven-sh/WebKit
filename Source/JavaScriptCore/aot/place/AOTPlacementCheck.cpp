@@ -12,7 +12,9 @@
 #include "AOTFlowResults.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTSlotPlanSteps.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <optional>
@@ -21,7 +23,6 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -342,7 +343,7 @@ static void checkSetTest(const PlacementCheckContext& context, LayoutSetID set, 
         for (uint32_t shape = range.first; shape < range.end(); ++shape)
             expectedShapes.append(shape);
     }
-    std::ranges::sort(expectedShapes);
+    AOT::sort(expectedShapes);
     auto memberShapes = shapes.memberShapes(set);
     if (std::ranges::adjacent_find(expectedShapes) != expectedShapes.end() || !std::ranges::equal(memberShapes, expectedShapes))
         context.failures.fail(PlacementRule::MemberShapesWrong, subject);
@@ -593,7 +594,7 @@ static void checkKeyOrders(const PlacementCheckContext& context, LayoutID id)
     for (size_t i = 0; i < orders.size(); ++i) {
         auto order = orders[i].span();
         Vector<FieldIndex, 16> sorted(order);
-        std::ranges::sort(sorted);
+        AOT::sort(sorted);
         bool everyFieldHasStorage = std::ranges::all_of(order, [&](FieldIndex field) { return field < planned.numberOfFields() && planned.slots[field].hasStorage(); });
         if (std::ranges::adjacent_find(sorted) != sorted.end() || !everyFieldHasStorage)
             context.failures.fail(PlacementRule::KeyOrderInvalid, id);
@@ -903,7 +904,7 @@ void checkGuardBits(const PlacementCheckContext& context)
             context.failures.fail(PlacementRule::GuardBitsNotDistinct, bit.classLayout);
         usedBits |= bit.mask();
     }
-    std::ranges::sort(wordOffsets);
+    AOT::sort(wordOffsets);
     if (std::ranges::adjacent_find(wordOffsets) != wordOffsets.end())
         context.failures.fail(PlacementRule::GuardBitsNotDistinct);
 }

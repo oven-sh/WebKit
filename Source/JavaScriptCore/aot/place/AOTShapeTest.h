@@ -11,13 +11,13 @@
 #include "AOTIR.h"
 #include "AOTLayoutData.h"
 #include "AOTPagedBitSet.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <algorithm>
 #include <compare>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

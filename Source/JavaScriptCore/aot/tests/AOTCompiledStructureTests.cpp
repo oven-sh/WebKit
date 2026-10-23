@@ -14,6 +14,7 @@
 #include "AOTOperationCallScope.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTVector.h"
 #include "BrandedStructure.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
@@ -22,7 +23,6 @@
 #include "StrongInlines.h"
 #include "WeakInlines.h"
 #include <array>
-#include <wtf/Vector.h>
 
 #if ENABLE(WEBASSEMBLY)
 #include "WebAssemblyGCStructure.h"

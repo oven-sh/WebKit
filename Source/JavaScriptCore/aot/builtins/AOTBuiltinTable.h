@@ -9,6 +9,7 @@
 
 #include "AOTBuiltinIDTypes.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include "ArrayBufferSharingMode.h"
 #include "IterationKind.h"
 #include "JSExportMacros.h"
@@ -20,7 +21,6 @@
 #include <wtf/EnumSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>

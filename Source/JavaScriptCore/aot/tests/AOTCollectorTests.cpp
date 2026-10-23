@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
+#include "AOTVector.h"
 #include "Collector.h"
 #include "FastMarkAppender.h"
 #include "HeapHelperPool.h"
@@ -27,7 +28,6 @@
 #include <wtf/DataLog.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -489,9 +489,9 @@ static void testNothingIsDeferredWithoutCompiledCode()
     table->checkEverythingIsMarked(realm);
 }
 
-static Vector<Identifier> namesOfChain(VM& vm)
+static WTF::Vector<Identifier> namesOfChain(VM& vm)
 {
-    return Vector<Identifier>(6, [&](size_t index) {
+    return WTF::Vector<Identifier>(6, [&](size_t index) {
         return Identifier::fromString(vm, makeString("chained"_s, index));
     });
 }
@@ -509,7 +509,7 @@ static void checkFullCollectionDropsTransitionChain()
     TestVM test;
     VM& vm = test.vm();
     Structure* empty = test.createRealm()->objectStructureForObjectConstructor();
-    Vector<Identifier> names = namesOfChain(vm);
+    WTF::Vector<Identifier> names = namesOfChain(vm);
     JSObject* object = constructEmptyObject(vm, empty);
     for (auto& name : names)
         object->putDirect(vm, name, jsNumber(1));

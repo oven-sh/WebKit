@@ -20,7 +20,9 @@
 #include "AOTLargeVectors.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaRuntimeColumns.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <optional>
@@ -286,7 +288,7 @@ static const OpcodeSet& opcodesThatGiveReferences()
 
 static void mergeEntriesOfOneParameter(Vector<HandedOnReferences>& entries)
 {
-    std::ranges::sort(entries, [](const HandedOnReferences& a, const HandedOnReferences& b) {
+    AOT::sort(entries, [](const HandedOnReferences& a, const HandedOnReferences& b) {
         return std::tuple(a.callee, a.entryParameter) < std::tuple(b.callee, b.entryParameter);
     });
     size_t numberOfMergedEntries = 0;
@@ -343,7 +345,7 @@ BorrowingBody BodyScanner::run()
     }
     mergeEntriesOfOneParameter(body.handedOn);
     moveToExactBuffer(body.handedOn);
-    std::ranges::sort(m_calleesWhoseRecordsWereRead);
+    AOT::sort(m_calleesWhoseRecordsWereRead);
     removeRepeatedElements(m_calleesWhoseRecordsWereRead);
     moveToExactBuffer(m_calleesWhoseRecordsWereRead);
     body.calleesWhoseRecordsWereRead = WTF::move(m_calleesWhoseRecordsWereRead);

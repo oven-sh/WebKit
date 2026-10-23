@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Locker.h>
 #include <wtf/MathExtras.h>
@@ -582,7 +584,6 @@ bool ValueSets::setsOfSeveralMembersMeet(ValueSetID first, ValueSetID second) co
 
 ValueSetMaker::ValueSetMaker(ValueSets& sets)
     : m_sets(sets)
-    , m_rememberedSets(static_cast<size_t>(1) << bitsOfRememberedSets)
     , m_rememberedEntries(static_cast<size_t>(1) << bitsOfRememberedEntries)
     , m_rememberedBlocks(static_cast<size_t>(1) << bitsOfRememberedBlocks)
 {
@@ -601,11 +602,8 @@ uint32_t ValueSetMaker::combineBlocks(Operation operation, uint32_t first, uint3
         std::swap(first, second);
     uint32_t key = second | static_cast<uint32_t>(operation) << 30;
     Remembered& remembered = m_rememberedBlocks[placeInTable(first, key, bitsOfRememberedBlocks)];
-    if (remembered.first == first && remembered.second == key) {
-        ++m_counters.blocksRemembered;
+    if (remembered.first == first && remembered.second == key)
         return remembered.result;
-    }
-    ++m_counters.blocksComputed;
 
     const ValueSets::Run& firstRun = m_sets.m_blocks.at(first);
     const ValueSets::Run& secondRun = m_sets.m_blocks.at(second);
@@ -1265,26 +1263,18 @@ uint32_t ValueSetMaker::combine(Operation operation, uint32_t first, uint32_t se
 {
     switch (operation) {
     case Operation::Unite:
-        if (first == second || !second) {
-            ++m_counters.answeredAtOnce;
+        if (first == second || !second)
             return first;
-        }
-        if (!first) {
-            ++m_counters.answeredAtOnce;
+        if (!first)
             return second;
-        }
         break;
     case Operation::Intersect:
-        if (first == second || !first || !second) {
-            ++m_counters.answeredAtOnce;
+        if (first == second || !first || !second)
             return first == second ? first : 0;
-        }
         break;
     case Operation::Subtract:
-        if (!first || first == second || !second) {
-            ++m_counters.answeredAtOnce;
+        if (!first || first == second || !second)
             return second ? 0 : first;
-        }
         break;
     }
     if (operation != Operation::Subtract && first > second)
@@ -1292,18 +1282,11 @@ uint32_t ValueSetMaker::combine(Operation operation, uint32_t first, uint32_t se
 
     bool firstIsOne = ValueSets::holdsOneMember(first);
     bool secondIsOne = ValueSets::holdsOneMember(second);
-    if (firstIsOne && secondIsOne && operation != Operation::Unite) {
-        ++m_counters.answeredAtOnce;
+    if (firstIsOne && secondIsOne && operation != Operation::Unite)
         return operation == Operation::Subtract ? first : 0;
-    }
 
-    uint32_t firstKey;
-    uint32_t secondKey;
-    Remembered& remembered = rememberedAt(operation, first, second, firstKey, secondKey);
-    if (remembered.first == firstKey && remembered.second == secondKey) {
-        ++m_counters.remembered;
-        return remembered.result;
-    }
+    uint32_t firstKey = first | (static_cast<uint32_t>(operation) & 1) << 31;
+    uint32_t secondKey = second | (static_cast<uint32_t>(operation) >> 1) << 31;
     bool isCheap = operation == Operation::Intersect ? firstIsOne || secondIsOne : operation == Operation::Subtract && firstIsOne;
     uint64_t key = static_cast<uint64_t>(firstKey) << 32 | secondKey;
     if (!isCheap)
@@ -1313,72 +1296,14 @@ uint32_t ValueSetMaker::combine(Operation operation, uint32_t first, uint32_t se
     if (!secondIsOne)
         __builtin_prefetch(&m_sets.m_lists.at(second));
     if (!isCheap) {
-        if (std::optional<uint32_t> result = m_sets.findRememberedByAll(key)) {
-            ++m_counters.rememberedByAll;
-            remembered = Remembered { firstKey, secondKey, *result };
+        if (std::optional<uint32_t> result = m_sets.findRememberedByAll(key))
             return *result;
-        }
     }
-    ++m_counters.computed;
 
     uint32_t result = combineByForm(operation, first, second);
-    remembered = Remembered { firstKey, secondKey, result };
     if (!isCheap)
         m_sets.rememberForAll(key, result);
     return result;
-}
-
-ALWAYS_INLINE auto ValueSetMaker::rememberedAt(Operation operation, uint32_t first, uint32_t second, uint32_t& firstKey, uint32_t& secondKey) -> Remembered&
-{
-    firstKey = first | (static_cast<uint32_t>(operation) & 1) << 31;
-    secondKey = second | (static_cast<uint32_t>(operation) >> 1) << 31;
-    return m_rememberedSets[placeInTable(firstKey, secondKey, bitsOfRememberedSets)];
-}
-
-void ValueSetMaker::prefetchCombine(Operation operation, uint32_t first, uint32_t second)
-{
-    if (!first || !second || first == second)
-        return;
-    if (operation != Operation::Subtract && first > second)
-        std::swap(first, second);
-    uint32_t firstKey;
-    uint32_t secondKey;
-    const Remembered& remembered = rememberedAt(operation, first, second, firstKey, secondKey);
-    if (remembered.first == firstKey && remembered.second == secondKey)
-        return;
-    __builtin_prefetch(&m_sets.rememberedByAllAt(static_cast<uint64_t>(firstKey) << 32 | secondKey));
-    if (!ValueSets::holdsOneMember(first))
-        __builtin_prefetch(&m_sets.m_lists.at(first));
-    if (!ValueSets::holdsOneMember(second))
-        __builtin_prefetch(&m_sets.m_lists.at(second));
-}
-
-void ValueSetMaker::prefetchUnite(ValueSetID first, ValueSetID second)
-{
-    uint32_t a = ValueSets::storedSetOf(first);
-    uint32_t b = ValueSets::storedSetOf(second);
-    if (!ValueSets::isComplement(first)) {
-        if (ValueSets::isComplement(second))
-            prefetchCombine(Operation::Subtract, b, a);
-        else
-            prefetchCombine(Operation::Unite, a, b);
-        return;
-    }
-    prefetchCombine(ValueSets::isComplement(second) ? Operation::Intersect : Operation::Subtract, a, b);
-}
-
-void ValueSetMaker::prefetchIntersect(ValueSetID first, ValueSetID second)
-{
-    uint32_t a = ValueSets::storedSetOf(first);
-    uint32_t b = ValueSets::storedSetOf(second);
-    if (!ValueSets::isComplement(first)) {
-        prefetchCombine(ValueSets::isComplement(second) ? Operation::Subtract : Operation::Intersect, a, b);
-        return;
-    }
-    if (ValueSets::isComplement(second))
-        prefetchCombine(Operation::Unite, a, b);
-    else
-        prefetchCombine(Operation::Subtract, b, a);
 }
 
 uint32_t ValueSetMaker::combineByForm(Operation operation, uint32_t first, uint32_t second)
@@ -1483,22 +1408,55 @@ uint32_t ValueSetMaker::combineLists(Operation operation, uint32_t first, uint32
     return internList(m_list.span(), totals, lowestMembers);
 }
 
-ValueSetID ValueSetMaker::uniteDifferentSets(ValueSetID first, ValueSetID second)
+NEVER_INLINE ValueSetID ValueSetMaker::intersectDifferentSets(ValueSetID first, ValueSetID second)
 {
-    uint32_t a = ValueSets::storedSetOf(first);
-    uint32_t b = ValueSets::storedSetOf(second);
-    if (!ValueSets::isComplement(first))
-        return ValueSets::isComplement(second) ? ValueSetID(combine(Operation::Subtract, b, a) * 2 + 1) : ValueSetID(combine(Operation::Unite, a, b) * 2);
-    return ValueSetID(combine(ValueSets::isComplement(second) ? Operation::Intersect : Operation::Subtract, a, b) * 2 + 1);
+    if (first.index() > second.index())
+        std::swap(first, second);
+    Remembered& remembered = m_rememberedSets[placeInTable(first.index(), second.index(), bitsOfRememberedSets)];
+    if (remembered.first == first.index() && remembered.second == second.index() && remembered.result != intersectionIsNotEmpty) [[likely]]
+        return ValueSetID(remembered.result);
+    return intersectUncached(first, second, remembered);
 }
 
-ValueSetID ValueSetMaker::intersectDifferentSets(ValueSetID first, ValueSetID second)
+NEVER_INLINE ValueSetID ValueSetMaker::intersectUncached(ValueSetID first, ValueSetID second, Remembered& remembered)
 {
     uint32_t a = ValueSets::storedSetOf(first);
     uint32_t b = ValueSets::storedSetOf(second);
+    // The name of a set of one member is greater than that of any other set, so it stands second.
+    if (ValueSets::holdsOneMember(b)) {
+        bool isHeld = m_sets.contains(first, ValueFlowObjectID(ValueSets::onlyMemberOf(b)));
+        if (!ValueSets::isComplement(second) || !isHeld) {
+            ValueSetID answer = ValueSets::isComplement(second) ? first : isHeld ? second : ValueSets::nothing;
+            remembered = Remembered { first.index(), second.index(), answer.index() };
+            return answer;
+        }
+    }
+    ValueSetID result;
     if (!ValueSets::isComplement(first))
-        return ValueSetID(combine(ValueSets::isComplement(second) ? Operation::Subtract : Operation::Intersect, a, b) * 2);
-    return ValueSets::isComplement(second) ? ValueSetID(combine(Operation::Unite, a, b) * 2 + 1) : ValueSetID(combine(Operation::Subtract, b, a) * 2);
+        result = ValueSetID(combine(ValueSets::isComplement(second) ? Operation::Subtract : Operation::Intersect, a, b) * 2);
+    else
+        result = ValueSets::isComplement(second) ? ValueSetID(combine(Operation::Unite, a, b) * 2 + 1) : ValueSetID(combine(Operation::Subtract, b, a) * 2);
+    remembered = Remembered { first.index(), second.index(), result.index() };
+    return result;
+}
+
+NEVER_INLINE bool ValueSetMaker::nonEmptySetsMeet(ValueSetID first, ValueSetID second)
+{
+    if (first.index() > second.index())
+        std::swap(first, second);
+    Remembered& remembered = m_rememberedSets[placeInTable(first.index(), second.index(), bitsOfRememberedSets)];
+    if (remembered.first == first.index() && remembered.second == second.index() && !ValueSets::isComplement(ValueSetID(remembered.result))) [[likely]]
+        return remembered.result;
+    return meetUncached(first, second, remembered);
+}
+
+NEVER_INLINE bool ValueSetMaker::meetUncached(ValueSetID first, ValueSetID second, Remembered& remembered)
+{
+    bool result = m_sets.meet(first, second);
+    bool isCached = remembered.first == first.index() && remembered.second == second.index();
+    if (!isCached && !(ValueSets::isComplement(first) && ValueSets::isComplement(second)))
+        remembered = Remembered { first.index(), second.index(), result ? intersectionIsNotEmpty : 0 };
+    return result;
 }
 
 ValueSetID ValueSetMaker::pass(ValueSetID value, ValueSetID mask, ValueSetID familyObjects, ValueFlowMaskKind kind, const ValueFlowPlaceholders& placeholders, const ValueFlowCoveredObjects& covered)
@@ -1555,7 +1513,7 @@ void ValueSetMaker::sortMembersAndRemoveRepeats()
 {
     constexpr size_t mostMembersSorted = 48;
     if (m_members.size() <= mostMembersSorted) {
-        std::ranges::sort(m_members);
+        AOT::sort(m_members);
         removeRepeatedElements(m_members);
         return;
     }
@@ -1616,7 +1574,7 @@ ValueSetID ValueSetMaker::of(std::span<const ValueFlowObjectID> members)
         RELEASE_ASSERT(member.index() < m_sets.sizeOfUniverse());
         m_members.append(member.index());
     }
-    std::ranges::sort(m_members);
+    AOT::sort(m_members);
     removeRepeatedElements(m_members);
     uint64_t lowestMembers = 0;
     size_t numberOfLowestMembers = 0;

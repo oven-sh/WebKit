@@ -9,13 +9,13 @@
 
 #include "AOTCFG.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTVector.h"
 #include <cstddef>
 #include <optional>
 #include <span>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

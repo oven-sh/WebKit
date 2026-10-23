@@ -15,6 +15,7 @@
 #include "AOTPropertyAccessCache.h"
 #include "AOTResultRules.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 #include <wtf/BitVector.h>

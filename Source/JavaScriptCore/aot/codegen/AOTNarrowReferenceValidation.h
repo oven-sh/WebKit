@@ -7,13 +7,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "B3HeapRange.h"
 #include "B3Origin.h"
 #include "B3Policy.h"
 #include "JSExportMacros.h"
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {

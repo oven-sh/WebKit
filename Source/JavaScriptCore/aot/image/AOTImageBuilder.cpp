@@ -29,9 +29,11 @@
 #include "AOTProgramTables.h"
 #include "AOTRegExpRecordEncoder.h"
 #include "AOTSectionWriter.h"
+#include "AOTSort.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <expected>
 #include <functional>
@@ -287,7 +289,7 @@ static Vector<uint32_t, 32> collectOffsetsAskedForFrame(const CompiledCode& code
         addReturnOffset(access.codeOffset + static_cast<uint32_t>(sizeOfNearCall));
     for (const PollSite& poll : code.sites.pollSites)
         addReturnOffset(poll.returnOffset());
-    std::ranges::sort(offsets);
+    AOT::sort(offsets);
     return offsets;
 }
 
@@ -446,7 +448,7 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
         if (hasAddressInImage(descriptorOf(placement.key.family()).linkage))
             addresses.append({ placement.key.bits(), placement.offset, 0 });
     }
-    std::ranges::sort(addresses, { }, &StubAddressInImage::key);
+    AOT::sort(addresses, { }, &StubAddressInImage::key);
     return bytesOf(addresses);
 }
 

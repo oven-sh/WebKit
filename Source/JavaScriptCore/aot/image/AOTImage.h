@@ -21,6 +21,7 @@
 #include "AOTProgramTables.h"
 #include "AOTStubFrames.h"
 #include "AOTStubKey.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "JSExportMacros.h"
 #include <array>
@@ -29,7 +30,6 @@
 #include <memory>
 #include <mutex>
 #include <span>
-#include <wtf/Vector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringImpl.h>

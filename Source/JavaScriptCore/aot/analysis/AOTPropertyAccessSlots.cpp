@@ -12,6 +12,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -471,7 +472,8 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
     // Where a creating store has to be paid for with tests, the stores of a constructor and of what it calls pay.
     std::optional<CreationTests> tests = state.form.isEmpty() ? testsToCreateField(context, query, arm, state) : std::nullopt;
     // Nothing but a store creates a field that was added late, so one of the stores outside the constructor finds the slot empty in every object.
-    if (tests && (tests->isEmpty() || query.expectsEmptySlot || state.isAddedLateInSomeMember || mayStoreIntoUnfinishedObject(context, query) || isInBodyOfModuleThatOwnsLayouts(context, query, arm))) {
+    bool hasFoundSlotFilled = query.storesWhatWasMadeOfField && !query.expectsEmptySlot && tests && !tests->isEmpty() && !testsThatEmptySlotReadsAsUndefined(context, query, arm, state);
+    if (tests && !hasFoundSlotFilled && (tests->isEmpty() || query.expectsEmptySlot || state.isAddedLateInSomeMember || mayStoreIntoUnfinishedObject(context, query) || isInBodyOfModuleThatOwnsLayouts(context, query, arm))) {
         plan.requiredProofs |= tests->proofs;
         addConditions(plan.conditions, tests->conditions.span());
         setSlotOperation(plan, creatingStoreFor(state));

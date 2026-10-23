@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTVector.h"
 #include <mutex>
 #include <stdio.h>
 #include <wtf/CPUTime.h>
@@ -17,7 +18,6 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StringPrintStream.h>
-#include <wtf/Vector.h>
 
 #if OS(LINUX) && CPU(X86_64) && __has_include(<linux/perf_event.h>)
 #define AOT_HAS_INSTRUCTION_COUNTERS 1

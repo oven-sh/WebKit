@@ -22,9 +22,11 @@
 #include "AOTRegExpRecord.h"
 #include "AOTRegExpSummary.h"
 #include "AOTScratchRealm.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -163,7 +165,7 @@ public:
                     if (operation.opcode == Opcode::PutModuleVariable)
                         m_stores.append(Store { VariableID(operation.targetIndex), operation.function, operation.value });
                 }
-                std::ranges::sort(m_stores, { }, [](const Store& store) {
+                AOT::sort(m_stores, { }, [](const Store& store) {
                     return std::tuple { store.variable, store.function, store.stored };
                 });
             },
@@ -1003,7 +1005,7 @@ private:
                 for (uint32_t index = 0; index < parameters.size(); ++index)
                     result.append(BlockParameter { parameters[index], BlockID(block), index });
             }
-            std::ranges::stable_sort(result, { }, &BlockParameter::parameter);
+            AOT::stableSort(result, { }, &BlockParameter::parameter);
             return result;
         }).iterator->value;
         auto found = std::ranges::lower_bound(sortedParameters, parameter, { }, &BlockParameter::parameter);
@@ -1992,7 +1994,7 @@ static void addCandidatesFromConstants(const Program& program, StringArena& stri
 {
     if (calls.isEmpty())
         return;
-    std::ranges::sort(calls, { }, &CallWithUnknownText::site);
+    AOT::sort(calls, { }, &CallWithUnknownText::site);
     TextsFromConstants constants(program, strings, context);
     for (const CallWithUnknownText& call : calls) {
         TextsFromConstants::Patterns known = constants.patternsOf(call);
@@ -2113,7 +2115,7 @@ RegExpRequests collectRegExpRequests(const Program& program, const FlowResults& 
     moveSitesOfRequestsAlsoIn(literals, candidates);
     moveSitesOfRequestsAlsoIn(evaluated, candidates);
     candidates.appendVector(WTF::move(evaluated));
-    std::ranges::sort(candidates, { }, keyOf);
+    AOT::sort(candidates, { }, keyOf);
 
     for (RegExpRequest& request : literals)
         internMetadataStrings(request, program, strings, context);

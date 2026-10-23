@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
+
 namespace JSC { namespace AOT {
 
 ClassHierarchy::ClassHierarchy(State&)

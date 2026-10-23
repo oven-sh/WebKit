@@ -9,6 +9,7 @@
 
 #include "AOTImageSiteTestBodies.h"
 #include "AOTStubsExceptions.h"
+#include "AOTVector.h"
 #include <array>
 #include <initializer_list>
 #include <limits>

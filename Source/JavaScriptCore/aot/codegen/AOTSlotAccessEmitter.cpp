@@ -29,6 +29,7 @@
 #include "AOTStubsPropertyKeys.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include "GetterSetter.h"
 #include "JSCJSValueInlines.h"
 #include <limits>

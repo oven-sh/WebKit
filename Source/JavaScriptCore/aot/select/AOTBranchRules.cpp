@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 void selectTestAndBranch(SelectionContext& context)

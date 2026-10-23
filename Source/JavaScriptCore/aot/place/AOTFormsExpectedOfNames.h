@@ -9,10 +9,10 @@
 
 #include "AOTFieldTable.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

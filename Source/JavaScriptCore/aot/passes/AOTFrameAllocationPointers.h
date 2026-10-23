@@ -11,11 +11,11 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFrameAllocation.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

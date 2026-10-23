@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTOrderedInterning.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <utility>
@@ -133,7 +135,7 @@ static Vector<uint32_t> collectNames(const Wire::Sections& checkedSections, uint
                 names.append(field.key);
         }
     }
-    std::ranges::sort(names);
+    AOT::sort(names);
     removeRepeatedElements(names);
     return names;
 }
@@ -196,7 +198,7 @@ static DeclaredNames collectDeclaredNames(const ParallelLoops& loops, const Wire
             if (isRequiredField(field))
                 result.required[index].append(field.key);
         }
-        std::ranges::sort(result.required[index]);
+        AOT::sort(result.required[index]);
     });
     return result;
 }
@@ -217,7 +219,7 @@ static void addNamesOfTaggedLayouts(DeclaredNames& names, const Wire::Sections& 
                         declared.append(field.key);
                 }
             }
-            std::ranges::sort(declared);
+            AOT::sort(declared);
             removeRepeatedElements(declared);
             RELEASE_ASSERT(member.layout.index() - names.firstTaggedLayout == names.declaredByTaggedLayouts.size());
             names.declaredByTaggedLayouts.append(WTF::move(declared));
@@ -292,7 +294,7 @@ static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, 
         }
         if (!fewest)
             return;
-        std::ranges::sort(required);
+        AOT::sort(required);
         size_t sizeBefore = found.size();
         for (uint32_t layout : *fewest) {
             if (layout != type && std::ranges::includes(names[layout], required) && !tellingFields.tellApart(layout, type))
@@ -483,7 +485,7 @@ static void widenFamilies(const Conversions& conversions, DeclaredFamilies& fami
             if (passesOn(conversions, conversion, member) && canPassFor(conversions, member, conversion.target))
                 members.append(member);
         }
-        std::ranges::sort(members);
+        AOT::sort(members);
         removeRepeatedElements(members);
         bool passesOnEveryMember = !requiresNoName(conversions, conversion.source) || requiresNoName(conversions, conversion.target);
         if (passesOnEveryMember && families.hasMembersWithoutLayout.quickGet(conversion.source))
@@ -667,7 +669,7 @@ static Vector<Vector<BuiltinID>> collectBuiltinMembers(const Wire::Sections& che
         });
     }
     for (Vector<BuiltinID>& list : members) {
-        std::ranges::sort(list);
+        AOT::sort(list);
         list.shrink(std::ranges::unique(list).begin() - list.begin());
     }
     return members;

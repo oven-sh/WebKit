@@ -13,10 +13,10 @@
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

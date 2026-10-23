@@ -12,6 +12,8 @@
 #include "AOTFlowResults.h"
 #include "AOTImageFormat.h"
 #include "AOTPlacementSteps.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <optional>
@@ -121,7 +123,7 @@ static EncodedShapeSet encodeShapeSetAsBits(std::span<const uint32_t> ascendingS
         pages[distanceFromLast >> PagedBitSet::logBitsPerPage] |= 1ull << distanceFromLast % PagedBitSet::bitsPerPage;
     }
     Vector<uint64_t, 64> distinctPages = pages;
-    std::ranges::sort(distinctPages);
+    AOT::sort(distinctPages);
     distinctPages.shrink(std::ranges::unique(distinctPages).begin() - distinctPages.begin());
 
     using enum PagedBitSet::Entries;
@@ -393,7 +395,7 @@ private:
                     shapes[next++] = shape;
             }
             RELEASE_ASSERT(next == shapes.size());
-            std::ranges::sort(shapes);
+            AOT::sort(shapes);
             m_parts.testOfSet[index] = chooseShapeTestForm(shapes, assigned);
         });
     }

@@ -13,6 +13,7 @@
 #include "AOTNumberLiteralStrings.h"
 #include "AOTTextEncoder.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/MathExtras.h>
 

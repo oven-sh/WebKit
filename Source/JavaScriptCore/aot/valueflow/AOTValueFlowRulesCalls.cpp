@@ -13,8 +13,10 @@
 #include "AOTCFG.h"
 #include "AOTEdgeResults.h"
 #include "AOTKnownClosures.h"
+#include "AOTSort.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -164,7 +166,7 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
         else
             member.group = 2ull << 32 | member.object.index();
     }
-    std::ranges::stable_sort(members, { }, &Member::group);
+    AOT::stableSort(members, { }, &Member::group);
     Vector<ValueFlowObjectID, 64> objects;
     for (size_t first = 0; first < members.size();) {
         bool isRest = result.groups.size() >= mostGroups;

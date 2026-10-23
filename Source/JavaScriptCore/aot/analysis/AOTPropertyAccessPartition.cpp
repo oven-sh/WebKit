@@ -10,6 +10,7 @@
 
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/CommaPrinter.h>
 

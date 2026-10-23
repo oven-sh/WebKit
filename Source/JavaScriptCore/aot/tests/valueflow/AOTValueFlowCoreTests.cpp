@@ -12,6 +12,7 @@
 #include "AOTValueFlowGraph.h"
 #include "AOTValueFlowSolver.h"
 #include "AOTValueSets.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/WeakRandom.h>

@@ -12,7 +12,9 @@
 #include "AOTBuildContext.h"
 #include "AOTCodeUnits.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -157,7 +159,7 @@ void sortByHashAndUnit(std::span<Window> windows, std::span<Window> scratch)
         return static_cast<unsigned>(window.hash >> 48 & (numberOfParts - 1));
     };
     if (windows.size() < 4 * numberOfParts) {
-        std::ranges::sort(windows, isLess);
+        AOT::sort(windows, isLess);
         return;
     }
     std::array<uint32_t, numberOfParts + 1> starts { };
@@ -169,7 +171,7 @@ void sortByHashAndUnit(std::span<Window> windows, std::span<Window> scratch)
     for (auto& window : windows)
         scratch[next[partOf(window)]++] = window;
     for (unsigned part = 0; part < numberOfParts; ++part)
-        std::ranges::sort(scratch.subspan(starts[part], starts[part + 1] - starts[part]), isLess);
+        AOT::sort(scratch.subspan(starts[part], starts[part + 1] - starts[part]), isLess);
     memcpySpan(windows, scratch);
 }
 
@@ -268,7 +270,7 @@ private:
         });
         forEachIndexInParallel(loops, m_functions.size(), [&](unsigned function) {
             if (numberOfSites[function] > 1)
-                std::ranges::sort(m_result.sites[function], { }, &OutlinedSite::offset);
+                AOT::sort(m_result.sites[function], { }, &OutlinedSite::offset);
         });
     }
 

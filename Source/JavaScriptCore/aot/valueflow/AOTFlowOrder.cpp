@@ -9,7 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -48,11 +48,11 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
     return *result;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
+JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);
-    scope.release();
     vm.traps().handleTraps(VMTraps::AsyncEvents);
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance, uint8_t* returnAddress))

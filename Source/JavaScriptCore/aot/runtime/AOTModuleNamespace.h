@@ -8,13 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTRecordTypes.h"
+#include "AOTVector.h"
 #include "AbstractModuleRecord.h"
 #include "ArgList.h"
 #include "JSCellButterfly.h"
 #include "JSObject.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

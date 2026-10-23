@@ -12,6 +12,7 @@
 #include "AOTStringEmitter.h"
 #include "AOTStubsArithmetic.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

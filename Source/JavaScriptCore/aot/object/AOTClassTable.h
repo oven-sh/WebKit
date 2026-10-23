@@ -10,6 +10,7 @@
 #include "AOTFunctionTables.h"
 #include "AOTLayoutData.h"
 #include "AOTObjectWords.h"
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "JSCJSValue.h"
 #include "PropertyOffset.h"
@@ -21,7 +22,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {

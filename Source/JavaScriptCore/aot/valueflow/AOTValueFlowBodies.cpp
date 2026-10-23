@@ -7,8 +7,10 @@
 #include "AOTValueFlowBodies.h"
 
 #if ENABLE(AOT)
+#include "AOTSort.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesModules.h"
+#include "AOTVector.h"
 #endif
 
 #if ENABLE(AOT)
@@ -287,7 +289,7 @@ private:
     template<typename T>
     static void sortAndRemoveRepeats(Vector<T>& list)
     {
-        std::ranges::sort(list);
+        AOT::sort(list);
         list.shrink(std::ranges::unique(list).begin() - list.begin());
     }
 
@@ -353,7 +355,7 @@ private:
         Vector<uint32_t> order(m_body.sites.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
         });
-        std::ranges::sort(order, { }, [&](uint32_t index) {
+        AOT::sort(order, { }, [&](uint32_t index) {
             return std::pair { m_body.sites[index].value, m_body.sites[index].ordinal };
         });
         Vector<uint32_t> placeOf(order.size());
@@ -369,7 +371,7 @@ private:
                 if (object.kind == ValueFlowObjectKind::Site)
                     object.index = placeOf[object.index];
             }
-            std::ranges::sort(constant.objects);
+            AOT::sort(constant.objects);
         }
         for (Body::Statement& statement : m_body.statements) {
             auto first = std::ranges::lower_bound(m_body.sites, statement.site, { }, &ValueFlowSite::value);
@@ -415,7 +417,7 @@ private:
         Vector<ObjectName, 4> objects;
         objects.appendVector(m_body.constants[first].objects);
         objects.appendVector(m_body.constants[second].objects);
-        std::ranges::sort(objects);
+        AOT::sort(objects);
         objects.shrink(std::ranges::unique(objects).begin() - objects.begin());
         return constantOf(m_body.constants[first].primitives | m_body.constants[second].primitives, objects.span());
     }
@@ -468,7 +470,7 @@ private:
             Vector<TypeID, 1> all;
             all.appendVector(a);
             all.appendVector(b);
-            std::ranges::sort(all);
+            AOT::sort(all);
             all.shrink(std::ranges::unique(all).begin() - all.begin());
             return all;
         };

@@ -25,6 +25,7 @@
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"

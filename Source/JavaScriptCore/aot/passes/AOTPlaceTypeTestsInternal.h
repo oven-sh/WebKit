@@ -10,12 +10,12 @@
 #include "AOTExpectedTypesByUse.h"
 #include "AOTGenericCopy.h"
 #include "AOTPlaceTypeTestsPlan.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

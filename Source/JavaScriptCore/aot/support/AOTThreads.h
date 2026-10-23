@@ -7,6 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <algorithm>
 #include <array>
@@ -23,7 +25,6 @@
 #include <wtf/ScopedLambda.h>
 #include <wtf/Seconds.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/WorkerPool.h>
 
 namespace JSC { namespace AOT {
@@ -198,38 +199,24 @@ Vector<T> createVectorWithCapacityInParallel(const ParallelLoops& loops, size_t 
     return vector;
 }
 
-// What is collected comes in the order of the indices, whatever the order they are visited in. An index that takes long is a chunk of its own.
+struct ChunksOfIndices {
+    unsigned size() const { return firstIndexOf.size() - 1; }
+
+    Vector<uint32_t> firstIndexOf;
+    Vector<uint32_t> longestFirst;
+};
+
+// An index that takes long is a chunk of its own.
+JS_EXPORT_PRIVATE ChunksOfIndices divideIntoChunks(unsigned count, std::span<const uint32_t> longestFirst);
+
+// What is collected comes in the order of the indices, whatever the order they are visited in.
 template<typename T>
 Vector<Vector<T>> collectChunksInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, const Invocable<void(unsigned, Vector<T>&)> auto& collect)
 {
-    constexpr unsigned chunkSize = 256;
-    Vector<uint32_t> ascending(longestFirst);
-    std::ranges::sort(ascending);
-    Vector<uint32_t> firstIndexOf;
-    firstIndexOf.reserveInitialCapacity(count / chunkSize + 2 * ascending.size() + 2);
-    Vector<uint32_t> chunkOfLongIndex;
-    chunkOfLongIndex.reserveInitialCapacity(ascending.size());
-    uint32_t nextIndex = 0;
-    auto addChunksUpTo = [&](uint32_t end) {
-        for (; nextIndex < end; nextIndex = std::min(end, nextIndex + chunkSize))
-            firstIndexOf.append(nextIndex);
-    };
-    for (uint32_t longIndex : ascending) {
-        addChunksUpTo(longIndex);
-        chunkOfLongIndex.append(firstIndexOf.size());
-        addChunksUpTo(longIndex + 1);
-    }
-    addChunksUpTo(count);
-    unsigned numberOfChunks = firstIndexOf.size();
-    firstIndexOf.append(count);
-
-    Vector<uint32_t> longestChunksFirst(longestFirst.size(), [&](size_t position) {
-        size_t rank = std::ranges::lower_bound(ascending, longestFirst[position]) - ascending.begin();
-        return chunkOfLongIndex[rank];
-    });
-    Vector<Vector<T>> chunks(numberOfChunks);
-    forEachIndexInParallel(loops, numberOfChunks, longestChunksFirst.span(), [&](unsigned chunk) {
-        for (unsigned index = firstIndexOf[chunk]; index < firstIndexOf[chunk + 1]; ++index)
+    ChunksOfIndices division = divideIntoChunks(count, longestFirst);
+    Vector<Vector<T>> chunks(division.size());
+    forEachIndexInParallel(loops, division.size(), division.longestFirst.span(), [&](unsigned chunk) {
+        for (unsigned index = division.firstIndexOf[chunk]; index < division.firstIndexOf[chunk + 1]; ++index)
             collect(index, chunks[chunk]);
     });
     return chunks;
@@ -274,49 +261,57 @@ Vector<uint32_t> findIndicesInParallel(const ParallelLoops& loops, unsigned coun
     });
 }
 
+JS_EXPORT_PRIVATE void sortRunsAndMerge(const ParallelLoops&, const SortSteps&, char* list, size_t count);
+
 template<typename T, typename Less>
 void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isLess)
 {
-    constexpr size_t numberOfRuns = 16;
     constexpr size_t fewestForPool = 1 << 13;
     size_t count = list.size();
     if (count < fewestForPool) {
-        std::ranges::sort(list, isLess);
+        AOT::sort(list, isLess);
         return;
     }
-    Vector<T> scratchBuffer = createVectorWithCapacityInParallel<T>(loops, count);
-    scratchBuffer.grow(count);
-    std::span<T> from = list;
-    std::span<T> to = scratchBuffer.mutableSpan();
-    auto runOf = [&](std::span<T> all, size_t run, size_t runs) {
-        size_t start = count * run / runs;
-        return all.subspan(start, count * (run + 1) / runs - start);
-    };
-    forEachIndexInParallel(loops, numberOfRuns, [&](unsigned run) {
-        std::ranges::sort(runOf(from, run, numberOfRuns), isLess);
-    });
-    // The last round merges two runs: one thread would go through the whole list, and two through the round in front of it.
-    constexpr size_t partsPerRound = 4 * numberOfRuns;
-    for (size_t runs = numberOfRuns; runs > 1; runs /= 2) {
-        size_t partsPerMerge = partsPerRound / (runs / 2);
-        forEachIndexInParallel(loops, partsPerRound, [&](unsigned index) {
-            size_t pair = index / partsPerMerge;
-            std::span<T> first = runOf(from, 2 * pair, runs);
-            std::span<T> second = runOf(from, 2 * pair + 1, runs);
-            auto beginOf = [&](size_t part) {
-                if (part == partsPerMerge)
-                    return std::pair { first.size(), second.size() };
-                size_t inFirst = first.size() * part / partsPerMerge;
-                size_t inSecond = part ? static_cast<size_t>(std::ranges::lower_bound(second, first[inFirst], isLess) - second.begin()) : 0;
-                return std::pair { inFirst, inSecond };
-            };
-            auto [firstBegin, secondBegin] = beginOf(index % partsPerMerge);
-            auto [firstEnd, secondEnd] = beginOf(index % partsPerMerge + 1);
-            std::ranges::merge(first.subspan(firstBegin, firstEnd - firstBegin), second.subspan(secondBegin, secondEnd - secondBegin), runOf(to, pair, runs / 2).begin() + (firstBegin + secondBegin), isLess);
+    if constexpr (movesAsBytes<T>) {
+        std::decay_t<Less> order = isLess;
+        std::identity identity;
+        sortRunsAndMerge(loops, OrderedSteps<T, std::decay_t<Less>, std::identity>(order, identity).stepsOfSortAndMerge(), reinterpret_cast<char*>(list.data()), count);
+    } else {
+        constexpr size_t numberOfRuns = 16;
+        Vector<T> scratchBuffer = createVectorWithCapacityInParallel<T>(loops, count);
+        scratchBuffer.grow(count);
+        std::span<T> from = list;
+        std::span<T> to = scratchBuffer.mutableSpan();
+        auto runOf = [&](std::span<T> all, size_t run, size_t runs) {
+            size_t start = count * run / runs;
+            return all.subspan(start, count * (run + 1) / runs - start);
+        };
+        forEachIndexInParallel(loops, numberOfRuns, [&](unsigned run) {
+            AOT::sort(runOf(from, run, numberOfRuns), isLess);
         });
-        std::swap(from, to);
+        // The last round merges two runs: one thread would go through the whole list, and two through the round in front of it.
+        constexpr size_t partsPerRound = 4 * numberOfRuns;
+        for (size_t runs = numberOfRuns; runs > 1; runs /= 2) {
+            size_t partsPerMerge = partsPerRound / (runs / 2);
+            forEachIndexInParallel(loops, partsPerRound, [&](unsigned index) {
+                size_t pair = index / partsPerMerge;
+                std::span<T> first = runOf(from, 2 * pair, runs);
+                std::span<T> second = runOf(from, 2 * pair + 1, runs);
+                auto beginOf = [&](size_t part) {
+                    if (part == partsPerMerge)
+                        return std::pair { first.size(), second.size() };
+                    size_t inFirst = first.size() * part / partsPerMerge;
+                    size_t inSecond = part ? static_cast<size_t>(std::ranges::lower_bound(second, first[inFirst], isLess) - second.begin()) : 0;
+                    return std::pair { inFirst, inSecond };
+                };
+                auto [firstBegin, secondBegin] = beginOf(index % partsPerMerge);
+                auto [firstEnd, secondEnd] = beginOf(index % partsPerMerge + 1);
+                std::ranges::merge(first.subspan(firstBegin, firstEnd - firstBegin), second.subspan(secondBegin, secondEnd - secondBegin), runOf(to, pair, runs / 2).begin() + (firstBegin + secondBegin), isLess);
+            });
+            std::swap(from, to);
+        }
+        static_assert(numberOfRuns == 16, "an even number of rounds of merging leaves the result in the list");
     }
-    static_assert(numberOfRuns == 16, "an even number of rounds of merging leaves the result in the list");
 }
 
 template<typename T, size_t inlineCapacity>

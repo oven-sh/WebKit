@@ -11,6 +11,7 @@
 #include "AOTEnvironment.h"
 #include "AOTObjectWords.h"
 #include "AOTProgramTables.h"
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include "FreeList.h"
 #include "LocalAllocator.h"
@@ -19,7 +20,6 @@
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

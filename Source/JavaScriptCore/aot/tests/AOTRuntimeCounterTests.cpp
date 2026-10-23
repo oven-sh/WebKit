@@ -11,10 +11,10 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeTable.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/StringPrintStream.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
 

@@ -9,6 +9,7 @@
 
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTVector.h"
 #include "Identifier.h"
 #include "JSCJSValue.h"
 #include "JSExportMacros.h"
@@ -21,7 +22,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

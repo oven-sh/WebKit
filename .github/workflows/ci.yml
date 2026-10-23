@@ -433,6 +433,8 @@ jobs:
               probe=0; "$program" $arguments > probe.txt 2>&1 || probe=$?
               echo "TestWTF $arguments: exit $probe, $(wc -l < probe.txt) lines, the last: $(tail -n 1 probe.txt)"
             done
+            command -v gdb > /dev/null || sudo apt-get install -y --no-install-recommends gdb > /dev/null 2>&1 || true
+            gdb -batch -ex run -ex backtrace -ex 'info registers' -ex 'x/8i $pc - 16' --args "$program" --gtest_filter=WTF.ASCIILIteralComparison 2>&1 | tail -n 80 || true
           fi
           exit $status
       - name: run-javascriptcore-tests

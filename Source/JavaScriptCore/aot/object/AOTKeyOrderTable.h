@@ -11,6 +11,7 @@
 #include "AOTObject.h"
 #include "AOTObjectWords.h"
 #include "AOTProgramTables.h"
+#include "AOTVector.h"
 #include "RememberedSlot.h"
 #include <memory>
 #include <optional>

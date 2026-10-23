@@ -13,7 +13,9 @@
 #include "AOTFunctionCodeGenerator.h"
 #include "AOTRelocation.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "AirCode.h"
 #include "AirFrameEmission.h"
 #include "AirGenerationContext.h"
@@ -1015,7 +1017,7 @@ bool DirectCodeGenerator::orderBlocks()
         }
         if (count == 3) {
             std::array<unsigned, 3> order { 2, 1, 0 };
-            std::ranges::stable_sort(order, std::ranges::greater { }, [&](unsigned index) {
+            AOT::stableSort(order, std::ranges::greater { }, [&](unsigned index) {
                 return rankOf(block->successor(index));
             });
             return block->successorBlock(order[position]);
@@ -1328,7 +1330,7 @@ void DirectCodeGenerator::findLoops()
 {
     if (m_backEdges.isEmpty())
         return;
-    std::ranges::sort(m_backEdges, [](const auto& a, const auto& b) {
+    AOT::sort(m_backEdges, [](const auto& a, const auto& b) {
         return a.first != b.first ? a.first < b.first : a.second > b.second;
     });
     Vector<uint32_t, 8> open;
@@ -3264,7 +3266,7 @@ void DirectCodeGenerator::layOutFrame()
                 root.holdsArgument = true;
         }
     }
-    std::ranges::sort(webs, { }, [&](uint32_t web) {
+    AOT::sort(webs, { }, [&](uint32_t web) {
         return m_homes[web].start;
     });
 
@@ -3277,7 +3279,7 @@ void DirectCodeGenerator::layOutFrame()
             if (!m_homes[web].holdsDouble && m_homes[web].gainOfWeb > 0)
                 candidates.append(web);
         }
-        std::ranges::sort(candidates, std::ranges::greater { }, [&](uint32_t web) {
+        AOT::sort(candidates, std::ranges::greater { }, [&](uint32_t web) {
             return m_homes[web].gainOfWeb;
         });
         if (candidates.size() > maxCandidates)
@@ -3374,7 +3376,7 @@ void DirectCodeGenerator::layOutFrame()
         root.slot = slot;
     }
     Vector<Slot, 32> ranked = slots;
-    std::ranges::sort(ranked, [](const Slot& a, const Slot& b) {
+    AOT::sort(ranked, [](const Slot& a, const Slot& b) {
         if (a.holdsArgument != b.holdsArgument)
             return a.holdsArgument;
         return a.accesses > b.accesses;
@@ -4768,7 +4770,7 @@ void DirectCodeGenerator::emitCheck(B3::CheckValue* check)
     CCallHelpers& jit = *m_jit;
     uint64_t early = bitsOf(check->earlyClobbered());
     uint64_t temporaries = 0;
-    Vector<B3::ValueRep> reps;
+    WTF::Vector<B3::ValueRep> reps;
     for (unsigned index = 1; index < check->numChildren(); ++index) {
         B3::ConstrainedValue child = check->constrainedChild(index);
         if (child.rep().kind() == B3::ValueRep::Register || child.rep().kind() == B3::ValueRep::StackArgument) {
@@ -4817,7 +4819,7 @@ void DirectCodeGenerator::emitCheckedArithmetic(B3::CheckValue* check)
     bool isWide = check->type() == B3::Int64;
     uint64_t early = bitsOf(check->earlyClobbered());
     uint64_t temporaries = 0;
-    Vector<B3::ValueRep> reps;
+    WTF::Vector<B3::ValueRep> reps;
     for (unsigned index = 2; index < check->numChildren(); ++index) {
         B3::ConstrainedValue child = check->constrainedChild(index);
         if (child.rep().kind() == B3::ValueRep::Register || child.rep().kind() == B3::ValueRep::StackArgument) {
@@ -4997,7 +4999,7 @@ void DirectCodeGenerator::emitPatchpoint(B3::PatchpointValue* patchpoint, ValueS
         params.m_gpScratch.append(scratch);
     for (FPRReg scratch : doubleScratches)
         params.m_fpScratch.append(scratch);
-    Vector<Box<Label>> labels;
+    WTF::Vector<Box<Label>> labels;
     if (isTerminal) {
         for (unsigned index = 0; index < block.block->numSuccessors(); ++index) {
             DirectBlock& successor = targetOf(block, index);
@@ -5546,7 +5548,7 @@ void DirectCodeGenerator::emitSwitch(B3::SwitchValue* value, DirectBlock& block)
     Vector<Case, 16> cases;
     for (unsigned index = 0; index < value->numCaseValues(); ++index)
         cases.append(Case { value->caseValue(index), index });
-    std::ranges::sort(cases, { }, &Case::value);
+    AOT::sort(cases, { }, &Case::value);
     DirectBlock& otherwise = targetOf(block, numberOfSuccessors - 1);
     auto finish = [&](bool jumpsToOtherwise) {
         for (unsigned index = 0; index + 1 < numberOfSuccessors; ++index) {
@@ -6198,7 +6200,7 @@ bool DirectCodeGenerator::generate(CCallHelpers& jit, CodeRecords& records, cons
         return false;
     }
     m_code.setNumEntrypoints(1);
-    m_code.setEntrypointLabels(Vector<Label> { entry });
+    m_code.setEntrypointLabels(WTF::Vector<Label> { entry });
     if (m_procedure.needsPCToOriginMap()) [[unlikely]]
         m_procedure.pcToOriginMap().appendItem(jit.labelIgnoringWatchpoints(), B3::Origin());
 

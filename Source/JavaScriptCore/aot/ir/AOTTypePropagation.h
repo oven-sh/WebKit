@@ -11,12 +11,12 @@
 #include "AOTEdgeResults.h"
 #include "AOTIR.h"
 #include "AOTResultRules.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

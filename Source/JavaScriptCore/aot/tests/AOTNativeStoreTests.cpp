@@ -24,6 +24,7 @@
 #include "AOTTemporaryFile.h"
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "CustomGetterSetter.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"

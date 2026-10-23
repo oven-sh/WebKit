@@ -12,7 +12,9 @@
 #include "AOTLargeVectors.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -181,7 +183,7 @@ void BodyIndex::ColdRow::setNames(std::array<Vector<uint32_t, 64>, 4>& lists)
 {
     size_t size = 0;
     for (Vector<uint32_t, 64>& list : lists) {
-        std::ranges::sort(list);
+        AOT::sort(list);
         removeRepeatedElements(list);
         size += list.size();
     }

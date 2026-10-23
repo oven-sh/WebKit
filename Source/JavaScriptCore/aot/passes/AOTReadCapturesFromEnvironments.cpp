@@ -17,9 +17,11 @@
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <ranges>
@@ -168,7 +170,7 @@ public:
         }
         if (m_isEmpty)
             return;
-        std::ranges::sort(m_closuresWithStores);
+        AOT::sort(m_closuresWithStores);
         m_isObject.ensureSize(function.values.size());
         spread();
         findObjects();
@@ -781,7 +783,7 @@ void Planner::sortWhatWasFound()
         }
     }
     m_found.clear();
-    std::ranges::sort(m_stores);
+    AOT::sort(m_stores);
     BitVector isFilled(m_candidates.fields.size());
     for (const Store& store : m_stores)
         isFilled.quickSet(store.candidate);
@@ -827,7 +829,7 @@ void Planner::planLayout(LayoutID layout, std::span<const Store> stores)
         return;
 
     // Closures that are stored at the same places can share the fields for what they capture.
-    std::ranges::sort(members, [](const Member& a, const Member& b) {
+    AOT::sort(members, [](const Member& a, const Member& b) {
         if (a.runs != b.runs)
             return std::ranges::lexicographical_compare(a.runs, b.runs);
         return a.candidate < b.candidate;
@@ -944,18 +946,18 @@ Plan Planner::run()
         first = end;
     }
 
-    std::ranges::sort(m_plan.addedStores, [](const AddedStores& a, const AddedStores& b) {
+    AOT::sort(m_plan.addedStores, [](const AddedStores& a, const AddedStores& b) {
         if (a.function != b.function)
             return a.function < b.function;
         return std::tuple { b.block, b.indexInBlock, b.fields[0] } < std::tuple { a.block, a.indexInBlock, a.fields[0] };
     });
-    std::ranges::sort(m_plan.removedStores);
+    AOT::sort(m_plan.removedStores);
     m_plan.editedFunctions = WTF::move(m_readers);
     for (const AddedStores& added : m_plan.addedStores)
         m_plan.editedFunctions.append(added.function);
     for (const RemovedStore& removed : m_plan.removedStores)
         m_plan.editedFunctions.append(removed.function);
-    std::ranges::sort(m_plan.editedFunctions);
+    AOT::sort(m_plan.editedFunctions);
     removeRepeatedElements(m_plan.editedFunctions);
     return WTF::move(m_plan);
 }
@@ -1605,7 +1607,7 @@ static void readOwnCaptures(const Program& program, const OwnCaptures& own, IRBu
     builder.applyInsertions();
     if (!widerReads.isEmpty()) {
         // Ascending: the blocks were visited in order, but the values of a function are not numbered by block.
-        std::ranges::sort(widerReads);
+        AOT::sort(widerReads);
         BitVector hasOtherUse(function.values.size());
         auto entryParameterFor = [&](ValueID operand) {
             auto found = std::ranges::lower_bound(widerReads, operand, { }, &std::pair<ValueID, ValueID>::first);

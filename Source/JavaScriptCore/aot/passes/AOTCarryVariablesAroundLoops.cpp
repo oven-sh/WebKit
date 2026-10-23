@@ -18,12 +18,13 @@
 #include "AOTNaturalLoops.h"
 #include "AOTRegionCloner.h"
 #include "AOTSSARepair.h"
+#include "AOTSort.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -139,7 +140,7 @@ Vector<BlockID, 8> VariableCarrier::headersFromInnermost()
     Vector<const NaturalLoop*, 8> sorted;
     for (unsigned index = 0; index < loops.numLoops(); ++index)
         sorted.append(&loops.loop(index));
-    std::ranges::stable_sort(sorted, { }, &NaturalLoop::size);
+    AOT::stableSort(sorted, { }, &NaturalLoop::size);
     Vector<BlockID, 8> headers;
     for (const NaturalLoop* loop : sorted)
         headers.append(loop->header());
@@ -413,7 +414,7 @@ bool VariableCarrier::carryOnce(const NaturalLoop& loop, BitVector& leaves)
     if (m_variables.isEmpty())
         return false;
     if (m_variables.size() > maxCarriedVariablesPerLoop) {
-        std::ranges::stable_sort(m_variables, std::ranges::greater { }, [](const CarriedVariable& variable) {
+        AOT::stableSort(m_variables, std::ranges::greater { }, [](const CarriedVariable& variable) {
             return variable.reads.size();
         });
         m_variables.shrink(maxCarriedVariablesPerLoop);

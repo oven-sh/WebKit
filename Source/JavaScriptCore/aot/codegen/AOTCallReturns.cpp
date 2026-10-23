@@ -15,6 +15,7 @@
 #include "AOTPromisedResults.h"
 #include "AOTTypeTestEmitter.h"
 #include "AOTStubsCallFrames.h"
+#include "AOTVector.h"
 #include "AirCode.h"
 #include "AirFrameEmission.h"
 #include "AirGenerationContext.h"

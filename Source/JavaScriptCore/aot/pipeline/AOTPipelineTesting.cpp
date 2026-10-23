@@ -15,12 +15,12 @@
 #include "AOTIRPrinter.h"
 #include "AOTInterningPhases.h"
 #include "AOTPipelineInternal.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -9,11 +9,11 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTRepresentationRules.h"
+#include "AOTVector.h"
 #include <array>
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

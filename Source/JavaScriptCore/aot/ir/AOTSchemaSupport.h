@@ -9,6 +9,7 @@
 
 #include "AOTBuiltinIDTypes.h"
 #include "AOTSchemaIDs.h"
+#include "AOTVector.h"
 #include <array>
 #include <bit>
 #include <iterator>
@@ -16,7 +17,6 @@
 #include <span>
 #include <type_traits>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

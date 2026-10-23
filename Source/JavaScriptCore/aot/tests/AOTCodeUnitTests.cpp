@@ -11,6 +11,7 @@
 #include "AOTCompiledCode.h"
 #include "AOTImageTestSupport.h"
 #include "AOTNativeTest.h"
+#include "AOTVector.h"
 #include "AirBasicBlock.h"
 #include "AirCode.h"
 #include "AirInst.h"
@@ -200,7 +201,7 @@ static BlockOffsets offsetsOf(LinkBuffer& linkBuffer, const BlockLabels& labels)
     return { linkBuffer.offsetOf(labels.move), linkBuffer.offsetOf(labels.call), linkBuffer.offsetOf(labels.last), linkBuffer.offsetOf(labels.end) };
 }
 
-static Vector<uint32_t> offsetsOf(LinkBuffer& linkBuffer, const Vector<Label>& labels)
+static Vector<uint32_t> offsetsOf(LinkBuffer& linkBuffer, const WTF::Vector<Label>& labels)
 {
     return labels.map([&](Label label) {
         return linkBuffer.offsetOf(label);
@@ -296,7 +297,7 @@ static void testPlainNamingForbiddenRegister()
 #endif
     };
 
-    Vector<Label> labels;
+    WTF::Vector<Label> labels;
     Vector<uint32_t> offsets;
     LinkedCode code = emitAndLink([&](Emission& emission) {
         for (const NamedRegistersCase& testCase : cases) {
@@ -347,7 +348,7 @@ static void testAirInstructions()
     };
 
     AirBlocks blocks(1);
-    Vector<Label> labels;
+    WTF::Vector<Label> labels;
     Vector<uint32_t> offsets;
     LinkedCode code = emitAndLink([&](Emission& emission) {
         emission.units.setColdBlocks(blocks.indicesOf({ 0 }), { });
@@ -412,7 +413,7 @@ static void testWithoutColdBlocksEverythingIsPinned()
 static void testLatePathIsPlain()
 {
     AirBlocks blocks(2);
-    Vector<Label> labels;
+    WTF::Vector<Label> labels;
     Vector<uint32_t> offsets;
     LinkedCode code = emitAndLink([&](Emission& emission) {
         for (unsigned block = 0; block < 2; ++block) {

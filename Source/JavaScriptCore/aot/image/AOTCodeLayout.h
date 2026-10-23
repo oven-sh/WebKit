@@ -14,10 +14,10 @@
 #include "AOTStubBlob.h"
 #include "AOTStubCalls.h"
 #include "AOTUnitPlacement.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

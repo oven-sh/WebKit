@@ -10,7 +10,9 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -224,14 +226,14 @@ void Area::reserve(uint32_t offset, unsigned logSize)
 
 Vector<OffsetUse, 8> countOffsetUses(Vector<uint32_t, 8>&& offsets)
 {
-    std::ranges::sort(offsets);
+    AOT::sort(offsets);
     Vector<OffsetUse, 8> uses;
     for (uint32_t offset : offsets) {
         if (uses.isEmpty() || uses.last().offset != offset)
             uses.append(OffsetUse { offset, 0 });
         ++uses.last().numberOfRows;
     }
-    std::ranges::sort(uses, [](const OffsetUse& a, const OffsetUse& b) {
+    AOT::sort(uses, [](const OffsetUse& a, const OffsetUse& b) {
         return a.numberOfRows != b.numberOfRows ? a.numberOfRows > b.numberOfRows : a.offset < b.offset;
     });
     return uses;
@@ -287,7 +289,7 @@ private:
             return std::pair(slotOf(member).offset, member.row);
         };
         if (!std::ranges::is_sorted(placed, { }, orderOf))
-            std::ranges::sort(placed, { }, orderOf);
+            AOT::sort(placed, { }, orderOf);
         forEachAdjacentGroup(placed, [&](MemberRow a, MemberRow b) {
             return slotOf(a).offset == slotOf(b).offset;
         }, functor);
@@ -637,7 +639,7 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
     Vector<uint32_t, 32> betterRanks(FillWith { }, optionalRows.last() - firstRow + 1, std::numeric_limits<uint32_t>::max());
     auto rankBy = [&](auto&& estimateOf) {
         Vector<SlotRow, 16> ranked = optionalRows;
-        std::ranges::sort(ranked, [&](SlotRow a, SlotRow b) {
+        AOT::sort(ranked, [&](SlotRow a, SlotRow b) {
             return std::tuple(estimateOf(m_uses.rows[a]), b) > std::tuple(estimateOf(m_uses.rows[b]), a);
         });
         for (uint32_t rank = 0; rank < ranked.size(); ++rank)
@@ -650,7 +652,7 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
         const SlotRowUse& use = m_uses.rows[row];
         return std::tuple(claim.isSetAtCreation, claim.isInitializedWithValue, use.isFilledBesideCreation(), std::numeric_limits<uint32_t>::max() - betterRanks[row - firstRow], hasVisibleStore(id, row), use.accessWeight);
     };
-    std::ranges::sort(optionalRows, [&](SlotRow a, SlotRow b) {
+    AOT::sort(optionalRows, [&](SlotRow a, SlotRow b) {
         auto scoreOfA = scoreOf(a);
         auto scoreOfB = scoreOf(b);
         return scoreOfA != scoreOfB ? scoreOfA > scoreOfB : a < b;
@@ -877,7 +879,7 @@ Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFir
         return m_sharedRows.mutableSpan().subspan(setOffsets[indexOfSet], setOffsets[indexOfSet + 1] - setOffsets[indexOfSet]);
     };
     forEachIndexInParallel(loops(), sets.size(), [&](unsigned indexOfSet) {
-        std::ranges::sort(setRows(indexOfSet), { }, [&](MemberRow member) {
+        AOT::sort(setRows(indexOfSet), { }, [&](MemberRow member) {
             return std::tuple(slotOf(member).storage, slotOf(member).representation, depthOfDeclaration(member), inheritedRows.declaringRowOf(member.row), member.row);
         });
     });
@@ -927,7 +929,7 @@ Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFir
         steps.last().placesTwoRowsInOneGranule = true;
     }
 
-    std::ranges::sort(steps, [](const PlacementStep& a, const PlacementStep& b) {
+    AOT::sort(steps, [](const PlacementStep& a, const PlacementStep& b) {
         return std::tuple(a.depth, a.rank, b.weight, a.firstSharedRow) < std::tuple(b.depth, b.rank, a.weight, b.firstSharedRow);
     });
     return steps;
@@ -1106,7 +1108,7 @@ void ObjectPacker::findMemberRows(LocationRequest& request)
         if (m_packed.slots[row].hasStorage())
             rows[request.numberOfMemberRows++] = { member, row };
     }
-    std::ranges::sort(memberRowsOf(request), { }, [&](MemberRow member) {
+    AOT::sort(memberRowsOf(request), { }, [&](MemberRow member) {
         return std::tuple(slotOf(member).storage, slotOf(member).representation, member.row);
     });
 }
@@ -1166,7 +1168,7 @@ std::optional<uint32_t> ObjectPacker::findMostSharedOffset(std::span<const Membe
         first = std::min(first, findFreeOffset(area.occupied, logSize, 0, area.limit).value_or(UINT32_MAX));
         limitsDescending.append(area.limit);
     }
-    std::ranges::sort(limitsDescending, std::ranges::greater { });
+    AOT::sort(limitsDescending, std::ranges::greater { });
     std::optional<uint32_t> best;
     size_t mostRows = 1;
     for (uint32_t offset = first; mostRows < rowsByFamily.size() && offset < limitsDescending[mostRows]; offset += 1u << logSize) {
@@ -1299,11 +1301,11 @@ void ObjectPacker::placeAtSharedOffsets(std::span<const MemberRow> rows, bool ma
     }
     if (unplaced.isEmpty())
         return;
-    std::ranges::sort(unplaced, { }, [&](MemberRow member) {
+    AOT::sort(unplaced, { }, [&](MemberRow member) {
         return std::pair(m_context.inheritedRows.declaringRowOf(member.row), member.row);
     });
     if (mayGrowCells && !slotOf(unplaced[0]).isOutOfLine()) {
-        std::ranges::sort(offsets);
+        AOT::sort(offsets);
         offsets.shrink(std::ranges::unique(offsets).begin() - offsets.begin());
         if (offsets.size() <= 1 && tryPlaceAtOneOffset(unplaced.span(), offsets.span()))
             return;
@@ -1343,7 +1345,7 @@ void ObjectPacker::placeOutOfLineRowsByWeight(LayoutID id)
         if (m_packed.slots[row].isOutOfLine() && !m_isPlaced[row])
             rows.append(row);
     }
-    std::ranges::sort(rows, [&](SlotRow a, SlotRow b) {
+    AOT::sort(rows, [&](SlotRow a, SlotRow b) {
         return std::tuple(m_uses.rows[b].accessWeight, a) < std::tuple(m_uses.rows[a].accessWeight, b);
     });
     for (SlotRow row : rows)

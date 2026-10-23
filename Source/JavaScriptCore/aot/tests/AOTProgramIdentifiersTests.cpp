@@ -11,6 +11,7 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTVector.h"
 #include "BuiltinNames.h"
 #include "Identifier.h"
 #include "IdentifierInlines.h"
@@ -19,7 +20,6 @@
 #include <optional>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Threading.h>
-#include <wtf/Vector.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>

@@ -12,6 +12,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <algorithm>
 #include <wtf/StdLibExtras.h>

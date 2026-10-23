@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

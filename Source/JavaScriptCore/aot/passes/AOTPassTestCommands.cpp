@@ -14,6 +14,7 @@
 #include "AOTKnownValue.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTStringArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <limits>

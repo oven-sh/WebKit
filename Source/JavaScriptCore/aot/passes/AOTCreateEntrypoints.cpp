@@ -15,6 +15,7 @@
 #include "AOTSlotPlan.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {

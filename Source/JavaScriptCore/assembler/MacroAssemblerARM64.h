@@ -489,7 +489,7 @@ public:
     void add64(RegisterID src, Address dest)
     {
         load64(dest, getCachedDataTempRegisterIDAndInvalidate());
-        m_assembler.add<64>(src, dataTempRegister, dataTempRegister);
+        m_assembler.add<64>(dataTempRegister, dataTempRegister, src);
         store64(dataTempRegister, dest);
     }
 

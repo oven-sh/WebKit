@@ -17,14 +17,15 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCJSValueInlines.h"
 #include "VM.h"
 #include <algorithm>
 #include <span>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT {
@@ -138,7 +139,7 @@ static void dumpOperationCalls(VM& vm, PrintStream& out)
         if (isOperation(entry) && table->callCount(entry))
             calledOperations.append(entry);
     }
-    std::sort(calledOperations.begin(), calledOperations.end(), [](Entry a, Entry b) {
+    AOT::sort(calledOperations, [](Entry a, Entry b) {
         return codePointCompareLessThan(nameOf(a), nameOf(b));
     });
     for (Entry entry : calledOperations)

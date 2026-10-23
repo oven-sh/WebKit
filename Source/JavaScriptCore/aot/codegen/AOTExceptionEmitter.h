@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTVector.h"
 #include "HandlerInfo.h"
 #include <wtf/BitVector.h>
 #include <wtf/Box.h>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

@@ -15,10 +15,10 @@
 #include "AOTLayout.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -13,6 +13,7 @@
 #include "AOTStringArena.h"
 #include "AOTStringTable.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <array>
 #include <optional>
 #include <wtf/StdLibExtras.h>

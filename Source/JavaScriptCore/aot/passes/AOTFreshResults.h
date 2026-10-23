@@ -9,9 +9,9 @@
 
 #include "AOTAnalysisContext.h"
 #include "AOTPass.h"
+#include "AOTVector.h"
 #include "AOTVirtualObjectShapes.h"
 #include <optional>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

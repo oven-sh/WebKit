@@ -12,6 +12,7 @@
 #include "AOTIRProgram.h"
 #include "AOTRegExpCodeAddressing.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"
 #include <utility>

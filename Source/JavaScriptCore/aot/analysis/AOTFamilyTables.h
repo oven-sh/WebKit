@@ -9,6 +9,7 @@
 
 #include "AOTLayout.h"
 #include "AOTSortedSet.h"
+#include "AOTVector.h"
 #include <atomic>
 #include <memory>
 #include <span>
@@ -16,7 +17,6 @@
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

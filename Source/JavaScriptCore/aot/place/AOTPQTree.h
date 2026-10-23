@@ -7,11 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <span>
 #include <utility>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -77,7 +78,7 @@ public:
                 children.append(child);
             });
             if (at(node).kind == Kind::P) {
-                std::ranges::sort(children, [&](uint32_t a, uint32_t b) {
+                AOT::sort(children, [&](uint32_t a, uint32_t b) {
                     return keys[a] < keys[b];
                 });
             } else if (keys[children.last()] < keys[children.first()])

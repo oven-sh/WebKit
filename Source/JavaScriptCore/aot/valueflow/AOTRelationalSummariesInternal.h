@@ -11,6 +11,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTEffectsOfProtocols.h"
 #include "AOTRelationalSummaries.h"
+#include "AOTVector.h"
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {

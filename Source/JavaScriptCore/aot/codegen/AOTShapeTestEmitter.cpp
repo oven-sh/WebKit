@@ -12,6 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTPlacement.h"
 #include "AOTShapeTest.h"
+#include "AOTVector.h"
 #include "MarkedBlock.h"
 #include <algorithm>
 

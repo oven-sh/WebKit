@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <utility>
@@ -30,7 +32,7 @@ static bool isOnSameClassSide(const GuardUse& a, const GuardUse& b)
 static Vector<GuardUse> chooseHeaviestGuards(const PlacementContext& context, std::span<const GuardUse> guards, size_t count)
 {
     Vector<GuardUse> chosen(guards);
-    std::ranges::sort(chosen, [](const GuardUse& a, const GuardUse& b) {
+    AOT::sort(chosen, [](const GuardUse& a, const GuardUse& b) {
         if (a.weight != b.weight)
             return a.weight > b.weight;
         return kindAndKeyOf(a) < kindAndKeyOf(b);
@@ -38,7 +40,7 @@ static Vector<GuardUse> chooseHeaviestGuards(const PlacementContext& context, st
     for (const GuardUse& guard : chosen.subspan(count))
         context.build.gaveUp(LimitID::MaxGuardBitsPerClassSide, { .layout = guard.classLayout });
     chosen.shrink(count);
-    std::ranges::sort(chosen, { }, kindAndKeyOf);
+    AOT::sort(chosen, { }, kindAndKeyOf);
     return chosen;
 }
 

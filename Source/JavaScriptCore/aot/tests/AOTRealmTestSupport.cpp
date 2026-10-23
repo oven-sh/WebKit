@@ -14,6 +14,7 @@
 #include "AOTModuleHost.h"
 #include "AOTRealmStartup.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "Completion.h"
 #include "ErrorInstance.h"
 #include "GlobalObjectMethodTable.h"
@@ -41,7 +42,7 @@ static JSValue requireBuiltinModule(JSGlobalObject* realm, uint32_t)
     return moduleObject;
 }
 
-static JSObject* captureSyntheticExports(JSGlobalObject* realm, SyntheticExportRule rule, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
+static JSObject* captureSyntheticExports(JSGlobalObject* realm, SyntheticExportRule rule, JSValue value, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
 {
     VM& vm = realm->vm();
     AOT_TEST_CHECK(rule == SyntheticExportRule::RuntimeModule);
@@ -55,7 +56,7 @@ static JSObject* captureSyntheticExports(JSGlobalObject* realm, SyntheticExportR
     return asObject(value);
 }
 
-static JSObject* captureNativeModuleExports(JSGlobalObject* realm, uint32_t registryID, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
+static JSObject* captureNativeModuleExports(JSGlobalObject* realm, uint32_t registryID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
 {
     VM& vm = realm->vm();
     names.append(vm.propertyNames->defaultKeyword);

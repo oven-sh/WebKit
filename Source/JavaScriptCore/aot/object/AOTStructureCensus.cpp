@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTCompiledStructure.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
@@ -114,7 +116,7 @@ void dumpStructureCensus(VM& vm, PrintStream& out)
         group.bytes += size;
         group.cells += cells;
     }
-    std::ranges::sort(groups, [](auto& a, auto& b) {
+    AOT::sort(groups, [](auto& a, auto& b) {
         return a.second.bytes > b.second.bytes;
     });
     for (auto& [key, group] : groups) {

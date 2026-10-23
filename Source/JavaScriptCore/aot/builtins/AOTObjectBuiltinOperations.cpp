@@ -21,6 +21,7 @@
 #include "AOTPropertyCachesKeys.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "DeferGC.h"
 #include "GetterSetter.h"
 #include "InternalFieldTuple.h"

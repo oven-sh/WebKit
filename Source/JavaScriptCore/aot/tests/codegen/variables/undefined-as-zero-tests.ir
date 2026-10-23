@@ -2,6 +2,8 @@
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: generate-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
 # RUN(SLOTS): plan-slots variables
 # SLOTS: g0 Statics UndefinedAsZero JSValue
 # SLOTS-NEXT: g1 Statics Plain JSValue
@@ -62,7 +64,9 @@ function f3 name="testsEncodedVariableForUndefinedOrNull" results=[{type=anythin
     v3 = Integer integer=1
     Return v3
 }
-# CHECK-NEXT: f3: size=[[sizeOfTestForZero]] frame=
+# CHECK-NEXT: f3: size=
+# X64: f1: size=[[sizeOfTestForZero]] frame=
+# X64: f3: size=[[sizeOfTestForZero]] frame=
 function f4 name="stores" parameters=[{type=number}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
   b0(v0: number, v1: boolean, v2: boolean):
     Branch v1 -> taken b1(), notTaken b2()

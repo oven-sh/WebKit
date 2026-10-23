@@ -8,9 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTPropertyAccessReceivers.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

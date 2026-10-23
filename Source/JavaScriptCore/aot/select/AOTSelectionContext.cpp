@@ -13,6 +13,7 @@
 #include "AOTEffects.h"
 #include "AOTGuardAvailability.h"
 #include "AOTResultRules.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

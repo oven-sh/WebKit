@@ -15,6 +15,7 @@
 #include "AOTLongExpectations.h"
 #include "AOTTaggedLayouts.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include "AOTWireSections.h"
 #include <algorithm>
@@ -26,7 +27,6 @@
 #include <wtf/Function.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -11,6 +11,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsRegExp.h"
+#include "AOTVector.h"
 #include "RegExp.h"
 #include <algorithm>
 #include <wtf/FixedVector.h>

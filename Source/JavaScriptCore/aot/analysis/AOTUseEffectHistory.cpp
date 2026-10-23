@@ -11,6 +11,8 @@
 #include "AOTBuildContext.h"
 #include "AOTEffects.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <tuple>
@@ -235,7 +237,7 @@ void UseEffectHistory::collectActions(FunctionAnalyses& analyses, const EscapeAn
         addAction(allocation.block, allocation.index, object, ActionKind::Reset);
     }
 
-    std::ranges::sort(pendingActions, { }, [](const PendingAction& pending) {
+    AOT::sort(pendingActions, { }, [](const PendingAction& pending) {
         auto& action = pending.action;
         return std::tuple { pending.blockOrder, action.object, action.index, action.kind == ActionKind::Event };
     });

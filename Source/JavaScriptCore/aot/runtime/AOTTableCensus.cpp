@@ -17,7 +17,9 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTSiteCaches.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCConfig.h"
 #include "VM.h"
 #include <algorithm>
@@ -25,7 +27,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/PageBlock.h>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 
 #if OS(UNIX)
 #include <sys/mman.h>
@@ -91,7 +92,7 @@ public:
             if (counts.touchedPages)
                 printLine("no row: "_s, name, next, limit - next, counts);
         };
-        std::ranges::sort(m_tables);
+        AOT::sort(m_tables);
         for (auto [startOfTable, endOfTable] : m_tables) {
             if (endOfTable <= next)
                 continue;

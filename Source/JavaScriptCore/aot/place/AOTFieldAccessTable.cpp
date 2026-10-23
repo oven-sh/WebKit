@@ -12,6 +12,7 @@
 #include "AOTIRPrinter.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTSlotPlanSteps.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/StringPrintStream.h>

@@ -9,11 +9,11 @@
 
 #include "AOTImageTestSupport.h"
 #include "AOTOutliner.h"
+#include "AOTVector.h"
 #include "GPRInfo.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/FastMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC::AOT::ImageTests {
 

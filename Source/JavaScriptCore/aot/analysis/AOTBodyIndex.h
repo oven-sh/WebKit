@@ -8,7 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -21,7 +23,6 @@
 #include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -505,7 +506,7 @@ void forEachValueListedOrNot(const Program& program, FunctionID id, const Opcode
                 if (wanted.contains(listed.opcode()))
                     found.append(listed.value());
             }
-            std::ranges::sort(found);
+            AOT::sort(found);
             for (ValueID value : found)
                 functor(value, function.at(value));
             return;

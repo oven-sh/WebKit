@@ -25,6 +25,7 @@
 #include "AOTRegionCloner.h"
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/BitVector.h>
 

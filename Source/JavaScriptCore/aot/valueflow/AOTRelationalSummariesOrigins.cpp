@@ -13,6 +13,7 @@
 #include "AOTFlowResults.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
 #include <wtf/DataLog.h>

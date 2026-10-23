@@ -10,6 +10,7 @@
 
 #include "AOTConversionEmitter.h"
 #include "AOTStubsStrings.h"
+#include "AOTVector.h"
 #include "B3MemoryValue.h"
 #include "JSString.h"
 #include "SmallStrings.h"

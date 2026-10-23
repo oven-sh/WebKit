@@ -18,6 +18,7 @@
 #include "AOTSiteCachePlacement.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {

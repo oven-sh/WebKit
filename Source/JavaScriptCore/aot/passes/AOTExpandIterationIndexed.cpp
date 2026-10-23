@@ -12,7 +12,9 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResolveCallsDirectCall.h"
+#include "AOTSort.h"
 #include "AOTSplitStringWalk.h"
+#include "AOTVector.h"
 #include "JSArrayIterator.h"
 #include <algorithm>
 #include <utility>
@@ -317,7 +319,7 @@ PassOutcome expandArrayIteratorSteps(FunctionPassContext& pass, IRBuilder& build
     if (steps.isEmpty())
         return PassOutcome::Unchanged;
 
-    std::ranges::sort(steps, std::ranges::greater { }, [](const ProgramPoint& point) {
+    AOT::sort(steps, std::ranges::greater { }, [](const ProgramPoint& point) {
         return std::pair { point.block, point.index };
     });
     SSARepair repair(builder, pass.analyses);

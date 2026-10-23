@@ -11,6 +11,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTHeat.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <wtf/ASCIICType.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>

@@ -21,16 +21,21 @@
 #include "AOTNativeTest.h"
 #include "AOTPassID.h"
 #include "AOTSchemaEnums.h"
+#include "AOTSort.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "LineColumn.h"
 #include <algorithm>
+#include <array>
 #include <initializer_list>
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <wtf/StdLibExtras.h>
+#include <wtf/WeakRandom.h>
 
 namespace JSC { namespace AOT {
 
@@ -431,6 +436,174 @@ static void testFunctionQueueOnManyThreads()
         checkFunctionQueue(8);
 }
 
+namespace {
+
+template<size_t numberOfOtherWords>
+struct SortedRecord {
+    uint32_t key;
+    std::array<uint32_t, numberOfOtherWords> otherWords;
+
+    friend bool operator==(const SortedRecord&, const SortedRecord&) = default;
+};
+
+struct SortedRecordWithList {
+    uint32_t key;
+    Vector<uint32_t, 2> list;
+
+    friend bool operator==(const SortedRecordWithList&, const SortedRecordWithList&) = default;
+};
+static_assert(movesAsBytes<SortedRecord<4>> && movesAsBytes<std::pair<FunctionID, FunctionID>> && !movesAsBytes<SortedRecordWithList>);
+
+enum class KeyPattern : uint8_t { Random, Ascending, Descending, RisingThenFalling, AllEqual };
+
+Vector<uint32_t> createKeys(WeakRandom& random, size_t size, KeyPattern pattern, uint32_t numberOfDifferentKeys)
+{
+    return Vector<uint32_t>(size, [&](size_t index) -> uint32_t {
+        switch (pattern) {
+        case KeyPattern::Random:
+            return random.getUint32(numberOfDifferentKeys);
+        case KeyPattern::Ascending:
+            return index * numberOfDifferentKeys / size;
+        case KeyPattern::Descending:
+            return (size - index) * numberOfDifferentKeys / size;
+        case KeyPattern::RisingThenFalling:
+            return std::min(index, size - index) * numberOfDifferentKeys / size;
+        case KeyPattern::AllEqual:
+            return 7;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    });
+}
+
+void forEachListOfKeys(const Invocable<void(const Vector<uint32_t>&)> auto& check)
+{
+    WeakRandom random(20261022);
+    for (size_t size : { 0, 1, 2, 3, 5, 7, 8, 15, 16, 17, 18, 31, 33, 64, 100, 257, 1000, 4099 }) {
+        for (KeyPattern pattern : { KeyPattern::Random, KeyPattern::Ascending, KeyPattern::Descending, KeyPattern::RisingThenFalling, KeyPattern::AllEqual }) {
+            for (uint32_t numberOfDifferentKeys : { 2u, 3u, 10u, 1000000u })
+                check(createKeys(random, size, pattern, numberOfDifferentKeys));
+        }
+    }
+}
+
+template<typename Record>
+Vector<Record> createRecords(const Vector<uint32_t>& keys)
+{
+    return Vector<Record>(keys.size(), [&](size_t index) {
+        Record record { };
+        record.key = keys[index];
+        if constexpr (std::is_same_v<Record, SortedRecordWithList>)
+            record.list = { static_cast<uint32_t>(index), 1, 2, 3 };
+        else
+            record.otherWords[0] = index;
+        return record;
+    });
+}
+
+template<typename Record>
+void checkSortsOf(const Vector<uint32_t>& keys)
+{
+    Vector<Record> sorted = createRecords<Record>(keys);
+    Vector<Record> expected = sorted;
+    AOT::sort(sorted, { }, &Record::key);
+    AOT_TEST_CHECK(std::ranges::is_sorted(sorted, { }, &Record::key));
+#if defined(__GLIBCXX__)
+    std::ranges::sort(expected, { }, &Record::key);
+    AOT_TEST_CHECK(sorted == expected);
+#endif
+
+    sorted = createRecords<Record>(keys);
+    expected = sorted;
+    auto isGreater = [](const Record& first, const Record& second) {
+        return first.key > second.key;
+    };
+    AOT::stableSort(sorted, isGreater);
+    std::ranges::stable_sort(expected, isGreater);
+    AOT_TEST_CHECK(sorted == expected);
+}
+
+} // namespace
+
+static void testSortLeavesEqualElementsWhereTheStandardLibraryDoes()
+{
+    forEachListOfKeys([](const Vector<uint32_t>& keys) {
+        checkSortsOf<SortedRecord<1>>(keys);
+        checkSortsOf<SortedRecord<2>>(keys);
+        checkSortsOf<SortedRecord<5>>(keys);
+        checkSortsOf<SortedRecordWithList>(keys);
+    });
+}
+
+static void testSortOfIntegersAndIDs()
+{
+    forEachListOfKeys([](const Vector<uint32_t>& keys) {
+        Vector<uint32_t> expected = keys;
+        std::ranges::sort(expected);
+        Vector<uint32_t> integers = keys;
+        AOT::sort(integers);
+        AOT_TEST_CHECK(integers == expected);
+        Vector<FunctionID> ids = keys.map([](uint32_t key) {
+            return FunctionID(key);
+        });
+        AOT::sort(ids);
+        AOT_TEST_CHECK(std::ranges::equal(ids, expected, { }, &FunctionID::index));
+        AOT::sort(integers, std::ranges::greater { });
+        AOT_TEST_CHECK(std::ranges::equal(integers, expected | std::views::reverse));
+    });
+}
+
+static void testHeapSortBehindTooManyPartitions()
+{
+    using Record = SortedRecord<2>;
+    forEachListOfKeys([](const Vector<uint32_t>& keys) {
+        if (keys.size() < 2)
+            return;
+        Vector<Record> sorted = createRecords<Record>(keys);
+        Vector<Record> expected = sorted;
+        std::ranges::less isLess;
+        auto projection = &Record::key;
+        OrderedSteps<Record, std::ranges::less, decltype(projection)> order(isLess, projection);
+        char* first = reinterpret_cast<char*>(sorted.mutableSpan().data());
+        heapSort(order.stepsOfSort(), first, first + sorted.size() * sizeof(Record));
+        AOT_TEST_CHECK(std::ranges::is_sorted(sorted, { }, &Record::key));
+#if defined(__GLIBCXX__)
+        std::ranges::partial_sort(expected, expected.end(), { }, &Record::key);
+        AOT_TEST_CHECK(sorted == expected);
+#endif
+    });
+
+    // An order that answers so that every partition cuts off as little as it can (M. D. McIlroy, "A Killer Adversary for Quicksort").
+    constexpr uint32_t size = 20000;
+    constexpr uint32_t undecided = size - 1;
+    Vector<uint32_t> values;
+    values.fill(undecided, size);
+    uint32_t numberDecided = 0;
+    uint32_t candidate = 0;
+    size_t numberOfQuestions = 0;
+    Vector<uint32_t> indices(size, [](size_t index) {
+        return static_cast<uint32_t>(index);
+    });
+    AOT::sort(indices, [&](uint32_t first, uint32_t second) {
+        ++numberOfQuestions;
+        if (values[first] == undecided && values[second] == undecided)
+            values[first == candidate ? first : second] = numberDecided++;
+        if (values[first] == undecided)
+            candidate = first;
+        else if (values[second] == undecided)
+            candidate = second;
+        return values[first] < values[second];
+    });
+    AOT_TEST_CHECK(numberOfQuestions < 100 * size);
+    Vector<Record> sorted = createRecords<Record>(values);
+    Vector<Record> expected = sorted;
+    AOT::sort(sorted, { }, &Record::key);
+    AOT_TEST_CHECK(std::ranges::is_sorted(sorted, { }, &Record::key));
+#if defined(__GLIBCXX__)
+    std::ranges::sort(expected, { }, &Record::key);
+    AOT_TEST_CHECK(sorted == expected);
+#endif
+}
+
 std::span<const NativeTest> supportTests()
 {
     static constexpr NativeTest tests[] = {
@@ -449,6 +622,9 @@ std::span<const NativeTest> supportTests()
         { "statistics/many-threads"_s, testStatisticsFromManyThreads },
         { "losses/lowest-subject"_s, testLossesKeepLowestSubject },
         { "losses/subject-with-location"_s, testLossesPreferSubjectWithLocation },
+        { "sort/equal-elements"_s, testSortLeavesEqualElementsWhereTheStandardLibraryDoes },
+        { "sort/integers-and-ids"_s, testSortOfIntegersAndIDs },
+        { "sort/heap-sort-behind-too-many-partitions"_s, testHeapSortBehindTooManyPartitions },
     };
     return tests;
 }

@@ -10,6 +10,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -139,7 +141,7 @@ static Vector<BlockID> sortedBlocksOf(const NaturalLoop& loop)
     blocks.reserveInitialCapacity(loop.size());
     for (unsigned index = 0; index < loop.size(); ++index)
         blocks.append(loop.at(index));
-    std::ranges::sort(blocks);
+    AOT::sort(blocks);
     return blocks;
 }
 

@@ -16,6 +16,7 @@
 #include "AOTNativeTest.h"
 #include "AOTReaderFixture.h"
 #include "AOTReaderInternal.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include "AOTWire.h"
 #include <algorithm>
@@ -26,7 +27,6 @@
 #include <wtf/Function.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/WTFString.h>
 

@@ -69,7 +69,7 @@ function f6 name="inFastCode" parameters=[{type=Array<anything, pristine[Storage
   b2():
     Return
 }
-# CHECK-NEXT: stub ArrayGetAtIndex x1
+# CHECK: stub ArrayGetAtIndex x1
 # CHECK-NEXT: stub ArrayGetAtNumber x1
 # CHECK-NEXT: stub ArrayPutAtIndex.Value x1
 # CHECK-NEXT: stub ArrayPutAtNumber.Value x1
@@ -130,6 +130,6 @@ function f11 name="hasInFastCode" parameters=[{type=Array<anything, proven, pris
   b2():
     Return
 }
-# CHECK-NEXT: stub ArrayHasAtIndex x1
+# CHECK: stub ArrayHasAtIndex x1
 # CHECK-NOT: stub InByValCached
 # S: f11 b1 Fast

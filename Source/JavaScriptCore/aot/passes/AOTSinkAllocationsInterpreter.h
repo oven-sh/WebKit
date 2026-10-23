@@ -9,10 +9,10 @@
 
 #include "AOTForwardedCalls.h"
 #include "AOTSinkAllocationsInternal.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -202,7 +202,9 @@ private:
     ValueID emitAllocation(VirtualObjectID, const VirtualShape&, Vector<LateFieldStore, 2>&, AbsentResult = AbsentResult::IsExcluded);
     bool hasBothAllocationOutcomes(VirtualObjectID) const;
     ValueID emitValueOfVariant(VirtualObjectID, const ObjectVariant&, Vector<LateFieldStore, 2>&);
-    void buildByTag(VirtualObjectID, Vector<LateFieldStore, 2>&);
+    void buildByTag(VirtualObjectID, Vector<LateFieldStore, 2>&, const BuildCause&);
+    bool isBuiltInArmsOf(VirtualObjectID holder, const HeldObject&) const;
+    bool isReachedOnlyThrough(VirtualObjectID holder, VirtualObjectID held) const;
     void emitLateStores(std::span<const LateFieldStore>);
     void didBuild(VirtualObjectID, const BuildCause&);
     BlockFrequency frequencyOfBuild() const;

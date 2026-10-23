@@ -10,6 +10,7 @@
 
 #include "AOTBlockCycles.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <atomic>
 #include <wtf/Atomics.h>
 

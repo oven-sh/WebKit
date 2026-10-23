@@ -10,10 +10,10 @@
 
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

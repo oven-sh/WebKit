@@ -10,10 +10,10 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTTypeTable.h"
 #include "AOTValueFlow.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

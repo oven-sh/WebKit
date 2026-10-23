@@ -12,6 +12,7 @@
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

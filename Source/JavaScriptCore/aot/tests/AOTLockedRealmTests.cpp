@@ -13,6 +13,7 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "ArrayPrototype.h"
 #include "JSCInlines.h"
 #include "JSSentinel.h"

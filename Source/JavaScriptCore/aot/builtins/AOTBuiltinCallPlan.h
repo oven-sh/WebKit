@@ -9,9 +9,9 @@
 
 #include "AOTBuiltinTypes.h"
 #include "AOTEffects.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -14,6 +14,7 @@
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPolls.h"
+#include "AOTVector.h"
 #include "AssemblerPolicy.h"
 #include "LinkBuffer.h"
 #include "StackAlignment.h"

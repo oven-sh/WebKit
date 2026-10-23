@@ -19,6 +19,7 @@
 #include "AOTStubsGlobalBindings.h"
 #include "AOTStubsPropertyInlineCode.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
@@ -58,7 +59,7 @@ static void jumpToSuccessors(CCallHelpers& jit, const B3::StackmapGenerationPara
     CCallHelpers::Jump hit;
     if (!params.fallsThroughToSuccessor(0))
         hit = jit.jump();
-    Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+    WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
     params.addLatePath([=](CCallHelpers& jit) {
         misses.linkTo(*labels[1], &jit);
         if (hit.isSet())

@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 
@@ -259,7 +261,7 @@ DispatchPlan planDispatch(FunctionPassContext& context, const MemberPartition& p
         if (canEmitArm(arm))
             plan.arms.append(index);
     }
-    std::ranges::sort(plan.arms, [&](uint32_t a, uint32_t b) {
+    AOT::sort(plan.arms, [&](uint32_t a, uint32_t b) {
         return isHeavier(weights[a], weights[b]);
     });
     if (context.exceeds(LimitID::MaxDispatchCases, plan.arms.size(), site))

@@ -12,8 +12,10 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTSlotAccess.h"
+#include "AOTSort.h"
 #include "AOTTableInImage.h"
 #include "AOTTextEncoder.h"
+#include "AOTVector.h"
 #include "IndexingHeader.h"
 #include "IndexingType.h"
 #include "JSCJSValueInlines.h"
@@ -395,7 +397,7 @@ static bool hasRepeatedKey(std::span<const TableInImage::Key> keys)
     Vector<uint32_t> strings(keys.size(), [&](size_t index) {
         return keys[index].string;
     });
-    std::ranges::sort(strings);
+    AOT::sort(strings);
     return std::ranges::adjacent_find(strings) != strings.end();
 }
 
@@ -465,7 +467,7 @@ static Vector<std::pair<uint32_t, DataID>> findPlacedNodes(TableEncoder& encoder
         if (request && request->node)
             placed.append({ *request->node, request->data });
     }
-    std::ranges::sort(placed, { }, &std::pair<uint32_t, DataID>::first);
+    AOT::sort(placed, { }, &std::pair<uint32_t, DataID>::first);
     placed.shrink(std::ranges::unique(placed).begin() - placed.begin());
     return placed;
 }

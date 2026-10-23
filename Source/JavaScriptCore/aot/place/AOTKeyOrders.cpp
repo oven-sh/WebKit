@@ -10,6 +10,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -106,7 +108,7 @@ public:
             if (!fields[field].key && fields[field].flags.contains(FieldFlags::IsInherited))
                 m_inheritedFieldsWithoutKey.append({ declarationOf(program, { layout, field }), field });
         }
-        std::ranges::sort(m_inheritedFieldsWithoutKey, { }, &InheritedField::declaration);
+        AOT::sort(m_inheritedFieldsWithoutKey, { }, &InheritedField::declaration);
     }
 
     Vector<FieldIndex> declaredOrder() const
@@ -191,7 +193,7 @@ private:
         });
         if (orders.isEmpty() && declaredFieldsOf(declaringLayout).isEmpty())
             orders.grow(1);
-        std::ranges::sort(orders, isLexicographicallyLess, &Vector<FieldIndex>::span);
+        AOT::sort(orders, isLexicographicallyLess, &Vector<FieldIndex>::span);
         removeRepeatedElements(orders);
         return orders;
     }
@@ -418,7 +420,7 @@ static KeyOrderList computeKeyOrders(const PlacementContext& context, std::initi
         if (canBeKeyOrder(context, test))
             addCandidate(test.fields);
     }
-    std::ranges::sort(candidates, isLexicographicallyLess);
+    AOT::sort(candidates, isLexicographicallyLess);
 
     KeyOrderList orders;
     orders.reserveInitialCapacity(candidates.size());

@@ -15,6 +15,7 @@
 #include "AOTStubsBarriers.h"
 #include "AOTStubsCallAdapters.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTVector.h"
 #include "CPUFeatureSet.h"
 #include "MarkedBlockCage.h"
 #include "RegisterSet.h"

@@ -19,6 +19,7 @@
 #include "AOTPropertyCachesNamedAccess.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "BytecodeStructs.h"
 #include "CodeBlock.h"
 #include "GetterSetter.h"

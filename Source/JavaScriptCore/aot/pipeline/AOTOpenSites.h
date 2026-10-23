@@ -10,10 +10,10 @@
 #include "AOTCFG.h"
 #include "AOTChangeLog.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <array>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

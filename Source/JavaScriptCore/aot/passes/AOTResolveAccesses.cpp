@@ -17,10 +17,12 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTTypePropagation.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -374,7 +376,7 @@ bool AccessResolver::listFirstStoresAtAllocation(BlockID block, uint32_t allocat
     });
     if (!hasStoreToList)
         return false;
-    std::ranges::stable_sort(uses, { }, &UseInBlock::index);
+    AOT::stableSort(uses, { }, &UseInBlock::index);
 
     Vector<uint32_t, 16> fields(function.at(allocationID).fields());
     Vector<ValueID, 16> listedValues(function.at(allocationID).variadicOperands());
@@ -728,7 +730,7 @@ void AccessResolver::expandReadsOfFieldsThatMayBeEmpty()
         read.site.block = location.block;
         read.site.index = location.index;
     }
-    std::ranges::sort(m_readsOfFieldsThatMayBeEmpty, std::ranges::greater { }, [](const NamedAccessSite& read) {
+    AOT::sort(m_readsOfFieldsThatMayBeEmpty, std::ranges::greater { }, [](const NamedAccessSite& read) {
         return std::pair { read.site.block, read.site.index };
     });
 

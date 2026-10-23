@@ -14,6 +14,7 @@
 #include "AOTPendingStars.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "GetterSetter.h"
 #include "InternalFieldTuple.h"

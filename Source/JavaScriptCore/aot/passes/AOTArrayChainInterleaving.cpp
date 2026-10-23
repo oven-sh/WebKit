@@ -12,6 +12,7 @@
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

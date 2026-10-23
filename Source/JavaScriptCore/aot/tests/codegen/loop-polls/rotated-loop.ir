@@ -1,9 +1,15 @@
 # A loop whose test moves to its end polls there, once an iteration. The copy of the test in front of the loop runs once an entry and does not poll. The function has two loops: one for an integer bound, one for any other
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
-# RUN: generate-code
+# A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# RUN(ARM64): generate-code calls
+# REQUIRES(ARM64): arm64
 # STATISTIC: LoopsRotated >= 1
-# CHECK: f1: size={{*}} polls=2
+# X64: f1: size={{*}} polls=2
+# ARM64-LABEL: f1: size=
+# ARM64: operation operationAOTPollSlow x2
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

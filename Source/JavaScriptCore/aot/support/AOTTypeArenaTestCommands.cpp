@@ -14,6 +14,7 @@
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>

@@ -13,7 +13,9 @@
 #include "AOTCodeRecords.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionKinds.h"
+#include "AOTSort.h"
 #include "AOTThrowEmitter.h"
+#include "AOTVector.h"
 #include "LinkBuffer.h"
 #include <algorithm>
 #include <iterator>
@@ -82,7 +84,7 @@ static Vector<FaultingAccess> collectFaultingAccesses(const DescribedFunction& d
     TrapRecords& traps = records.traps;
     RELEASE_ASSERT(!described.build.validates() || records.units.takeTraps().size() == traps.trappingAccesses.size());
 
-    std::ranges::sort(traps.trapSites, { }, &TrapSite::value);
+    AOT::sort(traps.trapSites, { }, &TrapSite::value);
     Vector<FaultingAccess> accesses;
     accesses.reserveInitialCapacity(traps.trappingAccesses.size() + traps.callThrowSites.size());
     for (const TrappingAccess& access : traps.trappingAccesses) {
@@ -95,7 +97,7 @@ static Vector<FaultingAccess> collectFaultingAccesses(const DescribedFunction& d
     }
     for (const CallThrowSite& site : traps.callThrowSites)
         accesses.append({ body.returnSites[site.returnSite].offset - static_cast<uint32_t>(sizeOfNearCall), { }, site.words });
-    std::ranges::sort(accesses, { }, &FaultingAccess::codeOffset);
+    AOT::sort(accesses, { }, &FaultingAccess::codeOffset);
     return accesses;
 }
 
@@ -116,7 +118,7 @@ static Vector<SiteReference, 32> collectSiteReferences(CodeBody& body, SiteDescr
         if (poll.callSite)
             references.append({ poll.returnOffset(), &poll.callSite.bits });
     }
-    std::ranges::stable_sort(references, { }, &SiteReference::returnOffset);
+    AOT::stableSort(references, { }, &SiteReference::returnOffset);
     return references;
 }
 
@@ -125,7 +127,7 @@ LandingPadsOfCopies::LandingPadsOfCopies(const ExceptionRecords& exceptions, siz
 {
     if (m_landingPads.isEmpty())
         return;
-    std::ranges::stable_sort(m_landingPads, { }, &SiteLandingPad::site);
+    AOT::stableSort(m_landingPads, { }, &SiteLandingPad::site);
     m_copies.grow(numberOfSites + 1);
     for (uint32_t index = m_landingPads.size(); index--;) {
         Copies& copies = m_copies[m_landingPads[index].site];
@@ -331,7 +333,7 @@ SiteDescription describeSites(const DescribedFunction& described, CodeRecords& r
     sites.frameMapWords = WTF::move(records.frameMaps.words);
     sites.faultingAccesses = collectFaultingAccesses(described, records, linkBuffer, body);
     sites.pollSites = WTF::move(records.traps.pollSites);
-    std::ranges::sort(sites.pollSites, { }, &PollSite::offset);
+    AOT::sort(sites.pollSites, { }, &PollSite::offset);
 
     Vector<SiteReference, 32> references = collectSiteReferences(body, sites);
     RenumberedSites renumbered = renumberSites(records, linkBuffer, references.span(), sites);

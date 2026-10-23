@@ -12,6 +12,7 @@
 #include "AOTStringArena.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTValidationRules.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <cmath>
 #include <optional>

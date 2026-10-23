@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTTestCommand.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/MathExtras.h>
 #include <wtf/PrintStream.h>
-#include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/StringView.h>

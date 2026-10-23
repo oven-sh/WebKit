@@ -9,6 +9,7 @@
 
 #include "AOTIR.h"
 #include "AOTSiteWeight.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <compare>
 #include <span>

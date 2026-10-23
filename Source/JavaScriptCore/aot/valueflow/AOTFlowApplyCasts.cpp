@@ -15,9 +15,9 @@
 #include "AOTResultRules.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

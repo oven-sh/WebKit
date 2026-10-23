@@ -8,9 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/EnumTraits.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -382,7 +383,7 @@ static void dumpNaturalLoops(PrintStream& out, const CFG& cfg, const NaturalLoop
         Vector<BlockID> blocks;
         for (unsigned index = 0; index < loop->size(); ++index)
             blocks.append(loop->at(index));
-        std::ranges::sort(blocks);
+        AOT::sort(blocks);
         const NaturalLoop* outerLoop = naturalLoops.innerMostOuterLoop(*loop);
 
         dumpProperty(out, loop->header(), "loop blocks"_s, blocks.span());

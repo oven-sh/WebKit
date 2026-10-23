@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTIRProgram.h"
+#include "AOTVector.h"
 #include "SmallStrings.h"
 
 namespace JSC { namespace AOT {

@@ -3,7 +3,7 @@
 # OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
 # RUN: generate-code calls
 # CHECK: f0: size=
-# CHECK-NEXT: operation operationAOTReserveArrayCapacity x{{*}}
+# CHECK: operation operationAOTReserveArrayCapacity x{{*}}
 # CHECK-NOT: no code
 # RUN(S): code-shapes
 

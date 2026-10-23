@@ -16,6 +16,7 @@
 #include "AOTRegExpSummary.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTVector.h"
 #include "YarrFlags.h"
 
 namespace JSC { namespace AOT { namespace Typed {

@@ -26,6 +26,7 @@
 #include "AOTRealmStartup.h"
 #include "AOTRuntimeType.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "Error.h"
 #include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
@@ -38,7 +39,6 @@
 #include <optional>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SetForScope.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 

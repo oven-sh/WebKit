@@ -9,6 +9,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTPlacement.h"
+#include "AOTSort.h"
 #include "JSExportMacros.h"
 #include <algorithm>
 #include <atomic>
@@ -124,7 +125,7 @@ inline Extent extentAt(uint32_t offset, uint32_t size) { return { offset, static
 
 inline bool areDisjoint(std::span<Extent> extents, uint64_t start, uint64_t limit)
 {
-    std::ranges::sort(extents, { }, &Extent::first);
+    AOT::sort(extents, { }, &Extent::first);
     uint64_t end = start;
     for (auto& extent : extents) {
         if (extent.first < end)

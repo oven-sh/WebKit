@@ -12,8 +12,10 @@
 #include "AOTCFG.h"
 #include "AOTExpandOwnKeysOrders.h"
 #include "AOTSelectTypedResultsTypeNodes.h"
+#include "AOTSort.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -230,7 +232,7 @@ Vector<LayoutID, 4> layoutsReachedBy(const Program& program, TypeID root, size_t
         return layouts.size() > maxNumberOfLayouts ? IterationStatus::Done : IterationStatus::Continue;
     };
     forEachLayoutReachedBy(program, root, headLayouts, ScopedLambda<IterationStatus(LayoutID)>(append));
-    std::ranges::sort(layouts);
+    AOT::sort(layouts);
     return layouts;
 }
 

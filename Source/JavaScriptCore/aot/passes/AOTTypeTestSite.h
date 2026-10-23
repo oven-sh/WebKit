@@ -12,6 +12,7 @@
 #include "AOTMethodDispatch.h"
 #include "AOTPass.h"
 #include "AOTTypeTestConditions.h"
+#include "AOTVector.h"
 #include <initializer_list>
 #include <optional>
 #include <span>
@@ -19,7 +20,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -150,6 +150,10 @@ public:
     EarlierTest findEarlierTest(const Value& test) const;
     // False: findEarlierTest() answers Unknown here for every test of the value.
     bool mayHaveFailedTestOf(ValueID) const;
+    // Whether a rule has reported tests for the use in this round.
+    bool isClaimed(ValueID use) const { return m_isClaimed.get(use.index()); }
+    // The use is looked at again in the next round, or behind the rounds if this one is the last.
+    void putOffUse() { m_context.hasUsesAwaitingExpansion = true; }
     // Whatever the rule reports here is taken away again: collectTestSites() says why.
     bool takesAwaySitesInColdCode();
     // A rule that has planned the use and reports nothing leaves its plan to the rules behind it, which would make the same one.

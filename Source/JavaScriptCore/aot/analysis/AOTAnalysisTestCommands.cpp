@@ -21,6 +21,7 @@
 #include "AOTSSARepair.h"
 #include "AOTValueFlowResults.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <algorithm>
 #include <wtf/EnumTraits.h>

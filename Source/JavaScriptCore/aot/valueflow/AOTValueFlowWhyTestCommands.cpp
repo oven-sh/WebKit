@@ -10,12 +10,14 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTCFG.h"
+#include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTTypeArena.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueFlowPositions.h"
 #include "AOTValueFlowResultsInternal.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <wtf/BitVector.h>
@@ -59,7 +61,7 @@ static ASCIILiteral nameOf(ValueFlowStatementKind kind)
     return "?"_s;
 }
 
-constexpr size_t numberOfUnknownSources = static_cast<size_t>(ValueFlowUnknownSource::DeclaredNativeResult) + 1;
+constexpr size_t numberOfUnknownSources = static_cast<size_t>(ValueFlowUnknownSource::ObjectWithoutLayout) + 1;
 
 static ASCIILiteral nameOf(ValueFlowUnknownSource source)
 {
@@ -82,8 +84,6 @@ static ASCIILiteral nameOf(ValueFlowUnknownSource source)
         return "ResultOfUnknownCallee"_s;
     case ValueFlowUnknownSource::ObjectWithoutLayout:
         return "ObjectWithoutLayout"_s;
-    case ValueFlowUnknownSource::DeclaredNativeResult:
-        return "DeclaredNativeResult"_s;
     }
     return "?"_s;
 }
@@ -298,14 +298,14 @@ static void printLateRounds(PrintStream& out, ValueFlowSolution& solution, uint3
         Vector<uint32_t> statements;
         for (; index < logged.size() && logged[index].round == round; ++index)
             statements.append(logged[index].statement.index());
-        std::ranges::sort(statements);
+        AOT::sort(statements);
         Vector<std::pair<uint32_t, uint32_t>> counts;
         for (uint32_t statement : statements) {
             if (counts.isEmpty() || counts.last().second != statement)
                 counts.append({ 0, statement });
             ++counts.last().first;
         }
-        std::ranges::sort(counts, [](auto first, auto second) {
+        AOT::sort(counts, [](auto first, auto second) {
             return std::pair { second.first, first.second } < std::pair { first.first, second.second };
         });
         out.print("round ", round, " edges ", statements.size(), " statements ", counts.size(), ":");
@@ -327,7 +327,7 @@ static void printFunctionsInOrderReached(PrintStream& out, ValueFlowSolution& so
         if (program.functions[index].hasBody() && solver.isReached(FunctionID(index)))
             reached.append(FunctionID(index));
     }
-    std::ranges::stable_sort(reached, { }, [&](FunctionID function) {
+    AOT::stableSort(reached, { }, [&](FunctionID function) {
         return solver.reachedBy(function).round;
     });
     for (FunctionID function : reached) {
@@ -547,7 +547,7 @@ private:
         }
         if (opcodes.isEmpty())
             return "a node that no operation with a rule takes"_s;
-        std::ranges::sort(opcodes);
+        AOT::sort(opcodes);
         StringBuilder names;
         for (Opcode opcode : opcodes)
             names.append(names.isEmpty() ? ""_s : "+"_s, nameOf(opcode));
@@ -592,7 +592,7 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
         ++roots[place].closures;
     });
 
-    std::ranges::stable_sort(roots, std::greater { }, &Root::closures);
+    AOT::stableSort(roots, std::greater { }, &Root::closures);
     out.println("roots ", roots.size());
     for (const Root& root : roots.span().first(std::min(roots.size(), numberOfRootsPrinted))) {
         out.print(root.closures, " closures behind ");
@@ -687,12 +687,12 @@ static void printWhoLetsEscape(PrintStream& out, ValueFlowSolution& solution, Wa
         ++objectsOfStatement.add(logger.index(), 0).iterator->value;
     });
 
-    std::ranges::sort(lines, std::greater { }, &Line::objects);
+    AOT::sort(lines, std::greater { }, &Line::objects);
     out.println("by an edge that no statement has logged: ", byEdgesOfNoStatement, "; by the operations that take the node from which it starts:");
     Vector<std::pair<String, uint32_t>> takers;
     for (auto& entry : objectsOfTakers)
         takers.append({ entry.key, entry.value });
-    std::ranges::sort(takers, [](const auto& first, const auto& second) {
+    AOT::sort(takers, [](const auto& first, const auto& second) {
         return first.second != second.second ? first.second > second.second : codePointCompareLessThan(first.first, second.first);
     });
     for (auto& [names, objects] : takers)
@@ -716,7 +716,7 @@ static void printWhoLetsEscape(PrintStream& out, ValueFlowSolution& solution, Wa
     Vector<StatementLine> statements;
     for (auto& entry : objectsOfStatement)
         statements.append({ ValueFlowStatementID(entry.key), entry.value });
-    std::ranges::sort(statements, [](const StatementLine& first, const StatementLine& second) {
+    AOT::sort(statements, [](const StatementLine& first, const StatementLine& second) {
         return std::pair { second.objects, first.statement.index() } < std::pair { first.objects, second.statement.index() };
     });
     constexpr size_t numberOfStatementsPrinted = 16;
@@ -818,7 +818,7 @@ static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solu
     Vector<std::pair<String, uint32_t>> producers;
     for (auto& [name, count] : producersOfOperandsWithUnknownObject)
         producers.append({ name, count });
-    std::ranges::sort(producers, [](const auto& a, const auto& b) {
+    AOT::sort(producers, [](const auto& a, const auto& b) {
         return a.second != b.second ? a.second > b.second : codePointCompareLessThan(a.first, b.first);
     });
     for (auto& [name, count] : producers)
@@ -830,7 +830,7 @@ static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solu
     if (withoutSource)
         out.println("a seed of a body: ", withoutSource, " operands");
 
-    std::ranges::stable_sort(births, std::greater { }, &Birth::operands);
+    AOT::stableSort(births, std::greater { }, &Birth::operands);
     out.println("births ", births.size());
     for (const Birth& birth : births.span().first(std::min(births.size(), numberOfBirthsPrinted))) {
         out.print(birth.operands, " <- f", birth.witness.function);
@@ -1093,7 +1093,7 @@ static void printChecks(PrintStream& out, ValueFlowSolution& solution, BuildCont
     }
     if (functionsWithoutSource)
         out.println("  a seed of a body: ", functionsWithoutSource);
-    std::ranges::stable_sort(births, std::greater { }, &Birth::functions);
+    AOT::stableSort(births, std::greater { }, &Birth::functions);
     out.println("  births ", births.size(), ", from no operation ", functionsWithoutBirth);
     for (const Birth& birth : births.span().first(std::min(births.size(), numberOfBirthsPrinted))) {
         out.print("  ", birth.functions, " <- f", birth.witness.function);
@@ -1336,7 +1336,7 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
         if (heaviestChildOf[dominator] == none || weighs(node) > weighs(heaviestChildOf[dominator]))
             heaviestChildOf[dominator] = node;
     }
-    std::ranges::sort(childrenOfRoot, [&](uint32_t first, uint32_t second) {
+    AOT::sort(childrenOfRoot, [&](uint32_t first, uint32_t second) {
         return std::pair { weighs(second), first } < std::pair { weighs(first), second };
     });
 
@@ -1384,7 +1384,7 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
         birthLines[place].weight.checks += weightBelow[birth].checks;
         birthLines[place].weight.accesses += weightBelow[birth].accesses;
     }
-    std::ranges::sort(birthLines, std::greater { }, &BirthLine::births);
+    AOT::sort(birthLines, std::greater { }, &BirthLine::births);
     for (const BirthLine& line : birthLines)
         out.println("  births: ", line.births, " ", line.name, "; below them alone ", line.weight.checks, " checks ", line.weight.accesses, " accesses");
     auto printLine = [&](uint32_t node) {
@@ -1994,7 +1994,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             }
             ++lines[found].functions;
         }
-        std::ranges::sort(lines, std::greater { }, &Line::functions);
+        AOT::sort(lines, std::greater { }, &Line::functions);
         context.out.println("entered by a body or the host: ", enteredByBodies);
         for (const Line& line : lines) {
             if (line.kind == ValueFlowStatementKind::Operation)
@@ -2181,7 +2181,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 if (ValueFlowStatementID logger = solver.statementThatLogged({ predecessor, node }))
                     raisers.append(logger.index());
             });
-            std::ranges::sort(raisers);
+            AOT::sort(raisers);
             removeRepeatedElements(raisers);
             for (uint32_t raiser : raisers) {
                 context.out.print("  ");

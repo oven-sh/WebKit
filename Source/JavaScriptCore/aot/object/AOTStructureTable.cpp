@@ -16,7 +16,9 @@
 #include "AOTObjectModel.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "ConservativeRoots.h"
 #include "DeferGCInlines.h"
@@ -256,7 +258,7 @@ void StructureTable::dumpStructuresMade(PrintStream& out) const
         if (made > 1)
             mostOften.append({ made, layoutAndKind });
     }
-    std::ranges::sort(mostOften, std::ranges::greater { });
+    AOT::sort(mostOften, std::ranges::greater { });
     for (auto [made, layoutAndKind] : mostOften.span().first(std::min(mostOften.size(), numberOfLayoutsListed))) {
         out.print(made, "\tstructures of one layout:L"_s, static_cast<uint32_t>(layoutAndKind), " "_s);
         MadeStructures::printKind(out, layoutAndKind >> 32);

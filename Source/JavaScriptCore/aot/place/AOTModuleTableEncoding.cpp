@@ -11,8 +11,10 @@
 #include "AOTFlowResults.h"
 #include "AOTModuleGraph.h"
 #include "AOTSlotPlanSteps.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/ASCIICType.h>
@@ -453,7 +455,7 @@ static void appendModulesByPath(TableEncoder& encoder)
             continue;
         modules.append(index);
     }
-    std::ranges::sort(modules, [&](uint32_t left, uint32_t right) {
+    AOT::sort(modules, [&](uint32_t left, uint32_t right) {
         return std::ranges::lexicographical_compare(program.string(program.modules[left].path), program.string(program.modules[right].path));
     });
     encoder.setTable(ProgramTableIndex::modulesByPath, encodeModuleNumbers(encoder, modules.span()));
@@ -472,7 +474,7 @@ static void appendCompiledRuntimeModules(TableEncoder& encoder)
             continue;
         runtimeModules.append({ module.runtimeModule.index(), index });
     }
-    std::ranges::sort(runtimeModules, { }, &CompiledRuntimeModuleData::registryID);
+    AOT::sort(runtimeModules, { }, &CompiledRuntimeModuleData::registryID);
     encoder.setTable(ProgramTableIndex::compiledRuntimeModules, runtimeModules);
 }
 

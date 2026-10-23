@@ -10,6 +10,7 @@
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowSolver.h"
 #include "AOTValueSets.h"
+#include "AOTVector.h"
 #include <memory>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -60,8 +61,10 @@ class ValueFlowSolution {
 public:
     // A build that collects the report on sites remembers who logged each edge whatever is asked for here.
     enum class Witnesses : uint8_t { None, ForEveryEdge };
+    // Whether anybody asks the solver how a value has come to a node: see ValueFlowSolverInput::isAskedHowValuesCame.
+    enum class WaysOfValues : uint8_t { AreAskedFor, AreNotAskedFor };
     // It makes property keys of the texts that calls pass where a function takes a key: see ValueFlowInstancedFunctions.
-    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { });
+    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor);
     ~ValueFlowSolution();
 
     const Program& program() const { return m_program; }

@@ -9,13 +9,13 @@
 
 #include "AOTModuleData.h"
 #include "AOTProgramTables.h"
+#include "AOTVector.h"
 #include <compare>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>

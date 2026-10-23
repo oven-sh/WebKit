@@ -12,6 +12,7 @@
 #include "AOTPropertyAccessInternal.h"
 #include "AOTRefusedContents.h"
 #include "AOTSharedMemo.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>

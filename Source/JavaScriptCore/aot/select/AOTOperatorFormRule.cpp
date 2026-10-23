@@ -10,6 +10,7 @@
 
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

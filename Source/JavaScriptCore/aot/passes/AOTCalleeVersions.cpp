@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
 #include "AOTDerivedFunctions.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

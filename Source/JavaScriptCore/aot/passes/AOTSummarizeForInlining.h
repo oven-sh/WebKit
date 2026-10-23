@@ -11,6 +11,7 @@
 #include "AOTHeat.h"
 #include "AOTIR.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <array>
 #include <memory>
 #include <optional>
@@ -18,7 +19,6 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT {

@@ -13,6 +13,7 @@
 #include "AOTRealmTestSupport.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
 #include "JSMapInlines.h"

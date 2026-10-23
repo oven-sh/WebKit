@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTPass.h"
+#include "AOTVector.h"
 #include <ranges>
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

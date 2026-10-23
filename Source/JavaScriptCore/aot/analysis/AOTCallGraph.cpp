@@ -19,8 +19,10 @@
 #include "AOTFlowResults.h"
 #include "AOTLargeVectors.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <atomic>
 #include <functional>
 #include <numeric>
@@ -179,7 +181,7 @@ void BodyReferenceCollector::read(const Terminator& terminator, const EffectDesc
 void BodyReferenceCollector::addMembersOfCalleeSets()
 {
     Vector<CalleeSetID>& sets = m_references.calleeSets;
-    std::ranges::sort(sets);
+    AOT::sort(sets);
     for (size_t index = 0; index < sets.size(); ++index) {
         if (index && sets[index] == sets[index - 1])
             continue;
@@ -198,7 +200,7 @@ void BodyReferenceCollector::addIndirectCallees(const FlowResults& flow, Functio
     addSource(id);
     for (const InlineFrame& frame : m_program.at(id).inlineFrames)
         addSource(frame.callee);
-    std::ranges::sort(sources);
+    AOT::sort(sources);
     removeRepeatedElements(sources);
     for (FunctionID source : sources) {
         for (const FlowIndirectCall& call : flow.indirectCallsFrom(source))
@@ -216,7 +218,7 @@ void BodyReferenceCollector::addExpectedFunctionTypes(FunctionID id)
         if (expected && (types.isEmpty() || types.last() != expected) && !m_program.at(expected).functions.isEmpty())
             types.append(expected);
     }
-    std::ranges::sort(types);
+    AOT::sort(types);
     removeRepeatedElements(types);
     moveToExactBuffer(types);
 }
@@ -226,9 +228,9 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
     addMembersOfCalleeSets();
     addIndirectCallees(flow, id);
     addExpectedFunctionTypes(id);
-    std::ranges::sort(m_references.callees);
+    AOT::sort(m_references.callees);
     removeRepeatedElements(m_references.callees);
-    std::ranges::sort(m_references.otherReferences);
+    AOT::sort(m_references.otherReferences);
     removeRepeatedElements(m_references.otherReferences);
     moveToExactBuffer(m_references.callees);
     moveToExactBuffer(m_references.directCallees);

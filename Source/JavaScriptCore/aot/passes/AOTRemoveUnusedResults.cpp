@@ -15,6 +15,7 @@
 #include "AOTPassRunner.h"
 #include "AOTThreads.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>

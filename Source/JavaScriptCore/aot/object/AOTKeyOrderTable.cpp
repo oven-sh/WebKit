@@ -14,7 +14,9 @@
 #include "AOTLimits.h"
 #include "AOTObjectModel.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
@@ -621,7 +623,7 @@ size_t KeyOrderTable::indexOfFieldAt(const LayoutData& layout, uint32_t slotKey)
             if (uint32_t key = slotKeyFor(fields[index].slot.offset, fields[index].isOutOfLine()); key != noSlotKey)
                 keysAndIndexes.append(static_cast<uint64_t>(key) << 32 | index);
         }
-        std::ranges::sort(keysAndIndexes);
+        AOT::sort(keysAndIndexes);
         keysAndIndexes.shrinkToFit();
     }
     auto found = std::ranges::lower_bound(keysAndIndexes, static_cast<uint64_t>(slotKey) << 32);

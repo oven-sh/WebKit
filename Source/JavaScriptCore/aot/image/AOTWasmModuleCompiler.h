@@ -8,6 +8,7 @@
 #if ENABLE(AOT) && ENABLE(WEBASSEMBLY_OMGJIT)
 
 #include "AOTCodeTemplates.h"
+#include "AOTVector.h"
 #include "AOTWasmInterface.h"
 #include "AOTWasmSection.h"
 #include "AssemblerPolicy.h"
@@ -20,7 +21,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

@@ -16,6 +16,7 @@
 #include "AOTSupportTestCommands.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeRelations.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <ranges>
 #include <utility>

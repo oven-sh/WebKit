@@ -13,6 +13,7 @@
 #include "AOTSharedMemo.h"
 #include "AOTType.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 

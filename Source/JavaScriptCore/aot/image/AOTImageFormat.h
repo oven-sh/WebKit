@@ -12,6 +12,7 @@
 #include "AOTLimits.h"
 #include "AOTRuntimeTable.h"
 #include "AOTVarint.h"
+#include "AOTVector.h"
 #include "CPU.h"
 #include "StackAlignment.h"
 #include <algorithm>

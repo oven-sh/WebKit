@@ -19,15 +19,16 @@
 #include "AOTHeat.h"
 #include "AOTIRProgram.h"
 #include "AOTSiteWeight.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <optional>
 #include <tuple>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -502,7 +503,7 @@ void BirthFinder::removeFieldsOfObjectsHeldTwice(const CFG& cfg)
     auto keyOf = [](const Held& entry) {
         return std::tuple { entry.object.index(), entry.outerLayout.index(), entry.field };
     };
-    std::ranges::stable_sort(held, { }, keyOf);
+    AOT::stableSort(held, { }, keyOf);
 
     for (size_t begin = 0; begin < held.size();) {
         size_t end = begin + 1;
@@ -620,7 +621,7 @@ InnerObjectWeights::InnerObjectWeights(const Program& program, const Promises& p
     Vector<uint32_t, 16> sortedIndices(births.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::sort(sortedIndices, [&](uint32_t a, uint32_t b) {
+    AOT::sort(sortedIndices, [&](uint32_t a, uint32_t b) {
         const Value& first = allocationAt(a);
         const Value& second = allocationAt(b);
         if (first.allocationClass() != second.allocationClass())

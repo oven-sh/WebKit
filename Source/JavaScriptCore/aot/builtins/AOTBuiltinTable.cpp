@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinNameSlots.h"
 #include "AOTRemovableFeature.h"
+#include "AOTVector.h"
 #include "CommonIdentifiers.h"
 #include "IdentifierInlines.h"
 #include "VM.h"

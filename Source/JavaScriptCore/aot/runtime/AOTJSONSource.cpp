@@ -18,6 +18,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSArrayBufferView.h"
 #include "JSCInlines.h"

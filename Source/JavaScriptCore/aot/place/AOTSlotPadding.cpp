@@ -11,7 +11,9 @@
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <tuple>
@@ -434,7 +436,7 @@ void EmptySlotReserver::run()
     });
     if (candidates.isEmpty())
         return;
-    std::ranges::sort(candidates, [&](uint32_t a, uint32_t b) {
+    AOT::sort(candidates, [&](uint32_t a, uint32_t b) {
         return std::tuple(accesses[b].weight, a) < std::tuple(accesses[a].weight, b);
     });
 
@@ -489,7 +491,7 @@ void reserveEmptySlotsInPadding(const SlotPlanContext& context, const SlotUses& 
     };
     reserveEmptySlots(context, uses, packed, { hasLocation, isFree, take });
     for (auto& reserved : packed.bytesKeptZero)
-        std::ranges::sort(reserved);
+        AOT::sort(reserved);
 }
 
 } } } // namespace JSC::AOT::Typed

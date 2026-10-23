@@ -22,6 +22,7 @@
 #include "AOTStubsPropertyKeys.h"
 #include "AOTStubsRegExp.h"
 #include "AOTStubsValues.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <iterator>

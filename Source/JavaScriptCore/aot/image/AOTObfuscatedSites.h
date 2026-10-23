@@ -8,8 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTImageForward.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

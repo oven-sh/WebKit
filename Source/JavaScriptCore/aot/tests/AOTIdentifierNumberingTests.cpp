@@ -12,6 +12,7 @@
 #include "AOTImageTestSupport.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTStubCatalog.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <memory>

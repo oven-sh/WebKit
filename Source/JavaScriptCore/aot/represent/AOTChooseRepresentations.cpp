@@ -11,6 +11,8 @@
 #include "AOTBuildContext.h"
 #include "AOTConversions.h"
 #include "AOTRepresentationWebs.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <utility>
@@ -486,7 +488,7 @@ private:
 
     void sortLinks()
     {
-        std::ranges::stable_sort(m_links, { }, &Link::copy);
+        AOT::stableSort(m_links, { }, &Link::copy);
         uint32_t next = 0;
         for (uint32_t index = 0; index < m_copies.size(); ++index) {
             m_copies[index].firstLink = next;
@@ -707,7 +709,7 @@ static bool takesOneValueInTwoForms(const ConversionWalk& walk, const Operation&
         if (ValueID operand = user.operand(operandIndex))
             operands.append({ operand, operandIndex });
     }
-    std::ranges::sort(operands);
+    AOT::sort(operands);
     for (size_t index = 1; index < operands.size(); ++index) {
         if (operands[index - 1].first == operands[index].first && formTakenAt(operands[index - 1].second) != formTakenAt(operands[index].second))
             return true;

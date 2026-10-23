@@ -9,8 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <iterator>
 #include <limits>
@@ -280,7 +282,7 @@ void SSARepair::splitCoveredBlocksAfterDefinitions()
     if (cuts.isEmpty())
         return;
 
-    std::sort(cuts.begin(), cuts.end(), [](const ProgramPoint& a, const ProgramPoint& b) {
+    AOT::sort(cuts, [](const ProgramPoint& a, const ProgramPoint& b) {
         return std::tie(a.block, a.index) < std::tie(b.block, b.index);
     });
     removeRepeatedElements(cuts);
@@ -303,7 +305,7 @@ void SSARepair::collectUses(VariableData& data)
         for (const Use& use : useLists.usesOf(value))
             data.uses.append(RecordedUse { use, useLists.pointOf(use), value, false });
     }
-    std::sort(data.uses.begin(), data.uses.end(), [&](const RecordedUse& a, const RecordedUse& b) {
+    AOT::sort(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
         return useLists.isBefore(a.use, b.use);
     });
 }
@@ -618,7 +620,7 @@ const SSARepair::Definition* SSARepair::findLastDefinitionBefore(const VariableD
 
 void SSARepair::sortDefinitions(VariableData& data)
 {
-    std::stable_sort(data.definitions.begin(), data.definitions.end(), [](const Definition& a, const Definition& b) {
+    AOT::stableSort(data.definitions, [](const Definition& a, const Definition& b) {
         return std::tie(a.block, a.order) < std::tie(b.block, b.order);
     });
 }

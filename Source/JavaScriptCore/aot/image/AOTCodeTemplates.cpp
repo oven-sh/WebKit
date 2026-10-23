@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImageFormat.h"
+#include "AOTVector.h"
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT {

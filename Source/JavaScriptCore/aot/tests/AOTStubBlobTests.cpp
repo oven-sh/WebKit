@@ -32,6 +32,7 @@
 #include "AOTStubsRegExp.h"
 #include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
+#include "AOTVector.h"
 #include "Butterfly.h"
 #include "IndexingType.h"
 #include "JSCJSValueInlines.h"

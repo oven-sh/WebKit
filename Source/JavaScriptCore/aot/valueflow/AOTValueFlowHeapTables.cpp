@@ -19,6 +19,7 @@
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowRulesModules.h"
 #include "AOTValueSets.h"
+#include "AOTVector.h"
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {

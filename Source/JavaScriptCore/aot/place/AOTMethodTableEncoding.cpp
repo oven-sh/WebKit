@@ -8,6 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 // The image builder turns the functions into code offsets, in sections of their own. The run time reads only the dependents.
@@ -25,7 +28,7 @@ void encodeMethodTable(TableEncoder& encoder)
         const MethodTableDependent& dependent = table.dependents[index];
         return MethodTableDependentData { numberInStaticsOf(encoder.placement.guardBit(dependent.guard)), dependent.entry, dependent.selector };
     });
-    std::ranges::sort(dependents);
+    AOT::sort(dependents);
 
     encoder.setTable(ProgramTableIndex::methodTableFunctions, functions);
     encoder.setTable(ProgramTableIndex::methodLookupFunctions, lookups);

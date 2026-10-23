@@ -26,6 +26,7 @@
 #include "AOTStubCatalog.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

@@ -21,6 +21,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "GetterSetter.h"
 #include "JSArrayBuffer.h"
@@ -30,7 +31,6 @@
 #include <algorithm>
 #include <bit>
 #include <span>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/SymbolImpl.h>
 

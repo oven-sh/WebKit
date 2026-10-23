@@ -11,10 +11,10 @@
 #include "AOTID.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSchemaRecords.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

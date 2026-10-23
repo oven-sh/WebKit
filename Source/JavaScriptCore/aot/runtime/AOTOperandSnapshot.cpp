@@ -12,6 +12,8 @@
 #include "AOTCompactTable.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include "DateInstance.h"
 #include "GetterSetter.h"
 #include "JSArrayBuffer.h"
@@ -305,7 +307,7 @@ OperandSnapshot capture(JSObject* object)
         captureInternalState(object, state);
         state.isClassPrototypeWithoutMembers = object->classInfo() == ClassPrototype::info();
     }
-    std::ranges::sort(state.properties, { }, [](const CapturedProperty& property) {
+    AOT::sort(state.properties, { }, [](const CapturedProperty& property) {
         return property.key.get();
     });
     return state;

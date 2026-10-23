@@ -16,6 +16,7 @@
 #include "AOTPropertyAccessElements.h"
 #include "AOTTypeArena.h"
 #include "AOTValueFlowBuiltins.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 

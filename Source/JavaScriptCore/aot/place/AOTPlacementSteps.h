@@ -13,13 +13,13 @@
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTSiteWeight.h"
 #include "AOTSlotPlanSteps.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <compare>
 #include <optional>
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

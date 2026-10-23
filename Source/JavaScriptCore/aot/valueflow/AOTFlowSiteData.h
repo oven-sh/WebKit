@@ -9,8 +9,8 @@
 
 #include "AOTIRProgram.h"
 #include "AOTSchemaRecords.h"
+#include "AOTVector.h"
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

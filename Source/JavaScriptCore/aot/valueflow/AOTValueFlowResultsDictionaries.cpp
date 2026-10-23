@@ -9,9 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -175,7 +177,7 @@ static void createTypesBehindDictionaries(const Program& program, const BitVecto
                 didChange = true;
             }
         }
-        std::ranges::sort(changedTypes);
+        AOT::sort(changedTypes);
         testedBehind = WTF::map(changedTypes, [&](uint32_t index) {
             return arena.intern(typeBehindDictionaries(program, layoutsOfDictionaries, program.at(TypeID(index)), arena, [&](TypeID contents) {
                 return contents && behindOf[contents.index()] ? behindOf[contents.index()] : contents;

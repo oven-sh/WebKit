@@ -21,7 +21,9 @@
 #include "AOTRegExpRequests.h"
 #include "AOTReuseEnvironments.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTTestRunner.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <compare>
 #include <inttypes.h>
@@ -31,7 +33,6 @@
 #include <type_traits>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -395,7 +396,7 @@ static void printSiteCells(PrintStream& out, const Program& program, const Stati
         if (std::optional<StaticsOffset> offset = value.staticsOffset())
             cells.append(SiteCell { offset->value(), value.opcode });
     });
-    std::ranges::sort(cells);
+    AOT::sort(cells);
     removeRepeatedElements(cells);
 
     for (const SiteCell& cell : cells) {

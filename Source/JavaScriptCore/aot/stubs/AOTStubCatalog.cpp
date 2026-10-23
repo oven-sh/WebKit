@@ -15,6 +15,7 @@
 #include "AOTStubFrontEnds.h"
 #include "AOTStubRecording.h"
 #include "AOTStubsOperations.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <wtf/DataLog.h>

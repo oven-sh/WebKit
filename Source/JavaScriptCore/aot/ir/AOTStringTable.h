@@ -12,11 +12,11 @@
 #include "AOTNameClass.h"
 #include "AOTNonMovingVector.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include <array>
 #include <compare>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 

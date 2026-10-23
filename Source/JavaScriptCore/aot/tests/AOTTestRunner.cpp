@@ -17,6 +17,7 @@
 #include "AOTTestFile.h"
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/FileSystem.h>
 #include <wtf/NumberOfCores.h>

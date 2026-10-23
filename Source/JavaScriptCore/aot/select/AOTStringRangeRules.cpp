@@ -11,8 +11,10 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTSelectionContext.h"
+#include "AOTSort.h"
 #include "AOTStringRuleSupport.h"
 #include "AOTStringTable.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -254,7 +256,7 @@ RangeMatcher::RangeMatcher(SelectionContext& context, Vector<RangeValue>&& range
 void RangeMatcher::sortRanges()
 {
     const CFG& cfg = m_context.analyses().cfg();
-    std::ranges::sort(m_ranges, { }, [&](const RangeValue& range) {
+    AOT::sort(m_ranges, { }, [&](const RangeValue& range) {
         ProgramPoint point = m_uses.pointOf(range.value);
         return std::pair { cfg.reversePostOrderIndex(point.block), point.index };
     });

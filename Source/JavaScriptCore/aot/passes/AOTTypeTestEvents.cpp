@@ -12,6 +12,8 @@
 #include "AOTCodeSizeEstimate.h"
 #include "AOTGrouping.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/Hasher.h>
@@ -169,8 +171,8 @@ void TestEvents::collectPointItems()
             break;
         }
     }
-    std::ranges::stable_sort(m_parameterProofsByBlock, { }, orderOf);
-    std::ranges::stable_sort(m_valueProofsByPoint, { }, orderOf);
+    AOT::stableSort(m_parameterProofsByBlock, { }, orderOf);
+    AOT::stableSort(m_valueProofsByPoint, { }, orderOf);
 }
 
 static bool isReadAsDefinition(const Program& program, const Function& function, const Value& value)

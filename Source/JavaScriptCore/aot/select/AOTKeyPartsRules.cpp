@@ -11,6 +11,7 @@
 #include "AOTInlineBuiltinForms.h"
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>

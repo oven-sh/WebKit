@@ -10,9 +10,9 @@
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTRepresentationRules.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

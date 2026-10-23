@@ -15,6 +15,7 @@
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

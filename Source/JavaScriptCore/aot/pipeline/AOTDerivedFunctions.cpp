@@ -13,6 +13,7 @@
 #include "AOTInterningPhases.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/ParkingLot.h>

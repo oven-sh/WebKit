@@ -10,6 +10,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTSplitUnions.h"
+#include "AOTVector.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {

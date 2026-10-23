@@ -14,9 +14,9 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubsStringLiterals.h"
 #include "AOTStubsValues.h"
+#include "AOTVector.h"
 #include "JSCJSValue.h"
 #include <wtf/Box.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

@@ -15,6 +15,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTValueFlowHeapTables.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -22,7 +23,6 @@
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

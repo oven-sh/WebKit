@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTLayoutData.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

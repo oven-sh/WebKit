@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSelectTypedResultsNodes.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

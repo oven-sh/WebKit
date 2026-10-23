@@ -11,6 +11,7 @@
 #include "AOTLimits.h"
 #include "AOTPassID.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include "JSExportMacros.h"
 #include "LineColumn.h"
@@ -18,7 +19,6 @@
 #include <optional>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/WTFString.h>
 

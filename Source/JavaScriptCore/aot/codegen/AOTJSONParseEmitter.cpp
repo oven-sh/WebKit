@@ -13,6 +13,7 @@
 #include "AOTInstance.h"
 #include "AOTJSONScanner.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTVector.h"
 #include "B3StackmapGenerationParams.h"
 #include "StackManager.h"
 #include <algorithm>

@@ -13,6 +13,7 @@
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowTestCommands.h"
 #include "AOTValueSets.h"
+#include "AOTVector.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/MonotonicTime.h>
 

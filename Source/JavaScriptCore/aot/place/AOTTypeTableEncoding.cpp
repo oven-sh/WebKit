@@ -13,6 +13,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include "AOTTypeTestPlan.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <bit>

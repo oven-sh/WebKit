@@ -11,13 +11,13 @@
 #include "AOTCellSizeClasses.h"
 #include "AOTSiteWeight.h"
 #include "AOTSlotPlan.h"
+#include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <compare>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

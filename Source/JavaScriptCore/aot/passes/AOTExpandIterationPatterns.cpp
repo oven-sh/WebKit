@@ -14,7 +14,9 @@
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTSort.h"
 #include "AOTTypeTestSite.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -332,7 +334,7 @@ void expandPatternsInOneRead(FunctionPassContext& pass, IRBuilder& builder, std:
         for (const PatternInOneRead& pattern : patterns)
             plans.append(planOneRead(pass, useLists, pattern.operations, pointsOfOperations));
     }
-    std::ranges::sort(pointsOfOperations, isBefore);
+    AOT::sort(pointsOfOperations, isBefore);
     eraseOperations(builder, pointsOfOperations.span());
 
     for (size_t index = 0; index < patterns.size(); ++index) {

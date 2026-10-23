@@ -13,6 +13,7 @@
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTReaderFixture.h"
+#include "AOTVector.h"
 #include <array>
 #include <initializer_list>
 #include <limits>

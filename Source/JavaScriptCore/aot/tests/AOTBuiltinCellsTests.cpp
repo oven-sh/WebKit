@@ -13,6 +13,7 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramTables.h"
+#include "AOTVector.h"
 #include "CustomGetterSetter.h"
 #include "JSCInlines.h"
 #include "JSCustomGetterFunction.h"
@@ -21,7 +22,6 @@
 #include "VMInlines.h"
 #include <bit>
 #include <wtf/StackPointer.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

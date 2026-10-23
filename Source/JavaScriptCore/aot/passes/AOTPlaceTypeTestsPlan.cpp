@@ -11,6 +11,8 @@
 #include "AOTAnalysisDump.h"
 #include "AOTGenericCopy.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <tuple>
@@ -249,7 +251,7 @@ static void appendSlowPaths(TestPlacementPlan& plan, const Function& function, c
         if (results.wanted.isInStretchAtHead(target))
             plan.slowPaths.append(PlannedSlowPath { results.stretches.stretchAtHeadOf(target), edge });
     }
-    std::ranges::sort(plan.slowPaths, { }, [&](const PlannedSlowPath& slowPath) {
+    AOT::sort(plan.slowPaths, { }, [&](const PlannedSlowPath& slowPath) {
         return std::pair { cfg.reversePostOrderIndex(slowPath.edge.from), slowPath.edge.targetIndex };
     });
 }
@@ -291,7 +293,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         if (isRarerThanPredecessor && !goesStraightBack && mayRejoinAt(head))
             plan.rejoinPoints.append(head);
     }
-    std::ranges::sort(plan.rejoinPoints, { }, [&](ProgramPoint point) {
+    AOT::sort(plan.rejoinPoints, { }, [&](ProgramPoint point) {
         return std::pair { cfg.reversePostOrderIndex(point.block), point.index };
     });
     removeRepeatedElements(plan.rejoinPoints);
@@ -456,7 +458,7 @@ static void appendRejoinPointsWithoutTests(TestPlacementPlan& plan, FunctionPass
     auto orderOf = [&](ProgramPoint point) {
         return std::pair { cfg.reversePostOrderIndex(point.block), point.index };
     };
-    std::ranges::sort(plan.rejoinPointsWithoutTests, { }, orderOf);
+    AOT::sort(plan.rejoinPointsWithoutTests, { }, orderOf);
     removeRepeatedElements(plan.rejoinPointsWithoutTests);
     plan.rejoinPointsWithoutTests.removeAllMatching([&](ProgramPoint point) {
         return std::ranges::binary_search(plan.rejoinPoints, orderOf(point), { }, orderOf);
@@ -634,7 +636,7 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& si
     recordExceededBudgets(context, plan, coverage);
 
     const CFG& cfg = context.analyses.cfg();
-    std::ranges::stable_sort(plan.tests, { }, [&](const PlannedTest& test) {
+    AOT::stableSort(plan.tests, { }, [&](const PlannedTest& test) {
         return placementOrderOf(cfg, test);
     });
 
@@ -729,7 +731,7 @@ void TestPlacementPlan::dump(PrintStream& out, const Program& program) const
             dumpEdge(out, slowPath.edge);
         }
 
-        std::ranges::sort(usedValues);
+        AOT::sort(usedValues);
         out.print(separator, "uses");
         for (ValueID value : usedValues) {
             out.print(" ");

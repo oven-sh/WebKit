@@ -11,6 +11,7 @@
 #include "AOTImageTestSupport.h"
 #include "AOTOutliner.h"
 #include "AOTStubsBarriers.h"
+#include "AOTVector.h"
 #include <span>
 #include <utility>
 

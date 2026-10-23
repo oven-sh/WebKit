@@ -11,6 +11,7 @@
 #include "AOTSchemaRecords.h"
 #include "AOTSharedTypeMemo.h"
 #include "AOTType.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <concepts>
@@ -22,7 +23,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/SegmentedVector.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

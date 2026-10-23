@@ -10,7 +10,9 @@
 
 #include "AOTLinearScanInternals.h"
 #include "AOTRelocation.h"
+#include "AOTSort.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "AirFrameEmission.h"
 #include "AirHandleCalleeSaves.h"
 #include "AirInstInlines.h"
@@ -162,7 +164,7 @@ void LinearScanCodeGenerator::layOutFrame()
         if (m_virtualRegisters[vreg].needsSlot)
             spilled.append(vreg);
     }
-    std::ranges::sort(spilled, { }, [&](uint32_t vreg) {
+    AOT::sort(spilled, { }, [&](uint32_t vreg) {
         return m_intervals[m_virtualRegisters[vreg].firstInterval].from;
     });
     unsigned numberOfShadows = 0;
@@ -288,7 +290,7 @@ void LinearScanCodeGenerator::layOutFrame()
         noteMoves(m_moves);
         noteMoves(m_movesOnEdges);
         Vector<uint32_t, 32> slotsByUse = positionOfSlot;
-        std::ranges::stable_sort(slotsByUse, std::ranges::greater { }, [&](uint32_t slot) {
+        AOT::stableSort(slotsByUse, std::ranges::greater { }, [&](uint32_t slot) {
             return accessesOfSlot[slot];
         });
         size_t numberAtTop = std::min<size_t>(slots.size(), (bytesInShortReach - std::min(firstSlot, bytesInShortReach)) / sizeof(CPURegister));
@@ -1440,7 +1442,7 @@ bool LinearScanCodeGenerator::generate(CCallHelpers& jit, CodeRecords& records, 
         }
     }
     m_code.setNumEntrypoints(1);
-    m_code.setEntrypointLabels(Vector<Label> { entry });
+    m_code.setEntrypointLabels(WTF::Vector<Label> { entry });
     if (m_procedure.needsPCToOriginMap()) [[unlikely]]
         m_procedure.pcToOriginMap().appendItem(jit.labelIgnoringWatchpoints(), B3::Origin());
 

@@ -18,11 +18,11 @@
 #include "AOTSupportTestCommands.h"
 #include "AOTTypeArena.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <algorithm>
 #include <climits>
 #include <wtf/StringPrintStream.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {

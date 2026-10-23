@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "AssemblerPolicy.h"
 #include "CCallHelpers.h"
 #include "LinkBuffer.h"
@@ -15,7 +16,6 @@
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT {

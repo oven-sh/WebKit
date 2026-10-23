@@ -25,6 +25,7 @@
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include <algorithm>
 #include <array>

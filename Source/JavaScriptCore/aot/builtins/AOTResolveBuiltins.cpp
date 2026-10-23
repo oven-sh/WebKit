@@ -13,6 +13,7 @@
 #include "AOTPropertyAccessCache.h"
 #include "AOTSimplifyBuiltinCallsInternal.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 

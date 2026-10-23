@@ -13,6 +13,7 @@
 #include "AOTBuiltinTableRealm.h"
 #include "AOTInstance.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "FunctionPrototype.h"
 #include "InternalFunction.h"
 #include "JSArrayBuffer.h"

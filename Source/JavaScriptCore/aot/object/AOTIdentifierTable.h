@@ -7,6 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -14,7 +16,6 @@
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -88,7 +89,7 @@ inline Vector<uint32_t> IdentifierTable::create(std::span<const Key> allKeys)
     if (allKeys.empty())
         return { };
     Vector<Key> keys(allKeys);
-    std::ranges::sort(keys, [](const Key& a, const Key& b) {
+    AOT::sort(keys, [](const Key& a, const Key& b) {
         return std::pair(a.hash, a.number) < std::pair(b.hash, b.number);
     });
     uint32_t maxNumber = 0;
@@ -117,7 +118,7 @@ inline Vector<uint32_t> IdentifierTable::create(std::span<const Key> allKeys)
     Vector<uint32_t> buckets(numberOfBuckets, [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::stable_sort(buckets, [&](uint32_t a, uint32_t b) {
+    AOT::stableSort(buckets, [&](uint32_t a, uint32_t b) {
         return keysOf(a).size() > keysOf(b).size();
     });
 

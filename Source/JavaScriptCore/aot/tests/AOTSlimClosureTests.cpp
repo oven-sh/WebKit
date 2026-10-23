@@ -13,6 +13,7 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObjectModel.h"
 #include "AOTSlimClosure.h"
+#include "AOTVector.h"
 #include "AsyncFunctionPrototype.h"
 #include "BuiltinNames.h"
 #include "CustomGetterSetter.h"

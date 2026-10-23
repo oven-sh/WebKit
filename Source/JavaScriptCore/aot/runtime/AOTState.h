@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <memory>
 #include <span>
@@ -17,7 +18,6 @@
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/PageBlock.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

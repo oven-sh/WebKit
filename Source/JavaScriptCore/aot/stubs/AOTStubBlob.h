@@ -11,13 +11,13 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubFrames.h"
 #include "AOTStubKey.h"
+#include "AOTVector.h"
 #include <expected>
 #include <optional>
 #include <span>
 #include <type_traits>
 #include <utility>
 #include <wtf/BitSet.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {

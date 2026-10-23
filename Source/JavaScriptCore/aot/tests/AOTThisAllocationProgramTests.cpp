@@ -17,6 +17,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"

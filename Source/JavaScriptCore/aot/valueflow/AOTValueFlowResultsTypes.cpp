@@ -21,6 +21,7 @@
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
@@ -28,6 +29,7 @@
 #include "AOTUseLists.h"
 #include "AOTValueFlowPositions.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -383,7 +385,7 @@ void NumbersOfPositions::findValuesThatRestOnChecks(const FlowResultTables& tabl
                     m_passedValues[index].append({ contents.parameters[parameter], valuePassedOn(function, edge, parameter) });
             }
         }
-        std::ranges::sort(m_passedValues[index], { }, &PassedValue::order);
+        AOT::sort(m_passedValues[index], { }, &PassedValue::order);
     });
 }
 
@@ -761,7 +763,7 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
                 hasOtherWriter.quickSet(index);
         });
     }
-    std::ranges::sort(sources, { }, &Source::order);
+    AOT::sort(sources, { }, &Source::order);
 
     Vector<ValueFlowObjectID> objectsOfSources;
     for (const Source& source : sources) {
@@ -947,7 +949,7 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
     m_writersOfMaps.removeAllMatching([&](const Writer& writer) {
         return hasOtherWriter.quickGet(writer.position - m_firstMap);
     });
-    std::ranges::sort(m_readsOfMaps, { }, &ReadOfMaps::order);
+    AOT::sort(m_readsOfMaps, { }, &ReadOfMaps::order);
     return hasOtherWriter;
 }
 
@@ -1217,7 +1219,7 @@ bool NumbersOfPositions::typeLoopsByRules()
         std::span<const uint32_t> writers = m_writersInLoopingFunctions.subspan(function.firstWriter, function.endOfWriters - function.firstWriter);
         bool hasFoundSomethingHere = typeWritersByRules(arena, m_writers[writers[0]].function, writers, function.positionsAsked);
         RELEASE_ASSERT(getsOtherAnswers || !hasFoundSomethingHere);
-        std::ranges::sort(function.positionsAsked);
+        AOT::sort(function.positionsAsked);
         removeRepeatedElements(function.positionsAsked);
         function.positionsAsked.shrinkToFit();
         numberOfFunctionsTyped.fetch_add(1, std::memory_order_relaxed);
@@ -1273,7 +1275,7 @@ bool NumbersOfPositions::runRound()
             RELEASE_ASSERT(isHandedOtherNumbers || found[index] == m_numbers[followed.position]);
             if (isFirstRound) {
                 std::span<uint32_t> readHere = positionsRead.mutableSpan().subspan(followed.firstPositionRead);
-                std::ranges::sort(readHere);
+                AOT::sort(readHere);
                 positionsRead.shrink(positionsRead.size() - std::ranges::unique(readHere).size());
                 followed.endOfPositionsRead = positionsRead.size();
             }
@@ -1789,8 +1791,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
                 update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving) });
         }
     }
-    std::ranges::sort(update.proofs, { }, &FlowValueProof::value);
-    std::ranges::sort(update.claims, { }, &FlowClaimUpdate::claim);
+    AOT::sort(update.proofs, { }, &FlowValueProof::value);
+    AOT::sort(update.claims, { }, &FlowClaimUpdate::claim);
 }
 
 // Such a read has the type of its location, which holds `absent` for the sake of other reads.
@@ -1813,7 +1815,7 @@ static void proveReadsAfterInitialization(const Program& program, const Parallel
             bool isOnlyExpected = declared.flags.contains(PositionFlags::IsExpected) && !position.isProven;
             update.proofs.append(FlowValueProof { read, isOnlyExpected ? TypeTable::anything : types.intern(held.withoutPrimitives(Primitive::Absent)) });
         }
-        std::ranges::sort(update.proofs, { }, &FlowValueProof::value);
+        AOT::sort(update.proofs, { }, &FlowValueProof::value);
     }
 }
 
@@ -1898,7 +1900,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         Vector<uint32_t> longestFirst(numberOfTasks, [](size_t task) {
             return static_cast<uint32_t>(task);
         });
-        std::ranges::sort(longestFirst, std::greater { }, [&](uint32_t task) {
+        AOT::sort(longestFirst, std::greater { }, [&](uint32_t task) {
             return timeOfTask[task];
         });
         dataLogLn("AOT phase times: pass AnalyzeFlow | types: ", numberOfTasks, " tasks | cpu of those that are timed (layouts, variables, functions of 64 values and more) ", timeOfAll.milliseconds(), " ms");
@@ -1914,7 +1916,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     if (inputs.build.options().logging.logsPhaseTimes) [[unlikely]]
         printAwaits(WTF::dataFile(), inputs.solution);
     if (linesAboutSetsOutsideTypes)
-        std::ranges::sort(*linesAboutSetsOutsideTypes, codePointCompareLessThan);
+        AOT::sort(*linesAboutSetsOutsideTypes, codePointCompareLessThan);
 
     times.didFinish("types: awaits printed"_s);
     TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());

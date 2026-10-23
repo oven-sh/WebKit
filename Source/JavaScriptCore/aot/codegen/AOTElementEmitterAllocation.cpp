@@ -18,6 +18,7 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include "ArrayConventions.h"
 #include "IndexingHeader.h"
 #include "JSArray.h"

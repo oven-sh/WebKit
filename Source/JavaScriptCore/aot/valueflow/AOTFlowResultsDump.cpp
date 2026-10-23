@@ -11,6 +11,7 @@
 #include "AOTBuiltinTableWords.h"
 #include "AOTFlowRecords.h"
 #include "AOTIRPrinter.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/PrintStream.h>

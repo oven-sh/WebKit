@@ -14,7 +14,9 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <numeric>
@@ -80,7 +82,7 @@ StoredBodySummary::StoredBodySummary(InternedLocationMasks& masks, FunctionID fu
         return Dependency { dependency.source.function ? dependency.source.function.index() + 1 : 0, numberOfNode(dependency.source), numberOfNode(dependency.target) };
     });
     if (!std::ranges::is_sorted(dependencies))
-        std::ranges::sort(dependencies);
+        AOT::sort(dependencies);
 
     size_t numberOfGroups = 0;
     for (size_t index = 0; index < dependencies.size(); ++index) {
@@ -479,7 +481,7 @@ static Vector<FunctionID> functionsOfClosuresMadeBy(const Function& function)
                 functions.append(value.function());
         }
     }
-    std::ranges::sort(functions);
+    AOT::sort(functions);
     removeRepeatedElements(functions);
     return functions;
 }
@@ -516,7 +518,7 @@ void EffectSummarizer::summarizeBodies()
         if (numberOfValues >= fewestValuesOfLongFunction)
             longFunctions.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | position);
     }
-    std::ranges::sort(longFunctions);
+    AOT::sort(longFunctions);
     Vector<uint32_t> longestFirst = longFunctions.map([](uint64_t key) {
         return static_cast<uint32_t>(key);
     });
@@ -601,7 +603,7 @@ void EffectSummarizer::summarizeBodies()
             if (doesMore)
                 m_changedFunctions.append(index);
         }
-        std::ranges::sort(m_changedFunctions);
+        AOT::sort(m_changedFunctions);
         removeRepeatedElements(m_changedFunctions);
     }
 
@@ -648,7 +650,7 @@ void EffectSummarizer::findFunctionsEnteredByUnknownCode()
     for (uint32_t index : functionsWithAnotherAnswer)
         m_kept.m_isEnteredByUnknownCode[index] ^= 1;
     m_changedFunctions.appendVector(functionsWithAnotherAnswer);
-    std::ranges::sort(m_changedFunctions);
+    AOT::sort(m_changedFunctions);
     removeRepeatedElements(m_changedFunctions);
     m_entryFlippedFunctions = WTF::move(functionsWithAnotherAnswer);
 }
@@ -943,7 +945,7 @@ std::optional<Vector<uint32_t>> EffectSummarizer::addAffectedSources(std::span<c
             states[index] = affected;
         return std::nullopt;
     }
-    std::ranges::sort(found);
+    AOT::sort(found);
     return found;
 }
 
@@ -1127,7 +1129,7 @@ bool EffectSummarizer::solveAgain(EffectSummaries& summaries)
             pendingFunctions.append(user.index());
         });
     }
-    std::ranges::sort(pendingFunctions);
+    AOT::sort(pendingFunctions);
     removeRepeatedElements(pendingFunctions);
     const size_t extraBudget = std::max(minExtraBudget, numberOfFunctions / extraBudgetDivisor);
     const size_t budget = std::min(maxIncrementalSolveSize(), pendingFunctions.size() + extraBudget);
@@ -1180,7 +1182,7 @@ bool EffectSummarizer::solveAgain(EffectSummaries& summaries)
                     readyFunctions.append(index);
             }
             if (!readyFunctions.isEmpty()) {
-                std::ranges::sort(readyFunctions);
+                AOT::sort(readyFunctions);
                 batch = WTF::move(readyFunctions);
             } else if (batchLimit < remainingBudget)
                 batch = addAffectedSources(pendingFunctions.span(), states, remainingBudget);
@@ -1207,7 +1209,7 @@ bool EffectSummarizer::solveAgain(EffectSummaries& summaries)
             });
         }
     }
-    std::ranges::sort(functions);
+    AOT::sort(functions);
 
     unsigned numberOfChunks = (numberOfFunctions + BodySummaries::functionsInChunk - 1) / BodySummaries::functionsInChunk;
     m_kept.m_effectsEnteredInChunk.insertFill(m_kept.m_effectsEnteredInChunk.size(), Effects::none(), numberOfChunks - m_kept.m_effectsEnteredInChunk.size());
@@ -1684,7 +1686,7 @@ void EffectSummarizer::listUsers()
         });
     });
     forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
-        std::ranges::sort(m_kept.m_users.mutableSubspan(firstUser[index], firstUser[index + 1] - firstUser[index]));
+        AOT::sort(m_kept.m_users.mutableSubspan(firstUser[index], firstUser[index + 1] - firstUser[index]));
     });
 }
 

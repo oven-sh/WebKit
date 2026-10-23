@@ -10,9 +10,9 @@
 #include "AOTBranchCounterNumbers.h"
 #include "AOTOperationEmitter.h"
 #include "AOTSwitchWindow.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

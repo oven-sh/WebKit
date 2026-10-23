@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTIR.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <wtf/PrintStream.h>

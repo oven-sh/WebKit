@@ -9,6 +9,7 @@
 
 #include "AOTEdgeResults.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>

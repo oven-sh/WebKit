@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationArguments.h"
+#include "AOTVector.h"
 #include "InterpreterInlines.h"
 #include "JSCInlines.h"
 #include "RegExpObjectInlines.h"

@@ -10,6 +10,7 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTRawWordWebs.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/ForbidHeapAllocation.h>
 

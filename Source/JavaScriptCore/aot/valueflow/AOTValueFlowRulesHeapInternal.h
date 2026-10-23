@@ -12,7 +12,7 @@
 #include "AOTIRProgram.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

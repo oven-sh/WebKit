@@ -1,10 +1,19 @@
 # CMakeLists.txt includes this file, and so does Bun's build, whose reader (scripts/build/cmake.ts in Bun) runs set(),
 # list(APPEND) and include() of an absolute path and skips function bodies. So every list is written out, outside a function.
-# `bun scripts/build/aot-source-lists.ts` in Bun writes aot/Sources.txt and the three lists marked "written by" below.
-# It finds each of the three by its first line and the next line that is only ")".
+# `bun scripts/build/aot-source-lists.ts` in Bun writes aot/Sources.txt and the four lists marked "written by" below.
+# It finds each of the four by its first line and the next line that is only ")".
 
-include("${JAVASCRIPTCORE_DIR}/aot/ir/generated/AOTSchemaFiles.cmake")
+# Where the generators of aot/ write. One folder, no folders in it.
+set(JavaScriptCore_AOT_GENERATED_DIR "${JavaScriptCore_DERIVED_SOURCES_DIR}/aot")
+
+include("${JAVASCRIPTCORE_DIR}/aot/ir/AOTSchemaFiles.cmake")
 include("${JAVASCRIPTCORE_DIR}/aot/builtins/AOTBuiltinTable.cmake")
+
+# What aot/image/generator/runtime-facts.ts writes.
+set(JavaScriptCore_AOT_RUNTIME_FACTS_GENERATED_HEADERS
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTRuntimeFactsOfLayouts.def"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTRuntimeFactsOfLayoutsIncludes.h"
+)
 
 list(APPEND JavaScriptCore_UNIFIED_SOURCE_LIST_FILES
     "aot/Sources.txt"
@@ -20,6 +29,8 @@ if (NOT ENABLE_STATIC_JSC)
     list(APPEND JavaScriptCore_SOURCES ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES})
 endif ()
 
+list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES "${JavaScriptCore_AOT_GENERATED_DIR}")
+
 # Written by aot-source-lists.ts: every folder under aot/ that has a header.
 list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/aot/analysis"
@@ -28,7 +39,6 @@ list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/aot/codegen"
     "${JAVASCRIPTCORE_DIR}/aot/image"
     "${JAVASCRIPTCORE_DIR}/aot/ir"
-    "${JAVASCRIPTCORE_DIR}/aot/ir/generated"
     "${JAVASCRIPTCORE_DIR}/aot/object"
     "${JAVASCRIPTCORE_DIR}/aot/passes"
     "${JAVASCRIPTCORE_DIR}/aot/pipeline"
@@ -68,31 +78,6 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/ir/AOTIRForm.h
     aot/ir/AOTNameClass.h
     aot/ir/AOTOpcode.h
-    aot/ir/AOTSchemaSupport.h
-    aot/ir/generated/AOTSchemaDeclaredEnums.h
-    aot/ir/generated/AOTSchemaEntryEnums.h
-    aot/ir/generated/AOTSchemaEntryMacros.h
-    aot/ir/generated/AOTSchemaEnums.h
-    aot/ir/generated/AOTSchemaFlagMasks.h
-    aot/ir/generated/AOTSchemaIDs.h
-    aot/ir/generated/AOTSchemaOperandIndexes.h
-    aot/ir/generated/AOTSchemaOperandPositions.h
-    aot/ir/generated/AOTSchemaOperationColumns.h
-    aot/ir/generated/AOTSchemaOperations.h
-    aot/ir/generated/AOTSchemaPayloadPositions.h
-    aot/ir/generated/AOTSchemaPayloadWords.h
-    aot/ir/generated/AOTSchemaResultRulesInlines.h
-    aot/ir/generated/AOTSchemaRuntimeColumns.h
-    aot/ir/generated/AOTSchemaRuntimeOperations.h
-    aot/ir/generated/AOTSchemaValueOperandAccessors.inc
-    aot/ir/generated/AOTSchemaVariadicOperandPositions.h
-    aot/ir/generated/AOTSchemaWalkersInlines.h
-    aot/ir/generated/AOTWire.h
-    aot/ir/generated/AOTWireDiagnosticColumns.h
-    aot/ir/generated/AOTWireEnumColumns.h
-    aot/ir/generated/AOTWireEnums.h
-    aot/ir/generated/AOTWireLimitColumns.h
-    aot/ir/generated/AOTWireRecords.h
     aot/object/AOTAllocationSiteRecord.h
     aot/object/AOTCellFormat.h
     aot/object/AOTClosure.h
@@ -185,11 +170,36 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTLimits.h
     aot/support/AOTLosses.h
     aot/support/AOTStatistics.h
+    aot/support/AOTVector.h
     aot/valueflow/AOTFlowReport.h
+)
+
+# Written by aot-source-lists.ts: the same of what the schema's generator writes.
+set(JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaDeclaredEnums.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryEnums.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryMacros.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEnums.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaFlagMasks.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperandIndexes.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperandPositions.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperationColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperations.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPayloadPositions.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeOperations.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaVariadicOperandPositions.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWire.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireDiagnosticColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireEnumColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireEnums.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireLimitColumns.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWireRecords.h"
 )
 
 list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ${JavaScriptCore_AOT_EXPORTED_HEADERS}
+    ${JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS}
     ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS}
 )
 
@@ -531,11 +541,11 @@ set(JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE
     aot/ir/AOTVerifierOperations.cpp
     aot/ir/AOTVerifierTypes.cpp
     aot/ir/AOTVerifierUnspecifiedValues.cpp
-    aot/ir/generated/AOTSchemaEntryPrinter.cpp
-    aot/ir/generated/AOTSchemaRecordPrinter.cpp
-    aot/ir/generated/AOTSchemaRecords.cpp
-    aot/ir/generated/AOTSchemaVerifier.cpp
-    aot/ir/generated/AOTWire.cpp
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryPrinter.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordPrinter.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecords.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaVerifier.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWire.cpp"
     aot/passes/AOTAllocateTaggedLayouts.cpp
     aot/passes/AOTArrayChainInterleaving.cpp
     aot/passes/AOTArrayChainStep.cpp
@@ -914,20 +924,28 @@ function(AOT_GENERATE_UNIFIED_SOURCES)
     set(JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE ${JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE} ${bundlesCompiledForSize} PARENT_SCOPE)
 endfunction()
 
-function(AOT_CHECK_SCHEMA_IS_FRESH)
-    set(digests "")
-    foreach (input IN LISTS JavaScriptCore_AOT_SCHEMA_INPUTS)
-        file(SHA256 "${JAVASCRIPTCORE_DIR}/${input}" digest)
-        list(APPEND digests "${digest} ${input}")
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/${input}")
-    endforeach ()
-    list(SORT digests)
-    list(JOIN digests "\n" joinedDigests)
-    string(SHA256 inputsHash "${joinedDigests}\n")
-    file(STRINGS "${JAVASCRIPTCORE_DIR}/aot/ir/generated/AOTSchemaInputs.sha256" recordedHash LIMIT_COUNT 1)
-    if (NOT inputsHash STREQUAL recordedHash)
-        message(FATAL_ERROR "aot/ir/generated/ is stale: its inputs hash to ${inputsHash}, and it was generated from ${recordedHash}. In Bun's tree, run `bun src/codegen/aot-schema/index.ts --schema ${JAVASCRIPTCORE_DIR}/aot/ir/AOTSchema.def --engine-out ${JAVASCRIPTCORE_DIR}/aot/ir/generated --rust-out src/aot/ir/generated` and check the result in.")
-    endif ()
+# The generators run while CMake configures, so that every generated file is there before anything is compiled. A file is written only when its text changes.
+function(AOT_GENERATE_FROM_SCHEMA)
+    find_program(NODE_EXECUTABLE node REQUIRED)
+    file(GLOB generator CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/ir/generator/*.ts")
+    list(TRANSFORM JavaScriptCore_AOT_SCHEMA_INPUTS PREPEND "${JAVASCRIPTCORE_DIR}/" OUTPUT_VARIABLE inputs)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${generator} ${inputs})
+    execute_process(
+        COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/ir/generator/index.ts" --schema "${JAVASCRIPTCORE_DIR}/aot/ir/AOTSchema.def" --engine-out "${JavaScriptCore_AOT_GENERATED_DIR}"
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+endfunction()
+
+# It reads the text of the compiler's sources, so it is a step of the build. Windows takes a .def among the sources for the linker's.
+function(AOT_GENERATE_RUNTIME_FACTS)
+    file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/*.cpp" "${JAVASCRIPTCORE_DIR}/aot/*.h")
+    add_custom_command(
+        OUTPUT ${JavaScriptCore_AOT_RUNTIME_FACTS_GENERATED_HEADERS}
+        DEPENDS ${sources} "${JAVASCRIPTCORE_DIR}/aot/image/generator/runtime-facts.ts" "${JAVASCRIPTCORE_DIR}/aot/image/AOTRuntimeFactsLeftOut.txt"
+        COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/image/generator/runtime-facts.ts" --javascriptcore "${JAVASCRIPTCORE_DIR}" --out "${JavaScriptCore_AOT_GENERATED_DIR}"
+        VERBATIM
+    )
+    set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} "${JavaScriptCore_AOT_GENERATED_DIR}/AOTRuntimeFactsOfLayoutsIncludes.h" PARENT_SCOPE)
 endfunction()
 
 function(AOT_READ_LIBRARY_SOURCES result problemsResult)
@@ -956,7 +974,6 @@ function(AOT_CHECK_SOURCE_LISTS)
 
     set(listed
         ${librarySources}
-        ${JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES}
         ${JavaScriptCore_AOT_TEST_SOURCES}
@@ -989,6 +1006,7 @@ endfunction()
 function(AOT_CHECK_EXPORTED_HEADERS)
     set(exported
         ${JavaScriptCore_AOT_EXPORTED_HEADERS}
+        ${JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS}
     )
     set(problems)
@@ -1002,11 +1020,12 @@ function(AOT_CHECK_EXPORTED_HEADERS)
     endforeach ()
 
     foreach (header IN LISTS exported)
-        if (NOT EXISTS "${JAVASCRIPTCORE_DIR}/${header}")
+        get_filename_component(path ${header} ABSOLUTE BASE_DIR "${JAVASCRIPTCORE_DIR}")
+        if (NOT EXISTS "${path}")
             list(APPEND problems "${header}: exported, but there is no such file")
             continue ()
         endif ()
-        file(STRINGS "${JAVASCRIPTCORE_DIR}/${header}" includeLines REGEX "^[ \t]*#[ \t]*include[ \t]+[\"<](JavaScriptCore/)?AOT[^\">]*[\">]")
+        file(STRINGS "${path}" includeLines REGEX "^[ \t]*#[ \t]*include[ \t]+[\"<](JavaScriptCore/)?AOT[^\">]*[\">]")
         foreach (line IN LISTS includeLines)
             string(REGEX REPLACE "^[^\"<]*[\"<](JavaScriptCore/)?([^\">]*)[\">].*$" "\\2" name "${line}")
             if (NOT name IN_LIST exportedNames)
@@ -1029,8 +1048,9 @@ function(AOT_REPORT_LIST_PROBLEMS)
     message(FATAL_ERROR "The lists of aot/ do not match the tree.\n  ${report}\nTo write them again, in Bun's tree: `bun scripts/build/aot-source-lists.ts --webkit=${checkout}`")
 endfunction()
 
+AOT_GENERATE_FROM_SCHEMA()
+AOT_GENERATE_RUNTIME_FACTS()
 AOT_GENERATE_UNIFIED_SOURCES()
 AOT_COMPILE_SOURCES_FOR_SIZE()
-AOT_CHECK_SCHEMA_IS_FRESH()
 AOT_CHECK_SOURCE_LISTS()
 AOT_CHECK_EXPORTED_HEADERS()

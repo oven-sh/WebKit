@@ -13,8 +13,8 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionEditing.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

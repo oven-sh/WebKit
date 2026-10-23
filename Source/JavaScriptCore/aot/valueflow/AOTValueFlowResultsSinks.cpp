@@ -10,7 +10,9 @@
 
 #include "AOTCFG.h"
 #include "AOTFlowStamps.h"
+#include "AOTSort.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/HashSet.h>
@@ -41,7 +43,7 @@ public:
             auto [currentFunction, currentValue] = m_worklist.takeLast();
             follow(currentFunction, currentValue);
         }
-        std::ranges::sort(m_candidates.strings);
+        AOT::sort(m_candidates.strings);
         removeRepeatedElements(m_candidates.strings);
         return WTF::move(m_candidates);
     }
@@ -196,7 +198,7 @@ void computeSinkOperandResults(const ValueFlowResultInputs& inputs, const ValueF
                     arguments.appendIfNotContains(parameter.operand.argumentIndex());
             }
         }
-        std::ranges::sort(arguments);
+        AOT::sort(arguments);
         if (!arguments.isEmpty())
             builtinsWithSuchArguments.append(universe.objectOf(builtin));
     }
@@ -247,7 +249,7 @@ void computeSinkOperandResults(const ValueFlowResultInputs& inputs, const ValueF
     TextsThatArrive texts(inputs, calls, tables);
     for (const Operand& operand : operands)
         tables.sites.sinkOperands.append({ operand.call, operand.operandIndex, texts.at(operand.function, operand.passed) });
-    std::ranges::sort(tables.sites.sinkOperands, { }, [](const FlowSinkOperand& operand) {
+    AOT::sort(tables.sites.sinkOperands, { }, [](const FlowSinkOperand& operand) {
         return std::tuple(operand.call, operand.operandIndex);
     });
 }

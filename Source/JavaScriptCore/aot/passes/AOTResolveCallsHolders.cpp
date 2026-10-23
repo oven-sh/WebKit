@@ -13,6 +13,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTPropertyAccessInternal.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

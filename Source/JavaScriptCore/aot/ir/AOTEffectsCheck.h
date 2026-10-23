@@ -8,7 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEffects.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT {
 

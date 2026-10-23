@@ -18,7 +18,9 @@
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSlimClosure.h"
+#include "AOTSort.h"
 #include "AOTStubsClosures.h"
+#include "AOTVector.h"
 #include "JSCell.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -202,7 +204,7 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
         return;
     }
 
-    std::ranges::sort(entrypoints);
+    AOT::sort(entrypoints);
     Vector<EntrypointRun, 4> runs;
     for (uint32_t entrypoint : entrypoints) {
         if (!runs.isEmpty() && runs.last().last + 1 >= entrypoint)

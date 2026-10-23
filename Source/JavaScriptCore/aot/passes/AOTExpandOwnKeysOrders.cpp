@@ -10,6 +10,7 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTJSONSupport.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 

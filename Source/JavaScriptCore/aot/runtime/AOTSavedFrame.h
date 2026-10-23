@@ -9,6 +9,7 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTSavedFrameMap.h"
+#include "AOTVector.h"
 #include "CallData.h"
 #include "GPRInfo.h"
 #include "JSObject.h"
@@ -18,7 +19,6 @@
 #include <optional>
 #include <span>
 #include <wtf/Atomics.h>
-#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

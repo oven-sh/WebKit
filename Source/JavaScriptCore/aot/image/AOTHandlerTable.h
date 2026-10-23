@@ -7,11 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "CallFrame.h"
 #include "HandlerInfo.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC::AOT {
 

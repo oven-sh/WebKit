@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

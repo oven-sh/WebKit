@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
+#include "AOTVector.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "Completion.h"
 #include "FastMallocAlignedMemoryAllocator.h"
@@ -34,7 +35,6 @@
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -116,9 +116,10 @@ static void testRangeIsAlignedAndSized()
 static void testPrefixIsNeverAllocated()
 {
     constexpr size_t prefixSize = 64 * blockSize;
+    constexpr size_t numberOfBlocks = std::min<size_t>(1000, 2 * rangeSize / blockSize / 4);
     ReservedRangeHeap& range = createRange(prefixSize, 2 * rangeSize);
     AOT_TEST_CHECK(range.contains(std::bit_cast<void*>(range.start())));
-    for (unsigned count = 0; count < 1000; ++count) {
+    for (size_t count = 0; count < numberOfBlocks; ++count) {
         void* block = range.tryAllocateAligned(blockSize, blockSize);
         AOT_TEST_CHECK(block && isInside(range, block, blockSize));
         AOT_TEST_CHECK(std::bit_cast<uintptr_t>(block) >= range.start() + prefixSize);

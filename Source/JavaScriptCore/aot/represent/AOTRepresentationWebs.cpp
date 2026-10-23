@@ -12,6 +12,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <utility>

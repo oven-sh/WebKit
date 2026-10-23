@@ -23,6 +23,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "HeapCellInlines.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
@@ -33,7 +34,6 @@
 #include <algorithm>
 #include <bit>
 #include <wtf/DataLog.h>
-#include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

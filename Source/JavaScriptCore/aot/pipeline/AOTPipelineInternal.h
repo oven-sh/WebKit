@@ -14,6 +14,7 @@
 #include "AOTProgramAnalyses.h"
 #include "AOTProgramCaches.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <memory>
 #include <optional>
 #include <span>

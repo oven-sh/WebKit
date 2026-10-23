@@ -22,6 +22,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <array>
 #include <concepts>
 #include <functional>

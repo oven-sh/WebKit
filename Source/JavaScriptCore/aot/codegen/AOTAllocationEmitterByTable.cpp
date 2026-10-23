@@ -16,6 +16,7 @@
 #include "AOTResultRules.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStubsAllocation.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <wtf/MathExtras.h>

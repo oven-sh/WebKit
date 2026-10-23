@@ -13,6 +13,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTHeat.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

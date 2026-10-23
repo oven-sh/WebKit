@@ -15,6 +15,7 @@
 #include "AOTOperationScope.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStringEmitter.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include <algorithm>
 #include <array>

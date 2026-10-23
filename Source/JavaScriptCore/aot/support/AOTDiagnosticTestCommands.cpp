@@ -17,6 +17,7 @@
 #include "AOTSchemaEnums.h"
 #include "AOTTestFile.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include <algorithm>
 #include <iterator>

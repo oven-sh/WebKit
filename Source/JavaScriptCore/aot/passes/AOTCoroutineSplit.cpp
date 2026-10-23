@@ -15,9 +15,9 @@
 #include "AOTPassRunner.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

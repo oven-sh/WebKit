@@ -18,12 +18,13 @@
 #include "AOTMethodDispatch.h"
 #include "AOTRegionCloner.h"
 #include "AOTSSARepair.h"
+#include "AOTSort.h"
 #include "AOTTypePropagation.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -147,7 +148,7 @@ std::optional<SeparationPlan> LoopPathSeparator::findPlan()
         if (!m_isFinishedHeader.get(loops.loop(index).header().index()))
             candidates.append(&loops.loop(index));
     }
-    std::ranges::stable_sort(candidates, { }, &NaturalLoop::size);
+    AOT::stableSort(candidates, { }, &NaturalLoop::size);
 
     for (const NaturalLoop* loop : candidates) {
         m_isFinishedHeader.set(loop->header().index());

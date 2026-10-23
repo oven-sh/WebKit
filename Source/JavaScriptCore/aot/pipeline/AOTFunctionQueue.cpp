@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <memory>
 #include <optional>
@@ -282,7 +284,7 @@ void FunctionQueue::processShare(Worker& own)
         }
 
         confirmFoundFunctions(found);
-        std::ranges::sort(found, isProcessedLater);
+        AOT::sort(found, isProcessedLater);
         if (!found.isEmpty()) {
             Locker locker { own.lock };
             own.functions.append(found.span());
@@ -323,8 +325,8 @@ void FunctionQueue::processEach(std::span<const QueuedFunction> functions, std::
         first.append(function);
         m_speculativeFunctions.append(SpeculativeFunction { function.id, { } });
     }
-    std::ranges::sort(m_speculativeFunctions, { }, &SpeculativeFunction::id);
-    std::ranges::sort(first, isProcessedLater);
+    AOT::sort(m_speculativeFunctions, { }, &SpeculativeFunction::id);
+    AOT::sort(first, isProcessedLater);
 
     ParallelRegionScope parallelRegion;
     m_numberOfSpareThreads.store(m_loops.width() - 1, std::memory_order_relaxed);

@@ -12,6 +12,8 @@
 #include "AOTHost.h"
 #include "AOTImageLoading.h"
 #include "AOTObject.h"
+#include "AOTVector.h"
+#include "ConsoleClient.h"
 #include "CustomGetterSetter.h"
 #include "Exception.h"
 #include "GlobalObjectMethodTable.h"
@@ -23,15 +25,21 @@
 #include "ObjectConstructor.h"
 #include "Options.h"
 #include "PropertyNameArray.h"
+#include "ScriptArguments.h"
+#include "Symbol.h"
 #include <array>
+#include <cmath>
 #include <optional>
+#include <stdio.h>
 #include <stdlib.h>
 #include <utility>
 #include <wtf/DataLog.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 #if OS(WINDOWS)
 #include <windows.h>
@@ -240,8 +248,60 @@ JSC_DEFINE_HOST_FUNCTION(functionStoreInSlotWithoutTest, (JSGlobalObject* global
     return JSValue::encode(jsUndefined());
 }
 
+// An image locks `console`, so no script can give the shell one that prints.
+class ConsoleOfShell final : public ConsoleClient {
+    WTF_MAKE_TZONE_ALLOCATED(ConsoleOfShell);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ConsoleOfShell);
+public:
+    void messageWithTypeAndLevel(MessageType, MessageLevel level, JSGlobalObject* globalObject, Ref<Inspector::ScriptArguments>&& arguments) final
+    {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        StringBuilder line;
+        for (size_t index = 0; index < arguments->argumentCount(); ++index) {
+            JSValue value = arguments->argumentAt(index);
+            if (index)
+                line.append(' ');
+            if (value.isSymbol()) {
+                if (auto description = asSymbol(value)->tryGetDescriptiveString())
+                    line.append(description.value());
+                continue;
+            }
+            if (value.isDouble() && !value.asDouble() && std::signbit(value.asDouble())) {
+                line.append("-0"_s);
+                continue;
+            }
+            String text = value.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+            line.append(text);
+        }
+        line.append('\n');
+        CString bytes = line.toString().utf8();
+        FILE* stream = level == MessageLevel::Error || level == MessageLevel::Warning ? stderr : stdout;
+        fwrite(bytes.data(), 1, bytes.length(), stream);
+        fflush(stream);
+    }
+
+    void count(JSGlobalObject*, const String&) final { }
+    void countReset(JSGlobalObject*, const String&) final { }
+    void profile(JSGlobalObject*, const String&) final { }
+    void profileEnd(JSGlobalObject*, const String&) final { }
+    void takeHeapSnapshot(JSGlobalObject*, const String&) final { }
+    void time(JSGlobalObject*, const String&) final { }
+    void timeLog(JSGlobalObject*, const String&, Ref<Inspector::ScriptArguments>&&) final { }
+    void timeEnd(JSGlobalObject*, const String&) final { }
+    void timeStamp(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final { }
+    void record(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final { }
+    void recordEnd(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final { }
+    void screenshot(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) final { }
+};
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ConsoleOfShell);
+
 void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
 {
+    if (Options::aotImagePath())
+        globalObject->setConsoleClient(*new ConsoleOfShell);
+
     const std::pair<NativeFunction, unsigned> functions[] = {
         { functionRunCompiledEntryPoint, 1 },
         { functionSetRequireCacheEntry, 2 },
@@ -385,7 +445,7 @@ static bool hasESModuleMarker(JSGlobalObject* globalObject, JSObject* exports)
     return isFound && slot.isValue() && slot.getValue(globalObject, markerName).pureToBoolean() == TriState::True;
 }
 
-static void captureCommonJSExports(JSGlobalObject* globalObject, SyntheticExportRule rule, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
+static void captureCommonJSExports(JSGlobalObject* globalObject, SyntheticExportRule rule, JSValue value, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -436,7 +496,7 @@ static void captureCommonJSExports(JSGlobalObject* globalObject, SyntheticExport
     }
 }
 
-static JSObject* captureSyntheticExports(JSGlobalObject* globalObject, SyntheticExportRule rule, JSValue value, Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
+static JSObject* captureSyntheticExports(JSGlobalObject* globalObject, SyntheticExportRule rule, JSValue value, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

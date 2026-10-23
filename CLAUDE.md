@@ -39,6 +39,8 @@ cmake -G Ninja \
 cmake --build . --target jsc
 ```
 
+`node` (23.6 or later: it runs TypeScript as it is) has to be on `PATH`. Nothing that a generator of `Source/JavaScriptCore/aot` writes is checked in: `aot/ir/generator/index.ts` writes the C++ of the compiler's IR from `aot/ir/AOTSchema.def` while CMake configures, and `aot/image/generator/runtime-facts.ts` is a step of the build; both write into `<build>/JavaScriptCore/DerivedSources/aot`. `aot/ir/AOTSchemaFiles.cmake` lists what the first reads and writes; people keep it and the generator names what is missing. Bun's build runs the same two scripts, and every lane's tarball carries `aot/ir/generator` with the schema, from which Bun generates the Rust half.
+
 ### Key Build Flags
 - `USE_BUN_JSC_ADDITIONS=ON`: Enable Bun-specific features
 - `USE_BUN_EVENT_LOOP=ON`: Use Bun's event loop implementation

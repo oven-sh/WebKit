@@ -24,8 +24,10 @@
 #include "AOTInlineBuiltinForms.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaRuntimeColumns.h"
+#include "AOTSort.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/ScopedLambda.h>
@@ -384,7 +386,7 @@ FramePointers::FramePointers(const Program* program, const Function& function, F
     }
     if (m_allocations.isEmpty())
         return;
-    std::ranges::sort(m_allocations);
+    AOT::sort(m_allocations);
 
     for (bool changed = true; changed;) {
         changed = false;

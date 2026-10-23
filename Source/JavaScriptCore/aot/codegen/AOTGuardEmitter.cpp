@@ -24,10 +24,12 @@
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
+#include "AOTSort.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestEmitter.h"
+#include "AOTVector.h"
 #include "JSGlobalObject.h"
 #include "MarkedBlock.h"
 #include "Structure.h"
@@ -219,7 +221,7 @@ void GuardEmitter::planTestsOfFlags()
                 mayBeUnfinished.add(analyses().identityOf(test.objectOperand()));
         }
     }
-    std::ranges::stable_sort(tests, { }, [](const Test& test) {
+    AOT::stableSort(tests, { }, [](const Test& test) {
         return test.object.index();
     });
 

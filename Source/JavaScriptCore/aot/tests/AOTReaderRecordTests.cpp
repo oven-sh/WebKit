@@ -9,6 +9,7 @@
 
 #include "AOTIRParser.h"
 #include "AOTReaderTestSupport.h"
+#include "AOTVector.h"
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {

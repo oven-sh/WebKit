@@ -24,9 +24,11 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTSlimClosure.h"
 #include "AOTSlotAccess.h"
+#include "AOTSort.h"
 #include "AOTStructureCensus.h"
 #include "AOTTableCensus.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "BlockDirectoryInlines.h"
 #include "ButterflyInlines.h"
 #include "DeferGCInlines.h"
@@ -312,7 +314,7 @@ void ObjectCensus::findHoldersOfFirstTables()
             ++first.lengthOfChain;
         m_firstTables.append(WTF::move(first));
     }
-    std::ranges::sort(m_firstTables, std::ranges::greater { }, &FirstTable::lengthOfChain);
+    AOT::sort(m_firstTables, std::ranges::greater { }, &FirstTable::lengthOfChain);
     size_t numberOfListedChains = std::min(m_firstTables.size(), maxListedChains);
     if (!numberOfListedChains)
         return;
@@ -744,7 +746,7 @@ void ObjectCensus::printCells(PrintStream& out) const
         }
         lines.append({ kind, index, WTF::move(start), cellSize, entry.value });
     }
-    std::ranges::sort(lines, [](auto& a, auto& b) {
+    AOT::sort(lines, [](auto& a, auto& b) {
         if (std::get<0>(a) != std::get<0>(b))
             return std::get<0>(a) < std::get<0>(b);
         if (std::get<1>(a) != std::get<1>(b))
@@ -787,7 +789,7 @@ void ObjectCensus::printClosures(PrintStream& out) const
     Vector<std::pair<FunctionID, ClosureCounts>> functions;
     for (auto& entry : m_closuresByFunction)
         functions.append({ entry.key, entry.value });
-    std::ranges::sort(functions);
+    AOT::sort(functions);
     for (auto& [function, counts] : functions) {
         FunctionKindData kind = programTables().kindOfFunction(function.index());
         ASCIILiteral role = kind.closureStructure == classObjectClosureStructure ? "class"_s : kind.isConstructor ? "constructor"_s : "not-constructor"_s;
@@ -801,7 +803,7 @@ Vector<std::tuple<uint32_t, uint32_t, uint64_t>> ObjectCensus::sorted(const Coun
     Vector<std::tuple<uint32_t, uint32_t, uint64_t>> result;
     for (auto& entry : counts)
         result.append({ entry.key.first, entry.key.second, entry.value });
-    std::ranges::sort(result);
+    AOT::sort(result);
     return result;
 }
 
@@ -869,7 +871,7 @@ void ObjectCensus::printKeySets(PrintStream& out) const
         add(entry.value);
     for (auto& entry : m_unorderedKeySets)
         add(entry.value);
-    std::ranges::sort(lines, [](auto& a, auto& b) {
+    AOT::sort(lines, [](auto& a, auto& b) {
         if (std::get<0>(a) != std::get<0>(b))
             return std::get<0>(a) < std::get<0>(b);
         if (std::get<1>(a) != std::get<1>(b))
@@ -894,7 +896,7 @@ void ObjectCensus::printLayouts(PrintStream& out) const
     Vector<const LayoutData*> layoutsWithSlots;
     for (auto& entry : m_slots)
         layoutsWithSlots.append(entry.key);
-    std::ranges::sort(layoutsWithSlots, [](auto* a, auto* b) {
+    AOT::sort(layoutsWithSlots, [](auto* a, auto* b) {
         return std::tie(a->index, a->shape) < std::tie(b->index, b->shape);
     });
     for (const LayoutData* layout : layoutsWithSlots) {
@@ -928,7 +930,7 @@ void ObjectCensus::printExtensions(PrintStream& out) const
         const LayoutData* layout = std::bit_cast<const LayoutData*>(descriptor);
         lines.append({ layout->index, layout->shape, granulesHeld, granulesWithValue, layout, entry.value });
     }
-    std::ranges::sort(lines);
+    AOT::sort(lines);
     for (auto& [index, shape, granulesHeld, granulesWithValue, layout, objects] : lines)
         out.println("AOT live: granules ", index, " ", nameAsWord(*layout), " held ", granulesHeld, " with-value ", granulesWithValue, " objects ", objects);
 }
@@ -938,7 +940,7 @@ void ObjectCensus::printBeside(PrintStream& out) const
     Vector<const LayoutData*> layouts;
     for (auto& entry : m_beside)
         layouts.append(entry.key);
-    std::ranges::sort(layouts, [](auto* a, auto* b) {
+    AOT::sort(layouts, [](auto* a, auto* b) {
         return std::tie(a->index, a->shape) < std::tie(b->index, b->shape);
     });
     for (const LayoutData* layout : layouts) {
@@ -952,7 +954,7 @@ void ObjectCensus::printEnvironments(PrintStream& out) const
     Vector<const EnvironmentData*> environments;
     for (auto& entry : m_environmentSlots)
         environments.append(entry.key);
-    std::ranges::sort(environments, [](auto* a, auto* b) {
+    AOT::sort(environments, [](auto* a, auto* b) {
         return std::tie(a->index, a->shape) < std::tie(b->index, b->shape);
     });
     for (const EnvironmentData* environment : environments)
@@ -1006,7 +1008,7 @@ void ObjectCensus::printFreeCells(PrintStream& out) const
     Vector<std::tuple<size_t, String, FreeCells>> freeCells;
     for (auto& entry : m_freeCells)
         freeCells.append({ entry.key.second, String::fromLatin1(entry.key.first->name().data()), entry.value });
-    std::ranges::sort(freeCells, [](auto& a, auto& b) {
+    AOT::sort(freeCells, [](auto& a, auto& b) {
         if (std::get<0>(a) != std::get<0>(b))
             return std::get<0>(a) < std::get<0>(b);
         if (auto order = codePointCompare(std::get<1>(a), std::get<1>(b)); order != std::strong_ordering::equal)

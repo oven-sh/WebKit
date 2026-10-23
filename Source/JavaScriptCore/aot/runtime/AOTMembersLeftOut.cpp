@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "Error.h"
 #include "Exception.h"
 #include "JSCInlines.h"

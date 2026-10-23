@@ -12,6 +12,7 @@
 #include "AOTCFG.h"
 #include "AOTIRBuilder.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

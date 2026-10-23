@@ -7,11 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

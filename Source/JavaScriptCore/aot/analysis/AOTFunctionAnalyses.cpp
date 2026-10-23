@@ -14,6 +14,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTAnalysisDump.h"
 #include "AOTFlowResults.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <bit>

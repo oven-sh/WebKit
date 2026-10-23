@@ -12,6 +12,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTErrorMessages.h"
 #include "AOTModuleHost.h"
+#include "AOTVector.h"
 #include "ArrayIteratorPrototype.h"
 #include "AsyncFunctionPrototype.h"
 #include "AsyncGeneratorFunctionPrototype.h"
@@ -38,7 +39,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC::AOT {

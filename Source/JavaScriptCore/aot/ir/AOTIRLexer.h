@@ -8,11 +8,11 @@
 #if ENABLE(AOT)
 
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include <bit>
 #include <optional>
 #include <span>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringView.h>
 

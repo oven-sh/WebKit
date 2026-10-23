@@ -10,6 +10,8 @@
 
 #include "AOTClassMemberTable.h"
 #include "AOTFieldTable.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <span>
 #include <wtf/MathExtras.h>
@@ -102,7 +104,7 @@ static NamedFields collectNamedFields(TableEncoder& encoder, uint32_t highestObj
         auto end = static_cast<uint32_t>(result.fields.size());
         if (begin == end)
             continue;
-        std::ranges::sort(result.fields.mutableSpan().subspan(begin));
+        AOT::sort(result.fields.mutableSpan().subspan(begin));
         result.rows.append({ shape, begin, end });
     }
     return result;
@@ -172,7 +174,7 @@ static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(co
             return std::nullopt;
         members.append(DeclaredClassMember { *nameOfConstructor, cell });
     }
-    std::ranges::sort(members, { }, &DeclaredClassMember::name);
+    AOT::sort(members, { }, &DeclaredClassMember::name);
     return members;
 }
 
@@ -215,7 +217,7 @@ static Vector<bool> collectClassMembers(TableEncoder& encoder, NamedFields& name
 // The largest rows first, while there is room for them. Rows that say the same are neighbors.
 static void sortLargestFirst(NamedFields& named)
 {
-    std::ranges::sort(named.rows, [&](const Row& a, const Row& b) {
+    AOT::sort(named.rows, [&](const Row& a, const Row& b) {
         if (a.size() != b.size())
             return a.size() > b.size();
         auto fieldsOfA = named.fieldsOf(a);

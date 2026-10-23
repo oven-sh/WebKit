@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCFG.h"
+#include "AOTVector.h"
 #include <memory>
 #include <optional>
 #include <span>
@@ -17,7 +18,6 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

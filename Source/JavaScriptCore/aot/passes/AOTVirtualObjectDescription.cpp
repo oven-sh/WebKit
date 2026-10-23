@@ -16,6 +16,7 @@
 #include "AOTGuardAvailability.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/PrintStream.h>
 

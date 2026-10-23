@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
+#include "AOTSort.h"
 #include <algorithm>
 #include <tuple>
 #include <utility>
@@ -48,10 +49,10 @@ FailedTests::FailedTests(FunctionAnalyses& analyses)
             m_failedSwitches.append(FailedSwitch { analyses.identityOf(terminator.subjectOperand()), from, target });
     }
 
-    std::ranges::sort(m_failedEdges, { }, [](const FailedEdge& edge) {
+    AOT::sort(m_failedEdges, { }, [](const FailedEdge& edge) {
         return std::tuple { edge.opcode, edge.subject, edge.target };
     });
-    std::ranges::sort(m_failedSwitches, { }, [](const FailedSwitch& entry) {
+    AOT::sort(m_failedSwitches, { }, [](const FailedSwitch& entry) {
         return std::pair { entry.subject, entry.target };
     });
 }

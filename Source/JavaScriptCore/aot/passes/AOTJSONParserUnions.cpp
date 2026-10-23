@@ -10,6 +10,7 @@
 
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

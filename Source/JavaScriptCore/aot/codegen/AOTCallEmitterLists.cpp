@@ -12,6 +12,7 @@
 #include "AOTConvention.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

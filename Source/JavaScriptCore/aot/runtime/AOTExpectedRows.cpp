@@ -14,12 +14,12 @@
 #include "AOTOperationScope.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "TopExceptionScope.h"
 #include <cstddef>
 #include <span>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/SymbolImpl.h>
 

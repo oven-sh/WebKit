@@ -11,6 +11,7 @@
 #include "AOTProvisionalFunctions.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
+#include "AOTVector.h"
 #include <array>
 
 namespace JSC { namespace AOT { namespace Typed {

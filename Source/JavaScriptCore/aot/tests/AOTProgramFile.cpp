@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTIRParser.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include <algorithm>
 #include <array>

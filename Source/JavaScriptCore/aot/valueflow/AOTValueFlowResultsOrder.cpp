@@ -13,6 +13,7 @@
 #include "AOTThreads.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <tuple>

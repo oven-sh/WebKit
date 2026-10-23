@@ -9,9 +9,9 @@
 
 #include "AOTThreads.h"
 #include "AOTTypeTable.h"
+#include "AOTVector.h"
 #include <array>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

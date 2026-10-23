@@ -8,11 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -146,7 +147,7 @@ static void encodeDirectEval(const TableEncoder& encoder, const DirectEvalRecord
     Vector<uint32_t> bindingsByName(names.size(), [](size_t index) {
         return static_cast<uint32_t>(index);
     });
-    std::ranges::stable_sort(bindingsByName, { }, [&](uint32_t index) {
+    AOT::stableSort(bindingsByName, { }, [&](uint32_t index) {
         return names[index];
     });
     for (uint32_t index : bindingsByName)

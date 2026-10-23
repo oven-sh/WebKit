@@ -11,6 +11,7 @@
 #include "AOTCellFormat.h"
 #include "AOTIR.h"
 #include "AOTInstance.h"
+#include "AOTVector.h"
 #include "B3Procedure.h"
 #include "JSGlobalObject.h"
 #include <algorithm>
@@ -502,7 +503,7 @@ bool AOTHeaps::hasTemporaryClientHeaps() const
         || std::ranges::any_of(m_exactHeaps, [](const ExactHeaps& heaps) { return !heaps.isEmpty(); });
 }
 
-void AOTHeaps::appendGrownClientHeaps(Vector<GrownHeap, 16>& grownHeaps)
+void AOTHeaps::appendGrownClientHeaps(WTF::Vector<GrownHeap, 16>& grownHeaps)
 {
     for (Bucket* bucket : m_bucketsWithExactHeaps)
         grownHeaps.append({ &bucket->heap, bucket->numberOfRetainedChildren });

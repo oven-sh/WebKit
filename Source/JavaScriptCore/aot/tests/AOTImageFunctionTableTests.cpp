@@ -12,6 +12,7 @@
 #include "AOTImageTestSupport.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsExceptions.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <limits>

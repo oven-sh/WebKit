@@ -16,7 +16,9 @@
 #include "AOTIRBuilder.h"
 #include "AOTPassRunner.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
@@ -532,7 +534,7 @@ void FunctionScanner::scanAccessByKey(const ListedValue& listed)
     }
     if (found.isEmpty())
         return;
-    std::ranges::sort(found);
+    AOT::sort(found);
     removeRepeatedElements(found);
 
     if (reachesOnlyCandidates && (isRemovableSlotStore(value.opcode) || isUnusedSlotRead(listed)))

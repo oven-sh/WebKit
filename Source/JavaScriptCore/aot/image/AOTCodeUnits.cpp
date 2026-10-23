@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTCompiledCode.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include "AirBasicBlock.h"
 #include "AirInst.h"
 #include "AirOpcodeUtils.h"
@@ -505,7 +507,7 @@ Vector<CodeUnit> CodeUnitRecorder::link(ImageLinkBuffer& buffer, std::span<const
             ranges.recorded.append(OffsetRange { begin, offsetOfLastEnd, range.kind });
     }
     if (!ascends) {
-        std::ranges::sort(ranges.recorded, { }, &OffsetRange::begin);
+        AOT::sort(ranges.recorded, { }, &OffsetRange::begin);
         for (size_t i = 1; i < ranges.recorded.size(); ++i)
             RELEASE_ASSERT(ranges.recorded[i - 1].end <= ranges.recorded[i].begin);
     }
@@ -513,7 +515,7 @@ Vector<CodeUnit> CodeUnitRecorder::link(ImageLinkBuffer& buffer, std::span<const
     for (auto& [begin, end] : m_pins)
         appendLinkedRange(ranges.pins, begin, end, CodeUnit::Kind::Pinned);
     if (!ascendStrictly(ranges.pins, &OffsetRange::begin))
-        std::ranges::sort(ranges.pins, { }, &OffsetRange::begin);
+        AOT::sort(ranges.pins, { }, &OffsetRange::begin);
 
     ranges.hotBlocks.reserveInitialCapacity(m_hotBlockRanges.size());
     for (auto& [begin, end] : m_hotBlockRanges)

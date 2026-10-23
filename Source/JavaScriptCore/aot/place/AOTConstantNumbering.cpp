@@ -15,7 +15,9 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionKinds.h"
 #include "AOTNameClass.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <tuple>
@@ -95,7 +97,7 @@ static void appendCellsOfClass(const BuiltinClass& builtinClass, Vector<BuiltinC
 
 static void sortAndRemoveKeysWithoutCell(const BuiltinTable& builtins, Vector<BuiltinCellKey>& cells)
 {
-    std::ranges::sort(cells, { }, &BuiltinCellKey::encoded);
+    AOT::sort(cells, { }, &BuiltinCellKey::encoded);
     removeRepeatedElements(cells);
     cells.removeAllMatching([&](BuiltinCellKey key) {
         return !key.hasCell(builtins);
@@ -217,7 +219,7 @@ static void numberKeyCells(const PlacementContext& context, const KeyCellUsesOfB
     removeRepeatedElements(uses, [](const KeyCellUse& first, const KeyCellUse& later) {
         return first.key == later.key;
     });
-    std::ranges::sort(uses, { }, [](const KeyCellUse& use) {
+    AOT::sort(uses, { }, [](const KeyCellUse& use) {
         return std::tuple(use.module, use.sourceFunction, use.key);
     });
 

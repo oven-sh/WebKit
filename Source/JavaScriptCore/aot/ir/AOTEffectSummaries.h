@@ -11,6 +11,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTLargeVectors.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <array>
 #include <atomic>
 #include <bit>
@@ -22,7 +23,6 @@
 #include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

@@ -12,13 +12,13 @@
 #include "AOTIR.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramFile.h"
+#include "AOTVector.h"
 #include "AOTWire.h"
 #include <cstddef>
 #include <memory>
 #include <optional>
 #include <span>
 #include <wtf/StdLibExtras.h>
-#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringView.h>
 

@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTEdgeResults.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/HashSet.h>
@@ -101,7 +103,7 @@ ProductionReach RawWordWebs::collectProductions(ValueID word, Vector<RawWordProd
         }
     }
 
-    std::ranges::sort(productions);
+    AOT::sort(productions);
     removeRepeatedElements(productions);
     return ProductionReach::OnlyProductions;
 }

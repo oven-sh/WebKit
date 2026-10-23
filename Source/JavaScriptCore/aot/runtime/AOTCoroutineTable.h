@@ -7,10 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include "CollectionScope.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

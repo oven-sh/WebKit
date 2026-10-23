@@ -15,8 +15,10 @@
 #include "AOTOutliningCandidates.h"
 #include "AOTPass.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -206,7 +208,7 @@ static Vector<SiteGroup> findProfitableGroups(const Program& program, const Para
     Vector<uint32_t> longestRunsFirst = findIndicesInParallel(loops, hashRunStarts.size(), [&](unsigned run) {
         return keysOfRun(run).size() >= sitesInLongHashRun;
     });
-    std::ranges::sort(longestRunsFirst, [&](uint32_t a, uint32_t b) {
+    AOT::sort(longestRunsFirst, [&](uint32_t a, uint32_t b) {
         return std::pair { keysOfRun(b).size(), a } < std::pair { keysOfRun(a).size(), b };
     });
 
@@ -220,7 +222,7 @@ static Vector<SiteGroup> findProfitableGroups(const Program& program, const Para
         }, firstGroupWithHash);
     });
 
-    std::ranges::sort(groups.mutableSpan(), { }, [](const SiteGroup& group) {
+    AOT::sort(groups.mutableSpan(), { }, [](const SiteGroup& group) {
         return group.sites.first();
     });
     return groups;

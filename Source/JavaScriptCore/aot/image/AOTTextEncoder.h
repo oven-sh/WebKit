@@ -11,9 +11,9 @@
 #include "AOTImageText.h"
 #include "AOTStringConstantNumbering.h"
 #include "AOTStringUses.h"
+#include "AOTVector.h"
 #include <span>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

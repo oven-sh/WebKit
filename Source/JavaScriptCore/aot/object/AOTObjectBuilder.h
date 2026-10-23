@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLayoutData.h"
+#include "AOTVector.h"
 #include "Allocator.h"
 #include "DeferGC.h"
 #include "JSCJSValue.h"
@@ -20,7 +21,6 @@
 #include <wtf/RefPtr.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

@@ -15,9 +15,9 @@
 #include "AOTStubFrames.h"
 #include "AOTStubKey.h"
 #include "AOTStubRegisters.h"
+#include "AOTVector.h"
 #include "RegisterSet.h"
 #include <wtf/BitSet.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

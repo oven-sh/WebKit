@@ -14,6 +14,7 @@
 #include "AOTFrameArrayParameters.h"
 #include "AOTIR.h"
 #include "AOTKnownValue.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <memory>
 #include <optional>
@@ -22,7 +23,6 @@
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -13,6 +13,7 @@
 #include "AOTIdentifierNumbering.h"
 #include "AOTRegExpSummary.h"
 #include "AOTScratchRealm.h"
+#include "AOTVector.h"
 #include "B3CompilationScratch.h"
 #include <utility>
 #include <wtf/ASCIICType.h>

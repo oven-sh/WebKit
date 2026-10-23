@@ -10,6 +10,7 @@
 #include "AOTEntrypointsNothingEnters.h"
 #include "AOTFlowReport.h"
 #include "AOTPass.h"
+#include "AOTVector.h"
 #include <memory>
 #include <span>
 #include <wtf/FastMalloc.h>

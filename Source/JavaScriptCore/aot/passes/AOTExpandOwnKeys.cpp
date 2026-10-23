@@ -10,11 +10,12 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
+#include "AOTSort.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -163,7 +164,7 @@ static bool collectLiteralMadeForSpread(FunctionPassContext& context, ValueID al
             return false;
         current = next->user;
     }
-    std::ranges::sort(value.definitions, { }, [&](ValueID definition) {
+    AOT::sort(value.definitions, { }, [&](ValueID definition) {
         return useLists.locationOf(definition).index;
     });
     for (ValueID definition : value.definitions)

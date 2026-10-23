@@ -18,6 +18,8 @@
 #include "AOTFrameAllocationMaterialization.h"
 #include "AOTFunctionKinds.h"
 #include "AOTHeat.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -1243,7 +1245,7 @@ void FramePlanner::finishPlan()
             addAllocation(m_plan, m_program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
         }
     }
-    std::ranges::sort(m_plan.decisions, { }, &FrameDecision::allocation);
+    AOT::sort(m_plan.decisions, { }, &FrameDecision::allocation);
 }
 
 } } } // namespace JSC::AOT::Typed

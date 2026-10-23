@@ -12,9 +12,11 @@
 #include "AOTBuiltinTable.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeRelations.h"
 #include "AOTValueSets.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
@@ -588,7 +590,7 @@ public:
         });
         if (layouts.size() > m_build.limit(LimitID::MaxLayoutsInType))
             return { };
-        std::ranges::sort(layouts);
+        AOT::sort(layouts);
         return layouts;
     }
 
@@ -749,13 +751,13 @@ private:
                 }
             }
         });
-        std::ranges::sort(universe.m_moduleBuiltins);
+        AOT::sort(universe.m_moduleBuiltins);
         universe.m_moduleBuiltins.shrink(std::ranges::unique(universe.m_moduleBuiltins).begin() - universe.m_moduleBuiltins.begin());
         for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
             if (FunctionID body = m_program.modules[index].body)
                 universe.m_modulesWithBodies.append({ body, ModuleID(index) });
         }
-        std::ranges::sort(universe.m_modulesWithBodies);
+        AOT::sort(universe.m_modulesWithBodies);
 
         universe.m_firstBuiltin = ValueFlowUniverse::untrackedObject().index() + 1;
         universe.m_firstModuleBuiltin = universe.m_firstBuiltin + m_program.builtins().builtinCount();
@@ -1306,25 +1308,24 @@ private:
         next.statementLeavingBody = next.statement;
         m_result.m_ranges[m_bodies.size()] = next;
 
-        // A list that grows writes every entry, and these are hundreds of megabytes.
+        static_assert(std::is_trivially_copyable_v<ValueFlowStatement> && std::is_trivially_copyable_v<ValueFlowOperand>);
+        m_result.m_statements = MallocSpan<ValueFlowStatement>::malloc(next.statement * sizeof(ValueFlowStatement));
+        m_result.m_operands = MallocSpan<ValueFlowOperand>::malloc(nextOperand * sizeof(ValueFlowOperand));
+        // A list that grows writes every entry.
         runTasksInParallel(m_loops, {
             [&] {
-                m_result.m_statements.grow(next.statement);
-            },
-            [&] {
-                m_result.m_operands.grow(nextOperand);
-            },
-            [&] {
                 m_result.m_edges.grow(nextEdge);
+            },
+            [&] {
+                m_result.m_observedValues.grow(nextObservedValue);
             },
             [&] {
                 m_result.m_masks.grow(nextMask);
                 m_result.m_edgesOnceReached.grow(next.edgeOnceReached);
                 m_result.m_seedsOnceReached.grow(next.seedOnceReached);
                 m_result.m_functionsEnteredOnceReached.grow(next.functionEntered);
-                m_result.m_observedValues.grow(nextObservedValue);
-        m_result.m_comparedValues.grow(nextComparedValues);
-        m_result.m_valuesAliveForComparisonsOnly.grow(nextValueAliveForComparisonsOnly);
+                m_result.m_comparedValues.grow(nextComparedValues);
+                m_result.m_valuesAliveForComparisonsOnly.grow(nextValueAliveForComparisonsOnly);
             },
         });
     }

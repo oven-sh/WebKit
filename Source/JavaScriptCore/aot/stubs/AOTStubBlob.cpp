@@ -9,11 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTSort.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubFrontEnds.h"
 #include "AOTStubRecording.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <memory>
 #include <wtf/HashSet.h>
@@ -100,7 +102,7 @@ static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const
 
 static void orderBodies(Vector<ReachedBody>& bodies, uint32_t layoutSeed)
 {
-    std::ranges::sort(bodies, { }, &ReachedBody::key);
+    AOT::sort(bodies, { }, &ReachedBody::key);
     if (!layoutSeed)
         return;
     WeakRandom random(layoutSeed);
@@ -143,7 +145,7 @@ static void checkReturnLabels(const Vector<StubAssembler::BoundReturnLabel>& ret
 static Vector<StubEntryRange> findEntriesInFrontOfSingleReturnSites(const StubBlob& blob)
 {
     Vector<StubPlacement> byOffset = blob.placements;
-    std::ranges::sort(byOffset, { }, &StubPlacement::offset);
+    AOT::sort(byOffset, { }, &StubPlacement::offset);
     auto isSingleReturnSite = [&](uint32_t offset) {
         auto site = std::ranges::lower_bound(blob.returnSites, offset, { }, &StubReturnSite::offset);
         return site != blob.returnSites.end() && site->offset == offset && hasSingleReturnSite(site->kind);
@@ -166,7 +168,7 @@ static Vector<StubEntryRange> findEntriesInFrontOfSingleReturnSites(const StubBl
             result.append({ entry->offset, next == byOffset.end() ? static_cast<uint32_t>(blob.code.bytes.size()) : next->offset });
         }
     }
-    std::ranges::sort(result, { }, &StubEntryRange::offset);
+    AOT::sort(result, { }, &StubEntryRange::offset);
     removeRepeatedElements(result, [](const StubEntryRange& a, const StubEntryRange& b) {
         return a.offset == b.offset;
     });
@@ -212,10 +214,10 @@ std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const 
     }));
     for (auto& entry : jit.boundEntries())
         blob.placements.append(StubPlacement { entry.key, linkBuffer.offsetOf(entry.label) });
-    std::ranges::sort(blob.placements, { }, &StubPlacement::key);
+    AOT::sort(blob.placements, { }, &StubPlacement::key);
     for (auto& returnLabel : jit.boundReturnLabels())
         blob.returnSites.append(StubReturnSite { linkBuffer.offsetOf(returnLabel.label), returnLabel.kind });
-    std::ranges::sort(blob.returnSites, { }, &StubReturnSite::offset);
+    AOT::sort(blob.returnSites, { }, &StubReturnSite::offset);
     RELEASE_ASSERT(std::ranges::adjacent_find(blob.returnSites, { }, &StubReturnSite::offset) == blob.returnSites.end());
     blob.entriesInFrontOfSingleReturnSites = findEntriesInFrontOfSingleReturnSites(blob);
     blob.entriesUsed = reached.entriesUsed;

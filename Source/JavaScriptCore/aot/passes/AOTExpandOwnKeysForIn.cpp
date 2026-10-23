@@ -14,6 +14,7 @@
 #include "AOTHeat.h"
 #include "AOTNaturalLoops.h"
 #include "AOTRegionCloner.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <memory>

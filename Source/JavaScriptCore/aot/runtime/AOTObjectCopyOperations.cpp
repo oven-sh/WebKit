@@ -25,6 +25,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
 #include "AOTUnwinding.h"
+#include "AOTVector.h"
 #include "ButterflyInlines.h"
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"

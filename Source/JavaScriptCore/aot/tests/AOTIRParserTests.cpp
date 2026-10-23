@@ -14,6 +14,7 @@
 #include "AOTIRPrinter.h"
 #include "AOTIRTestSupport.h"
 #include "AOTReaderFixture.h"
+#include "AOTVector.h"
 #include "LineColumn.h"
 #include <cmath>
 #include <limits>

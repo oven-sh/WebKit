@@ -10,6 +10,7 @@
 
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -7,11 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTVector.h"
 #include <atomic>
 #include <memory>
 #include <wtf/Noncopyable.h>
 #include <wtf/Threading.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

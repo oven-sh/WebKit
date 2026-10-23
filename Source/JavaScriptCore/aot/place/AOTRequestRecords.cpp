@@ -10,6 +10,7 @@
 
 #include "AOTOperationData.h"
 #include "AOTPlacementSteps.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Hasher.h>
 #include <wtf/StdLibExtras.h>

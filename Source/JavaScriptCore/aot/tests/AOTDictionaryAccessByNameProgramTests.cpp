@@ -92,33 +92,33 @@ globalThis.publish = (read, store) => {
 
 #define OUTPUT_LINE(what, served) what served "\n"
 
-// What a read, or a store that replaces a value, is served by where no cache may answer, and a read of a name that the object has not.
+// What a read, or a store that replaces a value, is served by where no cache may answer, and a read that is filed only behind its first few calls.
 #if CPU(X86_64)
 #define READ_WITHOUT_CACHE(cached, notCached, objectAnswers) objectAnswers
-#define READ_OF_ABSENT_NAME(cached, notCached) cached
+#define READ_CACHED_LATE(cached, objectAnswers) cached
 #else
 #define READ_WITHOUT_CACHE(cached, notCached, objectAnswers) notCached
-#define READ_OF_ABSENT_NAME(cached, notCached) notCached
+#define READ_CACHED_LATE(cached, objectAnswers) objectAnswers
 #endif
 
-#define OUTPUT_OF_CACHEABLE_DICTIONARIES(cached, notCached) \
+#define OUTPUT_OF_CACHEABLE_DICTIONARIES(cached, notCached, objectAnswers) \
     OUTPUT_LINE("held: 2", cached) \
     OUTPUT_LINE("replaced: 3", cached) \
     OUTPUT_LINE("another name added: 3", cached) \
-    OUTPUT_LINE("getter: 5", cached) \
+    OUTPUT_LINE("getter: 5", READ_CACHED_LATE(cached, objectAnswers)) \
     OUTPUT_LINE("held, flattened before: 2", cached) \
     OUTPUT_LINE("stored, flattened before: 99", cached) \
     OUTPUT_LINE("read after the stores: 99", cached) \
-    OUTPUT_LINE("deleted: undefined", READ_OF_ABSENT_NAME(cached, notCached)) \
+    OUTPUT_LINE("deleted: undefined", cached) \
     OUTPUT_LINE("added under the same Structure: 6", cached) \
     OUTPUT_LINE("read-only: 7", notCached)
 
 static void testCacheableDictionaryFilesWhatItHolds()
 {
-    checkOutputOfProgramInShell(programText, OUTPUT_OF_CACHEABLE_DICTIONARIES(", cached", ", not cached") ""_s,
+    checkOutputOfProgramInShell(programText, OUTPUT_OF_CACHEABLE_DICTIONARIES(", cached", ", not cached", ", the object answers") ""_s,
         { }, "globalThis.printsCalls = true;" MEASURE_ACCESSES STATEMENTS_WITH_CACHEABLE_DICTIONARIES ""_s, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
     for (ASCIILiteral word : { "validate"_s, "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s })
-        checkOutputOfProgramInShell(programText, OUTPUT_OF_CACHEABLE_DICTIONARIES("", "") ""_s, { word }, MEASURE_ACCESSES STATEMENTS_WITH_CACHEABLE_DICTIONARIES ""_s, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
+        checkOutputOfProgramInShell(programText, OUTPUT_OF_CACHEABLE_DICTIONARIES("", "", "") ""_s, { word }, MEASURE_ACCESSES STATEMENTS_WITH_CACHEABLE_DICTIONARIES ""_s, { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s });
 }
 
 // An uncacheable dictionary changes in every way under one Structure, so nothing is filed under it once it cannot be flattened again.
@@ -154,7 +154,7 @@ globalThis.publish = (read, store) => {
 )JS"
 
 #define OUTPUT_OF_UNCACHEABLE_DICTIONARIES(cached, notCached, objectAnswers) \
-    OUTPUT_LINE("flattened by the first read: 2", cached) \
+    OUTPUT_LINE("flattened by the first read: 2", READ_CACHED_LATE(cached, objectAnswers)) \
     OUTPUT_LINE("held: 2", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
     OUTPUT_LINE("replaced: 3", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \
     OUTPUT_LINE("stored: 99", READ_WITHOUT_CACHE(cached, notCached, objectAnswers)) \

@@ -12,6 +12,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRules.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>

@@ -9,9 +9,9 @@
 
 #include "AOTImageForward.h"
 #include "AOTSchemaEnums.h"
+#include "AOTVector.h"
 #include <array>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

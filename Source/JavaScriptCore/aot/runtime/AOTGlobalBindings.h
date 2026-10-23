@@ -9,6 +9,7 @@
 
 #include "AOTChainDependents.h"
 #include "AOTRuntimeWords.h"
+#include "AOTVector.h"
 #include "AOTWatchpoints.h"
 #include "CollectionScope.h"
 #include "Identifier.h"
@@ -21,7 +22,6 @@
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC {
 

@@ -16,6 +16,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <utility>

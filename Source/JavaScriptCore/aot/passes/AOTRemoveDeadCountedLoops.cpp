@@ -11,10 +11,11 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTInductionVariables.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -174,7 +175,7 @@ static Vector<DeadLoop> findOutermostDeadLoops(FunctionPassContext& context)
         if (std::optional<DeadLoop> loop = describeDeadLoop(context, loops.loop(i)))
             found.append(WTF::move(*loop));
     }
-    std::ranges::sort(found, [](const DeadLoop& a, const DeadLoop& b) {
+    AOT::sort(found, [](const DeadLoop& a, const DeadLoop& b) {
         size_t aSize = a.body.bitCount();
         size_t bSize = b.body.bitCount();
         return aSize != bSize ? aSize > bSize : a.header.index() < b.header.index();

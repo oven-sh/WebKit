@@ -20,9 +20,11 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <array>
 #include <memory>
@@ -33,7 +35,6 @@
 #include <wtf/BitVector.h>
 #include <wtf/DataLog.h>
 #include <wtf/FastMalloc.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -1207,14 +1208,14 @@ void DeferralAnalysis::findCandidates()
     }
     for (const ClosureStore& store : m_closureStores)
         places.append({ { store.layout, store.field }, store.closureFunction, { store.function, store.store } });
-    std::ranges::sort(places);
+    AOT::sort(places);
     removeRepeatedElements(places);
 
     using Maker = std::pair<LayoutID, FunctionID>;
     Vector<Maker> makers = places.map([](const Place& place) {
         return Maker { place.field.layout, place.operation.function };
     });
-    std::ranges::sort(makers);
+    AOT::sort(makers);
     auto numberOfPlacesOfMaker = [&](const Place& place) {
         return std::ranges::equal_range(makers, Maker { place.field.layout, place.operation.function }).size();
     };
@@ -1275,7 +1276,7 @@ void DeferralAnalysis::findEnteredCalls()
     if (calls.isEmpty())
         return;
 
-    std::ranges::sort(calls, { }, &EnteredCall::call);
+    AOT::sort(calls, { }, &EnteredCall::call);
     for (const EnteredCall& call : calls) {
         if (m_callSites.isEmpty() || m_callSites.last().call != call.call)
             m_callSites.append({ call.call, call.callee, call.passesOwnReceiver, 0 });
@@ -1287,7 +1288,7 @@ void DeferralAnalysis::findEnteredCalls()
         if (!m_isCalleeOfWindow.quickSet(site.callee.index()))
             m_callees.append({ .function = site.callee });
     }
-    std::ranges::sort(m_callees, { }, &CalleeState::function);
+    AOT::sort(m_callees, { }, &CalleeState::function);
     for (const CallSiteState& site : m_callSites) {
         CalleeState& callee = findSorted(m_callees, site.callee, &CalleeState::function);
         ++callee.numberOfEnteredSites;
@@ -1354,7 +1355,7 @@ void DeferralAnalysis::findAccesses()
                 m_initializingStores.append(initializer.store);
         }
     }
-    std::ranges::sort(m_initializingStores);
+    AOT::sort(m_initializingStores);
 
     Vector<FoundAccess> accesses = collectInParallel<FoundAccess>(m_build.parallelLoops(), m_program.functions.size(), m_largeFunctions.span(), [&](unsigned index, Vector<FoundAccess>& found) {
         // classifyAccess() answers for no other operation.
@@ -1439,7 +1440,7 @@ void DeferralAnalysis::findCalleeStores()
                 stores.append(initializer.store);
         }
     }
-    std::ranges::sort(stores);
+    AOT::sort(stores);
     for (const ValueReference& store : stores) {
         if (m_calleeStores.isEmpty() || m_calleeStores.last().store != store)
             m_calleeStores.append({ .store = store });
@@ -1541,7 +1542,7 @@ void DeferralAnalysis::rejectFieldsGivenOtherThanObjects()
     Vector<ValueReference> describedAllocations = m_objects.map([](const FreshObject& object) {
         return ValueReference { object.function, object.allocation };
     });
-    std::ranges::sort(describedAllocations);
+    AOT::sort(describedAllocations);
     for (const ValueReference& reference : m_allocations) {
         if (std::ranges::binary_search(describedAllocations, reference))
             continue;
@@ -1904,7 +1905,7 @@ void DeferralAnalysis::finish()
         std::optional<uint32_t> existingField = layout.flow.closureEnvironmentField;
         m_environmentFields.append({ candidate.layout, existingField.value_or(static_cast<uint32_t>(layout.fields.size())), m_program.at(state.function).captures[0].type, !existingField });
     }
-    std::ranges::sort(m_environmentFields, { }, &ClosureEnvironmentField::layout);
+    AOT::sort(m_environmentFields, { }, &ClosureEnvironmentField::layout);
     removeRepeatedElements(m_environmentFields, [](const ClosureEnvironmentField& a, const ClosureEnvironmentField& b) {
         return a.layout == b.layout;
     });
@@ -1925,7 +1926,7 @@ void DeferralAnalysis::finish()
                 storesListedByAllocations.append(object.initializers[index].store);
         }
     }
-    std::ranges::sort(storesListedByAllocations);
+    AOT::sort(storesListedByAllocations);
     m_closureStores.removeAllMatching([&](const ClosureStore& store) {
         return !defers(store) || std::ranges::binary_search(storesListedByAllocations, ValueReference { store.function, store.store });
     });

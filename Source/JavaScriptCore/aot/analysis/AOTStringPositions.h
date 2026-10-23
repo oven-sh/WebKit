@@ -8,9 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTIntegerRelations.h"
+#include "AOTVector.h"
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -9,11 +9,11 @@
 
 #include "AOTForwardDataflow.h"
 #include "AOTTypeTestEvents.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

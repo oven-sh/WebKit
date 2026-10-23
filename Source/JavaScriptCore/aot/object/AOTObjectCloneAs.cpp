@@ -16,6 +16,7 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "MarkedSpace.h"
 #include "StructureCache.h"

@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTLinkedFunctions.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC::AOT {
 

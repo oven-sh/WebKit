@@ -11,9 +11,9 @@
 #include "AOTEffects.h"
 #include "AOTEffectsOfProtocols.h"
 #include "AOTOpcode.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

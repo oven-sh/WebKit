@@ -9,12 +9,12 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTValueFlow.h"
+#include "AOTVector.h"
 #include <atomic>
 #include <memory>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 

@@ -13,6 +13,7 @@
 #include "AOTPrimitives.h"
 #include "AOTProgramStrings.h"
 #include "AOTState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
 #include "PureNaN.h"
 #include <algorithm>

@@ -15,8 +15,10 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTFuseGeneratorLoops.h"
 #include "AOTRegionCloner.h"
+#include "AOTSort.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <memory>
@@ -671,7 +673,7 @@ void ArmDispatcher::collectOperationSites()
             addSite(close);
     }
 
-    std::sort(m_sites.begin(), m_sites.end(), [](const OperationSite& a, const OperationSite& b) {
+    AOT::sort(m_sites, [](const OperationSite& a, const OperationSite& b) {
         return std::tie(a.point.block, a.point.index) > std::tie(b.point.block, b.point.index);
     });
 }
@@ -1050,7 +1052,7 @@ void IterationRound::separate(std::span<const Iteration> iterations)
         return;
 
     // From the last cut of a block to the first: what stands in front of a cut stays where it is.
-    std::ranges::sort(cuts, std::ranges::greater { }, [](const Cut& cut) {
+    AOT::sort(cuts, std::ranges::greater { }, [](const Cut& cut) {
         return std::pair { cut.point.block, cut.point.index };
     });
     for (const Cut& cut : cuts) {
@@ -1138,7 +1140,7 @@ Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
         region.append(block);
         worklist.append(cfg.predecessors(block));
     }
-    std::ranges::sort(region, { }, [&](BlockID block) {
+    AOT::sort(region, { }, [&](BlockID block) {
         return cfg.reversePostOrderIndex(block);
     });
     return region;

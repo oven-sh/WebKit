@@ -15,6 +15,8 @@
 #include "AOTModuleTable.h"
 #include "AOTProgramStrings.h"
 #include "AOTProgramTables.h"
+#include "AOTSort.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/FilePrintStream.h>
 #include <wtf/HexNumber.h>
@@ -65,7 +67,7 @@ void writePerfMap()
     }
     for (unsigned copy = 0; copy < image->sharedCodeCopies().size(); ++copy)
         symbols.append({ static_cast<size_t>(image->sharedCodeCopy(copy) - code), String("(stubs of compiled code)"_s) });
-    std::ranges::sort(symbols, { }, &PerfMapSymbol::offset);
+    AOT::sort(symbols, { }, &PerfMapSymbol::offset);
     for (size_t i = 0; i < symbols.size(); ++i) {
         size_t end = i + 1 < symbols.size() ? symbols[i + 1].offset : header.code.functionsEnd;
         file->println(hex(reinterpret_cast<uintptr_t>(code) + symbols[i].offset, Lowercase), " ", hex(end - symbols[i].offset, Lowercase), " ", symbols[i].name);

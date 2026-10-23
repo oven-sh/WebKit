@@ -14,6 +14,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTPropertyAccessMembers.h"
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -13,7 +13,9 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFlowStamps.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <optional>
@@ -228,10 +230,10 @@ StatementsMadeByRules::StatementsMadeByRules(const ValueFlowResultInputs& inputs
                 return std::tuple(entry.group.callees, entry.group.kind);
             };
             auto groups = groupsOfTask.mutableSpan().subspan(firstGroup);
-            std::ranges::sort(groups, { }, orderOfGroup);
+            AOT::sort(groups, { }, orderOfGroup);
             groupsOfTask.shrink(groupsOfTask.size() - std::ranges::unique(groups, { }, orderOfGroup).size());
             auto asked = askersAndAskedOfTask.mutableSpan().subspan(firstAsked);
-            std::ranges::sort(asked);
+            AOT::sort(asked);
             askersAndAskedOfTask.shrink(askersAndAskedOfTask.size() - std::ranges::unique(asked).size());
         }
     });
@@ -316,7 +318,7 @@ static auto orderOf(const FlowIndirectCall& call)
 // Sorts the calls from `first` on and leaves one for each caller, site, callee and kind.
 static void mergeIndirectCalls(Vector<FlowIndirectCall>& calls, size_t first)
 {
-    std::ranges::sort(calls.mutableSpan().subspan(first), { }, orderOf);
+    AOT::sort(calls.mutableSpan().subspan(first), { }, orderOf);
     size_t count = first;
     for (size_t index = first; index < calls.size(); ++index) {
         FlowIndirectCall call = calls[index];
@@ -798,7 +800,7 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
     auto orderOf = [](const BindCall& call) {
         return std::tuple(call.target, call.numberOfBoundArguments);
     };
-    std::ranges::sort(calls, { }, orderOf);
+    AOT::sort(calls, { }, orderOf);
 
     Vector<FlowBoundFunctionUse> uses;
     for (size_t first = 0; first < calls.size();) {
@@ -842,7 +844,7 @@ static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& input
             solver.graph().forEachPredecessor(ValueFlowNodeID(node), [&](ValueFlowNodeID predecessor) {
                 predecessors.append(predecessor);
             });
-            std::ranges::sort(predecessors);
+            AOT::sort(predecessors);
             for (ValueFlowNodeID predecessor : predecessors) {
                 ValueSetID brought = maker.intersect(solver.valueOf(predecessor), lookedFor);
                 if (brought == ValueSets::nothing)
@@ -873,7 +875,7 @@ static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& input
         level.shrink(0);
         for (auto& [node, lookedFor] : next)
             level.append({ node, lookedFor });
-        std::ranges::sort(level, { }, [](const auto& entry) { return entry.first; });
+        AOT::sort(level, { }, [](const auto& entry) { return entry.first; });
     }
     return witnesses;
 }
@@ -1185,7 +1187,7 @@ void computeSymbolConstantResults(const ValueFlowResultInputs& inputs, FlowResul
         }
         if (update.symbolConstants.isEmpty())
             return;
-        std::ranges::sort(update.symbolConstants, { }, &FlowSymbolConstant::call);
+        AOT::sort(update.symbolConstants, { }, &FlowSymbolConstant::call);
         update.proofs.removeAllMatching([&](const FlowValueProof& proof) {
             return !!findByValue(update.symbolConstants.span(), proof.value, &FlowSymbolConstant::call);
         });

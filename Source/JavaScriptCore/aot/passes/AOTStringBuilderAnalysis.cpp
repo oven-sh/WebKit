@@ -16,7 +16,9 @@
 #include "AOTLiveness.h"
 #include "AOTPass.h"
 #include "AOTRuleSupport.h"
+#include "AOTSort.h"
 #include "AOTType.h"
+#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/BitVector.h>
@@ -574,7 +576,7 @@ void StringBuilderAnalyzer::findCyclesWithAppends()
     }
     for (WebState& state : m_states) {
         auto& cycles = state.cyclesWithAppends;
-        std::ranges::sort(cycles);
+        AOT::sort(cycles);
         cycles.shrink(cycles.size() - std::ranges::unique(cycles).size());
     }
 }
@@ -876,10 +878,10 @@ void StringBuilderAnalyzer::collectEntriesOnEdge(Edge edge)
 
 void StringBuilderAnalyzer::sortRecords(StringWeb& web) const
 {
-    std::ranges::sort(web.reads, [&](const StringStateRead& a, const StringStateRead& b) {
+    AOT::sort(web.reads, [&](const StringStateRead& a, const StringStateRead& b) {
         return m_useLists.isBefore(a.use, b.use);
     });
-    std::ranges::sort(web.discardedAfter, { }, [&](const StringStateDiscard& discard) {
+    AOT::sort(web.discardedAfter, { }, [&](const StringStateDiscard& discard) {
         ProgramPoint point = m_useLists.pointAfter(discard.after);
         return std::pair { m_cfg.reversePostOrderIndex(point.block), point.index };
     });

@@ -13,6 +13,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTIR.h"
+#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {

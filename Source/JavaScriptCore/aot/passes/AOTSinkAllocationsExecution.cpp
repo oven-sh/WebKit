@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEffectsOfOperands.h"
+#include "AOTVector.h"
 #include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {

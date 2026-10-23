@@ -11,7 +11,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTIR.h"
 #include "AOTRepresentation.h"
-#include <wtf/Vector.h>
+#include "AOTVector.h"
 
 namespace JSC { namespace AOT {
 
