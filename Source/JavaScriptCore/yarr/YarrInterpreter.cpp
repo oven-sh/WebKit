@@ -285,6 +285,16 @@ public:
             ++pos;
         }
 
+        // The step of the start search with the u or v flag. The input is then a sequence of code
+        // points, and the offset between the two halves of a surrogate pair is not a position of
+        // it: the search steps over the whole code point at pos (AdvanceStringIndex in ECMA-262).
+        void LEGACY_NODELETE advanceStartPosition()
+        {
+            ASSERT(decodeSurrogatePairs);
+            ASSERT(pos < length);
+            pos += U16_IS_LEAD(input[pos]) && pos + 1 < length && U16_IS_TRAIL(input[pos + 1]) ? 2 : 1;
+        }
+
         void LEGACY_NODELETE rewind(unsigned amount)
         {
             ASSERT(pos >= amount);
@@ -2153,12 +2163,27 @@ public:
             if (offset > 0)
                 MATCH_NEXT();
 
-            if (input.atEnd() || pattern->sticky()) {
+            if (input.atEnd()) {
                 DUMP_EXTRA("- Return NoMatch\n");
                 return JSRegExpResult::NoMatch;
             }
 
-            input.next();
+            // The search moves to the next start. A sticky pattern does not search. With the u or v
+            // flag the next start is the next code point: for Yarr::RegularExpression, and for a
+            // DotStarEnclosure term, which reports the start of its line, nothing above the
+            // interpreter drops a match that began between the two halves of a surrogate pair.
+            // An 8-bit subject holds no surrogate. One test covers the three flags.
+            static constexpr OptionSet<Flags> flagsWithTheirOwnStep = sizeof(CharType) == 1
+                ? OptionSet<Flags> { Flags::Sticky }
+                : OptionSet<Flags> { Flags::Sticky, Flags::Unicode, Flags::UnicodeSets };
+            if (pattern->m_flags.containsAny(flagsWithTheirOwnStep)) [[unlikely]] {
+                if (pattern->sticky()) {
+                    DUMP_EXTRA("- Return NoMatch\n");
+                    return JSRegExpResult::NoMatch;
+                }
+                input.advanceStartPosition();
+            } else
+                input.next();
 
             context->matchBegin = input.getPos();
 

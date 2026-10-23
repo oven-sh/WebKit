@@ -89,10 +89,24 @@ Rules for an edit to an upstream test:
 
 ### A6. `/u` regular expressions never start a match inside a surrogate pair
 
-- Fork code: `RegExp::matchInlineAtCodePointBoundaries` (`runtime/RegExpInlines.h:115`, fork PR #299).
-  - A sticky or global `/u` regexp whose `lastIndex` is inside a pair matches from the pair's start, as the spec's
-    `RegExpBuiltinExec` and V8 do. Upstream: no match.
-  - A match is not reported at an index between the two halves. Here the fork differs from V8 too.
+- Fork code:
+  - `RegExp::matchInlineAtCodePointBoundaries` (`runtime/RegExpInlines.h`, fork PR #299). A sticky or global `/u`
+    regexp whose `lastIndex` is inside a pair matches from the pair's start, as the spec's `RegExpBuiltinExec` and
+    V8 do. Upstream: no match.
+  - A match is not reported at an index between the two halves. Three places see to that:
+    - The same function drops a match that the JIT reports there, and searches on.
+    - The interpreter's start search steps by code point (`InputStream::advanceStartPosition` in
+      `yarr/YarrInterpreter.cpp`), so it moves to no offset there. This also covers `Yarr::RegularExpression`,
+      which calls the interpreter directly. A start offset that its caller gives inside a pair is tried as given.
+    - The JIT's DotStarEnclosure term (`generateDotStarEnclosure` in `yarr/YarrJIT.cpp`) rejects an expression that
+      began there. A `.*X.*` pattern reports the start of the line, not where `X` matched, so the first place cannot
+      tell.
+
+    Here the fork differs from the V8 of Node 26 too. V8 steps its search by code point since v8/v8@ebed2499f45a.
+    Upstream draft WebKit/WebKit#70714 steps the search of both engines by code point. If it lands, take its
+    interpreter step for this one. The JIT's search then steps over pairs too. Its end-anchored start can still
+    fall between the halves, where a body that must consume a character fails by itself, so the first and the
+    third place should find nothing left to drop.
 - Files: `stress/regexp-unicode-code-unit-read-for-bmp-terms.js`, two expectations;
   `stress/regexp-stringlist-eol-length-groups.js`, one.
 

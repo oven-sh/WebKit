@@ -35,5 +35,11 @@ Two more oracles, for angles a plain engine differential cannot cover:
   and `refcheck.mjs` validates the reference against the host engine. This catches "JIT and
   interpreter agree but both are wrong".
 
+`surrogate-cases.mjs <count> <plain|dotstar> <out.jsonl>` writes /u and /v patterns whose
+alternatives can match without consuming a character, alone or wrapped as `/.*X.*/`, with subjects
+that hold surrogate pairs and lone surrogates: the offset between the two halves of a pair is where
+a start search or the DotStarEnclosure rewrite can go wrong. Replay them with
+`drive.mjs --profile file:<out.jsonl> --configs jit,interp,base`.
+
 `mutate.mjs`, `refmatch.mjs`, `refgen.mjs` and `refcheck.mjs` need `@eslint-community/regexpp` (and
 `mutate.mjs` also `randexp`) installed next to them.
