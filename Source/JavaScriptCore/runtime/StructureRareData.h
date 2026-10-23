@@ -30,6 +30,7 @@
 #include "JSTypeInfo.h"
 #include "PropertyOffset.h"
 #include "PropertySlot.h"
+#include <wtf/BitVector.h>
 #include <wtf/FixedVector.h>
 
 namespace JSC {
@@ -170,11 +171,24 @@ private:
     WriteBarrier<JSCellButterfly> m_cachedPropertyNames[numberOfCachedPropertyNames] { };
 
     typedef UncheckedKeyHashMap<PropertyOffset, RefPtr<WatchpointSet>, WTF::IntHash<PropertyOffset>, WTF::UnsignedWithZeroKeyHashTraits<PropertyOffset>> PropertyWatchpointMap;
-#ifdef NDEBUG
-    static_assert(sizeof(PropertyWatchpointMap) == sizeof(void*), "StructureRareData should remain small");
-#endif
 
-    PropertyWatchpointMap m_replacementWatchpointSets;
+    // A WatchpointSet exists only for an offset that something asked to watch. An offset whose
+    // replacement was cached or observed before anything watched it is a bit in firedOffsets,
+    // and VM::invalidatedPropertyReplacementWatchpointSet() stands in for its set.
+    struct ReplacementWatchpoints {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ReplacementWatchpoints);
+        PropertyWatchpointMap sets;
+        BitVector firedOffsets;
+    };
+
+    ReplacementWatchpoints& ensureReplacementWatchpoints()
+    {
+        if (!m_replacementWatchpoints)
+            m_replacementWatchpoints = makeUnique<ReplacementWatchpoints>();
+        return *m_replacementWatchpoints;
+    }
+
+    std::unique_ptr<ReplacementWatchpoints> m_replacementWatchpoints;
     std::unique_ptr<SpecialPropertyCache> m_specialPropertyCache;
     Box<InlineWatchpointSet> m_polyProtoWatchpoint;
 

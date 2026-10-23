@@ -1119,6 +1119,10 @@ public:
     void didEnterFromOutside() { ++m_entryCountFromOutside; }
 
     WatchpointSet* ensureWatchpointSetForImpureProperty(UniquedStringImpl*);
+
+    // Structure hands this out for a property offset whose replacement was already cached or observed
+    // before anything watched it. It is created invalidated and never changes, so it can be shared.
+    WatchpointSet& invalidatedPropertyReplacementWatchpointSet() LIFETIME_BOUND { return m_invalidatedPropertyReplacementWatchpointSet.get(); }
     
     // FIXME: Use AtomString once it got merged with Identifier.
     JS_EXPORT_PRIVATE void addImpureProperty(UniquedStringImpl*);
@@ -1430,6 +1434,7 @@ private:
     std::unique_ptr<IntlCache> m_intlCache;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
     UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
+    const Ref<WatchpointSet> m_invalidatedPropertyReplacementWatchpointSet;
     std::unique_ptr<TypeProfiler> m_typeProfiler;
     std::unique_ptr<TypeProfilerLog> m_typeProfilerLog;
     unsigned m_typeProfilerEnabledCount { 0 };

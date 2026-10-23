@@ -1168,13 +1168,15 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     if (!hasRareData())
         allocateRareData(vm);
     ConcurrentJSLocker locker(m_lock);
-    Structure* structure = this;
-    StructureRareData* rareData = structure->rareData();
-    auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
+    StructureRareData* rareData = this->rareData();
+    auto& watchpoints = rareData->ensureReplacementWatchpoints();
+    if (watchpoints.firedOffsets.get(offset))
+        return &vm.invalidatedPropertyReplacementWatchpointSet();
+    auto result = watchpoints.sets.add(offset, nullptr);
     if (result.isNewEntry) {
         result.iterator->value = WatchpointSet::create(IsWatched);
         rareData->incrementActiveReplacementWatchpointSet();
-        structure->setIsWatchingReplacement(true);
+        setIsWatchingReplacement(true);
     }
     return result.iterator->value.get();
 }
@@ -1182,13 +1184,32 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
 WatchpointSet* Structure::firePropertyReplacementWatchpointSet(VM& vm, PropertyOffset offset, const char* reason)
 {
     ASSERT(!isCompilationThread());
-    auto* structure = this;
-    auto* watchpointSet = structure->ensurePropertyReplacementWatchpointSet(vm, offset);
-    if (watchpointSet && watchpointSet->state() == IsWatched) {
-        StructureRareData* rareData = structure->rareData();
+    ASSERT(!isUncacheableDictionary());
+
+    // In some places it's convenient to call this with an invalid offset. So, we do the check here.
+    if (!isValidOffset(offset))
+        return nullptr;
+
+    if (!hasRareData())
+        allocateRareData(vm);
+    WatchpointSet* watchpointSet = nullptr;
+    {
+        ConcurrentJSLocker locker(m_lock);
+        auto& watchpoints = rareData()->ensureReplacementWatchpoints();
+        if (!watchpoints.sets.isEmpty())
+            watchpointSet = watchpoints.sets.get(offset);
+        if (!watchpointSet) {
+            // Nothing watches this offset, so there is no set to fire. Record that it is fired:
+            // from now on ensurePropertyReplacementWatchpointSet() hands out the invalidated set for it.
+            watchpoints.firedOffsets.set(offset);
+            return &vm.invalidatedPropertyReplacementWatchpointSet();
+        }
+    }
+    // Outside m_lock: a watchpoint that fires can run arbitrary code.
+    if (watchpointSet->state() == IsWatched) {
         watchpointSet->fireAll(vm, reason);
-        if (!rareData->decrementActiveReplacementWatchpointSet())
-            structure->setIsWatchingReplacement(false);
+        if (!rareData()->decrementActiveReplacementWatchpointSet())
+            setIsWatchingReplacement(false);
     }
     return watchpointSet;
 }
