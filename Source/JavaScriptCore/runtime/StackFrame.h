@@ -45,6 +45,12 @@ struct JSFrameData {
     WriteBarrier<CodeBlock> codeBlock;
     BytecodeIndex bytecodeIndex;
     bool m_isAsyncFrame { false };
+#if USE(BUN_JSC_ADDITIONS)
+    // The receiver of a function frame that is not a construct call. Empty when the frame has none
+    // (a native frame, a construct call, program or module code) or when it was not captured.
+    // Held like the callee: weakly by an ErrorInstance, strongly by an Exception.
+    WriteBarrier<Unknown> thisValue;
+#endif
 };
 
 struct WasmFrameData {
@@ -105,6 +111,19 @@ public:
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
             return jsFrame->m_isAsyncFrame;
         return false;
+    }
+
+    JSValue thisValue() const
+    {
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+            return jsFrame->thisValue.get();
+        return { };
+    }
+
+    void setThisValue(VM& vm, JSCell* owner, JSValue value)
+    {
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+            jsFrame->thisValue.set(vm, owner, value);
     }
 #endif
 
