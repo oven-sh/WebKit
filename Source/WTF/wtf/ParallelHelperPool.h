@@ -86,6 +86,9 @@ private:
     friend class Thread;
 
     void didMakeWorkAvailable(const AbstractLocker&) WTF_REQUIRES_LOCK(m_lock);
+#if USE(BUN_JSC_ADDITIONS)
+    void didMakeWorkAvailableForOneThread(const AbstractLocker&) WTF_REQUIRES_LOCK(m_lock);
+#endif
 
     bool LEGACY_NODELETE hasClientWithTask() WTF_REQUIRES_LOCK(m_lock);
     ParallelHelperClient* LEGACY_NODELETE getClientWithTask() WTF_REQUIRES_LOCK(m_lock);
@@ -181,6 +184,19 @@ public:
         setTask(createSharedTask<void ()>(functor));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Sets a task that no thread of the pool runs until requestThread() asks for one. Each request makes one thread
+    // run the task once. A thread that returns from the task leaves it set, so a later request runs it again: the
+    // task stays until finish(). This is for a parallel algorithm whose threads cost more to wake than a small
+    // share of its work is worth, and that knows when it has work for one more of them.
+    WTF_EXPORT_PRIVATE void setTaskOnRequest(RefPtr<SharedTask<void ()>>&&);
+
+    // Asks one more thread of the pool to run the task set by setTaskOnRequest(). Unlike the rest of this class, any
+    // thread may call it, also a thread that runs the task. Returns false if no thread will come for this request:
+    // no such task is set, or every thread of the pool has a request to take already.
+    WTF_EXPORT_PRIVATE bool requestThread();
+#endif
+
     WTF_EXPORT_PRIVATE void finish();
 
     WTF_EXPORT_PRIVATE void doSomeHelping();
@@ -208,11 +224,24 @@ private:
     friend class ParallelHelperPool;
 
     void finishWithLock() WTF_REQUIRES_LOCK(*m_pool->m_lock);
+    // Whether a thread of the pool that is free should run the task: claimTask() then returns it.
+    bool hasTaskForThread() const WTF_REQUIRES_LOCK(*m_pool->m_lock)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_taskIsOnRequest && !m_numRequested)
+            return false;
+#endif
+        return !!m_task;
+    }
     RefPtr<SharedTask<void()>> LEGACY_NODELETE claimTask() WTF_REQUIRES_LOCK(*m_pool->m_lock);
     void runTask(const RefPtr<SharedTask<void ()>>&);
 
     const RefPtr<ParallelHelperPool> m_pool;
     RefPtr<SharedTask<void ()>> m_task;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_taskIsOnRequest { false };
+    unsigned m_numRequested { 0 }; // Requests for a thread that no thread has taken yet.
+#endif
     unsigned m_numActive { 0 };
 };
 

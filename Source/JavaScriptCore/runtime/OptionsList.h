@@ -473,6 +473,8 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Unsigned, minimumNumberOfScansBetweenRebalance, 100, Normal, nullptr) \
     v(Unsigned, numberOfGCMarkers, computeNumberOfGCMarkers(8), Normal, nullptr) \
+    v(Unsigned, minimumBytesMarkedForParallelMarking, 2 * MB, Normal, "What a marking thread visits to pay for the wake-up of one more thread for the marking: for cells that are shared, for a task of the constraint solver, or when the mutator resumes. A thread that was woken pays once it has visited an eighth of this. Nothing else wakes a helper thread, and one that finds no shared work leaves the collection. Until a thread has visited this much, the conductor's thread marks alone and the mutator stays stopped. 0 = none of this: the helper threads join every collection at its start and park in it, and each donation wakes all of them. collectContinuously does the same."_s) \
+    v(Double, gcMarkerPollMS, 0.05, Normal, "A marking thread that runs dry while another one is at work looks at the shared mark stacks for this long before it parks or leaves the collection. 0 = it does not look."_s) \
     v(Bool, useParallelMarkingConstraintSolver, true, Normal, nullptr) \
     v(Unsigned, opaqueRootMergeThreshold, 1000, Normal, nullptr) \
     v(Unsigned, maxHeapSizeAsRAMSizeMultiple, 0, Normal, nullptr) \
