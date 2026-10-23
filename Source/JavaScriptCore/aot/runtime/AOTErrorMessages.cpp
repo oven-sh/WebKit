@@ -575,7 +575,7 @@ static JSObject* createNotCompiledError(JSGlobalObject* globalObject, const Stri
 
 JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const String& builtin)
 {
-    return createNotCompiledError(globalObject, makeString(builtin, " was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s));
+    return createError(globalObject, withAOTErrorNote(makeString(builtin, " was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s)));
 }
 
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject* globalObject, const String& functionName)

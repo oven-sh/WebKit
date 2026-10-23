@@ -577,7 +577,7 @@ void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
         m_out.appendTo(hasExecutable);
         const B3::AbstractHeap& fixed = m_heaps.AOTInstance_fixedFields;
         Pointer code(m_out.loadPtr(m_out.address(fixed, executable.value(), NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall))));
-        Pointer bindings = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.nativeFunctionsOfHost));
+        Pointer bindings = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtinBindings.nativeFunctionsOfHost));
         ptrdiff_t offsetOfExpectedCode = *number * static_cast<ptrdiff_t>(sizeof(BuiltinNativeFunctionBinding)) + static_cast<ptrdiff_t>(OBJECT_OFFSETOF(BuiltinNativeFunctionBinding, function));
         Pointer expected(m_out.loadPtr(m_out.address(fixed, bindings.value(), offsetOfExpectedCode)));
         branch(equal(code, expected), targets);

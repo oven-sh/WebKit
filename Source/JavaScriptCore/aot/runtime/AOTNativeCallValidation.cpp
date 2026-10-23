@@ -155,6 +155,7 @@ private:
 
     OperandUses usesOf(BuiltinOperand) const;
     OperandUses usesOfBytesOf(const Operand&) const;
+    bool holdsUnderNamedMember(const BuiltinParameter&, JSObject* holder, JSObject* held) const;
     bool isAt(BuiltinOperand, JSObject*) const;
     bool isTakenForUnknownFunction() const;
     bool isHelperOfLibraryFunctions() const;
@@ -290,6 +291,30 @@ static bool isBuiltinIterator(JSObject* object)
     }
 }
 
+// { transfer: [buffer] }: the member itself, or an element of the array that it holds.
+bool NativeCallValidationScope::Checker::holdsUnderNamedMember(const BuiltinParameter& parameter, JSObject* holder, JSObject* held) const
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    DeferGCForAWhile deferGC(m_vm);
+    for (BuiltinName name : parameter.namedMembers) {
+        Identifier key = table.identifierOf(m_vm, name);
+        PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+        if (!holder->methodTable()->getOwnPropertySlot(holder, m_call.realm, key, slot) || !slot.isValue())
+            continue;
+        JSValue member = slot.getValue(m_call.realm, key);
+        if (member == JSValue(held))
+            return true;
+        if (!parameter.protocols.contains(Protocol::Iterate) || !isJSArray(member))
+            continue;
+        JSArray* array = asArray(member);
+        for (unsigned index = 0; index < array->length(); ++index) {
+            if (array->canGetIndexQuickly(index) && array->getIndexQuickly(index) == JSValue(held))
+                return true;
+        }
+    }
+    return false;
+}
+
 OperandUses NativeCallValidationScope::Checker::usesOf(BuiltinOperand position) const
 {
     const BuiltinTable& table = BuiltinTable::singleton();
@@ -309,8 +334,15 @@ OperandUses NativeCallValidationScope::Checker::usesOf(BuiltinOperand position) 
         if (m_call.kind == CodeSpecializationKind::CodeForCall && m_call.thisValue == JSValue(object))
             addUsesAt(*overload, BuiltinOperand::receiver());
         for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
-            if (m_call.arguments.at(index) == JSValue(object))
+            JSValue argument = m_call.arguments.at(index);
+            if (argument == JSValue(object)) {
                 addUsesAt(*overload, BuiltinOperand::argument(index));
+                continue;
+            }
+            // What is declared for an operand and for what it reaches may happen to another operand that it holds.
+            const BuiltinParameter* parameter = overload->isUndeclared() || !argument.isObject() ? nullptr : table.parameterFor(*overload, BuiltinOperand::argument(index));
+            if (parameter && parameter->uses.contains(OperandUse::AppliesTransitively) && holdsUnderNamedMember(*parameter, asObject(argument), object))
+                uses.add(parameter->uses);
         }
     }
     return uses;

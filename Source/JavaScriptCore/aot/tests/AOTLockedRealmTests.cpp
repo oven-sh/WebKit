@@ -817,6 +817,28 @@ static void testPristineArrayTransitions()
     AOT_TEST_CHECK(!isPristine(vm, realms.evaluate(locked, "[1, 2]"_s)));
 }
 
+static void testIndexAccessorInRealmThatPrototypeInheritsFrom()
+{
+    Realms realms;
+    VM& vm = realms.vm();
+    JSGlobalObject* locked = realms.locked();
+    JSGlobalObject* plain = realms.plain();
+
+    JSArray* ordinary = realms.array(locked, "[1, 2].slice()"_s);
+    JSObject* inheritor = realms.object(locked, "var inheritor = { 0: 1 }; var heir = Object.create(inheritor); inheritor"_s);
+    inheritor->setPrototypeDirect(vm, plain->objectPrototype());
+    AOT_TEST_CHECK(!locked->isHavingABadTime() && !plain->isHavingABadTime());
+    AOT_TEST_CHECK(!hasSlowPutArrayStorage(inheritor->indexingType()));
+
+    realms.evaluate(plain, "Object.defineProperty(Object.prototype, '1', { get() { return 'inherited'; }, configurable: true })"_s);
+    AOT_TEST_CHECK(plain->isHavingABadTime());
+    AOT_TEST_CHECK(!locked->isHavingABadTime());
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(inheritor->indexingType()));
+    AOT_TEST_CHECK(hasInt32(ordinary->indexingType()) && isPristine(vm, ordinary));
+    AOT_TEST_CHECK(hasInt32(realms.array(locked, "[1, 2].slice()"_s)->indexingType()));
+    AOT_TEST_CHECK(realms.evaluate(locked, "inheritor[1] === 'inherited' && heir[1] === 'inherited' && Object.create(heir)[1] === 'inherited' && [1][1] === undefined && ({})[1] === undefined"_s) == jsBoolean(true));
+}
+
 static void testPristineArrayCachedTransitions()
 {
     Realms realms;
@@ -998,6 +1020,7 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/pristine-needs-locked-prototypes"_s, testPristineNeedsLockedPrototypes },
         { "locked-realm/non-pristine-values"_s, testNonPristineValues },
         { "locked-realm/transitions-of-pristine-arrays"_s, testPristineArrayTransitions },
+        { "locked-realm/index-accessor-in-a-realm-that-a-prototype-inherits-from"_s, testIndexAccessorInRealmThatPrototypeInheritsFrom },
         { "locked-realm/cached-transitions-of-pristine-arrays"_s, testPristineArrayCachedTransitions },
         { "locked-realm/start-up-locks-objects"_s, withoutBuiltins<testStartUpLocksObjects> },
         { "locked-realm/start-up-creates-no-class"_s, withoutBuiltins<testStartUpCreatesNoClass> },

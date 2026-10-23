@@ -10,6 +10,7 @@
 
 #include "AOTASANShadowChecks.h"
 #include "AOTBackEndReport.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCodeDescription.h"
 #include "AOTCodeSizeMap.h"
 #include "AOTElideStackChecks.h"
@@ -54,6 +55,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
 FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, FunctionID id, const Function& function, const FrameMaps& frameMaps)
 {
     bool savesFrameOnSuspend = frameMaps.numberOfSuspensions() || function.role == FunctionRole::CoroutineBody;
+    // The stubs that suspend a function return in the place of its frame and drop nothing above its return address.
+    RELEASE_ASSERT(!savesFrameOnSuspend || !inputs.conventions.of(inputs.program, id).spillsArgumentRegisters);
     return {
         .function = findFunctionAsRead(&inputs.program, id),
         .convention = function.role == FunctionRole::StubBody ? BackEndConvention::StubBody : BackEndConvention::Function,

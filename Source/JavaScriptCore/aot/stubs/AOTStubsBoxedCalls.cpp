@@ -81,7 +81,7 @@ static const BoxedCallTarget& boxedCallTargetOf(BoxedCallForm form)
 // The executable remembers what the table says of its function: one more than the index of the entry, or that there is none. Zero: nobody has looked yet.
 constexpr int32_t hasNoBoxedCallEntry = UINT8_MAX;
 static_assert(StubWords::numberOfBoxedCallEntries < hasNoBoxedCallEntry);
-constexpr int32_t offsetOfBoxedCallTable = AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfBoxedCalls();
+constexpr int32_t offsetOfBoxedCallTable = Instance::offsetOfBoxedCalls();
 constexpr StubRegister boxedCallEntryRegister = StubRegister::T9;
 
 void emitBoxedCallDispatch(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& hasNoBoxedCall)

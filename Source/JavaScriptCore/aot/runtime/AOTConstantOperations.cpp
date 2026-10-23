@@ -59,11 +59,6 @@ static void exitIfRealmLacksHostOf(State& state, uint32_t numberOfCell)
     RELEASE_ASSERT(key);
     if (BuiltinBindings::provides(table.at(key->builtin()).origin))
         return;
-    // A call of such a row enters the compiler's own function, whatever the cell holds.
-    for (const BuiltinOverloadSummary& overload : table.overloadSummariesOf(key->builtin())) {
-        if (overload.kind == BuiltinImplementationKind::Compiled || overload.kind == BuiltinImplementationKind::Inline)
-            return;
-    }
     dataLogLn("AOT: the program needs the host's ", table.textOf(key->builtin()), ", and this realm has no host");
     exitProcess(4);
 }

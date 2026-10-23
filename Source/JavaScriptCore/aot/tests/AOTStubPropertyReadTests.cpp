@@ -1194,7 +1194,7 @@ public:
         instance.image.closureFunctionKindsOrigin = std::bit_cast<uintptr_t>(m_functionKinds.data());
 
         closureWord() = ClosureWord::encode({ CalleeThatReadsItsClosure::distanceFromCode, 1 }, function, { });
-        instance.closures.closureWords = m_closureWords.data();
+        instance.functionTables.closureWords = m_closureWords.data();
         FakeObject<sizeof(uint64_t)> slimClosure;
         slimClosure.setHeader(structureIDOfSlimClosures, SlimClosureType);
         instance.slimClosureHeaders[0] = slimClosure.at<uint64_t>(0);

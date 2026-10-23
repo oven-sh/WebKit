@@ -2985,6 +2985,12 @@ private:
     Vector<JSGlobalObject*>& m_affectedRealms;
 };
 
+bool prototypesOfOrdinaryArraysAreLocked(JSGlobalObject* realm)
+{
+    Structure* arrayPrototype = realm->arrayPrototype()->structure();
+    return arrayPrototype->hasImmutableIndexedProperties() && arrayPrototype->hasImmutablePrototype() && realm->objectPrototype()->structure()->hasImmutableProperties();
+}
+
 } // end private namespace for helpers for JSGlobalObject::haveABadTime()
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -3135,8 +3141,10 @@ void JSGlobalObject::haveABadTime(VM& vm)
             auto result = globalsHavingABadTime.add(global);
             if (result.isNewEntry) {
                 if (UncheckedKeyHashSet<JSGlobalObject*>* dependents = dependencies.dependentsFor(global)) {
-                    for (JSGlobalObject* dependentGlobal : *dependents)
-                        globals.append(dependentGlobal);
+                    for (JSGlobalObject* dependentGlobal : *dependents) {
+                        if (!prototypesOfOrdinaryArraysAreLocked(dependentGlobal))
+                            globals.append(dependentGlobal);
+                    }
                 }
             }
         }
@@ -3163,11 +3171,7 @@ void JSGlobalObject::haveABadTime(VM& vm, JSObject* interceptor)
     if (isHavingABadTime())
         return;
 
-    JSObject* arrayPrototype = this->arrayPrototype();
-    JSObject* objectPrototype = this->objectPrototype();
-    bool ordinaryArraysAreOutOfReach = interceptor != arrayPrototype && interceptor != objectPrototype
-        && arrayPrototype->structure()->hasImmutableIndexedProperties() && arrayPrototype->structure()->hasImmutablePrototype()
-        && objectPrototype->structure()->hasImmutableProperties();
+    bool ordinaryArraysAreOutOfReach = interceptor != arrayPrototype() && interceptor != objectPrototype() && prototypesOfOrdinaryArraysAreLocked(this);
     if (!ordinaryArraysAreOutOfReach) {
         haveABadTime(vm);
         return;

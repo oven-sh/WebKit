@@ -12,6 +12,7 @@
 #include "AOTPropertyCaches.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTRuntimeTable.h"
+#include "AOTStubTestSupport.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsPropertyKeys.h"
@@ -135,6 +136,29 @@ static void testStubsFindTheirWordsBeforeFirstUse(LoadedProgram& program)
     AOT_TEST_CHECK(words.hasInstanceUID == vm.propertyNames->hasInstanceSymbol.impl() && words.prototypeUID == vm.propertyNames->prototype.impl());
     AOT_TEST_CHECK(words.defaultHasInstanceFunction == program.realm()->functionProtoHasInstanceSymbolFunction());
 }
+
+#if defined(BUN_HARDENED) && OS(UNIX)
+static void testWordsWrittenOnceCannotBeWritten(LoadedProgram& program)
+{
+    Instance& instance = program.instance();
+    auto write = [](auto& part) {
+        return runInChild([&] {
+            auto* byte = reinterpret_cast<volatile uint8_t*>(&part);
+            *byte = *byte + 1;
+        });
+    };
+#define AOT_CHECK_WRITE_FINISHES(member, Type) AOT_TEST_CHECK(write(instance.member) == ChildOutcome::Finished);
+#define AOT_CHECK_WRITE_CRASHES(member, Type) AOT_TEST_CHECK(write(instance.member) == ChildOutcome::Crashed);
+    FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_CHECK_WRITE_FINISHES, AOT_CHECK_WRITE_CRASHES)
+#undef AOT_CHECK_WRITE_CRASHES
+#undef AOT_CHECK_WRITE_FINISHES
+    AOT_TEST_CHECK(write(instance.runtimeTable) == ChildOutcome::Crashed);
+    AOT_TEST_CHECK(write(instance.slotHandlers()) == ChildOutcome::Crashed);
+    AOT_TEST_CHECK(write(instance.builtinBindings.directFunctions) == ChildOutcome::Crashed);
+    AOT_TEST_CHECK(write(instance.builtinBindings.nativeFunctionsOfHost) == ChildOutcome::Crashed);
+    AOT_TEST_CHECK(write(instance.functionTables.closureWords) == ChildOutcome::Crashed);
+}
+#endif
 
 static void fileAnswerUnder(PropertyCaches& caches, Structure* structure, const Identifier& name)
 {
@@ -273,6 +297,9 @@ std::span<const NativeTest> startupTests()
         { "startup/property-caches-are-created-at-first-use"_s, withProgram<testPropertyCachesAreCreatedAtFirstUse> },
         { "startup/global-object-reports-changes-once-an-answer-depends-on-it"_s, withProgram<testGlobalObjectReportsChangesOnceAnAnswerDependsOnIt> },
         { "startup/stubs-find-their-words-before-first-use"_s, withProgram<testStubsFindTheirWordsBeforeFirstUse> },
+#if defined(BUN_HARDENED) && OS(UNIX)
+        { "startup/words-written-once-cannot-be-written"_s, withProgram<testWordsWrittenOnceCannotBeWritten> },
+#endif
         { "startup/classes-of-primitives-are-not-created-at-start"_s, withProgram<testClassesOfPrimitivesAreNotCreatedAtStart> },
         { "startup/stubs-of-a-family-lie-side-by-side"_s, withProgram<testStubsOfFamilyLieSideBySide> },
     };

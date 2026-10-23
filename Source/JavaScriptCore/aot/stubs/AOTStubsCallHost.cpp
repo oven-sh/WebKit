@@ -64,7 +64,7 @@ void generateCallDirectFunction(StubAssembler& jit)
     }
 
     const GPRReg function = jit.reuseScratch(StubRegister::Operation);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(builtins.directFunctions)), function);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(builtinBindings.directFunctions)), function);
     jit.loadPtr(CCallHelpers::BaseIndex(function, jit.immediate(), CCallHelpers::TimesOne), function);
     if (form == DirectFunctionCall::Leaf) {
         jit.farJump(function, HostFunctionPtrTag);

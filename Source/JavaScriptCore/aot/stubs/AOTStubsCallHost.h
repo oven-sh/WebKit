@@ -27,7 +27,7 @@ enum class DirectFunctionCall : uint8_t { WithFrame, Leaf, WithHostFrame };
 inline constexpr unsigned directThisArgumentIndex = 3;
 inline constexpr unsigned directCalleeArgumentIndex = 4;
 
-// The immediate is the offset of the function's address in BuiltinWords::directFunctions.
+// The immediate is the offset of the function's address in BuiltinBindingWords::directFunctions.
 constexpr StubKey callDirectFunction(DirectFunctionCall call) { return StubKey(StubFamily::CallDirectFunction).withForm(static_cast<uint8_t>(call)); }
 
 constexpr StubKey callInternalFunction(CodeSpecializationKind kind, unsigned count)

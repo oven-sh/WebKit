@@ -78,7 +78,7 @@ public:
         structureOf(StructureOf::ClosureOfOtherRealm).at<uint64_t>(Structure::realmOffset()) = m_otherRealm.address();
         instance.closures.closureHeaders[0] = idOf(StructureOf::PlainClosure);
         instance.slimClosureHeaders[0] = idOf(StructureOf::SlimClosure);
-        instance.closures.closureWords = m_closureWords.data();
+        instance.functionTables.closureWords = m_closureWords.data();
         instance.realm.hostFunctionStructureID = idOf(StructureOf::HostFunction);
         instance.realm.boundFunctionStructureID = idOf(StructureOf::BoundFunction);
         instance.realm.functionPrototypeCall = std::bit_cast<JSCell*>(m_functionPrototypeCall.address());

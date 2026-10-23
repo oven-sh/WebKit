@@ -106,8 +106,8 @@ BuiltinCells::BuiltinCells(State& state)
     m_instance.prefix().builtinCells = m_cells;
     // Compiled code finds a value by the number of its key, as it finds a cell. There are words for the keys of values only, so the address it starts from lies in front of them.
     m_instance.builtins.hostValues = std::bit_cast<EncodedJSValue*>(std::bit_cast<uintptr_t>(m_values.data()) - m_numberOfFirstValue * sizeof(EncodedJSValue));
-    m_instance.builtins.directFunctions = BuiltinBindings::directFunctions().data();
-    m_instance.builtins.nativeFunctionsOfHost = BuiltinBindings::nativeFunctionsOfHost().data();
+    m_instance.builtinBindings.directFunctions = BuiltinBindings::directFunctions().data();
+    m_instance.builtinBindings.nativeFunctionsOfHost = BuiltinBindings::nativeFunctionsOfHost().data();
 }
 
 static bool isImmutableLocation(const BuiltinTable& table, std::span<const uint32_t> constantMembers, BuiltinID builtin)
@@ -240,6 +240,30 @@ BuiltinID BuiltinCells::builtinOfLockedObject(JSObject* object) const
     return found == m_builtinsOfLockedObjects.end() ? BuiltinID() : BuiltinID(found->value);
 }
 
+static JSC_DECLARE_HOST_FUNCTION(exitForFunctionOfMissingHost);
+
+JSC_DEFINE_HOST_FUNCTION(exitForFunctionOfMissingHost, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    std::optional<BuiltinCellKey> key = State::of(realm).builtinCells->keyOfCellHolding(callFrame->jsCallee());
+    RELEASE_ASSERT(key);
+    dataLogLn("AOT: the program needs the host's ", BuiltinTable::singleton().textOf(key->builtin()), ", and this realm has no host");
+    exitProcess(4);
+}
+
+// A call of such a row enters the compiler's own function, whatever the cell holds, so compiled code asks for the cell in a realm without the host too. It also reads through the cell without a test.
+static JSFunction* makeFunctionOfMissingHost(JSGlobalObject* realm, const BuiltinTable& table, BuiltinCellKey key)
+{
+    if (key.kind() != BuiltinCellKey::Kind::Object || BuiltinBindings::provides(table.at(key.builtin()).origin))
+        return nullptr;
+    bool hasFunctionOfCompiler = std::ranges::any_of(table.overloadSummariesOf(key.builtin()), [](const BuiltinOverloadSummary& overload) {
+        return overload.kind == BuiltinImplementationKind::Compiled || overload.kind == BuiltinImplementationKind::Inline;
+    });
+    if (!hasFunctionOfCompiler)
+        return nullptr;
+    VM& vm = realm->vm();
+    return JSFunction::create(vm, realm, 0, table.identifierOf(vm, table.at(key.builtin()).name).string(), exitForFunctionOfMissingHost, ImplementationVisibility::Public);
+}
+
 JSCell* BuiltinCells::cell(uint32_t number)
 {
     std::span<const uint32_t> keys = m_tables.builtinCells();
@@ -279,6 +303,10 @@ JSCell* BuiltinCells::cell(uint32_t number)
         if (isImmutable && BuiltinBindings::provides(table.at(key->builtin()).origin) && !table.has(BuiltinMark::MayBeAbsent, key->builtin())) {
             dataLogLn("AOT: built-in cell ", number, " (key ", key->encoded(), ", ", table.textOf(key->builtin()), ") is not in this realm: ", static_cast<unsigned>(found.error()));
             CRASH();
+        }
+        if (JSFunction* function = makeFunctionOfMissingHost(m_instance.globalObject, table, *key)) {
+            fillAndKeepAlive(number, function);
+            return function;
         }
         m_isUnavailable.ensureSizeAndSet(number, keys.size());
         return nullptr;

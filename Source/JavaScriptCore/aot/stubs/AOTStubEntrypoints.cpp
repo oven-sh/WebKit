@@ -60,9 +60,8 @@ CodePtr<JSEntryPtrTag> constructEntrypoint()
     return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
 }
 
-static BoxedCallEntry& findBoxedCallEntry(StubWords& words, const void* nativeFunction)
+static BoxedCallEntry& findBoxedCallEntry(std::span<BoxedCallEntry> entries, const void* nativeFunction)
 {
-    std::span entries { words.boxedCalls };
     unsigned index = StubWords::indexOfBoxedCall(std::bit_cast<uintptr_t>(nativeFunction));
     while (entries[index].nativeFunction && entries[index].nativeFunction != nativeFunction)
         index = (index + 1) % StubWords::numberOfBoxedCallEntries;
@@ -87,7 +86,7 @@ void initializeStubWords(Instance& instance)
             continue;
 
         const void* nativeFunction = TaggedNativeFunction(binding->function).taggedPtr();
-        BoxedCallEntry& entry = findBoxedCallEntry(instance.stubs, nativeFunction);
+        BoxedCallEntry& entry = findBoxedCallEntry(instance.boxedCalls(), nativeFunction);
         bool isFree = !entry.nativeFunction;
         if (isFree) {
             // A probe, here and in FindBoxedCall, ends at a free entry.

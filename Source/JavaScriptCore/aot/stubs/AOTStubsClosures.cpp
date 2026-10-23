@@ -98,7 +98,7 @@ static void loadClosureWord(StubAssembler& jit, GPRReg request, GPRReg word, GPR
 {
     ASSERT(noOverlap(request, word, scratch));
     jit.and32(TrustedImm32(ClosureWord::functionMask), request, word);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureWords)), scratch);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), scratch);
     jit.load64(BaseIndex(scratch, word, CCallHelpers::TimesEight), word);
 }
 
@@ -211,7 +211,7 @@ void generateNewSlimClosure(StubAssembler& jit)
     JumpList slow;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.slimClosureAllocators) + allocatorIndex * sizeof(void*)), allocator);
     AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, header, slow, MarkedSpace::sizeStep * (allocatorIndex + 1));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureWords)), word);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
     jit.load64(BaseIndex(word, function, CCallHelpers::TimesEight), word);
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind * sizeof(uint64_t)), header);
     jit.storePair64(header, word, Address(cell));
@@ -359,7 +359,7 @@ void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word)
     Jump isSlimClosure = jit.branchIfType(closure, SlimClosureType);
     jit.load32(Address(word, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), word);
     jit.lshift64(TrustedImm32(3), word);
-    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureWords)), word);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
     jit.load64(Address(word), word);
     isSlimClosure.link(&jit);
 }

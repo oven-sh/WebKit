@@ -235,7 +235,7 @@ void ConstantEmitter::storeCaptures(CellPointer closure, const NewClosureRequest
 
 Integer ConstantEmitter::closureWordOf(FunctionID entrypoint)
 {
-    Pointer closureWords = loadImmutablePointer(AOT_INSTANCE_OFFSET(closures.closureWords));
+    Pointer closureWords = loadImmutablePointer(AOT_INSTANCE_OFFSET(functionTables.closureWords));
     return Integer(m_out.load64(m_out.address(m_heaps.AOTImage_tables, closureWords.value(), static_cast<ptrdiff_t>(entrypoint.index()) * sizeof(uint64_t))));
 }
 

@@ -141,11 +141,15 @@ struct ObjectWords {
     }
 };
 
+struct FunctionTableWords {
+    // FunctionTables::words.
+    const uint64_t* closureWords;
+};
+
 struct ClosureWords {
     static constexpr unsigned numberOfExecutables = 4;
     static constexpr unsigned numberOfSlimClosureAllocators = 3;
 
-    const uint64_t* closureWords;
     JSCell* executables[numberOfExecutables];
     uint64_t closureHeaders[numberOfClosureStructures];
     // The Structures of plain functions that have got their `prototype` property and nothing else, as they come up. Zero where there is none yet.

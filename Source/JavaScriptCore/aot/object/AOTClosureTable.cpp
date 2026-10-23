@@ -66,7 +66,7 @@ ClosureTable::ClosureTable(State& state)
 {
     Instance& instance = state.instance;
     FunctionTables& shared = FunctionTables::of(*instance.vm);
-    instance.closures.closureWords = shared.words;
+    instance.functionTables.closureWords = shared.words;
     for (unsigned i = 0; i < FunctionTables::numberOfExecutables; ++i)
         instance.closures.executables[i] = shared.executables[i].get();
     state.caches->add(CacheKind::StrongRoots, "closures"_s, *this);
@@ -267,7 +267,7 @@ JSObject* ClosureTable::createClosureForOneCall(VM& vm, FunctionID function)
 JSObject* ClosureTable::calleeOfModuleBodies(VM& vm, FunctionID body)
 {
     ClosureFunctionRangeData closureFunctions = m_tables.closureFunctions;
-    RELEASE_ASSERT(closureFunctions.first <= body.index() && body.index() < closureFunctions.end && m_state.instance.closures.closureWords[body.index()]);
+    RELEASE_ASSERT(closureFunctions.first <= body.index() && body.index() < closureFunctions.end && m_state.instance.functionTables.closureWords[body.index()]);
     if (!m_calleeOfModuleBodies) [[unlikely]] {
         m_calleeOfModuleBodies = createClosureForOneCall(vm, body);
         m_state.immortalCells->add(m_calleeOfModuleBodies);

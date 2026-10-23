@@ -289,7 +289,7 @@ void generateEnterClosure(StubAssembler& jit)
     emitEnterAdapter(jit, word);
     jit.load32(Address(fp, offsetOfFirstArgument), word);
     jit.lshift64(TrustedImm32(3), word);
-    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureWords)), word);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
     jit.load64(Address(word), word);
     hasWord.append(jit.jump());
 
@@ -371,7 +371,7 @@ static void emitFindConstructWord(StubAssembler& jit, GPRReg word, const Constru
     hasOneCandidate.link(&jit);
     isNotListed.append(jit.branch32(CCallHelpers::NotEqual, function, Address(first, offsetOfFunction)));
     jit.load32(Address(first, OBJECT_OFFSETOF(ConstructEntrypointData, constructEntrypointAndFlag)), function);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureWords)), first);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), first);
     Jump allocatesThis = jit.branchTest32(CCallHelpers::NonZero, function, TrustedImm32(static_cast<int32_t>(ConstructEntrypointData::allocatesThis)));
     jit.load64(BaseIndex(first, function, CCallHelpers::TimesEight), word);
     jit.branchTest64(CCallHelpers::NonZero, word).linkTo(search.continuation, &jit);

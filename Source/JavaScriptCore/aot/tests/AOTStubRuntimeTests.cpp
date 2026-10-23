@@ -84,12 +84,12 @@ static void testBoxedCallHandlers()
     AOT_TEST_CHECK(stubsInTable.count() == numberOfBuiltinBoxedStubs);
 }
 
-static const BoxedCallEntry* probeBoxedCalls(const StubWords& words, const void* nativeFunction)
+static const BoxedCallEntry* probeBoxedCalls(std::span<const BoxedCallEntry> entries, const void* nativeFunction)
 {
     uint64_t entry = std::bit_cast<uintptr_t>(nativeFunction) >> StubWords::boxedCallHashShift;
     for (unsigned step = 0; step < StubWords::numberOfBoxedCallEntries; ++step) {
         entry &= StubWords::numberOfBoxedCallEntries - 1;
-        const BoxedCallEntry& candidate = words.boxedCalls[entry];
+        const BoxedCallEntry& candidate = entries[entry];
         if (candidate.nativeFunction == nativeFunction)
             return &candidate;
         if (!candidate.nativeFunction)
@@ -113,21 +113,30 @@ static const void* nativeFunctionWordOf(LoadedProgram& program, BuiltinID builti
 
 static void testBoxedCallTable(LoadedProgram& program)
 {
-    const StubWords& words = program.instance().stubs;
+    std::span<const BoxedCallEntry> entries = program.instance().boxedCalls();
     for (const BuiltinBoxedCall& call : BuiltinTable::singleton().boxedCalls()) {
-        const BoxedCallEntry* entry = probeBoxedCalls(words, nativeFunctionWordOf(program, call.builtin));
+        const BoxedCallEntry* entry = probeBoxedCalls(entries, nativeFunctionWordOf(program, call.builtin));
         AOT_TEST_CHECK(entry);
         for (unsigned count = BoxedCallEntry::minArgumentCount; count <= BoxedCallEntry::maxArgumentCount; ++count) {
             const void* handler = addressOfStubInCurrentImage(callBoxedBuiltin(boxedCallFormOf(call.stub), count));
             AOT_TEST_CHECK(entry->targets[count - BoxedCallEntry::minArgumentCount] == handler);
         }
     }
-    AOT_TEST_CHECK(!probeBoxedCalls(words, TaggedNativeFunction(hostFunctionWithoutBoxedCall).taggedPtr()));
+    AOT_TEST_CHECK(!probeBoxedCalls(entries, TaggedNativeFunction(hostFunctionWithoutBoxedCall).taggedPtr()));
 
     unsigned numberOfUsedEntries = 0;
-    for (const BoxedCallEntry& entry : words.boxedCalls)
+    for (const BoxedCallEntry& entry : entries)
         numberOfUsedEntries += !!entry.nativeFunction;
     AOT_TEST_CHECK(numberOfUsedEntries == numberOfBuiltinBoxedStubs);
+
+#if defined(BUN_HARDENED) && OS(UNIX)
+    // An executable names its entry by a byte: one more than the entry's number.
+    for (unsigned byte = 1; byte <= UINT8_MAX; ++byte) {
+        const BoxedCallEntry& entry = entries.data()[byte - 1];
+        AOT_TEST_CHECK(byte <= entries.size() || std::ranges::all_of(entry.targets, [](const void* target) { return !target; }));
+        AOT_TEST_CHECK(runInChild([&] { const_cast<const void* volatile&>(entry.targets[0]) = nullptr; }) == ChildOutcome::Crashed);
+    }
+#endif
 }
 
 namespace {
@@ -501,7 +510,7 @@ static void testSlimClosures()
     StubRunner runner;
     runner.recordCallsOf(Entry::operationAOTNewClosureSlow);
     FakeAllocator allocator { cellSize };
-    runner.instance().closures.closureWords = closureWords.data();
+    runner.instance().functionTables.closureWords = closureWords.data();
     runner.instance().closures.slimClosureAllocators[1] = reinterpret_cast<LocalAllocator*>(&allocator);
     runner.instance().slimClosureHeaders[kind] = header;
 

@@ -46,6 +46,9 @@ struct BuiltinWords {
     EncodedJSValue* hostValues;
     // The number of the Structure with which an instance holds an own slot at its place. Zero: nobody has looked for it.
     uint32_t ownSlotStructureIDs[numberOfOwnSlotStructures];
+};
+
+struct BuiltinBindingWords {
     // BuiltinBindings::directFunctions() of the host.
     const BuiltinDirectFunctionBinding* directFunctions;
     // BuiltinBindings::nativeFunctionsOfHost().

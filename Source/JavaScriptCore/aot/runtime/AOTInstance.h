@@ -238,10 +238,12 @@ struct NumberWords {
     v(runtime, RuntimeWords) \
     v(modules, ModuleWords) \
     v(objects, ObjectWords) \
+    writtenOnce(functionTables, FunctionTableWords) \
     v(closures, ClosureWords) \
     v(classes, ClassWords) \
     v(coroutines, CoroutineWords) \
     v(builtins, BuiltinWords) \
+    writtenOnce(builtinBindings, BuiltinBindingWords) \
     v(arrays, ArrayWords) \
     v(iteration, IterationWords) \
     v(json, JSONWords) \
@@ -330,6 +332,9 @@ struct Instance : InstanceHeader {
 #endif
     static constexpr ptrdiff_t offsetOfSlotHandlers(SlotHandlerTable);
 
+    std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> boxedCalls() { return std::span<BoxedCallEntry, StubWords::numberOfBoxedCallEntries> { reinterpret_cast<BoxedCallEntry*>(reinterpret_cast<uint8_t*>(this) + offsetOfBoxedCalls()), StubWords::numberOfBoxedCallEntries }; }
+    static constexpr ptrdiff_t offsetOfBoxedCalls();
+
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
@@ -364,6 +369,15 @@ constexpr ptrdiff_t Instance::offsetOfSlotHandlers(SlotHandlerTable table)
     return offsetOfHandlers + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKinds * sizeof(void*));
 }
 
+constexpr ptrdiff_t Instance::offsetOfBoxedCalls()
+{
+#if defined(BUN_HARDENED)
+    return InstanceLayout::offsetOfBoxedCalls;
+#else
+    return AOT_INSTANCE_OFFSET(stubs.boxedCalls);
+#endif
+}
+
 static_assert(std::is_trivially_default_constructible_v<Instance>, "Instance lives in zeroed pages and is never constructed, so default member initializers would be ignored");
 static_assert(std::is_trivially_default_constructible_v<InstancePrefix>);
 static_assert(std::is_trivially_default_constructible_v<InstanceHeader>);
@@ -373,6 +387,8 @@ FOR_EACH_AOT_INSTANCE_PART(AOT_CHECK_INSTANCE_PART)
 static_assert(OBJECT_OFFSETOF(InstanceHeader, vm) == 16, "JSWebAssemblyInstance::offsetOfVM()");
 #if defined(BUN_HARDENED)
 static_assert(AOT_INSTANCE_OFFSET(runtimeTable) == InstanceLayout::offsetOfWordsWrittenOnce);
+static_assert(UINT8_MAX * sizeof(BoxedCallEntry) <= InstanceLayout::bytesReservedForBoxedCalls);
+static_assert(InstanceLayout::offsetOfBoxedCalls + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForBoxedCalls + sizeof(InstancePrefix)) <= 0);
 #else
 static_assert(!OBJECT_OFFSETOF(InstanceHeader, runtimeTable));
 #endif

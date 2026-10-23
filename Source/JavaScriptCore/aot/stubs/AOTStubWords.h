@@ -43,16 +43,16 @@ struct StubWords {
 
     const void* returnAddress(StubFrameKind kind) const { return returnAddresses[static_cast<unsigned>(kind)]; }
     static constexpr ptrdiff_t offsetOfReturnAddress(StubFrameKind kind) { return static_cast<ptrdiff_t>(static_cast<unsigned>(kind) * sizeof(void*)); }
-    static constexpr ptrdiff_t offsetOfBoxedCalls() { return static_cast<ptrdiff_t>(numberOfStubFrameKinds * sizeof(void*)); }
 
     const void* returnAddresses[numberOfStubFrameKinds];
+#if !defined(BUN_HARDENED)
     BoxedCallEntry boxedCalls[numberOfBoxedCallEntries];
+#endif
     const void* closureEntrypoint;
     const void* slimClosureEntrypoint;
 };
 static_assert(std::is_trivially_default_constructible_v<StubWords>);
 static_assert(std::has_single_bit(StubWords::numberOfBoxedCallEntries));
-static_assert(OBJECT_OFFSETOF(StubWords, boxedCalls) == StubWords::offsetOfBoxedCalls());
 static_assert(!OBJECT_OFFSETOF(StubWords, returnAddresses));
 
 } } // namespace JSC::AOT

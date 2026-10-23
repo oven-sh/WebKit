@@ -103,6 +103,9 @@ struct LandedCall {
 struct StubEnvironment {
     static StubEnvironment& of(Instance* instance) { return *reinterpret_cast<StubEnvironment*>(reinterpret_cast<uint8_t*>(instance) - OBJECT_OFFSETOF(StubEnvironment, instance)); }
 
+#if defined(BUN_HARDENED)
+    std::array<uint8_t, -InstanceLayout::offsetOfBoxedCalls - sizeof(InstancePrefix)> boxedCallsAndUnusedBelowPrefix;
+#endif
     InstancePrefix prefix;
     Instance instance;
     std::array<uint8_t, InstanceLayout::offsetOfStringCells - sizeof(Instance)> unusedBelowStringCells;
@@ -127,7 +130,7 @@ struct StubEnvironment {
     // What a small StructureID leads to unless a test has Structures of its own: a Structure that has seen no name and says nothing about a prototype, so whoever asks it learns nothing.
     std::array<uint8_t, 0x2000> emptyStructures;
 };
-static_assert(OBJECT_OFFSETOF(StubEnvironment, instance) == sizeof(InstancePrefix));
+static_assert(OBJECT_OFFSETOF(StubEnvironment, instance) == OBJECT_OFFSETOF(StubEnvironment, prefix) + sizeof(InstancePrefix));
 static_assert(OBJECT_OFFSETOF(StubEnvironment, stringCells) == OBJECT_OFFSETOF(StubEnvironment, instance) + InstanceLayout::offsetOfStringCells && sizeof(uint32_t) == InstanceLayout::sizeOfStringCell);
 
 struct StubRun {

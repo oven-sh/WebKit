@@ -257,7 +257,8 @@ static void testPackedWords()
     AOT_TEST_CHECK(ResumeClosureRequest::frameWordOf(resumeRequest) == 3);
 }
 
-static const void* wordAt(const StubWords& words, ptrdiff_t offset)
+template<typename Words>
+static const void* wordAt(const Words& words, ptrdiff_t offset)
 {
     const void* word;
     memcpySpan(asMutableByteSpan(word), asByteSpan(words).subspan(offset, sizeof(word)));
@@ -271,24 +272,19 @@ static void testStubWords()
     auto takeWord = [&] { return std::bit_cast<const void*>(nextWord++); };
     for (const void*& address : words.returnAddresses)
         address = takeWord();
-    for (BoxedCallEntry& entry : words.boxedCalls) {
-        entry.nativeFunction = takeWord();
-        for (const void*& target : entry.targets)
-            target = takeWord();
-    }
+    BoxedCallEntry entry { };
+    entry.nativeFunction = takeWord();
+    for (const void*& target : entry.targets)
+        target = takeWord();
 
     for (unsigned kind = 0; kind < numberOfStubFrameKinds; ++kind) {
         StubFrameKind frameKind = static_cast<StubFrameKind>(kind);
         AOT_TEST_CHECK(words.returnAddress(frameKind) == words.returnAddresses[kind]);
         AOT_TEST_CHECK(wordAt(words, StubWords::offsetOfReturnAddress(frameKind)) == words.returnAddresses[kind]);
     }
-    for (unsigned index = 0; index < StubWords::numberOfBoxedCallEntries; ++index) {
-        const BoxedCallEntry& entry = words.boxedCalls[index];
-        ptrdiff_t offsetOfEntry = StubWords::offsetOfBoxedCalls() + (static_cast<ptrdiff_t>(index) << BoxedCallEntry::sizeShift);
-        AOT_TEST_CHECK(wordAt(words, offsetOfEntry + BoxedCallEntry::offsetOfNativeFunction()) == entry.nativeFunction);
-        for (unsigned count = BoxedCallEntry::minArgumentCount; count <= BoxedCallEntry::maxArgumentCount; ++count)
-            AOT_TEST_CHECK(wordAt(words, offsetOfEntry + BoxedCallEntry::offsetOfTarget(count)) == entry.targets[count - BoxedCallEntry::minArgumentCount]);
-    }
+    AOT_TEST_CHECK(wordAt(entry, BoxedCallEntry::offsetOfNativeFunction()) == entry.nativeFunction);
+    for (unsigned count = BoxedCallEntry::minArgumentCount; count <= BoxedCallEntry::maxArgumentCount; ++count)
+        AOT_TEST_CHECK(wordAt(entry, BoxedCallEntry::offsetOfTarget(count)) == entry.targets[count - BoxedCallEntry::minArgumentCount]);
 
     constexpr uintptr_t functionAlignment = 1u << StubWords::boxedCallHashShift;
     AOT_TEST_CHECK(!StubWords::indexOfBoxedCall(0) && StubWords::indexOfBoxedCall(functionAlignment) == 1);

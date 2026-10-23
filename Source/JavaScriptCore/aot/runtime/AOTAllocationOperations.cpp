@@ -83,7 +83,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
         for (unsigned slot = 0; slot < ClosureRequest::countOf(request); ++slot)
             word(SlimClosure::offsetOfCaptures() + slot * sizeof(uint64_t)) = captures[slot];
         WTF::storeStoreFence();
-        word(SlimClosure::offsetOfWord()) = instance->closures.closureWords[ClosureRequest::functionOf(request)];
+        word(SlimClosure::offsetOfWord()) = instance->functionTables.closureWords[ClosureRequest::functionOf(request)];
         WTF::storeStoreFence();
         OPERATION_RETURN(scope, cell);
     }
@@ -94,7 +94,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
     for (unsigned slot = 0; slot < ClosureRequest::countOf(request); ++slot)
         word(Closure::offsetOfCaptures() + slot * sizeof(uint64_t)) = captures[slot];
     WTF::storeStoreFence();
-    word(Closure::offsetOfEntry()) = instance->closures.closureWords[ClosureRequest::functionOf(request)];
+    word(Closure::offsetOfEntry()) = instance->functionTables.closureWords[ClosureRequest::functionOf(request)];
     WTF::storeStoreFence();
     OPERATION_RETURN(scope, cell);
 }

@@ -174,9 +174,14 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
     // as `peek.call()` does, has it listed.
     if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_statement.function && m_statement.site && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
         BuiltinID named = entryNamedByOperations(m_program, m_program.at(m_statement.function), m_statement.site);
-        if (named && isMemberOfBun(named) && m_context.sets().contains(m_universe.builtinFunctions(), m_universe.objectOf(named))) {
+        bool isNamed = named && isMemberOfBun(named);
+        ClimbingSet bun(only(m_universe.objectOf(Builtins::Bun)));
+        if (isNamed && m_context.sets().contains(m_universe.builtinFunctions(), m_universe.objectOf(named))) {
             use(named, BuiltinUse::Read);
             add(m_statement.result, only(m_universe.objectOf(named)));
+        } else if (isNamed || (object.node && m_context.holdsAnyOf(bun, object.node))) {
+            // Beside the unknown object the normal form leaves out Bun once it has escaped. The read binds to it all the same.
+            connect(m_context.lookup(bun, name), m_statement.result);
         }
     }
     // And for whoever goes on to a prototype object: `globalThis[name].prototype` answers the prototype object of a constructor that the operand lists, though the constructor has escaped.

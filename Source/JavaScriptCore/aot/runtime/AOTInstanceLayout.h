@@ -37,6 +37,9 @@ struct InstanceLayout {
 #if defined(BUN_HARDENED)
     // From here to the key order steps: what nothing writes once the instance has been created. The pages are read-only from then on.
     static constexpr size_t offsetOfWordsWrittenOnce = 16 * KB;
+    // The table of boxed calls, with room for an entry for every number that a byte holds. Read-only from then on as well.
+    static constexpr ptrdiff_t offsetOfBoxedCalls = -static_cast<ptrdiff_t>(32 * KB);
+    static constexpr size_t bytesReservedForBoxedCalls = 16 * KB;
 #endif
     // Between the instance and the string cells.
     static constexpr size_t offsetOfKeyOrderSteps = 32 * KB;
@@ -82,6 +85,8 @@ static_assert(!(InstanceLayout::bytesReservedForPrefixAndPollPage % InstanceLayo
 static_assert(!(InstanceLayout::offsetOfStringCells % InstanceLayout::granuleAboveInstance));
 #if defined(BUN_HARDENED)
 static_assert(!(InstanceLayout::offsetOfWordsWrittenOnce % InstanceLayout::granuleAboveInstance) && !(InstanceLayout::offsetOfKeyOrderSteps % InstanceLayout::granuleAboveInstance));
+static_assert(!(InstanceLayout::offsetOfBoxedCalls % static_cast<ptrdiff_t>(InstanceLayout::granuleAboveInstance)) && !(InstanceLayout::bytesReservedForBoxedCalls % InstanceLayout::granuleAboveInstance));
+static_assert(InstanceLayout::offsetOfLoopPollPage() + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfBoxedCalls);
 #endif
 static_assert(InstanceLayout::offsetOfStringCells - InstanceLayout::offsetOfBuiltinValues == InstanceLayout::offsetOfBuiltinValues - InstanceLayout::offsetOfBuiltinCells);
 static_assert(!(InstanceLayout::granuleAboveInstance % InstanceLayout::sizeOfSiteCache));

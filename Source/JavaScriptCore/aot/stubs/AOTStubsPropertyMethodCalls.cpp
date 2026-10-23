@@ -371,7 +371,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
     const GPRReg header = operands;
     const GPRReg closureWord = function;
     const int32_t offsetOfClosure = offsetOfClosureInFrame(count);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureWords)), header);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), header);
     jit.load64(BaseIndex(header, function, CCallHelpers::TimesEight), closureWord);
     otherwise.append(jit.branchTest64(CCallHelpers::Zero, closureWord));
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders)), header);
