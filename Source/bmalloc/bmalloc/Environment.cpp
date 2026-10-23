@@ -109,9 +109,7 @@ static bool isLibgmallocEnabled()
 
 static bool isSanitizerEnabled()
 {
-#if BASAN_ENABLED || BTSAN_ENABLED
-    return true;
-#elif BOS(DARWIN)
+#if BOS(DARWIN)
     static const char sanitizerPrefix[] = "/libclang_rt.";
     static const char asanName[] = "asan_";
     static const char tsanName[] = "tsan_";
