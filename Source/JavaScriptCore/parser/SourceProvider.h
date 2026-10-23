@@ -55,6 +55,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace JSC {
 
+class JSCell;
 class SourceCode;
 class SourceCodeKey;
 class UnlinkedCodeBlock;
@@ -412,16 +413,24 @@ private:
 
         // For a generator that evaluates a module written by the user to find out what it exports (a CommonJS module).
         // It does not run when the module record is created, which happens whenever that module's fetch completes, but
-        // once the whole graph importing it has loaded, in import order, right before that graph is linked. See
-        // AbstractModuleRecord::generateDeferredSyntheticModules().
-        static Ref<SyntheticSourceProvider> createDeferred(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
+        // when the record is evaluated: where InnerModuleEvaluation reaches it in the graph that imports it, after the
+        // modules imported ahead of it. Until then the record has no exports (AbstractModuleRecord::hasPendingExports()).
+        // See SyntheticModuleRecord::createWithDeferredGenerator().
+        //
+        // `owner` answers with the cell that the generator works on (the host's object for the module), or null. A
+        // provider is not visited by the collector and must not root that cell: the record keeps it alive, from when the
+        // record is made until the generator has run.
+        using DeferredOwner = WTF::Function<JSCell*()>;
+        static Ref<SyntheticSourceProvider> createDeferred(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL, DeferredOwner&& owner = nullptr)
         {
             Ref provider = create(WTF::move(generator), sourceOrigin, WTF::move(sourceURL));
             provider->m_isDeferred = true;
+            provider->m_deferredOwner = WTF::move(owner);
             return provider;
         }
 
         bool isDeferred() const { return m_isDeferred; }
+        JSCell* deferredOwner() const { return m_deferredOwner ? m_deferredOwner() : nullptr; }
 
         unsigned hash() const final
         {
@@ -455,6 +464,7 @@ private:
         String m_source;
         SyntheticSourceGenerator m_generator;
         LazySyntheticSourceGenerator m_lazyGenerator;
+        DeferredOwner m_deferredOwner;
         bool m_isDeferred { false };
     };
 

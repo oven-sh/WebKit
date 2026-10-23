@@ -225,17 +225,29 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
                 throwSyntaxError(globalObject, scope, "Importing binding name 'default' cannot be resolved by star export entries."_s);
                 return;
 
+#if USE(BUN_JSC_ADDITIONS)
+            case Resolution::Type::Pending:
+                // The record that exports the binding has not evaluated (an import cycle). There is no value to
+                // snapshot, as for a module that is not linked yet below.
+                break;
+#endif
+
             case Resolution::Type::Resolved:
                 break;
             }
 
             AbstractModuleRecord* importedRecord = resolution.moduleRecord;
 #if USE(BUN_JSC_ADDITIONS)
-            // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
-            SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
-            RETURN_IF_EXCEPTION(scope, void());
-#endif
+            JSModuleEnvironment* importedEnvironment = nullptr;
+            if (resolution.type == Resolution::Type::Resolved) {
+                // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
+                SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
+                RETURN_IF_EXCEPTION(scope, void());
+                importedEnvironment = importedRecord->moduleEnvironmentMayBeNull();
+            }
+#else
             JSModuleEnvironment* importedEnvironment = importedRecord->moduleEnvironmentMayBeNull();
+#endif
             // It means that target module is not linked yet. In wasm loading, we allow this since we do not solve cyclic resolution as if JS's bindings.
             // At that time, error occurs since |value| is an empty, and later |value| becomes an undefined.
             // https://github.com/WebAssembly/esm-integration/tree/master/proposals/esm-integration#js---wasm-cycle-where-js-is-higher-in-the-module-graph

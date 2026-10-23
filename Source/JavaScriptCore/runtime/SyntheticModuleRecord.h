@@ -62,7 +62,11 @@ public:
     static SyntheticModuleRecord* createTextModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*);
+#else
     JS_EXPORT_PRIVATE JSValue LEGACY_NODELETE evaluate(JSGlobalObject*);
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // Creates a record (reported as a JavaScript module, SourceProviderSourceType::Module) exporting exportValues
@@ -72,13 +76,23 @@ public:
     // of it or when it is read off a module namespace object.
     JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
 
-    // Creates a record without exports for a SyntheticSourceProvider::createDeferred() provider. runDeferredGenerator()
-    // gives the record its exports; AbstractModuleRecord::link() calls it before it links anything.
+    // Creates a record without exports for a SyntheticSourceProvider::createDeferred() provider: the record
+    // hasPendingExports() until runDeferredGenerator() gives it its exports. evaluate() calls that, so the generator runs
+    // where InnerModuleEvaluation reaches the record. Until then modules that import from the record link without its
+    // export names (Resolution::Type::Pending) and bind when they are about to run (CyclicModuleRecord::linkPendingImports).
     static SyntheticModuleRecord* createWithDeferredGenerator(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, Ref<SyntheticSourceProvider>&&);
 
     // No-op unless the record still has a deferred generator. Runs arbitrary JS and throws what the generator throws,
     // again on every later call.
     void runDeferredGenerator(JSGlobalObject*);
+
+    // For a record that hasPendingExports(): the scope offset at which its module environment will hold `exportName`,
+    // for code that embeds the offset before the environment exists. That is code linked while the record has not
+    // evaluated (an import cycle, JSScope::abstractResolve) and code shared with a record of another loader
+    // (JSModuleRecord::resolvesImportsLike). The second form asks for the offset that shared code embeds: false if the
+    // name or the offset is promised otherwise.
+    unsigned reserveExportOffset(UniquedStringImpl* exportName);
+    bool reserveExportOffset(UniquedStringImpl* exportName, unsigned scopeOffset);
 
     bool hasLazyExports() const { return !!m_lazyExportsSource; }
 
@@ -103,8 +117,28 @@ private:
     void initializeExports(JSGlobalObject*, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
 
 #if USE(BUN_JSC_ADDITIONS)
+    // Before *namespace* and the loader there are no exports.
+    static constexpr unsigned firstExportOffset = 2;
+public:
+    // Where every synthetic record's environment keeps the record's namespace object (*namespace*).
+    static constexpr unsigned namespaceScopeOffset = 0;
+private:
+
+    struct Deferred {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(Deferred);
+        Deferred(Ref<SyntheticSourceProvider>&& generator)
+            : generator(WTF::move(generator))
+        {
+        }
+
+        Ref<SyntheticSourceProvider> generator;
+        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> reservedOffsetByName;
+        UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> reservedOffsets;
+        unsigned nextOffset { firstExportOffset };
+    };
+
     WriteBarrier<JSObject> m_lazyExportsSource;
-    RefPtr<SyntheticSourceProvider> m_deferredGenerator;
+    std::unique_ptr<Deferred> m_deferred;
     WriteBarrier<Unknown> m_deferredGeneratorError;
 #endif
 };
