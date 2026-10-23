@@ -1015,12 +1015,33 @@ String makeRFC2822DateString(unsigned dayOfWeek, unsigned day, unsigned month, u
     return stringBuilder.toString();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// "+05:30" is the identifier of an offset time zone: what Intl.DateTimeFormat().resolvedOptions().timeZone reports for
+// one. ICU knows that zone as the custom ID "GMT+05:30".
+static bool isOffsetTimeZoneIdentifier(StringView timeZone)
+{
+    return timeZone.length() == 6 && (timeZone[0] == '+' || timeZone[0] == '-')
+        && isASCIIDigit(timeZone[1]) && isASCIIDigit(timeZone[2]) && timeZone[3] == ':'
+        && isASCIIDigit(timeZone[4]) && isASCIIDigit(timeZone[5]);
+}
+#endif
+
 static std::optional<Vector<char16_t, 32>> validateTimeZone(StringView timeZone)
 {
     auto buffer = timeZone.upconvertedCharacters();
     const char16_t* characters = buffer;
+    int32_t length = timeZone.length();
+#if USE(BUN_JSC_ADDITIONS)
+    std::array<char16_t, 9> customID { 'G', 'M', 'T' };
+    if (isOffsetTimeZoneIdentifier(timeZone)) {
+        for (unsigned index = 0; index < 6; ++index)
+            customID[3 + index] = timeZone[index];
+        characters = customID.data();
+        length = customID.size();
+    }
+#endif
     Vector<char16_t, 32> canonicalBuffer;
-    auto status = callBufferProducingFunction(ucal_getCanonicalTimeZoneID, characters, timeZone.length(), canonicalBuffer, nullptr);
+    auto status = callBufferProducingFunction(ucal_getCanonicalTimeZoneID, characters, length, canonicalBuffer, nullptr);
     if (!U_SUCCESS(status))
         return std::nullopt;
     return canonicalBuffer;

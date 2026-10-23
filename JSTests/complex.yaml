@@ -112,6 +112,54 @@
           runComplexTest [], [], "TZ=Etc/Unknown", "--useDollarVM=1", "--useTemporal=1"
       end
 
+- path: complex/host-timezone-posix-whole-hours.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=MSK-3", "--useDollarVM=1", "--useTemporal=1"
+      end
+
+- path: complex/host-timezone-posix-gmt-sign.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=GMT+3", "--useDollarVM=1", "--useTemporal=1"
+      end
+
+- path: complex/host-timezone-posix-minutes.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=XYZ-7:15", "--useDollarVM=1", "--useTemporal=1"
+      end
+
+- path: complex/host-timezone-posix-past-etc-range.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=XYZ+13", "--useDollarVM=1", "--useTemporal=1"
+      end
+
+- path: complex/host-timezone-posix-dst-rule.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=XYZ-7:15XYS,M3.5.0,M10.5.0/3", "--useDollarVM=1", "--useTemporal=1"
+      end
+
+- path: complex/host-timezone-tzfile-path.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=:/usr/share/zoneinfo/America/New_York", "--useDollarVM=1", "--useTemporal=1"
+      end
+
 - path: complex/for-in-clobberize.js
   cmd: runComplexTest [], [], nil, "--destroy-vm"
 
