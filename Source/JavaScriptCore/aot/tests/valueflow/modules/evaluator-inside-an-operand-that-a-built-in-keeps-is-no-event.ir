@@ -1,6 +1,7 @@
 # fetch("https://example.com", { body: eval })
 # Native code keeps the options with all that they lead to. The evaluator inside has escaped with them, and that is a mention of it and no call.
 # The run time refuses an evaluator in an image whose build saw no application of one
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen EvaluatesText
 # CHECK: unseen-code no

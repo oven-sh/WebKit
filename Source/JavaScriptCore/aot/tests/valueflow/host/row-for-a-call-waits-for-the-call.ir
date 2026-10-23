@@ -1,5 +1,6 @@
 # `typeof setTimeout` reads the function and calls nothing, so the warning printer that a call with an odd delay reaches is not entered (runtimefunction 65572)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 

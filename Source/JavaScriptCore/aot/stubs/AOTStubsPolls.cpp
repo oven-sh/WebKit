@@ -95,6 +95,7 @@ void generatePollAtPrologue(StubAssembler& jit)
         jit.storePtr(GPRInfo::returnValueGPR, Address(sp));
     });
     jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, CCallHelpers::linkRegister), handleExceptionAtPrologue());
+    jit.linkToStub(jit.branch64(CCallHelpers::Equal, CCallHelpers::linkRegister, TrustedImm32(pollAtPrologueMustThrow)), throwStackOverflow(true));
     jit.ret();
 #endif
 }
@@ -151,9 +152,13 @@ void generatePollBeforeEntering(StubAssembler& jit)
     callPollSlow(jit);
     constexpr GPRReg exception = siteReturnAddress;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
+    // Both scratch registers are taken below. The loads, the pop and the test of the exception leave the flags alone.
+    jit.load8(Address(exception, VM::offsetOfTraps() + VMTraps::offsetOfStackManager() + StackManager::offsetOfStopsAtFunctionEntries()), scratch);
+    jit.compareOnFlags32(scratch, TrustedImm32(0));
     jit.loadPtr(Address(exception, VM::exceptionOffset()), exception);
     jit.popPair(CCallHelpers::linkRegister, scratch);
     Jump hasThrown = jit.branchTestPtr(CCallHelpers::NonZero, exception);
+    jit.linkToStub(jit.branchOnFlags(CCallHelpers::NotEqual), throwStackOverflow());
     // A return, so that it pairs with the call in the return-address predictor.
     jit.m_assembler.ret(scratch);
 

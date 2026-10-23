@@ -411,7 +411,6 @@ static void checkReserveIsKeptOnceHalfFull()
         AOT_TEST_CHECK(blocks.last() && blocks.size() <= cage.size() / blockSize);
     } while (std::bit_cast<uintptr_t>(blocks.last()) + blockSize <= middle);
 
-#if CPU(X86_64)
     constexpr size_t whole = 4 * MB;
     static_assert(cageSizeInMB * MB / 64 == whole);
     cage.keepReserveOnceHalfFull();
@@ -426,10 +425,6 @@ static void checkReserveIsKeptOnceHalfFull()
     cage.didThrowOutOfMemoryError();
     cage.keepReserveOnceHalfFull();
     AOT_TEST_CHECK(cage.reserveSize() == blockSize);
-#else
-    cage.keepReserveOnceHalfFull();
-    AOT_TEST_CHECK(!cage.reserveSize());
-#endif
     for (void* block : blocks)
         cage.free(block);
 }

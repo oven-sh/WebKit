@@ -1,4 +1,5 @@
 # A call whose callee is proven and whose operands choose no overload still calls that entry: operands as they come, the type joined over the overloads they can reach, matched again once they narrow
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins
 # RUN(NARROWED): pass ResolveBuiltins ResolveBuiltins
 # RUN(CODE): compile

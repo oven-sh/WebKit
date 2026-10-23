@@ -1,6 +1,7 @@
 # const first = require("./data.json"); delete require("node:module")._cache["/data.json"]; const second = require("./data.json")
 # No module of the image is in the module cache, a module of data no more than a file with code. Whatever the program does to the cache, the body of the data module runs once,
 # and the variable that holds its value is stored once
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="_0" {{*}}flow={writers=AllKnown stores=AtMostOnce
 

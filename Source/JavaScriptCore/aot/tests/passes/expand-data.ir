@@ -1,5 +1,6 @@
 # A small constant record becomes constants and allocations, children before parents, with the root under the id of the Data value, and an array holds what flow found at its site
 # The records are handed to a built-in that reads its operand and neither keeps nor writes it: a callee nobody knows may store into the arrays, and then flow says nothing about what they hold
+# REQUIRES: host-entries
 # RUN: pass ExpandData
 # RUN(PLAIN): pass ExpandData
 # RUN(FLOW): pipeline ExpandData

@@ -1,6 +1,7 @@
 # builtin-use-guarded-location.ir for a member that the host makes when it is first looked for. The test makes nothing: it passes once the engine has reported what the host made and while the location holds that.
 # A data property whose value is an object is then read from the word of the instance. One whose value may be a primitive is not tested: the engine reports objects
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass PlaceTypeTests
 # CHECK: outcome: Changed
 

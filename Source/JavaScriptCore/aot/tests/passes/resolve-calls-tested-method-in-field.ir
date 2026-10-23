@@ -2,6 +2,7 @@
 # the function that was read is tested, whatever is expected of it, and under the tests of the read that test is about a closure just made
 # The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN(PLAN): test-placement
 # RUN(IR): pass PlaceTypeTests
 

@@ -1,5 +1,6 @@
 # The same program without the call: the function that makes a promise is not reached, so nothing that hangs on Promise is entered
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

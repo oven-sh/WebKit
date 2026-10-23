@@ -3,6 +3,7 @@
 # what the read answers is in the hands of whoever has the value, so Array.prototype.filter counts as used. Nobody calls the value here, so its code need not run.
 # With records: read-under-an-unknown-key-in-the-code-behind-a-described-built-in-hands-out-nothing.ir
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK: {{*}} ArrayPrototypeFilter
 

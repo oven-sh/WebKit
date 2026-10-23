@@ -2,6 +2,7 @@
 # No operation names the helper before that pass runs, behind the analysis. A function that the analysis has not reached loses its body, and the call that the pass makes would have nothing to call:
 # so the call with a typed result counts as a call of the helper
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # RUN(WHY): valueflow-why reached=f1

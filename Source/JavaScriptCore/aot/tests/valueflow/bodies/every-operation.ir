@@ -1,4 +1,5 @@
 # No rule that reduces a body crashes on a well-formed operation: every operation and terminator that the front end can write, one function per family. The last function is the stand-in library
+# REQUIRES: host-entries
 # RUN: valueflow-body
 # CHECK-LABEL: body f0:
 # CHECK-LABEL: body f1:

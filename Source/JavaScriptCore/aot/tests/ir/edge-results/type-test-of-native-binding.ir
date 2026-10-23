@@ -1,5 +1,6 @@
 # A test that names what a native binding answers cannot tell that object, which the realm keeps no cell for, from another object: the edge that is not taken keeps it. A test that names a built-in of the realm decides
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: print
 
 module m0 path="main.js" displayPath="main.js"

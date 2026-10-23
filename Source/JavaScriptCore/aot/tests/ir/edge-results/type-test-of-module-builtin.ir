@@ -1,5 +1,6 @@
 # A test that names import.meta cannot tell the object, which each module has one of, from another object: the edge that is not taken keeps it. Where import.meta is the only object the value may be, the test asks for an object and decides. A built-in of the realm is one cell, and the edge that is not taken has lost it
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: print
 
 module m0 path="main.js" displayPath="main.js"

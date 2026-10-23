@@ -2,6 +2,7 @@
 # The row lists the operands: `process`, the queue, which is an object that native code makes by itself, and a function that native code makes. A call of that function is a call of its entry.
 # What the call answers is process.nextTick and nothing else becomes of it but what the row lists: it has not escaped.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f1:v3 values=f1:v4
 # CHECK: values=f1:v3
 # CHECK: operand 0 {{*}} 1 members: Process

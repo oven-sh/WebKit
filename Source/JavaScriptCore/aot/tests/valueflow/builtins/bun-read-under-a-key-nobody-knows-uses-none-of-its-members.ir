@@ -1,5 +1,6 @@
 # Bun[key](); for (name in Bun) ..
 # A key nobody knows names no member of Bun, and an enumeration makes none: what comes out is a value nobody knows
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK-NOT: BunGlob
 # CHECK-NOT: BunArchive

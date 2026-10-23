@@ -1,6 +1,7 @@
 # A capture holds what the operations that make a closure of the function put there, so it gets the type of all that the reached ones among them pass: integers by range, other primitives by kind, constant strings and functions by name.
 # What an unreached function would capture does not count. A capture that the unknown object reaches keeps its type.
 # A type that was only expected is proven where all that arrives lies inside it, and stays expected where something else arrives
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: function f1 name="reader" {{*}}captures=[{type=1|"a"}, {type=f3}]
 # CHECK-NEXT: b0(v0: 1|"a", v1: f3):

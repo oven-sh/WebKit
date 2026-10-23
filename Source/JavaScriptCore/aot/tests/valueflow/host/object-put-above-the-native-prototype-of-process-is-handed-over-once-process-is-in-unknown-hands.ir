@@ -1,6 +1,7 @@
 # const above = Object.create(null); above.helper = helper; Object.setPrototypeOf(Object.getPrototypeOf(process), above); handedOver(process)
 # Whoever holds `process` climbs to %EventEmitter%.prototype and from there to `above`, and reads whatever lies there
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached
 

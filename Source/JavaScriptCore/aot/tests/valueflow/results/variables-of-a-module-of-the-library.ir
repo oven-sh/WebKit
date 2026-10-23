@@ -2,6 +2,7 @@
 # a variable that it stores before it creates the function that reads it is stored before every read.
 # The host enters a registered function at any time, also before the body of its module has run, and what that function calls by value nobody lists: the variables of such a module have no order
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="early" {{*}}initialization=StoredBeforeEveryRead
 # CHECK: variable g2 name="besideRegistered"

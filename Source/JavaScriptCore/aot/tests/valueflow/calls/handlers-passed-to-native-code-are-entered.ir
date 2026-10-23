@@ -3,6 +3,7 @@
 # Evaluated text names the modules of the library, so native code holds what the module of the library exports, and both objects hang on that. Each of them also gets into such hands the ordinary way:
 # one as an operand of a native call, which calls the handlers that its entry lists, the other as an argument of a callee nobody knows. What arrives that way may be called, and so may what hangs on it.
 # The export that arrives only with the object that holds the exports stays unreached
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f2 v5 -> BunListen
 # CHECK-NEXT: f2 v7 -> unknown

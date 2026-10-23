@@ -4,6 +4,7 @@
 # With records: promise-resolved-with-an-unknown-operand-in-the-code-behind-a-described-built-in-calls-no-then.ir
 # The call of process.send may raise the flag by itself, so the test asks for every edge into the flags.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why timeline
 # CHECK: flag h6
 # CHECK: by CallGroup

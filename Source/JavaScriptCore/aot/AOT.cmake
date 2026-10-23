@@ -35,7 +35,6 @@ list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES "${JavaScriptCore_AOT_GEN
 list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/aot/analysis"
     "${JAVASCRIPTCORE_DIR}/aot/builtins"
-    "${JAVASCRIPTCORE_DIR}/aot/builtins/generated"
     "${JAVASCRIPTCORE_DIR}/aot/codegen"
     "${JAVASCRIPTCORE_DIR}/aot/image"
     "${JAVASCRIPTCORE_DIR}/aot/ir"
@@ -55,7 +54,6 @@ list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
 
 # Written by aot-source-lists.ts: what Bun, a JavaScriptCore header outside aot/ or an exported header of the built-ins table includes, and what those include.
 set(JavaScriptCore_AOT_EXPORTED_HEADERS
-    aot/builtins/AOTBuiltinNameSlots.h
     aot/builtins/AOTBuiltinWords.h
     aot/codegen/AOTArrivalSiteNumbers.h
     aot/codegen/AOTCodegenScratchWords.h
@@ -201,6 +199,7 @@ list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ${JavaScriptCore_AOT_EXPORTED_HEADERS}
     ${JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS}
     ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS}
+    ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS}
 )
 
 # Written by aot-source-lists.ts: every AOT*TestCommands.cpp and every .cpp under aot/tests/ but AOTShell.cpp. Linked into testaot only.
@@ -871,6 +870,14 @@ function(AOT_COMPILE_SOURCES_FOR_SIZE)
     endif ()
 endfunction()
 
+# A bundle of unified sources includes the header as its first line.
+function(AOT_INCLUDE_STANDARD_LIBRARY_ASSERTIONS_FIRST)
+    if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
+        AOT_READ_LIBRARY_SOURCES(librarySources problems)
+        set_property(SOURCE ${librarySources} APPEND PROPERTY COMPILE_OPTIONS "SHELL:-include ${JAVASCRIPTCORE_DIR}/aot/support/AOTStandardLibraryAssertions.h")
+    endif ()
+endfunction()
+
 # Only CMake builds aot/ as unified sources. Bun's own build reads aot/Sources.txt and compiles each source separately.
 function(AOT_GENERATE_UNIFIED_SOURCES)
     if (NOT ENABLE_UNIFIED_BUILDS)
@@ -905,7 +912,7 @@ function(AOT_GENERATE_UNIFIED_SOURCES)
             list(SUBLIST sources_${group} ${start} ${bundleSize} bundledSources)
             math(EXPR start "${start} + ${bundleSize}")
             math(EXPR index "${index} + 1")
-            set(text "")
+            set(text "#include \"aot/support/AOTStandardLibraryAssertions.h\"\n")
             foreach (path IN LISTS bundledSources)
                 string(APPEND text "#include \"${path}\"\n")
             endforeach ()
@@ -932,6 +939,25 @@ function(AOT_GENERATE_FROM_SCHEMA)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${generator} ${inputs})
     execute_process(
         COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/ir/generator/index.ts" --schema "${JAVASCRIPTCORE_DIR}/aot/ir/AOTSchema.def" --engine-out "${JavaScriptCore_AOT_GENERATED_DIR}"
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+endfunction()
+
+# What the engine is compiled with, and the table of the programs that this build links: the engine's entries and the stand-in host's.
+function(AOT_GENERATE_BUILTIN_TABLE)
+    file(GLOB generator CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/builtins/generator/*.ts")
+    set(inputs
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_DECLARATIONS}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_OWN_PROPERTIES}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS}
+        ${JavaScriptCore_OBJECT_LUT_SOURCES}
+    )
+    list(TRANSFORM inputs PREPEND "${JAVASCRIPTCORE_DIR}/")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${generator} ${inputs} ${JavaScriptCore_BUILTINS_SOURCES})
+    execute_process(
+        COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/builtins/generator/engine.ts" "--javascriptcore=${JAVASCRIPTCORE_DIR}" "--out=${JavaScriptCore_AOT_GENERATED_DIR}"
         COMMAND_ERROR_IS_FATAL ANY
     )
 endfunction()
@@ -974,8 +1000,6 @@ function(AOT_CHECK_SOURCE_LISTS)
 
     set(listed
         ${librarySources}
-        ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES}
-        ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES}
         ${JavaScriptCore_AOT_TEST_SOURCES}
         ${JavaScriptCore_AOT_PROGRAM_SOURCES}
         ${JavaScriptCore_AOT_SHELL_SOURCES}
@@ -1008,6 +1032,7 @@ function(AOT_CHECK_EXPORTED_HEADERS)
         ${JavaScriptCore_AOT_EXPORTED_HEADERS}
         ${JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS}
     )
     set(problems)
     set(exportedNames)
@@ -1049,8 +1074,10 @@ function(AOT_REPORT_LIST_PROBLEMS)
 endfunction()
 
 AOT_GENERATE_FROM_SCHEMA()
+AOT_GENERATE_BUILTIN_TABLE()
 AOT_GENERATE_RUNTIME_FACTS()
 AOT_GENERATE_UNIFIED_SOURCES()
 AOT_COMPILE_SOURCES_FOR_SIZE()
+AOT_INCLUDE_STANDARD_LIBRARY_ASSERTIONS_FIRST()
 AOT_CHECK_SOURCE_LISTS()
 AOT_CHECK_EXPORTED_HEADERS()

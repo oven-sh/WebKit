@@ -1,6 +1,7 @@
 # const above = { get on() { return handedOver(this); } }; Object.setPrototypeOf(Object.getPrototypeOf(process), above); delete Object.getPrototypeOf(process).on; process.on
 # The member may be gone, so the read goes on to the object above the native prototype: the getter is entered with `process` as its receiver and hands it over
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped-builtin=Process
 # CHECK: escaped-builtin=Process
 # CHECK-NEXT: n0 escaped

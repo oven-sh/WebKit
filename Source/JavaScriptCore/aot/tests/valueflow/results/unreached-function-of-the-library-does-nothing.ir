@@ -1,5 +1,6 @@
 # A function of the library that nothing reaches loses its body like any other, so what it reads, stores and calls happens nowhere:
 # a declaration of its module that reached code only calls is only called, and a variable that reached code stores once has all its writers known
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="helper" {{*}}flow={writers=AllKnown stores=Never {{*}}reads=OnlyCalled
 # CHECK: variable g1 name="state" {{*}}flow={writers=AllKnown stores=AtMostOnce

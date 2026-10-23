@@ -1,6 +1,7 @@
 # A call of a built-in that has a form for JSON text becomes a call of that form with the text the serializer wrote
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsHot
+# REQUIRES: host-entries
 # RUN: pass ExpandOwnKeys
 # STATISTIC: OwnKeyWalksExpanded = 2
 

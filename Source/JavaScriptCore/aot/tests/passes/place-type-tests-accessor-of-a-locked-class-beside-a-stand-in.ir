@@ -1,6 +1,7 @@
 # A value that is expected to be the native object or its stand-in written in JavaScript. The accessor of a locked prototype is entered without a lookup once the receiver is known to be the native one, so the union is tested for in front of a read of such a name as it is in front of a call. A name that the native class does not have as an accessor asks for no such test.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot
+# REQUIRES: host-entries
 # RUN: pipeline PlaceTypeTests
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -1,6 +1,7 @@
 # A run-time type record copies the plan of a complete test of its type: a layout is tested by the shapes of its family and named for messages, and a closure by the generic entrypoint of its function
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow type-errors=log
+# REQUIRES: host-entries
 # RUN: tables types
 
 module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="declared" variable=g8}]

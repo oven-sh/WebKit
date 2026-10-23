@@ -1,6 +1,7 @@
 # JSON.stringify({})
 # The one object that JSON.stringify is handed is a literal of the program, so nobody calls Buffer.prototype.toJSON.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=BufferPrototypeToJSON
 # CHECK: used-builtin=BufferPrototypeToJSON
 # CHECK-NEXT: not held

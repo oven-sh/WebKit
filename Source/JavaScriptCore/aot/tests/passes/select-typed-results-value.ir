@@ -1,5 +1,6 @@
 # validate<T>(v) calls the validator of node 0 in place of the host function, and asks the general validator with the plan on the rare path
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 2
 # STATISTIC: ValidatorsCreated = 1

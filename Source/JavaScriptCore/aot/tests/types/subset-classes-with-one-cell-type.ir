@@ -1,5 +1,6 @@
 # Two classes whose instances have one cell type may hold the same object, unless the sharing mode tells them apart
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: subset
 # CHECK: t0 <= t1: no overlaps: no
 # CHECK: t0 <= t2: no overlaps: no

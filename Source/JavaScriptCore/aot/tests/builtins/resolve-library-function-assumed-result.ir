@@ -1,5 +1,6 @@
 # The table says more about the result of an entry than the function of the library declares, whose types are only expected. A call that a pass created with the type of the table still becomes a direct call, and the result is assumed to have that type
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins ResolveBuiltins
 # CHECK: outcome: Changed
 # CHECK: outcome: Unchanged

@@ -2,6 +2,7 @@
 # A require() under a name nobody knows may answer the object of any native module, bun:jsc among them, and that is no use of the module. Nor is the read off it under a key nobody knows:
 # a computed name keeps nothing. What the read answers is a value of native code that nobody knows.
 # member-of-a-native-module-that-the-program-names-under-a-key-nobody-knows-is-a-use.ir names the module
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=BunJscHeapStats used-builtin=BunJsc
 # CHECK: used-builtin=BunJscHeapStats
 # CHECK-NEXT: not held

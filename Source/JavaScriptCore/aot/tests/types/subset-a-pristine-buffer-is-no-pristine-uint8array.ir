@@ -1,4 +1,5 @@
 # A Buffer is a Uint8Array. A pristine Buffer inherits from Buffer.prototype, so it is no pristine Uint8Array
+# REQUIRES: host-entries
 # RUN: subset
 # CHECK: t0 <= t1: yes overlaps: yes
 # CHECK-NEXT: t0 <= t2: no overlaps: yes

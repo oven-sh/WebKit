@@ -1,6 +1,7 @@
 # Error.isError and ArrayBuffer.isView are answered by the class of the operand, where every part of its type has one that says it. Where the type does not say it they are tests for the class,
 # which look at the kind of the cell as the functions do. Not of what has the layout of a class below a built-in class, or of a class of which nobody knows what lies above it: no type says what cell that is
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass SimplifyBuiltinCalls
 # CHECK: outcome: Changed
 

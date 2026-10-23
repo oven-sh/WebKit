@@ -1,5 +1,6 @@
 # handedBack = somebody(Bun); new handedBack.Glob(); handedBack.constructor
 # Bun is in unknown hands, so the value that comes back may be Bun. The name Glob read from it spells a name and binds to nothing: it is no use of Bun.Glob
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK-NOT: BunGlob
 # CHECK-NOT: BunArchive

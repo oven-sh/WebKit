@@ -1,6 +1,7 @@
 # function parseHandle(text: string, other) { text.x; other.x }   The host calls it on behalf of process.send (runtimefunction 65559), and its row lists no operands.
 # A parameter with an annotation that the checker has held the body against gets the values of that type. One without gets anything.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f1:v2 values=f1:v3
 # CHECK: values=f1:v2
 # CHECK: operand 0 {{*}} 1 members: primitive{{*}}

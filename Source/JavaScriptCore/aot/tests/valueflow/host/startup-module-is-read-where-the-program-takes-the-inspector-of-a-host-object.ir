@@ -1,5 +1,6 @@
 # new URLSearchParams("a=1")[Symbol.for("nodejs.util.inspect.custom")](2, {})
 # The method by which a class of the host prints itself is native code that calls the printer of node:util, whoever calls the method. The program has it from the read, so the read loads the start-up module.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

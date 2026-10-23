@@ -2,6 +2,7 @@
 # class Below { }; Object.defineProperty(Below.prototype, "x", { value: 1, writable: false }); class Over { x() { } }; class Iced { x() { } }; Object.freeze(Iced.prototype); array = [1]; icedArray = [1]; Object.freeze(icedArray)
 # None of these stores runs code. Those that a frozen or closed object, a read-only property or a read-only member above refuses leave the object without what was stored.
 # A method that a class defines is a writable property, which a store passes by: the object gets a property of its own.
+# REQUIRES: host-entries
 # RUN: runs-no-code x 0 toString
 # CHECK: f5 v0: L0: x=yes|yes 0=no|no toString=yes|yes any=yes|no keys=yes iterate=no convert=yes define=no unlisted=no called=yes
 # CHECK: f5 v0 stores land: x=yes 0=no toString=no any=no

@@ -1,5 +1,6 @@
 # The compiler's helpers and the functions of bun:bundle are in no realm: a call of one that ResolveBuiltins did not make a direct call has nothing to call
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: RequiredPassLeftOperation 2
 

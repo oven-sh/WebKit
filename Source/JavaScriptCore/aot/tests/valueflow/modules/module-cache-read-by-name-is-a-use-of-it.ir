@@ -1,4 +1,5 @@
 # require("node:module")._cache
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=NodeModule_cache
 # CHECK-NOT: not held
 # CHECK: by Lookup lookup {{*}}"_cache"

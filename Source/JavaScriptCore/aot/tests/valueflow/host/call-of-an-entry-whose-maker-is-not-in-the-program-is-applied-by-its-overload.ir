@@ -1,6 +1,7 @@
 # process.nextTick(callback), in a program that does not hold initializeNextTickQueue
 # Nothing says what the entry holds, so its overload speaks for the call: the callback is called, and nobody else gets hold of it.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # RUN(ESCAPED): valueflow-why escaped=f1

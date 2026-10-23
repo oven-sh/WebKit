@@ -3,6 +3,7 @@
 # The program asks for no module of the library. Native code requires the start-up module on its own and reads `inspect` from what that answers, so the function is entered with operands nobody knows, and with it the function that it calls by name.
 # Neither is seen code: no statement of the program leads to them. The call of the evaluator raises no event, and the run time refuses the evaluator.
 # evaluator-called-in-module-of-library-that-the-program-requests.ir has such a call in a module that the program asks for
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

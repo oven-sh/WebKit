@@ -1,6 +1,7 @@
 # Whoever enters a graph of modules in which something is to be linked, or waited for, goes through the loader. A site that evaluates such a module asks the loader where it stands,
 # and the module that holds the site is a function like any other.
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass CallModules
 # STATISTIC: ModulesWithState = 1
 # STATISTIC: ModulesWithoutState = 2

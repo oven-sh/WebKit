@@ -3,6 +3,7 @@
 # `module` as a value is an object that the host makes on demand, and its `exports` shows the variable that holds what the module exports. A store to the property is a store to the variable:
 # the call in main.cjs gets what hand() has stored. A read of the property reads the variable: the call in read() gets what the body of second.cjs has stored.
 # Such a variable is read and written by more than the operations that name it. third.cjs hands its module object to nobody, and its variable is as every other
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v2 -> f3
 # CHECK: f7 v2 -> f6

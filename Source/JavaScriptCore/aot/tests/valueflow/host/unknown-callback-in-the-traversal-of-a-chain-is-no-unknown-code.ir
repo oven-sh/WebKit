@@ -3,6 +3,7 @@
 # and FuseArrayChains calls it in the place of the calls of a chain. The records of those calls have said what they do with their callbacks, so the helper's call of a callback nobody knows
 # is no sign of code that nobody compiles
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why flag=h6 escaped=f2
 # CHECK: flag=h6
 # CHECK-NEXT: not held

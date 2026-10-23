@@ -1,5 +1,6 @@
 # export default { app: 0 }
 # Whatever lies under `app` makes the object a server's configuration for the host.
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK: run BunServe
 

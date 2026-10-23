@@ -2,6 +2,7 @@
 # The package is interpreted. The host gives it a stand-in for the file that has required it, and the module cache lists no module of the image.
 # So it sees no module object of the program, as in an executable that `bun build --compile` makes without --aot, and what an inner file exports stays
 # in the program. An entry point answers to its name, whoever asks. main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir has a program that names a way
+# REQUIRES: host-entries
 # RUN: valueflow-why flag=h29 escaped-builtin=ModuleObject used-builtin=ProcessMainModule escaped=f2
 # CHECK: flag=h29
 # CHECK-NEXT: by RequireModule f0 v2

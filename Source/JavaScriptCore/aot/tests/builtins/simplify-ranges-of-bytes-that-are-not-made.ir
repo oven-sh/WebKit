@@ -1,6 +1,7 @@
 # view.subarray(begin) that goes into encoder.encodeInto(text, ..) and nowhere else on its way there is not made. In its place travel the view and the place where the range starts, -1 where the value is what it is.
 # Whoever else gets to see the range on another way has it made for him. Nobody may see it twice: two ranges made of one would be two objects.
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass SimplifyBuiltinCalls
 
 module m0 path="main.js" displayPath="main.js"

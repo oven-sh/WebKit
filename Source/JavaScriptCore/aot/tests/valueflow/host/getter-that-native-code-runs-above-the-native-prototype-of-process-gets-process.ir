@@ -2,6 +2,7 @@
 # `throwDeprecation` is on `process` in some runs only, so the lookup of native code comes to `above` and runs the getter, with `process` as `this`. The getter is entered with operands nobody knows,
 # and the unknown object stands only for what has escaped
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped=f1 escaped-builtin=Process
 # CHECK: escaped=f1
 # CHECK-NEXT: n0 escaped

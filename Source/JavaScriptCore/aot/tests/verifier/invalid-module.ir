@@ -1,5 +1,6 @@
 # a module record follows the rules of its kind: lists, requests, interoperation, flags, the exports variable, body, links and exports, one bad module for each rule
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: InvalidModule 61
 

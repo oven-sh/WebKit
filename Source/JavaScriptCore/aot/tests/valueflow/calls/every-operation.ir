@@ -1,5 +1,6 @@
 # No rule of the solve crashes on a well-formed operation: the program of bodies/every-operation.ir with every function handed to a callee nobody knows. Every function is reached,
 # whether a round runs the statements that are due or all of them, and each load under a computed name and each evaluation of text in the program's own code is an event
+# REQUIRES: host-entries
 # RUN: valueflow-solve
 # CHECK: functions [[count]] reached [[count]]
 # RUN(FULL): valueflow-solve full

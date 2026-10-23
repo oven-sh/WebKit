@@ -1,6 +1,7 @@
 # globalThis.handedOut = require; eval(text)
 # A text that is evaluated and holds the require function of a file of the image finds no file of the image in its cache, and the host answers undefined for `main` in a program in which no file names a way between module objects.
 # A name that the text hands it finds the entry points alone. So nobody but the code of the program calls what the files export
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK: unreached f2

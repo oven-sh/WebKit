@@ -1,5 +1,6 @@
 # a native binding is evaluated by its number, which an entry of another kind and a function that native code hands over by itself do not have
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: InvalidBuiltinCall 2
 

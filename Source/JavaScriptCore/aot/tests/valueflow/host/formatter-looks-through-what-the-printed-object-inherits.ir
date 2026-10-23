@@ -1,5 +1,6 @@
 # console.log(Object.create({ inner: { [Symbol.for("nodejs.util.inspect.custom")]() { return "custom" } } }))
 # The formatter shows what an object inherits. So it comes by `inner`, which lies on the object above the printed one, and calls its custom inspect function.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 

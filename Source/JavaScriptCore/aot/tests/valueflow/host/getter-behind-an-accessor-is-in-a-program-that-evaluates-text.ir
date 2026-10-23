@@ -3,6 +3,7 @@
 # no read of the accessor is refused. A function that the text would have to call stays out: the call throws the error that names it.
 # getter-behind-an-accessor-stays-out-of-a-program-that-nobody-else-gets-into.ir has the same program without eval
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK: unreached f2

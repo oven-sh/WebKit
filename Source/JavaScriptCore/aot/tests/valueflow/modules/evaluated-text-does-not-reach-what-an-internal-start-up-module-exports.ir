@@ -4,6 +4,7 @@
 # Text that is evaluated at run time loads by name whatever PUBLIC module of the library has run. No name loads internal/util/inspect in a process that runs a compiled program,
 # so the export that nobody else takes is neither held nor entered. A public module: exports-of-a-public-library-module-are-held-where-unseen-code-runs.ir
 # Without the call of eval: host/startup-module-is-read-where-the-host-calls-a-method-of-the-operand.ir
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen EvaluatesText Eval f0:v14
 # CHECK: unseen-code yes

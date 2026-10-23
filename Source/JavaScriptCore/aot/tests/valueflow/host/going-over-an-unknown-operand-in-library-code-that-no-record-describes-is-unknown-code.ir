@@ -4,6 +4,7 @@
 # With records: going-over-an-unknown-operand-in-the-code-behind-a-described-built-in-steps-nothing.ir
 # LIBRARY: own
 # The call of process.send may raise the flag by itself, so the test asks for every edge into the flags.
+# REQUIRES: host-entries
 # RUN: valueflow-why timeline
 # CHECK: flag h6
 # CHECK: by CallGroup

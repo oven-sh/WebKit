@@ -1,5 +1,6 @@
 # A call that validates its result stays a CallBuiltin, which carries what the result is expected to be, though a function of the library stands behind its entry. Validated against nothing, the value is what that function returns: a direct call, like a helper of the same library file without a typed result
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins ResolveBuiltins
 # CHECK: outcome: Changed
 # CHECK: outcome: Unchanged

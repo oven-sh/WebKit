@@ -1,5 +1,6 @@
 # a Builtin value names an object of the table, and the operands of a built-in call lie in the parameters of its overload
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: InvalidBuiltinCall 19
 

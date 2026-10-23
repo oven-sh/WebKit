@@ -1,5 +1,6 @@
 # process.dlopen({ exports: {} }, addonPath);        keep(globalThis.__definedByTheAddon)
 # An N-API addon is handed the global object for the asking and defines on it what it likes.
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f0:v8 flag=h5
 # CHECK: values=f0:v8
 # CHECK: result {{*}} unknown

@@ -2,6 +2,7 @@
 # A definition looks for the property first, and the host makes the value of a member when it is first looked for: the code that makes it is in the image.
 # A deletion that finds a member has the host make every other member of the holder too.
 # store-into-a-host-object-is-no-use-of-the-member-it-replaces.ir has the store, which does not look
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=ProcessStdin used-builtin=ProcessStdout
 # CHECK: used-builtin=ProcessStdin
 # CHECK-NOT: not held

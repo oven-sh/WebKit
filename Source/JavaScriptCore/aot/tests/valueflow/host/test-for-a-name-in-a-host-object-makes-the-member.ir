@@ -1,6 +1,7 @@
 # "allowedNodeEnvironmentFlags" in process; "cwd" in process
 # The host makes the first with a function of the library when the name is looked for. The second lies there without: a test for it stays a test.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=ProcessAllowedNodeEnvironmentFlags used-builtin=ProcessCwd used-builtin=ProcessStdout
 # CHECK: used-builtin=ProcessAllowedNodeEnvironmentFlags
 # CHECK-NEXT: by PropHas

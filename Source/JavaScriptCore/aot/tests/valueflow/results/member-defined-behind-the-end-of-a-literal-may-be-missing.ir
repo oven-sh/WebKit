@@ -1,5 +1,6 @@
 # In internal/shared: const shared = { other }; define(shared, "helper", helper); export default shared      In node:readline: const { helper } = require("internal/shared"); function run() { return helper() }
 # A definition behind FinishObject is no part of the literal: somebody may hold the object without the member.
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="helper" module=m1 declared={type=undefined|f4}
 

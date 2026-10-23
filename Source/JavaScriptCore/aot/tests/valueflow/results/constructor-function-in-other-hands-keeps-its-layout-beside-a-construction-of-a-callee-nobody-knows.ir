@@ -3,6 +3,7 @@
 # Native code enters Derived with a new.target nobody knows, which super() hands on as an operand, and the program constructs a callee nobody knows.
 # Neither hands a function of the program the instance of another one. The group of the unknown object enters no function of the program: native code enters what has escaped, with the unknown object as `this`.
 # For a new.target nobody knows the rule hands over the unknown object. So what `new Shape()` makes is made for Shape and has its layout, although Shape is in other hands.
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="shape" {{*}}declared={type={{*}}L0}
 

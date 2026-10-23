@@ -8,7 +8,7 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "paths": {
-      "bun-builtins-table": ["../../../../../../src/codegen/builtins/lib.ts", "../../../../../bun/src/codegen/builtins/lib.ts"]
+      "bun-builtins-table": ["./generator/lib.ts"]
     }
   },
   "include": ["*.builtins.ts"]

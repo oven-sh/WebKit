@@ -1,6 +1,7 @@
 # new ($newCppFunction(..))(handed)
 # The function that the macro makes is no constructor: the construction throws before native code sees an operand.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f1 v2 -> NativeFunctionsInternalForTestingCppJsFunction_hasReifiedStatic
 # RUN(UNREACHED): valueflow-solve unreached

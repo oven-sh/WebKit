@@ -2,6 +2,7 @@
 # %EventEmitter%.prototype is in unknown hands, and beside the unknown object the chain of `process` no longer lists it. It is an object of the realm, which a store that nobody can place leaves as the table says,
 # so it still has `on` among its own members and the read ends there: it answers the native method and nothing that is found through the unknown object
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped-builtin=EventEmitterPrototype values=f0:v11
 # CHECK: escaped-builtin=EventEmitterPrototype
 # CHECK-NEXT: n0 escaped

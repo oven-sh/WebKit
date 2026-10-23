@@ -1,6 +1,7 @@
 # The trigger of the pair with logged-object-baseline.ir: the same program with one more line, console.log(point). The instance keeps its size, its proven accesses and its direct calls: the numbers below are those of the baseline
 # FORM: AsRead
 # OPTIONS: references=narrow
+# REQUIRES: host-entries
 # RUN: plan-slots layouts
 # RUN(CALLS): pipeline ResolveCalls
 # STATISTIC: HiddenWordsPlaced = 0

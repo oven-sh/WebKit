@@ -1,6 +1,7 @@
 # require.cache[name] = module; require("./first.cjs"); require("./second.cjs")()
 # No module of the image is in the module cache, and a constant name is bound to its module by the build. So an entry that the program stores into the cache answers no require with a constant name:
 # the call gets what second.cjs exports and nothing else, and nothing is loaded by name
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen LoadsModuleByName
 # CHECK: unseen-code no

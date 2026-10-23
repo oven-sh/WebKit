@@ -2,6 +2,7 @@
 # Whoever lists the keys, copies the properties, reads or tests under a key nobody knows, also through an object that inherits from the namespace object, or hands the object to native code may read every export.
 #   import * as listed ..  Object.keys(listed); "b" in tested; console.log(printed); name in walked; Object.create(inherited)[name]; ({ x: name, ...spread })
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # RUN(RESULTS): valueflow-results
 # CHECK: variable g0 {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation isUnchangedDuringActivation=true}

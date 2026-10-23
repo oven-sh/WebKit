@@ -1,6 +1,7 @@
 # new Function("return 1"); Bun.serve({ port: 0 })
 # Text that is evaluated reaches the global scope, and what has escaped may then hold anything under any name: the options too, once the server keeps them. At the call they are the literal that is written there.
 # So the call goes by the fields of what reaches it, and the evaluator beside it does not make a development server of every server: the code that runs stays text of the global scope
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen-code yes
 # RUN(REALM): valueflow-why flag=h19

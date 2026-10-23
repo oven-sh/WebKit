@@ -2,6 +2,7 @@
 # A key nobody knows names no function of the loader, in a store as in a read: for all that the build can tell the statement copies a property. Every require with a constant name
 # goes on answering its own module. Should the key be "_resolveFilename" at run time, Modules::willChangeRequireOverride() refuses the store.
 # store-to-a-function-of-the-loader-replaces-no-answer.ir has the store that names it
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen LoadsModuleByName
 # CHECK: unseen-code no

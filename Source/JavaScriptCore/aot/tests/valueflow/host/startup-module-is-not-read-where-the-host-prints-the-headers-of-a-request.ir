@@ -1,5 +1,6 @@
 # console.log(new Request("http://localhost").headers)
 # The getter answers an instance of Headers that native code has made before. The row names the class, Buffer does not extend it, and its prototype object lists all it has: nothing there prints itself.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

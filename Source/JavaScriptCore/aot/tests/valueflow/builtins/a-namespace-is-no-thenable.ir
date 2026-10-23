@@ -1,5 +1,6 @@
 # Promise.resolve(Bun).then(bun => new bun.Glob()); (async () => Bun)().then(bun => bun.nanoseconds())
 # No namespace of the table has a `then`, so the promise is fulfilled with the namespace itself, nothing runs that nobody knows, and the reaction has the namespace and nothing beside it
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f1 v2 -> BunGlob
 # CHECK: f3 v2 -> BunNanoseconds

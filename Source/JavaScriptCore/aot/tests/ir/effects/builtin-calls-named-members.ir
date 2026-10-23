@@ -1,5 +1,6 @@
 # A built-in that reads members of an operand runs their getters and never what the members hold. A built-in that calls a member runs the method, and one that prints an object runs unknown code
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: effects summaries f0 f1 f2
 
 module m0 path="main.js" displayPath="main.js"

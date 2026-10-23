@@ -1,6 +1,7 @@
 # The receiver is one of two functions of the program or a built-in function, and is expected to be one of the two. The test for every function lets the built-in function through,
 # which has members of its own: behind the test the receiver is still no instance like any other, so the read could not be resolved. No test is planned, and the read stays a read by name
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass PlaceTypeTests
 # RUN(PLAN): test-placement
 # PLAN: function f0

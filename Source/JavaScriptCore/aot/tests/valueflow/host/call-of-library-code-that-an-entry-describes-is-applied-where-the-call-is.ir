@@ -3,6 +3,7 @@
 # One body runs for all callers, where every callback would meet every argument. So no operand goes into it: the overloads of the entry are applied with the operands of each call,
 # and each callback gets what was passed with it.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f4 v2 -> f6
 # CHECK-NEXT: f5 v2 -> f7

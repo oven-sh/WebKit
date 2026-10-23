@@ -1,5 +1,6 @@
 # two modules with a file of their own do not share a path, and no two modules share a body or an exports variable
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: InvalidModule 3
 

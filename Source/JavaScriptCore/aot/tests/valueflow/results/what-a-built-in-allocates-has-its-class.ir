@@ -5,6 +5,7 @@
 # What a read takes out of it is what was put in, and `undefined`: native code makes nothing of its own for a result that stands for what an operand holds.
 # Beside these: callees that answer with different classes leave an object; a construction for another new.target makes an instance of the class with a prototype that nobody has looked at;
 # and of an instance that code which nobody compiles has got hold of only the class is left
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="map" {{*}}declared={type=Map<never, never, proven, pristine[Storage, Names]>}
 # CHECK: variable g1 name="filled" {{*}}declared={type=Map<"a", 1, proven, pristine[Storage, Names]>}

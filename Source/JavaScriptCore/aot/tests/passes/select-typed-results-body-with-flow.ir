@@ -1,6 +1,7 @@
 # A body read as lowering writes it, with the class of the promise expected before the await: flow puts the typed result into the promise, and the pass parses the bytes into the layouts
 # FORM: AsRead
 # OPTIONS: report=Declines only-passes=ResolveBuiltins,SelectTypedResults
+# REQUIRES: host-entries
 # RUN: pipeline SelectTypedResults
 # STATISTIC: TypedResultsSelected = 1
 # STATISTIC: ParsersCreated >= 2

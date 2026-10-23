@@ -1,6 +1,7 @@
 # module = { exports: {} }; process.dlopen(module, addonPath); handed = { x: 1 }; kept = { y: 1 }; kept.y; module.exports.run(handed, callback)
 # The addon fills the object that it is handed, so nobody knows what the program finds there afterwards. A call of that is a call of a function nobody knows: its operands escape,
 # the callback is entered, and its result is unknown. What is not handed over stays in the program, and no unseen code runs.
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls unseen unreached
 # CHECK: f0 v15 -> unknown
 # CHECK-NOT: unreached f1

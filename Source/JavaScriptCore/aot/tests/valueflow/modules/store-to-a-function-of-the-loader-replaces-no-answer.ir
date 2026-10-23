@@ -1,6 +1,7 @@
 # Module._resolveFilename = resolve; require("./first.cjs"); require("./second.cjs")()
 # The run time refuses whoever puts a function of its own in the place of the loader's, also where the build has seen the store. So every require with a constant name goes on answering its own module,
 # and nothing is loaded by name
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen LoadsModuleByName
 # CHECK: unseen-code no

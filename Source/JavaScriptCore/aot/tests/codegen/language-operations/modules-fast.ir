@@ -1,4 +1,5 @@
 # Namespaces, static and dynamic imports, requires and resolutions, import.meta, the require function and the module object, and an import that failed to resolve pass the back-end checks in fast code
+# REQUIRES: host-entries
 # RUN: compile
 # OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
 # DIAGNOSTIC: CodeOutsideImageIsRefused 4

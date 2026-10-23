@@ -1,5 +1,6 @@
 # export default { port: 0 }
 # The host looks for a function under `fetch` and for anything under `app`, finds neither and leaves the object alone: no use of Bun.serve.
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK-NOT: BunServe
 

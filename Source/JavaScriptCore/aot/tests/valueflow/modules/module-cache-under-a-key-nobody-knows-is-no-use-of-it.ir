@@ -1,6 +1,7 @@
 # require("node:module")[name]
 # The key names no member, so the read is no use of the module cache, and the module objects of the program stay where they are. The function of the library that makes the cache is in the image
 # only for a program that names it: whoever comes to it under such a key gets the error of a function that was not compiled. module-cache-read-by-name-is-a-use-of-it.ir names it
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=NodeModule_cache
 # CHECK: not held
 

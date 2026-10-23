@@ -2,6 +2,7 @@
 # `process` is in unknown hands, so the store may hit any of its members. It names none of them. What hangs on process.send in the table (the modules of the channel) comes into the image for a program
 # that names process.send, not for this store. store-under-a-key-nobody-knows-is-a-store-to-a-host-built-in-that-is-named.ir is that program
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped-builtin=Process used-builtin=ProcessSend used-builtin=ProcessChannel
 # CHECK: escaped-builtin=Process
 # CHECK-NEXT: n0 escaped

@@ -1,6 +1,7 @@
 # A field holds what the stores through the objects of its layout put there. Every allocation of the first layout fills both fields and nothing deletes, redefines or stores another type: they are always filled.
 # The second layout has a field that one allocation leaves out and a field that is deleted; an object of the third goes to code that nobody has seen, so nothing is said of its field.
 # The numbers are no integers: a field that is seen to hold small integers gets a type of its own before the analysis runs
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Point" fields=[{key="x" declared={type=fractional} flags=[IsRequired{{*}}] flow={location={writers=AllKnown {{*}}initialization=SetAtCreation{{*}}} occupancy=AlwaysFilled {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="label" declared={type="a"}
 # CHECK: layout L1 name="Partial" fields=[{key="x" declared={type=fractional} {{*}}flow={location={writers=AllKnown{{*}}} stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}

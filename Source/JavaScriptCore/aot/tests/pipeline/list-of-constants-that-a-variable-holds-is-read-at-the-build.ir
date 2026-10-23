@@ -1,6 +1,7 @@
 # const kept = [1, 2]; const changed = [1, 2]; changed.push(3); function inKept(x) { return kept.includes(x) } ..
 # Nothing ever changes `kept`, so whoever only looks into it needs no list: includes compares, join is a text, a spread appends the constants. Nobody reads the variable any more.
 # `changed` is the same but for one push, and every call on it stays.
+# REQUIRES: host-entries
 # RUN: pipeline EmbedConstantCollections
 # CHECK-NOT: GetModuleVariable variable=g0
 # RUN(COMPARED): pipeline EmbedConstantCollections

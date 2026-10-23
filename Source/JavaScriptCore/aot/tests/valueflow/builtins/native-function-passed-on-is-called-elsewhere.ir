@@ -2,6 +2,7 @@
 # The function goes where any value goes. Whoever calls it there calls its entry, beside whatever else arrives.
 # The example is a function for Bun's own tests: the table will not come to describe it.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f1 v2 -> f2
 # CHECK-NEXT: f1 v4 -> f2

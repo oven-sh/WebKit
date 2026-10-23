@@ -5,6 +5,7 @@
 # The constructor of Base allocates for no Alone: every object of that layout has passed its own constructor, and its field is set at creation as it is without the construction.
 # What the constructor of Base stores, and what native code may put on the object that it has constructed, lands on no Alone either: the names that are added to one are all known.
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 kind=Instance name="Alone" {{*}}initialization=SetAtCreation{{*}}addedKeysAreComplete=true
 # CHECK: layout L2 kind=Instance name="Derived"

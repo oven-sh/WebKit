@@ -1,5 +1,6 @@
 # A function that is a value and has text has an entry under its generic entrypoint: its range in the retained text, which is the union of those ranges, module after module, so a nested or overlapping range adds no byte twice. A function that is never a value, one without text and one in a module of the runtime have none
 # OPTIONS: disable=pass:InlineCalls
+# REQUIRES: host-entries
 # RUN: tables functions function-texts
 # RUN(SIZES): tables
 

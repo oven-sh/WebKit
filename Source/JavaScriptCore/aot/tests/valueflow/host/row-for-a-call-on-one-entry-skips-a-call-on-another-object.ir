@@ -1,6 +1,7 @@
 # process.on.call({}, "message", listener)
 # The channel belongs to `process`. On any other receiver the method keeps a list of listeners and nothing else, so parseHandle is not entered (runtimefunction 65559)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 

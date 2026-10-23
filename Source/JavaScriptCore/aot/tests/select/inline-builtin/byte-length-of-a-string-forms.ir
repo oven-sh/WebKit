@@ -1,5 +1,6 @@
 # Buffer.byteLength(string, encoding): only a string names an encoding. Without an encoding, with "utf8" or "utf-8", and with a value that cannot be a string, the code in line is the whole call. With a value that may be a string the code in line asks, and has a miss edge.
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass Select
 # RUN(FORMS): inline-forms
 

@@ -2,6 +2,7 @@
 # A loader in hands that nobody follows loads by name, so native code holds what the module of the library exports, and whatever it holds is written like what has escaped: an accessor nobody knows may lie
 # on the object that holds the exports, and the read of `other` hands the object to it. So the object has escaped. Nobody searches such an object when it escapes: the getter `lazy` on it is only held.
 # The read that names `lazy` starts at that very object, beside the unknown object above it. It still finds the getter there and enters it. The getter beside it, which nothing names, stays unreached.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

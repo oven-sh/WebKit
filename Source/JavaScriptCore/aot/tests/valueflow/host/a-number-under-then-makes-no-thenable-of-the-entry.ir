@@ -1,4 +1,5 @@
 # What is no function under `then` is an export like any other: the promise is fulfilled with the namespace, which has no `default`.
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK-NOT: BunServe
 

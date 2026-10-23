@@ -1,6 +1,7 @@
 # const split = $bindgen("node_util_binding.bind.ts", "extractedSplitNewLinesFastPathStringsOnly"); split("a\nb", ignored).length
 # The entry of the binding has the signature that its schema declares: it takes a string and answers an array of strings or undefined. So nothing is handed over, and nothing that nobody knows comes back.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f1 v3 -> NativeFunctionsNode_util_bindingBindTsExtractedSplitNewLinesFastPathStringsOnly
 # RUN(UNREACHED): valueflow-solve unreached

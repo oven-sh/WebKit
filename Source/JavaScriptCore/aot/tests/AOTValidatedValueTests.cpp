@@ -9,9 +9,9 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
-#include "AOTBuiltinTableArrays.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTIRParser.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramFile.h"
@@ -19,6 +19,7 @@
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <array>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
@@ -179,14 +180,27 @@ function f16 name="interpretedBelowTheRoot" parameters=[{type=anything}] results
 )IR"_s;
 
 // The general validator of the library throws the error. f1 stands for it: the compiled validators call it with every value that they do not accept.
+// The front end of the host compiles these functions, so the table that the program is linked with has their numbers.
+static RuntimeFunctionID functionImplementing(BuiltinID builtin)
+{
+    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
+        if (std::ranges::contains(function.implements, builtin))
+            return function.id;
+    }
+    AOT_TEST_CHECK(false);
+    return { };
+}
+
 static String programText()
 {
-    static_assert(RuntimeFunctions::ValidationHoldsRule.index() < RuntimeFunctions::ValidationValidate.index());
-    static_assert(RuntimeFunctions::ValidationValidate.index() < RuntimeFunctions::ValidationValidateByPlan.index());
+    RuntimeFunctionID holdsRule = functionImplementing(Builtins::CompilerHelpersHoldsRule);
+    RuntimeFunctionID validate = functionImplementing(hostBuiltin("BunBundleValidate"_s));
+    RuntimeFunctionID validateByPlan = functionImplementing(Builtins::CompilerHelpersValidateByPlan);
+    AOT_TEST_CHECK(holdsRule.index() < validate.index() && validate.index() < validateByPlan.index());
     return makeString(recordsOfProgram,
-        "runtimefunction id="_s, RuntimeFunctions::ValidationHoldsRule.index(), " function=f12\n"_s,
-        "runtimefunction id="_s, RuntimeFunctions::ValidationValidate.index(), " function=f11\n"_s,
-        "runtimefunction id="_s, RuntimeFunctions::ValidationValidateByPlan.index(), " function=f1\n"_s,
+        "runtimefunction id="_s, holdsRule.index(), " function=f12\n"_s,
+        "runtimefunction id="_s, validate.index(), " function=f11\n"_s,
+        "runtimefunction id="_s, validateByPlan.index(), " function=f1\n"_s,
         functionsOfProgram);
 }
 

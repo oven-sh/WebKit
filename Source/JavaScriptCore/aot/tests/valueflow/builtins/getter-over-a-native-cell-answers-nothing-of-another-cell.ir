@@ -1,6 +1,7 @@
 # timer = setTimeout(later, 10); listener = Bun.listen({ data: kept, socket: undefined }); listener.data(); timer._onTimeout()
 # Native code keeps the callback of a timer in one cell and `data` of a socket in another, and each getter answers what is in its own.
 # While an async context is set the callback of a timer is kept in a wrapper, which `_onTimeout` hands out: an object that nobody knows
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v4 -> SetTimeout
 # CHECK-NEXT: f0 v10 -> BunListen

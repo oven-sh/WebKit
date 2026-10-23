@@ -1,5 +1,6 @@
 # counts = new Map(); counts.set("a", 5); Reflect.apply(Map.prototype.set, counts, list); return counts.get("a")
 # The second store spells out no value: nobody has looked at what it stores, so nothing bounds the numbers.
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: function f0 name="main" {{*}}results=[{type=undefined|int|"a"}]
 

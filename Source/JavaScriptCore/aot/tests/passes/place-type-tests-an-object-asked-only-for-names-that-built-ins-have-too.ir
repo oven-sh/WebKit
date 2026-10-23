@@ -3,6 +3,7 @@
 # An object of which something is expected keeps that, and so does one in a function that handles no object with the name
 # FORM: Prepared optimizing
 # OPTIONS: heat=EverythingIsHot
+# REQUIRES: host-entries
 # RUN: pass PlaceTypeTests
 
 module m0 path="main.js" displayPath="main.js"

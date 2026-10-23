@@ -2,6 +2,7 @@
 # A read of `require.cache` finds no module of the image: module-cache-lists-no-module-of-the-image.ir. It is no event. Nothing is loaded by name, no code runs that the build has not seen,
 # and a require with a constant name answers what the module exports and no object nobody knows.
 # entry-that-the-program-puts-into-the-module-cache-answers-no-constant-name.ir has a store
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen LoadsModuleByName
 # CHECK: unseen-code no

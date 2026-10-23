@@ -1,6 +1,7 @@
 # process.on("exit", listener)
 # The functions of the channel hang on `on` for the events "message" and "disconnect". The call spells its event out, and it is neither, so parseHandle is not entered (runtimefunction 65559)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NOT: unreached f2

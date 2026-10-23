@@ -2,6 +2,7 @@
 # `either` may be the unknown object or the object that holds what node:path exports, which has come into unknown hands. The unknown object stands for that holder, so it is not listed beside it,
 # and a key nobody knows names nothing on it: the read does not search the holder, and `close`, which no code names, stays out of the image. A call of it at run time throws the error that names it.
 # `open` is read by name and is entered
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f3 v4 ->{{*}} f4
 # RUN(UNREACHED): valueflow-solve unreached

@@ -1,5 +1,6 @@
 # The plan of an access under a computed key: a constant key is a name, a typed array needs no test, an array needs the tests its type does not prove
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: element-access
 
 module m0 path="main.js" displayPath="main.js"

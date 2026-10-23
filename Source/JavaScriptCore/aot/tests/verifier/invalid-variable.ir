@@ -1,5 +1,6 @@
 # a variable starts as a function only with a function and only in a module with code of the program or of the library, and its owner is a class that lists it as a static field
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: InvalidVariable 6
 

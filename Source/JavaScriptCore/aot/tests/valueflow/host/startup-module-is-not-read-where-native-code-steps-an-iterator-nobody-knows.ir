@@ -1,6 +1,7 @@
 # Iterator.from(handedIn).next()
 # Native code calls `next` on an iterator nobody knows. It loads a start-up module only for a method that it finds under Symbol.for("nodejs.util.inspect.custom"), which gets the printer of node:util:
 # a step of an iterator gets nothing out of such a module, so none is read.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

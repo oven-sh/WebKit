@@ -1,6 +1,7 @@
 # ({ valueOf: Bun.plugin }) & 1
 # The conversion of an operand finds `valueOf` by the name of its protocol and calls what lies there. Seen code names the function neither as a callee nor as an operand of a call.
 # It is applied for an operation of the program, so the event is raised, and the record names the built-in
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen RunsUnseenCode BunPlugin
 # CHECK: unseen-code yes

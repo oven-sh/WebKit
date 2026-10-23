@@ -2,6 +2,7 @@
 # The function of a native binding hangs on no object of the realm, so a built-in object that it is called on is handed to it like an argument.
 # The example is a function for Bun's own tests: the table will not come to describe it.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped-builtin=Process
 # CHECK: escaped-builtin=Process
 # CHECK-NEXT: escaped {{*}}by Call f1 v2

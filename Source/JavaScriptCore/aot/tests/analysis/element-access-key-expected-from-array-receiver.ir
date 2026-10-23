@@ -1,5 +1,6 @@
 # A key of which nothing is known is expected to be an index where the receiver is proven to be an array or a typed array
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: element-access
 
 module m0 path="main.js" displayPath="main.js"

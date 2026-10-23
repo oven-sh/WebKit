@@ -12,6 +12,12 @@
 
 namespace JSC { namespace AOT {
 
+// WebKit's own build links its programs with the table of a stand-in host (aot/tests/host), which has few entries. Bun's build links them with Bun's.
+inline bool hasStandInHost()
+{
+    return !!BuiltinTable::singleton().builtinFromToken("UnfilledHostRole"_s);
+}
+
 // The engine has a constant for what it declares and for the roles of the host. A test finds anything else of the host in the table that it is linked with.
 inline BuiltinID hostBuiltin(ASCIILiteral token)
 {

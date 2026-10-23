@@ -1,5 +1,6 @@
 # new Blob(); publish(handedIn[someName])
 # An object nobody knows may be a Blob, and a key nobody knows may spell `image`. That names no member of the host: the code behind one is in the image for a program that takes it from a holder it knows.
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK-NOT: run BlobPrototypeImage
 

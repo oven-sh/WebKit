@@ -1,5 +1,6 @@
 # $inherits(..) in a module of the library; a helper that the compiler calls
 # A built-in holder that has the name among its own members answers by itself, also where the table does not say what lies above it. A private name of the global object names a function of the host.
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v2 -> PrivateGlobalsInherits
 # CHECK: f0 v5 -> CompilerHelpersCopyOwnProperties

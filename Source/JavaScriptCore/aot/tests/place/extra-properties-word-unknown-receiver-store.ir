@@ -1,6 +1,7 @@
 # A store under a new name through an unknown receiver may reach every object that was handed to a function nobody knows: its layout has the word for extra properties. A logged object did not escape and has none
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow references=narrow disable=flow:AppendedFields
+# REQUIRES: host-entries
 # RUN: plan-slots layouts
 
 module m0 path="main.js" displayPath="main.js" body=f0

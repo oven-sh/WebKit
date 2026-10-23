@@ -1,6 +1,7 @@
 # A program that loads nothing through the host leaves the host's require() (overridableRequire, runtimefunction 65547) out of the image.
 # module-that-the-host-answers-enters-the-loader-of-the-host.ir has such a load
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 

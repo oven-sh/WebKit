@@ -3,6 +3,7 @@
 # what hangs on that built-in in the table does not come into the image for it, and the call throws an error that names the built-in.
 # native-caller-passes-what-the-annotation-says.ir is a program that names it
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen EvaluatesText Eval f0:v5
 # CHECK: unseen-code yes

@@ -1,5 +1,6 @@
 # No test finds the object that a module has for import.meta, module, exports or require, so a Check that names such a built-in would leave the typed code with every value of its type. A TypeTest may name it: it does not pass
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: PayloadOutOfRange 5
 

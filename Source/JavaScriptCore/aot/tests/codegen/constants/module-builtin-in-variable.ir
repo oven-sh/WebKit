@@ -1,5 +1,6 @@
 # A module variable that only ever holds import.meta has a type the program tables can describe, so the build succeeds
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: compile
 # CHECK: image not empty
 

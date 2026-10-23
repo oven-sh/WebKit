@@ -1,6 +1,7 @@
 # main.cjs: exports.kept = function () {}; process[globalThis.name] = 1; eval(globalThis.text)
 # A store under a key nobody knows names no member, so it is no use of process.mainModule, and what the module exports stays in the program beside evaluated text.
 # main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir has the read that names it
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=ProcessMainModule escaped=f1
 # CHECK: used-builtin=ProcessMainModule
 # CHECK-NEXT: not held

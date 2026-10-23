@@ -1,5 +1,6 @@
 # A member call on an expected receiver is two uses with the same tests: under one set of tests the read is a closure nobody uses and the call is direct
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass PlaceTypeTests
 # RUN(TESTS): pass PlaceTypeTests
 # CHECK: outcome: Changed

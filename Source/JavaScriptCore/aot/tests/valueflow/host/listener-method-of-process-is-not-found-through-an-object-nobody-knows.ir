@@ -3,6 +3,7 @@
 # What hangs on that method in the table (the functions of the channel, and with them node:net, node:dgram and the streams) stays out of the image.
 # listener-method-of-process-is-found-once-process-is-in-unknown-hands.ir is the program that needs it
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped-builtin=Process used-builtin=EventEmitterPrototypeOn
 # CHECK: escaped-builtin=Process
 # CHECK-NEXT: not held

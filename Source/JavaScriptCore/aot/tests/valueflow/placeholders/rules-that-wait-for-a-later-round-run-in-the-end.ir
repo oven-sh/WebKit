@@ -2,6 +2,7 @@
 # The two switches let about half of the rules that are due in a round wait for a later one: another valid schedule, for the tests that hold one schedule against another.
 # Nothing is dropped: the call still hands `process` over. And the solve ends: the round that runs every rule once more, to see that nothing moves, is left whole.
 # OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped-builtin=Process
 # CHECK: escaped-builtin=Process
 # CHECK-NOT: not held

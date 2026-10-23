@@ -1,4 +1,5 @@
 # Entry lines, with what the host reads from the exports of the module
+# REQUIRES: host-entries
 # RUN: round-trip
 # CHECK: variable g0 name="a" module=m0 declared={type=anything}
 # CHECK-NEXT: module m0 path="/a.ts" displayPath="a.ts" body=f0 exports=[{name="apply" variable=g0}, {name="default" variable=g0}, {name="fetch" variable=g0}]

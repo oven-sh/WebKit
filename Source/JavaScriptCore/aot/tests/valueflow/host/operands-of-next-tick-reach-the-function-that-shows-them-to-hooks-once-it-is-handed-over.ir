@@ -2,6 +2,7 @@
 # While a hook of node:async_hooks is enabled, process.nextTick hands the callback and its arguments to the function that lies on the ring, which node:async_hooks has put there.
 # A row keeps what lies there in a native cell, and the overload calls it with the operands of the call. operands-of-next-tick-reach-nobody-without-a-hook.ir has no store.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f5 v2 -> f6
 

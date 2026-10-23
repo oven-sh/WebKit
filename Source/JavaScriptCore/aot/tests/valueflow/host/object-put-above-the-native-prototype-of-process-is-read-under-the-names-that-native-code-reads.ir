@@ -2,6 +2,7 @@
 # `above` is not handed over: native code looks through it, under the names of the table's list. `process` may have lost its `stdin`, so that lookup comes to `above` and finds the array, with all it holds.
 # %EventEmitter%.prototype has `emit` among its own members, so nobody asks `above` for it, and native code looks up no `helper`
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped=f1 escaped=f2 escaped=f3 escaped-builtin=Process
 # CHECK: escaped=f1
 # CHECK-NEXT: n0 escaped

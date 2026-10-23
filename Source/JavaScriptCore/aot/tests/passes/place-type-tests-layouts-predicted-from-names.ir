@@ -1,5 +1,6 @@
 # Of an object that nobody could follow, the names it is asked for are all there is to go by: where few allocated layouts have them, the object is expected to be one of those, and a test for those layouts guards the slots
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass PlaceTypeTests
 # LOSS: MaxDeclarationsPredictedFromNames x1 f1 v1
 

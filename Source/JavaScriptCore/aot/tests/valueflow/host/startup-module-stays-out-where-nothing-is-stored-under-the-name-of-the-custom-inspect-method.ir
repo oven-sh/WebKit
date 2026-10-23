@@ -2,6 +2,7 @@
 # The formatter looks for the custom inspect method of what it prints under one name, and calls it with a function of a start-up module. Nobody knows the operand.
 # It has such a method only if some statement has stored one under that name, on whatever object, or if it may be an instance of a class of the table that has one. Neither is so here:
 # the module is not read. (What native code answers without a description may be a Buffer, which has the method: no such value comes into being here.)
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK: unreached f2

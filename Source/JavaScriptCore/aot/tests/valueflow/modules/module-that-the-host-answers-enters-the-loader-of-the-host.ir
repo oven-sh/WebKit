@@ -2,6 +2,7 @@
 # The build knows the file and has no code for it: the run time asks the host, and the host's require() is a function of the library (overridableRequire, runtimefunction 65547).
 # So that function is in the image. A program without such a module leaves it out: loader-of-the-host-stays-out-without-a-module-that-the-host-answers.ir
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # RUN(UNSEEN): valueflow-solve unseen

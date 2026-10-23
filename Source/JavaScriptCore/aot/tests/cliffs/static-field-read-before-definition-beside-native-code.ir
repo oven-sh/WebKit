@@ -2,6 +2,7 @@
 # The class objects that escape are handed to native code, which only reads them. One call of a callee nobody knows in the program would let code that nobody compiles write to them, and then nobody knows the writers of their static fields
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses
+# REQUIRES: host-entries
 # RUN: pipeline ResolveAccesses
 # RUN(ORDER): valueflow-apply
 # ORDER: variable g10 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead

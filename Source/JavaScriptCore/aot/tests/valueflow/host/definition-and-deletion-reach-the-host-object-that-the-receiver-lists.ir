@@ -1,6 +1,7 @@
 # hidden = globalThis[name]; process[key] = 1; Object.defineProperty semantics: hidden[key] defined as a closure; delete hidden[key]; process.release
 # `globalThis[name]` answers the unknown object, and beside it the operand lists `process`. The store under a key nobody knows leaves no member of `process` locked, so the definition and the deletion work at run time:
 # a read by name finds what was defined, and undefined once the member is gone. HeapRule::store() says the same of a store
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f0:v10
 # primitive0 is undefined
 # CHECK: result {{*}} primitive0 {{*}} f1

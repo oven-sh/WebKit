@@ -1,6 +1,7 @@
 # setTimeout(later, 10); setImmediate(soon); kept = setTimeout(watched, 10); bytes.reduce(fold, first)
 # The timer is the `this` of its callback, and what the callback of reduce() answers is its next accumulator: both are the result of the call.
 # The program drops three of the four results, so no value of the program holds them. Native code hands them on all the same.
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f1:v1 values=f2:v1 values=f3:v1 values=f4:v3
 # CHECK: values=f1:v1
 # CHECK: operand 0 {{*}} 1 members: object{{*}}@f0

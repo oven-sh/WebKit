@@ -1,6 +1,7 @@
 # node:readline   var exports = { first, second }; function first() { .. exports .. }; return exports        main   readline = require("node:readline"); input(require(name))
 # A module of the library whose functions name the object that holds its exports keeps that object in a variable and returns the variable. It is the same object to whoever loads the module:
 # it is only held, however it got into hands that nobody follows, and so is whatever it leads to. export-of-library-module-is-held-not-called.ir has the object returned as it is allocated
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK: unreached f2

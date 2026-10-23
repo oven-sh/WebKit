@@ -1,6 +1,7 @@
 # Each reason for which a call with a typed form keeps its plain result is reported as a decline with the reason
 # FORM: Prepared
 # OPTIONS: report=Declines
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults
 # STATISTIC: TypedResultsSelected = 0
 # CHECK: outcome: Unchanged

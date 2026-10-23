@@ -1,5 +1,6 @@
 # A call or construction whose callee is one built-in function by its type becomes a CallBuiltin
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins
 # RUN(PLACED): pass ResolveBuiltins PlaceTypeTests
 # CHECK: outcome: Changed

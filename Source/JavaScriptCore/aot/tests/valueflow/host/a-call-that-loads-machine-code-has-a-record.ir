@@ -1,6 +1,7 @@
 # process.dlopen(module, "./addon.node")
 # Machine code is no JavaScript that nobody has seen: the solve raises no event for it, no fact falls, and the run time admits no text for its sake.
 # But an addon reads and calls globals by names that nobody sees, so whoever removes what the program does not use is told of each call that may load one: a record with a cause of its own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen RunsMachineCode ProcessDlopen f0:v4
 # CHECK-NEXT: unseen-code no

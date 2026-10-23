@@ -1,6 +1,7 @@
 # x.json() of a receiver that is only expected stands behind a test, and its promise meets what the call by name answers in front of the one await. The arm of the test calls x.bytes(), each jump says whether it brings bytes, and only those are parsed behind the await
 # FORM: Prepared
 # OPTIONS: report=Declines
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 3
 # STATISTIC: ParsersCreated = 1

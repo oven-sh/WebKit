@@ -1,6 +1,7 @@
 # In a module of the library: function Base() {}; Base.prototype = {}; Base.prototype.on = first; Base.prototype.emit = first; function Heir() {}; $toClass(Heir, "Heir", Base); Heir.prototype.on = second
 # $toClass puts the function below the base and gives it a prototype object of its own below that of the base. A store to `Heir.prototype` is none to `Base.prototype`:
 # a name that both classes define is known of both. The model of the table is one function for all calls, with one new object, and is not entered.
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 kind=Instance name="Base" {{*}}namedMembers=[{key="on" function=f3}, {key="emit" function=f3}]
 # CHECK: layout L1 kind=Instance name="Heir" {{*}}namedMembers=[{key="on" function=f4}]

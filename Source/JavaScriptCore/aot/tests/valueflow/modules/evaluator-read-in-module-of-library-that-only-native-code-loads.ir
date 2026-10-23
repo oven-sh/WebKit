@@ -3,6 +3,7 @@
 # The program asks for no module of the library: native code requires the start-up module on its own, so the body of the module is no seen code.
 # Its read names the evaluator all the same and answers it, as the operation `Builtin` does there: what hangs from `Function` is followed. A read is no event.
 # evaluator-called-in-function-of-library-that-only-native-code-enters.ir has the call of an evaluator in such code
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f1:v1 values=f1:v2 values=f1:v3
 # CHECK: values=f1:v1
 # CHECK: result {{*}} Function

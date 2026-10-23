@@ -2,6 +2,7 @@
 # Only a read that names the accessor enters the function behind it. TODO: the program has values that nobody knows, and `unknown[key]` names no member of the host: where such a read hits the accessor
 # at run time it is refused with the error that names it. Entering the function once a call may call whatever has escaped cures that (tried 00:33:12, taken out: one function more in the tests of T:codegen)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK: unreached f2

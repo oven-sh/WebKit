@@ -1,6 +1,7 @@
 # A closure of a bound function is slim like the arrow functions beside it, whatever is done with it. In a runtime module, whose functions native code casts, it is slim only where every result of the calls of bind is only called: a read of name or of length and instanceof make it full. More than four captures make it full everywhere. It captures the closure of its target only where the target has captures of its own
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveCalls,PlaceTypeTests,ChooseCallingConventions
+# REQUIRES: host-entries
 # RUN: plan-slots closures
 # RUN(SITES): place program
 # STATISTIC: BoundFunctions = 7

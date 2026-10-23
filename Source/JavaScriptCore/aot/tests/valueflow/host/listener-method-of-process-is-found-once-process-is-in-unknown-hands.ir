@@ -1,6 +1,7 @@
 # handedOver(process).on("message", 1)
 # `process` is in unknown hands, so the object that the call answers may be `process`, which inherits `on` from %EventEmitter%.prototype.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped-builtin=Process used-builtin=EventEmitterPrototypeOn
 # CHECK: escaped-builtin=Process
 # CHECK-NEXT: n0 escaped

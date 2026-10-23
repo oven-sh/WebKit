@@ -1,6 +1,7 @@
 # console.log(JSON.parse(text))
 # What JSON.parse makes holds primitives, ordinary objects and arrays, under whatever key. The formatter looks for a method under Symbol.for("nodejs.util.inspect.custom") and finds such an object at most:
 # none of them is a function, so it calls nothing, hands nobody the printer of node:util, and native code reads no start-up module.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

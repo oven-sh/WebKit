@@ -2,6 +2,7 @@
 # The front end binds the call to the module of the library that the constant names, and keeps the call itself for a program that has put another function in the place of process.getBuiltinModule.
 # Nobody has, so nothing gets past the comparison and the module is required like one that is imported: no module is loaded by name, the file that nobody imports stays unreached,
 # and the module outside the image does not run
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v8 ->
 # CHECK-NOT: ProcessGetBuiltinModule

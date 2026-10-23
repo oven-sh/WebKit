@@ -1,6 +1,7 @@
 # A Buffer has the cell type of a Uint8Array, so no test at run time tells that one is pristine. A proof needs no test: the type of a Buffer that flow follows, and the creation of a new one
 # FORM: Prepared
 # Each run takes the facts as they stand when it begins, where a read by name that it has not resolved yet counts as unknown code: the call, then one read a run
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins ResolveBuiltins ResolveBuiltins ResolveBuiltins
 # CHECK-NOT: IsPristine
 

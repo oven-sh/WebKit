@@ -3,6 +3,7 @@
 # main.js: require("node:readline"); Function("text")()
 # Unseen code may load node:path by its name and store into what it exports, so nobody knows what the read of path.kHandle answers.
 # exports-of-an-internal-library-module-stay-known-where-unseen-code-runs.ir has the module that no name loads
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Holder" fields=[{key="a"
 # CHECK-NOT: symbol("handle")@m1:100 declared

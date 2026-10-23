@@ -2,6 +2,7 @@
 # so it has the word, and its number slots have the markers for a field that has left its slot
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow references=narrow
+# REQUIRES: host-entries
 # RUN: plan-slots layouts
 
 module m0 path="main.js" displayPath="main.js" body=f0

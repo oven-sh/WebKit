@@ -1,6 +1,7 @@
 # main.cjs: exports.kept = function () {}; globalThis.name in process; eval(globalThis.text)
 # The host makes many members of process when they are first looked for, so a test counts as a read of the ones that code of the library makes. A key nobody knows names no way to the module objects
 # all the same: in a program in which no file names a way between module objects the host makes undefined of it and runs nothing. What the module exports stays in the program beside evaluated text.
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=ProcessMainModule escaped=f1
 # CHECK: used-builtin=ProcessMainModule
 # CHECK-NEXT: not held

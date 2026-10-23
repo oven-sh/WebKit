@@ -1,6 +1,7 @@
 # process.on("mess" + String(Date.now()), listener)
 # Nobody follows the text of a string that is put together at run time, so it may be one of the events for which the functions of the channel hang on `on`: parseHandle is entered (runtimefunction 65559)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

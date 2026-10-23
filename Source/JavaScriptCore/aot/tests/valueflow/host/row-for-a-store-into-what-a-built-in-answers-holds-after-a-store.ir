@@ -1,5 +1,6 @@
 # `process.env.NAME = value` may warn about the value. The table does not describe the object, so any store into an object nobody knows counts: here through a second name of it (runtimefunction 65572)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 

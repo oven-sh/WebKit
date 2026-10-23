@@ -1,4 +1,5 @@
 # validate<T>(v) keeps what its result is expected to be on the way from the call as read to the pass that expands it: the library function of the entry, which returns its argument, is never called in its place
+# REQUIRES: host-entries
 # RUN: pipeline SelectTypedResults
 # STATISTIC: TypedResultsSelected = 1
 # STATISTIC: ValidatorsCreated = 1

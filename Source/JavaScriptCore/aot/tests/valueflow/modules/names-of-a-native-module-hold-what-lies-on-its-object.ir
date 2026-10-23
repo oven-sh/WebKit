@@ -3,6 +3,7 @@
 # and some modules with a value that they make anew where the property is gone or is an accessor by then.
 # So a member of an object that the program only stores to is the function of the table or what is stored. Once the program has deleted something from the object,
 # nobody knows what any of its names holds. `undefined` is what these variables are declared with here
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f0:v8 values=f0:v10 values=f0:v12 values=f0:v14 values=f0:v16
 # CHECK: values=f0:v8
 # CHECK: operand 0 {{*}} 2 members: primitive0 ProcessNextTick

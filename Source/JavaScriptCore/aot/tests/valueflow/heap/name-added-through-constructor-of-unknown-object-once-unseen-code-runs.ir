@@ -2,6 +2,7 @@
 # A plugin lets in whole files that the build has not seen. Such code may patch the realm before anybody uses it, so nothing there is locked: the built-in objects of the realm are open, and it holds all of them.
 # The unknown object may be an array, so the store may go to `Array`: what the program stores through the unknown object is found on every object that has escaped.
 # name-added-through-constructor-of-unknown-object-where-text-is-evaluated.ir has the same program with eval in place of the plugin
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v10 -> {{*}}f1
 # RUN(UNSEEN): valueflow-solve unseen

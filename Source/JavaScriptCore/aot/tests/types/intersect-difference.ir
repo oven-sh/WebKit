@@ -1,5 +1,6 @@
 # A Buffer is also a Uint8Array, and the result lists an object of both classes under the subclass. Against t4, which lists both classes, a Buffer in t3 is listed as a Buffer and the rest takes the proof of t4's part.
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: intersect
 # CHECK: t0 & t1 = string
 # CHECK-NEXT: t0 - t1 = int[0, 9]

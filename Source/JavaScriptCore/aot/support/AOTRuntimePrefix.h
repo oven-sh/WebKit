@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "JavaScriptCorePrefix.h"
+#include "AOTPrefix.h"
 
 #ifdef __cplusplus
 #include "config.h"

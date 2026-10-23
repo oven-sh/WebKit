@@ -3,6 +3,7 @@
 # A read that starts at a built-in holder with a member of the name finds the member, so it does not answer undefined: the lookup never comes to the end of a chain.
 # It may answer undefined where the member may be deleted, where an accessor with a setter alone may take its place, where undefined is stored, and where the holder has no such member.
 # What the table lists at a prototype object for the instances of the class does not lie on that object, and a member that changes on its own may hold anything
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="kept" module=m0 declared={type=builtin(ConsoleLog)}
 # CHECK: variable g1 name="deleted" module=m0 declared={type=anything}

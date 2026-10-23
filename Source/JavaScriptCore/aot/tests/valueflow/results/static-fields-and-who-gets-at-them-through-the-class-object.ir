@@ -10,6 +10,7 @@
 #   class Plain { static count = 1.5 }  Plain.count
 #   class ReadByKey { static count = 1.5 }  ReadByKey[name]
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L2 {{*}}staticNamesAreComplete=true
 # CHECK: layout L3

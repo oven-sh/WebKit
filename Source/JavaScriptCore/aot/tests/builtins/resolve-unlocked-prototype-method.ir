@@ -1,5 +1,6 @@
 # A method found on a prototype that is not always locked, or on an instance that can never be tested pristine, is tested by identity, and the failing side calls the value that was read
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins InsertObjectCoercibleChecks PlaceTypeTests
 # CHECK: outcome: Unchanged
 # CHECK: outcome: Changed

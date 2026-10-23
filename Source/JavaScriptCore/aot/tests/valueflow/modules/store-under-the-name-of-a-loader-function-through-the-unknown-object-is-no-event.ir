@@ -2,6 +2,7 @@
 # `Module` is in unknown hands, and the program stores under `_resolveFilename` into an object nobody knows: a field of its own, for all that the build can tell. That is no store to Module._resolveFilename,
 # so a require with a constant name keeps its answer. Should the store hit the function of the loader at run time, the run time refuses it.
 # store-to-a-function-of-the-loader-replaces-no-answer.ir has a store that the build sees
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen LoadsModuleByName
 # CHECK-NOT: unseen ReplacesLoaderAnswers

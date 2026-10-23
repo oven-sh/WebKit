@@ -1,5 +1,6 @@
 # new Error("x")[Symbol.for("nodejs.util.inspect.custom")]
 # Nothing of the host lies above an error, an array or an object literal: the read finds nothing that calls the printer of node:util.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

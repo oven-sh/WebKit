@@ -3,6 +3,7 @@
 # publish({ id: 1, name: "a" }); keep({ key: "k" }); parsed = JSON.parse(text); handle(parsed); keep(parsed)
 # The JSON parser may allocate a Body: one has escaped, so flow claims nothing about the layout. No Kept has escaped.
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: tables layouts
 # CHECK: layout shape=[[body]] index=L0 kind=Record name="Body"
 # CHECK: parsedRecordField name="id" shape=[[body]]

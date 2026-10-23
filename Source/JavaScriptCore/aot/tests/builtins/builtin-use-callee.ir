@@ -1,5 +1,6 @@
 # A call of a callee expected to be one built-in reports the identity test of the callee, then the tests its operands need to match an overload
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass PlaceTypeTests
 # RUN(PLAN): test-placement
 # CHECK: outcome: Changed

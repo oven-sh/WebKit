@@ -1,6 +1,7 @@
 # The library is followed like the program. `const kState = Symbol("kState")` in a module of the library is created once and stored before every read, so the variable holds that one symbol and nothing else:
 # `holder[kState]` becomes an access by name, and the objects that the symbol is stored into get a field for it. A variable that the body stores behind a call of its reader keeps its dead zone.
 # A function of the library whose callers are all known gets the types of what they pass and of what it returns. Native code enters a function that stands behind a built-in, so the parameters of that one keep their types
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Holder" fields=[{key=symbol("kState")@m1:100
 # CHECK: variable g0 name="kState" module=m1 declared={type=symbol("kState")@m1:100} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}

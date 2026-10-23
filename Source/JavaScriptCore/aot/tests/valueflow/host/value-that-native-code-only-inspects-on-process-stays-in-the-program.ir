@@ -2,6 +2,7 @@
 # const above = Object.create(null); above.noDeprecation = other; Object.setPrototypeOf(Object.getPrototypeOf(process), above)
 # Native code asks whether process._fatalException can be called and whether the other two are true. It neither calls nor keeps what it finds, on `process`, on the native prototype or above that
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped=f1 escaped=f2 escaped=f3 escaped-builtin=Process
 # CHECK: escaped=f1
 # CHECK-NEXT: not held

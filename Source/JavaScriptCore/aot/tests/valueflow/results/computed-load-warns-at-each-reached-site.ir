@@ -1,4 +1,5 @@
 # The build warns once at each reached require(x) and import(x) under a computed name in the program's own code: not in a function that nothing calls, and not in a module of the library that has run
+# REQUIRES: host-entries
 # RUN: valueflow-results
 # DIAGNOSTIC: CodeOutsideImageIsRefused 3
 # CHECK: function f1 reachability=Unreached

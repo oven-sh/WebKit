@@ -1,6 +1,7 @@
 # A constant name that is still handed to require() stays with the loader whole: what it answers for an ES module that is running hangs on whether a require() or an import has begun the evaluation,
 # which only the loader knows. A module that the loader enters evaluates what it imports by itself.
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: pipeline CallModules
 # STATISTIC: ModulesWithState = 2
 

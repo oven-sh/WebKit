@@ -2,6 +2,7 @@
 # `$cpp` and `$rust` answer whatever their native function returns: an object, a list of objects, a number. Nobody knows that value, nor what a call of it enters.
 # The example is a binding for Bun's own tests: the table will not come to describe it.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f1 v2 -> unknown
 # RUN(UNREACHED): valueflow-solve unreached

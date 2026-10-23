@@ -1,5 +1,6 @@
 # class Body { constructor() { this.hits = 0 } }; body = new Body; new NativeZlib(1); somebody = new Proxy({}, {}); somebody.onerror = body; return body.hits
 # An instance of a class that has a setter under the name may exist, and the unknown object may be that instance: the setter of that class runs. Those of the other classes still wait.
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK-NOT: NativeBrotliPrototypeOnerror
 # CHECK: NativeZlibPrototypeOnerror

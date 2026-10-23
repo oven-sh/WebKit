@@ -1,6 +1,7 @@
 # new vm.Script(input)
 # node:vm compiles text, as eval and Function do: a script in the global scope of this realm, or code in a realm of its own that has of this one what it is handed. The text finds the realm closed
 # and locked like everybody else, so unseen code runs and the realm is not changed behind the analysis. plugin-changes-the-realm.ir has code that is started with a loader in its hands
+# REQUIRES: host-entries
 # RUN: valueflow-why flag=h5 flag=h19
 # CHECK: flag=h5
 # CHECK-NOT: not held

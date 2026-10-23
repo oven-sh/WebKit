@@ -1,5 +1,6 @@
 # Each module record has an entry, and one more ends the table. Only modules with a unique path are listed by path, so External and Runtime records are left out. A RuntimeSource record is also listed by its registry id
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: tables
 # RUN(ROWS): tables modules
 

@@ -1,6 +1,7 @@
 # process.on.call(handedOver(), "message", listener)
 # Nobody knows the receiver. Nobody was handed `process`, so it is not `process`, and parseHandle is not entered (runtimefunction 65559)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 

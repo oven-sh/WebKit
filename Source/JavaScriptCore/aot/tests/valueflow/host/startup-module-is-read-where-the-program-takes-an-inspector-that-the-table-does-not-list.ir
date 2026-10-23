@@ -1,5 +1,6 @@
 # new ReadableStream()[Symbol.for("nodejs.util.inspect.custom")](2, {})
 # The table does not list all that lies on the prototype object of the streams, so the method by which a stream prints itself may be what the read finds there.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

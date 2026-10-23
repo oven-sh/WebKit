@@ -1,5 +1,6 @@
 # Every operation and terminator the engine creates that is legal from form Prepared on
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: round-trip
 # CHECK: expectedresult x0 type=anything
 # CHECK-NEXT: layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]

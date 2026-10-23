@@ -1,6 +1,7 @@
 # other.ts: export * as B from "bun"        main.ts: import { B } from "./other"; B.color("red", "hex")
 # Here `B` is the namespace object of the module, another object than `Bun`. The loader has filled it from `Bun`, name by name, so a read under a name finds what `Bun` holds under that name,
 # and it is a use of that member: the read names it by binding. That the namespace object was made is a use of no member: nothing else of `Bun` is used
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v4 ->{{*}} BunColor
 # RUN(USED): valueflow-solve used

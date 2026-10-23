@@ -1,5 +1,6 @@
 # The host alone calls a handler, 32768 times in a run, whether the handler is a member of an options object or an operand: the function that registers it has no edge to it and neither has unknown code. A callback called once later has an edge from the function that hands it over
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: heat-graph flow
 
 module m0 path="main.js" displayPath="main.js" body=f0

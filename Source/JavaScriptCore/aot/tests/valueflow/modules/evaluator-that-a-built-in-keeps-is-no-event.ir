@@ -1,6 +1,7 @@
 # process.emitWarning(eval)
 # The program hands the evaluator itself to a built-in that keeps its operand. A built-in that has come into unknown hands is a value like any other: a mention, and no call.
 # The run time refuses an evaluator in an image whose build saw no application of one
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen EvaluatesText
 # CHECK: unseen-code no

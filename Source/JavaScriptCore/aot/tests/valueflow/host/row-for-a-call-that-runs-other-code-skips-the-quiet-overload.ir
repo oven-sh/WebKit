@@ -1,5 +1,6 @@
 # setTimeout(f, 10) takes the overload for a delay that fits a timer, which warns about nothing: the warning printer is not entered (runtimefunction 65572)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NOT: unreached f2

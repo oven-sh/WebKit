@@ -2,6 +2,7 @@
 # and a pass calls it in code that it makes behind the analysis: `list.slice(0, 2).join()` becomes one call that passes 2 as `end`.
 # The analysis has seen no number arrive there. That does not say that none does: the callers are not all known, and the parameter keeps its type.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why reached=f1
 # CHECK: f1 <- UsedBuiltins
 # RUN(RESULTS): valueflow-results

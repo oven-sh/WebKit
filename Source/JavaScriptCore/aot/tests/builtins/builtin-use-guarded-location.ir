@@ -1,6 +1,7 @@
 # A member of a built-in object that only a write replaces, where nothing rules the write out, is taken for what the realm was created with behind a test of its location.
 # The failing side reads by name. The test holds until something may write a named property
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass PlaceTypeTests
 # RUN(PLAN): test-placement
 # CHECK: outcome: Changed

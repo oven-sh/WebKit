@@ -1,5 +1,6 @@
 # Creating a permanent constant cell touches the allocator and is no safepoint; a cell made at each evaluation, or by the host, collects
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: effects f0
 # RUN(EACH): effects f1
 

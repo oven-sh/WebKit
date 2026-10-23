@@ -1,6 +1,7 @@
 # x.json() that is awaited at once becomes x.bytes(), the same await, and a parse of the bytes, with the decoded text given to JSON.parse on the rare path
 # FORM: Prepared
 # OPTIONS: report=Declines
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 4
 # STATISTIC: ParsersCreated = 1

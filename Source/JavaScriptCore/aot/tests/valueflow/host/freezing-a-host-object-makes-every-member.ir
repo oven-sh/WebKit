@@ -1,6 +1,7 @@
 # main.js: Object.freeze(process)
 # Freezing and sealing define every own property anew, and a definition looks for the property first, which has the host make the value of a member that it makes lazily: the code that makes it is in the image.
 # definition-and-deletion-on-a-host-object-make-the-member-they-look-for.ir has the definition of one member
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=ProcessStdin used-builtin=ProcessAllowedNodeEnvironmentFlags
 # CHECK: used-builtin=ProcessStdin
 # CHECK-NOT: not held

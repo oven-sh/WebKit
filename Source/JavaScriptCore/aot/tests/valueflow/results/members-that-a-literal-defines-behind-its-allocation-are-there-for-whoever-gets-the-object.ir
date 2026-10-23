@@ -1,6 +1,7 @@
 # In internal/shared: export default { helper, other }      In node:readline: const { helper } = require("internal/shared"); function run() { return helper() }
 # The front end puts a member into the allocation of a literal only where the type of the field is established. Every other member is defined behind the allocation, and FinishObject hands the object out:
 # nobody else holds it before. So whoever reads `helper` off the object finds it, and the constant of the importing module holds the function and never undefined.
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="helper" module=m1 declared={type=f4}
 

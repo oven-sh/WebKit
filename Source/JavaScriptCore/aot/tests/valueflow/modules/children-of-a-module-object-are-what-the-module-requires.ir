@@ -3,6 +3,7 @@
 # that of child.cjs, and through it that of grandchild.cjs. The list itself is an object nobody knows, so the two are in unknown hands, and with them what the two files export.
 # In a program that names such a way the module object of every entry point is found from the global scope, under process.mainModule, by whoever reads globals by a name that the build does not see.
 # So that of other.cjs is in unknown hands too, and through it that of apart.cjs
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v7 -> unknown
 # RUN(WHY): valueflow-why escaped=f2 escaped=f4 escaped=f7

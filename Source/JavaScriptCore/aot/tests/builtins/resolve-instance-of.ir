@@ -1,5 +1,6 @@
 # instanceof with a built-in constructor is answered from the type of the value, or by a class test and a pristine test that can only answer yes. What is left walks the chain of the value for the prototype object
 # OPTIONS: only-passes=ResolveBuiltins
+# REQUIRES: host-entries
 # RUN: pipeline ResolveBuiltins
 # RUN(TWICE): pass ResolveBuiltins ResolveBuiltins ResolveBuiltins
 # TWICE: outcome: Changed

@@ -2,6 +2,7 @@
 # Evaluated text names the modules of the library, so native code holds what those in the image export. Whatever the program can call has to work on a path that nobody follows too:
 # the export that seen code calls is entered with operands nobody knows as well. The export beside it is still only held. It stays unreached, and so does the module that it requires.
 # What is held is written like what has escaped, so a read of the object that holds the exports may find anything
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v7 -> Eval
 # CHECK-NEXT: f0 v9 -> unknown

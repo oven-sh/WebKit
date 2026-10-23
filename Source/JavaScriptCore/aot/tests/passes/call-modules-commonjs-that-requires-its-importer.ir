@@ -2,6 +2,7 @@
 # So where some require() names an ES module, the CommonJS files that the module imports are evaluated before it begins. Each of them has a state of its own, for the importer comes by twice.
 # Whatever else the module imports is evaluated behind its beginning, as everything is that a module imports which no require() names.
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: pipeline CallModules
 # STATISTIC: ModulesWithState = 2
 # STATISTIC: ModulesWithoutState = 2

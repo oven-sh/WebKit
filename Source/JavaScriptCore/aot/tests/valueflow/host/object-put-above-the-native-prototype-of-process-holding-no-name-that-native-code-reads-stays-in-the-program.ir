@@ -1,6 +1,7 @@
 # const above = Object.create(null); above.on = on; above.emit = emit; Object.setPrototypeOf(Object.getPrototypeOf(process), above); process.noDeprecation
 # Nothing on `above` lies under a name that a lookup of native code comes to it with, so neither `above`, nor what it holds, nor `process` is in unknown hands
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped=f1 escaped=f2 escaped-builtin=Process escaped-builtin=EventEmitterPrototype
 # CHECK: escaped=f1
 # CHECK-NEXT: not held

@@ -3,6 +3,7 @@
 # the getter of `ReadStream` runs and requires internal/fs/streams, and the function under `lstatSync` arrives at the call. Nothing binds `promises`, so its getter does not run and node:fs/promises is not evaluated.
 # Whoever holds the namespace object reads any name, so both getters of node:stream run, and what they require is evaluated
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f
 # CHECK: unreached f4

@@ -1,6 +1,7 @@
 # The objects that validating parsers allocate and validators clone have the stamp of the one site flow modeled for typed results of their layout
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveBuiltins,SelectTypedResults
+# REQUIRES: host-entries
 # RUN: pipeline SelectTypedResults
 # STATISTIC: TypedResultsSelected = 2
 # STATISTIC: ParsersCreated = 2

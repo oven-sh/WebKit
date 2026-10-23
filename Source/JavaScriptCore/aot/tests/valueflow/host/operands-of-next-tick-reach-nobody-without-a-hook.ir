@@ -2,6 +2,7 @@
 # Nothing has put a function on the ring, so the overload of process.nextTick finds nothing to show the operands to.
 # operands-of-next-tick-reach-the-function-that-shows-them-to-hooks-once-it-is-handed-over.ir has the store.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f5
 # CHECK-NEXT: unreached f6

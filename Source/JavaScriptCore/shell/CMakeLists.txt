@@ -4,8 +4,7 @@ list(TRANSFORM JavaScriptCore_AOT_TEST_SOURCES PREPEND ../ OUTPUT_VARIABLE aotTe
 
 # A static JavaScriptCore leaves the table of built-ins to the program that links it. Compiled once, for all of them.
 if (ENABLE_STATIC_JSC)
-    list(TRANSFORM JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES PREPEND ../ OUTPUT_VARIABLE aotBuiltinTableSources)
-    add_library(aot-builtin-table-obj OBJECT ${aotBuiltinTableSources})
+    add_library(aot-builtin-table-obj OBJECT ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES})
     target_include_directories(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>)
     target_compile_definitions(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,COMPILE_DEFINITIONS>)
     target_compile_options(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,COMPILE_OPTIONS>)

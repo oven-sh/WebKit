@@ -1,6 +1,7 @@
 # A query whose awaited result is checked for, or expected to be, an array of one head layout is marked with that layout right after the call
 # FORM: Prepared
 # OPTIONS: report=Declines
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 3
 # STATISTIC: ParsersCreated = 0

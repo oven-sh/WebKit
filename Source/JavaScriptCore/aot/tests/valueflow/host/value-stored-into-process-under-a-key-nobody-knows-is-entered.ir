@@ -1,6 +1,7 @@
 # process[handedOver()] = helper
 # The key may be one of the names that native code looks up on `process`
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached
 

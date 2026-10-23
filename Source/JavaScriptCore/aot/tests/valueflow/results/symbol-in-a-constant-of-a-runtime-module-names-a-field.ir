@@ -3,6 +3,7 @@
 # A constant at the top level of a module of the library starts as undefined, as in plain Bun, whose bundler makes a `var` of it. The library reads none before its only store, so the solve takes the key of
 # `holder[kState]` for the symbol alone: the store names a field. A variable of the program that starts as undefined may be read so: the key is the symbol or "undefined". SplitUnions tests such a key,
 # so the store names a field there too, and none under "undefined"
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Holder" fields=[{key="a"
 # CHECK: {key=symbol("state")@m1:100 declared={type=int} flags=[IsAddedLate

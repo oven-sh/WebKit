@@ -1,6 +1,7 @@
 # A function that returns import.meta or a fresh array is split, and where the worker returns the array the place of import.meta holds an Unspecified of that type: the program tables can describe it, so the build succeeds
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# REQUIRES: host-entries
 # RUN: compile
 # RUN(SPLIT): pipeline SplitFreshResults
 # CHECK: image not empty

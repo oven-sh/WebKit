@@ -1,5 +1,6 @@
 # typeof process.dlopen    input(process)
 # Only a call counts. A mention is none, and neither is a loader that has come into unknown hands with the object that holds it: `process[name]` blocks nothing
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen Runs
 # CHECK: unseen-code no

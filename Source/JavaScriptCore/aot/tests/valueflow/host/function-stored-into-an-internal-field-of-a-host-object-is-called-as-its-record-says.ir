@@ -1,6 +1,7 @@
 # $putInternalField(queue, 2, drain): the queue is an object of native code, which calls what lies in that field without operands and drops the answer
 # The function is entered and has not escaped. One that stays in the hands of the library is not entered.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f2
 # CHECK: unreached f3

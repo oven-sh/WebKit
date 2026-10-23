@@ -1,6 +1,7 @@
 # What the run time does with a promise takes no call of the program: the functions that the table hangs on Promise (runtimefunction 65572 and 65578)
 # are entered where a function that makes a promise is reached
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f2
 # CHECK-NOT: unreached f3

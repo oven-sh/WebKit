@@ -1,6 +1,7 @@
 # main.cjs: require("./child.cjs"); module.children; handedOver(module)        child.cjs: module.exports = exportedByChild
 # The front end says that the program names a way between module objects (flags of main.cjs), so the host answers `children` to whoever holds a module object. The module object of main.cjs is in unknown hands, and with it that of child.cjs and what child.cjs exports.
 # main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir has a program that does not name the way
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped=f2
 # CHECK: n0 escaped
 

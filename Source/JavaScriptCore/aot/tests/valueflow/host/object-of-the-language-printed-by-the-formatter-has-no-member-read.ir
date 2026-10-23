@@ -1,6 +1,7 @@
 # console.log(Object)
 # What the language puts on its own objects lies there without any code of the library: the walk is no use of a member, and nothing of the library comes in for it.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=ObjectKeys used-builtin=ObjectPrototype
 # CHECK: used-builtin=ObjectKeys
 # CHECK-NEXT: not held

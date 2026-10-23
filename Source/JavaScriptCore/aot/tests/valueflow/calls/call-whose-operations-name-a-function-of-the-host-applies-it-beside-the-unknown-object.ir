@@ -3,6 +3,7 @@
 # and the unknown object covers what has escaped: the callees of the calls in `later`, which is reached behind all that, show the unknown object and nothing else.
 # Of what the unknown object covers nobody applies a function of the host. The operations of a call lead to the entry by themselves, so the call names it and applies it: it counts as run.
 # So does a call that passes a list.
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f1 v4 -> unknown
 # CHECK: f1 v7 -> unknown

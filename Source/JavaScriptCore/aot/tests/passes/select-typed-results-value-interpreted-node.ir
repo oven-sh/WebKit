@@ -1,5 +1,6 @@
 # validate<T>(v) of a type with a node that the library validates, at the root or below, asks the general validator at once: the interpreter reads the value of the program, getters and all, and whenever the validation then ended in anything but Parsed the general validator would read it a second time
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults
 # STATISTIC: TypedResultsSelected = 2
 # STATISTIC: ValidatorsCreated = 0

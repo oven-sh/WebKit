@@ -2,6 +2,7 @@
 # The results are handed to a built-in that looks at its operand and neither keeps nor writes it: a callee nobody knows may store into the arrays, and then nothing is proven of them
 # FORM: AsRead
 # OPTIONS: report=Declines only-passes=ResolveBuiltins,SelectTypedResults
+# REQUIRES: host-entries
 # RUN: pipeline SelectTypedResults
 # STATISTIC: TypedResultsSelected = 3
 # STATISTIC: ParsersCreated = 6

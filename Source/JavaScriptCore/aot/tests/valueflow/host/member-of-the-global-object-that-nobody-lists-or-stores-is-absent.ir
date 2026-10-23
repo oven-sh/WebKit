@@ -1,6 +1,7 @@
 # post = globalThis.__configOfSomePackage; post(1);        globalThis.__hookOfSomeTool(2)
 # The table lists every own name that the engine and the host give the global object. No statement stores under these two, no text that nobody has seen runs and no addon is loaded:
 # the reads answer undefined, so nothing that nobody knows is called and no built-in counts as called or used for it.
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f0:v1 values=f0:v4 flag=h23 flag=h6 used-builtin=BufferPrototype
 # CHECK: values=f0:v1
 # CHECK: result {{*}} 1 members: primitive0

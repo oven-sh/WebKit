@@ -215,7 +215,7 @@ size_t MarkedBlockCage::reserveSize() const
 
 void MarkedBlockCage::keepReserveOnceHalfFull()
 {
-#if CPU(X86_64)
+#if CPU(X86_64) || CPU(ARM64)
     if (!m_range || m_hasReleasedReserve)
         return;
     size_t size = std::clamp(m_size / reserveDivisor, smallestReserveSize, largestReserveSize);

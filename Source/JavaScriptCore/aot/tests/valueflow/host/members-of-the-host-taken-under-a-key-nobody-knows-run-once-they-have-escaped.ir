@@ -1,6 +1,7 @@
 # publish(Blob.prototype[someName])
 # The read answers every member of Blob.prototype, and the program hands the answer over. Beside the unknown object no call lists a function that has escaped,
 # and of what the unknown object covers nobody applies a function of the host. These the program has taken from their holder itself, so a call of a value nobody knows is a call of each.
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK: run BlobPrototypeImage
 

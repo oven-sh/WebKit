@@ -1,6 +1,7 @@
 # thrown = new Error("x"); thrown.code = {}; thrown.code[Symbol.for("nodejs.util.inspect.custom")] = custom; try { throw thrown } catch (error) { console.log(error.code) }
 # Nobody knows what was caught nor what it holds. A statement has stored a function under the name of the custom inspect method, so the formatter may find it on its operand,
 # and it calls it with a function of a start-up module.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

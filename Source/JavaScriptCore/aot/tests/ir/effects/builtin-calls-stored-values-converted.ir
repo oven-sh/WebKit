@@ -1,5 +1,6 @@
 # An array makes a number of what is stored as its length, and a setter of a host class makes a string or a number of what it takes. A built-in that stores into such an object, or defines on it, runs code that nobody lists. An object that keeps what is stored runs nothing
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: effects summaries f0 f1
 
 module m0 path="main.js" displayPath="main.js"

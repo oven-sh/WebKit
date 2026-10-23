@@ -1,6 +1,7 @@
 # import { getBuiltinModule } from "node:process"; getBuiltinModule(String(Math.random()))
 # No lookup hands out a member that lets unseen code in: a read in a function finds it by itself. When a native module is first loaded the host fills the variable of a name that an importer binds
 # with what lies on the object of the module: that is such a read. The variable holds the loader, and a call of what it holds under a name nobody knows opens the program for loads by name
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f0:v4
 # CHECK: values=f0:v4
 # CHECK: operand 0 {{*}} ProcessGetBuiltinModule

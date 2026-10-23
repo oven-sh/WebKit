@@ -1,6 +1,7 @@
 # A callback handed to a timer of the host, and what it calls, is not code that runs once and ranks above a function called in a loop at start, which is hot too where the callback's code is less than a fifth of the program
 # FORM: AsRead
 # OPTIONS: only-passes=EstimateHeat
+# REQUIRES: host-entries
 # RUN: pipeline EstimateHeat
 # CHECK: f0 RunsOnce [[percentileOfMain]] 1
 # CHECK-NEXT: f1 Hot [[percentile]] [[activations]]

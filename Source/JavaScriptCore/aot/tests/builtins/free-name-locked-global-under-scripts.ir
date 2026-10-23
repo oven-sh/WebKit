@@ -1,6 +1,7 @@
 # The program runs a script of node:vm: text that Function or eval is given declares nothing at the top level. A script may declare a top-level `let Date`, which every free name of the program finds
 # before it asks the global object. It may not declare `let Array`: the run time refuses a declaration under which the global object holds a locked property. So a locked global is a constant here too,
 # a global that only a write replaces is not, and a name that the global object lacks may come to be bound.
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins
 # RUN(FLOW): pipeline ResolveBuiltins
 # CHECK: outcome: Changed

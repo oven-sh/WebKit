@@ -2,6 +2,7 @@
 # A require() under a name nobody knows answers what an entry point of the program exports, the object of a native module, or data that the loader makes of a file outside the image. The run time refuses code there,
 # and a file that loads as a database or a page. None of these is a callee nobody knows, so the operand of the call goes to the functions that entry points export and to nobody else:
 # not to what a file exports that is in the image because another file names it by a constant, which would call it
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v4 ->{{*}} f2
 # CHECK-NOT: unknown

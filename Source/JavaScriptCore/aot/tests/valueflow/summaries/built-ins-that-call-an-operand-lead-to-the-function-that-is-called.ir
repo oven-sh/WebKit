@@ -3,6 +3,7 @@
 # What a function does with a capture is done with the contents of the closure that is called, and what it stores into a capture lies behind the operand that holds the closure. A function that takes its callee gets hold of the closure.
 # `call`, `apply` and Reflect.apply are built-ins that call an operand: the records say which operand stands where, and the function that is called answers. `bind` keeps its operands in what it answers,
 # and nobody lists what a call of that enters. A closure that native code calls later is kept. A built-in may be the callback. Whether `stringify` finds a toJSON is decided by the type of the operand.
+# REQUIRES: host-entries
 # RUN: fates-at-calls f1.p0=members-written f1.p1=members-read f1.p2=nothing f1.p2.into-parameters=1 f2.p0=stored-in-variable f2.p1=compared f3.p0=members-read f3.p1=nothing f3.p1.results=1
 # CHECK: f0 v5 Call operand 0: called contents=members-written
 # CHECK-NEXT: f0 v5 Call operand 2: members-read contents=nothing read=[any]

@@ -1,5 +1,6 @@
 # A call with a typed result has the effects that its overload declares: it throws, and it runs the code of its operand. The function of the library behind the entry returns its argument and says nothing about the call, but the call may enter it. Where the call itself makes the value that is tested, it says what SelectTypedResults puts in its place: the helper that walks any value
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: effects summaries f2 f3 f4
 # RUN(GRAPH): pass BuildCallGraph
 

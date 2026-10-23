@@ -1,4 +1,5 @@
 # A built-in that may read members it does not name runs the getters that the program has defined, inherited ones too, on every object it reaches. It calls no method that it finds.
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v7 -> f1
 # CHECK-NEXT: f0 v11 -> BunDeepEquals

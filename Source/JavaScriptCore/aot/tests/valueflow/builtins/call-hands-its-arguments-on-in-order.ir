@@ -1,6 +1,7 @@
 # function second(first, value) { first.x; value.x }  second.call(undefined, 1, "text")
 # The row of Function.prototype.call lists its rest operand as the arguments of the function that it calls. They are handed on in order: the number is the first argument and the text the second.
 # Native code says of no position that it leaves it empty, so each parameter may be undefined too (primitive0).
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f1:v2 values=f1:v3
 # CHECK: values=f1:v2
 # CHECK: operand 0 {{*}} 2 members: primitive0 primitive4

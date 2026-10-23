@@ -1,6 +1,7 @@
 # Without a handler the function called in a loop at start is the hottest code, and hot. A callback that a timer or the microtask queue calls once stays cold, and what the module body calls once runs once
 # FORM: AsRead
 # OPTIONS: only-passes=EstimateHeat
+# REQUIRES: host-entries
 # RUN: pipeline EstimateHeat
 # CHECK: f0 RunsOnce 23 1
 # CHECK-NEXT: f1 RunsOnce 0 1

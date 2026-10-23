@@ -1,6 +1,7 @@
 # const above = Object.create(null); above.emit = emit; Object.setPrototypeOf(Object.getPrototypeOf(process), above); delete Object.getPrototypeOf(process).emit
 # The native `emit` may be gone, so native code finds the function on `above` and calls it on `process`. It enters the function with operands nobody knows, and the unknown object stands only for what has escaped
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why escaped=f1 escaped-builtin=Process
 # CHECK: escaped=f1
 # CHECK-NEXT: n0 escaped

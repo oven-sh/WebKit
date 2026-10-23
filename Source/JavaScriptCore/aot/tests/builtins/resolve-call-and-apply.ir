@@ -1,5 +1,6 @@
 # A built-in method called with an explicit this resolves by the type of this, and call and apply of a built-in function resolve as methods of that function, which ResolveCalls forwards
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins
 # RUN(BOTH): pass ResolveBuiltins ResolveCalls ResolveBuiltins
 # CHECK: outcome: Changed

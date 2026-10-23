@@ -1,5 +1,6 @@
 # setTimeout(f, delay) with a delay nobody knows may warn, so the warning printer is entered (runtimefunction 65572)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

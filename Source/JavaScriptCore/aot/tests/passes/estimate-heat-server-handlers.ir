@@ -1,6 +1,7 @@
 # What the host calls per request or message, and what that calls, is the hottest code of a server, whether the handler is an operand or a member of an options object. A function called in a loop at start ranks below, a callback called once later is not hot, and the module body has one activation though it calls unknown code
 # FORM: AsRead
 # OPTIONS: only-passes=EstimateHeat
+# REQUIRES: host-entries
 # RUN: pipeline EstimateHeat
 # RUN(LIMITS): pipeline EstimateHeat
 # CHECK: f0 RunsOnce [[percentileOfMain]] 1

@@ -1,5 +1,6 @@
 # What a lookup by shape and name finds: a value in the cell, a narrow reference, a value in the Extension, any other field, and nothing under a name that the layout lacks. Layouts that say the same share a row
 # OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# REQUIRES: host-entries
 # RUN: tables field-table
 
 module m0 path="main.js" displayPath="main.js" body=f0

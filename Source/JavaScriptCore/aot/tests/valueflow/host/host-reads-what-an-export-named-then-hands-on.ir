@@ -1,5 +1,6 @@
 # The load of the entry point answers a promise for its namespace. A function under `then` makes the namespace a thenable: what the function hands on stands in its place,
 # and the host hands the `default` of that to Bun.serve, though the module itself exports no `default`.
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK: run BunServe
 

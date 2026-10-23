@@ -2,6 +2,7 @@
 # The table does not describe what the call answers: it may be a Buffer that no statement has made. JSON.stringify calls `toJSON` on it, and Buffer.prototype.toJSON is written in JavaScript:
 # the image holds its code only where something uses it. Date.prototype.toJSON is native code and is there anyway: it counts as used by nobody.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=BufferPrototypeToJSON used-builtin=DatePrototypeToJSON
 # CHECK: used-builtin=BufferPrototypeToJSON
 # CHECK-NOT: not held

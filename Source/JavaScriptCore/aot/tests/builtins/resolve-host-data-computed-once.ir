@@ -1,5 +1,6 @@
 # A data property that the host makes at its first read, and that only a write replaces, is read from a word of the instance where the flow analysis proves that nothing writes it.
 # The result has the type that the table gives the property. Without the proof, and for a property that the program stores to, the read stays a read by name
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins
 # RUN(FLOW): pipeline ResolveBuiltins
 # CHECK: outcome: Unchanged

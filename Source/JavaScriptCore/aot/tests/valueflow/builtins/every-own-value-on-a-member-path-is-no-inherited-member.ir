@@ -1,6 +1,7 @@
 # Bun.serve({ routes: { "/": handler } })
 # The host goes over the own properties of `routes` and calls each value that is a function. What `routes` inherits from Object.prototype is no route:
 # nobody calls hasOwnProperty, toString or Object with a request, and no value that nobody describes comes back from such a call.
+# REQUIRES: host-entries
 # RUN: valueflow-results
 # CHECK: -> f1 BuiltinCallback PerEvent
 # RUN(USED): valueflow-solve used

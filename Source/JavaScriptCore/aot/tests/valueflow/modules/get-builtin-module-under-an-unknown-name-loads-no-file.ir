@@ -2,6 +2,7 @@
 # process.getBuiltinModule answers a module of the library or undefined, whatever name it is given. The module that the program requires has run and is in the answer.
 # A file of the program is not: the one that nobody imports stays unreached. Nor is the module outside the image, so no unseen code runs.
 # The name still reaches the loader of the host at run time, so the image has to admit loads by name
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v4 -> ProcessGetBuiltinModule
 # CHECK: f0 v5 ->{{*}} f2

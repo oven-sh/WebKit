@@ -1,6 +1,7 @@
 # handedOver(require("node:module")); other = require("./other.cjs"); handedOver(unknown._cache); other()
 # `Module` is in unknown hands, and the program reads `_cache` from an object nobody knows: a field of its own, for all that the build can tell. That is no read of Module._cache,
 # so the table of the loader is handed to nobody. entry-that-the-program-puts-into-the-module-cache-answers-no-constant-name.ir has a store that the build sees
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK-NOT: unseen LoadsModuleByName
 # CHECK: modules-by-name no

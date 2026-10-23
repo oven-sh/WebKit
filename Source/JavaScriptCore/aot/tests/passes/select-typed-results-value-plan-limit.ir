@@ -1,6 +1,7 @@
 # validate<T>(v) of a list with more nodes than the limit has interpreted nodes, so the general validator takes the value at once, and the call reports one loss
 # FORM: Prepared optimizing
 # OPTIONS: limit=MaxParserPlanNodes:2
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults
 # LOSS: MaxParserPlanNodes x1 f0 v1
 # STATISTIC: TypedResultsSelected = 2

@@ -1,5 +1,6 @@
 # Reflect.apply(process.dlopen, process, list)
 # No operation spells the call out, so the record names no place. a-call-that-loads-machine-code-has-a-record.ir has the call
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen RunsMachineCode ProcessDlopen
 # CHECK-NEXT: unseen-code no

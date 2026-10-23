@@ -3,6 +3,7 @@
 # that one is followed from the read that names it to the call that applies it. So the call is an application of the loader whenever its rule looks, before the loader has escaped or behind that:
 # the rules wait here for later rounds as the switches say, and the image admits loads by name all the same.
 # OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen LoadsModuleByName ProcessGetBuiltinModule f0:v14
 # CHECK: modules-by-name yes

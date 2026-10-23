@@ -1,5 +1,6 @@
 # A handler that native code holds is entered only with the declared arguments, and its callers are all known. A built-in that runs code of no operand may still be what calls it: close() of the socket writes what the close handler writes. It does not write a variable that nothing writes
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN(W): write-overlap flow summaries f2
 
 module m0 path="main.js" displayPath="main.js" body=f3

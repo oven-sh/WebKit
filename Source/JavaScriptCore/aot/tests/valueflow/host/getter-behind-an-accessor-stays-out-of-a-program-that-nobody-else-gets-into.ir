@@ -2,6 +2,7 @@
 # Only a read that the analysis sees enters the function behind the accessor. Entered from the start it would bring the unknown object into a program that has none.
 # getter-behind-an-accessor-is-in-a-program-that-evaluates-text.ir has the same program with eval
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK: unreached f2

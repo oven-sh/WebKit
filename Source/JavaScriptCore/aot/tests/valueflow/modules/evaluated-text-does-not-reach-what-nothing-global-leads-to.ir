@@ -1,6 +1,7 @@
 # printed[Symbol.for("nodejs.util.inspect.custom")] = custom; console.log(printed); eval(String(Date.now())); holder = { kept: function () {} }
 # Evaluated text reaches the global scope and holds what the modules of the library export. A function that the program keeps in an object that nobody is handed is out of its reach:
 # it is not lost, it does not escape, and nothing enters it. Nor is the export entered that nobody else takes
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f4
 # CHECK-NEXT: unreached f5

@@ -1,5 +1,6 @@
 # class Body { constructor() { this.hits = 0 } }; body = new Body; new Proxy(body, {}).hits = "text"; return body.hits
 # The proxy is the unknown object and its target has escaped, so the store through the proxy may be what the read of the target finds.
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: function f0 name="main" {{*}}results=[{type=int|"text"}]
 

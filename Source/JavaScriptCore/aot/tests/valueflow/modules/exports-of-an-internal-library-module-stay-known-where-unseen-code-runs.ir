@@ -4,6 +4,7 @@
 # Unseen code loads modules by names that nobody knows. In a process that runs a compiled program no name loads a module of the library that the table does not call public, not even
 # with --expose-internals (Bun: seal_internals() in src/resolve_builtins), so what internal/http exports stays in known hands:
 # the read of http.kHandle answers the one symbol, and the store under it names a field. exports-of-a-public-library-module-are-held-where-unseen-code-runs.ir has the public module
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Holder" fields=[{key="a"
 # CHECK: {key=symbol("handle")@m1:100

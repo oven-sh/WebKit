@@ -1,4 +1,5 @@
 # A cast stays inside the cast type: an object that may be an instance of two classes, neither of which extends the other, is named as the cast type names it, and a proof about another part of the source does not cover it. Of a class and its subclass the result lists the subclass
+# REQUIRES: host-entries
 # RUN: cast
 # CHECK: t0 as t1 = null|Array<number>
 # CHECK-NEXT: t0 as t2 = Object

@@ -1,5 +1,6 @@
 # console.log finds the custom inspect method of its operand by name and calls it with operands of its own choice, and one of them is a function of a start-up module:
 # native code requires the module and reads `inspect` from what that answers. The function beside it stays where it is
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

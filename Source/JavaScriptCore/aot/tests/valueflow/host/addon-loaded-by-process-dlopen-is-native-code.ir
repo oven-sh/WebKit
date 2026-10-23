@@ -3,6 +3,7 @@
 # An N-API addon is native code and no text that nobody has seen. It holds, calls and changes what it is handed: the module object and what that leads to lose what an escaped object loses.
 # It reads and calls globals by name: the function that the program has stored on the global object is entered. It defines no function of JavaScript, so no unseen code runs, no module is loaded by a name
 # nobody knows, the members of the global object stay what they are, and what it is not handed stays in the program: the class, the plain object and the other function.
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 kind=Instance name="Kept" {{*}}initialization=SetAtCreation{{*}}fieldCreation=OnlyAtConstruction
 # CHECK: layout L1 name="Module" {{*}}cause=ReachesUnknownJavaScript

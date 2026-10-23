@@ -2,6 +2,7 @@
 # Native code makes process.nextTick by a call of initializeNextTickQueue (runtimefunction 65578), and the entry holds what that call answers. So the call of the program enters that function
 # with the operands of the call: the callback arrives at its parameter and has not escaped, as it would have by the overload of the entry, which retains it.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v3 -> ProcessNextTick
 # CHECK-NEXT: f2 v1 -> f3

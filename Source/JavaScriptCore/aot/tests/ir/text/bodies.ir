@@ -1,5 +1,6 @@
 # Heads of blocks, handlers, proofs on edges, absent and variadic operands, operations without a result, one payload field of every kind, flags, positions and inline frames
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: round-trip
 # CHECK: typesite w0 module=m0 position=3 kind=Assertion text="T"
 # CHECK-NEXT: expectedresult x0 type=anything

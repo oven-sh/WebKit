@@ -1,6 +1,7 @@
 # What is recorded of a `require` of an ES module is the mark that its namespace object shows from then on. Where the object is never made, or is only read by names that are spelled, and nobody spells the mark,
 # nothing is recorded. Where the object is handed on, somebody may look.
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: pipeline CallModules
 # STATISTIC: ModulesWithoutState = 2
 # STATISTIC: RequireSitesBound = 2

@@ -1,6 +1,7 @@
 # process.helper = helper; Object.getPrototypeOf(process).other = other; handedOver(process)
 # Whoever holds `process` reads whatever lies on it, and climbs to the native prototype above it
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached
 

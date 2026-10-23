@@ -1,5 +1,6 @@
 # Selection answers for each inline built-in of numbers, buffers and typed arrays whether the call stays, gets inline code with a miss edge to the call, or is inline code alone
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass Select
 # RUN(FORMS): inline-forms
 # CHECK: outcome: Changed

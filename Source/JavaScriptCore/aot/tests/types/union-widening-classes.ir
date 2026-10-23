@@ -1,5 +1,6 @@
 # Eight built-in classes are the limit and no hit. The ninth widens the object parts to object.
 # OPTIONS: limit=MaxClassesInType:8
+# REQUIRES: host-entries
 # RUN: union-widening
 # LOSS: MaxClassesInType x2 f0
 # CHECK: t0 | t0 = Array|

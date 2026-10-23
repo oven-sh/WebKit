@@ -1,5 +1,6 @@
 # What createRequire() answers is no module's own require function. In the hands of a text that is evaluated it leads to no module object: the host shows whoever holds it no file of the image.
 # So nobody but the code of the program calls what the files export.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK: unreached f2

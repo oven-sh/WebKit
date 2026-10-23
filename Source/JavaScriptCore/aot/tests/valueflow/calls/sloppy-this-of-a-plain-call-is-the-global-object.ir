@@ -1,5 +1,6 @@
 # function setX() { this.x = "text" }  setX(); globalThis.x
 # A plain call passes undefined as `this`, which a sloppy function turns into the global object.
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f0:v3
 # CHECK: values=f0:v3
 # CHECK: result {{*}}key

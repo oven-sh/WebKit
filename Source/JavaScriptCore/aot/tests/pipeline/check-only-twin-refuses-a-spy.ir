@@ -1,4 +1,5 @@
 # The twin of check-only-takes-a-spy-for-no-write: in a build, spyOn of bun:test on a locked member that every run reaches throws in every run, and the build says so
+# REQUIRES: host-entries
 # RUN: pipeline CheckLockedBuiltinWrites
 # DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
 

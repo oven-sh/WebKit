@@ -1,5 +1,6 @@
 # A parameter that flow narrowed to a built-in of a module: no test finds that object, and the entrypoint needs none. It tests nothing and takes every narrowed type from flow, a built-in of the realm and a primitive too
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: derived-functions GenericEntrypoint:f0
 # OPTIONS: check=VerifyEachPass
 

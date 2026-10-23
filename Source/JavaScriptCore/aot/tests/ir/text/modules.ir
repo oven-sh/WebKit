@@ -1,4 +1,5 @@
 # Module lines of every kind with every field, and the namespace layouts of the three modules that have one
+# REQUIRES: host-entries
 # RUN: round-trip
 # CHECK: variable g0 name="a" module=m0 declared={type=anything}
 # CHECK-NEXT: variable g1 name="z" module=m9 declared={type=anything}

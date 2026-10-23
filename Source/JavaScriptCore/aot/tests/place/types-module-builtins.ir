@@ -1,6 +1,7 @@
 # import.meta, module, exports and require are one object per module, so the record of a type that names one tests for an object or a function, wherever the type is kept: a variable, a field, a parameter of a function called by value. A built-in of the realm keeps the test for its cell
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow
+# REQUIRES: host-entries
 # RUN: tables
 # RUN(META): tables types
 # RUN(MODULE): tables types

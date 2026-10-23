@@ -1,4 +1,5 @@
 # A program that is only checked runs from its source afterwards, where spyOn of bun:test goes through the lock: a spy on a locked member that every run reaches is not reported
+# REQUIRES: host-entries
 # RUN: compile CodeBytesEmitted
 # OPTIONS: check-only
 # CHECK-NOT: diagnostic

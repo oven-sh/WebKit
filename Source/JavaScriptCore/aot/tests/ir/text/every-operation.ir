@@ -1,5 +1,6 @@
 # Every operation and terminator of the wire, once with every optional operand, payload field and flag and once with none
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: round-trip
 # CHECK: typesite w0 module=m0 position=1 kind=Assertion
 # CHECK-NEXT: expectedresult x0 type=anything

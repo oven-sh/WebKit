@@ -2,6 +2,7 @@
 # %EventEmitter%.prototype has `on` among its own members, so the read ends there, as it would at a receiver that has the name: the getter above it is not entered, nobody is handed `process`,
 # and the read answers the native method
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why reached=f1 escaped-builtin=Process values=f0:v8
 # CHECK: reached=f1
 # CHECK-NEXT: f1 is not reached

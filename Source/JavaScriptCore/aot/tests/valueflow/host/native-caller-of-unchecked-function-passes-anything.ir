@@ -1,5 +1,6 @@
 # The same function in a file that the checker has not held against its types: a type there was inferred from what the body does, and says nothing about what the host passes.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why values=f1:v1
 # CHECK: values=f1:v1
 # CHECK: operand 0 {{*}} unknown

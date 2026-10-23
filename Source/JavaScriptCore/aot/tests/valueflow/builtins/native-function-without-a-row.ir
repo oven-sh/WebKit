@@ -2,6 +2,7 @@
 # The macro answers one native function, so the call is a call of its entry and of nothing else. The entry says nothing of the call: the receiver and the argument are handed over and entered, and nobody knows the answer.
 # The example is a function for Bun's own tests: the table will not come to describe it.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f1 v3 -> NativeFunctionsInternalForTestingCppJsFunction_hasReifiedStatic
 # CHECK-NEXT: f1 v4 -> unknown

@@ -3,6 +3,7 @@
 # The stream comes into unknown hands, and what it holds with it. The object that holds what node:path exports is held there and not searched: none of its functions is entered with operands nobody knows.
 # `start` is entered by whoever has the stream, with the unknown object as `this`. The unknown object may be any object that is held, so what the read of `.open` through it answers lists the function
 # that node:path exports under the name, and the call enters it: it is a call of seen code
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f3 v4 ->{{*}} f4
 # RUN(UNREACHED): valueflow-solve unreached

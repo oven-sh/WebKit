@@ -2,6 +2,7 @@
 # Nobody knows the receiver. That `process` is in unknown hands does not make it `process`: the row is about a call on `process`, and a method of that name called on something nobody knows says nothing about it.
 # parseHandle is not entered (runtimefunction 65559). Were the receiver `process` at run time, parseHandle would throw the error that names it where native code comes to call it
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 

@@ -1,5 +1,6 @@
 # require("./other.cjs"); require.cache[name].exports.handler()
 # `require.cache` is the host's map of what it has loaded from outside the image. No module of the image is in it, so whoever reads it comes to no module object and to nothing that a file exports
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK: unreached f2

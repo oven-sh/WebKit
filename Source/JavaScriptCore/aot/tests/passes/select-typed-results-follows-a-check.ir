@@ -2,6 +2,7 @@
 # AddGenericVersion makes a test and a branch of a check, and they name the type as the check did. Of several checks of one value the narrowest decides
 # FORM: Prepared
 # OPTIONS: report=Declines
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 9
 # STATISTIC: ParsersCreated = 2

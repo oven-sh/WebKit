@@ -1,4 +1,5 @@
 # The host hands the default export of the entry point to Bun.serve, which calls what it finds on it. An export that the host does not read stays where it is
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK: unreached f2

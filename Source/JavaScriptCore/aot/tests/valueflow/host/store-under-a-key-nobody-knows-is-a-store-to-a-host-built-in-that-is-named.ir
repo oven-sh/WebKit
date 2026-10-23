@@ -1,6 +1,7 @@
 # handedOver(process); unknown[key] = 1; process.send
 # The program names process.send, and the store under a key nobody knows may hit it: the member counts as written, so nothing takes it for the function of the table
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=ProcessSend written-builtin=ProcessSend written-builtin=ProcessChannel
 # CHECK: used-builtin=ProcessSend
 # CHECK-NOT: not held

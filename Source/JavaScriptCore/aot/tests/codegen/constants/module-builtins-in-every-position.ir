@@ -1,6 +1,7 @@
 # import.meta in a variable, a field and the parameter of two functions called by value, and exports, require and module in the fields of an object that a closure captures: flow narrows every one of these positions to a built-in of a module, and the build succeeds
 # FORM: AsRead
 # OPTIONS: check=VerifyEachPass
+# REQUIRES: host-entries
 # RUN: compile
 # RUN(TYPES): pipeline ApplyFlowResults
 # CHECK: image not empty

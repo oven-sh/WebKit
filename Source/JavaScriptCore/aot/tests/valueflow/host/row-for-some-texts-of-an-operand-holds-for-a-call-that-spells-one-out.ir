@@ -1,6 +1,7 @@
 # process.on("message", listener)
 # The call spells out one of the events for which the functions of the channel hang on `on`, so parseHandle is entered (runtimefunction 65559)
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

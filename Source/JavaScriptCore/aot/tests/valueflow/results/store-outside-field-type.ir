@@ -1,6 +1,7 @@
 # An untyped store by name of a value outside the type of a field costs that field. The value lies beside the slot, so the field may be stored a value of another type and is not always filled, and a read by name finds the value.
 # The object keeps its layout. A store inside the type costs nothing. Both objects are created with the field and nothing deletes it, so no read finds nothing.
 # The numbers are no integers: a field that is seen to hold small integers gets a range of its own before the analysis runs, and the analysis follows no ranges
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Overwritten" fields=[{key="n" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
 # CHECK: layout L1 name="Kept" fields=[{key="n" {{*}}occupancy=AlwaysFilled {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}

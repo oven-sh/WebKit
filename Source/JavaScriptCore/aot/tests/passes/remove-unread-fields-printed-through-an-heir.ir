@@ -1,6 +1,7 @@
 # The formatter of console.log prints the enumerable properties that its operand inherits, so the fields of a literal that is only the prototype of what is printed stay, in their order.
 # The fields of a prototype of an object that is not printed are removed
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: pipeline RemoveUnreadFields
 # OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,EliminateDeadCode,RemoveUnreadFields
 # STATISTIC: UnreadFieldsRemoved = 1

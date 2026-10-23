@@ -1,6 +1,7 @@
 # const above = Object.create(null); above.emit = emit; Object.setPrototypeOf(Object.getPrototypeOf(process), above); delete Object.getPrototypeOf(process).emit
 # The native `emit` may be gone, so the lookup of native code goes on to `above` and calls what it finds there
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached
 

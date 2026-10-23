@@ -1,5 +1,6 @@
 # buffer = Buffer.alloc(8);  bytes = new Uint8Array(8);  handedOver = Buffer.alloc(8); keep(handedOver);  changed = Buffer.alloc(8); changed.extra = 8
 # A Buffer that flow follows keeps the behavior it is made with, like the bytes beside it. One that unknown code has got hold of, or that has got a property, does not
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="buffer" {{*}}declared={type=Buffer<{{*}}pristine[Storage, Names]>}
 # CHECK: variable g1 name="bytes" {{*}}declared={type=Uint8Array<{{*}}pristine[Storage, Names]>}

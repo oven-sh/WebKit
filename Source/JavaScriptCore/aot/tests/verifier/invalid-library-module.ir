@@ -1,5 +1,6 @@
 # IsLibrary is for a module of a kind that has a file, without a body and without exports
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: InvalidModule 4
 

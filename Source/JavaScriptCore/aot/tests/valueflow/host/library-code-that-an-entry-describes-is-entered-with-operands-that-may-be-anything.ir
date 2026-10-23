@@ -2,6 +2,7 @@
 # No operand of a call goes into the function of the library that the entry describes. The function is compiled for all callers, so each of its parameters holds any primitive and an object
 # of which nothing is known: both arms of a test of the parameter are reached. A call of that object does nothing: what is called with what, the overloads say where the call of the entry is.
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached
 # RUN(CALLS): valueflow-solve calls

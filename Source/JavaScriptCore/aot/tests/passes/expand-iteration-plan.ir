@@ -1,6 +1,7 @@
 # The type of the iterable and the type that is expected of it decide which forms an iteration is expanded for, read off the tests at the open
 # FORM: Prepared optimizing
 # OPTIONS: limit=MaxDispatchCases:2
+# REQUIRES: host-entries
 # RUN: pass ExpandIteration
 # RUN(ABSENT): pass ExpandIteration
 # RUN(LEFT): pass ExpandIteration

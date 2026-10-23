@@ -1,5 +1,6 @@
 # listener = Bun.listen({ data: first, socket: undefined }); listener.data(); listener.data = second; listener.data()
 # `data` of a listener answers what native code keeps in the cell behind it: the function that came in with the options and the one that was stored later. It answers no object that nobody knows
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f0 v6 -> BunListen
 # CHECK-NEXT: f0 v8 -> f1 f2

@@ -1,6 +1,7 @@
 # Closures of a function are slim if its kind, role, flags and number of captures allow it and it is not expected to get properties: all of them are only called, or it constructs no layout and lies outside the runtime modules
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow
+# REQUIRES: host-entries
 # RUN: plan-slots closures
 # RUN(KINDS): place
 

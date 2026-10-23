@@ -1,4 +1,5 @@
 # Every payload field, operand and flag that only the engine has on an operation or terminator of the wire, shown on the first use of each
+# REQUIRES: host-entries
 # RUN: round-trip
 # CHECK: typesite w0 module=m0 position=1 kind=Assertion
 # CHECK-NEXT: expectedresult x0 type=anything

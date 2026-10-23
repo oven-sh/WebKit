@@ -2,6 +2,7 @@
 # but neither it nor what it calls is compact. A callback that is called once later is
 # FORM: AsRead
 # OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1
+# REQUIRES: host-entries
 # RUN: pipeline EstimateHeat
 # CHECK: f1 Cold 10 1
 # CHECK-NEXT: f2 Cold 10 1

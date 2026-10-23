@@ -1,4 +1,5 @@
 # No step of the results crashes on a well-formed operation, and the program is valid with the results applied: the program of calls/every-operation.ir
+# REQUIRES: host-entries
 # RUN: valueflow-results
 # RUN(APPLY): valueflow-apply
 # STATISTIC: FlowUnreachedFunctions = 0

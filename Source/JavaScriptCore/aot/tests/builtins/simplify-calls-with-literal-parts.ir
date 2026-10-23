@@ -1,5 +1,6 @@
 # A call of a built-in that has a form for the members of a literal, with an object literal that nobody else sees, becomes a call of that form with the members as arguments. Native code reads no member by name, and no object is made.
 # FORM: Prepared
+# REQUIRES: host-entries
 # RUN: pass SimplifyBuiltinCalls
 # RUN(DEAD): pass SimplifyBuiltinCalls EliminateDeadCode
 # STATISTIC: LiteralArgumentsTakenApart = 7

@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <span>
 #include <wtf/Assertions.h>
 #include <wtf/HashSet.h>
@@ -67,9 +69,20 @@ static void checkNativeTests()
 
 using NativeTestList = std::span<const NativeTest* const>;
 
+// They name entries of Bun, or need roles that the stand-in host leaves out. A program that is linked with Bun's table runs them.
+static constexpr ASCIILiteral testsOfHostEntries[] = {
+#include "AOTNativeTestsOfHostEntries.inc"
+};
+
+static bool needsHostEntries(const NativeTest& test)
+{
+    return std::ranges::contains(testsOfHostEntries, StringView(test.name), [](ASCIILiteral name) { return StringView(name); });
+}
+
 static Vector<const NativeTest*> selectNativeTests(const NativeTestRequest& request)
 {
     Vector<const NativeTest*> tests;
+    bool leavesOutTestsOfHostEntries = hasStandInHost();
     bool isPastPreviousTest = request.previousTest.isEmpty();
     // Counted from the start of the list: the child that goes on behind a crash has to take the same tests.
     unsigned ordinal = 0;
@@ -79,7 +92,7 @@ static Vector<const NativeTest*> selectNativeTests(const NativeTestRequest& requ
             isPastPreviousTest = request.previousTest == test.name;
             return;
         }
-        if (isSelected)
+        if (isSelected && !(leavesOutTestsOfHostEntries && needsHostEntries(test)))
             tests.append(&test);
     });
     return tests;

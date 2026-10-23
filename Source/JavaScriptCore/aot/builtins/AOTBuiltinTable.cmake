@@ -29,6 +29,7 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS
 
 # The host of the programs that WebKit's own build links.
 set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_DECLARATIONS
+    aot/tests/host/compiler-helpers.builtins.ts
     aot/tests/host/stand-in.builtins.ts
 )
 set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_OWN_PROPERTIES aot/tests/host/own-properties.txt)
@@ -54,33 +55,42 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS
     aot/builtins/models/Objects.ts
 )
 
+# What aot/builtins/generator/engine.ts writes. A build makes these files: none is checked in.
 set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS
-    aot/builtins/generated/AOTBuiltinFeatures.h
-    aot/builtins/generated/AOTBuiltinIDs.h
-    aot/builtins/generated/AOTBuiltinTableArrays.h
-    aot/builtins/generated/AOTBuiltinTableWords.h
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinFeatures.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinIDs.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableWords.h"
 )
 
 set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES
-    aot/builtins/generated/AOTBuiltinTableEngineBindings.cpp
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableEngineBindings.cpp"
 )
 
 # The table itself. A static JavaScriptCore names its symbols and does not define them: whoever links the library compiles a table.
-# Bun compiles its own, from its own declarations. These are for the programs that WebKit's build links.
-set(JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES
-    aot/builtins/generated/AOTBuiltinTableAttachments.cpp
-    aot/builtins/generated/AOTBuiltinTableBuiltins.cpp
-    aot/builtins/generated/AOTBuiltinTableNames.cpp
-    aot/builtins/generated/AOTBuiltinTableOverloads.cpp
-    aot/builtins/generated/AOTBuiltinTableTypes.cpp
+# Bun compiles its own, from its own declarations. These are for the programs that WebKit's build links: the engine's entries and the stand-in host's.
+set(JavaScriptCore_AOT_BUILTIN_TABLE_DATA_HEADERS
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableArrays.h"
 )
 
+set(JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableAttachments.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableBuiltins.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableNames.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableOverloads.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableTypes.cpp"
+)
+
+# With what the table's generated sources include: whoever links the library compiles them.
 set(JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS
     aot/builtins/AOTBuiltinIDTypes.h
+    aot/builtins/AOTBuiltinNameSlots.h
     aot/builtins/AOTBuiltinTable.h
     aot/builtins/AOTBuiltinTableBindings.h
     aot/builtins/AOTBuiltinTableGuards.h
     aot/builtins/AOTBuiltinTableRealm.h
-    aot/builtins/generated/AOTBuiltinFeatures.h
-    aot/builtins/generated/AOTBuiltinIDs.h
+)
+
+set(JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinFeatures.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinIDs.h"
 )

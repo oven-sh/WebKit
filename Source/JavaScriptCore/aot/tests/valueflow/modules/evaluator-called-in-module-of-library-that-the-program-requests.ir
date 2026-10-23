@@ -1,4 +1,5 @@
 # A function of a module of the library is seen code once the program asks for the module: its call of the evaluator is an event
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen EvaluatesText Eval f2:v2
 # CHECK: unseen-code yes

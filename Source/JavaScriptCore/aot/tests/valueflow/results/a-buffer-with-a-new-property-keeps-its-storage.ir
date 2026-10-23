@@ -1,4 +1,5 @@
 # changed = Buffer.alloc(8); changed.extra = 8
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: variable g0 name="changed" {{*}}declared={type=Buffer<anything, pristine[Storage]>}
 # CHECK: module m0

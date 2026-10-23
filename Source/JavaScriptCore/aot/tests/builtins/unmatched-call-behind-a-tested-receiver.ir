@@ -1,5 +1,6 @@
 # A method call on a receiver that is only expected to be of a built-in class, with operands that match no overload, is still a call of the built-in behind the tests of the receiver where flow has seen that built-in and no other arrive as the callee: no other guess about the callee takes its place
 # FORM: Prepared optimizing
+# REQUIRES: host-entries
 # RUN: pass PlaceTypeTests
 # CHECK: outcome: Changed
 

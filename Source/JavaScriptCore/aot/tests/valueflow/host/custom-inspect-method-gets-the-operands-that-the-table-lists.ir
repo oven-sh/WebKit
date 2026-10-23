@@ -1,6 +1,7 @@
 # console.log(printed), where printed[Symbol.for("nodejs.util.inspect.custom")] = custom
 # Native code calls the method with a depth, with an options object that it makes by itself, and with `inspect`, which it has read from a start-up module and keeps in a cell.
 # So `inspect` arrives as itself, is entered by the call in the method with what that call passes, and has not escaped.
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f3 v4 -> f2
 # RUN(VALUES): valueflow-why values=f3:v5

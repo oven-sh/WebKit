@@ -1,6 +1,7 @@
 # process.nextTick = replacement; Object.getPrototypeOf(process)._kill = other
 # The table lists the names that native code looks up on `process`. It finds what the program stores under one of them, on `process` or on the native prototype above it, and calls it
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached
 

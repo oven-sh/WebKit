@@ -1,5 +1,6 @@
 # Bun.serve({ port: 0, fetch })
 # No object with a field `app` reaches the call: the world stays closed. A server is no reason to open it
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen-code no
 

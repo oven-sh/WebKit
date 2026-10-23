@@ -1,6 +1,7 @@
 # Between x.json() and its await stands the cast that carried the expected class of the promise, and flow states what the promise holds: the await is found through the casts, what is checked or expected behind it is the type of the body, and the casts go, because they speak of the promise of json() and not of the promise of bytes()
 # FORM: Prepared
 # OPTIONS: report=Declines
+# REQUIRES: host-entries
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 2
 # STATISTIC: ParsersCreated = 1

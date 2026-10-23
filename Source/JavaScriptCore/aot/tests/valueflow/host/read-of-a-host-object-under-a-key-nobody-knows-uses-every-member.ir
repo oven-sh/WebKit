@@ -1,6 +1,7 @@
 # main.js: process[globalThis.name]
 # A read under a key nobody knows may name any member, and the host makes the value of the one that it names: the code behind every member is in the image.
 # store-into-a-host-object-is-no-use-of-the-member-it-replaces.ir has the store
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=ProcessStdin
 # CHECK: used-builtin=ProcessStdin
 # CHECK-NOT: not held

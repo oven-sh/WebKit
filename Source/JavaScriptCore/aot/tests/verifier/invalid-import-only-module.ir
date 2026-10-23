@@ -1,5 +1,6 @@
 # IsLoadedByImportOnly is for a module with a runtimeModule
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: verify
 # DIAGNOSTIC: InvalidModule 5
 

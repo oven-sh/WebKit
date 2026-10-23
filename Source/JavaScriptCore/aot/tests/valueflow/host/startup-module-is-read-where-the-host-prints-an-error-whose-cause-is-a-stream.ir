@@ -1,5 +1,6 @@
 # console.log(new Error("x", { cause: new ReadableStream() }))
 # The cause is what the program has handed in. A stream prints itself, by native code that calls the printer of node:util.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

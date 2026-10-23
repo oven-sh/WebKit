@@ -1,5 +1,6 @@
 # Every constant compiles in each representation its type can have
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: compile
 # RUN(KEY): pipeline CheckPlacement
 # RUN(ABSENT): pipeline CheckPlacement

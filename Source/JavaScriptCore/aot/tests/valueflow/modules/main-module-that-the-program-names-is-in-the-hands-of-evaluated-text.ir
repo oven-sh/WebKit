@@ -1,6 +1,7 @@
 # As exports-of-a-commonjs-module-stay-in-the-program-beside-evaluated-text.ir, and the program reads process.mainModule
 # The host answers the module object of the entry point there, to the program and to evaluated text alike: what the entry point exports is in unknown hands.
 # One flag of the program stands for all four ways (ModuleFlags::NamesWayToModuleObjects), so `children` leads on from there: what helper.cjs exports is in unknown hands too
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen EvaluatesText
 # RUN(WHY): valueflow-why escaped=f3 escaped=f2

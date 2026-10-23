@@ -1,6 +1,7 @@
 # Bun.serve({ port: 0, app: { root: "." } })
 # With `app` among its options Bun.serve starts the development server, which bundles files from the disk when it runs and runs them beside the program: code that the build has not seen.
 # The row of the table speaks of the operand, and a call says whether an object with a field of that name reaches it
+# REQUIRES: host-entries
 # RUN: valueflow-solve unseen
 # CHECK: unseen-code yes
 

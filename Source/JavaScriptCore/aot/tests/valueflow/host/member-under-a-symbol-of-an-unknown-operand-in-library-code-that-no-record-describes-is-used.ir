@@ -3,6 +3,7 @@
 # and the call runs it.
 # With records: member-under-a-symbol-of-an-unknown-operand-in-the-code-behind-a-described-built-in-is-not-used.ir
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve used
 # CHECK: run MapPrototypeEntries
 

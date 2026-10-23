@@ -1,6 +1,7 @@
 # `await response.json()` as lowering writes it in a function whose parameter is only expected to be a Response, as the parameter of every handler of a server is: the call is resolved behind a test of the receiver, flow has put the typed result into the promise, and the arm of the test parses the bytes into the layout
 # FORM: AsRead
 # OPTIONS: report=Declines
+# REQUIRES: host-entries
 # RUN: pipeline FinishBirths
 # STATISTIC: TypedResultsSelected = 1
 # STATISTIC: ParsersCreated = 1

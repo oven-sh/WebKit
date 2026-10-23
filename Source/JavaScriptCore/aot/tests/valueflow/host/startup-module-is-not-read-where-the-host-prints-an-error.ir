@@ -1,5 +1,6 @@
 # console.log(new Error("x"))
 # The formatter reads `cause` and the elements of the error. The engine has made the error: what lies on it is no object of the host, so nothing there prints itself.
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

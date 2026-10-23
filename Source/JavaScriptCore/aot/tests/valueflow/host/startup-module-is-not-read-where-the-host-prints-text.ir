@@ -1,4 +1,5 @@
 # console.log of a string calls nothing of the program, so native code reads no start-up module
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2

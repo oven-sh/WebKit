@@ -1,6 +1,7 @@
 # Variables are grouped by region and first word, and a variable stores undefined as zero only if its reads are used only in nullish tests and no table describes it
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow
+# REQUIRES: host-entries
 # RUN: place statics
 
 module m0 path="a.ts" displayPath="a.ts" body=f0 requests=[{target=m1 completes=true}] exports=[{name="x" variable=g7}]

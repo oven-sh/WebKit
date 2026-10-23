@@ -2,6 +2,7 @@
 # so the URL is found before the generic version is made: whether a function has one does not decide whether its URL is made.
 # FORM: Prepared
 # OPTIONS: heat=NothingIsHottest
+# REQUIRES: host-entries
 # RUN: pass AddGenericVersion
 # STATISTIC: URLsLeftUnbuilt = 1
 # STATISTIC: GenericVersionsCreated = 1

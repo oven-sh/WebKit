@@ -2,6 +2,7 @@
 # compile({ symbols: { callback } })  with the native function behind `cc` of bun:ffi;  Bun.FFI.callback(options, other)
 # What bun:ffi loads is machine code. It gets numbers, pointers and the closures that it is handed, and it holds and calls those: both callbacks are entered, with arguments nobody knows.
 # It defines no function of JavaScript, so no unseen code runs, and what it is not handed stays in the program: the class and the other function.
+# REQUIRES: host-entries
 # RUN: valueflow-apply
 # CHECK: layout L0 kind=Instance name="Kept" {{*}}initialization=SetAtCreation{{*}}fieldCreation=OnlyAtConstruction
 # RUN(UNSEEN): valueflow-solve unseen unreached

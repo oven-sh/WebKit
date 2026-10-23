@@ -1,6 +1,7 @@
 # `Object.assign(list, { 0: "text" })`: whoever walks an array reads its elements out of the array, without a lookup, so what the source holds under an index is written into the array.
 # What was copied onto the source before lies above the source and is copied with it. A list beside it, onto which nothing is copied, keeps its numbers.
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: flow
 # CHECK: function f4 parameter 0 type=undefined|int|"text" proven
 # CHECK: function f5 parameter 0 type=undefined|int|"text" proven

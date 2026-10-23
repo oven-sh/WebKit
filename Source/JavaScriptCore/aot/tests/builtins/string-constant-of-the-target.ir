@@ -1,4 +1,5 @@
 # A member that the target of the build decides is a string constant of the table. A read of it becomes the text where nothing can have replaced the value
+# REQUIRES: host-entries
 # RUN: pass ResolveBuiltins
 # RUN(FLOW): pipeline ResolveBuiltins
 # RUN(ARM64): pipeline ResolveBuiltins

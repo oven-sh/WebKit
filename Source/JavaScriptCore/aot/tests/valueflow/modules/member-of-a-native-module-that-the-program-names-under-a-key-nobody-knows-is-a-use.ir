@@ -1,5 +1,6 @@
 # require("bun:jsc")[key]
 # The program names the module, so its object is a holder like any other: a read under a key nobody knows is a read of every member
+# REQUIRES: host-entries
 # RUN: valueflow-why used-builtin=BunJscHeapStats
 # CHECK-NOT: not held
 # CHECK: by Lookup

@@ -2,6 +2,7 @@
 # `require.main` answers the module object of an entry point, and no other: the call has one callee. In a program that names such a way that object is also found from the global scope,
 # under process.mainModule, by whoever reads globals by a name that the build does not see: machine code that the program has loaded, a read under a key nobody knows. So it is in unknown hands,
 # with what main.cjs exports, and through `children` so is the module object of helper.cjs
+# REQUIRES: host-entries
 # RUN: valueflow-solve calls
 # CHECK: f2 v5 -> {{*}}f1
 # CHECK-NOT: f2 v5 -> {{*}}f3

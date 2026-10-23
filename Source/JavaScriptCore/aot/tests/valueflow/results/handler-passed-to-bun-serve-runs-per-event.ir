@@ -1,4 +1,5 @@
 # Bun.serve({ fetch })
+# REQUIRES: host-entries
 # RUN: valueflow-results
 # CHECK: -> f1 BuiltinCallback PerEvent
 

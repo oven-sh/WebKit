@@ -5,6 +5,7 @@
 #   const elsewhere = new Map(); fill(elsewhere); for (const [key, value] of elsewhere) print(key, value)
 #   print("end")
 # The loops over the two collections that flow follows are expanded in front of the optimizer, the loop over the one that unknown code has seen by ExpandIteration
+# REQUIRES: host-entries
 # RUN: pipeline ExpandProvenIterations
 # CHECK-LABEL: function f0
 # CHECK: Map<never, never, proven,

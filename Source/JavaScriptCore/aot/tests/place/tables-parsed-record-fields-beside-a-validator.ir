@@ -2,6 +2,7 @@
 # function handle(body: Body) { return body.name }  publish({ id: 1, name: "a" }); handle(JSON.parse(text)); validate<Named>(JSON.parse(text))
 # A compiled validator takes plain data. What has every required member of a Named stays an ordinary object, so the table lists those members beside the fields of Body.
 # FORM: AsRead
+# REQUIRES: host-entries
 # RUN: tables layouts
 # CHECK: layout shape=[[body]] index=L0 kind=Record name="Body"
 # CHECK: parsedRecordField name="id" shape=[[body]]

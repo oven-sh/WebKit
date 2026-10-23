@@ -2,6 +2,7 @@
 # Native code that was not handed `process` looks up the names of the table's list on it and no other, so nobody but the program finds what lies under `helper` and `other`, and the program never calls it.
 # value-stored-into-process-under-a-name-that-native-code-reads-is-entered.ir has the names of the list, value-stored-into-process-is-entered-once-process-is-in-unknown-hands.ir the same stores beside a call that hands `process` over
 # LIBRARY: own
+# REQUIRES: host-entries
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2
