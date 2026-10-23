@@ -279,6 +279,8 @@ static constexpr OptionWordCase optionWordCases[] = {
         options.bisection.droppedGuard.ordinal = 2;
     } },
     { "references=narrow"_s, [](WireOptions& options) { options.target.referenceWidth = Wire::ReferenceWidth::Narrow; } },
+    { "image-form=position-independent"_s, [](WireOptions& options) { options.target.imageForm = Wire::ImageForm::PositionIndependent; } },
+    { "image-form=absolute"_s, [](WireOptions& options) { options.target.imageForm = Wire::ImageForm::Absolute; } },
     { "type-errors=log"_s, [](WireOptions& options) { options.mismatchPolicy = Wire::MismatchPolicy::Report; } },
     { "layout-seed=9"_s, [](WireOptions& options) { options.layoutSeed = 9; } },
     { "threads=3"_s, [](WireOptions& options) { options.threadCount = 3; } },
@@ -325,6 +327,7 @@ static constexpr ASCIILiteral rejectedWords[] = {
     "drop-guard=Nothing:1"_s,
     "drop-guard=TypeTest"_s,
     "references=tiny"_s,
+    "image-form=relative"_s,
     "type-errors=ignore"_s,
     "layout-seed=-1"_s,
     "threads=many"_s,
@@ -583,6 +586,8 @@ static void testCompileOptionsDefault()
 
 static constexpr InvalidMemberCase invalidMemberCases[] = {
     { offsetof(WireOptions, target.referenceWidth), [](WireOptions& wire) { wire.target.referenceWidth = firstInvalidEnumerator<Wire::ReferenceWidth>; } },
+    { offsetof(WireOptions, target.imageForm), [](WireOptions& wire) { wire.target.imageForm = firstInvalidEnumerator<Wire::ImageForm>; } },
+    { offsetof(WireOptions, target.reserved), [](WireOptions& wire) { wire.target.reserved = 1; } },
     { offsetof(WireOptions, action), [](WireOptions& wire) { wire.action = firstInvalidEnumerator<Wire::CompileAction>; } },
     { offsetof(WireOptions, mismatchPolicy), [](WireOptions& wire) { wire.mismatchPolicy = firstInvalidEnumerator<Wire::MismatchPolicy>; } },
     { offsetof(WireOptions, heatOverride), [](WireOptions& wire) { wire.heatOverride = firstInvalidEnumerator<Wire::HeatOverride>; } },

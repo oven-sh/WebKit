@@ -111,6 +111,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     FunctionEndsInFirstBlock(Optimize, "a function that is reached cannot get past its first block, and by no throw of its own: nothing is left of what a value there may be")
     GuardNotAvailable(Optimize, "something between the guard and the use may write what the guard depends on")
     InvalidGuard(Optimize, "the guard does not prove what the operation relies on")
+    UnspecifiedValueInspected(Optimize, "the operation looks at value {count}, which is unspecified on a path that reaches it")
     OperandMustBeDefinition(ReadAndVerify, "the operand must be the defining value, not a block parameter")
     CycleWithoutLoopMark(ReadAndVerify, "a cycle has no loop mark")
     InvalidCatch(ReadAndVerify, "a caught value is read outside a handler block")

@@ -129,9 +129,7 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
     const GPRReg cell = gprOf(StubRegister::T10);
     const GPRReg allocator = gprOf(StubRegister::T11);
     const GPRReg allocationScratch = gprOf(StubRegister::T12);
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     static_assert(sizeof(ImageStringHeader) == 24 && ImageString::hashMask * sizeof(ImageStringHeader) <= INT32_MAX);
-#endif
 
     cannot.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult, TrustedImm32(ImageString::hasTextFlag)));
     // ImageText::createAtom(): the header of an identifier's text is the atom. Any other atom is the one in the table of the thread.
@@ -139,99 +137,99 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
     jit.and32(TrustedImm32(ImageString::isAtomFlag | ImageString::hasIdentifierNumberFlag), scratch);
     cannot.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(ImageString::isAtomFlag)));
     Jump hasNoHeader = jit.branchTest32(CCallHelpers::NonZero, wordAndResult, TrustedImm32(ImageString::hasNoHeaderFlag));
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    createCellOfHeaderAndReturn(jit, wordAndResult, scratch, number, cannot, [&](JumpList& cannotAllocate) {
-        const GPRReg headerNumber = wordAndResult;
-        const GPRReg record = cell;
-        const GPRReg offset = allocator;
-        const GPRReg literalStringWord = offset;
-        const GPRReg lazyHeaders = allocationScratch;
-        const GPRReg newHeader = lazyHeaders;
-        const GPRReg word = scratch;
-        constexpr unsigned flagsFor16Bit = StringImpl::hashAndFlagsOfStaticString(0, false, StringImpl::StringNormal);
-        constexpr unsigned atomFlags = StringImpl::hashAndFlagsOfStaticString(0, false, StringImpl::StringAtom) ^ flagsFor16Bit;
-        static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringNormal) == (flagsFor16Bit | StringImpl::flagIs8Bit()));
-        static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringAtom) == (flagsFor16Bit | atomFlags | StringImpl::flagIs8Bit()) && !(atomFlags & flagsFor16Bit));
-        static_assert(sizeof(ImageStringRecord) == sizeof(uint64_t) && !OBJECT_OFFSETOF(ImageStringRecord, rangeOrIndex) && OBJECT_OFFSETOF(ImageStringRecord, hashAndFlags) == sizeof(uint32_t));
-        static_assert(OBJECT_OFFSETOF(ImageStringHeader, length) == sizeof(uint32_t) && OBJECT_OFFSETOF(ImageStringHeader, literalStringWord) == OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags) + sizeof(uint32_t));
-        jit.and32(TrustedImm32(ImageString::hashMask), headerNumber);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), word);
-        jit.load32(BaseIndex(word, headerNumber, CCallHelpers::TimesFour), offset);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaders)), lazyHeaders);
-        Jump isCreated = jit.branchTest32(CCallHelpers::NonZero, offset);
+    if (jit.options().isPositionIndependent) {
+        createCellOfHeaderAndReturn(jit, wordAndResult, scratch, number, cannot, [&](JumpList& cannotAllocate) {
+            const GPRReg headerNumber = wordAndResult;
+            const GPRReg record = cell;
+            const GPRReg offset = allocator;
+            const GPRReg literalStringWord = offset;
+            const GPRReg lazyHeaders = allocationScratch;
+            const GPRReg newHeader = lazyHeaders;
+            const GPRReg word = scratch;
+            constexpr unsigned flagsFor16Bit = StringImpl::hashAndFlagsOfStaticString(0, false, StringImpl::StringNormal);
+            constexpr unsigned atomFlags = StringImpl::hashAndFlagsOfStaticString(0, false, StringImpl::StringAtom) ^ flagsFor16Bit;
+            static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringNormal) == (flagsFor16Bit | StringImpl::flagIs8Bit()));
+            static_assert(StringImpl::hashAndFlagsOfStaticString(0, true, StringImpl::StringAtom) == (flagsFor16Bit | atomFlags | StringImpl::flagIs8Bit()) && !(atomFlags & flagsFor16Bit));
+            static_assert(sizeof(ImageStringRecord) == sizeof(uint64_t) && !OBJECT_OFFSETOF(ImageStringRecord, rangeOrIndex) && OBJECT_OFFSETOF(ImageStringRecord, hashAndFlags) == sizeof(uint32_t));
+            static_assert(OBJECT_OFFSETOF(ImageStringHeader, length) == sizeof(uint32_t) && OBJECT_OFFSETOF(ImageStringHeader, literalStringWord) == OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags) + sizeof(uint32_t));
+            jit.and32(TrustedImm32(ImageString::hashMask), headerNumber);
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), word);
+            jit.load32(BaseIndex(word, headerNumber, CCallHelpers::TimesFour), offset);
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), lazyHeaders);
+            Jump isCreated = jit.branchTest32(CCallHelpers::NonZero, offset);
 
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), record);
-        jit.load64(BaseIndex(record, headerNumber, CCallHelpers::TimesEight), record);
-        Jump hasInlineRange = jit.branchTest32(CCallHelpers::NonZero, record, TrustedImm32(ImageString::lengthMask));
-        cannotAllocate.append(jit.branchTestBit64(CCallHelpers::Zero, record, TrustedImm32(32 + WTF::fastLog2(ImageStringRecord::isLiteralStringFlag))));
-        jit.zeroExtend32ToWord(record, word);
-        jit.urshift32(TrustedImm32(ImageString::lengthBits), word);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.listedStrings)), literalStringWord);
-        jit.load64(BaseIndex(literalStringWord, word, CCallHelpers::TimesFour), literalStringWord);
-        jit.urshift64(TrustedImm32(32), record);
-        jit.lshift64(TrustedImm32(32), record);
-        jit.zeroExtend32ToWord(literalStringWord, word);
-        jit.or64(word, record);
-        jit.urshift64(TrustedImm32(32), literalStringWord);
-        hasInlineRange.link(&jit);
-        jit.move(record, word);
-        jit.and32(TrustedImm32(ImageString::lengthMask), word);
-        cannotAllocate.append(jit.branch32(CCallHelpers::BelowOrEqual, word, TrustedImm32(1)));
-        jit.move(TrustedImm32(1), word);
-        jit.atomicXchg32(word, Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)));
-        cannotAllocate.append(jit.branchTest32(CCallHelpers::NonZero, word));
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), word);
-        jit.load32(BaseIndex(word, headerNumber, CCallHelpers::TimesFour), word);
-        Jump wasCreatedConcurrently = jit.branchTest32(CCallHelpers::NonZero, word);
-        jit.load32(Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, end)), word);
-        jit.add32(TrustedImm32(sizeof(LazyStringHeader)), Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, end)));
-        jit.add64(word, newHeader);
-        jit.move(record, word);
-        jit.and32(TrustedImm32(ImageString::lengthMask), word);
-        jit.lshift64(TrustedImm32(32), word);
-        jit.or64(TrustedImm32(StringImpl::refCountOfStaticString()), word);
-        jit.store64(word, Address(newHeader));
-        jit.zeroExtend32ToWord(record, word);
-        jit.urshift32(TrustedImm32(ImageString::lengthBits), word);
-        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.text)), word);
-        jit.store64(word, Address(newHeader, OBJECT_OFFSETOF(ImageStringHeader, characters)));
-        jit.urshift64(TrustedImm32(32), record);
-        jit.move(record, word);
-        jit.lshift32(TrustedImm32(StringImpl::s_flagCount), word);
-        jit.or32(TrustedImm32(flagsFor16Bit), word);
-        Jump is16Bit = jit.branchTest32(CCallHelpers::NonZero, record, TrustedImm32(ImageString::is16BitFlag));
-        jit.or32(TrustedImm32(StringImpl::flagIs8Bit()), word);
-        is16Bit.link(&jit);
-        Jump isNotAtom = jit.branchTest32(CCallHelpers::Zero, record, TrustedImm32(ImageString::isAtomFlag));
-        jit.or32(TrustedImm32(atomFlags), word);
-        isNotAtom.link(&jit);
-        jit.lshift64(TrustedImm32(32), literalStringWord);
-        jit.or64(literalStringWord, word);
-        jit.store64(word, Address(newHeader, OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags)));
-        jit.store64(headerNumber, Address(newHeader, OBJECT_OFFSETOF(LazyStringHeader, number)));
-        jit.move(newHeader, offset);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaders)), lazyHeaders);
-        jit.sub64(lazyHeaders, offset);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), word);
-        jit.store32(offset, BaseIndex(word, headerNumber, CCallHelpers::TimesFour));
-        Jump isWritten = jit.jump();
-        wasCreatedConcurrently.link(&jit);
-        jit.move(word, offset);
-        isWritten.link(&jit);
-        jit.store32(TrustedImm32(0), Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)));
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), record);
+            jit.load64(BaseIndex(record, headerNumber, CCallHelpers::TimesEight), record);
+            Jump hasInlineRange = jit.branchTest32(CCallHelpers::NonZero, record, TrustedImm32(ImageString::lengthMask));
+            cannotAllocate.append(jit.branchTestBit64(CCallHelpers::Zero, record, TrustedImm32(32 + WTF::fastLog2(ImageStringRecord::isLiteralStringFlag))));
+            jit.zeroExtend32ToWord(record, word);
+            jit.urshift32(TrustedImm32(ImageString::lengthBits), word);
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.listedStrings)), literalStringWord);
+            jit.load64(BaseIndex(literalStringWord, word, CCallHelpers::TimesFour), literalStringWord);
+            jit.urshift64(TrustedImm32(32), record);
+            jit.lshift64(TrustedImm32(32), record);
+            jit.zeroExtend32ToWord(literalStringWord, word);
+            jit.or64(word, record);
+            jit.urshift64(TrustedImm32(32), literalStringWord);
+            hasInlineRange.link(&jit);
+            jit.move(record, word);
+            jit.and32(TrustedImm32(ImageString::lengthMask), word);
+            cannotAllocate.append(jit.branch32(CCallHelpers::BelowOrEqual, word, TrustedImm32(1)));
+            jit.move(TrustedImm32(1), word);
+            jit.atomicXchg32(word, Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)));
+            cannotAllocate.append(jit.branchTest32(CCallHelpers::NonZero, word));
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), word);
+            jit.load32(BaseIndex(word, headerNumber, CCallHelpers::TimesFour), word);
+            Jump wasCreatedConcurrently = jit.branchTest32(CCallHelpers::NonZero, word);
+            jit.load32(Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, end)), word);
+            jit.add32(TrustedImm32(sizeof(LazyStringHeader)), Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, end)));
+            jit.add64(word, newHeader);
+            jit.move(record, word);
+            jit.and32(TrustedImm32(ImageString::lengthMask), word);
+            jit.lshift64(TrustedImm32(32), word);
+            jit.or64(TrustedImm32(StringImpl::refCountOfStaticString()), word);
+            jit.store64(word, Address(newHeader));
+            jit.zeroExtend32ToWord(record, word);
+            jit.urshift32(TrustedImm32(ImageString::lengthBits), word);
+            jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.text)), word);
+            jit.store64(word, Address(newHeader, OBJECT_OFFSETOF(ImageStringHeader, characters)));
+            jit.urshift64(TrustedImm32(32), record);
+            jit.move(record, word);
+            jit.lshift32(TrustedImm32(StringImpl::s_flagCount), word);
+            jit.or32(TrustedImm32(flagsFor16Bit), word);
+            Jump is16Bit = jit.branchTest32(CCallHelpers::NonZero, record, TrustedImm32(ImageString::is16BitFlag));
+            jit.or32(TrustedImm32(StringImpl::flagIs8Bit()), word);
+            is16Bit.link(&jit);
+            Jump isNotAtom = jit.branchTest32(CCallHelpers::Zero, record, TrustedImm32(ImageString::isAtomFlag));
+            jit.or32(TrustedImm32(atomFlags), word);
+            isNotAtom.link(&jit);
+            jit.lshift64(TrustedImm32(32), literalStringWord);
+            jit.or64(literalStringWord, word);
+            jit.store64(word, Address(newHeader, OBJECT_OFFSETOF(ImageStringHeader, hashAndFlags)));
+            jit.store64(headerNumber, Address(newHeader, OBJECT_OFFSETOF(LazyStringHeader, number)));
+            jit.move(newHeader, offset);
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), lazyHeaders);
+            jit.sub64(lazyHeaders, offset);
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), word);
+            jit.store32(offset, BaseIndex(word, headerNumber, CCallHelpers::TimesFour));
+            Jump isWritten = jit.jump();
+            wasCreatedConcurrently.link(&jit);
+            jit.move(word, offset);
+            isWritten.link(&jit);
+            jit.store32(TrustedImm32(0), Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)));
 
-        isCreated.link(&jit);
-        jit.getEffectiveAddress(BaseIndex(lazyHeaders, offset, CCallHelpers::TimesOne), header);
-        cannotAllocate.append(jit.branch32(CCallHelpers::BelowOrEqual, Address(header, StringImpl::lengthMemoryOffset()), TrustedImm32(1)));
-    });
-#else
-    jit.and32(TrustedImm32(ImageString::hashMask), wordAndResult);
-    jit.mul32(TrustedImm32(sizeof(ImageStringHeader)), wordAndResult, header);
-    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), header);
-    // The empty string and the strings of one character have their cells in the VM. A header that is all zero is no string.
-    cannot.append(jit.branch32(CCallHelpers::BelowOrEqual, Address(header, StringImpl::lengthMemoryOffset()), TrustedImm32(1)));
-    createCellOfHeaderAndReturn(jit, wordAndResult, scratch, number, cannot, [](JumpList&) { });
-#endif
+            isCreated.link(&jit);
+            jit.getEffectiveAddress(BaseIndex(lazyHeaders, offset, CCallHelpers::TimesOne), header);
+            cannotAllocate.append(jit.branch32(CCallHelpers::BelowOrEqual, Address(header, StringImpl::lengthMemoryOffset()), TrustedImm32(1)));
+        });
+    } else {
+        jit.and32(TrustedImm32(ImageString::hashMask), wordAndResult);
+        jit.mul32(TrustedImm32(sizeof(ImageStringHeader)), wordAndResult, header);
+        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), header);
+        // The empty string and the strings of one character have their cells in the VM. A header that is all zero is no string.
+        cannot.append(jit.branch32(CCallHelpers::BelowOrEqual, Address(header, StringImpl::lengthMemoryOffset()), TrustedImm32(1)));
+        createCellOfHeaderAndReturn(jit, wordAndResult, scratch, number, cannot, [](JumpList&) { });
+    }
 
     hasNoHeader.link(&jit);
     createCellOfHeaderAndReturn(jit, wordAndResult, scratch, number, cannot, [&](JumpList& cannotAllocate) {

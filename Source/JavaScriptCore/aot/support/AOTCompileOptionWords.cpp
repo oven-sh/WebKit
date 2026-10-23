@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompileOptions.h"
 #include "AOTLimits.h"
 #include "AOTPassID.h"
 #include "AOTSchemaEnums.h"
@@ -81,6 +82,11 @@ static constexpr ASCIILiteral allFlowResultsName = "flow-results"_s;
 static constexpr NamedValue<Wire::ReferenceWidth> referenceWidths[] = {
     { "narrow"_s, Wire::ReferenceWidth::Narrow },
     { "wide"_s, Wire::ReferenceWidth::Wide },
+};
+
+static constexpr NamedValue<Wire::ImageForm> imageForms[] = {
+    { "absolute"_s, Wire::ImageForm::Absolute },
+    { "position-independent"_s, Wire::ImageForm::PositionIndependent },
 };
 
 static constexpr NamedValue<Wire::MismatchPolicy> mismatchPolicies[] = {
@@ -529,6 +535,20 @@ static void listReferenceWidths(PrintStream& out)
     listNamedValues(out, referenceWidths);
 }
 
+static std::optional<String> applyImageForm(Wire::CompileOptions& options, StringView value)
+{
+    auto form = findNamedValue(imageForms, value);
+    if (!form)
+        return unknownNameSentence("image form"_s, value);
+    options.target.imageForm = *form;
+    return std::nullopt;
+}
+
+static void listImageForms(PrintStream& out)
+{
+    listNamedValues(out, imageForms);
+}
+
 static std::optional<String> applyTypeErrors(Wire::CompileOptions& options, StringView value)
 {
     auto mismatchPolicy = findNamedValue(mismatchPolicies, value);
@@ -604,6 +624,7 @@ static constexpr OptionWord optionWords[] = {
     { "count-arrivals"_s, ValueForm::None, { }, WordOwner::Engine, applyCountArrivals, listNoValues },
     { "drop-guard"_s, ValueForm::Required, "<Opcode>:<n>"_s, WordOwner::Engine, applyDropGuard, listNoValues },
     { "references"_s, ValueForm::Required, "narrow|wide"_s, WordOwner::Engine, applyReferences, listReferenceWidths },
+    { "image-form"_s, ValueForm::Required, "absolute|position-independent"_s, WordOwner::Engine, applyImageForm, listImageForms },
     { "type-errors"_s, ValueForm::Required, "throw|log"_s, WordOwner::Engine, applyTypeErrors, listMismatchPolicies },
     { "layout-seed"_s, ValueForm::Required, "<n>"_s, WordOwner::Engine, applyLayoutSeed, listNoValues },
     { "threads"_s, ValueForm::Required, "<n>"_s, WordOwner::Engine, applyThreads, listNoValues },
@@ -660,6 +681,7 @@ Wire::CompileOptions makeDefaultCompileOptions()
     options.threadCount = std::clamp<unsigned>(WTF::numberOfProcessorCores(), 1, std::min<unsigned>(Limits::maxWorkers, mostUsefulThreads));
     options.target.architecture = hostArchitecture();
     options.target.features = CPUFeatureSet::buildTarget().bits();
+    options.target.imageForm = imageFormOfThisRuntime();
     options.sizeClassProgression = Options::sizeClassProgressionForCompiledCode;
     return options;
 }

@@ -97,11 +97,8 @@ StubSignature signatureOfLooseEqualsLiteral(StubKey)
 void generateStringEqualsLiteral(StubAssembler& jit)
 {
     static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     static_assert(sizeof(ImageStringRecord) == sizeof(uint64_t) && !OBJECT_OFFSETOF(ImageStringRecord, rangeOrIndex) && sizeof(ImageStringWord) == sizeof(uint32_t));
-#else
     static_assert(sizeof(ImageStringHeader) == 3 * sizeof(uint64_t) && sizeof(ImageStringWord) == sizeof(uint32_t));
-#endif
     const GPRReg subject = jit.operand(0);
     const GPRReg stringIndex = jit.immediate();
     const GPRReg result = jit.result();
@@ -124,48 +121,49 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     jit.bindEntry(jit.key());
     jit.loadPtr(Address(subject, JSString::offsetOfValue()), fiber);
     Jump isRope = jit.branchIfRopeStringImpl(fiber);
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    const GPRReg number = header;
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), number);
-    jit.load32(BaseIndex(number, stringIndex, CCallHelpers::TimesFour), number);
-    hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, number, TrustedImm32(ImageString::hasNoHeaderFlag)));
-    jit.and32(TrustedImm32(ImageString::hashMask), number);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), length);
-    jit.load64(BaseIndex(length, number, CCallHelpers::TimesEight), length);
-    hasNoHeader.append(jit.branchTest64(CCallHelpers::Zero, length));
-    Jump hasInlineRange = jit.branchTest32(CCallHelpers::NonZero, length, TrustedImm32(ImageString::lengthMask));
-    static_assert(ImageString::lengthBits > CCallHelpers::TimesFour);
-    jit.urshift32(TrustedImm32(ImageString::lengthBits), length);
-    jit.lshift32(TrustedImm32(CCallHelpers::TimesFour), length);
-    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.listedStrings)), length);
-    jit.load32(Address(length), length);
-    hasInlineRange.link(&jit);
-    jit.and32(TrustedImm32(ImageString::lengthMask), length);
-    hasNoHeader.append(jit.branchTest32(CCallHelpers::Zero, length));
-    isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), length));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), headers);
-    jit.load32(BaseIndex(headers, number, CCallHelpers::TimesFour), header);
-    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaders)), header);
-    Jump isSameImpl = jit.branchPtr(CCallHelpers::Equal, fiber, header);
-    hasNoHeader.append(jit.jump());
-#else
-    // The header of the text is a StringImpl: a string made of the text has that very impl, and most others have another length.
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), header);
-    jit.load32(BaseIndex(header, stringIndex, CCallHelpers::TimesFour), header);
-    hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, header, TrustedImm32(ImageString::hasNoHeaderFlag)));
-    jit.and32(TrustedImm32(ImageString::hashMask), header);
-    jit.getEffectiveAddress(BaseIndex(header, header, CCallHelpers::TimesTwo), header);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
-    jit.getEffectiveAddress(BaseIndex(headers, header, CCallHelpers::TimesEight), header);
-    Jump isSameImpl = jit.branchPtr(CCallHelpers::Equal, fiber, header);
-    jit.load32(Address(header, OBJECT_OFFSETOF(ImageStringHeader, length)), length);
-    // A string without text and the empty text have a header of zeros.
-    hasNoHeader.append(jit.branchTest32(CCallHelpers::Zero, length));
-    isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), length));
-    jit.move(fiber, implArgument);
-    jit.callLeaf(Entry::operationAOTStringImplsAreEqual);
-    jit.returnToCaller();
-#endif
+    Jump isSameImpl;
+    if (jit.options().isPositionIndependent) {
+        const GPRReg number = header;
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), number);
+        jit.load32(BaseIndex(number, stringIndex, CCallHelpers::TimesFour), number);
+        hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, number, TrustedImm32(ImageString::hasNoHeaderFlag)));
+        jit.and32(TrustedImm32(ImageString::hashMask), number);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), length);
+        jit.load64(BaseIndex(length, number, CCallHelpers::TimesEight), length);
+        hasNoHeader.append(jit.branchTest64(CCallHelpers::Zero, length));
+        Jump hasInlineRange = jit.branchTest32(CCallHelpers::NonZero, length, TrustedImm32(ImageString::lengthMask));
+        static_assert(ImageString::lengthBits > CCallHelpers::TimesFour);
+        jit.urshift32(TrustedImm32(ImageString::lengthBits), length);
+        jit.lshift32(TrustedImm32(CCallHelpers::TimesFour), length);
+        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.listedStrings)), length);
+        jit.load32(Address(length), length);
+        hasInlineRange.link(&jit);
+        jit.and32(TrustedImm32(ImageString::lengthMask), length);
+        hasNoHeader.append(jit.branchTest32(CCallHelpers::Zero, length));
+        isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), length));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), headers);
+        jit.load32(BaseIndex(headers, number, CCallHelpers::TimesFour), header);
+        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), header);
+        isSameImpl = jit.branchPtr(CCallHelpers::Equal, fiber, header);
+        hasNoHeader.append(jit.jump());
+    } else {
+        // The header of the text is a StringImpl: a string made of the text has that very impl, and most others have another length.
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), header);
+        jit.load32(BaseIndex(header, stringIndex, CCallHelpers::TimesFour), header);
+        hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, header, TrustedImm32(ImageString::hasNoHeaderFlag)));
+        jit.and32(TrustedImm32(ImageString::hashMask), header);
+        jit.getEffectiveAddress(BaseIndex(header, header, CCallHelpers::TimesTwo), header);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
+        jit.getEffectiveAddress(BaseIndex(headers, header, CCallHelpers::TimesEight), header);
+        isSameImpl = jit.branchPtr(CCallHelpers::Equal, fiber, header);
+        jit.load32(Address(header, OBJECT_OFFSETOF(ImageStringHeader, length)), length);
+        // A string without text and the empty text have a header of zeros.
+        hasNoHeader.append(jit.branchTest32(CCallHelpers::Zero, length));
+        isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(fiber, StringImpl::lengthMemoryOffset()), length));
+        jit.move(fiber, implArgument);
+        jit.callLeaf(Entry::operationAOTStringImplsAreEqual);
+        jit.returnToCaller();
+    }
 
     isSameImpl.link(&jit);
     jit.move(TrustedImm32(1), result);
@@ -334,11 +332,11 @@ void findLiteralStringWord(StubAssembler& jit, const LiteralStringProbeRegisters
     const GPRReg headers = tables;
     const GPRReg sizeOfHeaders = maxLength;
     jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaders)), headers);
-#else
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
-#endif
+    if (jit.options().isPositionIndependent) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), headers);
+    } else {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
+    }
     jit.load32(Address(headers, OBJECT_OFFSETOF(ImageStringHeader, literalStringWord)), sizeOfHeaders);
     jit.sub64(impl, headers, entry);
     Jump isOutsideOfImage = jit.branch64(CCallHelpers::AboveOrEqual, entry, sizeOfHeaders);

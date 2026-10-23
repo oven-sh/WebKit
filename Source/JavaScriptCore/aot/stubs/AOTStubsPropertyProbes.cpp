@@ -1094,22 +1094,20 @@ Jump branchIfCellNameDiffers(StubAssembler& jit, GPRReg column, GPRReg cell, GPR
 
 void loadIdentifier(StubAssembler& jit, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated)
 {
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    static_assert(sizeof(ProgramSymbol) == 2u << CCallHelpers::TimesEight);
-    const GPRReg scratch = jit.scratchRegister();
-    RELEASE_ASSERT(noOverlap(identifierNumber, uid, scratch, instanceGPR));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), scratch);
-    jit.load32(BaseIndex(scratch, identifierNumber, CCallHelpers::TimesFour), uid);
-    Jump isAtomOfImage = jit.branchTest32(CCallHelpers::NonZero, uid);
-#else
     static_assert(sizeof(UniquedStringImpl) == 3u << CCallHelpers::TimesEight && sizeof(ProgramSymbol) == 2u << CCallHelpers::TimesEight);
     const GPRReg scratch = jit.scratchRegister();
     RELEASE_ASSERT(noOverlap(identifierNumber, uid, scratch, instanceGPR));
-    jit.getEffectiveAddress(BaseIndex(identifierNumber, identifierNumber, CCallHelpers::TimesTwo), uid);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), scratch);
-    jit.getEffectiveAddress(BaseIndex(scratch, uid, CCallHelpers::TimesEight), uid);
-    Jump isAtomOfImage = jit.branchTest32(CCallHelpers::NonZero, Address(uid, StringImpl::lengthMemoryOffset()));
-#endif
+    Jump isAtomOfImage;
+    if (jit.options().isPositionIndependent) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), scratch);
+        jit.load32(BaseIndex(scratch, identifierNumber, CCallHelpers::TimesFour), uid);
+        isAtomOfImage = jit.branchTest32(CCallHelpers::NonZero, uid);
+    } else {
+        jit.getEffectiveAddress(BaseIndex(identifierNumber, identifierNumber, CCallHelpers::TimesTwo), uid);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), scratch);
+        jit.getEffectiveAddress(BaseIndex(scratch, uid, CCallHelpers::TimesEight), uid);
+        isAtomOfImage = jit.branchTest32(CCallHelpers::NonZero, Address(uid, StringImpl::lengthMemoryOffset()));
+    }
 
     // A symbol, a private name or the empty text: ProgramSymbols::find().
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programSymbols)), uid);
@@ -1127,15 +1125,15 @@ void loadIdentifier(StubAssembler& jit, GPRReg identifierNumber, GPRReg uid, Jum
 
     isFound.link(&jit);
     jit.loadPtr(Address(uid, OBJECT_OFFSETOF(ProgramSymbol, uid)), uid);
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    Jump isSymbol = jit.jump();
+    if (jit.options().isPositionIndependent) {
+        Jump isSymbol = jit.jump();
 
-    isAtomOfImage.link(&jit);
-    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaders)), uid);
-    isSymbol.link(&jit);
-#else
-    isAtomOfImage.link(&jit);
-#endif
+        isAtomOfImage.link(&jit);
+        jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), uid);
+        isSymbol.link(&jit);
+    } else {
+        isAtomOfImage.link(&jit);
+    }
 }
 
 void findHashedSlot(StubAssembler& jit, SlotAccess access, const HashedProbeRegisters& r, JumpList& miss)

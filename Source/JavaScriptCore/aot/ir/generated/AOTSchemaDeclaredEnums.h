@@ -19,10 +19,10 @@ using Wire::CheckCause; using Wire::UnseenCodeCause; using Wire::LocaleUseKind; 
 using Wire::ImageVerdict; using Wire::DeclineKind; using Wire::TypedResultDeclineReason; using Wire::CallDeclineReason;
 using Wire::GeneratorFusionDeclineReason; using Wire::ArrayChainDeclineReason; using Wire::StringBuilderDeclineReason; using Wire::LoopDeclineReason;
 using Wire::InterpretedCause; using Wire::AllocationHeapCause; using Wire::AllocationOutcome; using Wire::AllocationKind; using Wire::ResultSection;
-using Wire::CompileAction; using Wire::Architecture; using Wire::ReferenceWidth; using Wire::MismatchPolicy; using Wire::HeatOverride;
-using Wire::Sabotage; using Wire::BuiltinUse; using Wire::ArrivalLayoutFlags; using Wire::ArrivalFieldFlags; using Wire::AllocationEscapeReason;
-using Wire::CheckSet; using Wire::ReportSet; using Wire::TestingSwitch; using Wire::Instrumentation; using Wire::AdmittedCode;
-using Wire::ExcludedCode; using Wire::OutputOptions;
+using Wire::CompileAction; using Wire::Architecture; using Wire::ReferenceWidth; using Wire::ImageForm; using Wire::MismatchPolicy;
+using Wire::HeatOverride; using Wire::Sabotage; using Wire::BuiltinUse; using Wire::ArrivalLayoutFlags; using Wire::ArrivalFieldFlags;
+using Wire::AllocationEscapeReason; using Wire::CheckSet; using Wire::ReportSet; using Wire::TestingSwitch; using Wire::Instrumentation;
+using Wire::AdmittedCode; using Wire::ExcludedCode; using Wire::OutputOptions;
 
 enum class IRForm : uint8_t { AsRead, Prepared, Selected, Placed };
 enum class ResultRule : uint8_t { None, Constant, Natural, Allocation, Declared, Unknown, Cast, Results };

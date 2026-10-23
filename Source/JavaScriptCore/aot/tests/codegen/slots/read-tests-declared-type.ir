@@ -4,7 +4,7 @@
 # What it costs: nothing says any more that the loaded number is no NaN, so boxing it (readNumber) purifies it, which the size of f2 shows
 # FORM: Selected
 # RUN: generate-code
-# REQUIRES: unsanitized-code
+# REQUIRES: x86_64 unsanitized-code
 # OPTIONS: heat=everything-is-hot check=validate-back-end
 # CHECK: f1: size=21 frame=none
 # CHECK: f2: size={{*}} frame=none

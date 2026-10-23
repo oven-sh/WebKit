@@ -17,8 +17,8 @@ void runValueFlowRule(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 // Every primitive and the unknown object. Whoever brings the unknown object into being says why: the source goes with every set that the run adds from here on, until the run names another one.
 ValueSetID unknownValue(ValueFlowRuleContext&, ValueFlowUnknownSource);
-// What an entry of the engine answers without a description. The engine makes no object of the host.
-ValueSetID unknownValueOutOfEngine(ValueFlowRuleContext&);
+// What an entry of the engine answers without a description, for the engine makes no object of the host, and an instance of a class that a row names and Buffer does not extend.
+ValueSetID undescribedValueThatIsNoBuffer(ValueFlowRuleContext&);
 // Whoever fills a group of kind Call or Construct says from which position on it passes nothing: a parameter that every caller of the group fills is not undefined.
 void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments);
 

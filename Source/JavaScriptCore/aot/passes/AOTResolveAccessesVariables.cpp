@@ -37,7 +37,7 @@ void AccessRewriter::becomeVariableAccess(const NamedAccessSite& site, const Acc
         replaced.add({ program, m_context.inputs.effects }, m_context.function, valueAt(site.site));
 
     if (plan.operation == Opcode::PutModuleVariable) {
-        ASSERT(program.typeOf(m_context.function, operands.stored).isSubsetOf(program.at(variable.declared.type), program));
+        ASSERT(variable.declared.flags.contains(PositionFlags::IsExpected) || program.typeOf(m_context.function, operands.stored).isSubsetOf(program.at(variable.declared.type), program));
         Value& store = valueAt(site.site);
         store.become(Opcode::PutModuleVariable);
         store.setVariable(id);

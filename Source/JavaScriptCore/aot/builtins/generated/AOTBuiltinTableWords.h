@@ -860,6 +860,7 @@ inline constexpr ASCIILiteral builtinOverloadFlagWords[] = {
     "ReadsStateBeforeConversions"_s,
     "IsSpecialCase"_s,
     "OnlyPropagatesErrors"_s,
+    "ResultIsDeclaredOnly"_s,
 };
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::IsUndeclared) == 1u << 0);
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::IsProvenByConstruction) == 1u << 1);
@@ -868,6 +869,7 @@ static_assert(static_cast<unsigned>(BuiltinOverloadFlag::RunsOnlyOperandCode) ==
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::ReadsStateBeforeConversions) == 1u << 4);
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::IsSpecialCase) == 1u << 5);
 static_assert(static_cast<unsigned>(BuiltinOverloadFlag::OnlyPropagatesErrors) == 1u << 6);
+static_assert(static_cast<unsigned>(BuiltinOverloadFlag::ResultIsDeclaredOnly) == 1u << 7);
 
 inline constexpr ASCIILiteral operandUseWords[] = {
     "Inspects"_s,

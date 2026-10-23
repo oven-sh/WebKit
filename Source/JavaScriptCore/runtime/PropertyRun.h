@@ -120,15 +120,6 @@ public:
 
     PropertyAdditionCache& additionCache() LIFETIME_BOUND { return m_additionCache; }
 
-    void didExtendLongTransitionChain(Structure* previous, Structure* last)
-    {
-        if (!m_endsOfLongTransitionChains.isEmpty() && m_endsOfLongTransitionChains.last() == previous)
-            m_endsOfLongTransitionChains.last() = last;
-        else
-            m_endsOfLongTransitionChains.append(last);
-    }
-    Vector<Structure*> takeEndsOfLongTransitionChains() { return std::exchange(m_endsOfLongTransitionChains, { }); }
-
 private:
     struct RunHash {
         static unsigned hash(const Ref<PropertyRun>& run) { return run->hash(); }
@@ -140,7 +131,6 @@ private:
     HashSet<Ref<PropertyRun>, RunHash> m_runs;
     HashMap<UniquedStringImpl*, Vector<const PropertyRun*, 1>> m_runsByLastName;
     PropertyAdditionCache m_additionCache;
-    Vector<Structure*> m_endsOfLongTransitionChains;
 };
 
 } // namespace JSC

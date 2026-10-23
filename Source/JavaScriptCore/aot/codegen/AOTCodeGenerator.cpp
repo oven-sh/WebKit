@@ -599,6 +599,14 @@ void CodeGenerator::takeOperandsOf(ValueID operationLeftToUser)
     convertOperandsOf(*m_operation, function().at(operationLeftToUser));
 }
 
+void CodeGenerator::generateWithOperandsOf(ValueID operationLeftToUser, NOESCAPE const ScopedLambda<void()>& generate)
+{
+    const OperationContext& user = *m_operation;
+    OperationScope scope(*this, user);
+    convertOperandsOf(user, function().at(operationLeftToUser));
+    generate();
+}
+
 std::optional<Operand> CodeGenerator::onlyValueOf(const Type& type, Representation representation)
 {
     if (!isLegalRepresentation(type, representation))

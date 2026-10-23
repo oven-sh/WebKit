@@ -275,8 +275,13 @@ static bool isStoredLateOrNever(const FieldArmState& state)
     return state.isAddedLate && state.admitsUndefined && !state.isRequired && !state.holdsRawNumberOrBoolean;
 }
 
+static bool isLazilyInitialized(const FieldArmState& state)
+{
+    return state.hasConstructor && !state.isRequired && !state.isInContainer && state.admitsUndefined && !state.holdsRawNumberOrBoolean;
+}
+
 // `child.style.position`, where the style is one of two records that leave `position` out and of two other layouts that always have it: the objects that come with an empty slot are those of the records.
-std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
+std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key, OptionSet<OptionKind> kinds)
 {
     LayoutList layoutsWithEmptySlots;
     bool hasOption = false;
@@ -288,8 +293,11 @@ std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const Pro
         if (state.isAlwaysFilled)
             continue;
         layoutsWithEmptySlots.add(layout);
-        hasOption |= !state.isRequired && state.isLeftOutAtConstruction && !state.hasConstructor;
-        hasOption |= isStoredLateOrNever(state);
+        hasOption |= kinds.contains(OptionKind::LazilyInitializedField) && isLazilyInitialized(state);
+        if (kinds.contains(OptionKind::RecordOption)) {
+            hasOption |= !state.isRequired && state.isLeftOutAtConstruction && !state.hasConstructor;
+            hasOption |= isStoredLateOrNever(state);
+        }
         cannotMoveOut &= state.cannotMoveOut;
     }
     if (!hasOption)
@@ -306,6 +314,26 @@ std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const Pro
 static Opcode creatingStoreFor(const FieldArmState& state)
 {
     return state.receivers.keys == KeyEnumeration::NeverEnumerated && !state.mayLieOutOfLine ? Opcode::PutSlot : Opcode::PutSlotOrAdd;
+}
+
+std::optional<LazyFieldCreation> planLazyFieldCreation(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
+{
+    FieldArmState state = computeStateOfFieldArm(context.program, receivers, key, false);
+    if (!isLazilyInitialized(state) || !state.form.isEmpty() || state.hasImmutableMember || state.hasDeferredMember)
+        return std::nullopt;
+    LazyFieldCreation creation { creatingStoreFor(state), { }, { } };
+    if (!state.cannotMoveOut)
+        creation.proofs.add(Proof::NoFieldOutsideSlot);
+    if (!state.receivers.cannot(ObjectMutation::ChangeIntegrity))
+        creation.proofs.add(Proof::NotFrozen);
+    if (!state.inheritsNothingUnderName) {
+        std::optional<CreationTests> inherited = computeTestsThatNothingIsInherited(context, receivers, key, Access::Store);
+        if (!inherited)
+            return std::nullopt;
+        creation.proofs |= inherited->proofs;
+        creation.conditions = WTF::move(inherited->conditions);
+    }
+    return creation;
 }
 
 static void planFieldRead(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state, PropertyAccessPlan& plan)

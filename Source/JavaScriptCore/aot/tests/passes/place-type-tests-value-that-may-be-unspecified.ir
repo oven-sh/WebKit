@@ -27,7 +27,11 @@ function f0 name="arrayOnlyForOneKind" parameters=[{type=Array}, {type=boolean}]
     v9 = ElemGet v6, v8
     Branch v1 -> taken b4(), notTaken b6()
   b6():
+    Switch v5 cases=[0] -> case b7(), otherwise b8()
+  b7():
     v10 = HasArrayStorage v6 arrayStorage=Contiguous
+    Return
+  b8():
     Return
 }
 # F0: test HasArrayStorage v6 arrayStorage=Contiguous before v9
@@ -53,7 +57,11 @@ function f1 name="arrayForEveryKind" parameters=[{type=Array}, {type=boolean}] r
     v9 = ElemGet v6, v8
     Branch v1 -> taken b4(), notTaken b6()
   b6():
+    Switch v5 cases=[0] -> case b7(), otherwise b8()
+  b7():
     v10 = HasArrayStorage v6 arrayStorage=Contiguous
+    Return
+  b8():
     Return
 }
 # F1: test HasArrayStorage v0 arrayStorage=Contiguous on b3.0

@@ -463,6 +463,11 @@ static void testOtherCageShift()
     checkHeaderChange(Verdict::OptionsConflict, [](ImageHeader& header) { header.heap.markedBlockCageShift += 1; });
 }
 
+static void testOtherImageForm()
+{
+    checkHeaderChange(Verdict::OptionsConflict, [](ImageHeader& header) { header.options.imageForm ^= 1; });
+}
+
 static void testOtherSizeClasses()
 {
     checkHeaderChange(Verdict::OptionsConflict, [](ImageHeader& header) { header.heap.sizeClassProgression *= 2; });
@@ -778,6 +783,8 @@ static void testStamp()
     AOT_TEST_CHECK(imageStamp(buildTarget, testIdentity) == imageStamp(buildTarget, testIdentity));
     AOT_TEST_CHECK(imageStamp(buildTarget, testIdentity) != imageStamp(buildTarget, otherIdentity()));
     AOT_TEST_CHECK(imageStamp(noFeatures, testIdentity) != imageStamp(oneFeature, testIdentity));
+    AOT_TEST_CHECK(imageStamp(buildTarget, testIdentity) == imageStamp(buildTarget, testIdentity, imageFormOfThisRuntime()));
+    AOT_TEST_CHECK(imageStamp(buildTarget, testIdentity, Wire::ImageForm::Absolute) != imageStamp(buildTarget, testIdentity, Wire::ImageForm::PositionIndependent));
 }
 
 static void testAdmittedCodeIsInHeader()
@@ -960,6 +967,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/check/needs-cell-cage"_s, testNeedsCellCage },
         { "image/check/other-cage-shift"_s, testOtherCageShift },
         { "image/check/other-size-classes"_s, testOtherSizeClasses },
+        { "image/check/other-image-form"_s, testOtherImageForm },
         { "image/check/unaligned-code"_s, testUnalignedCode },
         { "image/check/code-past-end"_s, testCodePastEnd },
         { "image/check/section-offset-unaligned"_s, testSectionOffsetUnaligned },

@@ -180,7 +180,10 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers)
 {
     ClimbingSet start = startOfLookup(receivers);
     ClimbingSet chain = m_context.valueOf(m_context.lookup(start, prototypeLinkName));
-    return { start, ClimbingSet(ValueSets::nothing), known(chain), known(chain), mayBeUnknownObject(chain) || mayBeUnknownObject(receivers), mayBeUntrackedObject(chain) || mayBeUntrackedObject(receivers) };
+    ClimbingSet objects = known(chain);
+    if (m_keepsHoldersOfExportsItStartsFrom)
+        objects = m_context.unite(objects, m_context.restrict(start, m_universe.holdersOfLibraryExports()));
+    return { start, ClimbingSet(ValueSets::nothing), objects, objects, mayBeUnknownObject(chain) || mayBeUnknownObject(receivers), mayBeUntrackedObject(chain) || mayBeUntrackedObject(receivers) };
 }
 
 ValueSetID HeapRule::holdersWithLockedLocationUnder(const HeapKey& key) const
@@ -900,7 +903,7 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
         passToAccessorNobodyKnows(receiver, m_tables.whatIsNewToNativeCode());
         if (value)
             connect(*value, ValueFlowProgramNodes::escaped());
-        add(result, m_undescribedNativeCodeIsOfEngine ? unknownValueOutOfEngine(m_context) : unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
+        add(result, m_undescribedNativeCodeIsOfEngine ? undescribedValueThatIsNoBuffer(m_context) : unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
     }
 
     // An accessor nobody knows, on an object nobody knows, may be a function that has escaped, which is entered with the unknown object as every operand.
@@ -1550,6 +1553,7 @@ void HeapRule::runLookup()
     if (splitLookupThroughPlaceholders())
         return;
 
+    m_keepsHoldersOfExportsItStartsFrom = name == everyPropertyOfListedHoldersOfExports;
     switch (name.kind) {
     case ValueFlowNameKind::Property:
     case ValueFlowNameKind::Elements:

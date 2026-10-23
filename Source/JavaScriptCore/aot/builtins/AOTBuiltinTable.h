@@ -177,6 +177,7 @@ enum class BuiltinOverloadFlag : uint8_t {
     ReadsStateBeforeConversions = 1 << 4,
     IsSpecialCase = 1 << 5,
     OnlyPropagatesErrors = 1 << 6,
+    ResultIsDeclaredOnly = 1 << 7,
 };
 
 enum class BuiltinCapability : uint8_t {
@@ -684,6 +685,8 @@ struct BuiltinOverload {
     // With operands that it admits the entry has no step of its own that throws.
     constexpr bool onlyPropagatesErrors() const { return flags.contains(BuiltinOverloadFlag::OnlyPropagatesErrors); }
     constexpr bool isUndeclared() const { return flags.contains(BuiltinOverloadFlag::IsUndeclared); }
+    // Nothing proves the type of the result: native code may hand back any value. The type is what is expected, and compiled code tests the value where it arrives.
+    constexpr bool resultIsDeclaredOnly() const { return flags.contains(BuiltinOverloadFlag::ResultIsDeclaredOnly); }
     constexpr bool hasTypedResult() const { return result.typedResultForm != TypedResultForm::None; }
 
     // The function of the library that a call is: its body says what the call does, and the call may enter it directly.

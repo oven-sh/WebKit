@@ -121,8 +121,8 @@ public:
             m_identifierOffsets[name] = name * sizeof(LazyStringHeader);
         }
         instance.image.lazyStringHeaderOffsets = m_identifierOffsets.data();
-        instance.image.lazyStringHeaders = reinterpret_cast<uint8_t*>(m_identifiers.data());
-        instance.image.lazyStringHeadersCapacity = sizeof(m_identifiers);
+        instance.lazyStrings.headers = reinterpret_cast<uint8_t*>(m_identifiers.data());
+        instance.lazyStrings.capacity = sizeof(m_identifiers);
 #else
         for (unsigned name = 1; name < numberOfNames; ++name)
             m_identifiers[name].length = 1;

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "JSExportMacros.h"
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -44,7 +45,7 @@ struct RuntimeDescription {
     uint8_t checks;
     uint32_t reserved;
 };
-static_assert(sizeof(RuntimeDescription) == 32);
+static_assert(sizeof(RuntimeDescription) == 32 && offsetof(RuntimeDescription, imageForm) == 26);
 
 struct RuntimeDifference {
     ASCIILiteral name;

@@ -61,10 +61,12 @@ struct TextRecords {
 };
 
 struct StringHeaderNumbers {
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    uint64_t sizeOfHeaders() const { return static_cast<uint64_t>(count) * sizeof(ImageStringRecord); }
+    bool hasRecords() const { return form == ImageForm::PositionIndependent; }
+    uint64_t sizeOfHeaders() const { return static_cast<uint64_t>(count) * (hasRecords() ? sizeof(ImageStringRecord) : sizeof(ImageStringHeader)); }
     uint64_t sizeOfList() const { return static_cast<uint64_t>(numberOfListedWords) * sizeof(uint32_t); }
 
+    ImageForm form { ImageForm::Absolute };
+    // The number of the header of a string that is no identifier's text, or the first word in the image's list of a string without a header.
     Vector<uint32_t> byString;
     Vector<uint32_t> listedWordIndexes;
     Vector<uint32_t> literalStringWords;
@@ -86,19 +88,22 @@ static bool needsRecord(const TextRecords& text, const ImageString& string)
     return string.hasHeader() && string.range(text.longStrings).length;
 }
 
-static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords& text, std::span<const uint32_t> literalStrings, BuildContext& context)
+static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords& text, std::span<const uint32_t> literalStrings, ImageForm form, BuildContext& context)
 {
     StringHeaderNumbers numbers;
+    numbers.form = form;
     numbers.byString.fill(0, text.strings.size());
-    numbers.listedWordIndexes.fill(0, text.strings.size());
-    numbers.literalStringWords.fill(0, text.strings.size());
-    for (uint32_t number = 0; number < literalStrings.size(); ++number)
-        numbers.literalStringWords[literalStrings[number]] = literalStringWord(number);
+    if (numbers.hasRecords()) {
+        numbers.listedWordIndexes.fill(0, text.strings.size());
+        numbers.literalStringWords.fill(0, text.strings.size());
+        for (uint32_t number = 0; number < literalStrings.size(); ++number)
+            numbers.literalStringWords[literalStrings[number]] = literalStringWord(number);
+    }
     uint64_t count = text.identifiers.size();
     uint64_t numberOfListedWords = 0;
     for (size_t index = 0; index < text.strings.size(); ++index) {
         const ImageString& string = text.strings[index];
-        if (needsRecord(text, string) && (numbers.literalStringWords[index] || !ImageListedString::fitsOneWord(string.range(text.longStrings)))) {
+        if (numbers.hasRecords() && needsRecord(text, string) && (numbers.literalStringWords[index] || !ImageListedString::fitsOneWord(string.range(text.longStrings)))) {
             numbers.listedWordIndexes[index] = static_cast<uint32_t>(numberOfListedWords);
             numberOfListedWords += ImageListedString::numberOfWords(string.range(text.longStrings)) + !!numbers.literalStringWords[index];
         }
@@ -111,37 +116,7 @@ static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords&
         numbers.byString[index] = static_cast<uint32_t>(numberOfListedWords);
         numberOfListedWords += ImageListedString::numberOfWords(string.range(text.longStrings)) + string.hasListedHash();
     }
-#else
-    uint64_t sizeOfHeaders() const { return static_cast<uint64_t>(count) * sizeof(ImageStringHeader); }
-    uint64_t sizeOfList() const { return static_cast<uint64_t>(numberOfListedWords) * sizeof(uint32_t); }
-
-    // The number of the header of a string that is no identifier's text, or the first word in the image's list of a string without a header.
-    Vector<uint32_t> byString;
-    uint32_t count { 0 };
-    uint32_t numberOfListedWords { 0 };
-};
-
-} // anonymous namespace
-
-static std::optional<StringHeaderNumbers> numberStringHeaders(const TextRecords& text, BuildContext& context)
-{
-    StringHeaderNumbers numbers;
-    numbers.byString.fill(0, text.strings.size());
-    uint64_t count = text.identifiers.size();
-    uint64_t numberOfListedWords = 0;
-    for (size_t index = 0; index < text.strings.size(); ++index) {
-        const ImageString& string = text.strings[index];
-        if (!string.hasText() || string.hasIdentifierNumber())
-            continue;
-        if (string.hasHeader()) {
-            numbers.byString[index] = static_cast<uint32_t>(count++);
-            continue;
-        }
-        numbers.byString[index] = static_cast<uint32_t>(numberOfListedWords);
-        numberOfListedWords += ImageListedString::numberOfWords(string.range(text.longStrings)) + string.hasListedHash();
-    }
     // Not context.limit(): a test that lowers it means the list of long strings.
-#endif
     static_assert(defaultLimitValue(LimitID::MaxListedStrings, hostArchitecture()) == ImageString::hashMask + 1);
     if (std::max(count, numberOfListedWords) > ImageString::hashMask + 1) {
         context.reportLimitExceeded(LimitID::MaxListedStrings, std::max(count, numberOfListedWords));
@@ -283,7 +258,7 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& inputs, co
     static_assert(sizeof(ImageHeapOptions) == sizeof(double) + 2 * sizeof(uint32_t), "a double has no unique object representation, so the sizes say that there is no padding");
     header.magic = imageMagic;
     header.identity = context.options().executableIdentity;
-    header.stamp = imageStamp(context.targetFeatures(), header.identity);
+    header.stamp = imageStamp(context.targetFeatures(), header.identity, context.recordedOptions().form());
     header.size = extent.size;
     header.codeOffset = extent.codeOffset;
     header.codeSize = inputs.linker.layout.codeSize;
@@ -309,7 +284,7 @@ static void copySections(std::span<uint8_t> image, const ImageWriterInputs& inpu
             chunks.append({ static_cast<size_t>(offset) + start, source.subspan(start, std::min(bytesPerChunk, source.size() - start)) });
     };
     for (unsigned index = 0; index < numberOfImageSections; ++index) {
-        // writeStringHeaders() makes the three of the encoder's records.
+        // writeStringHeaders() | writeStringRecords() makes the three of the encoder's records.
         if (static_cast<ImageSection>(index) != ImageSection::Strings && static_cast<ImageSection>(index) != ImageSection::LongStrings && static_cast<ImageSection>(index) != ImageSection::Identifiers)
             addChunks(extent.sections[index].offset, inputs.sections.bytes[index].span());
     }
@@ -328,8 +303,7 @@ static std::span<T> sectionIn(std::span<uint8_t> image, const ImageExtent& exten
     return spanReinterpretCast<T>(image.subspan(range.offset, range.size));
 }
 
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-static void writeStringHeaders(std::span<uint8_t> image, const TextRecords& text, const StringHeaderNumbers& numbers, const ImageExtent& extent, const ParallelLoops& loops)
+static void writeStringRecords(std::span<uint8_t> image, const TextRecords& text, const StringHeaderNumbers& numbers, const ImageExtent& extent, const ParallelLoops& loops)
 {
     std::span records = sectionIn<ImageStringRecord>(image, extent, ImageSection::StringHeaders);
     std::span stringsInImage = sectionIn<ImageStringWord>(image, extent, ImageSection::Strings);
@@ -368,7 +342,9 @@ static void writeStringHeaders(std::span<uint8_t> image, const TextRecords& text
         records[number] = ImageStringRecord::create(rangeOrIndex, isIdentifier ? text.identifiers[number].hashOrSymbol() : string.hashOrIdentifierNumber(), string.is16Bit(), isIdentifier);
         if (literalStringWord)
             records[number].hashAndFlags |= ImageStringRecord::isLiteralStringFlag;
-#else
+    });
+}
+
 // A header that it does not write stays zero.
 static void writeStringHeaders(std::span<uint8_t> image, const TextRecords& text, const StringHeaderNumbers& numbers, const ImageExtent& extent, const ParallelLoops& loops)
 {
@@ -403,7 +379,6 @@ static void writeStringHeaders(std::span<uint8_t> image, const TextRecords& text
         }
         uint32_t number = numbers.byString[index];
         headers[number] = ImageStringHeader::create(characters, range.length, string.hashOrIdentifierNumber(), string.is16Bit(), StringImpl::StringNormal);
-#endif
     });
 }
 
@@ -421,7 +396,6 @@ static void writeRangeOfShapeSets(std::span<uint8_t> image, const ImageWriterInp
     tables.ranges[static_cast<unsigned>(ProgramTableIndex::shapeSetBits)] = { static_cast<uint32_t>(distance), static_cast<uint32_t>(size / sizeof(uint64_t)) };
 }
 
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 // Runs behind writeStringHeaders().
 static void writeLiteralStringWords(std::span<uint8_t> image, const TextRecords& text, const StringHeaderNumbers& numbers, const ImageExtent& extent, const ImageSections& sections)
 {
@@ -441,7 +415,6 @@ static void writeLiteralStringWords(std::span<uint8_t> image, const TextRecords&
             header.literalStringWord = literalStringWord(number);
     }
 }
-#endif
 
 static bool isEmptyPageRange(std::span<const uint8_t> code, const ReservedRange& range)
 {
@@ -467,12 +440,7 @@ Vector<uint8_t> writeImage(const ImageWriterInputs& inputs, BuildContext& contex
 {
     uint64_t codeSize = inputs.linker.layout.codeSize;
     TextRecords text(inputs.sections);
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    std::span<const uint32_t> literalStrings = findLiteralStrings(inputs.sections);
-    std::optional<StringHeaderNumbers> stringHeaders = numberStringHeaders(text, literalStrings, context);
-#else
-    std::optional<StringHeaderNumbers> stringHeaders = numberStringHeaders(text, context);
-#endif
+    std::optional<StringHeaderNumbers> stringHeaders = numberStringHeaders(text, findLiteralStrings(inputs.sections), context.recordedOptions().form(), context);
     if (!stringHeaders)
         return { };
     std::optional<ImageExtent> extent = computeImageExtent(inputs.sections, *stringHeaders, codeSize, context);
@@ -485,10 +453,12 @@ Vector<uint8_t> writeImage(const ImageWriterInputs& inputs, BuildContext& contex
     runTasksInParallel(loops, {
         [&] {
             copySections(image.mutableSpan(), inputs, *extent, loops);
-            writeStringHeaders(image.mutableSpan(), text, *stringHeaders, *extent, loops);
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-            writeLiteralStringWords(image.mutableSpan(), text, *stringHeaders, *extent, inputs.sections);
-#endif
+            if (stringHeaders->hasRecords())
+                writeStringRecords(image.mutableSpan(), text, *stringHeaders, *extent, loops);
+            else {
+                writeStringHeaders(image.mutableSpan(), text, *stringHeaders, *extent, loops);
+                writeLiteralStringWords(image.mutableSpan(), text, *stringHeaders, *extent, inputs.sections);
+            }
             writeRangeOfShapeSets(image.mutableSpan(), inputs, *extent);
         },
         [&] { linkCode(inputs.linker, image.mutableSubspan(extent->codeOffset, codeSize), context); },

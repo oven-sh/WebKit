@@ -43,6 +43,7 @@ aot/analysis/AOTRecordUsers.cpp @no-unify
 aot/analysis/AOTRegionCloner.cpp @no-unify
 aot/analysis/AOTSSARepair.cpp @no-unify
 aot/analysis/AOTStringPositions.cpp @no-unify
+aot/analysis/AOTUnspecifiedValuePaths.cpp @no-unify
 aot/analysis/AOTUseEffectHistory.cpp @no-unify
 aot/analysis/AOTUseLists.cpp @no-unify
 aot/analysis/AOTValueIdentity.cpp @no-unify
@@ -362,6 +363,7 @@ aot/ir/AOTVerifierEdges.cpp @no-unify
 aot/ir/AOTVerifierGuards.cpp @no-unify
 aot/ir/AOTVerifierOperations.cpp @no-unify
 aot/ir/AOTVerifierTypes.cpp @no-unify
+aot/ir/AOTVerifierUnspecifiedValues.cpp @no-unify
 aot/ir/AOTWireBody.cpp @no-unify
 aot/ir/AOTWireProgramBuilder.cpp @no-unify
 aot/object/AOTAllocationSites.cpp @no-unify

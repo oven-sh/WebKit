@@ -80,6 +80,7 @@ enum ValueFlag : uint16_t {
     HasSeveralSources = 128,
     IsReadWide = 256,
     HasSourceWithHighBits = 512,
+    WasLetGoUnsaved = 1024,
 };
 
 struct ValueState {
@@ -697,6 +698,11 @@ private:
     void release(Reg reg)
     {
         uint64_t bit = bitOf(reg);
+        if (m_file.dirty & bit) {
+            uint32_t id = m_file.holder[reg.index()] - 1;
+            m_states[id].flags |= WasLetGoUnsaved;
+            m_valuesLetGoUnsaved.append(id);
+        }
         m_file.holder[reg.index()] = 0;
         m_file.occupied &= ~bit;
         m_file.dirty &= ~bit;
@@ -711,6 +717,7 @@ private:
             m_file.dirty |= bit;
         else
             m_file.dirty &= ~bit;
+        m_states[id].flags &= ~WasLetGoUnsaved;
         m_states[id].reg = encode(reg);
     }
 
@@ -901,6 +908,7 @@ private:
     Vector<int32_t, 4> m_spareSlots;
     Vector<RegisterFile> m_snapshots;
     Vector<const B3::UpsilonValue*, 8> m_pendingUpsilons;
+    Vector<uint32_t, 16> m_valuesLetGoUnsaved;
     std::array<const B3::Value*, numberOfRegisters> m_argumentValues { };
 
     uint64_t m_generalRegisters { 0 };
@@ -2321,7 +2329,8 @@ void DirectCodeGenerator::noteUse(const B3::Value* child, Reg hint)
             m_exposedUses.append(ExposedUse { m_user.block, home, m_user.position, first });
             m_homes[home].firstExposedUse = m_exposedUses.size();
             ++m_homes[home].numberOfExposedUses;
-        }
+        } else
+            m_exposedUses[first - 1].lastPosition = std::max(m_exposedUses[first - 1].lastPosition, m_user.position);
     }
     if (state.stretch != m_user.stretch) {
         state.flags |= NeedsHome;
@@ -3717,7 +3726,7 @@ void DirectCodeGenerator::materialize(const B3::Value* value, Reg destination)
             RELEASE_ASSERT_NOT_REACHED();
         }
     case ValueForm::Plain:
-        if (!state.home) {
+        if (!state.home || ((state.flags & WasLetGoUnsaved) && state.lastUse >= m_position)) {
             fail();
             return;
         }
@@ -6112,6 +6121,9 @@ void DirectCodeGenerator::emitBlock(DirectBlock& block)
     enterBlock(block);
     m_stateIsFor = UINT32_MAX;
     m_pendingUpsilons.shrink(0);
+    for (uint32_t id : m_valuesLetGoUnsaved)
+        m_states[id].flags &= ~WasLetGoUnsaved;
+    m_valuesLetGoUnsaved.shrink(0);
     if (setsUpFrame && !m_hasFailed) {
         emitFrameSetup();
         flushDirtyValues();

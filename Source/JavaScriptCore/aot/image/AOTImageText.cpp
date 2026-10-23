@@ -255,6 +255,7 @@ String ImageText::createAtom(StringID string) const
     if (impl.isAtom())
         return String(impl);
     return AtomStringImpl::add(&impl);
+#endif
 }
 
 static const ImageHeader& headerOfImage(std::span<const uint8_t> image)
@@ -272,6 +273,8 @@ static ImageSectionRange rangeOfStringHeaders(std::span<const uint8_t> image)
 
 ImageAddressPlaces addressPlacesOf(std::span<const uint8_t> image)
 {
+    if (headerOfImage(image).options.form() == ImageForm::PositionIndependent)
+        return { };
     ImageSectionRange range = rangeOfStringHeaders(image);
     return {
         .offsetOfImageAddress = offsetof(ImageHeader, address),
@@ -283,6 +286,8 @@ ImageAddressPlaces addressPlacesOf(std::span<const uint8_t> image)
 
 void relocateImage(std::span<uint8_t> image, uint64_t address)
 {
+    if (headerOfImage(image).options.form() == ImageForm::PositionIndependent)
+        return;
     uint64_t distance = address - headerOfImage(image).address;
     if (!distance)
         return;
@@ -294,6 +299,7 @@ void relocateImage(std::span<uint8_t> image, uint64_t address)
     reinterpret_cast<ImageHeader*>(image.data())->address = address;
 }
 
+#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 static std::span<uint8_t> pagesHolding(std::span<const uint8_t> bytes)
 {
     uintptr_t start = std::bit_cast<uintptr_t>(bytes.data());
@@ -357,8 +363,8 @@ bool relocateLoadedImage(std::span<const uint8_t> image)
             forbidWrites(pages);
     }
     return true;
-#endif
 }
+#endif
 
 } } // namespace JSC::AOT
 

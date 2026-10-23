@@ -94,7 +94,10 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, const Suspe
         AllowMacroScratchRegisterUsage allowScratch(jit);
         std::optional<uint64_t> word = FrameMapEmitter::siteWordFor(records->frameMaps, params, roots, driverChild);
         if (!word) {
-            build->diagnostics().add(InternalError { .kind = InternalErrorKind::FrameMapNotEncodable, .function = function, .value = valueID });
+            if (records->frameMaps.anotherGeneratorCanTry)
+                records->frameMaps.hasSiteWithoutWord = true;
+            else
+                build->diagnostics().add(InternalError { .kind = InternalErrorKind::FrameMapNotEncodable, .function = function, .value = valueID });
             jit.breakpoint();
             return;
         }

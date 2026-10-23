@@ -45,6 +45,7 @@ inline constexpr uint16_t Defined = All | Absent | LiteralString | LiteralSymbol
 inline constexpr uint16_t cellPrimitives = Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt;
 
 inline constexpr int64_t maxExactInteger = 1ll << 53;
+inline constexpr int64_t maxTypedArrayLength = 1ll << 32;
 inline constexpr int64_t maxTrackedInteger = Wire::MaxTrackedInteger;
 
 constexpr bool isTrackedInteger(double number)
@@ -98,7 +99,7 @@ struct Range {
 constexpr int64_t widenedMaximum(int64_t maximum)
 {
     // The largest length is 2 ** 53 - 1: a counter below a length can still take a step from there.
-    for (int64_t landmark : { int64_t { 0 }, int64_t { INT32_MAX }, int64_t { UINT32_MAX }, maxExactInteger - 1, maxExactInteger }) {
+    for (int64_t landmark : { int64_t { 0 }, int64_t { INT32_MAX }, int64_t { UINT32_MAX }, maxTypedArrayLength, maxExactInteger - 1, maxExactInteger }) {
         if (maximum <= landmark)
             return landmark;
     }

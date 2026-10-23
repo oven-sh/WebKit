@@ -39,8 +39,8 @@ std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const u
         return RuntimeDifference { "the architecture"_s, here.architecture, there.architecture };
     if (there.operatingSystem != here.operatingSystem)
         return RuntimeDifference { "the operating system"_s, static_cast<uint64_t>(here.operatingSystem), static_cast<uint64_t>(there.operatingSystem) };
-    if (there.imageForm != here.imageForm)
-        return RuntimeDifference { "whether the executable is position independent"_s, static_cast<uint64_t>(here.imageForm), static_cast<uint64_t>(there.imageForm) };
+    if (there.imageForm > RuntimeDescription::ImageForm::PositionIndependent)
+        return RuntimeDifference { "the form of the image"_s, static_cast<uint64_t>(here.imageForm), static_cast<uint64_t>(there.imageForm) };
     if (there.cpuFeatures != here.cpuFeatures)
         return RuntimeDifference { "the set of CPU features that the build requires"_s, here.cpuFeatures, there.cpuFeatures };
     if (there.checks != here.checks)

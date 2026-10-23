@@ -143,6 +143,16 @@ PassOutcome Pipeline::verify(IRForm form)
     return m_runner.lastProgramPassOutcome();
 }
 
+void Pipeline::verifyUnspecifiedValues()
+{
+    bool isRunning = !m_runner.isStopped();
+    bool isValid = read(PassID::VerifyProgram, [&] {
+        return Typed::verifyUnspecifiedValues(m_program, m_build);
+    });
+    if (isRunning && !isValid)
+        m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAtTheEnd });
+}
+
 PassOutcome Pipeline::guardTaintedPositions()
 {
     editProgram(PassID::GuardTaintedPositions, [&] {

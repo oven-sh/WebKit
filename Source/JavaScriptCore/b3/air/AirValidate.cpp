@@ -103,9 +103,11 @@ public:
                         VALIDATE(&arg <= &inst.args().back(), ("At ", arg, " in ", inst, " in ", *block));
 
                         // FIXME: replace with a check for wasm simd instructions.
+                        // Bun: a pair of 64-bit registers is loaded from 128 bits of memory, with or without SIMD.
                         VALIDATE(Options::useWasmSIMD()
                             || !Arg::isAnyUse(role)
-                            || width <= Width64, ("At ", inst, " in ", *block, " arg ", arg));
+                            || width <= Width64
+                            || inst.kind.opcode == LoadPair64, ("At ", inst, " in ", *block, " arg ", arg));
                     });
                 
                 switch (inst.kind.opcode) {

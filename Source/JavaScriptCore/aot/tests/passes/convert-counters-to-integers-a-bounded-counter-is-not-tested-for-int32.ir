@@ -1,0 +1,96 @@
+# A test that the counter is an int32 was placed while nobody knew its bound. Behind a comparison with an integer the counter is an integer without it
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="testedWhileTheBoundWasUnknown" parameters=[{type=int[0, 4294967296]}] results=[{type=number}] {
+  b0(v0: int[0, 4294967296]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b5()
+  b2():
+    v5 = TypeTest v2 testedType=i32
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    v7 = Increment v6
+    Jump -> next b1(v7)
+  b4() frequency=Rare:
+    Return v2
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="testedWhileTheBoundWasUnknown"
+# CHECK: b1(v2: int[0, 4294967296]):
+# CHECK-NOT: Branch v5
+# CHECK: int[1, 4294967296] = Increment
+
+function f1 name="testAheadOfTheComparisonStays" parameters=[{type=int[0, 4294967296]}] results=[{type=number}] {
+  b0(v0: int[0, 4294967296]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = TypeTest v2 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b4()
+  b2(v5):
+    v6 = Less v5, v0
+    Branch v6 -> taken b3(), notTaken b5()
+  b3():
+    v7 = Increment v5
+    Jump -> next b1(v7)
+  b4() frequency=Rare:
+    Return v2
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="testAheadOfTheComparisonStays"
+# CHECK: Branch v4 -> taken
+
+function f2 name="failingSideIsLikely" parameters=[{type=int[0, 4294967296]}] results=[{type=number}] {
+  b0(v0: int[0, 4294967296]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b5()
+  b2():
+    v5 = TypeTest v2 testedType=i32
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    v7 = Increment v6
+    Jump -> next b1(v7)
+  b4():
+    Return v2
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="failingSideIsLikely"
+# CHECK: Branch v5 -> taken
+
+function f3 name="anUpcastNamedTheNarrowerRange" parameters=[{type=int[0, 4294967296]}] results=[{type=number}] {
+  b0(v0: int[0, 4294967296]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b5()
+  b2():
+    v5 = TypeTest v2 testedType=i32
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    v7 = Increment v6
+    v8 = Upcast v7 castType=int[0, 2147483648]
+    Jump -> next b1(v8)
+  b4() frequency=Rare:
+    Return v2
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f3 name="anUpcastNamedTheNarrowerRange"
+# CHECK: b1(v2: int[0, 4294967296]):
+# CHECK: = Upcast {{*}} castType=int[0, 4294967296]

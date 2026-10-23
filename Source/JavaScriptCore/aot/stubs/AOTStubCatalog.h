@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompileOptions.h"
 #include "AOTEffects.h"
 #include "AOTStubDescriptor.h"
 #include "CPUFeatureSet.h"
@@ -42,6 +43,7 @@ struct StubOptions {
     bool hasOneInstance { false };
     bool validates { false };
     bool countsAllocations { false };
+    bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t layoutSeed { 0 };
     CPUFeatureSet targetFeatures;
 };

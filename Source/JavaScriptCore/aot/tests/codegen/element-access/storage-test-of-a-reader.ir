@@ -1,7 +1,7 @@
 # A reader's test for contiguous storage, and for that of int32s, is one test of bits of the array's byte: an array is never without storage for elements, so no mask and compare. Doubles take the mask and compare
 # FORM: Placed
 # RUN: generate-code
-# REQUIRES: unsanitized-code
+# REQUIRES: x86_64 unsanitized-code
 # CHECK: f0: size=17 
 # CHECK-NEXT: f1: size=17 
 # CHECK-NEXT: f2: size=23 

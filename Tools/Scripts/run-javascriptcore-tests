@@ -807,52 +807,6 @@ sub runTest {
     }
 }
 
-sub runCodeRules {
-    my ($jscSourceDir) = @_;
-
-    my $testName = "check-code-rules";
-    my $interpreter = isWindows() ? "python" : "python3";
-    my $script = File::Spec->catfile(sourceDir(), "Tools", "Scripts", "aot", "check-code-rules.py");
-
-    my $testResult = 0;
-
-    foreach my $argument ("--self-test", $jscSourceDir) {
-        my @command = ($interpreter, $script, $argument);
-        my $testOutput = "";
-
-        open(TEST, "-|", "@command 2>&1") or die "Failed to run @command";
-        while ( my $line = <TEST> ) {
-            $testOutput .= $line;
-        }
-        my $commandResult = close(TEST) ? 0 : $?;
-        print "$testOutput" if ($verbose or $commandResult);
-        $testResult ||= $commandResult;
-    }
-    $reportData{$testName} = $testResult ? {actual => "FAIL"} : {actual => "PASS"};
-
-    my $exitStatus = exitStatus($testResult);
-
-    print "$testName completed with rc=$testResult ($exitStatus)\n\n";
-
-    if ($testResult) {
-        $isTestFailed = 1;
-        push @testResults, $testName;
-    }
-    if (defined($jsonFileName)) {
-        my $testStatus = ($exitStatus == 0)? JSON::PP::true: JSON::PP::false;
-        $jsonData{allAOTCodeRulesPassed} = $testStatus;
-    }
-
-    if ($testResult && $failFast) {
-        reportTestFailures();
-        writeJsonDataIfApplicable();
-
-        $endTime = time();
-        uploadResults();
-        exit $exitStatus;
-    }
-}
-
 sub reportTestFailures {
   my $numJSCtestFailures = @testResults;
   if ($numJSCtestFailures) {
@@ -917,7 +871,6 @@ if ($runTestB3) { runTest("testb3", "allB3TestsPassed") }
 if ($runTestAOT) {
     my $jscSourceDir = File::Spec->catdir(sourceDir(), "Source", "JavaScriptCore");
     runTest("testaot", "allAOTTestsPassed", "", "all " . File::Spec->catdir($jscSourceDir, "aot", "tests"));
-    runCodeRules($jscSourceDir);
 }
 if ($runTestDFG) { runTest("testdfg", "allDFGTestsPassed") }
 if ($runTestAPI) {

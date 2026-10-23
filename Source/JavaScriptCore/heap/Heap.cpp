@@ -2445,11 +2445,6 @@ void Heap::willStartCollection(CollectionScope scope)
     for (auto* observer : m_observers)
         observer->willGarbageCollect();
 
-#if ENABLE(AOT)
-    for (Structure* structure : vm().propertyRuns.takeEndsOfLongTransitionChains())
-        structure->dropLongTransitionChainBeforeMarking(vm());
-#endif
-
     if (m_verifier) [[unlikely]] {
         // Verify that live objects from the last GC cycle haven't been corrupted by
         // mutators before we begin this new GC cycle.

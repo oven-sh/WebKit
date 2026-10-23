@@ -7934,6 +7934,28 @@ static void testCachedTempRegisterImm32Normalization()
         CRASH();                                                         \
     } while (false)
 
+static void testPrefetch()
+{
+    auto prefetchAround = compile([](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        for (GPRReg base : { X86Registers::eax, X86Registers::ecx, X86Registers::r8, X86Registers::r12, X86Registers::r13 }) {
+            jit.push(base);
+            jit.move(GPRInfo::argumentGPR0, base);
+            for (int32_t offset : { 0, 64, -64, 4096 })
+                jit.prefetch(CCallHelpers::Address(base, offset));
+            jit.pop(base);
+        }
+        jit.move(GPRInfo::argumentGPR0, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    alignas(64) std::array<char, 192> bytes { };
+    CHECK_EQ(invoke<void*>(prefetchAround, bytes.data() + 64), static_cast<void*>(bytes.data() + 64));
+    CHECK_EQ(std::ranges::count(bytes, 0), static_cast<ptrdiff_t>(bytes.size()));
+    CHECK_EQ(invoke<void*>(prefetchAround, nullptr), static_cast<void*>(nullptr));
+}
+
 static void testAtomicAndEmitsCode()
 {
     // On x86, atomic (seqcst) RMW operations must emit a seqcst store (so a
@@ -11596,6 +11618,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
 #if CPU(X86_64)
     RUN(testTagsInMemory());
+    RUN(testPrefetch());
     RUN(testAtomicAndEmitsCode());
 #endif
 

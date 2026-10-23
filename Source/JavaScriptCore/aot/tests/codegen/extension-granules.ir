@@ -4,7 +4,7 @@
 # OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
 # RUN(SLOTS): pass PlanSlots
 # RUN: generate-code
-# REQUIRES: unsanitized-code
+# REQUIRES: x86_64 unsanitized-code
 # RUN(CALLS): generate-code calls
 # REQUIRES(CALLS): unsanitized-code
 

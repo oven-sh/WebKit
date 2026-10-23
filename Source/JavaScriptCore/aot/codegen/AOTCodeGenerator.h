@@ -22,6 +22,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
@@ -151,6 +152,7 @@ public:
     Operand getAsDefined(ValueID) const;
     // For the one user of an operation that leaves its code to the user: from here on the user finds the operands of that operation in the forms in which it takes them.
     void takeOperandsOf(ValueID operationLeftToUser);
+    void generateWithOperandsOf(ValueID operationLeftToUser, NOESCAPE const ScopedLambda<void()>&);
     // Null for any other parameter.
     LValue slotsOfBorrowedParameter(ValueID parameter) const { return m_slotsOfBorrowedParameters.get(parameter.index() + 1); }
     // Whether the value may be an outer object that stands for an inner one which was not made.

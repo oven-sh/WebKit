@@ -10,7 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableArrays.h"
-#include "JSGlobalObject.h"
+#include "JSCInlines.h"
 
 namespace JSC { namespace AOT {
 

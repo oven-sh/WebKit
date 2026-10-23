@@ -58,7 +58,12 @@ static void emitCompareAndCall(CCallHelpers& jit, const B3::StackmapGenerationPa
     });
 }
 
-static bool isLengthOfData(FunctionAnalyses& analyses, ValueID id)
+static bool readsLengthOfData(InlineBuiltin builtin)
+{
+    return builtin == InlineBuiltin::ArrayLength || builtin == InlineBuiltin::StringLength || builtin == InlineBuiltin::TypedArrayLength;
+}
+
+static bool isLengthOfDataWhereComputed(FunctionAnalyses& analyses, ValueID id)
 {
     const Value& value = analyses.function().at(analyses.identityOf(id));
     switch (value.opcode) {
@@ -67,10 +72,31 @@ static bool isLengthOfData(FunctionAnalyses& analyses, ValueID id)
     case Opcode::GetTypedArrayLength:
         return true;
     case Opcode::CallInline:
-        return value.inlineBuiltin() == InlineBuiltin::ArrayLength || value.inlineBuiltin() == InlineBuiltin::StringLength || value.inlineBuiltin() == InlineBuiltin::TypedArrayLength;
+        return readsLengthOfData(value.inlineBuiltin());
+    case Opcode::CallBuiltin:
+        return analyses.program().builtins().at(value.overload()).builtin == Builtins::TypedArrayPrototypeLength;
     default:
         return false;
     }
+}
+
+static bool isLengthOfData(FunctionAnalyses& analyses, ValueID id)
+{
+    const Function& function = analyses.function();
+    ValueLocation location = analyses.useLists().locationOf(analyses.identityOf(id));
+    if (location.placement != ValuePlacement::Parameter)
+        return isLengthOfDataWhereComputed(analyses, id);
+    if (location.block == entryBlock)
+        return false;
+    return std::ranges::all_of(analyses.cfg().incomingEdges(location.block), [&](Edge edge) {
+        if (edge.isHandlerEdge())
+            return false;
+        const Terminator& terminator = function.at(edge.from).terminator;
+        const Target& target = terminator.targets[edge.targetIndex];
+        if (location.index < target.arguments.size())
+            return isLengthOfDataWhereComputed(analyses, target.arguments[location.index]);
+        return terminator.kind == TerminatorKind::TryCallInline && &target == &terminator.done() && readsLengthOfData(terminator.inlineBuiltin());
+    });
 }
 
 static bool countsUpToLengthOfData(FunctionAnalyses& analyses, const NaturalLoop& loop)

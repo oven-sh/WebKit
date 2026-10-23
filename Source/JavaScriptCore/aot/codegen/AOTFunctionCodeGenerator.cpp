@@ -302,8 +302,9 @@ CompiledCode FunctionCodeGenerator::emitCode()
     CCallHelpers::Label bodyStart = m_jit.label();
     if (generatesDirectly()) {
         BlockColdnessRule coldness(m_inputs, m_id);
+        m_records.frameMaps.anotherGeneratorCanTry = true;
         bool isGenerated = m_linearScanCode ? generateLinearScanCode(*m_linearScanCode, m_jit, m_records, coldness) : generateDirectCode(*m_directCode, m_jit, m_records, coldness);
-        if (!isGenerated) {
+        if (!isGenerated || m_records.frameMaps.hasSiteWithoutWord) {
             m_didFailToGenerateDirectly = true;
             return { };
         }

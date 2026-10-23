@@ -200,9 +200,7 @@ static void answerByPropertyTableAndReturn(StubAssembler& jit, ObjectLookupQuest
 // Leaves the number of the name in r.name. isNoNameOfImage: the image has no such name, so nothing that it declares has it. hasNoColumn: the tables of the image say nothing about the name.
 static void loadNumberOfName(StubAssembler& jit, const ObjectLookupRegisters& r, ObjectLookupName name, JumpList& isNoNameOfImage, JumpList& hasNoColumn)
 {
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     static_assert(sizeof(UniquedStringImpl) == 24);
-#endif
     switch (name) {
     case ObjectLookupName::IsGivenByNumber:
         hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName)));
@@ -210,18 +208,18 @@ static void loadNumberOfName(StubAssembler& jit, const ObjectLookupRegisters& r,
     case ObjectLookupName::IsGivenByUID:
         // The names of the image are atoms that lie in the order of their numbers. Text made at run time that equals one of them is that atom.
         jit.move(r.uid, r.name);
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-        jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaders)), r.name);
-        isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeadersCapacity))));
-        jit.load32(Address(r.uid, OBJECT_OFFSETOF(LazyStringHeader, number)), r.name);
-        hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName)));
-#else
-        jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name);
-        isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.sizeOfProgramIdentifiers))));
-        hasNoColumn.append(jit.branch64(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName * sizeof(UniquedStringImpl))));
-        jit.urshift32(TrustedImm32(3), r.name);
-        jit.mul32(TrustedImm32(static_cast<int32_t>(0xaaaaaaabu)), r.name, r.name);
-#endif
+        if (jit.options().isPositionIndependent) {
+            jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), r.name);
+            isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.capacity))));
+            jit.load32(Address(r.uid, OBJECT_OFFSETOF(LazyStringHeader, number)), r.name);
+            hasNoColumn.append(jit.branch32(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName)));
+        } else {
+            jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name);
+            isNoNameOfImage.append(jit.branch64(CCallHelpers::AboveOrEqual, r.name, Address(instanceGPR, AOT_INSTANCE_OFFSET(image.sizeOfProgramIdentifiers))));
+            hasNoColumn.append(jit.branch64(CCallHelpers::Above, r.name, TrustedImm32(FieldTableEntry::maxName * sizeof(UniquedStringImpl))));
+            jit.urshift32(TrustedImm32(3), r.name);
+            jit.mul32(TrustedImm32(static_cast<int32_t>(0xaaaaaaabu)), r.name, r.name);
+        }
         isNoNameOfImage.append(jit.branchTest32(CCallHelpers::Zero, r.name));
         return;
     }
@@ -383,15 +381,15 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     auto restoreName = [&] {
         if (name != ObjectLookupName::IsGivenByNumber)
             return;
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-        jit.load32(Address(r.uid, OBJECT_OFFSETOF(LazyStringHeader, number)), r.name);
-#else
-        static_assert(sizeof(UniquedStringImpl) == 24);
-        jit.move(r.uid, r.name);
-        jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name);
-        jit.urshift32(TrustedImm32(3), r.name);
-        jit.mul32(TrustedImm32(static_cast<int32_t>(0xaaaaaaabu)), r.name, r.name);
-#endif
+        if (jit.options().isPositionIndependent) {
+            jit.load32(Address(r.uid, OBJECT_OFFSETOF(LazyStringHeader, number)), r.name);
+        } else {
+            static_assert(sizeof(UniquedStringImpl) == 24);
+            jit.move(r.uid, r.name);
+            jit.sub64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), r.name);
+            jit.urshift32(TrustedImm32(3), r.name);
+            jit.mul32(TrustedImm32(static_cast<int32_t>(0xaaaaaaabu)), r.name, r.name);
+        }
     };
 
     isUnknown.append(jit.branchIfNotCell(r.receiver));

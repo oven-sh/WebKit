@@ -421,6 +421,7 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
 {
     switch (source) {
     case ValueFlowUnknownSource::UndescribedNativeResult:
+    case ValueFlowUnknownSource::DeclaredNativeResult:
         return UnprovenCause::UndescribedNativeResult;
     case ValueFlowUnknownSource::UnseenCode:
         return UnprovenCause::UnseenCode;

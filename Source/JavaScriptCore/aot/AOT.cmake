@@ -450,6 +450,7 @@ set(JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE
     aot/analysis/AOTAnalysisVerification.cpp
     aot/analysis/AOTCheckCause.cpp
     aot/analysis/AOTClosureObservers.cpp
+    aot/analysis/AOTUnspecifiedValuePaths.cpp
     aot/analysis/AOTWholeLiterals.cpp
     aot/builtins/AOTArrayBufferViewBuiltinEmitter.cpp
     aot/builtins/AOTBufferBuiltinEmitter.cpp
@@ -524,6 +525,7 @@ set(JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE
     aot/ir/AOTVerifierGuards.cpp
     aot/ir/AOTVerifierOperations.cpp
     aot/ir/AOTVerifierTypes.cpp
+    aot/ir/AOTVerifierUnspecifiedValues.cpp
     aot/ir/generated/AOTSchemaEntryPrinter.cpp
     aot/ir/generated/AOTSchemaRecordPrinter.cpp
     aot/ir/generated/AOTSchemaRecords.cpp

@@ -361,18 +361,18 @@ enum class InternalErrorKind : uint32_t {
     EdgeArgumentCountMismatch, InvalidProof, InvalidHandler, HandlerArgumentNotAvailable, InvalidBlockRole, BlockOrderInvalid, TypeOutOfDate,
     BrokenResultRule, WrongRepresentation, OperandTypeMismatch, StoredTypeMismatch, EdgeArgumentMismatch, EntryParametersMismatch, ReturnTypeMismatch,
     UpcastNotSubset, ResultIndexOutOfRange, ValueAfterNever, InvalidEnvironmentUse, UseNotDominated, FunctionEndsInFirstBlock, GuardNotAvailable,
-    InvalidGuard, OperandMustBeDefinition, CycleWithoutLoopMark, InvalidCatch, InvalidReturnCall, InvalidTestAndBranch, InvalidBuiltinCall,
-    InvalidSuspension, IntrinsicOutsideLibraryCode, ExpectedTypeAfterSelection, InvalidInlineFrame, InvalidCreatorRecord, InvalidRelations,
-    UseWithoutRelation, ClosureOnDemandWithoutField, ObjectOnDemandWithoutRoom, BorrowedObjectHeld, FlowWriterOutsideDeclaredType, FlowMembersInvalid,
-    FlowRemovedCheckNotProven, MaskCutKnownValue, FlowEndedTooEarly, FlowRuleWasNotDue, EffectsExceedReplacedGroup, EffectsOfPreparedTooNarrow,
-    EffectsExceedSummary, StoreOutsideDeclaredEffects, RequiredTailCallNotConverted, FramePointerReturned, FramePointerThrown, FramePointerRetained,
-    CalleeRetainsFramePointer, FramePointerInTailCall, FramePointerAcrossSuspension, FrameCellAcrossIterations, RawPointerAcrossSuspension,
-    RawPointerOutlivesStorage, RawPointerWithoutBase, RawWordEscapes, ResolvedTargetMismatch, CursorInFunctionValue, CursorGuardMismatch,
-    CursorUsedAfterClose, KeyOrderOfOtherObject, BuilderCapacityExceeded, BuilderCursorUsedAfterMove, SlotAccessNotPlaced, PlacementCheckFailed,
-    ProgramTableCheckFailed, RuntimeTypeStricterThanPlan, UnsupportedConversion, OpcodeWithoutCode, FrameMapNotEncodable, AbsoluteAddressInProcedure,
-    RelocationNotLowered, VariableReadBeforeSet, FrameAddressAcrossSuspension, NarrowReferenceWithoutPointer, DisplacedNarrowReference,
-    InvalidCodeUnits, UncheckedStackCycle, UncheckedStackTooDeep, CallToFunctionWithoutCode, CallToStubNotGenerated, ProcessAddressInImageCode,
-    RelocationNotApplied, WritableSectionInImage, FunctionWithoutCode, FrameSavesUnknownRegister
+    InvalidGuard, UnspecifiedValueInspected, OperandMustBeDefinition, CycleWithoutLoopMark, InvalidCatch, InvalidReturnCall, InvalidTestAndBranch,
+    InvalidBuiltinCall, InvalidSuspension, IntrinsicOutsideLibraryCode, ExpectedTypeAfterSelection, InvalidInlineFrame, InvalidCreatorRecord,
+    InvalidRelations, UseWithoutRelation, ClosureOnDemandWithoutField, ObjectOnDemandWithoutRoom, BorrowedObjectHeld, FlowWriterOutsideDeclaredType,
+    FlowMembersInvalid, FlowRemovedCheckNotProven, MaskCutKnownValue, FlowEndedTooEarly, FlowRuleWasNotDue, EffectsExceedReplacedGroup,
+    EffectsOfPreparedTooNarrow, EffectsExceedSummary, StoreOutsideDeclaredEffects, RequiredTailCallNotConverted, FramePointerReturned,
+    FramePointerThrown, FramePointerRetained, CalleeRetainsFramePointer, FramePointerInTailCall, FramePointerAcrossSuspension,
+    FrameCellAcrossIterations, RawPointerAcrossSuspension, RawPointerOutlivesStorage, RawPointerWithoutBase, RawWordEscapes, ResolvedTargetMismatch,
+    CursorInFunctionValue, CursorGuardMismatch, CursorUsedAfterClose, KeyOrderOfOtherObject, BuilderCapacityExceeded, BuilderCursorUsedAfterMove,
+    SlotAccessNotPlaced, PlacementCheckFailed, ProgramTableCheckFailed, RuntimeTypeStricterThanPlan, UnsupportedConversion, OpcodeWithoutCode,
+    FrameMapNotEncodable, AbsoluteAddressInProcedure, RelocationNotLowered, VariableReadBeforeSet, FrameAddressAcrossSuspension,
+    NarrowReferenceWithoutPointer, DisplacedNarrowReference, InvalidCodeUnits, UncheckedStackCycle, UncheckedStackTooDeep, CallToFunctionWithoutCode,
+    CallToStubNotGenerated, ProcessAddressInImageCode, RelocationNotApplied, WritableSectionInImage, FunctionWithoutCode, FrameSavesUnknownRegister
 };
 enum class KnowledgeLevel : uint32_t { Unknown, Expected, Proven };
 enum class AccessCost : uint32_t { ByName, TestsReceiver, TestsSlot, Free };
@@ -442,6 +442,7 @@ enum class ResultSection : uint32_t {
 enum class CompileAction : uint32_t { Compile, VerifyOnly, CheckOnly };
 enum class Architecture : uint32_t { ARM64, X86_64 };
 enum class ReferenceWidth : uint32_t { Wide, Narrow };
+enum class ImageForm : uint32_t { Absolute, PositionIndependent };
 enum class MismatchPolicy : uint32_t { Throw, Report };
 enum class HeatOverride : uint32_t { None, OnlyLoopsAreHot, EverythingIsHot, EverythingIsCold, NothingIsHottest };
 enum class Sabotage : uint32_t {
@@ -494,14 +495,14 @@ JS_EXPORT_PRIVATE ASCIILiteral nameOf(LoopDeclineReason); JS_EXPORT_PRIVATE ASCI
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationHeapCause); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationOutcome);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationKind); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ResultSection);
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(CompileAction); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Architecture);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ReferenceWidth); JS_EXPORT_PRIVATE ASCIILiteral nameOf(MismatchPolicy);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(HeatOverride); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Sabotage);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(BuiltinUse); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrivalLayoutFlags);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrivalFieldFlags); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationEscapeReason);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(CheckSet); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ReportSet);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(TestingSwitch); JS_EXPORT_PRIVATE ASCIILiteral nameOf(Instrumentation);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(AdmittedCode); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ExcludedCode);
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(OutputOptions);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ReferenceWidth); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ImageForm);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(MismatchPolicy); JS_EXPORT_PRIVATE ASCIILiteral nameOf(HeatOverride);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(Sabotage); JS_EXPORT_PRIVATE ASCIILiteral nameOf(BuiltinUse);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrivalLayoutFlags); JS_EXPORT_PRIVATE ASCIILiteral nameOf(ArrivalFieldFlags);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(AllocationEscapeReason); JS_EXPORT_PRIVATE ASCIILiteral nameOf(CheckSet);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ReportSet); JS_EXPORT_PRIVATE ASCIILiteral nameOf(TestingSwitch);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(Instrumentation); JS_EXPORT_PRIVATE ASCIILiteral nameOf(AdmittedCode);
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ExcludedCode); JS_EXPORT_PRIVATE ASCIILiteral nameOf(OutputOptions);
 
 } // namespace Wire
 
@@ -519,7 +520,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Wire::RuntimeCounterID>
 template<> inline constexpr unsigned numberOfEnumerators<Wire::DiagnosticSeverity> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Int32ProofFailure> = 13;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::UserDiagnosticKind> = 29;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::InternalErrorKind> = 142;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::InternalErrorKind> = 143;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::KnowledgeLevel> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AccessCost> = 4;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::AccessKind> = 8;
@@ -546,6 +547,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Wire::ResultSection> = 
 template<> inline constexpr unsigned numberOfEnumerators<Wire::CompileAction> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Architecture> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::ReferenceWidth> = 2;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::ImageForm> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::MismatchPolicy> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::HeatOverride> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::Sabotage> = 15;

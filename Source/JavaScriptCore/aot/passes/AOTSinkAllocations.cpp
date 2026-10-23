@@ -237,16 +237,6 @@ void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID merge
         candidate.mergeBlock = mergeBlock;
 }
 
-static void verifyThatNoAllocationPays(FunctionAnalyses& analyses)
-{
-    AllocationSinking sinking(analyses, SinkingPolicy { .recordsLosses = false });
-    RELEASE_ASSERT(sinking.collectCandidates());
-    sinking.analyze();
-    RELEASE_ASSERT(!sinking.hasCandidates());
-    for (uint32_t index = 0; index < sinking.numberOfCandidates(); ++index)
-        RELEASE_ASSERT(sinking.at(VirtualObjectID(index)).isJoin || !sinking.at(VirtualObjectID(index)).mergeBlock);
-}
-
 PassOutcome sinkAllocations(FunctionPassContext& context)
 {
     constexpr unsigned maxEdgeSplittingRounds = 3;
@@ -266,9 +256,8 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
     for (unsigned round = 0; round < maxEdgeSplittingRounds; ++round) {
         AllocationSinking sinking(context.analyses, policy);
         if (!sinking.collectCandidates()) {
-            if (sinking.foundThatNoAllocationPays() && context.build.options().verifiesAfterEveryPass) [[unlikely]]
-                verifyThatNoAllocationPays(context.analyses);
             sinking.recordLosses();
+            sinking.addTracesOfFruitlessAllocations(context.tracesOfAllocationsNotWorthSinking);
             return outcome;
         }
         if (!findingsBeforeSplitting || !sinking.analyzeStartingFrom(WTF::move(*findingsBeforeSplitting)))

@@ -119,7 +119,6 @@ inline ImageLongString ImageString::range(std::span<const ImageLongString> longS
     return { offsetOrIndex, length };
 }
 
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 struct ImageStringRecord {
     static constexpr uint32_t isLiteralStringFlag = 1u << 30;
 
@@ -138,7 +137,6 @@ struct ImageStringRecord {
     uint32_t hashAndFlags;
 };
 static_assert(sizeof(ImageStringRecord) == 8 && isImageRecord<ImageStringRecord>);
-#endif
 
 // The words of a WTF::StaticStringImpl.
 struct ImageStringHeader {
@@ -160,7 +158,6 @@ static_assert(offsetof(ImageStringHeader, length) == static_cast<size_t>(StringI
 static_assert(offsetof(ImageStringHeader, characters) == StringImpl::dataOffset());
 static_assert(offsetof(ImageStringHeader, hashAndFlags) == StringImpl::flagsOffset());
 
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 struct LazyStringHeader {
     ImageStringHeader header;
     uint32_t number;
@@ -177,7 +174,6 @@ struct LazyStringHeaderArena {
     uint64_t unused3;
 };
 static_assert(sizeof(LazyStringHeaderArena) == sizeof(LazyStringHeader) && offsetof(LazyStringHeaderArena, sizeInBytes) == offsetof(ImageStringHeader, literalStringWord));
-#endif
 
 struct ImageIdentifierWord;
 
@@ -401,20 +397,19 @@ inline std::optional<uint32_t> ImageText::identifierNumber(StringID string) cons
 }
 
 // An image holds addresses in two kinds of places, and nowhere else: ImageHeader::address, which is the address of the image itself, and ImageStringHeader::characters.
+// A position-independent image holds none.
 struct ImageAddressPlaces {
     uint64_t offsetOfImageAddress;
     uint64_t offsetOfFirstStringAddress;
     uint64_t bytesBetweenStringAddresses;
     uint64_t numberOfStringAddresses;
 };
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-inline ImageAddressPlaces addressPlacesOf(std::span<const uint8_t>) { return { }; }
-inline void relocateImage(std::span<uint8_t>, uint64_t) { }
-[[nodiscard]] inline bool relocateLoadedImage(std::span<const uint8_t>) { return true; }
-#else
 JS_EXPORT_PRIVATE ImageAddressPlaces addressPlacesOf(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE void relocateImage(std::span<uint8_t> image, uint64_t address);
 
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+[[nodiscard]] inline bool relocateLoadedImage(std::span<const uint8_t>) { return true; }
+#else
 // For an image that no loader brought to its address: an image in a file that the process mapped or read, or in an executable whose writer did not call relocateImage().
 [[nodiscard]] JS_EXPORT_PRIVATE bool relocateLoadedImage(std::span<const uint8_t> image);
 #endif

@@ -1105,6 +1105,11 @@ AssemblyHelpers::FreeListRefill AssemblyHelpers::emitAllocateFromFreeList(GPRReg
     loadPtr(Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()), resultGPR);
     refill.isExhausted = branchPtr(RelationalCondition::AboveOrEqual, resultGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd()));
     refill.hasRoom = label();
+    // The stores that fill cells wait for one line of memory after the other. Small cells share a line, and each would ask for the same next one.
+    constexpr int32_t cacheLineSize = 64;
+    constexpr unsigned minCellSizeToPrefetchBehind = 48;
+    if (constantCellSize && *constantCellSize >= minCellSizeToPrefetchBehind)
+        prefetch(Address(resultGPR, cacheLineSize));
     if (constantCellSize)
         add64(TrustedImm32(*constantCellSize), Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
     else {

@@ -33,6 +33,7 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .hasOneInstance = flow.programInstances() == Typed::ProgramInstances::AtMostOne,
         .validates = recorded.validates,
         .countsAllocations = recorded.countsBranches,
+        .isPositionIndependent = recorded.form() == ImageForm::PositionIndependent,
         .layoutSeed = recorded.layoutSeed,
         .targetFeatures = CPUFeatureSet::fromBits(static_cast<uint32_t>(recorded.targetFeatures)),
     };

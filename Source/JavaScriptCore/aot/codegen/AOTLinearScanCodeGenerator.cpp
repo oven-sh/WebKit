@@ -24,6 +24,7 @@
 #include "B3Variable.h"
 #include "StackAlignment.h"
 #include <algorithm>
+#include <numeric>
 #include <wtf/DataLog.h>
 #include <wtf/StringPrintStream.h>
 
@@ -259,8 +260,44 @@ void LinearScanCodeGenerator::layOutFrame()
     }
     unsigned firstSlot = extent;
     extent += slots.size() * sizeof(CPURegister);
+    // An access has a short form near the frame pointer and, on x86-64, near the stack pointer. The slots named most lie at the top, the next at the bottom, the rest between them.
+    constexpr unsigned bytesInShortReach = isX86_64() ? 128 : 256;
+    Vector<uint32_t, 32> positionOfSlot;
+    positionOfSlot.grow(slots.size());
+    std::iota(positionOfSlot.begin(), positionOfSlot.end(), 0);
+    if (extent > bytesInShortReach) {
+        Vector<uint32_t, 32> accessesOfSlot;
+        accessesOfSlot.fill(0, slots.size());
+        auto noteAccess = [&](NodeID id) {
+            uint32_t vreg = node(id).vreg;
+            if (vreg && m_virtualRegisters[vreg].hasPlaceInFrame)
+                ++accessesOfSlot[m_virtualRegisters[vreg].offset];
+        };
+        auto noteMoves = [&](const Vector<Move>& moves) {
+            for (const Move& move : moves) {
+                if (move.from == locationInSlot)
+                    noteAccess(move.source);
+                if (move.to == locationInSlot)
+                    noteAccess(move.destination);
+            }
+        };
+        for (const Operand& operand : m_operands) {
+            if (operand.location == locationInSlot)
+                noteAccess(operand.node);
+        }
+        noteMoves(m_moves);
+        noteMoves(m_movesOnEdges);
+        Vector<uint32_t, 32> slotsByUse = positionOfSlot;
+        std::ranges::stable_sort(slotsByUse, std::ranges::greater { }, [&](uint32_t slot) {
+            return accessesOfSlot[slot];
+        });
+        size_t numberAtTop = std::min<size_t>(slots.size(), (bytesInShortReach - std::min(firstSlot, bytesInShortReach)) / sizeof(CPURegister));
+        std::ranges::reverse(slotsByUse.mutableSpan().subspan(numberAtTop));
+        for (uint32_t position = 0; position < slotsByUse.size(); ++position)
+            positionOfSlot[slotsByUse[position]] = position;
+    }
     for (uint32_t vreg : spilled)
-        m_virtualRegisters[vreg].offset = -static_cast<int32_t>(firstSlot + (m_virtualRegisters[vreg].offset + 1) * sizeof(CPURegister));
+        m_virtualRegisters[vreg].offset = -static_cast<int32_t>(firstSlot + (positionOfSlot[m_virtualRegisters[vreg].offset] + 1) * sizeof(CPURegister));
     bool needsFrameForSlots = !slots.isEmpty();
     unsigned bytesOfSavesAtBottom = savesLieOnTop ? 0 : bytesOfSaves;
     unsigned extentOfSlots = extent;

@@ -253,6 +253,7 @@ private:
     typedef enum {
         OP2_UD2                         = 0xB,
         OP2_MOVSD_VsdWsd                = 0x10,
+        OP2_GROUP16                     = 0x18,
         OP2_MOVUPS_VsdWsd               = 0x10,
         OP2_MOVSS_VsdWsd                = 0x10,
         OP2_MOVSD_WsdVsd                = 0x11,
@@ -549,6 +550,8 @@ private:
 
         GROUP14_OP_PSLLD = 6,
         GROUP14_OP_PSLLQ = 6,
+
+        GROUP16_OP_PREFETCHT0 = 1,
         GROUP14_OP_PSRAQ = 4,
         GROUP14_OP_PSRLQ = 2,
         GROUP14_OP_PSRLW = 2,
@@ -4318,6 +4321,11 @@ public:
     void lfence()
     {
         m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_AE, OP3_LFENCE);
+    }
+
+    void prefetcht0(int offset, RegisterID base)
+    {
+        m_formatter.twoByteOp(OP2_GROUP16, GROUP16_OP_PREFETCHT0, base, offset);
     }
 
     void mfence()

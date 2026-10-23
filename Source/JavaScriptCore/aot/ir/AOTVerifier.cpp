@@ -80,6 +80,7 @@ bool FunctionVerifier::run()
         &FunctionVerifier::verifyTypes,
         &FunctionVerifier::verifyDominance,
         &FunctionVerifier::verifyGuards,
+        &FunctionVerifier::verifyUnspecifiedValues,
         &FunctionVerifier::verifyOperations,
     };
     for (Stage stage : stages) {
@@ -88,6 +89,15 @@ bool FunctionVerifier::run()
             return false;
     }
     return true;
+}
+
+bool FunctionVerifier::runUnspecifiedValues()
+{
+    if (!runStructure())
+        return false;
+    if (m_function.hasBody())
+        verifyUnspecifiedValues();
+    return !hasFailed();
 }
 
 bool FunctionVerifier::runStructure()

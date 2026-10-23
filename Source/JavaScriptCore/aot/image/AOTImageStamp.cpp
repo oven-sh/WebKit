@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompileOptions.h"
 #include "AOTIdentifierTable.h"
 #include "AOTImageFormat.h"
 #include "AOTImageText.h"
@@ -66,6 +67,11 @@ extern "C" constinit const DescribedRuntime describedRuntime = {
 
 uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& identity)
 {
+    return imageStamp(features, identity, imageFormOfThisRuntime());
+}
+
+uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& identity, Wire::ImageForm form)
+{
     uint64_t stamp = Wire::schemaHash;
     auto mix = [&](uint64_t value) {
         stamp = (stamp ^ value) * 0x100000001b3ULL;
@@ -92,9 +98,8 @@ uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& ident
     mix(ImageListedString::maxNumberOfWords);
     mix(sizeof(ImageIdentifierWord));
     mix(sizeof(IdentifierTable::Header) + IdentifierTable::firstHashBitInEntry);
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    mix(sizeof(ImageStringRecord));
-#endif
+    if (form == Wire::ImageForm::PositionIndependent)
+        mix(sizeof(ImageStringRecord));
     mix(sizeof(ImageStringHeader));
     mix(sizeof(ImageRegExp));
     mix(sizeof(ImageRegExpHash));

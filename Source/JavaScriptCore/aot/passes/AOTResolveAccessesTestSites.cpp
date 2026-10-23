@@ -328,15 +328,35 @@ void reportPropertyAccessTests(TestSiteReporter& reporter)
 
 namespace {
 
-struct ReadOfOption {
+struct AccessBehindSlotTest {
     BlockID test;
-    ValueSite read;
+    ValueSite access;
 };
 
 } // anonymous namespace
 
-// The block that the test of the slot leads to where it passes: the guard is its one parameter, and nothing stands in front of the read but what joins that guard to others for it.
-static std::optional<ValueSite> findReadBehindSlotTest(FunctionPassContext& context, const Value& test, BlockID filled)
+static bool isDefinedInBlockBefore(const Block& block, uint32_t end, ValueID value)
+{
+    for (uint32_t index = 0; index < end; ++index) {
+        if (block.values[index] == value)
+            return true;
+    }
+    return false;
+}
+
+static bool isGuardValidation(const Function& function, const UseLists& useLists, const Block& block, uint32_t index)
+{
+    if (index + 2 >= block.values.size())
+        return false;
+    ValueID test = block.values[index];
+    ValueID expected = block.values[index + 1];
+    const Value& validation = function.at(block.values[index + 2]);
+    if (provesOf(function.at(test).opcode) == Proof::None || function.at(expected).opcode != Opcode::Boolean || validation.opcode != Opcode::ValidateSameValue)
+        return false;
+    return validation.operand(0) == test && validation.operand(1) == expected && useLists.useCount(test) == 1 && useLists.useCount(expected) == 1;
+}
+
+static std::optional<ValueSite> findAccessBehindSlotTest(FunctionPassContext& context, const Value& test, BlockID filled)
 {
     const Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
@@ -354,19 +374,28 @@ static std::optional<ValueSite> findReadBehindSlotTest(FunctionPassContext& cont
         const Value& value = function.at(id);
         if (value.opcode == Opcode::AllGuards && useLists.useCount(id) == 1)
             continue;
-        bool readsTestedSlot = value.opcode == Opcode::GetSlot && !value.holdsDeclaredType() && value.objectOperand() == test.objectOperand() && value.key() == test.key();
-        if (!readsTestedSlot || !(context.program.typeOf(function, id).primitives & Primitive::Undefined))
+        if (isGuardValidation(function, useLists, block, index)) {
+            index += 2;
+            continue;
+        }
+        if (value.opcode != Opcode::GetSlot && value.opcode != Opcode::PutSlot)
+            return std::nullopt;
+        if (value.objectOperand() != test.objectOperand() || value.key() != test.key())
+            return std::nullopt;
+        if (value.opcode == Opcode::PutSlot && isDefinedInBlockBefore(block, index, value.valueOperand()))
+            return std::nullopt;
+        if (value.opcode == Opcode::GetSlot && (value.holdsDeclaredType() || !(context.program.typeOf(function, id).primitives & Primitive::Undefined)))
             return std::nullopt;
         return ValueSite { filled, index, id };
     }
     return std::nullopt;
 }
 
-static Vector<ReadOfOption> findReadsOfOptionsBehindSlotTests(FunctionPassContext& context)
+static Vector<AccessBehindSlotTest> findAccessesBehindSlotTests(FunctionPassContext& context)
 {
     const Function& function = context.function;
     const CFG& cfg = context.analyses.cfg();
-    Vector<ReadOfOption> reads;
+    Vector<AccessBehindSlotTest> sites;
     for (BlockID id : cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         if (block.frequency != BlockFrequency::Normal || block.values.isEmpty() || !block.terminator.isConditionalBranch())
@@ -378,55 +407,116 @@ static Vector<ReadOfOption> findReadsOfOptionsBehindSlotTests(FunctionPassContex
         bool leavesWhereEmpty = isRarerThan(function.at(block.terminator.notTaken().block).frequency, block.frequency);
         if (!leavesWhereEmpty || !filled.arguments.isEmpty() || !cfg.singleIncomingEdge(filled.block))
             continue;
-        if (std::optional<ValueSite> read = findReadBehindSlotTest(context, test, filled.block))
-            reads.append({ id, *read });
+        if (std::optional<ValueSite> access = findAccessBehindSlotTest(context, test, filled.block))
+            sites.append({ id, *access });
     }
-    return reads;
+    return sites;
 }
 
-// `settings.model ?? "default"`: one option, read by a function that handles no others.
-PassOutcome readOptionsLeftOutAsUndefined(FunctionPassContext& context)
+static std::optional<PropertyAccessPlan> planEmptySlotCase(FunctionPassContext& context, const Value& slotTest, bool isStore, bool functionStoresField)
 {
-    if (!readsOptionsLeftOutAsUndefined(context))
-        return PassOutcome::Unchanged;
-    Vector<ReadOfOption> reads = findReadsOfOptionsBehindSlotTests(context);
-    if (reads.isEmpty())
+    PropertyAccessContext accessContext { context.program, &context.inputs.flow };
+    std::span<const LayoutID> receivers = context.program.at(slotTest.receivers()).members;
+    bool handlesLazyFields = !isLibraryCode(context.program, context.function);
+    PropertyAccessPlan plan;
+    if (isStore) {
+        std::optional<LazyFieldCreation> creation = handlesLazyFields ? planLazyFieldCreation(accessContext, receivers, slotTest.key()) : std::nullopt;
+        if (!creation)
+            return std::nullopt;
+        plan.operation = creation->operation;
+        plan.storedValueFits = true;
+        plan.requiredProofs = creation->proofs;
+        plan.conditions = WTF::move(creation->conditions);
+        return plan;
+    }
+    OptionSet<OptionKind> kinds;
+    if (readsOptionsLeftOutAsUndefined(context))
+        kinds.add(OptionKind::RecordOption);
+    if (handlesLazyFields && functionStoresField)
+        kinds.add(OptionKind::LazilyInitializedField);
+    std::optional<TestsOfEmptySlot> needed = kinds.isEmpty() ? std::nullopt : testsThatOptionLeftOutReadsAsUndefined(accessContext, receivers, slotTest.key(), kinds);
+    if (!needed)
+        return std::nullopt;
+    plan.requiredProofs = needed->proofs;
+    plan.conditions = WTF::move(needed->conditions);
+    return plan;
+}
+
+static void addEmptySlotCase(FunctionPassContext& context, IRBuilder& builder, SiteExpansion& expansion, const AccessBehindSlotTest& site, const Value& slotTest, const PropertyAccessPlan& plan, bool isStore)
+{
+    Function& function = context.function;
+    AccessTests tests = createAccessTests(context, plan, { slotTest.objectOperand(), { }, { slotTest.key(), slotTest.receivers(), slotTest.level(), { } } });
+
+    BlockFrequency frequency = function.at(site.test).frequency;
+    Target leaves = function.at(site.test).terminator.notTaken();
+    expansion.begin(site.access);
+    Value original = expansion.original();
+    ValueID copy = expansion.appendOriginal();
+    if (isStore)
+        expansion.finishArmWithoutResult();
+    else
+        expansion.finishArm(copy);
+
+    BlockID empty = builder.addBlock(frequency);
+    builder.moveToEndOf(empty);
+    builder.setOrigin(slotTest.origin());
+    Vector<ValueID, 4> guards;
+    if (slotTest.guardOperand())
+        guards.append(slotTest.guardOperand());
+    for (Value& test : tests.tests) {
+        if (slotTest.guardOperand() && OperandPosition::guard(test.opcode))
+            test.setGuardOperand(slotTest.guardOperand());
+        ValueID passed = builder.append(WTF::move(test));
+        if (isStore) {
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(passed, 0, frequency, frequency, { { }, Target(leaves) });
+            guards.append(branch.provenOnTaken);
+            builder.moveToEndOf(branch.taken);
+            continue;
+        }
+        BlockID next = builder.addBlock(frequency);
+        builder.emitBranch(passed, Target { next, { }, { } }, Target(leaves));
+        builder.moveToEndOf(next);
+    }
+    if (isStore) {
+        Value store(plan.operation);
+        store.setObjectOperand(original.objectOperand());
+        if (!guards.isEmpty())
+            store.setGuardOperand(guards.size() == 1 ? guards[0] : builder.appendAllGuards(guards.span()));
+        store.setValueOperand(original.valueOperand());
+        setSlotStamp(store, { original.key(), original.receivers(), original.level(), original.accessSite() });
+        builder.append(WTF::move(store));
+        expansion.finishArmWithoutResult();
+    } else
+        expansion.finishArm(expansion.append(IRBuilder::make(Opcode::Undefined)));
+    expansion.end();
+    builder.redirectEdge(Edge { site.test, 1 }, Target { empty, { }, { } });
+}
+
+PassOutcome addEmptySlotCases(FunctionPassContext& context)
+{
+    Vector<AccessBehindSlotTest> sites = findAccessesBehindSlotTests(context);
+    if (sites.isEmpty())
         return PassOutcome::Unchanged;
 
     Function& function = context.function;
+    UncheckedKeyHashSet<uint32_t> storedKeys;
+    for (const AccessBehindSlotTest& site : sites) {
+        const Value& access = function.at(site.access.value);
+        if (access.opcode == Opcode::PutSlot)
+            storedKeys.add(access.key().index() + 1);
+    }
+
     IRBuilder builder({ context.build, context.program, &context.inputs.flow, &context.inputs.effects, context.id }, function, context.types, &context.analyses);
     SiteExpansion expansion(context, builder);
     PassOutcome outcome = PassOutcome::Unchanged;
-    // An expansion moves what stands behind the read into a block of its own, the test of the next option with it. So the last comes first.
-    for (const ReadOfOption& read : reads | std::views::reverse) {
-        Value slotTest = function.at(function.at(read.test).values.last());
-        std::optional<TestsOfEmptySlot> needed = testsThatOptionLeftOutReadsAsUndefined({ context.program, &context.inputs.flow }, context.program.at(slotTest.receivers()).members, slotTest.key());
-        if (!needed)
+    // An expansion moves what stands behind the access into a block of its own, the next slot test with it. So the last comes first.
+    for (const AccessBehindSlotTest& site : sites | std::views::reverse) {
+        Value slotTest = function.at(function.at(site.test).values.last());
+        bool isStore = function.at(site.access.value).opcode == Opcode::PutSlot;
+        std::optional<PropertyAccessPlan> plan = planEmptySlotCase(context, slotTest, isStore, storedKeys.contains(slotTest.key().index() + 1));
+        if (!plan)
             continue;
-        PropertyAccessPlan plan;
-        plan.requiredProofs = needed->proofs;
-        plan.conditions = WTF::move(needed->conditions);
-        AccessTests tests = createAccessTests(context, plan, { slotTest.objectOperand(), { }, { slotTest.key(), slotTest.receivers(), slotTest.level(), { } } });
-
-        BlockFrequency frequency = function.at(read.test).frequency;
-        Target leaves = function.at(read.test).terminator.notTaken();
-        expansion.begin(read.read);
-        expansion.finishArm(expansion.appendOriginal());
-
-        BlockID empty = builder.addBlock(frequency);
-        builder.moveToEndOf(empty);
-        builder.setOrigin(slotTest.origin());
-        for (Value& test : tests.tests) {
-            if (slotTest.guardOperand() && OperandPosition::guard(test.opcode))
-                test.setGuardOperand(slotTest.guardOperand());
-            ValueID passed = builder.append(WTF::move(test));
-            BlockID next = builder.addBlock(frequency);
-            builder.emitBranch(passed, Target { next, { }, { } }, Target(leaves));
-            builder.moveToEndOf(next);
-        }
-        expansion.finishArm(expansion.append(IRBuilder::make(Opcode::Undefined)));
-        expansion.end();
-        builder.redirectEdge(Edge { read.test, 1 }, Target { empty, { }, { } });
+        addEmptySlotCase(context, builder, expansion, site, slotTest, *plan, isStore);
         outcome = PassOutcome::Changed;
     }
     return outcome;

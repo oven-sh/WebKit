@@ -413,7 +413,9 @@ jobs:
         if: *have_jsc
         env: *test_env
         run: |
-          if [ -x "$RUNNER_TEMP/bun-webkit/bin/TestWTF" ]; then "$RUNNER_TEMP/bun-webkit/bin/TestWTF"; else echo "this lane has no TestWTF"; fi
+          # Line by line: what a program that crashes still holds in its buffer is lost, and with it the name of the test.
+          # Not StackTraceTest: the lanes are compiled without unwind tables, so backtrace() sees one frame.
+          if [ -x "$RUNNER_TEMP/bun-webkit/bin/TestWTF" ]; then stdbuf -oL "$RUNNER_TEMP/bun-webkit/bin/TestWTF" --gtest_filter=-StackTraceTest.*; else echo "this lane has no TestWTF"; fi
       - name: run-javascriptcore-tests
         if: *have_jsc
         env: *test_env

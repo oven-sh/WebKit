@@ -8,8 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBlockCycles.h"
+#include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
+#include <algorithm>
+#include <tuple>
 #include <utility>
 #include <wtf/EnumSet.h>
 #include <wtf/MathExtras.h>
@@ -18,860 +22,1535 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// Most functions make no more objects than a word has bits. The few that make more are the large ones, where an analysis that is left out saves most.
-struct WideObjectMask {
-    static constexpr uint32_t numberOfWords = 4;
-
-    constexpr WideObjectMask(uint64_t low = 0)
-        : words { low, 0, 0, 0 }
+template<unsigned numberOfWords>
+struct WidePrefilterMask {
+    WidePrefilterMask(uint64_t low = 0)
     {
+        words[0] = low;
     }
 
-    explicit constexpr operator bool() const { return words[0] | words[1] | words[2] | words[3]; }
-    constexpr WideObjectMask operator~() const
+    NEVER_INLINE WidePrefilterMask operator~() const
     {
-        WideObjectMask result;
-        for (uint32_t word = 0; word < numberOfWords; ++word)
+        WidePrefilterMask result;
+        for (unsigned word = 0; word < numberOfWords; ++word)
             result.words[word] = ~words[word];
         return result;
     }
-    constexpr WideObjectMask& operator|=(const WideObjectMask& other)
+    NEVER_INLINE WidePrefilterMask& operator|=(const WidePrefilterMask& other)
     {
-        for (uint32_t word = 0; word < numberOfWords; ++word)
+        for (unsigned word = 0; word < numberOfWords; ++word)
             words[word] |= other.words[word];
         return *this;
     }
-    constexpr WideObjectMask& operator&=(const WideObjectMask& other)
+    NEVER_INLINE WidePrefilterMask& operator&=(const WidePrefilterMask& other)
     {
-        for (uint32_t word = 0; word < numberOfWords; ++word)
+        for (unsigned word = 0; word < numberOfWords; ++word)
             words[word] &= other.words[word];
         return *this;
     }
-    friend constexpr WideObjectMask operator|(WideObjectMask a, const WideObjectMask& b) { return a |= b; }
-    friend constexpr WideObjectMask operator&(WideObjectMask a, const WideObjectMask& b) { return a &= b; }
-    friend constexpr bool operator==(const WideObjectMask&, const WideObjectMask&) = default;
+    friend NEVER_INLINE WidePrefilterMask operator|(const WidePrefilterMask& a, const WidePrefilterMask& b)
+    {
+        WidePrefilterMask result;
+        for (unsigned word = 0; word < numberOfWords; ++word)
+            result.words[word] = a.words[word] | b.words[word];
+        return result;
+    }
+    friend NEVER_INLINE WidePrefilterMask operator&(const WidePrefilterMask& a, const WidePrefilterMask& b)
+    {
+        WidePrefilterMask result;
+        for (unsigned word = 0; word < numberOfWords; ++word)
+            result.words[word] = a.words[word] & b.words[word];
+        return result;
+    }
+    friend NEVER_INLINE bool operator==(const WidePrefilterMask& a, const WidePrefilterMask& b)
+    {
+        uint64_t difference = 0;
+        for (unsigned word = 0; word < numberOfWords; ++word)
+            difference |= a.words[word] ^ b.words[word];
+        return !difference;
+    }
 
-    uint64_t words[numberOfWords];
+    uint64_t words[numberOfWords] { };
 };
 
-template<typename ObjectMask> constexpr uint32_t numberOfObjectsIn = 64;
-template<> constexpr uint32_t numberOfObjectsIn<WideObjectMask> = 64 * WideObjectMask::numberOfWords;
+template<typename Mask> struct PrefilterMaskTraits;
 
-template<typename ObjectMask> constexpr ObjectMask maskOfObject(uint32_t object) { return ObjectMask(1) << object; }
-template<> constexpr WideObjectMask maskOfObject<WideObjectMask>(uint32_t object)
-{
-    WideObjectMask result;
-    result.words[object / 64] = uint64_t { 1 } << object % 64;
-    return result;
-}
-
-void forEachObjectIn(uint64_t objects, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
-{
-    for (; objects; objects &= objects - 1)
-        functor(ctz(objects));
-}
-
-void forEachObjectIn(const WideObjectMask& objects, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
-{
-    for (uint32_t word = 0; word < WideObjectMask::numberOfWords; ++word) {
-        forEachObjectIn(objects.words[word], [&](uint32_t object) {
-            functor(64 * word + object);
-        });
+template<> struct PrefilterMaskTraits<uint64_t> {
+    static constexpr uint32_t numberOfBits = 64;
+    static uint64_t ofBit(uint32_t bit) { return uint64_t { 1 } << bit; }
+    static bool has(uint64_t mask, uint32_t bit) { return mask >> bit & 1; }
+    static bool isEmpty(uint64_t mask) { return !mask; }
+    static void forEachBit(uint64_t mask, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
+    {
+        for (; mask; mask &= mask - 1)
+            functor(ctz(mask));
     }
-}
-
-uint32_t firstObjectIn(uint64_t objects) { return ctz(objects); }
-uint32_t firstObjectIn(const WideObjectMask& objects)
-{
-    for (uint32_t word = 0; word < WideObjectMask::numberOfWords; ++word) {
-        if (objects.words[word])
-            return 64 * word + ctz(objects.words[word]);
+    static void findBit(uint64_t mask, NOESCAPE const Invocable<bool(uint32_t)> auto& functor)
+    {
+        for (; mask; mask &= mask - 1) {
+            if (functor(ctz(mask)))
+                return;
+        }
     }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool isOneObject(uint64_t objects) { return hasOneBitSet(objects); }
-bool isOneObject(const WideObjectMask& objects)
-{
-    uint32_t count = 0;
-    for (uint64_t word : objects.words)
-        count += std::popcount(word);
-    return count == 1;
-}
-
-template<typename ObjectMask>
-struct ScreenedObjectsIn {
-    ObjectMask unbuilt { 0 };
-    ObjectMask perhapsBuilt { 0 };
-    ObjectMask built { 0 };
-    ObjectMask consumed { 0 };
 };
 
-enum class ScreenedFrequencies : bool { AreIgnored, AreCompared };
+template<unsigned numberOfWords> struct PrefilterMaskTraits<WidePrefilterMask<numberOfWords>> {
+    using Mask = WidePrefilterMask<numberOfWords>;
+    static constexpr uint32_t numberOfBits = 64 * numberOfWords;
+    static Mask ofBit(uint32_t bit)
+    {
+        Mask result;
+        result.words[bit / 64] = uint64_t { 1 } << bit % 64;
+        return result;
+    }
+    static bool has(const Mask& mask, uint32_t bit) { return mask.words[bit / 64] >> bit % 64 & 1; }
+    static NEVER_INLINE bool isEmpty(const Mask& mask)
+    {
+        uint64_t any = 0;
+        for (uint64_t word : mask.words)
+            any |= word;
+        return !any;
+    }
+    static void forEachBit(const Mask& mask, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
+    {
+        for (unsigned word = 0; word < numberOfWords; ++word) {
+            for (uint64_t bits = mask.words[word]; bits; bits &= bits - 1)
+                functor(64 * word + ctz(bits));
+        }
+    }
+    static void findBit(const Mask& mask, NOESCAPE const Invocable<bool(uint32_t)> auto& functor)
+    {
+        for (unsigned word = 0; word < numberOfWords; ++word) {
+            for (uint64_t bits = mask.words[word]; bits; bits &= bits - 1) {
+                if (functor(64 * word + ctz(bits)))
+                    return;
+            }
+        }
+    }
+};
 
-template<typename ObjectMask>
-class AllocationScreening {
-    WTF_MAKE_NONCOPYABLE(AllocationScreening);
+// Runs the sinking analysis on one bit per object: virtual or materialized. It drops the candidates that do not pay and starts over, as the analysis does.
+// It knows no fields, shapes or tags, so an object stays virtual wherever those decide.
+class AllocationPrefilter {
+    WTF_MAKE_NONCOPYABLE(AllocationPrefilter);
 public:
-    using ScreenedObjects = ScreenedObjectsIn<ObjectMask>;
+    AllocationPrefilter(AllocationSinking&, std::span<const Candidate>, std::span<const DescribedObject>, Vector<VirtualObjectID>& objectOfValue, const Vector<uint64_t>* tracesOfFruitlessComponents);
+    ~AllocationPrefilter();
 
-    AllocationScreening(AllocationSinking&, std::span<const Candidate>, std::span<const DescribedObject>, Vector<VirtualObjectID>& objectOfValue, ScreenedFrequencies);
-    ~AllocationScreening();
-
-    static constexpr uint32_t maxNumberOfObjects = numberOfObjectsIn<ObjectMask>;
-
-    ScreeningResult run();
-    // Bit k: the allocation with that index, or something that it is held by, holds or meets. For the others nothing is gained whatever becomes of these.
-    BitVector allocationsThatMayPay();
-    // For each allocation a number for all that was seen of it and of what it holds, is held by or meets, in the order of the blocks.
-    Vector<uint64_t> tracesOfAllocations();
-    // The first use in the order of the blocks that makes the allocation necessary. Found for whoever collects the reasons why allocations stay.
-    std::optional<Use> firstBuilderOf(uint32_t allocation) const { return m_objects[allocation].firstBuilder; }
+    void run();
+    bool isUnprofitable(uint32_t allocation) const { return !m_objects[allocation].isProfitable; }
+    // A number for all uses of the allocation and of what it is connected with, each at its distance in blocks. It names no value and no block.
+    uint64_t traceOf(uint32_t allocation) { return m_objects[findComponent(find(allocation))].traceOfComponent; }
+    bool wasFruitlessBefore(uint32_t allocation) const { return m_objects[allocation].wasFruitlessBefore; }
+    bool exceedsMaterializationLimit(uint32_t allocation) const { return m_objects[allocation].exceedsMaterializationLimit; }
+    std::optional<Use> firstMaterializationOf(uint32_t allocation) const { return m_objects[allocation].firstMaterialization; }
 
 private:
+    static constexpr uint32_t noObject = UINT32_MAX;
+    static constexpr uint32_t terminatorIndex = UINT32_MAX;
+
     struct Object {
         BlockID block;
-        ObjectMask held { 0 };
-        uint32_t group { 0 };
-        BlockFrequency frequency { BlockFrequency::Normal };
-        Vector<ValueID, 2> names;
+        ValueID definition;
+        uint32_t parent { 0 };
+        uint32_t parameterIndex { 0 };
+        uint32_t component { 0 };
+        uint32_t chunk { 0 };
+        uint32_t bit { 0 };
+        bool isMaterializedByCall { false };
+        bool isUnmodeled { false };
+        bool isProfitable { true };
+        bool isLinked { false };
+        bool holdsUnmodeledObjects { false };
+        bool isDecided { false };
+        uint32_t firstMaterializationIndex { UINT32_MAX };
+        uint32_t firstStoreIndex { UINT32_MAX };
         uint64_t trace { 0 };
-        ObjectMask sources { 0 };
-        std::optional<Use> firstBuilder;
+        uint64_t traceOfComponent { 0 };
+        bool wasFruitlessBefore { false };
+        bool exceedsMaterializationLimit { false };
+        std::optional<Use> firstMaterialization;
+        EnumSet<VirtualObjectKind> kinds;
     };
 
-    static constexpr ObjectMask maskOf(uint32_t object) { return maskOfObject<ObjectMask>(object); }
+    enum class EventKind : uint8_t { Allocation, Materialization, Store, StoreFromObject, Hold, BranchTest };
 
-    static void forEachObject(const ObjectMask& objects, NOESCAPE const Invocable<void(uint32_t)> auto& functor) { forEachObjectIn(objects, functor); }
+    struct Event {
+        uint32_t chunk { 0 };
+        uint32_t position { 0 };
+        uint32_t index { 0 };
+        uint32_t object { 0 };
+        EventKind kind { EventKind::Materialization };
+        uint32_t other { noObject };
+        Use use;
+        KnownBoolean answer { KnownBoolean::Unknown };
+    };
 
-    static uint64_t mix(uint64_t trace, uint64_t seen)
-    {
-        trace = (trace ^ seen) * 0x9e3779b97f4a7c15ull;
-        return trace ^ trace >> 29;
-    }
-    void note(ObjectMask mentioned, uint64_t operation, const ScreenedObjects& before, const ScreenedObjects& after)
-    {
-        forEachObject(mentioned, [&](uint32_t object) {
-            ObjectMask mask = maskOf(object);
-            uint64_t states = !!(before.unbuilt & mask) | !!(after.unbuilt & mask) << 1 | !!(after.perhapsBuilt & mask) << 2 | !!(after.consumed & mask) << 3;
-            m_objects[object].trace = mix(m_objects[object].trace, operation << 8 | static_cast<uint64_t>(m_frequencyOfBlock) << 4 | states);
-        });
-    }
+    struct ParameterLink {
+        uint32_t chunk { 0 };
+        uint32_t position { 0 };
+        Edge edge;
+        uint32_t source { 0 };
+        uint32_t parameter { 0 };
+    };
 
+    struct ObjectUse {
+        uint32_t chunk { 0 };
+        uint32_t position { 0 };
+        uint32_t object { 0 };
+    };
+
+    struct Chunk {
+        uint32_t numberOfBits { 0 };
+        uint32_t firstPosition { UINT32_MAX };
+        Vector<uint32_t, 8> objects;
+        std::span<const Event> events;
+        std::span<const ParameterLink> links;
+        std::span<const ObjectUse> uses;
+    };
+
+    template<typename Mask> class Solver;
+
+    bool isAllocation(uint32_t object) const { return object < m_numberOfAllocations; }
     std::optional<uint32_t> objectNamedBy(ValueID) const;
-    ObjectMask maskNamedBy(ValueID) const;
-    ObjectMask maskNamedByOperandsOf(const Instruction&) const;
-    bool isJoin(uint32_t object) const { return !!(m_joins & maskOf(object)); }
-    bool mayBeCell(uint32_t object) const { return !!(m_joinsOfCells & maskOf(object)); }
-    const VirtualObjectDescription* descriptionOf(uint32_t object) const;
+    uint32_t find(uint32_t object);
+    uint32_t findComponent(uint32_t object);
     void addName(ValueID, uint32_t object);
-    void mayPay(ObjectMask objects) { m_objectsThatMayPay |= objects; }
-    uint32_t groupOf(uint32_t object);
-    void connect(uint32_t, uint32_t);
-    void connectAll(ObjectMask);
-    std::optional<FieldLookup> lookUp(uint32_t object, const Value& access) const;
-    bool alwaysPasses(uint32_t object, Opcode cast) const;
-    bool neverFolds(uint32_t object, const Value& store) const;
-    bool mayBeTakenApartBy(uint32_t object, const Value& user) const;
+    uint32_t ensureParameterObject(BlockID, uint32_t parameterIndex);
 
-    void visit(BlockID, uint32_t position);
-    ScreenedObjects enter(BlockID, uint32_t position);
-    void bindParameter(BlockID, uint32_t parameterIndex, std::span<const Edge>, std::span<ScreenedObjects> objectsOnEdges, bool isEnteredBackwards);
-    void execute(ScreenedObjects&, ValueID);
-    void allocate(ScreenedObjects&, ValueID, ObjectMask named);
-    void executeTerminator(ScreenedObjects&, const Terminator&);
-    void build(ScreenedObjects&, ObjectMask, Opcode builder);
-    void build(ScreenedObjects&, ObjectMask);
-    void noteBuilderOf(ObjectMask roots, ObjectMask built);
-    void leave(BlockID, uint32_t position, const ScreenedObjects&, ObjectMask unbuiltSomewhere);
-    void leaveToHandler(const Target& handler, ObjectMask unbuiltSomewhere);
+    void collectNames();
+    void uniteAliases();
+    void findKinds();
+    void classifyUses();
+    void classify(ValueID name, uint32_t object, const Use&);
+    void classifyAllocationOperand(ValueID name, uint32_t object, const Use&);
+    void classifyListOperand(uint32_t object, const Use&);
+    void addEvent(EventKind, uint32_t object, const Use&, uint32_t other = noObject);
+    void materialize(uint32_t object, const Use&);
+    bool neverFolds(uint32_t object, const Value& store, BlockID) const;
+    bool mayBeScalarReplacedBy(uint32_t object, const Value& user);
+    bool storesLate(uint32_t holder) const;
+    std::optional<uint32_t> candidateReadFrom(ValueID) const;
+    KnownBoolean evaluateOnAllocatedShape(uint32_t object, const Use& test) const;
+    uint32_t bitOf(uint32_t object) const { return m_objects[object].bit; }
+    uint32_t positionOf(BlockID block) const { return m_cfg.reversePostOrderIndex(block); }
+    void decideLocally();
+    void removeDecidedObjects();
+    void partition();
+    static uint64_t mix(uint64_t seen)
+    {
+        seen *= 0x9e3779b97f4a7c15ull;
+        return seen ^ seen >> 29;
+    }
+    void addToTrace(uint32_t object, uint64_t seen) { m_objects[object].trace += mix(seen); }
 
-    bool comparesFrequencies() const { return m_frequencies; }
-    BlockFrequency frequencyOf(uint32_t object);
-    void didReach(BlockFrequency, ObjectMask unbuilt);
-    ObjectMask groupsOf(ObjectMask);
-    ObjectMask groupsBuiltApartInFrame();
-
-    const AllocationSinking& m_sinking;
+    AllocationSinking& m_sinking;
     FunctionAnalyses& m_analyses;
     const VirtualObjectContext& m_context;
     const Program& m_program;
     const Function& m_function;
     const CFG& m_cfg;
+    const UseLists& m_useLists;
     std::span<const Candidate> m_candidates;
     std::span<const DescribedObject> m_described;
     Vector<VirtualObjectID>& m_objectOfValue;
-    const BlockFrequencies* m_frequencies { nullptr };
+    uint32_t m_numberOfAllocations;
+    bool m_findsFirstMaterializations { false };
+    const Vector<uint64_t>* m_tracesOfFruitlessComponents { nullptr };
     Vector<Object, 16> m_objects;
-    Vector<ValueID, 16> m_addedNames;
-    Vector<ScreenedObjects> m_objectsAtEnd;
-    BitVector m_blocksWithAllocations;
-    BitVector m_enteredBlocks;
-    uint32_t m_numberOfAllocations { 0 };
-    bool m_storesByNameWait { false };
-    bool m_findsBuilders { false };
-    Use m_user;
-    ObjectMask m_named { 0 };
-    BlockFrequency m_frequencyOfBlock { BlockFrequency::Normal };
-    ObjectMask m_joins { 0 };
-    ObjectMask m_joinsOfCells { 0 };
-    ObjectMask m_objectsThatMayPay { 0 };
-    ObjectMask m_objectsBuiltByCalls { 0 };
-    ObjectMask m_objectsLeavingTheirBlocks { 0 };
-    ObjectMask m_objectsOnRarerPaths { 0 };
+    Vector<ValueID, 32> m_names;
+    Vector<Event, 32> m_events;
+    Vector<ParameterLink, 8> m_parameterLinks;
+    Vector<ObjectUse, 32> m_uses;
+    Vector<Chunk, 2> m_chunks;
 };
 
-template<typename ObjectMask>
-AllocationScreening<ObjectMask>::AllocationScreening(AllocationSinking& sinking, std::span<const Candidate> candidates, std::span<const DescribedObject> described, Vector<VirtualObjectID>& objectOfValue, ScreenedFrequencies frequencies)
+AllocationPrefilter::AllocationPrefilter(AllocationSinking& sinking, std::span<const Candidate> candidates, std::span<const DescribedObject> described, Vector<VirtualObjectID>& objectOfValue, const Vector<uint64_t>* tracesOfFruitlessComponents)
     : m_sinking(sinking)
     , m_analyses(sinking.analyses())
     , m_context(sinking.objectContext())
     , m_program(m_context.program)
     , m_function(m_context.function)
     , m_cfg(m_analyses.cfg())
+    , m_useLists(m_analyses.useLists())
     , m_candidates(candidates)
     , m_described(described)
     , m_objectOfValue(objectOfValue)
-    , m_objectsAtEnd(m_function.blocks.size())
-    , m_blocksWithAllocations(m_function.blocks.size())
-    , m_enteredBlocks(m_function.blocks.size())
     , m_numberOfAllocations(candidates.size())
+    , m_findsFirstMaterializations(sinking.context().build.options().collectsDeclines())
+    , m_tracesOfFruitlessComponents(tracesOfFruitlessComponents)
 {
-    RELEASE_ASSERT(m_numberOfAllocations <= maxNumberOfObjects);
-    m_findsBuilders = sinking.context().build.options().collectsDeclines();
-    if (frequencies == ScreenedFrequencies::AreCompared)
-        m_frequencies = &m_analyses.blockFrequencies();
-    for (uint32_t index = 0; index < m_numberOfAllocations; ++index)
-        m_objects.append(Object { candidates[index].block, 0, index, BlockFrequency::Normal, { candidates[index].definition } });
-    for (const Candidate& candidate : candidates)
-        m_blocksWithAllocations.quickSet(candidate.block.index());
+    for (uint32_t index = 0; index < m_numberOfAllocations; ++index) {
+        m_objects.append(Object { candidates[index].block, candidates[index].definition, index });
+        m_names.append(candidates[index].definition);
+    }
 }
 
-template<typename ObjectMask>
-AllocationScreening<ObjectMask>::~AllocationScreening()
+AllocationPrefilter::~AllocationPrefilter()
 {
-    for (ValueID name : m_addedNames)
-        m_objectOfValue[name.index()] = { };
+    for (size_t index = m_numberOfAllocations; index < m_names.size(); ++index)
+        m_objectOfValue[m_names[index].index()] = { };
 }
 
-template<typename ObjectMask>
-std::optional<uint32_t> AllocationScreening<ObjectMask>::objectNamedBy(ValueID value) const
+std::optional<uint32_t> AllocationPrefilter::objectNamedBy(ValueID value) const
 {
-    VirtualObjectID object = m_objectOfValue[value.index()];
+    VirtualObjectID object = value ? m_objectOfValue[value.index()] : VirtualObjectID();
     if (!object)
         return std::nullopt;
     return object.index();
 }
 
-template<typename ObjectMask>
-ObjectMask AllocationScreening<ObjectMask>::maskNamedBy(ValueID value) const
+uint32_t AllocationPrefilter::find(uint32_t object)
 {
-    std::optional<uint32_t> object = objectNamedBy(value);
-    return object ? maskOf(*object) : ObjectMask(0);
-}
-
-template<typename ObjectMask>
-ObjectMask AllocationScreening<ObjectMask>::maskNamedByOperandsOf(const Instruction& instruction) const
-{
-    ObjectMask named = 0;
-    instruction.forEachOperand([&](ValueID operand, uint32_t) {
-        named |= maskNamedBy(operand);
-    });
-    return named;
-}
-
-template<typename ObjectMask>
-const VirtualObjectDescription* AllocationScreening<ObjectMask>::descriptionOf(uint32_t object) const
-{
-    return object < m_numberOfAllocations ? &m_described[object].description : nullptr;
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::addName(ValueID value, uint32_t object)
-{
-    m_objectOfValue[value.index()] = VirtualObjectID(object);
-    m_addedNames.append(value);
-    m_objects[object].names.append(value);
-}
-
-template<typename ObjectMask>
-uint32_t AllocationScreening<ObjectMask>::groupOf(uint32_t object)
-{
-    while (m_objects[object].group != object) {
-        m_objects[object].group = m_objects[m_objects[object].group].group;
-        object = m_objects[object].group;
+    while (m_objects[object].parent != object) {
+        m_objects[object].parent = m_objects[m_objects[object].parent].parent;
+        object = m_objects[object].parent;
     }
     return object;
 }
 
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::connect(uint32_t a, uint32_t b)
+void AllocationPrefilter::addName(ValueID value, uint32_t object)
 {
-    m_objects[groupOf(a)].group = groupOf(b);
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::connectAll(ObjectMask objects)
-{
-    if (!objects || isOneObject(objects))
+    if (m_objectOfValue[value.index()])
         return;
-    uint32_t first = firstObjectIn(objects);
-    forEachObject(objects, [&](uint32_t object) {
-        connect(first, object);
-    });
+    m_objectOfValue[value.index()] = VirtualObjectID(object);
+    m_names.append(value);
 }
 
-template<typename ObjectMask>
-std::optional<FieldLookup> AllocationScreening<ObjectMask>::lookUp(uint32_t object, const Value& access) const
+uint32_t AllocationPrefilter::ensureParameterObject(BlockID block, uint32_t parameterIndex)
 {
-    const VirtualObjectDescription* description = descriptionOf(object);
-    if (!description)
-        return std::nullopt;
-    return lookUpField(m_context, *description, access).lookup;
+    ValueID parameter = m_function.at(block).parameters[parameterIndex];
+    if (std::optional<uint32_t> object = objectNamedBy(parameter))
+        return *object;
+    uint32_t object = m_objects.size();
+    m_objects.append(Object { block, parameter, object, parameterIndex });
+    addName(parameter, object);
+    return object;
 }
 
-template<typename ObjectMask>
-bool AllocationScreening<ObjectMask>::alwaysPasses(uint32_t object, Opcode cast) const
+void AllocationPrefilter::collectNames()
 {
-    constexpr OpcodeSet castsOfEveryObject { Opcode::FinishObject, Opcode::Upcast, Opcode::NarrowByField, Opcode::AssumeType, Opcode::CheckInitialized, Opcode::RequireObjectCoercible };
-
-    const VirtualObjectDescription* description = descriptionOf(object);
-    return description && !description->absentResult && castsOfEveryObject.contains(cast);
+    for (size_t next = 0; next < m_names.size(); ++next) {
+        ValueID name = m_names[next];
+        uint32_t object = m_objectOfValue[name.index()].index();
+        for (const Use& use : m_useLists.usesOf(name)) {
+            switch (use.kind) {
+            case Use::Kind::Operand:
+                if (!use.operandIndex && interpretedOf(m_function.at(use.user).opcode) == Interpretation::Cast)
+                    addName(use.user, object);
+                break;
+            case Use::Kind::EdgeArgument:
+            case Use::Kind::HandlerArgument: {
+                Edge edge = use.edge();
+                uint32_t parameter = ensureParameterObject(targetOf(m_function, edge).block, use.operandIndex);
+                m_parameterLinks.append(ParameterLink { 0, positionOf(use.block), edge, object, parameter });
+                break;
+            }
+            case Use::Kind::TerminatorOperand:
+            case Use::Kind::BlockSubject:
+                break;
+            }
+        }
+    }
 }
 
-template<typename ObjectMask>
-bool AllocationScreening<ObjectMask>::neverFolds(uint32_t object, const Value& store) const
+void AllocationPrefilter::uniteAliases()
+{
+    for (bool changed = m_objects.size() > m_numberOfAllocations; changed;) {
+        changed = false;
+        for (uint32_t parameter = m_numberOfAllocations; parameter < m_objects.size(); ++parameter) {
+            if (find(parameter) != parameter)
+                continue;
+            const Object& object = m_objects[parameter];
+            std::optional<uint32_t> source;
+            bool isAlias = true;
+            for (Edge edge : m_cfg.incomingEdges(object.block)) {
+                ValueID incoming = valuePassedOn(m_function, edge, object.parameterIndex);
+                if (incoming == object.definition)
+                    continue;
+                std::optional<uint32_t> named = objectNamedBy(incoming);
+                if (!named) {
+                    isAlias = false;
+                    break;
+                }
+                uint32_t root = find(*named);
+                if (root == parameter)
+                    continue;
+                if (source && *source != root) {
+                    isAlias = false;
+                    break;
+                }
+                source = root;
+            }
+            if (!isAlias || !source)
+                continue;
+            m_objects[parameter].parent = *source;
+            changed = true;
+        }
+    }
+}
+
+void AllocationPrefilter::findKinds()
+{
+    for (uint32_t allocation = 0; allocation < m_numberOfAllocations; ++allocation)
+        m_objects[allocation].kinds.add(m_described[allocation].description.kind);
+    for (bool changed = !m_parameterLinks.isEmpty(); changed;) {
+        changed = false;
+        for (const ParameterLink& link : m_parameterLinks) {
+            EnumSet<VirtualObjectKind>& kinds = m_objects[find(link.parameter)].kinds;
+            EnumSet<VirtualObjectKind> united = kinds | m_objects[find(link.source)].kinds;
+            changed |= united != kinds;
+            kinds = united;
+        }
+    }
+}
+
+void AllocationPrefilter::addEvent(EventKind kind, uint32_t object, const Use& use, uint32_t other)
+{
+    uint32_t index = use.kind == Use::Kind::Operand ? m_useLists.locationOf(use.user).index : terminatorIndex;
+    m_events.append(Event { 0, positionOf(use.block), index, object, kind, other, use });
+    Object& root = m_objects[find(object)];
+    root.trace += mix(mix(static_cast<uint64_t>(kind) + 1 + (static_cast<uint64_t>(m_cfg.successors(use.block).size()) << 8)) + positionOf(use.block) - positionOf(root.block) + (static_cast<uint64_t>(index) << 32));
+    if (other != noObject) {
+        root.isLinked = true;
+        m_objects[find(other)].isLinked = true;
+    }
+    if (use.block != root.block)
+        return;
+    if (kind == EventKind::Materialization && index < root.firstMaterializationIndex) {
+        root.firstMaterializationIndex = index;
+        root.firstMaterialization = use;
+    } else if (kind == EventKind::Store)
+        root.firstStoreIndex = std::min(root.firstStoreIndex, index);
+}
+
+void AllocationPrefilter::materialize(uint32_t object, const Use& use)
+{
+    addEvent(EventKind::Materialization, object, use);
+    if (use.kind == Use::Kind::Operand && effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call)
+        m_objects[find(object)].isMaterializedByCall = true;
+}
+
+bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockID block) const
 {
     constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::Arguments };
 
-    if (mayBeCell(object))
-        return true;
-    const VirtualObjectDescription* description = descriptionOf(object);
-    if (!description || store.opcode == Opcode::AppendElement || store.opcode == Opcode::AppendHole)
+    if (!isAllocation(object) || store.opcode == Opcode::AppendElement || store.opcode == Opcode::AppendHole)
         return false;
-    VirtualFieldAccess access = lookUpField(m_context, *description, store);
-    if (access.lookup != FieldLookup::Field || !writableKinds.contains(description->kind))
+    const VirtualObjectDescription& description = m_described[object].description;
+    VirtualFieldAccess access = lookUpField(m_context, description, store);
+    if (access.lookup != FieldLookup::Field || !writableKinds.contains(description.kind))
         return true;
-    if (description->kind == VirtualObjectKind::Arguments)
+    if (description.kind == VirtualObjectKind::Arguments)
         return false;
-    if (access.whenPresent != PresentField::IsOwnData && access.whenAbsent != AbsentField::FindsNothing)
+    bool isListed = false;
+    forEachInitialField(m_context, description, [&](const VirtualField& field, ValueID) {
+        isListed |= field == access.field;
+    });
+    if (isListed ? access.whenPresent != PresentField::IsOwnData : access.whenAbsent != AbsentField::FindsNothing)
         return true;
     TypeID storedType = m_function.at(store.valueOperand()).type;
-    TypeID fieldType = typeOfField(m_context, *description, access.field);
+    TypeID fieldType = typeOfField(m_context, description, access.field);
     if (storedType == fieldType || m_program.at(storedType).isSubsetOf(m_program.at(fieldType), m_program))
         return false;
-    return store.opcode != Opcode::PropSet || m_storesByNameWait || !canHoldUnprovenValue(m_program, *description, access.field);
+    return store.opcode != Opcode::PropSet || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
 }
 
-template<typename ObjectMask>
-bool AllocationScreening<ObjectMask>::mayBeTakenApartBy(uint32_t object, const Value& user) const
+bool AllocationPrefilter::mayBeScalarReplacedBy(uint32_t object, const Value& user)
 {
-    if (mayBeCell(object))
-        return false;
-    const VirtualObjectDescription* description = descriptionOf(object);
-    if (!description || description->kind == VirtualObjectKind::Arguments)
+    EnumSet<VirtualObjectKind> kinds = m_objects[find(object)].kinds;
+    if (kinds.contains(VirtualObjectKind::Arguments))
         return true;
-    return description->kind == VirtualObjectKind::Array && user.opcode == Opcode::CallBuiltin && user.builtinCallForm() == BuiltinCallForm::List;
+    return kinds.contains(VirtualObjectKind::Array) && user.opcode == Opcode::CallBuiltin && user.builtinCallForm() == BuiltinCallForm::List;
 }
 
-static uint32_t indexOfOperandTakenApart(Opcode listUse)
+bool AllocationPrefilter::storesLate(uint32_t holder) const
 {
-    switch (listUse) {
+    if (!isAllocation(holder))
+        return false;
+    VirtualObjectKind kind = m_described[holder].description.kind;
+    return kind == VirtualObjectKind::Environment || kind == VirtualObjectKind::Object;
+}
+
+// What is read out of a virtual object may be another virtual object.
+std::optional<uint32_t> AllocationPrefilter::candidateReadFrom(ValueID value) const
+{
+    while (interpretedOf(m_function.at(value).opcode) == Interpretation::Cast)
+        value = m_function.at(value).operand(0);
+    const Value& definition = m_function.at(value);
+    if (interpretationOf(m_program, definition) != Interpretation::Read)
+        return std::nullopt;
+    return objectNamedBy(definition.operand(0));
+}
+
+KnownBoolean AllocationPrefilter::evaluateOnAllocatedShape(uint32_t object, const Use& use) const
+{
+    constexpr OpcodeSet testsIndependentOfStores {
+        Opcode::ToBoolean, Opcode::TypeTest, Opcode::IsNotFrozen, Opcode::HasLayoutPrototype, Opcode::BelongsToInstance, Opcode::IsPristine, Opcode::IsClosureOf,
+    };
+
+    const Value& test = m_function.at(use.user);
+    if (!isAllocation(object) || !testsIndependentOfStores.contains(test.opcode))
+        return KnownBoolean::Unknown;
+    bool namesOtherObject = false;
+    test.forEachOperand([&](ValueID operand, uint32_t index) {
+        namesOtherObject |= index != use.operandIndex && objectNamedBy(operand);
+    });
+    if (namesOtherObject)
+        return KnownBoolean::Unknown;
+
+    const VirtualObjectDescription& description = m_described[object].description;
+    VirtualFamily family;
+    KeyOrderTable orders;
+    uint32_t descriptionIndex = family.addDescription(description);
+    forEachInitialField(m_context, description, [&](const VirtualField& field, ValueID) {
+        family.ensureField(field);
+    });
+    VirtualShape shape = shapeAtAllocation(m_context, family, orders, descriptionIndex);
+    return evaluateTest(ShapeContext { m_context, family, orders }, shape, test, use.operandIndex);
+}
+
+void AllocationPrefilter::classifyAllocationOperand(ValueID name, uint32_t object, const Use& use)
+{
+    const Value& user = m_function.at(use.user);
+    std::optional<uint32_t> holder = objectNamedBy(use.user);
+    if (!holder || !isAllocation(*holder) || m_objects[*holder].definition != use.user) {
+        if (!mayBeScalarReplacedBy(object, user))
+            materialize(object, use);
+        return;
+    }
+
+    const VirtualObjectDescription& description = m_described[*holder].description;
+    if (description.staysInPlace) {
+        if (description.isDead)
+            m_objects[find(object)].isUnmodeled = true;
+        else
+            materialize(object, use);
+        return;
+    }
+    bool isListed = false;
+    forEachInitialField(m_context, description, [&](const VirtualField&, ValueID value) {
+        isListed |= value == name;
+    });
+    if (isListed)
+        addEvent(EventKind::Hold, object, use, *holder);
+    else
+        m_objects[find(object)].isUnmodeled = true;
+}
+
+void AllocationPrefilter::classifyListOperand(uint32_t object, const Use& use)
+{
+    static_assert(OperandIndex::AppendSpread::array == OperandIndex::AppendElements::array && OperandIndex::AppendSpread::iterable == OperandIndex::AppendElements::source);
+    static_assert(OperandIndex::CopyDataProperties::target == OperandIndex::AppendElements::array && OperandIndex::CopyDataProperties::source == OperandIndex::AppendElements::source);
+
+    const Value& user = m_function.at(use.user);
+    switch (user.opcode) {
     case Opcode::AppendSpread:
-        return OperandIndex::AppendSpread::iterable;
     case Opcode::AppendElements:
-        return OperandIndex::AppendElements::source;
-    case Opcode::CopyDataProperties:
-        return OperandIndex::CopyDataProperties::source;
+    case Opcode::CopyDataProperties: {
+        if (use.operandIndex != OperandIndex::AppendElements::array)
+            return;
+        std::optional<uint32_t> source = objectNamedBy(user.operand(OperandIndex::AppendElements::source));
+        if (source)
+            addEvent(EventKind::StoreFromObject, object, use, *source);
+        else
+            materialize(object, use);
+        return;
+    }
     case Opcode::CallList:
     case Opcode::ConstructList:
     case Opcode::SuperConstructList:
-        return OperandIndex::CallList::list;
-    case Opcode::DestructureIterable:
-        return OperandIndex::DestructureIterable::iterable;
-    case Opcode::ResultAt:
-        return OperandIndex::ResultAt::results;
+        if (use.operandIndex != OperandIndex::CallList::list)
+            materialize(object, use);
+        return;
     default:
+        return;
+    }
+}
+
+void AllocationPrefilter::classify(ValueID name, uint32_t object, const Use& use)
+{
+    uint64_t frequency = static_cast<uint64_t>(m_function.at(use.block).frequency);
+    uint64_t operation = use.kind == Use::Kind::Operand ? static_cast<uint64_t>(m_function.at(use.user).opcode) : static_cast<uint64_t>(m_function.at(use.block).terminator.kind);
+    uint64_t distance = positionOf(use.block) - positionOf(m_objects[find(object)].block);
+    addToTrace(find(object), (static_cast<uint64_t>(use.kind) | frequency << 4 | static_cast<uint64_t>(use.operandIndex) << 8 | operation << 24) + mix(distance));
+    if (use.isEdgeUse())
+        return;
+    m_uses.append(ObjectUse { 0, positionOf(use.block), object });
+    if (use.kind == Use::Kind::BlockSubject)
+        return;
+    if (use.kind == Use::Kind::TerminatorOperand) {
+        switch (m_function.at(use.block).terminator.kind) {
+        case TerminatorKind::Return:
+        case TerminatorKind::Branch:
+        case TerminatorKind::Throw:
+        case TerminatorKind::Rethrow:
+        case TerminatorKind::Switch:
+        case TerminatorKind::SwitchString:
+        case TerminatorKind::ReturnCall:
+        case TerminatorKind::TryCallInline:
+            materialize(object, use);
+            return;
+        case TerminatorKind::SwitchOnShape:
+            addEvent(EventKind::BranchTest, object, use);
+            return;
+        case TerminatorKind::Jump:
+        case TerminatorKind::Unreachable:
+        case TerminatorKind::TestAndBranch:
+            return;
+        }
         RELEASE_ASSERT_NOT_REACHED();
     }
-}
 
-template<typename ObjectMask>
-BlockFrequency AllocationScreening<ObjectMask>::frequencyOf(uint32_t object)
-{
-    return isJoin(object) ? m_objects[object].frequency : m_frequencies->classOf(m_objects[object].block);
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::didReach(BlockFrequency frequency, ObjectMask unbuilt)
-{
-    if (frequency == BlockFrequency::Normal)
+    const Value& user = m_function.at(use.user);
+    switch (interpretationOf(m_program, user)) {
+    case Interpretation::Cast:
+    case Interpretation::Guards:
         return;
-    forEachObject(unbuilt & ~m_objectsOnRarerPaths, [&](uint32_t object) {
-        if (isRarerThan(frequency, frequencyOf(object)))
-            m_objectsOnRarerPaths |= maskOf(object);
-    });
-}
-
-template<typename ObjectMask>
-ObjectMask AllocationScreening<ObjectMask>::groupsOf(ObjectMask objects)
-{
-    ObjectMask groups = 0;
-    forEachObject(objects, [&](uint32_t object) {
-        groups |= maskOf(groupOf(object));
-    });
-    return groups;
-}
-
-template<typename ObjectMask>
-ObjectMask AllocationScreening<ObjectMask>::groupsBuiltApartInFrame()
-{
-    ObjectMask groupsBuiltApart = groupsOf(m_objectsBuiltByCalls) & groupsOf(comparesFrequencies() ? m_objectsOnRarerPaths : m_objectsLeavingTheirBlocks);
-    if (!groupsBuiltApart)
-        return 0;
-    ObjectMask groups = 0;
-    for (uint32_t object = 0; object < m_numberOfAllocations; ++object) {
-        ObjectMask group = maskOf(groupOf(object));
-        if ((groupsBuiltApart & group & ~groups) && isFrameAllocatable(m_sinking, m_candidates[object]))
-            groups |= group;
-    }
-    return groups;
-}
-
-template<typename ObjectMask>
-ScreeningResult AllocationScreening<ObjectMask>::run()
-{
-    std::span<const BlockID> order = m_cfg.reversePostOrder();
-    for (uint32_t position = m_cfg.reversePostOrderIndex(m_objects[0].block); position < order.size(); ++position) {
-        BlockID block = order[position];
-        if (m_enteredBlocks.quickGet(block.index()) || m_blocksWithAllocations.quickGet(block.index()))
-            visit(block, position);
-    }
-
-    if (m_objectsThatMayPay)
-        return ScreeningResult::SomeAllocationMayPay;
-    if (!groupsBuiltApartInFrame())
-        return ScreeningResult::NoAllocationPays;
-    return comparesFrequencies() ? ScreeningResult::SomeAllocationMayPay : ScreeningResult::DependsOnFrequencies;
-}
-
-template<typename ObjectMask>
-BitVector AllocationScreening<ObjectMask>::allocationsThatMayPay()
-{
-    ObjectMask groups = groupsOf(m_objectsThatMayPay) | groupsBuiltApartInFrame();
-    BitVector allocations(m_numberOfAllocations);
-    for (uint32_t object = 0; object < m_numberOfAllocations; ++object) {
-        if (groups & maskOf(groupOf(object)))
-            allocations.quickSet(object);
-    }
-    return allocations;
-}
-
-template<typename ObjectMask>
-Vector<uint64_t> AllocationScreening<ObjectMask>::tracesOfAllocations()
-{
-    Vector<uint64_t, 64> traceOfGroup(FillWith { }, m_objects.size(), uint64_t { 0 });
-    for (uint32_t object = 0; object < m_objects.size(); ++object) {
-        ObjectMask mask = maskOf(object);
-        uint64_t marks = !!(m_objectsThatMayPay & mask) | !!(m_joinsOfCells & mask) << 1 | !!(m_objectsBuiltByCalls & mask) << 2 | !!(m_objectsLeavingTheirBlocks & mask) << 3 | !!(m_joins & mask) << 4;
-        traceOfGroup[groupOf(object)] += mix(m_objects[object].trace, marks);
-    }
-    return Vector<uint64_t>(m_numberOfAllocations, [&](size_t object) {
-        return mix(traceOfGroup[groupOf(object)], 1);
-    });
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::visit(BlockID id, uint32_t position)
-{
-    const Block& block = m_function.at(id);
-    ScreenedObjects objects;
-    if (m_enteredBlocks.quickGet(id.index()))
-        objects = enter(id, position);
-
-    m_storesByNameWait = m_sinking.storesByNameWaitIn(id);
-    m_frequencyOfBlock = block.frequency;
-    ObjectMask unbuiltSomewhere = objects.unbuilt;
-    if (objects.unbuilt || objects.consumed || m_blocksWithAllocations.quickGet(id.index())) {
-        for (ValueID value : block.values) {
-            ScreenedObjects before = objects;
-            m_named = 0;
-            m_user = Use { .kind = Use::Kind::Operand, .block = id, .user = value };
-            execute(objects, value);
-            unbuiltSomewhere |= objects.unbuilt;
-            constexpr uint64_t throwsUnderHandler = 1ull << 32;
-            if (m_named)
-                note(m_named, static_cast<uint64_t>(m_function.at(value).opcode), before, objects);
-            if (block.handler && objects.unbuilt && mayThrow(m_function.at(value).opcode))
-                note(objects.unbuilt, throwsUnderHandler, before, objects);
-        }
-    }
-    ScreenedObjects before = objects;
-    ObjectMask named = maskNamedByOperandsOf(block.terminator);
-    m_user = Use { .kind = Use::Kind::TerminatorOperand, .block = id };
-    executeTerminator(objects, block.terminator);
-    constexpr uint64_t isTerminator = 1ull << 33;
-    constexpr uint64_t leavesFunction = 1ull << 34;
-    if (named)
-        note(named, isTerminator | static_cast<uint64_t>(block.terminator.kind), before, objects);
-    if (block.terminator.targets.isEmpty() && before.unbuilt)
-        note(before.unbuilt, leavesFunction, before, objects);
-    m_objectsAtEnd[id.index()] = objects;
-    leave(id, position, objects, unbuiltSomewhere);
-}
-
-template<typename ObjectMask>
-typename AllocationScreening<ObjectMask>::ScreenedObjects AllocationScreening<ObjectMask>::enter(BlockID id, uint32_t position)
-{
-    const Block& block = m_function.at(id);
-    std::span<const Edge> edges = m_cfg.incomingEdges(id);
-
-    bool isEnteredBackwards = false;
-    Vector<ScreenedObjects, 4> objectsOnEdges;
-    for (Edge edge : edges) {
-        ScreenedObjects objects;
-        if (m_cfg.reversePostOrderIndex(edge.from) >= position)
-            isEnteredBackwards = true;
-        else
-            objects = m_objectsAtEnd[edge.from.index()];
-        if (edge.isHandlerEdge())
-            objects.unbuilt = 0;
-        objects.perhapsBuilt &= objects.unbuilt;
-        objectsOnEdges.append(objects);
-    }
-
-    for (uint32_t parameterIndex = 0; parameterIndex < block.parameters.size(); ++parameterIndex)
-        bindParameter(id, parameterIndex, edges, objectsOnEdges.mutableSpan(), isEnteredBackwards);
-
-    ScreenedObjects result;
-    for (const ScreenedObjects& objects : objectsOnEdges) {
-        result.unbuilt |= objects.unbuilt;
-        result.perhapsBuilt |= objects.perhapsBuilt;
-        result.built |= objects.built;
-        result.consumed |= objects.consumed;
-    }
-    mayPay(result.unbuilt & (result.built | result.consumed) & ~m_joins);
-    if (edges.size() > 1)
-        mayPay(result.unbuilt & result.perhapsBuilt & ~m_joins);
-    if (isEnteredBackwards)
-        mayPay(result.unbuilt);
-    if (block.subject)
-        mayPay(maskNamedBy(block.subject));
-    if (comparesFrequencies())
-        didReach(m_frequencies->classOf(id), result.unbuilt);
-    return result;
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::bindParameter(BlockID id, uint32_t parameterIndex, std::span<const Edge> edges, std::span<ScreenedObjects> objectsOnEdges, bool isEnteredBackwards)
-{
-    const Block& block = m_function.at(id);
-    ValueID parameter = block.parameters[parameterIndex];
-
-    ObjectMask sources = 0;
-    bool everyEdgePassesAnObject = true;
-    for (size_t edgeIndex = 0; edgeIndex < edges.size(); ++edgeIndex) {
-        ValueID incoming = valuePassedOn(m_function, edges[edgeIndex], parameterIndex);
-        if (incoming == parameter)
-            continue;
-        ObjectMask source = incoming ? maskNamedBy(incoming) : ObjectMask(0);
-        mayPay(source & objectsOnEdges[edgeIndex].consumed);
-        sources |= source;
-        everyEdgePassesAnObject &= !!source;
-    }
-    if (!sources)
-        return;
-
-    bool isAlias = everyEdgePassesAnObject && isOneObject(sources);
-    bool isGuard = m_function.at(parameter).type == TypeTable::guard;
-    bool isUnderstood = !isEnteredBackwards && parameter != block.subject && (isAlias || (!isGuard && m_objects.size() < maxNumberOfObjects));
-    if (!isUnderstood) {
-        mayPay(sources);
-        connectAll(sources);
-    }
-    if (isAlias || !isUnderstood) {
-        addName(parameter, firstObjectIn(sources));
-        return;
-    }
-
-    uint32_t join = m_objects.size();
-    BlockFrequency frequency = BlockFrequency::Normal;
-    if (comparesFrequencies()) {
-        frequency = m_frequencies->classOf(id);
-        forEachObject(sources, [&](uint32_t source) {
-            frequency = moreFrequentOf(frequency, frequencyOf(source));
-        });
-    }
-    m_objects.append(Object { id, 0, join, frequency, { } });
-    m_joins |= maskOf(join);
-    addName(parameter, join);
-    connectAll(sources | maskOf(join));
-
-    for (size_t edgeIndex = 0; edgeIndex < edges.size(); ++edgeIndex) {
-        ScreenedObjects& objects = objectsOnEdges[edgeIndex];
-        ValueID incoming = valuePassedOn(m_function, edges[edgeIndex], parameterIndex);
-        ObjectMask source = incoming ? maskNamedBy(incoming) : ObjectMask(0);
-        if (!(source & objects.unbuilt)) {
-            objects.built |= maskOf(join);
-            if (!incoming || !virtualConstantOf(m_program, m_function, incoming))
-                m_joinsOfCells |= maskOf(join);
-            continue;
-        }
-        if (source & m_joinsOfCells)
-            m_joinsOfCells |= maskOf(join);
-        objects.unbuilt &= ~source;
-        objects.perhapsBuilt &= ~source;
-        objects.consumed |= source;
-        m_objects[join].sources |= source;
-        mayPay(m_objects[firstObjectIn(source)].held & objects.unbuilt);
-        objects.unbuilt |= maskOf(join);
-    }
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::build(ScreenedObjects& objects, ObjectMask roots)
-{
-    ObjectMask members = roots;
-    forEachObject(roots, [&](uint32_t root) {
-        members |= m_objects[root].held;
-    });
-    members &= objects.unbuilt;
-    objects.unbuilt &= ~members;
-    objects.perhapsBuilt &= ~members;
-    objects.built |= members;
-    if (m_findsBuilders && members)
-        noteBuilderOf(roots, members);
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::noteBuilderOf(ObjectMask roots, ObjectMask built)
-{
-    const Instruction& user = m_user.kind == Use::Kind::Operand ? static_cast<const Instruction&>(m_function.at(m_user.user)) : m_function.at(m_user.block).terminator;
-    std::optional<uint32_t> operandIndex;
-    user.forEachOperand([&](ValueID operand, uint32_t index) {
-        if (!operandIndex && operand && (maskNamedBy(operand) & roots))
-            operandIndex = index;
-    });
-    m_user.operandIndex = operandIndex.value_or(0);
-
-    ObjectMask seen = 0;
-    while (ObjectMask next = built & ~seen) {
-        seen |= next;
-        forEachObject(next, [&](uint32_t object) {
-            if (!m_objects[object].firstBuilder)
-                m_objects[object].firstBuilder = m_user;
-            built |= m_objects[object].sources;
-        });
-    }
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::build(ScreenedObjects& objects, ObjectMask roots, Opcode builder)
-{
-    ObjectMask unbuiltBefore = objects.unbuilt;
-    build(objects, roots);
-    if (effectRuleOf(builder) == EffectRule::Call)
-        m_objectsBuiltByCalls |= unbuiltBefore & ~objects.unbuilt;
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::allocate(ScreenedObjects& objects, ValueID id, ObjectMask named)
-{
-    uint32_t object = *objectNamedBy(id);
-    const VirtualObjectDescription& description = m_described[object].description;
-    ObjectMask mentioned = named & objects.unbuilt;
-    if (description.staysInPlace) {
-        if (description.isDead)
-            mayPay(mentioned);
-        else
-            build(objects, mentioned, m_function.at(id).opcode);
-    } else if (named) {
-        ObjectMask listed = 0;
-        forEachInitialField(m_context, description, [&](const VirtualField&, ValueID value) {
-            listed |= maskNamedBy(value);
-        });
-        mayPay(mentioned & ~listed);
-        connectAll(named | maskOf(object));
-        forEachObject(listed & mentioned, [&](uint32_t held) {
-            m_objects[object].held |= maskOf(held) | m_objects[held].held;
-        });
-    }
-    objects.unbuilt |= maskOf(object);
-}
-
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::execute(ScreenedObjects& objects, ValueID id)
-{
-    const Value& value = m_function.at(id);
-    bool isAllocation = interpretedOf(value.opcode) == Interpretation::Allocation && m_objectOfValue[id.index()];
-    if (!isAllocation && !objects.unbuilt && !objects.consumed)
-        return;
-
-    ObjectMask named = maskNamedByOperandsOf(value);
-    mayPay(named & ~(objects.unbuilt | objects.built));
-    m_named = named | (isAllocation ? maskNamedBy(id) : ObjectMask(0));
-    if (isAllocation) {
-        allocate(objects, id, named);
-        return;
-    }
-    ObjectMask mentioned = named & objects.unbuilt;
-    if (!mentioned)
-        return;
-
-    auto leaveUnbuilt = [&] {
-        mayPay(mentioned);
-        connectAll(named);
-    };
-    auto unbuiltObjectAt = [&](uint32_t operandIndex) -> std::optional<uint32_t> {
-        ValueID operand = value.operand(operandIndex);
-        std::optional<uint32_t> object = operand ? objectNamedBy(operand) : std::nullopt;
-        return object && (objects.unbuilt & maskOf(*object)) ? object : std::nullopt;
-    };
-
-    switch (interpretationOf(m_program, value)) {
-    case Interpretation::Cast: {
-        std::optional<uint32_t> object = unbuiltObjectAt(0);
-        if (!object || mayBeCell(*object)) {
-            build(objects, mentioned, value.opcode);
+    case Interpretation::Read:
+        if (!use.operandIndex) {
+            if (isAllocation(object) && lookUpField(m_context, m_described[object].description, user).lookup == FieldLookup::Unknown)
+                materialize(object, use);
             return;
         }
-        if (named != maskOf(*object))
-            leaveUnbuilt();
-        if (!alwaysPasses(*object, value.opcode))
-            objects.perhapsBuilt |= maskOf(*object);
-        addName(id, *object);
+        if (!objectNamedBy(user.operand(0)))
+            materialize(object, use);
         return;
-    }
-    case Interpretation::Guards: {
-        bool everyOperandIsAName = true;
-        value.forEachOperand([&](ValueID operand, uint32_t) {
-            everyOperandIsAName &= !!maskNamedBy(operand);
-        });
-        if (everyOperandIsAName && isOneObject(named))
-            addName(id, firstObjectIn(named));
-        else
-            build(objects, mentioned, value.opcode);
-        return;
-    }
-    case Interpretation::Read: {
-        std::optional<uint32_t> object = unbuiltObjectAt(0);
-        if (!object || mayBeCell(*object) || lookUp(*object, value) == FieldLookup::Unknown) {
-            build(objects, mentioned, value.opcode);
-            return;
-        }
-        if (named != maskOf(*object))
-            leaveUnbuilt();
-        mayPay(m_objects[*object].held);
-        objects.perhapsBuilt |= maskOf(*object);
-        return;
-    }
     case Interpretation::Store: {
-        std::optional<uint32_t> object = unbuiltObjectAt(0);
-        if (!object || neverFolds(*object, value))
-            build(objects, mentioned, value.opcode);
-        else
-            leaveUnbuilt();
+        if (!use.operandIndex) {
+            if (neverFolds(object, user, use.block))
+                materialize(object, use);
+            else
+                addEvent(EventKind::Store, object, use, user.opcode == Opcode::AppendHole ? noObject : objectNamedBy(user.valueOperand()).value_or(noObject));
+            return;
+        }
+        std::optional<uint32_t> holder = objectNamedBy(user.operand(0));
+        if (!holder) {
+            if (std::optional<uint32_t> source = candidateReadFrom(user.operand(0))) {
+                m_objects[find(object)].isUnmodeled = true;
+                m_objects[find(*source)].holdsUnmodeledObjects = true;
+            } else
+                materialize(object, use);
+        } else if (user.opcode != Opcode::AppendHole && user.valueOperand() == name)
+            addEvent(EventKind::Hold, object, use, *holder);
         return;
     }
-    case Interpretation::Test:
-        if (testsLeftToRun.contains(value.opcode) || !(mentioned & ~m_joinsOfCells))
-            build(objects, mentioned, value.opcode);
-        else
-            leaveUnbuilt();
-        return;
-    case Interpretation::List: {
-        std::optional<uint32_t> object = unbuiltObjectAt(indexOfOperandTakenApart(value.opcode));
-        if (!object || mayBeCell(*object))
-            build(objects, mentioned, value.opcode);
-        else
-            leaveUnbuilt();
+    case Interpretation::Test: {
+        if (testsLeftToRun.contains(user.opcode)) {
+            materialize(object, use);
+            return;
+        }
+        const Terminator& terminator = m_function.at(use.block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || terminator.conditionOperand() != use.user)
+            return;
+        addEvent(EventKind::BranchTest, object, use);
+        m_events.last().answer = evaluateOnAllocatedShape(object, use);
         return;
     }
-    case Interpretation::Allocation: {
-        bool mayTakeObjectApart = false;
-        forEachObject(mentioned, [&](uint32_t object) {
-            mayTakeObjectApart |= mayBeTakenApartBy(object, value);
-        });
-        if (mayTakeObjectApart)
-            leaveUnbuilt();
-        else
-            build(objects, mentioned, value.opcode);
+    case Interpretation::List:
+        classifyListOperand(object, use);
         return;
-    }
+    case Interpretation::Allocation:
+        classifyAllocationOperand(name, object, use);
+        return;
     case Interpretation::None:
-        if (familyOf(value.opcode) == OperationFamily::RuntimeValidation)
-            leaveUnbuilt();
-        else
-            build(objects, mentioned, value.opcode);
+        if (familyOf(user.opcode) != OperationFamily::RuntimeValidation)
+            materialize(object, use);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::executeTerminator(ScreenedObjects& objects, const Terminator& terminator)
+void AllocationPrefilter::classifyUses()
 {
-    if (!objects.unbuilt && !objects.consumed)
-        return;
-
-    ObjectMask named = maskNamedByOperandsOf(terminator);
-    mayPay(named & objects.consumed);
-    ObjectMask mentioned = named & objects.unbuilt;
-    switch (terminator.kind) {
-    case TerminatorKind::Jump:
-    case TerminatorKind::Unreachable:
-    case TerminatorKind::TestAndBranch:
-    case TerminatorKind::SwitchOnShape:
-        mayPay(mentioned);
-        break;
-    case TerminatorKind::Return:
-    case TerminatorKind::Branch:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::ReturnCall:
-    case TerminatorKind::TryCallInline:
-        build(objects, mentioned);
-        break;
+    for (uint32_t allocation = 0; allocation < m_numberOfAllocations; ++allocation)
+        m_events.append(Event { 0, positionOf(m_objects[allocation].block), m_useLists.locationOf(m_objects[allocation].definition).index, allocation, EventKind::Allocation, noObject, { } });
+    for (ValueID name : m_names) {
+        uint32_t object = m_objectOfValue[name.index()].index();
+        for (const Use& use : m_useLists.usesOf(name))
+            classify(name, object, use);
     }
-    if (terminator.targets.isEmpty())
-        mayPay(objects.unbuilt);
 }
 
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::leaveToHandler(const Target& handler, ObjectMask unbuiltSomewhere)
-{
-    forEachObject(unbuiltSomewhere & ~m_objectsThatMayPay, [&](uint32_t object) {
-        bool isLive = m_objects[object].names.containsIf([&](ValueID name) {
-            return handler.arguments.contains(name) || m_sinking.isLiveAtHead(name, handler.block);
-        });
-        if (isLive)
-            mayPay(maskOf(object));
-    });
-}
+template<typename Mask>
+class AllocationPrefilter::Solver {
+    WTF_MAKE_NONCOPYABLE(Solver);
+public:
+    Solver(AllocationPrefilter& prefilter, const Chunk& chunk)
+        : m_prefilter(prefilter)
+        , m_analyses(prefilter.m_analyses)
+        , m_function(prefilter.m_function)
+        , m_cfg(prefilter.m_cfg)
+        , m_chunk(chunk)
+        , m_firstPosition(chunk.firstPosition)
+        , m_held(FillWith { }, chunk.numberOfBits, Mask(0))
+    {
+    }
 
-template<typename ObjectMask>
-void AllocationScreening<ObjectMask>::leave(BlockID id, uint32_t position, const ScreenedObjects& objects, ObjectMask unbuiltSomewhere)
+    void run();
+
+private:
+    using Traits = PrefilterMaskTraits<Mask>;
+
+    struct BlockState {
+        Mask defined { 0 };
+        Mask liveIn { 0 };
+        Mask virtualIn { 0 };
+        Mask unheldIn { 0 };
+        Mask materializedAtEntry { 0 };
+        uint32_t firstEvent { 0 };
+        uint32_t endEvent { 0 };
+        uint32_t firstLink { 0 };
+        uint32_t endLink { 0 };
+        bool isPending { false };
+        bool wasVisited { false };
+    };
+
+    struct Site {
+        Mask members { 0 };
+        BlockID block;
+        std::optional<Edge> edge;
+        const Use* use { nullptr };
+    };
+
+    struct Counts {
+        uint32_t bit { 0 };
+        BlockID origin;
+        unsigned numberOfMaterializations { 0 };
+        unsigned numberOfRarerMaterializations { 0 };
+        unsigned numberOfBorrowingMaterializations { 0 };
+    };
+
+    static Mask ofBit(uint32_t bit) { return Traits::ofBit(bit); }
+    static bool has(const Mask& mask, uint32_t bit) { return Traits::has(mask, bit); }
+    static bool isEmpty(const Mask& mask) { return Traits::isEmpty(mask); }
+    uint32_t bitOf(uint32_t object) const { return m_prefilter.m_objects[object].bit; }
+    uint32_t objectOf(uint32_t bit) const { return m_chunk.objects[bit]; }
+    uint32_t positionOf(BlockID block) const { return m_cfg.reversePostOrderIndex(block); }
+    BlockState& at(uint32_t position)
+    {
+        size_t index = position - m_firstPosition;
+        if (index >= m_blocks.size()) [[unlikely]]
+            m_blocks.grow(index + 1);
+        return m_blocks[index];
+    }
+
+    void prepare();
+    void findComponents();
+    void findObjectsLeavingTheirBlocks();
+    void findHeldObjects();
+    void solveLiveness();
+    void findObjectsMaterializedAtLoopEntries();
+    void propagateVirtualObjects();
+    void recountMaterializations();
+    bool visit(uint32_t position);
+    bool enterEdge(const Mask& leaving, const Mask& unheld, uint32_t fromPosition, Edge, BlockID target, std::span<const ParameterLink>);
+    void materialize(Mask& current, const Mask& unheld, uint32_t bit, BlockID, const Edge*, const Use*);
+    void count(uint32_t bit, BlockID, const Edge*, const Use*);
+    bool dropUnprofitableCandidates();
+
+    AllocationPrefilter& m_prefilter;
+    FunctionAnalyses& m_analyses;
+    const Function& m_function;
+    const CFG& m_cfg;
+    const Chunk& m_chunk;
+    uint32_t m_firstPosition;
+    Vector<BlockState, 16> m_blocks;
+    Vector<Mask, 16> m_held;
+    Vector<uint32_t, 16> m_visitedPositions;
+    Vector<uint32_t, 8> m_eventsInCycles;
+    Vector<uint32_t, 8> m_linksInCycles;
+    Vector<Site, 16> m_sites;
+    bool m_hasVisitedBlockTwice { false };
+    Mask m_candidates { 0 };
+    Mask m_active { 0 };
+    Mask m_leavesBlock { 0 };
+    Vector<Mask, 16> m_component;
+    Mask m_joins { 0 };
+    Mask m_holders { 0 };
+    Mask m_unmodeled { 0 };
+    Mask m_isMaterializedByCall { 0 };
+    Mask m_materializedBeforeBranches { 0 };
+    Mask m_abandoned { 0 };
+    Mask m_diesVirtual { 0 };
+    Mask m_entersJoin { 0 };
+    Mask m_foldsStore { 0 };
+    Mask m_isStoredLate { 0 };
+    Mask m_isMaterialized { 0 };
+    Mask m_isMaterializedTwice { 0 };
+    Mask m_isMaterializedThrice { 0 };
+    Mask m_counted { 0 };
+    Mask m_exceededLimit { 0 };
+    Vector<Counts, 4> m_counts;
+};
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::prepare()
 {
-    const Block& block = m_function.at(id);
-    if (block.handler && unbuiltSomewhere)
-        leaveToHandler(*block.handler, unbuiltSomewhere);
-    if (!objects.unbuilt && !objects.built && !objects.consumed)
+    for (uint32_t bit = 0; bit < m_chunk.numberOfBits; ++bit) {
+        const Object& object = m_prefilter.m_objects[objectOf(bit)];
+        at(positionOf(object.block)).defined |= ofBit(bit);
+        m_candidates |= ofBit(bit);
+        if (!m_prefilter.isAllocation(objectOf(bit)))
+            m_joins |= ofBit(bit);
+        if (object.isUnmodeled)
+            m_unmodeled |= ofBit(bit);
+        if (object.isMaterializedByCall)
+            m_isMaterializedByCall |= ofBit(bit);
+    }
+    std::span<const Event> events = m_chunk.events;
+    for (uint32_t index = 0; index < events.size();) {
+        BlockState& state = at(events[index].position);
+        state.firstEvent = index;
+        while (index < events.size() && events[index].position == events[state.firstEvent].position)
+            ++index;
+        state.endEvent = index;
+    }
+    std::span<const ParameterLink> links = m_chunk.links;
+    for (uint32_t index = 0; index < links.size();) {
+        BlockState& state = at(links[index].position);
+        state.firstLink = index;
+        while (index < links.size() && links[index].position == links[state.firstLink].position)
+            ++index;
+        state.endLink = index;
+    }
+
+    if (!m_cfg.hasCycle())
         return;
+    const BlockCycles& cycles = m_analyses.blockCycles();
+    for (uint32_t index = 0; index < events.size(); ++index) {
+        EventKind kind = events[index].kind;
+        if ((kind == EventKind::Materialization || kind == EventKind::Hold || kind == EventKind::StoreFromObject) && cycles.isInCycle(m_cfg.reversePostOrder()[events[index].position]))
+            m_eventsInCycles.append(index);
+    }
+    for (uint32_t index = 0; index < links.size(); ++index) {
+        if (cycles.areInSameCycle(links[index].edge.from, targetOf(m_function, links[index].edge).block))
+            m_linksInCycles.append(index);
+    }
+}
 
-    forEachOutgoingEdge(m_function, id, [&](Edge edge, const Target& target) {
-        if (m_cfg.reversePostOrderIndex(target.block) <= position) {
-            mayPay(objects.unbuilt);
-            return;
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::findComponents()
+{
+    m_component.fill(Mask(0), m_chunk.numberOfBits);
+    for (uint32_t first = 0; first < m_chunk.numberOfBits;) {
+        uint32_t component = m_prefilter.findComponent(objectOf(first));
+        Mask members = 0;
+        uint32_t end = first;
+        for (; end < m_chunk.numberOfBits && m_prefilter.findComponent(objectOf(end)) == component; ++end)
+            members |= ofBit(end);
+        for (uint32_t bit = first; bit < end; ++bit)
+            m_component[bit] = members;
+        first = end;
+    }
+}
+
+// An object stays virtual for a shorter time in each round, so what the first round finds holds for all.
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::findObjectsLeavingTheirBlocks()
+{
+    std::span<const Event> events = m_chunk.events;
+    for (uint32_t first = 0; first < events.size();) {
+        uint32_t end = first;
+        Mask current = 0;
+        Mask unheld = 0;
+        for (; end < events.size() && events[end].position == events[first].position; ++end) {
+            const Event& event = events[end];
+            uint32_t bit = bitOf(event.object);
+            switch (event.kind) {
+            case EventKind::Allocation:
+                current |= ofBit(bit);
+                unheld |= ofBit(bit);
+                break;
+            case EventKind::Materialization:
+                if (has(current, bit))
+                    current &= ~(ofBit(bit) | (m_held[bit] & ~unheld));
+                break;
+            case EventKind::Store:
+            case EventKind::BranchTest:
+                break;
+            case EventKind::StoreFromObject:
+                if (has(current, bit) && !has(current, bitOf(event.other)))
+                    current &= ~(ofBit(bit) | (m_held[bit] & ~unheld));
+                break;
+            case EventKind::Hold:
+                if (!has(current, bit))
+                    break;
+                if (has(current, bitOf(event.other)))
+                    unheld &= ~ofBit(bit);
+                else
+                    current &= ~(ofBit(bit) | (m_held[bit] & ~unheld));
+                break;
+            }
         }
-        m_enteredBlocks.quickSet(target.block.index());
-        if (edge.isHandlerEdge())
+        m_leavesBlock |= current;
+        first = end;
+    }
+    m_leavesBlock |= m_joins;
+}
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::findHeldObjects()
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        auto add = [&](uint32_t holderBit, const Mask& held) {
+            Mask united = m_held[holderBit] | held;
+            changed |= united != m_held[holderBit];
+            m_held[holderBit] = united;
+        };
+        for (const Event& event : m_chunk.events) {
+            if (event.kind == EventKind::Hold)
+                add(bitOf(event.other), ofBit(bitOf(event.object)) | m_held[bitOf(event.object)]);
+        }
+        for (const ParameterLink& link : m_chunk.links)
+            add(bitOf(link.parameter), m_held[bitOf(link.source)]);
+    }
+    for (uint32_t bit = 0; bit < m_chunk.numberOfBits; ++bit) {
+        if (isEmpty(m_held[bit]))
+            continue;
+        m_holders |= ofBit(bit);
+        if (m_prefilter.m_objects[objectOf(bit)].holdsUnmodeledObjects)
+            m_unmodeled |= m_held[bit];
+    }
+}
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::solveLiveness()
+{
+    std::span<const BlockID> order = m_cfg.reversePostOrder();
+    auto add = [&](uint32_t position, const Mask& bits) {
+        BlockState& state = at(position);
+        Mask united = state.liveIn | bits;
+        if (united == state.liveIn)
+            return false;
+        state.liveIn = united;
+        state.isPending = true;
+        return true;
+    };
+    for (const ObjectUse& use : m_chunk.uses) {
+        if (has(m_leavesBlock, bitOf(use.object)))
+            add(use.position, ofBit(bitOf(use.object)));
+    }
+    for (bool mustRepeat = true; mustRepeat;) {
+        mustRepeat = false;
+        for (size_t index = m_blocks.size(); index--;) {
+            if (!std::exchange(m_blocks[index].isPending, false))
+                continue;
+            Mask liveOut = m_blocks[index].liveIn & ~m_blocks[index].defined;
+            if (isEmpty(liveOut))
+                continue;
+            for (BlockID predecessor : m_cfg.predecessors(order[m_firstPosition + index])) {
+                uint32_t predecessorPosition = positionOf(predecessor);
+                if (predecessorPosition >= m_firstPosition && add(predecessorPosition, liveOut))
+                    mustRepeat |= predecessorPosition - m_firstPosition >= index;
+            }
+        }
+        for (const ParameterLink& link : m_chunk.links) {
+            if (bitOf(link.parameter) != bitOf(link.source) && has(m_leavesBlock, bitOf(link.source)) && has(at(positionOf(targetOf(m_function, link.edge).block)).liveIn, bitOf(link.parameter)))
+                mustRepeat |= add(link.position, ofBit(bitOf(link.source)));
+        }
+    }
+}
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::findObjectsMaterializedAtLoopEntries()
+{
+    if (m_eventsInCycles.isEmpty() && m_linksInCycles.isEmpty())
+        return;
+    const BlockCycles& cycles = m_analyses.blockCycles();
+    std::span<const BlockID> order = m_cfg.reversePostOrder();
+    Vector<std::pair<unsigned, Mask>, 4> materializedInOutermostCycle;
+    Vector<std::pair<unsigned, Mask>, 4> materializedInCycle;
+    auto add = [](auto& list, unsigned cycle, const Mask& bits) {
+        for (auto& entry : list) {
+            if (entry.first == cycle) {
+                entry.second |= bits;
+                return;
+            }
+        }
+        list.append({ cycle, bits });
+    };
+    auto materializeIn = [&](BlockID block, uint32_t materializedBit) {
+        Traits::forEachBit((ofBit(materializedBit) | m_held[materializedBit]) & m_leavesBlock & m_candidates & m_active, [&](uint32_t bit) {
+            BlockID origin = m_prefilter.m_objects[objectOf(bit)].block;
+            if (block == origin)
+                return;
+            if (!cycles.areInSameCycle(block, origin)) {
+                add(materializedInOutermostCycle, *cycles.outermostCycleOf(block), ofBit(bit));
+                return;
+            }
+            const BlockCycles::Forest& forest = cycles.forest();
+            unsigned depthOfOrigin = cycles.depthOf(origin);
+            for (unsigned cycle = forest.innermost(block); cycle != BlockCycles::Forest::none && forest[cycle].depth > depthOfOrigin; cycle = forest[cycle].parent)
+                add(materializedInCycle, cycle, ofBit(bit));
+        });
+    };
+    for (uint32_t index : m_eventsInCycles) {
+        const Event& event = m_chunk.events[index];
+        if (event.kind == EventKind::Materialization || !has(m_candidates, bitOf(event.other)))
+            materializeIn(order[event.position], bitOf(event.object));
+    }
+    for (uint32_t index : m_linksInCycles) {
+        const ParameterLink& link = m_chunk.links[index];
+        if (!has(m_candidates, bitOf(link.parameter)))
+            materializeIn(link.edge.from, bitOf(link.source));
+    }
+    if (materializedInOutermostCycle.isEmpty() && materializedInCycle.isEmpty())
+        return;
+    for (size_t index = 0; index < m_blocks.size(); ++index) {
+        BlockState& state = m_blocks[index];
+        BlockID block = order[m_firstPosition + index];
+        if (isEmpty(state.liveIn) || !cycles.isInCycle(block))
+            continue;
+        for (const auto& [cycle, bits] : materializedInOutermostCycle) {
+            if (cycle == *cycles.outermostCycleOf(block))
+                state.materializedAtEntry |= bits;
+        }
+        if (materializedInCycle.isEmpty())
+            continue;
+        const BlockCycles::Forest& forest = cycles.forest();
+        for (unsigned cycle = forest.innermost(block); cycle != BlockCycles::Forest::none; cycle = forest[cycle].parent) {
+            for (const auto& [materializingCycle, bits] : materializedInCycle) {
+                if (cycle == materializingCycle)
+                    state.materializedAtEntry |= bits;
+            }
+        }
+    }
+}
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::count(uint32_t bit, BlockID block, const Edge* edge, const Use* use)
+{
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    BlockFrequency frequency = edge ? rarerOf(frequencies.classOf(edge->from), frequencies.classOf(*edge)) : frequencies.classOf(block);
+    for (Counts& counts : m_counts) {
+        if (counts.bit != bit)
+            continue;
+        ++counts.numberOfMaterializations;
+        if (isRarerThan(frequency, frequencies.classOf(counts.origin)))
+            ++counts.numberOfRarerMaterializations;
+        else if (use && use->kind == Use::Kind::Operand) {
+            BuildCause cause = describeCause(m_analyses, *use);
+            if (cause.opcode && effectRuleOf(*cause.opcode) == EffectRule::Call && cause.reasons.isEmpty())
+                ++counts.numberOfBorrowingMaterializations;
+        }
+        return;
+    }
+}
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::materialize(Mask& current, const Mask& unheld, uint32_t bit, BlockID block, const Edge* edge, const Use* use)
+{
+    Mask members = (ofBit(bit) | (m_held[bit] & ~unheld)) & current;
+    current &= ~members;
+    m_isMaterializedThrice |= m_isMaterializedTwice & members;
+    m_isMaterializedTwice |= m_isMaterialized & members;
+    m_isMaterialized |= members;
+    if (use && m_prefilter.m_findsFirstMaterializations) {
+        Traits::forEachBit(members, [&](uint32_t member) {
+            std::optional<Use>& first = m_prefilter.m_objects[objectOf(member)].firstMaterialization;
+            if (!first)
+                first = *use;
+        });
+    }
+    if (!isEmpty(members & ~m_joins))
+        m_sites.append(Site { members & ~m_joins, block, edge ? std::optional<Edge>(*edge) : std::nullopt, use });
+}
+
+template<typename Mask>
+bool AllocationPrefilter::Solver<Mask>::enterEdge(const Mask& leaving, const Mask& unheld, uint32_t fromPosition, Edge edge, BlockID target, std::span<const ParameterLink> links)
+{
+    uint32_t position = positionOf(target);
+    BlockState* state = position >= m_firstPosition && position - m_firstPosition < m_blocks.size() ? &m_blocks[position - m_firstPosition] : nullptr;
+    Mask entering = leaving;
+    Mask added = 0;
+    Mask alive = state ? state->liveIn & ~state->defined : Mask(0);
+
+    for (const ParameterLink& link : links) {
+        uint32_t sourceBit = bitOf(link.source);
+        uint32_t parameterBit = bitOf(link.parameter);
+        if (link.edge != edge || parameterBit == sourceBit || !has(entering, sourceBit))
+            continue;
+        if (edge.isHandlerEdge()) {
+            m_unmodeled |= ofBit(sourceBit) | ofBit(parameterBit);
+            added |= ofBit(parameterBit);
+            continue;
+        }
+        if (!has(m_candidates, parameterBit)) {
+            materialize(entering, unheld, sourceBit, edge.from, &edge, nullptr);
+            continue;
+        }
+        if (has(alive, sourceBit) || has(added, parameterBit))
+            m_abandoned |= ofBit(parameterBit);
+        entering &= ~ofBit(sourceBit);
+        added |= ofBit(parameterBit);
+        m_entersJoin |= ofBit(sourceBit);
+    }
+
+    if (state) {
+        Traits::forEachBit(entering & alive & state->materializedAtEntry, [&](uint32_t bit) {
+            if (has(entering, bit))
+                materialize(entering, unheld, bit, edge.from, &edge, nullptr);
+        });
+    }
+    Mask heldOnly = entering & ~alive & ~unheld;
+    if (!isEmpty(heldOnly)) {
+        Traits::findBit(((entering & alive) | added) & m_holders, [&](uint32_t holder) {
+            alive |= m_held[holder] & heldOnly;
+            heldOnly &= ~m_held[holder];
+            return isEmpty(heldOnly);
+        });
+    }
+    if (!edge.isHandlerEdge())
+        m_diesVirtual |= entering & ~alive;
+    if (!state)
+        return false;
+
+    Mask next = state->virtualIn | (entering & alive) | added;
+    Mask nextUnheld = state->unheldIn | (entering & alive & unheld) | added;
+    if (next == state->virtualIn && nextUnheld == state->unheldIn)
+        return false;
+    state->virtualIn = next;
+    state->unheldIn = nextUnheld;
+    state->isPending = true;
+    return position <= fromPosition;
+}
+
+template<typename Mask>
+bool AllocationPrefilter::Solver<Mask>::visit(uint32_t position)
+{
+    BlockID id = m_cfg.reversePostOrder()[position];
+    BlockState& state = m_blocks[position - m_firstPosition];
+    Mask current = state.virtualIn;
+    Mask somewhere = current;
+    Mask unheld = state.unheldIn;
+    bool branchMayFold = false;
+    std::optional<uint32_t> deadTargetIndex;
+    if (state.firstEvent == state.endEvent && state.firstLink == state.endLink && !m_cfg.hasHandler(id) && isEmpty(current & m_materializedBeforeBranches)) {
+        std::span<const BlockID> successors = m_cfg.successors(id);
+        if (successors.empty())
+            m_diesVirtual |= current;
+        bool mustRepeat = false;
+        for (uint32_t targetIndex = 0; targetIndex < successors.size(); ++targetIndex)
+            mustRepeat |= enterEdge(current, unheld, position, Edge { id, targetIndex }, successors[targetIndex], { });
+        return mustRepeat;
+    }
+    const Block& block = m_function.at(id);
+
+    for (const Event& event : m_chunk.events.subspan(state.firstEvent, state.endEvent - state.firstEvent)) {
+        uint32_t bit = bitOf(event.object);
+        switch (event.kind) {
+        case EventKind::Allocation:
+            if (!has(m_candidates & m_active, bit))
+                break;
+            if (has(current, bit))
+                m_abandoned |= ofBit(bit);
+            current |= ofBit(bit);
+            somewhere |= ofBit(bit);
+            unheld |= ofBit(bit);
+            break;
+        case EventKind::Materialization:
+            if (has(current, bit))
+                materialize(current, unheld, bit, id, nullptr, &event.use);
+            break;
+        case EventKind::BranchTest:
+            if (!has(current, bit))
+                break;
+            branchMayFold = true;
+            if (event.answer == KnownBoolean::Unknown)
+                m_unmodeled |= ofBit(bit);
+            else
+                deadTargetIndex = event.answer == KnownBoolean::True ? 1 : 0;
+            break;
+        case EventKind::Store: {
+            if (!has(current, bit))
+                break;
+            bool isStoredLate = event.other != noObject && has(current, bitOf(event.other)) && m_prefilter.storesLate(objectOf(bit)) && has(m_held[bitOf(event.other)], bit);
+            if (!isStoredLate)
+                m_foldsStore |= ofBit(bit);
+            break;
+        }
+        case EventKind::StoreFromObject:
+            if (!has(current, bit))
+                break;
+            if (has(current, bitOf(event.other)))
+                m_foldsStore |= ofBit(bit);
+            else
+                materialize(current, unheld, bit, id, nullptr, &event.use);
+            break;
+        case EventKind::Hold: {
+            if (!has(current, bit))
+                break;
+            uint32_t holderBit = bitOf(event.other);
+            if (!has(current, holderBit)) {
+                materialize(current, unheld, bit, id, nullptr, &event.use);
+                break;
+            }
+            unheld &= ~ofBit(bit);
+            if (m_prefilter.storesLate(objectOf(holderBit)) && has(m_held[bit], holderBit))
+                m_isStoredLate |= ofBit(bit);
+            break;
+        }
+        }
+    }
+
+    uint32_t numberOfTargets = block.terminator.targets.size();
+    if (numberOfTargets > 1 && !branchMayFold) {
+        Traits::forEachBit(current & m_materializedBeforeBranches, [&](uint32_t bit) {
+            if (has(current, bit))
+                materialize(current, unheld, bit, id, nullptr, nullptr);
+        });
+    }
+    if (!numberOfTargets)
+        m_diesVirtual |= current;
+    std::span<const ParameterLink> links = m_chunk.links.subspan(state.firstLink, state.endLink - state.firstLink);
+    bool mustRepeat = false;
+    if (!isEmpty(current)) {
+        for (uint32_t targetIndex = 0; targetIndex < numberOfTargets; ++targetIndex) {
+            if (targetIndex != deadTargetIndex)
+                mustRepeat |= enterEdge(current, unheld, position, Edge { id, targetIndex }, block.terminator.targets[targetIndex].block, links);
+        }
+    }
+    if (block.handler && !isEmpty(somewhere))
+        mustRepeat |= enterEdge(somewhere, somewhere, position, Edge::toHandlerOf(id), block.handler->block, links);
+    return mustRepeat;
+}
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::propagateVirtualObjects()
+{
+    for (uint32_t position : m_visitedPositions) {
+        BlockState& state = m_blocks[position - m_firstPosition];
+        state.virtualIn = 0;
+        state.unheldIn = 0;
+        state.wasVisited = false;
+        state.isPending = false;
+    }
+    m_visitedPositions.shrink(0);
+    m_sites.shrink(0);
+    m_hasVisitedBlockTwice = false;
+    m_abandoned &= ~m_active;
+    m_diesVirtual &= ~m_active;
+    m_entersJoin &= ~m_active;
+    m_foldsStore &= ~m_active;
+    m_isStoredLate &= ~m_active;
+    m_isMaterialized &= ~m_active;
+    m_isMaterializedTwice &= ~m_active;
+    m_isMaterializedThrice &= ~m_active;
+    findObjectsMaterializedAtLoopEntries();
+
+    for (const Event& event : m_chunk.events) {
+        if (event.kind == EventKind::Allocation && has(m_candidates & m_active, bitOf(event.object)))
+            m_blocks[event.position - m_firstPosition].isPending = true;
+    }
+    for (bool mustRepeat = true; mustRepeat;) {
+        mustRepeat = false;
+        for (size_t index = 0; index < m_blocks.size(); ++index) {
+            BlockState& state = m_blocks[index];
+            if (!std::exchange(state.isPending, false))
+                continue;
+            uint32_t position = m_firstPosition + index;
+            if (std::exchange(state.wasVisited, true))
+                m_hasVisitedBlockTwice = true;
+            else
+                m_visitedPositions.append(position);
+            mustRepeat |= visit(position);
+        }
+    }
+    if (m_hasVisitedBlockTwice)
+        recountMaterializations();
+}
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::recountMaterializations()
+{
+    m_isMaterialized &= ~m_active;
+    m_isMaterializedTwice &= ~m_active;
+    m_isMaterializedThrice &= ~m_active;
+    m_sites.shrink(0);
+    for (uint32_t position : m_visitedPositions)
+        visit(position);
+}
+
+template<typename Mask>
+bool AllocationPrefilter::Solver<Mask>::dropUnprofitableCandidates()
+{
+    uint64_t maxNumberOfMaterializations = m_prefilter.m_sinking.limit(LimitID::MaxMaterializations);
+    auto isFrameAllocatableBit = [&](uint32_t bit) {
+        return isFrameAllocatable(m_prefilter.m_sinking, m_prefilter.m_candidates[objectOf(bit)]);
+    };
+
+    Mask pays = m_diesVirtual | m_entersJoin | ~m_isMaterialized | (m_isMaterialized & ~m_isMaterializedTwice & (m_foldsStore | m_isStoredLate));
+    m_counted = 0;
+    m_counts.shrink(0);
+    Traits::forEachBit(m_candidates & m_active & ~m_joins & m_isMaterializedTwice & (m_isMaterializedThrice | ~pays), [&](uint32_t bit) {
+        bool mayExceedLimit = maxNumberOfMaterializations != 2 || has(m_isMaterializedThrice, bit);
+        bool mayBeFrameAllocated = !has(pays, bit) && !isEmpty(m_component[bit] & m_isMaterializedByCall) && isFrameAllocatableBit(bit);
+        if (!mayExceedLimit && !mayBeFrameAllocated)
             return;
-        m_objectsLeavingTheirBlocks |= objects.unbuilt;
-        if (comparesFrequencies())
-            didReach(rarerOf(m_frequencies->classOf(id), m_frequencies->classOf(edge)), objects.unbuilt);
+        m_counted |= ofBit(bit);
+        m_counts.append(Counts { bit, m_prefilter.m_objects[objectOf(bit)].block });
     });
+
+    Mask exceedsLimit = 0;
+    if (!m_counts.isEmpty()) {
+        for (const Site& site : m_sites) {
+            Traits::forEachBit(site.members & m_counted, [&](uint32_t bit) {
+                count(bit, site.block, site.edge ? &*site.edge : nullptr, site.use);
+            });
+        }
+        for (const Counts& counts : m_counts) {
+            unsigned numberOfFrequentMaterializations = counts.numberOfMaterializations - counts.numberOfRarerMaterializations;
+            if (numberOfFrequentMaterializations > maxNumberOfMaterializations)
+                exceedsLimit |= ofBit(counts.bit);
+            if (counts.numberOfRarerMaterializations && counts.numberOfBorrowingMaterializations && numberOfFrequentMaterializations == counts.numberOfBorrowingMaterializations && isFrameAllocatableBit(counts.bit))
+                pays |= ofBit(counts.bit);
+        }
+    }
+
+    Mask changed = 0;
+    Traits::forEachBit(m_candidates & m_active & ~m_joins & ~m_materializedBeforeBranches & m_isMaterializedTwice & m_foldsStore & (exceedsLimit | ~pays) & ~m_abandoned, [&](uint32_t bit) {
+        m_materializedBeforeBranches |= ofBit(bit);
+        changed |= m_component[bit];
+    });
+    Mask dropped = m_candidates & m_active & ~changed & (((~pays | exceedsLimit) & ~m_unmodeled & ~m_materializedBeforeBranches) | m_abandoned);
+    m_candidates &= ~dropped;
+    m_exceededLimit |= dropped & exceedsLimit;
+    // A join that does nothing but enter joins that are dropped would be dropped in the next round.
+    Mask onlyEntersJoins = m_candidates & m_active & ~changed & m_joins & m_entersJoin & ~(m_diesVirtual | m_foldsStore | m_isStoredLate | m_unmodeled | m_isMaterialized);
+    for (bool mayDropMore = !isEmpty(dropped & m_joins) && !isEmpty(onlyEntersJoins); mayDropMore;) {
+        mayDropMore = false;
+        Mask entersCandidate = 0;
+        for (const ParameterLink& link : m_chunk.links) {
+            if (has(m_candidates, bitOf(link.parameter)))
+                entersCandidate |= ofBit(bitOf(link.source));
+        }
+        Mask more = onlyEntersJoins & m_candidates & ~entersCandidate;
+        if (!isEmpty(more)) {
+            m_candidates &= ~more;
+            dropped |= more;
+            mayDropMore = true;
+        }
+    }
+    Traits::forEachBit(dropped, [&](uint32_t bit) {
+        if (!isEmpty(m_component[bit] & m_candidates))
+            changed |= m_component[bit];
+    });
+    m_active = changed;
+    return !isEmpty(changed);
+}
+
+template<typename Mask>
+void AllocationPrefilter::Solver<Mask>::run()
+{
+    prepare();
+    findComponents();
+    findHeldObjects();
+    findObjectsLeavingTheirBlocks();
+    m_active = m_candidates;
+    solveLiveness();
+    Mask all = m_candidates;
+    do
+        propagateVirtualObjects();
+    while (dropUnprofitableCandidates());
+
+    // The analysis sets joins aside and takes them up again. What pays with them or without them is followed.
+    Mask withoutJoins = 0;
+    Traits::forEachBit(all & ~m_joins & ~m_candidates, [&](uint32_t bit) {
+        if (!isEmpty(m_component[bit] & m_joins))
+            withoutJoins |= m_component[bit];
+    });
+    if (!isEmpty(withoutJoins)) {
+        Mask profitable = m_candidates;
+        m_candidates = (m_candidates & ~withoutJoins) | (withoutJoins & ~m_joins);
+        m_materializedBeforeBranches &= ~withoutJoins;
+        m_active = withoutJoins;
+        do
+            propagateVirtualObjects();
+        while (dropUnprofitableCandidates());
+        m_candidates |= profitable;
+    }
+
+    for (uint32_t bit = 0; bit < m_chunk.numberOfBits; ++bit) {
+        Object& object = m_prefilter.m_objects[objectOf(bit)];
+        object.isProfitable = has(m_candidates, bit);
+        object.exceedsMaterializationLimit = has(m_exceededLimit & ~m_candidates, bit);
+    }
+}
+
+// An allocation that nothing holds, that holds nothing and that is passed to no block is materialized once if a use in its own block needs the cell.
+void AllocationPrefilter::decideLocally()
+{
+    for (const ParameterLink& link : m_parameterLinks) {
+        if (find(link.source) == find(link.parameter))
+            continue;
+        m_objects[find(link.source)].isLinked = true;
+        m_objects[find(link.parameter)].isLinked = true;
+    }
+    bool hasDecided = false;
+    for (uint32_t allocation = 0; allocation < m_numberOfAllocations; ++allocation) {
+        Object& object = m_objects[allocation];
+        if (object.isLinked)
+            continue;
+        if (object.isUnmodeled)
+            object.isDecided = true;
+        else if (object.firstMaterializationIndex != UINT32_MAX && !m_function.at(object.block).handler) {
+            object.isProfitable = object.firstStoreIndex < object.firstMaterializationIndex;
+            object.isDecided = true;
+        }
+        hasDecided |= object.isDecided;
+    }
+    if (hasDecided)
+        removeDecidedObjects();
+}
+
+void AllocationPrefilter::removeDecidedObjects()
+{
+    m_events.removeAllMatching([&](const Event& event) {
+        return m_objects[find(event.object)].isDecided;
+    });
+    m_uses.removeAllMatching([&](const ObjectUse& use) {
+        return m_objects[find(use.object)].isDecided;
+    });
+    m_parameterLinks.removeAllMatching([&](const ParameterLink& link) {
+        return m_objects[find(link.source)].isDecided;
+    });
+}
+
+uint32_t AllocationPrefilter::findComponent(uint32_t object)
+{
+    while (m_objects[object].component != object) {
+        m_objects[object].component = m_objects[m_objects[object].component].component;
+        object = m_objects[object].component;
+    }
+    return object;
+}
+
+void AllocationPrefilter::partition()
+{
+    constexpr uint32_t bitsInWord = 64;
+
+    for (uint32_t object = 0; object < m_objects.size(); ++object)
+        m_objects[object].component = find(object);
+    auto unite = [&](uint32_t a, uint32_t b) {
+        uint32_t rootOfA = findComponent(find(a));
+        uint32_t rootOfB = findComponent(find(b));
+        if (rootOfA != rootOfB)
+            m_objects[std::max(rootOfA, rootOfB)].component = std::min(rootOfA, rootOfB);
+    };
+    for (const ParameterLink& link : m_parameterLinks)
+        unite(link.source, link.parameter);
+    for (const Event& event : m_events) {
+        if (event.kind == EventKind::Hold || event.kind == EventKind::StoreFromObject)
+            unite(event.object, event.other);
+    }
+
+    Vector<std::tuple<uint32_t, uint32_t, uint32_t>, 16> roots;
+    Vector<uint32_t, 16> firstPositionOfComponent(FillWith { }, m_objects.size(), UINT32_MAX);
+    for (uint32_t object = 0; object < m_objects.size(); ++object) {
+        if (find(object) == object)
+            firstPositionOfComponent[findComponent(object)] = std::min(firstPositionOfComponent[findComponent(object)], positionOf(m_objects[object].block));
+    }
+    for (const ParameterLink& link : m_parameterLinks)
+        addToTrace(find(link.source), mix(link.position - positionOf(m_objects[find(link.source)].block)) + positionOf(m_objects[find(link.parameter)].block) - link.position + (static_cast<uint64_t>(link.edge.isHandlerEdge()) << 40));
+    for (uint32_t object = 0; object < m_objects.size(); ++object) {
+        if (find(object) != object)
+            continue;
+        const Object& root = m_objects[object];
+        uint64_t allocated = isAllocation(object) ? static_cast<uint64_t>(m_function.at(root.definition).opcode) + 1 : 0;
+        uint64_t distance = positionOf(root.block) - firstPositionOfComponent[findComponent(object)];
+        m_objects[findComponent(object)].traceOfComponent += mix(root.trace + mix(allocated | static_cast<uint64_t>(m_function.at(root.block).frequency) << 16 | distance << 24));
+    }
+    if (m_tracesOfFruitlessComponents && !m_tracesOfFruitlessComponents->isEmpty()) {
+        bool hasDecided = false;
+        for (uint32_t object = 0; object < m_objects.size(); ++object) {
+            Object& root = m_objects[object];
+            if (find(object) != object || (root.isDecided && !root.isProfitable) || !std::ranges::binary_search(*m_tracesOfFruitlessComponents, m_objects[findComponent(object)].traceOfComponent))
+                continue;
+            root.isDecided = true;
+            root.isProfitable = false;
+            root.wasFruitlessBefore = true;
+            hasDecided = true;
+        }
+        if (hasDecided)
+            removeDecidedObjects();
+    }
+    for (uint32_t object = 0; object < m_objects.size(); ++object) {
+        if (find(object) == object && !m_objects[object].isDecided)
+            roots.append({ firstPositionOfComponent[findComponent(object)], findComponent(object), object });
+    }
+    std::ranges::sort(roots);
+
+    for (size_t first = 0; first < roots.size();) {
+        size_t end = first;
+        while (end < roots.size() && std::get<1>(roots[end]) == std::get<1>(roots[first]))
+            ++end;
+        uint32_t size = end - first;
+        if (m_chunks.isEmpty() || m_chunks.last().numberOfBits + size > bitsInWord)
+            m_chunks.append(Chunk { });
+        Chunk& chunk = m_chunks.last();
+        for (size_t index = first; index < end; ++index) {
+            Object& object = m_objects[std::get<2>(roots[index])];
+            object.chunk = m_chunks.size() - 1;
+            object.bit = chunk.numberOfBits++;
+            chunk.objects.append(std::get<2>(roots[index]));
+            chunk.firstPosition = std::min(chunk.firstPosition, positionOf(object.block));
+        }
+        first = end;
+    }
+    for (uint32_t object = 0; object < m_objects.size(); ++object) {
+        m_objects[object].chunk = m_objects[find(object)].chunk;
+        m_objects[object].bit = m_objects[find(object)].bit;
+    }
+
+    for (Event& event : m_events)
+        event.chunk = m_objects[event.object].chunk;
+    for (ParameterLink& link : m_parameterLinks)
+        link.chunk = m_objects[link.source].chunk;
+    for (ObjectUse& use : m_uses)
+        use.chunk = m_objects[use.object].chunk;
+    std::ranges::sort(m_events, { }, [](const Event& event) {
+        return std::tuple { event.chunk, event.position, event.index, event.kind };
+    });
+    std::ranges::sort(m_parameterLinks, { }, [](const ParameterLink& link) {
+        return std::tuple { link.chunk, link.position, link.edge.targetIndex, link.parameter, link.source };
+    });
+    if (m_chunks.size() > 1)
+        std::ranges::sort(m_uses, { }, &ObjectUse::chunk);
+    auto spanOfChunk = [](auto& list, uint32_t chunk) {
+        auto range = std::ranges::equal_range(list, chunk, { }, [](const auto& entry) {
+            return entry.chunk;
+        });
+        return std::span { range.begin(), range.end() };
+    };
+    for (uint32_t index = 0; index < m_chunks.size(); ++index) {
+        m_chunks[index].events = spanOfChunk(m_events, index);
+        m_chunks[index].links = spanOfChunk(m_parameterLinks, index);
+        m_chunks[index].uses = spanOfChunk(m_uses, index);
+    }
+}
+
+void AllocationPrefilter::run()
+{
+    collectNames();
+    uniteAliases();
+    findKinds();
+    classifyUses();
+    for (uint32_t allocation = 0; allocation < m_numberOfAllocations; ++allocation) {
+        const VirtualObjectDescription& description = m_described[allocation].description;
+        if (description.staysInPlace || description.absentResult || !description.canBeBuilt)
+            m_objects[allocation].isUnmodeled = true;
+    }
+    decideLocally();
+    partition();
+
+    for (const Chunk& chunk : m_chunks) {
+        if (chunk.numberOfBits <= 64)
+            Solver<uint64_t>(*this, chunk).run();
+        else if (chunk.numberOfBits <= 1024)
+            Solver<WidePrefilterMask<16>>(*this, chunk).run();
+    }
 }
 
 } // anonymous namespace
@@ -967,10 +1646,8 @@ bool AllocationSinking::collectCandidates()
         return uint64_t { m_candidates.size() } * m_function.blocks.size() > m_maxWork / expectedNumberOfSweeps;
     };
     m_inputs.isLargeForItsWork = isLargeForItsWork();
-    if (m_policy.leavesWhenNoAllocationPays && findsThatNoAllocationPays(described.span())) {
-        m_foundThatNoAllocationPays = true;
+    if (m_policy.leavesWhenNoAllocationPays && findsThatNoAllocationPays(described.span()))
         return false;
-    }
 
     collectJoins();
     m_inputs.isLargeForItsWork = isLargeForItsWork();
@@ -979,10 +1656,8 @@ bool AllocationSinking::collectCandidates()
     createFamilies(described.span(), rootOfCandidate.span());
     if (m_policy.leavesWhenNoAllocationPays) {
         abandonAllocationsBuiltAtOnce();
-        if (!hasCandidates()) {
-            m_foundThatNoAllocationPays = true;
+        if (!hasCandidates())
             return false;
-        }
     }
     findNames();
     computeInputs();
@@ -1129,45 +1804,23 @@ Vector<DescribedObject> AllocationSinking::collectAllocations()
     return result;
 }
 
-template<typename ObjectMask>
-ScreeningResult AllocationSinking::screen(std::span<const DescribedObject> described, BitVector& allocationsThatMayPay)
-{
-    auto screen = [&](ScreenedFrequencies frequencies) {
-        AllocationScreening<ObjectMask> screening(*this, m_candidates.span(), described, m_candidateOfValue, frequencies);
-        ScreeningResult result = screening.run();
-        allocationsThatMayPay = screening.allocationsThatMayPay();
-        m_tracesOfAllocations = screening.tracesOfAllocations();
-        for (uint32_t index = 0; index < m_candidates.size(); ++index) {
-            if (std::optional<Use> builder = screening.firstBuilderOf(index))
-                m_candidates[index].firstCause = describeCause(m_analyses, *builder);
-        }
-        return result;
-    };
-    ScreeningResult result = screen(ScreenedFrequencies::AreIgnored);
-    if (result == ScreeningResult::DependsOnFrequencies)
-        result = screen(ScreenedFrequencies::AreCompared);
-    return result;
-}
-
 bool AllocationSinking::findsThatNoAllocationPays(std::span<const DescribedObject> described)
 {
     RELEASE_ASSERT(m_policy.returnedObjects == ReturnedObjects::AreBuilt);
-    if (described.size() > numberOfObjectsIn<WideObjectMask>)
-        return false;
-
-    BitVector allocationsThatMayPay;
-    ScreeningResult result = described.size() > numberOfObjectsIn<uint64_t> ? screen<WideObjectMask>(described, allocationsThatMayPay) : screen<uint64_t>(described, allocationsThatMayPay);
-    if (result == ScreeningResult::NoAllocationPays) {
-        for (Candidate& candidate : m_candidates)
-            candidate.isAbandoned = true;
-        return true;
-    }
-
+    AllocationPrefilter prefilter(*this, m_candidates.span(), described, m_candidateOfValue, m_policy.tracesOfFruitlessAllocations);
+    prefilter.run();
+    m_tracesOfAllocations = Vector<uint64_t>(m_candidates.size(), [&](size_t index) {
+        return prefilter.traceOf(index);
+    });
     bool someAllocationIsLeft = false;
     for (uint32_t index = 0; index < m_candidates.size(); ++index) {
         Candidate& candidate = m_candidates[index];
-        candidate.wasFruitlessBefore = m_policy.tracesOfFruitlessAllocations && std::ranges::binary_search(*m_policy.tracesOfFruitlessAllocations, m_tracesOfAllocations[index]);
-        candidate.isLeftOut = candidate.wasFruitlessBefore || !allocationsThatMayPay.quickGet(index);
+        if (std::optional<Use> use = prefilter.firstMaterializationOf(index); use && context().build.options().collectsDeclines())
+            candidate.firstCause = describeCause(m_analyses, *use);
+        candidate.wasFruitlessBefore = prefilter.wasFruitlessBefore(index);
+        candidate.isLeftOut = prefilter.isUnprofitable(index);
+        if (prefilter.exceedsMaterializationLimit(index))
+            abandon(VirtualObjectID(index), LimitID::MaxMaterializations);
         candidate.isAbandoned = candidate.isLeftOut;
         someAllocationIsLeft |= !candidate.isAbandoned;
     }

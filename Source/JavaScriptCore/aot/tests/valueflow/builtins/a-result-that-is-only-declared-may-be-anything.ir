@@ -1,0 +1,16 @@
+# headers = new Request("http://localhost/").headers
+# Nothing proves what the getter answers, so beside the Headers that it declares stands a value nobody knows, with a source of its own.
+# RUN: valueflow-why seeds
+# CHECK: DeclaredNativeResult
+# CHECK-NOT: UndescribedNativeResult
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Request
+    v1 = String string="http://localhost/"
+    v2 = Construct v0, -, v1
+    v3 = PropGet v2 key="headers"
+    Return
+}

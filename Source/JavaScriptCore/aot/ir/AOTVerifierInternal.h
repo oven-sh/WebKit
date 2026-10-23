@@ -66,6 +66,7 @@ public:
 
     bool run();
     bool runStructure();
+    bool runUnspecifiedValues();
     Vector<InternalError> takeErrors();
 
     const Program& program() const { return m_program; }
@@ -145,6 +146,8 @@ private:
 
     void verifyGuards();
     void verifyGuardOperand(BlockID, ValueID user, const Value&, ProofSet neededFromGuard, ValueID guard);
+
+    void verifyUnspecifiedValues();
 
     void verifyOperations();
     void verifyOperation(BlockID, uint32_t indexInBlock, ValueID, const Value&);

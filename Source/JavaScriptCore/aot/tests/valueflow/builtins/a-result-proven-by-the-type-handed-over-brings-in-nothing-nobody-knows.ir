@@ -1,0 +1,15 @@
+# status = new Response().status
+# Native code hands the number over as a number.
+# RUN: valueflow-why seeds
+# CHECK-NOT: DeclaredNativeResult
+# CHECK-NOT: UndescribedNativeResult
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Response
+    v1 = Construct v0, -
+    v2 = PropGet v1 key="status"
+    Return
+}

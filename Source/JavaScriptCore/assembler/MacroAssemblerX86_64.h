@@ -4667,6 +4667,11 @@ public:
         m_assembler.lfence();
     }
 
+    void prefetch(Address address)
+    {
+        m_assembler.prefetcht0(address.offset, address.base);
+    }
+
     void mfence()
     {
         m_assembler.mfence();

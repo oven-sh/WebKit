@@ -47,6 +47,8 @@ struct VerifierInputs {
 };
 
 bool verifyProgram(const Program&, IRForm, BuildContext&, const VerifierInputs& = { });
+// The one check of the Prepared form that no later form can make.
+bool verifyUnspecifiedValues(const Program&, BuildContext&);
 bool hoistsFunctionsIntoVariables(ModuleKind);
 bool verifyFunction(const Program&, FunctionID, const Function&, IRForm, BuildContext&, const VerifierInputs& = { });
 // For a caller that has something to add to the errors before they are reported. A valid body has none.

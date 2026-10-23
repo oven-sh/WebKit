@@ -100,17 +100,17 @@ inline constexpr Stage stageByInternalErrorKind[] = {
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ChooseRepresentations, Stage::ReadAndVerify,
     Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify,
-    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify,
-    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Select, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify,
-    Stage::Select, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Optimize, Stage::Optimize, Stage::Optimize,
-    Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::Select,
-    Stage::Select, Stage::GenerateCode, Stage::GenerateCode, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize,
-    Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Select, Stage::Select, Stage::Select, Stage::Select, Stage::Select, Stage::Optimize,
-    Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::PlanSlots, Stage::NumberAndEncode,
-    Stage::NumberAndEncode, Stage::NumberAndEncode, Stage::ChooseRepresentations, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode,
-    Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::BuildImage, Stage::BuildImage,
+    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize,
+    Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Select, Stage::Optimize, Stage::Optimize,
+    Stage::ReadAndVerify, Stage::Select, Stage::Optimize, Stage::Optimize, Stage::ReadAndVerify, Stage::ReadAndVerify, Stage::Optimize,
+    Stage::Optimize, Stage::Optimize, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow, Stage::AnalyzeFlow,
+    Stage::AnalyzeFlow, Stage::Select, Stage::Select, Stage::GenerateCode, Stage::GenerateCode, Stage::Optimize, Stage::Optimize, Stage::Optimize,
+    Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Select, Stage::Select, Stage::Select, Stage::Select,
+    Stage::Select, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::Optimize, Stage::PlanSlots,
+    Stage::NumberAndEncode, Stage::NumberAndEncode, Stage::NumberAndEncode, Stage::ChooseRepresentations, Stage::GenerateCode, Stage::GenerateCode,
+    Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::GenerateCode, Stage::BuildImage,
     Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage, Stage::BuildImage,
-    Stage::BuildImage
+    Stage::BuildImage, Stage::BuildImage
 };
 constexpr Stage stageOf(InternalErrorKind value)
 {
@@ -194,6 +194,7 @@ inline constexpr ASCIILiteral messageByInternalErrorKind[] = {
     "a function that is reached cannot get past its first block, and by no throw of its own: nothing is left of what a value there may be"_s,
     "something between the guard and the use may write what the guard depends on"_s,
     "the guard does not prove what the operation relies on"_s,
+    "the operation looks at value {count}, which is unspecified on a path that reaches it"_s,
     "the operand must be the defining value, not a block parameter"_s,
     "a cycle has no loop mark"_s,
     "a caught value is read outside a handler block"_s,

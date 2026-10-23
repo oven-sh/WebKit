@@ -491,6 +491,8 @@ static JSObject* describeOverload(const TableDescription& description, BuiltinOv
     put(description, object, "runsOnlyOperandCode"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode)));
     put(description, object, "readsStateBeforeConversions"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::ReadsStateBeforeConversions)));
     put(description, object, "isSpecialCase"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::IsSpecialCase)));
+    if (overload.resultIsDeclaredOnly())
+        put(description, object, "resultIsDeclaredOnly"_s, jsBoolean(true));
     put(description, object, "reads"_s, reads);
     put(description, object, "writes"_s, writes);
     put(description, object, "transfers"_s, transfers);

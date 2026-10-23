@@ -47,7 +47,7 @@ bool isOnlyCalled(FunctionAnalyses&, ValueID read);
 AccessOperands operandsOfNamedAccess(const Value& access);
 SlotStamp createSlotStamp(FunctionPassContext&, const Value& access, const PropertyAccessPlan&);
 CalleeSetID calleesOfGetterInSlot(FunctionPassContext&, const PropertyAccessPlan&, PropertyKeyID);
-PassOutcome readOptionsLeftOutAsUndefined(FunctionPassContext&);
+PassOutcome addEmptySlotCases(FunctionPassContext&);
 Effects effectsAfterRewrite(FunctionPassContext&, const PropertyAccessPlan&, const SlotStamp&);
 Effects effectsAfterRewrite(const ElementAccessPlan&, const Type& key);
 

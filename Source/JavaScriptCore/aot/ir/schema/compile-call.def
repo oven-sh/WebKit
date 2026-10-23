@@ -111,6 +111,7 @@ record ArrivalLayoutFieldRecord abi { name: TextRange flags: ArrivalFieldFlags }
 enum CompileAction { Compile VerifyOnly CheckOnly }
 enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
+enum ImageForm { Absolute PositionIndependent }
 enum MismatchPolicy { Throw Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FlowFixpoint FunctionsGetPastEntry }
@@ -133,7 +134,7 @@ record BisectionSwitches abi {
     disabledFlowResults: UInt64 disabledPasses: UInt64[4] disabledSelectionRules: UInt64 disabledBackEndSwitches: UInt64 switchRange: SwitchRange
     droppedGuard: DroppedGuardWords
 }
-record TargetOptions abi { features: UInt64 architecture: Architecture referenceWidth: ReferenceWidth }
+record TargetOptions abi { features: UInt64 architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {
     bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double executableIdentity: UInt8[16] size: UInt32
     action: CompileAction mismatchPolicy: MismatchPolicy checks: CheckSet reports: ReportSet testing: TestingSwitch instrumentation: Instrumentation

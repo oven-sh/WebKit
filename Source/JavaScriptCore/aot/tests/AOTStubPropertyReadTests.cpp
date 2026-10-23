@@ -74,8 +74,8 @@ public:
             m_identifierOffsets[i] = i * sizeof(LazyStringHeader);
         }
         instance.image.lazyStringHeaderOffsets = m_identifierOffsets.data();
-        instance.image.lazyStringHeaders = reinterpret_cast<uint8_t*>(m_identifiers.data());
-        instance.image.lazyStringHeadersCapacity = sizeof(m_identifiers);
+        instance.lazyStrings.headers = reinterpret_cast<uint8_t*>(m_identifiers.data());
+        instance.lazyStrings.capacity = sizeof(m_identifiers);
         instance.image.programSymbols = &m_symbols;
         instance.cellCageBase = MarkedBlockCage::baseOf(this);
     }

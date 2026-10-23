@@ -119,16 +119,15 @@ struct ImageWords {
     const uint32_t* codeGranules;
     const uint32_t* subsequentFunctionStarts;
     const ProgramTables* tables;
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    const ImageStringRecord* stringRecords;
-    const uint32_t* lazyStringHeaderOffsets;
-    uint8_t* lazyStringHeaders;
-    uint64_t lazyStringHeadersCapacity;
-#else
-    // The atoms of the image, read-only, one header per identifier number: the name with the number n is programIdentifiers + n.
-    UniquedStringImpl* programIdentifiers;
-    uint64_t sizeOfProgramIdentifiers;
-#endif
+    union {
+        // The atoms of the image, read-only, one header per identifier number: the name with the number n is programIdentifiers + n.
+        UniquedStringImpl* programIdentifiers;
+        const ImageStringRecord* stringRecords;
+    };
+    union {
+        uint64_t sizeOfProgramIdentifiers;
+        const uint32_t* lazyStringHeaderOffsets;
+    };
     // ImageSection::Strings, one ImageStringWord for each StringID, and ImageSection::StringConstants, the StringID of each string cell.
     const uint32_t* stringWords;
     const uint32_t* stringConstants;
@@ -144,6 +143,11 @@ struct ImageWords {
     const uint64_t* data;
     // Where the kind of function 0 would lie if ProgramTables::closureFunctionKinds() began with it: a stub adds the number of a closure's function.
     uintptr_t closureFunctionKindsOrigin;
+};
+
+struct LazyStringWords {
+    uint8_t* headers;
+    uint64_t capacity;
 };
 
 enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, DefaultFinalObject, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set };
@@ -239,7 +243,8 @@ struct NumberWords {
     v(stringBuilder, StringBuilderWords) \
     v(stubs, StubWords) \
     v(scratch, CodegenScratchWords) \
-    v(constructWords, ConstructWordCache)
+    v(constructWords, ConstructWordCache) \
+    v(lazyStrings, LazyStringWords)
 
 struct Instance : InstanceHeader {
 #define AOT_DECLARE_INSTANCE_PART(member, Type) Type member;
@@ -340,9 +345,7 @@ static_assert(InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches
 static_assert(sizeof(InstancePrefix) + InstanceLayout::bytesReservedForLoopPollPage <= InstanceLayout::bytesReservedForPrefixAndPollPage);
 static_assert(sizeof(RememberedSlot<Slot>) == InstanceLayout::sizeOfSiteCache && sizeof(RememberedSlot<uint32_t>) == InstanceLayout::sizeOfStringCell);
 static_assert(sizeof(TypedArrayAllocation) == 32);
-#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");
-#endif
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
 

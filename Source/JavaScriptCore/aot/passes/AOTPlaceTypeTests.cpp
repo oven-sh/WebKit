@@ -388,7 +388,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
     ExpectedTypesByUse expectations(context.function);
     PassOutcome outcome = expectTypesByUses(context, expectations);
     outcome |= placePlannedTests(context, expectations);
-    outcome |= readOptionsLeftOutAsUndefined(context);
+    outcome |= addEmptySlotCases(context);
     if (outcome == PassOutcome::Unchanged && !expectations.isEmpty()) {
         expectations.takeBack();
         context.analyses.didChangeTypes();

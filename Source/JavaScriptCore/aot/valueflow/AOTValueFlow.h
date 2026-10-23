@@ -200,6 +200,8 @@ enum class ValueFlowUnknownSource : uint8_t {
     ResultOfUnknownCallee,
     // The construction of a plain function without a layout, the prototype object of such a function, the raw strings of a template.
     ObjectWithoutLayout,
+    // An overload whose result type nothing proves: beside what is declared.
+    DeclaredNativeResult,
 };
 
 // The value is what the mask lets through of (the node's set | constant). An operand without a node holds the constant alone.

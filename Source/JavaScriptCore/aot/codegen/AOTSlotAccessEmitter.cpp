@@ -429,12 +429,16 @@ void SlotAccessEmitter::makeBorrowedObject(const ValueContext& value)
 void SlotAccessEmitter::storeFlattenedObject(const ValueContext& value, CellPointer outerObject, LayoutID outerLayout, uint32_t field, ValueID held, bool roomIsZero)
 {
     const PlacedFlattenedObject* flattened = m_placement.layout(outerLayout).flattenedObjectIn(field);
-    const Value& allocation = m_function.at(definitionThroughUpcasts(m_function, held));
+    ValueID allocationID = definitionThroughUpcasts(m_function, held);
+    const Value& allocation = m_function.at(allocationID);
     if (!flattened || allocation.opcode != Opcode::NewObject || allocation.layout() != flattened->layout) {
         fail(value, InternalErrorKind::SlotAccessNotPlaced);
         return;
     }
-    emitter<AllocationEmitter>().storeSlotsOfFlattenedObject(value, outerObject, *flattened, allocation, roomIsZero);
+    auto storeSlots = [&] {
+        emitter<AllocationEmitter>().storeSlotsOfFlattenedObject(value, outerObject, *flattened, allocation, roomIsZero);
+    };
+    generator().generateWithOperandsOf(allocationID, ScopedLambda<void()>(storeSlots));
 }
 
 void SlotAccessEmitter::generateGetDeferredClosureSlot(const ValueContext& value)

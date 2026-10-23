@@ -167,6 +167,9 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         ClimbingSet listed = hostObjectsListedBesideUnknownObject(object, receivers);
         if (holdsAnything(listed))
             connect(m_context.lookup(listed, name), m_statement.result);
+        ClimbingSet holdersOfExports = holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers);
+        if (holdsAnything(holdersOfExports))
+            connect(m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports), m_statement.result);
     }
     // And for whoever goes on to a prototype object: `globalThis[name].prototype` answers the prototype object of a constructor that the operand lists, though the constructor has escaped.
     if (key.keyClass == HeapKeyClass::Name && key.name == m_tables.prototypeKey() && object.node && mayBeUnknownObject(receivers)) {
@@ -560,6 +563,16 @@ ClimbingSet HeapRule::hostObjectsListedBesideUnknownObject(const ValueFlowOperan
     if (!object.node || !mayBeUnknownObject(receivers))
         return { };
     return m_context.valueWithin(ClimbingSet(m_tables.holdersOfMembersThatHostMakes()), object.node);
+}
+
+ClimbingSet HeapRule::holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers)
+{
+    if (!object.node || !mayBeUnknownObject(receivers) || !m_statement.function)
+        return { };
+    FunctionRole role = m_program.at(m_statement.function).role;
+    if (role == FunctionRole::Library || role == FunctionRole::Model)
+        return { };
+    return m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), object.node);
 }
 
 void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const ValueFlowOperand& value)

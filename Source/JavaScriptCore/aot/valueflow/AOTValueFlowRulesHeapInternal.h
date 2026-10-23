@@ -81,6 +81,8 @@ struct HeapReceiver {
 };
 
 // The objects that a lookup goes through.
+constexpr ValueFlowName everyPropertyOfListedHoldersOfExports { ValueFlowNameKind::EveryProperty, 2 };
+
 struct HeapChain {
     // The key of the lookup that holds the chain.
     ClimbingSet start;
@@ -270,6 +272,8 @@ private:
     ClimbingSet builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet hostObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers);
+    ClimbingSet holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers);
+    bool m_keepsHoldersOfExportsItStartsFrom { false };
     void notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);
     void callSetters(ClimbingSet receivers, const HeapKey&, const ValueFlowOperand& receiver, const ValueFlowOperand& value, bool receiverIsStartOfLookup = true);

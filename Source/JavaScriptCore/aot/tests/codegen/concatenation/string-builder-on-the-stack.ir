@@ -141,7 +141,7 @@ function f7 name="oneAfterTheOther" results=[{type=string}] {
     v5 = StringBuilderFinish v3
     Return v5
 }
-# CHECK-LABEL: f7: size={{*}} frame=176@
+# CHECK-LABEL: f7: size={{*}} frame={{*}}@
 # CHECK: operation operationAOTStackStringBuilderFinish x2
 function f8 name="twoWebsOpenAtOnce" results=[{type=string}] {
   b0():

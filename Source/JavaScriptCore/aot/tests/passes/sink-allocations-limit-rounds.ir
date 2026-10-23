@@ -2,7 +2,7 @@
 # FORM: Prepared
 # OPTIONS: limit=MaxSinkingRounds:1
 # RUN: pass SinkAllocations
-# LOSS: MaxSinkingRounds x2 f0 v2
+# LOSS: MaxSinkingRounds x1 f0 v2
 # STATISTIC: AllocationsRemoved = 1
 # STATISTIC: AllocationsSunk = 1
 # STATISTIC: TailsDuplicatedForSinking = 0

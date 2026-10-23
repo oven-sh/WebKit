@@ -35,6 +35,7 @@ using Wire::CompileAction;
 using Wire::ExcludedCode;
 using Wire::FlowResultKind;
 using Wire::HeatOverride;
+using Wire::ImageForm;
 using Wire::Instrumentation;
 using Wire::MismatchPolicy;
 using Wire::OutputOptions;
@@ -66,6 +67,15 @@ struct RecordedSwitches {
     friend bool operator==(const RecordedSwitches&, const RecordedSwitches&) = default;
 };
 
+constexpr ImageForm imageFormOfThisRuntime()
+{
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    return ImageForm::PositionIndependent;
+#else
+    return ImageForm::Absolute;
+#endif
+}
+
 struct RecordedOptions {
     RecordedSwitches switches;
     uint64_t loweredLimitValue { 0 };
@@ -86,9 +96,11 @@ struct RecordedOptions {
     uint16_t testing { 0 };
     uint8_t admittedCode { 0 };
     uint8_t sabotage { 0 };
-    std::array<uint8_t, 6> unused { };
+    uint8_t imageForm { static_cast<uint8_t>(imageFormOfThisRuntime()) };
+    std::array<uint8_t, 5> unused { };
 
     bool useWideReferences() const { return referenceWidth == static_cast<uint8_t>(ReferenceWidth::Wide); }
+    ImageForm form() const { return static_cast<ImageForm>(imageForm); }
     MismatchPolicy policy() const { return static_cast<MismatchPolicy>(mismatchPolicy); }
     bool has(TestingSwitch flag) const { return testing & static_cast<uint16_t>(flag); }
     bool isSabotaged(Sabotage part) const { return sabotage == static_cast<uint8_t>(part); }

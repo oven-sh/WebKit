@@ -409,19 +409,25 @@ function f20 name="subjectIsUnspecifiedOnOneEdge" parameters=[{type=anything}, {
   b1():
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v3 = AllGuards v2
-    Jump -> next b3(v2, v3)
+    v4 = Integer integer=1
+    Jump -> next b3(v2, v3, v4)
   b2():
-    v4 = Unspecified valueType=object
-    v5 = AllGuards
-    Jump -> next b3(v4, v5)
-  b3(v6, v7):
-    v8 = GetSlot v6, v7 key="x" receivers=[L0] level=Proven
-    Return v8
+    v5 = Unspecified valueType=object
+    v6 = AllGuards
+    v7 = Integer
+    Jump -> next b3(v5, v6, v7)
+  b3(v8, v9, v10):
+    Switch v10 cases=[1] -> case b4(), otherwise b5()
+  b4():
+    v11 = GetSlot v8, v9 key="x" receivers=[L0] level=Proven
+    Return v11
+  b5():
+    Return
 }
 # CHECK-LABEL: function f20
-# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, SlotFilled NotFrozen of v6 by allocation v2 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v6 by allocation v2 reads NamedProperties, KeyOrder of v6 by allocation v2 reads ShapeWords[L0] OrderWords]
-# CHECK: b3 available at head: [v7.0 v7.1 v7.2 v7.3]
-# CHECK: v8 guard v7: Available
+# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled NotFrozen of v8 by allocation v2 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v8 by allocation v2 reads NamedProperties, KeyOrder of v8 by allocation v2 reads ShapeWords[L0] OrderWords]
+# CHECK: b3 available at head: [v9.0 v9.1 v9.2 v9.3]
+# CHECK: v11 guard v9: Available
 
 function f21 name="objectWithoutGuardOnOneEdge" parameters=[{type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: object, v2: boolean):

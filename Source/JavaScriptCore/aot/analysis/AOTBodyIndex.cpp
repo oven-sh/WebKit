@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCFG.h"
 #include "AOTLargeVectors.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"

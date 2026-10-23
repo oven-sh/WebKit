@@ -25,7 +25,7 @@ static ValueSetID unknownValueFrom(ValueFlowRuleContext& context, ValueFlowUnkno
     return context.maker().unite(universe.anyPrimitive(), universe.unknownObjectAlone());
 }
 
-ValueSetID unknownValueOutOfEngine(ValueFlowRuleContext& context)
+ValueSetID undescribedValueThatIsNoBuffer(ValueFlowRuleContext& context)
 {
     return unknownValueFrom(context, ValueFlowUnknownSource::UndescribedNativeResult);
 }

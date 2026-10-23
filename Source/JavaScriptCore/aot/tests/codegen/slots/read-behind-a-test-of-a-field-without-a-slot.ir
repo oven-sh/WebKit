@@ -5,7 +5,10 @@
 # FORM: Selected
 # OPTIONS: references=narrow
 # RUN: generate-code calls
-# CHECK: f1: size=7 frame=none
+# RUN(X64): generate-code calls
+# REQUIRES(X64): x86_64
+# X64: f1: size=7 frame=none
+# CHECK: f1: size={{*}} frame=none
 # CHECK: f2: size={{*}}
 
 module m0 path="main.js" displayPath="main.js"

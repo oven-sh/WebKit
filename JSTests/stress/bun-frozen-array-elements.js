@@ -57,45 +57,27 @@ function checkInheritor(object, expectedElements) {
     shouldBe(Object.hasOwn(object, 0), false);
 }
 
-function createFactory(expectedMode, create) {
+// One allocation site per array: optimized code that expects a wider shape converts the array it is handed, and the site that allocated it allocates that shape from then on.
+function createFactory(expectedMode, source) {
     return () => {
-        const array = create();
+        const array = new Function(source)();
         if (canFreezeInPlace)
             shouldBe($vm.indexingMode(array), expectedMode);
         return array;
     };
 }
 
-// One allocation site per shape: a site's profile only ever widens the shape it allocates.
 const pushFactories = [
-    createFactory("ArrayWithInt32", () => {
-        const array = [];
-        array.push(3);
-        array.push(1);
-        array.push(2);
-        return array;
-    }),
-    createFactory("ArrayWithDouble", () => {
-        const array = [];
-        array.push(2.5);
-        array.push(1.5);
-        array.push(3.5);
-        return array;
-    }),
-    createFactory("ArrayWithContiguous", () => {
-        const array = [];
-        array.push("c");
-        array.push("a");
-        array.push("b");
-        return array;
-    }),
+    createFactory("ArrayWithInt32", "const array = []; array.push(3); array.push(1); array.push(2); return array;"),
+    createFactory("ArrayWithDouble", "const array = []; array.push(2.5); array.push(1.5); array.push(3.5); return array;"),
+    createFactory("ArrayWithContiguous", 'const array = []; array.push("c"); array.push("a"); array.push("b"); return array;'),
 ];
 
 const inPlaceFactories = [
     ...pushFactories,
-    createFactory("CopyOnWriteArrayWithInt32", () => [3, 1, 2]),
-    createFactory("CopyOnWriteArrayWithDouble", () => [2.5, 1.5, 3.5]),
-    createFactory("CopyOnWriteArrayWithContiguous", () => ["c", "a", "b"]),
+    createFactory("CopyOnWriteArrayWithInt32", "return [3, 1, 2];"),
+    createFactory("CopyOnWriteArrayWithDouble", "return [2.5, 1.5, 3.5];"),
+    createFactory("CopyOnWriteArrayWithContiguous", 'return ["c", "a", "b"];'),
 ];
 
 function forEachFrozenArray(test) {

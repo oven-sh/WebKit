@@ -59,7 +59,7 @@ static ASCIILiteral nameOf(ValueFlowStatementKind kind)
     return "?"_s;
 }
 
-constexpr size_t numberOfUnknownSources = static_cast<size_t>(ValueFlowUnknownSource::ObjectWithoutLayout) + 1;
+constexpr size_t numberOfUnknownSources = static_cast<size_t>(ValueFlowUnknownSource::DeclaredNativeResult) + 1;
 
 static ASCIILiteral nameOf(ValueFlowUnknownSource source)
 {
@@ -82,6 +82,8 @@ static ASCIILiteral nameOf(ValueFlowUnknownSource source)
         return "ResultOfUnknownCallee"_s;
     case ValueFlowUnknownSource::ObjectWithoutLayout:
         return "ObjectWithoutLayout"_s;
+    case ValueFlowUnknownSource::DeclaredNativeResult:
+        return "DeclaredNativeResult"_s;
     }
     return "?"_s;
 }

@@ -782,8 +782,12 @@ private:
         for (const BuiltinPropertyAction& action : overload.flow.propertyActions)
             applyPropertyAction(action);
         m_plainDataOfResult = { };
-        if (ValueFlowNodeID result = nodeTakingResult())
+        if (ValueFlowNodeID result = nodeTakingResult()) {
             m_context.add(result, answersObjectsOfNativeCell(overload) ? m_tables.primitivesOf(overload.result.type) : valueOfType(overload.result.type, m_resultObject));
+            // What is declared is what is expected. Native code may hand back anything else.
+            if (overload.resultIsDeclaredOnly())
+                m_context.add(result, unknownValue(m_context, ValueFlowUnknownSource::DeclaredNativeResult));
+        }
         if (m_call.operation)
             allocateTypedResult(overload, *m_call.operation, m_call, m_resultObject, m_plainDataOfResult, m_context);
         // A constructor whose answer nobody follows, as that of `Function`. What it makes for a class of the program has the prototype object of that class above it, and the unknown object stands only for what has escaped.
@@ -1698,7 +1702,7 @@ private:
 
     ValueSetID undescribedValue()
     {
-        return m_builtins.at(m_builtin).origin == BuiltinOrigin::Host ? unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult) : unknownValueOutOfEngine(m_context);
+        return m_builtins.at(m_builtin).origin == BuiltinOrigin::Host ? unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult) : undescribedValueThatIsNoBuffer(m_context);
     }
 
     ValueSetID undescribedObject()
@@ -1752,7 +1756,10 @@ private:
             case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
             case BuiltinTypePartKind::Layout:
                 if (type.freshness == BuiltinFreshness::No || !fresh || isCalledInWaysNobodyFollows(part)) {
-                    value = maker.unite(value, undescribedObject());
+                    // Of a class without a prototype object the table says nothing.
+                    bool mayBeBuffer = part.kind == BuiltinTypePartKind::Instance
+                        && (!m_builtins.at(part.builtinClass).prototype || std::ranges::contains(m_tables.classesAtOrBelow(part.builtinClass), BuiltinClassID(BuiltinClasses::Buffer)));
+                    value = maker.unite(value, mayBeBuffer ? undescribedObject() : maker.intersect(undescribedValueThatIsNoBuffer(m_context), m_universe.objects()));
                     // The unknown object stands only for what has escaped. So the module objects in the list that `module.children` answers are in unknown hands.
                     if (holdsModuleObjects(part)) {
                         objects.shrink(0);

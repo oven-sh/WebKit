@@ -1200,7 +1200,7 @@ static ResultFreshness freshnessOfDeclaredResult(const Program& program, const F
 {
     const BuiltinTable& table = program.builtins();
     BuiltinTypeID resultType = table.at(overload).result.type;
-    if (!table.contains(resultType))
+    if (!table.contains(resultType) || table.at(overload).resultIsDeclaredOnly())
         return ResultFreshness::Unknown;
 
     switch (table.at(resultType).freshness) {

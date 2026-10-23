@@ -59,8 +59,11 @@ static Type typeOfBuiltinEntry(const TypingContext& context, BuiltinID builtin)
 
     Type result = Type::never();
     for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
-        if (overload.mode == BuiltinCallMode::Get)
-            result = result.unionWith(typeOfBuiltinType({ context }, overload.result.type), context.types);
+        if (overload.mode != BuiltinCallMode::Get)
+            continue;
+        if (overload.resultIsDeclaredOnly() && context.level == TypeLevel::Proven)
+            return Type::anything();
+        result = result.unionWith(typeOfBuiltinType({ context }, overload.result.type), context.types);
     }
     return result.isNever() ? Type::anything() : result;
 }
@@ -574,6 +577,8 @@ Type ResultRules::declared(const Value& value, BuiltinOverloadID overload, uint3
 {
     if (builtinCallOpcodes.contains(value.opcode))
         return resultTypeOfOverload(context, value, overload, resultIndex);
+    if (context.program.builtins().at(overload).resultIsDeclaredOnly() && context.level == TypeLevel::Proven)
+        return Type::anything();
     return typeOfBuiltinType({ context }, context.program.builtins().at(overload).result.type);
 }
 
@@ -1038,7 +1043,9 @@ static constexpr OpcodeSet opcodesTypedAlikeAtBothLevels = []() consteval {
     return opcodes;
 }();
 
-static constexpr OpcodeSet opcodesWhoseRuleReadsTheLevel { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::Convert, Opcode::NewObject, Opcode::CloneAs, Opcode::NarrowByField };
+static constexpr OpcodeSet opcodesWhoseRuleReadsTheLevel {
+    Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::Convert, Opcode::NewObject, Opcode::CloneAs, Opcode::NarrowByField, Opcode::CallBuiltin, Opcode::CallInline, Opcode::GetBuiltinValue
+};
 
 static void addKeyOfResult(auto& hasher, const TypingContext& context, const Value& value)
 {

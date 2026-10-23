@@ -33,8 +33,6 @@ enum class ReturnedObjects : uint8_t { AreBuilt, StayVirtual };
 // An analysis goes through the function about this often: the solver until its decisions stand, a count, and both again for each round of candidates given up.
 inline constexpr uint64_t expectedNumberOfSweeps = 16;
 
-enum class ScreeningResult : uint8_t { SomeAllocationMayPay, NoAllocationPays, DependsOnFrequencies };
-
 struct SinkingPolicy {
     ReturnedObjects returnedObjects { ReturnedObjects::AreBuilt };
     bool recordsLosses { true };
@@ -306,7 +304,6 @@ public:
     }
     std::span<const VirtualReturn> virtualReturns() const LIFETIME_BOUND { return m_returns.span(); }
     const FreshResultShape* resultShape() const { return m_resultShape; }
-    bool foundThatNoAllocationPays() const { return m_foundThatNoAllocationPays; }
     void addTracesOfFruitlessAllocations(Vector<uint64_t>&) const;
 
     // While the function is analyzed. Few of its values name an object or a test of one.
@@ -350,7 +347,6 @@ private:
 
     Vector<DescribedObject> collectAllocations();
     bool findsThatNoAllocationPays(std::span<const DescribedObject>);
-    template<typename ObjectMask> ScreeningResult screen(std::span<const DescribedObject>, BitVector& allocationsThatMayPay);
     void collectJoins();
     void uniteFamilies(Vector<uint32_t>& parentOfCandidate);
     void createFamilies(std::span<const DescribedObject>, std::span<const uint32_t> rootOfCandidate);
@@ -413,7 +409,6 @@ private:
     const VirtualObjectContext m_objectContext;
     Vector<Candidate> m_candidates;
     Vector<VirtualObjectID> m_candidateOfValue;
-    bool m_foundThatNoAllocationPays { false };
     mutable std::optional<LivenessOfAskedValues> m_liveness;
     Vector<std::optional<BitVector>> m_blocksWithLiveDefinition;
     Vector<uint64_t> m_tracesOfAllocations;

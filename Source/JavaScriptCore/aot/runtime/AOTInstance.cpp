@@ -174,8 +174,7 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     words.stringRecords = image.text().stringRecords().data();
     words.lazyStringHeaderOffsets = image.text().lazyHeaderOffsets();
-    words.lazyStringHeaders = image.text().lazyHeaders();
-    words.lazyStringHeadersCapacity = image.text().lazyHeadersCapacity();
+    instance.lazyStrings = { image.text().lazyHeaders(), image.text().lazyHeadersCapacity() };
 #else
     words.programIdentifiers = vm.aotState().identifiers->identifiers();
     words.sizeOfProgramIdentifiers = static_cast<uint64_t>(vm.aotState().identifiers->count()) * sizeof(UniquedStringImpl);

@@ -1,0 +1,46 @@
+# `request.headers`, `request.url`, `blob.text()`: the schema says what native code answers and nothing proves it. The type is what is expected of the result, and a use that gains by it tests the value.
+# `response.status` is a number by the type that native code hands over: that one is a fact.
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="anObjectOfAClass" parameters=[{type=Request}] results=[{type=anything}] {
+  b0(v0: Request):
+    v1 = CallBuiltin v0 overload=RequestPrototypeHeaders/0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="anObjectOfAClass"
+# CHECK: v1: anything ~ Headers = CallBuiltin v0 overload=RequestPrototypeHeaders/0
+
+function f1 name="aStringThatIsMeasured" parameters=[{type=Request}] results=[{type=anything}] {
+  b0(v0: Request):
+    v1 = CallBuiltin v0 overload=RequestPrototypeUrl/0
+    v2 = PropGet v1 key="length"
+    Return v2
+}
+# CHECK-LABEL: function f1 name="aStringThatIsMeasured"
+# CHECK: v1: anything ~ string = CallBuiltin v0 overload=RequestPrototypeUrl/0
+# CHECK: TypeTest v1 testedType=string
+# CHECK: ([[text1]]: string):
+# CHECK-NOT: PropGet [[text1]]
+# CHECK: frequency=Unlikely:
+# CHECK: PropGet {{*}} key="length"
+
+function f2 name="aPromise" parameters=[{type=Blob}] results=[{type=anything}] {
+  b0(v0: Blob):
+    v1 = CallBuiltin v0 overload=BlobPrototypeText/0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="aPromise"
+# CHECK: v1: anything ~ Promise{{*}} = CallBuiltin v0 overload=BlobPrototypeText/0
+
+function f3 name="provenByTheTypeHandedOver" parameters=[{type=Response}] results=[{type=anything}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeStatus/0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="provenByTheTypeHandedOver"
+# CHECK-NOT: v1: anything
+# CHECK: = CallBuiltin v0 overload=ResponsePrototypeStatus/0

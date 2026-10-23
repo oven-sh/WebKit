@@ -85,6 +85,8 @@ FrameMaps computeFrameMaps(const Program&, const Function&, FunctionAnalyses&);
 
 struct FrameMapRecords {
     Vector<uint32_t> words;
+    bool anotherGeneratorCanTry { false };
+    bool hasSiteWithoutWord { false };
 
     uint32_t addMap(std::span<const uint32_t> map);
 

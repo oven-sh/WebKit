@@ -34,7 +34,7 @@ struct PropertyAccessQuery {
     bool isLeftOutByUnfinishedAllocation { false };
     // A test on the way here found the slot of the field empty, or may have.
     bool expectsEmptySlot { false };
-    // The read stands in hot code where readOptionsLeftOutAsUndefined() works: the tests of what lies above the object and beside the slot may stand behind the test of the slot.
+    // The read stands in hot code where addEmptySlotCases() works: the tests of what lies above the object and beside the slot may stand behind the test of the slot.
     bool mayTestSlotFirst { false };
     LayoutID declaringLayout;
     // The receiver is expected to be a class object, which no type proves: the closure of this function.
@@ -121,7 +121,18 @@ struct TestsOfEmptySlot {
 };
 
 // For an option: an optional field of records that some literal leaves out. The tests under which an object whose slot is empty answers undefined.
-std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID);
+enum class OptionKind : uint8_t {
+    RecordOption = 1 << 0,
+    LazilyInitializedField = 1 << 1,
+};
+std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID, OptionSet<OptionKind>);
+
+struct LazyFieldCreation {
+    Opcode operation;
+    ProofSet proofs;
+    MemberConditions conditions;
+};
+std::optional<LazyFieldCreation> planLazyFieldCreation(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID);
 
 Type storedTypeOf(const Program&, std::span<const LayoutID> receivers, PropertyKeyID, TypeArena&);
 

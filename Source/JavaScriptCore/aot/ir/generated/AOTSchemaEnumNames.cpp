@@ -562,14 +562,14 @@ ASCIILiteral nameOf(UserDiagnosticKind value)
 
 ASCIILiteral nameOf(InternalErrorKind value)
 {
-    static constexpr EnumeratorNames<142, 2887> names {
+    static constexpr EnumeratorNames<143, 2913> names {
         {
             0, 8, 30, 58, 85, 112, 128, 140, 155, 174, 190, 208, 220, 239, 256, 269, 285, 306, 325, 343, 356, 375, 393, 405, 424, 437, 451, 471, 487,
             503, 517, 538, 562, 574, 595, 608, 621, 637, 663, 682, 697, 715, 738, 758, 780, 798, 819, 835, 852, 867, 886, 903, 923, 949, 962, 977,
-            1005, 1022, 1040, 1054, 1071, 1091, 1111, 1130, 1151, 1175, 1194, 1210, 1232, 1248, 1270, 1286, 1311, 1329, 1342, 1366, 1387, 1400, 1418,
-            1439, 1458, 1476, 1504, 1531, 1550, 1571, 1588, 1607, 1635, 1661, 1680, 1710, 1729, 1755, 1773, 1791, 1809, 1836, 1863, 1884, 1912, 1941,
-            1962, 1981, 2002, 2028, 2051, 2080, 2106, 2133, 2159, 2181, 2196, 2219, 2241, 2261, 2282, 2304, 2328, 2355, 2375, 2396, 2420, 2448, 2470,
-            2488, 2509, 2536, 2557, 2579, 2608, 2638, 2663, 2680, 2700, 2722, 2748, 2771, 2797, 2818, 2841, 2861
+            1005, 1022, 1040, 1054, 1071, 1091, 1111, 1130, 1151, 1175, 1194, 1210, 1232, 1248, 1270, 1286, 1311, 1329, 1342, 1368, 1392, 1413, 1426,
+            1444, 1465, 1484, 1502, 1530, 1557, 1576, 1597, 1614, 1633, 1661, 1687, 1706, 1736, 1755, 1781, 1799, 1817, 1835, 1862, 1889, 1910, 1938,
+            1967, 1988, 2007, 2028, 2054, 2077, 2106, 2132, 2159, 2185, 2207, 2222, 2245, 2267, 2287, 2308, 2330, 2354, 2381, 2401, 2422, 2446, 2474,
+            2496, 2514, 2535, 2562, 2583, 2605, 2634, 2664, 2689, 2706, 2726, 2748, 2774, 2797, 2823, 2844, 2867, 2887
         },
         "Unknown\0" "InvalidCompileOptions\0" "VerificationFailedAfterPass\0" "VerificationFailedAtTheEnd\0" "SkippedPassChangesFunction\0"
         "ProgramTooShort\0" "NotAProgram\0" "SchemaMismatch\0" "SectionOutOfBounds\0" "ListOutOfBounds\0" "UnknownEnumerator\0" "UnknownFlag\0"
@@ -583,21 +583,21 @@ ASCIILiteral nameOf(InternalErrorKind value)
         "InvalidHandler\0" "HandlerArgumentNotAvailable\0" "InvalidBlockRole\0" "BlockOrderInvalid\0" "TypeOutOfDate\0" "BrokenResultRule\0"
         "WrongRepresentation\0" "OperandTypeMismatch\0" "StoredTypeMismatch\0" "EdgeArgumentMismatch\0" "EntryParametersMismatch\0"
         "ReturnTypeMismatch\0" "UpcastNotSubset\0" "ResultIndexOutOfRange\0" "ValueAfterNever\0" "InvalidEnvironmentUse\0" "UseNotDominated\0"
-        "FunctionEndsInFirstBlock\0" "GuardNotAvailable\0" "InvalidGuard\0" "OperandMustBeDefinition\0" "CycleWithoutLoopMark\0" "InvalidCatch\0"
-        "InvalidReturnCall\0" "InvalidTestAndBranch\0" "InvalidBuiltinCall\0" "InvalidSuspension\0" "IntrinsicOutsideLibraryCode\0"
-        "ExpectedTypeAfterSelection\0" "InvalidInlineFrame\0" "InvalidCreatorRecord\0" "InvalidRelations\0" "UseWithoutRelation\0"
-        "ClosureOnDemandWithoutField\0" "ObjectOnDemandWithoutRoom\0" "BorrowedObjectHeld\0" "FlowWriterOutsideDeclaredType\0" "FlowMembersInvalid\0"
-        "FlowRemovedCheckNotProven\0" "MaskCutKnownValue\0" "FlowEndedTooEarly\0" "FlowRuleWasNotDue\0" "EffectsExceedReplacedGroup\0"
-        "EffectsOfPreparedTooNarrow\0" "EffectsExceedSummary\0" "StoreOutsideDeclaredEffects\0" "RequiredTailCallNotConverted\0"
-        "FramePointerReturned\0" "FramePointerThrown\0" "FramePointerRetained\0" "CalleeRetainsFramePointer\0" "FramePointerInTailCall\0"
-        "FramePointerAcrossSuspension\0" "FrameCellAcrossIterations\0" "RawPointerAcrossSuspension\0" "RawPointerOutlivesStorage\0"
-        "RawPointerWithoutBase\0" "RawWordEscapes\0" "ResolvedTargetMismatch\0" "CursorInFunctionValue\0" "CursorGuardMismatch\0"
-        "CursorUsedAfterClose\0" "KeyOrderOfOtherObject\0" "BuilderCapacityExceeded\0" "BuilderCursorUsedAfterMove\0" "SlotAccessNotPlaced\0"
-        "PlacementCheckFailed\0" "ProgramTableCheckFailed\0" "RuntimeTypeStricterThanPlan\0" "UnsupportedConversion\0" "OpcodeWithoutCode\0"
-        "FrameMapNotEncodable\0" "AbsoluteAddressInProcedure\0" "RelocationNotLowered\0" "VariableReadBeforeSet\0" "FrameAddressAcrossSuspension\0"
-        "NarrowReferenceWithoutPointer\0" "DisplacedNarrowReference\0" "InvalidCodeUnits\0" "UncheckedStackCycle\0" "UncheckedStackTooDeep\0"
-        "CallToFunctionWithoutCode\0" "CallToStubNotGenerated\0" "ProcessAddressInImageCode\0" "RelocationNotApplied\0" "WritableSectionInImage\0"
-        "FunctionWithoutCode\0" "FrameSavesUnknownRegister"
+        "FunctionEndsInFirstBlock\0" "GuardNotAvailable\0" "InvalidGuard\0" "UnspecifiedValueInspected\0" "OperandMustBeDefinition\0"
+        "CycleWithoutLoopMark\0" "InvalidCatch\0" "InvalidReturnCall\0" "InvalidTestAndBranch\0" "InvalidBuiltinCall\0" "InvalidSuspension\0"
+        "IntrinsicOutsideLibraryCode\0" "ExpectedTypeAfterSelection\0" "InvalidInlineFrame\0" "InvalidCreatorRecord\0" "InvalidRelations\0"
+        "UseWithoutRelation\0" "ClosureOnDemandWithoutField\0" "ObjectOnDemandWithoutRoom\0" "BorrowedObjectHeld\0" "FlowWriterOutsideDeclaredType\0"
+        "FlowMembersInvalid\0" "FlowRemovedCheckNotProven\0" "MaskCutKnownValue\0" "FlowEndedTooEarly\0" "FlowRuleWasNotDue\0"
+        "EffectsExceedReplacedGroup\0" "EffectsOfPreparedTooNarrow\0" "EffectsExceedSummary\0" "StoreOutsideDeclaredEffects\0"
+        "RequiredTailCallNotConverted\0" "FramePointerReturned\0" "FramePointerThrown\0" "FramePointerRetained\0" "CalleeRetainsFramePointer\0"
+        "FramePointerInTailCall\0" "FramePointerAcrossSuspension\0" "FrameCellAcrossIterations\0" "RawPointerAcrossSuspension\0"
+        "RawPointerOutlivesStorage\0" "RawPointerWithoutBase\0" "RawWordEscapes\0" "ResolvedTargetMismatch\0" "CursorInFunctionValue\0"
+        "CursorGuardMismatch\0" "CursorUsedAfterClose\0" "KeyOrderOfOtherObject\0" "BuilderCapacityExceeded\0" "BuilderCursorUsedAfterMove\0"
+        "SlotAccessNotPlaced\0" "PlacementCheckFailed\0" "ProgramTableCheckFailed\0" "RuntimeTypeStricterThanPlan\0" "UnsupportedConversion\0"
+        "OpcodeWithoutCode\0" "FrameMapNotEncodable\0" "AbsoluteAddressInProcedure\0" "RelocationNotLowered\0" "VariableReadBeforeSet\0"
+        "FrameAddressAcrossSuspension\0" "NarrowReferenceWithoutPointer\0" "DisplacedNarrowReference\0" "InvalidCodeUnits\0" "UncheckedStackCycle\0"
+        "UncheckedStackTooDeep\0" "CallToFunctionWithoutCode\0" "CallToStubNotGenerated\0" "ProcessAddressInImageCode\0" "RelocationNotApplied\0"
+        "WritableSectionInImage\0" "FunctionWithoutCode\0" "FrameSavesUnknownRegister"
     };
     return nameAt(names, value);
 }
@@ -906,6 +906,17 @@ ASCIILiteral nameOf(ReferenceWidth value)
             0, 5
         },
         "Wide\0" "Narrow"
+    };
+    return nameAt(names, value);
+}
+
+ASCIILiteral nameOf(ImageForm value)
+{
+    static constexpr EnumeratorNames<2, 29> names {
+        {
+            0, 9
+        },
+        "Absolute\0" "PositionIndependent"
     };
     return nameAt(names, value);
 }

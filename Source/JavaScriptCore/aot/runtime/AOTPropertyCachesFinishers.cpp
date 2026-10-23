@@ -47,7 +47,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallSetterOfSlot, void, (Instance* instance
 
 static void addPropertyByTransition(VM& vm, JSObject* target, Structure* newStructure, PropertyOffset offset, JSValue value)
 {
-    ASSERT((newStructure->isTransitionFrom(target->structure()) || newStructure->transitionKind() == TransitionKind::PropertyRunAddition) && newStructure->isValidOffset(offset));
+    // The new Structure need not name the old one any more: it may have dropped its chain since the slot was filed, and have taken the like chain of other objects for its own.
+    ASSERT(newStructure->isValidOffset(offset) && newStructure->inlineCapacity() == target->structure()->inlineCapacity() && newStructure->storedPrototype() == target->structure()->storedPrototype());
     // An array that was born with room for its first named properties has the storage that the transition asks for.
     bool hasRoomInOwnCell = !target->structure()->outOfLineCapacity() && newStructure->outOfLineCapacity() == initialOutOfLineCapacity
         && std::bit_cast<char*>(target->butterfly()) == std::bit_cast<char*>(target) + sizeOfArrayWithStorage(0, propertyRoomOfArray);

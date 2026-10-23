@@ -80,6 +80,7 @@ public:
     PassOutcome narrowFieldTypes();
     PassOutcome nameCreatedSymbols();
     PassOutcome verify(IRForm);
+    void verifyUnspecifiedValues();
     PassOutcome guardTaintedPositions();
     PassOutcome analyzeFlow();
     PassOutcome applyFlowResults();

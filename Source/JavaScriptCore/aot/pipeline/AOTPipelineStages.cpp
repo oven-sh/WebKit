@@ -98,6 +98,18 @@ public:
             verify(form);
     }
 
+    void verifyAtEndOfPreparedForm()
+    {
+        if (m_pipeline.runner().build().options().verifiesAfterEveryStage) {
+            verify(IRForm::Prepared);
+            return;
+        }
+        if (!verifiesProgram())
+            return;
+        m_pipeline.verifyUnspecifiedValues();
+        m_times.didFinish(nameOf(PassID::VerifyProgram));
+    }
+
 private:
     Pipeline& m_pipeline;
     PhaseTimes m_times;
@@ -355,7 +367,7 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::AllocateInFrames);
     stage.run(PassID::AllocateInnerObjects);
     stage.run(PassID::ReuseEnvironments);
-    stage.verifyOnRequest(IRForm::Prepared);
+    stage.verifyAtEndOfPreparedForm();
 }
 
 void Pipeline::runSlotStage()

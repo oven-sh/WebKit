@@ -331,7 +331,7 @@ static void testImageIsAttachedToVM(LoadedProgram& program)
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     const ImageText& text = state.image->text();
     AOT_TEST_CHECK(program.instance().image.stringRecords == text.stringRecords().data() && program.instance().image.lazyStringHeaderOffsets == text.lazyHeaderOffsets());
-    AOT_TEST_CHECK(program.instance().image.lazyStringHeaders == text.lazyHeaders() && program.instance().image.lazyStringHeadersCapacity == text.lazyHeadersCapacity());
+    AOT_TEST_CHECK(program.instance().lazyStrings.headers == text.lazyHeaders() && program.instance().lazyStrings.capacity == text.lazyHeadersCapacity());
 #else
     AOT_TEST_CHECK(program.instance().image.programIdentifiers == state.identifiers->identifiers());
 #endif

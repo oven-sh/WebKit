@@ -279,13 +279,14 @@ static_assert(offsetof(BisectionSwitches, disabledSelectionRules) == 40); static
 static_assert(offsetof(BisectionSwitches, switchRange) == 56); static_assert(offsetof(BisectionSwitches, droppedGuard) == 64);
 
 struct TargetOptions {
-    uint64_t features { 0 }; Architecture architecture { }; ReferenceWidth referenceWidth { };
+    uint64_t features { 0 }; Architecture architecture { }; ReferenceWidth referenceWidth { }; ImageForm imageForm { }; uint32_t reserved { 0 };
 
     friend bool operator==(const TargetOptions&, const TargetOptions&) = default;
 };
-static_assert(sizeof(TargetOptions) == 16 && alignof(TargetOptions) == 8 && std::is_trivially_copyable_v<TargetOptions>);
+static_assert(sizeof(TargetOptions) == 24 && alignof(TargetOptions) == 8 && std::is_trivially_copyable_v<TargetOptions>);
 static_assert(offsetof(TargetOptions, features) == 0); static_assert(offsetof(TargetOptions, architecture) == 8);
-static_assert(offsetof(TargetOptions, referenceWidth) == 12);
+static_assert(offsetof(TargetOptions, referenceWidth) == 12); static_assert(offsetof(TargetOptions, imageForm) == 16);
+static_assert(offsetof(TargetOptions, reserved) == 20);
 
 struct CompileOptions {
     BisectionSwitches bisection; TargetOptions target; uint64_t loweredLimitValue { 0 }; double sizeClassProgression { 0 };
@@ -296,18 +297,18 @@ struct CompileOptions {
 
     friend bool operator==(const CompileOptions&, const CompileOptions&) = default;
 };
-static_assert(sizeof(CompileOptions) == 184 && alignof(CompileOptions) == 8 && std::is_trivially_copyable_v<CompileOptions>);
+static_assert(sizeof(CompileOptions) == 192 && alignof(CompileOptions) == 8 && std::is_trivially_copyable_v<CompileOptions>);
 static_assert(offsetof(CompileOptions, bisection) == 0); static_assert(offsetof(CompileOptions, target) == 72);
-static_assert(offsetof(CompileOptions, loweredLimitValue) == 88); static_assert(offsetof(CompileOptions, sizeClassProgression) == 96);
-static_assert(offsetof(CompileOptions, executableIdentity) == 104); static_assert(offsetof(CompileOptions, size) == 120);
-static_assert(offsetof(CompileOptions, action) == 124); static_assert(offsetof(CompileOptions, mismatchPolicy) == 128);
-static_assert(offsetof(CompileOptions, checks) == 132); static_assert(offsetof(CompileOptions, reports) == 136);
-static_assert(offsetof(CompileOptions, testing) == 140); static_assert(offsetof(CompileOptions, instrumentation) == 144);
-static_assert(offsetof(CompileOptions, heatOverride) == 148); static_assert(offsetof(CompileOptions, loweredLimit) == 152);
-static_assert(offsetof(CompileOptions, threadCount) == 156); static_assert(offsetof(CompileOptions, layoutSeed) == 160);
-static_assert(offsetof(CompileOptions, admittedCode) == 164); static_assert(offsetof(CompileOptions, output) == 168);
-static_assert(offsetof(CompileOptions, excludedCode) == 172); static_assert(offsetof(CompileOptions, sabotage) == 176);
-static_assert(offsetof(CompileOptions, reserved) == 180);
+static_assert(offsetof(CompileOptions, loweredLimitValue) == 96); static_assert(offsetof(CompileOptions, sizeClassProgression) == 104);
+static_assert(offsetof(CompileOptions, executableIdentity) == 112); static_assert(offsetof(CompileOptions, size) == 128);
+static_assert(offsetof(CompileOptions, action) == 132); static_assert(offsetof(CompileOptions, mismatchPolicy) == 136);
+static_assert(offsetof(CompileOptions, checks) == 140); static_assert(offsetof(CompileOptions, reports) == 144);
+static_assert(offsetof(CompileOptions, testing) == 148); static_assert(offsetof(CompileOptions, instrumentation) == 152);
+static_assert(offsetof(CompileOptions, heatOverride) == 156); static_assert(offsetof(CompileOptions, loweredLimit) == 160);
+static_assert(offsetof(CompileOptions, threadCount) == 164); static_assert(offsetof(CompileOptions, layoutSeed) == 168);
+static_assert(offsetof(CompileOptions, admittedCode) == 172); static_assert(offsetof(CompileOptions, output) == 176);
+static_assert(offsetof(CompileOptions, excludedCode) == 180); static_assert(offsetof(CompileOptions, sabotage) == 184);
+static_assert(offsetof(CompileOptions, reserved) == 188);
 
 } // namespace Wire
 

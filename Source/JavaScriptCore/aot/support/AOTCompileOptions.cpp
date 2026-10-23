@@ -31,7 +31,7 @@ static constexpr unsigned bitsPerSwitchWord = 64;
 static constexpr uint64_t fnvOffsetBasis = 0xcbf29ce484222325ull;
 static constexpr uint64_t fnvPrime = 0x100000001b3ull;
 
-static_assert(sizeof(WireOptions) == 184);
+static_assert(sizeof(WireOptions) == 192);
 static_assert(sizeof(LimitID) == 4);
 static_assert(std::is_same_v<decltype(WireOptions::sizeClassProgression), decltype(CompileOptions::sizeClassProgression)>);
 static_assert(std::is_same_v<decltype(Wire::BisectionSwitches::disabledPasses), PassSet>);
@@ -150,7 +150,7 @@ uint64_t RecordedOptions::hash() const
 
 bool RecordedOptions::isCompatibleWithProcess() const
 {
-    if (architecture != static_cast<uint8_t>(hostArchitecture()))
+    if (architecture != static_cast<uint8_t>(hostArchitecture()) || form() != imageFormOfThisRuntime())
         return false;
     if (!hasOnlyKnownFeatures(targetFeatures))
         return false;
@@ -290,6 +290,9 @@ void WireOptionsReader::readTarget(CompileOptions& options)
     options.recorded.architecture = static_cast<uint8_t>(architecture);
     options.recorded.targetFeatures = features;
     options.recorded.referenceWidth = static_cast<uint8_t>(checkedEnum(target.referenceWidth));
+    options.recorded.imageForm = static_cast<uint8_t>(checkedEnum(target.imageForm));
+    if (target.reserved)
+        reportInvalid(offsetOf(target.reserved));
     options.limits = LimitValues(architecture);
 }
 

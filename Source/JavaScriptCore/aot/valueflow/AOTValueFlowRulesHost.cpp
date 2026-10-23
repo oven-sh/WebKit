@@ -1094,11 +1094,13 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
     ClimbingSet takenFromHolders = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders));
     Vector<ValueFlowObjectID, 64> escapedObjectsOfLanguage;
     Vector<ValueFlowObjectID, 16> calledFunctionsOfHost;
+    bool callsLoaderThatHasEscaped = false;
     Attachments attachments(context);
     context.forEachMember(escaped, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);
         if (!builtin)
             return;
+        callsLoaderThatHasEscaped |= callsWhateverHasEscaped && eventOfCalling(builtins, builtins.canonicalID(builtin), context.refusesEvaluatedText()) == UnseenCodeCause::LoadsModuleByName;
         bool isOfLanguage = builtins.at(builtin).origin != BuiltinOrigin::Host;
         if (!isOfLanguage && callsWhateverHasEscaped && context.contains(takenFromHolders, object))
             calledFunctionsOfHost.append(object);
@@ -1108,6 +1110,12 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         if (callsWhateverHasEscaped || context.contains(run, object))
             attachments.addClassesAnsweredBy(builtin);
     });
+    if (callsLoaderThatHasEscaped) {
+        if (isRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
+            handLoadedModulesToNativeCode(context);
+        else if (isRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName))
+            handLibraryModulesToNativeCode(context);
+    }
     ClimbingSet escapedOfLanguage(context.maker().of(escapedObjectsOfLanguage.span()));
     ClimbingSet used = context.unite(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), escapedOfLanguage);
     // A built-in that a statement has had as itself has escaped as a value that the program handed over: the handler of a proxy holds it, or an object in the hands of native code. Whoever has it calls it.
