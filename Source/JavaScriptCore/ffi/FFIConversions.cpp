@@ -33,6 +33,7 @@
 #include "Error.h"
 #include "ExceptionHelpers.h"
 #include "FFIContext.h"
+#include "FFISignature.h"
 #include "FFIType.h"
 #include "FrameTracers.h"
 #include "JSArrayBuffer.h"
@@ -431,6 +432,25 @@ bool writeSlotFromJSValue(JSGlobalObject* globalObject, FFIContext& context, Typ
     return false;
 }
 
+bool slotIsBufferSnapshot(Type type, JSValue value)
+{
+    switch (type) {
+    case Type::Pointer:
+    case Type::CString:
+    case Type::Function:
+    case Type::Buffer:
+    case Type::BufferLength:
+        break;
+    default:
+        return false;
+    }
+
+    if (!value.isCell())
+        return false;
+    JSCell* cell = value.asCell();
+    return dynamicDowncast<JSArrayBufferView>(cell) || dynamicDowncast<JSArrayBuffer>(cell);
+}
+
 JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, uint64_t slot)
 {
     switch (type) {
@@ -522,6 +542,39 @@ JSC_DEFINE_JIT_OPERATION(operationFFIWriteSlot, void, (JSGlobalObject* globalObj
     ASSERT(context);
     ASSERT(typeTag < FFI::numberOfTypes);
     FFI::writeSlotFromJSValue(globalObject, *context, static_cast<FFI::Type>(typeTag), JSValue::decode(value), *slot, &context->arena());
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationFFIWriteSlotAndRetakeSnapshots, void, (JSGlobalObject* globalObject, FFI::Signature* signature, uint32_t index, EncodedJSValue value, uint64_t* slot))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASSERT(signature);
+    ASSERT(index < signature->argumentCount());
+    FFI::FFIContext& context = globalObject->ffiContext();
+    uint64_t* slots = slot - index;
+    const EncodedJSValue* parkedValues = reinterpret_cast<const EncodedJSValue*>(slots + signature->slotCount());
+
+    FFI::writeSlotFromJSValue(globalObject, context, signature->argumentType(index), JSValue::decode(value), *slot, &context.arena());
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+
+    // This conversion can have run JS: an integer or a float argument coerces through valueOf or
+    // Symbol.toPrimitive, and an object passed for a pointer has its 'ptr' property read. That JS
+    // can detach, transfer, or resize a buffer an earlier argument took its address or its byte
+    // length from. So take those snapshots again. Only the parked arguments that are still a
+    // snapshot are read again: a 'ptr' property getter must not run a second time.
+    for (unsigned i = 0; i < index; ++i) {
+        FFI::Type type = signature->argumentType(i);
+        JSValue parked = JSValue::decode(parkedValues[i]);
+        if (!FFI::slotIsBufferSnapshot(type, parked))
+            continue;
+        FFI::writeSlotFromJSValue(globalObject, context, type, parked, slots[i], &context.arena());
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+    }
+
     OPERATION_RETURN(scope);
 }
 

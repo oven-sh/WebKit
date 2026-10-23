@@ -70,7 +70,9 @@ bool tryConvertCallToCallFFI(DFG::Graph& graph, DFG::InsertionSet& insertionSet,
         return false;
     unsigned checkIndex = nodeIndex;
 
-    graph.m_parameterSlots = std::max(graph.m_parameterSlots, DFG::Graph::parameterSlotsForArgCount(signature.slotCount() + 1));
+    // The backend marshals the call in this area: one slot per argument, the return slot, then the
+    // parked argument values (see FFI::argumentValueOffset).
+    graph.m_parameterSlots = std::max(graph.m_parameterSlots, DFG::Graph::parameterSlotsForArgCount(signature.slotCount() + signature.argumentCount() + 1));
 
     for (unsigned index = 0; index < signature.argumentCount(); ++index) {
         Type type = signature.argumentType(index);
@@ -184,6 +186,36 @@ SpeculatedType speculatedResultTypeForCallFFI(DFG::Node* node)
     }
     RELEASE_ASSERT_NOT_REACHED();
     return SpecBytecodeTop;
+}
+
+bool conversionCanRunJS(Type type, DFG::UseKind useKind)
+{
+    if (useKind != DFG::UntypedUse)
+        return false;
+    switch (type) {
+    case Type::Buffer:
+    case Type::BufferLength:
+    case Type::JSValue:
+        return false;
+    default:
+        return true;
+    }
+}
+
+bool conversionCanTakeBufferSnapshot(Type type, DFG::UseKind useKind)
+{
+    if (useKind != DFG::UntypedUse)
+        return false;
+    switch (type) {
+    case Type::Pointer:
+    case Type::CString:
+    case Type::Function:
+    case Type::Buffer:
+    case Type::BufferLength:
+        return true;
+    default:
+        return false;
+    }
 }
 
 } } // namespace JSC::FFI

@@ -59,9 +59,28 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
     ASSERT(argumentCount <= Signature::maxArguments);
     uint64_t slots[Signature::maxArguments + 1];
 
+    // Two passes over the arguments. A conversion can run JS: an integer or a float argument
+    // coerces through valueOf or Symbol.toPrimitive, and an object passed for a pointer has its
+    // 'ptr' property read. That JS can detach, transfer, or resize a buffer, so every address and
+    // byte length read off a live buffer is taken in the second pass, after all of it has run.
+    // Without that, well-behaved C gets a pointer and a length for memory that is gone.
+    static_assert(Signature::maxArguments <= 32);
+    uint32_t snapshots = 0;
     for (unsigned i = 0; i < argumentCount; ++i) {
         Type type = signature.argumentType(i);
-        writeSlotFromJSValue(globalObject, context, type, callFrame->argument(i), slots[i], &context.stringArena());
+        JSValue argument = callFrame->argument(i);
+        if (slotIsBufferSnapshot(type, argument)) {
+            snapshots |= 1u << i;
+            continue;
+        }
+        writeSlotFromJSValue(globalObject, context, type, argument, slots[i], &context.stringArena());
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    for (unsigned i = 0; snapshots; ++i) {
+        if (!(snapshots & (1u << i)))
+            continue;
+        snapshots &= ~(1u << i);
+        writeSlotFromJSValue(globalObject, context, signature.argumentType(i), callFrame->argument(i), slots[i], &context.stringArena());
         RETURN_IF_EXCEPTION(scope, { });
     }
     slots[argumentCount] = 0;
