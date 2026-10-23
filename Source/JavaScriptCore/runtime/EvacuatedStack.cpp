@@ -140,17 +140,12 @@ static const Register* LEGACY_NODELETE topOfFrame(const CallFrame* callFrame)
         ASSERT(nativeCallee->category() == NativeCallee::Category::Wasm);
         auto* wasmCallee = uncheckedDowncast<Wasm::Callee>(nativeCallee);
 
-        switch (wasmCallee->compilationMode()) {
-        case Wasm::CompilationMode::WasmToJSMode:
-        case Wasm::CompilationMode::IPIntMode:
-        case Wasm::CompilationMode::BBQMode:
-        case Wasm::CompilationMode::OMGMode:
+        auto compilationMode = wasmCallee->compilationMode();
+        if (Wasm::isSliceableWasmFrame(compilationMode) || compilationMode == Wasm::CompilationMode::WasmToJSMode)
             return callFrame->registers() + 2;
-        case Wasm::CompilationMode::JSToWasmMode:
-            return alignStackPointer(callFrame->registers() + static_cast<size_t>(CallFrameSlot::firstArgument) + callFrame->argumentCount());
-        default:
-            RELEASE_ASSERT_NOT_REACHED(); // case not accounted for
-        }
+        // The slicers end a slice at a JSToWasm frame and at no other stub.
+        RELEASE_ASSERT(compilationMode == Wasm::CompilationMode::JSToWasmMode);
+        return alignStackPointer(callFrame->registers() + static_cast<size_t>(CallFrameSlot::firstArgument) + callFrame->argumentCount());
     } else {
         // A JSFunction
         return alignStackPointer(callFrame->registers() + static_cast<size_t>(CallFrameSlot::firstArgument) + callFrame->argumentCount());
@@ -241,9 +236,13 @@ Vector<std::unique_ptr<EvacuatedStackSlice>> StackSlicerBase::reverseAndTakeSlic
     Before slicing (always initiated by a Suspending function), the stack is in one of the
     following configurations, as indicated by the value of JSPIContext::purpose of
     vmTopJSPIContext (Promising vs Completing). There is always one or more Wasm frames
-    (IPInt, BBQ, or OMG) between JSToWasm and WasmToJS frames. The position of
-    JSPIContext::limitFrame is indicated by an arrow. Higher addresses/older calls are on
-    top.
+    (IPInt, BBQ, or OMG) between JSToWasm and WasmToJS frames. A tail call can leave a
+    RestoreFrame (see Wasm::RestoreFrameCallee) in place of the caller's frame: a frame
+    record plus the saved instance, which the tail callee returns into. IPInt writes one for
+    a cross-instance return_call, BBQ and OMG for a return_call to any import, so the frame
+    can sit directly above the WasmToJS frame. Wasm::isSliceableWasmFrame says which modes
+    the slicers treat as one more Wasm frame. The position of JSPIContext::limitFrame is
+    indicated by an arrow. Higher addresses/older calls are on top.
 
     Promising stack configuration:
 
@@ -354,25 +353,14 @@ IterationStatus SlabSlicer::step(VM& vm, StackVisitor& visitor)
     }
     case State::Scanning: {
         if (compilationMode.has_value()) {
-            switch (*compilationMode) {
-            case Wasm::CompilationMode::WasmToJSMode:
-            case Wasm::CompilationMode::IPIntMode:
-            case Wasm::CompilationMode::BBQMode:
-            case Wasm::CompilationMode::OMGMode:
-            case Wasm::CompilationMode::OMGForOSREntryMode: {
+            if (Wasm::isSliceableWasmFrame(*compilationMode) || *compilationMode == Wasm::CompilationMode::WasmToJSMode) {
                 m_pendingFrameRecords.append(callFrame);
-                break;
-            }
-            case Wasm::CompilationMode::JSToWasmICMode:
-            case Wasm::CompilationMode::JSToWasmMode: {
+            } else if (*compilationMode == Wasm::CompilationMode::JSToWasmICMode || *compilationMode == Wasm::CompilationMode::JSToWasmMode) {
                 m_pendingFrameRecords.append(callFrame);
                 m_state = State::ScannedJSToWasm;
-                break;
-            }
-            default: {
+            } else {
                 setErrorMessageWithCompilationMode("unrecognized type of Wasm frame: "_s, *compilationMode);
                 m_state = State::Failure;
-            }
             }
         } else { // no compilationMode - a JS frame
             m_errorMessage = "encountered an unexpected non-Wasm frame"_s;
@@ -457,10 +445,7 @@ IterationStatus FragSlicer::step(VM& vm, StackVisitor& visitor)
         break;
     }
     case State::ScannedWasmToJS: {
-        if (compilationMode == Wasm::CompilationMode::IPIntMode
-            || compilationMode == Wasm::CompilationMode::BBQMode
-            || compilationMode == Wasm::CompilationMode::OMGMode
-        ) {
+        if (compilationMode && Wasm::isSliceableWasmFrame(*compilationMode)) {
             ASSERT(m_futureSliceBottom && m_futureReturnFromFrame);
             m_futureSliceTop = topOfFrame(callFrame);
             m_pendingFrameRecords.append(callFrame);
@@ -473,11 +458,7 @@ IterationStatus FragSlicer::step(VM& vm, StackVisitor& visitor)
     }
     case State::ScanningWasm: {
         if (compilationMode.has_value()) {
-            switch (*compilationMode) {
-            case Wasm::CompilationMode::IPIntMode:
-            case Wasm::CompilationMode::BBQMode:
-            case Wasm::CompilationMode::OMGMode:
-            case Wasm::CompilationMode::OMGForOSREntryMode: {
+            if (Wasm::isSliceableWasmFrame(*compilationMode)) {
                 // Commit the pending slice and start a new pending from the bottom of this frame.
                 const CallFrame* savedReturnFromFrame = m_pendingFrameRecords.last();
                 auto* savedBottom = m_futureSliceTop;
@@ -486,18 +467,12 @@ IterationStatus FragSlicer::step(VM& vm, StackVisitor& visitor)
                 m_futureSliceTop = topOfFrame(callFrame);
                 m_futureReturnFromFrame = savedReturnFromFrame;
                 m_pendingFrameRecords.append(callFrame);
-                break;
-            }
-            case Wasm::CompilationMode::JSToWasmICMode:
-            case Wasm::CompilationMode::JSToWasmMode: {
+            } else if (*compilationMode == Wasm::CompilationMode::JSToWasmICMode || *compilationMode == Wasm::CompilationMode::JSToWasmMode) {
                 commitPendingSliceWithAdditionalFrame(callFrame);
                 m_state = State::ScannedJSToWasm;
-                break;
-            }
-            default: {
+            } else {
                 setErrorMessageWithCompilationMode("unrecognized type of Wasm frame: "_s, *compilationMode);
                 m_state = State::Failure;
-            }
             }
         } else { // no compilationMode - a JS frame
             m_errorMessage = "encountered an unexpected non-Wasm frame"_s;
