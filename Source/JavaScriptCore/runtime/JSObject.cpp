@@ -808,6 +808,10 @@ bool setterThatIgnoresPrototypeProperties(JSGlobalObject* globalObject, JSValue 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // A setter that is called with no receiver gets the caller's scope, and this would give
+    // it a property of the name the setter is for, which is a binding of the caller. Every
+    // caller of this is a custom setter, so none of them can take a JSScope for a receiver.
+    thisValue = thisValue.toThis(globalObject, ECMAMode::strict());
     if (!thisValue.isObject())
         return throwTypeError(globalObject, scope, "SetterThatIgnoresPrototypeProperties expected |this| to be an object."_s);
 

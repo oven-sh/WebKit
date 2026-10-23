@@ -155,7 +155,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncTest, (JSGlobalObject* globalObject, Cal
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
     if (!thisValue.isObject()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "RegExp.prototype.test requires that |this| be an Object"_s);
     JSObject* thisObject = asObject(thisValue);
@@ -296,7 +296,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncMatch, (JSGlobalObject* globalObject, Ca
 
     // 1. Let regexp be the this value.
     // 2. If regexp is not an Object, throw a TypeError exception.
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
     if (!thisValue.isObject()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "RegExp.prototype.@@match requires that |this| be an Object"_s);
     JSObject* thisObject = asObject(thisValue);
@@ -660,7 +660,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncSearch, (JSGlobalObject* globalObject, C
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
     if (!thisValue.isObject()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "RegExp.prototype.@@search requires that |this| be an Object"_s);
     JSObject* thisObject = asObject(thisValue);
@@ -1115,7 +1115,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncSplit, (JSGlobalObject* globalObject, Ca
 
     // 1. Let regexp be the this value.
     // 2. If regexp is not an Object, throw a TypeError exception.
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
     if (!thisValue.isObject()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "RegExp.prototype.@@split requires that |this| be an Object"_s);
     JSObject* thisObject = asObject(thisValue);
@@ -1721,7 +1721,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncReplace, (JSGlobalObject* globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
     if (!thisValue.isObject()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "RegExp.prototype.@@replace requires that |this| be an Object"_s);
     JSObject* thisObject = asObject(thisValue);
@@ -1738,7 +1738,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncMatchAll, (JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
 
     if (!thisValue.isObject()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "RegExp.prototype.@@matchAll requires that |this| be an Object"_s);
