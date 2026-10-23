@@ -334,6 +334,10 @@ public:
     {
         m_hasTerminationRequest = false;
         clearEntryScopeService(ConcurrentEntryScopeService::ResetTerminationRequest);
+#if ENABLE(AOT)
+        if (hasCompiledCode())
+            traps().didClearTerminationRequest();
+#endif
     }
     void LEGACY_NODELETE setHasTerminationRequest();
 

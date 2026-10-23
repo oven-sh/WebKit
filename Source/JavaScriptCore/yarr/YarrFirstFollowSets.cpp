@@ -296,7 +296,7 @@ Outcome CharacterSetWalker::collect(const PatternAlternative& alternative, unsig
     }
     if (!continuation->alternative) {
         walk.reachedEndOfGroup = true;
-        return Outcome::Done;
+        return passedAssertion ? Outcome::GaveUp : Outcome::Done;
     }
     if (continuation->repeatedGroup) {
         for (auto& nested : continuation->repeatedGroup->parentheses.disjunction->m_alternatives) {

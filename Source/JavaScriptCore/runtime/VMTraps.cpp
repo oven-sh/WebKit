@@ -428,6 +428,11 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
     Locker locker { *m_trapSignalingLock };
 
     bool shouldStop = needHandling(AsyncEvents);
+#if ENABLE(AOT)
+    // Compiled code polls the stop request alone, and looks at no trap bit. Native code that clears whatever was thrown may clear a TerminationException,
+    // whose bit is spent by then. So the polls stay armed for as long as the termination is asked for, and throw it again.
+    shouldStop |= vm().hasCompiledCode() && vm().hasTerminationRequest();
+#endif
 
     if (shouldStop == m_threadStopRequested)
         return; // State already matches, nothing to do.

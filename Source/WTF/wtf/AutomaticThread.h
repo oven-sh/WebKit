@@ -190,6 +190,12 @@ protected:
     // or to specify a custom stack size.
     virtual StackAllocationSpecification stackSpecification() { return { }; }
 
+#if ENABLE(AOT)
+    // Whether the work gets done without this thread too, by whoever made it available. Where Thread::survivesFailedCreation(), such a thread
+    // that cannot be started (the limit on threads is reached) is left out, and the next notification tries again. Any other crashes.
+    virtual bool isOptional() const { return false; }
+#endif
+
 private:
     friend class AutomaticThreadCondition;
 

@@ -14,6 +14,7 @@
 #include "AOTOperationScope.h"
 #include "AOTSavedFrame.h"
 #include "AOTUnwinding.h"
+#include "DeferTermination.h"
 #include "InternalFunction.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncGenerator.h"
@@ -31,6 +32,7 @@ namespace JSC { namespace AOT {
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewPromise, JSCell*, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewPromise);
+    DeferTerminationForAWhile deferTermination(vm);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     RELEASE_AND_RETURN(scope, JSPromise::create(vm, globalObject->promiseStructure()));
 }

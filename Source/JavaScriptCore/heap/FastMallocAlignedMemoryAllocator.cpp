@@ -168,6 +168,10 @@ private:
         }
 
         ASCIILiteral name() const final { return "JSCWarmUp"_s; }
+#if ENABLE(AOT)
+        // Whoever finds no block here makes one itself.
+        bool isOptional() const final { return true; }
+#endif
 
     protected:
         void threadDidStart() final

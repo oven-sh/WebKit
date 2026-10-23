@@ -12,6 +12,7 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTSavedFrame.h"
+#include "DeferTermination.h"
 #include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
 
@@ -21,6 +22,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGenerator, JSCell*, (Instance* 
 {
     constexpr Entry entry = Entry::operationAOTNewGenerator;
     AOT_OPERATION_BEGIN(instance, entry);
+    DeferTerminationForAWhile deferTermination(vm);
     JSObject* generatorFunction = objectArgument(closure, entry);
     JSObject* generator = createGenerator(globalObject, *instance, generatorFunction, isAsync ? CoroutineKind::AsyncGenerator : CoroutineKind::Generator);
     // The prototype property of a generator function is a data property that cannot be reconfigured, so reading it runs no code.
@@ -41,6 +43,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTakeGeneratorPrototype, void, (Ins
 {
     constexpr Entry entry = Entry::operationAOTTakeGeneratorPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
+    DeferTerminationForAWhile deferTermination(vm);
     JSObject* object = cellArgument<JSObject>(generator, entry);
     Structure* structure = structureOfGenerator(globalObject, *instance, objectArgument(closure, entry), generatorKind(object, entry));
     scope.releaseAssertNoException();

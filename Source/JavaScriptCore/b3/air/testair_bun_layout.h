@@ -28,7 +28,9 @@ template<typename Functor>
 static void checkBranchFallsThroughToLikelySuccessor(const Functor& appendBranch, int32_t (*runWith)(Compilation&, bool shouldBeTaken))
 {
     for (bool takenIsLikely : { true, false }) {
-        B3::Procedure proc;
+        B3::Policy policy;
+        policy.selection.extendsInstructionSelection = true;
+        B3::Procedure proc(policy);
         proc.setOptLevel(2);
         Code& code = proc.code();
         BasicBlock* root = code.addBlock();

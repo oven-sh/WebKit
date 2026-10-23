@@ -21,7 +21,7 @@ namespace JSC {
 inline size_t availableAddressSpace()
 {
 #if OS(LINUX)
-    static const size_t result = [] {
+    static const size_t result = []() -> size_t {
         struct rlimit limit;
         if (getrlimit(RLIMIT_AS, &limit) || limit.rlim_cur == RLIM_INFINITY)
             return std::numeric_limits<size_t>::max();

@@ -20,6 +20,7 @@
 #include "AOTStubsRegExp.h"
 #include "AOTVMState.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "InterpreterInlines.h"
 #include "JSCInlines.h"
 #include "RegExpConstructor.h"
@@ -354,6 +355,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpLiteral, JSCell*, (Instance* insta
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSharedRegExpLiteral, JSCell*, (Instance* instance, uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSharedRegExpLiteral);
+    DeferTerminationForAWhile deferTermination(vm);
     DeferGCForAWhile deferGC(vm);
     RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags));
     ASSERT(regExp->isValid());

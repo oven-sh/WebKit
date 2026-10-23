@@ -13,6 +13,7 @@
 #include "AOTOperationScope.h"
 #include "AOTRuntimeTable.h"
 #include "AOTUnwinding.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 
@@ -21,6 +22,7 @@ namespace JSC { namespace AOT {
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewDictionary);
+    DeferTerminationForAWhile deferTermination(vm);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     Structure* structure = globalObject->objectStructureForObjectConstructor();
     prepareFinalObjectAllocation(instance, InlineAllocation::DefaultFinalObject, structure);

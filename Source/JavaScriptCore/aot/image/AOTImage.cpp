@@ -22,6 +22,7 @@
 #include <limits>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/Threading.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -291,6 +292,7 @@ bool Image::publish(std::unique_ptr<Image>&& unpublishedImage)
     if (!s_current.compare_exchange_strong(expected, image.get(), std::memory_order_release, std::memory_order_relaxed))
         return false;
     JSCellButterfly::setStorageOutsideHeap(image->m_bytes);
+    Thread::setSurvivesFailedCreation();
     image.release();
     return true;
 }

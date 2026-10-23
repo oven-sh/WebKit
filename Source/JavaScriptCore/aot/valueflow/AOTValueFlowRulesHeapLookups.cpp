@@ -139,10 +139,14 @@ ClimbingSet HeapRule::startOfLookup(ClimbingSet receivers)
 HeapChain HeapRule::chainFrom(ClimbingSet receivers)
 {
     ClimbingSet start = startOfLookup(receivers);
-    ClimbingSet chain = m_context.valueOf(m_context.lookup(start, prototypeLinkName));
+    ValueFlowNodeID wholeChain = m_context.lookup(start, prototypeLinkName);
+    ClimbingSet chain = m_context.valueOf(wholeChain);
     ClimbingSet objects = known(chain);
-    if (m_keepsHoldersOfExportsItStartsFrom)
-        objects = m_context.unite(objects, m_context.restrict(start, m_universe.holdersOfLibraryExports()));
+    // The names of a namespace object are copied from the object that the body of its module answers, which is such a holder too: beside the unknown object the chain shows neither once it has escaped.
+    if (m_keepsHoldersOfExportsItStartsFrom) {
+        ClimbingSet holdersOfExports(m_universe.holdersOfLibraryExports());
+        objects = m_context.unite(objects, m_context.unite(m_context.restrict(start, m_universe.holdersOfLibraryExports()), m_context.valueWithin(holdersOfExports, wholeChain)));
+    }
     return { start, ClimbingSet(ValueSets::nothing), objects, objects, mayBeUnknownObject(chain) || mayBeUnknownObject(receivers), mayBeUntrackedObject(chain) || mayBeUntrackedObject(receivers) };
 }
 
@@ -1197,7 +1201,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             // Whoever makes an accessor of a property writes what the descriptor holds as `get` and `set` under the name, undefined too. An object that is marked for another name has none under this one.
             ClimbingSet redefinedObjects = m_context.markedAmong(otherWritableObjects, ObjectMutation::RedefineProperty);
             mayFindNothing = (holdsAnything(writableHolders) && holdsAnything(readWhereWritten(writableHolders, setter)))
-                || (holdsAnything(redefinedObjects) && (holdsAnything(readWhereWritten(redefinedObjects, getter)) || holdsAnything(readWhereWritten(redefinedObjects, setter))));
+                || (holdsAnything(otherWritableObjects) && holdsAnything(readWhereWritten(otherWritableObjects, setter)))
+                || (holdsAnything(redefinedObjects) && holdsAnything(readWhereWritten(redefinedObjects, getter)));
             forEachNodeStoredThroughPlaceholdersInto(chain.writableObjects, setter, [&](ValueFlowNodeID) {
                 mayFindNothing = true;
             });

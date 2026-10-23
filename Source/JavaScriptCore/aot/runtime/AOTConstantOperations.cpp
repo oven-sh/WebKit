@@ -20,6 +20,7 @@
 #include "AOTProgramTables.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "DeferTermination.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
@@ -80,6 +81,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBuiltinCell, JSCell*, (Instance* i
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBigIntConstant, EncodedJSValue, (Instance* instance, uint32_t index))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTBigIntConstant);
+    DeferTerminationForAWhile deferTermination(vm);
     DeferGCForAWhile deferGC(vm);
     OPERATION_RETURN(scope, JSValue::encode(instance->state->strings->bigIntConstant(globalObject, index)));
 }

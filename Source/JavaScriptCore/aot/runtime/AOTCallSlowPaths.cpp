@@ -128,7 +128,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportPoisonedAccess, void, (Insta
 {
     void* returnAddress = __builtin_return_address(0);
     void* frame = __builtin_frame_address(1);
-    dataLogLn("AOT: compiled code touches poisoned memory: function ", Image::current()->locate(returnAddress).function, ", at ", imageCodeOffset(returnAddress).value_or(0), " bytes into the code of the image");
+    CodeLocation location = Image::current()->locate(returnAddress);
+    if (location.kind == CodeKind::Stub)
+        dataLogLn("AOT: compiled code touches poisoned memory: a stub, at ", imageCodeOffset(returnAddress).value_or(0), " bytes into the code of the image");
+    else
+        dataLogLn("AOT: compiled code touches poisoned memory: function ", location.function, ", at ", imageCodeOffset(returnAddress).value_or(0), " bytes into the code of the image");
     __asan_report_error(returnAddress, frame, frame, address, sizeAndIsStore >> 8, sizeAndIsStore & 0xff);
     CRASH();
 }

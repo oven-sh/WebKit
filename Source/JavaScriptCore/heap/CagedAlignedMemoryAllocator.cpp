@@ -71,6 +71,10 @@ private:
         }
 
         ASCIILiteral name() const final { return "JSCWarmUpCage"_s; }
+#if ENABLE(AOT)
+        // Whoever finds no block here makes one itself.
+        bool isOptional() const final { return true; }
+#endif
 
     private:
         void threadDidStart() final

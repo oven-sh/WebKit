@@ -807,6 +807,19 @@ void invertBranch(BasicBlock* block)
     branch.args()[0] = branch.args()[0].inverted();
 }
 
+static bool isInvertedOnlyWithExtendedSelection(Opcode opcode)
+{
+    switch (opcode) {
+    case BranchTestBit32:
+    case BranchTestBit64:
+    case BranchFloatWithZero:
+    case BranchDoubleWithZero:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void optimizeBlockOrder(Code& code)
 {
     PhaseScope phaseScope(code, "optimizeBlockOrder"_s);
@@ -817,7 +830,10 @@ void optimizeBlockOrder(Code& code)
 
     // Finally, flip any branches that we recognize. It's most optimal if the taken successor does not point
     // at the next block.
+    const bool extendsSelection = code.proc().policy().selection.extendsInstructionSelection;
     for (BasicBlock* block : code) {
+        if (!extendsSelection && isInvertedOnlyWithExtendedSelection(block->last().kind.opcode))
+            continue;
         if (canInvertBranch(block->last()) && code.findNextBlock(block) == block->successorBlock(0))
             invertBranch(block);
     }

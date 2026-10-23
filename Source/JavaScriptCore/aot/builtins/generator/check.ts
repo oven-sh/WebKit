@@ -1262,7 +1262,10 @@ export function checkMutability(model: Pick<TableModel, "builtins">, problems: P
       );
     }
     if (builtin.mutability === "AlwaysLocked" && builtin.marks.includes("MayBeAbsent")) {
-      problems.add(null, `${builtin.text} may be absent and is AlwaysLocked: whoever reads a locked name takes what the table says for what is there`);
+      problems.add(
+        null,
+        `${builtin.text} may be absent and is AlwaysLocked: whoever reads a locked name takes what the table says for what is there`,
+      );
     }
     if (builtin.mutability !== "AlwaysLocked" || holder === null) continue;
     const isLockedByDefault = defaultMutabilityOf(builtin) === "AlwaysLocked";

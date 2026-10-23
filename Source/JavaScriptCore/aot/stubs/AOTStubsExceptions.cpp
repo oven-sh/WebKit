@@ -52,6 +52,18 @@ static void callLookupExceptionHandler(StubAssembler& jit)
     jit.call(T11, OperationPtrTag);
 }
 
+// The buffer lies on the stack, which the collector reads for references. Left as it is, it would hold whatever the frame of the handler had in its registers until the next throw:
+// behind an error for lack of memory, the very objects that filled the heap.
+static void restoreCalleeSavesAndClearBuffer(StubAssembler& jit, GPRReg vm, GPRReg scratch)
+{
+    jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(vm, scratch);
+    const RegisterAtOffsetList& saved = *RegisterSet::vmCalleeSaveRegisterOffsets();
+    for (unsigned i = 0; i < saved.registerCount(); ++i) {
+        if (saved.at(i).reg().isGPR())
+            jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), Address(scratch, saved.at(i).offset()));
+    }
+}
+
 static void jumpToGenericUnwindTarget(StubAssembler& jit)
 {
 #if ENABLE(WEBASSEMBLY)
@@ -89,7 +101,7 @@ void emitUnwind(StubAssembler& jit)
     callLookupExceptionHandler(jit);
     Jump isNotInCompiledCallers = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     jit.move(GPRInfo::returnValueGPR2, GPRInfo::callFrameRegister);
-    jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(savedVM, A2);
+    restoreCalleeSavesAndClearBuffer(jit, savedVM, A2);
     loadStackPointerOfHandler(jit);
     jit.farJump(GPRInfo::returnValueGPR, NoPtrTag);
     isNotInCompiledCallers.link(&jit);
@@ -145,7 +157,7 @@ void generateHandleExceptionPreservingRegisters(StubAssembler& jit)
     Jump isNotInCompiledCallers = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     jit.move(GPRInfo::returnValueGPR, landingPad);
     jit.move(GPRInfo::returnValueGPR2, GPRInfo::callFrameRegister);
-    jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(savedVM, A2);
+    restoreCalleeSavesAndClearBuffer(jit, savedVM, A2);
     for (unsigned i = 0; i < registers.size(); ++i) {
         if (registers[i].isGPR())
             jit.loadPtr(Address(sp, i * sizeof(CPURegister)), registers[i].gpr());
@@ -188,7 +200,7 @@ void generateCatch(StubAssembler& jit)
     vmReady.link(&jit);
 #endif
 
-    jit.restoreCalleeSavesFromVMEntryFrameCalleeSavesBuffer(vm, GPRInfo::regT0);
+    restoreCalleeSavesAndClearBuffer(jit, vm, GPRInfo::regT0);
     jit.loadPtr(Address(vm, VM::callFrameForCatchOffset()), GPRInfo::callFrameRegister);
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), Address(vm, VM::callFrameForCatchOffset()));
     jit.loadPtr(Address(vm, OBJECT_OFFSETOF(VM, targetMachinePCAfterCatch)), GPRInfo::regT1);

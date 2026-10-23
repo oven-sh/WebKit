@@ -214,12 +214,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetDelete, EncodedJSValue, (Instance* insta
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewMapIterator, JSCell*, (Instance* instance, JSCell* collection, uint32_t kind))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewMapIterator);
+    DeferTerminationForAWhile deferTermination(vm);
     OPERATION_RETURN(scope, JSMapIterator::create(vm, globalObject->mapIteratorStructure(), cellArgument<JSMap>(collection, Entry::operationAOTNewMapIterator), static_cast<IterationKind>(kind)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSetIterator, JSCell*, (Instance* instance, JSCell* collection, uint32_t kind))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSetIterator);
+    DeferTerminationForAWhile deferTermination(vm);
     OPERATION_RETURN(scope, JSSetIterator::create(vm, globalObject->setIteratorStructure(), cellArgument<JSSet>(collection, Entry::operationAOTNewSetIterator), static_cast<IterationKind>(kind)));
 }
 

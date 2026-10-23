@@ -299,6 +299,9 @@ public:
     bool needsOutOfMemoryError() const { return m_stack.stopsAtFunctionEntries(); }
     void setNeedsOutOfMemoryError(bool needsError) { m_stack.setStopsAtFunctionEntries(needsError); }
 #endif
+#if ENABLE(AOT)
+    void didClearTerminationRequest() { updateThreadStopRequestIfNeeded(); }
+#endif
 
 private:
     ALWAYS_INLINE BitField clearTrapWithoutCancellingThreadStop(Event event)

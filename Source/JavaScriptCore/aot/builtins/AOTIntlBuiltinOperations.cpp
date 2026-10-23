@@ -10,6 +10,7 @@
 
 #include "AOTOperationScope.h"
 #include "AOTRemovableFeature.h"
+#include "DeferTermination.h"
 #include "IntlDateTimeFormat.h"
 #include "IntlNumberFormat.h"
 #include <wtf/DateMath.h>
@@ -52,12 +53,14 @@ static JSCell* tryFormatNumber(JSGlobalObject* globalObject, EncodedJSValue form
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFormatDateTime, JSCell*, (Instance* instance, EncodedJSValue formatter, double timeValue))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFormatDateTime);
+    DeferTerminationForAWhile deferTermination(vm);
     OPERATION_RETURN(scope, callRemovable<RemovableFeature::IntlDateTimeFormat, RemovedFeatureStub::Abort, tryFormatDateTime>(globalObject, formatter, timeValue));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFormatNumber, JSCell*, (Instance* instance, EncodedJSValue formatter, double number))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFormatNumber);
+    DeferTerminationForAWhile deferTermination(vm);
     OPERATION_RETURN(scope, callRemovable<RemovableFeature::IntlNumberFormat, RemovedFeatureStub::Abort, tryFormatNumber>(globalObject, formatter, number));
 }
 

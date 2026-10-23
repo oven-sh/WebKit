@@ -26,6 +26,7 @@
 #include "AOTVector.h"
 #include "ButterflyInlines.h"
 #include "DeferGC.h"
+#include "DeferTermination.h"
 #include "GCDeferralContextInlines.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
@@ -227,6 +228,7 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConvertToDoubleStorage);
+    DeferTerminationForAWhile deferTermination(vm);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTConvertToDoubleStorage);
     // An array that refuses stays as it was, and goes on failing the test for Double storage.
     if (hasInt32(array->indexingType()) || hasUndecided(array->indexingType()))

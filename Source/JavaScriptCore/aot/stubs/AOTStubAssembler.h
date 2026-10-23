@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTASANShadowChecks.h"
 #include "AOTRelocation.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubBlob.h"
@@ -173,6 +174,35 @@ public:
     Call nearTailCall() = delete;
     Call threadSafePatchableNearCall() = delete;
 
+#if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
+#define AOT_FOR_EACH_STUB_MEMORY_ACCESS(v) \
+    v(load8, 1, Read) v(load8SignedExtendTo32, 1, Read) v(load16, 2, Read) v(load16Unaligned, 2, Read) v(load16SignedExtendTo32, 2, Read) \
+    v(load32, 4, Read) v(load32SignedExtendTo64, 4, Read) v(load64, 8, Read) v(loadPtr, 8, Read) v(loadFloat, 4, Read) v(loadDouble, 8, Read) \
+    v(loadPair64, 16, Read) v(loadVector, 16, Read) \
+    v(branch8, 1, Read) v(branch16, 2, Read) v(branch32, 4, Read) v(branch64, 8, Read) v(branchPtr, 8, Read) \
+    v(branchTest8, 1, Read) v(branchTest16, 2, Read) v(branchTest32, 4, Read) v(branchTest64, 8, Read) v(branchTestPtr, 8, Read) \
+    v(branchTestBit32, 4, Read) v(branchTestBit64, 8, Read) v(compare32, 4, Read) v(test32, 4, Read) \
+    v(compareOnFlags32, 4, Read) v(compareOnFlags64, 8, Read) v(testOnFlags64, 8, Read) \
+    v(convertInt32ToDouble, 4, Read) v(convertInt64ToDouble, 8, Read) v(convertFloatToDouble, 4, Read) \
+    v(addDouble, 8, Read) v(subDouble, 8, Read) v(mulDouble, 8, Read) v(divDouble, 8, Read) v(mul32, 4, Read) \
+    v(store8, 1, Write) v(store16, 2, Write) v(store32, 4, Write) v(store64, 8, Write) v(storePtr, 8, Write) v(storeFloat, 4, Write) v(storeDouble, 8, Write) \
+    v(storePair64, 16, Write) v(storeValue, 8, Write) \
+    v(add8, 1, Update) v(add32, 4, Update) v(add64, 8, Update) v(addPtr, 8, Update) v(sub32, 4, Update) v(sub64, 8, Update) \
+    v(and32, 4, Update) v(and64, 8, Update) v(or32, 4, Update) v(or64, 8, Update) v(xor32, 4, Update) v(xor64, 8, Update) \
+    v(neg32, 4, Update) v(neg64, 8, Update) v(not32, 4, Update) v(not64, 8, Update) \
+    v(branchAdd32, 4, Update) v(branchAdd64, 8, Update) v(branchSub32, 4, Update) v(branchMul32, 4, Update) v(atomicXchg32, 4, Update)
+
+#define AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS(name, size, kind) \
+    template<typename... Arguments> decltype(auto) name(Arguments&&... arguments) \
+    { \
+        checkASANShadow<size, MemoryAccess::kind>(arguments...); \
+        return CCallHelpers::name(std::forward<Arguments>(arguments)...); \
+    }
+    AOT_FOR_EACH_STUB_MEMORY_ACCESS(AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS)
+#undef AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS
+#undef AOT_FOR_EACH_STUB_MEMORY_ACCESS
+#endif
+
     struct BoundEntry {
         StubKey key;
         Label label;
@@ -187,6 +217,24 @@ public:
     [[nodiscard]] bool linkCallsAndAddresses(LinkBuffer&);
 
 private:
+#if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
+    enum class MemoryAccess : uint8_t { Read, Write, Update };
+
+    template<unsigned size, MemoryAccess access, typename... Arguments>
+    void checkASANShadow(const Arguments&... arguments)
+    {
+        size_t remaining = sizeof...(Arguments);
+        auto check = [&]<typename Argument>(const Argument& argument) {
+            --remaining;
+            if constexpr (std::is_same_v<Argument, Address> || std::is_same_v<Argument, BaseIndex>) {
+                recordUse(Entry::operationAOTReportPoisonedAccess);
+                emitASANShadowCheck(*this, argument, size, access == MemoryAccess::Write || (access == MemoryAccess::Update && !remaining));
+            }
+        };
+        (check(arguments), ...);
+    }
+#endif
+
     // An entry, or the register that has the offset of an entry in the run-time table.
     using CalledOperation = Variant<Entry, GPRReg>;
 

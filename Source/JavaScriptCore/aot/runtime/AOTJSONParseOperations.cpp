@@ -13,6 +13,7 @@
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include <cmath>
 #include <wtf/FastFloat.h>
@@ -190,6 +191,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseKey, UGPRPair, (Instance*
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseValue, UGPRPair, (Instance* instance, const uint8_t* cursor))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONParseValue);
+    DeferTerminationForAWhile deferTermination(vm);
     ParsedJSONValue parsed = parseJSONValueAt(*instance, vm, globalObject, cursor);
     OPERATION_RETURN(scope, makeUGPRPair(static_cast<UCPURegister>(JSValue::encode(parsed.value)), std::bit_cast<UCPURegister>(parsed.end)));
 }

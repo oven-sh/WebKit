@@ -173,6 +173,7 @@ public:
     }
 
     Knowledge findKnowledge(FunctionAnalyses&, const CallContext&, const BitVector* countAsMadeElsewhere = nullptr);
+    bool isMadeGiven(FunctionAnalyses&, const Knowledge&, const Value&);
     // The blocks of loops of which nothing says that they end.
     BitVector findBlocksThatMayRunForever(FunctionAnalyses&);
     bool terminatorMayMove(FunctionAnalyses&, BlockID);
@@ -221,6 +222,7 @@ private:
     ValueID allocationOf(const Function&, ValueID) const;
     TypeID withConstantsWidened(TypeID) const;
     std::optional<CallContext> contextOf(const Function& caller, const Knowledge&, const Value& call, const Function& callee) const;
+    bool isOtherNameOfFirstOperand(const Function&, const Value&) const;
     std::optional<InitializerCalleeAnswer> answerForCall(const Function&, const Knowledge&, const Value& call);
     std::optional<ValueID> operandReturnedBy(const Function&, const Value&) const;
     std::optional<Function> specialize(FunctionID, const CallContext&);
@@ -273,7 +275,7 @@ private:
     bool givesTheSameWheneverDone(ValueID) const;
     void forEachValueTakenBy(const Item&, NOESCAPE const Invocable<void(ValueID)> auto&);
     bool mayMove(const Item&, const Knowledge&);
-    bool handsOnWhatVariablesHold(const Item&) const;
+    bool handsOnWhatVariablesHold(const Item&);
     bool areSetInFrontOf(uint32_t item, std::span<const VariableID>);
     bool runsCompiledCode(const Item&);
     unsigned estimatedCostOf(const Item&) const;
@@ -908,6 +910,29 @@ bool MovableCode::terminatorMayMove(FunctionAnalyses& analyses, BlockID block)
     return !effects.mayRunOtherCode() && !effects.mayThrowByRule() && !effects.mayBeTerminated && effects.writes.containsOnly(heapsNobodyObserves | heapsWhoseWritesNobodySees);
 }
 
+bool MovableCode::isOtherNameOfFirstOperand(const Function& function, const Value& value) const
+{
+    return isCast(value.opcode) || value.opcode == Opcode::FinishClass || value.opcode == Opcode::NewClass || (value.opcode == Opcode::ToObject && typeOf(function, value.operand(0)).isObject());
+}
+
+bool MovableCode::isMadeGiven(FunctionAnalyses& analyses, const Knowledge& known, const Value& value)
+{
+    const Function& function = analyses.function();
+    if (interpretedOf(value.opcode) == Interpretation::Allocation || value.opcode == Opcode::NewDictionary || value.opcode == Opcode::NewArrayLike || value.opcode == Opcode::NewContiguousArray)
+        return true;
+    if (isOtherNameOfFirstOperand(function, value))
+        return known.made.get(value.operand(0).index());
+    if (value.opcode == Opcode::ArraySpeciesCreate)
+        return hasOnlyPristineArrays(typeOf(function, value.operand(1)));
+    if (std::optional<ValueID> returned = operandReturnedBy(function, value))
+        return known.made.get(returned->index());
+    if (builtinCallOpcodes.contains(value.opcode))
+        return freshnessOf(analyses.effectContext(), function, value) != ResultFreshness::Unknown;
+    if (std::optional<InitializerCalleeAnswer> answer = answerForCall(function, known, value))
+        return answer->mayMove && answer->returnsWhatItMade;
+    return false;
+}
+
 Knowledge MovableCode::findKnowledge(FunctionAnalyses& analyses, const CallContext& context, const BitVector* countAsMadeElsewhere)
 {
     const Function& function = analyses.function();
@@ -924,24 +949,12 @@ Knowledge MovableCode::findKnowledge(FunctionAnalyses& analyses, const CallConte
     }
 
     auto isAlias = [&](const Value& value) {
-        return isCast(value.opcode) || value.opcode == Opcode::FinishClass || value.opcode == Opcode::NewClass || (value.opcode == Opcode::ToObject && typeOf(function, value.operand(0)).isObject());
+        return isOtherNameOfFirstOperand(function, value);
     };
     auto isMadeBy = [&](ValueID id, const Value& value) {
         if (countAsMadeElsewhere && countAsMadeElsewhere->get(id.index()))
             return false;
-        if (interpretedOf(value.opcode) == Interpretation::Allocation || value.opcode == Opcode::NewDictionary || value.opcode == Opcode::NewArrayLike || value.opcode == Opcode::NewContiguousArray)
-            return true;
-        if (isAlias(value))
-            return known.made.get(value.operand(0).index());
-        if (value.opcode == Opcode::ArraySpeciesCreate)
-            return hasOnlyPristineArrays(typeOf(function, value.operand(1)));
-        if (std::optional<ValueID> returned = operandReturnedBy(function, value))
-            return known.made.get(returned->index());
-        if (builtinCallOpcodes.contains(value.opcode))
-            return freshnessOf(analyses.effectContext(), function, value) != ResultFreshness::Unknown;
-        if (std::optional<InitializerCalleeAnswer> answer = answerForCall(function, known, value))
-            return answer->mayMove && answer->returnsWhatItMade;
-        return false;
+        return isMadeGiven(analyses, known, value);
     };
     auto isUnchanging = [&](const Value& value) {
         if (hasOnlyObjectsThatNeverChange(m_arenas.types.at(value.type)))
@@ -2094,10 +2107,14 @@ bool DeferredInitializerScanner::mayMove(const Item& item, const Knowledge& know
 }
 
 // What follows looks into the object under its other name, so the item goes where the object is made.
-bool DeferredInitializerScanner::handsOnWhatVariablesHold(const Item& item) const
+bool DeferredInitializerScanner::handsOnWhatVariablesHold(const Item& item)
 {
-    if (!item.isRegion())
-        return isCast(m_function.at(item.value).opcode) || m_function.at(item.value).opcode == Opcode::FinishClass;
+    if (!item.isRegion()) {
+        const Value& value = m_function.at(item.value);
+        if (isCast(value.opcode) || value.opcode == Opcode::FinishClass)
+            return true;
+        return m_known.made.get(item.value.index()) && !m_code.isMadeGiven(m_analyses, m_knownIfVariablesHoldWhatWasMadeElsewhere, value);
+    }
     return std::ranges::any_of(m_function.at(item.join).parameters, [&](ValueID parameter) {
         return m_known.made.get(parameter.index()) && !m_knownIfVariablesHoldWhatWasMadeElsewhere.made.get(parameter.index());
     });

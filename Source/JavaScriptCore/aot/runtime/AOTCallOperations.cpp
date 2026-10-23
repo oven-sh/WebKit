@@ -20,6 +20,7 @@
 #include "AOTState.h"
 #include "ClonedArguments.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "ErrorConstructor.h"
 #include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
@@ -153,6 +154,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
     VM& vm = *instance->vm;
     // As for a native function.
     vm.topCallFrame = hostCallFrame;
+    DeferTerminationForAWhile deferTermination(vm);
     const UGPRPair isEngines = makeUGPRPair(0, 0);
     // The target may be a proxy again, and no function is entered that would test the stack. performProxyCall() throws the error.
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]

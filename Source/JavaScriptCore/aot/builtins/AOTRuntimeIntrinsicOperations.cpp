@@ -12,6 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
 #include "LinkTimeConstant.h"
@@ -47,6 +48,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNativeBinding, EncodedJSValue, (Instance* i
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, JSCell*, (Instance* instance, uint32_t constant))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTLinkTimeConstant);
+    DeferTerminationForAWhile deferTermination(vm);
     DeferGCForAWhile deferGC(vm);
     JSCell* cell = globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant));
     instance->realm.linkTimeConstants[constant] = JSValue::encode(cell);

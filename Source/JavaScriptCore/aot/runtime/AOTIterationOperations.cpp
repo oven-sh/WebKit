@@ -20,6 +20,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "IteratorOperations.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncFromSyncIterator.h"
@@ -223,6 +224,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCreateAsyncFromSyncIterator, JSCel
 {
     constexpr Entry entry = Entry::operationAOTCreateAsyncFromSyncIterator;
     AOT_OPERATION_BEGIN(instance, entry);
+    DeferTerminationForAWhile deferTermination(vm);
     JSObject* syncIterator = cellArgument<JSObject>(iterator, entry);
     JSValue nextMethod = JSValue::decode(next);
     IterationMode mode = IterationMode::Generic;

@@ -28,6 +28,7 @@
 #include "AOTVector.h"
 #include "ButterflyInlines.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "MarkedSpace.h"
 #include "ObjectAllocationProfileInlines.h"
@@ -436,6 +437,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, E
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryCopyTwoObjects, JSCell*, (Instance* instance, EncodedJSValue first, EncodedJSValue second))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryCopyTwoObjects);
+    DeferTerminationForAWhile deferTermination(vm);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     AssignmentPlanCache& plans = instance->state->objects->caches->assignmentPlans;
     JSFinalObject* copy = tryCopyTwoObjects(vm, *instance->state, globalObject, JSValue::decode(first), JSValue::decode(second));
@@ -447,6 +449,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryCopyTwoObjects, JSCell*, (Insta
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCloneObjectAs, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t requestOffset, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCloneObjectAs);
+    DeferTerminationForAWhile deferTermination(vm);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     const CloneAsRequest& request = requestAt<CloneAsRequest>(instance, requestOffset);
     const LayoutData& layout = instance->state->objects->layouts.layoutForShape(request.shape);

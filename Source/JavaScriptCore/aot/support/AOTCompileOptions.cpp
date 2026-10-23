@@ -155,7 +155,8 @@ bool RecordedOptions::isCompatibleWithProcess() const
         return false;
     if (!hasOnlyKnownFeatures(targetFeatures))
         return false;
-    if (!CPUFeatureSet::fromBits(static_cast<uint32_t>(targetFeatures)).isSubsetOf(CPUFeatureSet::host()))
+    // The operating system may report fewer features than the CPU has, and this binary already executes its build target's instructions.
+    if (!CPUFeatureSet::fromBits(static_cast<uint32_t>(targetFeatures)).isSubsetOf(CPUFeatureSet::host().unionWith(CPUFeatureSet::buildTarget())))
         return false;
     return useWideReferences() || MarkedBlockCage::isEnabled();
 }

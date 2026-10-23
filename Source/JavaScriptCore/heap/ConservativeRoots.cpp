@@ -277,8 +277,10 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
         if (jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(candidate)) || !m_heap.objectSpace().blocks().set().contains(candidate))
             return;
         void* cell = pointer;
+#if ENABLE(AOT)
         if (candidate->hasInnerCells() && MarkedBlock::isAtomAligned(pointer) && !AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::NarrowReferenceOnStackNamesNoInnerCell)) [[unlikely]]
             cell = candidate->outerCellOf(pointer);
+#endif
         if (candidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, cell))
             genericAddPointer<false>(pointer, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
     };

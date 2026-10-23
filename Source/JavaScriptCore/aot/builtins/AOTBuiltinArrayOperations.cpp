@@ -16,6 +16,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "ArrayPrototypeInlines.h"
 #include "ButterflyInlines.h"
+#include "DeferTermination.h"
 #include "JSArrayInlines.h"
 #include "JSArrayIterator.h"
 #include "JSCInlines.h"
@@ -318,6 +319,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayUnshift, EncodedJSValue, (Instance* in
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayIterator, JSCell*, (Instance* instance, JSCell* array, uint32_t kind))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayIterator);
+    DeferTerminationForAWhile deferTermination(vm);
     RELEASE_ASSERT(kind <= static_cast<uint32_t>(IterationKind::Entries));
     return JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), cellArgument<JSObject>(array, Entry::operationAOTNewArrayIterator), static_cast<IterationKind>(kind));
 }

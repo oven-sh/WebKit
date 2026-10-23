@@ -69,9 +69,15 @@ const ARMV8 = "-march=armv8-a+crc";
 
 // The variant is the label's suffix: bun-webkit-linux-amd64 is "release", bun-webkit-linux-amd64-debug-asan is
 // "debug-asan". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
+//
+// `aot: false` is ENABLE_AOT=0: neither the ahead-of-time compiler nor the run time of its programs is in the libraries.
+// That is what `bun` links. Each such variant has a twin with both, "-aot", which is what `bun-aot` links. Every other
+// variant has both: they are what the tests of the compiler run on.
 const variants = {
-  "release": { buildType: "Release", mimalloc: true },
-  "lto": { buildType: "Release", mimalloc: true, lto: true },
+  "release": { buildType: "Release", mimalloc: true, aot: false },
+  "aot": { buildType: "Release", mimalloc: true },
+  "lto": { buildType: "Release", mimalloc: true, lto: true, aot: false },
+  "lto-aot": { buildType: "Release", mimalloc: true, lto: true },
   "debug": { buildType: "Debug" },
   "asan": { buildType: "Release", sanitizers: SANITIZERS },
   "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS },
@@ -88,12 +94,15 @@ const variants = {
   "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
   // "release" and "lto" with ICU and WebKit compiled with HARDENING, and nothing else changed.
   "hardened": { buildType: "Release", mimalloc: true, hardened: true },
-  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
+  "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
 };
-const NO_ASAN = ["release", "lto", "debug"];
+const NO_ASAN = ["release", "aot", "lto", "lto-aot", "debug"];
 const ALL = [...NO_ASAN, "asan", "debug-asan"];
 const FUZZING = ["assertions", "coverage", "assertions-coverage"];
-const HARDENED = ["hardened", "lto-hardened"];
+const HARDENED = ["hardened", "lto-hardened", "lto-hardened-aot"];
+// "lto-aot" is "lto" with the compiler.
+const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/-aot$/, ""));
 
 // Each platform:
 //   label(arch)     the label of the release variant; the other variants append -<variant>
@@ -105,13 +114,15 @@ const HARDENED = ["hardened", "lto-hardened"];
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
-//                   the runner it does that on: a machine of the lane's own platform and architecture. "lto" ("release"
-//                   where there is no lto lane) is what bun ships, and nothing else runs "lto-hardened". The asan lanes
+//                   the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
+//                   what bun-aot ships, and nothing else runs "lto-hardened-aot". The job runs testaot too, so it cannot
+//                   take a lane without the compiler. The asan lanes
 //                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
 //                   on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
 //   bunTests        per architecture, the variants bun's CI links and then runs bun's tests with (buildPlatforms and
-//                   testPlatforms in bun's .buildkite/ci.ts, ltoDefault in its scripts/build/config.ts). See `programs`.
+//                   testPlatforms in bun's .buildkite/ci.ts, ltoDefault in its scripts/build/config.ts), each with its
+//                   "-aot" twin where it has one. See `programs`.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -121,8 +132,8 @@ const platforms = [
     packageOS: "linux",
     lanes: { amd64: [...ALL, ...FUZZING, ...HARDENED], arm64: ALL },
     tested: {
-      amd64: { on: "linux-x64-gh", variants: ["lto", "lto-hardened"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto"] },
+      amd64: { on: "linux-x64-gh", variants: ["lto-aot", "lto-hardened-aot"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto-aot"] },
     },
     testPrograms: ["testb3", "testair", "TestWTF"],
     bunTests: arch => (arch === "arm64" ? ["lto"] : ["lto", "asan"]),
@@ -188,10 +199,10 @@ const platforms = [
     lanes: {
       // ASAN is x64 only: LLVM ships no Windows ARM64 ASAN runtime. The sanitizer runtime (import lib, /MT runtime
       // thunk, DLL) comes from the compiler-rt-windows-* release tag.
-      amd64: ["release", "lto", "debug", "asan"],
+      amd64: ["release", "aot", "lto", "lto-aot", "debug", "asan"],
       // No arm64 lto: LLVM's CodeView emitter (still true of 23.1) has no register mapping for ARM64 NEON quad-register tuples
       // ("LLVM ERROR: unknown codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates values into them.
-      arm64: ["release", "debug"],
+      arm64: ["release", "aot", "debug"],
     },
     lto: LTO_WINDOWS,
     bunTests: arch => [arch === "arm64" ? "release" : "lto"],
@@ -248,7 +259,7 @@ const platforms = [
 function programs(platform, arch, variant, test) {
   const objects = ["jsc-objects", "testaot-objects"];
   if (test) return ["jsc", "testFFI", "testaot", ...objects];
-  if (platform.bunTests?.(arch).includes(variant)) return ["jsc", "testFFI", ...objects];
+  if (platform.bunTests?.(arch).includes(withoutAOT(variant))) return variants[variant].aot === false ? ["jsc", "testFFI"] : ["jsc", "testFFI", ...objects];
   return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan" ? ["jsc", ...objects] : ["jsc"];
 }
 
@@ -256,7 +267,7 @@ function programs(platform, arch, variant, test) {
 // tests, at the same paths. That is the schema, the two generators and the generated files the engine was compiled with:
 // 2 MB. bun's jobs that link no engine (its lint and type-check jobs) read it in place of a lane's tarball.
 // `from` packs it, out of its own output.
-const SOURCES = { label: "bun-webkit-aot-sources", from: "bun-webkit-linux-amd64-lto" };
+const SOURCES = { label: "bun-webkit-aot-sources", from: "bun-webkit-linux-amd64-lto-aot" };
 
 // A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage (less
 // comments, and less the global ARGs that `base` does not take, which are lane settings), the files that stage copies
@@ -297,6 +308,9 @@ const lanes = platforms.flatMap(platform =>
         ...(platform.testPrograms ? { TEST_PROGRAMS: test ? platform.testPrograms.join(" ") : "" } : {}),
         ...platform.args(arch, v, variant),
       };
+      // wtf/PlatformEnable.h turns it on wherever the FTL is on, unless it is defined. Every Dockerfile hands MARCH_FLAG to
+      // each compile of WebKit.
+      if (v.aot === false) buildArgs.MARCH_FLAG += " -DENABLE_AOT=0";
       const label = platform.label(arch) + (variant === "release" ? "" : `-${variant}`);
       return {
         label,

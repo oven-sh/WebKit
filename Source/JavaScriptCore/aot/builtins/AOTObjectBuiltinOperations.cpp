@@ -23,6 +23,7 @@
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "DeferGC.h"
+#include "DeferTermination.h"
 #include "GetterSetter.h"
 #include "InternalFieldTuple.h"
 #include "JSArrayInlines.h"
@@ -393,6 +394,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance* insta
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTObjectCreate, JSCell*, (Instance* instance, JSCell* prototypeOrNull))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectCreate);
+    DeferTerminationForAWhile deferTermination(vm);
     if (!prototypeOrNull) {
         Structure* structure = globalObject->nullPrototypeObjectStructure();
         prepareFinalObjectAllocation(instance, InlineAllocation::NullPrototypeObject, structure);

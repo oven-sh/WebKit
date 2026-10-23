@@ -11,6 +11,7 @@
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
+#include "DeferTermination.h"
 #include "Error.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
@@ -53,6 +54,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToObject, JSCell*, (Instance* instance, Enc
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToThis, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTToThis);
+    DeferTerminationForAWhile deferTermination(vm);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isUndefinedOrNull())
         OPERATION_RETURN(scope, JSValue::encode(globalObject->globalThis()));

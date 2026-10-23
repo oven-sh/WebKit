@@ -27,6 +27,7 @@
 #include "AOTStubsPolls.h"
 #include "AOTUnwinding.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "Error.h"
 #include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
@@ -52,6 +53,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
+    vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN(scope);
 }
 
@@ -61,6 +63,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance,
     // What a caller knows about a callee that collects nothing holds for the callee's prologue too.
     DeferGCForAWhile deferGC(vm);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
+    vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
         OPERATION_RETURN(scope, std::bit_cast<void*>(static_cast<uintptr_t>(pollAtPrologueMustThrow)));
@@ -180,6 +183,7 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeError, JSCell*, (Instance* instance, uint32_t errorKind))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewRuntimeError);
+    DeferTerminationForAWhile deferTermination(vm);
     RELEASE_AND_RETURN(scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(errorKind), nullptr));
 }
 
@@ -191,6 +195,7 @@ static Identifier identifierOf(VM& vm, StringID text)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeErrorWithName, JSCell*, (Instance* instance, uint32_t errorKind, uint32_t name))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewRuntimeErrorWithName);
+    DeferTerminationForAWhile deferTermination(vm);
     Identifier identifier = identifierOf(vm, StringID(name));
     RELEASE_AND_RETURN(scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(errorKind), &identifier));
 }
@@ -198,6 +203,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeErrorWithName, JSCell*, 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuppressedError, JSCell*, (Instance* instance, EncodedJSValue error, EncodedJSValue suppressed))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSuppressedError);
+    DeferTerminationForAWhile deferTermination(vm);
     constexpr bool useCurrentFrame = false;
     RELEASE_AND_RETURN(scope, createSuppressedError(globalObject, vm, globalObject->errorStructure(ErrorType::SuppressedError), JSValue::decode(error), JSValue::decode(suppressed), jsUndefined(), nullptr, TypeNothing, useCurrentFrame));
 }

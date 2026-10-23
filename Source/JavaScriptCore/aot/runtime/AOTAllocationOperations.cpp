@@ -19,6 +19,7 @@
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTUnwinding.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
@@ -66,6 +67,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMaterializeEnvironment, JSCell*, (
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance* instance, uint64_t request, uint64_t first, uint64_t second, uint64_t third, uint64_t fourth))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewClosureSlow);
+    DeferTerminationForAWhile deferTermination(vm);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     ObjectModel& objects = *instance->state->objects;
     uint64_t captures[] = { first, second, third, fourth };
@@ -121,6 +123,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Insta
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewMap, JSCell*, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewMap);
+    DeferTerminationForAWhile deferTermination(vm);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     if (AllocationCounts::isEnabled()) [[unlikely]]
         AllocationCounts::willAllocateMap(*instance);
@@ -132,6 +135,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewMap, JSCell*, (Instance* instan
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSet, JSCell*, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSet);
+    DeferTerminationForAWhile deferTermination(vm);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     if (AllocationCounts::isEnabled()) [[unlikely]]
         AllocationCounts::willAllocateSet(*instance);

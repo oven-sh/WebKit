@@ -105,7 +105,7 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseString(Cursor quote)
     return { parsed.string, parsed.end };
 }
 
-ParsedJSONValue JSONValueParser::parseNumber(Cursor cursor)
+NEVER_INLINE ParsedJSONValue JSONValueParser::parseNumber(Cursor cursor)
 {
     JSValue integer;
     if (Cursor end = tryParseSmallJSONInteger(cursor, integer)) [[likely]]
@@ -187,7 +187,7 @@ ALWAYS_INLINE std::optional<ParsedJSONValue> JSONValueParser::parseMembersInFron
     return std::nullopt;
 }
 
-ParsedJSONValue JSONValueParser::parseObject(Cursor brace, NamesOfElementInFront* inFront)
+NEVER_INLINE ParsedJSONValue JSONValueParser::parseObject(Cursor brace, NamesOfElementInFront* inFront)
 {
     if (!m_vm.isSafeToRecurse() || m_vm.traps().needsOutOfMemoryError()) [[unlikely]]
         return { };
@@ -363,7 +363,7 @@ ParsedJSONValue JSONValueParser::parseRemainingMembers(JSObject* object, Cursor 
     }
 }
 
-ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
+NEVER_INLINE ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
 {
     if (!m_vm.isSafeToRecurse() || m_vm.traps().needsOutOfMemoryError()) [[unlikely]]
         return { };
