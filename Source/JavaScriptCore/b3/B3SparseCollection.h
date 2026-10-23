@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(DFG_JIT)
+#if ENABLE(B3_JIT)
 
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
@@ -202,4 +202,4 @@ private:
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(DFG_JIT)
+#endif // ENABLE(B3_JIT)

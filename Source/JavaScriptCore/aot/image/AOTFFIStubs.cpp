@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTCodeTemplates.h"
 #include "AOTFlowResults.h"
 #include "AOTImageBuilder.h"
 #include "AOTImageFormat.h"
@@ -60,6 +61,12 @@ FFIStubs generateFFIStubs(BuildContext& context)
         return { };
     }
 
+    auto templates = CodeTemplates::create(context.assemblerPolicy(), &context);
+    if (!templates) {
+        reportLinkFailure(templates.error(), FunctionID(), context);
+        return { };
+    }
+
     std::span<const uint8_t> code = buffer.bytes();
     size_t codeOffset = roundUpToMultipleOf<stubCodeAlignment>(FFI::StubDirectory::sizeWithEntries(numberOfEntries));
     size_t contextOffset = roundUpToMultipleOf<imagePageSize>(codeOffset + code.size());
@@ -74,6 +81,7 @@ FFIStubs generateFFIStubs(BuildContext& context)
     result.code = Vector<uint8_t>(FillWith { }, contextOffset + imagePageSize, 0);
     std::span<uint8_t> bytes = result.code.mutableSpan();
     memcpySpan(bytes.subspan(codeOffset), code);
+    templates->fillWithBreakpoints(bytes.subspan(codeOffset + code.size(), contextOffset - codeOffset - code.size()));
 
     FFI::StubDirectory directory { offsetOf(invoke), safeCast<uint32_t>(contextOffset), safeCast<uint32_t>(imagePageSize), numberOfEntries };
     memcpySpan(bytes, asByteSpan(directory));

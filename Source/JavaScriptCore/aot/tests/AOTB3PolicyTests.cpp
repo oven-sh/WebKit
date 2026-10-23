@@ -190,7 +190,11 @@ static void testFunctionPolicy()
     checkAddressingAndAllocation(policy, lowering);
     checkUpstreamPolicy(policy.upstream);
     checkOptimizationPolicy(policy);
+#if defined(BUN_HARDENED)
+    AOT_TEST_CHECK(policy.validation.level == B3::ValidationLevel::AtBoundaries);
+#else
     AOT_TEST_CHECK(policy.validation.level == B3::ValidationLevel::FromOptions);
+#endif
     AOT_TEST_CHECK(!policy.validation.checksKnownPropertiesAtRunTime);
     AOT_TEST_CHECK(policy.limits == B3::LimitValues());
     AOT_TEST_CHECK(policy.targetFeatures == build.targetFeatures());
@@ -332,7 +336,7 @@ static void testBuildOptions()
     AOT_TEST_CHECK(!checkedPolicy.validation.checksKnownPropertiesAtRunTime);
     AOT_TEST_CHECK(checkedPolicy.collectsRemarks);
     AOT_TEST_CHECK(!checkedPolicy.air.frame.mayOmitFrameRecord);
-    checkedPolicy.validation.level = B3::ValidationLevel::FromOptions;
+    checkedPolicy.validation.level = lowestValidationLevel;
     checkedPolicy.collectsRemarks = false;
     checkedPolicy.air.frame.mayOmitFrameRecord = isX86_64();
     AOT_TEST_CHECK(WTF::toString(checkedPolicy) == description);
@@ -340,13 +344,13 @@ static void testBuildOptions()
     B3::Policy verifyingPolicy = policyWith({ "check=verify-each-pass"_s }, traitsFor(7), lowering);
     AOT_TEST_CHECK(verifyingPolicy.validation.level == B3::ValidationLevel::AtBoundaries);
     AOT_TEST_CHECK(!verifyingPolicy.validation.checksKnownPropertiesAtRunTime);
-    verifyingPolicy.validation.level = B3::ValidationLevel::FromOptions;
+    verifyingPolicy.validation.level = lowestValidationLevel;
     AOT_TEST_CHECK(WTF::toString(verifyingPolicy) == description);
 
     B3::Policy validatingPolicy = policyWith({ "validate"_s }, traitsFor(7), lowering);
     AOT_TEST_CHECK(validatingPolicy.validation.level == B3::ValidationLevel::AtBoundaries);
     AOT_TEST_CHECK(validatingPolicy.validation.checksKnownPropertiesAtRunTime);
-    validatingPolicy.validation.level = B3::ValidationLevel::FromOptions;
+    validatingPolicy.validation.level = lowestValidationLevel;
     validatingPolicy.validation.checksKnownPropertiesAtRunTime = false;
     AOT_TEST_CHECK(WTF::toString(validatingPolicy) == description);
 

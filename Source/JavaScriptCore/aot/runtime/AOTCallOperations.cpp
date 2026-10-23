@@ -302,7 +302,7 @@ static StringView nameOfCalleeAtCallSite(VM& vm)
     ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(site->throwSite[0]);
     if (static_cast<ThrowKind>(word.kind) != ThrowKind::NotAFunction)
         return { };
-    return Image::current()->text().view(StringID(word.hasWideA ? site->throwSite[1] : word.a));
+    return Image::current()->text().view(StringID(word.hasWideA ? site->throwSite[1] : word.narrowA()));
 }
 
 static JSValue calleeOfDecodedReference(Instance* instance, EncodedJSValue callee)

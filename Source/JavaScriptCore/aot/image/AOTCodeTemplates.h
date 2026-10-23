@@ -18,7 +18,7 @@ struct CodeTemplates {
     JS_EXPORT_PRIVATE static std::expected<CodeTemplates, LinkFailure> create(const AssemblerPolicy&, BuildContext*);
 
     size_t sizeOfVeneer() const { return veneer.bytes.size(); }
-    void fillWithBreakpoints(std::span<uint8_t>) const;
+    JS_EXPORT_PRIVATE void fillWithBreakpoints(std::span<uint8_t>) const;
 
     Vector<uint8_t> nearCall;
     Vector<uint8_t> nearJump;

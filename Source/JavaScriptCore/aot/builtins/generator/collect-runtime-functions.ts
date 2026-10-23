@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 import {
   GeneratorError,
+  leftOutOf,
   type Problems,
   type RuntimeFunctionRole,
   type Source,
@@ -94,11 +95,27 @@ const compareFunctions = (left: FunctionRef, right: FunctionRef): number =>
 
 export const sourceOf = (file: string, origin: Origin): Source => ({ file, line: null, origin, proof: "Structure" });
 
-export function engineBuiltinSources(javaScriptCore: string): string[] {
+/** The files of builtins/ that implement a member that is left out. An engine that is built without the member is built without the file. */
+function objectsLeftOut(declared: readonly SourcedDeclaration[]): Set<string> {
+  const roots = leftOutOf(declared).flatMap(leftOut => leftOut.paths);
+  const isLeftOut = (path: string): boolean => roots.some(root => path === root || path.startsWith(`${root}.`));
+  return new Set(
+    declared.flatMap(({ declaration }) =>
+      declaration.declares === "Member" && isLeftOut(declaration.path)
+        ? declaration.signatures.flatMap(({ implementation }) =>
+            implementation.how === "Compiled" ? [implementation.function.file] : [],
+          )
+        : [],
+    ),
+  );
+}
+
+export function engineBuiltinSources(javaScriptCore: string, declared: readonly SourcedDeclaration[]): string[] {
   const file = join(javaScriptCore, "CMakeLists.txt");
   const sources = readCMakeList(file, engineSourceListName, { JAVASCRIPTCORE_DIR: javaScriptCore });
   if (sources.length === 0) throw new GeneratorError(`${file}: there is no list ${engineSourceListName}`);
-  return sources;
+  const leftOut = objectsLeftOut(declared);
+  return sources.filter(source => !leftOut.has(basename(source, ".js")));
 }
 
 function blankComments(text: string): string {
@@ -181,7 +198,7 @@ function findEngineFunctions(sources: readonly string[]): EngineFunction[] {
 }
 
 export function engineFunctions(javaScriptCore: string): EngineFunction[] {
-  return findEngineFunctions(engineBuiltinSources(javaScriptCore));
+  return findEngineFunctions(engineBuiltinSources(javaScriptCore, []));
 }
 
 const exportedFunctionPattern = /^export\s+(?:async\s+)?function\s*\*?\s*([\w$]+)/gm;
@@ -292,7 +309,7 @@ function collectEngineHalf(
   declared: readonly SourcedDeclaration[],
   problems: Problems,
 ): EngineHalf {
-  const sources = engineBuiltinSources(javaScriptCore);
+  const sources = engineBuiltinSources(javaScriptCore, declared);
   const pathByObject = new Map(
     sources.map(file => [basename(file, ".js"), relative(javaScriptCore, file).split(sep).join("/")]),
   );

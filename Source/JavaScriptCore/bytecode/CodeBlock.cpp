@@ -477,7 +477,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             for (size_t i = 0; i < count; i++) {
                 const UnlinkedHandlerInfo& unlinkedHandler = unlinkedCodeBlock->exceptionHandler(i);
                 HandlerInfo& handler = m_rareData->m_exceptionHandlers[i];
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
                 auto& instruction = *instructions().at(unlinkedHandler.target).ptr();
                 handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(instruction.width()).code()));
 #else

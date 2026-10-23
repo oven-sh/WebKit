@@ -19,6 +19,7 @@
 #include "AOTStubsPolls.h"
 #include "AOTVector.h"
 #include "AirGenerationContext.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3Procedure.h"
 #include "LinkBuffer.h"
 #include "StackManager.h"

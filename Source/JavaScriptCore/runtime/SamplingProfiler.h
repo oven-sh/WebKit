@@ -84,7 +84,7 @@ public:
         std::optional<Wasm::IndexOrName> wasmIndexOrName;
 #endif
         std::optional<Wasm::CompilationMode> wasmCompilationMode;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         Box<PCToCodeOriginMap> wasmPCMap;
 #endif
     };

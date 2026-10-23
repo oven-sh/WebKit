@@ -41,6 +41,7 @@ Placement::Placement(PlacementParts&& parts)
     , m_constants(WTF::move(parts.constants))
     , m_functions(WTF::move(parts.functions))
     , m_classRanks(WTF::move(parts.classRanks))
+    , m_layoutsOutOfUse(WTF::move(parts.layoutsOutOfUse))
     , m_typesNeededAtRunTime(WTF::move(parts.typesNeededAtRunTime))
     , m_typesWithCells(WTF::move(parts.typesWithCells))
     , m_numberOfRegExpRecords(parts.numberOfRegExpRecords)
@@ -231,6 +232,8 @@ struct ShapeInputs {
     ShapeVariants variants;
     BitVector typesNeededAtRunTime;
     BitVector typesWithCells;
+    // The numbers of the shapes do not depend on which layouts are out of use.
+    BitVector typesThatOrderShapes;
 };
 
 } // anonymous namespace
@@ -266,13 +269,13 @@ static LayoutID ensureClosureLayout(ProgramEditor& editor)
     return editor.addLayout(WTF::move(closure));
 }
 
-// encodeLayoutRecords gives every layout of kind Instance a class record, in the order of the layouts.
-static Vector<std::optional<uint32_t>> rankClasses(const Program& program)
+// encodeLayoutRecords gives every layout of kind Instance that is in use a class record, in the order of the layouts.
+static Vector<std::optional<uint32_t>> rankClasses(const Program& program, const BitVector& layoutsOutOfUse)
 {
     Vector<std::optional<uint32_t>> ranks(program.layouts.size());
     uint32_t numberOfClasses = 0;
     for (size_t index = 0; index < program.layouts.size(); ++index) {
-        if (program.layouts[index].kind == LayoutKind::Instance)
+        if (program.layouts[index].kind == LayoutKind::Instance && !layoutsOutOfUse.get(index))
             ranks[index] = numberOfClasses++;
     }
     return ranks;
@@ -334,6 +337,7 @@ static ShapeInputs prepareShapeInputs(const StepRunner& steps, ProgramEditor& ed
             steps.runStep("computeTypesNeededAtRunTime"_s, [&] {
                 result.typesNeededAtRunTime = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude);
                 result.typesWithCells = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Include);
+                result.typesThatOrderShapes = sites.layoutsOutOfUse.isEmpty() ? result.typesNeededAtRunTime : computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude, LayoutsOutOfUse::Include);
             });
         },
         [&] { result.variants = steps.runStep("chooseShapeVariants"_s, [&] { return chooseShapeVariants(context, sites); }); },
@@ -373,6 +377,7 @@ struct PlacementInSteps::State {
     ShapeVariants variants;
     BitVector typesNeeded;
     BitVector typesWithCells;
+    BitVector typesThatOrderShapes;
     LiteralSites literals;
     MethodTableFunctions methodTableFunctions;
     PlacedOrderWords orderWords;
@@ -437,6 +442,7 @@ Placement PlacementInSteps::numberWhatRepresentationsAsk(ProgramEditor& editor, 
     state.variants = WTF::move(shapeInputs.variants);
     state.typesNeeded = WTF::move(shapeInputs.typesNeededAtRunTime);
     state.typesWithCells = WTF::move(shapeInputs.typesWithCells);
+    state.typesThatOrderShapes = WTF::move(shapeInputs.typesThatOrderShapes);
     return Placement(PlacementParts {
         .slots = &state.inputs.slots,
         .fieldAccesses = WTF::move(shapeInputs.fieldAccesses),
@@ -456,7 +462,7 @@ void PlacementInSteps::numberRest(Placement& placement)
     const PlacementContext& context = *state.context;
     const Program& program = context.program;
     PlacedSites& sites = state.sites;
-    const BitVector& typesNeeded = state.typesNeeded;
+    const BitVector& typesNeeded = state.typesThatOrderShapes;
     Vector<FieldAccess>& fieldAccesses = placement.m_fieldAccesses;
     const GuardBitTable& guardBits = placement.m_guardBits;
 
@@ -490,7 +496,7 @@ void PlacementInSteps::numberRest(Placement& placement)
         },
         [&] {
             functions = steps.runStep("numberFunctions"_s, [&] { return numberFunctions(context, sites); });
-            classRanks = steps.runStep("rankClasses"_s, [&] { return rankClasses(program); });
+            classRanks = steps.runStep("rankClasses"_s, [&] { return rankClasses(program, sites.layoutsOutOfUse); });
         },
     });
     steps.runStep("finishAllocations"_s, [&] { finishAllocations(context, shapes, state.orderWords, sites.allocations.span(), allocations); });
@@ -504,6 +510,7 @@ void PlacementInSteps::numberRest(Placement& placement)
     placement.m_constants = WTF::move(constants);
     placement.m_functions = WTF::move(functions);
     placement.m_classRanks = WTF::move(classRanks);
+    placement.m_layoutsOutOfUse = sites.layoutsOutOfUse;
     placement.m_typesNeededAtRunTime = WTF::move(state.typesNeeded);
     placement.m_typesWithCells = WTF::move(state.typesWithCells);
     placement.m_numberOfRegExpRecords = static_cast<unsigned>(state.inputs.regExpRequests.all().size());

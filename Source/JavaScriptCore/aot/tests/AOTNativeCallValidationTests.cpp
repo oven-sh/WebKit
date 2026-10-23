@@ -217,6 +217,16 @@ static void testConversionOfObjectOperandMayCollect()
     });
 }
 
+// A string that is still in pieces is made whole before it becomes a number.
+static void testConversionOfStringOperandMayCollect()
+{
+    Realms realms(RuntimeValidation::On);
+    SimulatedCall(realms, "Math.max"_s).run({ jsNumber(1), jsNontrivialString(realms.vm(), "12"_s) }, [&] {
+        realms.vm().heap.collectNow(Synchronousness::Sync, CollectionScope::Eden);
+        return jsNumber(12);
+    });
+}
+
 static void testReadsAreAccepted()
 {
     Realms realms(RuntimeValidation::On);
@@ -614,6 +624,7 @@ std::span<const NativeTest> nativeCallValidationTests()
         { "native-call-validation/reads-are-accepted"_s, testReadsAreAccepted },
         { "native-call-validation/conversion-of-an-object-operand-may-run-code"_s, testConversionOfObjectOperandMayRunCode },
         { "native-call-validation/conversion-of-an-object-operand-may-collect"_s, testConversionOfObjectOperandMayCollect },
+        { "native-call-validation/conversion-of-a-string-operand-may-collect"_s, testConversionOfStringOperandMayCollect },
         { "native-call-validation/changes-made-by-code-that-ran-are-accepted"_s, testChangesMadeByCodeThatRanAreAccepted },
         { "native-call-validation/collection-in-a-call-that-throws-is-accepted"_s, testCollectionInCallThatThrowsIsAccepted },
         { "native-call-validation/proxy-that-an-entry-uses-by-a-protocol-throws-by-itself"_s, testProxyThatAnEntryUsesByProtocolThrowsByItself },

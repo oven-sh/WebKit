@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
 #include "MacroAssemblerCodeRef.h"
 #include "WasmJS.h"
@@ -48,7 +48,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> crashDueToOMGStackOverflowGenerator(const 
 MacroAssemblerCodeRef<JITThunkPtrTag> materializeBaselineDataGenerator(const AbstractLocker&);
 MacroAssemblerCodeRef<JITThunkPtrTag> callPolymorphicCalleeGenerator(const AbstractLocker&);
 #endif
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 MacroAssemblerCodeRef<JITThunkPtrTag> triggerOMGEntryTierUpThunkGeneratorImpl(const AbstractLocker&, bool isSIMDContext);
 MacroAssemblerCodeRef<JITThunkPtrTag> triggerOMGEntryTierUpThunkGeneratorSIMD(const AbstractLocker&);
 MacroAssemblerCodeRef<JITThunkPtrTag> triggerOMGEntryTierUpThunkGeneratorNoSIMD(const AbstractLocker&);
@@ -80,4 +80,4 @@ private:
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#endif // ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)

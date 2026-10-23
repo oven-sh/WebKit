@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 namespace JSC::FTL {
 
@@ -41,4 +41,4 @@ enum class SelectPredictability : uint8_t {
 
 } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

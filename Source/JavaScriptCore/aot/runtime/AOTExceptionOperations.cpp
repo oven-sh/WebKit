@@ -38,6 +38,7 @@
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <array>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
@@ -260,13 +261,21 @@ struct DecodedThrowSite {
     bool isFaultSite;
 };
 
+static uint32_t wordBehindCall(const uint32_t* site, size_t index)
+{
+    return WTF::unalignedLoad<uint32_t>(reinterpret_cast<const uint8_t*>(site) + (index + 1) * ThrowSiteWord::sizeOfWordBehindCall - sizeof(uint32_t));
+}
+
 static DecodedThrowSite decodeThrowSite(const uint64_t* registers, const uint32_t* site, ThrowSiteSource source)
 {
     std::array<uint32_t, FaultSite::maxThrowSiteWords> localWords { };
     const uint32_t* words = nullptr;
     switch (source) {
     case ThrowSiteSource::WordsAfterCall:
-        words = site;
+        localWords[0] = wordBehindCall(site, 0);
+        if (std::bit_cast<ThrowSiteWord>(localWords[0]).hasWideA)
+            localWords[1] = wordBehindCall(site, 1);
+        words = localWords.data();
         break;
     case ThrowSiteSource::WordInRegister:
         localWords[0] = static_cast<uint32_t>(registers[static_cast<unsigned>(throwWordGPR)]);
@@ -281,7 +290,7 @@ static DecodedThrowSite decodeThrowSite(const uint64_t* registers, const uint32_
     }
     }
     ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(*words++);
-    uint32_t a = word.hasWideA ? *words : word.a;
+    uint32_t a = word.hasWideA ? *words : word.narrowA();
     return { word, a, source == ThrowSiteSource::FaultSite };
 }
 

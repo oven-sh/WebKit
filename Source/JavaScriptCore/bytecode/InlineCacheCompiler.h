@@ -28,6 +28,7 @@
 #if ENABLE(JIT)
 
 #include "AccessCase.h"
+#include "CCallHelpers.h"
 #include "InlineCacheHandler.h"
 #include "JITStubRoutine.h"
 #include "JSFunctionInlines.h"

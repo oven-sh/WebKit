@@ -23,6 +23,7 @@
 #include "AOTStubsCalls.h"
 #include "AOTThrowEmitter.h"
 #include "AOTVector.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"

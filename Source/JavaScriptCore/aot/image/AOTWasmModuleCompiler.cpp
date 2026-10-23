@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT) && ENABLE(WEBASSEMBLY_OMGJIT)
 
+#include "AOTB3Policy.h"
 #include "AOTBuildContext.h"
 #include "AOTCodeDescription.h"
 #include "AOTImageFormat.h"
@@ -94,6 +95,7 @@ static B3::Policy b3PolicyFor(CPUFeatureSet features, B3::RelocationLowering& lo
     policy.addressing.dataSectionSpace = static_cast<uint32_t>(RelocationSpace::Constants);
     policy.addressing.jumpTableSpace = static_cast<uint32_t>(RelocationSpace::JumpTables);
     policy.addressing.relocationLowering = &lowering;
+    policy.validation.level = lowestValidationLevel;
     policy.targetFeatures = features;
     return policy;
 }

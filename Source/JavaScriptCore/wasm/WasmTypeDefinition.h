@@ -863,7 +863,7 @@ public:
     String toString() const;
     void dump(WTF::PrintStream& out) const;
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     // For function-kind RTTs: returns the JS->Wasm IC entrypoint for this signature.
     // The IC cache + lock live on the RTT itself.
     CodePtr<JSEntryPtrTag> jsToWasmICEntrypoint() const;
@@ -1032,7 +1032,7 @@ private:
     mutable RefPtr<const RTTGroup> m_group { nullptr };
     mutable uint32_t m_canonicalIndexInGroup { 0 };
     mutable uint32_t m_virtualRefCount { 0 };
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     // Cache for the JS->Wasm IC entrypoint. Function-kind only; null for
     // struct/array. Lazy-initialized under m_jitCodeLock; once set, the IC
     // pointer is read without locking via the storeStoreFence in the writer.

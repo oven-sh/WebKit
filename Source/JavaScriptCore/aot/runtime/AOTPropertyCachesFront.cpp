@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEmptyPages.h"
+#include "AOTGuardedPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTPropertyCachesCustomAccessors.h"
 #include "AOTRuntimeCounters.h"
@@ -34,7 +35,7 @@ static_assert(!(RowDisplacementTable::cellsPerPlane % 64));
 
 static void* reserveForTable(size_t size)
 {
-    void* result = OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages);
+    void* result = reserveGuardedPages(size);
 #if OS(LINUX)
     while (madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
 #endif
@@ -61,7 +62,7 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
 RowDisplacementTable::~RowDisplacementTable()
 {
     clear();
-    OSAllocator::decommitAndRelease(m_planes[0], sizeOfTables);
+    releaseGuardedPages(m_planes[0], sizeOfTables);
 }
 
 void RowDisplacementTable::writeCell(SlotAccess access, uint32_t index, PackedSlot cell)

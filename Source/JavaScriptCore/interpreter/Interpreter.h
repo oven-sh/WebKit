@@ -137,7 +137,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
 
         bool m_valid { false };
         HandlerType m_type;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         CodePtr<ExceptionHandlerPtrTag> m_nativeCode;
         CodePtr<ExceptionHandlerPtrTag> m_nativeCodeForDispatchAndCatch;
 #endif

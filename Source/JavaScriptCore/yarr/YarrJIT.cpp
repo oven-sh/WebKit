@@ -64,14 +64,16 @@ static constexpr bool verbose = false;
 #if !defined(YARR_FOR_IMAGE)
 static constexpr int32_t errorCodePoint = -1;
 
-#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(JIT)
 static MacroAssemblerCodeRef<JITThunkPtrTag> tryReadUnicodeCharSlowThunkGenerator(VM&);
 #endif
 
 #if ENABLE(YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAreCanonicallyEquivalent, bool, (unsigned, unsigned, CanonicalMode));
 
+#if ENABLE(JIT)
 static MacroAssemblerCodeRef<JITThunkPtrTag> areCanonicallyEquivalentThunkGenerator(VM&);
+#endif
 
 // Since the generator areCanonicallyEquivalentThunkGenerator() needs to be static,
 // we set the incoming argument registers to the thunk here and ASSERT at runtime
@@ -771,8 +773,11 @@ static void tryReadUnicodeCharImpl(CCallHelpers& jit, MacroAssembler::RegisterID
     done.append(jit.jump());
 
     slowCases.link(&jit);
-#if !defined(YARR_FOR_IMAGE)
+#if !defined(YARR_FOR_IMAGE) && ENABLE(JIT)
     jit.nearCallThunk(CodeLocationLabel { vm.getCTIStub(tryReadUnicodeCharSlowThunkGenerator).template retaggedCode<NoPtrTag>() });
+#elif !defined(YARR_FOR_IMAGE)
+    UNUSED_PARAM(vm);
+    RELEASE_ASSERT_NOT_REACHED();
 #else
     addressing.callRoutine(SharedRoutine { SharedRoutine::SlowCodePointRead { } });
 #endif
@@ -3846,8 +3851,10 @@ class YarrGenerator final : public YarrJITInfo {
             int32_t canonicalMode = static_cast<int32_t>(m_decodeSurrogatePairs ? CanonicalMode::Unicode : CanonicalMode::UCS2);
             m_jit.move(MacroAssembler::TrustedImm32(canonicalMode), areCanonicallyEquivalentCanonicalModeArgReg);
 
-#if !defined(YARR_FOR_IMAGE)
+#if !defined(YARR_FOR_IMAGE) && ENABLE(JIT)
             m_jit.nearCallThunk(CodeLocationLabel { m_vm->getCTIStub(areCanonicallyEquivalentThunkGenerator).retaggedCode<NoPtrTag>() });
+#elif !defined(YARR_FOR_IMAGE)
+            RELEASE_ASSERT_NOT_REACHED();
 #else
             callRoutine(SharedRoutine::CanonicalEquivalence { m_decodeSurrogatePairs ? CanonicalMode::Unicode : CanonicalMode::UCS2 });
 #endif
@@ -12757,7 +12764,7 @@ private:
 };
 
 #if !defined(YARR_FOR_IMAGE)
-#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(JIT)
 static MacroAssemblerCodeRef<JITThunkPtrTag> tryReadUnicodeCharSlowThunkGenerator(VM&)
 {
     CCallHelpers jit(nullptr);
@@ -12785,6 +12792,7 @@ struct CodeGenerationAttempt {
 
 #if !defined(YARR_FOR_IMAGE)
 #if ENABLE(YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS)
+#if ENABLE(JIT)
 static MacroAssemblerCodeRef<JITThunkPtrTag> areCanonicallyEquivalentThunkGenerator(VM&)
 {
     CCallHelpers jit(nullptr);
@@ -12866,6 +12874,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> areCanonicallyEquivalentThunkGenera
 
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Yarr areCanonicallyEquivalent", "YARR areCanonicallyEquivalent call");
 }
+#endif
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAreCanonicallyEquivalent, bool, (unsigned a, unsigned b, CanonicalMode canonicalMode))
 {

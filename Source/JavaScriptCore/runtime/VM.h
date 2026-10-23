@@ -507,6 +507,8 @@ public:
 
 #if ENABLE(JIT)
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
+#elif ENABLE(AOT)
+    void* m_inPlaceOfJITSizeStatistics { nullptr };
 #endif
 #if ENABLE(AOT)
     using AOTState = AOT::VMState;
@@ -809,7 +811,11 @@ public:
     static JS_EXPORT_PRIVATE bool canUseAssembler();
     static bool isInMiniMode()
     {
+#if ENABLE(JIT) || !ENABLE(AOT)
         return (!Options::useJIT() && !Options::runsCompiledImage()) || Options::forceMiniVMMode();
+#else
+        return Options::forceMiniVMMode();
+#endif
     }
 
     static bool useUnlinkedCodeBlockJettisoning()
@@ -829,9 +835,13 @@ public:
     MacroAssemblerCodeRef<JITThunkPtrTag> getCTIStub(ThunkGenerator);
     MacroAssemblerCodeRef<JITThunkPtrTag> getCTIStub(CommonJITThunkID);
     std::unique_ptr<SharedJITStubSet> m_sharedJITStubs;
+#elif ENABLE(AOT)
+    void* m_inPlaceOfJITStubs[2] { };
 #endif
 #if ENABLE(FTL_JIT)
     std::unique_ptr<FTL::Thunks> ftlThunks;
+#elif ENABLE(AOT)
+    void* m_inPlaceOfFTLThunks { nullptr };
 #endif
 
     NativeExecutable* getHostFunction(NativeFunction, ImplementationVisibility, NativeFunction constructor, unsigned length, const String& name);

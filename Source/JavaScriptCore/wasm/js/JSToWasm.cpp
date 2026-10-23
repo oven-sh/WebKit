@@ -27,12 +27,13 @@
 #include "JSToWasm.h"
 #include "WasmCallee.h"
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
 #include "CCallHelpers.h"
 #include "JSCJSValueInlines.h"
 #include "JSWebAssemblyInstance.h"
 #include "MaxFrameExtentForSlowPathCall.h"
+#include "ThunkGenerator.h"
 #include "WasmCallingConvention.h"
 #include "WasmContext.h"
 #include "WasmOperations.h"
@@ -775,4 +776,4 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#endif // ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)

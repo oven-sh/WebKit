@@ -81,6 +81,7 @@ private:
 
     Narrowing& narrowingOf(TypeID replacedType, const Type& provenType);
     TypeID castTypeFor(Narrowing&, const Type& provenType);
+    bool isReachedByCastIn(BlockID target, const Use&) const;
     void replace(const Use&, ValueID replacement);
 
     FunctionPassContext& m_context;
@@ -391,6 +392,24 @@ TypeID DominatedUseReplacer::castTypeFor(Narrowing& narrowing, const Type& prove
     return *narrowing.castType;
 }
 
+// A parameter is available at the head of its block and in the handler of that block. A cast that is put into the block is not.
+bool DominatedUseReplacer::isReachedByCastIn(BlockID target, const Use& use) const
+{
+    if (use.block != target)
+        return m_context.analyses.dominators().terminatorDominates(target, use.block);
+
+    switch (use.kind) {
+    case Use::Kind::Operand:
+    case Use::Kind::TerminatorOperand:
+    case Use::Kind::EdgeArgument:
+        return true;
+    case Use::Kind::HandlerArgument:
+    case Use::Kind::BlockSubject:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void DominatedUseReplacer::replace(const Use& use, ValueID replacement)
 {
     replaceUse(m_function, use, replacement);
@@ -404,6 +423,7 @@ void DominatedUseReplacer::replaceUsesDominatedBy(Edge edge, ValueID subject, Va
     TypeID provenTypeID = m_function.at(proven).type;
     Type provenType = m_context.types.at(provenTypeID);
     ProgramPoint pointOfTest = pointBeforeTerminatorOf(m_function, edge.from);
+    BlockID target = targetOf(m_function, edge).block;
     m_narrowings.shrink(0);
 
     auto uses = std::ranges::equal_range(m_uses, analyses.identityOf(subject), { }, &NarrowableUse::identity);
@@ -427,7 +447,7 @@ void DominatedUseReplacer::replaceUsesDominatedBy(Edge edge, ValueID subject, Va
             continue;
         }
         // What a value defined behind the edge says holds from its definition on.
-        if (!analyses.dominates(current, pointOfTest))
+        if (!analyses.dominates(current, pointOfTest) || !isReachedByCastIn(target, use))
             continue;
         if (TypeID castType = castTypeFor(narrowing, provenType)) {
             narrowable.getsCast = true;

@@ -291,9 +291,11 @@ static constexpr Step steps[] = {
         [](Procedure& procedure, PipelineState& state) {
             return cleanupsIfChanged(rotateLoops(procedure, &state.topTestedVersionHeaders), { Cleanup::FixSSA, Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
         } },
+#if ENABLE(WEBASSEMBLY)
     { "eliminateWasmGCAllocations"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.usesWasmGCStructAllocations() && procedure.policy().upstream.eliminatesWasmGCAllocations; },
         runPass<eliminateWasmGCAllocations> },
+#endif
     // This puts the IR in quirks mode.
     { "lowerMacros"_s, always, runPass<lowerMacros> },
     { "optimizeAssociativeExpressionTrees"_s,

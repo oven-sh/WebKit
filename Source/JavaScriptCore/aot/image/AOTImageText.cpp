@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTGuardedPages.h"
 #include "AOTImage.h"
 #include "AOTVector.h"
 #include <array>
@@ -46,8 +47,8 @@ ImageText::ImageText(const Image& image)
     , m_stringConstants(image.section<uint32_t>(ImageSection::StringConstants))
     , m_stringRecords(image.section<ImageStringRecord>(ImageSection::StringHeaders))
 {
-    m_lazyHeaderOffsets = static_cast<std::atomic<uint32_t>*>(OSAllocator::reserveAndCommit(lazyHeaderOffsetsSize()));
-    m_lazyHeadersReservation = OSAllocator::reserveAndCommit(lazyHeadersReservationSize());
+    m_lazyHeaderOffsets = static_cast<std::atomic<uint32_t>*>(reserveGuardedPages(lazyHeaderOffsetsSize(), OSAllocator::UnknownUsage));
+    m_lazyHeadersReservation = reserveGuardedPages(lazyHeadersReservationSize(), OSAllocator::UnknownUsage);
     m_lazyHeaders = std::bit_cast<uint8_t*>(roundUpToMultipleOf<lazyHeadersAlignment>(std::bit_cast<uintptr_t>(m_lazyHeadersReservation)));
     RELEASE_ASSERT(lazyHeadersCapacity() <= std::numeric_limits<uint32_t>::max());
     auto& arena = *reinterpret_cast<LazyStringHeaderArena*>(m_lazyHeaders);
@@ -57,8 +58,8 @@ ImageText::ImageText(const Image& image)
 
 ImageText::~ImageText()
 {
-    OSAllocator::decommitAndRelease(m_lazyHeaderOffsets, lazyHeaderOffsetsSize());
-    OSAllocator::decommitAndRelease(m_lazyHeadersReservation, lazyHeadersReservationSize());
+    releaseGuardedPages(m_lazyHeaderOffsets, lazyHeaderOffsetsSize());
+    releaseGuardedPages(m_lazyHeadersReservation, lazyHeadersReservationSize());
 }
 
 size_t ImageText::lazyHeadersReservationSize() const

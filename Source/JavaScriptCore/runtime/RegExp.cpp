@@ -206,7 +206,8 @@ void RegExp::finishCreation(VM& vm)
             m_state = ParseError;
             return;
         }
-        if (!summary.hasNamedCaptureGroups && !summary.isOnlyPatternCharacters && summary.maxParenthesesDepth <= maxLazilyConstructedParenthesesDepth) {
+        bool reportsConstructionErrors = summary.hasCountedQuantifier && m_patternString.length() <= maxEagerlyConstructedPatternLength;
+        if (!summary.hasNamedCaptureGroups && !summary.isOnlyPatternCharacters && summary.maxParenthesesDepth <= maxLazilyConstructedParenthesesDepth && !reportsConstructionErrors) {
             m_numSubpatterns = summary.numSubpatterns;
             m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
             return;
@@ -534,6 +535,7 @@ void RegExp::countInterpretedMatch(VM& vm)
 #if ENABLE(YARR_JIT)
 bool RegExp::compileWithJIT(VM* vm, Yarr::YarrPattern& pattern, Yarr::CharSize charSize, std::optional<StringView> sampleString, Yarr::ExecutionMode mode)
 {
+#if ENABLE(JIT)
     auto& jitCode = ensureRegExpJITCode();
     RegExpState stateWithCode = JITCode;
 #if ENABLE(AOT)
@@ -548,6 +550,14 @@ bool RegExp::compileWithJIT(VM* vm, Yarr::YarrPattern& pattern, Yarr::CharSize c
     m_state = stateWithCode;
     m_minimumSize = pattern.m_body->m_minimumSize;
     return true;
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(pattern);
+    UNUSED_PARAM(charSize);
+    UNUSED_PARAM(sampleString);
+    UNUSED_PARAM(mode);
+    return false;
+#endif
 }
 #endif
 

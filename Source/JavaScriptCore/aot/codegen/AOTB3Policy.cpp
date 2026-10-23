@@ -161,7 +161,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     else if (build.options().verifiesAfterEveryPass || build.validates() || build.recordedOptions().has(TestingSwitch::GenerateAllCodeDirectly) || build.recordedOptions().has(TestingSwitch::GenerateColdCodeDirectly))
         validation.level = B3::ValidationLevel::AtBoundaries;
     else
-        validation.level = B3::ValidationLevel::FromOptions;
+        validation.level = lowestValidationLevel;
     validation.checksKnownPropertiesAtRunTime = build.validates();
     return validation;
 }

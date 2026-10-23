@@ -32,6 +32,9 @@ struct UnitGraph {
     Vector<uint32_t> numberWithinSharing;
     Vector<uint32_t> uniqueUnits;
     Vector<uint32_t> copyableUnits;
+    // The unique units from this one on are data.
+    size_t firstDataUnit { 0 };
+    size_t dataAlignment { 1 };
 };
 
 struct UseRows {
@@ -57,6 +60,8 @@ struct Veneer {
 struct SectionLayout {
     UnitPlacement placement;
     Vector<Vector<Veneer, 0>> veneersByUniqueUnit;
+    size_t dataOffset { 0 };
+    size_t end { 0 };
 };
 
 class RelocationLinker {
@@ -141,11 +146,22 @@ static std::expected<UnitGraph, SectionLinkFailure> createGraph(const SectionLin
     UnitGraph graph;
     graph.units = inputs.units;
     graph.targets = WTF::move(*targets);
-    graph.numberWithinSharing.reserveInitialCapacity(inputs.units.size());
-    for (uint32_t unit = 0; unit < inputs.units.size(); ++unit) {
-        Vector<uint32_t>& unitsWithSameSharing = graph.isCopyable(unit) ? graph.copyableUnits : graph.uniqueUnits;
-        graph.numberWithinSharing.append(static_cast<uint32_t>(unitsWithSameSharing.size()));
+    graph.dataAlignment = inputs.dataAlignment;
+    graph.numberWithinSharing.fill(0, inputs.units.size());
+    auto append = [&](Vector<uint32_t>& unitsWithSameSharing, uint32_t unit) {
+        graph.numberWithinSharing[unit] = static_cast<uint32_t>(unitsWithSameSharing.size());
         unitsWithSameSharing.append(unit);
+    };
+    for (uint32_t unit = 0; unit < inputs.units.size(); ++unit) {
+        if (graph.isCopyable(unit))
+            append(graph.copyableUnits, unit);
+        else if (!inputs.units[unit].isData)
+            append(graph.uniqueUnits, unit);
+    }
+    graph.firstDataUnit = graph.uniqueUnits.size();
+    for (uint32_t unit = 0; unit < inputs.units.size(); ++unit) {
+        if (!graph.isCopyable(unit) && inputs.units[unit].isData)
+            append(graph.uniqueUnits, unit);
     }
     return graph;
 }
@@ -213,7 +229,8 @@ static SectionLayout layOutSection(const UnitGraph& graph, const CopyableUses& u
 {
     size_t numberOfUniqueUnits = graph.uniqueUnits.size();
     Vector<size_t> alignments(numberOfUniqueUnits, [&](size_t number) -> size_t {
-        return graph.units[graph.uniqueUnits[number]].alignment;
+        size_t alignment = graph.units[graph.uniqueUnits[number]].alignment;
+        return number == graph.firstDataUnit ? std::max(alignment, graph.dataAlignment) : alignment;
     });
     if (alignments.isEmpty())
         alignments.append(1);
@@ -249,15 +266,20 @@ static SectionLayout layOutSection(const UnitGraph& graph, const CopyableUses& u
             .policy = CopyPolicy::BeforeUser,
         });
     } while (addVeneers(graph, layout));
+    bool hasData = graph.firstDataUnit < numberOfUniqueUnits;
+    layout.dataOffset = hasData ? layout.placement.unitStarts[graph.firstDataUnit] : roundUpToMultipleOf(graph.dataAlignment, layout.placement.end);
+    layout.end = std::max(layout.placement.end, layout.dataOffset);
     return layout;
 }
 
 static LinkedSection copyUnits(const UnitGraph& graph, const SectionLayout& layout, const CodeTemplates& templates)
 {
     LinkedSection section;
-    section.bytes = Vector<uint8_t>(FillWith { }, layout.placement.end, 0);
+    section.bytes = Vector<uint8_t>(FillWith { }, layout.end, 0);
+    section.dataOffset = static_cast<uint32_t>(layout.dataOffset);
     section.uniqueUnitOffsets = Vector<uint32_t>(FillWith { }, graph.units.size(), 0);
     std::span<uint8_t> bytes = section.bytes.mutableSpan();
+    templates.fillWithBreakpoints(bytes.first(layout.dataOffset - layout.dataOffset % templates.breakpoint.size()));
     for (size_t number = 0; number < graph.uniqueUnits.size(); ++number) {
         uint32_t unitIndex = graph.uniqueUnits[number];
         const LinkUnit& unit = graph.units[unitIndex];
@@ -376,7 +398,7 @@ std::expected<LinkedSection, SectionLinkFailure> linkSection(const SectionLinkIn
     CopyableUses uses { collectUses(*graph, graph->uniqueUnits.span()), collectUses(*graph, graph->copyableUnits.span()) };
 
     SectionLayout layout = layOutSection(*graph, uses, inputs.templates);
-    if (layout.placement.end > std::min(inputs.maxSize, maxVectorSize))
+    if (layout.end > std::min(inputs.maxSize, maxVectorSize))
         return std::unexpected(SectionLinkFailure { SectionLinkError::SectionTooLarge, 0, 0 });
 
     LinkedSection section = copyUnits(*graph, layout, inputs.templates);

@@ -358,6 +358,8 @@ private:
 
 #if ENABLE(SIGNAL_BASED_VM_TRAPS)
     RefPtr<SignalSender> m_signalSender;
+#elif ENABLE(AOT) && HAVE(MACHINE_CONTEXT)
+    void* m_inPlaceOfSignalSender { nullptr };
 #endif
 
     friend class LLIntOffsetsExtractor;

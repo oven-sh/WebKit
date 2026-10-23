@@ -292,12 +292,12 @@ static void appendRegExpCode(Vector<ImageSymbol>& symbols, const ImageSymbolInpu
 
 static void appendWebAssemblyCode(Vector<ImageSymbol>& symbols, const CodeLayout& layout, const Typed::Program& program)
 {
-    if (!mayHaveWebAssemblyModules(program) || layout.webAssemblyCodeOffset >= layout.constantsOffset)
+    if (!mayHaveWebAssemblyModules(program) || layout.webAssemblyCodeOffset >= layout.ffiCodeOffset)
         return;
     symbols.append(ImageSymbol {
         .kind = SymbolKind::WebAssemblyCode,
         .offset = layout.webAssemblyCodeOffset,
-        .size = layout.constantsOffset - layout.webAssemblyCodeOffset,
+        .size = layout.ffiCodeOffset - layout.webAssemblyCodeOffset,
         .name = "(WebAssembly code)"_s,
     });
 }
@@ -316,12 +316,12 @@ static void appendConstants(Vector<ImageSymbol>& symbols, const BuiltImage& buil
 
 static void appendFFICode(Vector<ImageSymbol>& symbols, const CodeLayout& layout)
 {
-    if (layout.ffiCodeOffset >= layout.codeSize)
+    if (!layout.ffiCodeSize)
         return;
     symbols.append(ImageSymbol {
         .kind = SymbolKind::FFICode,
         .offset = layout.ffiCodeOffset,
-        .size = safeCast<uint32_t>(layout.codeSize - layout.ffiCodeOffset),
+        .size = layout.ffiCodeSize,
         .name = "(FFI code)"_s,
     });
 }

@@ -184,7 +184,12 @@ static Modules* modulesOrThrow(JSGlobalObject* realm, ModuleID module, LoadByNam
     }
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(SHADOW_REALM)
     throwException(realm, scope, createModuleInShadowRealmError(realm, modulePath(module)));
+#else
+    scope.release();
+    throwLoadByNameRefused(realm, modulePath(module), form);
+#endif
     return nullptr;
 }
 

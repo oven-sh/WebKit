@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTGuardedPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTImmortalCells.h"
@@ -62,7 +63,7 @@ ProgramStrings::ProgramStrings(State& state)
     if (size_t numberOfListedWords = m_image.section<uint32_t>(ImageSection::LongStrings).size(); numberOfListedWords && !hasFirstInstance.exchange(true)) {
         // A site makes at most one header: the cell of a numbered constant is kept, and a site without a number runs at most once. A listed string has a word or more.
         constants.sizeOfStringHeaders = roundUpToMultipleOf(pageSize(), numberOfListedWords * sizeof(ImageStringHeader));
-        constants.startOfStringHeaders = static_cast<uint8_t*>(OSAllocator::reserveAndCommit(constants.sizeOfStringHeaders));
+        constants.startOfStringHeaders = static_cast<uint8_t*>(reserveGuardedPages(constants.sizeOfStringHeaders, OSAllocator::UnknownUsage));
         constants.nextStringHeader = constants.startOfStringHeaders;
         constants.endOfStringHeaders = constants.startOfStringHeaders + constants.sizeOfStringHeaders;
     }

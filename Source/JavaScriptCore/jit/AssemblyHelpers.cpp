@@ -28,7 +28,7 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "AccessCase.h"
 #include "AssemblyHelpersSpoolers.h"
@@ -297,6 +297,7 @@ void AssemblyHelpers::callExceptionFuzz(VM& vm, GPRReg exceptionReg)
 {
     RELEASE_ASSERT(Options::useExceptionFuzz());
 
+#if ENABLE(JIT)
     EncodedJSValue* buffer = vm.exceptionFuzzingBuffer(sizeof(EncodedJSValue) * (GPRInfo::numberOfRegisters + FPRInfo::numberOfRegisters));
 
     for (unsigned i = 0; i < GPRInfo::numberOfRegisters; ++i) {
@@ -333,6 +334,11 @@ void AssemblyHelpers::callExceptionFuzz(VM& vm, GPRReg exceptionReg)
 
     if (exceptionReg != InvalidGPRReg)
         loadPtr(vm.addressOfException(), exceptionReg);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(exceptionReg);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 AssemblyHelpers::Jump AssemblyHelpers::emitJumpIfException(VM& vm)
@@ -1555,8 +1561,13 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, G
             move(TrustedImmPtr(std::get<JSGlobalObject*>(globalObject)), scratchIfShouldCheckMasqueradesAsUndefined);
         else if (std::holds_alternative<GPRReg>(globalObject))
             move(std::get<GPRReg>(globalObject), scratchIfShouldCheckMasqueradesAsUndefined);
-        else
+        else {
+#if ENABLE(JIT)
             loadPtr(Address(GPRInfo::jitDataRegister, BaselineJITData::offsetOfGlobalObject()), scratchIfShouldCheckMasqueradesAsUndefined);
+#else
+            RELEASE_ASSERT_NOT_REACHED();
+#endif
+        }
         isNotMasqueradesAsUndefined.append(branchPtr(NotEqual, Address(scratch, Structure::realmOffset()), scratchIfShouldCheckMasqueradesAsUndefined));
 
         // We act like we are "undefined" here.
@@ -2184,6 +2195,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::checkWasmStackOverflow(GPRReg instanc
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

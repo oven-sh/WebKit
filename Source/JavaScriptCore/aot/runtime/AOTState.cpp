@@ -17,6 +17,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
 #include "AOTGlobalBindings.h"
+#include "AOTGuardedPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTImmortalCells.h"
@@ -52,7 +53,7 @@ static constexpr int populateStateForWriting = 23;
 void* ZeroedPages::allocate(size_t bytes, FirstUse firstUse)
 {
     size_t size = roundUpToMultipleOf(pageSize(), std::max<size_t>(bytes, 1));
-    void* pages = OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages);
+    void* pages = reserveGuardedPages(size);
 #if OS(LINUX)
     while (madvise(pages, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
     // A kernel older than 5.14 refuses, and the pages fault in one by one.
@@ -71,14 +72,14 @@ void ZeroedPages::release(void* pages)
         return range.first == pages;
     });
     RELEASE_ASSERT(index != notFound);
-    OSAllocator::decommitAndRelease(pages, m_ranges[index].second);
+    releaseGuardedPages(pages, m_ranges[index].second);
     m_ranges.removeAt(index);
 }
 
 ZeroedPages::~ZeroedPages()
 {
     for (auto& [pages, size] : m_ranges)
-        OSAllocator::decommitAndRelease(pages, size);
+        releaseGuardedPages(pages, size);
 }
 
 static size_t sizeOfZeroedTable(size_t count, size_t size)

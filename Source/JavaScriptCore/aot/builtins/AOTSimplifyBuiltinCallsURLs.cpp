@@ -383,7 +383,8 @@ static void expandRead(FunctionPassContext& context, IRBuilder& builder, const U
 
     builder.moveToEndOf(isUnbuilt.taken);
     if (read.member == Builtins::URLSearchParamsPrototypeSize) {
-        builder.endExpansion(expansion, appendShifted(builder, parts.packed, PlainURL::shiftOfPairCount));
+        // The word is not negative where nothing was built, which its type does not say. The result of an unsigned shift is a size whatever the word is.
+        builder.endExpansion(expansion, builder.append(Opcode::URShift, { parts.packed, builder.appendInteger(PlainURL::shiftOfPairCount) }));
         return;
     }
     ValueID endOfPath = appendOffset(builder, parts.packed, PlainURL::bitsOfOffset);

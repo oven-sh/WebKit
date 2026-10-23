@@ -13,6 +13,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTCellFormat.h"
 #include "AOTGlobalBindings.h"
+#include "AOTGuardedPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
 #include "AOTImage.h"
@@ -73,7 +74,7 @@ static ReservationSizes reservationSizes(const Image& image)
 
 static void* reserveZeroedPages(size_t bytes)
 {
-    void* pages = OSAllocator::reserveAndCommit(bytes, OSAllocator::FastMallocPages);
+    void* pages = reserveGuardedPages(bytes);
 #if OS(LINUX)
     while (madvise(pages, bytes, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
 #endif
@@ -108,7 +109,7 @@ static Instance* reserveMemory(const Image& image)
 static void releaseMemory(Instance* instance)
 {
     auto [below, above] = reservationSizes(*instance->vm->aotState().image);
-    OSAllocator::decommitAndRelease(reinterpret_cast<char*>(instance) - below, below + above);
+    releaseGuardedPages(reinterpret_cast<char*>(instance) - below, below + above);
 }
 
 static uint32_t idOf(Structure* structure)

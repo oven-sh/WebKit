@@ -6,10 +6,12 @@
 #include "config.h"
 #include "CellVisitValidator.h"
 
+#include "BlockDirectoryInlines.h"
 #include "Collector.h"
 #include "FastMarkAppender.h"
 #include "InlineCellVisits.h"
 #include "JSCellInlines.h"
+#include "MarkedSpaceInlines.h"
 #include "Options.h"
 #include "SlotVisitorInlines.h"
 #include "VM.h"
@@ -38,6 +40,8 @@ public:
     }
 
     const UncheckedKeyHashSet<const void*>& references() const LIFETIME_BOUND { return m_references; }
+    // No field names it: a cell that a field names lies in it.
+    bool isNamedOnlyAsOuterCell(const void* reference) const { return m_namedOnlyAsOuterCells.contains(reference); }
     bool sawRace() const { return m_sawRace; }
 
     NO_RETURN_DUE_TO_CRASH void append(const ConservativeRoots&) final { RELEASE_ASSERT_NOT_REACHED(); }
@@ -74,15 +78,20 @@ private:
         if (!reference)
             return;
         m_references.add(reference);
+        m_namedOnlyAsOuterCells.remove(reference);
         // The marker marks the cell that an inner cell lies in with the inner cell.
         auto* cell = static_cast<const HeapCell*>(reference);
-        if (!cell->isPreciseAllocation() && cell->markedBlock().isInnerCell(cell))
-            m_references.add(cell->markedBlock().outerCellOf(cell));
+        if (!cell->isPreciseAllocation() && cell->markedBlock().isInnerCell(cell)) {
+            const void* outer = cell->markedBlock().outerCellOf(cell);
+            if (m_references.add(outer).isNewEntry)
+                m_namedOnlyAsOuterCells.add(outer);
+        }
     }
 
     const SlotVisitor& m_marker;
     ConcurrentPtrHashSet m_opaqueRootStorage;
     UncheckedKeyHashSet<const void*> m_references;
+    UncheckedKeyHashSet<const void*> m_namedOnlyAsOuterCells;
     bool m_sawRace { false };
 };
 
@@ -173,9 +182,19 @@ void CellVisitValidator::validate(SlotVisitor& visitor, const JSCell* cell)
         const void* namedWithoutMark = nullptr;
         const JSCell* markedWithoutName = nullptr;
         size_t numberMarked = 0;
+        // Whoever is the first to mark an inner cell marks its outer cell next. Another marker that was the first may stand between the two marks right now. validateMarksOfInnerCells() asks for that mark once all markers are done.
+        auto isLeftToAnotherMarker = [&](const void* reference) {
+            if (!recorder.isNamedOnlyAsOuterCell(reference))
+                return false;
+            for (const JSCell* marked : fastVisitor.m_collectorStack) {
+                if (!marked->isPreciseAllocation() && marked->markedBlock().outerCellIfInnerCell(marked) == reference)
+                    return false;
+            }
+            return true;
+        };
         if (!recorder.sawRace()) {
             for (const void* reference : recorder.references()) {
-                if (reference == droppedCell || !visitor.isMarked(reference))
+                if (reference == droppedCell || (!visitor.isMarked(reference) && !isLeftToAnotherMarker(reference)))
                     namedWithoutMark = reference;
             }
             for (const JSCell* marked : fastVisitor.m_collectorStack) {
@@ -216,6 +235,23 @@ void CellVisitValidator::validate(SlotVisitor& visitor, const JSCell* cell)
     fastVisitor.m_extraMemoryInHeap = 0;
     fastVisitor.donateAll();
     fastVisitor.reset();
+}
+
+void CellVisitValidator::validateMarksOfInnerCells(JSC::Heap& heap)
+{
+    heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* handle) {
+        MarkedBlock& block = handle->block();
+        if (!block.hasInnerCells() || block.areMarksStale())
+            return;
+        block.marks().forEachSetBit([&](size_t atom) {
+            auto* inner = static_cast<HeapCell*>(handle->atomAt(atom));
+            HeapCell* outer = block.outerCellIfInnerCell(inner);
+            if (!outer || block.isMarkedRaw(outer)) [[likely]]
+                return;
+            dataLogLn("GC: at the end of marking ", RawPointer(inner), " has a mark and the cell that it lies in has none: ", RawPointer(outer), ", in block ", RawPointer(&block), " of cells of ", block.cellSize(), " bytes with marks of version ", block.markingVersion());
+            crashOnMismatch(static_cast<JSCell*>(inner));
+        });
+    });
 }
 
 void CellVisitValidator::crashOnMismatch(const JSCell* cell)

@@ -72,14 +72,14 @@ Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation represe
 {
     RELEASE_ASSERT(representation != Representation::LiteralString && representation != Representation::Boolean);
     RELEASE_ASSERT(registerNumber < ThrowSiteWord::numberOfRegistersPerBank);
-    bool hasWideA = site.a > ThrowSiteWord::maxNarrowA;
+    bool hasWideA = site.a > ThrowSiteWord::maxNarrowA && site.a != ThrowSiteWord::none;
     ThrowSiteWord word { };
     word.kind = static_cast<uint32_t>(site.kind);
     word.representation = static_cast<uint32_t>(representation);
     word.registerNumber = registerNumber;
     word.hasWideA = hasWideA;
     word.hasB = !!site.b;
-    word.a = hasWideA ? 0 : site.a;
+    word.a = hasWideA ? 0 : std::min(site.a, ThrowSiteWord::narrowNone);
     Vector<uint32_t, 3> words { std::bit_cast<uint32_t>(word) };
     if (hasWideA)
         words.append(site.a);
@@ -112,8 +112,12 @@ static void emitThrowSiteCall(CCallHelpers& jit, CodeRecords& records, bool fram
     }
     records.stubCalls.call(jit, key, OptionalIndex { site });
     CCallHelpers::Label begin = jit.labelIgnoringWatchpoints();
-    for (uint32_t word : words)
+    for (uint32_t word : words) {
+#if CPU(X86_64)
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(ThrowSiteWord::opcodeInFrontOfWordBehindCall));
+#endif
         jit.m_assembler.buffer().putInt(word);
+    }
     records.units.pin(begin, jit.labelIgnoringWatchpoints());
 }
 

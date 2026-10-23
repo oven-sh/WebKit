@@ -289,8 +289,9 @@ static void testPartsAfterFunctions()
     checkNameAt(decoded.span(), layout.webAssemblyCodeOffset, "(WebAssembly code)"_s);
     checkNameAt(decoded.span(), layout.constantsOffset, "(constants)"_s);
     checkNameAt(decoded.span(), layout.ffiCodeOffset, "(FFI code)"_s);
-    AOT_TEST_CHECK(symbolAt(decoded.span(), layout.webAssemblyCodeOffset)->size == sizeOfPart);
-    AOT_TEST_CHECK(symbolAt(decoded.span(), layout.ffiCodeOffset)->size == sizeOfPart);
+    AOT_TEST_CHECK(layout.webAssemblyCodeOffset < layout.ffiCodeOffset && layout.ffiCodeOffset < layout.constantsOffset);
+    AOT_TEST_CHECK(symbolAt(decoded.span(), layout.webAssemblyCodeOffset)->size == layout.ffiCodeOffset - layout.webAssemblyCodeOffset);
+    AOT_TEST_CHECK(symbolAt(decoded.span(), layout.ffiCodeOffset)->size == layout.constantsOffset - layout.ffiCodeOffset);
 }
 
 static void testNoEntry()

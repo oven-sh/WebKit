@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
 #include "JITCompilation.h"
 #include "WasmFormat.h"
@@ -46,4 +46,4 @@ void emitWasmToWasm(CCallHelpers&, const Wasm::ModuleInformation&, unsigned impo
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#endif // ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)

@@ -28,7 +28,7 @@
 
 #include "CallFrame.h"
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
@@ -84,4 +84,4 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#endif // ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)

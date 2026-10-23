@@ -100,7 +100,7 @@ static AlignedBytes imageWithSections(std::initializer_list<std::pair<ImageSecti
     }
     header.codeOffset = roundUpToMultipleOf<imagePageSize>(offset);
     header.codeSize = codeSize;
-    header.code.webAssemblyCodeOffset = static_cast<uint32_t>(codeSize);
+    header.code.constantsOffset = static_cast<uint32_t>(codeSize);
     header.size = roundUpToMultipleOf<imagePageSize>(header.codeOffset + codeSize);
 
     Vector<uint8_t> bytes(FillWith { }, header.size, 0);

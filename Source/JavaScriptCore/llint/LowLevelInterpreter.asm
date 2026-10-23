@@ -1474,7 +1474,7 @@ macro convertJSCalleeToVM(callee)
 end
 
 macro getVMFromCallFrame(vm, scratch)
-if WEBASSEMBLY
+if WEBASSEMBLY or AOT
         loadq Callee[cfr], vm
         move vm, scratch
         andq (constexpr JSValue::NativeCalleeMask), scratch
@@ -1483,7 +1483,11 @@ if WEBASSEMBLY
         jmp .loaded
     .isWasmCallee:
         loadp CodeBlock + LowWordOffset[cfr], vm
+    if WEBASSEMBLY
         loadp JSWebAssemblyInstance::m_vm[vm], vm
+    else
+        loadp (constexpr (AOT_INSTANCE_OFFSET(vm)))[vm], vm
+    end
     .loaded:
 else
     loadp Callee + LowWordOffset[cfr], vm

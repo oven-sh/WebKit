@@ -404,8 +404,22 @@ bool NativeCallValidationScope::Checker::usesProxyByProtocol() const
 
 bool NativeCallValidationScope::Checker::mayCollect() const
 {
-    return m_declaration.overloads.isEmpty() || std::ranges::any_of(m_declaration.overloads, [](const BuiltinOverload* overload) {
-        return overload->isUndeclared() || overload->effects.capability != BuiltinCapability::None;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    // The capability is that of the function behind the conversions of its operands.
+    auto mayMakeFlat = [](const BuiltinParameter& parameter, JSValue operand) {
+        return operand.isString() && readsCharactersOfString(parameter.conversion);
+    };
+    return m_declaration.overloads.isEmpty() || std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+        if (overload->isUndeclared() || overload->effects.capability != BuiltinCapability::None)
+            return true;
+        if (overload->receiver && mayMakeFlat(*overload->receiver, m_call.thisValue))
+            return true;
+        for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
+            const BuiltinParameter* parameter = table.parameterFor(*overload, BuiltinOperand::argument(index));
+            if (parameter && mayMakeFlat(*parameter, m_call.arguments.at(index)))
+                return true;
+        }
+        return false;
     });
 }
 

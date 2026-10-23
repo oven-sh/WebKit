@@ -11,6 +11,7 @@
 #include "AOTArrivalCounts.h"
 #include "AOTCompactTable.h"
 #include "AOTGenerator.h"
+#include "AOTGuardedPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTHost.h"
 #include "AOTImage.h"
@@ -22,6 +23,7 @@
 #include "AOTVMState.h"
 #include "DFGOperations.h"
 #include "ErrorConstructor.h"
+#include "FrameTracers.h"
 #include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
@@ -37,6 +39,162 @@
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 #include <wtf/TZoneMallocInlines.h>
+
+#if !ENABLE(DFG_JIT)
+// The two operations of the DFG that compiled code calls, for an engine that has no DFG.
+namespace JSC {
+
+JSC_DECLARE_JIT_OPERATION(operationArrayIncludesValueInt32OrContiguous, UCPUStrictInt32, (JSGlobalObject*, Butterfly*, EncodedJSValue, int32_t));
+JSC_DECLARE_JIT_OPERATION(operationArrayIndexOfValueInt32OrContiguous, UCPUStrictInt32, (JSGlobalObject*, Butterfly*, EncodedJSValue, int32_t));
+
+static ALWAYS_INLINE UCPUStrictInt32 arrayIncludesString(JSGlobalObject* globalObject, Butterfly* butterfly, JSString* searchElement, int32_t index)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    int32_t length = butterfly->publicLength();
+    auto data = butterfly->contiguous().data();
+    for (; index < length; ++index) {
+        JSValue value = data[index].get();
+        if (!value || !value.isString())
+            continue;
+        auto* string = asString(value);
+        if (string == searchElement)
+            return toUCPUStrictInt32(1);
+        if (string->equalInline(globalObject, searchElement)) {
+            scope.assertNoExceptionExceptTermination();
+            return toUCPUStrictInt32(1);
+        }
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return toUCPUStrictInt32(0);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationArrayIncludesValueInt32OrContiguous, UCPUStrictInt32, (JSGlobalObject* globalObject, Butterfly* butterfly, EncodedJSValue encodedValue, int32_t index))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue searchElement = JSValue::decode(encodedValue);
+
+    if (searchElement.isString())
+        OPERATION_RETURN(scope, arrayIncludesString(globalObject, butterfly, asString(searchElement), index));
+
+    int32_t length = butterfly->publicLength();
+    auto data = butterfly->contiguous().data();
+
+    if (index >= length)
+        OPERATION_RETURN(scope, toUCPUStrictInt32(0));
+
+    if (searchElement.isObject()) {
+        auto* result = std::bit_cast<const WriteBarrier<Unknown>*>(WTF::find64(std::bit_cast<const uint64_t*>(data + index), encodedValue, length - index));
+        if (result)
+            OPERATION_RETURN(scope, toUCPUStrictInt32(1));
+        OPERATION_RETURN(scope, toUCPUStrictInt32(0));
+    }
+
+    if (searchElement.isInt32()) {
+        for (; index < length; ++index) {
+            JSValue value = data[index].get();
+            if (!value || !value.isNumber())
+                continue;
+            if (searchElement.asInt32() == value.asNumber())
+                OPERATION_RETURN(scope, toUCPUStrictInt32(1));
+        }
+        OPERATION_RETURN(scope, toUCPUStrictInt32(0));
+    }
+
+    bool searchElementIsUndefined = searchElement.isUndefined();
+    for (; index < length; ++index) {
+        JSValue value = data[index].get();
+        if (!value) {
+            if (searchElementIsUndefined)
+                OPERATION_RETURN(scope, 1);
+            continue;
+        }
+        bool isEqual = sameValueZero(globalObject, searchElement, value);
+        OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+        if (isEqual)
+            OPERATION_RETURN(scope, toUCPUStrictInt32(1));
+    }
+    OPERATION_RETURN(scope, toUCPUStrictInt32(0));
+}
+
+static ALWAYS_INLINE UCPUStrictInt32 arrayIndexOfString(JSGlobalObject* globalObject, Butterfly* butterfly, JSString* searchElement, int32_t index)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    int32_t length = butterfly->publicLength();
+    auto data = butterfly->contiguous().data();
+    for (; index < length; ++index) {
+        JSValue value = data[index].get();
+        if (!value || !value.isString())
+            continue;
+        auto* string = asString(value);
+        if (string == searchElement)
+            return toUCPUStrictInt32(index);
+        if (string->equalInline(globalObject, searchElement)) {
+            scope.assertNoExceptionExceptTermination();
+            return toUCPUStrictInt32(index);
+        }
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return toUCPUStrictInt32(-1);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfValueInt32OrContiguous, UCPUStrictInt32, (JSGlobalObject* globalObject, Butterfly* butterfly, EncodedJSValue encodedValue, int32_t index))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue searchElement = JSValue::decode(encodedValue);
+
+    if (searchElement.isString())
+        OPERATION_RETURN(scope, arrayIndexOfString(globalObject, butterfly, asString(searchElement), index));
+
+    int32_t length = butterfly->publicLength();
+    auto data = butterfly->contiguous().data();
+
+    if (index >= length)
+        OPERATION_RETURN(scope, toUCPUStrictInt32(-1));
+
+    if (searchElement.isObject()) {
+        auto* result = std::bit_cast<const WriteBarrier<Unknown>*>(WTF::find64(std::bit_cast<const uint64_t*>(data + index), encodedValue, length - index));
+        if (result)
+            OPERATION_RETURN(scope, toUCPUStrictInt32(result - data));
+        OPERATION_RETURN(scope, toUCPUStrictInt32(-1));
+    }
+
+    if (searchElement.isInt32()) {
+        for (; index < length; ++index) {
+            JSValue value = data[index].get();
+            if (!value || !value.isNumber())
+                continue;
+            if (searchElement.asInt32() == value.asNumber())
+                OPERATION_RETURN(scope, toUCPUStrictInt32(index));
+        }
+        OPERATION_RETURN(scope, toUCPUStrictInt32(-1));
+    }
+
+    for (; index < length; ++index) {
+        JSValue value = data[index].get();
+        if (!value)
+            continue;
+        bool isEqual = JSValue::strictEqual(globalObject, searchElement, value);
+        OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+        if (isEqual)
+            OPERATION_RETURN(scope, toUCPUStrictInt32(index));
+    }
+    OPERATION_RETURN(scope, toUCPUStrictInt32(-1));
+}
+
+} // namespace JSC
+#endif // !ENABLE(DFG_JIT)
 
 namespace JSC { namespace AOT {
 
@@ -196,7 +354,7 @@ static size_t entryPagesSize()
 
 RuntimeTable::RuntimeTable(VM& vm)
 #if defined(BUN_HARDENED)
-    : m_entries(static_cast<void**>(OSAllocator::reserveAndCommit(entryPagesSize())))
+    : m_entries(static_cast<void**>(reserveGuardedPages(entryPagesSize(), OSAllocator::UnknownUsage)))
     , m_countsCalls(HAVE_MUST_TAIL_CALL && Options::aotCountsPath())
 #else
     : m_countsCalls(HAVE_MUST_TAIL_CALL && Options::aotCountsPath())
@@ -215,7 +373,7 @@ RuntimeTable::RuntimeTable(VM& vm)
 RuntimeTable::~RuntimeTable()
 {
 #if defined(BUN_HARDENED)
-    OSAllocator::decommitAndRelease(m_entries, entryPagesSize());
+    releaseGuardedPages(m_entries, entryPagesSize());
 #endif
 }
 

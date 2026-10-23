@@ -227,8 +227,8 @@ static void countTableBytes(const ImageExtent& extent, BuildContext& context)
     context.statistics().count(StatisticID::TableBytesEmitted, extent.codeOffset);
 }
 
-// The tables start as zeros. The code starts as breakpoints: that is what lies between two functions and behind the last one.
-static Vector<uint8_t> allocateImage(const ImageExtent& extent, const CodeTemplates& templates, const ParallelLoops& loops)
+// What is executed starts as breakpoints: that is what lies between two functions and behind the last one. All else starts as zeros.
+static Vector<uint8_t> allocateImage(const ImageExtent& extent, size_t executableSize, const CodeTemplates& templates, const ParallelLoops& loops)
 {
     static_assert(!(bytesPerChunk % codeOffsetUnit) && !(imagePageSize % codeOffsetUnit));
     Vector<uint8_t> image;
@@ -237,8 +237,10 @@ static Vector<uint8_t> allocateImage(const ImageExtent& extent, const CodeTempla
         size_t start = i * bytesPerChunk;
         size_t end = std::min(start + bytesPerChunk, image.size());
         size_t codeStart = std::clamp<size_t>(extent.codeOffset, start, end);
+        size_t codeEnd = std::clamp<size_t>(extent.codeOffset + executableSize, start, end);
         zeroSpan(image.mutableSpan().subspan(start, codeStart - start));
-        templates.fillWithBreakpoints(image.mutableSpan().subspan(codeStart, end - codeStart));
+        templates.fillWithBreakpoints(image.mutableSpan().subspan(codeStart, codeEnd - codeStart));
+        zeroSpan(image.mutableSpan().subspan(codeEnd, end - codeEnd));
     });
     return image;
 }
@@ -249,13 +251,13 @@ static void writeCodeRanges(ImageCodeRanges& code, const ImageWriterInputs& inpu
     code.functionsEnd = layout.functionsEnd;
     code.codeGranuleShift = layout.codeGranuleShift;
     code.sharedCodeSize = layout.sharedCodeSize;
-    code.regExpCodeOffset = layout.regExpCodeOffset;
     code.webAssemblyCodeOffset = layout.webAssemblyCodeOffset;
     code.webAssemblyCodeSize = safeCast<uint32_t>(inputs.webAssemblyCode.size());
-    code.constantsOffset = layout.constantsOffset;
-    code.constantsSize = safeCast<uint32_t>(inputs.linker.constants.bytes.size());
     code.ffiCodeOffset = layout.ffiCodeOffset;
     code.ffiCodeSize = safeCast<uint32_t>(inputs.ffiCode.size());
+    code.regExpCodeOffset = layout.regExpCodeOffset;
+    code.constantsOffset = layout.constantsOffset;
+    code.constantsSize = safeCast<uint32_t>(inputs.linker.constants.bytes.size());
 }
 
 static void writeHeader(ImageHeader& header, const ImageWriterInputs& inputs, const ImageExtent& extent, BuildContext& context)
@@ -269,6 +271,8 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& inputs, co
     header.codeOffset = extent.codeOffset;
     header.codeSize = inputs.linker.layout.codeSize;
     header.address = 0;
+    header.executableSize = inputs.linker.layout.executableSize;
+    header.formatVersion = imageFormatVersion;
     header.options = context.recordedOptions();
     header.heap = { context.options().sizeClassProgression, MarkedBlockCage::shift, 0 };
     for (unsigned index = 0; index < numberOfImageSections; ++index)
@@ -454,7 +458,7 @@ Vector<uint8_t> writeImage(const ImageWriterInputs& inputs, BuildContext& contex
         return { };
 
     const ParallelLoops& loops = context.parallelLoops();
-    Vector<uint8_t> image = allocateImage(*extent, inputs.linker.layoutInputs.templates, loops);
+    Vector<uint8_t> image = allocateImage(*extent, inputs.linker.layout.executableSize, inputs.linker.layoutInputs.templates, loops);
     writeHeader(*reinterpret_cast<ImageHeader*>(image.mutableSpan().data()), inputs, *extent, context);
     runTasksInParallel(loops, {
         [&] {

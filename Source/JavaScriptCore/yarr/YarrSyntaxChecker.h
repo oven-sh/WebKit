@@ -40,6 +40,7 @@ struct SyntaxSummary {
     bool hasNamedCaptureGroups { false };
     bool isOnlyPatternCharacters { true };
     bool hasUnicodePropertyLookup { false };
+    bool hasCountedQuantifier { false };
 };
 
 ErrorCode checkSyntax(StringView pattern, StringView flags);

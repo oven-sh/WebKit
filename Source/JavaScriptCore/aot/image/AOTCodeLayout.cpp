@@ -49,11 +49,12 @@ struct Veneers {
 
 struct CodeParts {
     size_t functionsEnd { 0 };
-    size_t regExpCodeOffset { 0 };
-    size_t regExpCodeEnd { 0 };
     size_t webAssemblyCodeOffset { 0 };
-    size_t constantsOffset { 0 };
     size_t ffiCodeOffset { 0 };
+    size_t regExpCodeOffset { 0 };
+    size_t executableSize { 0 };
+    size_t regExpCodeEnd { 0 };
+    size_t constantsOffset { 0 };
     size_t codeSize { 0 };
 };
 
@@ -355,15 +356,18 @@ static Vector<size_t> computeUnitSizes(const CodeLayoutInputs& inputs, std::span
 
 static CodeParts layOutCodeParts(const CodeLayoutInputs& inputs, size_t functionsEnd)
 {
-    size_t regExpCodeSize = inputs.regExpSection.bytes.size();
+    static_assert(!(imagePageSize % RegExpSection::alignment));
+    const RegExpSection& regExpSection = inputs.regExpSection;
     CodeParts parts;
     parts.functionsEnd = functionsEnd;
-    parts.regExpCodeOffset = regExpCodeSize ? WTF::roundUpToMultipleOf<RegExpSection::alignment>(functionsEnd) : functionsEnd;
-    parts.regExpCodeEnd = parts.regExpCodeOffset + regExpCodeSize;
-    parts.webAssemblyCodeOffset = WTF::roundUpToMultipleOf(inputs.webAssemblyCodeAlignment, parts.regExpCodeEnd);
-    parts.constantsOffset = WTF::roundUpToMultipleOf<imageConstantsAlignment>(parts.webAssemblyCodeOffset + inputs.webAssemblyCodeSize);
-    parts.ffiCodeOffset = WTF::roundUpToMultipleOf(inputs.ffiCodeAlignment, parts.constantsOffset + inputs.constantsSize);
-    parts.codeSize = parts.ffiCodeOffset + inputs.ffiCodeSize;
+    parts.webAssemblyCodeOffset = WTF::roundUpToMultipleOf(inputs.webAssemblyCodeAlignment, functionsEnd);
+    parts.ffiCodeOffset = WTF::roundUpToMultipleOf(inputs.ffiCodeAlignment, parts.webAssemblyCodeOffset + inputs.webAssemblyCodeSize);
+    // The section of the regular expressions lies across the end of what is executed: its code is the last of the code, and its tables are the first of the data.
+    parts.executableSize = WTF::roundUpToMultipleOf<imagePageSize>(parts.ffiCodeOffset + inputs.ffiCodeSize + regExpSection.dataOffset);
+    parts.regExpCodeOffset = parts.executableSize - regExpSection.dataOffset;
+    parts.regExpCodeEnd = parts.regExpCodeOffset + regExpSection.bytes.size();
+    parts.constantsOffset = WTF::roundUpToMultipleOf<imageConstantsAlignment>(parts.regExpCodeEnd);
+    parts.codeSize = parts.constantsOffset + inputs.constantsSize;
     return parts;
 }
 
@@ -408,10 +412,12 @@ static CodeLayout createLayout(const CodeLayoutInputs& inputs, PlacedCode&& code
     layout.fallsIntoNext = WTF::move(code.fallsIntoNext);
     layout.sharedCodeSize = safeCast<uint32_t>(code.sharedCodeSize);
     layout.functionsEnd = safeCast<uint32_t>(code.parts.functionsEnd);
-    layout.regExpCodeOffset = safeCast<uint32_t>(code.parts.regExpCodeOffset);
     layout.webAssemblyCodeOffset = safeCast<uint32_t>(code.parts.webAssemblyCodeOffset);
-    layout.constantsOffset = safeCast<uint32_t>(code.parts.constantsOffset);
     layout.ffiCodeOffset = safeCast<uint32_t>(code.parts.ffiCodeOffset);
+    layout.ffiCodeSize = safeCast<uint32_t>(inputs.ffiCodeSize);
+    layout.regExpCodeOffset = safeCast<uint32_t>(code.parts.regExpCodeOffset);
+    layout.executableSize = safeCast<uint32_t>(code.parts.executableSize);
+    layout.constantsOffset = safeCast<uint32_t>(code.parts.constantsOffset);
     layout.codeSize = code.parts.codeSize;
     return layout;
 }
@@ -425,7 +431,7 @@ static void countStatistics(const CodeLayout& layout, BuildContext& context)
     context.statistics().count(StatisticID::StubCopiesEmitted, layout.sharedCodeCopies.size());
     context.statistics().count(StatisticID::CodeBytesEmitted, layout.codeSize);
     context.statistics().count(StatisticID::SharedCodeBytesEmitted, static_cast<uint64_t>(layout.sharedCodeSize) * layout.sharedCodeCopies.size());
-    context.statistics().count(StatisticID::RegExpCodeBytesEmitted, layout.webAssemblyCodeOffset - layout.regExpCodeOffset);
+    context.statistics().count(StatisticID::RegExpCodeBytesEmitted, layout.constantsOffset - layout.regExpCodeOffset);
 }
 
 static void recordLimitHits(const LinkedFunctions& functions, const CodeLayout& layout, BuildContext& context)

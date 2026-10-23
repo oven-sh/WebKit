@@ -356,7 +356,8 @@ static void testOneCopy()
         AOT_TEST_CHECK(layout.sharedCodeCopyByBody[position] == layout.sharedCodeCopies[0]);
     }
     checkCodeIsDisjoint(steps);
-    AOT_TEST_CHECK(layout.constantsOffset == WTF::roundUpToMultipleOf<imageConstantsAlignment>(layout.functionsEnd));
+    AOT_TEST_CHECK(layout.executableSize == WTF::roundUpToMultipleOf<imagePageSize>(layout.functionsEnd));
+    AOT_TEST_CHECK(layout.constantsOffset == layout.executableSize);
     AOT_TEST_CHECK(layout.codeSize == layout.constantsOffset);
 }
 
@@ -485,26 +486,32 @@ static void testSeed()
     }
 }
 
+#if ENABLE(WEBASSEMBLY)
 static void testRegExpAndWebAssembly()
 {
     Steps steps(repeatedBodies(5));
-    steps.regExpSection.bytes.fill(0, 100);
+    steps.regExpSection.bytes.fill(0, RegExpSection::alignment + 100);
+    steps.regExpSection.dataOffset = RegExpSection::alignment;
     steps.layOut(50, WasmSectionBuilder::codeAlignment);
     const CodeLayout& layout = steps.layout;
-    AOT_TEST_CHECK(layout.regExpCodeOffset >= layout.functionsEnd);
-    AOT_TEST_CHECK(!(layout.regExpCodeOffset % RegExpSection::alignment));
-    AOT_TEST_CHECK(layout.webAssemblyCodeOffset >= layout.regExpCodeOffset + 100);
+    AOT_TEST_CHECK(layout.webAssemblyCodeOffset >= layout.functionsEnd);
     AOT_TEST_CHECK(!(layout.webAssemblyCodeOffset % WasmSectionBuilder::codeAlignment));
-    AOT_TEST_CHECK(layout.constantsOffset == WTF::roundUpToMultipleOf<imageConstantsAlignment>(layout.webAssemblyCodeOffset + 50));
+    AOT_TEST_CHECK(layout.regExpCodeOffset >= layout.webAssemblyCodeOffset + 50);
+    AOT_TEST_CHECK(!(layout.regExpCodeOffset % RegExpSection::alignment));
+    AOT_TEST_CHECK(layout.executableSize == layout.regExpCodeOffset + RegExpSection::alignment);
+    AOT_TEST_CHECK(!(layout.executableSize % imagePageSize) && layout.executableSize - layout.webAssemblyCodeOffset - 50 - RegExpSection::alignment < imagePageSize);
+    AOT_TEST_CHECK(layout.constantsOffset == WTF::roundUpToMultipleOf<imageConstantsAlignment>(layout.executableSize + 100));
     AOT_TEST_CHECK(layout.codeSize == layout.constantsOffset);
 }
+#endif // ENABLE(WEBASSEMBLY)
 
 static void testNeitherRegExpNorWebAssembly()
 {
     Steps steps(repeatedBodies(5));
     steps.layOut();
-    AOT_TEST_CHECK(steps.layout.regExpCodeOffset == steps.layout.functionsEnd);
     AOT_TEST_CHECK(steps.layout.webAssemblyCodeOffset == steps.layout.functionsEnd);
+    AOT_TEST_CHECK(steps.layout.ffiCodeOffset == steps.layout.functionsEnd);
+    AOT_TEST_CHECK(steps.layout.regExpCodeOffset == steps.layout.executableSize);
 }
 
 static void testOwnBodiesAfterCaller()
@@ -700,7 +707,9 @@ std::span<const NativeTest> codeLayoutTests()
         { "image/layout/veneer-pushes-call-out-of-reach"_s, testVeneerPushesCallOutOfReach },
         { "image/layout/far-regexp-entries"_s, testFarRegExpEntries },
         { "image/layout/seed"_s, testSeed },
+#if ENABLE(WEBASSEMBLY)
         { "image/layout/regexp-and-wasm"_s, testRegExpAndWebAssembly },
+#endif
         { "image/layout/neither"_s, testNeitherRegExpNorWebAssembly },
         { "image/layout/own-bodies-after-caller"_s, testOwnBodiesAfterCaller },
         { "image/layout/no-body"_s, testNoBody },

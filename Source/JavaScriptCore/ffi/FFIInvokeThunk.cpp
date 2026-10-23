@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFIInvokeThunk.h"
 
-#if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(CODE_GENERATION)
 
 #include "CCallHelpers.h"
 #include "FFICallingConvention.h"
@@ -340,7 +340,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature&)
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
+#endif // USE(BUN_JSC_ADDITIONS) && ENABLE(CODE_GENERATION)
 
 #if USE(BUN_JSC_ADDITIONS)
 

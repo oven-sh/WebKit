@@ -56,6 +56,8 @@ struct ExpectedSection {
     explicit ExpectedSection(const LinkedSection& section)
         : bytes(FillWith { }, section.bytes.size(), 0)
     {
+        size_t sizeOfBreakpoint = testTemplates().breakpoint.size();
+        testTemplates().fillWithBreakpoints(bytes.mutableSpan().first(section.dataOffset - section.dataOffset % sizeOfBreakpoint));
     }
 
     void place(const LinkUnit&, size_t offset, std::initializer_list<size_t> targets = { });
@@ -410,6 +412,7 @@ static void testOneVeneerPerUnitAndTarget()
     expected.placeVeneer(firstVeneer, offsets[3]);
     expected.place(units[1], offsets[1], { secondVeneer });
     expected.placeVeneer(secondVeneer, offsets[3]);
+    expected.place(units[2], offsets[2]);
     expected.place(units[3], offsets[3]);
     AOT_TEST_CHECK(section->bytes == expected.bytes);
 }
@@ -435,6 +438,7 @@ static void checkSecondCopyOutOfReach(const RelocatableCode& user, const Vector<
     ExpectedSection expected(*section);
     expected.place(units[3], 0);
     expected.place(units[0], offsets[0], { 0 });
+    expected.place(units[1], offsets[1]);
     expected.place(units[3], secondCopy);
     expected.place(units[2], offsets[2], { secondCopy });
     AOT_TEST_CHECK(section->bytes == expected.bytes);
@@ -465,6 +469,7 @@ static void testEveryCopyNamesUniqueTable()
     expected.place(units[0], offsets[0]);
     expected.place(units[4], firstCopy, { offsets[0] });
     expected.place(units[1], offsets[1], { firstCopy });
+    expected.place(units[2], offsets[2]);
     expected.place(units[4], secondCopy, { offsets[0] });
     expected.place(units[3], offsets[3], { secondCopy });
     AOT_TEST_CHECK(section->bytes == expected.bytes);

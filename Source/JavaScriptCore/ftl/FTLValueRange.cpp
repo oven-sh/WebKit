@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FTLValueRange.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 namespace JSC { namespace FTL {
 
@@ -38,4 +38,4 @@ void ValueRange::decorateInstruction(LValue loadInstruction, unsigned rangeKind)
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

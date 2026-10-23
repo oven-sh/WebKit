@@ -26,6 +26,8 @@
 #include <errno.h>
 #include <sys/mman.h>
 #if OS(DARWIN)
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #endif
@@ -112,21 +114,22 @@ static void* chooseAddressForCode(size_t size)
     return nullptr;
 }
 
-static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size)
+// The first executableSize bytes of a code part are executed. The rest is data that the code finds by its distance, so it is mapped behind the code, to be read only.
+static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_t executableSize)
 {
     int fileDescriptor = static_cast<int>(descriptor);
-    void* code = mmap(chooseAddressForCode(size), size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
-#if !OS(LINUX)
-    if (code == MAP_FAILED && errno == EPERM) {
-        code = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fileDescriptor, fileOffset);
-        if (code != MAP_FAILED && mprotect(code, size, PROT_READ | PROT_EXEC)) {
-            munmap(code, size);
-            code = MAP_FAILED;
-        }
-    }
-#endif
+    void* code = mmap(chooseAddressForCode(size), size, PROT_READ, MAP_PRIVATE, fileDescriptor, fileOffset);
     if (code == MAP_FAILED)
         return nullptr;
+    bool isExecutable = mmap(code, executableSize, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_FIXED, fileDescriptor, fileOffset) != MAP_FAILED;
+#if !OS(LINUX)
+    if (!isExecutable && errno == EPERM)
+        isExecutable = !mprotect(code, executableSize, PROT_READ | PROT_EXEC);
+#endif
+    if (!isExecutable) {
+        munmap(code, size);
+        return nullptr;
+    }
 #if OS(DARWIN)
     mach_vm_protect(mach_task_self(), reinterpret_cast<mach_vm_address_t>(code), size, true, VM_PROT_READ | VM_PROT_EXECUTE);
 #endif
@@ -143,12 +146,16 @@ static void unmapCode(void* code, size_t size)
 #define MREMAP_DONTUNMAP 4
 #endif
 
-static void* moveLoadedCode(std::span<const uint8_t> code)
+static void* moveLoadedCode(std::span<const uint8_t> code, size_t executableSize)
 {
     void* target = mmap(chooseAddressForCode(code.size()), code.size(), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (target == MAP_FAILED)
         return nullptr;
-    if (mremap(const_cast<uint8_t*>(code.data()), code.size(), code.size(), MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP, target) == MAP_FAILED) {
+    // One call moves one mapping, and the loader made two: they differ in their protection.
+    auto move = [&](size_t offset, size_t size) {
+        return !size || mremap(const_cast<uint8_t*>(code.data()) + offset, size, size, MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP, static_cast<uint8_t*>(target) + offset) != MAP_FAILED;
+    };
+    if (!move(0, executableSize) || !move(executableSize, code.size() - executableSize)) {
         munmap(target, code.size());
         return nullptr;
     }
@@ -156,17 +163,17 @@ static void* moveLoadedCode(std::span<const uint8_t> code)
 }
 
 #if !defined(BUN_HARDENED)
-static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code)
+static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code, size_t executableSize)
 {
     void* copy = mmap(nullptr, code.size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (copy == MAP_FAILED)
         return nullptr;
     memcpySpan(std::span { static_cast<uint8_t*>(copy), code.size() }, code);
-    if (mprotect(copy, code.size(), PROT_READ | PROT_EXEC)) {
+    if (mprotect(copy, code.size(), PROT_READ) || mprotect(copy, executableSize, PROT_READ | PROT_EXEC)) {
         munmap(copy, code.size());
         return nullptr;
     }
-    __builtin___clear_cache(static_cast<char*>(copy), static_cast<char*>(copy) + code.size());
+    __builtin___clear_cache(static_cast<char*>(copy), static_cast<char*>(copy) + executableSize);
     return copy;
 }
 #endif
@@ -181,7 +188,7 @@ static size_t allocationGranularity()
     return info.dwAllocationGranularity;
 }
 
-static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size)
+static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_t executableSize)
 {
     // A view can be executed only if its file was opened for that, which whoever wrote the file had no reason to ask for.
     HANDLE file = ReOpenFile(reinterpret_cast<HANDLE>(descriptor), GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
@@ -199,7 +206,8 @@ static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size)
     if (!view)
         return nullptr;
     DWORD previousProtection;
-    if (!VirtualProtect(view, size + skipped, PAGE_EXECUTE_READ, &previousProtection)) {
+    if (!VirtualProtect(view, executableSize + skipped, PAGE_EXECUTE_READ, &previousProtection)
+        || (size > executableSize && !VirtualProtect(static_cast<uint8_t*>(view) + skipped + executableSize, size - executableSize, PAGE_READONLY, &previousProtection))) {
         UnmapViewOfFile(view);
         return nullptr;
     }
@@ -225,13 +233,13 @@ class CodeMapping {
 public:
     enum class Kind : uint8_t { FileMapping, ExecutableSegment, LoadedSection, AnonymousCopy };
 
-    static std::optional<CodeMapping> mapFile(ImageFile, uint64_t codeOffset, size_t size);
+    static std::optional<CodeMapping> mapFile(ImageFile, uint64_t codeOffset, size_t size, size_t executableSize);
     static CodeMapping useExecutableSegment(std::span<const uint8_t> code);
-    static std::optional<CodeMapping> protectLoadedSection(std::span<const uint8_t> code);
+    static std::optional<CodeMapping> protectLoadedSection(std::span<const uint8_t> executableCode);
 #if OS(LINUX)
-    static std::optional<CodeMapping> moveExecutableSegment(std::span<const uint8_t> code);
+    static std::optional<CodeMapping> moveExecutableSegment(std::span<const uint8_t> code, size_t executableSize);
 #if !defined(BUN_HARDENED)
-    static std::optional<CodeMapping> copy(std::span<const uint8_t> code);
+    static std::optional<CodeMapping> copy(std::span<const uint8_t> code, size_t executableSize);
 #endif
 #endif
 
@@ -251,9 +259,9 @@ private:
     size_t m_size;
 };
 
-std::optional<CodeMapping> CodeMapping::mapFile(ImageFile file, uint64_t codeOffset, size_t size)
+std::optional<CodeMapping> CodeMapping::mapFile(ImageFile file, uint64_t codeOffset, size_t size, size_t executableSize)
 {
-    void* code = mapCode(file.descriptor, file.offset + codeOffset, size);
+    void* code = mapCode(file.descriptor, file.offset + codeOffset, size, executableSize);
     if (!code)
         return std::nullopt;
     return CodeMapping { Kind::FileMapping, code, size };
@@ -264,16 +272,16 @@ CodeMapping CodeMapping::useExecutableSegment(std::span<const uint8_t> code)
     return { Kind::ExecutableSegment, const_cast<uint8_t*>(code.data()), code.size() };
 }
 
-std::optional<CodeMapping> CodeMapping::protectLoadedSection(std::span<const uint8_t> code)
+std::optional<CodeMapping> CodeMapping::protectLoadedSection(std::span<const uint8_t> executableCode)
 {
-    CodeMapping mapping { Kind::LoadedSection, const_cast<uint8_t*>(code.data()), code.size() };
+    CodeMapping mapping { Kind::LoadedSection, const_cast<uint8_t*>(executableCode.data()), executableCode.size() };
     // On Darwin the section is in a segment that the loader maps executable.
 #if OS(FREEBSD)
     if (mprotect(mapping.m_code, mapping.m_size, PROT_READ | PROT_EXEC))
         return std::nullopt;
 #elif OS(WINDOWS)
     MEMORY_BASIC_INFORMATION region;
-    if (VirtualQuery(mapping.m_code, &region, sizeof(region)) && region.Protect == PAGE_EXECUTE_READ && static_cast<uint8_t*>(region.BaseAddress) + region.RegionSize >= code.data() + code.size())
+    if (VirtualQuery(mapping.m_code, &region, sizeof(region)) && region.Protect == PAGE_EXECUTE_READ && static_cast<uint8_t*>(region.BaseAddress) + region.RegionSize >= executableCode.data() + executableCode.size())
         return mapping;
     DWORD previousProtection;
     if (!VirtualProtect(mapping.m_code, mapping.m_size, PAGE_EXECUTE_READ, &previousProtection))
@@ -284,18 +292,18 @@ std::optional<CodeMapping> CodeMapping::protectLoadedSection(std::span<const uin
 }
 
 #if OS(LINUX)
-std::optional<CodeMapping> CodeMapping::moveExecutableSegment(std::span<const uint8_t> code)
+std::optional<CodeMapping> CodeMapping::moveExecutableSegment(std::span<const uint8_t> code, size_t executableSize)
 {
-    void* moved = moveLoadedCode(code);
+    void* moved = moveLoadedCode(code, executableSize);
     if (!moved)
         return std::nullopt;
     return CodeMapping { Kind::FileMapping, moved, code.size() };
 }
 
 #if !defined(BUN_HARDENED)
-std::optional<CodeMapping> CodeMapping::copy(std::span<const uint8_t> code)
+std::optional<CodeMapping> CodeMapping::copy(std::span<const uint8_t> code, size_t executableSize)
 {
-    void* anonymousCopy = copyCodeToAnonymousMemory(code);
+    void* anonymousCopy = copyCodeToAnonymousMemory(code, executableSize);
     if (!anonymousCopy)
         return std::nullopt;
     return CodeMapping { Kind::AnonymousCopy, anonymousCopy, code.size() };
@@ -340,6 +348,7 @@ struct PositionInFile {
 
 struct LoadedSegment {
     int64_t offsetInFile;
+    uint64_t sizeFromAddress;
     uint32_t flags;
     bool isWhereItWasLinked;
 };
@@ -362,7 +371,7 @@ static int findSegmentContaining(struct dl_phdr_info* object, size_t, void* data
         uintptr_t start = object->dlpi_addr + header.p_vaddr;
         if (header.p_type != PT_LOAD || search.address < start || search.address - start >= header.p_filesz)
             continue;
-        search.found = LoadedSegment { static_cast<int64_t>(header.p_offset + (search.address - start)), header.p_flags, !object->dlpi_addr };
+        search.found = LoadedSegment { static_cast<int64_t>(header.p_offset + (search.address - start)), header.p_filesz - (search.address - start), header.p_flags, !object->dlpi_addr };
         return 1;
     }
     // The executable is the first object, and the image is in no other.
@@ -416,16 +425,114 @@ static bool removeWriteAccessFromLoadedSection(std::span<const uint8_t> image)
 #endif
 }
 
+namespace {
+
+// What the headers of the running executable, which its loader went by, say of the segment that holds an address.
+struct SegmentOfExecutable {
+    uint64_t sizeFromAddress;
+    bool mayBeWritten;
+    bool mayBeExecuted;
+};
+
+} // anonymous namespace
+
+#if OS(LINUX) || OS(FREEBSD)
+
+static constexpr bool dataHasSegmentsOfItsOwn = true;
+
+static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
+{
+    std::optional<LoadedSegment> segment = findLoadedSegment(address);
+    if (!segment)
+        return std::nullopt;
+    return SegmentOfExecutable { segment->sizeFromAddress, !!(segment->flags & PF_W), !!(segment->flags & PF_X) };
+}
+
+#elif OS(DARWIN)
+
+// The payload of a Mach-O executable is one segment, which has the protection of the code in it.
+static constexpr bool dataHasSegmentsOfItsOwn = false;
+
+static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
+{
+    auto* executable = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(0));
+    if (!executable || executable->magic != MH_MAGIC_64)
+        return std::nullopt;
+    uintptr_t slide = _dyld_get_image_vmaddr_slide(0);
+    auto* command = reinterpret_cast<const uint8_t*>(executable + 1);
+    for (uint32_t index = 0; index < executable->ncmds; ++index) {
+        auto& segment = *reinterpret_cast<const segment_command_64*>(command);
+        command += segment.cmdsize;
+        if (segment.cmd != LC_SEGMENT_64)
+            continue;
+        uintptr_t start = segment.vmaddr + slide;
+        uintptr_t position = reinterpret_cast<uintptr_t>(address);
+        if (position < start || position - start >= segment.filesize)
+            continue;
+        return SegmentOfExecutable { segment.filesize - (position - start), !!((segment.initprot | segment.maxprot) & VM_PROT_WRITE), !!(segment.initprot & VM_PROT_EXECUTE) };
+    }
+    return std::nullopt;
+}
+
+#elif OS(WINDOWS)
+
+// The payload of a PE executable is one section, which has the protection of the code in it.
+static constexpr bool dataHasSegmentsOfItsOwn = false;
+
+static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
+{
+    auto* executable = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+    if (!executable)
+        return std::nullopt;
+    auto* headers = reinterpret_cast<const IMAGE_NT_HEADERS*>(executable + reinterpret_cast<const IMAGE_DOS_HEADER*>(executable)->e_lfanew);
+    const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(headers);
+    for (unsigned index = 0; index < headers->FileHeader.NumberOfSections; ++index) {
+        const IMAGE_SECTION_HEADER& section = sections[index];
+        const uint8_t* start = executable + section.VirtualAddress;
+        if (address < start || static_cast<uint64_t>(address - start) >= section.Misc.VirtualSize)
+            continue;
+        return SegmentOfExecutable { section.Misc.VirtualSize - static_cast<uint64_t>(address - start), !!(section.Characteristics & IMAGE_SCN_MEM_WRITE), !!(section.Characteristics & IMAGE_SCN_MEM_EXECUTE) };
+    }
+    return std::nullopt;
+}
+
+#endif
+
+static bool liesInOneSegmentOfExecutable(std::span<const uint8_t> range, bool isExecuted)
+{
+    if (range.empty())
+        return !isExecuted;
+    std::optional<SegmentOfExecutable> segment = findSegmentOfExecutable(range.data());
+    if (!segment || range.size() > segment->sizeFromAddress || segment->mayBeWritten)
+        return false;
+    return segment->mayBeExecuted == isExecuted || (!isExecuted && !dataHasSegmentsOfItsOwn);
+}
+
+// The header of an image gets no more than the headers of the executable give: what it calls code was loaded to be executed, and nothing of it to be written.
+static bool isLoadedAsItsHeaderSays(std::span<const uint8_t> bytes, const ImageHeader& header)
+{
+#if (OS(LINUX) || OS(FREEBSD)) && !defined(BUN_HARDENED)
+    // An executable whose table of program headers has room for one more only has its whole payload in one segment, which is not executed.
+    if (std::optional<SegmentOfExecutable> segment = findSegmentOfExecutable(bytes.data()); segment && header.size <= segment->sizeFromAddress && !segment->mayBeExecuted)
+        return true;
+#endif
+    size_t endOfExecutedPart = header.codeOffset + header.executableSize;
+    return liesInOneSegmentOfExecutable(bytes.first(header.codeOffset), false)
+        && liesInOneSegmentOfExecutable(bytes.subspan(header.codeOffset, header.executableSize), true)
+        && liesInOneSegmentOfExecutable(bytes.subspan(endOfExecutedPart, header.size - endOfExecutedPart), false);
+}
+
 static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const ImageHeader& header, Wire::ImageVerdict& refusal)
 {
     refusal = Wire::ImageVerdict::CannotMapCode;
     size_t size = header.size - header.codeOffset;
+    size_t executableSize = header.executableSize;
 #if OS(LINUX) && !defined(BUN_HARDENED)
     if (Options::useAOTPerfMap()) [[unlikely]]
-        return CodeMapping::copy(bytes.subspan(header.codeOffset, size));
+        return CodeMapping::copy(bytes.subspan(header.codeOffset, size), executableSize);
 #endif
     if (file)
-        return CodeMapping::mapFile(*file, header.codeOffset, size);
+        return CodeMapping::mapFile(*file, header.codeOffset, size, executableSize);
     std::span<const uint8_t> code = bytes.subspan(header.codeOffset, size);
 #if OS(LINUX) || OS(FREEBSD)
     std::optional<LoadedSegment> segment = findLoadedSegment(code.data());
@@ -434,12 +541,16 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
     if (isLoadedExecutable && isAddressRandomizationDisabled())
         return CodeMapping::useExecutableSegment(code);
 #endif
+    if (s_positionOfImage && (!segment || segment->offsetInFile != s_positionOfImage->offset + static_cast<int64_t>(header.codeOffset))) {
+        refusal = Wire::ImageVerdict::OutsideItsSegments;
+        return std::nullopt;
+    }
     std::optional<CodeMapping> mapping;
     if (s_positionOfImage)
-        mapping = CodeMapping::mapFile({ s_positionOfImage->descriptor, s_positionOfImage->offset }, header.codeOffset, size);
+        mapping = CodeMapping::mapFile({ s_positionOfImage->descriptor, s_positionOfImage->offset }, header.codeOffset, size, executableSize);
 #if OS(LINUX)
     if (!mapping && isLoadedExecutable)
-        mapping = CodeMapping::moveExecutableSegment(code);
+        mapping = CodeMapping::moveExecutableSegment(code, executableSize);
 #endif
     if (mapping) {
         // Compiled code reads the constants in the code part through pointers into the loaded image.
@@ -464,7 +575,7 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
 #if OS(LINUX)
     return std::nullopt;
 #else
-    return CodeMapping::protectLoadedSection(code);
+    return CodeMapping::protectLoadedSection(code.first(executableSize));
 #endif
 }
 
@@ -529,6 +640,8 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
     uint64_t position = file ? static_cast<uint64_t>(file->offset) : reinterpret_cast<uintptr_t>(bytes.data());
     if (!isOnPageBoundaries(position, header.codeOffset, header.size, WTF::pageSize()))
         return ImageVerdict::Misaligned;
+    if (!file && !isLoadedAsItsHeaderSays(bytes, header))
+        return ImageVerdict::OutsideItsSegments;
     if (hasFaultSites(header) && !tryReserveLowPages())
         return ImageVerdict::LowPagesAccessible;
 

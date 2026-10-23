@@ -65,7 +65,11 @@ public:
     void LEGACY_NODELETE atomBackReference(unsigned) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE atomNamedBackReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE atomNamedForwardReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE quantifyAtom(unsigned, unsigned, bool) { m_summary.isOnlyPatternCharacters = false; }
+    void LEGACY_NODELETE quantifyAtom(unsigned min, unsigned max, bool)
+    {
+        m_summary.isOnlyPatternCharacters = false;
+        m_summary.hasCountedQuantifier |= min > 1 || (max > 1 && max != quantifyInfinite);
+    }
     void LEGACY_NODELETE disjunction(CreateDisjunctionPurpose) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE willLookUpUnicodeProperty() { m_summary.hasUnicodePropertyLookup = true; }
     void LEGACY_NODELETE resetForReparsing()

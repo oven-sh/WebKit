@@ -13,6 +13,7 @@
 #include "AOTImageFormat.h"
 #include "AOTImageText.h"
 #include "AOTInstance.h"
+#include "AOTOperationData.h"
 #include "AOTPositionTable.h"
 #include "AOTProgramTables.h"
 #include "AOTRegExpRecord.h"
@@ -88,6 +89,7 @@ uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& ident
 #endif
     mix(numberOfEntries);
     mix(numberOfImageSections);
+    mix(imageFormatVersion);
     mix(sizeof(ImageHeader));
     mix(sizeof(ImageFunction));
     mix(sizeof(ImageFrame));
@@ -123,6 +125,8 @@ uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& ident
     mix(static_cast<uint64_t>(-AdapterFrame::offsetOfInstance));
     mix(AdapterFrame::saveAreaSize);
     mix(numberOfStubFrameKinds);
+    mix(ThrowSiteWord::narrowNone);
+    mix(ThrowSiteWord::sizeOfWordBehindCall);
     return stamp;
 }
 

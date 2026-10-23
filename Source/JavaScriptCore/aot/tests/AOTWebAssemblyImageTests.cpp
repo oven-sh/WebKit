@@ -752,6 +752,7 @@ static void testLinkByHand()
     AOT_TEST_CHECK(!linkByHand(makeFunctionCalling(1, false), makeFunctionCalling(0, false)).usesVectors);
 
     Vector<uint8_t> expected(FillWith { }, module.code.size(), 0);
+    templates().fillWithBreakpoints(expected.mutableSpan());
     memcpySpan(expected.mutableSpan(), templates().returnToCaller.span());
     for (uint32_t index = 0; index < 2; ++index) {
         WasmFunctionCode function = makeFunctionCalling(1 - index, false);

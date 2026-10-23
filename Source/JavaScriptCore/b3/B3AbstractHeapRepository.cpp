@@ -329,6 +329,7 @@ void AbstractHeapRepository::decorateBulkMemoryWrite(const AbstractHeap* heap, V
     m_heapForBulkMemoryWrite.append(HeapForValue(heap, value));
 }
 
+#if ENABLE(WEBASSEMBLY)
 void AbstractHeapRepository::decorateWasmStructGet(const AbstractHeap* heap, Value* value)
 {
     m_heapForWasmStructGet.append(HeapForValue(heap, value));
@@ -363,6 +364,7 @@ void AbstractHeapRepository::decorateWasmArrayLength(const AbstractHeap* heap, V
 {
     m_heapForWasmArrayLength.append(HeapForValue(heap, value));
 }
+#endif // ENABLE(WEBASSEMBLY)
 
 void AbstractHeapRepository::computeRanges()
 {
@@ -460,6 +462,7 @@ void AbstractHeapRepository::computeRangesAndDecorateInstructions()
         entry.value->as<BulkMemoryValue>()->setReadRange(rangeFor(entry.heap));
     for (HeapForValue entry : m_heapForBulkMemoryWrite)
         entry.value->as<BulkMemoryValue>()->setWriteRange(rangeFor(entry.heap));
+#if ENABLE(WEBASSEMBLY)
     for (HeapForValue entry : m_heapForWasmStructGet) {
         auto* wasmStructGet = entry.value->as<WasmStructGetValue>();
         wasmStructGet->setRange(rangeFor(entry.heap));
@@ -488,6 +491,7 @@ void AbstractHeapRepository::computeRangesAndDecorateInstructions()
         auto* wasmArrayLength = entry.value->as<WasmArrayLengthValue>();
         wasmArrayLength->setRange(rangeFor(entry.heap));
     }
+#endif // ENABLE(WEBASSEMBLY)
 }
 
 } // namespace JSC::B3

@@ -113,6 +113,8 @@ static void copyHeaderMembers(ImageHeader& copy, const ImageHeader& header)
     copy.codeOffset = header.codeOffset;
     copy.codeSize = header.codeSize;
     copy.address = header.address;
+    copy.executableSize = header.executableSize;
+    copy.formatVersion = header.formatVersion;
     copy.options = header.options;
     copy.heap.sizeClassProgression = header.heap.sizeClassProgression;
     copy.heap.markedBlockCageShift = header.heap.markedBlockCageShift;

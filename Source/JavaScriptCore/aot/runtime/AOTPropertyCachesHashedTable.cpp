@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTGuardedPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTPropertyCachesCustomAccessors.h"
 #include "AOTRuntimeCounters.h"
@@ -71,13 +72,13 @@ HashedSlotTable::HashedSlotTable(VM& vm, CacheRegistry& registry, const CustomAc
 HashedSlotTable::~HashedSlotTable()
 {
     clear();
-    OSAllocator::decommitAndRelease(m_entries, sizeOfReservation(m_maxNumberOfEntries));
+    releaseGuardedPages(m_entries, sizeOfReservation(m_maxNumberOfEntries));
 }
 
 auto HashedSlotTable::reserveEntries(uint32_t maxNumberOfEntries) -> Entry*
 {
     size_t size = sizeOfReservation(maxNumberOfEntries);
-    void* entries = OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages);
+    void* entries = reserveGuardedPages(size);
 #if OS(LINUX)
     while (madvise(entries, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
 #endif

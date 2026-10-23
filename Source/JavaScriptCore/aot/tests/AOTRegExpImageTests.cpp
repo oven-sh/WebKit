@@ -27,6 +27,7 @@
 #include <wtf/BumpPointerAllocator.h>
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -124,8 +125,31 @@ static bool hasItemAt(const RegExpSection& section, Kind kind, uint32_t offset)
     });
 }
 
+// Between two units lie breakpoints where the code lies, and zeros where the data lies.
+static bool isPadding(const RegExpSection& section, size_t begin, size_t end)
+{
+    static const NeverDestroyed<Vector<uint8_t>> breakpoint = CodeTemplates::create(policyFor(nullptr), nullptr)->breakpoint;
+    for (size_t offset = begin; offset < end; ++offset) {
+        if (section.bytes[offset] != (offset < section.dataOffset ? breakpoint.get()[offset % breakpoint->size()] : 0))
+            return false;
+    }
+    return true;
+}
+
+// Without the padding in front of the data.
+static size_t occupiedSize(const RegExpSection& section)
+{
+    size_t endOfCode = 0;
+    for (const RegExpSectionItem& item : section.items) {
+        if (item.offset < section.dataOffset)
+            endOfCode = std::max<size_t>(endOfCode, item.offset + item.size);
+    }
+    return endOfCode + section.bytes.size() - section.dataOffset;
+}
+
 static void checkSection(const RegExpSection& section, std::span<const CompiledRegExp> regExps)
 {
+    AOT_TEST_CHECK(!(section.dataOffset % RegExpSection::alignment) && section.dataOffset <= section.bytes.size());
     size_t end = 0;
     for (const RegExpSectionItem& item : section.items) {
         AOT_TEST_CHECK(item.regExp < regExps.size());
@@ -133,13 +157,14 @@ static void checkSection(const RegExpSection& section, std::span<const CompiledR
             AOT_TEST_CHECK(hasItemAt(section, Kind::Body, item.offset));
             continue;
         }
-        AOT_TEST_CHECK(item.offset >= end && item.offset - end < maxPadding);
+        AOT_TEST_CHECK(item.kind == Kind::Table || item.offset + static_cast<size_t>(item.size) <= section.dataOffset);
+        AOT_TEST_CHECK(item.offset >= end && item.offset - end < (item.offset == section.dataOffset ? RegExpSection::alignment : maxPadding));
         AOT_TEST_CHECK(item.offset + static_cast<size_t>(item.size) <= section.bytes.size());
-        for (size_t offset = end; offset < item.offset; ++offset)
-            AOT_TEST_CHECK(!section.bytes[offset]);
+        AOT_TEST_CHECK(isPadding(section, end, item.offset));
         end = item.offset + static_cast<size_t>(item.size);
     }
-    AOT_TEST_CHECK(end == section.bytes.size());
+    AOT_TEST_CHECK(end == section.bytes.size() || (section.dataOffset == section.bytes.size() && section.dataOffset - end < RegExpSection::alignment));
+    AOT_TEST_CHECK(isPadding(section, end, section.bytes.size()));
 
     AOT_TEST_CHECK(section.entries.size() == regExps.size());
     for (size_t index = 0; index < regExps.size(); ++index) {
@@ -589,7 +614,7 @@ static void checkPrivateCopyBound(const RegExpSymbol& symbol)
     size_t bound = maxPrivateCopySize(symbol);
     for (size_t fillerSize = 0; fillerSize < 8; fillerSize += fillerStep) {
         std::array<CompiledRegExp, 1> user { makeRegExp(singleElementSpan(symbol), PCRelativeReach::Near, fillerSize) };
-        size_t sectionSize = layOutSection(user).bytes.size();
+        size_t sectionSize = occupiedSize(layOutSection(user));
         AOT_TEST_CHECK(sectionSize - user[0].code[0]->body.bytes.size() <= bound);
     }
 }

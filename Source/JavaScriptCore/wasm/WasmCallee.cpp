@@ -62,7 +62,7 @@ WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(RestoreFrameCallee);
 WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(IPIntCallee);
 WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(WasmBuiltinCallee);
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(JSToWasmICCallee);
 #endif
 
@@ -147,7 +147,7 @@ inline void Callee::runWithDowncast(NOESCAPE const Func& func)
         break;
 #endif
     case CompilationMode::JSToWasmICMode:
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         func(uncheckedDowncast<JSToWasmICCallee>(this));
 #endif
         break;
@@ -215,7 +215,7 @@ NEVER_INLINE std::tuple<void*, void*> Callee::range() const
     return result;
 }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 Box<PCToCodeOriginMap> Callee::pcToCodeOriginMap() const
 {
     Box<PCToCodeOriginMap> result;
@@ -259,7 +259,7 @@ JITCallee::JITCallee(Wasm::CompilationMode compilationMode, FunctionSpaceIndex i
 {
 }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 void JITCallee::setEntrypoint(Wasm::Entrypoint&& entrypoint)
 {
     m_entrypoint = WTF::move(entrypoint);
@@ -585,7 +585,7 @@ const RegisterAtOffsetList* JSToWasmCallee::calleeSaveRegistersImpl()
     return &RegisterAtOffsetList::wasmPinnedRegisters();
 }
 
-#if ENABLE(WEBASSEMBLY_BBQJIT)
+#if ENABLE(WEBASSEMBLY_BBQJIT) || ENABLE(WEBASSEMBLY_OMGJIT)
 
 void OptimizingJITCallee::linkExceptionHandlers(Vector<UnlinkedHandlerInfo> unlinkedExceptionHandlers, Vector<CodeLocationLabel<ExceptionHandlerPtrTag>> exceptionHandlerLocations)
 {
@@ -603,6 +603,10 @@ unsigned OptimizingJITCallee::computeCodeHashImpl() const
 {
     return m_profiledCallee->computeCodeHashImpl();
 }
+
+#endif
+
+#if ENABLE(WEBASSEMBLY_BBQJIT)
 
 BBQCallee::~BBQCallee()
 {

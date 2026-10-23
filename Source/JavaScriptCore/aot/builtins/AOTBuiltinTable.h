@@ -204,6 +204,31 @@ enum class BuiltinConversion : uint8_t {
     Dictionary,
 };
 
+// A rope is made flat for whoever reads its characters, which allocates.
+inline bool readsCharactersOfString(BuiltinConversion conversion)
+{
+    switch (conversion) {
+    case BuiltinConversion::ToNumber:
+    case BuiltinConversion::ToNumeric:
+    case BuiltinConversion::ToPropertyKey:
+    case BuiltinConversion::ToIntegerOrInfinity:
+    case BuiltinConversion::ToLength:
+    case BuiltinConversion::ToIndex:
+    case BuiltinConversion::ToInt32:
+    case BuiltinConversion::ToUint32:
+    case BuiltinConversion::ToBigInt:
+        return true;
+    case BuiltinConversion::None:
+    case BuiltinConversion::ToBoolean:
+    case BuiltinConversion::ToString:
+    case BuiltinConversion::ToObject:
+    case BuiltinConversion::ToPrimitive:
+    case BuiltinConversion::Dictionary:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 enum class BuiltinParameterMode : uint8_t {
     Required,
     Optional,

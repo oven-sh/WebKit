@@ -138,30 +138,6 @@ static bool mayFailOnOperands(const Program& program, const BuiltinOverload& ove
     });
 }
 
-static bool readsCharactersOfString(BuiltinConversion conversion)
-{
-    switch (conversion) {
-    case BuiltinConversion::ToNumber:
-    case BuiltinConversion::ToNumeric:
-    case BuiltinConversion::ToPropertyKey:
-    case BuiltinConversion::ToIntegerOrInfinity:
-    case BuiltinConversion::ToLength:
-    case BuiltinConversion::ToIndex:
-    case BuiltinConversion::ToInt32:
-    case BuiltinConversion::ToUint32:
-    case BuiltinConversion::ToBigInt:
-        return true;
-    case BuiltinConversion::None:
-    case BuiltinConversion::ToBoolean:
-    case BuiltinConversion::ToString:
-    case BuiltinConversion::ToObject:
-    case BuiltinConversion::ToPrimitive:
-    case BuiltinConversion::Dictionary:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 // A rope is made flat for whoever reads its characters, whatever the capability of the entry says.
 static void describeConversion(const BuiltinParameter& parameter, const Type& operand, EffectDescription& description)
 {

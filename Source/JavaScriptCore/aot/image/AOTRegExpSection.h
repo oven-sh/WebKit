@@ -34,6 +34,8 @@ struct RegExpSection {
     static constexpr size_t alignment = 4 * KB;
 
     Vector<uint8_t> bytes;
+    // A multiple of alignment. All code lies in front of it. Behind it lie tables alone.
+    uint32_t dataOffset { 0 };
     Vector<std::array<uint32_t, 2>> entries;
     Vector<RegExpSectionItem> items;
 };

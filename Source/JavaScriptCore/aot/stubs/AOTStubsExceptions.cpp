@@ -189,18 +189,14 @@ void generateCatch(StubAssembler& jit)
 {
     constexpr GPRReg vm = GPRInfo::regT3;
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), vm);
-#if ENABLE(WEBASSEMBLY)
     jit.and64(TrustedImm64(JSValue::NativeCalleeMask), vm, GPRInfo::regT0);
     Jump isJSCallee = jit.branch64(CCallHelpers::NotEqual, GPRInfo::regT0, TrustedImm64(JSValue::NativeCalleeTag));
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), vm);
-    jit.loadPtr(Address(vm, JSWebAssemblyInstance::offsetOfVM()), vm);
+    jit.loadPtr(Address(vm, AOT_INSTANCE_OFFSET(vm)), vm);
     Jump vmReady = jit.jump();
     isJSCallee.link(&jit);
-#endif
     loadCellVM(jit, vm);
-#if ENABLE(WEBASSEMBLY)
     vmReady.link(&jit);
-#endif
 
     restoreCalleeSavesAndClearBuffer(jit, vm, GPRInfo::regT0);
     jit.loadPtr(Address(vm, VM::callFrameForCatchOffset()), GPRInfo::callFrameRegister);

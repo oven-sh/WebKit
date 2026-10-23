@@ -19,6 +19,7 @@
 #include "AOTStubCatalog.h"
 #include "AOTStubsCallLists.h"
 #include "AirFrameEmission.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"

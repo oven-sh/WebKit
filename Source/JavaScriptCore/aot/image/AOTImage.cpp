@@ -111,7 +111,9 @@ static bool hasValidCodeRange(const ImageHeader& header)
         && !(header.codeOffset % imagePageSize)
         && header.codeOffset <= header.size
         && header.codeSize <= header.size - header.codeOffset
-        && header.codeSize <= std::numeric_limits<uint32_t>::max();
+        && header.codeSize <= std::numeric_limits<uint32_t>::max()
+        && !(header.executableSize % imagePageSize)
+        && header.executableSize <= header.codeSize;
 }
 
 static bool hasValidSectionRanges(const ImageHeader& header)
@@ -165,11 +167,12 @@ static uint64_t endOfCodePart(uint32_t offset, uint32_t size)
 static bool hasValidCodeParts(const ImageHeader& header)
 {
     const ImageCodeRanges& code = header.code;
-    return code.functionsEnd <= code.regExpCodeOffset
-        && code.regExpCodeOffset <= code.webAssemblyCodeOffset
-        && endOfCodePart(code.webAssemblyCodeOffset, code.webAssemblyCodeSize) <= code.constantsOffset
-        && endOfCodePart(code.constantsOffset, code.constantsSize) <= code.ffiCodeOffset
-        && endOfCodePart(code.ffiCodeOffset, code.ffiCodeSize) <= header.codeSize
+    return code.functionsEnd <= code.webAssemblyCodeOffset
+        && endOfCodePart(code.webAssemblyCodeOffset, code.webAssemblyCodeSize) <= code.ffiCodeOffset
+        && endOfCodePart(code.ffiCodeOffset, code.ffiCodeSize) <= code.regExpCodeOffset
+        && code.regExpCodeOffset <= header.executableSize
+        && header.executableSize <= code.constantsOffset
+        && endOfCodePart(code.constantsOffset, code.constantsSize) <= header.codeSize
         && (!code.ffiCodeSize || !(code.ffiCodeOffset % imagePageSize));
 }
 
@@ -231,6 +234,8 @@ Wire::ImageVerdict Image::check(std::span<const uint8_t> bytes, const std::array
         return Wire::ImageVerdict::StampMismatch;
     if (bytes.size() < sizeof(ImageHeader) || header.size > bytes.size())
         return Wire::ImageVerdict::Truncated;
+    if (header.formatVersion != imageFormatVersion)
+        return Wire::ImageVerdict::StampMismatch;
     if (!header.options.useWideReferences() && !MarkedBlockCage::isEnabled())
         return Wire::ImageVerdict::NeedsCellCage;
     if (!header.options.isCompatibleWithProcess() || !hasMatchingHeapOptions(header))
@@ -300,7 +305,7 @@ bool Image::publish(std::unique_ptr<Image>&& unpublishedImage)
 std::span<const uint8_t> Image::regExpCode() const
 {
     const ImageCodeRanges& ranges = header().code;
-    return code().subspan(ranges.regExpCodeOffset, ranges.webAssemblyCodeOffset - ranges.regExpCodeOffset);
+    return code().subspan(ranges.regExpCodeOffset, ranges.constantsOffset - ranges.regExpCodeOffset);
 }
 
 std::span<const uint8_t> Image::webAssemblyCode() const
@@ -326,7 +331,7 @@ static CodeLocation locateAfterFunctions(const ImageCodeRanges& ranges, uint32_t
         return { CodeKind::WebAssembly, StubFrameKind::Plain, 0, offset - ranges.webAssemblyCodeOffset };
     if (offset - ranges.ffiCodeOffset < ranges.ffiCodeSize)
         return { CodeKind::FFI, StubFrameKind::Plain, 0, offset - ranges.ffiCodeOffset };
-    if (offset >= ranges.regExpCodeOffset && offset < ranges.webAssemblyCodeOffset)
+    if (offset >= ranges.regExpCodeOffset && offset < ranges.constantsOffset)
         return { CodeKind::RegExp, StubFrameKind::Plain, 0, offset - ranges.regExpCodeOffset };
     return { };
 }

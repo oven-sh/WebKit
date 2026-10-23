@@ -294,7 +294,9 @@ public:
     void reduceAllBlocksStrength()
     {
         // lowerMacros expands every wasm-GC opcode, so the Final run cannot see one.
+#if ENABLE(WEBASSEMBLY)
         m_trackWasmGCAccesses = m_pass == ReduceStrengthPass::Initial && m_proc.usesWasmGCAccesses();
+#endif
         if (m_trackWasmGCAccesses) {
             computeWasmGCSpans();
             m_naturalLoops = &m_proc.naturalLoops();
@@ -3904,6 +3906,7 @@ private:
             break;
         }
 
+#if ENABLE(WEBASSEMBLY)
         case WasmStructGet:
         case WasmStructSet: {
             // Clearing the trap bit in place rather than inserting a replacement keeps this the
@@ -4037,6 +4040,8 @@ private:
             }
             break;
         }
+
+#endif // ENABLE(WEBASSEMBLY)
 
         default:
             break;
@@ -4759,6 +4764,7 @@ private:
     static constexpr unsigned wasmGCArrayAllSlot() { return 1 + numberOfWasmGCArrayElementTypes; }
     unsigned wasmGCSlotCount() const { return numberOfWasmGCSharedSlots + m_wasmGCStructWidth; }
 
+#if ENABLE(WEBASSEMBLY)
     unsigned wasmGCStructFieldIndex(HeapRange range) const
     {
         // An undecorated access carries HeapRange::top(), which would index anywhere at all.
@@ -5144,6 +5150,13 @@ private:
         }
         m_wasmGCArraySpan = HeapRange(begin, end);
     }
+#else
+    void computeWasmGCSpans() { }
+    void scanWasmGCAccesses() { }
+    void beginWasmGCBlock(BasicBlock*) { }
+    void endWasmGCBlock(BasicBlock*) { }
+    void processWasmGCAccess(HeapRange, bool) { }
+#endif // ENABLE(WEBASSEMBLY)
 
     bool canSimplifyCFG()
     {
@@ -5496,7 +5509,11 @@ private:
     DominatingConditionStack m_conditions;
     const bool m_validatesIRAtEachPhase { shouldValidateIRAtEachPhase(m_proc) };
 
+#if ENABLE(WEBASSEMBLY)
     bool m_trackWasmGCAccesses { false };
+#else
+    static constexpr bool m_trackWasmGCAccesses { false };
+#endif
     LayeredHashMap<WasmGCAccessKey, WasmGCAvailableValue, DefaultHash<WasmGCAccessKey>, WasmGCAccessKeyTraits> m_wasmGCMap;
     HeapRange m_wasmGCStructSpan;
     HeapRange m_wasmGCArraySpan;

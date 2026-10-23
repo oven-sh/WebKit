@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTableBindings.h"
 #include "AOTClosure.h"
+#include "AOTGuardedPages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeCounters.h"
@@ -35,13 +36,13 @@ CustomAccessorTable::CustomAccessorTable(VM& vm, CacheRegistry& registry)
     : m_vm(vm)
     , m_capacity(safeCast<uint32_t>(runtimeLimitValue(vm, LimitID::CustomAccessorRecords)))
 {
-    m_records = static_cast<CustomAccessorRecord*>(OSAllocator::reserveAndCommit(sizeOfRecords(m_capacity), OSAllocator::FastMallocPages));
+    m_records = static_cast<CustomAccessorRecord*>(reserveGuardedPages(sizeOfRecords(m_capacity)));
     registry.add(CacheKind::WeakByKey, "CustomAccessorTable"_s, *this);
 }
 
 CustomAccessorTable::~CustomAccessorTable()
 {
-    OSAllocator::decommitAndRelease(m_records, sizeOfRecords(m_capacity));
+    releaseGuardedPages(m_records, sizeOfRecords(m_capacity));
 }
 
 std::optional<uint32_t> CustomAccessorTable::find(const CustomAccessorRecord& record) const

@@ -115,10 +115,14 @@ static void testNamedListsTranslate()
 
 static void testMarks()
 {
+#if ENABLE(SHADOW_REALM)
     AOT_TEST_CHECK(table().has(BuiltinMark::EvaluatesTextInGlobalScope, Builtins::ShadowRealmPrototypeEvaluate) && !table().has(BuiltinMark::EvaluatesTextInGlobalScope, Builtins::ArrayPrototypePush));
+#endif
     AOT_TEST_CHECK(table().has(BuiltinMark::IsSpy, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::HoldsLoader, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::IsSpy, BuiltinID()));
     AOT_TEST_CHECK(table().marked(BuiltinMark::IsNotEnumerable).size() == 2 && table().has(BuiltinMark::IsNotEnumerable, hostBuiltin("Console_stdout"_s)));
+#if ENABLE(SHADOW_REALM)
     AOT_TEST_CHECK(table().has(BuiltinMark::MayBeAbsent, Builtins::ShadowRealm) && !table().has(BuiltinMark::MayBeAbsent, Builtins::ArrayBuffer));
+#endif
     for (BuiltinMark mark : { BuiltinMark::IsAddedByOption, BuiltinMark::MayBeAbsent, BuiltinMark::EvaluatesTextInGlobalScope, BuiltinMark::HoldsLoader, BuiltinMark::IsSpy, BuiltinMark::IsNotEnumerable }) {
         std::span<const BuiltinMarkedEntry> marked = table().marked(mark);
         AOT_TEST_CHECK(!marked.empty() && std::ranges::is_sorted(marked, { }, &BuiltinMarkedEntry::builtin));
@@ -810,7 +814,10 @@ static void testAttributesReadByPasses()
         return table().at(id).flags.contains(flag);
     };
     // Nothing of Bun's makes a second realm that runs the compiled program in the VM of its caller: a Worker has a VM of its own. The column stays for a host that does.
-    AOT_TEST_CHECK(!has(hostBuiltin("Worker"_s), BuiltinFlag::StartsInstance) && !has(Builtins::ShadowRealm, BuiltinFlag::StartsInstance) && !has(Builtins::Map, BuiltinFlag::StartsInstance));
+    AOT_TEST_CHECK(!has(hostBuiltin("Worker"_s), BuiltinFlag::StartsInstance) && !has(Builtins::Map, BuiltinFlag::StartsInstance));
+#if ENABLE(SHADOW_REALM)
+    AOT_TEST_CHECK(!has(Builtins::ShadowRealm, BuiltinFlag::StartsInstance));
+#endif
     AOT_TEST_CHECK(has(Builtins::Eval, BuiltinFlag::EvaluatesText) && has(Builtins::Function, BuiltinFlag::EvaluatesText) && !has(Builtins::ParseInt, BuiltinFlag::EvaluatesText));
     AOT_TEST_CHECK(has(Builtins::ArrayOf, BuiltinFlag::RequiresHolderAsThis) && has(Builtins::PromiseResolve, BuiltinFlag::RequiresHolderAsThis) && !has(Builtins::MathMax, BuiltinFlag::RequiresHolderAsThis));
     AOT_TEST_CHECK(has(Builtins::MathAbs, BuiltinFlag::IsDeterministic) && !has(Builtins::MathRandom, BuiltinFlag::IsDeterministic));

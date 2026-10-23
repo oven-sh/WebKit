@@ -307,9 +307,19 @@ enum class ThrowSiteSource : uint32_t {
 };
 
 struct ThrowSiteWord {
-    static constexpr uint32_t maxNarrowA = (1u << 17) - 1;
     static constexpr uint32_t none = UINT32_MAX;
+    static constexpr uint32_t narrowNone = (1u << 17) - 1;
+    static constexpr uint32_t maxNarrowA = narrowNone - 1;
     static constexpr unsigned numberOfRegistersPerBank = 32;
+#if CPU(X86_64)
+    // Behind a call each word is the immediate of a `test eax, imm32` that nothing executes: whoever decodes the code in order finds instructions alone, and the next one where it begins.
+    static constexpr uint8_t opcodeInFrontOfWordBehindCall = 0xa9;
+    static constexpr size_t sizeOfWordBehindCall = sizeof(uint8_t) + sizeof(uint32_t);
+#else
+    static constexpr size_t sizeOfWordBehindCall = sizeof(uint32_t);
+#endif
+
+    uint32_t narrowA() const { return a == narrowNone ? none : a; }
 
     uint32_t kind : 3;
     uint32_t representation : 4;

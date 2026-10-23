@@ -228,6 +228,7 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
         if (u.indices[2] == UINT32_MAX)
             return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), child(proc, 0), child(proc, 1));
         return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), child(proc, 0), child(proc, 1), child(proc, 2));
+#if ENABLE(WEBASSEMBLY)
     case WasmRefTest:
     case WasmRefCast: {
         unsigned packedFlags = u.indices[3] >> 16;
@@ -259,6 +260,7 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
         v->setRange(proc.heaps().JSWebAssemblyArray_size.range());
         return v;
     }
+#endif // ENABLE(WEBASSEMBLY)
     case Nop:
     case Set:
     case Get:

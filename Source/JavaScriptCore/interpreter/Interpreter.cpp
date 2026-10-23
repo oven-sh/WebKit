@@ -1175,7 +1175,7 @@ CatchInfo::CatchInfo(const HandlerInfo* handler, CodeBlock* codeBlock)
     m_valid = !!handler;
     if (m_valid) {
         m_type = handler->type();
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         m_nativeCode = handler->nativeCode;
 #endif
 
@@ -1198,7 +1198,7 @@ CatchInfo::CatchInfo(const Wasm::HandlerInfo* handler, const Wasm::Callee* calle
     m_valid = !!handler;
     if (m_valid) {
         m_type = HandlerType::Catch;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         m_nativeCode = handler->m_nativeCode;
         m_nativeCodeForDispatchAndCatch = nullptr;
 #endif

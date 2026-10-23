@@ -682,6 +682,7 @@ private:
                     invertedComparisonByXor(VectorGreaterThan, m_value->child(0), m_value->child(1));
                 break;
 
+#if ENABLE(WEBASSEMBLY)
             case WasmStructGet: {
                 WasmStructGetValue* structGet = m_value->as<WasmStructGetValue>();
                 Value* structPtr = structGet->child(0);
@@ -1095,6 +1096,8 @@ private:
                 m_changed = true;
                 break;
             }
+
+#endif // ENABLE(WEBASSEMBLY)
 
             default:
                 RELEASE_ASSERT(!isLoweredByLowerMacros(m_value->opcode()));
@@ -1575,6 +1578,7 @@ private:
         recursivelyBuildSwitch(cases, fallThrough, medianIndex, true, end, right);
     }
 
+#if ENABLE(WEBASSEMBLY)
     Value* appendStructureIDBase(BasicBlock* block)
     {
         if (m_proc.policy().addressing.isPositionIndependent)
@@ -2019,6 +2023,7 @@ private:
             m_insertionSet.insert<Value>(m_index, Mul, pointerType(), m_origin,
                 extIndex, m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, elementSize)));
     }
+#endif // ENABLE(WEBASSEMBLY)
 
     UseCountsWithoutUsingInstructions& useCounts()
     {

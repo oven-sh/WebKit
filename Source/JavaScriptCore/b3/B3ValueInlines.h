@@ -116,6 +116,12 @@ ALWAYS_INLINE bool Value::mustExecute() const
     return effectsSlow().mustExecute();
 }
 
+#if ENABLE(WEBASSEMBLY)
+#define B3_WASM_GC_VALUE_TYPE(ValueType) ValueType
+#else
+#define B3_WASM_GC_VALUE_TYPE(ValueType) Value
+#endif
+
 #define DISPATCH_ON_KIND(MACRO) \
     switch (kind().opcode()) { \
     case FramePointer: \
@@ -183,7 +189,7 @@ ALWAYS_INLINE bool Value::mustExecute() const
     case Select: \
         return MACRO(Value); \
     case WasmArrayLength: \
-        return MACRO(WasmArrayLengthValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmArrayLengthValue)); \
     case ArgumentReg: \
         return MACRO(ArgumentRegValue); \
     case Const32: \
@@ -230,20 +236,20 @@ ALWAYS_INLINE bool Value::mustExecute() const
     case WasmBoundsCheck: \
         return MACRO(WasmBoundsCheckValue); \
     case WasmStructGet: \
-        return MACRO(WasmStructGetValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmStructGetValue)); \
     case WasmStructSet: \
-        return MACRO(WasmStructSetValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmStructSetValue)); \
     case WasmStructNew: \
-        return MACRO(WasmStructNewValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmStructNewValue)); \
     case WasmArrayGet: \
-        return MACRO(WasmArrayGetValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmArrayGetValue)); \
     case WasmArraySet: \
-        return MACRO(WasmArraySetValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmArraySetValue)); \
     case WasmArrayNew: \
-        return MACRO(WasmArrayNewValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmArrayNewValue)); \
     case WasmRefCast: \
     case WasmRefTest: \
-        return MACRO(WasmRefTypeCheckValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmRefTypeCheckValue)); \
     case AtomicXchgAdd: \
     case AtomicXchgAnd: \
     case AtomicXchgOr: \

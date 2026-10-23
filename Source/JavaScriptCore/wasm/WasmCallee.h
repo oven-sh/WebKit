@@ -77,7 +77,7 @@ public:
     // Used by Wasm's fault signal handler to determine if the fault came from Wasm.
     std::tuple<void*, void*> range() const;
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     Box<PCToCodeOriginMap> pcToCodeOriginMap() const;
 #endif
 
@@ -98,7 +98,7 @@ public:
         return 0;
     }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     Box<PCToCodeOriginMap> pcToCodeOriginMapImpl() const { return nullptr; }
 #endif
 
@@ -128,7 +128,7 @@ public:
     friend class Callee;
     FixedVector<UnlinkedWasmToWasmCall>& wasmToWasmCallsites() LIFETIME_BOUND { return m_wasmToWasmCallsites; }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     void setEntrypoint(Wasm::Entrypoint&&);
     void setCodeInImage(std::span<const uint8_t> code, RegisterAtOffsetList&& savedRegisters)
     {
@@ -141,7 +141,7 @@ protected:
     JS_EXPORT_PRIVATE JITCallee(Wasm::CompilationMode);
     JS_EXPORT_PRIVATE JITCallee(Wasm::CompilationMode, FunctionSpaceIndex, std::pair<const Name*, RefPtr<NameSection>>&&);
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     std::tuple<void*, void*> rangeImpl() const
     {
         if (!m_codeInImage.empty())
@@ -166,7 +166,7 @@ protected:
 #endif
 
     FixedVector<UnlinkedWasmToWasmCall> m_wasmToWasmCallsites;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     Wasm::Entrypoint m_entrypoint;
     std::span<const uint8_t> m_codeInImage;
 #endif
@@ -248,7 +248,7 @@ private:
 extern "C" EncodedJSValue g_restoreFrameCalleeBoxed;
 extern "C" void wasm_restore_frame_return();
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 class JSToWasmICCallee final : public Callee {
     WTF_MAKE_COMPACT_TZONE_ALLOCATED(JSToWasmICCallee);
@@ -613,12 +613,14 @@ SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::OptimizingJITCallee)
     }
 SPECIALIZE_TYPE_TRAITS_END()
 
+#if ENABLE(WEBASSEMBLY_BBQJIT)
 SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::BBQCallee)
     static bool isType(const JSC::Wasm::Callee& callee)
     {
         return callee.compilationMode() == JSC::Wasm::CompilationMode::BBQMode;
     }
 SPECIALIZE_TYPE_TRAITS_END()
+#endif
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::OMGCallee)

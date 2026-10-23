@@ -879,6 +879,9 @@ void Options::notifyOptionsChanged()
     if (!Options::allowDoubleShape())
         Options::useJIT() = false; // We don't support JIT with !allowDoubleShape. So disable it.
 
+#if !ENABLE(WEBASSEMBLY)
+    Options::useWasm() = false;
+#endif
     if (!Options::useWasm())
         disableAllWasmOptions();
 

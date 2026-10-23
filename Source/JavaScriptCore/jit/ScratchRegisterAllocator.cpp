@@ -26,7 +26,7 @@
 #include "config.h"
 #include "ScratchRegisterAllocator.h"
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "AssemblyHelpersSpoolers.h"
 #include "MaxFrameExtentForSlowPathCall.h"
@@ -249,4 +249,4 @@ void ScratchRegisterAllocator::restoreRegistersFromStackForCall(AssemblyHelpers&
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

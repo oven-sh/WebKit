@@ -175,7 +175,8 @@ function findLineOfUse(table: SyntaxTable, name: string, position: IntrinsicPosi
   return line !== undefined && (line.spec.intrinsic === "SymbolKey") === isSymbolKey ? line : undefined;
 }
 
-function checkUses(table: SyntaxTable, uses: SyntaxUses, problems: Problems): void {
+function checkUses(table: SyntaxTable, uses: SyntaxUses, builder: ModelBuilder): void {
+  const { problems } = builder;
   const usedLines = new Set<SyntaxLine>();
   for (const name of sortedUnique(uses.names.keys())) {
     for (const position of intrinsicPositions) {
@@ -191,7 +192,7 @@ function checkUses(table: SyntaxTable, uses: SyntaxUses, problems: Problems): vo
   const callees = table.collectCallees();
   for (const line of table.lines) {
     if (!line.isWritten || usedLines.has(line) || callees.has(line.name)) continue;
-    problems.add(line.source, `${subjectOf(line)} has a line, but nothing in ${usingSources} uses it`);
+    builder.reportUnknown(line.source, `${subjectOf(line)} has a line, but nothing in ${usingSources} uses it`);
   }
 }
 
@@ -258,6 +259,7 @@ function resolveMeaning(builder: ModelBuilder, line: SyntaxLine): ModelIntrinsic
       return isListed(nativeCallKinds, spec.kind) ? spec : reject(`${spec.kind} is not a native call kind`);
     case "LinkedFunction": {
       const named = builder.functions.filter(candidate => candidate.name === line.name);
+      if (named.length === 0) return builder.reportUnknown(source, `${subjectOf(line)}: no runtime function has this name`);
       if (named.length !== 1) return reject(`${named.length} runtime functions have this name`);
       return { intrinsic: "LinkedFunction", function: named[0] };
     }
@@ -341,7 +343,7 @@ export function buildSyntax(
   addCalleesAndMacros(table);
   if (uses !== null) {
     addPrivateNames(table, uses);
-    checkUses(table, uses, builder.problems);
+    checkUses(table, uses, builder);
     checkPrefixedGlobals(table, uses.prefixedGlobals, builder.problems);
   }
 

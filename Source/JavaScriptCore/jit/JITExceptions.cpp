@@ -65,7 +65,7 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
         catchPCForInterpreter = handler.m_catchPCForInterpreter;
         catchMetadataPCForInterpreter = handler.m_catchMetadataPCForInterpreter;
         tryDepthForThrow = handler.m_tryDepthForThrow;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         catchRoutine = handler.m_nativeCode.taggedPtr();
         if (handler.m_nativeCodeForDispatchAndCatch)
             dispatchAndCatchRoutine = handler.m_nativeCodeForDispatchAndCatch.taggedPtr();

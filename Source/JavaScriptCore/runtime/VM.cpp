@@ -219,6 +219,9 @@ JSLock& VM::apiLock() { return m_apiLock.get(); }
 #if ENABLE(ASSEMBLER)
 static bool enableAssembler()
 {
+#if !ENABLE(JIT)
+    return false;
+#else
     if (!Options::useJIT())
         return false;
 
@@ -234,6 +237,7 @@ static bool enableAssembler()
     }
 
     return true;
+#endif
 }
 #endif // ENABLE(!ASSEMBLER)
 
@@ -941,8 +945,10 @@ static ThunkGenerator LEGACY_NODELETE thunkGeneratorForIntrinsic(Intrinsic intri
         return objectIsThunkGenerator;
     case BoundFunctionCallIntrinsic:
         return boundFunctionCallGenerator;
+#if ENABLE(SHADOW_REALM)
     case RemoteFunctionCallIntrinsic:
         return remoteFunctionCallGenerator;
+#endif
     case NumberConstructorIntrinsic:
         return numberConstructorCallThunkGenerator;
     case StringConstructorIntrinsic:

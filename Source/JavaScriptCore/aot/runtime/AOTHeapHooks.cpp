@@ -18,6 +18,7 @@
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "CellVisitValidator.h"
 #include "Collector.h"
 #include "HeapInlines.h"
 #include "HeapUtil.h"
@@ -197,6 +198,8 @@ void noteInnerCellsWithoutMark(JSCell* outerCell)
 
 void didFinishMarking(VM& vm)
 {
+    if (vm.heap.validatesCellVisits()) [[unlikely]]
+        CellVisitValidator::validateMarksOfInnerCells(vm.heap);
     VMState& state = vm.aotState();
     Locker locker { state.innerCellsWithoutMark.lock };
     for (JSCell* inner : state.innerCellsWithoutMark.cells) {

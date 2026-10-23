@@ -271,7 +271,7 @@ static void prependHead(CompiledCode& target, const CompiledCode& removed, const
     alias.prefixSize = prefixSize;
 }
 
-static void appendBody(CodeBody& host, const CompiledCode& guest, FunctionID target, EntryAlias& alias)
+static void appendBody(CodeBody& host, const CompiledCode& guest, FunctionID target, EntryAlias& alias, const CodeTemplates& templates)
 {
     constexpr size_t alignment = imageFunctionAlignment;
     static_assert(alignment <= 16);
@@ -280,8 +280,9 @@ static void appendBody(CodeBody& host, const CompiledCode& guest, FunctionID tar
     // The layout aligns the primary entry of the host, so the first byte of the host lies this far past a multiple of the alignment.
     size_t startMisalignment = (alignment - host.primaryEntryOffset() % alignment) % alignment;
     size_t start = WTF::roundUpToMultipleOf<alignment>(startMisalignment + hostEnd + guestEntry) - startMisalignment - guestEntry;
+    RELEASE_ASSERT(!((start - hostEnd) % templates.breakpoint.size()));
     while (host.bytes.size() < start)
-        host.bytes.append(0);
+        host.bytes.appendVector(templates.breakpoint);
     alias.start = safeCast<uint32_t>(start);
     alias.prefixSize = guestEntry;
     host.bytes.appendVector(guest.body.bytes);
@@ -381,7 +382,7 @@ void removeJumpOnlyFunctions(LinkedFunctions& functions, Vector<EntryAlias>& ali
         HostBody host = removed.hosts[number];
         size_t appendedBodiesEnd = number + 1 < removed.hosts.size() ? removed.hosts[number + 1].firstAppendedBody : removed.appendedBodies.size();
         for (const MovedBody& guest : removed.appendedBodies.subspan(host.firstAppendedBody, appendedBodiesEnd - host.firstAppendedBody))
-            appendBody(functions[host.position].body, functions[guest.position], functions[guest.target].function, aliases[guest.alias]);
+            appendBody(functions[host.position].body, functions[guest.position], functions[guest.target].function, aliases[guest.alias], templates);
     });
     if (!aliases.isEmpty()) {
         Vector<uint32_t> retainedPositions = findIndicesInParallel(loops, count, [&](unsigned position) {

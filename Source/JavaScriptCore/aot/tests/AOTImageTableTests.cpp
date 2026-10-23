@@ -414,6 +414,11 @@ static void testOtherStamp()
     checkHeaderChange(Verdict::StampMismatch, [](ImageHeader& header) { header.stamp ^= 1; });
 }
 
+static void testOtherFormatVersion()
+{
+    checkHeaderChange(Verdict::StampMismatch, [](ImageHeader& header) { header.formatVersion += 1; });
+}
+
 static void testSizeAboveSpan()
 {
     checkHeaderChange(Verdict::Truncated, [](ImageHeader& header) { header.size += imagePageSize; });
@@ -556,29 +561,46 @@ static void testSharedCodeCopiesOverlap()
     }) == Verdict::MalformedTables);
 }
 
-static void testRegExpCodeBeforeEndOfFunctions()
+static void testWebAssemblyCodeBeforeEndOfFunctions()
 {
-    checkCodePartChange([](ImageCodeRanges& code) { code.regExpCodeOffset = code.functionsEnd - 1; });
+    checkCodePartChange([](ImageCodeRanges& code) { code.webAssemblyCodeOffset = code.functionsEnd - 1; });
 }
 
-static void testWebAssemblyCodeBeforeRegExpCode()
+static void testWebAssemblyCodePastFFICode()
 {
-    checkCodePartChange([](ImageCodeRanges& code) { code.webAssemblyCodeOffset = code.regExpCodeOffset - 1; });
+    checkCodePartChange([](ImageCodeRanges& code) { code.webAssemblyCodeSize = code.ffiCodeOffset - code.webAssemblyCodeOffset + 1; });
 }
 
-static void testWebAssemblyCodePastConstants()
+static void testFFICodePastRegExpCode()
 {
-    checkCodePartChange([](ImageCodeRanges& code) { code.webAssemblyCodeSize = code.constantsOffset - code.webAssemblyCodeOffset + 1; });
+    checkCodePartChange([](ImageCodeRanges& code) { code.ffiCodeSize = code.regExpCodeOffset - code.ffiCodeOffset + 1; });
 }
 
-static void testConstantsPastFFICode()
+static void testRegExpCodePastExecutablePart()
 {
-    checkCodePartChange([](ImageCodeRanges& code) { code.constantsSize = code.ffiCodeOffset - code.constantsOffset + 1; });
+    uint32_t executableSize = static_cast<uint32_t>(imageWithEveryCodePart().image->header().executableSize);
+    checkCodePartChange([&](ImageCodeRanges& code) { code.regExpCodeOffset = executableSize + 1; });
 }
 
-static void testFFICodePastEnd()
+static void testConstantsInExecutablePart()
 {
-    checkCodePartChange([](ImageCodeRanges& code) { code.ffiCodeSize += 1; });
+    uint32_t executableSize = static_cast<uint32_t>(imageWithEveryCodePart().image->header().executableSize);
+    checkCodePartChange([&](ImageCodeRanges& code) { code.constantsOffset = executableSize - imageConstantsAlignment; });
+}
+
+static void testConstantsPastEnd()
+{
+    checkCodePartChange([](ImageCodeRanges& code) { code.constantsSize += 1; });
+}
+
+static void testExecutablePartOffPageBoundary()
+{
+    checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { header.executableSize -= imageConstantsAlignment; });
+}
+
+static void testExecutablePartPastEnd()
+{
+    checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { header.executableSize = header.size - header.codeOffset + imagePageSize; });
 }
 
 static void testFFICodeOffPageBoundary()
@@ -616,6 +638,7 @@ static void testNoCode()
 {
     checkHeaderChange(Verdict::NoCode, [](ImageHeader& header) {
         header.codeSize = 0;
+        header.executableSize = 0;
         header.code = { };
         rangeOf(header, ImageSection::SharedCodeCopies).size = 0;
     });
@@ -721,11 +744,12 @@ static void testRegExpAndWebAssemblyCode()
     AOT_TEST_CHECK(!(ranges.webAssemblyCodeOffset % 16));
     AOT_TEST_CHECK(ranges.webAssemblyCodeSize == sizeOfWebAssemblyCode);
     AOT_TEST_CHECK(loaded.regExpCode().data() == loaded.code().data() + ranges.regExpCodeOffset);
-    AOT_TEST_CHECK(loaded.regExpCode().data() + loaded.regExpCode().size() == loaded.webAssemblyCode().data());
+    AOT_TEST_CHECK(loaded.regExpCode().data() + loaded.regExpCode().size() == loaded.code().data() + ranges.constantsOffset);
+    AOT_TEST_CHECK(ranges.regExpCodeOffset < loaded.header().executableSize);
 
     checkCodePart(loaded, CodeKind::RegExp, loaded.regExpCode());
     checkCodePart(loaded, CodeKind::WebAssembly, loaded.webAssemblyCode());
-    if (ranges.functionsEnd < ranges.regExpCodeOffset)
+    if (ranges.ffiCodeOffset + ranges.ffiCodeSize < ranges.regExpCodeOffset)
         AOT_TEST_CHECK(loaded.locate(loaded.regExpCode().data() - 1).kind == CodeKind::NotInImage);
 }
 
@@ -738,9 +762,13 @@ static void testConstantsAndFFICode()
     AOT_TEST_CHECK(ranges.constantsSize == sizeOfConstant);
     AOT_TEST_CHECK(!(ranges.constantsOffset % imageConstantsAlignment));
     AOT_TEST_CHECK(ranges.ffiCodeSize == sizeOfFFICode);
-    AOT_TEST_CHECK(ranges.ffiCodeOffset + ranges.ffiCodeSize == header.codeSize);
+    AOT_TEST_CHECK(ranges.constantsOffset + ranges.constantsSize == header.codeSize);
+    AOT_TEST_CHECK(!(header.executableSize % imagePageSize));
+    AOT_TEST_CHECK(ranges.ffiCodeOffset + ranges.ffiCodeSize <= header.executableSize && header.executableSize <= ranges.constantsOffset);
 
     for (uint32_t offset = ranges.webAssemblyCodeOffset + ranges.webAssemblyCodeSize; offset < ranges.ffiCodeOffset; ++offset)
+        AOT_TEST_CHECK(loaded.locate(code + offset).kind == CodeKind::NotInImage);
+    for (uint32_t offset = ranges.constantsOffset; offset < header.codeSize; ++offset)
         AOT_TEST_CHECK(loaded.locate(code + offset).kind == CodeKind::NotInImage);
     checkCodePart(loaded, CodeKind::FFI, loaded.ffiCode());
     AOT_TEST_CHECK(loaded.locate(code + header.codeSize).kind == CodeKind::NotInImage);
@@ -961,6 +989,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/check/header-cut"_s, testHeaderCut },
         { "image/check/wrong-magic"_s, testWrongMagic },
         { "image/check/other-stamp"_s, testOtherStamp },
+        { "image/check/other-format-version"_s, testOtherFormatVersion },
         { "image/check/size-above-span"_s, testSizeAboveSpan },
         { "image/check/size-not-whole-pages"_s, testSizeNotWholePages },
         { "image/check/misaligned"_s, testMisaligned },
@@ -982,11 +1011,14 @@ std::span<const NativeTest> imageTableTests()
         { "image/check/shared-code-copy-past-functions"_s, testSharedCodeCopyPastFunctions },
         { "image/check/shared-code-ends-past-functions"_s, testSharedCodeEndsPastFunctions },
         { "image/check/shared-code-copies-overlap"_s, testSharedCodeCopiesOverlap },
-        { "image/check/regexp-code-before-end-of-functions"_s, testRegExpCodeBeforeEndOfFunctions },
-        { "image/check/wasm-code-before-regexp-code"_s, testWebAssemblyCodeBeforeRegExpCode },
-        { "image/check/wasm-code-past-constants"_s, testWebAssemblyCodePastConstants },
-        { "image/check/constants-past-ffi-code"_s, testConstantsPastFFICode },
-        { "image/check/ffi-code-past-end"_s, testFFICodePastEnd },
+        { "image/check/wasm-code-before-end-of-functions"_s, testWebAssemblyCodeBeforeEndOfFunctions },
+        { "image/check/wasm-code-past-ffi-code"_s, testWebAssemblyCodePastFFICode },
+        { "image/check/ffi-code-past-regexp-code"_s, testFFICodePastRegExpCode },
+        { "image/check/regexp-code-past-executable-part"_s, testRegExpCodePastExecutablePart },
+        { "image/check/constants-in-executable-part"_s, testConstantsInExecutablePart },
+        { "image/check/constants-past-end"_s, testConstantsPastEnd },
+        { "image/check/executable-part-off-page-boundary"_s, testExecutablePartOffPageBoundary },
+        { "image/check/executable-part-past-end"_s, testExecutablePartPastEnd },
         { "image/check/ffi-code-off-page-boundary"_s, testFFICodeOffPageBoundary },
         { "image/check/program-tables-magic"_s, testProgramTablesMagic },
         { "image/check/program-tables-cut"_s, testProgramTablesCut },

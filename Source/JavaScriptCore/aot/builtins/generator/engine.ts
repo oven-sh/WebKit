@@ -3,7 +3,7 @@
 import { join, resolve } from "node:path";
 import { loadSchema, type Schema } from "../../ir/generator/load.ts";
 import { buildModel } from "./build-model.ts";
-import { collectRuntimeFunctions } from "./collect-runtime-functions.ts";
+import { collectRuntimeFunctions, sourceOf } from "./collect-runtime-functions.ts";
 import { collectStaticTables } from "./collect-static-tables.ts";
 import { GeneratorError, Problems, type SourcedDeclaration } from "./declarations.ts";
 import { emitCppAttachments } from "./emit-cpp-attachments.ts";
@@ -17,6 +17,7 @@ import { emitCppTypes } from "./emit-cpp-types.ts";
 import { emitCppWords } from "./emit-cpp-words.ts";
 import { serializeEngineDeclarations, type EngineDeclarations } from "./engine-declarations.ts";
 import { engineFiles } from "./engine-sources.ts";
+import { leftOut } from "./lib.ts";
 import { engineDeclarationFiles, loadDeclarationFiles } from "./load-declaration-files.ts";
 import type { TableFeature, TableModel } from "./model.ts";
 import { collectOwnProperties } from "./own-properties.ts";
@@ -38,8 +39,17 @@ export interface EngineCode {
 
 const singleRoot = (root: string): { Engine: string; Host: string } => ({ Engine: root, Host: root });
 
-export async function collectEngine(javaScriptCore: string, problems: Problems): Promise<EngineDeclarations> {
+/** `pathsLeftOut`: what this engine is built without, such as "ShadowRealm" where ENABLE(SHADOW_REALM) is off. */
+export async function collectEngine(
+  javaScriptCore: string,
+  problems: Problems,
+  pathsLeftOut: readonly string[] = [],
+): Promise<EngineDeclarations> {
   const written = await loadDeclarationFiles(engineDeclarationFiles(javaScriptCore), "Engine", javaScriptCore);
+  if (pathsLeftOut.length > 0) {
+    const source = sourceOf("CMakeLists.txt", "Host");
+    written.push(...leftOut({ paths: pathsLeftOut, mayBeNamed: true }).map(declaration => ({ declaration, source })));
+  }
   const declared = [...written, ...collectStaticTables(written, singleRoot(javaScriptCore), problems)];
   const functions = collectRuntimeFunctions({ javaScriptCore, declared, frontEndFunctions: [] }, problems);
   problems.throwIfAny();

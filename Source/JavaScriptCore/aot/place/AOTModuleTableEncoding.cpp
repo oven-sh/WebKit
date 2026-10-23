@@ -8,8 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTFlowResults.h"
 #include "AOTModuleGraph.h"
+#include "AOTOpcodesNamingRecords.h"
+#include "AOTSchemaWalkers.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -146,6 +149,13 @@ void internPiecesOfModulePaths(Program& program)
     }
 }
 
+static void setNoPath(TableEncoder& encoder, ModuleData& entry)
+{
+    entry.publicPathOrName = encoder.shownStringNumber({ });
+    entry.directory = Number24(Number24::max);
+    entry.charactersInFrontOfDisplayPath = ModuleData::hasNoDisplayPath;
+}
+
 static void setPublicPath(TableEncoder& encoder, const Module& module, ModuleLists& lists, ModuleData& entry)
 {
     Vector<StringID, 16> pieces;
@@ -201,7 +211,6 @@ static void setDisplayPath(TableEncoder& encoder, ModuleID id, const Module& mod
 static void appendModule(TableEncoder& encoder, ModuleID id, const Module& module, ModuleLists& lists)
 {
     ModuleData entry { };
-    setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;
@@ -439,13 +448,62 @@ static bool hasCompiledBody(const TableEncoder& encoder, const Module& module)
     return module.body && encoder.program.at(module.body).hasBody();
 }
 
-static void appendModulesByPath(TableEncoder& encoder)
+// A frame shows the path of a module, code that names the module may read it, a record of the loader has it as its key, and whoever loads by a name that is computed looks for it.
+// An obfuscated build shows no path in a frame.
+static BitVector findModulesNeverAskedForPath(const TableEncoder& encoder, const ModuleLists& lists)
+{
+    const Program& program = encoder.program;
+    BitVector result(program.modules.size());
+    if (encoder.flow.mayRunUnseenCode() || encoder.inputs.bodyFacts.computesNamesOfModules)
+        return result;
+
+    BitVector isAsked(program.modules.size());
+    auto ask = [&](ModuleID module) {
+        if (module)
+            isAsked.quickSet(module.index());
+    };
+    const BodyFactsForTables& facts = encoder.inputs.bodyFacts;
+    for (size_t index : facts.functionsWithFrames) {
+        if (encoder.obfuscates())
+            break;
+        // No table names the entrypoint of a body that only returns: see bodyEntrypointOf().
+        const Function& function = program.functions[index];
+        const auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
+        if (!facts.functionsThatOnlyReturn.get(entrypoint ? entrypoint->target.index() : index))
+            ask(function.module);
+    }
+    isAsked.merge(facts.modulesNamedByCode);
+    for (const Entry& entry : program.entries)
+        ask(entry.module);
+    for (const Module& module : program.modules)
+        ask(module.referrer);
+    for (const RequireEdge& edge : encoder.placement.requireEdges()) {
+        ask(edge.referrer);
+        ask(edge.target);
+    }
+    for (const ModuleRequestData& request : lists.requests) {
+        if (request.isRequire)
+            isAsked.quickSet(request.target());
+    }
+    for (const ModuleImportSite& site : facts.importSites) {
+        isAsked.quickSet(site.importer);
+        isAsked.quickSet(site.target);
+    }
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        if (module.kind == ModuleKind::SourceText && lists.modules[index].isSimple() && !isAsked.quickGet(index))
+            result.quickSet(index);
+    }
+    return result;
+}
+
+static void appendModulesByPath(TableEncoder& encoder, const BitVector& modulesNeverAskedForPath)
 {
     const Program& program = encoder.program;
     Vector<uint32_t> modules;
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!isFoundByPath(module.kind))
+        if (!isFoundByPath(module.kind) || modulesNeverAskedForPath.get(index))
             continue;
         // Without an entry here, the host answers for the name of its module.
         if (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(encoder, module))
@@ -529,6 +587,35 @@ Vector<ModuleImportSite> findImportSites(const Program& program, const ParallelL
     return sites;
 }
 
+void findModulesNamedByCode(const Program& program, const BitVector& bodiesWithoutCode, const ParallelLoops& loops, BodyFactsForTables& facts)
+{
+    static constexpr OpcodeSet stepsOfEvaluation { Opcode::BeginModuleEvaluation, Opcode::FinishModuleEvaluation, Opcode::AbandonModuleEvaluation };
+    static constexpr OpcodeSet opcodesComputingNames { Opcode::ImportDynamic, Opcode::RequireDynamic, Opcode::ResolveDynamic };
+    static const OpcodeSet wanted = findOpcodesNaming<ModuleID>();
+    constexpr uint32_t computesName = UINT32_MAX;
+    Vector<uint32_t> found = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& named) {
+        if (!program.functions[index].hasBody() || bodiesWithoutCode.get(index))
+            return;
+        forEachListedValue(program, FunctionID(index), wanted, [&](BlockID, uint32_t, ValueID, const Value& value) {
+            if (stepsOfEvaluation.contains(value.opcode))
+                return;
+            if (opcodesComputingNames.contains(value.opcode))
+                named.append(computesName);
+            forEachModuleReference(value, [&](ModuleID module, ModuleReferenceKind) {
+                if (module)
+                    named.append(module.index());
+            });
+        });
+    });
+    facts.modulesNamedByCode.ensureSize(program.modules.size());
+    for (uint32_t module : found) {
+        if (module == computesName)
+            facts.computesNamesOfModules = true;
+        else
+            facts.modulesNamedByCode.quickSet(module);
+    }
+}
+
 // The process starts at the first entry.
 static Vector<LinkPlanStepData> planLinkOfFirstEntry(const TableEncoder& encoder, ModuleLists& lists)
 {
@@ -541,8 +628,16 @@ void encodeModuleTables(TableEncoder& encoder)
 {
     ModuleLists lists = collectModuleLists(encoder);
     computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span());
-    for (size_t index = 0; index < encoder.program.modules.size(); ++index)
-        setPublicPath(encoder, encoder.program.modules[index], lists, lists.modules[index]);
+    BitVector modulesNeverAskedForPath = findModulesNeverAskedForPath(encoder, lists);
+    for (uint32_t index = 0; index < encoder.program.modules.size(); ++index) {
+        const Module& module = encoder.program.modules[index];
+        if (modulesNeverAskedForPath.get(index)) {
+            setNoPath(encoder, lists.modules[index]);
+            continue;
+        }
+        setDisplayPath(encoder, ModuleID(index), module, lists, lists.modules[index]);
+        setPublicPath(encoder, module, lists, lists.modules[index]);
+    }
     ContractedModuleRequests contracted = contractRequestLists(encoder, lists);
     Vector<LinkPlanStepData> entryPointLinkPlan = planLinkOfFirstEntry(encoder, lists);
     std::optional<ModuleID> plannedEntryPoint = encoder.program.entries.isEmpty() ? std::nullopt : std::optional(encoder.program.entries.first().module);
@@ -567,7 +662,7 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::syntheticExports, lists.syntheticExports);
     encoder.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);
     appendModuleFailures(encoder);
-    appendModulesByPath(encoder);
+    appendModulesByPath(encoder, modulesNeverAskedForPath);
     appendCompiledRuntimeModules(encoder);
     appendCompiledRuntimeFunctions(encoder);
 }

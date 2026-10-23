@@ -32,6 +32,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL;
+// Goes up whenever a member of ImageHeader in front of `options` changes its place or its meaning. 1 had no such member, and all of its code part was executable.
+static constexpr uint32_t imageFormatVersion = 2;
 static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
 static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
@@ -101,17 +103,18 @@ struct ImageCounts {
     uint32_t maxRegExpOutputSize;
 };
 
+// In the order in which the parts lie. The section of the regular expressions ends at constantsOffset, and ImageHeader::executableSize lies in it: in front of its tables.
 struct ImageCodeRanges {
     uint32_t functionsEnd;
     uint32_t codeGranuleShift;
     uint32_t sharedCodeSize;
-    uint32_t regExpCodeOffset;
     uint32_t webAssemblyCodeOffset;
     uint32_t webAssemblyCodeSize;
-    uint32_t constantsOffset;
-    uint32_t constantsSize;
     uint32_t ffiCodeOffset;
     uint32_t ffiCodeSize;
+    uint32_t regExpCodeOffset;
+    uint32_t constantsOffset;
+    uint32_t constantsSize;
 };
 
 // Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, and without LoadsModulesByName only while no module is found by a name.
@@ -139,6 +142,10 @@ struct ImageHeader {
     uint64_t codeOffset;
     uint64_t codeSize;
     uint64_t address;
+    // The code part begins with what is executed, on this many bytes, whole pages. The rest is data that the code finds by its distance: it is mapped with the code and is only read.
+    uint64_t executableSize;
+    uint32_t formatVersion;
+    uint32_t reserved;
     RecordedOptions options;
     ImageHeapOptions heap;
     ImageSectionRange sections[numberOfImageSections];
@@ -152,6 +159,9 @@ static_assert(!(offsetof(ImageHeader, sections) % 4));
 static_assert(!offsetof(ImageHeader, magic) && offsetof(ImageHeader, stamp) == 8 && offsetof(ImageHeader, identity) == 16);
 static_assert(offsetof(ImageHeader, size) == 32 && offsetof(ImageHeader, codeOffset) == 40 && offsetof(ImageHeader, codeSize) == 48, "Bun's test/aot/cli/compiled-image.ts and test/aot/shell/expectations.py read these members by offset");
 static_assert(offsetof(ImageHeader, address) == 56, "Bun's writers of executables list this member for the loader");
+static_assert(offsetof(ImageHeader, executableSize) == 64, "Bun's writer of ELF executables reads this member by offset");
+static_assert(offsetof(ImageHeader, formatVersion) == 72 && offsetof(ImageHeader, options) == 80, "whoever reads an image without this header finds the members in front of `options` by offset: they stay where they are");
+static_assert(offsetof(ImageHeader, sections) == 208 && numberOfImageSections == 27 && offsetof(ImageHeader, code) + offsetof(ImageCodeRanges, constantsOffset) == 464 && offsetof(ImageHeader, code) + offsetof(ImageCodeRanges, constantsSize) == 468, "Bun's test/aot/cli/compiled-image.ts reads these members by offset");
 
 enum class ImageFunctionFlag : uint8_t {
     HasInlineFrames = 1 << 0,

@@ -595,6 +595,7 @@ aot/runtime/AOTFunctionDescription.cpp
 aot/runtime/AOTGenerator.cpp
 aot/runtime/AOTGlobalBindingOperations.cpp
 aot/runtime/AOTGlobalBindings.cpp
+aot/runtime/AOTGuardedPages.cpp
 aot/runtime/AOTHeapCacheRegistry.cpp
 aot/runtime/AOTHeapHooks.cpp
 aot/runtime/AOTImmortalCells.cpp

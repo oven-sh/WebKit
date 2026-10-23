@@ -36,6 +36,8 @@ static constexpr size_t sharedTableAlignment = 16;
 static constexpr size_t estimatedPadding = 16;
 static constexpr int64_t nearGroupMargin = 64 * KB;
 static constexpr size_t maxGroupSize = MacroAssembler::relocationReach(RelocationKind::AddressNear) - nearGroupMargin;
+// Where a near reference reaches as far as a far one, a table needs no copy next to its users.
+static constexpr UnitSharing sharingOfTables = MacroAssembler::relocationReach(RelocationKind::AddressNear) == MacroAssembler::relocationReach(RelocationKind::AddressFar) ? UnitSharing::Unique : UnitSharing::Copyable;
 
 static_assert(std::tuple_size_v<decltype(CompiledRegExp::code)> == numberOfCharSizes);
 static_assert(!(sharedTableAlignment % Yarr::sharedTableAlignment));
@@ -232,7 +234,7 @@ std::optional<RegExpSection> SectionBuilder::build()
         return targets[relocation.symbol];
     };
     UnitResolver resolve = findTarget;
-    auto linked = linkSection({ m_units.span(), resolve, m_templates, m_maxSize });
+    auto linked = linkSection({ m_units.span(), resolve, m_templates, m_maxSize, RegExpSection::alignment });
     if (!linked) {
         reportFailure(linked.error());
         return std::nullopt;
@@ -292,7 +294,7 @@ void SectionBuilder::numberBodies()
 uint32_t SectionBuilder::addUnit(Kind kind, UnitSharing sharing, uint32_t alignment, std::span<const uint8_t> bytes, uint32_t regExp)
 {
     uint32_t unit = static_cast<uint32_t>(m_units.size());
-    m_units.append(LinkUnit { bytes, { }, alignment, sharing });
+    m_units.append(LinkUnit { bytes, { }, alignment, sharing, kind == Kind::Table });
     m_unitInfos.append(UnitInfo { kind, regExp, { } });
     return unit;
 }
@@ -331,7 +333,7 @@ void SectionBuilder::addUngroupedUnits()
     for (uint32_t symbol = 0; symbol < m_symbols.size(); ++symbol) {
         SymbolState& state = m_symbolStates[symbol];
         auto addTable = [&](std::span<const uint8_t> bytes) {
-            state.target = UnitTarget { addUnit(Kind::Table, UnitSharing::Copyable, sectionDataAlignment, bytes, state.firstUser) };
+            state.target = UnitTarget { addUnit(Kind::Table, sharingOfTables, sectionDataAlignment, bytes, state.firstUser) };
         };
         WTF::switchOn(m_symbols.at(symbol),
             [&](Yarr::SharedTableID) { },
@@ -471,7 +473,7 @@ void SectionBuilder::addClassTables(std::span<const uint32_t> symbols, uint32_t 
     });
     packer.pack();
 
-    uint32_t unit = addUnit(Kind::Table, UnitSharing::Copyable, sectionDataAlignment, ownBytes(Vector<uint8_t>(packer.bytes())), regExp);
+    uint32_t unit = addUnit(Kind::Table, sharingOfTables, sectionDataAlignment, ownBytes(Vector<uint8_t>(packer.bytes())), regExp);
     for (size_t index = 0; index < symbols.size(); ++index)
         m_symbolStates[symbols[index]].target = UnitTarget { unit, packer.offsetOf(tables[index]) };
 }
@@ -489,7 +491,7 @@ void SectionBuilder::addBitPlanes(std::span<const uint32_t> symbols, uint32_t re
         RELEASE_ASSERT(plane.bit < Latin1BitPlane::planesPerByteTable);
         if (tablesWithFreeBit[plane.bit].isEmpty()) {
             std::span<uint8_t> bytes = ownBytes(Vector<uint8_t>(FillWith { }, Yarr::CharacterClass::latin1TableSize, static_cast<uint8_t>(0)));
-            ByteTable table { addUnit(Kind::Table, UnitSharing::Copyable, sectionDataAlignment, bytes, regExp), bytes };
+            ByteTable table { addUnit(Kind::Table, sharingOfTables, sectionDataAlignment, bytes, regExp), bytes };
             for (Vector<ByteTable>& tables : tablesWithFreeBit)
                 tables.append(table);
         }
@@ -519,6 +521,7 @@ RegExpSection SectionBuilder::createSection(LinkedSection&& linked) const
 
     RegExpSection section;
     section.bytes = WTF::move(linked.bytes);
+    section.dataOffset = linked.dataOffset;
     uint32_t entryWithoutCode = m_failureRoutineUnit ? linked.uniqueUnitOffsets[*m_failureRoutineUnit] : 0;
     section.entries.fill({ entryWithoutCode, entryWithoutCode }, m_regExps.size());
     for (uint32_t unit = 0; unit < m_units.size(); ++unit) {

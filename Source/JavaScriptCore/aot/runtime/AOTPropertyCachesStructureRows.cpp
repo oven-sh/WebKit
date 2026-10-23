@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTGuardedPages.h"
 #include "JSCConfig.h"
 #include <mutex>
 #include <wtf/AlignedStorage.h>
@@ -40,7 +41,7 @@ StructureRows::StructureRows()
     RELEASE_ASSERT((start & StructureID::structureIDMask) + (size - 1) <= StructureID::structureIDMask);
 
     size_t bytes = (size >> StructureRowWords::granuleShift) << StructureRowWords::wordShift;
-    void* words = OSAllocator::reserveAndCommit(bytes, OSAllocator::FastMallocPages);
+    void* words = reserveGuardedPages(bytes);
 #if OS(LINUX)
     while (madvise(words, bytes, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
 #endif

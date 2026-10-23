@@ -856,6 +856,7 @@ Effects Value::effectsSlow() const
         result.exitsSideways = true;
         result.reads = HeapRange::top();
         break;
+#if ENABLE(WEBASSEMBLY)
     case WasmStructGet: {
         const auto* derived = as<WasmStructGetValue>();
         result.reads = derived->range();
@@ -900,6 +901,7 @@ Effects Value::effectsSlow() const
         result.writes = opcode() == WasmStructNew ? as<WasmStructNewValue>()->range() : as<WasmArrayNewValue>()->range();
         result.exitsSideways = true;
         break;
+#endif // ENABLE(WEBASSEMBLY)
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -1103,6 +1105,7 @@ ValueKey Value::key() const
         if (numChildren() == 2)
             return ValueKey(kind(), type(), as<SIMDValue>()->simdInfo(), child(0), child(1), nullptr);
         return ValueKey(kind(), type(), as<SIMDValue>()->simdInfo(), child(0), child(1), child(2));
+#if ENABLE(WEBASSEMBLY)
     case WasmRefCast:
     case WasmRefTest: {
         auto* wasmValue = as<WasmRefTypeCheckValue>();
@@ -1118,6 +1121,7 @@ ValueKey Value::key() const
         // Use targetHeapType when RTT is null (builtin types)
         return ValueKey(kind(), type(), child(0), child2, flags.toRaw(), wasmValue->targetHeapType());
     }
+#endif // ENABLE(WEBASSEMBLY)
     case Nop:
     case Set:
     case Get:

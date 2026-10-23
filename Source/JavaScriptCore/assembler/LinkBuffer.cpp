@@ -449,7 +449,7 @@ void LinkBuffer::copyCompactAndLinkCode(MacroAssembler& macroAssembler, JITCompi
 
 #undef shouldCopyDirectlyToJITRegion
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     if (g_jscConfig.useFastJITPermissions) {
         ASSERT(codeOutData == outData);
         if (Options::dumpJITMemoryPath()) [[unlikely]]
@@ -493,7 +493,7 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
     // Ensure that the end of the last invalidation point does not extend beyond the end of the buffer.
     macroAssembler.label();
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 #if !ENABLE(BRANCH_COMPACTION)
 #if defined(ASSEMBLER_HAS_CONSTANT_POOL) && ASSEMBLER_HAS_CONSTANT_POOL
     macroAssembler.m_assembler.buffer().flushConstantPool(false);
@@ -518,9 +518,9 @@ void LinkBuffer::linkCode(MacroAssembler& macroAssembler, JITCompilationEffort e
 #elif CPU(ARM64)
     copyCompactAndLinkCode<uint32_t>(macroAssembler, effort);
 #endif // !ENABLE(BRANCH_COMPACTION)
-#else  // ENABLE(JIT)
+#else  // ENABLE(CODE_GENERATION)
 UNUSED_PARAM(effort);
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)
 
     if (m_records) [[unlikely]]
         takeRecords(macroAssembler);

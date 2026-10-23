@@ -35,6 +35,52 @@
 
 namespace JSC::B3 {
 
+#if ENABLE(WEBASSEMBLY)
+#define FOR_EACH_JSWEBASSEMBLY_ABSTRACT_FIELD(macro) \
+    macro(JSWebAssemblyArray_size, JSWebAssemblyArray::offsetOfSize(), Mutability::Immutable) \
+    macro(JSWebAssemblyInstance_cachedTable0Buffer, JSWebAssemblyInstance::offsetOfCachedTable0Buffer(), Mutability::Mutable) \
+    macro(JSWebAssemblyInstance_cachedTable0Length, JSWebAssemblyInstance::offsetOfCachedTable0Length(), Mutability::Mutable) \
+    macro(JSWebAssemblyInstance_moduleRecord, JSWebAssemblyInstance::offsetOfModuleRecord(), Mutability::Mutable) \
+    macro(JSWebAssemblyInstance_vm, JSWebAssemblyInstance::offsetOfVM(), Mutability::Immutable) \
+    macro(JSWebAssemblyInstance_cachedMemory0Size, JSWebAssemblyInstance::offsetOfCachedMemory0Size(), Mutability::Mutable)
+
+#define FOR_EACH_WASM_ABSTRACT_FIELD(macro) \
+    macro(WasmFuncRefTable_functions, Wasm::FuncRefTable::offsetOfFunctions(), Mutability::Mutable) \
+    macro(WasmFuncRefTable_wrappers, Wasm::FuncRefTable::offsetOfWrappers(), Mutability::Mutable) \
+    macro(WasmFuncRefTableFunction_boxedCallee, Wasm::FuncRefTable::Function::offsetOfBoxedCallee(), Mutability::Mutable) \
+    macro(WasmFuncRefTableFunction_entrypointLoadLocation, Wasm::FuncRefTable::Function::offsetOfEntrypointLoadLocation(), Mutability::Mutable) \
+    macro(WasmFuncRefTableFunction_rtt, Wasm::FuncRefTable::Function::offsetOfRTT(), Mutability::Mutable) \
+    macro(WasmFuncRefTableFunction_targetInstance, Wasm::FuncRefTable::Function::offsetOfTargetInstance(), Mutability::Mutable) \
+    macro(WasmGlobal_value, Wasm::Global::offsetOfValue(), Mutability::Mutable) \
+    macro(WasmGlobal_owner, Wasm::Global::offsetOfOwner(), Mutability::Immutable) \
+    macro(WasmGlobalValue_owner, Wasm::Global::Value::offsetOfOwner(), Mutability::Immutable) \
+    macro(WasmGlobalValue_value, Wasm::Global::Value::offsetOfValue(), Mutability::Mutable) \
+    macro(WasmWasmCallableFunctionLocation_value, Wasm::WasmCallableFunction::offsetOfValueOfLoadLocation(), Mutability::Mutable) \
+    macro(WasmRTT_displaySizeExcludingThis, Wasm::RTT::offsetOfDisplaySizeExcludingThis(), Mutability::Immutable) \
+    macro(WasmRTT_kind, Wasm::RTT::offsetOfKind(), Mutability::Immutable) \
+    macro(WasmTable_length, Wasm::Table::offsetOfLength(), Mutability::Mutable) \
+    macro(WasmExternOrAnyRefTable_jsValues, Wasm::ExternOrAnyRefTable::offsetOfJSValues(), Mutability::Mutable)
+
+#define FOR_EACH_WEBASSEMBLY_ABSTRACT_FIELD(macro) \
+    macro(WebAssemblyFunctionBase_boxedCallee, WebAssemblyFunctionBase::offsetOfBoxedCallee(), Mutability::Immutable) \
+    macro(WebAssemblyFunctionBase_entrypointLoadLocation, WebAssemblyFunctionBase::offsetOfEntrypointLoadLocation(), Mutability::Immutable) \
+    macro(WebAssemblyFunctionBase_rtt, WebAssemblyFunctionBase::offsetOfRTT(), Mutability::Immutable) \
+    macro(WebAssemblyFunctionBase_targetInstance, WebAssemblyFunctionBase::offsetOfTargetInstance(), Mutability::Immutable) \
+    macro(WebAssemblyGCStructure_rtt, WebAssemblyGCStructure::offsetOfRTT(), Mutability::Immutable) \
+    macro(WebAssemblyModuleRecord_exportsObject, WebAssemblyModuleRecord::offsetOfExportsObject(), Mutability::Mutable)
+
+#define FOR_EACH_WASM_INDEXED_ABSTRACT_HEAP(macro) \
+    macro(WasmRTT_data, Wasm::RTT::offsetOfData(), sizeof(RefPtr<const Wasm::RTT>)) \
+    macro(WasmExternOrAnyRefTable_jsValuesBuffer, 0, sizeof(WriteBarrier<Unknown>)) \
+    macro(WasmFuncRefTable_wrappersBuffer, 0, sizeof(WriteBarrier<Unknown>)) \
+    macro(WebAssemblyGCStructure_inlinedDisplay, WebAssemblyGCStructure::offsetOfInlinedDisplay(), sizeof(WriteBarrierStructureID))
+#else
+#define FOR_EACH_JSWEBASSEMBLY_ABSTRACT_FIELD(macro)
+#define FOR_EACH_WASM_ABSTRACT_FIELD(macro)
+#define FOR_EACH_WEBASSEMBLY_ABSTRACT_FIELD(macro)
+#define FOR_EACH_WASM_INDEXED_ABSTRACT_HEAP(macro)
+#endif
+
 #define FOR_EACH_ABSTRACT_HEAP(macro) \
     macro(TypedArrayProperties) \
     macro(JSCellHeaderAndNamedProperties) \
@@ -121,12 +167,7 @@ namespace JSC::B3 {
     macro(JSRopeString_fiber2, JSRopeString::offsetOfFiber2(), Mutability::Mutable) \
     macro(JSScope_next, JSScope::offsetOfNext(), Mutability::Immutable) \
     macro(JSSymbolTableObject_symbolTable, JSSymbolTableObject::offsetOfSymbolTable(), Mutability::Mutable) \
-    macro(JSWebAssemblyArray_size, JSWebAssemblyArray::offsetOfSize(), Mutability::Immutable) \
-    macro(JSWebAssemblyInstance_cachedTable0Buffer, JSWebAssemblyInstance::offsetOfCachedTable0Buffer(), Mutability::Mutable) \
-    macro(JSWebAssemblyInstance_cachedTable0Length, JSWebAssemblyInstance::offsetOfCachedTable0Length(), Mutability::Mutable) \
-    macro(JSWebAssemblyInstance_moduleRecord, JSWebAssemblyInstance::offsetOfModuleRecord(), Mutability::Mutable) \
-    macro(JSWebAssemblyInstance_vm, JSWebAssemblyInstance::offsetOfVM(), Mutability::Immutable) \
-    macro(JSWebAssemblyInstance_cachedMemory0Size, JSWebAssemblyInstance::offsetOfCachedMemory0Size(), Mutability::Mutable) \
+    FOR_EACH_JSWEBASSEMBLY_ABSTRACT_FIELD(macro) \
     macro(NativeExecutable_asString, NativeExecutable::offsetOfAsString(), Mutability::Mutable) \
     macro(RegExp_flags, RegExp::offsetOfFlags(), Mutability::Mutable) \
     macro(RegExp_minimumSize, RegExp::offsetOfMinimumSize(), Mutability::Mutable) \
@@ -174,33 +215,14 @@ namespace JSC::B3 {
     macro(VM_heap_mutatorShouldBeFenced, VM::offsetOfHeapMutatorShouldBeFenced(), Mutability::Mutable) \
     macro(VM_exception, VM::exceptionOffset(), Mutability::Mutable) \
     macro(WatchpointSet_state, WatchpointSet::offsetOfState(), Mutability::Mutable) \
-    macro(WasmFuncRefTable_functions, Wasm::FuncRefTable::offsetOfFunctions(), Mutability::Mutable) \
-    macro(WasmFuncRefTable_wrappers, Wasm::FuncRefTable::offsetOfWrappers(), Mutability::Mutable) \
-    macro(WasmFuncRefTableFunction_boxedCallee, Wasm::FuncRefTable::Function::offsetOfBoxedCallee(), Mutability::Mutable) \
-    macro(WasmFuncRefTableFunction_entrypointLoadLocation, Wasm::FuncRefTable::Function::offsetOfEntrypointLoadLocation(), Mutability::Mutable) \
-    macro(WasmFuncRefTableFunction_rtt, Wasm::FuncRefTable::Function::offsetOfRTT(), Mutability::Mutable) \
-    macro(WasmFuncRefTableFunction_targetInstance, Wasm::FuncRefTable::Function::offsetOfTargetInstance(), Mutability::Mutable) \
-    macro(WasmGlobal_value, Wasm::Global::offsetOfValue(), Mutability::Mutable) \
-    macro(WasmGlobal_owner, Wasm::Global::offsetOfOwner(), Mutability::Immutable) \
-    macro(WasmGlobalValue_owner, Wasm::Global::Value::offsetOfOwner(), Mutability::Immutable) \
-    macro(WasmGlobalValue_value, Wasm::Global::Value::offsetOfValue(), Mutability::Mutable) \
-    macro(WasmWasmCallableFunctionLocation_value, Wasm::WasmCallableFunction::offsetOfValueOfLoadLocation(), Mutability::Mutable) \
-    macro(WasmRTT_displaySizeExcludingThis, Wasm::RTT::offsetOfDisplaySizeExcludingThis(), Mutability::Immutable) \
-    macro(WasmRTT_kind, Wasm::RTT::offsetOfKind(), Mutability::Immutable) \
-    macro(WasmTable_length, Wasm::Table::offsetOfLength(), Mutability::Mutable) \
-    macro(WasmExternOrAnyRefTable_jsValues, Wasm::ExternOrAnyRefTable::offsetOfJSValues(), Mutability::Mutable) \
+    FOR_EACH_WASM_ABSTRACT_FIELD(macro) \
     macro(WeakMapImpl_capacity, WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfCapacity(), Mutability::Mutable) \
     macro(WeakMapImpl_buffer,  WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfBuffer(), Mutability::Mutable) \
     macro(WeakMapImpl_keyCount, WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfKeyCount(), Mutability::Mutable) \
     macro(WeakMapImpl_deleteCount, WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>::offsetOfDeleteCount(), Mutability::Mutable) \
     macro(WeakMapBucket_value, WeakMapBucket<WeakMapBucketDataKeyValue>::offsetOfValue(), Mutability::Mutable) \
     macro(WeakMapBucket_key, WeakMapBucket<WeakMapBucketDataKeyValue>::offsetOfKey(), Mutability::Mutable) \
-    macro(WebAssemblyFunctionBase_boxedCallee, WebAssemblyFunctionBase::offsetOfBoxedCallee(), Mutability::Immutable) \
-    macro(WebAssemblyFunctionBase_entrypointLoadLocation, WebAssemblyFunctionBase::offsetOfEntrypointLoadLocation(), Mutability::Immutable) \
-    macro(WebAssemblyFunctionBase_rtt, WebAssemblyFunctionBase::offsetOfRTT(), Mutability::Immutable) \
-    macro(WebAssemblyFunctionBase_targetInstance, WebAssemblyFunctionBase::offsetOfTargetInstance(), Mutability::Immutable) \
-    macro(WebAssemblyGCStructure_rtt, WebAssemblyGCStructure::offsetOfRTT(), Mutability::Immutable) \
-    macro(WebAssemblyModuleRecord_exportsObject, WebAssemblyModuleRecord::offsetOfExportsObject(), Mutability::Mutable) \
+    FOR_EACH_WEBASSEMBLY_ABSTRACT_FIELD(macro) \
     macro(Symbol_description, Symbol::offsetOfDescription(), Mutability::Mutable) \
     macro(Symbol_symbolImpl, Symbol::offsetOfSymbolImpl(), Mutability::Immutable) \
     macro(Symbol_string, Symbol::offsetOfString(), Mutability::Mutable) \
@@ -226,10 +248,7 @@ namespace JSC::B3 {
     macro(HasOwnPropertyCache, 0, sizeof(HasOwnPropertyCache::Entry)) \
     macro(SmallIntCache, 0, sizeof(NumericStrings::StringWithJSString)) \
     macro(IntCache, 0, sizeof(NumericStrings::CacheEntryWithJSString<int>)) \
-    macro(WasmRTT_data, Wasm::RTT::offsetOfData(), sizeof(RefPtr<const Wasm::RTT>)) \
-    macro(WasmExternOrAnyRefTable_jsValuesBuffer, 0, sizeof(WriteBarrier<Unknown>)) \
-    macro(WasmFuncRefTable_wrappersBuffer, 0, sizeof(WriteBarrier<Unknown>)) \
-    macro(WebAssemblyGCStructure_inlinedDisplay, WebAssemblyGCStructure::offsetOfInlinedDisplay(), sizeof(WriteBarrierStructureID)) \
+    FOR_EACH_WASM_INDEXED_ABSTRACT_HEAP(macro) \
 
 #define FOR_EACH_NUMBERED_ABSTRACT_HEAP(macro) \
     macro(properties) \
@@ -345,6 +364,7 @@ public:
         }
     }
 
+#if ENABLE(DFG_JIT)
     IndexedAbstractHeap& forArrayType(DFG::Array::Type type)
     {
         switch (type) {
@@ -362,6 +382,7 @@ public:
             return indexedInt32Properties;
         }
     }
+#endif
 
     JS_EXPORT_PRIVATE void decorateMemory(const AbstractHeap*, Value*);
     JS_EXPORT_PRIVATE void decorateCCallRead(const AbstractHeap*, Value*);
@@ -377,6 +398,7 @@ public:
     void decorateFencedAccess(const AbstractHeap*, Value*);
     void decorateBulkMemoryRead(const AbstractHeap*, Value*);
     void decorateBulkMemoryWrite(const AbstractHeap*, Value*);
+#if ENABLE(WEBASSEMBLY)
     void decorateWasmStructGet(const AbstractHeap*, Value*);
     void decorateWasmStructSet(const AbstractHeap*, Value*);
     void decorateWasmStructNew(const AbstractHeap*, Value*);
@@ -384,6 +406,7 @@ public:
     void decorateWasmArraySet(const AbstractHeap*, Value*);
     void decorateWasmArrayNew(const AbstractHeap*, Value*);
     void decorateWasmArrayLength(const AbstractHeap*, Value*);
+#endif
 
     JS_EXPORT_PRIVATE void computeRangesAndDecorateInstructions();
 

@@ -64,9 +64,11 @@ JSC_DECLARE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void*
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 void loadValuesIntoBuffer(Probe::Context&, const StackMap&, Wasm::Context::ScratchBufferEntry*);
+#endif
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerTierUpNow, void, (CallFrame*, JSWebAssemblyInstance*));
 #endif
-#if ENABLE(WEBASSEMBLY_OMGJIT) || ENABLE(WEBASSEMBLY_BBQJIT)
+#if ENABLE(WEBASSEMBLY_BBQJIT)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe::Context&));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe::Context&));
 #endif

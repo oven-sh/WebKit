@@ -147,6 +147,7 @@ struct TableEncoder {
 FastBitVector findUsedTypeSites(const Program&, const ParallelLoops&);
 BitVector findModuleBodiesThatOnlyReturn(const Program&);
 Vector<ModuleImportSite> findImportSites(const Program&, const ParallelLoops&);
+void findModulesNamedByCode(const Program&, const BitVector& bodiesWithoutCode, const ParallelLoops&, BodyFactsForTables&);
 
 void encodeTypeTables(TableEncoder&);
 void encodeLayoutTables(TableEncoder&);

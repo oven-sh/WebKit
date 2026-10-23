@@ -615,10 +615,12 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
     return error;
 }
 
+#if ENABLE(SHADOW_REALM)
 JSObject* createModuleInShadowRealmError(JSGlobalObject* globalObject, StringView path)
 {
     return createSyntaxError(globalObject, withAOTErrorNote(makeString("The module "_s, path, " was compiled ahead of time and can't be imported inside a ShadowRealm"_s)));
 }
+#endif
 
 static String describe(LoaderChange change, StringView changed)
 {

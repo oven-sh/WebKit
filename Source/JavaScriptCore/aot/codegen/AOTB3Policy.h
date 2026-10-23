@@ -37,6 +37,12 @@ struct FunctionBackEndTraits {
     bool returnsAreUnlikely { false };
 };
 
+#if defined(BUN_HARDENED)
+static constexpr B3::ValidationLevel lowestValidationLevel = B3::ValidationLevel::AtBoundaries;
+#else
+static constexpr B3::ValidationLevel lowestValidationLevel = B3::ValidationLevel::FromOptions;
+#endif
+
 JS_EXPORT_PRIVATE B3::Policy b3PolicyFor(const BuildContext&, const FunctionBackEndTraits&, B3::RelocationLowering&);
 
 } } // namespace JSC::AOT

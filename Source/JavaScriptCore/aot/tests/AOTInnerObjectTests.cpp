@@ -11,8 +11,10 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "CellVisitValidator.h"
 #include "JSCInlines.h"
 #include "MarkedBlockInlines.h"
+#include "SimpleMarkingConstraint.h"
 #include "StrongInlines.h"
 #include <array>
 
@@ -426,6 +428,75 @@ static void testCellIsUsedAgain(LoadedProgram& program)
     AOT_TEST_CHECK(isLive(hidden->outer) && isLive(hidden->inner));
 }
 
+// What a test does in the middle of marking, in the place of two markers.
+struct VisitBetweenTwoMarks {
+    Hidden pair;
+    uintptr_t holder { 0 };
+    bool isWaiting { false };
+    bool cameBetweenTheMarks { false };
+};
+
+static NEVER_INLINE void makeHolderOfInnerObject(LoadedProgram& program, VisitBetweenTwoMarks& visit)
+{
+    Pair pair = makePair(program);
+    Pair holder = makePair(program);
+    AOT_TEST_CHECK(holder.outer->tryStore(program.vm(), field(program, holder.outer, "t"_s), pair.inner));
+    visit.pair.outer = hide(pair.outer);
+    visit.pair.inner = hide(pair.inner);
+    visit.holder = hide(holder.outer);
+}
+
+// A marker marks an inner cell and then the cell that it lies in. Between the two, another marker may visit a cell that names the inner one: it finds the first mark and leaves the second to whoever set the first.
+// The check of inline visits does not take that for a reference that the visit missed. It asks for the mark of the outer cell at the end of marking.
+static void testHolderOfInnerObjectIsVisitedBetweenTheTwoMarks(LoadedProgram& program)
+{
+    if (framesAreThoseOfAddressSanitizer)
+        return;
+    VM& vm = program.vm();
+    // The constraint lasts as long as the heap.
+    static VisitBetweenTwoMarks visit;
+    visit = { };
+    vm.heap.addMarkingConstraint(makeUnique<SimpleMarkingConstraint>(
+        "Vb"_s, "Visit between the Two Marks of a Test"_s,
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([] (auto& visitor) {
+            if (!visit.holder)
+                return;
+            auto* holder = std::bit_cast<JSCell*>(~visit.holder);
+            visitor.appendUnbarriered(holder);
+            if constexpr (std::is_same_v<std::remove_cvref_t<decltype(visitor)>, SlotVisitor>) {
+                if (!std::exchange(visit.isWaiting, false))
+                    return;
+                auto* inner = std::bit_cast<JSCell*>(~visit.pair.inner);
+                auto* outer = std::bit_cast<JSCell*>(~visit.pair.outer);
+                if (!visitor.mutatorsAreStopped() || visitor.isMarked(inner) || visitor.isMarked(outer))
+                    return;
+                visit.cameBetweenTheMarks = true;
+                // The first marker.
+                JSC::Heap::testAndSetMarked(visitor.markingVersion(), inner);
+                // The second.
+                CellVisitValidator::validate(visitor, holder);
+                // The first again. The inner object names nothing but its structure.
+                inner->setCellState(CellState::PossiblyBlack);
+                visitor.appendUnbarriered(inner->structure());
+                visitor.appendUnbarriered(outer);
+            }
+        })),
+        ConstraintVolatility::GreyedByExecution,
+        ConstraintConcurrency::Sequential,
+        ConstraintParallelism::Sequential));
+
+    bool validated = vm.heap.validatesCellVisits();
+    vm.heap.setValidatesCellVisits(true);
+    collect(vm, CollectionScope::Full);
+    makeHolderOfInnerObject(program, visit);
+    visit.isWaiting = true;
+    collect(vm, CollectionScope::Full);
+    AOT_TEST_CHECK(visit.cameBetweenTheMarks);
+    AOT_TEST_CHECK(isMarked(vm, visit.pair.inner) && isMarked(vm, visit.pair.outer));
+    visit = { };
+    vm.heap.setValidatesCellVisits(validated);
+}
+
 // THE TESTS ABOVE HAVE TEETH: each part of the collector's side is left out by --aot-sabotage, and what the test above it demands is seen to fail. What is asserted here is the damage.
 static void testSabotagedStackScanNamesNoInnerObject(LoadedProgram& program)
 {
@@ -547,6 +618,7 @@ std::span<const NativeTest> innerObjectTests()
         { "inner-objects/young-cell-stored-into-an-old-cell"_s, withProgram<testYoungCellStoredIntoOldCell> },
         { "inner-objects/inner-cells-are-not-counted"_s, withProgram<testInnerCellsAreNotCounted> },
         { "inner-objects/cell-is-used-again"_s, withProgram<testCellIsUsedAgain> },
+        { "inner-objects/holder-of-inner-object-is-visited-between-the-two-marks"_s, withProgram<testHolderOfInnerObjectIsVisitedBetweenTheTwoMarks> },
         { "inner-objects/sabotaged/stack-names-no-inner-cell"_s, runWithSabotagedProgram<testSabotagedStackScanNamesNoInnerObject, stackNamesNoInnerCell> },
         { "inner-objects/sabotaged/narrow-reference-on-stack-names-no-inner-cell"_s, runWithSabotagedProgram<testSabotagedScanOfHalvesNamesNoInnerObject, narrowReferenceOnStackNamesNoInnerCell> },
         { "inner-objects/sabotaged/inner-object-is-visited-without-its-fields"_s, runWithSabotagedProgram<testSabotagedVisitInPlaceLeavesOutFields, innerObjectIsVisitedWithoutItsFields> },

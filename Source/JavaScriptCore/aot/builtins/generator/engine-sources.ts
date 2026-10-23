@@ -163,7 +163,7 @@ export function engineFiles(javaScriptCore: string, declared: readonly SourcedDe
 
   const problems = new Problems();
   const files = [
-    ...engineBuiltinSources(javaScriptCore).flatMap(source => {
+    ...engineBuiltinSources(javaScriptCore, declared).flatMap(source => {
       const object = basename(source, ".js");
       if (handwrittenObjects.has(object)) return [];
       const excludedFunctions = new Set(excludedByObject.get(object)?.map(({ name }) => name));

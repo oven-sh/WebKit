@@ -56,7 +56,13 @@ bool shouldDumpIRAtEachPhase(B3CompilationMode mode)
 
 bool shouldValidateIR()
 {
+#if ENABLE(DFG_JIT)
     return DFG::validationEnabled() || shouldValidateIRAtEachPhase();
+#elif ASSERT_ENABLED
+    return true;
+#else
+    return Options::validateGraph() || shouldValidateIRAtEachPhase();
+#endif
 }
 
 bool shouldValidateIRAtEachPhase()

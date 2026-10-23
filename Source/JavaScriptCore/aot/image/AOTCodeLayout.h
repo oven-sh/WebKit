@@ -76,10 +76,12 @@ struct CodeLayout {
     BitVector fallsIntoNext;
     uint32_t sharedCodeSize { 0 };
     uint32_t functionsEnd { 0 };
-    uint32_t regExpCodeOffset { 0 };
     uint32_t webAssemblyCodeOffset { 0 };
-    uint32_t constantsOffset { 0 };
     uint32_t ffiCodeOffset { 0 };
+    uint32_t ffiCodeSize { 0 };
+    uint32_t regExpCodeOffset { 0 };
+    uint32_t executableSize { 0 };
+    uint32_t constantsOffset { 0 };
     uint64_t codeSize { 0 };
 };
 

@@ -673,7 +673,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
     OPERATION_RETURN(scope);
 }
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 static bool shouldTriggerOMGCompile(TierUpCount& tierUp, OMGCallee* replacement, FunctionCodeIndex functionIndex)
 {
     if (!OMGPlan::ensureGlobalOMGAllowlist().containsWasmFunction(functionIndex)) {
@@ -724,6 +724,9 @@ static void triggerOMGReplacementCompile(TierUpCount& tierUp, JSWebAssemblyInsta
     }
 }
 
+#endif // ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
+
+#if ENABLE(WEBASSEMBLY_OMGJIT)
 // loadValuesIntoBuffer assumes context saved vector-width FPRs.
 void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm::Context::ScratchBufferEntry* buffer)
 {
@@ -803,7 +806,9 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
             RELEASE_ASSERT_NOT_REACHED();
     }
 }
+#endif // ENABLE(WEBASSEMBLY_OMGJIT)
 
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 SUPPRESS_ASAN
 static void doOSREntry(JSWebAssemblyInstance* instance, Probe::Context& context, BBQCallee& callee, OMGOSREntryCallee& osrEntryCallee, OSREntryData& osrEntryData)
 {
@@ -898,7 +903,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerTierUpNow, void, (CallFram
 }
 #endif
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe::Context& context))
 {
     OSREntryData& osrEntryData = *context.arg<OSREntryData*>();
@@ -1113,7 +1118,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe:
 }
 
 #endif
-#if ENABLE(WEBASSEMBLY_OMGJIT) || ENABLE(WEBASSEMBLY_BBQJIT)
+#if ENABLE(WEBASSEMBLY_BBQJIT)
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe::Context & context))
 {

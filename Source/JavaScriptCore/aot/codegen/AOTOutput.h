@@ -206,9 +206,11 @@ public:
     TypedPointer absolute(const void*) = delete;
     template<typename FunctionType> LValue operation(FunctionType) = delete;
     template<typename Function, typename... Arguments> LValue callWithoutSideEffects(B3::Type, Function, LValue, Arguments...) = delete;
+#if ENABLE(FTL_JIT)
     LValue alreadyRegisteredWeakPointer(DFG::Graph&, JSCell*) = delete;
     LValue alreadyRegisteredFrozenPointer(DFG::FrozenValue*) = delete;
     LValue doubleUnary(DFG::Arith::UnaryType, LValue) = delete;
+#endif
     LValue doubleStdPow(LValue, LValue) = delete;
     LValue doublePowi(LValue, LValue) = delete;
     void incrementSuperSamplerCount() = delete;

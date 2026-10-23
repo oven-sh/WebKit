@@ -403,6 +403,10 @@ set(JavaScriptCore_BUILTINS_SOURCES
     ${JAVASCRIPTCORE_DIR}/inspector/InjectedScriptSource.js
 )
 
+if (DEFINED ENABLE_SHADOW_REALM AND NOT ENABLE_SHADOW_REALM)
+    list(REMOVE_ITEM JavaScriptCore_BUILTINS_SOURCES ${JAVASCRIPTCORE_DIR}/builtins/ShadowRealmPrototype.js)
+endif ()
+
 add_custom_command(
     OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.cpp ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h
     MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-js-builtins.py

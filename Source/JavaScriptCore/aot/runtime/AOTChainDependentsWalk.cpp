@@ -89,7 +89,7 @@ static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* obje
     // The names and classes that the engine's megamorphic caches look up in the property table alone.
     JSType type = typeInfo.type();
     bool answersOnlyForLength = type == ArrayType || type == DerivedStringObjectType || object == start.globalObject->arrayPrototype();
-    if (!canUseMegamorphicGetByIdExcludingIndex(vm, uid)) {
+    if (uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto) {
         // Those caches leave out what a function answers for by itself. An array and a String object look `name` and `prototype` up like any other name.
         return answersOnlyForLength && (uid == vm.propertyNames->name || uid == vm.propertyNames->prototype);
     }

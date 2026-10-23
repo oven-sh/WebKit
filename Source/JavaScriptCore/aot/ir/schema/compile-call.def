@@ -24,7 +24,7 @@ flags ArrivalFieldFlags { IsOptional }
 
 enum ImageVerdict {
     Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned AlreadyInUse LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
-    MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress
+    MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress OutsideItsSegments
 }
 enum DeclineKind {
     Unknown HotCallNotInlined HotCallNotResolved GeneratorLoopNotFused ArrayChainNotFused StringBuilderNotCreated StringBuildersNotJoined AllocationNotSunk

@@ -633,6 +633,7 @@ TriState CalleeGroup::calleeIsReferenced(const AbstractLocker& locker, Wasm::Cal
         FunctionCodeIndex index = toCodeIndex(callee->index());
         if (m_osrEntryCallees.get(index).get()) {
             // The BBQCallee really owns the OMGOSREntryCallee so as long as that's around the OMGOSREntryCallee is referenced.
+#if ENABLE(WEBASSEMBLY_BBQJIT)
             const auto* tuple = optimizedCalleesTuple(locker, index);
             if (!tuple)
                 return TriState::Indeterminate;
@@ -640,6 +641,7 @@ TriState CalleeGroup::calleeIsReferenced(const AbstractLocker& locker, Wasm::Cal
             Locker bbqLocker { tuple->m_bbqCallee.lock() };
             if (tuple->m_bbqCallee.get())
                 return TriState::True;
+#endif
             return TriState::Indeterminate;
         }
         return TriState::False;

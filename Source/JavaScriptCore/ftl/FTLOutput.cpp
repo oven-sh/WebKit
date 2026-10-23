@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FTLOutput.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
@@ -46,10 +46,12 @@ namespace JSC { namespace FTL {
 
 using namespace B3;
 
+#if ENABLE(FTL_JIT)
 Output::Output(State& state)
     : m_proc(*state.proc)
 {
 }
+#endif
 
 Output::Output(B3::Procedure& proc)
     : m_proc(proc)
@@ -335,10 +337,12 @@ LValue Output::doubleTrunc(LValue operand)
     return m_block->appendNew<B3::Value>(m_proc, B3::FTrunc, origin(), operand);
 }
 
+#if ENABLE(FTL_JIT)
 LValue Output::doubleUnary(DFG::Arith::UnaryType type, LValue value)
 {
     return callWithoutSideEffects(B3::Double, DFG::arithUnaryFunction(type), value);
 }
+#endif
 
 LValue Output::doubleStdPow(LValue xOperand, LValue yOperand)
 {
@@ -1039,5 +1043,5 @@ TypedPointer Output::baseIndex(IndexedAbstractHeap& heap, LValue base, LValue in
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)
 

@@ -68,7 +68,9 @@ struct CompilationContext {
     std::unique_ptr<CCallHelpers> wasmEntrypointJIT;
     std::unique_ptr<OpaqueByproducts> wasmEntrypointByproducts;
     std::unique_ptr<B3::Procedure> procedure;
+#if ENABLE(WEBASSEMBLY_BBQJIT)
     std::unique_ptr<BBQDisassembler> bbqDisassembler;
+#endif
     Box<PCToCodeOriginMap> pcToCodeOriginMap;
     Box<PCToCodeOriginMapBuilder> pcToCodeOriginMapBuilder;
     Vector<CCallHelpers::Label> catchEntrypoints;
