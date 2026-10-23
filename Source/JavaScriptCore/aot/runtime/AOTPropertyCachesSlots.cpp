@@ -320,7 +320,7 @@ static bool hasPropertiesOfAndOneMore(Structure* structure, Structure* newStruct
         placesInNewStructure.add(entry.key(), std::pair { entry.offset(), entry.attributes() });
     for (const PropertyTableEntry& entry : properties) {
         auto place = placesInNewStructure.find(entry.key());
-        if (place == placesInNewStructure.end() || place->value != std::pair { entry.offset(), entry.attributes() })
+        if (place == placesInNewStructure.end() || place->value != std::pair<PropertyOffset, unsigned> { entry.offset(), entry.attributes() })
             return false;
     }
     auto added = placesInNewStructure.find(uid);
