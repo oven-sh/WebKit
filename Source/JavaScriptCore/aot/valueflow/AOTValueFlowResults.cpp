@@ -79,7 +79,7 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
     };
     ParallelArray<Vector<Instance>> instancesOfFunction(inputs.loops(), program.functions.size(), [&](unsigned index) {
         Vector<Instance> instances;
-        if (!inputs.isReached(FunctionID(index)))
+        if (!inputs.isReached(FunctionID(index)) || !inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::AllocationSite })))
             return instances;
         const Function& function = program.functions[index];
         // An allocation that stores nothing has no statement: the empty array that a spread fills, for one. It allocates the storage that its stamp tells it like any other.
@@ -551,6 +551,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         build.destroyLater(WTF::move(usesOfHeap));
     });
     steps->run();
+    tables.application->accessSites.valueOfSite = { };
     inputs.heapIndex = nullptr;
     build.destroyLater(WTF::move(heapIndex));
     inputs.nodesAskedFor = nullptr;

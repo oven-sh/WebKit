@@ -86,14 +86,12 @@ ValueFlowNodesAskedFor::ValueFlowNodesAskedFor(const ValueFlowResultInputs& inpu
     Vector<Vector<uint32_t>> wordsOfTasks(numberOfTasks);
     forEachIndexInParallel(inputs.loops(), numberOfTasks, [&](unsigned task) {
         Vector<uint32_t>& words = wordsOfTasks[task];
-        for (uint32_t statement = task * statementsPerTask; statement < std::min(numberOfStatements, (task + 1) * statementsPerTask); ++statement) {
+        solver.forEachMadeNodeAskedForByStatements(task * statementsPerTask, std::min(numberOfStatements, (task + 1) * statementsPerTask), [&](uint32_t statement) {
             m_first[statement] = words.size();
-            solver.forEachMadeNodeAskedForBy(ValueFlowStatementID(statement), [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
-                uint32_t index = solver.indexOfMadeNodes(key);
-                RELEASE_ASSERT(index <= maskOfIndex);
-                words.append(static_cast<uint32_t>(key.kind) << (bitsOfIndex + 1) | (made ? hasStatement : 0) | index);
-            });
-        }
+        }, [&](uint32_t index, const ValueFlowNodeKey& key, ValueFlowStatementID made) {
+            RELEASE_ASSERT(index <= maskOfIndex);
+            words.append(static_cast<uint32_t>(key.kind) << (bitsOfIndex + 1) | (made ? hasStatement : 0) | index);
+        });
     });
     Vector<uint32_t> firstWordOfTask(numberOfTasks + 1);
     uint32_t numberOfWords = 0;
@@ -1770,6 +1768,7 @@ private:
     void findReceiversBehindChecks();
     static constexpr uint32_t isStatementInListOfWrites = 1u << 31;
 
+    LayoutSetID familyOfReceiverOf(const ValueFlowStatement&) const;
     void listWrites();
     void forEachWriteAmong(std::span<const uint32_t>, NOESCAPE const Invocable<void(const Writer&, const ValueFlowNodeKey&, ValueSetID value)> auto&) const;
     ObjectsOfSet findObjectsOf(ValueSetID) const;
@@ -2049,7 +2048,24 @@ void StoresByLayout::findReceiversBehindChecks()
     });
 }
 
-// The solver is asked once, statement by statement, on all threads.
+// The layouts that the type of the receiver admits. None where the type says nothing.
+LayoutSetID StoresByLayout::familyOfReceiverOf(const ValueFlowStatement& statement) const
+{
+    if (statement.kind != ValueFlowStatementKind::Operation)
+        return { };
+    std::optional<uint8_t> receiver = receiverOf(statement.opcode);
+    if (!receiver)
+        return { };
+    const Program& program = m_inputs.program;
+    const Function& function = program.at(statement.function);
+    ValueID object = function.at(statement.site).operand(*receiver);
+    const Type& type = program.typeOf(function, object);
+    if (!type.hasOnlyLayouts(program) || m_valuesBehindChecks[statement.function.index()].get(object.index()))
+        return { };
+    return type.layouts;
+}
+
+// The solver is asked once, statement by statement, on all threads. Behind each statement stands the family of its receiver, one more than its number, or zero.
 void StoresByLayout::listWrites()
 {
     constexpr uint32_t madeStatementsPerIndex = 512;
@@ -2074,6 +2090,9 @@ void StoresByLayout::listWrites()
                 RELEASE_ASSERT(!((index | id.index()) & isStatementInListOfWrites));
                 if (!std::exchange(isListed, true)) {
                     writes.append(id.index() | isStatementInListOfWrites);
+                    LayoutSetID family = familyOfReceiverOf(id.index() < statements.size() ? statements[id.index()] : solver.statementAt(id));
+                    writes.append(family ? family.index() + 1 : 0);
+                    RELEASE_ASSERT(!(writes.last() & isStatementInListOfWrites));
                     firstWrite = writes.size();
                 }
                 if (writes.size() - firstWrite >= mostWritesNotToldApart) {
@@ -2112,19 +2131,14 @@ void StoresByLayout::forEachWriteAmong(std::span<const uint32_t> writes, NOESCAP
     std::span<const ValueFlowStatement> statements = m_inputs.bodies().statements();
     for (size_t first = 0; first < writes.size();) {
         ValueFlowStatementID id(writes[first++] & ~isStatementInListOfWrites);
+        uint32_t family = writes[first++];
         const ValueFlowStatement& statement = id.index() < statements.size() ? statements[id.index()] : m_inputs.solver().statementAt(id);
         Writer writer { statement };
-        if (statement.kind == ValueFlowStatementKind::Operation) {
+        if (statement.kind == ValueFlowStatementKind::Operation)
             writer.isAllocation = resultRuleOf(statement.opcode) == ResultRule::Allocation || statement.opcode == Opcode::Data;
-            if (std::optional<uint8_t> receiver = receiverOf(statement.opcode)) {
-                const Function& function = program.at(statement.function);
-                ValueID object = function.at(statement.site).operand(*receiver);
-                const Type& type = program.typeOf(function, object);
-                if (type.hasOnlyLayouts(program) && !m_valuesBehindChecks[statement.function.index()].get(object.index())) {
-                    writer.layoutsOfReceiver = membersOf(program, type);
-                    writer.familyOfReceiver = type.layouts;
-                }
-            }
+        if (family) {
+            writer.familyOfReceiver = LayoutSetID(family - 1);
+            writer.layoutsOfReceiver = program.types.at(writer.familyOfReceiver).members.span();
         }
         for (; first < writes.size() && !(writes[first] & isStatementInListOfWrites); ++first)
             functor(writer, solver.keyOfMadeNodesAt(writes[first]), solver.valueOf(solver.firstOfMadeNodesAt(writes[first])));
@@ -3701,8 +3715,18 @@ void UsesOfObjects::listReceiversOfReads()
     }
 }
 
-// The values that go nowhere but into the callee position of calls.
-static BitVector findValuesOnlyCalled(const Function& function)
+namespace {
+
+struct ValuesWithOneUse {
+    // The values that go nowhere but into the callee position of calls.
+    BitVector onlyCalled;
+    // The values that go nowhere but into the receiver position of reads and stores by name.
+    BitVector onlyAccessed;
+};
+
+} // anonymous namespace
+
+static ValuesWithOneUse findValuesWithOneUse(const Function& function)
 {
     struct Cast {
         uint32_t result;
@@ -3710,82 +3734,48 @@ static BitVector findValuesOnlyCalled(const Function& function)
     };
 
     BitVector isCalled(function.values.size());
-    BitVector isUsedOtherwise(function.values.size());
+    BitVector isNotOnlyCalled(function.values.size());
+    BitVector isAccessed(function.values.size());
+    BitVector isNotOnlyAccessed(function.values.size());
     Vector<Cast, 8> casts;
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& value = function.values[index];
         value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
             OperandUses uses = operandUsesOf(value.opcode, operandIndex);
-            if (isCast(value.opcode) && uses.contains(OperandUse::Returns))
+            if (isCast(value.opcode) && uses.contains(OperandUse::Returns)) {
                 casts.append({ index, operand.index() });
-            else if (uses.contains(OperandUse::Calls) && !uses.containsAny({ OperandUse::Retains, OperandUse::Returns }))
-                isCalled.quickSet(operand.index());
-            else
-                isUsedOtherwise.quickSet(operand.index());
+                return;
+            }
+            bool calls = uses.contains(OperandUse::Calls) && !uses.containsAny({ OperandUse::Retains, OperandUse::Returns });
+            (calls ? isCalled : isNotOnlyCalled).quickSet(operand.index());
+            bool accesses = (value.opcode == Opcode::PropGet && operandIndex == OperandIndex::PropGet::object) || (value.opcode == Opcode::PropSet && operandIndex == OperandIndex::PropSet::object);
+            (accesses ? isAccessed : isNotOnlyAccessed).quickSet(operand.index());
         });
     }
     for (const Block& block : function.blocks) {
         block.forEachChildOutsideValues([&](ValueID child) {
-            isUsedOtherwise.quickSet(child.index());
+            isNotOnlyCalled.quickSet(child.index());
+            isNotOnlyAccessed.quickSet(child.index());
         });
     }
 
     // A cast hands on what it takes.
-    for (bool hasChanged = !casts.isEmpty(); hasChanged;) {
-        hasChanged = false;
-        for (const Cast& cast : casts)
-            hasChanged |= isCalled.quickGet(cast.result) && !isCalled.quickSet(cast.operand);
-    }
-    for (bool hasChanged = !casts.isEmpty(); hasChanged;) {
-        hasChanged = false;
-        for (const Cast& cast : casts)
-            hasChanged |= (isUsedOtherwise.quickGet(cast.result) || !isCalled.quickGet(cast.result)) && !isUsedOtherwise.quickSet(cast.operand);
-    }
-    isCalled.exclude(isUsedOtherwise);
-    return isCalled;
-}
-
-// The values that go nowhere but into the receiver position of reads and stores by name.
-static BitVector findValuesOnlyAccessed(const Function& function)
-{
-    struct Cast {
-        uint32_t result;
-        uint32_t operand;
+    auto followCasts = [&](BitVector& isUsed, BitVector& isUsedOtherwise) {
+        for (bool hasChanged = !casts.isEmpty(); hasChanged;) {
+            hasChanged = false;
+            for (const Cast& cast : casts)
+                hasChanged |= isUsed.quickGet(cast.result) && !isUsed.quickSet(cast.operand);
+        }
+        for (bool hasChanged = !casts.isEmpty(); hasChanged;) {
+            hasChanged = false;
+            for (const Cast& cast : casts)
+                hasChanged |= (isUsedOtherwise.quickGet(cast.result) || !isUsed.quickGet(cast.result)) && !isUsedOtherwise.quickSet(cast.operand);
+        }
+        isUsed.exclude(isUsedOtherwise);
     };
-
-    BitVector isAccessed(function.values.size());
-    BitVector isUsedOtherwise(function.values.size());
-    Vector<Cast, 8> casts;
-    for (uint32_t index = 0; index < function.values.size(); ++index) {
-        const Value& value = function.values[index];
-        value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            if (isCast(value.opcode) && operandUsesOf(value.opcode, operandIndex).contains(OperandUse::Returns))
-                casts.append({ index, operand.index() });
-            else if ((value.opcode == Opcode::PropGet && operandIndex == OperandIndex::PropGet::object) || (value.opcode == Opcode::PropSet && operandIndex == OperandIndex::PropSet::object))
-                isAccessed.quickSet(operand.index());
-            else
-                isUsedOtherwise.quickSet(operand.index());
-        });
-    }
-    for (const Block& block : function.blocks) {
-        block.forEachChildOutsideValues([&](ValueID child) {
-            isUsedOtherwise.quickSet(child.index());
-        });
-    }
-
-    // A cast hands on what it takes.
-    for (bool hasChanged = !casts.isEmpty(); hasChanged;) {
-        hasChanged = false;
-        for (const Cast& cast : casts)
-            hasChanged |= isAccessed.quickGet(cast.result) && !isAccessed.quickSet(cast.operand);
-    }
-    for (bool hasChanged = !casts.isEmpty(); hasChanged;) {
-        hasChanged = false;
-        for (const Cast& cast : casts)
-            hasChanged |= (isUsedOtherwise.quickGet(cast.result) || !isAccessed.quickGet(cast.result)) && !isUsedOtherwise.quickSet(cast.operand);
-    }
-    isAccessed.exclude(isUsedOtherwise);
-    return isAccessed;
+    followCasts(isCalled, isNotOnlyCalled);
+    followCasts(isAccessed, isNotOnlyAccessed);
+    return { WTF::move(isCalled), WTF::move(isAccessed) };
 }
 
 // A location that is only read as a callee loses its value once the operations that read it are gone, so a pass has to find each of them from the location.
@@ -3900,20 +3890,17 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
             return;
         // No code is emitted for a model: native code reads what it reads, and no pass turns its calls into direct calls.
         bool isEmitted = body != bodies.hostBody() && program.functions[body].role != FunctionRole::Model;
-        std::optional<BitVector> valuesOnlyCalled;
-        std::optional<BitVector> valuesOnlyAccessed;
+        std::optional<ValuesWithOneUse> values;
         for (uint32_t index = ranges[body].statement; index < ranges[body + 1].statement; ++index) {
             m_inputs.prefetchMadeNodesAskedForBy(index + 8, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Read, ValueFlowMadeNodeKind::Lookup }), true);
             const ValueFlowStatement& statement = statements[index];
             Reader reader = Reader::TakesValue;
             if (isEmitted && statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::PropGet && statement.function == FunctionID(body)) {
-                if (!valuesOnlyCalled) {
-                    valuesOnlyCalled = findValuesOnlyCalled(program.functions[body]);
-                    valuesOnlyAccessed = findValuesOnlyAccessed(program.functions[body]);
-                }
-                if (valuesOnlyCalled->quickGet(statement.site.index()))
+                if (!values)
+                    values = findValuesWithOneUse(program.functions[body]);
+                if (values->onlyCalled.quickGet(statement.site.index()))
                     reader = Reader::OnlyCalls;
-                else if (valuesOnlyAccessed->quickGet(statement.site.index()))
+                else if (values->onlyAccessed.quickGet(statement.site.index()))
                     reader = Reader::OnlyAccesses;
             }
             follow(worker, ValueFlowStatementID(index), reader, { });
@@ -4545,6 +4532,8 @@ static Vector<AllocatingOperation> collectAllocatingOperations(const FieldResult
     const ValueFlowResultInputs& inputs = results.inputs;
     const Program& program = inputs.program;
     return collectInParallel<AllocatingOperation>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<AllocatingOperation>& operations) {
+        if (!inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::Data })))
+            return;
         if (!inputs.isReached(FunctionID(index)) && !isUnsolvedCode(inputs, results.tables, FunctionID(index)))
             return;
         const Function& function = program.functions[index];
@@ -5763,6 +5752,8 @@ static void computeFieldsStoredOnceByConstructors(const FieldResults& results)
             calleesOfCalls = callees.take(results.heap.maker());
             isCalledDirectly.fill(0, program.functions.size());
             forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+                if (!inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::DirectCall })))
+                    return;
                 if (!inputs.isReached(FunctionID(index)) && !isUnsolvedCode(inputs, results.tables, FunctionID(index)))
                     return;
                 for (const Value& value : program.functions[index].values) {

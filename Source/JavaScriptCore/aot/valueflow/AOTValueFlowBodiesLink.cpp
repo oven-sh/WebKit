@@ -140,6 +140,8 @@ ValueFlowObjectKind ValueFlowUniverse::kindOf(ValueFlowObjectID object) const
 {
     uint32_t index = object.index();
     RELEASE_ASSERT(index < m_numberOfObjects);
+    if (index >= m_firstSite)
+        return index < m_firstKey ? ValueFlowObjectKind::Site : ValueFlowObjectKind::Key;
     if (index < numberOfPrimitiveKinds)
         return ValueFlowObjectKind::Primitive;
     if (index < m_firstBuiltin)
@@ -162,11 +164,7 @@ ValueFlowObjectKind ValueFlowUniverse::kindOf(ValueFlowObjectID object) const
         return ValueFlowObjectKind::RestArray;
     if (index < m_firstConstructedObject)
         return ValueFlowObjectKind::FunctionPrototype;
-    if (index < m_firstSite)
-        return ValueFlowObjectKind::ConstructedObject;
-    if (index < m_firstKey)
-        return ValueFlowObjectKind::Site;
-    return ValueFlowObjectKind::Key;
+    return ValueFlowObjectKind::ConstructedObject;
 }
 
 FunctionID ValueFlowUniverse::functionOf(ValueFlowObjectID object) const
@@ -183,10 +181,8 @@ FunctionID ValueFlowUniverse::functionOf(ValueFlowObjectID object) const
         return FunctionID(index - m_firstFunctionPrototype);
     case ValueFlowObjectKind::ConstructedObject:
         return FunctionID(index - m_firstConstructedObject);
-    case ValueFlowObjectKind::Site: {
-        auto next = std::ranges::upper_bound(m_firstSiteOfFunction, m_siteOfObject[index - m_firstSite]);
-        return FunctionID(static_cast<uint32_t>(next - m_firstSiteOfFunction.begin()) - 1);
-    }
+    case ValueFlowObjectKind::Site:
+        return m_functionOfSiteObject[index - m_firstSite];
     default:
         return { };
     }
@@ -624,6 +620,13 @@ public:
                 genericVersionOf[entryChecks->body.index()] = entryChecks->fallback;
             }
         }
+        static constexpr auto notedOperationsOfOpcode = [] {
+            std::array<ValueFlowNotedOperations, numberOfEnumerators<Opcode>> table { };
+            for (size_t index = 0; index < table.size(); ++index)
+                table[index] = notedOperationsOf(static_cast<Opcode>(index));
+            return table;
+        }();
+        m_result.m_notedOperations.fill(0, m_numberOfFunctions);
         Vector<uint32_t> largestFirst = largeFunctions(m_program, m_loops);
         largestFirst.insert(0, m_numberOfFunctions);
         runTasksInParallel(m_loops, {
@@ -634,6 +637,10 @@ public:
                 m_bodies = ParallelArray<ValueFlowBody>(m_loops, m_numberOfFunctions + 1, largestFirst.span(), [&](unsigned index) {
                     if (index == m_numberOfFunctions)
                         return makeHostBody(m_program, tables);
+                    ValueFlowNotedOperations operations = 0;
+                    for (const Value& value : m_program.functions[index].values)
+                        operations |= notedOperationsOfOpcode[static_cast<size_t>(value.opcode)];
+                    m_result.m_notedOperations[index] = operations;
                     return reduceBody(m_program, tables, FunctionID(index), &m_result.m_unobservedDefinitions, genericVersionOf[index]);
                 });
             },
@@ -826,6 +833,16 @@ private:
             universe.m_objectOfSite[site] = ValueFlowObjectID(object);
             universe.m_siteOfObject[object - universe.m_firstSite] = site;
         }
+        universe.m_functionOfSiteObject.grow(numberOfSiteObjects);
+        forEachIndexInParallel(m_loops, (m_numberOfFunctions + bodiesInChunk - 1) / bodiesInChunk, [&](unsigned chunk) {
+            unsigned end = std::min(m_numberOfFunctions, (chunk + 1) * bodiesInChunk);
+            for (unsigned index = chunk * bodiesInChunk; index < end; ++index) {
+                for (uint32_t site = universe.m_firstSiteOfFunction[index]; site < universe.m_firstSiteOfFunction[index + 1]; ++site) {
+                    if (siteWithObjectOf[site] == site)
+                        universe.m_functionOfSiteObject[universe.m_objectOfSite[site].index() - universe.m_firstSite] = FunctionID(index);
+                }
+            }
+        });
 
         universe.m_layoutOfNamespace.grow(m_program.modules.size());
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {

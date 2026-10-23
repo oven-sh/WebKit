@@ -44,6 +44,8 @@ struct ValueFlowMembersUnderKey {
     ValueSetID instancesThatKeepProperty;
     // The holders that are the prototype objects of classes whose instances are entries.
     ValueSetID prototypeObjectsOfEntries;
+    // What the holders have under the key, but for the members of the host.
+    ValueSetID membersOfEngineAndLibrary;
 };
 
 // A key under which the instances of a class have a property of their own for life.

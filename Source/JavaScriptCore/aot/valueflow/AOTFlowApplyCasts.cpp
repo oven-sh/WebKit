@@ -41,6 +41,7 @@ struct RequiredTypeCasts {
     const FlowCastInsertion& insertion;
     TypingContext typing;
     Vector<ValueID> inserted;
+    const OpcodeSet& opcodesWithRequiredTypes { opcodesWithRequiredOperandTypes() };
 };
 
 } // anonymous namespace
@@ -385,6 +386,8 @@ static void castDeclaredOperands(RequiredTypeCasts& casts, ProgramPoint point)
 {
     Function& function = casts.insertion.body.function;
     ValueID user = function.at(point.block).values[point.index];
+    if (!casts.opcodesWithRequiredTypes.contains(function.at(user).opcode))
+        return;
     dropDeadZonesThatNothingReads(casts.typing, function.edit(user));
     for (uint32_t operandIndex = 0; operandIndex < function.at(user).numberOfOperands(); ++operandIndex) {
         const Value& value = function.at(user);

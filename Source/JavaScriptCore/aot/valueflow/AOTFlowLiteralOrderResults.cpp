@@ -150,37 +150,31 @@ static LiteralPiece describePiece(ValueID id, const Value& operation)
     }
 }
 
-static bool isCompletedByPieces(const Function& function, const UseLists& uses, ValueID literal)
-{
-    bool isFinished = false;
-    bool hasPieces = false;
-    for (const Use& use : uses.usesOf(literal)) {
-        if (use.kind != Use::Kind::Operand || use.operandIndex != literalOperandOfPiece)
-            continue;
-        Opcode opcode = function.at(use.user).opcode;
-        isFinished |= opcode == Opcode::FinishObject;
-        hasPieces |= literalPieceOperations.contains(opcode);
-    }
-    return isFinished && hasPieces;
-}
-
 static void collectLiteralsOf(const ValueFlowResultInputs& inputs, FunctionID id, Vector<Literal>& literals)
 {
     const Function& function = inputs.program.at(id);
     if (!inputs.isReached(id))
         return;
-    bool finishesLiteral = std::ranges::any_of(function.values, [](const Value& value) {
-        return value.opcode == Opcode::FinishObject;
-    });
-    if (!finishesLiteral)
+    if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::FinishObject })))
         return;
 
     CFG cfg(function);
-    UseLists uses(function, cfg);
+    BitVector isFinished(function.values.size());
+    BitVector hasPieces(function.values.size());
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID value : function.at(block).values) {
+            const Value& operation = function.at(value);
+            bool finishes = operation.opcode == Opcode::FinishObject;
+            if (!finishes && !literalPieceOperations.contains(operation.opcode))
+                continue;
+            if (ValueID literal = operation.operand(literalOperandOfPiece))
+                (finishes ? isFinished : hasPieces).quickSet(literal.index());
+        }
+    }
     size_t first = literals.size();
     for (BlockID block : cfg.reversePostOrder()) {
         for (ValueID value : function.at(block).values) {
-            if (function.at(value).opcode == Opcode::NewObject && isCompletedByPieces(function, uses, value))
+            if (function.at(value).opcode == Opcode::NewObject && isFinished.quickGet(value.index()) && hasPieces.quickGet(value.index()))
                 literals.append(Literal { id, value, { } });
         }
     }

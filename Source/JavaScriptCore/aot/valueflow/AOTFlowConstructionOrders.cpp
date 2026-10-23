@@ -2248,6 +2248,8 @@ static BitVector findLayoutsAllocatedElsewhere(const ValueFlowResultInputs& inpu
     Vector<LayoutID> allocated = collectInParallel<LayoutID>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<LayoutID>& found) {
         FunctionID id(index);
         bool isFollowed = inputs.isReached(id);
+        if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewObject })))
+            return;
         if (!isFollowed && !isUnsolvedCode(inputs, tables, id))
             return;
         const Function& function = program.functions[index];
@@ -2337,6 +2339,8 @@ static void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowR
     Vector<KeysByLayout> keysOfWorker(inputs.loops().width());
     forEachIndexInParallel(inputs.loops(), program.functions.size(), [&](unsigned index, unsigned worker) {
         FunctionID id(index);
+        if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::PieceOutsideSlots })))
+            return;
         if (!inputs.isReached(id) && !isUnsolvedCode(inputs, tables, id))
             return;
         const Function& function = program.functions[index];

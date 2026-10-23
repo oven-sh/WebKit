@@ -88,7 +88,23 @@ void ModuleEmitter::generateImportModule(const ValueContext& value)
 
 void ModuleEmitter::generateRequireModule(const ValueContext& value)
 {
-    define(value, callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
+    ModuleID module = value->module();
+    auto requireInSlowPath = [&](const CallOptions& options) {
+        return callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
+    };
+    const Module& target = m_program.at(module);
+    bool isAnsweredByValueWord = (target.kind == ModuleKind::RuntimeSource || target.kind == ModuleKind::Runtime) && !target.exportsVariable && m_placement.hasModuleValue(module);
+    if (!isAnsweredByValueWord || value.shape() == CodeShape::Compact) {
+        define(value, requireInSlowPath({ }));
+        return;
+    }
+
+    Boxed stored = loadModuleValue(module);
+    define(value, either<Boxed>(isNotEmpty(stored), [&] {
+        return stored;
+    }, [&] {
+        return requireInSlowPath({ .isOnRarePath = true });
+    }));
 }
 
 void ModuleEmitter::generateRecordRequire(const ValueContext& value)

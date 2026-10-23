@@ -153,7 +153,7 @@ private:
         m_hasIndexOfDirectCalls = true;
         const Program& program = m_inputs.program;
         m_directCalls = collectInParallel<DirectCall>(m_inputs.loops(), program.functions.size(), [&](unsigned index, Vector<DirectCall>& calls) {
-            if (!m_inputs.isReached(FunctionID(index)))
+            if (!m_inputs.isReached(FunctionID(index)) || !m_inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect })))
                 return;
             const Function& function = program.functions[index];
             for (uint32_t value = 0; value < function.values.size(); ++value) {

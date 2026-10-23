@@ -11,6 +11,7 @@
 #include "AOTValueFlowLog.h"
 #include "AOTValueFlowRuleContext.h"
 #include "AOTVector.h"
+#include <array>
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/EnumSet.h>
@@ -374,6 +375,46 @@ public:
         }
     }
 
+    // The same for the statements from `first` up to `end`, in their order. The lists of several statements are followed side by side: each step along a list waits for memory.
+    void forEachMadeNodeAskedForByStatements(uint32_t first, uint32_t end, NOESCAPE const Invocable<void(uint32_t statement)> auto& beginStatement, NOESCAPE const Invocable<void(uint32_t indexOfMadeNodes, const ValueFlowNodeKey&, ValueFlowStatementID)> auto& functor) const
+    {
+        constexpr uint32_t listsSideBySide = 16;
+        uint32_t endOfLists = std::min<uint32_t>(end, m_firstUseOfStatement.size());
+        std::array<uint32_t, listsSideBySide> use;
+        std::array<Vector<uint32_t, 32>, listsSideBySide> found;
+        for (uint32_t base = first; base < end; base += listsSideBySide) {
+            uint32_t count = std::min(listsSideBySide, end - base);
+            uint32_t numberUnfinished = 0;
+            for (uint32_t list = 0; list < count; ++list) {
+                found[list].shrink(0);
+                use[list] = base + list < endOfLists ? m_firstUseOfStatement[base + list] : UINT32_MAX;
+                if (use[list] == UINT32_MAX)
+                    continue;
+                ++numberUnfinished;
+                __builtin_prefetch(&m_uses[use[list]]);
+            }
+            while (numberUnfinished) {
+                for (uint32_t list = 0; list < count; ++list) {
+                    if (use[list] == UINT32_MAX)
+                        continue;
+                    const Use& current = m_uses[use[list]];
+                    found[list].append(current.madeNodes);
+                    __builtin_prefetch(&m_madeNodes[current.madeNodes]);
+                    use[list] = current.next;
+                    if (use[list] == UINT32_MAX)
+                        --numberUnfinished;
+                    else
+                        __builtin_prefetch(&m_uses[use[list]]);
+                }
+            }
+            for (uint32_t list = 0; list < count; ++list) {
+                beginStatement(base + list);
+                for (uint32_t index : found[list])
+                    functor(index, m_madeNodes[index].key, m_madeNodes[index].statement);
+            }
+        }
+    }
+
     // A key that forEachMadeNodeAskedForBy() has handed out, as a number.
     uint32_t indexOfMadeNodes(const ValueFlowNodeKey& key) const { return static_cast<uint32_t>(reinterpret_cast<const MadeNodes*>(&key) - m_madeNodes.span().data()); }
     const ValueFlowNodeKey& keyOfMadeNodesAt(uint32_t index) const LIFETIME_BOUND { return m_madeNodes[index].key; }
@@ -493,7 +534,7 @@ private:
     // The same for every run of a turn, whatever the other threads have made meanwhile.
     std::optional<ValueFlowNodeID> findNodeMadeBeforeThisTurn(const ValueFlowNodeKey&) const;
     // None for a key that waits for the end of the turn: see makeNodesWhereAskedFor().
-    std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, ValueFlowRoundLog&, ValueSetMaker&) const;
+    std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstOperand, statement.operandCount); }
     bool isKnownWatcher(ValueFlowNodeID node, ValueSetID within, ValueFlowStatementID statement) const
     {
@@ -555,7 +596,7 @@ private:
     void makeNodesOf(std::span<KeyToMake>);
     void takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>>, std::span<KeyToMake>);
     // While the rules of a turn run, the thread that is the first to ask for a key makes its nodes: it takes the next numbers, writes the record and lists it under the key, so every thread has the same numbers from then on.
-    std::optional<uint32_t> makeNodesWhereAskedFor(const ValueFlowNodeKey&, ValueFlowRoundLog&, ValueSetMaker&) const;
+    std::optional<uint32_t> makeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     void letRulesMakeNodes();
     void takeWhatRulesHaveMade();
     static ValueFlowStatement statementMadeWith(const MadeNodes&);
@@ -661,7 +702,11 @@ private:
         // The slots lie at a cache line, so the low bits of their address hold the binary logarithm of their number.
         class Table {
         public:
-            Table() = default;
+            Table()
+                : m_bits(0)
+            {
+            }
+
             Table(Slot* slots, unsigned bits)
                 : m_bits(reinterpret_cast<uintptr_t>(slots) | bits)
             {
@@ -672,7 +717,7 @@ private:
             size_t numberOfSlots() const { return static_cast<size_t>(1) << (m_bits & 63); }
 
         private:
-            uintptr_t m_bits { 0 };
+            uintptr_t m_bits;
         };
 
         ~IndexOfMadeNodes();

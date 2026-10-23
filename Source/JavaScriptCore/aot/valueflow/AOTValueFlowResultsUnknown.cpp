@@ -58,15 +58,17 @@ static AccessKind accessKindOf(const Value& value)
     }
 }
 
-static void fillAccessSites(const Program& program, const FlowAccessSiteNumbering& numbering, const ParallelLoops& loops, FlowSiteTables& sites)
+static void fillAccessSites(const Program& program, FlowAccessSiteNumbering& numbering, const ParallelLoops& loops, FlowSiteTables& sites)
 {
     sites.accessSites.grow(numbering.numberOfSites());
+    numbering.valueOfSite.grow(numbering.numberOfSites());
     sites.callsOfBoundFunctions.fill(false, numbering.numberOfSites());
     forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
         FunctionID id(index);
         const Function& function = program.functions[index];
         forEachAccessSiteValue(function, [&](ValueID value, uint32_t ordinal) {
             AccessSiteID site = numbering.siteOf(id, ordinal);
+            numbering.valueOfSite[site.index()] = value;
             sites.accessSites[site.index()] = AccessSite { id, function.locationOf(value), accessKindOf(function.at(value)) };
             sites.callsOfBoundFunctions[site.index()] = PayloadWord::callees(function.at(value).opcode).has_value();
         });

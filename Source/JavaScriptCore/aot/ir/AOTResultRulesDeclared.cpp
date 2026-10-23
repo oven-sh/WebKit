@@ -475,6 +475,23 @@ static TypeID requiredTypeOfIteratorResultField(const TypingContext& positions, 
     return field ? positions.typeIDOf(layout.fields[*field].declared) : TypeID();
 }
 
+const OpcodeSet& opcodesWithRequiredOperandTypes()
+{
+    static const OpcodeSet opcodes = [] {
+        OpcodeSet result { Opcode::CreateIteratorResult };
+        for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
+            Opcode opcode = static_cast<Opcode>(index);
+            uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
+            for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
+                if (operandKindOf(opcode, operandIndex) == OperandKind::Declared)
+                    result.add(opcode);
+            }
+        }
+        return result;
+    }();
+    return opcodes;
+}
+
 // What enters a position has to be proven to lie in what a read of the position is proven to give.
 TypeID requiredTypeOfOperand(const TypingContext& context, const Value& user, uint32_t operandIndex)
 {

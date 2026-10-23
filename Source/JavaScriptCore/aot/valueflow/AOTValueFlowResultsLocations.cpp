@@ -146,23 +146,85 @@ static LocationEvent readEventOf(const Function& function, const UseLists& useLi
     return LocationEvent::ReadAsCallee;
 }
 
-static void noteOperationsOf(const Program& program, const Function& function, Locations& locations)
+// The same for all the reads of a function at once.
+static void noteReadsOf(const Function& function, std::span<const ValueID> reads, Locations& locations)
 {
-    bool needsUseLists = std::ranges::any_of(function.values, [&](const Value& value) {
-        return locationReadBy(locations, value).has_value();
-    });
-    std::optional<CFG> cfg;
-    std::optional<UseLists> useLists;
-    if (needsUseLists) {
-        cfg.emplace(function);
-        useLists.emplace(function, *cfg);
+    auto note = [&](ValueID read, LocationEvent event) {
+        locations.note(*locationReadBy(locations, function.at(read)), event);
+    };
+    // No code is emitted for a model: native code reads what it reads, and no pass turns its calls into direct calls.
+    if (function.role == FunctionRole::Model) {
+        for (ValueID read : reads)
+            note(read, LocationEvent::ReadAsValue);
+        return;
     }
 
+    // By value: the read that the value is, or that a chain of casts hands on to it.
+    Vector<ValueID, 128> readBehind(function.values.size());
+    BitVector isUsed(function.values.size());
+    BitVector isReadAsValue(function.values.size());
+    Vector<ValueID, 16> casts;
+    for (ValueID read : reads)
+        readBehind[read.index()] = read;
+    auto noteUsesAsValues = [&](std::span<const ValueID> used) {
+        for (ValueID value : used) {
+            if (ValueID read = value ? readBehind[value.index()] : ValueID())
+                isReadAsValue.quickSet(read.index());
+        }
+    };
+    auto visit = [&](const Block& block) {
+        if (block.subject)
+            noteUsesAsValues(singleElementSpan(block.subject));
+        if (block.handler)
+            noteUsesAsValues(block.handler->arguments.span());
+        for (ValueID user : block.values) {
+            Opcode opcode = function.at(user).opcode;
+            std::span<const ValueID> operands = function.at(user).operands();
+            for (uint32_t index = 0; index < operands.size(); ++index) {
+                ValueID read = operands[index] ? readBehind[operands[index].index()] : ValueID();
+                if (!read)
+                    continue;
+                isUsed.quickSet(operands[index].index());
+                OperandUses operandUses = operandUsesOf(opcode, index);
+                if (isCast(opcode) && operandUses.contains(OperandUse::Returns)) {
+                    RELEASE_ASSERT(!readBehind[user.index()] || readBehind[user.index()] == read);
+                    if (!readBehind[user.index()])
+                        casts.append(user);
+                    readBehind[user.index()] = read;
+                    continue;
+                }
+                if (!operandUses.contains(OperandUse::Calls) || operandUses.containsAny({ OperandUse::Retains, OperandUse::Returns }))
+                    isReadAsValue.quickSet(read.index());
+            }
+        }
+        noteUsesAsValues(block.terminator.operands());
+        for (const Target& target : block.terminator.targets)
+            noteUsesAsValues(target.arguments.span());
+    };
+    // A value is made in front of its uses, so a cast is known by the time its uses come.
+    if (function.blocks.size() == 1)
+        visit(function.blocks[0]);
+    else {
+        CFG cfg(function);
+        for (BlockID block : cfg.reversePostOrder())
+            visit(function.at(block));
+    }
+    for (ValueID cast : casts) {
+        if (!isUsed.quickGet(cast.index()))
+            isReadAsValue.quickSet(readBehind[cast.index()].index());
+    }
+    for (ValueID read : reads)
+        note(read, isReadAsValue.quickGet(read.index()) || !isUsed.quickGet(read.index()) ? LocationEvent::ReadAsValue : LocationEvent::ReadAsCallee);
+}
+
+static void noteOperationsOf(const Program& program, const Function& function, Locations& locations)
+{
+    Vector<ValueID, 32> reads;
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
-            if (std::optional<uint32_t> location = locationReadBy(locations, value))
-                locations.note(*location, readEventOf(function, *useLists, id));
+            if (locationReadBy(locations, value))
+                reads.append(id);
             if (VariableID exports = exportsVariableReadBy(program, value))
                 locations.note(locations.of(exports), LocationEvent::ReadOutsideOperations);
             forEachLocationStoredBy(program, locations, value, [&](uint32_t location) {
@@ -170,6 +232,8 @@ static void noteOperationsOf(const Program& program, const Function& function, L
             });
         }
     }
+    if (!reads.isEmpty())
+        noteReadsOf(function, reads.span(), locations);
 }
 
 static void noteEverythingOutsideOperations(Locations& locations, uint32_t location)

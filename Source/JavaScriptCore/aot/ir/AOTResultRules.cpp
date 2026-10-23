@@ -625,7 +625,10 @@ FunctionID onlyCalleeOf(const Program& program, const Type& callee)
     if (callee.functions.size() != 1)
         return { };
     FunctionID only = *callee.functions.begin();
-    if (callee != Type::forFunction(only))
+    bool isNothingElse = !callee.primitives && !callee.anyObject && !callee.anyFunction && !callee.opaque && callee.integers == Range() && !callee.environment && !callee.layouts
+        && callee.stringLiterals.isEmpty() && callee.symbolLiterals.isEmpty() && callee.classes.isEmpty() && callee.builtins.isEmpty() && callee.regExpLiteralSet.isEmpty();
+    ASSERT(isNothingElse == (callee == Type::forFunction(only)));
+    if (!isNothingElse)
         return { };
 
     return returnsDeclaredResultWhenCalledByValue(recordOf(program, only)) ? only : FunctionID();
@@ -784,7 +787,8 @@ struct ResultRulesWithoutType {
         if (callee.isNever())
             return TypeTable::never;
         // Only a callee that is one function says more.
-        return callee.functions.size() == 1 ? TypeID() : TypeTable::anything;
+        FunctionID only = onlyCalleeOf(context.program, callee);
+        return only ? declared(value, only, 0) : TypeTable::anything;
     }
 
     TypeID constant(const Value& value)
@@ -872,7 +876,15 @@ struct ResultRulesWithoutType {
         return idInArena(context.typeIDOf(positions[index]));
     }
 
-    TypeID declared(const Value&, LayoutID, uint32_t) { return { }; }
+    TypeID declared(const Value& value, LayoutID layout, uint32_t field)
+    {
+        const Vector<Field>& fields = context.program.at(layout).fields;
+        if (field >= fields.size())
+            return TypeTable::anything;
+        if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
+            return idInArena(context.typeIDOf(fields[field].declared));
+        return { };
+    }
     TypeID declared(const Value&, LayoutID) { return { }; }
     TypeID declared(const Value&, ModuleID) { return { }; }
     TypeID declared(const Value&, BuiltinOverloadID, uint32_t) { return { }; }

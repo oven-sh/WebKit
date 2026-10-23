@@ -203,6 +203,8 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
     const Program& program = inputs.program;
     Vector<ClassDefinition> classes(program.layouts.size());
     Vector<uint32_t> functionsToLookAt = findIndicesInParallel(inputs.loops(), program.functions.size(), [&](unsigned index) {
+        if (!inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::ClassDefinition, ValueFlowNotedOperation::NewClosure })))
+            return false;
         bool isUnsolved = isUnsolvedCode(inputs, tables, FunctionID(index));
         if (!isUnsolved && !inputs.isReached(FunctionID(index)))
             return false;

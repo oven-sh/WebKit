@@ -1,6 +1,24 @@
 // What the generator needs of its surroundings. It runs under node in WebKit's build and under Bun in Bun's.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Under an older node a generator would stop at the first type, or run and write nothing. It says what it needs instead.
+export function requireRuntime(): void {
+  if ("Bun" in globalThis) return;
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major > 24 || (major === 24 && minor >= 2) || (major === 22 && minor >= 18)) return;
+  console.error(
+    `error: the generators of aot/ need node 24.2 or later, or 22.18 or later of 22: this is ${process.versions.node}`,
+  );
+  process.exit(1);
+}
+
+/** Whether the module at `url` is the program that was started, not a module that another one imports. */
+export function isProgram(url: string): boolean {
+  const started = process.argv[1];
+  return started !== undefined && realpathSync(started) === realpathSync(fileURLToPath(url));
+}
 
 export function cap(text: string): string {
   return text[0].toUpperCase() + text.slice(1);

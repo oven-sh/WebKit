@@ -363,7 +363,6 @@ private:
     Vector<FlowIndirectCall>& m_calls;
     // Made with the first entry.
     bool m_hasPreparedSites { false };
-    Vector<AccessSiteID> m_accessSites;
     BitVector m_valuesInCycles;
     // Of the statement that is looked at.
     const CalleeSet* m_stamp { nullptr };
@@ -376,7 +375,6 @@ void EntriesFromFunction::prepareSites()
 {
     if (std::exchange(m_hasPreparedSites, true))
         return;
-    m_accessSites = accessSitesByValue(m_function, m_application.accessSites, m_id);
     m_valuesInCycles = BitVector(m_function.values.size());
     CFG cfg(m_function);
     BlockCycles cycles(cfg);
@@ -425,7 +423,7 @@ void EntriesFromFunction::add(const ValueFlowStatement& statement, const Entered
         prepareSites();
         FlowIndirectCall call { .caller = m_id, .callee = function, .kind = kindOf(statement, group.kind), .times = BuiltinCallbackTimes::Once };
         if (statement.site) {
-            call.site = m_accessSites[statement.site.index()];
+            call.site = m_application.accessSites.siteOfValue(m_id, statement.site);
             call.isInCycle = m_valuesInCycles.quickGet(statement.site.index());
         }
         if (call.kind == FlowIndirectCallKind::BuiltinCallback) {

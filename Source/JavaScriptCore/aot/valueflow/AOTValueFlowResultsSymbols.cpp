@@ -111,6 +111,8 @@ BitVector computeCreatedSymbolResults(const ValueFlowResultInputs& inputs, const
 
 static void appendClosuresMadeBy(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, FunctionID id, Vector<ClosureMade>& closures)
 {
+    if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewClosure })))
+        return;
     const Function& function = inputs.program.at(id);
     // No other function has code.
     if (!function.hasBody() || (!inputs.isReached(id) && !isUnsolvedCode(inputs, tables, id)))

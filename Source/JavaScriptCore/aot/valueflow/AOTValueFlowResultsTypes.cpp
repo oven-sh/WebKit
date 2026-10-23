@@ -557,7 +557,8 @@ void NumbersOfPositions::collectWritersOf(FunctionID id, Vector<Writer>& writers
         if (m_isFollowed.quickGet(position))
             writers.append({ position, id, value });
     };
-    for (const Value& value : function.values) {
+    bool holdsWriter = m_inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::StoreToLocation, ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::NewClosure, ValueFlowNotedOperation::CallDirect }));
+    for (const Value& value : holdsWriter ? function.values.span() : std::span<const Value> { }) {
         switch (value.opcode) {
         case Opcode::PutModuleVariable:
             add(value.variable().index(), value.valueOperand());
@@ -647,7 +648,7 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
     for (const Writer& entry : m_writers)
         hasWriter.quickSet(entry.function.index());
     Vector<uint32_t> functionsWithLoop = findIndicesInParallel(m_inputs.loops(), program.functions.size(), [&](unsigned index) {
-        return hasWriter.quickGet(index) && std::ranges::any_of(program.functions[index].values, [](const Value& value) { return value.opcode == Opcode::LoopHint; });
+        return hasWriter.quickGet(index) && m_inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::LoopHint }));
     });
     BitVector hasLoop(program.functions.size());
     for (uint32_t index : functionsWithLoop)

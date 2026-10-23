@@ -216,7 +216,7 @@ public:
         runs.shrink(0);
         nodesRead.shrink(0);
         functionsAsked.shrink(0);
-        nodesAskedFor.shrink(0);
+        madeNodesAskedFor.shrink(0);
         valuesShown.shrink(0);
         partsWatched.shrink(0);
         nodesAskedWhetherEmpty.shrink(0);
@@ -253,8 +253,8 @@ public:
     Vector<Run> runs;
     Vector<ValueFlowNodeID> nodesRead;
     Vector<FunctionID> functionsAsked;
-    // The first node of what read(), written(), lookup(), group(), hub() and masked() have answered.
-    Vector<ValueFlowNodeID> nodesAskedFor;
+    // What read(), written(), lookup(), group(), hub() and masked() have answered and the asking keeps awake: ValueFlowSolver's number of the record; for what this log has numbered, the first node (numberedByLog is set).
+    Vector<uint32_t> madeNodesAskedFor;
     // All that a node held when newSince() was asked about it. The merge keeps it by statement and node, and the next run of the statement is shown what the node holds beyond it.
     Vector<ValueFlowNodeSet> valuesShown;
     // What valueWithin() was asked: the statement runs again once the node holds more of the set.

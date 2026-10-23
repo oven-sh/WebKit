@@ -163,7 +163,7 @@ void OrderInputs::collectOperationsOf(FunctionID id, Vector<FlowCallLink>& links
 void OrderInputs::collectOperations()
 {
     m_callLinks = collectInParallel<FlowCallLink>(m_inputs.loops(), m_numberOfFunctions, [&](unsigned index, Vector<FlowCallLink>& links) {
-        if (m_isCompiled.quickGet(index))
+        if (m_isCompiled.quickGet(index) && m_inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect, ValueFlowNotedOperation::Builtin, ValueFlowNotedOperation::ModuleOperation })))
             collectOperationsOf(FunctionID(index), links);
     });
 }

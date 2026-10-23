@@ -168,7 +168,7 @@ struct AccessesOfFunction {
     ValueSetMaker& maker;
     FlowBodyUpdate& update;
     FlowSiteTables& sites;
-    Vector<AccessSiteID> accessSites;
+    const FlowAccessSiteNumbering& accessSites;
     const LayoutsWithFieldOfKey& layoutsWithFieldOfKey;
     ListedReceiversByName& listedReceiversOfSets;
     ListedReceiversKnownToWorker& listedReceivers;
@@ -470,7 +470,7 @@ static void stampAccess(AccessesOfFunction& accesses, const ValueFlowStatement& 
     }
     if (std::optional<LayoutSet> receivers = receiversSeenToArrive(accesses, access, family, held))
         accesses.update.accesses.append(FlowAccessStamp { access.site, accesses.types.intern(WTF::move(*receivers)) });
-    accesses.sites.accessSiteLosses[accesses.accessSites[access.site.index()].index()] = lossOfAccess(accesses, access, family, receiver, held);
+    accesses.sites.accessSiteLosses[accesses.accessSites.siteOfValue(accesses.id, access.site).index()] = lossOfAccess(accesses, access, family, receiver, held);
 }
 
 void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
@@ -499,18 +499,17 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             return;
 
         const Function& function = program.functions[index];
-        Vector<AccessSiteID> accessSites = accessSitesByValue(function, application.accessSites, id);
         if (!inputs.build.isEnabled(FlowResultKind::ReceiverSets, index)) {
             for (const ValueFlowStatement& statement : statements) {
                 if (hasReceiverStamp(statement))
-                    tables.sites.accessSiteLosses[accessSites[statement.site.index()].index()] = FlowSiteLoss { .cause = UnprovenCause::ResultDisabled };
+                    tables.sites.accessSiteLosses[application.accessSites.siteOfValue(id, statement.site).index()] = FlowSiteLoss { .cause = UnprovenCause::ResultDisabled };
             }
             return;
         }
 
         TypeArena arena(*phase, index);
         ValueFlowPositions positions(inputs, arena, counts, index, &makers.of(worker));
-        AccessesOfFunction accesses { inputs, id, function, arena, positions, makers.of(worker), application.bodies[index], tables.sites, WTF::move(accessSites), layoutsWithFieldOfKey, listedReceiversOfSets, listedReceivers[worker], listedBlocksOfAll, listedBlocks[worker], layoutsOfMembers, layoutsMet[worker], builtinClassesOfMembers };
+        AccessesOfFunction accesses { inputs, id, function, arena, positions, makers.of(worker), application.bodies[index], tables.sites, application.accessSites, layoutsWithFieldOfKey, listedReceiversOfSets, listedReceivers[worker], listedBlocksOfAll, listedBlocks[worker], layoutsOfMembers, layoutsMet[worker], builtinClassesOfMembers };
         for (const ValueFlowStatement& statement : statements) {
             if (hasReceiverStamp(statement))
                 stampAccess(accesses, statement);

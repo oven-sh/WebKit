@@ -453,9 +453,9 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         constexpr uint32_t recordOfOtherKey = 0;
         constexpr uint32_t recordOfEnginePrivateName = 1;
         constexpr uint32_t recordOfText = 2;
-        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, holdersThatListNotAllMembers, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
-        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, builtinObjects, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
-        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, holdersThatListNotAllMembers, maker.unite(m_lockedObjects, maker.of(holdersClosedToOtherNames.span())), ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
+        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, holdersThatListNotAllMembers, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
+        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, builtinObjects, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
+        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, holdersThatListNotAllMembers, maker.unite(m_lockedObjects, maker.of(holdersClosedToOtherNames.span())), ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> recordOfName;
         HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> recordOfPrivateName;
 
@@ -492,8 +492,14 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 // There are thousands of them, and four names.
                 if (!isPrivateName && builtins.isClosedOnHostFunctions(name.name))
                     locked.appendVector(functionsOfEngine);
+                Objects membersOfEngineAndLibrary;
+                maker.sets().forEachMember(holders, [&](ValueFlowObjectID holder) {
+                    BuiltinID member = findOwnMember(program, universe.builtinOf(holder), key);
+                    if (member && builtins.at(member).origin != BuiltinOrigin::Host)
+                        membersOfEngineAndLibrary.append(universe.objectOf(member));
+                });
                 m_membersUnderKey.append({ holders, maker.intersect(holders, m_prototypeObjects), undeclared, maker.unite(m_lockedObjects, maker.of(locked.span())), maker.intersect(holders, maker.of(holdersOfName.holdersOfEvaluators.span())),
-                    isPrivateName ? ValueSets::nothing : holdersOfName.instancesThatKeepProperty, maker.intersect(holders, maker.of(prototypeObjectsOfEntries.span())) });
+                    isPrivateName ? ValueSets::nothing : holdersOfName.instancesThatKeepProperty, maker.intersect(holders, maker.of(prototypeObjectsOfEntries.span())), maker.of(membersOfEngineAndLibrary.span()) });
                 return static_cast<uint32_t>(m_membersUnderKey.size() - 1);
             }).iterator->value;
         });

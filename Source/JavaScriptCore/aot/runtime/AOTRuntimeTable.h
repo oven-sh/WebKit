@@ -151,8 +151,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
 constexpr std::optional<RemovableFeature> featureOf(Entry entry)
 {
     switch (entry) {
-    case Entry::operationAOTWeakMapSet:
-        return RemovableFeature::WeakReferences;
     case Entry::operationAOTFormatNumber:
         return RemovableFeature::IntlNumberFormat;
     case Entry::operationAOTFormatDateTime:
@@ -172,7 +170,7 @@ static_assert(!runtimeOperationOf(Entry::HandleException));
 static_assert(argumentBufferAccessOf(Entry::operationAOTValueAdd) == ArgumentBufferAccess::None);
 static_assert(argumentBufferAccessOf(Entry::operationAOTNewArray) == ArgumentBufferAccess::Reads);
 static_assert(argumentBufferAccessOf(Entry::operationArrayIndexOfValueInt32OrContiguous) == ArgumentBufferAccess::ReadsAndWrites);
-static_assert(featureOf(Entry::operationAOTWeakMapSet) == RemovableFeature::WeakReferences);
+static_assert(featureOf(Entry::operationAOTFormatNumber) == RemovableFeature::IntlNumberFormat);
 static_assert(!featureOf(Entry::operationAOTValueAdd));
 static_assert(isOperation(Entry::operationArrayIndexOfValueInt32OrContiguous) && !isOperation(Entry::VirtualCallTrampoline));
 

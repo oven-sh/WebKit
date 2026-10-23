@@ -20,7 +20,7 @@ import { engineFiles } from "./engine-sources.ts";
 import { engineDeclarationFiles, loadDeclarationFiles } from "./load-declaration-files.ts";
 import type { TableFeature, TableModel } from "./model.ts";
 import { collectOwnProperties } from "./own-properties.ts";
-import { readCMakeList, readFlags, writeIfChanged } from "./support.ts";
+import { isProgram, readCMakeList, readFlags, requireRuntime, writeIfChanged } from "./support.ts";
 
 export const engineDeclarationsName = "AOTBuiltinEngineDeclarations.json";
 export const arraysHeader = "AOTBuiltinTableArrays.h";
@@ -125,7 +125,8 @@ async function main(): Promise<void> {
   for (const [name, text] of [...engine, ...table]) writeIfChanged(join(resolve(out), name), text);
 }
 
-if (import.meta.main) {
+if (isProgram(import.meta.url)) {
+  requireRuntime();
   main().catch(error => {
     if (!(error instanceof GeneratorError)) throw error;
     console.error(`error: ${error.message}`);

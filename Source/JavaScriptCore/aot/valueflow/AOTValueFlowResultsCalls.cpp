@@ -31,7 +31,7 @@ struct CallsOfFunction {
     ValueSetMaker& maker;
     FlowBodyUpdate& update;
     FlowSiteTables& sites;
-    Vector<AccessSiteID> accessSites;
+    const FlowAccessSiteNumbering& accessSites;
     uint64_t numberOfUnknownCallees { 0 };
 };
 
@@ -81,7 +81,7 @@ static void stampCall(CallsOfFunction& calls, const ValueFlowStatement& call)
     std::optional<CalleeSet> callees = calls.positions.calleesAt(family, held, !!OperandPosition::newTarget(call.opcode));
     calls.numberOfUnknownCallees += calls.inputs.sets().contains(held, ValueFlowUniverse::unknownObject());
 
-    AccessSiteID site = calls.accessSites[call.site.index()];
+    AccessSiteID site = calls.accessSites.siteOfValue(calls.id, call.site);
     if (!callees || !callees->isComplete)
         calls.sites.accessSiteLosses[site.index()] = lossOfCall(calls, call, family, callee, held);
     // A complete set without a member says that the call enters nothing: whatever arrives cannot be called.
@@ -110,18 +110,17 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
             return;
 
         const Function& function = program.functions[index];
-        Vector<AccessSiteID> accessSites = accessSitesByValue(function, application.accessSites, id);
         if (!inputs.build.isEnabled(FlowResultKind::CalleeSets, index)) {
             for (const ValueFlowStatement& statement : statements) {
                 if (callsValue(statement))
-                    tables.sites.accessSiteLosses[accessSites[statement.site.index()].index()] = FlowSiteLoss { .cause = UnprovenCause::ResultDisabled };
+                    tables.sites.accessSiteLosses[application.accessSites.siteOfValue(id, statement.site).index()] = FlowSiteLoss { .cause = UnprovenCause::ResultDisabled };
             }
             return;
         }
 
         TypeArena arena(*phase, index);
         ValueFlowPositions positions(inputs, arena, counts, index, &makers.of(worker));
-        CallsOfFunction calls { inputs, id, function, arena, positions, makers.of(worker), application.bodies[index], tables.sites, WTF::move(accessSites) };
+        CallsOfFunction calls { inputs, id, function, arena, positions, makers.of(worker), application.bodies[index], tables.sites, application.accessSites };
         for (const ValueFlowStatement& statement : statements) {
             if (callsValue(statement))
                 stampCall(calls, statement);

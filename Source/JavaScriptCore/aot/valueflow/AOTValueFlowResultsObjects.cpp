@@ -460,6 +460,8 @@ static void noteAllocatingOperations(const ValueFlowResultInputs& inputs, const 
 
     const Program& program = inputs.program;
     Vector<AllocatedLayout> allocatedLayouts = collectInParallel<AllocatedLayout>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<AllocatedLayout>& found) {
+        if (!inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::CreateIteratorResult })))
+            return;
         const Function& function = program.functions[index];
         bool isUnsolved = isUnsolvedCode(inputs, tables, FunctionID(index));
         if (!isUnsolved && !inputs.isReached(FunctionID(index)))
@@ -861,6 +863,8 @@ static void stampAllocations(const ValueFlowResultInputs& inputs, std::span<cons
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
     Vector<Allocation> allocations = collectInParallel<Allocation>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<Allocation>& found) {
+        if (!inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::NewClosure })))
+            return;
         const Function& function = program.functions[index];
         if (!inputs.isReached(FunctionID(index)) && !isUnsolvedCode(inputs, tables, FunctionID(index)))
             return;

@@ -932,8 +932,22 @@ function(AOT_GENERATE_UNIFIED_SOURCES)
 endfunction()
 
 # The generators run while CMake configures, so that every generated file is there before anything is compiled. A file is written only when its text changes.
+# A generator that ended well and left a file out would show as a missing header somewhere in the build.
+function(AOT_REQUIRE_GENERATED_FILES generator)
+    foreach (file IN LISTS ARGN)
+        if (NOT EXISTS "${file}")
+            message(FATAL_ERROR "${generator} ended without an error and did not write ${file}")
+        endif ()
+    endforeach ()
+endfunction()
+
 function(AOT_GENERATE_FROM_SCHEMA)
     find_program(NODE_EXECUTABLE node REQUIRED)
+    execute_process(COMMAND "${NODE_EXECUTABLE}" --version OUTPUT_VARIABLE nodeVersion OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+    string(REGEX REPLACE "^v" "" nodeVersion "${nodeVersion}")
+    if (nodeVersion VERSION_LESS 22.18 OR (nodeVersion VERSION_GREATER_EQUAL 23 AND nodeVersion VERSION_LESS 24.2))
+        message(FATAL_ERROR "The generators of aot/ need node 24.2 or later, or 22.18 or later of 22: it has to run TypeScript as it is and have import.meta.main. ${NODE_EXECUTABLE} is ${nodeVersion}.")
+    endif ()
     file(GLOB generator CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/ir/generator/*.ts")
     list(TRANSFORM JavaScriptCore_AOT_SCHEMA_INPUTS PREPEND "${JAVASCRIPTCORE_DIR}/" OUTPUT_VARIABLE inputs)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${generator} ${inputs})
@@ -941,6 +955,7 @@ function(AOT_GENERATE_FROM_SCHEMA)
         COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/ir/generator/index.ts" --schema "${JAVASCRIPTCORE_DIR}/aot/ir/AOTSchema.def" --engine-out "${JavaScriptCore_AOT_GENERATED_DIR}"
         COMMAND_ERROR_IS_FATAL ANY
     )
+    AOT_REQUIRE_GENERATED_FILES(aot/ir/generator/index.ts ${JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS} ${JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES})
 endfunction()
 
 # What the engine is compiled with, and the table of the programs that this build links: the engine's entries and the stand-in host's.
@@ -959,6 +974,13 @@ function(AOT_GENERATE_BUILTIN_TABLE)
     execute_process(
         COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/builtins/generator/engine.ts" "--javascriptcore=${JAVASCRIPTCORE_DIR}" "--out=${JavaScriptCore_AOT_GENERATED_DIR}"
         COMMAND_ERROR_IS_FATAL ANY
+    )
+    AOT_REQUIRE_GENERATED_FILES(aot/builtins/generator/engine.ts
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_HEADERS}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES}
+        "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinEngineDeclarations.json"
     )
 endfunction()
 

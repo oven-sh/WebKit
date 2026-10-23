@@ -22,6 +22,7 @@
 
 #if ENABLE(AOT)
 
+#include <wtf/HashTraits.h>
 #include <wtf/Vector.h>
 
 // wtf/Vector.h for the compiler's own lists. Nobody borrows them, so there is no borrowed bit to test and to mask, and a destructor
@@ -32,6 +33,7 @@ namespace JSC { namespace AOT {
 using WTF::FailureAction;
 using WTF::GetPtrHelper;
 using WTF::CopyOrMoveToVectorResult;
+using WTF::ValueCheck;
 using WTF::VectorBufferMalloc;
 using WTF::VectorCopier;
 using WTF::VectorTypeOperations;
@@ -1778,6 +1780,14 @@ namespace WTF {
 
 template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
 struct VectorTraits<JSC::AOT::Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>> : VectorTraits<Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>> { };
+
+template<typename T, size_t inlineCapacity>
+struct HashTraits<JSC::AOT::Vector<T, inlineCapacity>> : GenericHashTraits<JSC::AOT::Vector<T, inlineCapacity>> {
+    static constexpr bool emptyValueIsZero = !inlineCapacity;
+
+    static void constructDeletedValue(JSC::AOT::Vector<T, inlineCapacity>& slot) { new (NotNull, std::addressof(slot)) JSC::AOT::Vector<T, inlineCapacity>(WTF::HashTableDeletedValue); }
+    static bool isDeletedValue(const JSC::AOT::Vector<T, inlineCapacity>& value) { return value.isHashTableDeletedValue(); }
+};
 
 } // namespace WTF
 

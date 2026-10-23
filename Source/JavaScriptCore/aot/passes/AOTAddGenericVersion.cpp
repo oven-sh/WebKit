@@ -1435,10 +1435,13 @@ static void forEachTypedStore(const TypingContext& typing, const CFG& cfg, NOESC
     if (function.results.size() == 1 && !function.isUnsplitCoroutine())
         requiredResult = typing.typeIDOf(function.result());
 
+    const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
     for (BlockID block : cfg.reversePostOrder()) {
         const Block& contents = function.at(block);
         for (ValueID id : contents.values) {
             const Value& value = function.at(id);
+            if (!opcodesWithRequiredTypes.contains(value.opcode))
+                continue;
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 if (value.operandKind(operandIndex) == OperandKind::Declared)
                     visit({ operand, requiredTypeOfOperand(typing, value, operandIndex), &value, operandIndex });

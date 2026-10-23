@@ -22,6 +22,7 @@ class ValueFlowRoundLog;
 class ValueFlowSolver;
 class ValueFlowUniverse;
 struct ValueFlowNodeKey;
+enum class ValueFlowRareWrite : uint8_t;
 
 // A set as it stands in this round; a later round may find more in it.
 class ClimbingSet {
@@ -230,15 +231,18 @@ private:
     friend class ValueFlowSolver;
 
     void begin(ValueFlowStatementID);
-    void beginWhereMade(ValueFlowStatementID, const ValueFlowNodeKey&);
+    void beginWhereMade(ValueFlowStatementID, const ValueFlowNodeKey&, uint32_t madeNodes);
     void end();
     const ValueFlowNodeKey& keyOfStatement() const;
     bool hasNeverRun() const { return m_keyOfStatementOfThisTurn || m_isFirstRunOfStatementOfBody; }
     void leaveOutWhatIsKnown();
     ValueFlowNodeID nodeFor(const ValueFlowNodeKey&);
     struct KnownNode;
-    ValueFlowNodeID nodeForUncached(const ValueFlowNodeKey&, KnownNode&);
-    void logNodeAskedFor(const ValueFlowNodeKey&, ValueFlowNodeID);
+    ValueFlowNodeID nodeForUncached(const ValueFlowNodeKey&, KnownNode&, uint32_t hash);
+    ValueFlowNodeID constantNodeForEdge(const ValueFlowNodeKey&);
+    ValueFlowNodeID rareWriteNode(ValueFlowRareWrite);
+    ValueFlowNodeID mutationNode(ObjectMutation);
+    void logMadeNodesAskedFor(const ValueFlowNodeKey&, uint32_t madeNodes);
     void addObjectsOfProgram(ValueFlowNodeID, ClimbingSet objects);
     ValueFlowNodeKey keyOfConstant(ValueSetID) const;
     ValueFlowNodeID holdingNothing();
@@ -280,14 +284,23 @@ private:
     ValueFlowRoundLog& m_log;
     const ValueFlowInstancedFunctions* const m_instancedFunctions;
     const bool m_skipsRedundantAdds;
-    struct KnownNode {
+    struct alignas(32) KnownNode {
         uint64_t payloadAndSet { 0 };
         uint32_t kindAndDetail { 0 };
         ValueFlowNodeID node;
+        uint32_t madeNodes { 0 };
     };
-    std::array<KnownNode, 4096> m_knownNodes { };
+    std::array<KnownNode, 2048> m_knownNodes { };
+    struct ConstantOfTurn {
+        uint64_t detailAndSet { 0 };
+        uint32_t turn { 0 };
+        ValueFlowNodeID node;
+    };
+    std::array<ConstantOfTurn, 256> m_constantsOfTurn { };
+    std::array<ValueFlowNodeID, 32> m_mutationNodes { };
     ValueSetMaker& m_maker;
     ValueFlowStatementID m_statement;
+    uint32_t m_madeNodesOfStatement { UINT32_MAX };
     bool m_isFirstRunOfStatementOfBody { false };
     bool m_filtersKnownEdges { true };
     // Where what the run logs begins.

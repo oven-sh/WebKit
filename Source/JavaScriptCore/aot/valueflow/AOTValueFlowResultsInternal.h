@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFlowApplication.h"
 #include "AOTLayout.h"
+#include "AOTSharedMemo.h"
 #include "AOTThreads.h"
 #include "AOTTypeTable.h"
 #include "AOTValueFlowAnalysis.h"
@@ -576,25 +577,22 @@ public:
 
     ValueSetID ensure(uint64_t question, NOESCAPE const Invocable<ValueSetID()> auto& answer)
     {
-        Part& part = m_parts[(question * 0x9e3779b97f4a7c15ull) >> 58];
-        {
-            Locker locker { part.lock };
-            auto found = part.answers.find(question);
-            if (found != part.answers.end())
-                return found->value;
-        }
-        ValueSetID answered = answer();
-        Locker locker { part.lock };
-        return part.answers.add(question, answered).iterator->value;
+        uint32_t hash = static_cast<uint32_t>((question * 0x9e3779b97f4a7c15ull) >> 32);
+        auto isWanted = [&](const Answer& known) {
+            return known.question == question;
+        };
+        if (const Answer* known = m_answers.find(hash, isWanted))
+            return known->answer;
+        return m_answers.add(hash, Answer { question, answer() }, isWanted).answer;
     }
 
 private:
-    struct alignas(64) Part {
-        Lock lock;
-        HashMap<uint64_t, ValueSetID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> answers WTF_GUARDED_BY_LOCK(lock);
+    struct Answer {
+        uint64_t question;
+        ValueSetID answer;
     };
 
-    std::array<Part, 64> m_parts;
+    SharedMemo<Answer> m_answers;
 };
 
 // What the views of the heap look things up in.

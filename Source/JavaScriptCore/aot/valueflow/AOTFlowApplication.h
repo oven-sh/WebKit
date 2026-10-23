@@ -156,10 +156,20 @@ const Entry* findByValue(std::span<const Entry> ascendingEntries, ValueID value,
 
 struct FlowAccessSiteNumbering {
     Vector<uint32_t> firstSiteOfFunction;
+    // By site. Only while the results are computed.
+    Vector<ValueID> valueOfSite;
 
     uint32_t numberOfSites() const { return firstSiteOfFunction.isEmpty() ? 0 : firstSiteOfFunction.last(); }
     AccessSiteID siteOf(FunctionID functionAsRead, uint32_t ordinal) const { return AccessSiteID(firstSiteOfFunction[functionAsRead.index()] + ordinal); }
     uint32_t numberOfSitesOf(FunctionID functionAsRead) const { return firstSiteOfFunction[functionAsRead.index() + 1] - firstSiteOfFunction[functionAsRead.index()]; }
+    // None for a value without a site.
+    AccessSiteID siteOfValue(FunctionID functionAsRead, ValueID value) const
+    {
+        uint32_t first = firstSiteOfFunction[functionAsRead.index()];
+        std::span<const ValueID> values = valueOfSite.subspan(first, numberOfSitesOf(functionAsRead));
+        auto found = std::ranges::lower_bound(values, value);
+        return found != values.end() && *found == value ? AccessSiteID(first + static_cast<uint32_t>(found - values.begin())) : AccessSiteID();
+    }
 };
 
 constexpr bool hasAccessSite(Opcode opcode) { return PayloadWord::accessSite(opcode).has_value(); }

@@ -1353,7 +1353,7 @@ void ValueFlowSolver::runStatementsMadeBy(Thread& thread)
         log.recordsOfRunsWhereMade.append(number);
         MadeNodes made = m_madeNodes[number];
         ValueFlowStatement statement = statementMadeWith(made);
-        thread.context.beginWhereMade(made.statement, made.key);
+        thread.context.beginWhereMade(made.statement, made.key, number);
         m_rule(statement, thread.context);
         thread.context.end();
         ++log.numberOfRunsWhereMade;
@@ -1366,14 +1366,17 @@ void ValueFlowSolver::letRulesMakeNodes()
     m_nextStatement.store(numberOfStatements(), std::memory_order_relaxed);
 }
 
-std::optional<uint32_t> ValueFlowSolver::findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey& key, ValueFlowRoundLog& log, ValueSetMaker& maker) const
+std::optional<uint32_t> ValueFlowSolver::findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey& key, uint32_t hash, ValueFlowRoundLog& log, ValueSetMaker& maker) const
 {
-    if (std::optional<uint32_t> number = findNumberOfMadeNodes(key))
+    std::optional<uint32_t> number = findInIndexOfMadeNodes(hash, [&](uint32_t candidate) {
+        return m_madeNodes[candidate].key == key;
+    });
+    if (number) [[likely]]
         return number;
-    return makeNodesWhereAskedFor(key, log, maker);
+    return makeNodesWhereAskedFor(key, hash, log, maker);
 }
 
-std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowNodeKey& key, ValueFlowRoundLog& log, ValueSetMaker& maker) const
+std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowNodeKey& key, uint32_t hash, ValueFlowRoundLog& log, ValueSetMaker& maker) const
 {
     if (NodeMaker::mayBringOthers(m_sets, key))
         return std::nullopt;
@@ -1387,7 +1390,6 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
         maker.appendParts(key.set, setsOfParts);
     bool hasStatement = !made.staysAtRest && setsOfParts.isEmpty() && (key.kind == ValueFlowMadeNodeKind::Lookup || key.kind == ValueFlowMadeNodeKind::CallGroup || key.kind == ValueFlowMadeNodeKind::Hub);
 
-    uint32_t hash = key.hash();
     IndexOfMadeNodes& index = indexOfMadeNodesWith(hash);
     auto give = [](ValueFlowRoundLog::NumbersToGive& numbers, uint32_t count, uint32_t mostInBlock, NOESCAPE const Invocable<uint32_t(uint32_t)> auto& takeBlock) {
         if (numbers.next == numbers.end) {
@@ -1435,9 +1437,7 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     // Outside the lock: a part has a lock of its own.
     Vector<uint32_t, 8> parts;
     auto join = [&](const ValueFlowNodeKey& keyOfPart) {
-        std::optional<uint32_t> part = findNumberOfMadeNodes(keyOfPart);
-        if (!part)
-            part = makeNodesWhereAskedFor(keyOfPart, log, maker);
+        std::optional<uint32_t> part = findOrMakeNodesWhereAskedFor(keyOfPart, keyOfPart.hash(), log, maker);
         parts.append(*part);
         ValueFlowNodeID firstOfPart = m_madeNodes[*part].first;
         if (keyOfPart.kind != ValueFlowMadeNodeKind::CallGroup) {
@@ -2499,23 +2499,17 @@ void ValueFlowSolver::noteNodesAskedFor()
         bool isFirstOfTurn = share.firstRun == thread.numberOfRunsTaken;
         uint32_t valuesShown = isFirstOfTurn ? thread.numberOfValuesShownTaken : thread.log.runs[share.firstRun - 1].endOfValuesShown;
         uint32_t nodeAskedFor = isFirstOfTurn ? thread.numberOfNodesAskedForTaken : thread.log.runs[share.firstRun - 1].endOfNodesAskedFor;
-        uint32_t endOfNodesAskedForOfShare = thread.log.runs[share.endOfRuns - 1].endOfNodesAskedFor;
-        auto madeNodesAskedForAt = [&](uint32_t position) -> const uint32_t& {
-            return m_madeNodesOfNode[thread.numberInGraph(thread.log.nodesAskedFor[position]).index() - m_input.numberOfNodes];
-        };
         for (size_t number = share.firstRun; number < share.endOfRuns; ++number) {
             const ValueFlowRoundLog::Run& run = thread.log.runs[number];
             size_t first = share.askedForAnew.size();
             seen.clear();
             for (; nodeAskedFor < run.endOfNodesAskedFor; ++nodeAskedFor) {
-                constexpr uint32_t distance = 8;
-                if (nodeAskedFor + 2 * distance < endOfNodesAskedForOfShare) {
-                    __builtin_prefetch(&madeNodesAskedForAt(nodeAskedFor + 2 * distance));
-                    __builtin_prefetch(&m_askerThatKeepsNothingAwake[madeNodesAskedForAt(nodeAskedFor + distance)]);
+                uint32_t madeNodes = thread.log.madeNodesAskedFor[nodeAskedFor];
+                if (madeNodes & ValueFlowRoundLog::numberedByLog) [[unlikely]] {
+                    madeNodes = m_madeNodesOfNode[thread.numberInGraph(ValueFlowNodeID(madeNodes)).index() - m_input.numberOfNodes];
+                    if (!keepsAwake(run.statement, madeNodes))
+                        continue;
                 }
-                uint32_t madeNodes = madeNodesAskedForAt(nodeAskedFor);
-                if (!keepsAwake(run.statement, madeNodes))
-                    continue;
                 std::span<const uint32_t> askedFor = share.askedForAnew.span().subspan(first);
                 if (askedFor.size() < mostComparedOneByOne) {
                     if (std::ranges::find(askedFor, madeNodes) != askedFor.end())

@@ -552,16 +552,26 @@ ValueID definitionThroughTests(const Function& function, ValueID id)
         id = definitionThroughSameValues(function, id);
         if (function.at(id).opcode != Opcode::Parameter)
             return id;
+        BlockID owner;
+        size_t parameterIndex = notFound;
+        for (uint32_t block = 0; block < function.blocks.size() && !owner; ++block) {
+            parameterIndex = function.blocks[block].parameters.find(id);
+            if (parameterIndex != notFound)
+                owner = BlockID(block);
+        }
+        if (!owner)
+            return id;
         unsigned numberOfEdges = 0;
         ValueID passed;
         for (uint32_t from = 0; from < function.blocks.size(); ++from) {
             const auto& targets = function.blocks[from].terminator.targets;
             for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
                 const Target& target = targets[targetIndex];
-                size_t parameterIndex = function.at(target.block).parameters.find(id);
-                if (parameterIndex == notFound)
+                if (target.block != owner)
                     continue;
-                ++numberOfEdges;
+                // What comes over two edges is no one value.
+                if (++numberOfEdges > 1)
+                    return id;
                 passed = parameterIndex < target.arguments.size() ? target.arguments[parameterIndex]
                     : operandNarrowedOnEdge(function, { BlockID(from), targetIndex, static_cast<uint32_t>(parameterIndex - target.arguments.size()) });
             }
@@ -656,14 +666,7 @@ static void callOperandOfDescribedCall(const ValueFlowStatement& statement, Valu
 
 ClimbingSet escapedMembersUnder(ValueFlowRuleContext& context, PropertyKeyID key)
 {
-    const ValueFlowUniverse& universe = context.universe();
-    Vector<ValueFlowObjectID, 8> members;
-    context.sets().forEachMember(universe.builtinTables().heap().under(key).holders, [&](ValueFlowObjectID holder) {
-        BuiltinID member = findOwnMember(context.program(), universe.builtinOf(holder), key);
-        if (member && context.program().builtins().at(member).origin != BuiltinOrigin::Host)
-            members.append(universe.objectOf(member));
-    });
-    return context.valueWithin(ClimbingSet(context.maker().of(members.span())), ValueFlowProgramNodes::escaped());
+    return context.valueWithin(ClimbingSet(context.universe().builtinTables().heap().under(key).membersOfEngineAndLibrary), ValueFlowProgramNodes::escaped());
 }
 
 // On an object that only the program has in its hands, and above it, lies what the program has stored, under whatever name it likes: `table.run = unknown[key]`.

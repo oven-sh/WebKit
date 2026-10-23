@@ -93,4 +93,16 @@ function main(argv: readonly string[]): number {
   }
 }
 
+// Under an older node a generator would stop at the first type, or run and write nothing. It says what it needs instead.
+function requireRuntime(): void {
+  if ("Bun" in globalThis) return;
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major > 24 || (major === 24 && minor >= 2) || (major === 22 && minor >= 18)) return;
+  console.error(
+    `error: the generators of aot/ need node 24.2 or later, or 22.18 or later of 22: this is ${process.versions.node}`,
+  );
+  process.exit(1);
+}
+
+requireRuntime();
 process.exit(main(process.argv.slice(2)));

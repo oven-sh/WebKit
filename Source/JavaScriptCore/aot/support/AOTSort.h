@@ -140,6 +140,9 @@ inline NEVER_INLINE void stableSortLongRange(const SortSteps& steps, char* first
 template<typename T>
 inline constexpr bool movesAsBytes = alignof(T) <= alignof(uint64_t) && ((std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>) || VectorTraits<T>::canMoveWithMemcpy);
 
+template<typename First, typename Second>
+inline constexpr bool movesAsBytes<std::pair<First, Second>> = alignof(std::pair<First, Second>) <= alignof(uint64_t) && movesAsBytes<First> && movesAsBytes<Second>;
+
 template<typename T, typename IsLess, typename Projection>
 class OrderedSteps {
 public:

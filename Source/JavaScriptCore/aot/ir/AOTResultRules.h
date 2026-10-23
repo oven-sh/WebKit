@@ -175,6 +175,8 @@ enum class FieldTypeState : uint8_t { Unknown, Proven };
 // Whether a read by name finds a value of the field's type. The type bounds what the slot holds, and a property that has left its slot holds anything.
 FieldTypeState fieldTypeStateOf(const Program&, FieldReference);
 
+// No operand of another operation has a required type.
+const OpcodeSet& opcodesWithRequiredOperandTypes();
 TypeID requiredTypeOfOperand(const TypingContext&, const Value& user, uint32_t operandIndex);
 TypeID requiredTypeOfOperand(const TypingContext&, const Terminator& user, uint32_t operandIndex);
 TypeID declaredEntryTypeOf(const TypingContext&, const Function& callee, unsigned entryParameterIndex);

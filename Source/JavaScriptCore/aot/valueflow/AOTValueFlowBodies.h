@@ -263,6 +263,7 @@ private:
     // The members of one kind lie side by side, so that a set of closures or of allocated objects takes few blocks. What built-ins allocate at calls comes behind all other sites.
     Vector<ValueFlowObjectID> m_objectOfSite;
     Vector<uint32_t> m_siteOfObject;
+    Vector<FunctionID> m_functionOfSiteObject;
     Vector<LayoutID> m_layoutOfNamespace;
     Vector<BuiltinClassID> m_classOfCoroutineResult;
     Vector<ValueSetID> m_objectsOfLayout;
@@ -655,6 +656,58 @@ struct ValueFlowBodiesTimes {
     Seconds link;
 };
 
+// What a walk over the values of the functions looks for. A word a function says which of them the function holds, so that the walk passes by the functions that hold none.
+enum class ValueFlowNotedOperation : uint8_t {
+    NewObject,
+    NewClosure,
+    CallDirect,
+    DirectCall,
+    Data,
+    CreateIteratorResult,
+    AllocationSite,
+    PieceOutsideSlots,
+    FinishObject,
+    LoopHint,
+    ClassDefinition,
+    StoreToLocation,
+    Builtin,
+    ModuleOperation,
+};
+
+using ValueFlowNotedOperations = uint64_t;
+
+constexpr ValueFlowNotedOperations notedOperations(std::initializer_list<ValueFlowNotedOperation> operations)
+{
+    ValueFlowNotedOperations bits = 0;
+    for (ValueFlowNotedOperation operation : operations)
+        bits |= 1ull << static_cast<unsigned>(operation);
+    return bits;
+}
+
+constexpr ValueFlowNotedOperations notedOperationsOf(Opcode opcode)
+{
+    ValueFlowNotedOperations bits = 0;
+    auto note = [&](ValueFlowNotedOperation operation, bool holds) {
+        if (holds)
+            bits |= notedOperations({ operation });
+    };
+    note(ValueFlowNotedOperation::NewObject, opcode == Opcode::NewObject);
+    note(ValueFlowNotedOperation::NewClosure, opcode == Opcode::NewClosure);
+    note(ValueFlowNotedOperation::CallDirect, opcode == Opcode::CallDirect);
+    note(ValueFlowNotedOperation::DirectCall, accessClassOf(opcode) == AccessClass::DirectCall);
+    note(ValueFlowNotedOperation::Data, opcode == Opcode::Data);
+    note(ValueFlowNotedOperation::CreateIteratorResult, opcode == Opcode::CreateIteratorResult);
+    note(ValueFlowNotedOperation::AllocationSite, PayloadWord::allocationSite(opcode).has_value());
+    note(ValueFlowNotedOperation::PieceOutsideSlots, opcode == Opcode::DefineGetter || opcode == Opcode::DefineSetter || opcode == Opcode::ElemDefine || opcode == Opcode::CopyDataProperties);
+    note(ValueFlowNotedOperation::FinishObject, opcode == Opcode::FinishObject);
+    note(ValueFlowNotedOperation::LoopHint, opcode == Opcode::LoopHint);
+    note(ValueFlowNotedOperation::ClassDefinition, opcode == Opcode::NewClass || opcode == Opcode::DefineMethod);
+    note(ValueFlowNotedOperation::StoreToLocation, opcode == Opcode::PutModuleVariable || opcode == Opcode::PutEnvironmentField);
+    note(ValueFlowNotedOperation::Builtin, opcode == Opcode::Builtin);
+    note(ValueFlowNotedOperation::ModuleOperation, opcode == Opcode::ModuleNamespace || opcode == Opcode::ImportModule || opcode == Opcode::RequireModule || opcode == Opcode::EvaluateModule || opcode == Opcode::ImportDynamic || opcode == Opcode::RequireDynamic || opcode == Opcode::RequireBuiltinModule);
+    return bits;
+}
+
 // All bodies in the numbers of the program.
 class ValueFlowBodies {
     WTF_MAKE_NONCOPYABLE(ValueFlowBodies);
@@ -684,6 +737,8 @@ public:
     std::span<const ValueFlowValueOfFunction> valuesAliveForComparisonsOnly() const LIFETIME_BOUND { return m_valuesAliveForComparisonsOnly.span(); }
     const UnobservedFieldDefinitions& unobservedDefinitions() const LIFETIME_BOUND { return m_unobservedDefinitions; }
     const ValueFlowBodiesTimes& times() const { return m_times; }
+    // Among all its values, whether a block lists them or not.
+    bool holdsAnyOf(FunctionID function, ValueFlowNotedOperations operations) const { return m_notedOperations[function.index()] & operations; }
 
     // The host's body comes after the last function.
     uint32_t numberOfBodies() const { return m_ranges.size() - 1; }
@@ -713,6 +768,8 @@ private:
     Vector<ValueFlowValueOfFunction> m_valuesAliveForComparisonsOnly;
     UnobservedFieldDefinitions m_unobservedDefinitions;
     ValueFlowBodiesTimes m_times;
+    // By function.
+    Vector<ValueFlowNotedOperations> m_notedOperations;
     // One entry more than there are bodies.
     Vector<ValueFlowBodyRange> m_ranges;
 };
