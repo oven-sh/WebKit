@@ -25,6 +25,21 @@ shouldBe(new Date(Date.UTC(-1, 0, 1)).setUTCMonth(12 * 275761), startOfYear27576
 shouldBe(new Date(Date.UTC(-271821, 3, 20)).setUTCMonth(3 + 12 * (275760 + 271821)), Date.UTC(275760, 3, 20));
 shouldBe(new Date(startOfYear275760).setUTCMonth(3 - 12 * (275760 + 271821), 20), minTimeValue);
 
+// A month count that spans more years than the whole time value range (547581 years) is fine when
+// the result is inside the range (oven-sh/bun#46342, hit through date-fns differenceInMonths).
+{
+    let date = new Date(0);
+    date.setUTCFullYear(-187631, 8, 27);
+    shouldBe(date.setUTCMonth(3472364), Date.UTC(101732, 8, 27));
+    shouldBe(date.toISOString(), "+101732-09-27T00:00:00.000Z");
+    shouldBe(new Date(Date.UTC(-270000, 8, 27)).setUTCMonth(280000 * 12 + 8), Date.UTC(10000, 8, 27));
+    shouldBe(new Date(Date.UTC(270000, 8, 27)).setUTCMonth(-280000 * 12 + 8), Date.UTC(-10000, 8, 27));
+    shouldBe(new Date(Date.UTC(2000, 0, 1)).setUTCFullYear(-270000, 6500000), Date.UTC(271666, 8, 1));
+    date = new Date(0);
+    date.setFullYear(-187631, 8, 27);
+    shouldBe(date.setMonth(3472364), new Date(101732, 8, 27).getTime());
+}
+
 // The day offset counts too: the start of 275761 is out of range, 200 days before it is not.
 shouldBe(new Date(0).setUTCFullYear(275761, 0, -200), Date.UTC(275761, 0, -200));
 shouldBe(new Date(0).setUTCFullYear(275761, 0, -200), Date.UTC(275760, 0, 166));
