@@ -358,6 +358,23 @@ public:
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 
+    // Calls functor(key, value) for each entry whose key the current collection has not marked yet.
+    // The collector calls this while every marking thread is idle, so the table cannot change under it.
+    template<typename T = WeakMapBucketType, typename Functor>
+        requires std::same_as<T, WeakMapBucket<WeakMapBucketDataKeyValue>>
+    void forEachEntryWithUnmarkedKey(Heap& heap, const Functor& functor)
+    {
+        auto* buffer = this->buffer();
+        for (uint32_t index = 0; index < m_capacity; ++index) {
+            auto* bucket = buffer + index;
+            if (bucket->isEmpty() || bucket->isDeleted())
+                continue;
+            if (heap.isMarked(bucket->key()))
+                continue;
+            functor(bucket->key(), bucket->value());
+        }
+    }
+
 private:
     template<typename Visitor>
     ALWAYS_INLINE static void visitOutputConstraintsForDataKeyValue(JSCell*, Visitor&);

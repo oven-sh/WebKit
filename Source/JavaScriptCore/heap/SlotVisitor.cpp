@@ -418,12 +418,25 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
         break;
     }
 
+    if (m_collector.m_ephemeronLinearMode) [[unlikely]]
+        visitPendingEphemerons(cell);
+
     if (m_isAnalyzingHeap) [[unlikely]] {
         if (m_isFirstVisit) {
             if (HeapAnalyzer* analyzer = cell->vm().activeHeapAnalyzer())
                 analyzer->analyzeNode(const_cast<JSCell*>(cell));
         }
     }
+}
+
+// Collector::buildPendingEphemeronsIfNeeded explains the table. It is read-only while visitors run.
+NEVER_INLINE void SlotVisitor::visitPendingEphemerons(const JSCell* cell)
+{
+    auto iterator = m_collector.m_pendingEphemerons.find(const_cast<JSCell*>(cell));
+    if (iterator == m_collector.m_pendingEphemerons.end())
+        return;
+    for (JSCell* value : iterator->value)
+        appendUnbarriered(value);
 }
 
 void SlotVisitor::visitAsConstraint(const JSCell* cell)

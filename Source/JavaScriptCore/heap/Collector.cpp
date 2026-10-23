@@ -31,13 +31,16 @@
 #include "IncrementalSweeper.h"
 #include "JITWorklistInlines.h"
 #include "JSCInlines.h"
+#include "JSWeakMap.h"
 #include "MarkingConstraintSet.h"
 #include "MutatorScheduler.h"
 #include "SpaceTimeMutatorScheduler.h"
 #include "StochasticSpaceTimeMutatorScheduler.h"
+#include "SubspaceInlines.h"
 #include "SynchronousStopTheWorldMutatorScheduler.h"
 #include "TypeProfiler.h"
 #include "VerifierSlotVisitorInlines.h"
+#include "WeakMapImplInlines.h"
 #include <wtf/ListDump.h>
 #include <wtf/ParkingLot.h>
 #include <wtf/Scope.h>
@@ -412,6 +415,7 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
 
     // After each heap's beginMarking has determined this collection's marking version.
     setUpVisitors(scope);
+    resetPendingEphemerons();
 
     m_parallelMarkersShouldExit = false;
 
@@ -528,6 +532,8 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
         // minimum, we could use this for work estimates - but it's probably more than just an
         // estimate.
         // https://bugs.webkit.org/show_bug.cgi?id=166828
+
+        buildPendingEphemeronsIfNeeded();
 
         // Wondering what this does? Look at Heap::createCoreConstraints(). The DOM and others can also
         // add their own using Heap::addMarkingConstraint().
@@ -688,6 +694,7 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
 
 void Collector::endCollectionInEachHeap()
 {
+    resetPendingEphemerons();
     forEachHeap([&](Heap& heap) {
         ASSERT(heap.m_mutatorMarkStack->isEmpty());
 
@@ -708,6 +715,53 @@ void Collector::endCollectionInEachHeap()
         heap.prepareForAllocation();
         heap.didFinishCollection();
     });
+}
+
+void Collector::resetPendingEphemerons()
+{
+    m_pendingEphemerons.clear();
+    m_ephemeronLinearMode = false;
+    m_productiveWeakMapRounds = 0;
+    m_weakMapOutputConstraintDidVisit.store(false, std::memory_order_relaxed);
+}
+
+// The "O" constraint visits the value of every WeakMap entry whose key is marked, once per
+// fixpoint round. A chain of entries where each value is the next key (or leads to it) gives
+// the constraint one or two new keys per round, so marking runs a round per link. After
+// Options::ephemeronFixpointIterations() rounds in which WeakMaps produced work, the collector
+// lists the entries whose key is still unmarked, by key. SlotVisitor::visitChildren then
+// appends the values of a key the moment it visits that key, so a chain resolves inside one
+// drain. A WeakMap that gets marked after the build visits the values of its marked keys
+// itself (WeakMapImpl::visitChildrenImpl). The "O" constraint keeps running as before: it
+// covers keys that got marked outside a drain, and entries not in the table. Each later round
+// in which it still produces work builds the table again, which costs one scan of the
+// WeakMaps, the same as the constraint itself. A stale entry (the mutator deleted or replaced
+// it between rounds) can only keep a value alive for this one collection.
+void Collector::buildPendingEphemeronsIfNeeded()
+{
+    if (!m_weakMapOutputConstraintDidVisit.load(std::memory_order_relaxed))
+        return;
+    m_weakMapOutputConstraintDidVisit.store(false, std::memory_order_relaxed);
+    if (++m_productiveWeakMapRounds <= Options::ephemeronFixpointIterations())
+        return;
+
+    // Every marking thread is idle here (runFixpointPhase checked didReachTermination), so
+    // nothing reads the table while it changes.
+    m_pendingEphemerons.clear();
+    forEachHeap([&](Heap& heap) {
+        if (!heap.m_weakMapSpace)
+            return;
+        heap.m_weakMapSpace->forEachMarkedCell([&](HeapCell* heapCell, HeapCell::Kind) {
+            auto* weakMap = static_cast<JSWeakMap*>(heapCell);
+            weakMap->forEachEntryWithUnmarkedKey(heap, [&](JSCell* key, JSValue value) {
+                if (!value.isCell() || heap.isMarked(value.asCell()))
+                    return;
+                m_pendingEphemerons.ensure(key, [] { return Vector<JSCell*, 1>(); }).iterator->value.append(value.asCell());
+            });
+        });
+    });
+    m_ephemeronLinearMode = true;
+    dataLogIf(Options::logGC(), "E=", m_pendingEphemerons.size(), " ");
 }
 
 bool Collector::changePhase(GCConductor conn, CollectorPhase nextPhase)

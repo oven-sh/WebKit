@@ -109,6 +109,7 @@
 #include "UnlinkedEvalCodeBlock.h"
 #include "VM.h"
 #include "VerifierSlotVisitor.h"
+#include "VisitCounter.h"
 #include "WasmCallee.h"
 #include "WeakMapImplInlines.h"
 #include "WeakSetInlines.h"
@@ -3175,7 +3176,18 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
             }
             if (m_weakMapSpace) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::WeakMapSpace);
-                add(*m_weakMapSpace);
+                // The count of rounds in which a WeakMap produces work decides when the collector
+                // switches to the key-to-values table (Collector::buildPendingEphemeronsIfNeeded).
+                RefPtr<SharedTask<void(decltype(visitor)&)>> task = m_weakMapSpace->template forEachMarkedCellInParallel<decltype(visitor)>(
+                    [] (auto& visitor, HeapCell* heapCell, HeapCell::Kind) {
+                        SetRootMarkReasonScope rootScope(visitor, RootMarkReason::Output);
+                        JSCell* cell = static_cast<JSCell*>(heapCell);
+                        VisitCounter visitCounter(visitor);
+                        cell->methodTable()->visitOutputConstraints(cell, visitor);
+                        if (visitCounter.visitCount())
+                            visitor.collector().m_weakMapOutputConstraintDidVisit.store(true, std::memory_order_relaxed);
+                    });
+                visitor.addParallelConstraintTask(WTF::move(task));
             }
         })),
         ConstraintVolatility::GreyedByMarking,

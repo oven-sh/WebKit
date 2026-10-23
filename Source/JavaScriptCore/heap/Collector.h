@@ -33,6 +33,7 @@
 #include <wtf/ConcurrentPtrHashSet.h>
 #include <wtf/Condition.h>
 #include <wtf/Deque.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
@@ -47,6 +48,7 @@ namespace JSC {
 
 class Heap;
 class HeapCell;
+class JSCell;
 class MarkStackArray;
 class MarkingConstraint;
 class MarkingConstraintSet;
@@ -82,6 +84,10 @@ public:
     bool hasHeap(Heap& heap) const { return m_heaps.contains(&heap); }
 
     SlotVisitor& collectorSlotVisitor() LIFETIME_BOUND { return *m_collectorSlotVisitor; }
+
+    // True once this collection resolves WeakMap entries through the key-to-values table
+    // (buildPendingEphemeronsIfNeeded).
+    bool isInEphemeronLinearMode() const { return m_ephemeronLinearMode; }
 
     // The GC verifier (Options::verifyGC()).
     bool isMarkingForGCVerifier() const { return m_isMarkingForGCVerifier; }
@@ -192,6 +198,9 @@ private:
     void setUpVisitors(CollectionScope);
     void endCollectionInEachHeap();
 
+    void buildPendingEphemeronsIfNeeded();
+    void resetPendingEphemerons();
+
     void stopThePeriphery();
     void resumeThePeriphery();
 
@@ -236,6 +245,15 @@ private:
 
     // Declared ahead of the visitors, each of which binds a reference to it on construction.
     ConcurrentPtrHashSet m_opaqueRoots;
+
+    // WeakMap entries whose key was not marked when the collector last built this table, keyed by
+    // that key. A SlotVisitor that visits a cell in linear mode appends the values listed for it.
+    // The collector fills the table while every marking thread is idle and the table is read-only
+    // until the next build or reset, so readers take no lock.
+    UncheckedKeyHashMap<JSCell*, Vector<JSCell*, 1>> m_pendingEphemerons;
+    bool m_ephemeronLinearMode { false };
+    unsigned m_productiveWeakMapRounds { 0 };
+    std::atomic<bool> m_weakMapOutputConstraintDidVisit { false };
 
     std::unique_ptr<SlotVisitor> m_collectorSlotVisitor;
 

@@ -210,6 +210,7 @@ private:
     void noteLiveAuxiliaryCell(HeapCell*);
     
     void visitChildren(const JSCell*);
+    void visitPendingEphemerons(const JSCell*);
 
     void propagateExternalMemoryVisitedIfNecessary();
     ALWAYS_INLINE void noteBytesMarked(JSC::Heap&, size_t);

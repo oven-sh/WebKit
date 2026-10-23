@@ -473,6 +473,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, minimumNumberOfScansBetweenRebalance, 100, Normal, nullptr) \
     v(Unsigned, numberOfGCMarkers, computeNumberOfGCMarkers(8), Normal, nullptr) \
     v(Bool, useParallelMarkingConstraintSolver, true, Normal, nullptr) \
+    v(Unsigned, ephemeronFixpointIterations, 10, Normal, "after this many marking fixpoint rounds in which WeakMaps produced new work, the collector resolves the remaining WeakMap entries through a key-to-values table"_s) \
     v(Unsigned, opaqueRootMergeThreshold, 1000, Normal, nullptr) \
     v(Unsigned, maxHeapSizeAsRAMSizeMultiple, 0, Normal, nullptr) \
     v(Double, minHeapUtilization, 0.8, Normal, nullptr) \

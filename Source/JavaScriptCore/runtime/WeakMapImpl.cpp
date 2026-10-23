@@ -28,6 +28,7 @@
 #include "WeakMapImpl.h"
 
 #include "AuxiliaryBarrierInlines.h"
+#include "Collector.h"
 #include "JSCJSValueInlines.h"
 #include "SlotVisitorInlines.h"
 #include "WeakMapImplInlines.h"
@@ -53,6 +54,14 @@ void WeakMapImpl<WeakMapBucket>::visitChildrenImpl(JSCell* cell, Visitor& visito
     Base::visitChildren(thisObject, visitor);
     if (thisObject->hasOutOfLineBuffer())
         visitor.reportExtraMemoryVisited(thisObject->m_capacity * sizeof(WeakMapBucket));
+    if constexpr (isWeakMap()) {
+        // A map that gets marked after the collector built its key-to-values table
+        // (Collector::buildPendingEphemeronsIfNeeded) has no entry in it. Visit the values of
+        // its marked keys now, so that a chain through this map goes on inside the current
+        // drain instead of waiting for the next round of the "O" constraint.
+        if (visitor.collector().isInEphemeronLinearMode()) [[unlikely]]
+            visitOutputConstraints(cell, visitor);
+    }
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename WeakMapBucket>, WeakMapImpl<WeakMapBucket>);
