@@ -65,12 +65,16 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 #include "WeakSet.h"
+#include <wtf/WeakRandom.h>
 #endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+#if USE(BUN_JSC_ADDITIONS)
+class AllocationSamplerClient;
+#endif
 class CodeBlock;
 class CodeBlockSet;
 class CollectingScope;
@@ -446,6 +450,22 @@ public:
     // early collections find nothing to free. Only widens the budget of the cycle in progress; once a collection has run,
     // sizing is back to the usual rules and minimums.
     JS_EXPORT_PRIVATE void setInitialAllocationBudget(size_t bytes);
+
+    // Allocation sampling: reports a random subset of the allocations to the client, one per `intervalBytes` of
+    // allocation on average, for an allocation profile. See AllocationSamplerClient. While it is on, every free-list
+    // allocator hides the cells past its next pick, so an allocation of a hidden cell takes the slow path (the inline
+    // bump and the JIT's inline allocator are unchanged); precise allocations and string payloads are picked against
+    // a byte budget. Mutator thread, API lock held. Starting while sampling is on does nothing.
+    JS_EXPORT_PRIVATE void startAllocationSampling(AllocationSamplerClient&, double intervalBytes);
+    JS_EXPORT_PRIVATE void stopAllocationSampling();
+    bool isSamplingAllocations() const { return !!m_allocationSamplerClient; }
+    // How many cells of cellSize to hand out before the next pick. Only while sampling.
+    uint32_t drawAllocationSampleCellCount(size_t cellSize);
+    uint64_t drawAllocationSampleBytes();
+    void didSampleAllocation(HeapCell*, size_t bytes);
+    void sampleAllocationBytes(HeapCell*, size_t bytes); // A precise allocation, or growth of one.
+    void sampleExtraMemoryBytes(const JSCell* owner, size_t bytes);
+    void didRelocateCell(HeapCell* from, HeapCell* to);
 #endif
     
     JS_EXPORT_PRIVATE void collect(Synchronousness, GCRequest = GCRequest());
@@ -479,6 +499,19 @@ public:
         if (size > minExtraMemory)
             reportExtraMemoryAllocatedSlowCase(deferralContext, cell, size);
     }
+    // For a string's characters: the same as above for the GC, and allocation sampling sees them, whatever their
+    // size. Other extra memory (array buffers, JIT code, what an embedder reports) is not sampled: it has no cell
+    // whose lifetime the client could follow, and V8's heap profile does not hold it either.
+    void reportStringExtraMemoryAllocated(GCDeferralContext* deferralContext, const JSCell* cell, size_t size)
+    {
+        if (size > minExtraMemory)
+            reportExtraMemoryAllocatedSlowCase(deferralContext, cell, size);
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_allocationSamplerClient) [[unlikely]]
+            sampleExtraMemoryBytes(cell, size);
+#endif
+    }
+    void reportStringExtraMemoryAllocated(const JSCell* cell, size_t size) { reportStringExtraMemoryAllocated(nullptr, cell, size); }
     JS_EXPORT_PRIVATE void reportExtraMemoryVisited(size_t);
 
 #if ENABLE(RESOURCE_USAGE)
@@ -889,6 +922,10 @@ private:
     bool m_isCollectionPrevented { false }; // Between preventCollection() and allowCollection(), which do not nest.
     bool m_auxiliaryEvacuationIsDue { false };
     HeapVersion m_lastAuxiliaryEvacuationVersion { 0 }; // The marking version (one per full collection) when cells were last moved.
+    AllocationSamplerClient* m_allocationSamplerClient { nullptr };
+    double m_allocationSamplingInterval { 0 };
+    uint64_t m_bytesUntilAllocationSample { 0 }; // The budget for the allocations that no free-list allocator counts.
+    WeakRandom m_allocationSamplingRandom;
 #endif
     size_t m_sizeAfterLastCollect { 0 };
     size_t m_sizeAfterLastFullCollect { 0 };

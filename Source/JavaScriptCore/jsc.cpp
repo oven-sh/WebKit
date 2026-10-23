@@ -43,6 +43,10 @@
 #include "Fuzzilli.h"
 #include "GlobalObjectMethodTable.h"
 #include "HeapSnapshotBuilder.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "AllocationSamplerClient.h"
+#include "HeapInlines.h"
+#endif
 #include "InitializeThreading.h"
 #include "Interpreter.h"
 #include "IteratorOperations.h"
@@ -499,6 +503,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionGCAndSweep);
 static JSC_DECLARE_HOST_FUNCTION(functionFullGC);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionIdleFullGC);
+static JSC_DECLARE_HOST_FUNCTION(functionStartHeapAllocationSampling);
+static JSC_DECLARE_HOST_FUNCTION(functionStopHeapAllocationSampling);
+static JSC_DECLARE_HOST_FUNCTION(functionHeapAllocationSamples);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
@@ -868,6 +875,9 @@ private:
         addFunction(vm, "fullGC"_s, functionFullGC, 0);
 #if USE(BUN_JSC_ADDITIONS)
         addFunction(vm, "idleFullGC"_s, functionIdleFullGC, 0);
+        addFunction(vm, "startHeapAllocationSampling"_s, functionStartHeapAllocationSampling, 1);
+        addFunction(vm, "stopHeapAllocationSampling"_s, functionStopHeapAllocationSampling, 0);
+        addFunction(vm, "heapAllocationSamples"_s, functionHeapAllocationSamples, 0);
 #endif
         addFunction(vm, "edenGC"_s, functionEdenGC, 0);
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
@@ -2426,6 +2436,133 @@ JSC_DEFINE_HOST_FUNCTION(functionIdleFullGC, (JSGlobalObject* globalObject, Call
     request.isIdle = true;
     vm.heap.collectSync(request);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+// A test client for Heap::startAllocationSampling: keeps every report and counts what became of it.
+class ShellAllocationSampler final : public AllocationSamplerClient {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(ShellAllocationSampler);
+public:
+    struct Sample {
+        HeapCell* cell; // Null once the cell died, or for extra memory.
+        size_t bytes;
+        bool isExtraMemory;
+        bool isVoid { false };
+    };
+
+    ShellAllocationSampler(VM& vm, double interval)
+        : m_vm(vm)
+        , m_interval(interval)
+    {
+    }
+
+    void didSampleAllocation(HeapCell* cell, size_t bytes) final { m_samples.append({ cell, bytes, false }); }
+    void didSampleExtraMemory(const JSCell*, size_t bytes) final { m_samples.append({ nullptr, bytes, true }); }
+
+    void didRelocateCell(HeapCell* from, HeapCell* to) final
+    {
+        for (auto& sample : m_samples) {
+            if (sample.cell == to)
+                sample.isVoid = true;
+        }
+        for (auto& sample : m_samples) {
+            if (sample.cell == from && !sample.isVoid) {
+                sample.cell = to;
+                m_relocated++;
+            }
+        }
+    }
+
+    void reconcileSampledCells(CollectionScope) final
+    {
+        for (auto& sample : m_samples) {
+            if (!sample.cell || sample.isVoid || m_vm.heap.isMarked(sample.cell))
+                continue;
+            sample.cell = nullptr;
+            m_deadCells++;
+        }
+    }
+
+    JSObject* toJS(JSGlobalObject* globalObject)
+    {
+        VM& vm = globalObject->vm();
+        unsigned liveCells = 0;
+        unsigned extraMemory = 0;
+        unsigned count = 0;
+        double cellBytes = 0;
+        double extraBytes = 0;
+        double estimatedBytes = 0;
+        for (auto& sample : m_samples) {
+            if (sample.isVoid)
+                continue;
+            count++;
+            if (sample.isExtraMemory) {
+                extraMemory++;
+                extraBytes += sample.bytes;
+            } else {
+                cellBytes += sample.bytes;
+                if (sample.cell)
+                    liveCells++;
+            }
+            estimatedBytes += sample.bytes / -std::expm1(-static_cast<double>(sample.bytes) / m_interval);
+        }
+        JSObject* result = constructEmptyObject(globalObject);
+        result->putDirect(vm, Identifier::fromString(vm, "samples"_s), jsNumber(count));
+        result->putDirect(vm, Identifier::fromString(vm, "liveCells"_s), jsNumber(liveCells));
+        result->putDirect(vm, Identifier::fromString(vm, "deadCells"_s), jsNumber(m_deadCells));
+        result->putDirect(vm, Identifier::fromString(vm, "extraMemory"_s), jsNumber(extraMemory));
+        result->putDirect(vm, Identifier::fromString(vm, "relocated"_s), jsNumber(m_relocated));
+        result->putDirect(vm, Identifier::fromString(vm, "cellBytes"_s), jsNumber(cellBytes));
+        result->putDirect(vm, Identifier::fromString(vm, "extraBytes"_s), jsNumber(extraBytes));
+        result->putDirect(vm, Identifier::fromString(vm, "estimatedBytes"_s), jsNumber(estimatedBytes));
+        return result;
+    }
+
+    VM& vm() const { return m_vm; }
+
+private:
+    VM& m_vm;
+    double m_interval;
+    Vector<Sample> m_samples;
+    unsigned m_deadCells { 0 };
+    unsigned m_relocated { 0 };
+};
+
+static std::unique_ptr<ShellAllocationSampler> shellAllocationSampler;
+
+JSC_DEFINE_HOST_FUNCTION(functionStartHeapAllocationSampling, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double interval = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!std::isfinite(interval) || interval < 1)
+        return throwVMRangeError(globalObject, scope, "Invalid sampling interval"_s);
+    if (shellAllocationSampler)
+        return throwVMError(globalObject, scope, "Allocation sampling is already on"_s);
+    shellAllocationSampler = makeUnique<ShellAllocationSampler>(vm, interval);
+    vm.heap.startAllocationSampling(*shellAllocationSampler, interval);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionStopHeapAllocationSampling, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    if (!shellAllocationSampler || &shellAllocationSampler->vm() != &vm)
+        return JSValue::encode(jsNull());
+    vm.heap.stopAllocationSampling();
+    JSObject* result = shellAllocationSampler->toJS(globalObject);
+    shellAllocationSampler = nullptr;
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionHeapAllocationSamples, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    if (!shellAllocationSampler || &shellAllocationSampler->vm() != &vm)
+        return JSValue::encode(jsNull());
+    return JSValue::encode(shellAllocationSampler->toJS(globalObject));
 }
 #endif
 

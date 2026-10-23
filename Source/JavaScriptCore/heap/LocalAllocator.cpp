@@ -49,23 +49,35 @@ LocalAllocator::LocalAllocator(BlockDirectory* directory)
 
 void LocalAllocator::reset()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isSamplingAllocations)
+        restoreHiddenCells();
+#endif
     m_freeList.clear();
     m_currentBlock = nullptr;
     m_lastActiveBlock = nullptr;
     m_allocationCursor = 0;
 }
 
-bool LocalAllocator::isFreeListedCell(const void* target) const
+bool LocalAllocator::isFreeListedCell(const void* target)
 {
     // Because the free list describes only those cells within the block this allocator is
     // currently allocating from, a match implies target lives in that (freelisted) block.
     if (!m_currentBlock)
         return false;
     bool found = false;
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isSamplingAllocations)
+        restoreHiddenCells();
+#endif
     m_freeList.forEach([&] (auto* cell) {
         if (static_cast<const void*>(cell) == target)
             found = true;
     });
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isSamplingAllocations)
+        hideCellsForSampling();
+#endif
     return found;
 }
 
@@ -94,6 +106,10 @@ LocalAllocator::~LocalAllocator()
 
 void LocalAllocator::stopAllocating(MarkedBlock::Handle::StopAllocatingMode mode)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isSamplingAllocations)
+        restoreHiddenCells();
+#endif
     ASSERT(!m_lastActiveBlock);
     if (!m_currentBlock) {
         ASSERT(m_freeList.allocationWillFail());
@@ -114,6 +130,10 @@ void LocalAllocator::resumeAllocating()
     m_lastActiveBlock->resumeAllocating(m_freeList);
     m_currentBlock = m_lastActiveBlock;
     m_lastActiveBlock = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isSamplingAllocations)
+        hideCellsForSampling();
+#endif
 }
 
 void LocalAllocator::prepareForAllocation()
@@ -129,6 +149,12 @@ void LocalAllocator::stopAllocatingForGood()
 
 void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (heap.isSamplingAllocations()) [[unlikely]] {
+        if (void* result = allocateAtSamplingBoundary(heap, cellSize))
+            return result;
+    }
+#endif
     SuperSamplerScope superSamplerScope(false);
     ASSERT(heap.vm().currentThreadIsHoldingAPILock());
     doTestCollectionsIfNeeded(heap, deferralContext);
@@ -158,15 +184,23 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     
     void* result = tryAllocateWithoutCollecting(cellSize);
     
-    if (result) [[likely]]
+    if (result) [[likely]] {
+#if USE(BUN_JSC_ADDITIONS)
+        noteAllocationForSampling(heap, result, cellSize);
+#endif
         return result;
+    }
 
     // FIXME GlobalGC: Need to synchronize here to when allocating from the BlockDirectory in the server.
 
     Subspace* subspace = m_directory->m_subspace;
     if (subspace->isIsoSubspace()) {
-        if (void* result = static_cast<IsoSubspace*>(subspace)->tryAllocateLowerTierPrecise(cellSize))
+        if (void* result = static_cast<IsoSubspace*>(subspace)->tryAllocateLowerTierPrecise(cellSize)) {
+#if USE(BUN_JSC_ADDITIONS)
+            noteAllocationForSampling(heap, result, cellSize);
+#endif
             return result;
+        }
     }
 
     ASSERT(!subspace->isPreciseOnly());
@@ -179,11 +213,82 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     m_directory->addBlock(block);
     result = allocateIn(block, cellSize);
     ASSERT(result);
+#if USE(BUN_JSC_ADDITIONS)
+    noteAllocationForSampling(heap, result, cellSize);
+#endif
     return result;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The inline allocator took the slow path. With sampling on that is either the sampling boundary, where cells are
+// hidden and the next one is handed out here, or the real end of the free list, where nothing is hidden and the caller
+// goes on to refill. Allocators that came into being after sampling started are configured here, on their first
+// slow path.
+void* LocalAllocator::allocateAtSamplingBoundary(JSC::Heap& heap, size_t cellSize)
+{
+    if (!m_isSamplingAllocations)
+        configureAllocationSampling(true);
+    restoreHiddenCells();
+    if (m_freeList.allocationWillFail())
+        return nullptr;
+    HeapCell* result = m_freeList.allocateWithCellSize([]() -> HeapCell* {
+        RELEASE_ASSERT_NOT_REACHED();
+        return nullptr;
+    }, cellSize);
+    noteAllocationForSampling(heap, result, cellSize);
+    return result;
+}
+
+// `cell` was just taken from the free list by C++ (not by a bump past hidden cells, which the budget already counts).
+// Reports it if it is the pick, and hides the cells past the next pick.
+void LocalAllocator::noteAllocationForSampling(JSC::Heap& heap, void* cell, size_t cellSize)
+{
+    if (!heap.isSamplingAllocations())
+        return;
+    ASSERT(m_isSamplingAllocations);
+    ASSERT(!m_savedIntervalEnd);
+    if (!m_cellsUntilSample) {
+        heap.didSampleAllocation(static_cast<HeapCell*>(cell), cellSize);
+        m_cellsUntilSample = heap.drawAllocationSampleCellCount(cellSize);
+    } else
+        --m_cellsUntilSample;
+    hideCellsForSampling();
+}
+
+void LocalAllocator::hideCellsForSampling()
+{
+    ASSERT(m_isSamplingAllocations);
+    ASSERT(!m_savedIntervalEnd);
+    m_cellsUntilSample -= m_freeList.hideCellsForSampling(m_cellsUntilSample, m_savedIntervalEnd, m_savedNextInterval);
+}
+
+void LocalAllocator::restoreHiddenCells()
+{
+    ASSERT(m_isSamplingAllocations);
+    if (!m_savedIntervalEnd)
+        return;
+    m_cellsUntilSample += m_freeList.restoreHiddenCells(m_savedIntervalEnd, m_savedNextInterval);
+    m_savedIntervalEnd = nullptr;
+    m_savedNextInterval = nullptr;
+}
+
+void LocalAllocator::configureAllocationSampling(bool enabled)
+{
+    if (m_isSamplingAllocations)
+        restoreHiddenCells();
+    m_isSamplingAllocations = enabled;
+    if (!enabled)
+        return;
+    m_cellsUntilSample = m_directory->markedSpace().heap().drawAllocationSampleCellCount(cellSize());
+    hideCellsForSampling();
+}
+#endif
+
 void LocalAllocator::didConsumeFreeList()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(!m_savedIntervalEnd);
+#endif
     if (m_currentBlock)
         m_currentBlock->didConsumeFreeList();
     

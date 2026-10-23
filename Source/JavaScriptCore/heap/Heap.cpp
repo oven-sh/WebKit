@@ -24,6 +24,10 @@
 
 #include "JSCJSValueInlines.h"
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "AllocationSamplerClient.h"
+#include <cmath>
+#endif
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
 #include "ButterflyInlines.h"
@@ -762,6 +766,11 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 #endif
 
     vm().reconcileWeakReferencesAtGCEnd();
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_allocationSamplerClient)
+        m_allocationSamplerClient->reconcileSampledCells(collectionScope);
+#endif
 
     if (auto* clientData = vm().clientData)
         clientData->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
@@ -1779,6 +1788,8 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
             RELEASE_ASSERT(MarkedBlock::blockFor(newCell)->handle().cellSize() == cellSize);
             Butterfly* oldButterfly = owner->butterfly();
             memcpySpan(unsafeMakeSpan(static_cast<uint8_t*>(newCell), cellSize), unsafeMakeSpan(std::bit_cast<const uint8_t*>(oldCell), cellSize));
+            if (m_allocationSamplerClient)
+                didRelocateCell(oldCell, static_cast<HeapCell*>(newCell));
             owner->setButterfly(vm, std::bit_cast<Butterfly*>(std::bit_cast<char*>(oldButterfly) + (std::bit_cast<char*>(newCell) - std::bit_cast<char*>(oldCell))));
             if (isTesting) [[unlikely]] {
                 // As a JSValue this is a cell at an address that is never mapped; as a length it is out of bounds.
@@ -2719,6 +2730,79 @@ void Heap::setInitialAllocationBudget(size_t bytes)
         m_fullActivityCallback->setEnabled(false);
         m_reenableFullActivityCallback = true;
     }
+}
+
+void Heap::startAllocationSampling(AllocationSamplerClient& client, double intervalBytes)
+{
+    ASSERT(vm().currentThreadIsHoldingAPILock());
+    RELEASE_ASSERT(std::isfinite(intervalBytes) && intervalBytes >= 1);
+    if (m_allocationSamplerClient)
+        return;
+    m_allocationSamplerClient = &client;
+    m_allocationSamplingInterval = intervalBytes;
+    m_bytesUntilAllocationSample = drawAllocationSampleBytes();
+    for (BlockDirectory* directory = m_objectSpace.firstDirectory(); directory; directory = directory->nextDirectory())
+        directory->configureAllocationSampling(true);
+}
+
+void Heap::stopAllocationSampling()
+{
+    ASSERT(vm().currentThreadIsHoldingAPILock());
+    if (!m_allocationSamplerClient)
+        return;
+    for (BlockDirectory* directory = m_objectSpace.firstDirectory(); directory; directory = directory->nextDirectory())
+        directory->configureAllocationSampling(false);
+    m_allocationSamplerClient = nullptr;
+}
+
+// The next pick is an exponential number of bytes away, so the picks are a Poisson process over the bytes allocated
+// and the probability that an allocation of `bytes` is picked is 1 - exp(-bytes / interval), whatever came before it.
+uint64_t Heap::drawAllocationSampleBytes()
+{
+    ASSERT(m_allocationSamplerClient);
+    double bytes = std::floor(-std::log1p(-m_allocationSamplingRandom.get()) * m_allocationSamplingInterval);
+    if (bytes >= static_cast<double>(std::numeric_limits<uint64_t>::max()))
+        return std::numeric_limits<uint64_t>::max();
+    return static_cast<uint64_t>(bytes);
+}
+
+uint32_t Heap::drawAllocationSampleCellCount(size_t cellSize)
+{
+    return static_cast<uint32_t>(std::min<uint64_t>(drawAllocationSampleBytes() / cellSize, std::numeric_limits<uint32_t>::max()));
+}
+
+void Heap::didSampleAllocation(HeapCell* cell, size_t bytes)
+{
+    ASSERT(m_allocationSamplerClient);
+    m_allocationSamplerClient->didSampleAllocation(cell, bytes);
+}
+
+void Heap::sampleAllocationBytes(HeapCell* cell, size_t bytes)
+{
+    ASSERT(m_allocationSamplerClient);
+    if (bytes <= m_bytesUntilAllocationSample) {
+        m_bytesUntilAllocationSample -= bytes;
+        return;
+    }
+    m_allocationSamplerClient->didSampleAllocation(cell, bytes);
+    m_bytesUntilAllocationSample = drawAllocationSampleBytes();
+}
+
+void Heap::sampleExtraMemoryBytes(const JSCell* owner, size_t bytes)
+{
+    ASSERT(m_allocationSamplerClient);
+    if (bytes <= m_bytesUntilAllocationSample) {
+        m_bytesUntilAllocationSample -= bytes;
+        return;
+    }
+    m_allocationSamplerClient->didSampleExtraMemory(owner, bytes);
+    m_bytesUntilAllocationSample = drawAllocationSampleBytes();
+}
+
+void Heap::didRelocateCell(HeapCell* from, HeapCell* to)
+{
+    ASSERT(m_allocationSamplerClient);
+    m_allocationSamplerClient->didRelocateCell(from, to);
 }
 #endif
 

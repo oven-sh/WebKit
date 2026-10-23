@@ -97,6 +97,10 @@ public:
     // Intended for diagnostics only (rdar://157153895)
     bool isFreeListedCell(const void*);
 
+#if USE(BUN_JSC_ADDITIONS)
+    void configureAllocationSampling(bool);
+#endif
+
     RefPtr<SharedTask<MarkedBlock::Handle*()>> parallelNotEmptyBlockSource();
     
     void addBlock(MarkedBlock::Handle*);

@@ -832,6 +832,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/AlignedMemoryAllocator.h
     heap/AllocatingScope.h
     heap/AllocationFailureMode.h
+    heap/AllocationSamplerClient.h
     heap/Allocator.h
     heap/AllocatorForMode.h
     heap/AllocatorInlines.h
