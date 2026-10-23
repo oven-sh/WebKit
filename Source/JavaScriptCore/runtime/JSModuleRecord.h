@@ -106,7 +106,19 @@ public:
     unsigned importSlotIndex(UniquedStringImpl* localName);
     // resolveImport(localName) and, for a resolved binding, its import slot.
     Resolution resolveImportWithSlot(JSGlobalObject*, const Identifier& localName, unsigned& importSlot);
-    JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
+    // What resolve_scope gives code that reads the import with that slot. That is the exporting environment, which the
+    // slot then holds, except while the import still waits for a record that hasPendingExports(): see fillImportSlotSlow.
+    JSLexicalEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
+#if USE(BUN_JSC_ADDITIONS)
+    // For code that is linked now. The scope offset that earlier code of this record embeds for the import with that
+    // slot, because it was linked before the import could be bound (EarlyImportLink).
+    std::optional<unsigned> earlyImportLinkOffset(unsigned importSlot) const;
+    // The import with that slot cannot be bound yet (the resolution is Pending), or could not be: the offset to embed.
+    unsigned linkImportEarly(unsigned importSlot, const Resolution&);
+    // Whether a single import of this record may be without its binding: link left it for later, or code was linked early.
+    bool mayHaveUnboundImports() const { return !!m_pendingImports; }
+    bool hasImportSlot(UniquedStringImpl* localName);
+#endif
     std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
     // Whether every import binding of this record is at the same place for `executable`'s code as for the record it
     // was linked for (its linker): the same slot, and the same variable of a module with the same source (or, for an
@@ -118,6 +130,9 @@ private:
 
     void finishCreation(JSGlobalObject*, VM&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    JSLexicalEnvironment* fillImportSlotSlow(JSGlobalObject*, unsigned index, const Resolution&);
+#endif
     const Vector<Identifier>& importSlotNames(); // not prelinked: the local names that have a slot, in the import entries' order
     const Identifier& importSlotLocalName(unsigned index);
     template<typename Functor> void forEachImportSlot(const Functor&); // (index, local name) -> IterationStatus

@@ -32,8 +32,13 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSONObject.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
+
+#if USE(BUN_JSC_ADDITIONS)
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(SyntheticModuleRecord::Deferred);
+#endif
 
 const ClassInfo SyntheticModuleRecord::s_info = { "ModuleRecord"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SyntheticModuleRecord) };
 
@@ -91,8 +96,45 @@ SyntheticModuleRecord* SyntheticModuleRecord::createWithDeferredGenerator(JSGlob
 {
     VM& vm = globalObject->vm();
     auto* moduleRecord = create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), moduleLoader, moduleKey, SourceProviderSourceType::Module);
-    moduleRecord->m_deferredGenerator = WTF::move(generator);
+    moduleRecord->m_deferred = makeUnique<Deferred>(WTF::move(generator));
+    moduleRecord->m_hasPendingExports = true;
+    // A synthetic record has no code, so nothing else uses the field for the frame of a module's body.
+    if (JSCell* owner = moduleRecord->m_deferred->generator->deferredOwner())
+        moduleRecord->internalField(Field::Frame).set(vm, moduleRecord, owner);
     return moduleRecord;
+}
+
+unsigned SyntheticModuleRecord::reserveExportOffset(UniquedStringImpl* exportName)
+{
+    ASSERT(hasPendingExports());
+    // The generator failed: the record never gets an environment, and nothing reads the offset.
+    if (!m_deferred)
+        return firstExportOffset;
+    auto& deferred = *m_deferred;
+    if (auto iterator = deferred.reservedOffsetByName.find(exportName); iterator != deferred.reservedOffsetByName.end())
+        return iterator->value;
+    while (deferred.reservedOffsets.contains(deferred.nextOffset))
+        ++deferred.nextOffset;
+    unsigned offset = deferred.nextOffset++;
+    deferred.reservedOffsets.add(offset);
+    deferred.reservedOffsetByName.add(exportName, offset);
+    return offset;
+}
+
+bool SyntheticModuleRecord::reserveExportOffset(UniquedStringImpl* exportName, unsigned scopeOffset)
+{
+    ASSERT(hasPendingExports());
+    if (!m_deferred)
+        return true;
+    if (scopeOffset < firstExportOffset)
+        return false;
+    auto& deferred = *m_deferred;
+    if (auto iterator = deferred.reservedOffsetByName.find(exportName); iterator != deferred.reservedOffsetByName.end())
+        return iterator->value == scopeOffset;
+    if (!deferred.reservedOffsets.add(scopeOffset).isNewEntry)
+        return false;
+    deferred.reservedOffsetByName.add(exportName, scopeOffset);
+    return true;
 }
 
 void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
@@ -104,18 +146,20 @@ void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
         throwException(globalObject, scope, error);
         return;
     }
-    if (!m_deferredGenerator)
+    if (!m_deferred)
         return;
 
-    // The generator runs once. A failure here or in initializeExports() is what every later link reports.
+    // The generator runs once. A failure here or in initializeExports() is what every later evaluation reports: the
+    // record stays without exports, so a module that links against it later still gets as far as evaluating it.
     auto failed = [&](Exception* exception) {
         if (vm.isTerminationException(exception))
             return;
         m_deferredGeneratorError.set(vm, this, exception->value());
-        m_deferredGenerator = nullptr;
+        m_deferred = nullptr;
+        internalField(Field::Frame).set(vm, this, jsUndefined());
     };
 
-    Ref generator = *m_deferredGenerator;
+    Ref generator = m_deferred->generator;
     MarkedArgumentBuffer exportValues;
     Vector<Identifier, 4> exportNames;
     JSObject* lazyExportsSource = generator->generate(globalObject, moduleKey(), exportNames, exportValues);
@@ -125,9 +169,9 @@ void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
     }
 
     // The generator can run code that loads a graph containing this record (a CommonJS module that require()s an ES
-    // module importing it back). That load ran the generator again, got the exports as they were at that point, and
-    // linked its importers against them.
-    if (!m_deferredGenerator)
+    // module importing it back). That load evaluated this record: it ran the generator again, got the exports as they
+    // were at that point, and its modules bound to them.
+    if (!m_deferred)
         return;
 
     initializeExports(globalObject, exportNames, exportValues, lazyExportsSource);
@@ -135,12 +179,24 @@ void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
         failed(exception);
         return;
     }
-    m_deferredGenerator = nullptr;
+    m_deferred = nullptr;
+    m_hasPendingExports = false;
+    internalField(Field::Frame).set(vm, this, jsUndefined());
 }
 #endif
 
-JSValue SyntheticModuleRecord::evaluate(JSGlobalObject*)
+JSValue SyntheticModuleRecord::evaluate(JSGlobalObject* globalObject)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_hasPendingExports) [[unlikely]] {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        runDeferredGenerator(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+#else
+    UNUSED_PARAM(globalObject);
+#endif
     return jsUndefined();
 }
 
@@ -189,6 +245,27 @@ void SyntheticModuleRecord::initializeExports(JSGlobalObject* globalObject, cons
         offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
         exportSymbolTable->add(NoLockingNecessary, vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), SymbolTableEntry(VarOffset(offset)));
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_deferred && !m_deferred->reservedOffsetByName.isEmpty()) [[unlikely]] {
+        // Code that was linked before now embeds these offsets. A reserved name that is not exported keeps its slot, empty.
+        auto& deferred = *m_deferred;
+        unsigned nextOffset = firstExportOffset;
+        for (auto& exportName : exportNames) {
+            unsigned offset;
+            if (auto iterator = deferred.reservedOffsetByName.find(exportName.impl()); iterator != deferred.reservedOffsetByName.end())
+                offset = iterator->value;
+            else {
+                while (deferred.reservedOffsets.contains(nextOffset))
+                    ++nextOffset;
+                offset = nextOffset++;
+            }
+            exportSymbolTable->add(NoLockingNecessary, exportName.impl(), SymbolTableEntry(VarOffset(ScopeOffset(offset))));
+            moduleRecord->addExportEntry(ExportEntry::createLocal(exportName, exportName));
+        }
+        for (unsigned offset : deferred.reservedOffsets)
+            exportSymbolTable->didUseScopeOffset(ScopeOffset(offset));
+    } else
+#endif
     for (auto& exportName : exportNames) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
         exportSymbolTable->add(NoLockingNecessary, exportName.impl(), SymbolTableEntry(VarOffset(offset)));

@@ -1,0 +1,1 @@
+(globalThis.missingLog ??= []).push("setup");

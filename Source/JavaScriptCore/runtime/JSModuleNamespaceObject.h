@@ -45,6 +45,18 @@ public:
         return vm.moduleNamespaceObjectSpace<mode>();
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // hasPendingExports: the names are not known yet, because the module takes some from a record that
+    // hasPendingExports(). The object has no exports until that record has evaluated (ensureExports).
+    static JSModuleNamespaceObject* create(JSGlobalObject* globalObject, Structure* structure, AbstractModuleRecord* moduleRecord, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&& resolutions, bool shouldPreventExtensions = true, bool isDeferred = false, bool hasPendingExports = false)
+    {
+        VM& vm = getVM(globalObject);
+        JSModuleNamespaceObject* object = new (NotNull, allocateCell<JSModuleNamespaceObject>(vm)) JSModuleNamespaceObject(vm, structure, moduleRecord, WTF::move(resolutions), isDeferred);
+        object->m_hasPendingExports = hasPendingExports;
+        object->finishCreation(globalObject, shouldPreventExtensions);
+        return object;
+    }
+#else
     static JSModuleNamespaceObject* create(JSGlobalObject* globalObject, Structure* structure, AbstractModuleRecord* moduleRecord, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&& resolutions, bool shouldPreventExtensions = true, bool isDeferred = false)
     {
         VM& vm = getVM(globalObject);
@@ -52,6 +64,7 @@ public:
         object->finishCreation(globalObject, shouldPreventExtensions);
         return object;
     }
+#endif
 
     JS_EXPORT_PRIVATE static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     JS_EXPORT_PRIVATE static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
@@ -92,11 +105,18 @@ private:
 
     using ExportMap = OrderedHashMap<RefPtr<UniquedStringImpl>, ExportEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>>;
 
+    void setExports(VM&, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&&);
+#if USE(BUN_JSC_ADDITIONS)
+    // For an object that was created without its names: takes them if the records they depend on have evaluated.
+    void ensureExports(JSGlobalObject*);
+#endif
+
     ExportMap m_exports;
     WriteBarrier<AbstractModuleRecord> m_moduleRecord;
     const bool m_isDeferred;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isOverridingValue = false;
+    bool m_hasPendingExports = false;
 #endif
 
     friend size_t cellSize(JSCell*);

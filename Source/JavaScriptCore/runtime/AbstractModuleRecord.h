@@ -235,11 +235,21 @@ public:
     void dump();
 
     struct Resolution {
+#if USE(BUN_JSC_ADDITIONS)
+        // Pending: the answer depends on the exports of a record that hasPendingExports(). When that record is the only
+        // one that can provide the binding, moduleRecord is that record and localName the name to look for in it;
+        // moduleRecord is null when more than one record can. A pending resolution is never cached.
+        enum class Type { Resolved, NotFound, Ambiguous, Error, Pending };
+#else
         enum class Type { Resolved, NotFound, Ambiguous, Error };
+#endif
 
         static Resolution LEGACY_NODELETE notFound();
         static Resolution LEGACY_NODELETE error();
         static Resolution LEGACY_NODELETE ambiguous();
+#if USE(BUN_JSC_ADDITIONS)
+        static Resolution pending(AbstractModuleRecord*, const Identifier& exportName);
+#endif
 
         bool isSameBinding(const Resolution& other) const { return moduleRecord == other.moduleRecord && localName == other.localName; }
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
@@ -264,7 +274,15 @@ public:
     {
         return getModuleNamespace(globalObject, ModulePhase::Evaluation, shouldPreventExtensions);
     }
+
+    // A synthetic record of a SyntheticSourceProvider::createDeferred() provider, until its generator has run
+    // (SyntheticModuleRecord::evaluate): what it exports is not known yet, and it has no module environment.
+    bool hasPendingExports() const { return m_hasPendingExports; }
 #endif
+
+    // The (export name, binding) list of GetModuleNamespace. False, without an exception, while a record that this one
+    // takes names from hasPendingExports(): JSModuleNamespaceObject asks again once that record has evaluated.
+    bool tryCollectNamespaceResolutions(JSGlobalObject*, Vector<std::pair<Identifier, Resolution>>&);
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
     bool readyForSyncExecution();
@@ -285,9 +303,6 @@ public:
     }
 
     void link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
-#if USE(BUN_JSC_ADDITIONS)
-    void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited);
-#endif
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown> internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
@@ -363,7 +378,8 @@ protected:
     std::optional<Resolution> tryResolveExportPrelinked(JSGlobalObject*, const Identifier& exportName);
     std::optional<Resolution> tryResolveExportPrelinked(JSGlobalObject*, const PrelinkedModuleGraph::Export&);
     std::optional<Resolution> prelinkedResolution(JSGlobalObject*, PrelinkedModuleGraph::ResolutionKind, uint32_t resolvedModule, uint32_t resolvedLocalSid, uint32_t requestIndex, uint32_t importNameSid);
-    bool collectPrelinkedNamespaceResolutions(JSGlobalObject*, Vector<std::pair<Identifier, Resolution>>&);
+    enum class PrelinkedNamespace : uint8_t { Collected, NeedsGenericPath, Pending };
+    PrelinkedNamespace collectPrelinkedNamespaceResolutions(JSGlobalObject*, Vector<std::pair<Identifier, Resolution>>&);
 private:
 #endif
 
@@ -415,6 +431,7 @@ protected:
     SourceProviderSourceType m_sourceType;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_prelinkedEntriesMaterialized { false };
+    bool m_hasPendingExports { false };
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;
     // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already

@@ -92,6 +92,30 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
             auto* sourceTextModuleRecord = dynamicDowncast<JSModuleRecord>(moduleRecord);
             AbstractModuleRecord::Resolution resolution = sourceTextModuleRecord ? sourceTextModuleRecord->resolveImportWithSlot(globalObject, ident, importSlot) : moduleRecord->resolveImport(globalObject, ident);
             catchScope.releaseAssertNoException();
+#if USE(BUN_JSC_ADDITIONS)
+            // (A resolved binding of a record without an environment is that record's namespace object, `export * as ns`,
+            // while the record hasPendingExports().)
+            bool isResolved = resolution.type == AbstractModuleRecord::Resolution::Type::Resolved && resolution.moduleRecord->moduleEnvironmentMayBeNull();
+            bool isPending = resolution.type == AbstractModuleRecord::Resolution::Type::Pending || (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved && !isResolved);
+            if (sourceTextModuleRecord && (isPending || sourceTextModuleRecord->mayHaveUnboundImports())) [[unlikely]] {
+                // This code is linked before the import has its binding: the record that exports it has not evaluated
+                // (an import cycle), or it has and the import could not be bound. The code reads the import like any
+                // other, at an offset of what its import slot gives it (JSModuleRecord::fillImportSlot), and so does
+                // code of this record that is linked later.
+                if (isResolved || isPending || sourceTextModuleRecord->hasImportSlot(ident.impl())) {
+                    if (!isResolved && !isPending)
+                        importSlot = sourceTextModuleRecord->importSlotIndex(ident.impl());
+                    std::optional<unsigned> offset = sourceTextModuleRecord->earlyImportLinkOffset(importSlot);
+                    if (!offset && !isResolved)
+                        offset = sourceTextModuleRecord->linkImportEarly(importSlot, resolution);
+                    if (offset) {
+                        unsigned moduleImportSlot = JSModuleEnvironment::importSlotScopeOffset(moduleEnvironment->symbolTable(), importSlot).offset();
+                        op = ResolveOp(makeType(ModuleVar, needsVarInjectionChecks), depth, nullptr, nullptr, nullptr, *offset, ident.impl(), moduleImportSlot);
+                        return true;
+                    }
+                }
+            }
+#endif
             if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
                 AbstractModuleRecord* importedRecord = resolution.moduleRecord;
                 JSModuleEnvironment* importedEnvironment = importedRecord->moduleEnvironment();
