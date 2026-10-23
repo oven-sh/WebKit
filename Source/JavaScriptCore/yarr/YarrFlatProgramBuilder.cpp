@@ -42,8 +42,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FlatProgram);
 
 class FlatProgramBuilder {
 public:
-    explicit FlatProgramBuilder(const YarrPattern& pattern)
+    FlatProgramBuilder(const YarrPattern& pattern, FlatProgramForm form)
         : m_pattern(pattern)
+        , m_countsTurns(form == FlatProgramForm::CountsTurns)
     {
     }
 
@@ -79,17 +80,23 @@ public:
             while (count < alternatives.size() && alternatives[count]->onceThrough())
                 ++count;
             program->triesOnlyOnce |= count == alternatives.size();
+            // From the second place on the bytecode runs the copies behind these, which lack what begins with ^.
+            if (m_countsTurns && count != alternatives.size())
+                return makeUnexpected(FlatProgramDecline::CopiedGroup);
         }
 
         if (!emitAlternatives(alternatives.span().first(count), { }))
             return makeUnexpected(*m_decline);
         emit(Kind::Match);
+        if (m_countsTurns && !std::ranges::contains(program->ops, Kind::CountTurn, &FlatOp::kind))
+            return makeUnexpected(FlatProgramDecline::NoTurnsToCount);
         if (hasExceededIndexLimit())
             return makeUnexpected(FlatProgramDecline::TooManySetsOrRegisters);
         program->numRegisters = m_nextRegister;
 
         removeUnneededLogging(*program);
-        computeStartScan(alternatives.span().first(count));
+        if (!m_countsTurns)
+            computeStartScan(alternatives.span().first(count));
 
         if (!program->text.isEmpty()) {
             for (unsigned i = 0; i < sizeof(uint64_t); ++i)
@@ -184,6 +191,10 @@ private:
         uint64_t neededAfter { 0 };
         unsigned nestingDepth { 0 };
         unsigned sharedPrefixDepth { 0 };
+        // FlatProgramForm::CountsTurns: PatternTerm::inputPosition counts from here in the alternatives that are emitted, and neededAfter is what ByteCompiler::emitDisjunction() has tested for beyond them.
+        unsigned initialInputPosition { 0 };
+        // FlatProgramForm::CountsTurns: an alternative that needs no more than this, and neededAfter, has been tested for.
+        unsigned testedFor { 0 };
     };
 
     // What is left of an alternative from one of its terms on.
@@ -680,11 +691,33 @@ private:
         return true;
     }
 
+    bool emitAlternativesInOrder(Alternatives alternatives, EmitContext context)
+    {
+        Vector<unsigned, 8> jumpsToEnd;
+        for (auto& alternative : alternatives) {
+            bool isLast = &alternative == &alternatives.back();
+            unsigned choice = isLast ? 0 : emit(Kind::Choice);
+            if (alternative->m_minimumSize > context.testedFor)
+                emitNeedsInput(alternative->m_minimumSize + context.neededAfter);
+            if (!emitAlternative(*alternative, context))
+                return false;
+            if (isLast)
+                break;
+            jumpsToEnd.append(emit(Kind::Jump));
+            setTarget(choice);
+        }
+        for (unsigned jump : jumpsToEnd)
+            setTarget(jump);
+        return true;
+    }
+
     bool emitAlternatives(Alternatives alternatives, EmitContext context)
     {
         if (context.nestingDepth >= maxNestingDepth)
             return decline(FlatProgramDecline::NestedTooDeep);
         ++context.nestingDepth;
+        if (m_countsTurns)
+            return emitAlternativesInOrder(alternatives, context);
         if (alternatives.size() == 1)
             return emitAlternative(*alternatives[0], context);
         Vector<Branch, 8> branches;
@@ -764,12 +797,13 @@ private:
         bool canBeEmpty;
         uint64_t neededForAnotherIteration;
         std::optional<CaptureRange> captures;
+        bool countsTurns { false };
     };
 
     template<typename Body>
     bool emitLoop(const Loop& loop, const Body& emitBody)
     {
-        auto [min, max, isLazy, canBeEmpty, neededForAnotherIteration, captures] = loop;
+        auto [min, max, isLazy, canBeEmpty, neededForAnotherIteration, captures, countsTurns] = loop;
         bool needsCounter = min > 1 || max != quantifyInfinite;
         unsigned counter = needsCounter ? m_nextRegister++ : 0;
         unsigned start = canBeEmpty ? m_nextRegister++ : 0;
@@ -782,6 +816,8 @@ private:
         else if (min) {
             if (canBeEmpty)
                 emitWithRegister(Kind::LoggedSetRegister, start, offsetNoMatch);
+            if (countsTurns)
+                emit(Kind::CountTurn);
             jumpToBody = emit(Kind::Jump);
         }
 
@@ -797,25 +833,34 @@ private:
                 unsigned choice = emit(Kind::Choice);
                 jumpsToExit.append(emit(Kind::Jump));
                 setTarget(choice);
+                if (countsTurns)
+                    emit(Kind::CountTurn);
                 if (neededForAnotherIteration)
                     emitNeedsInput(neededForAnotherIteration);
                 if (canBeEmpty)
                     emitWithRegister(Kind::LoggedSavePosition, start);
-            } else if (canBeEmpty)
-                jumpsToExit.append(emitWithRegister(Kind::GreedyLoopChoice, start));
-            else {
-                if (neededForAnotherIteration)
-                    jumpsToExit.append(emitNeedsInputElseJump(neededForAnotherIteration));
-                jumpsToExit.append(emit(Kind::Choice));
+            } else {
+                if (countsTurns)
+                    emit(Kind::CountTurn);
+                if (canBeEmpty)
+                    jumpsToExit.append(emitWithRegister(Kind::GreedyLoopChoice, start));
+                else {
+                    if (neededForAnotherIteration)
+                        jumpsToExit.append(emitNeedsInputElseJump(neededForAnotherIteration));
+                    jumpsToExit.append(emit(Kind::Choice));
+                }
             }
         }
         if (jumpToMandatory) {
-            if (canBeEmpty) {
+            if (canBeEmpty || countsTurns) {
                 std::optional<unsigned> skip;
                 if (min != max)
                     skip = emit(Kind::Jump);
                 setTarget(*jumpToMandatory);
-                emitWithRegister(Kind::LoggedSetRegister, start, offsetNoMatch);
+                if (countsTurns)
+                    emit(Kind::CountTurn);
+                if (canBeEmpty)
+                    emitWithRegister(Kind::LoggedSetRegister, start, offsetNoMatch);
                 if (skip)
                     setTarget(*skip);
             } else
@@ -885,14 +930,19 @@ private:
         const PatternDisjunction& disjunction = *term.parentheses.disjunction;
         if (!max)
             return true;
-        if (min != 1 || max != 1) {
+        if (m_countsTurns) {
+            bool isTestedForByParent = max == 1 && term.quantityType == QuantifierType::FixedCount;
+            context.initialInputPosition = term.inputPosition - (isTestedForByParent ? disjunction.m_minimumSize : 0);
+            if (isTestedForByParent || (!min && neededToEnter(disjunction, context.neededAfter)))
+                context.testedFor = disjunction.m_minimumSize;
+        } else if (min != 1 || max != 1) {
             unsigned termsLeftToVisit = maxTermsVisitedForEmptiness;
             if (computeInputConsumption(disjunction, termsLeftToVisit) == InputConsumption::None)
                 return !min || emitGroupBody(term, context);
         }
         if (max == 1)
             return min ? emitGroupBody(term, context) : emitOptionalGroup(term, context);
-        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term) };
+        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurnsOf(term) };
         return emitLoop(loop, [&] {
             return emitGroupBody(term, context);
         });
@@ -903,6 +953,7 @@ private:
         if (term.matchDirection() != Forward)
             return decline(FlatProgramDecline::Lookbehind);
         Alternatives alternatives = term.parentheses.disjunction->m_alternatives.span();
+        context.initialInputPosition = term.inputPosition;
         unsigned frameDepthRegister = m_nextRegister++;
         if (term.invert()) {
             unsigned begin = emit(Kind::NegativeLookaheadBegin, frameDepthRegister);
@@ -963,6 +1014,32 @@ private:
         unsigned max = extra == quantifyInfinite || extra > quantifyInfinite - min ? quantifyInfinite : min + extra;
         bool isGreedy = term.quantityType == QuantifierType::Greedy;
         Run run { isGreedy ? Kind::GreedyRun : Kind::LazyRun, set, 0, min, max, counted + 1 - i };
+        if (m_countsTurns) {
+            // Only tests of the next term's that fail are left out: no turn begins before one.
+            if (counted + 1 == terms.size())
+                return run;
+            const PatternTerm& next = terms[counted + 1];
+            if (!isAtom(next) || next.quantityType != QuantifierType::FixedCount || !next.quantityMaxCount)
+                return run;
+            auto hasWideMembers = [](const CharacterSetBits& bits) {
+                return bits.wideRangeCount || bits.invertsWideRanges;
+            };
+            CharacterSetBits following = m_program->characterSets[setForTerm(next)];
+            CharacterSetBits members = m_program->characterSets[set];
+            bool areComplements = term.type == PatternTerm::Type::CharacterClass && next.type == PatternTerm::Type::CharacterClass && term.characterClass == next.characterClass && term.invert() != next.invert();
+            bool areDisjoint = areComplements || !hasWideMembers(members) || !hasWideMembers(following);
+            for (unsigned word = 0; word < members.bits.size(); ++word)
+                areDisjoint &= !(members.bits[word] & following.bits[word]);
+            if (areDisjoint) {
+                run.kind = Kind::PossessiveRun;
+                return run;
+            }
+            if (hasWideMembers(following))
+                return run;
+            run.kind = isGreedy ? Kind::GreedyRunBeforeKnownCharacters : Kind::LazyRunBeforeKnownCharacters;
+            run.firstSet = internFirstSet({ following.bits, false });
+            return run;
+        }
         if ((isGreedy && term.possessive()) || m_pattern.m_firstFollowSets.areDisjoint(term.m_matchedSet, term.m_followSet)) {
             run.kind = Kind::PossessiveRun;
             return run;
@@ -982,6 +1059,8 @@ private:
         m_program->ops[op].firstSet = static_cast<uint16_t>(run.firstSet);
         if (run.kind != Kind::PossessiveRun)
             setNeeded(op, neededAfter);
+        else if (m_countsTurns && neededAfter)
+            emitNeedsInput(neededAfter);
     }
 
     void emitFixedAtom(const PatternTerm& term)
@@ -1075,6 +1154,8 @@ private:
         auto accountThrough = [&](unsigned last) {
             while (accounted <= last)
                 neededAfter -= minimumSize(terms[accounted++]);
+            if (m_countsTurns)
+                neededAfter = context.neededAfter + context.initialInputPosition + alternative.m_minimumSize - terms[last].inputPosition;
         };
         for (unsigned i = begin; i < terms.size(); ++i) {
             if (hasExceededIndexLimit())
@@ -1110,17 +1191,19 @@ private:
                 i += emitFixedAtoms(alternative, i) - 1;
                 break;
             case PatternTerm::Type::ParenthesesSubpattern:
-                if (!emitGroup(term, { neededAfter, context.nestingDepth, context.sharedPrefixDepth }))
+                if (!emitGroup(term, { neededAfter, context.nestingDepth, context.sharedPrefixDepth, 0, 0 }))
                     return false;
                 break;
             case PatternTerm::Type::ParentheticalAssertion:
-                if (!emitLookahead(term, { 0, context.nestingDepth, context.sharedPrefixDepth }))
+                if (!emitLookahead(term, { 0, context.nestingDepth, context.sharedPrefixDepth, 0, 0 }))
                     return false;
                 break;
             case PatternTerm::Type::NumberedBackReference:
             case PatternTerm::Type::NamedBackReference:
                 if (!emitBackReference(term))
                     return false;
+                if (m_countsTurns && neededAfter)
+                    emitNeedsInput(neededAfter);
                 break;
             case PatternTerm::Type::NumberedForwardReference:
             case PatternTerm::Type::NamedForwardReference:
@@ -1138,6 +1221,7 @@ private:
     StdUnorderedMap<SetKey, unsigned, InternedKeyHash> m_setIndexes;
     StdUnorderedMap<FirstSetBits, unsigned, InternedKeyHash> m_firstSetIndexes;
     unsigned m_nextRegister { 0 };
+    const bool m_countsTurns;
 };
 
 size_t FlatProgram::estimatedSizeInBytes() const
@@ -1175,10 +1259,10 @@ bool jitCountsTurnsOf(const PatternTerm& term)
     return term.parentheses.disjunction->m_alternatives.size() != 1 || (term.quantityMaxCount > 1 && containsBacktrackableContent(*term.parentheses.disjunction));
 }
 
-std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern& pattern)
+std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern& pattern, FlatProgramForm form)
 {
     ASSERT(pattern.m_executionMode == ExecutionMode::IncludeSubpatterns);
-    return FlatProgramBuilder(pattern).build();
+    return FlatProgramBuilder(pattern, form).build();
 }
 
 ASCIILiteral description(FlatProgramDecline reason)
@@ -1202,6 +1286,8 @@ ASCIILiteral description(FlatProgramDecline reason)
         return "nested too deep"_s;
     case FlatProgramDecline::TooManySetsOrRegisters:
         return "too many sets or registers"_s;
+    case FlatProgramDecline::NoTurnsToCount:
+        return "no turns to count"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

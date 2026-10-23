@@ -185,6 +185,14 @@ public:
     }
 
     VM& m_vm;
+#else
+    // The frame of the operation outlives what it calls. Without this the compiler may end an operation with a jump to its last callee.
+    // The record that vm.topCallFrame names is gone by then, and the callee's own lies at the same address only where a frame record
+    // lies above the registers that a function saves: on x86-64 and on Darwin, and not on ARM64 elsewhere.
+    ALWAYS_INLINE ~AOTOperationPrologueCallFrameTracer()
+    {
+        WTF::compilerFence();
+    }
 #endif
 };
 

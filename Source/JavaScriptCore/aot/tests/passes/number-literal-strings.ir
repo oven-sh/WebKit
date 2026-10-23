@@ -1,4 +1,4 @@
-# Which literal strings get a word and in which order. Of a variable that no code names and the run time cannot find, only a text that code holds as a constant anyway
+# Which literal strings get a word, in which order, and which of them without their text: the members that only a type spells. Of a variable that no code names and the run time cannot find, only a text that code holds as a constant anyway
 # FORM: Prepared
 # RUN: pass NumberLiteralStrings
 # STATISTIC: LiteralStringsNumbered >= 10
@@ -66,9 +66,9 @@ function f7 name="holdsConstant" parameters=[{type=function}] results=[{type=any
     Return v2
 }
 # CHECK: 0 ""
-# CHECK-NEXT: 1 "left"
-# CHECK-NEXT: 2 "right"
-# CHECK-NEXT: 3 "top"
+# CHECK-NEXT: 1 "left" without text
+# CHECK-NEXT: 2 "right" without text
+# CHECK-NEXT: 3 "top" without text
 # CHECK-NEXT: 4 "kept"
 # CHECK-NEXT: 5 "south"
 # CHECK-NEXT: 6 "north"

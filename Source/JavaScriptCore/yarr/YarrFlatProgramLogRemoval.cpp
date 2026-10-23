@@ -121,6 +121,7 @@ static bool propagateStackState(const FlatProgram& program, unsigned index, Stac
     case Kind::SavePosition:
     case Kind::FailIfEmpty:
     case Kind::NeedsInput:
+    case Kind::CountTurn:
     case Kind::InputStart:
     case Kind::LineStart:
     case Kind::InputEnd:

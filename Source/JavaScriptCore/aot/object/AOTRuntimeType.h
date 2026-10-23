@@ -92,6 +92,9 @@ struct alignas(4) RuntimeType {
     static constexpr uint8_t hasIntegerRange = 1;
     static constexpr uint8_t hasContents = 2;
     static constexpr uint8_t hasLayoutSet = 4;
+    // Of the listed strings. One without text has a word, and one without a word has its text.
+    static constexpr uint8_t hasLiteralStringWithoutText = 8;
+    static constexpr uint8_t hasLiteralStringWithoutWord = 16;
 
     uint16_t primitives;
     uint8_t flags;

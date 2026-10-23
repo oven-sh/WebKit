@@ -60,6 +60,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: literalStrings
 # CHECK-NEXT: literalStringTable
 # CHECK-NEXT: literalStringLimits
+# CHECK-NEXT: literalStringDigests
 # CHECK-NEXT: bigIntConstants 0 0
 # CHECK-NEXT: data 1 8
 # CHECK-NEXT: requests 1 4

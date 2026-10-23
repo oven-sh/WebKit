@@ -1021,6 +1021,8 @@ static void printConstants(const TablesContext& context)
     }
     for (const LiteralStringLimits& limits : tables.literalStringLimits())
         RecordLine(context, "literalStringLimits"_s).field("maxLength"_s, limits.maxLength);
+    for (const LiteralStringDigest& digest : tables.literalStringDigests())
+        RecordLine(context, "literalStringDigest"_s, digest.number).field("length"_s, digest.length);
     if (IdentifierTable identifiersByHash(tables.identifiersByHash()); !identifiersByHash.isEmpty()) {
         std::span<const uint32_t> slots = identifiersByHash.slots();
         for (uint32_t slot = 0; slot < slots.size(); ++slot) {

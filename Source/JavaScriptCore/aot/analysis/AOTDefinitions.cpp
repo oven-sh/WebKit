@@ -376,8 +376,9 @@ BuiltinID builtinParentNamedByClassRecord(const Program& program, const Layout& 
     if (layout.flow.baseState != BaseState::BuiltinClass)
         return { };
     const BuiltinTable& builtins = program.builtins();
-    BuiltinID constructor = builtins.at(layout.flow.baseClass).constructor;
-    if (!constructor)
+    const BuiltinClass& baseClass = builtins.at(layout.flow.baseClass);
+    BuiltinID constructor = baseClass.constructor;
+    if (!constructor || !baseClass.prototype)
         return { };
     const Builtin& builtin = builtins.at(constructor);
     bool isFoundAtAnyTime = builtin.origin == BuiltinOrigin::Engine && builtin.scope == BuiltinScope::Realm && BuiltinCellKey::object(constructor).hasCell(builtins);

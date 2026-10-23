@@ -87,6 +87,7 @@ namespace JSC { namespace Yarr {
     macro(JumpIfNotBelow) \
     macro(LoopBack) \
     macro(LoopBackUnlessEmpty) \
+    macro(CountTurn) \
     macro(LookaheadBegin) \
     macro(LookaheadEnd) \
     macro(LookaheadEndKeepingCaptures) \
@@ -164,7 +165,14 @@ public:
     bool triesOnlyOnce { false };
     // Of a pattern in unicode mode with a step that can consume a surrogate pair. A subject of 8-bit characters has none. Any other subject goes to the bytecode interpreter.
     bool runsOnlyOn8BitSubjects { false };
+    // FlatProgramForm::CountsTurns: whoever starts a match sets this to matchLimit, and keeps every other thread from starting one.
+    mutable unsigned remainingTurns { 0 };
 };
+
+// Fast: leaves out every part of the search that it can tell will fail. It gives up at matchLimit steps, which says nothing about where the JIT gives up.
+// CountsTurns: makes the same search as the bytecode, which tests for input where the JIT does, and takes one off matchLimit where the JIT does: see jitCountsTurnsOf(). Where no turn is left there is no match.
+// It still gives up at matchLimit steps between two turns.
+enum class FlatProgramForm : bool { Fast, CountsTurns };
 
 enum class FlatProgramDecline : uint8_t {
     UnicodeMode,
@@ -176,6 +184,7 @@ enum class FlatProgramDecline : uint8_t {
     DotStarEnclosure,
     NestedTooDeep,
     TooManySetsOrRegisters,
+    NoTurnsToCount,
 };
 
 struct RegExpMatchOutcome {
@@ -183,7 +192,7 @@ struct RegExpMatchOutcome {
     const unsigned* output;
 };
 
-std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern&);
+std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern&, FlatProgramForm = FlatProgramForm::Fast);
 // Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
 bool jitCountsTurnsOf(const PatternTerm&);
 void removeUnneededLogging(FlatProgram&);

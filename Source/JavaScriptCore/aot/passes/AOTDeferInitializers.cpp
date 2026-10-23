@@ -573,7 +573,8 @@ bool MovableCode::hasOnlyClassesAndBuiltins(const Type& type) const
     if (type.anyObject || type.anyFunction || type.layouts || !type.classes.isEmpty() || (type.primitives & ~Primitive::Null) || !type.isJavaScriptValue())
         return false;
     bool hasOnlyConstructors = std::ranges::all_of(type.builtins, [&](BuiltinID id) {
-        return m_program.builtins().at(id).kind == BuiltinKind::Constructor;
+        const Builtin& builtin = m_program.builtins().at(id);
+        return builtin.kind == BuiltinKind::Constructor && builtin.instanceClass && m_program.builtins().at(builtin.instanceClass).prototype;
     });
     return hasOnlyConstructors && std::ranges::all_of(type.functions, [&](FunctionID id) {
         return isClassConstructorFunction(m_program.at(id));
@@ -1603,7 +1604,8 @@ bool MovableCode::builtinCallMayMove(FunctionAnalyses& analyses, const Knowledge
     bool makesCollection = overload.mode == BuiltinCallMode::Construct && (overload.builtin == Builtins::Set || overload.builtin == Builtins::Map) && call.form == BuiltinCallForm::Whole && call.arguments.size() == 1;
     if (makesCollection) {
         ValueID entries = call.arguments[0];
-        if (!mayBeReference(typeOf(function, entries)))
+        // Neither looks at undefined or null. A string hands out its characters, which a Set takes; no other primitive can be iterated.
+        if (typeOf(function, entries).hasOnlyPrimitives(Primitive::UndefinedOrNull | (overload.builtin == Builtins::Set ? Primitive::AnyString : 0)))
             return true;
         if (known.mayReadFrom(entries) && isCollectionAsMade(function, known, entries) && (overload.builtin == Builtins::Set || hasOnlyInstancesOf(typeOf(function, entries), BuiltinClasses::Map)))
             return true;
@@ -1635,8 +1637,16 @@ bool MovableCode::builtinCallMayMove(FunctionAnalyses& analyses, const Knowledge
         return false;
     bool keepsInResultOrWhatWasMade = keepsOperandsInResultOrWhatWasMade(function, known, overload, call);
     auto operandMayMove = [&](ValueID operand, BuiltinOperand position) {
-        if (!operand || !mayBeReference(typeOf(function, operand)))
+        if (!operand)
             return true;
+        if (!mayBeReference(typeOf(function, operand))) {
+            // An entry that only passes errors on still raises its own over a primitive that it does not take, and over a receiver that is no object and becomes none.
+            const BuiltinParameter* parameter = overload.onlyPropagatesErrors() && !throwsForOtherTypesOnly ? m_program.builtins().parameterFor(overload, position) : nullptr;
+            if (!parameter)
+                return true;
+            const Type& type = typeOf(function, operand);
+            return !mayFailOnOperand(m_program, *parameter, type) && !(position.isReceiver() && type.mayBeUndefinedOrNull());
+        }
         OperandBehavior behavior = declaredBehaviorOf(overload, position);
         constexpr OperandUses usesThatAreNotFollowed = callingUses | OperandUses { OperandUse::PassesToUserCode, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype, OperandUse::ChangesIntegrity, OperandUse::DefinesName, OperandUse::TakesDescriptor };
         if (behavior.uses.containsAny(usesThatAreNotFollowed))

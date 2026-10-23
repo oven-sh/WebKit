@@ -58,6 +58,8 @@ public:
     JSString* stringForLiteralStringWord(uint64_t) const;
     JSString* literalStringIfCreated(uint32_t number) const;
     uint64_t literalStringWordFor(JSString*);
+    // The position in ProgramTables::literalStrings().
+    std::optional<uint32_t> findLiteralString(JSString*);
 
     // The number is the position of the key's identifier in ProgramTables::keyCellIdentifiers().
     JSCell* keyCell(VM&, uint32_t number);
@@ -78,8 +80,8 @@ private:
     void setConstant(uint32_t number, JSString*);
     JSCell* immortalCellAt(const uint32_t* narrowCells, JSCell* const* wideCells, uint32_t number) const;
     void setImmortalCellAt(uint32_t* narrowCells, JSCell** wideCells, uint32_t number, JSCell*) const;
-    std::optional<uint32_t> findLiteralString(JSString*);
     std::optional<uint32_t> findLiteralString(unsigned hash, StringView) const;
+    bool isTextOfLiteralStringWithoutText(uint32_t number, StringView) const;
 
     Instance& m_instance;
     State& m_state;

@@ -19,6 +19,7 @@
 #include "AOTObject.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTProgramStrings.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -65,16 +66,17 @@ static bool matchesAnyLiteral(std::span<const uint32_t> literals, StringView cha
 {
     const ImageText& imageText = text();
     return std::ranges::any_of(literals, [&](uint32_t literal) {
-        return imageText.view(StringID(literal)).length() == characters.length() && imageText.equals(StringID(literal), characters);
+        return imageText.hasText(StringID(literal)) && imageText.view(StringID(literal)).length() == characters.length() && imageText.equals(StringID(literal), characters);
     });
 }
+
 
 static NEVER_INLINE bool ropeMatchesAnyLiteral(JSGlobalObject* globalObject, std::span<const uint32_t> literals, JSString* rope)
 {
     unsigned length = rope->length();
     const ImageText& imageText = text();
     bool hasLiteralWithLength = std::ranges::any_of(literals, [&](uint32_t literal) {
-        return imageText.view(StringID(literal)).length() == length;
+        return imageText.hasText(StringID(literal)) && imageText.view(StringID(literal)).length() == length;
     });
     if (!hasLiteralWithLength)
         return false;
@@ -103,14 +105,21 @@ static bool numberHasType(const RuntimeType& type, double number)
     return !range || (number >= static_cast<double>(range->first) && number <= static_cast<double>(range->second));
 }
 
-static bool stringHasType(JSGlobalObject* globalObject, const RuntimeType& type, JSString* value)
+static bool stringHasType(const State& state, const RuntimeType& type, JSString* value)
 {
+    JSGlobalObject* globalObject = state.instance.globalObject;
     OptionSet<PrimitiveSet> primitives = type.primitiveSet();
     auto literals = type.literalStrings();
     if (literals.empty())
         return primitives.contains(PrimitiveSet::String);
     if (!primitives.containsAny({ PrimitiveSet::String, PrimitiveSet::LiteralString }))
         return false;
+    if (type.flags & RuntimeType::hasLiteralStringWithoutText) {
+        if (std::optional<uint32_t> number = state.strings->findLiteralString(value))
+            return std::ranges::contains(literals, state.tables.literalStrings()[*number]);
+        if (!(type.flags & RuntimeType::hasLiteralStringWithoutWord))
+            return false;
+    }
     if (StringImpl* impl = value->tryGetValueImpl())
         return matchesAnyLiteral(literals, StringView(*impl));
     return ropeMatchesAnyLiteral(globalObject, literals, value);
@@ -323,7 +332,7 @@ bool RuntimeLayoutTable::valueHasType(const RuntimeType& type, JSValue value) co
         return false;
     JSCell* cell = value.asCell();
     if (cell->isString())
-        return stringHasType(m_state.instance.globalObject, type, asString(cell));
+        return stringHasType(m_state, type, asString(cell));
     if (cell->isSymbol()) {
         if (primitives.contains(PrimitiveSet::Symbol))
             return true;

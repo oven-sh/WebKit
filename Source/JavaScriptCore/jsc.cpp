@@ -1404,6 +1404,16 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
     if (referrer.isSymbol())
         return resolvePath(currentWorkingDirectory());
 
+#if ENABLE(AOT)
+    // Bun: the key of a module of an image is its path.
+    if (AOT::Shell::isKeyOfCompiledModule(referrer.string())) {
+        Identifier resolved = resolvePath(URL::fileURLWithFileSystemPath(referrer.string()));
+        RETURN_IF_EXCEPTION(scope, { });
+        String path = URL({ }, resolved.string()).fileSystemPath();
+        return AOT::Shell::isKeyOfCompiledModule(path) ? Identifier::fromString(vm, path) : resolved;
+    }
+#endif
+
     // If the referrer exists, we assume that the referrer is the correct file url.
     URL url = URL({ }, referrer.impl());
     ASSERT(url.protocolIsFile());

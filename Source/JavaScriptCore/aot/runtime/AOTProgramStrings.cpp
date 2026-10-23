@@ -13,6 +13,7 @@
 #include "AOTImage.h"
 #include "AOTImmortalCells.h"
 #include "AOTInstance.h"
+#include "AOTLiteralStringDigest.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -263,10 +264,28 @@ JSString* ProgramStrings::stringForLiteralStringWord(uint64_t word) const
     uint32_t number = literalStringIndex(static_cast<uint32_t>(word));
     if (JSString* cell = literalStringIfCreated(number))
         return cell;
+    RELEASE_ASSERT_WITH_MESSAGE(m_image.text().hasText(StringID(m_tables.literalStrings()[number])), "AOT: a value is a literal string that the program spells nowhere, and no string from outside was that string");
     JSString* created = createString(*m_instance.vm, StringID(m_tables.literalStrings()[number]));
     const ConstantCellWords& constants = m_instance.runtime.constants;
     setImmortalCellAt(constants.literalStrings, constants.wideLiteralStrings, number, created);
     return created;
+}
+
+// The first string from outside that has the digest lends its text to the instance. No value is the literal string before that, so nobody asks for the text earlier.
+bool ProgramStrings::isTextOfLiteralStringWithoutText(uint32_t number, StringView text) const
+{
+    if (JSString* lent = literalStringIfCreated(number))
+        return text == StringView(*lent->tryGetValueImpl());
+    std::span<const LiteralStringDigest> digests = m_tables.literalStringDigests();
+    auto found = std::ranges::lower_bound(digests, number, { }, &LiteralStringDigest::number);
+    RELEASE_ASSERT(found != digests.end() && found->number == number);
+    if (found->length != text.length() || found->digest != digestOfLiteralString(text))
+        return false;
+    VM& vm = *m_instance.vm;
+    DeferGCForAWhile deferGC(vm);
+    const ConstantCellWords& constants = m_instance.runtime.constants;
+    setImmortalCellAt(constants.literalStrings, constants.wideLiteralStrings, number, jsString(vm, text.toString()));
+    return true;
 }
 
 std::optional<uint32_t> ProgramStrings::findLiteralString(unsigned hash, StringView text) const
@@ -283,7 +302,8 @@ std::optional<uint32_t> ProgramStrings::findLiteralString(unsigned hash, StringV
         uint32_t number = LiteralStringTable::numberOf(entry);
         if (entry != LiteralStringTable::entryFor(number, hash))
             continue;
-        if (m_image.text().equals(StringID(m_tables.literalStrings()[number]), text))
+        StringID string(m_tables.literalStrings()[number]);
+        if (m_image.text().hasText(string) ? m_image.text().equals(string, text) : isTextOfLiteralStringWithoutText(number, text))
             return number;
     }
 }
@@ -300,12 +320,17 @@ std::optional<uint32_t> ProgramStrings::findLiteralString(JSString* string)
         // The literal strings have their headers in the image.
         if (isHeaderOfConstant(*impl))
             return std::nullopt;
-        std::optional<uint32_t> number = findLiteralString(impl->hash(), StringView(*impl));
         static_assert(sizeof(StringImpl) >= 1u << literalStringCacheImplShift);
         uintptr_t address = std::bit_cast<uintptr_t>(impl);
         uint64_t cacheIndex = literalStringCacheIndex(address);
+        uint64_t& cached = m_instance.runtime.constants.literalStringCache[cacheIndex];
+        if (cached >> literalStringCacheWordBits == address >> literalStringCacheImplShift) {
+            uint32_t word = static_cast<uint32_t>(cached & ((1u << literalStringCacheWordBits) - 1)) << literalStringCacheWordShift;
+            return word ? std::optional<uint32_t>(literalStringIndex(word)) : std::nullopt;
+        }
+        std::optional<uint32_t> number = findLiteralString(impl->hash(), StringView(*impl));
         m_literalStringCacheKeys[cacheIndex] = impl;
-        m_instance.runtime.constants.literalStringCache[cacheIndex] = literalStringCacheEntry(address, number ? literalStringWord(*number) : 0);
+        cached = literalStringCacheEntry(address, number ? literalStringWord(*number) : 0);
         return number;
     }
     if (string->isSubstring()) {

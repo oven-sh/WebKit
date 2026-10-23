@@ -419,8 +419,10 @@ static DescribedType describedTypeOf(const ProgramTables& tables, const RuntimeT
         described.elements = describe(tables, tables.typeAt(*offset));
     for (const RuntimeCellTest& test : type.cellTests())
         appendCellTest(described, tables, type, test);
-    for (uint32_t string : type.literalStrings())
-        described.literalStrings.append(ProgramStrings::text(tables, StringID(string)));
+    for (uint32_t string : type.literalStrings()) {
+        if (Image::current()->text().hasText(StringID(string)))
+            described.literalStrings.append(ProgramStrings::text(tables, StringID(string)));
+    }
     return described;
 }
 

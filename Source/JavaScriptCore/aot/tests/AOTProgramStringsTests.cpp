@@ -13,6 +13,7 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTIRParser.h"
 #include "AOTImage.h"
+#include "AOTLiteralStringDigest.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTProgramFile.h"
 #include "AOTProgramStrings.h"
@@ -35,7 +36,7 @@ namespace JSC::AOT {
 
 std::span<const NativeTest> programStringsTests();
 
-static constexpr ASCIILiteral programText = R"IR(layout L0 name="Light" fields=[{key="color" declared={type="red"|"green"|"\u{65e5}\u{672c}"} flags=[IsRequired]}, {key="x" declared={type=number}}]
+static constexpr ASCIILiteral programText = R"IR(layout L0 name="Light" fields=[{key="color" declared={type="red"|"green"|"\u{65e5}\u{672c}"|"amber"|"violet"|"\u{7d05}\u{8449}"} flags=[IsRequired]}, {key="x" declared={type=number}}]
 layout L1 name="Holder" fields=[]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -312,6 +313,46 @@ static void testLiteralStringWords(LoadedProgram& program)
     AOT_TEST_CHECK(isLiteralStringWord(emptyLiteralStringWord));
 }
 
+static uint32_t numberOfLiteralWithoutText(LoadedProgram& program, StringView text)
+{
+    for (const LiteralStringDigest& digest : program.state().tables.literalStringDigests()) {
+        if (digest.length == text.length() && digest.digest == digestOfLiteralString(text))
+            return digest.number;
+    }
+    failNativeTest(__FILE__, __LINE__, "the image has the digest of the text");
+}
+
+// Three members of the field's type are spelled by no code.
+static void testFirstStringFromOutsideLendsItsText(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    ProgramStrings& strings = *program.state().strings;
+    constexpr std::array<char16_t, 6> violetIn16Bits { 'v', 'i', 'o', 'l', 'e', 't' };
+    constexpr std::array<char16_t, 2> autumnLeaves { 0x7d05, 0x8449 };
+    for (const String& text : { String("amber"_s), String(std::span { violetIn16Bits }), String(std::span { autumnLeaves }) }) {
+        uint32_t number = numberOfLiteralWithoutText(program, text);
+        uint64_t word = literalStringWord(number);
+        AOT_TEST_CHECK(!imageText().hasText(StringID(program.state().tables.literalStrings()[number])));
+        AOT_TEST_CHECK(!strings.literalStringIfCreated(number));
+
+        JSString* other = jsString(vm, makeString(StringView(text).substring(1), 'x'));
+        AOT_TEST_CHECK(other->length() == text.length() && strings.literalStringWordFor(other) == std::bit_cast<uint64_t>(other));
+        AOT_TEST_CHECK(!strings.literalStringIfCreated(number));
+
+        JSString* first = jsString(vm, text.isolatedCopy());
+        AOT_TEST_CHECK(strings.literalStringWordFor(first) == word);
+        JSString* lent = strings.literalStringIfCreated(number);
+        AOT_TEST_CHECK(lent && lent != first && lent->tryGetValueImpl() != first->tryGetValueImpl() && hasText(program, lent, text));
+        AOT_TEST_CHECK(strings.stringForLiteralStringWord(word) == lent && strings.literalStringWordFor(lent) == word);
+        AOT_TEST_CHECK(strings.literalStringWordFor(jsString(vm, text.isolatedCopy())) == word);
+        AOT_TEST_CHECK(strings.literalStringWordFor(other) == std::bit_cast<uint64_t>(other));
+        AOT_TEST_CHECK(strings.literalStringIfCreated(number) == lent);
+    }
+    AOT_TEST_CHECK(strings.literalStringWordFor(jsString(vm, String("violet"_s))) == literalStringWord(numberOfLiteralWithoutText(program, "violet"_s)));
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(hasText(program, strings.literalStringIfCreated(numberOfLiteralWithoutText(program, "amber"_s)), "amber"_s));
+}
+
 static void testLiteralStringWordsInHeaders(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -533,6 +574,7 @@ std::span<const NativeTest> programStringsTests()
         { "program-strings/small-strings-are-the-engines"_s, narrow<testSmallStringsAreTheEngines> },
         { "program-strings/created-constant-is-fresh"_s, narrow<testCreatedConstantIsFresh> },
         { "program-strings/literal-string-words"_s, narrow<testLiteralStringWords> },
+        { "program-strings/first-string-from-outside-lends-its-text"_s, narrow<testFirstStringFromOutsideLendsItsText> },
         { "program-strings/literal-string-words-in-headers"_s, narrow<testLiteralStringWordsInHeaders> },
         { "program-strings/constant-gets-header"_s, narrow<testConstantGetsHeader> },
         { "program-strings/literal-string-word-of-rope"_s, narrow<testLiteralStringWordOfRope> },
@@ -547,6 +589,7 @@ std::span<const NativeTest> programStringsTests()
         { "program-strings/wide-references/constant-survives-collections"_s, wide<testConstantSurvivesCollections> },
         { "program-strings/wide-references/small-strings-are-the-engines"_s, wide<testSmallStringsAreTheEngines> },
         { "program-strings/wide-references/literal-string-words"_s, wide<testLiteralStringWords> },
+        { "program-strings/wide-references/first-string-from-outside-lends-its-text"_s, wide<testFirstStringFromOutsideLendsItsText> },
         { "program-strings/wide-references/key-cell-of-text"_s, wide<testKeyCellOfText> },
     };
     return tests;

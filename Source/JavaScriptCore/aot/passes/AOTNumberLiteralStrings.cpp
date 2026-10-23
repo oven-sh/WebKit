@@ -37,10 +37,13 @@ static constexpr OpcodeSet operationsHandingOnValues { Opcode::Parameter, Opcode
 namespace {
 
 struct StringsNeedingWords {
-    StringsNeedingWords(const Program& program, const ParallelLoops& loops)
-        : typesToVisit(program.types.size())
+    StringsNeedingWords(const Program& program, const ParallelLoops& loops, bool everyWordHasText)
+        : everyWordHasText(everyWordHasText)
+        , typesToVisit(program.types.size())
+        , typesFromOutsideToVisit(program.types.size())
         , typesHandedOnToVisit(program.types.size())
         , strings(program.strings.size())
+        , membersFromOutside(program.strings.size())
         , membersHandedOn(program.strings.size())
         , constantsOfCode(program.strings.size())
         , variablesNamedByCode(program.variables.size())
@@ -52,6 +55,7 @@ struct StringsNeedingWords {
             for (unsigned index = share * typesInShare; index < std::min(numberOfTypes, (share + 1) * typesInShare); ++index) {
                 bool hasLiteralStrings = program.at(TypeID(index)).hasLiteralStrings();
                 typesToVisit[index] = hasLiteralStrings;
+                typesFromOutsideToVisit[index] = hasLiteralStrings;
                 typesHandedOnToVisit[index] = hasLiteralStrings;
             }
         });
@@ -65,9 +69,13 @@ struct StringsNeedingWords {
             add(string);
     }
 
+    bool everyWordHasText;
     FastBitVector typesToVisit;
+    FastBitVector typesFromOutsideToVisit;
     FastBitVector typesHandedOnToVisit;
     FastBitVector strings;
+    // Each gets a word, and its text only if the program spells it.
+    FastBitVector membersFromOutside;
     // Each gets a word only if the program spells it.
     FastBitVector membersHandedOn;
     FastBitVector constantsOfCode;
@@ -92,7 +100,7 @@ uint32_t LiteralStringTable::numberOf(StringID string) const
 void LiteralStringTable::dump(PrintStream& out, const Program& program) const
 {
     for (size_t index = 0; index < m_strings.size(); ++index)
-        out.print(index, " \"", byteCast<char8_t>(program.string(m_strings[index])), "\"\n");
+        out.print(index, " \"", byteCast<char8_t>(program.string(m_strings[index])), "\"", isWithoutText(m_strings[index]) ? " without text" : "", "\n");
 }
 
 static void collectLiteralsOf(const Program& program, TypeID id, StringsNeedingWords& found)
@@ -101,19 +109,22 @@ static void collectLiteralsOf(const Program& program, TypeID id, StringsNeedingW
         found.add(program.at(id).stringLiterals.span());
 }
 
-enum class Source : bool { Program, Anywhere };
+enum class Source : uint8_t { Program, Anywhere, Parser };
 
 // A string from outside the program gets its word where it comes in, so every member has one there. Where the program hands its own values on, a member that it spells nowhere does not occur.
+// A parse by type compares what it reads with the texts of the members.
 static void collectLiteralsOf(const Program& program, TypeID id, Source source, StringsNeedingWords& found)
 {
-    if (source == Source::Anywhere) {
+    if (source == Source::Parser || found.everyWordHasText) {
         collectLiteralsOf(program, id, found);
         return;
     }
-    if (!found.typesHandedOnToVisit.at(id.index()) || !found.typesHandedOnToVisit.atomicSetAndCheck(id.index(), false))
+    FastBitVector& typesToVisit = source == Source::Anywhere ? found.typesFromOutsideToVisit : found.typesHandedOnToVisit;
+    if (!typesToVisit.at(id.index()) || !typesToVisit.atomicSetAndCheck(id.index(), false))
         return;
+    FastBitVector& members = source == Source::Anywhere ? found.membersFromOutside : found.membersHandedOn;
     for (StringID string : program.at(id).stringLiterals)
-        found.membersHandedOn.atomicSetAndCheck(string.index(), true);
+        members.atomicSetAndCheck(string.index(), true);
 }
 
 static void collectLiteralsOf(const Program& program, std::span<const DeclaredType> positions, Source source, StringsNeedingWords& found)
@@ -148,7 +159,7 @@ static void collectStringsNeedingWords(const Program& program, FunctionID id, So
         else
             found.constantsOfCode.atomicSetAndCheck(value.string().index(), true);
         forEachType(value, [&](TypeID type) {
-            collectLiteralsOf(program, type, found);
+            collectLiteralsOf(program, type, Source::Anywhere, found);
         });
         if (equalityComparisonsOfLiterals.contains(value.opcode))
             collectComparedConstants(program, function, value, found);
@@ -185,7 +196,7 @@ static void collectStoredLiterals(const Program& program, const FlowResults& flo
     for (const Layout& layout : program.layouts) {
         bool isFilledByParse = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
         for (const Field& field : layout.fields)
-            collectLiteralsOf(program, field.declared.type, !isFilledByParse && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere, found);
+            collectLiteralsOf(program, field.declared.type, isFilledByParse ? Source::Parser : field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere, found);
     }
     BitVector described = findVariablesDescribedToRunTime(program, flow);
     for (unsigned index = 0; index < program.variables.size(); ++index) {
@@ -202,7 +213,12 @@ static void collectStoredLiterals(const Program& program, const FlowResults& flo
     }
 }
 
-static BitVector leaveOutMembersSpelledNowhere(const Program& program, StringsNeedingWords& found)
+struct MembersSpelledNowhere {
+    BitVector withoutText;
+    BitVector leftOut;
+};
+
+static MembersSpelledNowhere findMembersSpelledNowhere(const Program& program, StringsNeedingWords& found)
 {
     for (const Data& data : program.data) {
         forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
@@ -210,21 +226,28 @@ static BitVector leaveOutMembersSpelledNowhere(const Program& program, StringsNe
                 found.constantsOfCode[string->value.index()] = true;
         });
     }
-    BitVector leftOut(program.strings.size());
+    MembersSpelledNowhere members { BitVector(program.strings.size()), BitVector(program.strings.size()) };
+    found.membersFromOutside.forEachSetBit([&](size_t index) {
+        if (!found.strings.at(index) && !found.constantsOfCode.at(index))
+            members.withoutText.quickSet(index);
+        found.strings[index] = true;
+    });
     found.membersHandedOn.forEachSetBit([&](size_t index) {
         if (found.strings.at(index))
             return;
         if (found.constantsOfCode.at(index))
             found.strings[index] = true;
         else
-            leftOut.quickSet(index);
+            members.leftOut.quickSet(index);
     });
-    return leftOut;
+    return members;
 }
 
 LiteralStringTable numberLiteralStrings(const Program& program, const FlowResults& flow, BuildContext& build)
 {
-    StringsNeedingWords found(program, build.parallelLoops());
+    // A validating build and the report of a mismatch hold every value against its type, also a text that the engine made and no code reads: Object.keys(). They read the texts of the members.
+    bool everyWordHasText = build.validates() || build.recordedOptions().policy() == MismatchPolicy::Report;
+    StringsNeedingWords found(program, build.parallelLoops(), everyWordHasText);
     BitVector isEnteredOtherwise = functionsCalledByHost(program, build.parallelLoops());
     for (const FlowIndirectCall& call : flow.indirectCalls())
         isEnteredOtherwise.set(call.callee.index());
@@ -236,11 +259,13 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
         collectStringsNeedingWords(program, id, everyCallIsSeen ? Source::Program : Source::Anywhere, found);
     });
     collectStoredLiterals(program, flow, found);
-    BitVector leftOut = leaveOutMembersSpelledNowhere(program, found);
+    MembersSpelledNowhere spelledNowhere = findMembersSpelledNowhere(program, found);
 
     StringID emptyString = program.strings.emptyString();
+    spelledNowhere.withoutText.quickClear(emptyString.index());
     LiteralStringTable table;
-    table.m_leftOut = WTF::move(leftOut);
+    table.m_leftOut = WTF::move(spelledNowhere.leftOut);
+    table.m_withoutText = WTF::move(spelledNowhere.withoutText);
     table.m_strings.reserveInitialCapacity(found.strings.bitCount() + 1);
     table.m_strings.append(emptyString);
     found.strings.forEachSetBit([&](size_t index) {
@@ -252,6 +277,8 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     if (build.exceeds(LimitID::MaxLiteralStrings, table.m_strings.size())) {
         size_t numberOfWords = std::max<uint64_t>(build.limit(LimitID::MaxLiteralStrings), 1);
         table.m_stringsWithoutWord = Vector<StringID>(table.m_strings.subspan(numberOfWords));
+        for (StringID string : table.m_stringsWithoutWord)
+            table.m_withoutText.quickClear(string.index());
         table.m_strings.shrink(numberOfWords);
     }
 

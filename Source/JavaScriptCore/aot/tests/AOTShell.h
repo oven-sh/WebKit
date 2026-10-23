@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include <span>
+#include <wtf/Forward.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
@@ -27,6 +28,7 @@ void enableGlobalsOfBuiltinTable();
 void mapImageFromOptions();
 void addShellFunctions(VM&, JSGlobalObject*);
 std::span<const ASCIILiteral> shellFunctionNames();
+bool isKeyOfCompiledModule(const String&);
 extern const ModuleHost moduleHost;
 
 } // namespace JSC::AOT::Shell

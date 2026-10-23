@@ -10,6 +10,7 @@
 
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTIdentifierTable.h"
+#include "AOTLiteralStringDigest.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTTextEncoder.h"
 #include "AOTThreads.h"
@@ -24,16 +25,20 @@ namespace {
 struct TextProperties {
     uint32_t hash { 0 };
     uint32_t length { 0 };
+    std::array<uint8_t, 20> digest { };
 };
 
 } // anonymous namespace
 
 static Vector<TextProperties> computeTextProperties(const TableEncoder& encoder, std::span<const StringID> strings)
 {
+    const LiteralStringTable& literalStrings = *encoder.inputs.pipeline.literalStrings;
     Vector<TextProperties> properties(strings.size());
     forEachIndexInParallel(encoder.build.parallelLoops(), static_cast<unsigned>(strings.size()), [&](unsigned index) {
         DecodedString decoded = decodeForImage(encoder.program.strings[strings[index]]);
-        properties[index] = { decoded.hash, decoded.length() };
+        properties[index] = { decoded.hash, decoded.length(), { } };
+        if (literalStrings.isWithoutText(strings[index]))
+            properties[index].digest = digestOfLiteralString(decoded.is16Bit() ? StringView(decoded.units16.span()) : StringView(byteCast<Latin1Character>(decoded.units8.span())));
     });
     return properties;
 }
@@ -88,24 +93,29 @@ static void encodeKeyCellIdentifiers(TableEncoder& encoder)
 
 static void encodeLiteralStrings(TableEncoder& encoder)
 {
-    std::span<const StringID> literalStrings = encoder.inputs.pipeline.literalStrings->strings();
+    const LiteralStringTable& numbered = *encoder.inputs.pipeline.literalStrings;
+    std::span<const StringID> literalStrings = numbered.strings();
     RELEASE_ASSERT(literalStrings.size() <= maxLiteralStrings);
     encoder.setTable(ProgramTableIndex::literalStrings, Vector<uint32_t>(literalStrings.size(), [&](size_t number) {
-        return encoder.stringNumber(literalStrings[number]);
+        return numbered.isWithoutText(literalStrings[number]) ? literalStrings[number].index() : encoder.stringNumber(literalStrings[number]);
     }));
 
     Vector<TextProperties> properties = computeTextProperties(encoder, literalStrings);
     Vector<uint32_t> table = createHashTable(literalStrings.size());
     Vector<LiteralStringLimits, 1> limits;
+    Vector<LiteralStringDigest> digests;
     if (!literalStrings.empty())
         limits.append(LiteralStringLimits { 0 });
     for (uint32_t number = 0; number < literalStrings.size(); ++number) {
         uint32_t hash = properties[number].hash;
         insertIntoHashTable(table, hash, AOT::LiteralStringTable::entryFor(number, hash));
         limits[0].maxLength = std::max(limits[0].maxLength, properties[number].length);
+        if (numbered.isWithoutText(literalStrings[number]))
+            digests.append(LiteralStringDigest { number, properties[number].length, properties[number].digest });
     }
     encoder.setTable(ProgramTableIndex::literalStringTable, table);
     encoder.setTable(ProgramTableIndex::literalStringLimits, limits);
+    encoder.setTable(ProgramTableIndex::literalStringDigests, digests);
 }
 
 // The atom tables of the process ask this table for the atom of the image before they make one of their own, so it lists each identifier that is found by its text.

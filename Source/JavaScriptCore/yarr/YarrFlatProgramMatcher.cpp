@@ -637,6 +637,12 @@ struct Machine {
         return jumpTo(op->target);
     }
 
+    ALWAYS_INLINE Step runCountTurn()
+    {
+        remainingSteps = matchLimit;
+        return --program.remainingTurns ? Step::Next : Step::HitLimit;
+    }
+
     ALWAYS_INLINE Step runLoopBackUnlessEmpty()
     {
         if (registers()[op->registerIndex] == position)

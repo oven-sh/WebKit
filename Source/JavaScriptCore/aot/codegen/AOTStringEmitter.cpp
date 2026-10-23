@@ -62,6 +62,8 @@ private:
 
 } // anonymous namespace
 
+static constexpr uint32_t smallestStringImplSize = StringImpl::headerSize<Latin1Character>();
+
 static LValue markImmutable(LValue load)
 {
     load->as<B3::MemoryValue>()->setReadsMutability(B3::Mutability::Immutable);
@@ -126,7 +128,7 @@ Pointer StringEmitter::implOfFlatString(CellPointer flat)
     if (auto opened = m_openedStrings.find(flat.value()); opened != m_openedStrings.end())
         return opened->value.impl;
     Pointer impl = loadImmutableField(asPointer(flat), m_heaps.JSString_value);
-    m_proc.setKnownDereferenceableBytes(impl.value(), sizeof(StringImpl));
+    m_proc.setKnownDereferenceableBytes(impl.value(), smallestStringImplSize);
     return impl;
 }
 
@@ -535,7 +537,7 @@ void StringEmitter::generateFlattenString(const ValueContext& value)
     m_out.appendTo(continuation);
     CellPointer flat(m_out.phi(b3TypeOf(CellPointer::representation), cellWhenFlat, cellWhenRope));
     Pointer impl(m_out.phi(b3TypeOf(Pointer::representation), implWhenFlat, implWhenRope));
-    m_proc.setKnownDereferenceableBytes(impl.value(), sizeof(StringImpl));
+    m_proc.setKnownDereferenceableBytes(impl.value(), smallestStringImplSize);
     m_openedStrings.add(flat.value(), OpenedString { impl, sourceInImpl(impl, true) });
     define(value, flat);
 }

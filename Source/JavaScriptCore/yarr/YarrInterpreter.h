@@ -538,6 +538,8 @@ public:
             size += m_flatProgramFor8BitSubjects->estimatedSizeInBytes();
         if (m_bytecodeBehindFlatProgram)
             size += m_bytecodeBehindFlatProgram->estimatedSizeInBytes();
+        if (m_flatProgramThatCountsTurns)
+            size += m_flatProgramThatCountsTurns->estimatedSizeInBytes();
         return size;
     }
 
@@ -597,6 +599,9 @@ public:
     // A pattern that has only a flat program gets its bytecode out of its text on the day the flat program runs out of frames.
     String m_source;
     std::unique_ptr<BytecodePattern> m_bytecodeBehindFlatProgram;
+    // Made out of the text on the day the flat program gives up at matchLimit.
+    std::unique_ptr<FlatProgram> m_flatProgramThatCountsTurns;
+    bool m_hasAskedForFlatProgramThatCountsTurns { false };
     // Where no JIT stands in front of the bytecode: a match is given up where the JIT gives it up, not earlier. See Interpreter::countsTowardMatchLimit().
     bool m_countsWhatJITCounts { false };
 

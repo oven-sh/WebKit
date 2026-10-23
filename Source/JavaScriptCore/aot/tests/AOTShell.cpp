@@ -326,6 +326,11 @@ std::span<const ASCIILiteral> shellFunctionNames()
     return functionNames;
 }
 
+bool isKeyOfCompiledModule(const String& key)
+{
+    return !!findModule(key);
+}
+
 static ModuleID moduleOfModuleObject(JSGlobalObject* globalObject, JSObject* module)
 {
     return ModuleID(static_cast<uint32_t>(module->getDirect(globalObject->vm(), Identifier::fromString(globalObject->vm(), "numberInImage"_s)).asInt32()));

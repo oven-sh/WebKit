@@ -11,6 +11,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTSlotRepresentation.h"
 #include "JSCJSValue.h"
+#include <array>
 #include <bit>
 #include <span>
 
@@ -53,6 +54,14 @@ struct LiteralStringLimits {
     uint32_t maxLength;
 };
 static_assert(sizeof(LiteralStringLimits) == 4 && isImageRecord<LiteralStringLimits>);
+
+// Of a literal string whose text is not in the image: digestOfLiteralString().
+struct LiteralStringDigest {
+    uint32_t number;
+    uint32_t length;
+    std::array<uint8_t, 20> digest;
+};
+static_assert(sizeof(LiteralStringDigest) == 28 && isImageRecord<LiteralStringDigest>);
 
 struct LiteralStringTable {
     static constexpr unsigned indexBits = 19;
@@ -345,6 +354,7 @@ static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && nu
     v(literalStrings, uint32_t) \
     v(literalStringTable, uint32_t) \
     v(literalStringLimits, LiteralStringLimits) \
+    v(literalStringDigests, LiteralStringDigest) \
     v(bigIntConstants, uint32_t) \
     v(data, uint64_t) \
     v(requests, uint32_t) \

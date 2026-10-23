@@ -72,8 +72,8 @@ const ARMV8 = "-march=armv8-a+crc";
 // "debug-asan". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
 //
 // `aot: false` is ENABLE_AOT=0: neither the ahead-of-time compiler nor the run time of its programs is in the libraries.
-// That is what `bun` links. Each such variant has a twin with both, "-aot", which is what `bun-aot` links. Every other
-// variant has both: they are what the tests of the compiler run on.
+// That is what a bun built with --aot=off links. Each such variant has a twin with both, "-aot", which is what `bun`
+// links. Every other variant has both.
 const variants = {
   "release": { buildType: "Release", mimalloc: true, aot: false },
   "aot": { buildType: "Release", mimalloc: true },
@@ -118,15 +118,15 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //   image(arch)     the name of the toolchain image, one per distinct `base` stage: per architecture where `base`
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
-//   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
-//                   the runner it does that on: a machine of the lane's own platform and architecture. "lto" is what
-//                   bun ships and "lto-aot" what bun-aot ships, and nothing else runs "lto-hardened-aot". The asan lanes
-//                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
-//                   on Windows. `quick` is --quick, for a runner with few cores.
+//   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with,
+//                   and the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
+//                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot". The
+//                   asan lanes are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not
+//                   finish in 275 on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
 //   bunTests        per architecture, the variants bun's CI links and then runs bun's tests with (buildPlatforms and
-//                   testPlatforms in bun's .buildkite/ci.ts, ltoDefault in its scripts/build/config.ts), each with its
-//                   "-aot" twin where it has one. See `programs`.
+//                   testPlatforms in bun's .buildkite/ci.ts, ltoDefault in its scripts/build/config.ts): of a variant
+//                   that has an "-aot" twin it links the twin. See `programs`.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,

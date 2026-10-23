@@ -231,6 +231,9 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
         return;
     }
     header.flags = (integers ? RuntimeType::hasIntegerRange : 0) | (contentsOffset ? RuntimeType::hasContents : 0) | (layoutSet ? RuntimeType::hasLayoutSet : 0);
+    const LiteralStringTable& numbered = *encoder.inputs.pipeline.literalStrings;
+    for (StringID string : literalStrings)
+        header.flags |= numbered.isWithoutText(string) ? RuntimeType::hasLiteralStringWithoutText : numbered.indexOf(string) ? 0 : RuntimeType::hasLiteralStringWithoutWord;
     header.numberOfCellTests = static_cast<uint16_t>(cellTests.size());
     header.numberOfLiteralStrings = static_cast<uint16_t>(literalStrings.size());
 
@@ -239,7 +242,7 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
     for (const RuntimeCellTest& test : cellTests)
         appendRecord(words, test);
     for (StringID string : literalStrings)
-        words.append(encoder.stringNumber(string));
+        words.append(numbered.isWithoutText(string) ? string.index() : encoder.stringNumber(string));
     if (integers) {
         appendInt64(words, integers->minimum);
         appendInt64(words, integers->maximum);
