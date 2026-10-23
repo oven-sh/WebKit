@@ -33,6 +33,8 @@
 #include <wtf/ConcurrentPtrHashSet.h>
 #include <wtf/Condition.h>
 #include <wtf/Deque.h>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
@@ -47,6 +49,8 @@ namespace JSC {
 
 class Heap;
 class HeapCell;
+class JSCell;
+class JSWeakMap;
 class MarkStackArray;
 class MarkingConstraint;
 class MarkingConstraintSet;
@@ -82,6 +86,14 @@ public:
     bool hasHeap(Heap& heap) const { return m_heaps.contains(&heap); }
 
     SlotVisitor& collectorSlotVisitor() LIFETIME_BOUND { return *m_collectorSlotVisitor; }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // True once this collection resolves WeakMap entries through its key-to-values table
+    // (buildPendingEphemeronsIfNeeded).
+    bool isInEphemeronLinearMode() const { return m_ephemeronLinearMode; }
+    // How many marking fixpoint rounds the last collection ran, for tests ($vm).
+    unsigned fixpointRoundsOfLastCycle() const { return m_fixpointRoundsOfLastCycle; }
+#endif
 
     // The GC verifier (Options::verifyGC()).
     bool isMarkingForGCVerifier() const { return m_isMarkingForGCVerifier; }
@@ -193,6 +205,13 @@ private:
     void setUpVisitors(CollectionScope);
     void endCollectionInEachHeap();
 
+#if USE(BUN_JSC_ADDITIONS)
+    void buildPendingEphemeronsIfNeeded();
+    uint32_t countPendingEphemerons(JSWeakMap*);
+    void enrolPendingEphemerons(JSWeakMap*);
+    void resetPendingEphemerons();
+#endif
+
     void stopThePeriphery();
     void resumeThePeriphery();
 
@@ -220,7 +239,12 @@ private:
 
     // Mutated by the marking threads, grouped so that marking dirties as few cache lines as possible and
     // so that fields the mutator reads are not on those lines.
+#if USE(BUN_JSC_ADDITIONS)
+    // SlotVisitor::revisitLateWeakMapsWhenStacksRanDry reads it without m_markingMutex.
+    std::atomic<unsigned> m_numberOfActiveParallelMarkers { 0 };
+#else
     unsigned m_numberOfActiveParallelMarkers { 0 };
+#endif
     unsigned m_numberOfWaitingParallelMarkers WTF_GUARDED_BY_LOCK(m_markingMutex) { 0 };
     Lock m_markingMutex;
     Condition m_markingConditionVariable;
@@ -237,6 +261,29 @@ private:
 
     // Declared ahead of the visitors, each of which binds a reference to it on construction.
     ConcurrentPtrHashSet m_opaqueRoots;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // WeakMap entries whose key was not marked when the collector listed them, by key: the head
+    // map gives the 1-based index of the first entry of a key in m_pendingEphemerons, and each
+    // entry the index of the next one for the same key (0 ends the list). A SlotVisitor that
+    // visits a cell in linear mode appends the values listed for it. The collector fills the
+    // table with the world stopped and every marking thread idle, and nothing writes it while
+    // they run, so readers take no lock.
+    struct PendingEphemeron {
+        JSCell* value;
+        uint32_t next;
+    };
+    UncheckedKeyHashMap<JSCell*, uint32_t> m_pendingEphemeronHeads;
+    Vector<PendingEphemeron> m_pendingEphemerons;
+    // The maps listed so far in this collection. A map listed again (a write barrier greyed
+    // it) has its entries checked against the table, so that none is listed twice.
+    UncheckedKeyHashSet<JSWeakMap*> m_enrolledWeakMaps;
+    bool m_ephemeronLinearMode { false };
+    unsigned m_productiveWeakMapRounds { 0 };
+    std::atomic<bool> m_weakMapOutputConstraintDidVisit { false };
+    unsigned m_fixpointRoundsThisCycle { 0 };
+    unsigned m_fixpointRoundsOfLastCycle { 0 };
+#endif
 
     std::unique_ptr<SlotVisitor> m_collectorSlotVisitor;
 

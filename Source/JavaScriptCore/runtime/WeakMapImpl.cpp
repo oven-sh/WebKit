@@ -28,7 +28,9 @@
 #include "WeakMapImpl.h"
 
 #include "AuxiliaryBarrierInlines.h"
+#include "Collector.h"
 #include "JSCJSValueInlines.h"
+#include "JSWeakMap.h"
 #include "SlotVisitorInlines.h"
 #include "WeakMapImplInlines.h"
 
@@ -53,6 +55,18 @@ void WeakMapImpl<WeakMapBucket>::visitChildrenImpl(JSCell* cell, Visitor& visito
     Base::visitChildren(thisObject, visitor);
     if (thisObject->hasOutOfLineBuffer())
         visitor.reportExtraMemoryVisited(thisObject->m_capacity * sizeof(WeakMapBucket));
+#if USE(BUN_JSC_ADDITIONS)
+    if constexpr (isWeakMap() && std::is_same_v<Visitor, SlotVisitor>) {
+        // A map that gets marked after the collector built its key-to-values table
+        // (Collector::buildPendingEphemeronsIfNeeded) has no entry in it. The visitor walks it
+        // now, and again when its stacks run dry, so that a chain through this map goes on
+        // inside the current drain instead of waiting for the next round of the "O" constraint.
+        // A visit that a write barrier caused (a set() on a map that marking has passed) only
+        // notes the map: the collector lists its new entries before the next round.
+        if (visitor.collector().isInEphemeronLinearMode()) [[unlikely]]
+            visitor.visitWeakMapInLinearMode(static_cast<JSWeakMap*>(thisObject));
+    }
+#endif
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename WeakMapBucket>, WeakMapImpl<WeakMapBucket>);

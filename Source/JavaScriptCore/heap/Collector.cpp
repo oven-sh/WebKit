@@ -31,13 +31,16 @@
 #include "IncrementalSweeper.h"
 #include "JITWorklistInlines.h"
 #include "JSCInlines.h"
+#include "JSWeakMap.h"
 #include "MarkingConstraintSet.h"
 #include "MutatorScheduler.h"
 #include "SpaceTimeMutatorScheduler.h"
 #include "StochasticSpaceTimeMutatorScheduler.h"
+#include "SubspaceInlines.h"
 #include "SynchronousStopTheWorldMutatorScheduler.h"
 #include "TypeProfiler.h"
 #include "VerifierSlotVisitorInlines.h"
+#include "WeakMapImplInlines.h"
 #include <wtf/ListDump.h>
 #include <wtf/ParkingLot.h>
 #include <wtf/Scope.h>
@@ -412,6 +415,9 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
 
     // After each heap's beginMarking has determined this collection's marking version.
     setUpVisitors(scope);
+#if USE(BUN_JSC_ADDITIONS)
+    resetPendingEphemerons();
+#endif
 
     m_parallelMarkersShouldExit = false;
 
@@ -519,6 +525,10 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
         // minimum, we could use this for work estimates - but it's probably more than just an
         // estimate.
         // https://bugs.webkit.org/show_bug.cgi?id=166828
+
+#if USE(BUN_JSC_ADDITIONS)
+        buildPendingEphemeronsIfNeeded();
+#endif
 
         // Wondering what this does? Look at Heap::createCoreConstraints(). The DOM and others can also
         // add their own using Heap::addMarkingConstraint().
@@ -679,6 +689,9 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
 
 void Collector::endCollectionInEachHeap()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    resetPendingEphemerons();
+#endif
     forEachHeap([&](Heap& heap) {
         ASSERT(heap.m_mutatorMarkStack->isEmpty());
 
@@ -700,6 +713,124 @@ void Collector::endCollectionInEachHeap()
         heap.didFinishCollection();
     });
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Collector::resetPendingEphemerons()
+{
+    m_pendingEphemeronHeads.clear();
+    m_pendingEphemerons.clear();
+    m_enrolledWeakMaps.clear();
+    forEachSlotVisitor([](SlotVisitor& visitor) {
+        visitor.m_lateWeakMaps.clear();
+        visitor.m_lateWeakMapsRevisited.clear();
+        visitor.m_weakMapsToEnrol.clear();
+    });
+    m_ephemeronLinearMode = false;
+    m_productiveWeakMapRounds = 0;
+    m_weakMapOutputConstraintDidVisit.store(false, std::memory_order_relaxed);
+    m_fixpointRoundsOfLastCycle = m_fixpointRoundsThisCycle;
+    m_fixpointRoundsThisCycle = 0;
+}
+
+// The entries of the map that the table would list: key and value not marked, value a cell.
+uint32_t Collector::countPendingEphemerons(JSWeakMap* weakMap)
+{
+    Heap& heap = *Heap::heap(weakMap);
+    uint32_t count = 0;
+    weakMap->forEachEntryWithUnmarkedKey(heap, [&](JSCell*, JSValue value) {
+        if (value.isCell() && !heap.isMarked(value.asCell()))
+            count++;
+    });
+    return count;
+}
+
+// Lists the entries of the map whose key and value are not marked, if they fit in the table.
+// A value that is marked needs nothing, and a value that is not a cell cannot be marked. A map
+// listed again (a write barrier greyed it) has its entries checked against the table.
+void Collector::enrolPendingEphemerons(JSWeakMap* weakMap)
+{
+    size_t room = Options::ephemeronTableMaxEntries() - std::min<size_t>(m_pendingEphemerons.size(), Options::ephemeronTableMaxEntries());
+    // size() is a cheap upper bound: a map with more keys than the room left is not walked at all.
+    if (weakMap->size() > room || countPendingEphemerons(weakMap) > room)
+        return;
+    bool listedBefore = !m_enrolledWeakMaps.add(weakMap).isNewEntry;
+    Heap& heap = *Heap::heap(weakMap);
+    weakMap->forEachEntryWithUnmarkedKey(heap, [&](JSCell* key, JSValue value) {
+        if (!value.isCell() || heap.isMarked(value.asCell()))
+            return;
+        auto result = m_pendingEphemeronHeads.add(key, 0);
+        if (listedBefore) {
+            for (uint32_t index = result.iterator->value; index; index = m_pendingEphemerons[index - 1].next) {
+                if (m_pendingEphemerons[index - 1].value == value.asCell())
+                    return;
+            }
+        }
+        m_pendingEphemerons.append({ value.asCell(), result.iterator->value });
+        result.iterator->value = m_pendingEphemerons.size();
+    });
+}
+
+// The "O" constraint visits the value of every WeakMap entry whose key is marked, once per
+// fixpoint round. A chain of entries where each value is the next key (or leads to it) gives
+// the constraint one or two new keys per round, so marking runs a round per link. After
+// Options::ephemeronFixpointIterations() rounds in which WeakMaps produced work, the collector
+// lists the entries whose key is still unmarked, by key, of the marked WeakMaps, smallest
+// first, up to Options::ephemeronTableMaxEntries(). SlotVisitor::visitChildren then appends
+// the values of a key the moment it visits that key, so a chain resolves inside one drain. A
+// WeakMap that is not in the table when marking reaches it (it got marked after the build, or
+// a write barrier greyed it again) is listed before the next round; the visitor that marks a
+// late map also walks it itself (SlotVisitor::visitWeakMapInLinearMode). The "O" constraint
+// keeps running as before, and a map that does not fit in the table stays with it. A stale
+// entry (the mutator deleted or replaced it after the build) can only keep a value alive for
+// this one collection.
+void Collector::buildPendingEphemeronsIfNeeded()
+{
+    m_fixpointRoundsThisCycle++;
+
+    // The world is stopped and every marking thread is idle here (runFixpointPhase checked
+    // didReachTermination), so nothing reads the table while it changes.
+    if (m_ephemeronLinearMode) {
+        UncheckedKeyHashSet<JSWeakMap*> listedThisRound;
+        forEachSlotVisitor([&](SlotVisitor& visitor) {
+            for (auto* list : { &visitor.m_lateWeakMaps, &visitor.m_lateWeakMapsRevisited, &visitor.m_weakMapsToEnrol }) {
+                for (JSWeakMap* weakMap : *list) {
+                    if (listedThisRound.add(weakMap).isNewEntry)
+                        enrolPendingEphemerons(weakMap);
+                }
+                list->clear();
+            }
+        });
+        return;
+    }
+
+    if (!m_weakMapOutputConstraintDidVisit.load(std::memory_order_relaxed))
+        return;
+    m_weakMapOutputConstraintDidVisit.store(false, std::memory_order_relaxed);
+    if (++m_productiveWeakMapRounds <= Options::ephemeronFixpointIterations())
+        return;
+
+    Vector<std::pair<JSWeakMap*, uint32_t>> weakMaps;
+    forEachHeap([&](Heap& heap) {
+        if (!heap.m_weakMapSpace)
+            return;
+        heap.m_weakMapSpace->forEachMarkedCell([&](HeapCell* heapCell, HeapCell::Kind) {
+            auto* weakMap = static_cast<JSWeakMap*>(heapCell);
+            if (weakMap->size() > Options::ephemeronTableMaxEntries())
+                return;
+            if (uint32_t count = countPendingEphemerons(weakMap))
+                weakMaps.append({ weakMap, count });
+        });
+    });
+    std::ranges::stable_sort(weakMaps, [](auto& a, auto& b) { return a.second < b.second; });
+    for (auto& [weakMap, count] : weakMaps) {
+        if (m_pendingEphemerons.size() + count > Options::ephemeronTableMaxEntries())
+            break;
+        enrolPendingEphemerons(weakMap);
+    }
+    m_ephemeronLinearMode = true;
+    dataLogIf(Options::logGC(), "E=", m_pendingEphemerons.size(), " ");
+}
+#endif
 
 bool Collector::changePhase(GCConductor conn, CollectorPhase nextPhase)
 {
