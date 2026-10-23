@@ -467,6 +467,16 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
         return;
     Locker locker { AdoptLock, collector().m_markingMutex };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A cycle that visits little is done sooner on this thread alone than with the helpers woken, contending for this
+    // lock and seen off again. The helpers join once this visitor has done enough to show that there is more.
+    if (!collector().m_parallelMarkersStarted) {
+        if (bytesMarked() < Options::minimumBytesMarkedForParallelMarking())
+            return;
+        collector().startParallelMarkers(locker);
+    }
+#endif
+
     // Otherwise, assume that a thread will go idle soon, and donate.
     from.donateSomeCellsTo(to);
 
@@ -729,6 +739,11 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTi
     
     JSC::Heap& heap = m_collector.heap();
     if (Options::numberOfGCMarkers() == 1
+#if USE(BUN_JSC_ADDITIONS)
+        // Until the helpers have joined this cycle, the marking is this thread's to do (and its draining starts them
+        // once there is enough of it).
+        || !collector().parallelMarkersStarted()
+#endif
         || (heap.m_worldState.load() & Heap::mutatorWaitingBit)
         || !heap.hasHeapAccess()
         || heap.worldIsStopped()) {
