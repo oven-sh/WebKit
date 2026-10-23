@@ -90,6 +90,7 @@
 #include "WasmCapabilities.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "BufferAccessorRegistry.h"
+#include "Collector.h"
 #include "JSArrayBufferView.h"
 #include "JSBigInt.h"
 #include "MathCommon.h"
@@ -2185,6 +2186,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
 static JSC_DECLARE_HOST_FUNCTION(functionCancelTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionHasPendingTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionFixpointRoundsOfLastGC);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionGCSweepAsynchronously);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
 static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
@@ -2844,6 +2848,16 @@ JSC_DEFINE_HOST_FUNCTION(functionEdenGC, (JSGlobalObject* globalObject, CallFram
     VMInspector::edenGC(&globalObject->vm());
     return JSValue::encode(jsUndefined());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// How many marking fixpoint rounds the last collection ran.
+// Usage: $vm.fixpointRoundsOfLastGC()
+JSC_DEFINE_HOST_FUNCTION(functionFixpointRoundsOfLastGC, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().heap.collector().fixpointRoundsOfLastCycle()));
+}
+#endif
 
 // Runs a full GC, but sweep asynchronously.
 // Usage: $vm.gcSweepAsynchronously()
@@ -5931,6 +5945,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "gc"_s, functionGC, 0);
     addFunction(vm, alwaysAllow, "gcSweepAsynchronously"_s, functionGCSweepAsynchronously, 0);
     addFunction(vm, alwaysAllow, "edenGC"_s, functionEdenGC, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "fixpointRoundsOfLastGC"_s, functionFixpointRoundsOfLastGC, 0);
+#endif
     addFunction(vm, alwaysAllow, "dumpSubspaceHashes"_s, functionDumpSubspaceHashes, 0);
 
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);

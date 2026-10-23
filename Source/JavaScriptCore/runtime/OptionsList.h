@@ -97,11 +97,15 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, validatePrelinkedModuleInfo, false, Normal, "Cross-check every pre-resolved import/export binding of a PrelinkedModuleGraph against the specification's ResolveExport and crash on a mismatch."_s)
 #define FOR_EACH_JSC_STATIC_CODE_OPTION(v) \
     v(Bool, disallowNonStaticCode, false, Normal, "Only code whose SourceProvider was made with SourceProvenance::Static runs: anything else throws an EvalError."_s)
+#define FOR_EACH_JSC_EPHEMERON_MARKING_OPTION(v) \
+    v(Unsigned, ephemeronFixpointIterations, 10, Normal, "After this many marking fixpoint rounds in which WeakMaps produced new work, the collector lists the entries whose key is still unmarked by key, and a visitor that marks such a key appends its values at once (Collector::buildPendingEphemeronsIfNeeded)."_s) \
+    v(Unsigned, ephemeronTableMaxEntries, 131072, Normal, "The most WeakMap entries that list can hold in one collection. Smaller maps are listed first; a map that does not fit stays with the per-round scan."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v)
 #define FOR_EACH_JSC_STATIC_CODE_OPTION(v)
+#define FOR_EACH_JSC_EPHEMERON_MARKING_OPTION(v)
 #endif
 
 #define FOR_EACH_JSC_OPTION(v)                                          \
@@ -473,6 +477,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, minimumNumberOfScansBetweenRebalance, 100, Normal, nullptr) \
     v(Unsigned, numberOfGCMarkers, computeNumberOfGCMarkers(8), Normal, nullptr) \
     v(Bool, useParallelMarkingConstraintSolver, true, Normal, nullptr) \
+    FOR_EACH_JSC_EPHEMERON_MARKING_OPTION(v) \
     v(Unsigned, opaqueRootMergeThreshold, 1000, Normal, nullptr) \
     v(Unsigned, maxHeapSizeAsRAMSizeMultiple, 0, Normal, nullptr) \
     v(Double, minHeapUtilization, 0.8, Normal, nullptr) \
