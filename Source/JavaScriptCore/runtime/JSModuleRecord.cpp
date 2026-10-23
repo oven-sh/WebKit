@@ -40,6 +40,7 @@
 #include "JSModuleNamespaceObject.h"
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
+#include "SyntheticModuleRecord.h"
 #include "SourceProfiler.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakGCMapInlines.h"
@@ -263,6 +264,13 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
                 return IterationStatus::Continue;
             Resolution resolution = resolveImport(globalObject, localName);
             RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
+#if USE(BUN_JSC_ADDITIONS)
+            // (Not for a record with imports that may be without their binding: fillImportSlot decides for those.)
+            if (m_pendingImports) [[unlikely]]
+                return IterationStatus::Done;
+            if (resolution.type == Resolution::Type::Resolved && !resolution.moduleRecord->moduleEnvironmentMayBeNull()) [[unlikely]]
+                return IterationStatus::Continue;
+#endif
             if (resolution.type == Resolution::Type::Resolved)
                 environment->importSlot(index).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
             return IterationStatus::Continue;
@@ -300,6 +308,22 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
     std::optional<AsyncContextSwapScope> loaderAsyncContext;
     if (JSValue asyncContext = moduleLoader()->asyncContext())
         loaderAsyncContext.emplace(vm, globalObject, asyncContext);
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The modules this one imports from have evaluated, unless they are in an import cycle with it: an import that
+    // link left for later because it waited for a record that hasPendingExports() gets its binding now, or link's error.
+    if (m_pendingImports) [[unlikely]] {
+        linkPendingImports(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            if (hasTLA()) {
+                ASSERT(capability);
+                asyncCapability(vm, capability);
+                asyncModuleResolveEvaluation(globalObject, vm, scope, this, JSValue());
+            }
+            return;
+        }
+    }
 #endif
 
     // 1. Let moduleContext be a new ECMAScript code execution context.
@@ -428,18 +452,143 @@ auto JSModuleRecord::resolveImportWithSlot(JSGlobalObject* globalObject, const I
 #endif
     Resolution resolution = resolveImport(globalObject, localName);
     RETURN_IF_EXCEPTION(scope, Resolution::error());
+#if USE(BUN_JSC_ADDITIONS)
+    if (resolution.type == Resolution::Type::Resolved || resolution.type == Resolution::Type::Pending)
+#else
     if (resolution.type == Resolution::Type::Resolved)
+#endif
         importSlot = importSlotIndex(localName.impl());
     return resolution;
 }
 
-JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject, unsigned index)
+#if USE(BUN_JSC_ADDITIONS)
+bool JSModuleRecord::hasImportSlot(UniquedStringImpl* localName)
+{
+    if (isPrelinked()) {
+        const auto* import = prelinkedGraph()->findImport(prelinkedModule(), localName);
+        return import && !import->isNamespace();
+    }
+    importSlotNames();
+    return m_importSlotIndices.contains(localName);
+}
+
+std::optional<unsigned> JSModuleRecord::earlyImportLinkOffset(unsigned importSlot) const
+{
+    if (!m_pendingImports) [[likely]]
+        return std::nullopt;
+    auto iterator = m_pendingImports->earlyLinks.find(importSlot);
+    if (iterator == m_pendingImports->earlyLinks.end())
+        return std::nullopt;
+    return iterator->value.offset;
+}
+
+unsigned JSModuleRecord::linkImportEarly(unsigned importSlot, const Resolution& resolution)
+{
+    auto result = ensurePendingImports().earlyLinks.add(importSlot, EarlyImportLink { });
+    if (result.isNewEntry && (resolution.type == Resolution::Type::Pending || resolution.type == Resolution::Type::Resolved)) {
+        if (auto* exporter = dynamicDowncast<SyntheticModuleRecord>(resolution.moduleRecord); exporter && exporter->hasPendingExports()) {
+            // The record that is waited for says where the binding will be: code that this record shares with records
+            // of other loaders embeds the offset that was reserved in it for them (resolvesImportsLike). Its namespace
+            // object (a resolved `export * as ns`) has its place in every synthetic record's environment.
+            if (resolution.type == Resolution::Type::Pending)
+                result.iterator->value = { exporter, exporter->reserveExportOffset(resolution.localName.impl()) };
+            else
+                result.iterator->value = { exporter, SyntheticModuleRecord::namespaceScopeOffset };
+        }
+    }
+    return result.iterator->value.offset;
+}
+
+// fillImportSlot() for an import that is not bound like any other: it waits for a record that hasPendingExports(), it
+// could not be bound, or some code of this record was linked before it was bound.
+JSLexicalEnvironment* JSModuleRecord::fillImportSlotSlow(JSGlobalObject* globalObject, unsigned index, const Resolution& resolution)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const EarlyImportLink* early = nullptr;
+    if (m_pendingImports) {
+        if (auto iterator = m_pendingImports->earlyLinks.find(index); iterator != m_pendingImports->earlyLinks.end())
+            early = &iterator->value;
+    }
+
+    // An environment with `value` (empty: a binding in its TDZ) where the reading code expects the binding. The import
+    // slot stays empty, so the next read comes here again.
+    auto placeholder = [&](unsigned offset, JSValue value) -> JSLexicalEnvironment* {
+        SymbolTable* symbolTable = SymbolTable::create(vm);
+        symbolTable->didUseScopeOffset(ScopeOffset(offset));
+        JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsTDZValue());
+        if (value)
+            environment->variableAt(ScopeOffset(offset)).set(vm, environment, value);
+        return environment;
+    };
+
+    switch (resolution.type) {
+    case Resolution::Type::Pending: {
+        // The record that may export the binding has not evaluated (an import cycle). The binding has no value yet.
+        unsigned offset = 0;
+        if (early)
+            offset = early->offset;
+        else if (auto* exporter = dynamicDowncast<SyntheticModuleRecord>(resolution.moduleRecord))
+            offset = exporter->reserveExportOffset(resolution.localName.impl());
+        return placeholder(offset, jsUndefined());
+    }
+
+    case Resolution::Type::Resolved: {
+        if (resolution.localName == vm.propertyNames->starNamespacePrivateName) {
+            JSModuleNamespaceObject* exportedNamespace = resolution.moduleRecord->getModuleNamespace(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            // A record that hasPendingExports() has no environment to keep its namespace object in yet.
+            if (!resolution.moduleRecord->moduleEnvironmentMayBeNull())
+                return placeholder(early ? early->offset : SyntheticModuleRecord::namespaceScopeOffset, exportedNamespace);
+        }
+        JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironment();
+        if (early) [[unlikely]] {
+            ScopeOffset scopeOffset;
+            {
+                SymbolTable* symbolTable = environment->symbolTable();
+                ConcurrentJSLocker locker(symbolTable->m_lock);
+                auto iterator = symbolTable->find(locker, resolution.localName.impl());
+                RELEASE_ASSERT(iterator != symbolTable->end(locker));
+                scopeOffset = iterator->value.scopeOffset();
+            }
+            // Early code embeds another offset than the binding's (it could not name the record that exports it).
+            if (scopeOffset.offset() != early->offset)
+                return placeholder(early->offset, environment->readVariable(vm, scopeOffset));
+        }
+        moduleEnvironment()->importSlot(index).set(vm, moduleEnvironment(), environment);
+        return environment;
+    }
+
+    case Resolution::Type::NotFound:
+    case Resolution::Type::Ambiguous:
+    case Resolution::Type::Error: {
+        // The import could not be bound once the record it waited for had evaluated: link's error, where it is read.
+        if (std::optional<ImportEntry> entry = tryGetImportEntry(importSlotLocalName(index).impl())) {
+            AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, entry->moduleRequest, entry->moduleRequestType);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            linkImportEntry(globalObject, moduleEnvironment(), *entry, importedModule);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        return placeholder(early ? early->offset : 0, jsUndefined());
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
+}
+#endif
+
+JSLexicalEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject, unsigned index)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Resolution resolution = resolveImport(globalObject, importSlotLocalName(index));
     RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    if (resolution.type != Resolution::Type::Resolved || m_pendingImports || !resolution.moduleRecord->moduleEnvironmentMayBeNull()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, fillImportSlotSlow(globalObject, index, resolution));
+#endif
     RELEASE_ASSERT(resolution.type == Resolution::Type::Resolved);
     JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironment();
     moduleEnvironment()->importSlot(index).set(vm, moduleEnvironment(), environment);
@@ -476,6 +625,28 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
 #endif
         Resolution resolution = resolveImport(globalObject, localName);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
+#if USE(BUN_JSC_ADDITIONS)
+        if (resolution.type == Resolution::Type::Pending) [[unlikely]] {
+            // The binding will be at the offset that the code embeds if the one record that can export it puts it there
+            // (resolvesImportsLike asks for that). Without such a record nothing can be said yet.
+            auto* exporter = dynamicDowncast<SyntheticModuleRecord>(resolution.moduleRecord);
+            if (!exporter) {
+                comparable = false;
+                return IterationStatus::Done;
+            }
+            bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), 0, index, exporter });
+            return IterationStatus::Continue;
+        }
+        if (m_pendingImports) [[unlikely]] {
+            // Code of this record that was linked early for a record that did not come to export the binding reads
+            // the import from another place than the binding's (fillImportSlotSlow).
+            auto iterator = m_pendingImports->earlyLinks.find(index);
+            if (iterator != m_pendingImports->earlyLinks.end() && (resolution.type != Resolution::Type::Resolved || iterator->value.exporter != resolution.moduleRecord)) {
+                comparable = false;
+                return IterationStatus::Done;
+            }
+        }
+#endif
         if (resolution.type != Resolution::Type::Resolved)
             return IterationStatus::Continue;
         if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
@@ -518,13 +689,43 @@ bool JSModuleRecord::resolvesImportsLike(JSGlobalObject* globalObject, ModulePro
             return false;
         std::optional<ModuleProgramExecutable::ImportedBindings> bindings = linker->importedBindings(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+#if USE(BUN_JSC_ADDITIONS)
+        if (bindings) {
+            // The linker has not run yet either: what its code will embed for such a binding is decided now.
+            for (auto& binding : *bindings) {
+                if (auto* exporter = std::exchange(binding.pendingExporter, nullptr))
+                    binding.offset = exporter->reserveExportOffset(binding.exporterLocalName.get());
+            }
+        }
+#endif
         executable->setLinkerImportedBindings(WTF::move(bindings));
         if (!executable->linkerImportedBindings())
             return false;
     }
     std::optional<ModuleProgramExecutable::ImportedBindings> mine = importedBindings(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
+#if USE(BUN_JSC_ADDITIONS)
+    if (!mine)
+        return false;
+    const auto& theirs = *executable->linkerImportedBindings();
+    if (mine->size() != theirs.size())
+        return false;
+    for (unsigned i = 0; i < mine->size(); ++i) {
+        auto& binding = (*mine)[i];
+        auto* exporter = binding.pendingExporter;
+        if (exporter)
+            binding.offset = theirs[i].offset;
+        if (binding != theirs[i])
+            return false;
+        // The shared code reads the binding at the linker's offset: this record's exporter has to put it there when it
+        // evaluates. (What was reserved for a record that then does not share only orders that environment.)
+        if (exporter && !exporter->reserveExportOffset(binding.exporterLocalName.get(), binding.offset))
+            return false;
+    }
+    return true;
+#else
     return mine && *mine == *executable->linkerImportedBindings();
+#endif
 }
 
 // Whether linked code cannot tell the two sources apart. Besides the text, running code observes its

@@ -1705,6 +1705,68 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
     if (!fetchModuleFromLocalFileSystem(moduleURL, buffer))
         RELEASE_AND_RETURN(scope, rejectWithError(createError(globalObject, makeString("Could not open file '"_s, moduleKey, "'."_s))));
 
+#if USE(BUN_JSC_ADDITIONS)
+    // For tests of SyntheticSourceProvider::createDeferred(): a file named *.deferred.js is the body of
+    // `function (exports) { ... }`. It runs where the module's record is evaluated, once, and the record then exports
+    // the enumerable properties of `exports`, and `exports` itself as `default` unless that is one of them.
+    if (moduleKey.endsWith(".deferred.js"_s)) {
+        struct DeferredModule : RefCounted<DeferredModule> {
+            String body;
+            URL url;
+            String path;
+            // The module record keeps the object alive until the body has run.
+            Weak<JSObject> exports;
+            bool didRun { false };
+        };
+        Ref state = adoptRef(*new DeferredModule);
+        state->body = stringFromUTF(buffer);
+        state->url = moduleURL;
+        state->path = moduleKey;
+        state->exports = Weak<JSObject>(constructEmptyObject(globalObject));
+        auto generator = [state](JSGlobalObject* globalObject, Identifier, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues) {
+            VM& vm = globalObject->vm();
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSObject* exports = state->exports.get();
+            RELEASE_ASSERT(exports);
+            if (!state->didRun) {
+                state->didRun = true;
+                NakedPtr<Exception> exception;
+                JSValue function = evaluate(globalObject, jscSource(makeString("(function (exports) {"_s, state->body, "\n})"_s), SourceOrigin { state->url }, String(state->path)), JSValue(), exception);
+                if (exception) {
+                    throwException(globalObject, scope, exception.get());
+                    return;
+                }
+                MarkedArgumentBuffer arguments;
+                arguments.append(exports);
+                call(globalObject, function, arguments, "The body of a deferred synthetic module is not a function"_s);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            JSObject::getOwnPropertyNames(exports, globalObject, names, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, void());
+            bool hasDefault = false;
+            for (auto& name : names) {
+                JSValue value = exports->get(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, void());
+                hasDefault |= name == vm.propertyNames->defaultKeyword;
+                exportNames.append(name);
+                exportValues.append(value);
+            }
+            if (!hasDefault) {
+                exportNames.append(vm.propertyNames->defaultKeyword);
+                exportValues.append(exports);
+            }
+        };
+        auto owner = [state]() -> JSCell* {
+            return state->exports.get();
+        };
+        auto sourceCode = JSSourceCode::create(vm, SourceCode(SyntheticSourceProvider::createDeferred(WTF::move(generator), SourceOrigin { moduleURL }, WTF::move(moduleKey), WTF::move(owner))));
+        scope.release();
+        promise->resolve(globalObject, vm, sourceCode);
+        return promise;
+    }
+#endif
+
     if (attributes) {
         switch (attributes->type()) {
         case ScriptFetchParameters::Type::JSON: {

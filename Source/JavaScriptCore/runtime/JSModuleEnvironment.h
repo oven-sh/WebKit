@@ -111,7 +111,9 @@ public:
     // op_resolve_scope ModuleVar with an empty slot (module code running before the module
     // is evaluated, in an import cycle): `depth` scopes up from `scope` is the importing
     // environment; fill the slot from its record's import resolution and return it.
-    static JSModuleEnvironment* fillImportSlot(JSGlobalObject*, JSScope*, unsigned depth, ScopeOffset slot);
+    // (What is returned is not a module environment, and the slot stays empty, while the import
+    // cannot be bound: JSModuleRecord::fillImportSlot.)
+    static JSLexicalEnvironment* fillImportSlot(JSGlobalObject*, JSScope*, unsigned depth, ScopeOffset slot);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
