@@ -576,6 +576,89 @@ TEST(WTF, StringUTF8ConversionStrictReplacingMode)
     EXPECT_EQ(UTF8CString { u8"ab\xEF\xBF\xBD" "c"_span }, result);
 }
 
+// What the conversion to UTF-8 has to give for these code units, written out without any of WTF's converters.
+static Vector<char8_t> referenceUTF8(std::span<const char16_t> characters, bool& hasUnpairedSurrogate)
+{
+    Vector<char8_t> result;
+    hasUnpairedSurrogate = false;
+    for (size_t i = 0; i < characters.size(); ++i) {
+        char32_t codePoint = characters[i];
+        if (U16_IS_LEAD(codePoint) && i + 1 < characters.size() && U16_IS_TRAIL(characters[i + 1]))
+            codePoint = U16_GET_SUPPLEMENTARY(codePoint, characters[++i]);
+        else if (U16_IS_SURROGATE(codePoint)) {
+            hasUnpairedSurrogate = true;
+            codePoint = 0xFFFD;
+        }
+        if (codePoint < 0x80)
+            result.append(codePoint);
+        else if (codePoint < 0x800) {
+            result.append(0xC0 | (codePoint >> 6));
+            result.append(0x80 | (codePoint & 0x3F));
+        } else if (codePoint < 0x10000) {
+            result.append(0xE0 | (codePoint >> 12));
+            result.append(0x80 | ((codePoint >> 6) & 0x3F));
+            result.append(0x80 | (codePoint & 0x3F));
+        } else {
+            result.append(0xF0 | (codePoint >> 18));
+            result.append(0x80 | ((codePoint >> 12) & 0x3F));
+            result.append(0x80 | ((codePoint >> 6) & 0x3F));
+            result.append(0x80 | (codePoint & 0x3F));
+        }
+    }
+    return result;
+}
+
+TEST(WTF, StringUTF8ConversionUnpairedSurrogateAroundBufferSizes)
+{
+    // The conversion measures the string and converts it into a buffer of that size, which has 1,024 bytes inline.
+    // For an unpaired surrogate it then converts again, into 3 bytes for each code unit. The lengths are on both
+    // sides of where 3 bytes for each code unit stop fitting inline (341), and of where the measured size of
+    // 1-byte code units does (1,024). The patterns take 1, 2, 3 and 4 bytes, so the second buffer is the first
+    // one again, a larger inline one, or a new allocation.
+    for (unsigned length : { 1, 2, 340, 341, 342, 343, 1023, 1024, 1025, 5000 }) {
+        for (auto pattern : { std::initializer_list<char16_t> { 'a', 'b', ' ' }, { 0x436, 0x438 }, { 0x65E5, 0x672C, 0x8A9E }, { 0xD83D, 0xDE00 }, { 'a', 0xE9, 0x65E5, 0xD83D, 0xDE00 } }) {
+            Vector<char16_t> characters;
+            for (unsigned i = 0; i < length; ++i)
+                characters.append(std::data(pattern)[i % pattern.size()]);
+
+            for (char16_t surrogate : { 0xD800, 0xDBFF, 0xDC00, 0xDFFF }) {
+                for (unsigned surrogateIndex : { 0u, length / 2, length - 1 }) {
+                    SCOPED_TRACE(::testing::Message() << "length " << length << ", first code unit " << static_cast<unsigned>(characters[0]) << ", surrogate " << static_cast<unsigned>(surrogate) << " at " << surrogateIndex);
+                    auto withSurrogate = characters;
+                    withSurrogate[surrogateIndex] = surrogate;
+                    String string { withSurrogate.span() };
+                    bool hasUnpairedSurrogate;
+                    auto expected = referenceUTF8(withSurrogate.span(), hasUnpairedSurrogate);
+
+                    for (auto mode : { LenientConversion, StrictConversion, StrictConversionReplacingUnpairedSurrogatesWithFFFD }) {
+                        unsigned callbackCalls = 0;
+                        auto fromCallback = string.tryGetUTF8([&](std::span<const char8_t> converted) {
+                            ++callbackCalls;
+                            return Vector<char8_t> { converted };
+                        }, mode);
+                        auto cString = string.tryGetUTF8(mode);
+
+                        if (mode == StrictConversion && hasUnpairedSurrogate) {
+                            ASSERT_FALSE(fromCallback);
+                            EXPECT_EQ(UTF8ConversionError::Invalid, fromCallback.error());
+                            EXPECT_EQ(0u, callbackCalls);
+                            ASSERT_FALSE(cString);
+                            EXPECT_EQ(UTF8ConversionError::Invalid, cString.error());
+                            continue;
+                        }
+
+                        ASSERT_TRUE(fromCallback);
+                        EXPECT_EQ(1u, callbackCalls);
+                        EXPECT_TRUE(equalSpans(expected.span(), fromCallback->span()));
+                        ASSERT_TRUE(cString);
+                        EXPECT_TRUE(equalSpans(expected.span(), cString->span()));
+                    }
+                }
+            }
+        }
+    }
+}
+
 TEST(WTF, StringSimplifyWhiteSpace)
 {
     auto simplify = [](const String& string) {
