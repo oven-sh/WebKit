@@ -206,7 +206,7 @@ const platforms = [
     args: arch => ({
       ...ICU,
       FREEBSD_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
-      FREEBSD_VERSION: "14.3",
+      FREEBSD_VERSION: "14.4",
       MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
     }),
   },
