@@ -33,7 +33,6 @@ bool mayUseFFI(const Typed::PipelineOutput& pipeline)
 
 #if FFI_STUBS_SUPPORTED
 
-static constexpr size_t stubCodeAlignment = 16;
 static constexpr CodeSymbol callbackContextSymbol { SymbolSpace::FFI, 0 };
 
 FFIStubs generateFFIStubs(BuildContext& context)
@@ -68,10 +67,9 @@ FFIStubs generateFFIStubs(BuildContext& context)
     }
 
     std::span<const uint8_t> code = buffer.bytes();
-    size_t codeOffset = roundUpToMultipleOf<stubCodeAlignment>(FFI::StubDirectory::sizeWithEntries(numberOfEntries));
-    size_t contextOffset = roundUpToMultipleOf<imagePageSize>(codeOffset + code.size());
+    size_t contextOffset = roundUpToMultipleOf<imagePageSize>(code.size());
     auto offsetOf = [&](CCallHelpers::Label label) {
-        return safeCast<uint32_t>(codeOffset + buffer.linkBuffer().offsetOf(label));
+        return safeCast<uint32_t>(buffer.linkBuffer().offsetOf(label));
     };
 
     FFIStubs result;
@@ -80,15 +78,15 @@ FFIStubs generateFFIStubs(BuildContext& context)
     result.callbackContextSize = imagePageSize;
     result.code = Vector<uint8_t>(FillWith { }, contextOffset + imagePageSize, 0);
     std::span<uint8_t> bytes = result.code.mutableSpan();
-    memcpySpan(bytes.subspan(codeOffset), code);
-    templates->fillWithBreakpoints(bytes.subspan(codeOffset + code.size(), contextOffset - codeOffset - code.size()));
+    memcpySpan(bytes, code);
+    templates->fillWithBreakpoints(bytes.subspan(code.size(), contextOffset - code.size()));
 
     FFI::StubDirectory directory { offsetOf(invoke), safeCast<uint32_t>(contextOffset), safeCast<uint32_t>(imagePageSize), numberOfEntries };
-    memcpySpan(bytes, asByteSpan(directory));
     Vector<uint32_t> entryOffsets = entries.map(offsetOf);
-    memcpySpan(bytes.subspan(sizeof(FFI::StubDirectory)), asByteSpan(entryOffsets.span()));
+    result.directory.append(asByteSpan(directory));
+    result.directory.append(asByteSpan(entryOffsets.span()));
 
-    uint64_t numberApplied = applyRelocations(bytes, codeOffset, relocations->span(), [&](const Relocation& relocation) -> std::optional<size_t> {
+    uint64_t numberApplied = applyRelocations(bytes, 0, relocations->span(), [&](const Relocation& relocation) -> std::optional<size_t> {
         RELEASE_ASSERT(relocation.codeSymbol() == callbackContextSymbol);
         return contextOffset;
     }, [&](const Relocation& relocation) {

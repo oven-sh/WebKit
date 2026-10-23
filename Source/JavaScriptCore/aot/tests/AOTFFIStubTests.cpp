@@ -182,8 +182,8 @@ static FFIStubs generateWith(std::initializer_list<ASCIILiteral> optionWords)
 
 static const FFI::StubDirectory& directoryOf(const FFIStubs& stubs)
 {
-    AOT_TEST_CHECK(stubs.code.size() >= sizeof(FFI::StubDirectory));
-    return *reinterpret_cast<const FFI::StubDirectory*>(stubs.code.span().data());
+    AOT_TEST_CHECK(stubs.directory.size() >= sizeof(FFI::StubDirectory));
+    return *reinterpret_cast<const FFI::StubDirectory*>(stubs.directory.span().data());
 }
 
 static std::unique_ptr<CompileOutput> compileEmptyProgram(std::initializer_list<ASCIILiteral> optionWords)
@@ -222,7 +222,7 @@ static void checkLayout(std::initializer_list<ASCIILiteral> optionWords, unsigne
     AOT_TEST_CHECK(!(directory.callbackContext % imagePageSize));
     AOT_TEST_CHECK(directory.callbackContext + directory.callbackContextSize == stubs.code.size());
     AOT_TEST_CHECK(stubs.callbackContextOffset == directory.callbackContext && stubs.callbackContextSize == directory.callbackContextSize);
-    AOT_TEST_CHECK(directory.invoke >= FFI::StubDirectory::sizeWithEntries(expectedNumberOfEntries) && !(directory.invoke % 16));
+    AOT_TEST_CHECK(stubs.directory.size() == FFI::StubDirectory::sizeWithEntries(expectedNumberOfEntries) && !(directory.invoke % 16));
 
     std::span<const uint32_t> entries = directory.callbackEntries();
     AOT_TEST_CHECK(entries.size() == expectedNumberOfEntries && directory.invoke < entries[0]);
@@ -243,8 +243,8 @@ static void testLayout()
 static void testSameBytesEveryTime()
 {
     FFIStubs first = generateWith({ });
-    AOT_TEST_CHECK(generateWith({ }).code == first.code);
-    AOT_TEST_CHECK(generateWith({ "threads=1"_s }).code == first.code);
+    AOT_TEST_CHECK(generateWith({ }).code == first.code && generateWith({ }).directory == first.directory);
+    AOT_TEST_CHECK(generateWith({ "threads=1"_s }).code == first.code && generateWith({ "threads=1"_s }).directory == first.directory);
     AOT_TEST_CHECK(generateWith({ "limit=ForeignCallbackStubs:4"_s }).code != first.code);
 }
 
@@ -264,6 +264,20 @@ static void testOpenProgramHasStubs()
     AOT_TEST_CHECK(static_cast<uint64_t>(header.code.ffiCodeOffset) + header.code.ffiCodeSize <= header.codeSize);
     AOT_TEST_CHECK(header.codeOffset + header.codeSize <= output->image.size());
     AOT_TEST_CHECK(equalSpans(output->image.span().subspan(header.codeOffset + header.code.ffiCodeOffset, header.code.ffiCodeSize), stubs.code.span()));
+}
+
+static void testDirectoryIsNotExecutable()
+{
+    std::unique_ptr<CompileOutput> output = compileEmptyProgram({ "admit=Inspector"_s });
+    const ImageHeader& header = headerOf(*output);
+    FFIStubs stubs = generateWith({ "admit=Inspector"_s });
+    uint64_t offset = WTF::roundUpToMultipleOf<imageFFIDirectoryAlignment>(static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize);
+    AOT_TEST_CHECK(header.executableSize <= offset && offset + stubs.directory.size() == header.codeSize);
+    AOT_TEST_CHECK(equalSpans(output->image.span().subspan(header.codeOffset + offset, stubs.directory.size()), stubs.directory.span()));
+
+    std::unique_ptr<CompileOutput> closedOutput = compileEmptyProgram({ });
+    const ImageHeader& closed = headerOf(*closedOutput);
+    AOT_TEST_CHECK(static_cast<uint64_t>(closed.code.constantsOffset) + closed.code.constantsSize == closed.codeSize);
 }
 
 static String runInShell(const CompileOutput& output, ASCIILiteral statements)
@@ -307,6 +321,7 @@ std::span<const NativeTest> ffiStubTests()
         { "ffi-stubs/same-bytes-every-time"_s, testSameBytesEveryTime },
         { "ffi-stubs/closed-program-has-none"_s, testClosedProgramHasNone },
         { "ffi-stubs/open-program-has-stubs"_s, testOpenProgramHasStubs },
+        { "ffi-stubs/directory-is-not-executable"_s, testDirectoryIsNotExecutable },
         { "ffi-stubs/shell-calls-and-callbacks"_s, testShellCallsAndCallbacks },
         { "ffi-stubs/shell-without-stubs"_s, testShellWithoutStubs },
     };

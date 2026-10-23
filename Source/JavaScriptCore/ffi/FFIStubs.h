@@ -78,7 +78,7 @@ struct CallbackEntryContext {
     void* enter;
 };
 
-// The first bytes of the FFI code of an image. Every offset counts from the first byte of the directory.
+// Lies behind the constants of an image, where nothing is executed. Every offset counts from the first byte of the FFI code.
 struct StubDirectory {
     static constexpr size_t sizeWithEntries(unsigned numberOfCallbackEntries) { return sizeof(StubDirectory) + numberOfCallbackEntries * sizeof(uint32_t); }
 

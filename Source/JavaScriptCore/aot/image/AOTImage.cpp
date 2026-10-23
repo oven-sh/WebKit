@@ -320,6 +320,15 @@ std::span<const uint8_t> Image::ffiCode() const
     return code().subspan(ranges.ffiCodeOffset, ranges.ffiCodeSize);
 }
 
+std::span<const uint8_t> Image::ffiDirectory() const
+{
+    const ImageCodeRanges& ranges = header().code;
+    uint64_t offset = WTF::roundUpToMultipleOf<imageFFIDirectoryAlignment>(endOfCodePart(ranges.constantsOffset, ranges.constantsSize));
+    if (offset > header().codeSize)
+        return { };
+    return code().subspan(offset);
+}
+
 std::span<const StubReturnSite> Image::stubReturnSites() const
 {
     return section<StubReturnSite>(ImageSection::StubReturnSites);

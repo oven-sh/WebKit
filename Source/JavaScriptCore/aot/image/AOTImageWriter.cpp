@@ -301,6 +301,7 @@ static void copySections(std::span<uint8_t> image, const ImageWriterInputs& inpu
     addChunks(extent.codeOffset + layout.regExpCodeOffset, inputs.linker.layoutInputs.regExpSection.bytes.span());
     addChunks(extent.codeOffset + layout.webAssemblyCodeOffset, inputs.webAssemblyCode);
     addChunks(extent.codeOffset + layout.ffiCodeOffset, inputs.ffiCode);
+    addChunks(extent.codeOffset + layout.ffiDirectoryOffset, inputs.ffiDirectory);
     forEachIndexInParallel(loops, chunks.size(), [&](unsigned index) {
         memcpySpan(image.subspan(chunks[index].offset), chunks[index].source);
     });

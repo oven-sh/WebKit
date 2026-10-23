@@ -122,6 +122,7 @@ void describe(const SlotVisitor& visitor, const JSCell* cell, ASCIILiteral probl
     else {
         MarkedBlock& block = heapCell->markedBlock();
         dataLog(", in block ", RawPointer(&block), " of cells of ", block.cellSize(), " bytes with marks of version ", block.markingVersion());
+        dataLog(", newly allocated: ", block.isNewlyAllocated(reference), " in version ", block.newlyAllocatedVersion(), ", block on a free list: ", block.handle().isFreeListed());
         if (block.hasInnerCells())
             dataLog(", inner cell: ", block.isInnerCell(reference), ", in the visited cell: ", block.outerCellIfInnerCell(reference) == cell);
         if (&block.vm() != &cell->vm())

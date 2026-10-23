@@ -98,11 +98,14 @@ const variants = {
   "hardened": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
+  // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
+  // in the libraries.
+  "lto-hardened-aot-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, webAssembly: false },
 };
 const NO_ASAN = ["release", "aot", "lto", "lto-aot", "debug"];
 const ALL = [...NO_ASAN, "asan", "debug-asan"];
 const FUZZING = ["assertions", "coverage", "assertions-coverage"];
-const HARDENED = ["hardened", "lto-hardened", "lto-hardened-aot"];
+const HARDENED = ["hardened", "lto-hardened", "lto-hardened-aot", "lto-hardened-aot-no-webassembly"];
 // "lto-aot" is "lto" with the compiler.
 const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/-aot$/, ""));
 
@@ -147,6 +150,7 @@ const platforms = [
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
       HARDENING_FLAGS: v.hardened ? HARDENING : "",
+      ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
       MARCH_FLAG:

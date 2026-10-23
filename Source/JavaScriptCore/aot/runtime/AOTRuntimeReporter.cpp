@@ -327,25 +327,29 @@ RuntimeReporter::~RuntimeReporter()
         m_next->m_previous = m_previous;
 }
 
+void RuntimeReporter::callAtExit(void (*function)())
+{
+#if OS(WINDOWS)
+    if (Bun__atexit) {
+        Bun__atexit(function);
+        return;
+    }
+#endif
+    atexit(function);
+#if !OS(DARWIN) && !OS(WINDOWS)
+    at_quick_exit(function);
+#endif
+}
+
 void RuntimeReporter::installExitHook()
 {
     static std::once_flag once;
     std::call_once(once, [] {
-        void (*writeAllAtExit)() = [] {
+        callAtExit([] {
             Locker locker { s_lock };
             for (auto* reporter = s_firstReporter; reporter; reporter = reporter->m_next)
                 reporter->writeAtExit();
-        };
-#if OS(WINDOWS)
-        if (Bun__atexit) {
-            Bun__atexit(writeAllAtExit);
-            return;
-        }
-#endif
-        atexit(writeAllAtExit);
-#if !OS(DARWIN) && !OS(WINDOWS)
-        at_quick_exit(writeAllAtExit);
-#endif
+        });
     });
 }
 

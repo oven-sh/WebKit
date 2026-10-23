@@ -18,6 +18,7 @@ struct FFIStubs {
     size_t codeAlignment { 1 };
     size_t callbackContextOffset { 0 };
     size_t callbackContextSize { 0 };
+    Vector<uint8_t> directory;
 };
 
 bool mayUseFFI(const Typed::PipelineOutput&);

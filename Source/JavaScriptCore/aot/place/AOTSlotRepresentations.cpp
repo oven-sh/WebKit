@@ -38,6 +38,7 @@ struct MemberFacts {
         needsWideReference |= other.needsWideReference;
         mayHaveUnorderedShape |= other.mayHaveUnorderedShape;
         canHaveExtension &= other.canHaveExtension;
+        hasExtraPropertiesWord &= other.hasExtraPropertiesWord;
     }
 
     bool mayReachUnknownJavaScript { false };
@@ -45,6 +46,7 @@ struct MemberFacts {
     bool needsWideReference { false };
     bool mayHaveUnorderedShape { false };
     bool canHaveExtension { true };
+    bool hasExtraPropertiesWord { true };
 };
 
 struct FieldInputs {
@@ -56,6 +58,7 @@ struct FieldInputs {
     const SlotRowUse& use;
     bool isCreatedByStore;
     bool isInObjectBornWithoutValues;
+    bool isNamedSomewhere;
     MemberFacts members;
 };
 
@@ -181,6 +184,10 @@ static bool hasStorage(const SlotPlanContext& context, const FieldInputs& field)
     // The run time alone writes the slot of an accessor.
     if (field.declaration.form.contains(FieldForm::IsAccessor))
         return !isRemovedField(context.program, field.reference);
+
+    // Only a store that finds its key at run time gives an object such a property. The object keeps it with the properties that its layout does not declare.
+    if (!field.isNamedSomewhere && field.declaration.flags.contains(FieldFlags::IsNeverWritten) && field.members.hasExtraPropertiesWord && !field.members.isFilledByNativeCode)
+        return false;
 
     bool isNeverWritten = isNeverStored(context.program, field.reference) && !field.use.initializingSites && !field.use.storesIntoNewObjects;
     if (isNeverWritten && (field.declaration.flags.contains(FieldFlags::IsMethod) || !field.members.isFilledByNativeCode))
@@ -334,6 +341,7 @@ static MemberFacts memberFactsOf(const SlotPlanContext& context, FieldReference 
         .needsWideReference = needsWideReference(context, reference),
         .mayHaveUnorderedShape = mayHaveUnorderedShape(context.program, context.inputs.flow, id),
         .canHaveExtension = canHaveExtension(context, id),
+        .hasExtraPropertiesWord = claimForExtraPropertiesWord(context, id).hasStorage,
     };
 }
 
@@ -350,6 +358,16 @@ static bool isBornWithoutValues(const SlotPlanContext& context, const SlotUses& 
     return true;
 }
 
+static bool isNamedSomewhere(const Program& program, const SlotUses& uses, const Field& declaration, const SlotRowUse& use)
+{
+    if (use.accessWeight || use.isStoredSomewhere() || use.environmentUses || use.storesWithoutAllocation || use.storesIntoFilledSlots || use.storesIntoNewObjects || use.privateDefinitionsByName)
+        return true;
+    if (!declaration.key || uses.keysNamed.at(declaration.key.index()))
+        return true;
+    StringID text = program.at(declaration.key).text;
+    return !text || uses.stringsNamed.at(text.index());
+}
+
 static SlotClaim claimFor(const SlotPlanContext& context, const SlotUses& uses, const BitVector& fieldsCreatedByStores, FieldReference reference, const MemberFacts& members)
 {
     const Program& program = context.program;
@@ -364,6 +382,7 @@ static SlotClaim claimFor(const SlotPlanContext& context, const SlotUses& uses, 
         .use = use,
         .isCreatedByStore = fieldsCreatedByStores.quickGet(declaringRowOf(context, reference)),
         .isInObjectBornWithoutValues = use.initializingSites && !use.sitesInitializingWithValue && isBornWithoutValues(context, uses, reference.layout),
+        .isNamedSomewhere = isNamedSomewhere(program, uses, declaration, use),
         .members = members,
     });
 }

@@ -104,9 +104,10 @@ std::unique_ptr<const Stubs> Stubs::tryCreateFromImage()
     if (code.empty())
         return nullptr;
 
-    RELEASE_ASSERT(code.size() >= sizeof(StubDirectory));
-    auto& directory = *reinterpret_cast<const StubDirectory*>(code.data());
-    RELEASE_ASSERT(code.size() >= StubDirectory::sizeWithEntries(directory.numberOfCallbackEntries));
+    std::span<const uint8_t> directoryBytes = image->ffiDirectory();
+    RELEASE_ASSERT(directoryBytes.size() >= sizeof(StubDirectory));
+    auto& directory = *reinterpret_cast<const StubDirectory*>(directoryBytes.data());
+    RELEASE_ASSERT(directoryBytes.size() >= StubDirectory::sizeWithEntries(directory.numberOfCallbackEntries));
     RELEASE_ASSERT(directory.invoke < directory.callbackContext);
     RELEASE_ASSERT(directory.callbackContext + static_cast<uint64_t>(directory.callbackContextSize) <= code.size());
     RELEASE_ASSERT(directory.callbackContextSize >= sizeof(CallbackEntryContext));

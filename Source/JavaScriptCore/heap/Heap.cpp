@@ -1497,8 +1497,13 @@ static void forEachLiveCellOfSettledBlock(MarkedBlock::Handle& handle, const Fun
     if (handle.isAllocated()) {
         char* cell = std::bit_cast<char*>(handle.start());
         char* end = std::bit_cast<char*>(handle.end());
-        for (; cell + handle.cellSize() <= end; cell += handle.cellSize())
+        for (; cell + handle.cellSize() <= end; cell += handle.cellSize()) {
+#if ASAN_ENABLED
+            if (handle.isRedZoneCell(cell))
+                continue;
+#endif
             func(std::bit_cast<HeapCell*>(cell));
+        }
         return;
     }
     handle.forEachMarkedCell([&](size_t, HeapCell* cell, HeapCell::Kind) {
@@ -1511,9 +1516,13 @@ static size_t liveCellCountOfSettledBlock(MarkedBlock::Handle& handle)
 {
     ASSERT(!handle.block().hasAnyNewlyAllocated());
     size_t result;
-    if (handle.isAllocated())
+    if (handle.isAllocated()) {
         result = handle.cellsPerBlock();
-    else if (handle.block().areMarksStale())
+#if ASAN_ENABLED
+        if (MarkedBlock::Handle::hasRedZoneCells())
+            result = (result + 1) / 2;
+#endif
+    } else if (handle.block().areMarksStale())
         result = 0;
     else
         result = handle.block().markCount();

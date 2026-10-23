@@ -55,6 +55,7 @@ struct CodeParts {
     size_t executableSize { 0 };
     size_t regExpCodeEnd { 0 };
     size_t constantsOffset { 0 };
+    size_t ffiDirectoryOffset { 0 };
     size_t codeSize { 0 };
 };
 
@@ -367,7 +368,10 @@ static CodeParts layOutCodeParts(const CodeLayoutInputs& inputs, size_t function
     parts.regExpCodeOffset = parts.executableSize - regExpSection.dataOffset;
     parts.regExpCodeEnd = parts.regExpCodeOffset + regExpSection.bytes.size();
     parts.constantsOffset = WTF::roundUpToMultipleOf<imageConstantsAlignment>(parts.regExpCodeEnd);
-    parts.codeSize = parts.constantsOffset + inputs.constantsSize;
+    parts.ffiDirectoryOffset = parts.constantsOffset + inputs.constantsSize;
+    if (inputs.ffiCodeSize)
+        parts.ffiDirectoryOffset = WTF::roundUpToMultipleOf<imageFFIDirectoryAlignment>(parts.ffiDirectoryOffset);
+    parts.codeSize = parts.ffiDirectoryOffset + inputs.ffiDirectorySize;
     return parts;
 }
 
@@ -418,6 +422,7 @@ static CodeLayout createLayout(const CodeLayoutInputs& inputs, PlacedCode&& code
     layout.regExpCodeOffset = safeCast<uint32_t>(code.parts.regExpCodeOffset);
     layout.executableSize = safeCast<uint32_t>(code.parts.executableSize);
     layout.constantsOffset = safeCast<uint32_t>(code.parts.constantsOffset);
+    layout.ffiDirectoryOffset = safeCast<uint32_t>(code.parts.ffiDirectoryOffset);
     layout.codeSize = code.parts.codeSize;
     return layout;
 }

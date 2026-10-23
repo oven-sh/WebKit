@@ -13,6 +13,8 @@ ARG ENABLE_ASSERTS="AUTO"
 ARG ENABLE_FUZZILLI="OFF"
 # Added to the flags ICU and WebKit are compiled with.
 ARG HARDENING_FLAGS=""
+# OFF leaves WebAssembly out of JavaScriptCore. CMake options and not a flag in CFLAGS: cmakeconfig.h defines them.
+ARG ENABLE_WEBASSEMBLY="ON"
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 # Test programs to build besides what ships. They go to /output/test-bin, which CI hands to its `test` job and does not package.
@@ -315,6 +317,7 @@ ARG ENABLE_SANITIZERS
 ARG ENABLE_ASSERTS
 ARG ENABLE_FUZZILLI
 ARG HARDENING_FLAGS
+ARG ENABLE_WEBASSEMBLY
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 ARG TEST_PROGRAMS
@@ -454,6 +457,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
     -DENABLE_FUZZILLI="$ENABLE_FUZZILLI" \
+    $(if [ "$ENABLE_WEBASSEMBLY" = OFF ]; then echo "-DENABLE_WEBASSEMBLY=OFF -DENABLE_WEBASSEMBLY_BBQJIT=OFF -DENABLE_WEBASSEMBLY_OMGJIT=OFF"; fi) \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     -DENABLE_BUN_TEST_PROGRAMS=$(if [ -n "$TEST_PROGRAMS" ]; then echo ON; else echo OFF; fi) \

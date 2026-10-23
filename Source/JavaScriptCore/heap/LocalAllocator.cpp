@@ -296,7 +296,7 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
     // that algorithm is racy and may forget to do it sometimes.
     if (m_freeList.allocationWillFail()) {
         ASSERT(block->isFreeListed());
-        block->unsweepWithNoNewlyAllocated();
+        block->didConsumeFreeList();
         ASSERT(!block->isFreeListed());
         return nullptr;
     }

@@ -98,6 +98,7 @@ public:
     std::span<const uint8_t> regExpCode() const;
     std::span<const uint8_t> webAssemblyCode() const;
     std::span<const uint8_t> ffiCode() const;
+    std::span<const uint8_t> ffiDirectory() const;
     const ProgramTables& programTables() const { return *reinterpret_cast<const ProgramTables*>(section<uint8_t>(ImageSection::ProgramTables).data()); }
     const ImageText& text() const { return m_text; }
     bool isObfuscated() const { return header().isObfuscated(); }

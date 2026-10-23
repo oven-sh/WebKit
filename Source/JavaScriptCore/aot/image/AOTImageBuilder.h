@@ -90,6 +90,7 @@ struct ImageWriterInputs {
     const ImageSections& sections;
     std::span<const uint8_t> webAssemblyCode;
     std::span<const uint8_t> ffiCode;
+    std::span<const uint8_t> ffiDirectory;
     std::span<const ReservedRange> reservedRanges;
     const WTF::BitSet<numberOfEntries>& entriesUsed;
     ImageCounts counts;

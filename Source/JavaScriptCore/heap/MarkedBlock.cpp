@@ -203,6 +203,13 @@ void MarkedBlock::Handle::rebuildNewlyAllocatedByWord(const FreeList& freeList)
             if (expected) [[unlikely]]
                 expected->clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
         });
+#if ASAN_ENABLED
+    if (hasRedZoneCells()) {
+        blockHeader().m_newlyAllocated.clearEachNthBit(2 * m_atomsPerCell, m_startAtom + m_atomsPerCell, endAtom);
+        if (expected) [[unlikely]]
+            expected->clearEachNthBit(2 * m_atomsPerCell, m_startAtom + m_atomsPerCell, endAtom);
+    }
+#endif
     RELEASE_ASSERT(!expected || *expected == blockHeader().m_newlyAllocated);
 }
 
@@ -569,7 +576,12 @@ void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned 
     if (!isJSCellKind(m_attributes.cellKind))
         RELEASE_ASSERT(m_attributes.destruction == DoesNotNeedDestruction);
     
+#if ASAN_ENABLED
+    // A red-zone cell is never marked. Counted in, no block would ever be full enough to retire, and the allocator would come upon full blocks all the time.
+    double markCountBias = -(Options::minMarkedBlockUtilization() * (hasRedZoneCells() ? (cellsPerBlock() + 1) / 2 : cellsPerBlock()));
+#else
     double markCountBias = -(Options::minMarkedBlockUtilization() * cellsPerBlock());
+#endif
     
     // The mark count bias should be comfortably within this range.
     RELEASE_ASSERT(markCountBias > static_cast<double>(std::numeric_limits<int16_t>::min()));
@@ -802,6 +814,16 @@ void MarkedBlock::Handle::unpoisonCells()
     if (Options::runsCompiledImage())
         __asan_unpoison_memory_region(&block(), blockSize);
 }
+
+void MarkedBlock::Handle::poisonRedZoneCells()
+{
+    if (!hasRedZoneCells())
+        return;
+    size_t size = cellSize();
+    char* end = std::bit_cast<char*>(this->end());
+    for (char* cell = std::bit_cast<char*>(start()) + size; cell + size <= end; cell += 2 * size)
+        __asan_poison_memory_region(cell, size);
+}
 #endif
 
 void MarkedBlock::Handle::validateFreeIntervals(const WTF::BitSet<atomsPerBlock>& live, std::span<const std::pair<unsigned, unsigned>> intervals)
@@ -853,8 +875,12 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
 #if ASAN_ENABLED
     unpoisonCells();
     auto repoisonOnExit = makeScopeExit([&] {
-        if (sweepMode == SweepOnly && !heap()->isShuttingDown())
+        if (heap()->isShuttingDown())
+            return;
+        if (sweepMode == SweepOnly)
             poisonDeadCells();
+        else
+            poisonRedZoneCells();
     });
 #endif
 

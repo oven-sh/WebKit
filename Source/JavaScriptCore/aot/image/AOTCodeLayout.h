@@ -61,6 +61,7 @@ struct CodeLayoutInputs {
     size_t constantsSize;
     size_t ffiCodeSize { 0 };
     size_t ffiCodeAlignment { 1 };
+    size_t ffiDirectorySize { 0 };
 };
 
 struct CodeLayout {
@@ -82,6 +83,7 @@ struct CodeLayout {
     uint32_t regExpCodeOffset { 0 };
     uint32_t executableSize { 0 };
     uint32_t constantsOffset { 0 };
+    uint32_t ffiDirectoryOffset { 0 };
     uint64_t codeSize { 0 };
 };
 

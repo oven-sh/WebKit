@@ -11,10 +11,7 @@
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
-
-#if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX) && CPU(ADDRESS64)
-#include <sys/personality.h>
-#endif
+#include <wtf/WTFConfig.h>
 
 namespace JSC { namespace AOT {
 
@@ -36,8 +33,7 @@ static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Us
     static constexpr unsigned maxDraws = 16;
     if (bytes >= highestRandomAddress - lowestRandomAddress)
         return nullptr;
-    int persona = personality(0xffffffff);
-    if (persona != -1 && persona & ADDR_NO_RANDOMIZE)
+    if (WTF::isAddressRandomizationDisabled())
         return nullptr;
     uintptr_t numberOfSlots = (highestRandomAddress - lowestRandomAddress - bytes) / pageSize();
     for (unsigned draw = 0; draw < maxDraws; ++draw) {

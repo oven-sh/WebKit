@@ -30,6 +30,7 @@
 #include "NullSetterFunction.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
+#include <mutex>
 #include <wtf/DataLog.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
@@ -45,6 +46,85 @@ static bool mayRunCodeThroughOperand(const BuiltinParameter& parameter, JSValue 
     if (!parameter.protocols.isEmpty())
         return true;
     return operand.isObject() && parameter.conversion != BuiltinConversion::None;
+}
+
+namespace {
+
+class CheckedNativeCalls {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(CheckedNativeCalls);
+    WTF_MAKE_NONCOPYABLE(CheckedNativeCalls);
+public:
+    static CheckedNativeCalls* ifAskedFor()
+    {
+        static CheckedNativeCalls* calls;
+        static std::once_flag once;
+        std::call_once(once, [] {
+            const char* path = getenv("BUN_AOT_CHECKED_NATIVE_CALLS");
+            if (!path || !*path)
+                return;
+            calls = new CheckedNativeCalls(path);
+            RuntimeReporter::callAtExit(writeCheckedNativeCalls);
+        });
+        return calls;
+    }
+
+    void add(const String& entry, bool didThrow, bool didChangeOperand, bool hadExpectation)
+    {
+        Locker locker { m_lock };
+        auto found = m_counts.find(entry);
+        if (found == m_counts.end())
+            found = m_counts.add(entry.isolatedCopy(), Counts { }).iterator;
+        Counts& counts = found->value;
+        ++(didThrow ? counts.threw : counts.returned);
+        counts.changedOperand += didChangeOperand;
+        counts.hadExpectation += hadExpectation;
+    }
+
+    void write()
+    {
+        Locker locker { m_lock };
+        Vector<String> entries = copyToVector(m_counts.keys());
+        std::ranges::sort(entries, codePointCompareLessThan);
+        StringPrintStream out;
+        for (const String& entry : entries) {
+            const Counts& counts = m_counts.find(entry)->value;
+            out.print(entry, "\t", counts.returned, "\t", counts.threw, "\t", counts.changedOperand, "\t", counts.hadExpectation, "\n");
+        }
+        m_counts.clear();
+        auto text = out.toString().utf8();
+        FILE* file = text.length() ? fopen(m_path.span().data(), "ab") : nullptr;
+        if (!file)
+            return;
+        // One write, so that the lines of two processes do not mix.
+        setvbuf(file, nullptr, _IOFBF, text.length() + 1);
+        fwrite(text.data(), 1, text.length(), file);
+        fclose(file);
+    }
+
+private:
+    struct Counts {
+        uint64_t returned { 0 };
+        uint64_t threw { 0 };
+        uint64_t changedOperand { 0 };
+        uint64_t hadExpectation { 0 };
+    };
+
+    explicit CheckedNativeCalls(const char* path)
+        : m_path(unsafeMakeSpan(path, strlen(path) + 1))
+    {
+    }
+
+    Vector<char> m_path;
+    Lock m_lock;
+    HashMap<String, Counts> m_counts WTF_GUARDED_BY_LOCK(m_lock);
+};
+
+} // anonymous namespace
+
+void writeCheckedNativeCalls()
+{
+    if (CheckedNativeCalls* calls = CheckedNativeCalls::ifAskedFor())
+        calls->write();
 }
 
 class NativeCallValidationScope::Checker {
@@ -111,6 +191,7 @@ private:
     // The call in the course of which this one is made.
     Checker* m_outer { nullptr };
     bool m_didCallFunctionThatWrites { false };
+    bool m_didChangeOperand { false };
     static thread_local Checker* s_innermost;
 };
 
@@ -623,6 +704,7 @@ void NativeCallValidationScope::Checker::checkChanges(bool didRunCode)
         Vector<OperandDifference> differences = differencesBetween(m_vm, operand.object, operand.before, capture(operand.object));
         if (differences.isEmpty())
             continue;
+        m_didChangeOperand = true;
         for (const OperandDifference& difference : differences) {
             OperandChange change = changeAsCompiledCodeTakesIt(operand.object, difference);
             OperandUses uses = difference.change == OperandChange::BytesChanged ? usesOfBytesOf(operand) : usesOf(operand.position);
@@ -778,6 +860,8 @@ bool NativeCallValidationScope::Checker::finish(JSValue result)
     bool countsAsCode = didRunCode || m_declaration.overloads.isEmpty();
     if (m_outer && !countsAsCode && (m_didCallFunctionThatWrites || !declaredWrites().isEmpty()))
         m_outer->m_didCallFunctionThatWrites = true;
+    if (CheckedNativeCalls* calls = CheckedNativeCalls::ifAskedFor(); calls && m_declaration.source != NativeCallDeclarationSource::NotInTable)
+        calls->add(describeCallee(), m_vm.exceptionForInspection(), m_didChangeOperand, m_expectation.isKnown);
     return countsAsCode;
 }
 

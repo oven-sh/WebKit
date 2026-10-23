@@ -48,6 +48,9 @@ public:
     static constexpr unsigned maxLengthOfType = 80;
     static constexpr unsigned maxNumberOfCallers = 3;
 
+    // However the process ends by itself.
+    static void callAtExit(void (*)());
+
     explicit RuntimeReporter(VM&);
     ~RuntimeReporter();
 

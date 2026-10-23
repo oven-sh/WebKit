@@ -17,6 +17,7 @@
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/FastBitVector.h>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -191,6 +192,9 @@ struct SlotUses {
     Vector<LayoutUse> layouts;
     Vector<VariableUse> variables;
     Vector<SiteWeight> keyWeights;
+    // What an operation or data of the program names, whatever it does with it.
+    FastBitVector keysNamed;
+    FastBitVector stringsNamed;
     BitVector functionsWhoseNewClosuresAreStoredInto;
 };
 

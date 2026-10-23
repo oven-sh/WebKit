@@ -93,11 +93,15 @@ static bool tryReserveLowPages()
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 
 #if OS(LINUX)
+#if ENABLE(AOT_GUARDED_PAGES)
+using WTF::isAddressRandomizationDisabled;
+#else
 static bool isAddressRandomizationDisabled()
 {
     int persona = personality(0xffffffff);
     return persona != -1 && persona & ADDR_NO_RANDOMIZE;
 }
+#endif
 #endif
 
 static void* chooseAddressForCode(size_t size)

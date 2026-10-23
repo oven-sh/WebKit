@@ -116,7 +116,7 @@ uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& ident
     mix(imageFunctionAlignment);
     mix(imageStubsAlignment);
     mix(imageSectionAlignment);
-    mix(imageConstantsAlignment);
+    mix(imageConstantsAlignment + imageFFIDirectoryAlignment);
     mix(sitesBetweenPositionCheckpoints);
     mix(InstanceLayout::offsetOfStringCells);
     mix(InstanceLayout::sizeOfSiteCache);

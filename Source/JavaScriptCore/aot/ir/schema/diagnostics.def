@@ -128,9 +128,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     ObjectOnDemandWithoutRoom(Optimize, "an object that is made on demand is not taken by an operation that lays it into a room of an outer object")
     BorrowedObjectHeld(Optimize, "an inner object that may still lie in its outer object goes where the object itself is wanted")
 
-    FlowWriterOutsideDeclaredType(AnalyzeFlow, "{value} in {function} enters a position narrower than its type")
     FlowMembersInvalid(AnalyzeFlow, "members of {layout} do not ascend or are not allocated")
-    FlowRemovedCheckNotProven(AnalyzeFlow, "{value} in {function}: operand type outside the checked type and no flow proof")
     MaskCutKnownValue(AnalyzeFlow, "{function}: the type of {value} removed a value flow knows arrives")
     FlowEndedTooEarly(AnalyzeFlow, "the flow analysis was at rest, and {count} of its rules still add something when they run once more over the solved sets")
     FlowRuleWasNotDue(AnalyzeFlow, "{value} in {function}: the rule was not due, and run once more over the solved sets it adds something")
@@ -148,10 +146,6 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     FramePointerAcrossSuspension(Optimize, "{function}: a value that may point into the frame is live at {value}, which may suspend")
     FrameCellAcrossIterations(Optimize, "{function}: the frame cell {value} is live when its allocation runs again")
 
-    RawPointerAcrossSuspension(Select, "a raw pointer is live across a suspension")
-    RawPointerOutlivesStorage(Select, "a raw pointer is used after a write to the storage it points into")
-    RawPointerWithoutBase(Select, "a raw pointer is used without its base")
-    RawWordEscapes(Select, "a raw word reaches an operand that holds values")
     ResolvedTargetMismatch(Select, "a resolved call does not use the target that was resolved for it")
     CursorInFunctionValue(Optimize, "a cursor reaches a function that can be called by value")
     CursorGuardMismatch(Optimize, "a cursor is used under the guard of another source")

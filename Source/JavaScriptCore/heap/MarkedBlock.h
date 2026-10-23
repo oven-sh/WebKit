@@ -160,6 +160,10 @@ public:
         void poisonDeadCells();
         void poisonDeadCellsIfUnswept();
         void unpoisonCells();
+        // Every other cell is never allocated and stays poisoned.
+        static bool hasRedZoneCells();
+        bool isRedZoneCell(const void*);
+        void poisonRedZoneCells();
 #endif
         
         // This is to be called by Subspace.

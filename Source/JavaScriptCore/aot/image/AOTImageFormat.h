@@ -39,6 +39,7 @@ static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr size_t imageSectionAlignment = 16;
 static constexpr size_t imageConstantsAlignment = 16;
+static constexpr size_t imageFFIDirectoryAlignment = 4;
 constexpr uint32_t alignmentOfConstant(size_t size) { return static_cast<uint32_t>(std::min(imageConstantsAlignment, size_t { 1 } << std::countr_zero(size))); }
 static_assert(!(imagePageSize % imageSectionAlignment));
 
@@ -103,7 +104,7 @@ struct ImageCounts {
     uint32_t maxRegExpOutputSize;
 };
 
-// In the order in which the parts lie. The section of the regular expressions ends at constantsOffset, and ImageHeader::executableSize lies in it: in front of its tables.
+// In the order in which the parts lie. The section of the regular expressions ends at constantsOffset, and ImageHeader::executableSize lies in it: in front of its tables. Where there is FFI code, its directory lies behind the constants and ends the code part.
 struct ImageCodeRanges {
     uint32_t functionsEnd;
     uint32_t codeGranuleShift;

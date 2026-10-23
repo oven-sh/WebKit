@@ -100,9 +100,25 @@ inline bool MarkedBlock::Handle::isAllocated()
 // Whether the cell survived the last collection or was allocated after it. Cells the last
 // collection found unreachable are dead: not live, even though their memory is not freed
 // until the block is swept. Must not be called while the block is free-listed.
+#if ASAN_ENABLED
+inline bool MarkedBlock::Handle::hasRedZoneCells()
+{
+    return Options::runsCompiledImage();
+}
+
+inline bool MarkedBlock::Handle::isRedZoneCell(const void* cell)
+{
+    return hasRedZoneCells() && (block().candidateAtomNumber(cell) - m_startAtom) / m_atomsPerCell % 2;
+}
+#endif
+
 ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell* cell)
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
+#if ASAN_ENABLED
+    if (isRedZoneCell(cell))
+        return false;
+#endif
     if (m_directory->isAllocated(this))
         return true;
 
@@ -383,6 +399,25 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
         if (sweepMode == SweepToFreeList) {
             if (scribbleMode == Scribble) [[unlikely]]
                 scribble(payloadBegin, payloadEnd - payloadBegin);
+#if ASAN_ENABLED
+            if (hasRedZoneCells()) {
+                FreeCell* cursor = nullptr;
+                size_t freedBytes = 0;
+                for (char* cell = payloadBegin; cell < payloadEnd; cell += cellSize) {
+                    if (isRedZoneCell(cell)) {
+                        std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
+                        continue;
+                    }
+                    if (cursor)
+                        cursor->setNext(reinterpret_cast_ptr<FreeCell*>(cell), cellSize, secret);
+                    cursor = reinterpret_cast_ptr<FreeCell*>(cell);
+                    freedBytes += cellSize;
+                }
+                cursor->makeLast(cellSize, secret);
+                freeList->initialize(reinterpret_cast_ptr<FreeCell*>(payloadBegin), secret, freedBytes);
+                return;
+            }
+#endif
             FreeCell* interval = reinterpret_cast_ptr<FreeCell*>(payloadBegin);
             interval->makeLast(payloadEnd - payloadBegin, secret);
             freeList->initialize(interval, secret, payloadEnd - payloadBegin);
@@ -429,15 +464,29 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
                 if (scribbleMode == Scribble) [[unlikely]]
                     scribble(cell, intervalBytes);
 
-                if (!head)
-                    head = cell;
+                auto append = [&](FreeCell* interval, size_t bytes) {
+                    if (!head)
+                        head = interval;
 
-                if (cursor) [[likely]]
-                    cursor->setNext(cell, cursorIntervalBytes, secret);
+                    if (cursor) [[likely]]
+                        cursor->setNext(interval, cursorIntervalBytes, secret);
 
-                cursor = cell;
-                cursorIntervalBytes = intervalBytes;
-                freedBytes += intervalBytes;
+                    cursor = interval;
+                    cursorIntervalBytes = bytes;
+                    freedBytes += bytes;
+                };
+#if ASAN_ENABLED
+                if (hasRedZoneCells()) {
+                    for (char* target = std::bit_cast<char*>(cell); target < (std::bit_cast<char*>(cell) + intervalBytes); target += cellSize) {
+                        if (isRedZoneCell(target))
+                            std::bit_cast<HeapCell*>(target)->zap(HeapCell::StopAllocating);
+                        else
+                            append(std::bit_cast<FreeCell*>(target), cellSize);
+                    }
+                    return;
+                }
+#endif
+                append(cell, intervalBytes);
             }
         };
 

@@ -42,6 +42,10 @@
 #include <windows.h>
 #endif
 
+#if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX)
+#include <sys/personality.h>
+#endif
+
 #if defined(__has_include)
 #if __has_include(<libproc.h>)
 #endif // __has_include(<libproc.h>)
@@ -140,6 +144,18 @@ void setPermissionsOfConfigPage()
 #endif // PLATFORM(COCOA)
 }
 
+#if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX)
+bool isAddressRandomizationDisabled()
+{
+    using AddressRandomization = Config::AddressRandomization;
+    if (g_wtfConfig.addressRandomization == AddressRandomization::NotAsked) {
+        int persona = personality(0xffffffff);
+        g_wtfConfig.addressRandomization = persona != -1 && persona & ADDR_NO_RANDOMIZE ? AddressRandomization::Disabled : AddressRandomization::Enabled;
+    }
+    return g_wtfConfig.addressRandomization == AddressRandomization::Disabled;
+}
+#endif
+
 void Config::initialize()
 {
     // FIXME: We should do a placement new for Config so we can use default initializers.
@@ -179,6 +195,9 @@ void Config::initialize()
     }();
     g_wtfConfig.highestAccessibleAddress = static_cast<uintptr_t>((1ULL << OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH)) - 1);
     SignalHandlers::initialize();
+#if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX)
+    isAddressRandomizationDisabled();
+#endif
 
     [[maybe_unused]] uint8_t* reservedConfigBytes = reinterpret_cast_ptr<uint8_t*>(WebConfig::g_config);
 

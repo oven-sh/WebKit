@@ -16,6 +16,7 @@
 #include "AOTFunctionTables.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTNativeCallValidation.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperandSnapshot.h"
@@ -403,6 +404,7 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
         dataLogLn(CalledCodeDump(failure.found));
     else
         dataLogLn(ClassDump(failure.found));
+    writeCheckedNativeCalls();
     CRASH_WITH_INFO(static_cast<uint64_t>(failure.kind), failure.function.index(), failure.value.index());
 }
 

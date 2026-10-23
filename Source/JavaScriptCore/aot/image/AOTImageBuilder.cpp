@@ -517,6 +517,7 @@ static CodeLayoutInputs createLayoutInputs(const BuiltImage& built, const ImageI
         .constantsSize = built.constants.bytes.size(),
         .ffiCodeSize = inputs.ffiStubs.code.size(),
         .ffiCodeAlignment = inputs.ffiStubs.codeAlignment,
+        .ffiDirectorySize = inputs.ffiStubs.directory.size(),
     };
 }
 
@@ -718,6 +719,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
         .sections = sections,
         .webAssemblyCode = inputs.webAssembly.code.span(),
         .ffiCode = inputs.ffiStubs.code.span(),
+        .ffiDirectory = inputs.ffiStubs.directory.span(),
         .reservedRanges = reservedRanges.span(),
         .entriesUsed = result.entriesUsed,
         .counts = counts,

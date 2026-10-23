@@ -103,7 +103,7 @@ function objectsLeftOut(declared: readonly SourcedDeclaration[]): Set<string> {
     declared.flatMap(({ declaration }) =>
       declaration.declares === "Member" && isLeftOut(declaration.path)
         ? declaration.signatures.flatMap(({ implementation }) =>
-            implementation.how === "Compiled" ? [implementation.function.file] : [],
+            implementation?.how === "Compiled" ? [implementation.function.file] : [],
           )
         : [],
     ),

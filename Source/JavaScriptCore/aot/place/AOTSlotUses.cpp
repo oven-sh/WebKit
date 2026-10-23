@@ -59,6 +59,8 @@ struct SharedCounters {
     std::span<SlotRowUse> rows;
     std::span<LayoutUse> layouts;
     std::span<SiteWeight> keyWeights;
+    FastBitVector& keysNamed;
+    FastBitVector& stringsNamed;
 };
 
 // It says that the field exists and fills nothing.
@@ -396,6 +398,7 @@ private:
     void scanData(const SlotUseSite&);
     void scanDataObject(const DataNode::Object&, BlockID);
     void scanKeysLookedUpByName(const SlotUseSite&);
+    void scanNames(const auto& valueOrTerminator);
     void scanVariables(const Value&);
 
     const ScanInputs& m_inputs;
@@ -720,11 +723,33 @@ void SlotUseScanner::scanDataObject(const DataNode::Object& object, BlockID bloc
     }
 }
 
+static void setBit(FastBitVector& bits, size_t index)
+{
+    if (!bits.at(index))
+        bits.atomicSetAndCheck(index, true);
+}
+
 void SlotUseScanner::scanData(const SlotUseSite& site)
 {
     forEachDataNodeInPreorder(m_program.at(site.value.data()).root, [&](uint32_t, const DataNode& node) {
-        if (const DataNode::Object* object = node.tryAs<DataNode::Object>())
-            scanDataObject(*object, site.block);
+        if (const DataNode::String* string = node.tryAs<DataNode::String>())
+            setBit(m_counters.stringsNamed, string->value.index());
+        const DataNode::Object* object = node.tryAs<DataNode::Object>();
+        if (!object)
+            return;
+        for (const DataMember& member : object->members)
+            setBit(m_counters.keysNamed, member.key.index());
+        scanDataObject(*object, site.block);
+    });
+}
+
+void SlotUseScanner::scanNames(const auto& valueOrTerminator)
+{
+    forEachPropertyKey(valueOrTerminator, [&](PropertyKeyID key) {
+        setBit(m_counters.keysNamed, key.index());
+    });
+    forEachString(valueOrTerminator, [&](StringID string) {
+        setBit(m_counters.stringsNamed, string.index());
     });
 }
 
@@ -777,6 +802,7 @@ void SlotUseScanner::scanValue(const SlotUseSite& site)
     if (Value::opcodesWithData.contains(opcode))
         scanData(site);
     scanVariables(site.value);
+    scanNames(site.value);
 }
 
 FunctionUses SlotUseScanner::run()
@@ -787,6 +813,7 @@ FunctionUses SlotUseScanner::run()
     for (unsigned i = 0; i < m_function.blocks.size(); ++i) {
         for (ValueID id : m_function.blocks[i].values)
             scanValue({ BlockID(i), m_function.at(id) });
+        scanNames(m_function.blocks[i].terminator);
     }
     if (m_readsZeroEncodingCandidate)
         findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, m_uses.variablesWithUncheckedReads);
@@ -1161,13 +1188,15 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
             uses.layouts.fill({ }, program.layouts.size());
             uses.variables.fill({ }, program.variables.size());
             uses.keyWeights.fill(0, program.types.numberOfPropertyKeys());
+            uses.keysNamed = FastBitVector(program.types.numberOfPropertyKeys());
+            uses.stringsNamed = FastBitVector(program.strings.size());
         },
         [&] { inputs.layoutsNamedBelow = findLayoutsNamedBelow(context); },
         [&] { inputs.objectsUnderConstruction = findObjectsUnderConstruction(context); },
         [&] { inputs.zeroEncodingCandidates = findZeroEncodingCandidates(context); },
         [&] { inputs.runsBeforeEntry = computeRunsBeforeEntry(context); },
     });
-    SharedCounters counters { uses.rows.mutableSpan(), uses.layouts.mutableSpan(), uses.keyWeights.mutableSpan() };
+    SharedCounters counters { uses.rows.mutableSpan(), uses.layouts.mutableSpan(), uses.keyWeights.mutableSpan(), uses.keysNamed, uses.stringsNamed };
     ParallelArray<FunctionUses> usesOfFunctions = collectIntoArrayInParallel<FunctionUses>(loops, program.functions.size(), largeFunctions(program, loops).span(), [&](unsigned index, Vector<FunctionUses>& collected) {
         if (program.functions[index].hasBody())
             collected.append(SlotUseScanner(inputs, counters, FunctionID(index)).run());
