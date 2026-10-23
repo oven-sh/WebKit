@@ -102,7 +102,6 @@ class Stubs {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Stubs);
 public:
     JS_EXPORT_PRIVATE static const Stubs* current();
-    JS_EXPORT_PRIVATE static void installForTesting(InvokeStubFunction, Vector<void*>&& callbackEntries);
 
     InvokeStubFunction invoke() const { return m_invoke; }
     std::span<void* const> callbackEntries() const LIFETIME_BOUND { return m_callbackEntries.span(); }

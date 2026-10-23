@@ -439,17 +439,7 @@ jobs:
           # Not StackTraceTest: the lanes are compiled without unwind tables, so backtrace() sees one frame.
           program="$RUNNER_TEMP/bun-webkit/bin/TestWTF"
           if [ ! -x "$program" ]; then echo "this lane has no TestWTF"; exit 0; fi
-          status=0; stdbuf -oL "$program" --gtest_filter=-StackTraceTest.* || status=$?
-          if [ $status -ge 128 ]; then
-            # It died of a signal. How far does it get without stdbuf's preloaded library: to main, through a test, through a fork?
-            for arguments in --gtest_list_tests --gtest_filter=WTF.ASCIILIteralComparison --gtest_filter=WTF_CheckedPtrDeathTest.CheckedPtrCheckFailure; do
-              probe=0; "$program" $arguments > probe.txt 2>&1 || probe=$?
-              echo "TestWTF $arguments: exit $probe, $(wc -l < probe.txt) lines, the last: $(tail -n 1 probe.txt)"
-            done
-            command -v gdb > /dev/null || sudo apt-get install -y --no-install-recommends gdb > /dev/null 2>&1 || true
-            gdb -batch -ex run -ex backtrace -ex 'info registers' -ex 'x/8i $pc - 16' --args "$program" --gtest_filter=WTF.ASCIILIteralComparison 2>&1 | tail -n 80 || true
-          fi
-          exit $status
+          stdbuf -oL "$program" --gtest_filter=-StackTraceTest.*
       - name: run-javascriptcore-tests
         if: *have_jsc
         env: *test_env

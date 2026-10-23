@@ -21,6 +21,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "ObjectConstructor.h"
+#include "TopExceptionScope.h"
 #include <algorithm>
 #include <array>
 #include <wtf/HashSet.h>
@@ -81,6 +82,7 @@ static JSObject* createWithStructure(VM& vm, Structure* structure, std::span<con
 static JSObject* createExtraPropertiesWithAttributes(JSGlobalObject* realm, std::span<const Object::ExtraProperty> inOrder, unsigned attributes)
 {
     VM& vm = realm->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Structure* emptyStructure = Instance::of(realm)->realm.emptyExtraPropertiesStructure;
     Vector<UniquedStringImpl*, 16> names;
     names.reserveInitialCapacity(inOrder.size());
@@ -96,6 +98,7 @@ static JSObject* createExtraPropertiesWithAttributes(JSGlobalObject* realm, std:
         if (auto index = parseIndex(*property.name)) {
             ASSERT(!attributes);
             extra->putDirectIndex(realm, *index, property.value);
+            scope.assertNoException();
         } else
             putProperty(vm, extra, property.name, { property.value, attributes });
     }

@@ -245,6 +245,11 @@ void Structure::validateFlags()
     RELEASE_ASSERT(overridesGetPrototype == typeInfo().overridesGetPrototype());
 
     bool overridesPut = methodTable.put != JSObject::put && ((typeInfo().type() == StringType || typeInfo().type() == SymbolType || typeInfo().type() == HeapBigIntType) || methodTable.put != JSCell::put);
+#if ENABLE(AOT)
+    // InternalFunction sets the flag itself, and only where its put() refuses anything.
+    if (methodTable.put == InternalFunction::info()->methodTable.put)
+        overridesPut = typeInfo().overridesPut();
+#endif
     RELEASE_ASSERT(overridesPut == typeInfo().overridesPut());
 
     bool overridesIsExtensible =

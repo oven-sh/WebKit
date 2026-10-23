@@ -21,8 +21,8 @@ static constexpr bool everyCastHasItsValueFirst()
     for (Opcode opcode : allMembersOf<Opcode>) {
         if (interpretedOf(opcode) != Interpretation::Cast)
             continue;
-        // What NarrowByField takes beside its value is only looked at.
-        uint32_t numberOfOperands = opcode == Opcode::NarrowByField ? 2 : 1;
+        // What NarrowByField and ReadAgain take beside their value is only looked at.
+        uint32_t numberOfOperands = opcode == Opcode::NarrowByField || opcode == Opcode::ReadAgain ? 2 : 1;
         if (numberOfNamedOperandsOf(opcode) != numberOfOperands || hasVariadicOperand(opcode))
             return false;
     }
@@ -30,7 +30,7 @@ static constexpr bool everyCastHasItsValueFirst()
 }
 
 static_assert(everyCastHasItsValueFirst());
-static_assert(OperandIndex::NarrowByField::value == castOperandIndex);
+static_assert(OperandIndex::NarrowByField::value == castOperandIndex && OperandIndex::ReadAgain::object == castOperandIndex);
 
 struct VariantCastOutcomes {
     bool hasUnknown { false };
@@ -382,6 +382,8 @@ void ObjectInterpreter::requireCellsOfOperands(ValueID id)
     for (auto [operand, index] : operands) {
         bool isGuard = operandKindOf(opcode, index) == OperandKind::Guard;
         if (VirtualObjectID object = isGuard ? guardedObjectOf(operand) : objectOf(operand)) {
+            if (isGuard && hasPositionFromAnsweredTest(id, object))
+                m_sinking.abandon(object);
             if (isGuard && m_mode == SinkingMode::Count)
                 m_sinking.at(object).needsGuard = true;
             if (!stateOf(object)->isCell())

@@ -2902,9 +2902,15 @@ bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
 
 bool Heap::tryUseReserveOfExhaustedCage()
 {
-    if (!MarkedBlockCage::isRequired() || !cage().releaseReserve())
+    if (!MarkedBlockCage::isRequired())
         return false;
-    vm().traps().setNeedsOutOfMemoryError(true);
+    if (cage().releaseReserve()) {
+        vm().traps().setNeedsOutOfMemoryError(true);
+        return true;
+    }
+    if (!cage().releaseLastReserve())
+        return false;
+    MarkedBlockCage::willUseLastReserve(vm());
     return true;
 }
 

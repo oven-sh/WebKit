@@ -634,6 +634,7 @@ private:
     bool isLiveOut(uint32_t home, const DirectBlock&);
     uint32_t lastUseIn(uint32_t home, uint32_t block);
     bool isLiveBehind(uint32_t home, uint32_t position, uint32_t block) { return lastUseIn(home, block) > position || isLiveOut(home, m_blocks[block]); }
+    bool areFedDifferentValuesInOneBlock(uint32_t first, uint32_t second);
     bool writeClobbers(uint32_t written, uint32_t other);
     uint32_t findWeb(uint32_t home);
     bool tryCoalesce(uint32_t, uint32_t);
@@ -3032,12 +3033,33 @@ uint32_t DirectCodeGenerator::lastUseIn(uint32_t home, uint32_t block)
     return 0;
 }
 
+// A phi is not live into its own block, yet its home is written at the end of each block that feeds it. A block that ends in a branch may feed the phis of both targets.
+// noteUses() meets the blocks from the last to the first, so the records of a phi run from its first block to its last.
+bool DirectCodeGenerator::areFedDifferentValuesInOneBlock(uint32_t first, uint32_t second)
+{
+    uint32_t a = m_homes[first].firstUpsilon;
+    uint32_t b = m_homes[second].firstUpsilon;
+    while (a && b) {
+        const UpsilonRecord& recordOfFirst = m_upsilons[a - 1];
+        const UpsilonRecord& recordOfSecond = m_upsilons[b - 1];
+        if (recordOfFirst.block == recordOfSecond.block && resolve(recordOfFirst.upsilon->child(0)) != resolve(recordOfSecond.upsilon->child(0)))
+            return true;
+        if (recordOfFirst.block <= recordOfSecond.block)
+            a = recordOfFirst.nextForPhi;
+        else
+            b = recordOfSecond.nextForPhi;
+    }
+    return false;
+}
+
 bool DirectCodeGenerator::writeClobbers(uint32_t written, uint32_t other)
 {
     const ValueState& writtenState = m_states[m_homes[written].value];
     const ValueState& otherState = m_states[m_homes[other].value];
     if (m_homes[written].firstUpsilon || m_procedure.values().at(m_homes[written].value)->opcode() == B3::Phi) {
         if (isLiveIn(other, writtenState.block))
+            return true;
+        if (written != other && areFedDifferentValuesInOneBlock(written, other))
             return true;
         if (otherState.block == writtenState.block && written != other && (otherState.position < writtenState.position || m_procedure.values().at(m_homes[other].value)->opcode() == B3::Phi))
             return true;
@@ -4149,6 +4171,39 @@ void DirectCodeGenerator::emitLoad(B3::Value* value)
     MemoryOperand operand = operandForLoad(value);
     bool isDouble = value->type() == B3::Double;
     Reg result = isDouble ? define(value) : define(value, Reg(operand.base), operand.hasIndex() ? Reg(operand.index) : Reg());
+    GPRReg reference = operand.hasIndex() ? operand.index : operand.base;
+    bool referenceIsNarrow = operand.hasIndex();
+#if CPU(ARM64)
+    auto isOneInstruction = [&] {
+        if (operand.hasIndex())
+            return false;
+        if (ARM64Assembler::canEncodeSImmOffset(operand.offset))
+            return true;
+        switch (value->opcode()) {
+        case B3::Load8Z:
+        case B3::Load8S:
+            return ARM64Assembler::canEncodePImmOffset<8>(operand.offset);
+        case B3::Load16Z:
+        case B3::Load16S:
+            return ARM64Assembler::canEncodePImmOffset<16>(operand.offset);
+        default:
+            return value->type() == B3::Int32 ? ARM64Assembler::canEncodePImmOffset<32>(operand.offset) : ARM64Assembler::canEncodePImmOffset<64>(operand.offset);
+        }
+    };
+    if (value->traps() && !isOneInstruction()) {
+        if (operand.hasIndex() && !isUInt12(operand.offset)) {
+            fail();
+            return;
+        }
+        GPRReg address = jit.scratchRegister();
+        if (operand.hasIndex())
+            jit.getEffectiveAddress(operand.baseIndex(), address);
+        else
+            jit.add64(TrustedImm32(operand.offset), operand.base, address);
+        finishUnit();
+        operand = MemoryOperand { address };
+    }
+#endif
     Label begin = jit.labelIgnoringWatchpoints();
     withAddress(operand, [&](auto address) {
         switch (value->opcode()) {
@@ -4177,8 +4232,7 @@ void DirectCodeGenerator::emitLoad(B3::Value* value)
         }
     });
     if (value->traps()) {
-        bool isNarrow = operand.hasIndex();
-        m_records->traps.trappingAccesses.append(TrappingAccess { begin, valueOfOrigin(value->origin()), isNarrow ? operand.index : operand.base, isNarrow });
+        m_records->traps.trappingAccesses.append(TrappingAccess { begin, valueOfOrigin(value->origin()), reference, referenceIsNarrow });
         m_records->units.didGenerateTrappingAccess(begin, value->origin());
         finishUnit(CodeUnit::Kind::Pinned);
     } else
@@ -5107,6 +5161,15 @@ void DirectCodeGenerator::passPhiArguments(bool terminatorReadsValues)
         destinations |= bitOfRegister(destination);
         transfers.append(Transfer { destination, source, Reg() });
         phisInRegisters.append(phi);
+    }
+
+    for (const Copy& copy : copies) {
+        for (const Copy& other : copies)
+            RELEASE_ASSERT(copy.destination != other.destination || copy.source == other.source);
+    }
+    for (const Transfer& transfer : transfers) {
+        for (const Transfer& other : transfers)
+            RELEASE_ASSERT(transfer.destination != other.destination || transfer.value == other.value);
     }
 
     auto isOverwritten = [&](const B3::Value* source, const Copy* own) {

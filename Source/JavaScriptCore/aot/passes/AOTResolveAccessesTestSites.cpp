@@ -619,7 +619,7 @@ void rewriteTestedPropertyAccess(TestSiteRewriter& rewriter)
     std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, rewriter.function(), access, ExpectedClassObjects::Tested);
     RELEASE_ASSERT(query);
     query->mayTestSlotFirst = mayTestSlotFirst(context, *query);
-    query->storesWhatWasMadeOfField = query->access == Access::Store && storesWhatWasMadeOfField(program, rewriter.function(), access, query->key);
+    query->storesWhatWasMadeOfField = query->access == Access::Store && findFilledSlotTest(rewriter.tests());
 
     AccessOperands operands = operandsOfNamedAccess(access);
     operands.guard = rewriter.guard();

@@ -3376,8 +3376,13 @@ static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& pr
     validateFlatProgramResult(program, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
 }
 
-// A flat program keeps a frame for each turn of a repeated group, and gives up where they pass Options::maxRegExpStackSize(). That is no answer: the bytecode, which needs no memory
-// for many such groups, finishes the match.
+// A flat program keeps a frame for each turn of a repeated group, and gives up where they pass Options::maxRegExpStackSize(). It counts every frame that it resumes, and gives up at
+// matchLimit, which the bytecode reaches later or never. Neither is an answer: the bytecode finishes the match.
+static bool hasGivenUp(JSRegExpResult flatResult)
+{
+    return flatResult == JSRegExpResult::ErrorNoMemory || flatResult == JSRegExpResult::ErrorHitLimit;
+}
+
 static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     if (!bytecode->m_body) {
@@ -3405,7 +3410,7 @@ static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, Str
         validateFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, flatResult, output);
     if (flatResult == JSRegExpResult::Match)
         return output[0];
-    if (flatResult == JSRegExpResult::ErrorNoMemory) [[unlikely]]
+    if (hasGivenUp(flatResult)) [[unlikely]]
         return interpretBehindFlatProgram(bytecode, input, start, output);
     return offsetNoMatch;
 }
@@ -3417,7 +3422,7 @@ static NEVER_INLINE unsigned interpretFlatProgramFor8BitSubjects(BytecodePattern
         validateFlatProgram(bytecode, *bytecode->m_flatProgramFor8BitSubjects, input, start, flatResult, output);
     if (flatResult == JSRegExpResult::Match)
         return output[0];
-    if (flatResult == JSRegExpResult::ErrorNoMemory) [[unlikely]]
+    if (hasGivenUp(flatResult)) [[unlikely]]
         return interpretBehindFlatProgram(bytecode, input, start, output);
     return offsetNoMatch;
 }

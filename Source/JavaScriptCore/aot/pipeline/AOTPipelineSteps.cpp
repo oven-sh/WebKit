@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlattenInnerObjects.h"
 #include "AOTAddGenericVersion.h"
 #include "AOTAllocateInnerObjects.h"
 #include "AOTBorrowedParameters.h"
@@ -406,6 +407,14 @@ PassOutcome Pipeline::allocateInFrames()
     return m_runner.lastProgramPassOutcome();
 }
 
+PassOutcome Pipeline::flattenInnerObjects()
+{
+    edit(PassID::FlattenInnerObjects, [&](ProgramEditor& editor) {
+        Typed::flattenInnerObjects(editor, flow(), inputsFor(PassID::FlattenInnerObjects).heat, m_build);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
 PassOutcome Pipeline::allocateInnerObjects()
 {
     edit(PassID::AllocateInnerObjects, [&](ProgramEditor& editor) {
@@ -714,6 +723,8 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return allocateInFrames();
     case PassID::AllocateInnerObjects:
         return allocateInnerObjects();
+    case PassID::FlattenInnerObjects:
+        return flattenInnerObjects();
     case PassID::ReuseEnvironments:
         return reuseEnvironments();
     case PassID::NumberLiteralStrings:

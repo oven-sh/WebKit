@@ -591,8 +591,6 @@ public:
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
     JS_EXPORT_PRIVATE bool tryPutDirectPropertyRun(VM&, const PropertyRun&, std::span<const EncodedJSValue> values);
-    // The Structure has the properties of this object's Structure at the same offsets and then, in this order, a property for each name.
-    JS_EXPORT_PRIVATE void putDirectPropertiesWithStructure(VM&, Structure*, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values);
     bool tryPutDirectByExistingTransition(VM&, PropertyName, JSValue, unsigned attributes);
     void growOutOfLineStorageForTransition(VM&, Structure* next);
 

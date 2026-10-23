@@ -72,9 +72,11 @@ struct FieldData {
     uint32_t holdsRawValueFromBirth : 1;
     // Compiled code has a guard that says that a store under the name passes the prototype object of the class and what is above it. The guard holds once a store by name has made the run time look.
     uint32_t hasGuardOfStores : 1;
+    // The slot is of the kind that defers a closure, and what it leaves unmade is the object whose fields lie in this object.
+    uint32_t defersFlattenedObject : 1;
     // Compiled code reads the field without the test of the cell.
     uint32_t keepsStateOfBirth : 1;
-    uint32_t unused : 28 - nameBits { 0 };
+    uint32_t unused : 27 - nameBits { 0 };
     uint16_t flags;
     uint16_t operandIndex;
     SlotData slot;
@@ -311,8 +313,25 @@ struct LayoutData {
     // Only a field whose slot defers a closure has operands: the function and, where the closure captures an environment, the slot of the hidden field that holds it.
     FunctionID deferredClosureOf(const FieldData& field) const
     {
-        ASSERT(field.slot.representation() == SlotRepresentation::DeferredClosure);
+        ASSERT(field.slot.representation() == SlotRepresentation::DeferredClosure && !field.defersFlattenedObject);
         return FunctionID(fieldOperands()[field.operandIndex]);
+    }
+    // The operands of a field whose slot defers a flattened object.
+    struct FlattenedObjectData {
+        static constexpr uint32_t noFunction = UINT32_MAX;
+        static constexpr uint32_t noAllocation = UINT32_MAX;
+
+        uint32_t allocation;
+        uint32_t offsetInOuterObject;
+        uint32_t offsetInOwnCell;
+        uint32_t size;
+    };
+    FlattenedObjectData flattenedObjectOf(const FieldData& field) const
+    {
+        ASSERT(field.defersFlattenedObject);
+        std::span<const uint32_t> operands = fieldOperands().subspan(field.operandIndex);
+        ASSERT(operands[0] == FlattenedObjectData::noFunction);
+        return { operands[1], operands[2], operands[3], operands[4] };
     }
     SlotData closureEnvironmentSlotOf(const FieldData& field) const
     {

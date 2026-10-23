@@ -193,10 +193,8 @@ void didLinkNewObject(ObjectAllocationProfile&);
 bool planObjectLiteral(JSGlobalObject*, CodeBlock*, const JSInstruction*, ObjectAllocationProfile&);
 void didAllocateFirstPropertyOutsideCell(JSGlobalObject*, Structure* beforeAddition);
 
-void didLookUpCompiledCallee(VM&);
 void didLeaveInlineAllocation(VM&);
 void didLeaveInlineBranch(VM&);
-void didLeaveInlineOperator(VM&);
 
 } // namespace Interpreter
 

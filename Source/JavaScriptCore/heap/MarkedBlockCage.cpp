@@ -39,6 +39,7 @@ static constexpr size_t reserveDivisor = 64;
 static constexpr size_t smallestReserveSize = 4 * MB;
 static constexpr size_t largestReserveSize = 32 * MB;
 static constexpr size_t reserveChunkSize = MarkedBlock::blockSize;
+static constexpr size_t lastReserveDivisor = 4;
 
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
 static_assert(smallestUsableSize / randomPrefixDivisor >= randomPrefixGranule);
@@ -47,6 +48,7 @@ static_assert(unusedPrefixSize + (MarkedBlockCage::maxSize >> maxHalvingsOfFirst
 std::atomic<bool> MarkedBlockCage::s_isRequired { false };
 std::atomic<bool> MarkedBlockCage::s_hasAllocationsOutside { false };
 std::atomic<MarkedBlockCage::ExhaustionHandler> MarkedBlockCage::s_exhaustionHandler { nullptr };
+std::atomic<MarkedBlockCage::LastReserveHandler> MarkedBlockCage::s_lastReserveHandler { nullptr };
 static Lock s_poolLock;
 static LazyNeverDestroyed<Vector<ReservedRangeHeap*>> s_freeRanges WTF_GUARDED_BY_LOCK(s_poolLock);
 static ReservedRangeHeap* s_firstRange WTF_GUARDED_BY_LOCK(s_poolLock);
@@ -164,7 +166,7 @@ MarkedBlockCage::MarkedBlockCage()
 
 MarkedBlockCage::~MarkedBlockCage()
 {
-    releaseReserve();
+    releaseLastReserve();
     if (!m_range || m_sharesRange)
         return;
 
@@ -227,6 +229,17 @@ void MarkedBlockCage::keepReserveOnceHalfFull()
 }
 
 bool MarkedBlockCage::releaseReserve()
+{
+    size_t numberOfChunksKept = m_reserve.size() / lastReserveDivisor;
+    if (m_hasReleasedReserve || m_reserve.size() == numberOfChunksKept)
+        return false;
+    while (m_reserve.size() > numberOfChunksKept)
+        m_range->free(m_reserve.takeLast());
+    m_hasReleasedReserve = true;
+    return true;
+}
+
+bool MarkedBlockCage::releaseLastReserve()
 {
     if (m_reserve.isEmpty())
         return false;
@@ -297,6 +310,17 @@ void MarkedBlockCage::logExhaustion()
 void MarkedBlockCage::setExhaustionHandler(ExhaustionHandler handler)
 {
     s_exhaustionHandler.store(handler, std::memory_order_relaxed);
+}
+
+void MarkedBlockCage::willUseLastReserve(VM& vm)
+{
+    if (LastReserveHandler handler = s_lastReserveHandler.load(std::memory_order_relaxed))
+        handler(vm);
+}
+
+void MarkedBlockCage::setLastReserveHandler(LastReserveHandler handler)
+{
+    s_lastReserveHandler.store(handler, std::memory_order_relaxed);
 }
 
 } // namespace JSC

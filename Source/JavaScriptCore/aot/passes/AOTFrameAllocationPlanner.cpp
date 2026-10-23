@@ -152,6 +152,7 @@ static bool defersClosureWithCapture(ClosureDeferral deferral)
     case ClosureDeferral::CapturesNothing:
         return false;
     // Whoever borrows the object that is not made yet holds the outer object under the type of the inner one.
+    case ClosureDeferral::FlattenedObject:
     case ClosureDeferral::CapturesObject:
     case ClosureDeferral::CapturesEnvironment:
         return true;

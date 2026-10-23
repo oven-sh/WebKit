@@ -20,6 +20,7 @@ namespace JSC {
 class HeapCell;
 class JSCell;
 class ReservedRangeHeap;
+class VM;
 
 class MarkedBlockCage {
     WTF_MAKE_NONCOPYABLE(MarkedBlockCage);
@@ -65,6 +66,7 @@ public:
 
     void keepReserveOnceHalfFull();
     bool releaseReserve();
+    bool releaseLastReserve();
     void didThrowOutOfMemoryError() { m_hasReleasedReserve = false; }
     size_t reserveSize() const;
 
@@ -77,6 +79,12 @@ public:
     static void logExhaustion();
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
+
+    // Called on the thread of the VM, inside an allocation, when the error that is owed has found no place to be thrown and the last of the reserve is given out.
+    // A host that can end this thread alone asks for its termination here.
+    static void willUseLastReserve(VM&);
+    using LastReserveHandler = void (*)(VM&);
+    JS_EXPORT_PRIVATE static void setLastReserveHandler(LastReserveHandler);
 
 private:
     void didAllocate(const void*, size_t);
@@ -93,6 +101,7 @@ private:
     static std::atomic<bool> s_isRequired;
     static std::atomic<bool> s_hasAllocationsOutside;
     static std::atomic<ExhaustionHandler> s_exhaustionHandler;
+    static std::atomic<LastReserveHandler> s_lastReserveHandler;
 };
 
 ALWAYS_INLINE uintptr_t cageBaseOf(const HeapCell* holder)

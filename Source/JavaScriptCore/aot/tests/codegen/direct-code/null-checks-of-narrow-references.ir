@@ -1,0 +1,37 @@
+# The null check of a narrow reference is the read behind it, `[cage + 8 * word + offset]` (../null-checks/narrow-references.ir), in code that is made without the optimizing back end too.
+# The handler of faults finds the site by the address of the instruction that faulted. On x86-64 that read is one instruction. On ARM64 the address takes instructions of its own, and the record names the load
+# behind them: a record that names anything but a load or a store stops the build there.
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot references=narrow testing=NoLayoutIsMadeSeldom testing=GenerateAllCodeDirectly
+# RUN: generate-code FunctionsGeneratedDirectly
+# REQUIRES: unsanitized-code
+# CHECK: f0: size={{*}} faults=1
+# CHECK: f1: size={{*}} faults=2
+# CHECK: f2: size={{*}} faults=1
+# CHECK: statistic FunctionsGeneratedDirectly 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="left" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="right" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="up" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="down" declared={type=undefined|null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="readsThroughReference" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v2 = RequireObjectCoercible v1 name="count"
+    v3 = GetSlot v2 key="count" receivers=[L0] level=Proven
+    Return v3
+}
+function f1 name="readsThroughTwoReferences" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v2 = RequireObjectCoercible v1 name="next"
+    v3 = GetSlot v2 key="next" receivers=[L0] level=Proven
+    v4 = RequireObjectCoercible v3 name="count"
+    v5 = GetSlot v4 key="count" receivers=[L0] level=Proven
+    Return v5
+}
+function f2 name="onlyChecks" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
+    v2 = RequireObjectCoercible v1 name="count"
+    v3 = Integer integer=2
+    Return v3
+}

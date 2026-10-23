@@ -14,6 +14,7 @@
 #include "AOTOperationScope.h"
 #include "CommonSlowPathsInlines.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSMapInlines.h"
@@ -146,6 +147,7 @@ static void moveWalkedTableToHeap(JSGlobalObject* globalObject, Collection* coll
     auto* table = uncheckedDowncast<CompactTable>(storage);
     if (!table->isLive() || !table->isInImage())
         return;
+    DeferTerminationForAWhile deferTermination(globalObject->vm());
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     CompactTable::tryMoveToHeap(globalObject, collection);
     scope.clearException();

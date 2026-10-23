@@ -535,6 +535,7 @@ public:
         , m_makersNameFeatures(builtins.classCount())
     {
         m_classOfBuiltin.fill(noClass, builtins.builtinCount());
+        m_hostClassOfPrototype.fill(noClass, builtins.builtinCount());
         BitVector hangsOutsidePrototypeObjects(builtins.builtinCount());
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
             BuiltinID holder = builtins.at(BuiltinID(index)).holder;
@@ -543,7 +544,10 @@ public:
         }
         for (uint32_t index = 0; index < builtins.classCount(); ++index) {
             const BuiltinClass& builtinClass = builtins.at(BuiltinClassID(index));
-            if (builtinClass.origin != BuiltinOrigin::Host || builtinClass.instancesAreEntries || !builtinClass.prototype)
+            if (builtinClass.origin != BuiltinOrigin::Host || !builtinClass.prototype)
+                continue;
+            m_hostClassOfPrototype[builtins.canonicalID(builtinClass.prototype).index()] = index;
+            if (builtinClass.instancesAreEntries)
                 continue;
             bool canBeNamed = builtinClass.constructor && hangsOutsidePrototypeObjects.quickGet(builtins.canonicalID(builtinClass.constructor).index());
             if (canBeNamed && (isNamedByStatement(builtinClass.constructor) || isNamedByStatement(builtinClass.prototype)))
@@ -567,6 +571,22 @@ public:
     {
         uint32_t owner = m_classOfBuiltin[builtin.index()];
         return owner != noClass && m_makersNameFeatures.quickGet(owner) && classNeeds(owner, feature);
+    }
+
+    // The native code of a method or an accessor of a host class tests its receiver first. Whoever takes it from the prototype object can run it without an instance, and it leaves with the features of the class.
+    BuiltinID entryWithFeaturesOfClassOf(BuiltinID member) const
+    {
+        const Builtin& entry = m_builtins.at(member);
+        if (!entry.holder || (entry.kind != BuiltinKind::Method && entry.kind != BuiltinKind::Accessor))
+            return { };
+        uint32_t owner = m_hostClassOfPrototype[m_builtins.canonicalID(entry.holder).index()];
+        if (owner == noClass)
+            return { };
+        const BuiltinClass& builtinClass = m_builtins.at(BuiltinClassID(owner));
+        BuiltinID prototype = m_builtins.canonicalID(builtinClass.prototype);
+        if (!m_builtins.featureUsesOf(prototype).empty() || !builtinClass.constructor)
+            return prototype;
+        return m_builtins.canonicalID(builtinClass.constructor);
     }
 
 private:
@@ -625,6 +645,7 @@ private:
 
     const BuiltinTable& m_builtins;
     Vector<uint32_t> m_classOfBuiltin;
+    Vector<uint32_t> m_hostClassOfPrototype;
     BitVector m_makersNameFeatures;
 };
 
@@ -638,15 +659,23 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
     const BuiltinTable& builtins = inputs.program.builtins();
     bool refusesEvaluatedText = inputs.solver().input().refusesEvaluatedText;
     ValueSetID namedByStatements = inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::BuiltinsThatStatementsName));
-    HostClassesRootedByTheirMakers hostClasses(builtins, [&](BuiltinID builtin) {
+    auto isNamedByStatement = [&](BuiltinID builtin) {
         return inputs.sets().contains(namedByStatements, inputs.universe().objectOf(builtin));
-    });
+    };
+    HostClassesRootedByTheirMakers hostClasses(builtins, isNamedByStatement);
     Vector<FeatureUseRecord> uses;
     for (size_t index : builtinsWhoseCodeRuns) {
         if (refusesEvaluatedText && builtins.at(BuiltinID(index)).flags.contains(BuiltinFlag::EvaluatesText))
             continue;
         for (const BuiltinFeatureUse& line : builtins.featureUsesOf(BuiltinID(index))) {
             if (mayHold(holders, BuiltinID(index), line.condition) && !hostClasses.isRootedByMakersOfClass(BuiltinID(index), line.feature))
+                uses.append(FeatureUseRecord { static_cast<uint32_t>(line.feature), static_cast<uint32_t>(index), noWitness });
+        }
+        BuiltinID entryOfClass = hostClasses.entryWithFeaturesOfClassOf(BuiltinID(index));
+        if (!entryOfClass || !isNamedByStatement(builtins.canonicalID(builtins.at(BuiltinID(index)).holder)))
+            continue;
+        for (const BuiltinFeatureUse& line : builtins.featureUsesOf(entryOfClass)) {
+            if (!line.condition && !hostClasses.isRootedByMakersOfClass(BuiltinID(index), line.feature))
                 uses.append(FeatureUseRecord { static_cast<uint32_t>(line.feature), static_cast<uint32_t>(index), noWitness });
         }
     }

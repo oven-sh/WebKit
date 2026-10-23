@@ -373,6 +373,7 @@ aot/passes/AOTExpandOwnKeysForIn.cpp
 aot/passes/AOTExpandOwnKeysOrders.cpp
 aot/passes/AOTExpandOwnKeysSites.cpp
 aot/passes/AOTFinishBirths.cpp
+aot/passes/AOTFlattenInnerObjects.cpp
 aot/passes/AOTFoldConstantRegExps.cpp
 aot/passes/AOTFoldConstants.cpp
 aot/passes/AOTFrameAllocation.cpp

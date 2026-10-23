@@ -15,186 +15,596 @@
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
+class Integers {
+public:
+    static constexpr size_t capacity = 8;
+
+    Integers() = default;
+    Integers(int64_t only)
+        : m_size(1)
+    {
+        m_sorted[0] = only;
+    }
+
+    static Integers bothBooleans()
+    {
+        Integers both(0);
+        both.add(1);
+        return both;
+    }
+
+    std::span<const int64_t> span() const { return std::span(m_sorted).first(m_size); }
+    size_t size() const { return m_size; }
+    bool isEmpty() const { return !m_size; }
+    bool contains(int64_t integer) const { return std::ranges::binary_search(span(), integer); }
+    bool isOnly(int64_t integer) const { return m_size == 1 && m_sorted[0] == integer; }
+
+    bool add(int64_t integer)
+    {
+        std::span<const int64_t> sorted = span();
+        size_t index = std::ranges::lower_bound(sorted, integer) - sorted.begin();
+        if (index < m_size && m_sorted[index] == integer)
+            return true;
+        if (m_size == capacity)
+            return false;
+        std::copy_backward(m_sorted.begin() + index, m_sorted.begin() + m_size, m_sorted.begin() + m_size + 1);
+        m_sorted[index] = integer;
+        ++m_size;
+        return true;
+    }
+
+    Integers intersectedWith(const Integers& other) const
+    {
+        return filtered([&](int64_t integer) {
+            return other.contains(integer);
+        });
+    }
+
+    Integers filtered(NOESCAPE const Invocable<bool(int64_t)> auto& keeps) const
+    {
+        Integers kept;
+        for (int64_t integer : span()) {
+            if (keeps(integer))
+                kept.m_sorted[kept.m_size++] = integer;
+        }
+        return kept;
+    }
+
+    std::optional<Integers> unitedWith(const Integers& other) const
+    {
+        Integers united = *this;
+        for (int64_t integer : other.span()) {
+            if (!united.add(integer))
+                return std::nullopt;
+        }
+        return united;
+    }
+
+    friend bool operator==(const Integers& left, const Integers& right) { return std::ranges::equal(left.span(), right.span()); }
+
+private:
+    std::array<int64_t, capacity> m_sorted { };
+    uint8_t m_size { 0 };
+};
+
 struct Fact {
     ValueID value;
-    bool isUnspecified { false };
-    int64_t integer { 0 };
     TypeID testedType;
+    Integers integers;
 
-    friend bool operator==(const Fact&, const Fact&) = default;
-};
-
-using Facts = Vector<Fact, 8>;
-
-struct PathState {
-    BlockID block;
-    Facts facts;
-    std::optional<size_t> previous;
-    uint32_t firstValue { 0 };
-};
-
-// What a branch tells about its condition multiplies the states, so it is remembered only to refute what was found without it.
-enum class BranchesTeach : bool { No, Yes };
-
-class PathWalker {
-public:
-    PathWalker(FunctionAnalyses& analyses, size_t maxUses, size_t maxStates, BranchesTeach branchesTeach)
-        : maxStates(maxStates)
-        , m_analyses(analyses)
-        , m_function(analyses.function())
-        , m_visited(m_function.blocks.size())
-        , m_maxUses(maxUses)
-        , m_branchesTeach(branchesTeach == BranchesTeach::Yes)
+    bool isBefore(ValueID otherValue, TypeID otherType) const
     {
-        if (m_branchesTeach)
-            findRepeatedTests();
+        if (value != otherValue)
+            return value.index() < otherValue.index();
+        return rankOf(testedType) < rankOf(otherType);
+    }
+
+    static uint64_t rankOf(TypeID type) { return type ? static_cast<uint64_t>(type.index()) + 1 : 0; }
+};
+
+class Facts {
+public:
+    const Integers* find(ValueID value, TypeID testedType = { }) const
+    {
+        size_t index = indexOf(value, testedType);
+        return isAt(index, value, testedType) ? &m_sorted[index].integers : nullptr;
+    }
+
+    void set(ValueID value, TypeID testedType, const Integers& integers)
+    {
+        size_t index = indexOf(value, testedType);
+        if (isAt(index, value, testedType))
+            m_sorted[index].integers = integers;
+        else
+            m_sorted.insert(index, Fact { value, testedType, integers });
+    }
+
+    void remove(ValueID value)
+    {
+        size_t index = indexOf(value, { });
+        if (isAt(index, value, { }))
+            m_sorted.removeAt(index);
+    }
+
+    void removeAllMatching(NOESCAPE const Invocable<bool(const Fact&)> auto& matches) { m_sorted.removeAllMatching(matches); }
+
+    void forEachTestOf(ValueID value, NOESCAPE const Invocable<void(TypeID, const Integers& outcome)> auto& functor) const
+    {
+        for (size_t index = indexOf(value, { }); index < m_sorted.size() && m_sorted[index].value == value; ++index) {
+            if (m_sorted[index].testedType)
+                functor(m_sorted[index].testedType, m_sorted[index].integers);
+        }
+    }
+
+    bool mergeWith(const Facts& other)
+    {
+        bool changed = false;
+        size_t otherIndex = 0;
+        m_sorted.removeAllMatching([&](Fact& fact) {
+            while (otherIndex < other.m_sorted.size() && other.m_sorted[otherIndex].isBefore(fact.value, fact.testedType))
+                ++otherIndex;
+            std::optional<Integers> united;
+            if (other.isAt(otherIndex, fact.value, fact.testedType))
+                united = fact.integers.unitedWith(other.m_sorted[otherIndex].integers);
+            if (united && *united == fact.integers)
+                return false;
+            changed = true;
+            if (!united || fact.testedType)
+                return true;
+            fact.integers = *united;
+            return false;
+        });
+        return changed;
+    }
+
+    size_t size() const { return m_sorted.size(); }
+    const Fact& operator[](size_t index) const { return m_sorted[index]; }
+    auto begin() const { return m_sorted.begin(); }
+    auto end() const { return m_sorted.end(); }
+
+private:
+    size_t indexOf(ValueID value, TypeID testedType) const
+    {
+        return std::ranges::partition_point(m_sorted, [&](const Fact& fact) {
+            return fact.isBefore(value, testedType);
+        }) - m_sorted.begin();
+    }
+
+    bool isAt(size_t index, ValueID value, TypeID testedType) const
+    {
+        return index < m_sorted.size() && m_sorted[index].value == value && m_sorted[index].testedType == testedType;
+    }
+
+    Vector<Fact, 8> m_sorted;
+};
+
+struct RemainingKinds {
+    uint16_t primitives { 0 };
+    bool mayBeObject { false };
+
+    bool mayPass(const Type& tested) const { return (mayBeObject && tested.hasObjects()) || primitives & primitivesThatMayPass(tested); }
+    bool mayFail(const Type& tested) const { return mayBeObject || primitives & ~primitivesThatAlwaysPass(tested); }
+    bool isUndefinedOrNull() const { return !mayBeObject && !(primitives & ~Primitive::UndefinedOrNull); }
+
+    static uint16_t primitivesThatMayPass(const Type& tested)
+    {
+        uint16_t primitives = tested.primitives;
+        for (uint16_t kinds : { Primitive::Number, Primitive::AnyString, Primitive::AnySymbol }) {
+            if (primitives & kinds)
+                primitives |= kinds;
+        }
+        return primitives;
+    }
+
+    static uint16_t primitivesThatAlwaysPass(const Type& tested)
+    {
+        uint16_t primitives = tested.primitives & ~(Primitive::LiteralString | Primitive::LiteralSymbol);
+        if ((primitives & Primitive::Number) != Primitive::Number || tested.integers != Range::full())
+            primitives &= ~Primitive::Number;
+        if (primitives & Primitive::String)
+            primitives |= Primitive::LiteralString;
+        if (primitives & Primitive::Symbol)
+            primitives |= Primitive::LiteralSymbol;
+        return primitives;
+    }
+};
+
+class Folder {
+public:
+    Folder(const Program& program, const Function& function, FunctionAnalyses* analyses)
+        : m_program(program)
+        , m_function(function)
+        , m_analyses(analyses)
+    {
+    }
+
+    std::optional<Integers> integersOf(const Facts&, ValueID, unsigned depth = 0) const;
+    std::optional<Integers> fold(const Facts&, const Value&, unsigned depth = 0) const;
+    bool isNumber(ValueID id) const { return m_program.typeOf(m_function, id).isNumber(); }
+    std::optional<RemainingKinds> remainingKindsOf(const Facts&, ValueID) const;
+    static bool canFold(Opcode);
+
+private:
+    static constexpr unsigned maxDepth = 8;
+
+    std::optional<Integers> numbersOf(const Facts& facts, ValueID id, unsigned depth) const { return isNumber(id) ? integersOf(facts, id, depth) : std::nullopt; }
+    std::optional<Integers> foldCallOfOutlinedBody(const Facts&, const Value&, unsigned depth) const;
+
+    const Program& m_program;
+    const Function& m_function;
+    FunctionAnalyses* m_analyses;
+};
+
+bool Folder::canFold(Opcode opcode)
+{
+    switch (opcode) {
+    case Opcode::BitAnd:
+    case Opcode::BitOr:
+    case Opcode::LShift:
+    case Opcode::ToNumber:
+    case Opcode::StrictEq:
+    case Opcode::Eq:
+    case Opcode::Less:
+    case Opcode::LessEq:
+    case Opcode::Greater:
+    case Opcode::GreaterEq:
+    case Opcode::ToBoolean:
+    case Opcode::LogicalNot:
+    case Opcode::TypeTest:
+    case Opcode::CallDirect:
+        return true;
+    default:
+        return mayReturnOperand(opcode);
+    }
+}
+
+std::optional<Integers> Folder::integersOf(const Facts& facts, ValueID id, unsigned depth) const
+{
+    if (!id)
+        return std::nullopt;
+    const Value& value = m_function.at(id);
+    if (value.opcode == Opcode::Integer)
+        return Integers(value.integer());
+    if (value.opcode == Opcode::Boolean)
+        return Integers(value.boolean());
+    if (const Integers* known = facts.find(id))
+        return *known;
+    if (depth < maxDepth) {
+        if (std::optional<Integers> folded = fold(facts, value, depth + 1))
+            return folded;
+    }
+    if (m_program.typeOf(m_function, id).isBoolean())
+        return Integers::bothBooleans();
+    return std::nullopt;
+}
+
+std::optional<RemainingKinds> Folder::remainingKindsOf(const Facts& facts, ValueID id) const
+{
+    if (!m_analyses)
+        return std::nullopt;
+    ValueID identity = m_analyses->identityOf(id);
+    const Type& type = m_program.typeOf(m_function, identity);
+    if (!type.isJavaScriptValue())
+        return std::nullopt;
+    RemainingKinds remaining { type.primitives, type.hasObjects() };
+    bool isTested = false;
+    facts.forEachTestOf(identity, [&](TypeID testedType, const Integers& outcome) {
+        const Type& tested = m_program.at(testedType);
+        isTested = true;
+        if (outcome.isOnly(0)) {
+            remaining.primitives &= ~RemainingKinds::primitivesThatAlwaysPass(tested);
+            return;
+        }
+        remaining.primitives &= RemainingKinds::primitivesThatMayPass(tested);
+        remaining.mayBeObject = false;
+    });
+    return isTested ? std::optional(remaining) : std::nullopt;
+}
+
+std::optional<Integers> Folder::foldCallOfOutlinedBody(const Facts& facts, const Value& call, unsigned depth) const
+{
+    const Function& callee = m_program.at(call.function());
+    if (callee.role != FunctionRole::OutlinedBody || callee.blocks.size() != 1)
+        return std::nullopt;
+    const Block& body = callee.at(entryBlock);
+    if (body.terminator.kind != TerminatorKind::Return || !body.terminator.numberOfOperands() || body.parameters.size() != call.numberOfOperands())
+        return std::nullopt;
+    Facts inCallee;
+    for (uint32_t index = 0; index < call.numberOfOperands(); ++index) {
+        if (std::optional<Integers> argument = integersOf(facts, call.operand(index), depth))
+            inCallee.set(body.parameters[index], { }, *argument);
+    }
+    return Folder(m_program, callee, nullptr).integersOf(inCallee, body.terminator.operand(0));
+}
+
+std::optional<Integers> Folder::fold(const Facts& facts, const Value& value, unsigned depth) const
+{
+    auto both = [&](auto&& operation) -> std::optional<Integers> {
+        std::optional<Integers> left = numbersOf(facts, value.operand(0), depth);
+        std::optional<Integers> right = numbersOf(facts, value.operand(1), depth);
+        if (!left || !right)
+            return std::nullopt;
+        Integers results;
+        for (int64_t leftInteger : left->span()) {
+            for (int64_t rightInteger : right->span()) {
+                std::optional<int64_t> result = operation(leftInteger, rightInteger);
+                if (!result || !results.add(*result))
+                    return std::nullopt;
+            }
+        }
+        return results;
+    };
+    auto each = [&](auto&& operation) -> std::optional<Integers> {
+        std::optional<Integers> operand = integersOf(facts, value.operand(0), depth);
+        if (!operand)
+            return std::nullopt;
+        Integers results;
+        for (int64_t integer : operand->span())
+            results.add(operation(integer));
+        return results;
+    };
+    using Result = std::optional<int64_t>;
+    switch (value.opcode) {
+    case Opcode::BitAnd:
+        return both([](int64_t left, int64_t right) -> Result { return left & right; });
+    case Opcode::BitOr:
+        return both([](int64_t left, int64_t right) -> Result { return left | right; });
+    case Opcode::LShift:
+        return both([](int64_t left, int64_t right) -> Result {
+            if (left < 0 || left > INT32_MAX || right < 0 || right > 30 || left << right > INT32_MAX)
+                return std::nullopt;
+            return left << right;
+        });
+    case Opcode::ToNumber:
+        return integersOf(facts, value.operand(0), depth);
+    case Opcode::StrictEq:
+    case Opcode::Eq:
+        return both([](int64_t left, int64_t right) -> Result { return left == right; });
+    case Opcode::Less:
+        return both([](int64_t left, int64_t right) -> Result { return left < right; });
+    case Opcode::LessEq:
+        return both([](int64_t left, int64_t right) -> Result { return left <= right; });
+    case Opcode::Greater:
+        return both([](int64_t left, int64_t right) -> Result { return left > right; });
+    case Opcode::GreaterEq:
+        return both([](int64_t left, int64_t right) -> Result { return left >= right; });
+    case Opcode::ToBoolean:
+        return each([](int64_t integer) { return !!integer; });
+    case Opcode::LogicalNot:
+        return each([](int64_t integer) { return !integer; });
+    case Opcode::TypeTest:
+        if (std::optional<Integers> operand = numbersOf(facts, value.operand(0), depth)) {
+            Integers results;
+            for (int64_t integer : operand->span())
+                results.add(Type::integer({ integer, integer }).isSubsetOf(m_program.at(value.testedType()), m_program));
+            return results;
+        }
+        if (m_analyses) {
+            if (const Integers* outcome = facts.find(m_analyses->identityOf(value.operand(0)), value.testedType()))
+                return *outcome;
+        }
+        if (std::optional<RemainingKinds> remaining = remainingKindsOf(facts, value.operand(0))) {
+            const Type& tested = m_program.at(value.testedType());
+            if (remaining->mayPass(tested) != remaining->mayFail(tested))
+                return Integers(remaining->mayPass(tested));
+        }
+        return std::nullopt;
+    case Opcode::CallDirect:
+        return foldCallOfOutlinedBody(facts, value, depth);
+    default: {
+        std::optional<Integers> returned;
+        forEachReturnedOperand(m_function, value, [&](ValueID operand) {
+            returned = integersOf(facts, operand, depth);
+        });
+        return returned;
+    }
+    }
+}
+
+using MarkedValues = Vector<ValueID, 4>;
+
+struct WalkState {
+    BlockID block;
+    MarkedValues marked;
+    Facts facts;
+    std::optional<uint32_t> previous;
+    bool isQueued { false };
+};
+
+// One walk over the whole function with nothing marked finds what is known at each block. Then one walk from each edge that passes an Unspecified value, marking the values that hold it.
+// States of a block with the same marked values are merged, so the program's own flags multiply nothing: the integer that says whether the value is there was passed beside it.
+// A walk ends where no marked value is live. Fewer facts mean more paths, so a walk that lists nothing proves there is nothing.
+class MergingWalker {
+public:
+    MergingWalker(FunctionAnalyses& analyses, size_t maxUses, size_t maxBlockVisits)
+        : m_analyses(analyses)
+        , m_function(analyses.function())
+        , m_program(analyses.context().program)
+        , m_folder(m_program, m_function, &analyses)
+        , m_statesOfBlock(m_function.blocks.size())
+        , m_maxUses(maxUses)
+        , m_blockVisitsLeft(maxBlockVisits)
+    {
     }
 
     UsesOfUnspecifiedValues run();
 
 private:
-    const size_t maxStates;
+    static constexpr unsigned maxNarrowingDepth = 6;
 
-    struct TestedIdentity {
-        ValueID identity;
-        TypeID type;
-        friend bool operator==(const TestedIdentity&, const TestedIdentity&) = default;
-    };
-    void findRepeatedTests();
-    std::optional<TestedIdentity> repeatedTestOf(const Value&) const;
-    bool alwaysThrows(const Facts&, const Value&) const;
+    void findValuesThatAreAlwaysUnspecified();
+    bool isAlwaysUnspecified(ValueID id) const { return m_isAlwaysUnspecified.get(id.index()); }
+    bool passesUnspecifiedValue(Edge) const;
 
-    std::optional<Fact> factOf(const Facts&, ValueID) const;
-    std::optional<int64_t> integerOf(const Facts&, ValueID, unsigned depth = 0) const;
-    std::optional<int64_t> numberOf(const Facts&, ValueID, unsigned depth = 0) const;
-    bool isNumber(ValueID) const;
-    bool isUnspecified(const Facts&, ValueID) const;
-    static void set(Facts&, Fact);
+    bool narrow(Facts&, ValueID, Integers allowed, unsigned depth = 0) const;
+    bool refoldNarrowedValues(Facts&) const;
+    bool narrowOnEdge(Facts& facts, ValueID id, const Integers& allowed) const { return narrow(facts, id, allowed) && refoldNarrowedValues(facts); }
+    bool endsPath(const Facts&, const Value&) const;
 
-    template<typename User> void listUsesBy(const Facts&, BlockID, ValueID id, const User&);
-    void evaluate(Facts&, ValueID);
-    std::optional<int64_t> fold(const Facts&, const Value&, unsigned depth = 0) const;
-    void walk(size_t stateIndex);
-    void follow(const Facts&, Edge, std::optional<Fact> learned = std::nullopt);
-    void enter(BlockID target, Facts&&);
+    template<typename User> void listUsesBy(const MarkedValues&, BlockID, ValueID id, const User&);
+    void walkBlock(BlockID, Facts&&, MarkedValues&&, NOESCAPE const Invocable<void(Edge, Facts&&, const MarkedValues&)> auto& follow);
+    void follow(Edge, const Facts&, const MarkedValues&);
+    void enter(BlockID, Facts&&, MarkedValues&&);
+    void walkAll();
+    void forgetStates();
+    Vector<BlockID> pathTo(const Vector<WalkState>&, std::optional<uint32_t> stateIndex) const;
 
     FunctionAnalyses& m_analyses;
     const Function& m_function;
-    Vector<Vector<Facts>> m_visited;
-    Vector<PathState> m_states;
-    Vector<size_t> m_worklist;
-    size_t m_current { 0 };
+    const Program& m_program;
+    Folder m_folder;
+    BitVector m_isAlwaysUnspecified;
+    Vector<WalkState> m_states;
+    Vector<Vector<uint32_t, 1>> m_statesOfBlock;
+    Vector<std::pair<uint32_t, uint32_t>> m_queue;
+    Vector<WalkState> m_unmarkedStates;
+    std::optional<uint32_t> m_start;
+    std::optional<Edge> m_origin;
+    std::optional<uint32_t> m_current;
     size_t m_maxUses;
-    bool m_branchesTeach;
+    size_t m_blockVisitsLeft;
     bool m_gaveUp { false };
     Vector<UseOfUnspecifiedValue> m_uses;
-    Vector<TestedIdentity> m_repeatedTests;
 };
 
-void PathWalker::findRepeatedTests()
+void MergingWalker::findValuesThatAreAlwaysUnspecified()
 {
-    const Program& program = m_analyses.context().program;
-    Vector<TestedIdentity> seen;
-    for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {
-        for (ValueID id : m_function.at(BlockID(index)).values) {
+    m_isAlwaysUnspecified.ensureSize(m_function.values.size());
+    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+        for (ValueID id : m_function.at(block).values) {
             const Value& value = m_function.at(id);
-            bool refusesWhatIsNoString = value.opcode == Opcode::RequireObjectCoercible && program.typeOf(m_function, value.operand(0)).isStringOrNullish();
-            if (!refusesWhatIsNoString && (value.opcode != Opcode::TypeTest || program.at(value.testedType()).hasObjects()))
-                continue;
-            TestedIdentity tested { m_analyses.identityOf(value.operand(0)), refusesWhatIsNoString ? TypeTable::string : value.testedType() };
-            if (!seen.contains(tested))
-                seen.append(tested);
-            else if (!m_repeatedTests.contains(tested))
-                m_repeatedTests.append(tested);
+            bool isUnspecified = value.opcode == Opcode::Unspecified;
+            if (!isUnspecified && mayReturnOperand(value.opcode)) {
+                forEachReturnedOperand(m_function, value, [&](ValueID operand) {
+                    isUnspecified |= isAlwaysUnspecified(operand);
+                });
+            }
+            if (isUnspecified)
+                m_isAlwaysUnspecified.quickSet(id.index());
         }
     }
 }
 
-bool PathWalker::alwaysThrows(const Facts& facts, const Value& value) const
+bool MergingWalker::passesUnspecifiedValue(Edge edge) const
 {
-    if (value.opcode != Opcode::RequireObjectCoercible || !m_analyses.context().program.typeOf(m_function, value.operand(0)).isStringOrNullish())
-        return false;
-    ValueID identity = m_analyses.identityOf(value.operand(0));
-    return std::ranges::any_of(facts, [&](const Fact& fact) {
-        return fact.value == identity && fact.testedType == TypeTable::string && !fact.integer;
+    return std::ranges::any_of(targetOf(m_function, edge).arguments, [&](ValueID argument) {
+        return isAlwaysUnspecified(argument);
     });
 }
 
-std::optional<PathWalker::TestedIdentity> PathWalker::repeatedTestOf(const Value& value) const
+bool MergingWalker::narrow(Facts& facts, ValueID id, Integers allowed, unsigned depth) const
 {
-    if (value.opcode != Opcode::TypeTest || m_repeatedTests.isEmpty())
-        return std::nullopt;
-    TestedIdentity tested { m_analyses.identityOf(value.operand(0)), value.testedType() };
-    return m_repeatedTests.contains(tested) ? std::optional(tested) : std::nullopt;
-}
-
-std::optional<Fact> PathWalker::factOf(const Facts& facts, ValueID id) const
-{
-    const Value& value = m_function.at(id);
-    if (value.opcode == Opcode::Unspecified)
-        return Fact { id, true, 0 };
-    if (value.opcode == Opcode::Integer)
-        return Fact { id, false, value.integer() };
-    if (value.opcode == Opcode::Boolean)
-        return Fact { id, false, value.boolean() };
-    for (const Fact& fact : facts) {
-        if (fact.value == id && !fact.testedType)
-            return fact;
+    if (std::optional<Integers> known = m_folder.integersOf(facts, id)) {
+        allowed = allowed.intersectedWith(*known);
+        if (allowed.isEmpty())
+            return false;
     }
-    return std::nullopt;
-}
-
-// What a branch has told about an operand since the value was computed counts too, so a value without a fact is computed again from its operands.
-std::optional<int64_t> PathWalker::integerOf(const Facts& facts, ValueID id, unsigned depth) const
-{
-    static constexpr unsigned maxDepth = 8;
-    if (std::optional<Fact> fact = factOf(facts, id))
-        return fact->isUnspecified ? std::nullopt : std::optional<int64_t>(fact->integer);
-    if (depth == maxDepth)
-        return std::nullopt;
-    return fold(facts, m_function.at(id), depth + 1);
-}
-
-// A known boolean is kept as 0 or 1, and is no number to a comparison or a type test.
-bool PathWalker::isNumber(ValueID id) const
-{
-    const Program& program = m_analyses.context().program;
-    return program.typeOf(m_function, id).isSubsetOf(Type::fromPrimitives(Primitive::Number), program);
-}
-
-std::optional<int64_t> PathWalker::numberOf(const Facts& facts, ValueID id, unsigned depth) const
-{
-    return isNumber(id) ? integerOf(facts, id, depth) : std::nullopt;
-}
-
-bool PathWalker::isUnspecified(const Facts& facts, ValueID id) const
-{
-    std::optional<Fact> fact = factOf(facts, id);
-    return fact && fact->isUnspecified;
-}
-
-void PathWalker::set(Facts& facts, Fact added)
-{
-    for (Fact& fact : facts) {
-        if (fact.value == added.value && fact.testedType == added.testedType) {
-            fact = added;
-            return;
+    const Value& value = m_function.at(id);
+    if (value.opcode == Opcode::Integer || value.opcode == Opcode::Boolean)
+        return true;
+    facts.set(id, { }, allowed);
+    if (depth == maxNarrowingDepth || !Folder::canFold(value.opcode))
+        return true;
+    if (value.opcode == Opcode::TypeTest && !m_folder.isNumber(value.operand(0))) {
+        // An object may change its layout between two tests.
+        if (allowed.size() == 1 && !m_program.at(value.testedType()).hasObjects())
+            facts.set(m_analyses.identityOf(value.operand(0)), value.testedType(), allowed);
+        return true;
+    }
+    if (value.opcode == Opcode::StrictEq && allowed.isOnly(1)) {
+        for (uint32_t index = 0; index < 2; ++index) {
+            ValueID unknown = value.operand(index);
+            ValueID other = value.operand(1 - index);
+            if (!m_folder.isNumber(unknown) || !m_folder.isNumber(other) || m_folder.integersOf(facts, unknown))
+                continue;
+            if (std::optional<Integers> known = m_folder.integersOf(facts, other))
+                return narrow(facts, unknown, *known, depth + 1);
         }
     }
-    facts.append(added);
+    bool isPossible = true;
+    value.forEachOperand([&](ValueID operand, uint32_t) {
+        if (!isPossible)
+            return;
+        Opcode opcode = m_function.at(operand).opcode;
+        if (opcode == Opcode::Integer || opcode == Opcode::Boolean)
+            return;
+        std::optional<Integers> candidates = m_folder.integersOf(facts, operand);
+        if (!candidates || candidates->size() < 2)
+            return;
+        Facts trial = facts;
+        trial.remove(id);
+        Integers kept = candidates->filtered([&](int64_t candidate) {
+            trial.set(operand, { }, Integers(candidate));
+            std::optional<Integers> result = m_folder.fold(trial, value, 1);
+            return !result || !result->intersectedWith(allowed).isEmpty();
+        });
+        if (kept.isEmpty())
+            isPossible = false;
+        else if (kept.size() < candidates->size())
+            isPossible = narrow(facts, operand, kept, depth + 1);
+    });
+    return isPossible;
+}
+
+bool MergingWalker::refoldNarrowedValues(Facts& facts) const
+{
+    static constexpr unsigned maxRounds = 4;
+    for (unsigned round = 0; round < maxRounds; ++round) {
+        bool changed = false;
+        for (size_t index = 0; index < facts.size(); ++index) {
+            Fact fact = facts[index];
+            const Value& value = m_function.at(fact.value);
+            if (fact.testedType || fact.integers.size() < 2 || !Folder::canFold(value.opcode))
+                continue;
+            facts.remove(fact.value);
+            std::optional<Integers> computed = m_folder.fold(facts, value);
+            Integers narrowed = computed ? computed->intersectedWith(fact.integers) : fact.integers;
+            if (narrowed.isEmpty())
+                return false;
+            facts.set(fact.value, { }, narrowed);
+            changed |= narrowed.size() < fact.integers.size();
+        }
+        if (!changed)
+            break;
+    }
+    return true;
+}
+
+bool MergingWalker::endsPath(const Facts& facts, const Value& value) const
+{
+    if (value.opcode != Opcode::RequireObjectCoercible && value.opcode != Opcode::AssumeType)
+        return false;
+    std::optional<RemainingKinds> remaining = m_folder.remainingKindsOf(facts, value.operand(0));
+    if (!remaining)
+        return false;
+    if (value.opcode == Opcode::RequireObjectCoercible)
+        return remaining->isUndefinedOrNull();
+    return !remaining->mayPass(m_program.at(value.castType()));
+}
+
+Vector<BlockID> MergingWalker::pathTo(const Vector<WalkState>& states, std::optional<uint32_t> stateIndex) const
+{
+    Vector<BlockID> path;
+    for (std::optional<uint32_t> index = stateIndex; index; index = states[*index].previous)
+        path.append(states[*index].block);
+    path.reverse();
+    return path;
 }
 
 template<typename User>
-void PathWalker::listUsesBy(const Facts& facts, BlockID block, ValueID id, const User& user)
+void MergingWalker::listUsesBy(const MarkedValues& marked, BlockID block, ValueID id, const User& user)
 {
     static constexpr OperandUses usesThatLookAtNothing { OperandUse::Returns, OperandUse::Retains };
     user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (user.operandKind(operandIndex) == OperandKind::Guard || !isUnspecified(facts, operand))
+        bool isUnspecified = m_origin ? marked.contains(operand) : isAlwaysUnspecified(operand);
+        if (!isUnspecified || user.operandKind(operandIndex) == OperandKind::Guard)
             return;
         if (user.operandUses(operandIndex).containsOnly(usesThatLookAtNothing))
             return;
@@ -203,265 +613,238 @@ void PathWalker::listUsesBy(const Facts& facts, BlockID block, ValueID id, const
         });
         if (isListed)
             return;
-        UseOfUnspecifiedValue use { block, id, operand, { } };
-        for (std::optional<size_t> index = m_current; index; index = m_states[*index].previous)
-            use.path.append(m_states[*index].block);
-        use.path.reverse();
+        UseOfUnspecifiedValue use { block, id, operand, pathTo(m_unmarkedStates, m_start) };
+        use.path.appendVector(pathTo(m_states, m_current));
         m_uses.append(WTF::move(use));
     });
 }
 
-std::optional<int64_t> PathWalker::fold(const Facts& facts, const Value& value, unsigned depth) const
+void MergingWalker::walkBlock(BlockID blockID, Facts&& facts, MarkedValues&& marked, NOESCAPE const Invocable<void(Edge, Facts&&, const MarkedValues&)> auto& follow)
 {
-    auto both = [&](auto&& operation) -> std::optional<int64_t> {
-        std::optional<int64_t> left = numberOf(facts, value.operand(0), depth);
-        std::optional<int64_t> right = numberOf(facts, value.operand(1), depth);
-        if (!left || !right)
-            return std::nullopt;
-        return operation(*left, *right);
-    };
-    switch (value.opcode) {
-    case Opcode::BitAnd:
-        return both([](int64_t left, int64_t right) { return left & right; });
-    case Opcode::BitOr:
-        return both([](int64_t left, int64_t right) { return left | right; });
-    case Opcode::LShift:
-        return both([](int64_t left, int64_t right) -> std::optional<int64_t> {
-            if (left < 0 || left > INT32_MAX || right < 0 || right > 30 || left << right > INT32_MAX)
-                return std::nullopt;
-            return left << right;
-        });
-    case Opcode::ToNumber:
-    case Opcode::Upcast:
-    case Opcode::AssumeType:
-        return integerOf(facts, value.operand(0), depth);
-    case Opcode::StrictEq:
-    case Opcode::Eq:
-        return both([](int64_t left, int64_t right) { return left == right; });
-    case Opcode::Less:
-        return both([](int64_t left, int64_t right) { return left < right; });
-    case Opcode::LessEq:
-        return both([](int64_t left, int64_t right) { return left <= right; });
-    case Opcode::Greater:
-        return both([](int64_t left, int64_t right) { return left > right; });
-    case Opcode::GreaterEq:
-        return both([](int64_t left, int64_t right) { return left >= right; });
-    case Opcode::ToBoolean:
-        if (std::optional<int64_t> operand = integerOf(facts, value.operand(0), depth))
-            return !!*operand;
-        return std::nullopt;
-    case Opcode::LogicalNot:
-        if (std::optional<int64_t> operand = integerOf(facts, value.operand(0), depth))
-            return !*operand;
-        return std::nullopt;
-    case Opcode::TypeTest:
-        if (std::optional<int64_t> operand = numberOf(facts, value.operand(0), depth)) {
-            const Program& program = m_analyses.context().program;
-            return Type::integer({ *operand, *operand }).isSubsetOf(program.at(value.testedType()), program);
-        }
-        if (std::optional<TestedIdentity> tested = repeatedTestOf(value)) {
-            for (const Fact& fact : facts) {
-                if (fact.value == tested->identity && fact.testedType == tested->type)
-                    return fact.integer;
-            }
-        }
-        return std::nullopt;
-    default:
-        return std::nullopt;
-    }
-}
-
-void PathWalker::evaluate(Facts& facts, ValueID id)
-{
-    const Value& value = m_function.at(id);
-    facts.removeAllMatching([&](const Fact& fact) {
-        return fact.value == id && fact.testedType;
-    });
-    if (value.opcode == Opcode::Unspecified) {
-        set(facts, Fact { id, true, 0 });
-        return;
-    }
-    if (std::optional<int64_t> integer = fold(facts, value)) {
-        set(facts, Fact { id, false, *integer });
-        return;
-    }
-    std::optional<Fact> returned;
-    forEachReturnedOperand(m_function, value, [&](ValueID operand) {
-        if (std::optional<Fact> fact = factOf(facts, operand))
-            returned = fact;
-    });
-    if (!returned) {
-        facts.removeAllMatching([&](const Fact& fact) {
-            return fact.value == id;
-        });
-        return;
-    }
-    returned->value = id;
-    set(facts, *returned);
-}
-
-void PathWalker::enter(BlockID target, Facts&& facts)
-{
-    const Liveness& liveness = m_analyses.liveness();
-    const Block& block = m_function.at(target);
-    facts.removeAllMatching([&](const Fact& fact) {
-        return !fact.testedType && !block.parameters.contains(fact.value) && !liveness.isLiveAtHead(fact.value, target);
-    });
-    AOT::sort(facts, [](const Fact& left, const Fact& right) {
-        if (left.value != right.value)
-            return left.value.index() < right.value.index();
-        return (left.testedType ? left.testedType.index() + 1 : 0) < (right.testedType ? right.testedType.index() + 1 : 0);
-    });
-    Vector<Facts>& visited = m_visited[target.index()];
-    if (visited.contains(facts))
-        return;
-    if (m_states.size() == maxStates) {
-        m_gaveUp = true;
-        return;
-    }
-    visited.append(facts);
-    m_worklist.append(m_states.size());
-    m_states.append(PathState { target, WTF::move(facts), m_current, 0 });
-}
-
-void PathWalker::follow(const Facts& facts, Edge edge, std::optional<Fact> learned)
-{
-    const Target& target = targetOf(m_function, edge);
-    Facts atTarget = facts;
-    if (learned)
-        set(atTarget, *learned);
-    const Block& block = m_function.at(target.block);
-    Vector<std::optional<Fact>, 8> passed;
-    for (ValueID argument : target.arguments)
-        passed.append(factOf(atTarget, argument));
-    if (!edge.isHandlerEdge()) {
-        uint32_t numberOfResults = numberOfEdgeResults(m_function, edge.from, edge.targetIndex);
-        for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex) {
-            std::optional<EdgeResult> result = tryGetEdgeResult(m_function, { edge.from, edge.targetIndex, resultIndex });
-            bool isSameValue = result && result->kind == EdgeResultKind::NarrowedOperand && result->subject;
-            passed.append(isSameValue ? factOf(atTarget, result->subject) : std::nullopt);
-        }
-    }
-    for (ValueID parameter : block.parameters) {
-        atTarget.removeAllMatching([&](const Fact& fact) {
-            return fact.value == parameter;
-        });
-    }
-    for (size_t index = 0; index < passed.size() && index < block.parameters.size(); ++index) {
-        if (!passed[index])
-            continue;
-        passed[index]->value = block.parameters[index];
-        atTarget.append(*passed[index]);
-    }
-    enter(target.block, WTF::move(atTarget));
-}
-
-void PathWalker::walk(size_t stateIndex)
-{
-    m_current = stateIndex;
-    PathState state { m_states[stateIndex].block, m_states[stateIndex].facts, { }, m_states[stateIndex].firstValue };
-    const Block& block = m_function.at(state.block);
-    Facts facts = state.facts;
-    if (block.handler && !state.firstValue)
-        follow(facts, Edge::toHandlerOf(state.block));
-    for (uint32_t index = state.firstValue; index < block.values.size(); ++index) {
-        ValueID id = block.values[index];
+    const Block& block = m_function.at(blockID);
+    if (block.handler)
+        follow(Edge::toHandlerOf(blockID), Facts(facts), marked);
+    bool listsUses = m_origin || m_unmarkedStates.size();
+    for (ValueID id : block.values) {
         const Value& value = m_function.at(id);
-        // A tag may be computed from a boolean that no branch tells: the rest is followed once for each of its values.
-        if (m_branchesTeach && value.opcode == Opcode::ToNumber && !isNumber(value.operand(0)) && !factOf(facts, value.operand(0)) && !integerOf(facts, value.operand(0))) {
-            if (m_states.size() == maxStates) {
-                m_gaveUp = true;
-                return;
-            }
-            Facts whenFalse = facts;
-            set(whenFalse, Fact { value.operand(0), false, 0 });
-            m_worklist.append(m_states.size());
-            m_states.append(PathState { state.block, WTF::move(whenFalse), stateIndex, index });
-            set(facts, Fact { value.operand(0), false, 1 });
-        }
-        listUsesBy(facts, state.block, id, value);
-        if (m_branchesTeach && alwaysThrows(facts, value))
+        if (listsUses)
+            listUsesBy(marked, blockID, id, value);
+        if (endsPath(facts, value))
             return;
-        evaluate(facts, id);
+        facts.remove(id);
+        if (Folder::canFold(value.opcode)) {
+            if (std::optional<Integers> integers = m_folder.fold(facts, value))
+                facts.set(id, { }, *integers);
+        }
+        if (marked.isEmpty() || !mayReturnOperand(value.opcode))
+            continue;
+        forEachReturnedOperand(m_function, value, [&](ValueID operand) {
+            if (marked.contains(operand))
+                marked.appendIfNotContains(id);
+        });
     }
 
     const Terminator& terminator = block.terminator;
-    listUsesBy(facts, state.block, { }, terminator);
+    if (listsUses)
+        listUsesBy(marked, blockID, { }, terminator);
     switch (terminator.kind) {
     case TerminatorKind::Branch:
-    case TerminatorKind::TestAndBranch:
-        if (std::optional<int64_t> condition = integerOf(facts, terminator.conditionOperand())) {
-            follow(facts, Edge { state.block, *condition ? 0u : 1u });
-            return;
+    case TerminatorKind::TestAndBranch: {
+        ValueID condition = terminator.conditionOperand();
+        Integers outcomes = m_folder.integersOf(facts, condition).value_or(Integers::bothBooleans());
+        for (uint32_t targetIndex = 0; targetIndex < 2; ++targetIndex) {
+            Integers allowed = outcomes.filtered([&](int64_t outcome) {
+                return !outcome == !!targetIndex;
+            });
+            Facts onEdge = facts;
+            if (!allowed.isEmpty() && narrowOnEdge(onEdge, condition, allowed))
+                follow(Edge { blockID, targetIndex }, WTF::move(onEdge), marked);
         }
-        if (!m_branchesTeach)
-            break;
-        if (const Value& test = m_function.at(terminator.conditionOperand()); test.opcode == Opcode::StrictEq) {
-            std::optional<int64_t> left = numberOf(facts, test.operand(0));
-            std::optional<int64_t> right = numberOf(facts, test.operand(1));
-            if (!!left != !!right && isNumber(test.operand(left ? 1 : 0))) {
-                Facts whenEqual = facts;
-                set(whenEqual, Fact { test.operand(left ? 1 : 0), false, left ? *left : *right });
-                follow(whenEqual, Edge { state.block, 0 }, Fact { terminator.conditionOperand(), false, 1 });
-                follow(facts, Edge { state.block, 1 }, Fact { terminator.conditionOperand(), false, 0 });
-                return;
-            }
-        }
-        if (std::optional<TestedIdentity> tested = repeatedTestOf(m_function.at(terminator.conditionOperand()))) {
-            Facts whenPassed = facts;
-            set(whenPassed, Fact { tested->identity, false, 1, tested->type });
-            Facts whenFailed = facts;
-            set(whenFailed, Fact { tested->identity, false, 0, tested->type });
-            follow(whenPassed, Edge { state.block, 0 }, Fact { terminator.conditionOperand(), false, 1 });
-            follow(whenFailed, Edge { state.block, 1 }, Fact { terminator.conditionOperand(), false, 0 });
-            return;
-        }
-        follow(facts, Edge { state.block, 0 }, Fact { terminator.conditionOperand(), false, 1 });
-        follow(facts, Edge { state.block, 1 }, Fact { terminator.conditionOperand(), false, 0 });
         return;
+    }
     case TerminatorKind::Switch: {
         ValueID subject = terminator.subjectOperand();
-        std::optional<int64_t> known = integerOf(facts, subject);
+        std::optional<Integers> known = m_folder.isNumber(subject) ? m_folder.integersOf(facts, subject) : std::nullopt;
         uint32_t numberOfCases = terminator.numberOfCases();
-        bool isCase = false;
         for (uint32_t index = 0; index < numberOfCases; ++index) {
             int64_t caseValue = terminator.cases()[index];
-            if (known && *known != caseValue)
-                continue;
-            isCase = true;
-            follow(facts, Edge { state.block, index }, Fact { subject, false, caseValue });
+            Facts onEdge = facts;
+            if ((!known || known->contains(caseValue)) && narrowOnEdge(onEdge, subject, Integers(caseValue)))
+                follow(Edge { blockID, index }, WTF::move(onEdge), marked);
         }
-        if (!known || !isCase)
-            follow(facts, Edge { state.block, numberOfCases });
+        if (!known) {
+            follow(Edge { blockID, numberOfCases }, WTF::move(facts), marked);
+            return;
+        }
+        Integers others = known->filtered([&](int64_t integer) {
+            return !std::ranges::contains(terminator.cases(), integer);
+        });
+        if (!others.isEmpty() && narrowOnEdge(facts, subject, others))
+            follow(Edge { blockID, numberOfCases }, WTF::move(facts), marked);
         return;
     }
     default:
         break;
     }
     for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex)
-        follow(facts, Edge { state.block, targetIndex });
+        follow(Edge { blockID, targetIndex }, Facts(facts), marked);
 }
 
-UsesOfUnspecifiedValues PathWalker::run()
+void MergingWalker::follow(Edge edge, const Facts& facts, const MarkedValues& marked)
 {
-    m_worklist.append(0);
-    m_states.append(PathState { entryBlock, { }, std::nullopt, 0 });
-    while (!m_worklist.isEmpty() && !m_gaveUp && m_uses.size() < m_maxUses)
-        walk(m_worklist.takeLast());
-    return { WTF::move(m_uses), m_worklist.isEmpty() && !m_gaveUp };
+    const Target& target = targetOf(m_function, edge);
+    const Block& block = m_function.at(target.block);
+    bool isOrigin = m_origin && *m_origin == edge;
+
+    struct Passed {
+        std::optional<Integers> integers;
+        bool isMarked { false };
+    };
+    Vector<Passed, 8> passed;
+    auto pass = [&](ValueID id) {
+        passed.append(Passed { m_folder.integersOf(facts, id), marked.contains(id) || (isOrigin && isAlwaysUnspecified(id)) });
+    };
+    for (ValueID argument : target.arguments)
+        pass(argument);
+    if (!edge.isHandlerEdge()) {
+        uint32_t numberOfResults = numberOfEdgeResults(m_function, edge.from, edge.targetIndex);
+        for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex) {
+            std::optional<EdgeResult> result = tryGetEdgeResult(m_function, { edge.from, edge.targetIndex, resultIndex });
+            if (result && result->kind == EdgeResultKind::NarrowedOperand && result->subject)
+                pass(result->subject);
+            else
+                passed.append(Passed { });
+        }
+    }
+
+    const Liveness& liveness = m_analyses.liveness();
+    const UseLists& useLists = m_analyses.useLists();
+    auto survives = [&](ValueID id) {
+        return useLists.blockOf(id) != target.block;
+    };
+    Facts atTarget = facts;
+    atTarget.removeAllMatching([&](const Fact& fact) {
+        return !survives(fact.value) || (!fact.testedType && !liveness.isLiveAtHead(fact.value, target.block));
+    });
+    MarkedValues markedAtTarget;
+    for (ValueID id : marked) {
+        if (survives(id) && liveness.isLiveAtHead(id, target.block))
+            markedAtTarget.append(id);
+    }
+    for (size_t index = 0; index < passed.size() && index < block.parameters.size(); ++index) {
+        ValueID parameter = block.parameters[index];
+        bool tellsNothing = !passed[index].integers || (*passed[index].integers == Integers::bothBooleans() && m_program.typeOf(m_function, parameter).isBoolean());
+        if (!tellsNothing)
+            atTarget.set(parameter, { }, *passed[index].integers);
+        if (passed[index].isMarked)
+            markedAtTarget.append(parameter);
+    }
+    if (m_origin && markedAtTarget.isEmpty())
+        return;
+    AOT::sort(markedAtTarget, [](ValueID left, ValueID right) {
+        return left.index() < right.index();
+    });
+    enter(target.block, WTF::move(atTarget), WTF::move(markedAtTarget));
+}
+
+void MergingWalker::enter(BlockID block, Facts&& facts, MarkedValues&& marked)
+{
+    auto queue = [&](uint32_t stateIndex) {
+        m_states[stateIndex].isQueued = true;
+        m_queue.append({ m_analyses.cfg().reversePostOrderIndex(block), stateIndex });
+        std::ranges::push_heap(m_queue, std::greater { });
+    };
+    for (uint32_t stateIndex : m_statesOfBlock[block.index()]) {
+        WalkState& state = m_states[stateIndex];
+        if (state.marked != marked)
+            continue;
+        if (state.facts.mergeWith(facts) && !state.isQueued)
+            queue(stateIndex);
+        return;
+    }
+    uint32_t stateIndex = m_states.size();
+    m_statesOfBlock[block.index()].append(stateIndex);
+    m_states.append(WalkState { block, WTF::move(marked), WTF::move(facts), m_current, false });
+    queue(stateIndex);
+}
+
+void MergingWalker::walkAll()
+{
+    while (!m_queue.isEmpty() && m_uses.size() < m_maxUses) {
+        if (!m_blockVisitsLeft) {
+            m_gaveUp = true;
+            return;
+        }
+        --m_blockVisitsLeft;
+        std::ranges::pop_heap(m_queue, std::greater { });
+        uint32_t stateIndex = m_queue.takeLast().second;
+        m_current = stateIndex;
+        WalkState& state = m_states[stateIndex];
+        state.isQueued = false;
+        walkBlock(state.block, Facts(state.facts), MarkedValues(state.marked), [&](Edge edge, Facts&& facts, const MarkedValues& marked) {
+            follow(edge, facts, marked);
+        });
+    }
+}
+
+void MergingWalker::forgetStates()
+{
+    for (const WalkState& state : m_states)
+        m_statesOfBlock[state.block.index()].clear();
+    m_states.clear();
+    m_queue.clear();
+    m_current = std::nullopt;
+}
+
+UsesOfUnspecifiedValues MergingWalker::run()
+{
+    findValuesThatAreAlwaysUnspecified();
+    enter(entryBlock, { }, { });
+    walkAll();
+    m_unmarkedStates = std::exchange(m_states, { });
+    for (Vector<uint32_t, 1>& states : m_statesOfBlock)
+        states.clear();
+
+    for (uint32_t index = 0; index < m_unmarkedStates.size() && !m_gaveUp && m_uses.size() < m_maxUses; ++index) {
+        const WalkState& reached = m_unmarkedStates[index];
+        struct Start {
+            Edge edge;
+            Facts facts;
+        };
+        Vector<Start, 2> starts;
+        m_start = index;
+        m_origin = std::nullopt;
+        m_current = std::nullopt;
+        walkBlock(reached.block, Facts(reached.facts), { }, [&](Edge edge, Facts&& facts, const MarkedValues&) {
+            if (passesUnspecifiedValue(edge))
+                starts.append(Start { edge, WTF::move(facts) });
+        });
+        for (Start& start : starts) {
+            m_origin = start.edge;
+            follow(start.edge, start.facts, { });
+            walkAll();
+            forgetStates();
+        }
+    }
+    return { WTF::move(m_uses), !m_gaveUp && m_uses.size() < m_maxUses };
 }
 
 } // anonymous namespace
 
-UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses& analyses, size_t maxUses, size_t maxStates)
+static bool callsOutlinedBody(const Program& program, const Function& function)
+{
+    return std::ranges::any_of(function.values, [&](const Value& value) {
+        return value.opcode == Opcode::CallDirect && program.at(value.function()).role == FunctionRole::OutlinedBody;
+    });
+}
+
+UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses& analyses, size_t maxUses, OtherFunctions otherFunctions, size_t maxBlockVisits)
 {
     if (!analyses.opcodesOfValues().contains(Opcode::Unspecified))
         return { };
-    UsesOfUnspecifiedValues found = PathWalker(analyses, maxUses, maxStates, BranchesTeach::No).run();
-    if (found.uses.isEmpty())
-        return found;
-    UsesOfUnspecifiedValues left = PathWalker(analyses, maxUses, maxStates, BranchesTeach::Yes).run();
-    return left.wasEveryPathFollowed || !left.uses.isEmpty() ? left : found;
+    if (otherFunctions == OtherFunctions::MayChange && callsOutlinedBody(analyses.context().program, analyses.function()))
+        return { };
+    return MergingWalker(analyses, maxUses, maxBlockVisits).run();
 }
 
 } } } // namespace JSC::AOT::Typed

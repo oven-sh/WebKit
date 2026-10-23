@@ -65,7 +65,7 @@ void AllocationSinking::analyze()
 bool AllocationSinking::analyzeStartingFrom(SinkingFindings&& findings)
 {
     auto isSameCandidate = [](const Candidate& a, const Candidate& b) {
-        return a.definition == b.definition && a.block == b.block && a.isJoin == b.isJoin && a.family == b.family && a.descriptionIndex == b.descriptionIndex && a.tagBitWhenAbsent == b.tagBitWhenAbsent;
+        return a.definition == b.definition && a.block == b.block && a.isJoin == b.isJoin && a.family == b.family && a.descriptionIndex == b.descriptionIndex && a.tagBitWhenAbsent == b.tagBitWhenAbsent && a.isLeftOut == b.isLeftOut;
     };
     if (!std::ranges::equal(m_candidates, findings.candidates, isSameCandidate))
         return false;

@@ -246,6 +246,26 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetFieldOutsideSlot, EncodedJSValu
     OPERATION_RETURN(scope, JSValue::encode(value ? value : jsUndefined()));
 }
 
+// The caller knows the outer object and how far the slots of the inner one lie from where they would lie in a cell of its own, and not the field.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMakeFlattenedObjectAt, JSCell*, (Instance* instance, JSCell* cell, uint32_t distance))
+{
+    constexpr Entry entry = Entry::operationAOTMakeFlattenedObjectAt;
+    AOT_OPERATION_BEGIN(instance, entry);
+    auto* object = cellArgument<Object>(cell, entry);
+    const LayoutData& layout = object->layout();
+    for (const FieldData& field : layout.fields()) {
+        if (!field.defersFlattenedObject)
+            continue;
+        LayoutData::FlattenedObjectData flattened = layout.flattenedObjectOf(field);
+        if (flattened.offsetInOuterObject - flattened.offsetInOwnCell != distance)
+            continue;
+        if (!object->isInSlot(field)) [[unlikely]]
+            crashOnWrongOperand(entry);
+        OPERATION_RETURN(scope, object->materializeDeferredClosure(vm, field).asCell());
+    }
+    crashOnWrongOperand(entry);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetExtraProperty, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t key))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetExtraProperty);

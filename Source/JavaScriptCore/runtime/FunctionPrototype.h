@@ -29,7 +29,6 @@ public:
     typedef InternalFunction Base;
 #if ENABLE(AOT)
     // It lies above every function: a store to one of them must not find an object that overrides put on its way up. Its own members have the lock of the table.
-    static constexpr unsigned StructureFlags = Base::StructureFlags & ~OverridesPut;
     using JSObject::put;
     using JSObject::defineOwnProperty;
     using JSObject::setPrototype;

@@ -27,6 +27,7 @@
 #include "AOTRuntimeType.h"
 #include "AOTState.h"
 #include "AOTVector.h"
+#include "DeferTermination.h"
 #include "Error.h"
 #include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
@@ -484,6 +485,7 @@ static JSObject* createQuoting(const String& source, NOESCAPE const Invocable<JS
 // As the engine's message describes the value. Null where it cannot be described.
 static String describe(JSGlobalObject* globalObject, JSValue value)
 {
+    DeferTerminationForAWhile deferTermination(globalObject->vm());
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     String description = errorDescriptionForValue(globalObject, value);
     if (scope.exception()) [[unlikely]] {

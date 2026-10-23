@@ -13,6 +13,7 @@
 #include "AOTOperationScope.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTTableInImage.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
@@ -65,6 +66,7 @@ static CompactTable* heapTableOrNull(JSGlobalObject* globalObject, JSObject* col
     CompactTable* table = compactTableOrNull(collection);
     if (!table || !table->isInImage()) [[likely]]
         return table;
+    DeferTerminationForAWhile deferTermination(globalObject->vm());
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     CompactTable* moved = CompactTable::tryMoveToHeap(globalObject, collection);
     scope.clearException();

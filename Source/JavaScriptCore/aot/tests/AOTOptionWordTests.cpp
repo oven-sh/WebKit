@@ -271,6 +271,7 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "testing=ignore-branch-hints"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreBranchHints; } },
     { "testing=IgnoreExpectedTypes"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreExpectedTypes; } },
     { "sabotage=InnerCellLetGoKeepsItsHeader"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::InnerCellLetGoKeepsItsHeader; } },
+    { "sabotage=room-is-not-in-reference-list"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::RoomIsNotInReferenceList; } },
     { "count-branches"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountBranches; } },
     { "count-arrivals"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountArrivals; } },
     { "drop-guard=TypeTest:2"_s, [](WireOptions& options) {

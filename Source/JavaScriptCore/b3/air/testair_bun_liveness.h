@@ -860,20 +860,22 @@ static void addUpperHalves(Vector<BlockRegisterLiveness>& liveness, const Vector
 
 static Vector<BlockRegisterLiveness> collectRegLiveness(Code& code)
 {
+    padInterference(code);
     RegLiveness liveness(code);
     Vector<BlockRegisterLiveness> result(code.size());
     for (BasicBlock* block : code) {
         BlockRegisterLiveness& blockLiveness = result[block->index()];
         blockLiveness.atHead = liveness.liveAtHead(block);
         blockLiveness.atTail = liveness.liveAtTail(block);
-        blockLiveness.afterInsts.grow(block->size());
         RegLiveness::LocalCalc localCalc(liveness, block);
         for (unsigned instIndex = block->size(); instIndex--;) {
-            blockLiveness.afterInsts[instIndex] = localCalc.live();
+            if (block->at(instIndex).kind.opcode != Padding)
+                blockLiveness.afterInsts.append(localCalc.live());
             for (Reg reg : Reg::all())
                 CHECK(localCalc.isLive(reg) == localCalc.live().contains(reg, IgnoreVectors));
             localCalc.execute(instIndex);
         }
+        blockLiveness.afterInsts.reverse();
     }
     return result;
 }

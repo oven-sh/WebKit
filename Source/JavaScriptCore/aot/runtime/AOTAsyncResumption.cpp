@@ -82,6 +82,7 @@ public:
         }
         if (lastFrame->kind() == CoroutineKind::AsyncGenerator) {
             finishAsyncGeneratorBodyCall(instance.globalObject, uncheckedDowncast<JSAsyncGenerator>(lastAsyncGenerator), returned, error, &vm.syncResumeCallCache());
+            RETURN_IF_EXCEPTION(scope, void());
             return;
         }
         if (error) [[unlikely]] {

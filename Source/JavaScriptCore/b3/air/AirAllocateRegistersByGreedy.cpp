@@ -4511,6 +4511,10 @@ private:
         loopData.setLiveRange(LiveRange::subtract(m_intervalArena, originalData.liveRange, nonLoopRange));
         ASSERT(loopData.liveRange.size());
 
+        UseDefList& loopUseDefs = m_newTmpUseDefLists.ensure(loopTmp, [] {
+            return UseDefList();
+        }).iterator->value;
+
         bool loopHasDef = false;
         size_t cursor = 0;
         for (Interval interval : loopData.liveRange.intervals()) {
@@ -4526,9 +4530,7 @@ private:
                             loopData.hasColdUse = true;
                         else
                             loopData.useDefCost += UseDefCost(block.frequency());
-                        m_newTmpUseDefLists.ensure(loopTmp, [] {
-                            return UseDefList();
-                        }).iterator->value.add(point);
+                        loopUseDefs.add(point);
                     });
                 });
             } while (interval);

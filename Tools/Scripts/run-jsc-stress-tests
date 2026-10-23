@@ -799,13 +799,7 @@ def shouldCollectContinuously?
     $buildType == "release" or $forceCollectContinuously
 end
 
-def isRegExpTest?
-    "#{$collectionName}/#{$benchmark}" =~ /regex/i
-end
-
 COLLECT_CONTINUOUSLY_OPTIONS = shouldCollectContinuously? ? ["--collectContinuously=true", "--useGenerationalGC=false", "--verifyGC=true", "--initialHeapVersion=#{2**32 - 1 - rand(32)}"] : []
-REGEXP_IMAGE_MODE_OPTIONS = ["--useRegExpImageMode=true"]
-REGEXP_FLAT_PROGRAM_OPTIONS = ["--useRegExpJIT=false", "--validateRegExpFlatProgram=true"]
 
 $serialPlans = Set.new
 $exclusivePlans = Set.new
@@ -1190,6 +1184,13 @@ configKinds = [
     ConfigKind.new("", false, configInitializerPlain),
     ConfigKind.new("Config", true, configInitializerConfig),
 ]
+
+def isRegExpTest?
+    "#{$collectionName}/#{$benchmark}" =~ /regex/i
+end
+
+REGEXP_IMAGE_MODE_OPTIONS = ["--useRegExpImageMode=true"]
+REGEXP_FLAT_PROGRAM_OPTIONS = ["--useRegExpJIT=false", "--validateRegExpFlatProgram=true"]
 
 # Define base test modes. Each mode is an array of [name, kind,
 # options]. The name is used to derive the ruby method names, the kind

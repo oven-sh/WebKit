@@ -217,6 +217,11 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
     m_out.appendTo(done);
 }
 
+void AllocationEmitter::generateMakeBorrowedObject(const ValueContext& value)
+{
+    emitter<SlotAccessEmitter>().makeBorrowedObject(value);
+}
+
 AllocationEmitter::InitialFields AllocationEmitter::collectInitialFields(LayoutID layout, std::span<const uint32_t> fields, std::span<const ValueID> values)
 {
     RELEASE_ASSERT(fields.size() == values.size());
@@ -269,6 +274,8 @@ ZeroedBy AllocationEmitter::whoZeroesBodyOfFreshCell(const ValueContext& value, 
     forEachEmptySlot(layout, isInitialField, EmptySlots::All, [&](FieldIndex, const PlacedSlot& slot) {
         storesOfZero += isZeroWhileEmpty(slot.representation);
     });
+    for (const PlacedFlattenedObject& flattened : plan.layout(layout).flattenedObjects)
+        storesOfZero += (flattened.end() - flattened.begin()) / sizeof(uint64_t);
     return emitter<CellAllocationEmitter>().whoZeroesBody(value, id, storesOfZero);
 }
 
@@ -306,7 +313,12 @@ void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout
         m_out.store32As8(m_out.constInt32(0), m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), cell.value(), *isEscapedOffset));
 }
 
-void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
+void AllocationEmitter::storeInitialFields(const ValueContext& value, CellPointer cell, LayoutID layout, const InitialFields& initialFields, CellBody body)
+{
+    storeInitialFields(value, cell, cell, layout, initialFields, body);
+}
+
+void AllocationEmitter::storeInitialFields(const ValueContext& value, CellPointer cellWithSlots, CellPointer cell, LayoutID layout, const InitialFields& initialFields, CellBody body)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
     for (const InitialField& field : initialFields) {
@@ -316,11 +328,54 @@ void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, co
             continue;
         MemoryLocation location = locationOfField(m_program, layout, field.field);
         if (field.slot->representation != SlotRepresentation::DeferredClosure)
-            slots.storeSlot(cell, *field.slot, location, get(field.value), nullptr, typeOf(field.value));
-        else if (isDeferredClosure(m_function, field.value))
-            m_out.store32(m_out.constInt32(uncreatedDeferredClosure), slots.addressOf(cell, *field.slot, location));
-        else
-            m_out.store32(in<NarrowReference>(field.value).value(), slots.addressOf(cell, *field.slot, location));
+            slots.storeSlot(cellWithSlots, *field.slot, location, get(field.value), nullptr, typeOf(field.value));
+        else if (isDeferredClosure(m_function, field.value)) {
+            m_out.store32(m_out.constInt32(uncreatedDeferredClosure), slots.addressOf(cellWithSlots, *field.slot, location));
+            if (field.slot->defersFlattenedObject)
+                emitter<SlotAccessEmitter>().storeFlattenedObject(value, cell, layout, field.field, field.value, body == CellBody::Zero);
+        } else
+            m_out.store32(in<NarrowReference>(field.value).value(), slots.addressOf(cellWithSlots, *field.slot, location));
+    }
+}
+
+void AllocationEmitter::storeSlotsOfFlattenedObject(const ValueContext& value, CellPointer outerObject, const PlacedFlattenedObject& flattened, const Value& allocation, bool roomIsZero)
+{
+    const PlannedLayout& layout = m_placement.layout(flattened.layout);
+    InitialFields initialFields = collectInitialFields(flattened.layout, allocation.fields(), allocation.valuesOperands());
+    BitVector isInitialField(layout.numberOfFields());
+    for (const InitialField& field : initialFields) {
+        if (field.slot->isOutOfLine() || field.slot->representation == SlotRepresentation::DeferredClosure || representationOf(field.value) != Typed::representationOf(field.slot->representation)) {
+            fail(value, InternalErrorKind::WrongRepresentation);
+            return;
+        }
+        isInitialField.set(field.field);
+    }
+    CellBody body = roomIsZero ? CellBody::Zero : CellBody::Unwritten;
+    CellPointer cellWithSlots(offsetBy(asPointer(outerObject), flattened.distance).value());
+    initializeHiddenFields(cellWithSlots, flattened.layout, AllocationStorage::Heap, body);
+    storeInitialFields(value, cellWithSlots, outerObject, flattened.layout, initialFields, body);
+    storeEmptySlots(cellWithSlots, flattened.layout, isInitialField, EmptySlots::All, body);
+}
+
+void AllocationEmitter::clearReferencesInRoom(CellPointer outerObject, LayoutID outerLayout, uint32_t field)
+{
+    const PlacedFlattenedObject* flattened = m_placement.layout(outerLayout).flattenedObjectIn(field);
+    RELEASE_ASSERT(flattened);
+    for (const PlacedSlot& slot : m_placement.layout(flattened->layout).slots) {
+        if (slot.hasStorage() && traitsOf(slot.representation).holdsCell)
+            storeZeroBytes(m_out, m_heaps.entire(AbstractHeap::ObjectFields), outerObject, { flattened->distance + slot.offset, traitsOf(slot.representation).width });
+    }
+}
+
+// The collector looks into the room whatever the slot of the field says.
+void AllocationEmitter::storeZeroInRoomsLeftEmpty(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
+{
+    for (const PlacedFlattenedObject& flattened : m_placement.layout(layout).flattenedObjects) {
+        bool isFilled = initialFields.containsIf([&](const InitialField& field) {
+            return field.field == flattened.field && isDeferredClosure(m_function, field.value);
+        });
+        if (!isFilled)
+            storeZeroBytes(m_out, m_heaps.entire(AbstractHeap::ObjectFields), cell, { flattened.begin(), flattened.end() - flattened.begin() });
     }
 }
 
@@ -633,7 +688,7 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, All
         });
         {
             CodeGenerator::InitializationScope scope(generator());
-            storeInitialFields(cell, layoutID, initialFields);
+            storeInitialFields(value, cell, layoutID, initialFields);
             storeEmptySlots(cell, layoutID, isInitialField, EmptySlots::HoldingNoCells);
         }
         // The cell is as old as the inner object, so the collector may have marked it.
@@ -656,8 +711,10 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, All
     {
         CodeGenerator::InitializationScope scope(generator());
         initializeHiddenFields(cell, layoutID, storage, body);
-        storeInitialFields(cell, layoutID, initialFields);
+        storeInitialFields(value, cell, layoutID, initialFields, body);
         storeEmptySlots(cell, layoutID, isInitialField, EmptySlots::All, body);
+        if (body == CellBody::Unwritten && !build().recordedOptions().isSabotaged(Sabotage::RoomsLeftEmptyAreNotZeroed))
+            storeZeroInRoomsLeftEmpty(cell, layoutID, initialFields);
     }
     if (storage == AllocationStorage::Heap) {
         emitBarrierIfReleased(value, cell, layoutID, initialFields);

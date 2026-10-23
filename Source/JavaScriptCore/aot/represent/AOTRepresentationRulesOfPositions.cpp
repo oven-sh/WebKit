@@ -173,6 +173,8 @@ Representation resultOfDeclaredPosition(const RepresentationInputs& inputs, cons
     case Opcode::GetSlotOrUndefined:
     case Opcode::GetDeferredClosureSlot:
     case Opcode::GetDeferredClosureSlotOrUndefined:
+    case Opcode::GetFlattenedSlot:
+    case Opcode::GetFlattenedSlotOrUndefined:
         return loadRepresentationOf(slotOf(inputs, value.fieldAccess()), type);
     case Opcode::GetSlotGetter:
         return Representation::Cell;

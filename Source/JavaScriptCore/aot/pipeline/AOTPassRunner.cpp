@@ -680,6 +680,7 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         inputs.effects = &context.inputs.effects;
     // A program pass that is given no summaries simplifies functions which the Optimize loop has left: their guards stand across calls that only the summaries call harmless.
     inputs.cannotJudgeGuards = context.inputs.effects.isEmpty() && m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID());
+    inputs.otherFunctionsMayChange = true;
     Vector<InternalError> errors;
     if (canVerify(form) && !descriptor.isVerifiedAfterNextPass)
         errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, inputs);

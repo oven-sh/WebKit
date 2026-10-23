@@ -30,7 +30,6 @@
 
 #include "B3BreakCriticalEdges.h"
 #include "B3InsertionSetInlines.h"
-#include "B3Limits.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3SSACalculator.h"
@@ -52,31 +51,44 @@ namespace B3FixSSAInternal {
 static constexpr bool verbose = false;
 }
 
-struct Access {
-    unsigned variable;
-    bool isSet;
-    BasicBlock* block;
-    Value* value;
-};
-
-struct Accesses {
-    Vector<Access, 64> list;
-    Vector<unsigned, 32> firstAccessOfVariable;
-
-    std::span<Access> of(unsigned variable) { return list.mutableSpan().subspan(firstAccessOfVariable[variable], firstAccessOfVariable[variable + 1] - firstAccessOfVariable[variable]); }
-};
-
-bool killDeadVariables(Procedure& proc, Accesses& accesses)
+// Many variables often have trivial local liveness (i.e. within a single block), which we can resolve
+// without global SSA. Returns true if no variables remain.
+bool fixSSALocally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
 {
+    IndexSparseSet<KeyValuePair<unsigned, Value*>> mapping(proc.variables().size());
     IndexSet<Variable*> liveVariables;
-    for (Access& access : accesses.list) {
-        if (!access.isSet)
-            liveVariables.add(proc.variables()[access.variable]);
+    Vector<Value*> sets;
+    for (BasicBlock* block : proc) {
+        mapping.clear();
+
+        for (Value* value : *block) {
+            switch (value->opcode()) {
+            case Get: {
+                Variable* variable = value->as<VariableValue>()->variable();
+                if (KeyValuePair<unsigned, Value*>* replacement = mapping.get(variable->index())) {
+                    value->replaceWithIdentity(replacement->value);
+                    valuesToDelete.add(value);
+                } else
+                    liveVariables.add(variable);
+                break;
+            }
+
+            case Set: {
+                Variable* variable = value->as<VariableValue>()->variable();
+                mapping.set(variable->index(), value->child(0)->foldIdentity());
+                sets.append(value);
+                break;
+            }
+
+            default:
+                break;
+            }
+        }
     }
 
-    for (Access& access : accesses.list) {
-        if (access.isSet && !liveVariables.contains(proc.variables()[access.variable]))
-            access.value->replaceWithNop();
+    for (Value* set : sets) {
+        if (!liveVariables.contains(set->as<VariableValue>()->variable()))
+            set->replaceWithNop();
     }
 
     if (liveVariables.isEmpty()) {
@@ -91,156 +103,9 @@ bool killDeadVariables(Procedure& proc, Accesses& accesses)
     return false;
 }
 
-void fixSSALocally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& valuesToDelete)
+void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
 {
-    IndexSparseSet<KeyValuePair<unsigned, Value*>> mapping(proc.variables().size());
-    for (BasicBlock* block : proc.cachedBlocksInPreOrder()) {
-        mapping.clear();
-
-        for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
-            Value* value = block->at(valueIndex);
-
-            switch (value->opcode()) {
-            case Get: {
-                VariableValue* variableValue = value->as<VariableValue>();
-                Variable* variable = variableValue->variable();
-
-                if (KeyValuePair<unsigned, Value*>* replacement = mapping.get(variable->index())) {
-                    value->replaceWithIdentity(replacement->value);
-                    valuesToDelete.add(value);
-                } else
-                    accesses.list.append(Access { variable->index(), false, block, value });
-                break;
-            }
-                
-            case Set: {
-                VariableValue* variableValue = value->as<VariableValue>();
-                Variable* variable = variableValue->variable();
-
-                value->performSubstitution();
-                mapping.set(variable->index(), value->child(0));
-                accesses.list.append(Access { variable->index(), true, block, value });
-                break;
-            }
-
-            default:
-                break;
-            }
-        }
-    }
-}
-
-class LivenessByVariable {
-public:
-    LivenessByVariable(Procedure& proc, Accesses& accesses)
-        : m_proc(proc)
-        , m_accesses(accesses)
-    {
-    }
-
-    enum class Outcome : uint8_t { Complete, LimitReached };
-
-    Outcome run()
-    {
-        unsigned numVariables = m_proc.variables().size();
-        std::ranges::stable_sort(m_accesses.list, [](const Access& a, const Access& b) {
-            if (a.variable != b.variable)
-                return a.variable < b.variable;
-            return a.block->index() < b.block->index();
-        });
-        m_accesses.firstAccessOfVariable.fill(0, numVariables + 1);
-        for (Access& access : m_accesses.list)
-            ++m_accesses.firstAccessOfVariable[access.variable + 1];
-        for (unsigned i = 0; i < numVariables; ++i)
-            m_accesses.firstAccessOfVariable[i + 1] += m_accesses.firstAccessOfVariable[i];
-
-        m_isLiveAtHead.fill(0, m_proc.size());
-        m_hasLiveVariableAtHead.fill(0, m_proc.size());
-        m_isLiveAtTail.fill(0, m_proc.size());
-        m_hasSet.fill(0, m_proc.size());
-        m_firstLiveBlockOfVariable.fill(0, numVariables + 1);
-        uint64_t budget = static_cast<uint64_t>(m_proc.size()) * m_proc.limit(Limit::MaxLivenessStepsPerBlock);
-        Vector<BasicBlock*, 32> worklist;
-        for (unsigned variable = 0; variable < numVariables; ++variable) {
-            m_firstLiveBlockOfVariable[variable] = m_blocksLiveAtHead.size();
-            if (!m_proc.variables()[variable])
-                continue;
-            unsigned epoch = variable + 1;
-            auto accesses = m_accesses.of(variable);
-            for (Access& access : accesses) {
-                if (access.isSet)
-                    m_hasSet[access.block->index()] = epoch;
-            }
-            auto add = [&](BasicBlock* block) {
-                if (m_isLiveAtHead[block->index()] == epoch)
-                    return;
-                m_isLiveAtHead[block->index()] = epoch;
-                m_hasLiveVariableAtHead[block->index()] = 1;
-                m_blocksLiveAtHead.append(block->index());
-                worklist.append(block);
-            };
-            for (Access& access : accesses) {
-                if (!access.isSet)
-                    add(access.block);
-            }
-            while (!worklist.isEmpty()) {
-                BasicBlock* block = worklist.takeLast();
-                if (budget < block->numPredecessors() + 1) {
-                    m_proc.didReachLimit(Limit::MaxLivenessStepsPerBlock, block->at(0)->origin());
-                    return Outcome::LimitReached;
-                }
-                budget -= block->numPredecessors() + 1;
-                for (BasicBlock* predecessor : block->predecessors()) {
-                    m_isLiveAtTail[predecessor->index()] = epoch;
-                    if (m_hasSet[predecessor->index()] != epoch)
-                        add(predecessor);
-                }
-            }
-            for (unsigned i = 0; i < accesses.size(); ++i) {
-                Access& access = accesses[i];
-                if (!access.isSet)
-                    continue;
-                bool isLast = i + 1 == accesses.size() || accesses[i + 1].block != access.block;
-                if (!isLast || m_isLiveAtTail[access.block->index()] != epoch)
-                    access.value->replaceWithNop();
-            }
-        }
-        m_firstLiveBlockOfVariable[numVariables] = m_blocksLiveAtHead.size();
-        m_isLiveAtHead.fill(0);
-        return Outcome::Complete;
-    }
-
-    void selectVariable(unsigned variable)
-    {
-        m_epoch = variable + 1;
-        for (unsigned i = m_firstLiveBlockOfVariable[variable]; i < m_firstLiveBlockOfVariable[variable + 1]; ++i)
-            m_isLiveAtHead[m_blocksLiveAtHead[i]] = m_epoch;
-    }
-
-    bool isLiveAtHead(BasicBlock* block) const { return m_isLiveAtHead[block->index()] == m_epoch; }
-    bool hasLiveVariableAtHead(BasicBlock* block) const { return m_hasLiveVariableAtHead[block->index()]; }
-
-private:
-    Procedure& m_proc;
-    Accesses& m_accesses;
-    Vector<unsigned> m_isLiveAtHead;
-    Vector<uint8_t> m_hasLiveVariableAtHead;
-    Vector<unsigned> m_isLiveAtTail;
-    Vector<unsigned> m_hasSet;
-    Vector<unsigned> m_blocksLiveAtHead;
-    Vector<unsigned, 32> m_firstLiveBlockOfVariable;
-    unsigned m_epoch { 0 };
-};
-
-void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& valuesToDelete)
-{
-    LivenessByVariable livenessByVariable(proc, accesses);
-    bool usesPerVariableLiveness = livenessByVariable.run() == LivenessByVariable::Outcome::Complete;
-    std::optional<VariableLiveness> dense;
-    std::optional<VariableLiveness::LiveAtHead> denseLiveAtHead;
-    if (!usesPerVariableLiveness) {
-        dense.emplace(proc);
-        VariableLiveness& liveness = *dense;
+    VariableLiveness liveness(proc);
     
     // Kill any dead Set's. Each Set creates work for us, so this is profitable.
     for (BasicBlock* block : proc) {
@@ -253,8 +118,7 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
         }
     }
     
-        denseLiveAtHead.emplace(liveness.liveAtHead());
-    }
+    VariableLiveness::LiveAtHead liveAtHead = liveness.liveAtHead();
     
     SSACalculator ssa(proc);
 
@@ -269,23 +133,13 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
         variableToCalcVar[variable] = calcVar;
     }
 
-    if (usesPerVariableLiveness) {
-        for (Access& access : accesses.list) {
-            if (access.value->opcode() != Set)
-                continue;
-            if (SSACalculator::Variable* calcVar = variableToCalcVar[proc.variables()[access.variable]])
-                ssa.newDefBlock(calcVar, access.block);
-        }
-    } else
     for (BasicBlock* block : proc) {
         for (Value* value : *block) {
             if (value->opcode() != Set)
                 continue;
 
             Variable* variable = value->as<VariableValue>()->variable();
-
-            if (SSACalculator::Variable* calcVar = variableToCalcVar[variable])
-                ssa.newDefBlock(calcVar, block);
+            ssa.newDefBlock(variableToCalcVar[variable], block);
         }
     }
 
@@ -293,16 +147,9 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
     {
         CompilerTimingScope timingScope("B3"_s, "fixSSA: computePhis"_s);
         ssa.computePhis(
-            [&] (BasicBlock* block) {
-                return !usesPerVariableLiveness || livenessByVariable.hasLiveVariableAtHead(block);
-            },
-            [&] (SSACalculator::Variable* calcVar) {
-                if (usesPerVariableLiveness)
-                    livenessByVariable.selectVariable(calcVarToVariable[calcVar->index()]->index());
-            },
-            [&] (SSACalculator::Variable* calcVar, BasicBlock* block) -> Value* {
+            [&](SSACalculator::Variable* calcVar, BasicBlock* block) -> Value* {
                 Variable* variable = calcVarToVariable[calcVar->index()];
-                if (!(usesPerVariableLiveness ? livenessByVariable.isLiveAtHead(block) : denseLiveAtHead->isLiveAtHead(block, variable)))
+                if (!liveAtHead.isLiveAtHead(block, variable))
                     return nullptr;
                 
                 Value* phi = proc.add<Value>(Phi, variable->type(), block->at(0)->origin());
@@ -321,8 +168,6 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
     // Now perform the conversion.
     CompilerTimingScope timingScope("B3"_s, "fixSSA: convert"_s);
     InsertionSet insertionSet(proc);
-    Vector<uint8_t, 256> hasNoRemovals;
-    hasNoRemovals.fill(0, proc.size());
 
     Vector<Value*> reachingDefs(FillWith { }, proc.variables().size(), nullptr);
     Vector<std::pair<unsigned, Value*>> undoLog;
@@ -335,7 +180,6 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
     proc.dominators().forAllBlocksInDominatorTreePreOrder(
         [&](BasicBlock* block) {
             undoLogSizeAtEntry.append(undoLog.size());
-            bool hasRemovals = false;
 
             auto reachingDef = [&](Variable* variable, unsigned valueIndex, Origin origin) -> Value* {
                 if (Value* def = reachingDefs[variable->index()])
@@ -354,17 +198,13 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
 
             for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
                 Value* value = block->at(valueIndex);
-                for (Value*& child : value->children()) {
-                    if (child->opcode() == Identity)
-                        child = child->foldIdentity();
-                }
+                value->performSubstitution();
 
                 switch (value->opcode()) {
                 case Get: {
                     Variable* variable = value->as<VariableValue>()->variable();
                     value->replaceWithIdentity(reachingDef(variable, valueIndex, value->origin()));
                     valuesToDelete.add(value);
-                    hasRemovals = true;
                     break;
                 }
 
@@ -372,20 +212,13 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
                     Variable* variable = value->as<VariableValue>()->variable();
                     setReachingDef(variable, value->child(0));
                     value->replaceWithNop();
-                    hasRemovals = true;
                     break;
                 }
-
-                case Identity:
-                case Nop:
-                    hasRemovals = true;
-                    break;
 
                 default:
                     break;
                 }
             }
-            hasNoRemovals[block->index()] = !hasRemovals;
 
             unsigned upsilonInsertionPoint = block->size() - 1;
             Origin upsilonOrigin = block->last()->origin();
@@ -408,28 +241,25 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
 
             insertionSet.execute(block);
         },
-        [&](BasicBlock*) {
+        [&](BasicBlock* block) {
             unsigned undoLogSize = undoLogSizeAtEntry.takeLast();
             while (undoLog.size() > undoLogSize) {
                 auto [index, previous] = undoLog.takeLast();
                 reachingDefs[index] = previous;
             }
-        });
 
-    // This is isn't strictly necessary, but it leaves the IR nice and tidy, which is particularly
-    // useful for phases that do size estimates.
-    for (BasicBlock* block : proc) {
-        if (hasNoRemovals[block->index()])
-            continue;
-        block->values().removeAllMatching(
-            [&] (Value* value) -> bool {
-                if (value->opcode() != Nop && (value->opcode() != Identity || !valuesToDelete.contains(value)))
-                    return false;
-                
-                proc.deleteValue(value);
-                return true;
-            });
-    }
+            // Now that we've visited every block these `Get`s dominate, and all their users have been
+            // substituted, we can delete the `Get`. This isn't strictly necessary, but it leaves the IR
+            // tidy for phases that do size estimates.
+            block->values().removeAllMatching(
+                [&](Value* value) -> bool {
+                    if (!valuesToDelete.remove(value) && value->opcode() != Nop)
+                        return false;
+
+                    proc.deleteValue(value);
+                    return true;
+                });
+        });
 
     if (B3FixSSAInternal::verbose) {
         dataLog("B3 after SSA conversion:\n");
@@ -447,21 +277,8 @@ void forgetDemotedValues(Procedure& proc)
 
 void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
 {
-    struct VariableByValue {
-        void add(Value* value, Variable* variable) { table.add(value, variable); }
-        Variable* get(Value* value) const { return isDemoted[value->index()] ? table.get(value) : nullptr; }
-        auto begin() const { return table.begin(); }
-        auto end() const { return table.end(); }
-
-        const uint8_t* isDemoted;
-        UncheckedKeyHashMap<Value*, Variable*> table { };
-    };
-    Vector<uint8_t, 1024> isDemoted;
-    isDemoted.fill(0, proc.values().size());
-    for (Value* value : values.values(proc.values()))
-        isDemoted[value->index()] = 1;
-    VariableByValue map { isDemoted.span().data() };
-    VariableByValue phiMap { isDemoted.span().data() };
+    UncheckedKeyHashMap<Value*, Variable*> map;
+    UncheckedKeyHashMap<Value*, Variable*> phiMap;
 
     // Create stack slots.
     auto addVariableFor = [&](Value* value) {
@@ -550,21 +367,15 @@ bool fixSSA(Procedure& proc)
         return false;
     }
     
-    // Lots of variables have trivial local liveness. We can allocate those without any
-    // trouble.
-    Accesses accesses;
     IndexSet<Value*> valuesToDelete;
-    fixSSALocally(proc, accesses, valuesToDelete);
-    if (killDeadVariables(proc, accesses)) {
+    if (fixSSALocally(proc, valuesToDelete)) {
         // Users of a forwarded Get can be in any block, so substitute everywhere before deleting.
-        for (BasicBlock* block : proc.cachedBlocksInPreOrder()) {
-            for (Value* value : *block)
-                value->performSubstitution();
-        }
-        for (BasicBlock* block : proc.cachedBlocksInPreOrder()) {
+        for (Value* value : proc.values())
+            value->performSubstitution();
+        for (BasicBlock* block : proc) {
             block->values().removeAllMatching(
                 [&](Value* value) -> bool {
-                    if (value->opcode() != Identity || !valuesToDelete.contains(value))
+                    if (!valuesToDelete.remove(value))
                         return false;
 
                     proc.deleteValue(value);
@@ -577,9 +388,10 @@ bool fixSSA(Procedure& proc)
 
     breakCriticalEdges(proc);
 
-    fixSSAGlobally(proc, accesses, valuesToDelete);
+    fixSSAGlobally(proc, valuesToDelete);
 
     forgetDemotedValues(proc);
+
     proc.deleteAllVariables();
 
     return true;

@@ -152,6 +152,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
     // As for a native function.
     vm.topCallFrame = hostCallFrame;
     const UGPRPair isEngines = makeUGPRPair(0, 0);
+    // The target may be a proxy again, and no function is entered that would test the stack. performProxyCall() throws the error.
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        return isEngines;
     ProxyObject* proxy = uncheckedDowncast<ProxyObject>(hostCallFrame->jsCallee());
     JSValue handlerValue = proxy->handler();
     if (!handlerValue.isObject())

@@ -26,7 +26,6 @@
 #include "config.h"
 #include "CommonSlowPaths.h"
 
-#include "AOTInterpreterSlowPaths.h"
 #include "ArithProfile.h"
 #include "ArrayPrototypeInlines.h"
 #include "BytecodeStructs.h"
@@ -362,10 +361,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_neq)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_stricteq)
 {
     BEGIN();
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineOperator(vm);
-#endif
     auto bytecode = pc->as<OpStricteq>();
     RETURN(jsBoolean(JSValue::strictEqual(globalObject, GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue())));
 }
@@ -373,10 +368,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_stricteq)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_nstricteq)
 {
     BEGIN();
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineOperator(vm);
-#endif
     auto bytecode = pc->as<OpNstricteq>();
     RETURN(jsBoolean(!JSValue::strictEqual(globalObject, GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue())));
 }
@@ -537,10 +528,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_object)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_add)
 {
     BEGIN();
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineOperator(vm);
-#endif
     auto bytecode = pc->as<OpAdd>();
     JSValue v1 = GET_C(bytecode.m_lhs).jsValue();
     JSValue v2 = GET_C(bytecode.m_rhs).jsValue();
@@ -752,10 +739,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof_is_object)
 {
     BEGIN();
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineOperator(vm);
-#endif
     auto bytecode = pc->as<OpTypeofIsObject>();
     RETURN(jsBoolean(jsTypeofIsObject(globalObject, GET_C(bytecode.m_operand).jsValue())));
 }
@@ -763,10 +746,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof_is_object)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof_is_function)
 {
     BEGIN();
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineOperator(vm);
-#endif
     auto bytecode = pc->as<OpTypeofIsFunction>();
     RETURN(jsBoolean(jsTypeofIsFunction(globalObject, GET_C(bytecode.m_operand).jsValue())));
 }

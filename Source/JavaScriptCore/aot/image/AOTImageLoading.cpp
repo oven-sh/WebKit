@@ -180,8 +180,13 @@ static size_t allocationGranularity()
 
 static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size)
 {
+    // A view can be executed only if its file was opened for that, which whoever wrote the file had no reason to ask for.
+    HANDLE file = ReOpenFile(reinterpret_cast<HANDLE>(descriptor), GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+    if (file == INVALID_HANDLE_VALUE)
+        return nullptr;
     // A page of a view can only get a protection that the view was mapped for, and the FFI stubs write their callback context once.
-    HANDLE mapping = CreateFileMappingW(reinterpret_cast<HANDLE>(descriptor), nullptr, PAGE_EXECUTE_WRITECOPY, 0, 0, nullptr);
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_EXECUTE_WRITECOPY, 0, 0, nullptr);
+    CloseHandle(file);
     if (!mapping)
         return nullptr;
     uint64_t start = static_cast<uint64_t>(fileOffset) & ~static_cast<uint64_t>(allocationGranularity() - 1);

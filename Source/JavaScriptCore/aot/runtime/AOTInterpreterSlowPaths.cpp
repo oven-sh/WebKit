@@ -687,11 +687,6 @@ bool planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const
     return true;
 }
 
-void didLookUpCompiledCallee(VM& vm)
-{
-    count(vm, RuntimeCounterID::InterpreterCallSlowPaths);
-}
-
 void didLeaveInlineAllocation(VM& vm)
 {
     count(vm, RuntimeCounterID::InterpreterAllocationSlowPaths);
@@ -700,11 +695,6 @@ void didLeaveInlineAllocation(VM& vm)
 void didLeaveInlineBranch(VM& vm)
 {
     count(vm, RuntimeCounterID::InterpreterBranchSlowPaths);
-}
-
-void didLeaveInlineOperator(VM& vm)
-{
-    count(vm, RuntimeCounterID::InterpreterOperatorSlowPaths);
 }
 
 } // namespace Interpreter

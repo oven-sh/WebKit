@@ -521,7 +521,7 @@ ALWAYS_INLINE CompactTable::QuickAddition CompactTable::tryAddQuickly(JSGlobalOb
         });
     }
     if (validatesRuntime(vm)) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         std::optional<uint32_t> expected = find(globalObject, key);
         scope.releaseAssertNoException();
         if (expected != found || hash != hashOfStoredKey(key) || !canHold(vm, Width::Narrow, key) || !canHold(vm, m_valueWidth, value))
@@ -654,6 +654,7 @@ void CompactTable::reserveForAdditions(JSGlobalObject* globalObject, JSObject* o
     if (!expected || capacity > maxCapacity || (!everyAdditionAddedAnEntry && capacity <= capacityAfterGrowth(table->m_alive, table->m_used)))
         return;
 
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     CompactTable* replacement = table->tryCopyWithWidths(globalObject, table->keyWidth(), table->m_valueWidth, static_cast<uint32_t>(capacity));
     if (scope.exception()) [[unlikely]] {

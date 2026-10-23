@@ -93,6 +93,12 @@ static Vector<FaultingAccess> collectFaultingAccesses(const DescribedFunction& d
             reportUndeclaredTrap(described, access.value);
             continue;
         }
+#if CPU(ARM64)
+        // The handler of faults finds a site by the address of the instruction that faulted, so the record names the load or the store itself.
+        uint32_t instruction;
+        memcpy(&instruction, body.bytes.subspan(linkBuffer.offsetOf(access.instruction), sizeof(instruction)).data(), sizeof(instruction));
+        RELEASE_ASSERT((instruction & 0x0a000000) == 0x08000000, instruction);
+#endif
         accesses.append({ linkBuffer.offsetOf(access.instruction), OptionalIndex { site->callSite }, throwSiteWords(site->throwSite, access.referenceIsNarrow ? Representation::Cell32 : site->representation, static_cast<unsigned>(access.reference)) });
     }
     for (const CallThrowSite& site : traps.callThrowSites)

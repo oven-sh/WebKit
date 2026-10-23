@@ -116,11 +116,13 @@ enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FlowFixpoint FunctionsGetPastEntry }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals PassCodeBytes }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime }
 enum Sabotage {
     None
     StackNamesNoInnerCell NarrowReferenceOnStackNamesNoInnerCell InnerObjectIsVisitedWithoutItsFields InnerArrayIsVisitedWithoutItsElements InnerCellVisitedInPlaceStaysWhite
     InnerCellIsMarkedWithoutItsOuterCell InnerCellLetGoKeepsItsHeader
+    RoomIsNotInReferenceList RoomsLeftEmptyAreNotZeroed NoBarrierBehindFreshStoreIntoRoom NoBarrierForStoreThroughBorrowedObject StoreLeavesRoomAsItIs
+    FlattenedObjectIsMadeWithoutBarrier MakingLeavesRoomAsItIs
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

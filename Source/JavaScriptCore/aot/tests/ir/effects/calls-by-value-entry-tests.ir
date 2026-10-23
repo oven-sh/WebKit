@@ -101,5 +101,5 @@ function f10 name="otherEntries" parameters=[{type=f5}, {type=f6}, {type=f7}, {t
 # CHECK-NEXT: v10 Call: reads(AllocatorState) writes(AllocatorState) collects
 # CHECK-NEXT: v11 Call: reads(AllocatorState) writes(AllocatorState) collects
 # CHECK-NEXT: v12 Call: reads(AllocatorState) writes(AllocatorState) collects
-# CHECK-NEXT: v13 CallList: reads(Elements, ArrayStorage)
-# CHECK-NOT: throws
+# A list of any length has to fit on the stack before the callee is entered
+# CHECK-NEXT: v13 CallList: reads(Elements, ArrayStorage) throws

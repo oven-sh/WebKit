@@ -211,7 +211,7 @@ static JSCell* closureEnvironmentOf(State& state, const Object& object, const Fi
 
 static JSValue valueForInstance(VM& vm, State& state, const Object& allocated, const FieldData& field, JSObject& instance)
 {
-    if (field.slot.representation() != SlotRepresentation::DeferredClosure)
+    if (field.slot.representation() != SlotRepresentation::DeferredClosure || field.defersFlattenedObject)
         return allocated.read(field);
     if (allocated.at<uint32_t>(field.slot.offset) != uncreatedDeferredClosure)
         return allocated.read(field);

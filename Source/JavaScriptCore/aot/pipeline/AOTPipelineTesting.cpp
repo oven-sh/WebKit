@@ -473,6 +473,7 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
     case PassID::MarkResultsUsedAsKeys:
     case PassID::DeferClosuresInFields:
     case PassID::AllocateInnerObjects:
+    case PassID::FlattenInnerObjects:
     case PassID::ReadCapturesFromEnvironments:
     case PassID::RemoveUnreadFields:
     case PassID::RemoveUnusedResults:

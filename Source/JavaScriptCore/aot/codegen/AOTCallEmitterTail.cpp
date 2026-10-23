@@ -229,7 +229,7 @@ void CallEmitter::tailCallByConvention(const OperationContext& context, const Co
 }
 
 // The stub that calls finds out too late that there is nothing to call: the frame that the error names is gone by then.
-void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context, Boxed callee)
+void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee)
 {
     ClosureTestEmitter& closures = emitter<ClosureTestEmitter>();
     LBasicBlock mayNotBeCallable = newBlock();
@@ -239,7 +239,7 @@ void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context,
     m_out.branch(isKnownToBeCallable.value(), normalEdge(continuation), rareEdge(mayNotBeCallable));
 
     m_out.appendTo(mayNotBeCallable);
-    callStub(context, throwUnlessCallable(), { callee.value() }, { .isOnRarePath = true });
+    callStub(context, throwUnlessCallable(), { callee.value() }, { .throwSite = siteThatNamesCallee, .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -266,8 +266,12 @@ void CallEmitter::callAndReturnIfCalleeEndsItsTailCalls(const ValueContext& valu
 
 void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call)
 {
-    if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        requireCallableBeforeTailCall(value, call.callee);
+    if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program)) {
+        std::optional<ThrowSite> siteThatNamesCallee;
+        if (value->calleeName())
+            siteThatNamesCallee = ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
+        requireCallableBeforeTailCall(value, call.callee, siteThatNamesCallee);
+    }
 
     unsigned count = static_cast<unsigned>(call.arguments.size());
     Vector<LValue, 8> values;

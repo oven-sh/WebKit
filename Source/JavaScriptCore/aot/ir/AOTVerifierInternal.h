@@ -170,6 +170,9 @@ private:
     void verifyBuiltinOperation(BlockID, ValueID, const Value&);
     void verifyDirectEval(BlockID, ValueID, const Value&);
     void verifySlotOperation(BlockID, ValueID, const Value&);
+    void verifyUsesOfBorrowedObject(ValueID);
+    bool standsBehindBorrowedParameter(ValueID parameter);
+    void verifyObjectMadeOnDemand(BlockID, ValueID, const Value&);
     void verifyKeyedTail(BlockID, ValueID, const Value&, size_t numberOfKeys);
     void verifyElementOperation(BlockID, ValueID, const Value&);
     void verifyStringBuilderOperation(BlockID, ValueID, const Value&);

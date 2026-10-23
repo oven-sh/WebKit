@@ -139,7 +139,7 @@ static void checkLoopWithPad(const B3::Policy& policy, bool limitsRegisters)
     B3::Procedure proc(policy);
     BasicBlock* pad = buildLoopWithPad(proc, limitsRegisters, callClobberedRegisters());
     prepareForGeneration(proc.code());
-    CHECK(RegLiveness(proc.code()).liveAtHead(pad).filter(callClobberedRegisters()).isEmpty());
+    CHECK(RegisterSet(RegLiveness(proc.code()).liveAtHead(pad)).filter(callClobberedRegisters()).isEmpty());
 
     GeneratedCode generated = generateCode(proc);
     for (int64_t stopAt : { -1, 3, 0 })

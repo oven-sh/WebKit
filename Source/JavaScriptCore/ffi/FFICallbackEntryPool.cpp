@@ -84,12 +84,6 @@ unsigned CallbackEntryPool::numberOfEntries() const
     return static_cast<unsigned>(m_callbacks.size());
 }
 
-unsigned CallbackEntryPool::numberOfEntriesInUse()
-{
-    Locker locker { m_lock };
-    return static_cast<unsigned>(m_entriesInUse.bitCount());
-}
-
 } } // namespace JSC::FFI
 
 #endif // USE(BUN_JSC_ADDITIONS)

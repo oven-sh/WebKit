@@ -176,7 +176,7 @@ FramePlacement FrameShrinkWrapper::run()
     }
 
     if (liveness && isInRegion(entry))
-        RELEASE_ASSERT(!(liveness->bitsLiveAtHead(entry).registers & m_scratchRegisters));
+        RELEASE_ASSERT(!(bitsOf(liveness->liveAtHead(entry)) & m_scratchRegisters));
 
     rewriteIncomingArgumentAddresses();
     insertSetups();
@@ -345,7 +345,7 @@ void FrameShrinkWrapper::addBlocksWithLiveCalleeSaves(const RegLiveness& livenes
     if (!m_savedCalleeSaves)
         return;
     for (BasicBlock* block : m_code) {
-        if ((liveness.bitsLiveAtHead(block).registers | liveness.bitsLiveAtTail(block).registers) & m_savedCalleeSaves)
+        if ((bitsOf(liveness.liveAtHead(block)) | bitsOf(liveness.liveAtTail(block))) & m_savedCalleeSaves)
             addToRegion(block);
     }
 }
@@ -387,7 +387,7 @@ void FrameShrinkWrapper::addBlocksAfterAddressEscapes(const RegLiveness& livenes
     Vector<BasicBlock*, 16> worklist;
     for (size_t blockIndex : m_takesSlotAddress) {
         BasicBlock* block = m_code[blockIndex];
-        if (canSlotAddressEscape(block, liveness.bitsLiveAtTail(block).registers))
+        if (canSlotAddressEscape(block, bitsOf(liveness.liveAtTail(block))))
             worklist.append(block);
     }
     if (worklist.isEmpty())
@@ -517,7 +517,7 @@ bool FrameShrinkWrapper::growOverLiveScratchRegisters(const RegLiveness& livenes
     bool changed = false;
     while (!worklist.isEmpty()) {
         BasicBlock* block = worklist.takeLast();
-        if (!(liveness.bitsLiveAtHead(block).registers & m_scratchRegisters))
+        if (!(bitsOf(liveness.liveAtHead(block)) & m_scratchRegisters))
             continue;
         for (BasicBlock* predecessor : block->predecessors()) {
             if (!addToRegion(predecessor))

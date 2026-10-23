@@ -841,8 +841,6 @@ LLINT_SLOW_PATH_DECL(slow_path_create_lexical_environment)
 #if ENABLE(AOT)
     if (Options::useAOT())
         AOT::Interpreter::checkPlacesInSymbolTable(*symbolTable);
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineAllocation(vm);
 #endif
     LLINT_RETURN(newScope);
 }
@@ -1111,10 +1109,6 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
 LLINT_SLOW_PATH_DECL(slow_path_get_length)
 {
     LLINT_BEGIN();
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineOperator(vm);
-#endif
     auto bytecode = pc->as<OpGetLength>();
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = vm.propertyNames->length;
@@ -2108,10 +2102,6 @@ LLINT_SLOW_PATH_DECL(slow_path_jneq)
 LLINT_SLOW_PATH_DECL(slow_path_jstricteq)
 {
     LLINT_BEGIN();
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineOperator(vm);
-#endif
     auto bytecode = pc->as<OpJstricteq>();
     LLINT_BRANCH(JSValue::strictEqual(globalObject, getOperand(callFrame, bytecode.m_lhs), getOperand(callFrame, bytecode.m_rhs)));
 }
@@ -2119,10 +2109,6 @@ LLINT_SLOW_PATH_DECL(slow_path_jstricteq)
 LLINT_SLOW_PATH_DECL(slow_path_jnstricteq)
 {
     LLINT_BEGIN();
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::Interpreter::didLeaveInlineOperator(vm);
-#endif
     auto bytecode = pc->as<OpJnstricteq>();
     LLINT_BRANCH(!JSValue::strictEqual(globalObject, getOperand(callFrame, bytecode.m_lhs), getOperand(callFrame, bytecode.m_rhs)));
 }

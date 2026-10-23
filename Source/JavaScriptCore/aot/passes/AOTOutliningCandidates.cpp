@@ -460,7 +460,7 @@ static bool canCrossCallBoundary(const Program& program, TypeID type)
 static bool canBeLiveIn(OutliningScan& scan, ValueID id)
 {
     const Value& value = scan.function.at(id);
-    return canCrossCallBoundary(scan.program, value.type) && !scan.isFramePointer(id) && branchesOf(value.opcode) != Branches::Only && !isDeferredClosure(scan.function, id) && !scan.unspecifiedValues.mayContain(id);
+    return canCrossCallBoundary(scan.program, value.type) && !scan.isFramePointer(id) && branchesOf(value.opcode) != Branches::Only && !isDeferredClosure(scan.function, id) && !isBorrowedInnerObject(scan.function, id) && !scan.unspecifiedValues.mayContain(id);
 }
 
 static bool usesExecutionCounts(HeatOverride heat)
@@ -1046,7 +1046,7 @@ static bool canBeRoot(OutliningScan& scan, ValueID id)
     if (isConditionOfBranchWithProofs(function, scan.useLists, id))
         return false;
     // A deferred closure has no code and no value: it moves only together with the store that names it.
-    if (isDeferredClosure(function, id))
+    if (isDeferredClosure(function, id) || isBorrowedInnerObject(function, id))
         return false;
 
     std::span<const Use> uses = scan.useLists.usesOf(id);

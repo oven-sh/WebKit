@@ -455,6 +455,8 @@ public:
 
     // Type accessors.
     TypeInfo typeInfo() const { return m_blob.typeInfo(m_outOfLineTypeFlags); }
+    // For a class whose put() matters in some realms only: see InternalFunction. Before anything has been stored to a cell of this Structure.
+    void setOverridesPut() { m_outOfLineTypeFlags |= OverridesPut >> numberOfInlineBits; }
     bool isObject() const { return typeInfo().isObject(); }
     const ClassInfo* classInfoForCells() const { return m_classInfo; }
     CellState typeInfoDefaultCellState() const { return m_blob.defaultCellState(); }

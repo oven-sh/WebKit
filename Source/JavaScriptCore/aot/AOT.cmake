@@ -57,9 +57,7 @@ list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
 
 # Written by aot-source-lists.ts: what Bun, a JavaScriptCore header outside aot/ or an exported header of the built-ins table includes, and what those include.
 set(JavaScriptCore_AOT_EXPORTED_HEADERS
-    aot/builtins/AOTBuiltinWords.h
     aot/codegen/AOTArrivalSiteNumbers.h
-    aot/codegen/AOTCodegenScratchWords.h
     aot/image/AOTCallSiteTable.h
     aot/image/AOTCodeSites.h
     aot/image/AOTCompile.h
@@ -79,7 +77,6 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/ir/AOTIRForm.h
     aot/ir/AOTNameClass.h
     aot/ir/AOTOpcode.h
-    aot/object/AOTAllocationSiteRecord.h
     aot/object/AOTCellFormat.h
     aot/object/AOTClosure.h
     aot/object/AOTClosureWord.h
@@ -91,7 +88,6 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/object/AOTLayoutData.h
     aot/object/AOTObject.h
     aot/object/AOTObjectVisiting.h
-    aot/object/AOTObjectWords.h
     aot/object/AOTPagedBitSet.h
     aot/object/AOTProgramTables.h
     aot/object/AOTPropertyList.h
@@ -112,28 +108,20 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTCompiledFrame.h
     aot/runtime/AOTCompiledFrameExit.h
     aot/runtime/AOTCoroutineData.h
-    aot/runtime/AOTCoroutineWords.h
     aot/runtime/AOTFunctionDescription.h
     aot/runtime/AOTGenerator.h
     aot/runtime/AOTHeapCellClasses.h
     aot/runtime/AOTHeapCellVisits.h
     aot/runtime/AOTHeapHooks.h
-    aot/runtime/AOTHeapWords.h
     aot/runtime/AOTHost.h
-    aot/runtime/AOTInstance.h
     aot/runtime/AOTInstanceLayout.h
-    aot/runtime/AOTInterpreterSlowPaths.h
-    aot/runtime/AOTIterationWords.h
     aot/runtime/AOTJSONHooks.h
-    aot/runtime/AOTJSONWords.h
     aot/runtime/AOTMembersLeftOut.h
     aot/runtime/AOTModuleData.h
     aot/runtime/AOTModuleHost.h
     aot/runtime/AOTModuleRecord.h
-    aot/runtime/AOTModuleWords.h
     aot/runtime/AOTOperationData.h
     aot/runtime/AOTPropertyCachesStringKeys.h
-    aot/runtime/AOTPropertyCachesWords.h
     aot/runtime/AOTRealmStartup.h
     aot/runtime/AOTRemovableFeature.h
     aot/runtime/AOTRuntimeCounters.h
@@ -157,9 +145,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/stubs/AOTStubKey.h
     aot/stubs/AOTStubLeafConvention.h
     aot/stubs/AOTStubRegisters.h
-    aot/stubs/AOTStubWords.h
     aot/stubs/AOTStubsArrayFamilies.def
-    aot/stubs/AOTStubsArrayWords.h
     aot/stubs/AOTStubsCallFamilies.def
     aot/stubs/AOTStubsCoroutineFamilies.def
     aot/stubs/AOTStubsPropertyFamilies.def
@@ -507,7 +493,7 @@ function(AOT_GENERATE_FROM_SCHEMA)
     execute_process(COMMAND "${NODE_EXECUTABLE}" --version OUTPUT_VARIABLE nodeVersion OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
     string(REGEX REPLACE "^v" "" nodeVersion "${nodeVersion}")
     if (nodeVersion VERSION_LESS 22.18 OR (nodeVersion VERSION_GREATER_EQUAL 23 AND nodeVersion VERSION_LESS 24.2))
-        message(FATAL_ERROR "The generators of aot/ need node 24.2 or later, or 22.18 or later of 22: it has to run TypeScript as it is and have import.meta.main. ${NODE_EXECUTABLE} is ${nodeVersion}.")
+        message(FATAL_ERROR "The generators of aot/ need node 24.2 or later, or 22.18 or later of 22: it has to run TypeScript as it is. ${NODE_EXECUTABLE} is ${nodeVersion}.")
     endif ()
     file(GLOB generator CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/ir/generator/*.ts")
     list(TRANSFORM JavaScriptCore_AOT_SCHEMA_INPUTS PREPEND "${JAVASCRIPTCORE_DIR}/" OUTPUT_VARIABLE inputs)

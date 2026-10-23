@@ -20,7 +20,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
 #include "config.h"
@@ -30,6 +30,7 @@
 
 #include "AirCode.h"
 #include "AirInstInlines.h"
+#include "AirPadInterference.h"
 #include "AirRegLiveness.h"
 #include "AirPhaseScope.h"
 
@@ -39,36 +40,77 @@ bool reportUsedRegisters(Code& code)
 {
     PhaseScope phaseScope(code, "reportUsedRegisters"_s);
 
+    static constexpr bool verbose = false;
+
+    // The RegLiveness below reasons about interference at instruction boundaries, so it is only
+    // correct once padding separates a late use or def from a following early def.
+    padInterference(code);
+
+    if (verbose)
+        dataLog("Doing reportUsedRegisters on:\n", code);
+
     RegLiveness liveness(code);
 
     bool changed = false;
     for (BasicBlock* block : code) {
+        if (verbose)
+            dataLog("Looking at: ", *block, "\n");
+
         RegLiveness::LocalCalc localCalc(liveness, block);
-        unsigned removed = 0;
 
         for (unsigned instIndex = block->size(); instIndex--;) {
             Inst& inst = block->at(instIndex);
 
+            if (verbose)
+                dataLog("   Looking at: ", inst, "\n");
+
             // Kill dead assignments to registers. For simplicity we say that a store is killable if
             // it has only late defs and those late defs are to registers that are dead right now.
-            if (localCalc.definesOnlyDeadRegisters(instIndex) && !inst.hasNonArgEffects()) {
-                inst = Inst();
-                ++removed;
-            } else if (inst.kind.opcode == Patch)
+            if (!inst.hasNonArgEffects()) {
+                bool canDelete = true;
+                inst.forEachArg(
+                    [&] (Arg& arg, Arg::Role role, Bank, Width) {
+                        if (Arg::isEarlyDef(role)) {
+                            if (verbose)
+                                dataLog("        Cannot delete because of ", arg, "\n");
+                            canDelete = false;
+                            return;
+                        }
+                        if (!Arg::isLateDef(role))
+                            return;
+                        if (!arg.isReg()) {
+                            if (verbose)
+                                dataLog("        Cannot delete because arg is not reg: ", arg, "\n");
+                            canDelete = false;
+                            return;
+                        }
+                        if (localCalc.isLive(arg.reg())) {
+                            if (verbose)
+                                dataLog("        Cannot delete because arg is live: ", arg, "\n");
+                            canDelete = false;
+                            return;
+                        }
+                    });
+                if (canDelete)
+                    inst = Inst();
+            }
+
+            if (inst.kind.opcode == Patch)
                 inst.reportUsedRegisters(localCalc.live());
             localCalc.execute(instIndex);
         }
 
-        if (!removed)
-            continue;
         unsigned sizeBefore = block->size();
-        block->insts().removeAllMatching(
+        unsigned removed = block->insts().removeAllMatching(
             [&](const Inst& inst) -> bool {
                 return !inst;
             });
-        if (sizeBefore - removed <= 1)
+        if (removed && sizeBefore - removed <= 1)
             changed = true;
     }
+
+    if (verbose)
+        dataLog("After reportUsedRegisters:\n", code);
 
     return changed;
 }
@@ -76,4 +118,5 @@ bool reportUsedRegisters(Code& code)
 } } } // namespace JSC::B3::Air
 
 #endif // ENABLE(B3_JIT)
+
 

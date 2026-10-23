@@ -287,7 +287,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySubarrayOfAnyValue, EncodedJSValu
     JSValue begin = JSValue::decode(encodedBegin);
     JSValue end = JSValue::decode(encodedEnd);
     JSUint8Array* view = asFixedBytes(JSValue::decode(encodedReceiver));
-    if (view && (begin.isInt32() || begin.isUndefined()) && (end.isInt32() || end.isUndefined()) && view->realm() == globalObject && speciesWatchpointIsValid(globalObject, view)) [[likely]] {
+    bool makesPlainView = view && (begin.isInt32() || begin.isUndefined()) && (end.isInt32() || end.isUndefined()) && view->realm() == globalObject && speciesWatchpointIsValid(globalObject, view);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (makesPlainView) [[likely]] {
         int64_t length = view->lengthRaw();
         auto placeOf = [&](JSValue position, int64_t otherwise) {
             if (position.isUndefined())
@@ -317,6 +319,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPut, void, (Instance* in
 #define AOT_PUT_ELEMENT(name) \
     case name ## ArrayType: \
         uncheckedDowncast<JS ## name ## Array>(view)->setIndex(globalObject, index, value); \
+        scope.assertNoException(); \
         return;
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_PUT_ELEMENT)
 #undef AOT_PUT_ELEMENT

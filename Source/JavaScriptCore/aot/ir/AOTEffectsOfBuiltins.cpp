@@ -236,6 +236,7 @@ static void describeListElements(const Program& program, const BuiltinOverload& 
 static void describeListCall(const Program& program, const BuiltinOverload& overload, std::span<const TypeID> arguments, EffectDescription& description)
 {
     description.addOwn(listReadEffects);
+    description.addThrow();
     switch (describeCodeOf(program, overload, description)) {
     case OperandCode::IsDescribed:
         return;

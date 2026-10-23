@@ -3113,15 +3113,6 @@ bool JSObject::tryPutDirectPropertyRun(VM& vm, const PropertyRun& run, std::span
     return true;
 }
 
-void JSObject::putDirectPropertiesWithStructure(VM& vm, Structure* newStructure, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values)
-{
-    ASSERT(names.size() == values.size());
-    ASSERT(hasButterflyField(type()) && !structure()->isDictionary() && !newStructure->isDictionary());
-    putAddedPropertiesAndSetStructure(vm, this, newStructure, values);
-    if (mayBePrototype()) [[unlikely]]
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, names);
-}
-
 bool JSObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
     ASSERT(!object->structure()->isCompiledStructure());

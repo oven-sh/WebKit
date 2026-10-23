@@ -507,7 +507,7 @@ void RuntimeReporter::writeCounts()
     static Lock lock;
     static bool hasWrittenInThisProcess;
     Locker locker { lock };
-    auto file = FilePrintStream::open(name.utf8(), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
+    auto file = FilePrintStream::open(name.utf8(), std::exchange(hasWrittenInThisProcess, true) ? "ab"_s : "wb"_s);
     if (!file)
         return;
     dumpCounts(m_vm, *file);

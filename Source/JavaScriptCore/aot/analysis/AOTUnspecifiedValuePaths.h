@@ -24,14 +24,17 @@ struct UseOfUnspecifiedValue {
     Vector<BlockID> path;
 };
 
-// An Unspecified value travels beside an integer that says whether it is there. This follows every path through the function, takes at a branch or a switch
-// on a known integer only the edge that the integer takes, and lists the operations that look at such a value.
+// An Unspecified value travels beside an integer that says whether it is there. This follows the value from every edge that passes it, takes at a branch or a switch
+// on known integers only the edges that they take, and lists the operations that look at such a value.
 struct UsesOfUnspecifiedValues {
     Vector<UseOfUnspecifiedValue> uses;
     bool wasEveryPathFollowed { true };
 };
 
-UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses&, size_t maxUses, size_t maxStates = 1 << 16);
+// The integer may be tested by an outlined body. Where that body may change under the reader, a function that calls one is not judged.
+enum class OtherFunctions : bool { AreAtRest, MayChange };
+
+UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses&, size_t maxUses, OtherFunctions, size_t maxBlockVisits = 1 << 22);
 
 } } } // namespace JSC::AOT::Typed
 

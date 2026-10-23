@@ -364,7 +364,8 @@ static void printFieldRecords(const TablesContext& context, ASCIILiteral keyword
         RecordLine line(context, keyword, index);
         line.identifier("name"_s, field.name).flags("flags"_s, field.flags, fieldFlagNames).field("slot"_s, field.slot).field("type"_s, field.type);
         line.flag("isFilledAtBirth"_s, field.isFilledAtBirth).flag("holdsRawValueFromBirth"_s, field.holdsRawValueFromBirth).flag("keepsStateOfBirth"_s, field.keepsStateOfBirth);
-        if (field.slot.representation() != SlotRepresentation::DeferredClosure)
+        line.flag("defersFlattenedObject"_s, field.defersFlattenedObject);
+        if (field.slot.representation() != SlotRepresentation::DeferredClosure || field.defersFlattenedObject)
             continue;
         line.field("function"_s, layout.deferredClosureOf(field));
         if (field.flags & fieldDeferredClosureCapturesEnvironment)

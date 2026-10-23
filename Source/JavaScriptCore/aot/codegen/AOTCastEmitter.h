@@ -18,6 +18,8 @@ public:
     void generateUpcast(const ValueContext&);
     void generateNarrowByField(const ValueContext&);
     void generateAssumeType(const ValueContext&);
+    void generateReadAgain(const ValueContext&);
+    void generateBorrowedParameter(const ValueContext&);
     void generateReportMismatch(const ValueContext&);
     void generateCheckInitialized(const ValueContext&);
     void generateRequireObjectCoercible(const ValueContext&);

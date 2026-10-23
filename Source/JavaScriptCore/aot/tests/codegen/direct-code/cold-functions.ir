@@ -1,6 +1,6 @@
 # In a very large program a function that is not hot gets its machine code in one walk over the B3 values as they were emitted: no B3 phase, no Air
 # FORM: AsRead
-# REQUIRES: x86_64 unsanitized-code
+# REQUIRES: unsanitized-code
 # OPTIONS: limit=MaxWarmCodeValues:1 disable=pass:InlineCalls
 # RUN: generate-code FunctionsGeneratedDirectly DirectGenerationsAbandoned
 # CHECK: statistic FunctionsGeneratedDirectly 4

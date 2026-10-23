@@ -422,6 +422,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 #endif
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && AOT::refusesToInterpret(*this)) [[unlikely]] {
+        throwScope.release();
         AOT::throwLibraryFunctionNotCompiled(scope->realm(), *this);
         return;
     }

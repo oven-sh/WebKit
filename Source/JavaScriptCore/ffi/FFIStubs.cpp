@@ -65,13 +65,6 @@ const Stubs* Stubs::current()
     return s_currentStubs.load(std::memory_order_acquire);
 }
 
-void Stubs::installForTesting(InvokeStubFunction invoke, Vector<void*>&& callbackEntries)
-{
-    current();
-    RELEASE_ASSERT(!CallbackEntryPool::singleton().numberOfEntries());
-    s_currentStubs.store(new Stubs(invoke, WTF::move(callbackEntries), { }), std::memory_order_release);
-}
-
 #if ENABLE(AOT) && FFI_STUBS_SUPPORTED
 
 static std::optional<uint8_t*> mapCallbackEntries(uint8_t* base, const StubDirectory& directory)

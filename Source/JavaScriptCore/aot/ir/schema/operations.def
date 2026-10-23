@@ -44,7 +44,7 @@ operation PutEnvironmentField (environment: Layout/inspects, layout: Layout, fie
 operation ScopeHasBinding (scope: Object/inspects, key: PropertyKey) -> natural(boolean) ; unknownCode ; runtime = ScopeHasBinding ; flow = TableProves
 
 family Allocation AsRead..Placed
-operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp, engine allocationClass?: AllocationClass, engine outerLayout?: Layout) [| engine takesCellOfInnerObject cellCannotBeMarked] -> allocation(layout) ; Allocates ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates
+operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp, engine allocationClass?: AllocationClass, engine outerLayout?: Layout) [| engine takesCellOfInnerObject cellCannotBeMarked isMadeOnDemand] -> allocation(layout) ; Allocates ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates
 operation NewDictionary () -> natural(object) ; Allocates ; runtime = NewDictionary ; allocatesInline = true ; flow = Allocates
 operation FinishObject (object: Object/returns) -> natural(same(object)) ; none ; interpreted = Cast ; flow = Copies
 operation NewArray (contents: Type, holes: List<UInt32>, engine capacity?: Integer/inspects, elements...: Any/retains(result), engine allocationSite?: AllocationSite, engine storage: AllocationStorage, engine literalStorage: ArrayLiteralStorage, engine outerLayout?: Layout, engine from Placed staticsOffset?: StaticsOffset) -> allocation(Array<contents>) ; Allocates ; runtime = NewArray ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates
@@ -124,6 +124,8 @@ operation NarrowByField (value: Any/returns, read: Any/inspects, key: PropertyKe
 operation Check (value: Any/returns, castType: Type, site?: TypeSite, engine cause: CheckCause) -> cast(castType) ; none ; AsRead..Prepared ; interpreted = Cast ; flow = Checks
 operation Convert (value: Any/returns, declared: DeclaredType, illTypedCause: IllTypedCause) -> natural(same(value)) ; none ; AsRead..AsRead ; removedBy = TypeValues ; flow = Unsound
 engine operation AssumeType (value: Any/returns, castType: Type) -> cast(castType) ; none ; Prepared..Placed ; interpreted = Cast
+engine operation ReadAgain (object: Object/returns, again: Object/inspects) -> natural(same(object)) ; none ; Prepared..Placed ; interpreted = Cast
+engine operation BorrowedParameter (value: Any/returns) -> natural(same(value)) ; none ; Prepared..Placed ; interpreted = Cast
 engine operation ReportMismatch (value: Any/inspects, expectedType: Type, site?: TypeSite) -> none ; writes(ExternalState) throws ; runtime = ReportMismatch ; flow = Checks
 operation CheckInitialized (value: Any/returns, name: String) -> cast ; throws ; interpreted = Cast ; flow = Checks
 operation RequireObjectCoercible (value: Any/returns, nullishAccess: NullishAccess, name?: String) -> cast ; throws ; interpreted = Cast ; flow = Checks

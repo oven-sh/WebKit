@@ -1,0 +1,25 @@
+# typeof process === "function" ? "a function" : "no function", in the shell, which is a realm without the host, and nobody has defined `process` there.
+# The read by name becomes the built-in itself, and compiled code reads through its cell without a test. The realm says what is missing and exits: once the cell was null and the shell died of a signal.
+# FORM: AsRead
+# RUN: run-in-shell
+# CHECK: AOT: the program needs the host's process, and this realm has no host
+# CHECK-NEXT: exited with 4
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="process" [isFreeName, isForTypeOf]
+    v2 = TypeTest v1 testedType=function
+    v3 = PropGet v0 key="print" [isFreeName]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string="a function"
+    v5 = Call v3, -, v4
+    Return
+  b2():
+    v6 = String string="no function"
+    v7 = Call v3, -, v6
+    Return
+}

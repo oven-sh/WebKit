@@ -404,8 +404,10 @@ bool PlannedLayoutChecker::holdsClosureEnvironmentInCell() const
 bool PlannedLayoutChecker::isDeferredClosureProven(const PlacedSlot& slot, const Field& declaration) const
 {
     if (slot.representation != SlotRepresentation::DeferredClosure)
-        return !slot.deferredFunction && !slot.deferredClosureCapturesObject && !slot.deferredClosureCapturesEnvironment;
+        return !slot.deferredFunction && !slot.deferredClosureCapturesObject && !slot.deferredClosureCapturesEnvironment && !slot.defersFlattenedObject;
     const LocationFlow& location = declaration.flow.location;
+    if (slot.defersFlattenedObject || location.deferral == ClosureDeferral::FlattenedObject)
+        return slot.defersFlattenedObject && location.deferral == ClosureDeferral::FlattenedObject && !slot.deferredFunction && !slot.deferredClosureCapturesObject && !slot.deferredClosureCapturesEnvironment;
     return location.deferral != ClosureDeferral::Unknown
         && slot.deferredFunction
         && slot.deferredFunction == location.deferredFunction

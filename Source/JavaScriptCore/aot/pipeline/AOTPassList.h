@@ -41,6 +41,7 @@
     v(CreateEntrypoints) \
     v(ChooseCallingConventions) \
     v(DeferClosuresInFields) \
+    v(FlattenInnerObjects) \
     v(AllocateInFrames) \
     v(AllocateInnerObjects) \
     v(ReuseEnvironments) \

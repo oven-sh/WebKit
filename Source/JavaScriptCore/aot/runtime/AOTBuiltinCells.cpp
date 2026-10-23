@@ -29,6 +29,7 @@
 #include <utility>
 #include <wtf/DataLog.h>
 #include <wtf/StackPointer.h>
+#include <wtf/WTFProcess.h>
 
 namespace JSC { namespace AOT {
 
@@ -56,6 +57,8 @@ private:
 };
 
 } // anonymous namespace
+
+static constexpr int exitCodeOfRealmWithoutHost = 4;
 
 static bool isNearEndOfStack(VM& vm)
 {
@@ -271,6 +274,11 @@ JSCell* BuiltinCells::cell(uint32_t number)
         if (isImmutable && BuiltinBindings::provides(table.at(key->builtin()).origin)) {
             dataLogLn("AOT: built-in cell ", number, " (key ", key->encoded(), ", ", table.textOf(key->builtin()), ") is not in this realm: ", static_cast<unsigned>(found.error()));
             CRASH();
+        }
+        // Compiled code reads through the cell without a test.
+        if (!BuiltinBindings::provides(table.at(key->builtin()).origin)) {
+            dataLogLn("AOT: the program needs the host's ", table.textOf(key->builtin()), ", and this realm has no host");
+            exitProcess(exitCodeOfRealmWithoutHost);
         }
         m_isUnavailable.ensureSizeAndSet(number, keys.size());
         return nullptr;

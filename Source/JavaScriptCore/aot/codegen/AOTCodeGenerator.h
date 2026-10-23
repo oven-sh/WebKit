@@ -153,6 +153,10 @@ public:
     // For the one user of an operation that leaves its code to the user: from here on the user finds the operands of that operation in the forms in which it takes them.
     void takeOperandsOf(ValueID operationLeftToUser);
     void generateWithOperandsOf(ValueID operationLeftToUser, NOESCAPE const ScopedLambda<void()>&);
+    // Null for any other parameter.
+    LValue slotsOfBorrowedParameter(ValueID parameter) const { return m_slotsOfBorrowedParameters.get(parameter.index() + 1); }
+    // Whether the value may be an outer object that stands for an inner one which was not made.
+    bool mayBeBorrowedInnerObject(ValueID) const;
     void define(const ValueContext&, Operand);
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
@@ -299,6 +303,7 @@ private:
     // Takes what the operation that is being generated defines, in place of the table of values.
     Operand* m_definitionTaken { nullptr };
     // Beside a parameter in which borrowed objects meet: where the slots lie.
+    UncheckedKeyHashMap<uint32_t, LValue> m_slotsOfBorrowedParameters;
     Vector<std::optional<ResultRange>> m_resultRanges;
     Vector<Operand> m_results;
     Vector<LBasicBlock> m_blocks;

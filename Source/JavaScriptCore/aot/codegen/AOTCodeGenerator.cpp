@@ -193,6 +193,14 @@ void CodeGenerator::createPhis()
             lowered = block->appendNew<B3::Value>(m_proc, B3::Phi, b3TypeOf(representation), b3OriginOf(parameter));
             publishKnownProperties(parameter, lowered);
         }
+        for (ValueID value : function().at(id).values) {
+            const Value& operation = function().at(value);
+            if (operation.opcode != Opcode::BorrowedParameter)
+                continue;
+            ValueID parameter = parameterOf(function(), operation);
+            if (parameter && function().at(id).parameters.contains(parameter))
+                m_slotsOfBorrowedParameters.add(parameter.index() + 1, block->appendNew<B3::Value>(m_proc, B3::Phi, B3::Int64, b3OriginOf(value)));
+        }
     }
 }
 
@@ -463,6 +471,10 @@ void CodeGenerator::passArguments(Edge edge, const Target& target, std::span<con
     for (uint32_t index = 0; index < parameters.size(); ++index) {
         if (hasRegister(representationOf(parameters[index])))
             passArgument(parameters[index], takeIncomingOperand(edge, index, declaredResults));
+        if (m_slotsOfBorrowedParameters.isEmpty()) [[likely]]
+            continue;
+        if (LValue slots = slotsOfBorrowedParameter(parameters[index]))
+            m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), emitter<SlotAccessEmitter>().addressOfSlotsOf(target.arguments[index]), slots);
     }
     RELEASE_ASSERT(declaredResults.empty());
     dropSharedFormsSince(numberOfSharedForms);
@@ -504,6 +516,17 @@ void CodeGenerator::passArgument(ValueID parameter, const IncomingOperand& incom
     LValue phi = m_values[parameter.index()];
     RELEASE_ASSERT(phi && phi->opcode() == B3::Phi);
     m_out.m_block->appendNew<B3::UpsilonValue>(m_proc, m_out.origin(), argument.value, phi);
+}
+
+bool CodeGenerator::mayBeBorrowedInnerObject(ValueID id) const
+{
+    if (isBorrowedInnerObject(function(), id))
+        return true;
+    if (m_slotsOfBorrowedParameters.isEmpty()) [[likely]]
+        return false;
+    while (familyOf(function().at(id).opcode) == OperationFamily::Representation)
+        id = function().at(id).operand(0);
+    return !!slotsOfBorrowedParameter(id);
 }
 
 Representation CodeGenerator::representationOf(ValueID id) const

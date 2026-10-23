@@ -180,7 +180,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAsyncIteratorStep, EncodedJSValue, (Instanc
         consumer = (consumer & ~static_cast<uint64_t>(consumerOfStepNeedsSavedFrame)) | consumerOfStepHasNewSavedFrame;
     }
     SavedFrame* newSavedFrame = consumer & consumerOfStepHasNewSavedFrame ? std::bit_cast<SavedFrame*>(slotsOfStub[driverSlotInStubFrame]) : nullptr;
-    StepAnswer answer = consumer & consumerOfStepAwaitsPromise ? StepAnswer::IsPromise : StepAnswer::ResumesDriver;
+    constexpr uint64_t awaitsWhatNextReturns = consumerOfStepAwaitsPromise | consumerOfStepAwaitsCall;
+    StepAnswer answer = consumer & awaitsWhatNextReturns ? StepAnswer::IsPromise : StepAnswer::ResumesDriver;
     AsyncGeneratorStep step = stepAsyncIterator(*instance, frame, newSavedFrame, answer, asyncIteratorArgument(iterator, entry), JSValue::decode(sent));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     instance->coroutines.stepStatus = static_cast<uint32_t>(step.status);

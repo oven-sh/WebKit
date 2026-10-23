@@ -31,139 +31,79 @@
 #include "AirCode.h"
 #include "AirInst.h"
 #include "RegisterSet.h"
-#include <optional>
-#include <wtf/Vector.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#include <wtf/IndexMap.h>
 
 namespace JSC { namespace B3 { namespace Air {
 
+// Although we could trivially adapt Air::Liveness<> to work with Reg, this would not be so
+// efficient. There is a small number of registers, so it's much better to use bitvectors for
+// register liveness. This is a specialization of Liveness<> that uses bitvectors directly.
+// This makes the code sufficiently different that it didn't make sense to try to share code.
 class RegLiveness {
+    struct Actions {
+        Actions() = default;
+        
+        RegisterSet use;
+        RegisterSet def;
+    };
+    
+    typedef Vector<Actions, 0, UnsafeVectorOverflow> ActionsForBoundary;
+    
 public:
     typedef Reg Thing;
-
-    struct RegisterBits {
-        uint64_t registers { 0 };
-        uint64_t upperHalves { 0 };
-
-        friend bool operator==(const RegisterBits&, const RegisterBits&) = default;
-    };
-
-    JS_EXPORT_PRIVATE explicit RegLiveness(Code&);
-    JS_EXPORT_PRIVATE ~RegLiveness();
-
-    JS_EXPORT_PRIVATE static RegisterSet toRegisterSet(RegisterBits);
-
-private:
-    static_assert(Reg::maxIndex() < 64);
-
-    static constexpr uint8_t representsPadding = 1;
-    static constexpr uint8_t definesOnlyRegistersLate = 2;
-
-    struct Boundary {
-        uint64_t use { 0 };
-        uint64_t def { 0 };
-    };
-
-    struct BlockRecord {
-        RegisterBits liveAtHead;
-        RegisterBits liveAtTail;
-        unsigned firstSlot { 0 };
-        unsigned firstBoundary { 0 };
-        unsigned numberOfSlots { 0 };
-    };
-
-public:
+    
+    RegLiveness(Code& code);
+    ~RegLiveness();
+    
+    // This calculator has to be run in reverse.
     class LocalCalc {
     public:
         LocalCalc(RegLiveness& liveness, BasicBlock* block)
-            : m_boundaries(liveness.m_boundaries.span().data() + liveness.m_blocks[block->index()].firstBoundary)
-            , m_upperHalfUses(liveness.m_upperHalfUses.isEmpty() ? nullptr : liveness.m_upperHalfUses.span().data() + liveness.m_blocks[block->index()].firstBoundary)
-            , m_registerArgLateDefs(liveness.m_registerArgLateDefs.span().data() + liveness.m_blocks[block->index()].firstSlot)
-            , m_slotFlags(liveness.m_slotFlags.span().data() + liveness.m_blocks[block->index()].firstSlot)
-            , m_numberOfSlotsLeft(liveness.m_blocks[block->index()].numberOfSlots)
-            , m_numberOfInstsLeft(block->size())
-            , m_live(liveness.m_blocks[block->index()].liveAtTail)
+            : m_actions(liveness.m_actions[block])
+            , m_workset(liveness.m_liveAtTail[block])
         {
         }
 
         const RegisterSet& live() const
         {
-            if (!m_liveSetBits || *m_liveSetBits != m_live) {
-                m_liveSet = toRegisterSet(m_live);
-                m_liveSetBits = m_live;
-            }
-            return m_liveSet;
+            return m_workset;
         }
 
-        bool isLive(Reg reg) const { return m_live.registers >> reg.index() & 1; }
-
-        bool definesOnlyDeadRegisters(unsigned instIndex) const
+        bool isLive(Reg reg) const
         {
-            ASSERT_UNUSED(instIndex, instIndex + 1 == m_numberOfInstsLeft);
-            unsigned slot = m_numberOfSlotsLeft - 1;
-            return (m_slotFlags[slot] & definesOnlyRegistersLate) && !(m_live.registers & m_registerArgLateDefs[slot]);
+            return m_workset.contains(reg, IgnoreVectors);
         }
 
         void execute(unsigned instIndex)
         {
-            ASSERT_UNUSED(instIndex, instIndex + 1 == m_numberOfInstsLeft);
-            --m_numberOfInstsLeft;
-            executeSlot();
-            while (m_numberOfSlotsLeft && (m_slotFlags[m_numberOfSlotsLeft - 1] & representsPadding))
-                executeSlot();
+            m_actions[instIndex + 1].def.forEach([&] (Reg r) {
+                m_workset.remove(r);
+            });
+            m_workset.merge(m_actions[instIndex].use);
         }
 
     private:
-        ALWAYS_INLINE void executeSlot()
-        {
-            unsigned slot = --m_numberOfSlotsLeft;
-            uint64_t def = m_boundaries[slot + 1].def;
-            m_live.registers = (m_live.registers & ~def) | m_boundaries[slot].use;
-            if (m_upperHalfUses) [[unlikely]]
-                m_live.upperHalves = (m_live.upperHalves & ~def) | m_upperHalfUses[slot];
-        }
-
-        const Boundary* m_boundaries;
-        const uint64_t* m_upperHalfUses;
-        const uint64_t* m_registerArgLateDefs;
-        const uint8_t* m_slotFlags;
-        unsigned m_numberOfSlotsLeft;
-        unsigned m_numberOfInstsLeft;
-        RegisterBits m_live;
-        mutable RegisterSet m_liveSet;
-        mutable std::optional<RegisterBits> m_liveSetBits;
+        ActionsForBoundary& m_actions;
+        RegisterSet m_workset;
     };
 
-    RegisterBits bitsLiveAtHead(BasicBlock* block) const { return m_blocks[block->index()].liveAtHead; }
-    RegisterBits bitsLiveAtTail(BasicBlock* block) const { return m_blocks[block->index()].liveAtTail; }
-    RegisterSet liveAtHead(BasicBlock* block) const { return toRegisterSet(bitsLiveAtHead(block)); }
-    RegisterSet liveAtTail(BasicBlock* block) const { return toRegisterSet(bitsLiveAtTail(block)); }
-
+    const RegisterSet& liveAtHead(BasicBlock* block) const
+    {
+        return m_liveAtHead[block];
+    }
+    
+    const RegisterSet& liveAtTail(BasicBlock* block) const
+    {
+        return m_liveAtTail[block];
+    }
+    
 private:
-    struct TransferSets {
-        RegisterBits gen;
-        RegisterBits usedAtTail;
-        uint64_t kill { 0 };
-    };
-
-    enum class UpperHalves : bool { Ignored, Tracked };
-
-    struct DecodedInst;
-    struct RegisterRows;
-
-    bool tryDecode(Code&, Vector<TransferSets>&, UpperHalves);
-    void solve(Code&, const Vector<TransferSets>&);
-
-    Vector<BlockRecord> m_blocks;
-    Vector<Boundary> m_boundaries;
-    Vector<uint64_t> m_upperHalfUses;
-    Vector<uint64_t> m_registerArgLateDefs;
-    Vector<uint8_t> m_slotFlags;
+    IndexMap<BasicBlock*, RegisterSet> m_liveAtHead;
+    IndexMap<BasicBlock*, RegisterSet> m_liveAtTail;
+    IndexMap<BasicBlock*, ActionsForBoundary> m_actions;
 };
 
 } } } // namespace JSC::B3::Air
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
 #endif // ENABLE(B3_JIT)
+

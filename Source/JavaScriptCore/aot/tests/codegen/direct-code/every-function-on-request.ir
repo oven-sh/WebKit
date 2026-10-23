@@ -1,6 +1,6 @@
 # For tests: every function takes the direct road, the hot ones too
 # FORM: AsRead
-# REQUIRES: x86_64 unsanitized-code
+# REQUIRES: unsanitized-code
 # OPTIONS: heat=EverythingIsHot testing=GenerateAllCodeDirectly disable=pass:InlineCalls
 # RUN: generate-code FunctionsGeneratedDirectly
 # CHECK: statistic FunctionsGeneratedDirectly 4

@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "AOTInterpreterSlowPaths.h"
 #include "AOTMembersLeftOut.h"
 #include "CallLinkInfo.h"
 #include "ErrorInstance.h"
@@ -90,9 +89,6 @@ inline void* throwNotAConstructorErrorFromCallIC(JSGlobalObject* globalObject, J
 inline void* linkCompiledCallee(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallLinkInfo& callLinkInfo, JSObject* callee, const CallData& callData)
 {
     auto entrypoint = CodePtr<JSEntryPtrTag>::fromTaggedPtr(const_cast<void*>(callData.compiled.entrypoint));
-#if ENABLE(AOT)
-    AOT::Interpreter::didLookUpCompiledCallee(vm);
-#endif
     switch (callLinkInfo.mode()) {
     case CallLinkInfo::Mode::Init:
         if (!callLinkInfo.seenOnce())

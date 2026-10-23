@@ -826,6 +826,24 @@ void checkPristineInstances(Realms& realms)
     }
 }
 
+// An object that overrides put takes stores to itself, and to whatever lies below it, out of the inline caches: a realm that locks nothing must not pay for that.
+void checkNativeConstructorsOverridePut(Realms& realms)
+{
+    for (ASCIILiteral source : { "Array"_s, "Map"_s, "Set"_s, "Error"_s, "TypeError"_s, "RegExp"_s, "Uint8Array"_s, "Intl.Collator"_s }) {
+        AOT_TEST_CHECK_FOR_SOURCE(realms.object(realms.locked(), source)->structure()->typeInfo().overridesPut(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(!realms.object(realms.plain(), source)->structure()->typeInfo().overridesPut(), source);
+    }
+    for (JSGlobalObject* realm : { realms.locked(), realms.plain() })
+        AOT_TEST_CHECK(!realm->functionPrototype()->structure()->typeInfo().overridesPut());
+    for (ASCIILiteral source : { "Map.call = function () { }"_s, "Object.defineProperty(Map, 'apply', { value: 1 })"_s, "Object.setPrototypeOf(Map, { })"_s }) {
+        AOT_TEST_CHECK_FOR_SOURCE(realms.throwsTypeError(realms.locked(), source), source);
+        AOT_TEST_CHECK_FOR_SOURCE(!realms.throwsTypeError(realms.plain(), source), source);
+    }
+    ASCIILiteral storesBelow = "(C => (C.first = 1, C.call = 2, C.first + C.call))(class extends Map { })"_s;
+    for (JSGlobalObject* realm : { realms.locked(), realms.plain() })
+        AOT_TEST_CHECK_FOR_SOURCE(realms.evaluate(realm, storesBelow) == jsNumber(3), storesBelow);
+}
+
 void checkStatements(Realms& realms, const Statements& statements)
 {
     JSGlobalObject* locked = realms.locked();
@@ -925,6 +943,7 @@ std::span<const NativeTest> lockedRealmMemberTests()
         { "locked-realm-members/program-writes-to-species"_s, withProgram<checkStatementsOf<statementsAboutSpecies>> },
         { "locked-realm-members/program-writes-to-locked-members"_s, withProgram<checkStatementsOf<statementsAboutLockedMembers>> },
         { "locked-realm-members/program-writes-to-protocol-holders"_s, withProgram<checkStatementsOf<statementsAboutProtocolHolders>> },
+        { "locked-realm-members/native-constructors-override-put-where-locked-alone"_s, withProgram<checkNativeConstructorsOverridePut> },
     };
     return tests;
 }

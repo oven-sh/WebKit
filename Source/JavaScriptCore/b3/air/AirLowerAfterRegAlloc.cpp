@@ -32,6 +32,7 @@
 #include "AirCode.h"
 #include "AirEmitShuffle.h"
 #include "AirInsertionSet.h"
+#include "AirPadInterference.h"
 #include "AirRegLiveness.h"
 #include "AirPhaseScope.h"
 #include "B3CCallValue.h"
@@ -64,6 +65,8 @@ void lowerAfterRegAlloc(Code& code)
     auto isRelevant = [] (Inst& inst) -> bool {
         return inst.kind.opcode == Shuffle || inst.kind.opcode == ColdCCall;
     };
+
+    padInterference(code);
 
     UncheckedKeyHashMap<Inst*, RegisterSet> usedRegisters;
     

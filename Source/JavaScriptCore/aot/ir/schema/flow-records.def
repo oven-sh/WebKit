@@ -2,7 +2,7 @@ enum WriterState { | engine Unknown AllKnown }
 enum StoreCount { | engine Unknown Never AtMostOnce }
 enum InitializationState { | engine Unknown StoredBeforeEveryRead SetAtCreation }
 enum ReadState { | engine Unknown OnlyCalled OnlyAccessed NeverRead }
-enum ClosureDeferral { | engine Unknown CapturesNothing CapturesObject CapturesEnvironment }
+enum ClosureDeferral { | engine Unknown CapturesNothing CapturesObject CapturesEnvironment FlattenedObject }
 enum Occupancy { | engine Unknown FilledAtBirth FilledWithValueAtBirth AlwaysFilled }
 enum PrototypeNameState { | engine Unknown AbsentOnPrototypes }
 enum ExecutionCount { | engine Unknown AtMostOnce }

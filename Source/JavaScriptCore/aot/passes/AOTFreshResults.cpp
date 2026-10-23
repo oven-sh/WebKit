@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTFlattenInnerObjects.h"
 #include "AOTSinkAllocationsInternal.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -293,6 +294,25 @@ static void assignParts(const AllocationSinking& sinking, FreshResultShape& shap
     }
 }
 
+// The parts of such an object would leave the function with the inner object made, and the caller would build the outer one around it: two cells for ever.
+static bool listsObjectThatMayLieInIt(const AllocationSinking& sinking, const FreshResultVariant& variant)
+{
+    if (variant.kind != VirtualShapeKind::Fields)
+        return false;
+    const Function& function = sinking.function();
+    const Value& allocation = function.at(variant.description.allocation);
+    if (allocation.opcode != Opcode::NewObject)
+        return false;
+    auto fields = allocation.fields();
+    auto values = allocation.valuesOperands();
+    for (size_t index = 0; index < fields.size(); ++index) {
+        const Value& listed = function.at(sameObjectThroughCasts(function, values[index]));
+        if (listed.opcode == Opcode::NewObject && mayLieInOuterObject(sinking.program(), { allocation.layout(), fields[index] }, listed.layout()))
+            return true;
+    }
+    return false;
+}
+
 FreshResultShape shapeOfReturns(const AllocationSinking& sinking, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
 {
     std::span<const VirtualReturn> returns = sinking.virtualReturns();
@@ -306,6 +326,11 @@ FreshResultShape shapeOfReturns(const AllocationSinking& sinking, ObjectsThatBec
         addVariantsOfReturn(sinking, returned, shape);
 
     if (!hasVariantOfKind(shape, VirtualShapeKind::Fields))
+        return { .state = FreshResultsState::NotFresh };
+    bool mayBecomeOneObject = objectsThatBecomeOneCell == ObjectsThatBecomeOneCell::StayWhole && sinking.context().build.isEnabled(PassID::FlattenInnerObjects, FunctionID()) && std::ranges::any_of(shape.variants, [&](const FreshResultVariant& variant) {
+        return listsObjectThatMayLieInIt(sinking, variant);
+    });
+    if (mayBecomeOneObject)
         return { .state = FreshResultsState::NotFresh };
     if (shape.variants.size() > sinking.limit(LimitID::MaxVirtualObjectVariants)) {
         shape.state = FreshResultsState::Unknown;

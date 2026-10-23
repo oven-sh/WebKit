@@ -52,6 +52,9 @@ static bool throwsBeforeEntry(const Function& callee, BuiltinCallMode mode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// As many words as the list or the caller's own arguments have go onto the stack before the callee is entered, and they may not fit.
+static constexpr OpcodeSet callsThatCopyArgumentsOfAnyNumber { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList, Opcode::CallForwardVarargs, Opcode::ConstructSuperForwardVarargs };
+
 static bool namesEveryCallee(const Type& callee)
 {
     return callee.isObject() && callee.hasOnlyKnownCallees() && !callee.layouts;
@@ -236,6 +239,8 @@ void describeCall(const Program& program, const Function& function, const Value&
 
     BuiltinCallMode mode = callModeOf(value.opcode);
     CalleeList callees = calleesOfCall(program, value);
+    if (callsThatCopyArgumentsOfAnyNumber.contains(value.opcode))
+        description.addThrow();
     if (Value::opcodesWithCallees.contains(value.opcode)) {
         describeCalleesOfCall(program, function, value, callees, mode, description);
         describeOperandsGivenToBuiltins(program, function, value, callees, mode, description);

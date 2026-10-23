@@ -47,7 +47,6 @@ public:
     JSFFICallback* callbackAt(unsigned entry) const { return m_callbacks[entry].load(std::memory_order_acquire); }
 
     JS_EXPORT_PRIVATE unsigned numberOfEntries() const;
-    JS_EXPORT_PRIVATE unsigned numberOfEntriesInUse();
 
 private:
     std::optional<Failure> prepare() WTF_REQUIRES_LOCK(m_lock);

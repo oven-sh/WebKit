@@ -82,6 +82,7 @@ enum class Rejection : uint8_t {
     CapturesSeveralEnvironments,
     HoldsOtherThanObjects,
     IsPartOfConstantData,
+    LiesInOtherObjects,
 };
 constexpr size_t numberOfRejections = 10;
 
@@ -258,6 +259,8 @@ static ASCIILiteral describe(Rejection rejection)
         return "rejected: the field may get a value that is neither an object nor undefined nor null"_s;
     case Rejection::IsPartOfConstantData:
         return "rejected: constant data gives the field a value other than undefined and null"_s;
+    case Rejection::LiesInOtherObjects:
+        return "rejected: the slots of an object of the layout may lie in another object, which the run time cannot make a closure for"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -786,6 +789,7 @@ private:
             return;
         switch (deferralFor(m_program, closure.function())) {
         case ClosureDeferral::Unknown:
+        case ClosureDeferral::FlattenedObject:
             RELEASE_ASSERT_NOT_REACHED();
         case ClosureDeferral::CapturesNothing:
             break;
@@ -847,6 +851,7 @@ private:
 
         switch (deferral) {
         case ClosureDeferral::Unknown:
+        case ClosureDeferral::FlattenedObject:
             RELEASE_ASSERT_NOT_REACHED();
         case ClosureDeferral::CapturesNothing:
             break;
@@ -1485,6 +1490,16 @@ void DeferralAnalysis::rejectFieldsOfConstantData()
         if (m_dataMembersOfFields[row])
             reject(row, Rejection::IsPartOfConstantData);
     }
+
+    BitVector layoutsFlattenedInOthers;
+    for (const Layout& layout : m_program.layouts) {
+        for (const FlattenedObject& flattened : layout.flattenedObjects)
+            layoutsFlattenedInOthers.set(flattened.layout.index());
+    }
+    for (FieldReference candidate : m_candidates) {
+        if (layoutsFlattenedInOthers.get(candidate.layout.index()))
+            reject(rowOf(candidate.layout, candidate.field), Rejection::LiesInOtherObjects);
+    }
 }
 
 void DeferralAnalysis::rejectFieldsStoredOutsideInitialization()
@@ -1972,6 +1987,7 @@ void DeferralAnalysis::dump(PrintStream& out) const
         }
         switch (deferralFor(m_program, state.function)) {
         case ClosureDeferral::Unknown:
+        case ClosureDeferral::FlattenedObject:
             RELEASE_ASSERT_NOT_REACHED();
         case ClosureDeferral::CapturesNothing:
             ++capturingNothing;

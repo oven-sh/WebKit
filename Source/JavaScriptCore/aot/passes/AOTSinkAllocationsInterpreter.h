@@ -232,7 +232,7 @@ inline constexpr OpcodeSet interpretedStores {
 
 inline constexpr OpcodeSet interpretedCasts {
     Opcode::FinishObject, Opcode::Upcast, Opcode::NarrowByField, Opcode::Check, Opcode::AssumeType, Opcode::CheckInitialized,
-    Opcode::RequireObjectCoercible, Opcode::RequireObject,
+    Opcode::RequireObjectCoercible, Opcode::RequireObject, Opcode::ReadAgain, Opcode::BorrowedParameter,
 };
 
 inline constexpr OpcodeSet interpretedListUses {

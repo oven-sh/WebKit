@@ -35,11 +35,7 @@ class InternalFunction : public JSNonFinalObject {
     friend class LLIntOffsetsExtractor;
 public:
     using Base = JSNonFinalObject;
-#if ENABLE(AOT)
-    static constexpr unsigned StructureFlags = Base::StructureFlags | ImplementsHasInstance | ImplementsDefaultHasInstance | OverridesGetCallData | OverridesPut;
-#else
     static constexpr unsigned StructureFlags = Base::StructureFlags | ImplementsHasInstance | ImplementsDefaultHasInstance | OverridesGetCallData;
-#endif
 
     template<typename CellType, SubspaceAccess>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -102,6 +98,8 @@ protected:
     DECLARE_DEFAULT_FINISH_CREATION;
 
 #if ENABLE(AOT)
+    // They refuse only in a realm whose built-ins are locked. OverridesPut is not among the flags above: the constructor sets it on the Structure in such a realm alone,
+    // so that elsewhere a store to a native constructor, or to a class that extends one, is cached like any other.
     JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     JS_EXPORT_PRIVATE static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);

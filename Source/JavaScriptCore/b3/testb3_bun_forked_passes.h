@@ -157,47 +157,28 @@ static void buildLadder(Graph& graph)
 
 struct LadderInSSA {
     Vector<unsigned> phiCountByBlock;
-    uint32_t numberOfLimitHits { 0 };
 };
 
-static LadderInSSA fixSSAInLadder(uint64_t maxLivenessStepsPerBlock)
+static LadderInSSA fixSSAInLadder()
 {
-    Procedure proc(policyWith([&](Policy& policy) {
-        policy.limits.set(Limit::MaxLivenessStepsPerBlock, maxLivenessStepsPerBlock);
-    }));
+    Procedure proc;
     Graph graph { proc };
     buildLadder(graph);
     CHECK(fixSSA(proc));
     validate(proc);
     CHECK_EQ(numberOfValues(proc, B3::Get), 0u);
     CHECK_EQ(numberOfValues(proc, B3::Set), 0u);
-    CHECK(!proc.report().firstOriginOf(Limit::MaxLivenessStepsPerBlock));
     LadderInSSA result;
-    result.numberOfLimitHits = limitHits(proc, Limit::MaxLivenessStepsPerBlock);
     for (BasicBlock* block : proc)
         result.phiCountByBlock.append(numberOfValues(block, Phi));
     return result;
 }
 
-static void testFixSSAFallsBackToDenseLiveness()
+static void testFixSSAPlacesPhisInLadder()
 {
-    constexpr uint64_t defaultLimit = defaultValueOf(Limit::MaxLivenessStepsPerBlock);
-    LadderInSSA expected = fixSSAInLadder(defaultLimit);
-    CHECK_EQ(expected.numberOfLimitHits, 0u);
-    CHECK(expected.phiCountByBlock.containsIf([](unsigned phiCount) {
+    CHECK(fixSSAInLadder().phiCountByBlock.containsIf([](unsigned phiCount) {
         return phiCount;
     }));
-
-    uint64_t leastSufficientLimit = 0;
-    for (; leastSufficientLimit < defaultLimit; ++leastSufficientLimit) {
-        LadderInSSA ladder = fixSSAInLadder(leastSufficientLimit);
-        CHECK(ladder.phiCountByBlock == expected.phiCountByBlock);
-        if (!ladder.numberOfLimitHits)
-            break;
-        CHECK_EQ(ladder.numberOfLimitHits, 1u);
-    }
-    CHECK(leastSufficientLimit);
-    CHECK(leastSufficientLimit < defaultLimit);
 }
 
 template<typename Functor>
@@ -341,7 +322,7 @@ static void testEliminateDeadCodeKeepsPhiCycleWithLiveUser()
 inline void addBunForkedPassTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testInferSwitchesGrowsInPlaceLikeGeneralPath());
-    RUN(testFixSSAFallsBackToDenseLiveness());
+    RUN(testFixSSAPlacesPhisInLadder());
     RUN(testEliminateDeadCodeMatchesEffects());
     RUN(testEliminateDeadCodeKeepsPhiCycleWithLiveUser());
 }

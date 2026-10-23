@@ -365,7 +365,6 @@ public:
     MatchResult execute(std::span<const Latin1Character> input, unsigned start, int* output, MatchingContextHolder* matchingContext)
     {
         ASSERT(has8BitCode());
-        ASSERT(start <= input.size());
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), output, matchingContext, retagCodePtr<Yarr8BitPtrTag, YarrEntryPtrTag>(m_ref8.code().taggedPtr())));
@@ -376,7 +375,6 @@ public:
     MatchResult execute(std::span<const char16_t> input, unsigned start, int* output, MatchingContextHolder* matchingContext)
     {
         ASSERT(has16BitCode());
-        ASSERT(start <= input.size());
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), output, matchingContext, retagCodePtr<Yarr16BitPtrTag, YarrEntryPtrTag>(m_ref16.code().taggedPtr())));
@@ -387,7 +385,6 @@ public:
     MatchResult execute(std::span<const Latin1Character> input, unsigned start, MatchingContextHolder* matchingContext)
     {
         ASSERT(has8BitCodeMatchOnly());
-        ASSERT(start <= input.size());
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), nullptr, matchingContext, retagCodePtr<YarrMatchOnly8BitPtrTag, YarrEntryPtrTag>(m_matchOnly8.code().taggedPtr())));
@@ -398,7 +395,6 @@ public:
     MatchResult execute(std::span<const char16_t> input, unsigned start, MatchingContextHolder* matchingContext)
     {
         ASSERT(has16BitCodeMatchOnly());
-        ASSERT(start <= input.size());
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), nullptr, matchingContext, retagCodePtr<YarrMatchOnly16BitPtrTag, YarrEntryPtrTag>(m_matchOnly16.code().taggedPtr())));

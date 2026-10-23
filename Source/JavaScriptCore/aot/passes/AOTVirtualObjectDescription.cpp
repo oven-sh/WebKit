@@ -84,6 +84,11 @@ static DescribedObject describeObject(const Program& program, const Function& fu
     case LayoutKind::Container:
         if (!writesOnlyWhatSlotTypesAdmit(program, function, value))
             return unsupported(VirtualObjectSupport::Unknown);
+        // What stands in the list for an object whose fields lie in this one is no value, so the list is not taken apart.
+        if (!layout.flattenedObjects.isEmpty()) {
+            description.kind = VirtualObjectKind::Opaque;
+            return supported(description);
+        }
         description.kind = VirtualObjectKind::Object;
         description.hasKeyOrder = true;
         return supported(description);

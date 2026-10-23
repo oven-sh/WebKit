@@ -691,6 +691,8 @@ static Function createShorterEntrance(const AnalysisContext& context, TypeArena&
     const auto& record = header.creator.as<CreatorRecord::EntryChecks>();
     Function tests = header;
     tests.role = FunctionRole::CallSiteVersion;
+    // The entrance of a coroutine only calls what makes the promise or the generator. Under a role that has the body of the source the two flags would say that this is the coroutine itself.
+    tests.flags.remove({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
     tests.creator = CreatorRecord::Version { .provenVersion = key.entrance };
     // It has the parameters of the entrance, one for one: what flow says of them goes for a caller that enters here too.
     tests.derivation = Derivation {

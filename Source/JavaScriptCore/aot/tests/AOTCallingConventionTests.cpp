@@ -315,6 +315,9 @@ static void testKeptRegisterCheckNamesTheChangedRegister()
         kept.exclude(RegisterSet::reservedHardwareRegisters());
         kept.exclude(RegisterSet::macroClobberedGPRs());
         kept.exclude(RegisterSet::macroClobberedFPRs());
+#if CPU(ARM64)
+        kept.remove(ARM64Registers::x18);
+#endif
         AOT_TEST_CHECK(!kept.isEmpty());
         kept.forEach([&](Reg reg) {
             AOT_TEST_CHECK(runKeptRegisterCheck(clobbered, { reg }) == reportOf(reg));

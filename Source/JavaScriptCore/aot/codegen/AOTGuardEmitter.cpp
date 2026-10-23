@@ -130,7 +130,7 @@ bool GuardEmitter::standsInFrontOfReadsAlone(const ValueContext& test)
 
 void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
 {
-    CellPointer object = in<CellPointer>(value->objectOperand());
+    CellPointer object = emitter<SlotAccessEmitter>().cellWithSlotsOf(value->objectOperand());
     const FieldAccess& access = m_placement.fieldAccess(value->fieldAccess());
     auto isFilled = [&] {
         SlotEmitter& slots = emitter<SlotEmitter>();

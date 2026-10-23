@@ -419,7 +419,11 @@ static void checkReserveIsKeptOnceHalfFull()
         cage.keepReserveOnceHalfFull();
     AOT_TEST_CHECK(cage.reserveSize() == whole);
 
-    AOT_TEST_CHECK(cage.releaseReserve() && !cage.reserveSize() && !cage.releaseReserve());
+    // A quarter stays behind for a thread that finds no place to throw the error and has to be ended.
+    AOT_TEST_CHECK(cage.releaseReserve() && cage.reserveSize() == whole / 4 && !cage.releaseReserve());
+    cage.keepReserveOnceHalfFull();
+    AOT_TEST_CHECK(cage.reserveSize() == whole / 4);
+    AOT_TEST_CHECK(cage.releaseLastReserve() && !cage.reserveSize() && !cage.releaseLastReserve() && !cage.releaseReserve());
     cage.keepReserveOnceHalfFull();
     AOT_TEST_CHECK(!cage.reserveSize());
     cage.didThrowOutOfMemoryError();

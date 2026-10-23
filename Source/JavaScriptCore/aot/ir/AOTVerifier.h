@@ -42,6 +42,8 @@ struct VerifierInputs {
     bool hasUncheckedRecords { false };
     // The parser of IR text states the engine's fields of a function, its inline frames among them, after the reader has run, and verifies the structure again.
     bool lacksEngineFields { false };
+    // One function is verified behind a pass while other threads rewrite the others, so no body but its own may be read.
+    bool otherFunctionsMayChange { false };
 };
 
 bool verifyProgram(const Program&, IRForm, BuildContext&, const VerifierInputs& = { });

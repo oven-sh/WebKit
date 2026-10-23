@@ -54,7 +54,6 @@ public:
     void didRace(JSCell*, const char* reason);
 
     void setCurrentCell(const JSCell*);
-    void appendNarrowReference(uintptr_t cageBase, uint32_t index);
     void appendStructure(Structure*);
     // For a cell that lies in the cell that is being visited: that one is marked, so the marks of the block are those of this cycle. True if nobody has marked the inner cell before: then the caller visits it, here and now.
     bool markInnerCellOfVisitedCell(JSCell*);
@@ -342,12 +341,6 @@ ALWAYS_INLINE void FastMarkAppender::appendMarkedCell(JSCell* cell)
         m_cursor.load();
     } else
         *m_cursor.next++ = cell;
-}
-
-ALWAYS_INLINE void FastMarkAppender::appendNarrowReference(uintptr_t cageBase, uint32_t index)
-{
-    if (index >= MarkedBlockCage::minIndex)
-        appendUnbarriered(MarkedBlockCage::decode(cageBase, index));
 }
 
 ALWAYS_INLINE void FastMarkAppender::markAuxiliary(const void* base)

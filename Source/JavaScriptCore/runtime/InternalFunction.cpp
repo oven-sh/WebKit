@@ -95,6 +95,12 @@ InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction 
     ASSERT(methodTable()->getCallData == InternalFunction::info()->methodTable.getCallData);
     ASSERT(methodTable()->getConstructData == InternalFunction::info()->methodTable.getConstructData);
     ASSERT(type() == InternalFunctionType || type() == NullSetterFunctionType);
+
+#if ENABLE(AOT)
+    // Not Function.prototype, which has the put of an ordinary object.
+    if (structure->classInfoForCells()->methodTable.put == InternalFunction::put && AOT::RuntimeHooks::keepsPrototypeOfNativeConstructors(structure->realm())) [[unlikely]]
+        structure->setOverridesPut();
+#endif
 }
 
 void InternalFunction::finishCreation(VM& vm, unsigned length, const String& name, PropertyAdditionMode nameAdditionMode)

@@ -66,7 +66,7 @@ public:
     Operand callDirect(const OperationContext&, FunctionID, std::span<const Operand> arguments, const CallOptions& = { });
 
     void tailCallByConvention(const OperationContext&, const ConventionCall&);
-    void requireCallableBeforeTailCall(const OperationContext&, Boxed callee);
+    void requireCallableBeforeTailCall(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
     void didEmitTailCall();
 
     void returnValues(const TerminatorContext&, std::span<const Operand>);

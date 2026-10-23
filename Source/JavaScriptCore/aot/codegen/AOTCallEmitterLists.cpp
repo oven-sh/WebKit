@@ -34,13 +34,16 @@ void CallEmitter::generateCallList(const ValueContext& value)
         .thisValue = thisValue.value(),
     };
 
+    std::optional<ThrowSite> siteThatNamesCallee;
+    if (value->calleeName())
+        siteThatNamesCallee = ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
     if (!value.returnCall()) {
-        define(value, callByConvention(value, call, { .isTailCall = value->isDemotedTailCall() }));
+        define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee, .isTailCall = value->isDemotedTailCall() }));
         return;
     }
 
     if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        requireCallableBeforeTailCall(value, callee);
+        requireCallableBeforeTailCall(value, callee, siteThatNamesCallee);
     tailCallByConvention(value, call);
 }
 

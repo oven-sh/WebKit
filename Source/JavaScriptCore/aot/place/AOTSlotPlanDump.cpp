@@ -98,6 +98,7 @@ void printSlot(PrintStream& out, const PlacedSlot& slot)
         out.print(" "_s, letterOf(IDPrefix::Function), slot.deferredFunction.index());
     printFlag(out, slot.deferredClosureCapturesObject, "capturesObject"_s);
     printFlag(out, slot.deferredClosureCapturesEnvironment, "capturesEnvironment"_s);
+    printFlag(out, slot.defersFlattenedObject, "flattenedObject"_s);
     printOptional(out, " record="_s, slot.indexInLayoutRecord);
 }
 

@@ -173,6 +173,16 @@ static ValueID findClosureMadeOnDemand(const Function& function, ValueID value)
     return closure.opcode == Opcode::NewClosure && closure.isMadeOnDemand() ? definition : ValueID();
 }
 
+// An object that would have lain in the literal.
+static ValueID findObjectMadeOnDemand(const Function& function, ValueID value)
+{
+    if (!value)
+        return { };
+    ValueID definition = definitionThroughUpcasts(function, value);
+    const Value& object = function.at(definition);
+    return object.opcode == Opcode::NewObject && object.isMadeOnDemand() ? definition : ValueID();
+}
+
 static bool canCreateClosuresAtDefinition(SelectionContext& context, const DescriptorMatch& match)
 {
     const Program& program = context.program();
@@ -194,6 +204,9 @@ static bool canCreateClosuresAtDefinition(SelectionContext& context, const Descr
 static void createClosuresAtDefinition(const Program& program, Function& function, const DescriptorMatch& match)
 {
     for (ValueID value : { match.value, match.getter, match.setter }) {
+        // The literal is never made, so the object is made where it stands.
+        if (ValueID object = findObjectMadeOnDemand(function, value))
+            function.edit(object, ValueEdit::Definition).setIsMadeOnDemand(false);
         ValueID id = findClosureMadeOnDemand(function, value);
         if (!id)
             continue;
@@ -353,7 +366,7 @@ static std::optional<DescriptorsMeetingInParameter> findDescriptorsMeetingInPara
     // A closure that is made on demand is made where the literal stands.
     for (ValueID literal : found.literals) {
         ValueID member = function.at(literal).valuesOperands()[*found.differingMember];
-        if (findClosureMadeOnDemand(function, member))
+        if (findClosureMadeOnDemand(function, member) || findObjectMadeOnDemand(function, member))
             return std::nullopt;
     }
     return found;

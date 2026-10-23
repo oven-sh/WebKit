@@ -98,7 +98,7 @@ void RuntimeValidationEmitter::checkHasType(ValueID id, Operand operand, const T
 
 bool RuntimeValidationEmitter::hasTestableBits(ValueID id)
 {
-    if (generator().mayBeUnspecified(id) || isDeferredClosure(m_function, id))
+    if (generator().mayBeUnspecified(id) || isDeferredClosure(m_function, id) || generator().mayBeBorrowedInnerObject(id))
         return false;
     Representation representation = representationOf(id);
     return representation != Representation::Void && representation != Representation::LiteralString;

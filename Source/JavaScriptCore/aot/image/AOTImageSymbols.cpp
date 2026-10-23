@@ -522,7 +522,7 @@ static void printConstantsAndFFICode(PrintStream& out, std::span<const ImageSymb
 
 void writeMapFile(const UTF8CString& path, std::span<const ImageSymbol> symbols, const ImageSymbolInputs& inputs, std::span<const uint8_t> image, const BuildContext& context)
 {
-    std::unique_ptr<FilePrintStream> map = FilePrintStream::open(path, "w"_s);
+    std::unique_ptr<FilePrintStream> map = FilePrintStream::open(path, "wb"_s);
     if (!map) {
         dataLogLn("AOT: cannot write the map file ", path);
         return;

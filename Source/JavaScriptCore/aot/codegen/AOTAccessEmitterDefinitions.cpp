@@ -254,7 +254,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
         return std::nullopt;
     if (m_placement.allocation(allocation->allocation()).layout != layout || m_placement.freeCellOffset(layout) || m_placement.slots().extensionWord(layout).hasStorage())
         return std::nullopt;
-    if (!planned.innerObjects.isEmpty() || planned.size <= offsetOfFirstField)
+    if (!planned.innerObjects.isEmpty() || !planned.flattenedObjects.isEmpty() || planned.size <= offsetOfFirstField)
         return std::nullopt;
     for (uint32_t field = 0; field < m_program.at(layout).fields.size(); ++field) {
         const PlacedSlot& slot = m_placement.slot(layout, field);
@@ -308,7 +308,7 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     }
 
     // The words that are no fields are zero in a source that is copied.
-    bool mayCopyCell = !planned.innerObjects.isEmpty() || std::ranges::any_of(planned.slots.span().first(planned.numberOfFields()), [](const PlacedSlot& slot) {
+    bool mayCopyCell = !planned.innerObjects.isEmpty() || !planned.flattenedObjects.isEmpty() || std::ranges::any_of(planned.slots.span().first(planned.numberOfFields()), [](const PlacedSlot& slot) {
         return slot.hasStorage() && traitsOf(slot.representation).holdsCell;
     });
 
