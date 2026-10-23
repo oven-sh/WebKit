@@ -314,6 +314,10 @@ void InspectorDebuggerAgent::internalDisable(bool isBeingDestroyed)
     m_debugger.setClient(nullptr);
     m_debugger.removeObserver(*this, isBeingDestroyed);
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_debugger.cancelPauseAtEntry();
+#endif
+
     clearInspectorBreakpointState();
 
     if (!isBeingDestroyed)
@@ -1230,6 +1234,25 @@ bool InspectorDebuggerAgent::cancelPauseForSpecialBreakpoint(JSC::Breakpoint& br
     return true;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool InspectorDebuggerAgent::schedulePauseAtEntry(const String& url, bool programCode)
+{
+    // Code has debug hooks only while breakpoints are active.
+    if (!enabled() || !breakpointsActive())
+        return false;
+
+    JSC::JSLockHolder locker(m_debugger.vm());
+    m_debugger.schedulePauseAtEntry(url, programCode);
+    return true;
+}
+
+void InspectorDebuggerAgent::cancelPauseAtEntry()
+{
+    JSC::JSLockHolder locker(m_debugger.vm());
+    m_debugger.cancelPauseAtEntry();
+}
+#endif
+
 Protocol::ErrorStringOr<void> InspectorDebuggerAgent::pause()
 {
     schedulePauseAtNextOpportunity(DebuggerFrontendDispatcher::Reason::PauseOnNextStatement);
@@ -1986,6 +2009,11 @@ void InspectorDebuggerAgent::didPause(JSC::JSGlobalObject* globalObject, JSC::De
             m_pauseReason = m_lastPauseReason;
             m_pauseData = m_lastPauseData;
             break;
+#if USE(BUN_JSC_ADDITIONS)
+        case JSC::Debugger::PausedAtEntry:
+            updatePauseReasonAndData(DebuggerFrontendDispatcher::Reason::PauseOnNextStatement, nullptr);
+            break;
+#endif
         case JSC::Debugger::NotPaused:
             ASSERT_NOT_REACHED();
             break;
