@@ -353,8 +353,8 @@ namespace JSC {
         static constexpr OpcodeID opcodeForDisablingOptimizations = op_debug;
     };
 
-    // One character early, on whatever is before the expression: the basic block of an arrow
-    // function's own code starts at the expression, and two basic blocks with the same range share a counter.
+    // One character early, on whatever is before the expression: the basic block of an arrow function's own code starts at
+    // the expression, and two basic blocks with the same range share a counter.
     inline int startOffsetOfBasicBlock(ExpressionNode* node)
     {
         return node->startOffset() - 1;
@@ -696,21 +696,33 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
 
         void emitProfileControlFlow(int);
-        // For what does not run as often as the text around it: a part of an expression, or a statement that is a part of
-        // another. The basic block it is in goes on after it.
+        // For what does not always run: a part of an expression, or a statement that is a part of another. The basic block
+        // it is in goes on after it.
         void emitProfileControlFlow(int textOffset, int textEndOffset)
         {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 emitProfileControlFlowSlow(textOffset, textEndOffset);
         }
-        void emitProfileControlFlow(ExpressionNode* node) { emitProfileControlFlow(startOffsetOfBasicBlock(node), node->endOffset()); }
-        // The test of a while or a for, the update of a for, what a for-in or a for-of assigns to, or the test of a case.
-        void emitProfileControlFlowOfStatementHead(int textOffset, int textEndOffset)
+        // For what `?.`, a logical assignment or a default value can skip. The text of the test of a `case` is in the basic
+        // block of its clause, where a basic block of its own would mark a part of a clause that did not run as executed.
+        // `&&`, `||`, `??` and `?:` have theirs there.
+        void emitProfileControlFlowOutsideOfCaseTest(int textOffset, int textEndOffset)
+        {
+            if (!m_isInCaseTest)
+                emitProfileControlFlow(textOffset, textEndOffset);
+        }
+        bool& isInCaseTest() { return m_isInCaseTest; }
+        // For a part of a loop header that runs once for each iteration. A loop emits its condition twice, with one counter.
+        void emitProfileControlFlowForLoopHeader(int textOffset, int textEndOffset)
         {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 emitProfileControlFlowSlow(textOffset, textEndOffset, true);
         }
-        void emitProfileControlFlowOfStatementHead(ExpressionNode* node) { emitProfileControlFlowOfStatementHead(startOffsetOfBasicBlock(node), node->endOffset()); }
+        void emitProfileControlFlowForLoopHeader(ExpressionNode* conditionOrIncrement)
+        {
+            if (conditionOrIncrement)
+                emitProfileControlFlowForLoopHeader(startOffsetOfBasicBlock(conditionOrIncrement), conditionOrIncrement->endOffset());
+        }
         // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
         // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
         bool emitProfileControlFlowAfter(StatementNode* statement)
@@ -1131,7 +1143,7 @@ namespace JSC {
         bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !isPrivateBuiltinFunction(); }
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
-        void emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isStatementHead = false);
+        void emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isInLoopHeader = false);
         bool emitProfileControlFlowAfterSlow(StatementNode*);
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
         
@@ -1480,6 +1492,7 @@ namespace JSC {
         int m_nextConstantOffset { 0 };
         int m_statementsEndOffset { 0 };
         StatementNode* m_lastStatementWithProfileControlFlowAfter { nullptr };
+        bool m_isInCaseTest { false };
         
         // Constant pool
         IdentifierMap m_identifierMap;

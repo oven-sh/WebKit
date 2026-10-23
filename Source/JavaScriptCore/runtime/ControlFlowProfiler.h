@@ -77,6 +77,7 @@ struct BasicBlockRange {
     int m_startOffset;
     int m_endOffset;
     bool m_hasExecuted;
+    bool m_isInLoopHeader { false };
     size_t m_executionCount;
 };
 
@@ -90,9 +91,7 @@ public:
     JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
     // With its gaps, a basic block has the text of the basic blocks and of the functions that are in it.
     enum class Gaps : bool { Without, With };
-    // V8 has no basic block for the head of a statement. Without them and with gaps, its text is in the basic block around it.
-    enum class StatementHeads : bool { Without, With };
-    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&, Gaps = Gaps::Without, StatementHeads = StatementHeads::With) const;
+    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&, Gaps = Gaps::Without) const;
     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.
 

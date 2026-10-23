@@ -66,7 +66,7 @@ void ControlFlowProfiler::dumpData() const
     }
 }
 
-Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM& vm, Gaps gaps, StatementHeads statementHeads) const
+Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM& vm, Gaps gaps) const
 {
     Vector<BasicBlockRange> result(0);
     auto bucketFindResult = m_sourceIDBuckets.find(sourceID);
@@ -75,8 +75,6 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
 
     const BlockLocationCache& cache = bucketFindResult->value;
     for (const BasicBlockLocation* block : cache.values()) {
-        if (statementHeads == StatementHeads::Without && block->isStatementHead())
-            continue;
         bool hasExecuted = block->hasExecuted();
         size_t executionCount = block->executionCount();
 
@@ -85,6 +83,7 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
         for (BasicBlockLocation::Gap gap : blockRanges) {
             BasicBlockRange range;
             range.m_hasExecuted = hasExecuted;
+            range.m_isInLoopHeader = block->isInLoopHeader();
             range.m_executionCount = executionCount;
             range.m_startOffset = gap.first;
             range.m_endOffset = gap.second;

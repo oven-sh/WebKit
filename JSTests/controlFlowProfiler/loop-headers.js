@@ -9,18 +9,18 @@ function count(func, text, expected) {
     assert(actual === expected, `${func.name}: "${text}" ran ${actual} times, not ${expected}`);
 }
 
-// The parts of the head of a loop run a different number of times than the statement.
-function whileHead(limit, more) {
+// The parts of a loop header run a different number of times than the statement.
+function whileHeader(limit, more) {
     let i = 0;
     while (i < limit && more)
         i++;
 }
-whileHead(3, true);
-count(whileHead, "let i", 1);
-count(whileHead, "while", 1);
-count(whileHead, "i < limit", 4);
-count(whileHead, "&& more", 3);
-count(whileHead, "i++", 3);
+whileHeader(3, true);
+count(whileHeader, "let i", 1);
+count(whileHeader, "while", 1);
+count(whileHeader, "i < limit", 4);
+count(whileHeader, "&& more", 3);
+count(whileHeader, "i++", 3);
 
 function whileLeftEarly(limit) {
     let i = 0;
@@ -49,27 +49,27 @@ whileArrowFunction();
 count(whileArrowFunction, "(() =>", 2);
 count(whileArrowFunction, "noCall()", 0);
 
-function forHead(limit, step) {
+function forHeader(limit, step) {
     for (let i = 0; i < limit || step; i += step ?? 1)
         limit;
 }
-forHead(3, null);
-count(forHead, "for", 1);
-count(forHead, "let i", 1);
-count(forHead, "i < limit", 4);
-count(forHead, "step;", 1);
-count(forHead, "i +=", 3);
-count(forHead, "1)", 3);
-count(forHead, "limit;", 3);
+forHeader(3, null);
+count(forHeader, "for", 1);
+count(forHeader, "let i", 1);
+count(forHeader, "i < limit", 4);
+count(forHeader, "step;", 1);
+count(forHeader, "i +=", 3);
+count(forHeader, "1)", 3);
+count(forHeader, "limit;", 3);
 
-function forWithoutATest() {
+function forWithoutACondition() {
     for (let i = 0; ; i++) {
         if (i === 2)
             break;
     }
 }
-forWithoutATest();
-count(forWithoutATest, "i++", 2);
+forWithoutACondition();
+count(forWithoutACondition, "i++", 2);
 
 function forWithContinue(limit) {
     for (let i = 0; i < limit; i++) {
@@ -81,14 +81,14 @@ forWithContinue(3);
 count(forWithContinue, "i < limit", 4);
 count(forWithContinue, "i++", 3);
 
-function forNeverEntered() {
+function forNeverReached() {
     return;
     for (let i = 0; i < 1; i++)
         ;
 }
-forNeverEntered();
-count(forNeverEntered, "i < 1", 0);
-count(forNeverEntered, "i++", 0);
+forNeverReached();
+count(forNeverReached, "i < 1", 0);
+count(forNeverReached, "i++", 0);
 
 function forOfName(list) {
     for (const item of list)
@@ -150,15 +150,15 @@ drainMicrotasks();
 count(forAwait, "item of", 2);
 count(forAwait, "of list", 1);
 
-function* testWithAYield(limit) {
+function* conditionWithAYield(limit) {
     let i = 0;
     while (yield i, i++ < limit)
         ;
 }
-for (let _ of testWithAYield(2))
+for (let _ of conditionWithAYield(2))
     ;
-count(testWithAYield, "yield i", 3);
-count(testWithAYield, "i++ <", 3);
+count(conditionWithAYield, "yield i", 3);
+count(conditionWithAYield, "i++ <", 3);
 
 // Annex B: the initializer runs once, before the loop.
 function forInInitializer(object) {
@@ -169,83 +169,3 @@ forInInitializer({ });
 count(forInInitializer, "foo()", 1);
 forInInitializer({ a: 1, b: 2 });
 count(forInInitializer, "foo()", 2);
-
-// A test that is a constant or a name is a label: it has the count of its clause. Any other test runs when it is compared.
-var Kind = { A: 100, inner: { B: 101 } };
-var name = 102;
-function call() { return -1; }
-
-function labels(s) {
-    switch (s) {
-    case Kind.A: return 10;
-    case Kind.inner.B: return 11;
-    case name: return 12;
-    case 103: return 1;
-    case "s": return 2;
-    case -1: return 3;
-    case null: return 4;
-    case this: return 5;
-    case this.kind: return 6;
-    }
-}
-labels(0);
-for (let label of ["Kind.A", "Kind.inner.B", "name:", "103", "\"s\"", "-1", "null", "this:", "this.kind"])
-    count(labels, label, 0);
-labels(101);
-count(labels, "Kind.A", 0);
-count(labels, "Kind.inner.B", 1);
-count(labels, "return 11", 1);
-count(labels, "name:", 0);
-
-let object = {
-    labels(s) {
-        switch (s) {
-        case super.kind: return 7;
-        }
-    }
-};
-object.labels(0);
-count(object.labels, "super.kind", 0);
-
-function tests(s, object) {
-    switch (s) {
-    case object && object.a: return 1;
-    case object?.b: return 2;
-    case object ? 3 : 4: return 3;
-    case call(): return 5;
-    case s > 6: return 6;
-    case Kind["A"]: return 7;
-    default: return 8;
-    case (object ??= { }): return 9;
-    }
-}
-tests(0, { });
-tests(0, null);
-count(tests, "object &&", 2);
-count(tests, "object.a", 1);
-count(tests, "return 1", 0);
-count(tests, "object?.b", 2);
-count(tests, "?.b", 1);
-count(tests, "return 2", 0);
-count(tests, "object ? 3", 2);
-count(tests, "3 :", 1);
-count(tests, "4:", 1);
-count(tests, "call()", 2);
-count(tests, "return 5", 0);
-count(tests, "s > 6", 2);
-count(tests, "Kind[", 2);
-count(tests, "object ??=", 2);
-count(tests, "{ })", 1);
-count(tests, "return 9", 0);
-count(tests, "return 8", 2);
-
-function notCompared(s) {
-    switch (s) {
-    case call() + 2: return 1;
-    case call(): return 2;
-    }
-}
-notCompared(1);
-count(notCompared, "call() + 2", 1);
-count(notCompared, "return 1", 1);
-count(notCompared, "call():", 0);

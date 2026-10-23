@@ -1317,7 +1317,7 @@ void BytecodeGenerator::initializeDefaultParameterValuesAndSetupFunctionScopeSta
             if (parameter.second) {
                 Ref<Label> skipDefaultParameterBecauseNotUndefined = newLabel();
                 emitJumpIfFalse(emitIsUndefined(newTemporary(), temp.get()), skipDefaultParameterBecauseNotUndefined.get());
-                emitProfileControlFlow(parameter.second);
+                emitProfileControlFlow(startOffsetOfBasicBlock(parameter.second), parameter.second->endOffset());
                 emitNode(temp.get(), parameter.second);
                 emitLabel(skipDefaultParameterBecauseNotUndefined.get());
             }
@@ -2121,10 +2121,10 @@ void BytecodeGenerator::emitProfileControlFlow(int textOffset)
     }
 }
 
-void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isStatementHead)
+void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isInLoopHeader)
 {
     RELEASE_ASSERT(textOffset >= 0 && textOffset < textEndOffset);
-    OpProfileControlFlow::emit(this, textOffset, textEndOffset, isStatementHead);
+    OpProfileControlFlow::emit(this, textOffset, textEndOffset, isInLoopHeader);
     m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
 }
 
@@ -6135,7 +6135,7 @@ void BytecodeGenerator::emitOptionalCheck(RegisterID* src, int textOffset)
     ASSERT(m_optionalChainTargetStack.size());
     auto& target = m_optionalChainTargetStack.last();
     emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), src), target.label.get());
-    emitProfileControlFlow(textOffset, target.textEndOffset);
+    emitProfileControlFlowOutsideOfCaseTest(textOffset, target.textEndOffset);
 }
 
 template <typename OldOpType, typename NewOpType, typename TupleType>

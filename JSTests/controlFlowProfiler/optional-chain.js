@@ -196,12 +196,12 @@ testCount(object);
 assert(basicBlockExecutionCount(testCount, "x?.") === 5, "the base runs each time");
 assert(basicBlockExecutionCount(testCount, "foo()") === 3, "the rest runs when the base is an object");
 
-// The test of a `case` runs when it is compared, and its clause when it matches.
+// No basic block in the test of a `case`: its text belongs to the clause.
 function testCaseTest(x) {
     switch (2) {
     case x?.[foo(1)]: foo(2);
     }
 }
 testCaseTest(object);
-checkBasicBlock(testCaseTest, "foo(1)", ShouldHaveExecuted);
+checkBasicBlock(testCaseTest, "foo(1)", ShouldNotHaveExecuted);
 checkBasicBlock(testCaseTest, "foo(2)", ShouldNotHaveExecuted);
