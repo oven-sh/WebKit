@@ -552,6 +552,19 @@ jobs:
             [ -z "$PR" ] || gh pr comment "$PR" --edit-last --create-if-none --body "Preview build of ${REF:0:8}: [\`$TAG\`]($url)" || echo "::warning::could not comment on #$PR"
             exit 0
           fi
+          # TODO(bun): temporary, to be removed before the pull request that added it is merged. A pull request's preview
+          # is published with the lanes that did build, so that whoever downloads one of those can go on. The job still
+          # fails and says which are missing. Not when the run was cancelled: a newer run replaces it.
+          if [ -n "$PR" ] && [ -n "$RELEASE_ID" ] && ! jq -e 'any(.[]; .result == "cancelled")' <<< "$NEEDS" > /dev/null; then
+            jq -r '.[]' <<< "$LABELS" | sort > expected.txt
+            gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
+            if [ -s uploaded.txt ]; then
+              url=$(gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -F draft=false --jq .html_url)
+              echo "published $TAG with $(wc -l < uploaded.txt) of $(wc -l < expected.txt) assets: $url"
+              echo "missing from it:"; comm -23 expected.txt uploaded.txt
+              exit 1
+            fi
+          fi
           # Only the draft this run created is deleted: not a published release (a re-run of a run that succeeded),
           # and not a draft that a newer run for the same tag has replaced.
           if [ -n "$RELEASE_ID" ] && [ "$(gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq .draft 2>/dev/null || echo missing)" = true ]; then

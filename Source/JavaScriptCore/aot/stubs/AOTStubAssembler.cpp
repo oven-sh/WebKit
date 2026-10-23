@@ -33,10 +33,20 @@ void readTagsFromInstance(CCallHelpers& jit)
 #endif
 }
 
+// The stubs count bits with popcnt. Every x86-64 processor that Bun runs on has it: -march=nehalem is the floor.
+static CPUFeatureSet featuresOfStubs(CPUFeatureSet features)
+{
+#if CPU(X86_64)
+    return features.with(CPUFeature::Popcnt);
+#else
+    return features;
+#endif
+}
+
 StubAssembler::StubAssembler(const StubOptions& options, const StubCatalog& catalog)
     : m_options(options)
     , m_catalog(catalog)
-    , m_relocations(*this, AssemblerPolicy::forImage(options.targetFeatures))
+    , m_relocations(*this, AssemblerPolicy::forImage(featuresOfStubs(options.targetFeatures)))
 {
     readTagsFromInstance(*this);
 }

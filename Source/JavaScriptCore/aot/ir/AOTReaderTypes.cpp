@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <utility>
+#include <wtf/Atomics.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -1168,7 +1169,7 @@ bool Reader::checkTypesAgainstLayouts()
     forEachIndexInParallel(loops, static_cast<unsigned>((m_types.size() + recordsPerChunk - 1) / recordsPerChunk), [&](unsigned chunk) {
         for (size_t index = chunk * recordsPerChunk, end = std::min<size_t>(m_types.size(), index + recordsPerChunk); index < end; ++index) {
             if (LayoutSetID set = m_program.at(m_types[index]).layouts)
-                std::atomic_ref(isNamedByType[set.index()]).store(1, std::memory_order_relaxed);
+                AtomicRef(isNamedByType[set.index()]).store(1, std::memory_order_relaxed);
         }
     });
     Vector<LayoutID> environmentInSet(isNamedByType.size());

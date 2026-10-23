@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <wtf/Atomics.h>
 #include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -234,7 +235,7 @@ Vector<uint8_t> TaggedLayoutPlanner::findClassesWithInitializer() const
                 continue;
             for (uint32_t layout : words.subspan(named.start, named.count)) {
                 if (layout < m_layouts.size())
-                    std::atomic_ref(classes[layout]).store(1, std::memory_order_relaxed);
+                    AtomicRef(classes[layout]).store(1, std::memory_order_relaxed);
             }
         }
     });

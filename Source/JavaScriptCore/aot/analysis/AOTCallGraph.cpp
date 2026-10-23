@@ -395,7 +395,7 @@ static BitVector findFunctionsExpectedByCode(const Program& program, const Vecto
 static void markRecordReferences(const Program& program, Vector<uint8_t>& hasOtherReference, const ParallelLoops& loops)
 {
     auto mark = [&](FunctionID function) {
-        std::atomic_ref(hasOtherReference[function.index()]).store(1, std::memory_order_relaxed);
+        AtomicRef(hasOtherReference[function.index()]).store(1, std::memory_order_relaxed);
     };
     auto markReference = [&](FunctionID function, FunctionReferenceKind kind) {
         switch (kind) {
@@ -580,7 +580,7 @@ static Vector<uint8_t> findFunctionsReachableFromUnknownCode(const CallGraph& gr
     while (!frontier.isEmpty()) {
         frontier = collectInParallel<FunctionID>(loops, frontier.size(), [&](unsigned position, Vector<FunctionID>& chunk) {
             for (FunctionID callee : graph.calleesOf(frontier[position])) {
-                std::atomic_ref isCalleeReachable(isReachable[callee.index()]);
+                AtomicRef isCalleeReachable(isReachable[callee.index()]);
                 if (!isCalleeReachable.load(std::memory_order_relaxed) && !isCalleeReachable.exchange(1, std::memory_order_relaxed))
                     chunk.append(callee);
             }
@@ -748,8 +748,8 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     RELEASE_ASSERT(numberOfKeptBodies <= count && bodies.m_isChanged.size() == numberOfKeptBodies && bodies.m_stampsOfRecords.size() == numberOfKeptBodies && bodies.m_stampsOfRecordsForCallers.size() == numberOfKeptBodies);
     Vector<uint8_t> recordLooksDifferent(numberOfKeptBodies);
     Vector<uint8_t> recordLooksDifferentToCallers(numberOfKeptBodies);
-    growInParallel(loops, bodies.m_stampsOfRecords, count);
-    growInParallel(loops, bodies.m_stampsOfRecordsForCallers, count);
+    growWithRoomToSpareInParallel(loops, bodies.m_stampsOfRecords, count);
+    growWithRoomToSpareInParallel(loops, bodies.m_stampsOfRecordsForCallers, count);
     forEachIndexInParallel(loops, count, [&](unsigned index) {
         const Function& function = program.functions[index];
         uint64_t stamp = stampOfRecord(program, FunctionID(index));
@@ -770,7 +770,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     });
     const bool someRecordLooksDifferentToCallers = recordLooksDifferentToCallers.contains(1);
     const bool checksKeptBodies = build.options().verifiesAfterEveryPass;
-    growInParallel(loops, bodies.m_bodies, count);
+    growWithRoomToSpareInParallel(loops, bodies.m_bodies, count);
     std::atomic<uint64_t> numberOfBodiesCollected { 0 };
     std::atomic<uint64_t> numberOfBodiesCollectedAsBefore { 0 };
     const bool logsCounts = build.options().logging.logsPhaseTimes;

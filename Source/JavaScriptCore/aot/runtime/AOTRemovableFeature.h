@@ -177,12 +177,18 @@ inline __attribute__((__always_inline__)) void recordRemovableTableEntry()
         : JSC_REMOVABLE_RECORD_SYMBOL(&table), JSC_REMOVABLE_RECORD_SYMBOL(entryPoint), "i"(static_cast<uint16_t>(feature)), "i"(static_cast<uint8_t>(stub)), "i"(static_cast<uint8_t>(origin)), "i"(builtin));
 }
 
+// A function that records itself stays until the linker collects sections. LLVM 23 crashes (GlobalDCE, under link-time optimization)
+// when it removes a function that the constant of __builtin_function_start still names.
+template<auto function>
+[[gnu::used]] inline const void* const startOfRecordedDefinition = __builtin_function_start(function);
+
 template<RemovableFeature feature, auto function, RemovedFeatureStub stub = RemovedFeatureStub::Abort, uint32_t builtin = 0>
 inline __attribute__((__always_inline__)) void recordRemovableDefinition()
 {
     static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
     static_assert(stub == RemovedFeatureStub::Abort || stub == RemovedFeatureStub::Throw);
     static_assert(stub == RemovedFeatureStub::Throw || !builtin);
+    static_cast<void>(startOfRecordedDefinition<function>);
     __asm__ volatile(
         "771:\n" JSC_REMOVABLE_RECORD_SECTION
         ".p2align 3\n"

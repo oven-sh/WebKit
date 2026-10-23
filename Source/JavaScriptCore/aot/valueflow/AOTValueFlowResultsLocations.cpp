@@ -16,6 +16,7 @@
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueIdentity.h"
 #include <atomic>
+#include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -51,8 +52,8 @@ public:
     uint32_t of(VariableID variable) const { return variable.index(); }
     uint32_t of(LayoutID environment, uint32_t field) const { return m_firstFieldOfLayout[environment.index()] + field; }
 
-    void note(uint32_t location, LocationEvent event) { std::atomic_ref(m_events[location]).fetch_or(static_cast<uint8_t>(event), std::memory_order_relaxed); }
-    void noteStore(uint32_t location) { std::atomic_ref(m_numberOfStores[location]).fetch_add(1, std::memory_order_relaxed); }
+    void note(uint32_t location, LocationEvent event) { AtomicRef(m_events[location]).fetch_or(static_cast<uint8_t>(event), std::memory_order_relaxed); }
+    void noteStore(uint32_t location) { AtomicRef(m_numberOfStores[location]).fetch_add(1, std::memory_order_relaxed); }
 
     OptionSet<LocationEvent> eventsOf(uint32_t location) const { return OptionSet<LocationEvent>::fromRaw(m_events[location]); }
     uint32_t numberOfStoresOf(uint32_t location) const { return m_numberOfStores[location]; }

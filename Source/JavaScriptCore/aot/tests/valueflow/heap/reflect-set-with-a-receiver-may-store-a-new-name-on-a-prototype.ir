@@ -1,0 +1,27 @@
+# unknown = somethingNoTableLists; Reflect.set({}, "extra", one, Object.getPrototypeOf(unknown)); new Set().extra()
+# RUN: valueflow-solve calls
+# CHECK: f0 v12 -> {{*}}unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Builtin builtin=ObjectGetPrototypeOf
+    v3 = Call v2, -, v1
+    v4 = NewClosure function=f1
+    v5 = NewDictionary
+    v6 = String string="extra"
+    v7 = Builtin builtin=ReflectSet
+    v8 = Call v7, -, v5, v6, v4, v3
+    v9 = Builtin builtin=Set
+    v10 = Construct v9
+    v11 = PropGet v10 key="extra"
+    v12 = Call v11, v10
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

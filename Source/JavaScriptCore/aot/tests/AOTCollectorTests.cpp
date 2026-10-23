@@ -13,6 +13,7 @@
 #include "FastMarkAppender.h"
 #include "HeapHelperPool.h"
 #include "HeapInlines.h"
+#include "HeapIterationScope.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
@@ -20,6 +21,7 @@
 #include "ObjectConstructor.h"
 #include "RememberedSlot.h"
 #include "SimpleMarkingConstraint.h"
+#include "SubspaceInlines.h"
 #include "VM.h"
 #include "Weak.h"
 #include "WeakInlines.h"
@@ -529,6 +531,60 @@ static void checkFullCollectionDropsTransitionChain()
     ensureStillAliveHere(object);
 }
 
+static NEVER_INLINE JSObject* createObjectWithNames(VM& vm, Structure* empty, unsigned numberOfNames)
+{
+    JSObject* object = constructEmptyObject(vm, empty);
+    for (unsigned index = 0; index < numberOfNames; ++index)
+        object->putDirect(vm, Identifier::fromString(vm, makeString("chained"_s, index)), jsNumber(index));
+    return object;
+}
+
+static unsigned numberOfLiveStructures(TestVM& test)
+{
+    unsigned count = 0;
+    HeapIterationScope scope(test.heap());
+    test.heap().structureSpace.forEachLiveCell([&](HeapCell*, HeapCell::Kind) {
+        ++count;
+    });
+    return count;
+}
+
+static void checkEdenCollectionFreesLongTransitionChain()
+{
+    constexpr unsigned numberOfNames = 2 * Structure::s_minPropertiesToDropTransitionChainBeforeMarking;
+    TestVM test;
+    VM& vm = test.vm();
+    Structure* empty = test.createRealm()->objectStructureForObjectConstructor();
+    test.heap().collectNow(Sync, CollectionScope::Full);
+    unsigned numberOfStructuresBefore = numberOfLiveStructures(test);
+
+    JSObject* object = createObjectWithNames(vm, empty, numberOfNames);
+    Structure* last = object->structure();
+    AOT_TEST_CHECK(last->previousID() && !last->isPinnedPropertyTable());
+    AOT_TEST_CHECK(numberOfLiveStructures(test) == numberOfStructuresBefore + numberOfNames);
+
+    test.heap().collectNow(Sync, CollectionScope::Eden);
+    AOT_TEST_CHECK(!last->previousID() && last->isPinnedPropertyTable());
+    AOT_TEST_CHECK(numberOfLiveStructures(test) == numberOfStructuresBefore + 1);
+    for (unsigned index = 0; index < numberOfNames; ++index)
+        AOT_TEST_CHECK(object->getDirect(vm, Identifier::fromString(vm, makeString("chained"_s, index))) == jsNumber(index));
+
+    AOT_TEST_CHECK(createObjectWithNames(vm, empty, numberOfNames)->structure() == last);
+    AOT_TEST_CHECK(last->previousID());
+    test.heap().collectNow(Sync, CollectionScope::Eden);
+    AOT_TEST_CHECK(last->previousID() && createObjectWithNames(vm, empty, numberOfNames)->structure() == last);
+    ensureStillAliveHere(object);
+}
+
+static void checkEdenCollectionKeepsShortTransitionChain()
+{
+    TestVM test;
+    VM& vm = test.vm();
+    JSObject* object = createObjectWithNames(vm, test.createRealm()->objectStructureForObjectConstructor(), Structure::s_minPropertiesToDropTransitionChainBeforeMarking - 1);
+    test.heap().collectNow(Sync, CollectionScope::Eden);
+    AOT_TEST_CHECK(object->structure()->previousID() && !object->structure()->isPinnedPropertyTable());
+}
+
 static void testTransitionChainStaysWithoutCompiledCode()
 {
     if (Options::useAOT())
@@ -566,6 +622,8 @@ std::span<const NativeTest> collectorTests()
         { "collector/empty-eden/store-before-a-skip-is-seen-later"_s, withCompiledCodeOptions<checkStoreBeforeSkippedCollectionIsSeenLater> },
         { "collector/empty-eden/off-without-compiled-code"_s, testNoCollectionIsSkippedWithoutCompiledCode },
         { "collector/structures/full-collection-drops-transition-chain"_s, withCompiledCodeOptions<checkFullCollectionDropsTransitionChain> },
+        { "collector/structures/eden-collection-frees-long-transition-chain"_s, withCompiledCodeOptions<checkEdenCollectionFreesLongTransitionChain> },
+        { "collector/structures/eden-collection-keeps-short-transition-chain"_s, withCompiledCodeOptions<checkEdenCollectionKeepsShortTransitionChain> },
         { "collector/structures/chain-stays-without-compiled-code"_s, testTransitionChainStaysWithoutCompiledCode },
     };
     return tests;

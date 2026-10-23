@@ -15,6 +15,7 @@
 #include <bit>
 #include <functional>
 #include <utility>
+#include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -65,7 +66,7 @@ void HashedIndex::addConcurrently(uint32_t hash, uint32_t position)
     size_t mask = m_slots.size() - 1;
     for (size_t index = hash & mask; ; index = (index + 1) & mask) {
         uint64_t expected = 0;
-        if (std::atomic_ref<uint64_t>(reinterpret_cast<uint64_t&>(m_slots[index])).compare_exchange_strong(expected, bits, std::memory_order_release, std::memory_order_relaxed))
+        if (AtomicRef<uint64_t>(reinterpret_cast<uint64_t&>(m_slots[index])).compare_exchange_strong(expected, bits, std::memory_order_release, std::memory_order_relaxed))
             return;
     }
 }

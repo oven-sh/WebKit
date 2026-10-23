@@ -144,6 +144,18 @@ Rules for an edit to an upstream test:
 
 ---
 
+## TestWTF (`Tools/TestWebKitAPI/Tests/WTF`)
+
+Upstream's too, and run by the `test` job.
+
+| file | change | reason |
+|---|---|---|
+| `Threading.cpp` | `WTF_Thread.SchedulingAttributesFollowQOS` and `.HighPriorityThreadsRestoresClampWhenReenabled` are compiled only without `USE(BUN_JSC_ADDITIONS)` | on purpose, as in A: `Thread::updateSchedulingAttributes()` (`wtf/posix/ThreadingPOSIX.cpp`) does nothing on Linux, so a thread keeps the scheduling policy, nice level and utilization clamp of the process that embeds it. The tests expect upstream's mapping from QOS |
+| `StackTraceTest.cpp` | `StackTraceTest.StackTraceWorks` and `.CaptureStackTraceLimitAndSkip` are `DISABLED_` on Linux | the build, as in B: `DEFAULT_CFLAGS` in `Dockerfile` has `-fno-unwind-tables -fno-asynchronous-unwind-tables`, and glibc's `backtrace()` then returns its own frame alone |
+| `StringBuilder.cpp` | the `JSONEscape*` tests are the fork's own | they hold `appendEscapedJSONStringContent()` (`wtf/text/StringBuilderJSON.h`), which the fork vectorizes, to a scalar escaper, to its buffer, and to its check that the output has six characters of room for each one of the input |
+
+---
+
 ## D. Runner scripts
 
 - `Tools/Scripts/run-javascriptcore-tests`: `--no-slow` and `--asan`, passed on to `run-jsc-stress-tests`; the port lookup

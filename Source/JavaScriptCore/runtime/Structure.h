@@ -220,6 +220,7 @@ public:
     static constexpr int s_maxTransitionLengthForNonEvalPutById = 512;
     static constexpr int s_maxTransitionLengthForRemove = 4096; // Picked from benchmarking measurement.
     static constexpr unsigned s_minDroppableTransitionChainLength = 4;
+    static constexpr unsigned s_minPropertiesToDropTransitionChainBeforeMarking = 16;
 
     using SeenProperties = TinyBloomFilter<CompactPtr<UniquedStringImpl>::StorageType>;
 
@@ -316,6 +317,7 @@ public:
     // With more names than a line of Structures may have, the object is a dictionary.
     JS_EXPORT_PRIVATE static Structure* createForOneObject(VM&, Structure* base, std::span<UniquedStringImpl* const> names);
     JS_EXPORT_PRIVATE bool dropTransitionChain(VM&);
+    void dropLongTransitionChainBeforeMarking(VM&);
     JS_EXPORT_PRIVATE bool restoreTransitionChain(Structure* previous);
     bool isTransitionFrom(const Structure* previous) const
     {

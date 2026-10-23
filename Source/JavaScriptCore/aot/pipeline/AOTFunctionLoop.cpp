@@ -20,6 +20,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTProgramAnalyses.h"
 #include "AOTProgramCaches.h"
+#include "AOTLargeVectors.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <atomic>
@@ -385,6 +386,9 @@ static void commitCopies(CopyLoop& loop, ProgramAnalyses& analyses)
     taskOrder.appendVector(commit.tasks);
     BodyRemaps remaps = loop.phases.finish(taskOrder.span(), WTF::move(commit.remap), &build.parallelLoops());
 
+    // The list of functions moves when it grows. All threads take the page faults of where it moves to, and there is room for what the passes behind the loop add.
+    if (size_t numberOfFunctions = count + commit.functions.size(); numberOfFunctions > program.functions.capacity())
+        reserveCapacityInParallel(loops, program.functions, numberOfFunctions + numberOfFunctions / 4);
     ProgramEditor editor(program);
     FunctionID firstAdded = editor.reserveFunctions(commit.functions.size());
     RELEASE_ASSERT(firstAdded == commit.firstID && firstAdded.index() == count);

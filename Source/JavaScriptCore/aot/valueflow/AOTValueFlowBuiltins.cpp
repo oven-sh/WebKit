@@ -1017,17 +1017,23 @@ private:
         auto noteIn = [&](BuiltinName cell) {
             m_context.add(m_context.written(only(m_context, m_universe.objectOf(m_builtin)), nameOfNativeCell(cell)), m_universe.undefinedValue());
         };
+        BuiltinID builtin = m_builtins.canonicalID(m_builtin);
+        const BuiltinUnseenCode* row = m_builtins.unseenCodeOf(builtin);
+        BuiltinName propertyThatRunsUnseenCode = row && row->condition ? row->condition->hasProperty : BuiltinName();
+        auto mayHave = [&](const BuiltinCondition& condition) {
+            ClimbingSet holders = valueAt(condition.operand);
+            return condition.hasProperty == propertyThatRunsUnseenCode ? hasFieldUnderName(holders, condition.hasProperty) : mayHaveProperty(holders, condition.hasProperty);
+        };
         auto note = [&](const BuiltinCondition* condition) {
             if (!condition)
                 return;
-            if (condition->hasProperty && mayHaveProperty(valueAt(condition->operand), condition->hasProperty))
+            if (condition->hasProperty && mayHave(*condition))
                 noteIn(condition->hasProperty);
             if (condition->firstText() && mayHaveText(*condition) && mayBeCalledOn(condition->calledOn))
                 noteIn(condition->firstText());
         };
-        BuiltinID builtin = m_builtins.canonicalID(m_builtin);
-        if (const BuiltinUnseenCode* row = m_builtins.unseenCodeOf(builtin); row && row->condition && row->condition->hasProperty && hasFieldUnderName(valueAt(row->condition->operand), row->condition->hasProperty))
-            noteIn(row->condition->hasProperty);
+        if (row)
+            note(row->condition);
         for (const BuiltinModuleLoad& load : m_builtins.moduleLoadsOf(builtin))
             note(load.condition);
         for (const BuiltinCalledFunction& called : m_builtins.calledFunctionsOf(builtin))
@@ -1127,6 +1133,8 @@ private:
             letUnknownCodeWrite(m_context);
             letWhateverHasEscapedBeCalled(m_context);
         }
+        if (mayBeUnknownObject(valueAt(operand)))
+            noteUnknownCallee(m_context);
         answer(unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
         throwValue(unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
     }

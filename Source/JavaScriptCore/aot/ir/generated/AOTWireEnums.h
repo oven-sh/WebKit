@@ -395,7 +395,7 @@ enum class TypeTestFailure : uint32_t { TakesGenericPath, Throws };
 enum class ArrivalStamp : uint32_t { None, Open, Complete };
 enum class ImageVerdict : uint32_t {
     Unsupported, Accepted, CompiledCodeDisabled, NotAnImage, Truncated, Misaligned, AlreadyInUse, LowPagesAccessible, NoCode, CannotMapCode,
-    NeedsCellCage, OptionsConflict, MalformedTables, StampMismatch, IdentityMismatch
+    NeedsCellCage, OptionsConflict, MalformedTables, StampMismatch, IdentityMismatch, CodeAtFixedAddress
 };
 enum class DeclineKind : uint32_t {
     Unknown, HotCallNotInlined, HotCallNotResolved, GeneratorLoopNotFused, ArrayChainNotFused, StringBuilderNotCreated, StringBuildersNotJoined,
@@ -530,7 +530,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Wire::UnseenCodeCause> 
 template<> inline constexpr unsigned numberOfEnumerators<Wire::LocaleUseKind> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::TypeTestFailure> = 2;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::ArrivalStamp> = 3;
-template<> inline constexpr unsigned numberOfEnumerators<Wire::ImageVerdict> = 15;
+template<> inline constexpr unsigned numberOfEnumerators<Wire::ImageVerdict> = 16;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::DeclineKind> = 15;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::TypedResultDeclineReason> = 8;
 template<> inline constexpr unsigned numberOfEnumerators<Wire::CallDeclineReason> = 8;

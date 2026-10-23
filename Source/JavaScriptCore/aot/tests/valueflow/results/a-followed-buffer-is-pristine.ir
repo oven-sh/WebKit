@@ -4,7 +4,7 @@
 # CHECK: variable g0 name="buffer" {{*}}declared={type=Buffer<{{*}}pristine[Storage, Names]>}
 # CHECK: variable g1 name="bytes" {{*}}declared={type=Uint8Array<{{*}}pristine[Storage, Names]>}
 # CHECK: variable g2 name="handedOver" {{*}}declared={type=Buffer}
-# CHECK: variable g3 name="changed" {{*}}declared={type=Buffer<anything, pristine[Storage]>}
+# CHECK: variable g3 name="changed" {{*}}declared={type=Buffer}
 # CHECK: module m0
 
 module m0 path="main.js" displayPath="main.js" body=f0

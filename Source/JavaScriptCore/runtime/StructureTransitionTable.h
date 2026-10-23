@@ -312,6 +312,11 @@ public:
     template<typename Functor> void forEach(NOESCAPE const Functor&) const; // Defined in StructureInlines.h.
 
     Structure* trySingleTransition() const;
+    void clearSingleTransition()
+    {
+        ASSERT(isUsingSingleSlot());
+        m_data = UsingSingleSlotFlag;
+    }
 
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 

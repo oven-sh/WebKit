@@ -23,6 +23,7 @@
 #include <atomic>
 #include <limits>
 #include <optional>
+#include <wtf/Atomics.h>
 #include <wtf/CommaPrinter.h>
 #include <wtf/GenerationalSet.h>
 #include <wtf/PrintStream.h>
@@ -752,7 +753,7 @@ bool InliningSummaries::returnsFreshAggregate(const Program& program, FunctionID
     if (m_summaries[id.index()].barrier != InlineBarrier::None)
         return false;
 
-    std::atomic_ref answer(m_returnsFreshAggregate[id.index()]);
+    AtomicRef answer(m_returnsFreshAggregate[id.index()]);
     Answer known = answer.load(std::memory_order_relaxed);
     if (known != Answer::NotAsked)
         return known == Answer::Yes;

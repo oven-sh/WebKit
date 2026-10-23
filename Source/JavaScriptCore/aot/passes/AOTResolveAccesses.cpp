@@ -178,6 +178,18 @@ SlotStamp createSlotStamp(FunctionPassContext& context, const Value& access, con
     };
 }
 
+// effectsOfCallingGetterInSlot() promises the effects of these getters: a call that lists nobody is unknown code to whoever reads the body afterwards.
+CalleeSetID calleesOfGetterInSlot(FunctionPassContext& context, const PropertyAccessPlan& plan, PropertyKeyID key)
+{
+    std::optional<Vector<FunctionID, 2>> getters = gettersInSlots(context.program, plan.receivers.span(), key);
+    if (!getters)
+        return { };
+    CalleeSet callees;
+    callees.functions.append(getters->span());
+    callees.isComplete = true;
+    return context.types.intern(WTF::move(callees));
+}
+
 static Effects effectsOfCallingGetterInSlot(FunctionPassContext& context, const PropertyAccessPlan& plan, const SlotStamp& stamp)
 {
     std::optional<Vector<FunctionID, 2>> getters = gettersInSlots(context.program, plan.receivers.span(), stamp.key);
@@ -774,6 +786,7 @@ ValueID AccessResolver::appendCallOfGetterInSlot(const PropertyAccessPlan& plan,
     Value call = IRBuilder::make(Opcode::Call);
     call.setCalleeOperand(getter);
     call.setThisValueOperand(object);
+    call.setCallees(calleesOfGetterInSlot(m_context, plan, stamp.key));
     call.setAccessSite(stamp.accessSite);
     return m_builder.append(WTF::move(call));
 }

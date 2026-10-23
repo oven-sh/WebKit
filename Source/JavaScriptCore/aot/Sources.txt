@@ -281,6 +281,7 @@ aot/image/AOTRegExpSection.cpp @no-unify
 aot/image/AOTRegExpSummary.cpp @no-unify
 aot/image/AOTRelocation.cpp @no-unify
 aot/image/AOTRelocationLowering.cpp @no-unify
+aot/image/AOTRuntimeDescription.cpp @no-unify
 aot/image/AOTSectionLinker.cpp @no-unify
 aot/image/AOTSectionWriter.cpp @no-unify
 aot/image/AOTStackUsageCheck.cpp @no-unify

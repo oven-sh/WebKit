@@ -15,6 +15,7 @@
 #include <bit>
 #include <optional>
 #include <span>
+#include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/MallocSpan.h>
@@ -284,14 +285,14 @@ public:
     {
         if (!isKnown(id))
             return computeRecordStamps(program.functions[id.index()]);
-        std::atomic_ref<uint8_t> hasStamps(m_hasRecordStamps[id.index()]);
+        AtomicRef<uint8_t> hasStamps(m_hasRecordStamps[id.index()]);
         RecordStamps& kept = m_recordStamps[id.index()];
         if (hasStamps.load(std::memory_order_acquire))
-            return kept;
+            return RecordStamps { AtomicRef(kept.record).load(std::memory_order_relaxed), AtomicRef(kept.entry).load(std::memory_order_relaxed) };
         // Two threads that come here at one time store the same words.
         RecordStamps stamps = computeRecordStamps(program.functions[id.index()]);
-        std::atomic_ref(kept.record).store(stamps.record, std::memory_order_relaxed);
-        std::atomic_ref(kept.entry).store(stamps.entry, std::memory_order_relaxed);
+        AtomicRef(kept.record).store(stamps.record, std::memory_order_relaxed);
+        AtomicRef(kept.entry).store(stamps.entry, std::memory_order_relaxed);
         hasStamps.store(1, std::memory_order_release);
         return stamps;
     }
@@ -302,7 +303,7 @@ public:
         if (!hotRowOf(program, id))
             return std::nullopt;
         ColdRow& row = m_coldRows[id.index()];
-        std::atomic_ref<uint8_t> state(row.stateOfNames);
+        AtomicRef<uint8_t> state(row.stateOfNames);
         uint8_t seen = state.load(std::memory_order_acquire);
         if (seen != static_cast<uint8_t>(State::Known)) {
             if (seen != static_cast<uint8_t>(State::Unknown) || !state.compare_exchange_strong(seen, static_cast<uint8_t>(State::BeingMade), std::memory_order_relaxed))
@@ -334,7 +335,7 @@ private:
     {
         if (id.index() >= m_states.size())
             return false;
-        std::atomic_ref<uint8_t> state = stateOf(id);
+        AtomicRef<uint8_t> state = stateOf(id);
         uint8_t seen = state.load(std::memory_order_acquire);
         if (seen == static_cast<uint8_t>(State::Known)) [[likely]]
             return true;
@@ -348,7 +349,7 @@ private:
     static RecordStamps computeRecordStamps(const Function&);
     void store(FunctionID, Row&&);
     void growTo(size_t numberOfFunctions, State);
-    std::atomic_ref<uint8_t> stateOf(FunctionID id) { return std::atomic_ref(m_states[id.index()]); }
+    AtomicRef<uint8_t> stateOf(FunctionID id) { return AtomicRef(m_states[id.index()]); }
 
     const ParallelLoops* m_loops { nullptr };
     Vector<HotRow> m_hotRows;

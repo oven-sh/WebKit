@@ -75,8 +75,8 @@ static constinit const BuiltinCondition conditions[] = {
     { .operand = BuiltinOperand::argument(0), .hasProperty = BuiltinName(2928) },
     { .operand = BuiltinOperand::argument(0), .hasProperty = BuiltinName(2929) },
     { .operand = BuiltinOperand::argument(0), .hasProperty = BuiltinName(4121) },
-    { .operand = BuiltinOperand::argument(0), .isOneOf = std::span<const BuiltinName>(names).subspan(7, 1) },
     { .operand = BuiltinOperand::argument(0), .hasProperty = BuiltinName(1736) },
+    { .operand = BuiltinOperand::argument(0), .isOneOf = std::span<const BuiltinName>(names).subspan(7, 1) },
     { .callRunsOtherCode = true },
     { .objectNobodyKnowsIsWritten = true },
     { .buildAdmitsRuntimeCode = true },
@@ -3161,6 +3161,20 @@ constinit const BuiltinFeatureUse builtinTableFeatureUses[] = {
     { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(181), .condition = &conditions[32] },
     { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(204), .condition = &conditions[32] },
     { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(229), .condition = &conditions[33] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(177), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(176), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(7), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(1), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(2), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(8), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(5), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(178), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(179), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(180), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(184), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(192), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(16), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(260), .condition = &conditions[34] },
     { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(269) },
     { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(265) },
     { .builtin = BuiltinID(3766), .feature = static_cast<RemovableFeature>(262) },
@@ -3308,7 +3322,7 @@ constinit const BuiltinFeatureUse builtinTableFeatureUses[] = {
     { .builtin = BuiltinID(3873), .feature = static_cast<RemovableFeature>(15), .isGuard = true },
     { .builtin = BuiltinID(3874), .feature = static_cast<RemovableFeature>(15), .isGuard = true },
     { .builtin = BuiltinID(3874), .feature = static_cast<RemovableFeature>(271) },
-    { .builtin = BuiltinID(3874), .feature = static_cast<RemovableFeature>(9), .condition = &conditions[34] },
+    { .builtin = BuiltinID(3874), .feature = static_cast<RemovableFeature>(9), .condition = &conditions[35] },
     { .builtin = BuiltinID(3885), .feature = static_cast<RemovableFeature>(40), .isGuard = true },
     { .builtin = BuiltinID(3934), .feature = static_cast<RemovableFeature>(41), .isGuard = true },
     { .builtin = BuiltinID(3982), .feature = static_cast<RemovableFeature>(275), .isGuard = true },
@@ -4565,7 +4579,7 @@ constinit const BuiltinFeatureUse builtinTableFeatureUses[] = {
 };
 
 constinit const BuiltinUnseenCode builtinTableUnseenCode[] = {
-    { .builtin = BuiltinID(3766), .condition = &conditions[35] },
+    { .builtin = BuiltinID(3766), .condition = &conditions[34] },
 };
 
 constinit const BuiltinModuleLoad builtinTableModuleLoads[] = {

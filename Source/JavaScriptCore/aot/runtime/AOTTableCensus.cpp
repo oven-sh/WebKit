@@ -164,7 +164,7 @@ private:
     }
 #endif
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
     static char* residencyArgument();
 #else
     static unsigned char* residencyArgument();

@@ -236,10 +236,11 @@ public:
 
     static Ref<Steps> create(const ParallelLoops& loops) { return adoptRef(*new Steps(loops)); }
 
-    StepID add(std::initializer_list<StepID> awaited, WTF::Function<void()>&& run)
+    StepID add(std::initializer_list<StepID> awaited, WTF::Function<void()>&& run, TaskPriority priority = TaskPriority::Foreground)
     {
+        RELEASE_ASSERT(priority != TaskPriority::Idle);
         StepID id = m_steps.size();
-        m_steps.append(makeUnique<Step>(WTF::move(run), static_cast<unsigned>(awaited.size())));
+        m_steps.append(makeUnique<Step>(WTF::move(run), static_cast<unsigned>(awaited.size()), priority));
         for (StepID earlier : awaited)
             m_steps[earlier]->followers.append(id);
         return id;
@@ -257,22 +258,25 @@ public:
             m_numberUnfinished = m_steps.size();
             for (StepID id = 0; id < m_steps.size(); ++id) {
                 if (!m_steps[id]->numberAwaited)
-                    m_due.append(id);
+                    dueOf(m_steps[id]->priority).append(id);
             }
-            askForThreads(m_due.size() - 1);
+            if (size_t numberDue = dueOf(TaskPriority::Foreground).size())
+                askForThreads(TaskPriority::Foreground, numberDue - 1);
+            askForThreads(TaskPriority::Background, dueOf(TaskPriority::Background).size());
         }
         for (;;) {
             StepID step;
             {
                 Locker locker { m_lock };
-                while (m_due.isEmpty() && m_numberUnfinished) {
+                Deque<StepID>& due = dueOf(TaskPriority::Foreground);
+                while (due.isEmpty() && m_numberUnfinished) {
                     m_callerWaits = true;
                     m_hasChanged.wait(m_lock);
                 }
                 m_callerWaits = false;
                 if (!m_numberUnfinished)
                     return;
-                step = m_due.takeFirst();
+                step = due.takeFirst();
             }
             runStep(step);
         }
@@ -281,14 +285,16 @@ public:
 private:
     struct Step {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Step);
-        Step(WTF::Function<void()>&& run, unsigned numberAwaited)
+        Step(WTF::Function<void()>&& run, unsigned numberAwaited, TaskPriority priority)
             : run(WTF::move(run))
             , numberAwaited(numberAwaited)
+            , priority(priority)
         {
         }
 
         WTF::Function<void()> run;
         unsigned numberAwaited;
+        TaskPriority priority;
         Vector<StepID, 4> followers;
     };
 
@@ -302,49 +308,55 @@ private:
         m_steps[id]->run();
         Locker locker { m_lock };
         --m_numberUnfinished;
-        size_t numberDue = 0;
+        std::array<size_t, numberOfPriorities> numberDue { };
         for (StepID follower : m_steps[id]->followers) {
             if (--m_steps[follower]->numberAwaited)
                 continue;
-            m_due.append(follower);
-            ++numberDue;
+            dueOf(m_steps[follower]->priority).append(follower);
+            ++numberDue[static_cast<size_t>(m_steps[follower]->priority)];
         }
-        if (!m_numberUnfinished || (numberDue && m_callerWaits))
+        if (!m_numberUnfinished || (numberDue[static_cast<size_t>(TaskPriority::Foreground)] && m_callerWaits))
             m_hasChanged.notifyAll();
-        size_t numberTaken = 1 + m_callerWaits;
-        if (numberDue > numberTaken)
-            askForThreads(numberDue - numberTaken);
+        for (TaskPriority priority : { TaskPriority::Foreground, TaskPriority::Background }) {
+            size_t numberTaken = (priority == m_steps[id]->priority) + (priority == TaskPriority::Foreground && m_callerWaits);
+            if (numberDue[static_cast<size_t>(priority)] > numberTaken)
+                askForThreads(priority, numberDue[static_cast<size_t>(priority)] - numberTaken);
+        }
     }
 
-    void runOnThreadOfPool()
+    void runOnThreadOfPool(TaskPriority priority)
     {
         for (;;) {
             StepID step;
             {
                 Locker locker { m_lock };
-                if (m_due.size() <= static_cast<size_t>(m_callerWaits))
+                Deque<StepID>& due = dueOf(priority);
+                if (due.size() <= static_cast<size_t>(priority == TaskPriority::Foreground && m_callerWaits))
                     return;
-                step = m_due.takeFirst();
+                step = due.takeFirst();
             }
             runStep(step);
         }
     }
 
-    void askForThreads(size_t number) WTF_REQUIRES_LOCK(m_lock)
+    void askForThreads(TaskPriority priority, size_t number) WTF_REQUIRES_LOCK(m_lock)
     {
         for (size_t index = 0; index < number; ++index) {
             ref();
-            m_loops.schedule([](void* steps) {
-                adoptRef(*static_cast<Steps*>(steps))->runOnThreadOfPool();
+            m_loops.schedule(priority, [](void* steps) {
+                adoptRef(*static_cast<Steps*>(steps))->runOnThreadOfPool(ParallelLoops::currentPriority());
             }, this);
         }
     }
+
+    static constexpr size_t numberOfPriorities = 2;
+    Deque<StepID>& dueOf(TaskPriority priority) WTF_REQUIRES_LOCK(m_lock) { return m_due[static_cast<size_t>(priority)]; }
 
     const ParallelLoops& m_loops;
     Vector<std::unique_ptr<Step>> m_steps;
     Lock m_lock;
     Condition m_hasChanged;
-    Deque<StepID> m_due WTF_GUARDED_BY_LOCK(m_lock);
+    std::array<Deque<StepID>, numberOfPriorities> m_due WTF_GUARDED_BY_LOCK(m_lock);
     size_t m_numberUnfinished WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     bool m_callerWaits WTF_GUARDED_BY_LOCK(m_lock) { false };
 };
@@ -394,12 +406,12 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     Vector<PropertyKeyKind> kindsOfKeys;
 
     Ref<Steps> steps = Steps::create(build.parallelLoops());
-    auto add = [&](ASCIILiteral name, std::initializer_list<Steps::StepID> awaited, WTF::Function<void(PhaseTimes&)>&& run) {
+    auto add = [&](ASCIILiteral name, std::initializer_list<Steps::StepID> awaited, WTF::Function<void(PhaseTimes&)>&& run, TaskPriority priority = TaskPriority::Foreground) {
         return steps->add(awaited, [&build, name, run = WTF::move(run)] {
             PhaseTimes timesOfStep(build, PassID::AnalyzeFlow);
             run(timesOfStep);
             timesOfStep.didFinish(name);
-        });
+        }, priority);
     };
 
     auto indexOfHeap = add("index of the heap"_s, { }, [&](PhaseTimes&) {
@@ -485,14 +497,14 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     });
     auto order = add("order"_s, { locations }, [&](PhaseTimes&) {
         computeOrderResults(inputs, calls, tables);
-    });
+    }, TaskPriority::Background);
     auto builtins = add("built-ins"_s, { stampedCalls }, [&](PhaseTimes&) {
         writesUnderNewNames = computeBuiltinResults(inputs, tables);
-    });
+    }, TaskPriority::Background);
     auto closuresNeverCompared = add("closures never compared"_s, { storesListed }, [&](PhaseTimes&) {
         ValueFlowHeapView heap(inputs);
         computeClosuresNeverCompared(inputs, heap, tables);
-    });
+    }, TaskPriority::Background);
     auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed }, [&](PhaseTimes&) {
         fieldContents = computeFieldResults(inputs, *usesOfHeap, constructions, tables);
         kindsOfKeys = Vector<PropertyKeyKind>(program.types.numberOfPropertyKeys(), [&](size_t index) {
@@ -501,7 +513,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     });
     auto writes = add("writes to containers"_s, { numbers, builtins }, [&](PhaseTimes&) {
         writesToContainers = collectWritesToContainers(inputs, tables, types);
-    });
+    }, TaskPriority::Background);
     auto literalKeyOrders = add("literal key orders"_s, { fields }, [&](PhaseTimes&) {
         computeLiteralKeyOrders(inputs, heapViewOf(*usesOfHeap), WTF::move(kindsOfKeys), tables);
     });

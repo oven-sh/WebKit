@@ -23,6 +23,7 @@
 #include "AOTValueIdentity.h"
 #include <memory>
 #include <optional>
+#include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -526,9 +527,9 @@ static SinkEquations buildEquations(const OperandNodes& nodes, const Vector<Coll
     });
     forEachIndexInParallel(loops, collected.size(), [&](unsigned index) {
         for (const BaseUses& uses : collected[index].baseUses)
-            std::atomic_ref(base[uses.subject]).fetch_or(uses.uses.toRaw(), std::memory_order_relaxed);
+            AtomicRef(base[uses.subject]).fetch_or(uses.uses.toRaw(), std::memory_order_relaxed);
         for (const SinkRule& rule : collected[index].dependencies)
-            std::atomic_ref(cursors[rule.subject]).fetch_add(1, std::memory_order_relaxed);
+            AtomicRef(cursors[rule.subject]).fetch_add(1, std::memory_order_relaxed);
     });
     Vector<uint32_t> firstDependencyOfShare(numberOfShares);
     forEachShare([&](unsigned share, uint32_t first, uint32_t end) {
@@ -562,7 +563,7 @@ static SinkEquations buildEquations(const OperandNodes& nodes, const Vector<Coll
     });
     forEachIndexInParallel(loops, collected.size(), [&](unsigned index) {
         for (const SinkRule& rule : collected[index].dependencies)
-            equations.dependencies[std::atomic_ref(cursors[rule.subject]).fetch_add(1, std::memory_order_relaxed)] = rule.dependency;
+            equations.dependencies[AtomicRef(cursors[rule.subject]).fetch_add(1, std::memory_order_relaxed)] = rule.dependency;
     });
     return equations;
 }

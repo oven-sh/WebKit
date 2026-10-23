@@ -795,7 +795,9 @@ void noteStoreThroughUnknownObject(ValueFlowRuleContext& context, ValueFlowName 
     }
     FunctionID writer = context.functionOfStatement();
     if (writer && isLibraryRole(context.program().at(writer).role)) {
-        if (isCodeThatRecordsDescribe(context.universe(), writer) || !storesIntoOperandOfItsFunction(context, writer) || !isInSeenCode(context, writer))
+        if (isCodeThatRecordsDescribe(context.universe(), writer))
+            return;
+        if (name.kind != ValueFlowNameKind::Property && (!storesIntoOperandOfItsFunction(context, writer) || !isInSeenCode(context, writer)))
             return;
     }
     const ValueFlowUniverse& universe = context.universe();
@@ -817,6 +819,15 @@ void noteStoreThroughUnknownObject(ValueFlowRuleContext& context, ValueFlowName 
     default:
         return;
     }
+}
+
+void noteUnknownCallee(ValueFlowRuleContext& context)
+{
+    FunctionID caller = context.functionOfStatement();
+    if (!caller || isLibraryRole(context.program().at(caller).role))
+        return;
+    for (ValueFlowNameKind kind : { ValueFlowNameKind::UnknownKey, ValueFlowNameKind::GetterUnderUnknownKey })
+        noteStoreThroughUnknownObject(context, { kind, 0 });
 }
 
 bool isInSeenCode(ValueFlowRuleContext& context, FunctionID id)
@@ -1058,6 +1069,21 @@ static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID hol
     }
 }
 
+static constexpr BuiltinID entriesThatInstantiateModules[] { Builtins::WebAssemblyInstantiate, Builtins::WebAssemblyInstantiateStreaming, Builtins::WebAssemblyInstance };
+
+// A WebAssembly module finds what it imports under names that its bytes hold, `imports[module][field]`, and its code calls that. What it is handed has escaped: `{ Math }`. It looks up nothing on what it has found, so that does not escape.
+static void letModulesImportMembersOf(ValueFlowRuleContext& context, BuiltinID holder)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    for (BuiltinID member : builtins.membersOf(holder)) {
+        if (builtins.letsInUnseenCode(builtins.canonicalID(member)) || builtins.at(member).origin == BuiltinOrigin::Host)
+            continue;
+        BuiltinKind kind = builtins.at(member).kind;
+        bool isCallable = kind == BuiltinKind::Constructor || kind == BuiltinKind::Function || kind == BuiltinKind::Method;
+        context.useAsAnswerOfUnknownObject(member, isCallable ? OptionSet<BuiltinUse> { BuiltinUse::Read, BuiltinUse::Called } : OptionSet<BuiltinUse> { BuiltinUse::Read });
+    }
+}
+
 static constexpr BuiltinID locationsOfLoaders[] {
     Builtins::ModuleRequireCache,
     Builtins::NodeModule_cache,
@@ -1187,6 +1213,9 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
     // Whoever reads a way to the module objects is answered what the requests of the build lead to, and that is followed like any other value.
     if (namesWaysToModuleObjects(program))
         exposeModuleObjectsOfEntryPoints(context);
+    bool modulesFindImportsByName = std::ranges::any_of(entriesThatInstantiateModules, [&](BuiltinID entry) {
+        return context.contains(run, universe.objectOf(entry));
+    });
     Vector<BuiltinID, 4> waysBetweenModuleObjectsAnswered;
     context.forEachMember(escaped, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);
@@ -1196,6 +1225,8 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
             context.use(builtin, context.contains(run, object) ? OptionSet<BuiltinUse> { BuiltinUse::Escaped, BuiltinUse::Called } : OptionSet<BuiltinUse> { BuiltinUse::Escaped });
         if (membersFollowHolders || builtins.at(builtin).scope != BuiltinScope::Realm)
             exposeMembersOf(context, object, builtin, waysBetweenModuleObjectsAnswered);
+        else if (modulesFindImportsByName && builtins.at(builtin).origin != BuiltinOrigin::Host)
+            letModulesImportMembersOf(context, builtin);
     });
 }
 

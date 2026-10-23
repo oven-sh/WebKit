@@ -320,6 +320,7 @@ static ALWAYS_INLINE void appendWideVectorsWithBackslashes(std::span<char16_t>& 
 template<typename OutputCharacterType, typename InputCharacterType>
 ALWAYS_INLINE static bool appendEscapedJSONStringContent(std::span<OutputCharacterType>& output, std::span<const InputCharacterType> input)
 {
+    RELEASE_ASSERT(output.size() >= 6 * input.size());
 #if CPU(ARM64) && COMPILER(CLANG)
     if constexpr (sizeof(InputCharacterType) == 1) {
         // (How the last stretch was says how the next is likely to be.)

@@ -41,6 +41,16 @@ void growInParallel(const ParallelLoops& loops, Vector<T, inlineCapacity>& vecto
     vector.grow(size);
 }
 
+// vector.grow(size), for a list with an entry for each function that stays from one step of the build to the next. A program gets more functions at every loop and at many passes,
+// and a list that grows moves all that it holds, on one thread: so it takes twice the room it needs, which lasts for the build.
+template<typename T, size_t inlineCapacity>
+void growWithRoomToSpareInParallel(const ParallelLoops& loops, Vector<T, inlineCapacity>& vector, size_t size)
+{
+    if (size > vector.capacity())
+        reserveCapacityInParallel(loops, vector, 2 * size);
+    vector.grow(size);
+}
+
 // Vector<T>(size).
 template<typename T>
 Vector<T> createVectorInParallel(const ParallelLoops& loops, size_t size)

@@ -7,6 +7,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirArg.h"
 #include "GPRInfo.h"
 #include <optional>
 #include <span>
@@ -17,7 +18,6 @@ class CCallHelpers;
 
 namespace B3 { namespace Air {
 
-class Arg;
 class BasicBlock;
 class Code;
 struct GenerationContext;

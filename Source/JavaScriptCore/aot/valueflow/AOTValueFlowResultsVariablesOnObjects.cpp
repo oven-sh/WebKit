@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <memory>
+#include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -309,7 +310,7 @@ void AccessCollector::noteLook(ValueSetID objects, ValueFlowName name, Origin or
     m_followed.forEachObjectIn(objects, [&](ValueFlowObjectID object) {
         // An export may have any name, a number among them.
         if (m_followed.isNamespace(object) && name.kind != ValueFlowNameKind::Property) {
-            std::atomic_ref(m_isNamespaceReadUnderUnknownName[m_followed.moduleOf(object).index()]).store(1, std::memory_order_relaxed);
+            AtomicRef(m_isNamespaceReadUnderUnknownName[m_followed.moduleOf(object).index()]).store(1, std::memory_order_relaxed);
             return;
         }
         for (const VariableOnObject& variable : m_followed.variablesOn(object)) {
@@ -372,12 +373,12 @@ void AccessCollector::noteStore(const ValueFlowStatement* statement, ValueSetID 
             namesStaticField |= name.kind == ValueFlowNameKind::Property && !variable.mayLieUnderAnyName;
             found.append({ variable.variable, origin.function, origin.site, ObjectAccessKind::Store });
             if (statement && !indexOfValueStoredIntoProperty(statement->opcode))
-                std::atomic_ref(m_isStoredByBuiltin[variable.variable.index()]).store(1, std::memory_order_relaxed);
+                AtomicRef(m_isStoredByBuiltin[variable.variable.index()]).store(1, std::memory_order_relaxed);
             else if (!statement || !storesValueInside(*statement, variable.variable))
-                std::atomic_ref(m_isStoredOtherType[variable.variable.index()]).store(1, std::memory_order_relaxed);
+                AtomicRef(m_isStoredOtherType[variable.variable.index()]).store(1, std::memory_order_relaxed);
         }
         if (!namesStaticField && !definesMemberOfClass)
-            std::atomic_ref(m_isClassObjectStoredUnderOtherName[m_inputs.universe().closureFunction(object).index()]).store(1, std::memory_order_relaxed);
+            AtomicRef(m_isClassObjectStoredUnderOtherName[m_inputs.universe().closureFunction(object).index()]).store(1, std::memory_order_relaxed);
     });
 }
 

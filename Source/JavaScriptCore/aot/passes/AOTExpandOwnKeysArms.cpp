@@ -398,7 +398,7 @@ static std::array<Value, conditionsPerAllocation> conditionsAtCreation(FunctionP
     };
 }
 
-BitVector findUnchangedAllocations(FunctionPassContext& context, std::span<const AllocationUse> uses)
+BitVector findUnchangedAllocations(FunctionPassContext& context, std::span<const AllocationAtPoint> uses)
 {
     BitVector unchanged(uses.size());
     if (uses.empty())
@@ -409,7 +409,7 @@ BitVector findUnchangedAllocations(FunctionPassContext& context, std::span<const
     Vector<ExistingProof> proofs;
     Vector<size_t, 8> askedUses;
     for (size_t index = 0; index < uses.size(); ++index) {
-        const AllocationUse& use = uses[index];
+        const AllocationAtPoint& use = uses[index];
         if (!allocatesOwnLayout(context.program, context.function.at(use.allocation)))
             continue;
         std::array<Value, conditionsPerAllocation> wantedConditions = conditionsAtCreation(context, use.allocation);
@@ -448,8 +448,8 @@ BitVector findUnchangedAllocations(FunctionPassContext& context, std::span<const
 static Vector<TestOfAllocation, 4> findDecidableTests(FunctionPassContext& context)
 {
     Vector<TestOfAllocation, 4> candidateTests = findCandidateTests(context);
-    Vector<AllocationUse, 4> uses = candidateTests.map<Vector<AllocationUse, 4>>([](const TestOfAllocation& test) {
-        return AllocationUse { test.allocation, test.point };
+    Vector<AllocationAtPoint, 4> uses = candidateTests.map<Vector<AllocationAtPoint, 4>>([](const TestOfAllocation& test) {
+        return AllocationAtPoint { test.allocation, test.point };
     });
 
     Vector<TestOfAllocation, 4> tests;

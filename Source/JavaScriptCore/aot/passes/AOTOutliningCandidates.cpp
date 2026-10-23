@@ -33,6 +33,7 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/HashFunctions.h>
 #include <wtf/MathExtras.h>
@@ -62,7 +63,7 @@ public:
         size_t mask = m_slots.size() - 1;
         size_t index = WTF::intHash(hash) & mask;
         for (unsigned probe = 0; probe < longestProbe; ++probe, index = (index + 1) & mask) {
-            std::atomic_ref<unsigned> slot(m_slots[index]);
+            AtomicRef<unsigned> slot(m_slots[index]);
             unsigned found = slot.load(std::memory_order_relaxed);
             if (!found && slot.compare_exchange_strong(found, hash, std::memory_order_relaxed))
                 return false;

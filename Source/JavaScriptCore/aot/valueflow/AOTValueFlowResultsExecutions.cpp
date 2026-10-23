@@ -11,6 +11,7 @@
 #include "AOTBlockCycles.h"
 #include "AOTThreads.h"
 #include <atomic>
+#include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -41,7 +42,7 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 forEachFunctionEnteredBy(program, application.bodies[index], function, id, [&](FunctionID callee) {
-                    std::atomic_ref(counts[callee.index()]).fetch_add(1, std::memory_order_relaxed);
+                    AtomicRef(counts[callee.index()]).fetch_add(1, std::memory_order_relaxed);
                 });
             }
         }

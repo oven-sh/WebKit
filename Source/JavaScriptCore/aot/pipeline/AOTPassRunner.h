@@ -91,6 +91,8 @@ private:
 
     // What a build that logs its times, verifies every pass or reports bytes of code notes about the runs of one schedule. No other build makes room for it.
     struct NotesOfScheduleRun {
+        NotesOfScheduleRun() { }
+
         std::array<uint32_t, numberOfPasses> runsWithoutTrigger { };
         std::array<uint32_t, numberOfPasses> runsThatKeptAnalyses { };
         std::array<PassSet, numberOfPasses> changersSinceLastRun { };

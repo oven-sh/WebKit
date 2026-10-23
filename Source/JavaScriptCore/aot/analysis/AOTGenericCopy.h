@@ -81,6 +81,7 @@ private:
         BlockID block;
         unsigned depthOfLoop { 0 };
         Vector<ValueID, 4> narrowedLiveValues;
+        Vector<ValueID, 4> valuesThatMayBeUnspecified;
     };
 
     struct RejoinTest {

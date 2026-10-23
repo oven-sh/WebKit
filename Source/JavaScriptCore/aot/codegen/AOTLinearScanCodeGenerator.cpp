@@ -768,8 +768,13 @@ void LinearScanCodeGenerator::emitParallelMoves(Vector<Transfer, 8>& transfers)
             return 1000 - static_cast<int64_t>(offsetOfSlotOf(transfer.destination));
         return -1;
     };
-    for (Transfer& transfer : transfers)
-        transfer.isDone = keyOfSource(transfer) == keyOfDestination(transfer);
+    auto isStoredWhole = [&](NodeID id) {
+        return node(id).type != NodeType::Int32 || node(id).has(IsReadWide);
+    };
+    for (Transfer& transfer : transfers) {
+        bool mustBeWidenedInPlace = transfer.from == locationInSlot && transfer.to == locationInSlot && !isStoredWhole(transfer.source) && isStoredWhole(transfer.destination);
+        transfer.isDone = keyOfSource(transfer) == keyOfDestination(transfer) && !mustBeWidenedInPlace;
+    }
     for (;;) {
         bool madeProgress = false;
         bool hasPendingMove = false;

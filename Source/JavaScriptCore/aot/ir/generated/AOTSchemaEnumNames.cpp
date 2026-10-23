@@ -721,12 +721,13 @@ ASCIILiteral nameOf(ArrivalStamp value)
 
 ASCIILiteral nameOf(ImageVerdict value)
 {
-    static constexpr EnumeratorNames<15, 204> names {
+    static constexpr EnumeratorNames<16, 223> names {
         {
-            0, 12, 21, 42, 53, 63, 74, 87, 106, 113, 127, 141, 157, 173, 187
+            0, 12, 21, 42, 53, 63, 74, 87, 106, 113, 127, 141, 157, 173, 187, 204
         },
         "Unsupported\0" "Accepted\0" "CompiledCodeDisabled\0" "NotAnImage\0" "Truncated\0" "Misaligned\0" "AlreadyInUse\0" "LowPagesAccessible\0"
-        "NoCode\0" "CannotMapCode\0" "NeedsCellCage\0" "OptionsConflict\0" "MalformedTables\0" "StampMismatch\0" "IdentityMismatch"
+        "NoCode\0" "CannotMapCode\0" "NeedsCellCage\0" "OptionsConflict\0" "MalformedTables\0" "StampMismatch\0" "IdentityMismatch\0"
+        "CodeAtFixedAddress"
     };
     return nameAt(names, value);
 }

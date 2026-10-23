@@ -17,6 +17,7 @@
 #include "AOTThreads.h"
 #include <array>
 #include <atomic>
+#include <numeric>
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
 
@@ -415,6 +416,7 @@ void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
     forEachIndexInParallel(loops, functionsToSeed.size(), [&](unsigned position) {
         numbersOfParameters[position] = m_program.functions[functionsToSeed[position]].numberOfEntryParameters();
     });
+    m_kept.m_seed.reserveParameters(loops, std::accumulate(numbersOfParameters.begin(), numbersOfParameters.end(), static_cast<size_t>(0)));
     for (size_t position = 0; position < functionsToSeed.size(); ++position)
         m_kept.m_seed.setNumberOfParameters(functionsToSeed[position], numbersOfParameters[position]);
     forEachIndexInParallel(loops, functionsToSeed.size(), [&](unsigned position) {
@@ -519,8 +521,8 @@ void EffectSummarizer::summarizeBodies()
         return static_cast<uint32_t>(key);
     });
 
-    growInParallel(loops, m_kept.m_bodies, numberOfFunctions);
-    growInParallel(loops, m_kept.m_functionsOfClosuresMade, numberOfFunctions);
+    growWithRoomToSpareInParallel(loops, m_kept.m_bodies, numberOfFunctions);
+    growWithRoomToSpareInParallel(loops, m_kept.m_functionsOfClosuresMade, numberOfFunctions);
     m_kept.m_wasLoweredSinceSummarized.insertFill(m_numberOfFunctionsBefore, 0, numberOfFunctions - m_numberOfFunctionsBefore);
     if (m_references)
         m_references->prepareToTake(m_program, loops, m_kept.m_stampsOfRecords.span());
@@ -913,7 +915,7 @@ Vector<uint8_t> EffectSummarizer::markTransitiveUsers(std::span<const uint32_t> 
         frontier = collectInParallel<uint32_t>(loops, frontier.size(), [&](unsigned position, Vector<uint32_t>& found) {
             FunctionID function(frontier[position]);
             forEachUser(function.index(), [&](FunctionID user) {
-                std::atomic_ref userState(states[user.index()]);
+                AtomicRef userState(states[user.index()]);
                 if (userState.load(std::memory_order_relaxed) || !hasEdgeFrom(user, function))
                     return;
                 if (!userState.exchange(affected, std::memory_order_relaxed))

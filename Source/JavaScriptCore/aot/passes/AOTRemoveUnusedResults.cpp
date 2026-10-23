@@ -297,14 +297,16 @@ static ResultRemovalPlan planResultRemoval(const Program& program, const CallGra
 
     plan.singleResultTypes.grow(functionCount);
     plan.isCandidate.ensureSize(functionCount);
-    for (size_t index = 0; index < functionCount; ++index) {
+    // Few functions have a result that nobody reads: all threads look for them.
+    for (uint32_t index : findIndicesInParallel(build.parallelLoops(), functionCount, [&](unsigned index) {
+        FunctionID id(index);
+        if (plan.usedResults[index].bitCount() >= program.at(id).results.size())
+            return false;
+        return canEditResults(program, callGraph, id) == ResultEditing::Allowed && build.isEnabled(PassID::RemoveUnusedResults, findFunctionAsRead(&program, id));
+    })) {
         FunctionID id(index);
         auto& results = program.at(id).results;
         auto& used = plan.usedResults[index];
-        if (used.bitCount() >= results.size())
-            continue;
-        if (canEditResults(program, callGraph, id) != ResultEditing::Allowed || !build.isEnabled(PassID::RemoveUnusedResults, findFunctionAsRead(&program, id)))
-            continue;
         if (used.isEmpty())
             used.set(0);
         if (used.bitCount() == 1)

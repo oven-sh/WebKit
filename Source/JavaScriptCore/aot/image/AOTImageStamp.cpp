@@ -15,6 +15,7 @@
 #include "AOTPositionTable.h"
 #include "AOTProgramTables.h"
 #include "AOTRegExpRecord.h"
+#include "AOTRuntimeFactValues.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubBlob.h"
 #include "AOTStubFrames.h"
@@ -24,6 +25,44 @@
 #include <bit>
 
 namespace JSC { namespace AOT {
+
+static constexpr RuntimeDescription::OperatingSystem describedOperatingSystem()
+{
+#if OS(LINUX)
+    return RuntimeDescription::OperatingSystem::Linux;
+#elif OS(DARWIN)
+    return RuntimeDescription::OperatingSystem::Darwin;
+#elif OS(WINDOWS)
+    return RuntimeDescription::OperatingSystem::Windows;
+#elif OS(FREEBSD)
+    return RuntimeDescription::OperatingSystem::FreeBSD;
+#else
+    return RuntimeDescription::OperatingSystem::Other;
+#endif
+}
+
+extern "C" constinit const DescribedRuntime describedRuntime = {
+    {
+        RuntimeDescription::expectedMagic,
+        sizeOfDescribedRuntime,
+        numberOfRuntimeFacts,
+        CPUFeatureSet::buildTarget().bits(),
+        static_cast<uint8_t>(hostArchitecture()),
+        describedOperatingSystem(),
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+        RuntimeDescription::ImageForm::PositionIndependent,
+#else
+        RuntimeDescription::ImageForm::Absolute,
+#endif
+        (ASSERT_ENABLED ? RuntimeDescription::Assertions : 0) | (ASAN_ENABLED ? RuntimeDescription::AddressSanitizer : 0),
+        0,
+    },
+    {
+#define AOT_RUNTIME_FACT(name, value) checkedRuntimeFact(value),
+#include "AOTRuntimeFacts.def"
+#undef AOT_RUNTIME_FACT
+    },
+};
 
 uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& identity)
 {

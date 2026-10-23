@@ -56,6 +56,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTImageText.h
     aot/image/AOTObfuscatedSites.h
     aot/image/AOTPositionTable.h
+    aot/image/AOTRuntimeDescription.h
     aot/image/AOTVarint.h
     aot/image/AOTWasmInterface.h
     aot/ir/AOTID.h

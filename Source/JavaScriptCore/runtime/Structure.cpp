@@ -796,10 +796,10 @@ static bool isUnpinnedPropertyAddition(const Structure* structure)
     return structure->transitionKind() == TransitionKind::PropertyAddition && !structure->isPinnedPropertyTable() && structure->transitionPropertyName() && structure->previousID();
 }
 
-static bool hasUnsharedTransitionChain(Structure* structure)
+static bool hasUnsharedTransitionChain(Structure* structure, unsigned minLength = Structure::s_minDroppableTransitionChainLength)
 {
     unsigned length = 1;
-    for (Structure* previous = structure->previousID(); length < Structure::s_minDroppableTransitionChainLength; ++length) {
+    for (Structure* previous = structure->previousID(); length < minLength; ++length) {
         if (!previous || !isUnpinnedPropertyAddition(previous) || previous->trySingleTransition() != structure)
             return false;
         structure = previous;
@@ -931,6 +931,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
 
     offset = transition->add(vm, propertyName, attributes);
     transition->setTransitionOffset(vm, offset);
+    unsigned numberOfProperties = transition->propertyTableOrNull()->size();
 
     // Now that everything is fine with the new structure's bookkeeping, the GC is free to blow the
     // table away if it wants. We can now rebuild it fine.
@@ -942,6 +943,8 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
         GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
         structure->m_transitionTable.add(vm, structure, transition);
     }
+    if (Options::useAOT() && numberOfProperties >= s_minPropertiesToDropTransitionChainBeforeMarking)
+        vm.propertyRuns.didExtendLongTransitionChain(structure, transition);
     transition->checkOffsetConsistency();
     structure->checkOffsetConsistency();
     return transition;
@@ -1755,6 +1758,23 @@ bool Structure::dropTransitionChain(VM& vm)
     PropertyTable* table = ensurePropertyTable(vm);
     GCSafeConcurrentJSLocker locker(m_lock, vm);
     return dropTransitionChain(locker, vm, table);
+}
+
+void Structure::dropLongTransitionChainBeforeMarking(VM& vm)
+{
+    PropertyTable* table = propertyTableOrNull();
+    if (!table || table->size() < s_minPropertiesToDropTransitionChainBeforeMarking || !canDropTransitionChain() || !hasUnsharedTransitionChain(this, s_minPropertiesToDropTransitionChainBeforeMarking))
+        return;
+    Structure* previous = previousID();
+    {
+        ConcurrentJSLocker locker(m_lock);
+        if (!dropTransitionChain(locker, vm, table))
+            return;
+    }
+    for (Structure* next = this; previous && previous->trySingleTransition() == next; previous = previous->previousID()) {
+        previous->m_transitionTable.clearSingleTransition();
+        next = previous;
+    }
 }
 
 // In future we may want to cache this property.

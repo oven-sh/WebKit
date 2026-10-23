@@ -88,13 +88,13 @@ struct AssignPlan {
     std::optional<Value> remainingSourcesCall;
 };
 
-struct AllocationUse {
+struct AllocationAtPoint {
     ValueID allocation;
     ProgramPoint point;
 };
 
 // Bit i is set when nothing between the NewObject uses[i].allocation and uses[i].point can have changed its shape, its key order or its extra properties.
-BitVector findUnchangedAllocations(FunctionPassContext&, std::span<const AllocationUse> usesInProgramOrder);
+BitVector findUnchangedAllocations(FunctionPassContext&, std::span<const AllocationAtPoint> usesInProgramOrder);
 
 // Answers for the sources and targets of all the sites of a function with one solve.
 class UnchangedAllocations {
@@ -105,7 +105,7 @@ public:
 
 private:
     FunctionPassContext& m_context;
-    Vector<AllocationUse, 8> m_uses;
+    Vector<AllocationAtPoint, 8> m_uses;
     mutable std::optional<BitVector> m_unchanged;
 };
 

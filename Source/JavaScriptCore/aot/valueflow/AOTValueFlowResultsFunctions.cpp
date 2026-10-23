@@ -19,6 +19,7 @@
 #include <optional>
 #include <tuple>
 #include <utility>
+#include <wtf/Atomics.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/text/MakeString.h>
@@ -80,7 +81,7 @@ public:
     std::span<const uint32_t> statementsAskedForBy(uint32_t number) const LIFETIME_BOUND { return m_statementsAskedFor.of(number); }
 
     // From any thread.
-    void noteAsker(uint32_t number) { std::atomic_ref(m_isAskedFor[number]).store(1, std::memory_order_relaxed); }
+    void noteAsker(uint32_t number) { AtomicRef(m_isAskedFor[number]).store(1, std::memory_order_relaxed); }
     bool isAskedFor(uint32_t number) const { return m_isAskedFor[number]; }
 
 private:

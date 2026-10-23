@@ -29,6 +29,7 @@
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <atomic>
+#include <wtf/Atomics.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -2359,9 +2360,13 @@ bool StoresByLayout::spellsKey(ValueSetMaker& maker, const Writer& writer, Value
     if (name.kind != ValueFlowNameKind::Property || statement.kind != ValueFlowStatementKind::Operation)
         return false;
     // A computed key that can be one key alone gets that key as its type, and the store becomes a store by name: `holder[kState] = value`.
+    // `const { kState } = require(..)` may find nothing as far as anybody knows. SplitUnions tests such a key, and with the symbol the store is a store by name all the same.
     if (statement.opcode == Opcode::ElemSet || statement.opcode == Opcode::ElemDefine) {
         static_assert(OperandIndex::ElemSet::property == OperandIndex::ElemDefine::property);
-        ValueFlowObjectID key = m_inputs.sets().onlyMember(std::as_const(m_heap).valueOf(maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::ElemSet::property]));
+        ValueSetID keys = std::as_const(m_heap).valueOf(maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::ElemSet::property]);
+        if (ValueSets::isComplement(keys))
+            return false;
+        ValueFlowObjectID key = m_inputs.sets().onlyMember(maker.intersect(keys, ValueSets::complement(maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Absent) }))));
         return key && m_inputs.universe().kindOf(key) == ValueFlowObjectKind::Key && m_inputs.universe().keyOf(key).index() == name.payload;
     }
     if (!Value::opcodesWithKey.contains(statement.opcode))
@@ -3831,7 +3836,7 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
     Vector<uint8_t> readersOfMadeStatement;
     readersOfMadeStatement.fill(0, numberOfMadeStatements);
     auto readersOf = [&](ValueFlowStatementID made) {
-        return std::atomic_ref(readersOfMadeStatement[made.index() - statements.size()]);
+        return AtomicRef(readersOfMadeStatement[made.index() - statements.size()]);
     };
     auto addReader = [&](ValueFlowStatementID made, Reader reader) {
         uint8_t bit = static_cast<uint8_t>(reader);
@@ -5760,7 +5765,7 @@ static void computeFieldsStoredOnceByConstructors(const FieldResults& results)
                     return;
                 for (const Value& value : program.functions[index].values) {
                     if (accessClassOf(value.opcode) == AccessClass::DirectCall && value.function())
-                        std::atomic_ref(isCalledDirectly[value.function().index()]).store(1, std::memory_order_relaxed);
+                        AtomicRef(isCalledDirectly[value.function().index()]).store(1, std::memory_order_relaxed);
                 }
             });
         }
@@ -6133,7 +6138,7 @@ static void keepFieldsOnlyCalledWhoseReadsHaveStamps(const ValueFlowResultInputs
         bool hasEscapedObject = storesForAllThreads.hasEscapedObject(layout);
         bool hasLostObject = storesForAllThreads.hasLostObject(layout);
         forEachFieldOfObjectsWith(program, application, layout, [&](FieldReference declaration, const Field& field) {
-            std::atomic_ref reads(application.layouts[declaration.layout.index()].fields[declaration.field].flow.location.reads);
+            AtomicRef reads(application.layouts[declaration.layout.index()].fields[declaration.field].flow.location.reads);
             if (!field.key || !leavesReadsToBeFound(reads.load(std::memory_order_relaxed)))
                 return;
             size_t key = field.key.index();
@@ -6163,7 +6168,7 @@ void computeStoreNamingResults(const ValueFlowResultInputs& inputs, ValueFlowUse
         firstFieldOfLayout[index + 1] = firstFieldOfLayout[index] + program.layouts[index].fields.size();
     Vector<uint8_t> isStoredWithoutName(FillWith { }, firstFieldOfLayout.last(), static_cast<uint8_t>(0));
     auto noteField = [&](FieldReference declaration) {
-        std::atomic_ref(isStoredWithoutName[firstFieldOfLayout[declaration.layout.index()] + declaration.field]).store(1, std::memory_order_relaxed);
+        AtomicRef(isStoredWithoutName[firstFieldOfLayout[declaration.layout.index()] + declaration.field]).store(1, std::memory_order_relaxed);
     };
     auto namesLocation = [&](const Writer& writer, ValueFlowName name) {
         const ValueFlowStatement& statement = writer.statement;
@@ -6239,7 +6244,7 @@ void computeStoreNamingResults(const ValueFlowResultInputs& inputs, ValueFlowUse
         if (namesLocation(writer, name))
             return;
         uint32_t node = solver.indexOfMadeNodes(key);
-        bool isSeen = writer.layoutsOfReceiver.empty() ? std::atomic_ref(nodesSeenWithoutTypeOfReceiver[node]).exchange(1, std::memory_order_relaxed) : !seen.nodesAndTypesOfReceiversSeen.add(static_cast<uint64_t>(node) << 32 | writer.familyOfReceiver.index()).isNewEntry;
+        bool isSeen = writer.layoutsOfReceiver.empty() ? AtomicRef(nodesSeenWithoutTypeOfReceiver[node]).exchange(1, std::memory_order_relaxed) : !seen.nodesAndTypesOfReceiversSeen.add(static_cast<uint64_t>(node) << 32 | writer.familyOfReceiver.index()).isNewEntry;
         if (isSeen)
             return;
         auto noteFieldsOf = [&](LayoutID layout) {
@@ -6326,7 +6331,7 @@ void computeStoreNamingResults(const ValueFlowResultInputs& inputs, ValueFlowUse
         if (!stores.hasEscapedObject(LayoutID(index)))
             return;
         forEachFieldOfObjectsWith(program, application, LayoutID(index), [&](FieldReference declaration, const Field&) {
-            std::atomic_ref(application.layouts[declaration.layout.index()].fields[declaration.field].flow.location.storeNaming).store(StoreNaming::Unknown, std::memory_order_relaxed);
+            AtomicRef(application.layouts[declaration.layout.index()].fields[declaration.field].flow.location.storeNaming).store(StoreNaming::Unknown, std::memory_order_relaxed);
         });
     });
 }

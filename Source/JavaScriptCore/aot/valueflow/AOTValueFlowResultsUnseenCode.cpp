@@ -108,7 +108,7 @@ static bool staysOutsideImage(const Program& program, ModuleID module)
 }
 
 // No operation spells out the call where a built-in applies its callback or a protocol finds a method.
-static void appendRecordsOfApplicationsWithoutOperation(const ValueFlowSolution& solution, ValueSetMaker& maker, ValueSetID eventFunctions, Vector<UnseenCodeRecord>& records)
+static void appendRecordsOfApplicationsWithoutOperation(const ValueFlowSolution& solution, ValueSetMaker& maker, Vector<UnseenCodeRecord>& records)
 {
     const BuiltinTable& builtins = solution.program().builtins();
     BitVector isListed(builtins.builtinCount());
@@ -116,12 +116,15 @@ static void appendRecordsOfApplicationsWithoutOperation(const ValueFlowSolution&
         if (record.builtin != Wire::none)
             isListed.quickSet(record.builtin);
     }
-    ValueSetID applied = maker.intersect(solution.solver().valueOf(solution.bodies().nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode)), eventFunctions);
+    ValueSetID applied = maker.intersect(solution.solver().valueOf(solution.bodies().nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode)), solution.bodies().universe().builtinFunctions());
     size_t first = records.size();
     solution.sets().forEachMember(applied, [&](ValueFlowObjectID object) {
         BuiltinID builtin = builtins.canonicalID(solution.bodies().universe().builtinOf(object));
-        if (!isListed.quickSet(builtin.index()))
-            records.append(UnseenCodeRecord { *eventOfCalling(builtins, builtin, solution.solver().input().refusesEvaluatedText), builtin.index(), noWitness });
+        std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, solution.solver().input().refusesEvaluatedText);
+        if (!cause && builtins.unseenCodeOf(builtin))
+            cause = UnseenCodeCause::RunsUnseenCode;
+        if (cause && !isListed.quickSet(builtin.index()))
+            records.append(UnseenCodeRecord { *cause, builtin.index(), noWitness });
     });
     std::ranges::sort(records.mutableSpan().subspan(first), { }, &UnseenCodeRecord::builtin);
 }
@@ -237,7 +240,7 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
     Vector<UnseenCodeRecord> records;
     for (Vector<UnseenCodeRecord>& recordsOfOne : recordsOfFunction)
         records.appendVector(WTF::move(recordsOfOne));
-    appendRecordsOfApplicationsWithoutOperation(solution, makers.of(0), eventFunctions, records);
+    appendRecordsOfApplicationsWithoutOperation(solution, makers.of(0), records);
     // Likewise where a built-in applies the loader: Reflect.apply(process.dlopen, ..).
     ValueSetID applied = solution.solver().valueOf(bodies.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode));
     for (const Loader& loader : loaders) {

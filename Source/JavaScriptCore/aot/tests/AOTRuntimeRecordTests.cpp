@@ -332,12 +332,12 @@ static void testFarIndexDegrades()
     Realms realms;
     Cells cells(realms);
 
-    Slot near = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::isOwn, nullptr, lastOffsetInLocation);
-    AOT_TEST_CHECK(near.kind == Slot::Kind::Value && near.wordIndex() == -32768 && near.has(Slot::isOutOfLine));
+    Slot nearSlot = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::isOwn, nullptr, lastOffsetInLocation);
+    AOT_TEST_CHECK(nearSlot.kind == Slot::Kind::Value && nearSlot.wordIndex() == -32768 && nearSlot.has(Slot::isOutOfLine));
 
-    Slot far = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::isOwn | Slot::dependsOnChain, nullptr, firstFarOffset);
-    AOT_TEST_CHECK(far.kind == Slot::Kind::FarValue && far.offsetInStorage() == firstFarOffset);
-    AOT_TEST_CHECK(far.flags == (Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain));
+    Slot farSlot = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::isOwn | Slot::dependsOnChain, nullptr, firstFarOffset);
+    AOT_TEST_CHECK(farSlot.kind == Slot::Kind::FarValue && farSlot.offsetInStorage() == firstFarOffset);
+    AOT_TEST_CHECK(farSlot.flags == (Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain));
 
     Slot inherited = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::dependsOnChain, cells.holder, firstFarOffset);
     AOT_TEST_CHECK(inherited.kind == Slot::Kind::Uncacheable && inherited.structureID == cells.id() && !inherited.payloadBits());
@@ -379,12 +379,12 @@ static void testFarValuePacksAsValue()
 {
     Realms realms;
     Cells cells(realms);
-    Slot far = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::isOwn, nullptr, firstFarOffset);
-    AOT_TEST_CHECK(far.kind == Slot::Kind::FarValue);
-    std::optional<PackedSlot> packed = PackedSlot::tryPack(far, testName, cells.cageBase);
+    Slot farSlot = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::isOwn, nullptr, firstFarOffset);
+    AOT_TEST_CHECK(farSlot.kind == Slot::Kind::FarValue);
+    std::optional<PackedSlot> packed = PackedSlot::tryPack(farSlot, testName, cells.cageBase);
     AOT_TEST_CHECK(packed && packed->kind() == Slot::Kind::Value);
     AOT_TEST_CHECK(static_cast<int32_t>(packed->payload) == Slot::wordIndexFor(firstFarOffset) && !packed->location);
-    AOT_TEST_CHECK(hasSameBits(packed->unpack(cells.id(), cells.cageBase, false), far));
+    AOT_TEST_CHECK(hasSameBits(packed->unpack(cells.id(), cells.cageBase, false), farSlot));
 }
 
 static void testInheritedIndexOutsideEightBitsDoesNotPack()

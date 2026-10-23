@@ -26,6 +26,7 @@
 #include <atomic>
 #include <ranges>
 #include <span>
+#include <wtf/Atomics.h>
 #include <wtf/MathExtras.h>
 #include <wtf/SaturatingArithmetic.h>
 
@@ -461,7 +462,7 @@ static bool calleeReturnsFreshAggregate(FunctionPassContext& context, const Inli
     const InliningSummaries& inlining = context.inputs.inlining;
     if (inlining.contains(callee))
         return inlining.returnsFreshAggregate(context.program, callee);
-    std::atomic_ref answer(summary.returnsFreshAggregate);
+    AtomicRef answer(summary.returnsFreshAggregate);
     InliningSummary::Answer known = answer.load(std::memory_order_relaxed);
     if (known == InliningSummary::Answer::NotAsked) {
         FunctionAnalyses analyses(AnalysisContext { context.build, context.program, &context.inputs.flow, &context.inputs.effects, callee }, context.program.at(callee));

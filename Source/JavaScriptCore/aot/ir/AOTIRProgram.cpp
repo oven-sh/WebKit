@@ -18,6 +18,7 @@
 #include <atomic>
 #include <wtf/Atomics.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/UnalignedAccess.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -653,7 +654,7 @@ ProgramEditor::ProgramEditor(Program& program)
 void ProgramEditor::didChange(FunctionID id, uint8_t change)
 {
     RELEASE_ASSERT(id.index() < m_changes.size());
-    std::atomic_ref(m_changes[id.index()]).fetch_or(change, std::memory_order_relaxed);
+    AtomicRef(m_changes[id.index()]).fetch_or(change, std::memory_order_relaxed);
     if (!(change & (hasChangedOperations | wasLowered)))
         return;
     if (BodyIndex* index = m_program.bodyIndex())
@@ -771,7 +772,7 @@ LayoutID ProgramEditor::addLayout(Layout&& layout)
 Layout& ProgramEditor::at(LayoutID id)
 {
     m_program.familyTables().didChangeLayouts();
-    std::atomic_ref(m_isChangedLayout[id.index()]).fetch_or(isChangedLayout, std::memory_order_relaxed);
+    AtomicRef(m_isChangedLayout[id.index()]).fetch_or(isChangedLayout, std::memory_order_relaxed);
     return m_program.at(id);
 }
 
@@ -789,7 +790,7 @@ Layout& ProgramEditor::atForHiddenFields(LayoutID id)
 {
     m_program.familyTables().didChangeLayouts();
     Layout& layout = m_program.at(id);
-    std::atomic_ref state(m_isChangedLayout[id.index()]);
+    AtomicRef state(m_isChangedLayout[id.index()]);
     if (!(state.load(std::memory_order_relaxed) & mayHaveNewHiddenFields))
         state.fetch_or(layout.mayKeepFieldsOutOfLine() ? mayHaveNewHiddenFields : mayHaveNewHiddenFields | keptAllFieldsInline, std::memory_order_relaxed);
     return layout;
@@ -826,14 +827,32 @@ DataID ProgramEditor::addData(Data&& data)
     return id;
 }
 
+// Most passes mark a few records of hundreds of thousands, and each is asked several times what it marked: eight entries without a mark are passed over at a time.
+static void forEachMarked(std::span<const uint8_t> marks, NOESCAPE const Invocable<void(size_t index, uint8_t mark)> auto& functor)
+{
+    size_t index = 0;
+    for (; index + sizeof(uint64_t) <= marks.size(); index += sizeof(uint64_t)) {
+        if (!WTF::unalignedLoad<uint64_t>(marks.subspan(index).data()))
+            continue;
+        for (size_t marked = index; marked < index + sizeof(uint64_t); ++marked) {
+            if (marks[marked])
+                functor(marked, marks[marked]);
+        }
+    }
+    for (; index < marks.size(); ++index) {
+        if (marks[index])
+            functor(index, marks[index]);
+    }
+}
+
 template<typename RecordID>
 static Vector<RecordID> collectMarked(const Vector<uint8_t>& marks, uint8_t wanted)
 {
     Vector<RecordID> marked;
-    for (size_t index = 0; index < marks.size(); ++index) {
-        if (marks[index] & wanted)
+    forEachMarked(marks.span(), [&](size_t index, uint8_t mark) {
+        if (mark & wanted)
             marked.append(RecordID(index));
-    }
+    });
     return marked;
 }
 
@@ -850,10 +869,10 @@ Vector<FunctionID> ProgramEditor::functionsWithChangedOperations() const
 Vector<FunctionID> ProgramEditor::functionsThatWereOnlyLowered() const
 {
     Vector<FunctionID> functions;
-    for (size_t index = 0; index < m_changes.size(); ++index) {
-        if ((m_changes[index] & (hasChangedOperations | wasLowered | hasChangedStorage)) == wasLowered)
+    forEachMarked(m_changes.span(), [&](size_t index, uint8_t changes) {
+        if ((changes & (hasChangedOperations | wasLowered | hasChangedStorage)) == wasLowered)
             functions.append(FunctionID(index));
-    }
+    });
     return functions;
 }
 

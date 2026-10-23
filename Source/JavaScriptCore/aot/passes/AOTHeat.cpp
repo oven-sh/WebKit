@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <wtf/Atomics.h>
 #include <wtf/PrintStream.h>
 #include <wtf/dtoa.h>
 
@@ -361,7 +362,7 @@ static Vector<uint8_t> findFunctionsCalledInLoops(const ParallelLoops& loops, co
         for (unsigned index = 0; index < callees.size(); ++index) {
             FunctionID callee = graph.functionOf(callees[index]);
             if (callee && graph.multiplierOf(caller, index) >= minWeightOfCallThatLoopRepeats)
-                std::atomic_ref(isCalledInLoop[callee.index()]).store(1, std::memory_order_relaxed);
+                AtomicRef(isCalledInLoop[callee.index()]).store(1, std::memory_order_relaxed);
         }
     });
     return isCalledInLoop;

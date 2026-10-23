@@ -28,7 +28,7 @@ extern const BuiltinTextStorage<271, 4034> builtinTableClassTokens;
 extern const BuiltinTextStorage<39, 751> builtinTableSlotTokens;
 extern const BuiltinTextStorage<13, 227> builtinTableLayoutTokens;
 extern const BuiltinTextStorage<219, 4028> builtinTableModuleTokens;
-extern const BuiltinFeatureUse builtinTableFeatureUses[4145];
+extern const BuiltinFeatureUse builtinTableFeatureUses[4159];
 extern const BuiltinUnseenCode builtinTableUnseenCode[1];
 extern const BuiltinModuleLoad builtinTableModuleLoads[59];
 extern const BuiltinModuleLoad builtinTableStartupLoads[1];

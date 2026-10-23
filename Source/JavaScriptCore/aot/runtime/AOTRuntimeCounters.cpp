@@ -18,6 +18,7 @@
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "JSCJSValueInlines.h"
 #include "VM.h"
 #include <algorithm>
 #include <span>

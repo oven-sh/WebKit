@@ -153,6 +153,7 @@ private:
     std::optional<PlannedSplit> planSplitByArms(const ValueSite&, const PropertyAccessQuery&, const PropertyAccessPlan&);
     std::optional<PlannedSplit> planSplitByKeys(const ValueSite&);
     std::optional<PlannedSplit> planSplitOfNumberKey(const ValueSite&);
+    std::optional<PlannedSplit> planSplitOfSymbolKey(const ValueSite&);
     void moveToMemberCall(PlannedSplit&);
     void rewrite(const PlannedSplit&);
 

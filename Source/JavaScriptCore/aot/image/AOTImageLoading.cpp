@@ -329,6 +329,7 @@ struct PositionInFile {
 struct LoadedSegment {
     int64_t offsetInFile;
     uint32_t flags;
+    bool isWhereItWasLinked;
 };
 
 struct SegmentSearch {
@@ -349,7 +350,7 @@ static int findSegmentContaining(struct dl_phdr_info* object, size_t, void* data
         uintptr_t start = object->dlpi_addr + header.p_vaddr;
         if (header.p_type != PT_LOAD || search.address < start || search.address - start >= header.p_filesz)
             continue;
-        search.found = LoadedSegment { static_cast<int64_t>(header.p_offset + (search.address - start)), header.p_flags };
+        search.found = LoadedSegment { static_cast<int64_t>(header.p_offset + (search.address - start)), header.p_flags, !object->dlpi_addr };
         return 1;
     }
     // The executable is the first object, and the image is in no other.
@@ -403,8 +404,9 @@ static bool removeWriteAccessFromLoadedSection(std::span<const uint8_t> image)
 #endif
 }
 
-static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const ImageHeader& header)
+static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const ImageHeader& header, Wire::ImageVerdict& refusal)
 {
+    refusal = Wire::ImageVerdict::CannotMapCode;
     size_t size = header.size - header.codeOffset;
 #if OS(LINUX)
     if (Options::useAOTPerfMap()) [[unlikely]]
@@ -433,6 +435,12 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
             mprotect(const_cast<uint8_t*>(code.data()), code.size(), PROT_READ);
         return mapping;
     }
+#if OS(LINUX)
+    if (isLoadedExecutable && segment->isWhereItWasLinked) {
+        refusal = Wire::ImageVerdict::CodeAtFixedAddress;
+        return std::nullopt;
+    }
+#endif
     if (isLoadedExecutable)
         return CodeMapping::useExecutableSegment(code);
 #endif
@@ -512,9 +520,10 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
 #if OS(LINUX) || OS(FREEBSD)
     rememberPositionOfImage(bytes, file);
 #endif
-    std::optional<CodeMapping> mapping = createCodeMapping(bytes, file, header);
+    ImageVerdict refusal;
+    std::optional<CodeMapping> mapping = createCodeMapping(bytes, file, header, refusal);
     if (!mapping)
-        return ImageVerdict::CannotMapCode;
+        return refusal;
     if (!Image::publish(Image::create(bytes, mapping->code()))) {
         mapping->release();
         return ImageVerdict::AlreadyInUse;

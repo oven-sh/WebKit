@@ -174,7 +174,7 @@ UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::sp
     auto addUse = [&](const OwnKeyWalkSite& site, ValueID object) {
         ValueID origin = context.analyses.sameObjectThroughCasts(object);
         if (context.function.at(origin).opcode == Opcode::NewObject)
-            m_uses.append(AllocationUse { origin, { site.block, site.index } });
+            m_uses.append(AllocationAtPoint { origin, { site.block, site.index } });
     };
     for (const OwnKeyWalkSite& site : sites) {
         addUse(site, site.source);
@@ -183,14 +183,14 @@ UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::sp
     }
 
     const CFG& cfg = context.analyses.cfg();
-    std::ranges::sort(m_uses, { }, [&](const AllocationUse& use) {
+    std::ranges::sort(m_uses, { }, [&](const AllocationAtPoint& use) {
         return std::pair { cfg.reversePostOrderIndex(use.point.block), use.point.index };
     });
 }
 
 bool UnchangedAllocations::contains(ValueID allocation, ProgramPoint point) const
 {
-    size_t index = m_uses.findIf([&](const AllocationUse& use) {
+    size_t index = m_uses.findIf([&](const AllocationAtPoint& use) {
         return use.allocation == allocation && use.point.block == point.block && use.point.index == point.index;
     });
     if (index == notFound)

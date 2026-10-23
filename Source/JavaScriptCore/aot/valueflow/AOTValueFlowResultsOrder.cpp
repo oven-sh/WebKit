@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <atomic>
 #include <tuple>
+#include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -214,7 +215,7 @@ void OrderInputs::collectCallsOfClosures()
                 if (isOperationOfFunction)
                     links.append(linkBetween(statement.function, statement.site, function, linkKindOf(key.callKind())));
                 else
-                    std::atomic_ref(m_hasEntryThatNobodyLists[function.index()]).store(1, std::memory_order_relaxed);
+                    AtomicRef(m_hasEntryThatNobodyLists[function.index()]).store(1, std::memory_order_relaxed);
             });
         });
     }));

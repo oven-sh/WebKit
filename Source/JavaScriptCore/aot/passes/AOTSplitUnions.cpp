@@ -380,6 +380,10 @@ std::optional<PlannedSplit> UnionSplitter::planSplit(const ValueSite& site)
     std::optional<uint32_t> operandIndex = splitOperandOf(value);
     if (!operandIndex)
         return std::nullopt;
+    if (!isNamedAccess(value.opcode) && !isRecordedAsRare(m_function, site.block)) {
+        if (std::optional<PlannedSplit> plan = planSplitOfSymbolKey(site))
+            return plan;
+    }
     // Nothing is proven about the objects of such a type, and testing every unknown value for its primitive parts would only grow the code.
     if (m_program.typeOf(m_function, value.operand(*operandIndex)).anyObject)
         return std::nullopt;
@@ -540,6 +544,28 @@ std::optional<PlannedSplit> UnionSplitter::planSplitByKeys(const ValueSite& site
         plan.split.arms.append(SplitArm { m_context.types.intern(Type::stringLiteral(text)), frequency });
         plan.armReceivers.append(LayoutSetID());
     }
+    return plan;
+}
+
+// `const { kState } = require(..)` may find nothing as far as anybody knows, where somebody may see the module before its body has ended: the key is the symbol or undefined.
+// With the symbol the access is an access by name, whatever is known about the receiver: few layouts have a field under a symbol, so the name says what the receiver is expected to be.
+std::optional<PlannedSplit> UnionSplitter::planSplitOfSymbolKey(const ValueSite& site)
+{
+    const Value& value = m_function.at(site.value);
+    ValueID key = value.propertyOperand();
+    const Type& keyType = m_program.typeOf(m_function, key);
+    if (!keyType.mayBeUndefinedOrNull() || !keyType.hasOnlyPrimitives(Primitive::LiteralSymbol | Primitive::UndefinedOrNull) || keyType.symbolLiterals.size() != 1)
+        return std::nullopt;
+
+    BlockFrequency frequency = m_function.at(site.block).frequency;
+    PlannedSplit plan;
+    plan.site = site;
+    plan.operandIndex = *OperandPosition::property(value.opcode);
+    plan.split.value = key;
+    plan.split.arms.append(SplitArm { m_context.types.intern(Type::symbolLiteral(keyType.symbolLiterals[0])), frequency });
+    plan.armReceivers.append(LayoutSetID());
+    plan.split.hasRest = true;
+    plan.split.restFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
     return plan;
 }
 

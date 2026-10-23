@@ -29,7 +29,7 @@ namespace Typed {
 class BodyReferenceCollector;
 class BodyReferences;
 
-enum class SummaryPart : uint8_t { OnReturn, OnThrow, Parameter, UnknownCode };
+enum class SummaryPart : uint32_t { OnReturn, OnThrow, Parameter, UnknownCode };
 
 struct SummaryNode {
     FunctionID function;

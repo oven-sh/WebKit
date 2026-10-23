@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTMethodDispatch.h"
 #include "AOTPass.h"
@@ -569,13 +570,22 @@ void GenericCopy::recordTestedRejoins()
     if (m_testedRejoinBlocks.isEmpty())
         return;
     const Liveness& liveness = m_analyses.liveness();
+    UnspecifiedValues unspecifiedValues(m_analyses);
     for (BlockID block : m_testedRejoinBlocks) {
         if (!canLeaveCopyAt(block) || mergesAllocationThatSinksWithItsCopyAt(block))
             continue;
-        TestedRejoin rejoin { block, depthOfLoopEnteredAt(block), { } };
+        TestedRejoin rejoin { block, depthOfLoopEnteredAt(block), { }, { } };
         for (ValueID value : liveness.liveAtHead(block)) {
             if (m_mayBeNarrowed.get(value.index()))
                 rejoin.narrowedLiveValues.append(value);
+        }
+        for (ValueID parameter : m_function.at(block).parameters) {
+            if (unspecifiedValues.mayContain(parameter))
+                rejoin.valuesThatMayBeUnspecified.append(parameter);
+        }
+        for (ValueID value : rejoin.narrowedLiveValues) {
+            if (unspecifiedValues.mayContain(value))
+                rejoin.valuesThatMayBeUnspecified.append(value);
         }
         m_testedRejoins.append(WTF::move(rejoin));
     }
@@ -786,7 +796,7 @@ auto GenericCopy::planRejoin(const TestedRejoin& rejoin, const RejoinTypes& rejo
         const Type& wanted = types.at(typeInTypedCode);
         if (given.isSubsetOf(wanted, program))
             return true;
-        if (!given.isJavaScriptValue() || !wanted.isJavaScriptValue())
+        if (!given.isJavaScriptValue() || !wanted.isJavaScriptValue() || rejoin.valuesThatMayBeUnspecified.contains(inTypedCode))
             return false;
         Type testable = testableStoredTypeOf(accessContext, given, wanted, types);
         // No test looks at the contents of an array or at what is pristine about it.

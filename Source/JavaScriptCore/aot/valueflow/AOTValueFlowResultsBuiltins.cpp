@@ -77,6 +77,11 @@ public:
     // A lookup that misses on the holder goes on to the prototype that the table names, and nothing comes under a name without a record in the locations.
     bool isIntact(BuiltinID holder) const;
     BuiltinKind kindOf(BuiltinID builtin) const { return m_builtins.at(builtin).kind; }
+    bool runsUnseenCodeFor(BuiltinID builtin, BuiltinName property) const
+    {
+        const BuiltinUnseenCode* row = m_builtins.unseenCodeOf(builtin);
+        return property && row && row->condition && row->condition->hasProperty == property;
+    }
     // Or be a text, where the name is the first text of a condition.
     bool operandMayHaveProperty(BuiltinID builtin, BuiltinName property) const { return m_propertiesOfOperands.contains(static_cast<uint64_t>(builtin.index()) << 32 | property.index()); }
     // A holder with a locked location is among the receivers of a write under a key of which the sets know the kind alone.
@@ -523,7 +528,7 @@ static bool mayHold(const BuiltinHolders& holders, BuiltinID builtin, const Buil
         return true;
     if (condition->buildAdmitsRuntimeCode)
         return false;
-    if (holders.hasEscaped(builtin) && !condition->calledOn)
+    if (holders.hasEscaped(builtin) && !condition->calledOn && !holders.runsUnseenCodeFor(builtin, condition->hasProperty))
         return true;
     if (condition->firstText() && isObjectKind(holders.kindOf(builtin)) && !holders.operandMayHaveProperty(builtin, condition->firstText()))
         return false;

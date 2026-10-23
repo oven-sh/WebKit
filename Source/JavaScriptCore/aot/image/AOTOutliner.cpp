@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <wtf/Atomics.h>
 #include <wtf/FastBitVector.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
@@ -255,14 +256,14 @@ private:
         Vector<uint32_t> numberOfSites;
         fillWithZeroesOnPool(loops, numberOfSites, m_functions.size());
         forEachLocation([&](const ChosenLocation& location) {
-            std::atomic_ref(numberOfSites[location.function]).fetch_add(1, std::memory_order_relaxed);
+            AtomicRef(numberOfSites[location.function]).fetch_add(1, std::memory_order_relaxed);
         });
         forEachIndexInParallel(loops, m_functions.size(), [&](unsigned function) {
             if (numberOfSites[function])
                 m_result.sites[function] = Vector<OutlinedSite>(std::exchange(numberOfSites[function], 0));
         });
         forEachLocation([&](const ChosenLocation& location) {
-            uint32_t position = std::atomic_ref(numberOfSites[location.function]).fetch_add(1, std::memory_order_relaxed);
+            uint32_t position = AtomicRef(numberOfSites[location.function]).fetch_add(1, std::memory_order_relaxed);
             m_result.sites[location.function][position] = { m_offsets[location.firstUnit], location.sizeInBytes, location.body };
         });
         forEachIndexInParallel(loops, m_functions.size(), [&](unsigned function) {

@@ -1,0 +1,41 @@
+# symbols.js: module.exports = { kState: Symbol("state") }, behind the object that the module began with   main.js: const { kState } = require("./symbols"); const holder = { a: 1 }; holder[kState] = 1
+# Somebody may see symbols.js before its body has ended, so the variable of what it exports is stored twice, and the object that it began with has no `kState`: the key is the symbol or undefined.
+# SplitUnions tests such a key, and with the symbol the store is a store by name: it names a field, as it does where the key is the symbol alone. Under "undefined" nothing gets a field
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Holder" fields=[{key="a"
+# CHECK-NOT: key="undefined"
+# CHECK: {key=symbol("state")@m1:100 declared={type=int} flags=[IsAddedLate
+# CHECK-NOT: key="undefined"
+# CHECK: layout L1
+# CHECK: ElemSet {{*}}, [[key]],
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="symbols.js" displayPath="symbols.js" kind=CommonJs body=f1 exportsVariable=g0
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=number}}]
+layout L1 name="First"
+layout L2 name="Keys" fields=[{key="kState" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="kState"
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    ElemSet v4, v2, v3 mode=Strict
+    Return v4
+}
+function f1 name="symbols" module=m1 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = Builtin builtin=Symbol
+    v4 = String string="state"
+    v5 = Call v3, -, v4 @100
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    Return
+}

@@ -293,6 +293,8 @@ private:
     void grow(unsigned size, const ParallelLoops* = nullptr);
     // Not while another thread calls set().
     void setNumberOfParameters(unsigned index, uint32_t numberOfParameters);
+    // Room for that many more, on pages that are there, for whoever calls setNumberOfParameters() for many functions.
+    void reserveParameters(const ParallelLoops& loops, size_t numberOfMoreParameters) { reserveCapacityInParallel(loops, m_parameters, m_parameters.size() + numberOfMoreParameters); }
     // setNumberOfParameters() for every function, in ascending order.
     void setParameterCounts(NOESCAPE const Invocable<uint32_t(unsigned index)> auto& parameterCount, const ParallelLoops* loops = nullptr)
     {

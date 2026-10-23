@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTCarryVariablesAroundLoops.h"
 #include "AOTCodeSizeEstimate.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
@@ -36,6 +37,7 @@ struct SeparationPlan {
     Vector<Edge> leavingEdges;
     Vector<BlockID> entriesOfCopy;
     Vector<TypeID> typesOfCarriedValues;
+    BitVector carriedValuesThatMayBeUnspecified;
     bool letsVariablesBeCarried { false };
 };
 
@@ -70,7 +72,8 @@ private:
     void separate(const SeparationPlan&);
     bool addWayBack(IRBuilder&, const SeparationPlan&, BlockID headerOfCopy, std::span<const BlockID> copy);
     void carryVariables(IRBuilder&, BlockID header, BlockID headerOfCopy, std::span<const BlockID> copy);
-    Vector<TypeID> findTestsOfEveryTurn(const NaturalLoop&, const BitVector& leavesLoop);
+    BitVector findCarriedValuesThatMayBeUnspecified(BlockID header);
+    Vector<TypeID> findTestsOfEveryTurn(const NaturalLoop&, const BitVector& leavesLoop, const BitVector& mayBeUnspecified);
     Vector<TypeID> findTestsOfVariables(const NaturalLoop&, const BitVector& leavesLoop, size_t firstVariable);
     std::optional<Vector<TypeID>> testedTypesOfWayBack(const SeparationPlan&, std::span<const TypeID> testedEveryTurn);
     bool passesTests(const Arguments&, std::span<const TypeID> tested) const;
@@ -259,6 +262,18 @@ bool LoopPathSeparator::narrowsParameter(const BitVector& isInLoop, const BitVec
     return false;
 }
 
+BitVector LoopPathSeparator::findCarriedValuesThatMayBeUnspecified(BlockID header)
+{
+    const Block& block = m_function.at(header);
+    UnspecifiedValues unspecifiedValues(m_analyses);
+    BitVector result(block.parameters.size());
+    for (size_t index = 0; index < block.parameters.size(); ++index) {
+        if (unspecifiedValues.mayContain(block.parameters[index]))
+            result.set(index);
+    }
+    return result;
+}
+
 std::optional<SeparationPlan> LoopPathSeparator::planWithCarriedVariables(const NaturalLoop& loop)
 {
     m_likelyPathCannotLeave = false;
@@ -306,7 +321,8 @@ std::optional<SeparationPlan> LoopPathSeparator::planFor(const NaturalLoop& loop
     }
     if (leaves.isEmpty() || leaves.get(header.index()))
         return std::nullopt;
-    bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves), [](TypeID tested) {
+    plan.carriedValuesThatMayBeUnspecified = findCarriedValuesThatMayBeUnspecified(header);
+    bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
         return !!tested;
     });
     if (!movesTest && !plan.letsVariablesBeCarried && !narrowsParameter(isInLoop, leaves))
@@ -391,7 +407,7 @@ void LoopPathSeparator::separate(const SeparationPlan& plan)
 }
 
 // A value that goes around the loop and is tested in every turn, with the copy on the failing edge, is tested where it is made instead.
-Vector<TypeID> LoopPathSeparator::findTestsOfEveryTurn(const NaturalLoop& loop, const BitVector& leavesLoop)
+Vector<TypeID> LoopPathSeparator::findTestsOfEveryTurn(const NaturalLoop& loop, const BitVector& leavesLoop, const BitVector& mayBeUnspecified)
 {
     const CFG& cfg = m_analyses.cfg();
     const NaturalLoops& loops = m_analyses.naturalLoops();
@@ -407,6 +423,8 @@ Vector<TypeID> LoopPathSeparator::findTestsOfEveryTurn(const NaturalLoop& loop, 
     const Block& header = m_function.at(loop.header());
     Vector<TypeID> tested(header.parameters.size());
     for (size_t index = 0; index < header.parameters.size(); ++index) {
+        if (mayBeUnspecified.get(index))
+            continue;
         for (const Use& use : uses.usesOf(header.parameters[index])) {
             if (use.kind != Use::Kind::Operand || m_function.at(use.user).opcode != Opcode::TypeTest || !loops.belongsTo(use.block, loop))
                 continue;
@@ -510,7 +528,7 @@ std::optional<Vector<TypeID>> LoopPathSeparator::testedTypesOfWayBack(const Sepa
         }
         const Type& given = types.at(plan.typesOfCarriedValues[index]);
         const Type& wanted = typeOf(header.parameters[index]);
-        if (given.isSubsetOf(wanted, m_program))
+        if (given.isSubsetOf(wanted, m_program) || plan.carriedValuesThatMayBeUnspecified.get(index))
             continue;
         if (!given.isJavaScriptValue() || !wanted.isJavaScriptValue())
             return std::nullopt;
@@ -580,7 +598,7 @@ bool LoopPathSeparator::addWayBack(IRBuilder& builder, const SeparationPlan& pla
         (m_analyses.naturalLoops().belongsTo(edge.from, *loop) ? latchEdges : enteringEdges).append(edge);
     }
 
-    Vector<TypeID> testedEveryTurn = findTestsOfEveryTurn(*loop, isInCopy);
+    Vector<TypeID> testedEveryTurn = findTestsOfEveryTurn(*loop, isInCopy, plan.carriedValuesThatMayBeUnspecified);
     std::optional<Vector<TypeID>> testedTypes = testedTypesOfWayBack(plan, testedEveryTurn.span());
     if (!testedTypes)
         return false;
@@ -597,6 +615,8 @@ bool LoopPathSeparator::addWayBack(IRBuilder& builder, const SeparationPlan& pla
         TypeID typeInLoop = m_function.at(m_function.at(header).parameters[index]).type;
         if (TypeID tested = testedEveryTurn[index])
             typeInLoop = m_context.types.intern(m_context.types.at(typeInLoop).castTo(m_context.types.at(tested), m_context.types));
+        else if (plan.carriedValuesThatMayBeUnspecified.get(index))
+            typeInLoop = m_context.types.unionOf(typeInLoop, plan.typesOfCarriedValues[index]);
         parametersOfEntry.append(builder.addParameter(entry, typeInLoop));
         carried.append(builder.addParameter(tests, plan.typesOfCarriedValues[index]));
     }

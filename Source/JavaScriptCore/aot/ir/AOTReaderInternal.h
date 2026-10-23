@@ -359,10 +359,16 @@ void Reader::growFromEmpty(const ParallelLoops& loops, Vector<Record, inlineCapa
     RELEASE_ASSERT(records.isEmpty());
     if (records.capacity() < size)
         records.reserveInitialCapacity(size);
+    // AddressSanitizer is told that nobody writes behind the end of a vector.
+#if !ASAN_ENABLED
     std::span<uint8_t> bytes = unsafeMakeSpan(reinterpret_cast<uint8_t*>(records.mutableSpan().data()), size * sizeof(Record));
     forEachIndexInParallel(loops, static_cast<unsigned>((bytes.size() + bytesPerTask - 1) / bytesPerTask), [&](unsigned task) {
         zeroSpan(bytes.subspan(task * bytesPerTask, std::min(bytesPerTask, bytes.size() - task * bytesPerTask)));
     });
+#else
+    UNUSED_PARAM(loops);
+    UNUSED_VARIABLE(bytesPerTask);
+#endif
     records.grow(size);
 }
 

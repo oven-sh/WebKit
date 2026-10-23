@@ -38,6 +38,7 @@
 #include <span>
 #include <tuple>
 #include <utility>
+#include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
@@ -2083,7 +2084,7 @@ public:
         m_first.fill(0, numberOfOwners + 1);
         forEachIndexInParallel(loops, readsOfBodies.size(), [&](unsigned index) {
             forEachOwnerIn(readsOfBodies[index].positions.span(), [&](uint32_t owner) {
-                std::atomic_ref(m_first[owner + 1]).fetch_add(1, std::memory_order_relaxed);
+                AtomicRef(m_first[owner + 1]).fetch_add(1, std::memory_order_relaxed);
             });
         });
         for (size_t owner = 0; owner < numberOfOwners; ++owner)
@@ -2093,7 +2094,7 @@ public:
         // The order inside a row is that of arrival. Nobody reads it: a reader is a mark on a body.
         forEachIndexInParallel(loops, readsOfBodies.size(), [&](unsigned index) {
             forEachOwnerIn(readsOfBodies[index].positions.span(), [&](uint32_t owner) {
-                m_readers[std::atomic_ref(next[owner]).fetch_add(1, std::memory_order_relaxed)] = FunctionID(index);
+                m_readers[AtomicRef(next[owner]).fetch_add(1, std::memory_order_relaxed)] = FunctionID(index);
             });
         });
     }

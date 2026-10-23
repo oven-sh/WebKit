@@ -35,6 +35,7 @@
 #include <memory>
 #include <optional>
 #include <tuple>
+#include <wtf/Atomics.h>
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
 #include <wtf/Scope.h>
@@ -438,7 +439,7 @@ void NumbersOfPositions::collectCalls()
             }
             sets.forEachMember(key.set, [&](ValueFlowObjectID member) {
                 if (FunctionID function = universe.closureFunction(member))
-                    std::atomic_ref(m_hasOtherEntry[function.index()]).store(1, std::memory_order_relaxed);
+                    AtomicRef(m_hasOtherEntry[function.index()]).store(1, std::memory_order_relaxed);
             });
         });
     });
@@ -1531,7 +1532,7 @@ static LocationsStoredUndefined findLocationsStoredUndefined(const ValueFlowResu
             uint32_t node = target.index();
             if (node >= firstVariable && node - firstVariable < numberOfVariables) {
                 uint32_t variable = node - firstVariable;
-                std::atomic_ref isStored(variableIsStored[variable]);
+                AtomicRef isStored(variableIsStored[variable]);
                 if (inputs.program.variables[variable].initialization == VariableInitialization::Undefined && !isStored.load(std::memory_order_relaxed) && inputs.sets().meet(findStored(), inputs.universe().undefinedValue()))
                     isStored.store(1, std::memory_order_relaxed);
             }

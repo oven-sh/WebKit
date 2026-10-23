@@ -1,0 +1,33 @@
+# unknown = somethingNoTableLists; store({ state: Object.getPrototypeOf(unknown) }, one); new Set().extra()        store(holder, value) { holder.state.extra = value } is a function of the library
+# RUN: valueflow-solve calls
+# CHECK: f0 v12 -> {{*}}f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Builtin builtin=ObjectGetPrototypeOf
+    v3 = Call v2, -, v1
+    v4 = NewClosure function=f1
+    v5 = NewDictionary
+    PropSet v5, v3 key="state" mode=Strict
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v5, v4
+    v9 = Builtin builtin=Set
+    v10 = Construct v9
+    v11 = PropGet v10 key="extra"
+    v12 = Call v11, v10
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="store" role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = PropGet v0 key="state"
+    PropSet v2, v1 key="extra" mode=Strict
+    Return
+}

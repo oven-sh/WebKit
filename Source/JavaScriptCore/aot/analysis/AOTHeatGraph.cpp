@@ -19,10 +19,12 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
+#include "AOTLargeVectors.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <atomic>
 #include <numeric>
+#include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/CycleForest.h>
 #include <wtf/FrequencyEstimator.h>
@@ -185,7 +187,7 @@ private:
             return;
         m_calls.append(WeightedCall { m_graph.nodeOf(callee).index(), weight });
         if (callOfHost == CallOfHost::IsReplaced || m_flow.runsAtMostOnce(m_program, callee))
-            std::atomic_ref(m_isCountedByProgram[callee.index()]).store(1, std::memory_order_relaxed);
+            AtomicRef(m_isCountedByProgram[callee.index()]).store(1, std::memory_order_relaxed);
     }
 
     void mergeBlockGroups()
@@ -537,8 +539,8 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
     graph.m_firstSuccessor.fill(0u, numberOfNodes + 1);
     for (unsigned index = 0; index < numberOfNodes; ++index)
         graph.m_firstSuccessor[index + 1] = graph.m_firstSuccessor[index] + calls[index].size();
-    graph.m_successors.grow(graph.m_firstSuccessor[numberOfNodes]);
-    graph.m_multipliers.grow(graph.m_firstSuccessor[numberOfNodes]);
+    growInParallel(loops, graph.m_successors, graph.m_firstSuccessor[numberOfNodes]);
+    growInParallel(loops, graph.m_multipliers, graph.m_firstSuccessor[numberOfNodes]);
     forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
         uint32_t position = graph.m_firstSuccessor[index];
         for (const WeightedCall& call : calls[index]) {

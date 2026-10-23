@@ -789,7 +789,7 @@ BorrowedParameters computeBorrowedParameters(const Program& program, BuildContex
     Vector<uint64_t>& words = table.m_words;
     reserveCapacityInParallel(loops, words, numberOfFunctions);
     words.fill(0, numberOfFunctions);
-    growInParallel(loops, kept.m_bodies, numberOfFunctions);
+    growWithRoomToSpareInParallel(loops, kept.m_bodies, numberOfFunctions);
     std::atomic<bool> someBodySaysSomethingElse { false };
     kept.m_wasLoweredSinceScanned.insertFill(numberOfKeptBodies, 0, numberOfFunctions - numberOfKeptBodies);
     forEachIndexInParallel(loops, numberOfFunctions, largeFunctions(program, loops).span(), [&](unsigned index) {

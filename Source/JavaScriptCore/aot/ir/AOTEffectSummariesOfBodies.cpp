@@ -17,11 +17,22 @@
 #include "AOTIR.h"
 #include <algorithm>
 #include <array>
+#include <numeric>
 #include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using PredecessorLists = Vector<Vector<unsigned, 2>>;
+namespace {
+
+// One list behind the other. A body of a few blocks asks for no memory.
+struct PredecessorLists {
+    std::span<const unsigned> of(unsigned block) const { return blocks.span().subspan(first[block], first[block + 1] - first[block]); }
+
+    Vector<unsigned, 32> first;
+    Vector<unsigned, 64> blocks;
+};
+
+} // anonymous namespace
 
 template<typename Entry>
 static bool rowMayThrow(Entry entry, const Effects& bound)
@@ -60,27 +71,28 @@ static const FactsOfRows& factsOfRows()
     return facts;
 }
 
-static BitVector findBlocksReaching(const PredecessorLists& predecessors, Vector<unsigned>&& worklist)
+static void addBlocksReaching(const PredecessorLists& predecessors, BitVector& blocks)
 {
-    BitVector result(predecessors.size());
-    for (unsigned block : worklist)
-        result.quickSet(block);
+    Vector<unsigned, 32> worklist;
+    for (size_t block : blocks)
+        worklist.append(block);
     while (!worklist.isEmpty()) {
-        for (unsigned predecessor : predecessors[worklist.takeLast()]) {
-            if (!result.quickSet(predecessor))
+        for (unsigned predecessor : predecessors.of(worklist.takeLast())) {
+            if (!blocks.quickSet(predecessor))
                 worklist.append(predecessor);
         }
     }
-    return result;
 }
 
 ExitReachability computeExitReachability(const Function& function)
 {
     const FactsOfRows& rows = factsOfRows();
     unsigned numberOfBlocks = function.blocks.size();
-    PredecessorLists predecessors(numberOfBlocks);
-    Vector<unsigned> returningBlocks;
-    Vector<unsigned> throwingBlocks;
+    ExitReachability exits { BitVector(numberOfBlocks), BitVector(numberOfBlocks) };
+    BitVector comesToTerminator(numberOfBlocks);
+    BitVector comesToHandler(numberOfBlocks);
+    PredecessorLists predecessors;
+    predecessors.first.fill(0u, numberOfBlocks + 1);
     for (unsigned index = 0; index < numberOfBlocks; ++index) {
         const Block& block = function.blocks[index];
         bool reachesEnd = true;
@@ -96,20 +108,34 @@ ExitReachability computeExitReachability(const Function& function)
             TerminatorKind kind = block.terminator.kind;
             mayThrowInside = mayThrowInside || rows.terminatorKindsThatMayThrow.contains(kind);
             returns = returns || returnsToCaller(kind);
+            comesToTerminator.quickSet(index);
             for (const Target& target : block.terminator.targets)
-                predecessors[target.block.index()].append(index);
+                ++predecessors.first[target.block.index() + 1];
         }
         if (returns)
-            returningBlocks.append(index);
-        if (mayThrowInside && block.handler)
-            predecessors[block.handler->block.index()].append(index);
+            exits.reachesReturn.quickSet(index);
+        if (mayThrowInside && block.handler) {
+            comesToHandler.quickSet(index);
+            ++predecessors.first[block.handler->block.index() + 1];
+        }
         if (mayThrowInside && !block.handler)
-            throwingBlocks.append(index);
+            exits.reachesThrow.quickSet(index);
     }
-    return {
-        findBlocksReaching(predecessors, WTF::move(returningBlocks)),
-        findBlocksReaching(predecessors, WTF::move(throwingBlocks)),
-    };
+    if (numberOfBlocks == 1)
+        return exits;
+
+    std::partial_sum(predecessors.first.begin(), predecessors.first.end(), predecessors.first.begin());
+    predecessors.blocks.grow(predecessors.first.last());
+    Vector<unsigned, 32> next(predecessors.first.span().first(numberOfBlocks));
+    for (size_t index : comesToTerminator) {
+        for (const Target& target : function.blocks[index].terminator.targets)
+            predecessors.blocks[next[target.block.index()]++] = index;
+    }
+    for (size_t index : comesToHandler)
+        predecessors.blocks[next[function.blocks[index].handler->block.index()]++] = index;
+    addBlocksReaching(predecessors, exits.reachesReturn);
+    addBlocksReaching(predecessors, exits.reachesThrow);
+    return exits;
 }
 
 static bool maySuspend(FunctionAnalyses& analyses)

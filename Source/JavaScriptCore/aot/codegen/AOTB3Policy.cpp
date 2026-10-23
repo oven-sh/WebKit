@@ -13,6 +13,7 @@
 #include "AOTConvention.h"
 #include "AOTFaultTable.h"
 #include "AOTRelocation.h"
+#include "AOTSlotRepresentation.h"
 #include "AOTStubBodyConvention.h"
 #include "CPU.h"
 #include "GPRInfo.h"

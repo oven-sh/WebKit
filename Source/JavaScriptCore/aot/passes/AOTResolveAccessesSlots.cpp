@@ -98,6 +98,7 @@ void AccessRewriter::becomeCallOfGetterInSlot(const NamedAccessSite& site, const
     call.become(Opcode::Call);
     call.setCalleeOperand(getter);
     call.setThisValueOperand(operands.receiver);
+    call.setCallees(calleesOfGetterInSlot(m_context, plan, stamp.key));
     call.setAccessSite(stamp.accessSite);
     finish(site.site, replaced);
 }
