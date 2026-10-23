@@ -52,20 +52,40 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(DateConstructor, InternalFunction);
 JSObject* constructDate(JSGlobalObject*, JSValue newTarget, const ArgList&);
 JSValue dateNowImpl(JSGlobalObject*);
 
+// The years and the month counts MakeDay takes: up to 2^53 - 1 in magnitude, where every integer
+// is still a double. NaN and the infinities are outside it.
+constexpr static inline bool isYearOrMonthForMakeDay(double value)
+{
+    return std::abs(value) <= maxSafeInteger();
+}
+
 // https://tc39.es/ecma262/#sec-makeday
+// MakeDay for a year and a month count that isYearOrMonthForMakeDay() accepts. It splits the
+// month count into years and a month in 64-bit integers, which is exact. In a double it is not:
+// beyond 2^53, month / 12 rounds. The result is NaN when year + floor(month / 12) does not fit
+// an int32_t.
+constexpr static inline double makeDayForIntegers(int64_t year, int64_t month, double date)
+{
+    if (month < 0 || month > 11) {
+        int64_t additionalYears = month / 12;
+        month %= 12;
+        if (month < 0) {
+            month += 12;
+            --additionalYears;
+        }
+        year += additionalYears;
+    }
+    if (year != static_cast<int32_t>(year))
+        return PNaN;
+    double days = dateToDaysFrom1970(static_cast<int32_t>(year), static_cast<int32_t>(month), 1);
+    return days + date - 1;
+}
+
 constexpr static inline double makeDay(double year, double month, double date)
 {
-    double additionalYears = std::floor(month / 12);
-    double ym = year + additionalYears;
-    if (!std::isfinite(ym))
+    if (!isYearOrMonthForMakeDay(year) || !isYearOrMonthForMakeDay(month))
         return PNaN;
-    double mm = month - additionalYears * 12;
-    int32_t yearInt32 = toInt32(ym);
-    int32_t monthInt32 = toInt32(mm);
-    if (yearInt32 != ym || monthInt32 != mm)
-        return PNaN;
-    double days = dateToDaysFrom1970(yearInt32, monthInt32, 1);
-    return days + date - 1;
+    return makeDayForIntegers(static_cast<int64_t>(year), static_cast<int64_t>(month), date);
 }
 
 // https://tc39.es/ecma262/#sec-makedate

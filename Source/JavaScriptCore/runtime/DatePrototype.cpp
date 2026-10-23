@@ -24,6 +24,7 @@
 #include "config.h"
 #include "DatePrototype.h"
 
+#include "DateConstructor.h"
 #include "DateConversion.h"
 #include "DateInstance.h"
 #include "Error.h"
@@ -129,8 +130,8 @@ static void applyToNumberToOtherwiseIgnoredArguments(JSGlobalObject* globalObjec
 }
 
 // The broken-down date a setter builds its new time value from. It is deliberately not a
-// PlainGregorianDateTime: that type is packed and range-checked, while these fields have to hold
-// whatever out-of-range year or month the caller passed before the result is clipped.
+// PlainGregorianDateTime: that type is packed and range-checked. The year, month and day a date
+// setter was given are not kept here but in DateSetterFields.
 struct BrokenDownDate {
     BrokenDownDate() = default;
     explicit BrokenDownDate(PlainGregorianDateTime t)
@@ -200,11 +201,19 @@ static bool fillStructuresUsingTimeArgs(JSGlobalObject* globalObject, CallFrame*
     return std::isfinite(milliseconds);
 }
 
-// Converts a list of arguments sent to a Date member function into years, months, and milliseconds, updating
-// ms (representing milliseconds) and t (representing the rest of the date structure) appropriately.
-//
-// Format of member function: f([years,] [months,] [days])
-static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned maxArgs, double *ms, BrokenDownDate* t)
+// The year, month and day a date setter passes to MakeDay, as the caller gave them. MakeDay does
+// not range-check the year or the month count alone, only year + floor(month / 12):
+// setUTCFullYear(275761, -12) is January 275760.
+struct DateSetterFields {
+    int64_t year { 0 };
+    int64_t month { 0 };
+    double monthDay { 0 };
+};
+
+// Stores the arguments of a Date member function of the form f([years,] [months,] [days]) into
+// fields. Returns false if MakeDay does not take the years or the months, or the days are not
+// finite: the new time value is NaN then.
+static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned maxArgs, DateSetterFields* fields)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -217,31 +226,34 @@ static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame*
     if (maxArgs >= 3 && idx < numArgs) {
         double years = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-
-        // The broken-down date represents `years` as `int`.
-        // Therefore, if the `years` exceeds the maximum representable `int`, date calculations may produce incorrect results.
-        // The condidtion, `std::abs(years) <= msToYear(WTF::maxECMAScriptTime)`, is used as a safeguard before `timeClip(double)`.
-        ok = ok && std::isfinite(years) && std::abs(years) <= msToYear(WTF::maxECMAScriptTime);
-        t->year = toInt32(years);
+        ok = ok && isYearOrMonthForMakeDay(years);
+        if (ok)
+            fields->year = static_cast<int64_t>(years);
     }
     // months
     if (maxArgs >= 2 && idx < numArgs) {
         double months = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        double years = months / 12;
-        ok = ok && std::isfinite(months) && std::abs(years) <= msToYear(WTF::maxECMAScriptTime);
-        t->month = toInt32(months);
+        ok = ok && isYearOrMonthForMakeDay(months);
+        if (ok)
+            fields->month = static_cast<int64_t>(months);
     }
     // days
     if (idx < numArgs) {
         double days = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         ok = ok && std::isfinite(days);
-        t->monthDay = 0;
-        *ms += days * msPerDay;
+        fields->monthDay = days;
     }
 
     return ok;
+}
+
+// MakeDate(MakeDay(year, month, date), TimeWithinDay(t)), UTC() for a local time, and TimeClip.
+static ALWAYS_INLINE double dateSetterTimeValue(DateCache& cache, const DateSetterFields& fields, const BrokenDownDate& t, double ms, TimeType inputTimeType)
+{
+    double date = makeDate(makeDayForIntegers(fields.year, fields.month, fields.monthDay), makeTime(t.hour, t.minute, t.second, ms));
+    return timeClip(cache.localTimeToMS(date, inputTimeType));
 }
 
 const ClassInfo DatePrototype::s_info = { "Object"_s, &Base::s_info, &datePrototypeTable, nullptr, CREATE_METHOD_TABLE(DatePrototype) };
@@ -790,15 +802,15 @@ static EncodedJSValue setNewValueFromDateArgs(JSGlobalObject* globalObject, Call
         gregorianDateTime = BrokenDownDate(other);
     }
 
-    bool success = fillStructuresUsingDateArgs(globalObject, callFrame, numArgsToUse, &ms, &gregorianDateTime);
+    DateSetterFields fields { gregorianDateTime.year, gregorianDateTime.month, static_cast<double>(gregorianDateTime.monthDay) };
+    bool success = fillStructuresUsingDateArgs(globalObject, callFrame, numArgsToUse, &fields);
     RETURN_IF_EXCEPTION(scope, { });
     if (!success) {
         thisDateObj->setInternalNumber(PNaN);
         return JSValue::encode(jsNaN());
     }
 
-    double newUTCDate = cache.gregorianDateTimeToMS(gregorianDateTime.year, gregorianDateTime.month, gregorianDateTime.monthDay, gregorianDateTime.hour, gregorianDateTime.minute, gregorianDateTime.second, ms, inputTimeType);
-    double result = timeClip(newUTCDate);
+    double result = dateSetterTimeValue(cache, fields, gregorianDateTime, ms, inputTimeType);
     thisDateObj->setInternalNumber(result);
     return JSValue::encode(jsNumber(result));
 }
@@ -905,14 +917,13 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncSetYear, (JSGlobalObject* globalObject, Ca
 
     double year = callFrame->argument(0).toIntegerPreserveNaN(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!std::isfinite(year) || std::abs(year) > msToYear(WTF::maxECMAScriptTime)) {
+    if (!isYearOrMonthForMakeDay(year)) {
         thisDateObj->setInternalNumber(PNaN);
         return JSValue::encode(jsNaN());
     }
 
-    gregorianDateTime.year = toInt32((year >= 0 && year <= 99) ? (year + 1900) : year);
-    double timeInMilliseconds = cache.gregorianDateTimeToMS(gregorianDateTime.year, gregorianDateTime.month, gregorianDateTime.monthDay, gregorianDateTime.hour, gregorianDateTime.minute, gregorianDateTime.second, ms, TimeType::LocalTime);
-    double result = timeClip(timeInMilliseconds);
+    DateSetterFields fields { static_cast<int64_t>((year >= 0 && year <= 99) ? (year + 1900) : year), gregorianDateTime.month, static_cast<double>(gregorianDateTime.monthDay) };
+    double result = dateSetterTimeValue(cache, fields, gregorianDateTime, ms, TimeType::LocalTime);
     thisDateObj->setInternalNumber(result);
     return JSValue::encode(jsNumber(result));
 }
