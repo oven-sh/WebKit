@@ -712,7 +712,7 @@ namespace JSC {
                 emitProfileControlFlow(textOffset, textEndOffset);
         }
         bool& isInCaseTest() { return m_isInCaseTest; }
-        // For a part of a loop header that runs once for each iteration. A loop emits its condition twice, with one counter.
+        // For the condition, the increment or the left side in a loop header. A loop emits its condition twice, with one counter.
         void emitProfileControlFlowForLoopHeader(int textOffset, int textEndOffset)
         {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
