@@ -6652,8 +6652,9 @@ class YarrGenerator final : public YarrJITInfo {
     {
         if (m_failureReason)
             return true;
-        // Inlined code goes into the buffer of the DFG / FTL function, where it is too late to fall back.
-        // Its size is bounded up front: the stand-alone code passed this limit and maximumRegExpTestInlineCodesize.
+        // An inlined RegExp is emitted into the DFG / FTL function's buffer: codeSize() counts that function's code too,
+        // and it is too late to fall back to the interpreter. Its size is bounded before inlining instead: the stand-alone
+        // code passed this limit and maximumRegExpTestInlineCodesize.
         if (m_executionMode == ExecutionMode::InlineTest)
             return false;
         if (m_jit.m_assembler.buffer().codeSize() > Options::maximumRegExpJITCodeSize()) [[unlikely]] {
