@@ -333,6 +333,10 @@ public:
     bool isDictionary() const { return dictionaryKind() != NoneDictionaryKind; }
     bool isUncacheableDictionary() const { return dictionaryKind() == UncachedDictionaryKind; }
     bool isCacheableDictionary() const { return dictionaryKind() == CachedDictionaryKind; }
+    // A dictionary's one object has moved to a transition, which took its table (takePropertyTableFrom). No object
+    // has this structure any more, and it has no table to answer a property query from. An inline cache or a
+    // profile can still hold it: a status computation skips it, and no condition holds on it.
+    bool isDepartedDictionary() const { return isDictionary() && !isPinnedPropertyTable(); }
   
     bool prototypeQueriesAreCacheable()
     {
@@ -978,7 +982,8 @@ private:
     
     void setPropertyTable(VM& vm, PropertyTable* table);
     
-    PropertyTable* takePropertyTableOrCloneIfPinned(VM&);
+    void takePropertyTableFrom(VM&, Structure* previous);
+    PropertyTable* takePropertyTableFromDictionary(VM&);
     PropertyTable* copyPropertyTableForPinning(VM&);
 
     void setPreviousID(VM&, Structure*);

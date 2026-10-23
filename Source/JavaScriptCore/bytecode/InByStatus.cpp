@@ -131,6 +131,8 @@ InByStatus InByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(cons
         Structure* structure = propertyCache->inlineAccessBaseStructure();
         if (structure->takesSlowPathInDFGForImpureProperty())
             return InByStatus(TakesSlowPath);
+        if (structure->isDepartedDictionary())
+            return InByStatus(NoInformation);
         CacheableIdentifier identifier = propertyCache->identifier();
         UniquedStringImpl* uid = identifier.uid();
         RELEASE_ASSERT(uid);

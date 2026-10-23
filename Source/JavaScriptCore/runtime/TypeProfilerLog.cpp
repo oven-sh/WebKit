@@ -87,6 +87,9 @@ void TypeProfilerLog::processLogEntries(VM& vm, const String& reason)
         bool sawPolyProtoStructure = false;
         if (id) {
             structure = id.decode();
+            // A dictionary that its object has left has no properties to read: the object's structure now has them.
+            if (structure->isDepartedDictionary() && value.isCell())
+                structure = value.asCell()->structure();
             auto iter = cachedMonoProtoShapes.find(structure);
             if (iter == cachedMonoProtoShapes.end()) {
                 auto key = std::make_pair(structure, value.asCell());

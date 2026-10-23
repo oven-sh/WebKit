@@ -43,6 +43,10 @@ ComplexGetStatus ComplexGetStatus::computeFor(
     
     if (headStructure->takesSlowPathInDFGForImpureProperty())
         return takesSlowPath();
+
+    // No object has this structure any more, and it cannot say where the property was.
+    if (headStructure->isDepartedDictionary())
+        return skip();
     
     ComplexGetStatus result;
     result.m_kind = Inlineable;
