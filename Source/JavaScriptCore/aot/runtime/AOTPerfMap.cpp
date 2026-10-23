@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTHost.h"
 
-#if ENABLE(AOT)
+#if ENABLE(AOT) && !defined(BUN_HARDENED)
 
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"

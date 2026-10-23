@@ -17,6 +17,7 @@
 #include "AOTFlowSinkEquations.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTRuntimeValidationEmitter.h"
 #include "AOTStubBodyConvention.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsCalls.h"
@@ -161,6 +162,10 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
         break;
     }
 
+    std::optional<Integer> stopsBeforeCall;
+    if (generator().validates() && request.effects.mayCollect && !calls.effectsOfCall(context, request.effects).mayCollect)
+        stopsBeforeCall = emitter<RuntimeValidationEmitter>().countStopsForCollector();
+
     B3::PatchpointValue* patchpoint = calls.createCallPatchpoint(context, request);
     for (const B3::ConstrainedValue& argument : placed.inRegisters)
         patchpoint->append(argument);
@@ -249,6 +254,20 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     calls.finishCallPatchpoint(context, patchpoint, site, request);
     if (options.hasLandingOfMisfit)
         m_landingOfLastCall = emitter<ExceptionEmitter>().attachLandingOfMisfit(patchpoint, site);
+    if (stopsBeforeCall) {
+        RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
+        switch (target.kind) {
+        case TargetKind::Function:
+            validation.checkCollectorDidNotStop(context, *stopsBeforeCall, CalledCode::Kind::Function, target.calledFunction.index());
+            break;
+        case TargetKind::Address:
+            validation.checkCollectorDidNotStop(context, *stopsBeforeCall, CalledCode::Kind::Address, 0);
+            break;
+        case TargetKind::Stub:
+            validation.checkCollectorDidNotStop(context, *stopsBeforeCall, CalledCode::Kind::Stub, static_cast<uint32_t>(target.calledStub.family()));
+            break;
+        }
+    }
     return patchpoint;
 }
 

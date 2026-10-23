@@ -300,7 +300,7 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
     // Nothing is cached for extra properties that the Structure does not name. Whoever has asked for such keys more than once will ask again.
     if (JSObject* extra = extraProperties(); extra && !compiledStructure().extraPropertiesStructureID() && state.propertyCaches->shouldFile(extra->structureID(), nullptr, SlotAccess::Read))
         ensureStructureForExtraProperties(vm);
-    Structure* structureBefore = structure();
+    Structure* structureBefore = WTF::opaque(structure());
     uint32_t orderWordBefore = orderWord();
 
     bool hasExtraProperties = this->hasExtraProperties();

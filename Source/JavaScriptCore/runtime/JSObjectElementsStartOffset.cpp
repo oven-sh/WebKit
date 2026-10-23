@@ -17,7 +17,7 @@ static bool canHaveElementsStartOffset(JSObject* object, Structure* structure)
 {
     if (object->type() != ArrayType && object->type() != DerivedArrayType)
         return false;
-    if (structure->outOfLineCapacity() || structure->hijacksIndexingHeader() || structure->hasImmutableProperties())
+    if (structure->hijacksIndexingHeader() || structure->hasImmutableProperties())
         return false;
     switch (structure->indexingMode()) {
     case ArrayWithInt32:
@@ -75,20 +75,26 @@ bool JSObject::tryMoveElementsStartForward(VM& vm, unsigned count)
     ASSERT(count);
     if (!canHaveElementsStartOffset(this, structure()))
         return false;
+    // The out-of-line properties lie in front of the elements and move with their start.
+    size_t propertyCapacity = structure()->outOfLineCapacity();
+    if (propertyCapacity >= butterfly()->publicLength() - count)
+        return false;
     if (!structure()->hasElementsStartOffset() && !tryReallocateWithElementsStartOffset(vm, butterfly()->vectorLength(), 1))
         return false;
 
     Butterfly* oldButterfly = this->butterfly();
     unsigned publicLength = oldButterfly->publicLength();
     unsigned vectorLength = oldButterfly->vectorLength();
-    uint64_t numberOfFreeSlots = oldButterfly->indexingHeader()->elementsStartOffset(0);
+    uint64_t numberOfFreeSlots = oldButterfly->indexingHeader()->elementsStartOffset(propertyCapacity);
     RELEASE_ASSERT(count <= publicLength && publicLength <= vectorLength);
 
     Locker locker { cellLock() };
-    Butterfly* newButterfly = Butterfly::fromBase(static_cast<EncodedJSValue*>(oldButterfly->base(0, 0)) + count, 0, 0);
+    auto* oldBase = static_cast<EncodedJSValue*>(oldButterfly->base(0, propertyCapacity));
+    memmove(oldBase + count, oldBase, propertyCapacity * sizeof(EncodedJSValue));
+    Butterfly* newButterfly = Butterfly::fromBase(oldBase + count, 0, propertyCapacity);
     newButterfly->setPublicLength(publicLength - count);
     newButterfly->setVectorLength(vectorLength - count);
-    newButterfly->indexingHeader()->elementsStartOffset(0) = numberOfFreeSlots + count;
+    newButterfly->indexingHeader()->elementsStartOffset(propertyCapacity) = numberOfFreeSlots + count;
     WTF::storeStoreFence();
     butterflyRef().set(vm, this, newButterfly);
     return true;
@@ -105,8 +111,11 @@ bool JSObject::tryMoveElementsStartBackward(VM& vm, unsigned count)
     unsigned vectorLength = butterfly()->vectorLength();
     if (count > MAX_STORAGE_VECTOR_LENGTH - vectorLength)
         return false;
+    size_t propertyCapacity = structure->outOfLineCapacity();
+    if (propertyCapacity >= publicLength)
+        return false;
 
-    bool hasRoom = structure->hasElementsStartOffset() && butterfly()->indexingHeader()->elementsStartOffset(0) > count;
+    bool hasRoom = structure->hasElementsStartOffset() && butterfly()->indexingHeader()->elementsStartOffset(propertyCapacity) > count;
     if (!hasRoom) {
         size_t numberOfFreeSlots = static_cast<size_t>(count) + std::max<unsigned>(publicLength / 2, 16) + 1;
         if (numberOfFreeSlots + publicLength > MAX_STORAGE_VECTOR_LENGTH)
@@ -116,12 +125,14 @@ bool JSObject::tryMoveElementsStartBackward(VM& vm, unsigned count)
     }
 
     Butterfly* oldButterfly = this->butterfly();
-    uint64_t numberOfFreeSlots = oldButterfly->indexingHeader()->elementsStartOffset(0);
+    uint64_t numberOfFreeSlots = oldButterfly->indexingHeader()->elementsStartOffset(propertyCapacity);
     RELEASE_ASSERT(numberOfFreeSlots > count);
 
     Locker locker { cellLock() };
-    Butterfly* newButterfly = Butterfly::fromBase(static_cast<EncodedJSValue*>(oldButterfly->base(0, 0)) - count, 0, 0);
-    newButterfly->indexingHeader()->elementsStartOffset(0) = numberOfFreeSlots - count;
+    auto* oldBase = static_cast<EncodedJSValue*>(oldButterfly->base(0, propertyCapacity));
+    memmove(oldBase - count, oldBase, propertyCapacity * sizeof(EncodedJSValue));
+    Butterfly* newButterfly = Butterfly::fromBase(oldBase - count, 0, propertyCapacity);
+    newButterfly->indexingHeader()->elementsStartOffset(propertyCapacity) = numberOfFreeSlots - count;
     newButterfly->setPublicLength(publicLength + count);
     newButterfly->setVectorLength(vectorLength + count);
     Butterfly::clearRange(indexingType(), newButterfly, 0, count);

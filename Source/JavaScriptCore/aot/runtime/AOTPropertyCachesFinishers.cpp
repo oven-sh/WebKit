@@ -17,6 +17,7 @@
 #include "GetterSetter.h"
 #include <array>
 #include <bit>
+#include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT {
 
@@ -65,13 +66,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddPropertyBySlot, void, (Instance
     Slot slot = std::bit_cast<Slot>(std::array<uint64_t, 2> { header, payload });
     RELEASE_ASSERT(object->structureID() == slot.structureID);
     if (slot.kind == Slot::Kind::Transition) {
-        addPropertyByTransition(vm, asObject(object), slot.transition.newStructureID.decode(), slot.offsetInStorage(), JSValue::decode(value));
+        addPropertyByTransition(vm, asObject(object), WTF::opaque(slot.transition.newStructureID.decode()), slot.offsetInStorage(), JSValue::decode(value));
         return;
     }
 
     RELEASE_ASSERT(slot.kind == Slot::Kind::ExtraPropertyAddition);
     Object* receiver = uncheckedDowncast<Object>(object);
-    Structure* newStructure = slot.extraPropertyAddition.newStructureID.decode();
+    // The slot is a copy out of a weak cache, and no object need have this Structure yet: this pointer alone keeps it alive while the extra properties are allocated.
+    // The collector knows no StructureID on the stack, so the compiler must not make the pointer anew from the ID behind the call.
+    Structure* newStructure = WTF::opaque(slot.extraPropertyAddition.newStructureID.decode());
     JSObject* extraProperties = receiver->ensureExtraProperties(vm);
     RELEASE_ASSERT(extraProperties);
     addPropertyByTransition(vm, extraProperties, compiledObjectStructureOrNull(newStructure)->extraPropertiesStructure(), Slot::offsetFor(slot.extraPropertyAddition.wordIndex), JSValue::decode(value));

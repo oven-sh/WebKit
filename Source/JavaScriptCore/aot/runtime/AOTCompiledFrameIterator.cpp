@@ -117,8 +117,12 @@ Instance* CompiledFrameIterator::tryFindInstance() const
     if (state.instances.size() != 1)
         return findEnclosingAdapterInstance(m_cursor);
 #if ASSERT_ENABLED
-    Instance* adapterInstance = findEnclosingAdapterInstance(m_cursor);
-    ASSERT(!adapterInstance || adapterInstance == state.instances.first());
+    // The walk is as long as the stack is deep, and an error that passes a handler in every frame asks at each of them.
+    static std::atomic<unsigned> questions;
+    if (!(questions.fetch_add(1, std::memory_order_relaxed) % 1024)) {
+        Instance* adapterInstance = findEnclosingAdapterInstance(m_cursor);
+        ASSERT(!adapterInstance || adapterInstance == state.instances.first());
+    }
 #endif
     return state.instances.first();
 }

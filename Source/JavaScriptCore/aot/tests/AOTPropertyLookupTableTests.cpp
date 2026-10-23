@@ -1039,6 +1039,7 @@ void validatorStopsAtStaleRows()
         Structure* owner = fixture.createStructure(changing);
         fixture.caches().set(owner, fixture.nameWithoutNumber(number), SlotAccess::Read, absentSlot(owner));
         AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));
+        ensureStillAliveHere(owner);
         {
             VMPropertyCaches::UnreportedChange change(fixture.caches(), changing);
             changing->putDirect(vm, fixture.identifier(number), jsNull());

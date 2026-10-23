@@ -31,7 +31,7 @@ function f3 name="propSetOnParameter" parameters=[{type=L1}, {type=number}] resu
     PropSet v0, v1 key="x"
     Return
 }
-# CHECK: f3 return: none throw: none p0: [Inspects] writes(ObjectFields/1)
+# CHECK: f3 return: collects throw: none p0: [Inspects] writes(ObjectFields/1)
 function f4 name="callsStoreIntoOwnAllocation" parameters=[{type=anything}] results=[{type=undefined}] {
   b0(v0: anything):
     v1 = CallDirect v0 function=f0

@@ -168,9 +168,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         ClimbingSet listed = hostObjectsListedBesideUnknownObject(object, receivers);
         if (holdsAnything(listed))
             connect(m_context.lookup(listed, name), m_statement.result);
-        ClimbingSet holdersOfExports = holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers);
-        if (holdsAnything(holdersOfExports))
-            connect(m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports), m_statement.result);
+        readExportsOfListedHolders(object, receivers);
     }
     // The unknown object answers with no member of Bun: see isMemberOfBun(). Where the text names a function of Bun, as in `(await import("bun")).peek`, a call of what is read applies it: see runCall(). Whoever hands it on,
     // as `peek.call()` does, has it listed.
@@ -575,21 +573,47 @@ ClimbingSet HeapRule::hostObjectsListedBesideUnknownObject(const ValueFlowOperan
     return m_context.valueWithin(ClimbingSet(m_tables.holdersOfMembersThatHostMakes()), object.node);
 }
 
-ClimbingSet HeapRule::holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers)
+bool HeapRule::isInProgramCode()
 {
     // What a built-in does to its operand has no statement of its own: it is done where the built-in is called.
     FunctionID function = m_statement.function ? m_statement.function : m_context.functionOfStatement();
-    if (!object.node || !mayBeUnknownObject(receivers) || !function)
-        return { };
+    if (!function)
+        return false;
     FunctionRole role = m_program.at(function).role;
-    if (role == FunctionRole::Library || role == FunctionRole::Model)
+    return role != FunctionRole::Library && role != FunctionRole::Model;
+}
+
+ClimbingSet HeapRule::holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers)
+{
+    if (!object.node || !mayBeUnknownObject(receivers) || !isInProgramCode())
         return { };
     return m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), object.node);
+}
+
+void HeapRule::readExportsOfListedHolders(const ValueFlowOperand& object, ClimbingSet receivers)
+{
+    ClimbingSet holdersOfExports = holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers);
+    if (ClimbingSet start = startOfLookup(receivers); holdsAnything(start) && isInProgramCode()) {
+        ValueFlowNodeID chain = m_context.lookup(start, prototypeLinkName);
+        if (mayBeUnknownObject(m_context.valueOf(chain)))
+            holdersOfExports = m_context.unite(holdersOfExports, m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), chain));
+    }
+    if (holdsAnything(holdersOfExports))
+        connect(m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports), m_statement.result);
 }
 
 ValueFlowNodeID HeapRule::exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object)
 {
     ClimbingSet holdersOfExports = holdersOfExportsListedBesideUnknownObjectInProgram(object, m_context.valueOf(object));
+    return holdsAnything(holdersOfExports) ? m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports) : ValueFlowNodeID();
+}
+
+ValueFlowNodeID HeapRule::exportsOfHoldersIn(const ValueFlowOperand& object)
+{
+    if (!isInProgramCode())
+        return { };
+    ClimbingSet receivers = m_context.valueOf(object);
+    ClimbingSet holdersOfExports = m_context.unite(m_context.restrict(receivers, m_universe.holdersOfLibraryExports()), holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers));
     return holdsAnything(holdersOfExports) ? m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports) : ValueFlowNodeID();
 }
 
@@ -888,6 +912,8 @@ void HeapRule::runSuperGet()
         forEachStartOfLookup(bases, [&](ClimbingSet start) {
             readThroughChain(start, key, receiver, m_statement.result);
         });
+        if (key.keyClass == HeapKeyClass::Unknown)
+            readExportsOfListedHolders(operand(OperandIndex::SuperGet::base), bases);
     });
     mayThrow();
 }

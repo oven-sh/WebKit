@@ -833,6 +833,8 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     loadb SlotKind[t6], t1
     bbeq t1, constexpr AOT::Slot::Kind::Field, .field
     bbneq t1, constexpr AOT::Slot::Kind::FieldCreation, .slow
+    # In place of the type such a slot holds an order word.
+    btbnz SlotFlags[t6], constexpr AOT::Slot::remembersOrder, .slow
 .field:
     btinz (constexpr AOT::offsetOfOrderWord)[t0], constexpr AOT::orderWordIsFrozen, .slow
     locateField(t5, t6, t0, t1, t2, t3, t7, .slow)

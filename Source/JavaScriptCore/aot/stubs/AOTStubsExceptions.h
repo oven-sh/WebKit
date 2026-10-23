@@ -14,12 +14,13 @@ namespace JSC { namespace AOT {
 class StubAssembler;
 
 enum class StackOverflowForm : uint8_t { InBody, AtPrologue };
+enum class RejectedFrameForm : uint8_t { Plain, BelowSpilledArguments };
 
 constexpr StubKey handleException(bool preservesRegisters) { return StubKey(preservesRegisters ? StubFamily::HandleExceptionPreservingRegisters : StubFamily::HandleException); }
 constexpr StubKey handleExceptionAtPrologue() { return StubKey(StubFamily::HandleExceptionAtPrologue); }
 constexpr StubKey throwStackOverflow(bool isAtPrologue = false) { return StubKey(StubFamily::ThrowStackOverflow).withForm(static_cast<uint8_t>(isAtPrologue ? StackOverflowForm::AtPrologue : StackOverflowForm::InBody)); }
 constexpr StubKey catchException() { return StubKey(StubFamily::Catch); }
-constexpr StubKey rejectInFrame() { return StubKey(StubFamily::RejectInFrame); }
+constexpr StubKey rejectInFrame(bool liesBelowSpilledArguments) { return StubKey(StubFamily::RejectInFrame).withForm(static_cast<uint8_t>(liesBelowSpilledArguments ? RejectedFrameForm::BelowSpilledArguments : RejectedFrameForm::Plain)); }
 
 // Neither falls through. Both are entered with the stack as at the entry of a stub: the return address is the site that threw.
 void emitUnwind(StubAssembler&);

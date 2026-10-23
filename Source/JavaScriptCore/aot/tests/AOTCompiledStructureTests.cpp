@@ -515,6 +515,9 @@ static uint32_t allocationOf(LoadedProgram& program, ASCIILiteral layoutName)
 // Compiled code goes on behind the operation as behind the stub. Whatever lay in the free cell is gone: until compiled code has written a slot, nothing in it can be taken for a reference.
 static void testSlowAllocationWritesWhatTheStubWrites(LoadedProgram& program)
 {
+    // Under AddressSanitizer no two cells that are allocated lie side by side.
+    if (ASAN_ENABLED)
+        return;
     constexpr uint8_t leftInFreeCell = 0xa5;
     VM& vm = program.vm();
     DeferGC deferGC(vm);

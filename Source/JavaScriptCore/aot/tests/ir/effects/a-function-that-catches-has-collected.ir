@@ -1,0 +1,21 @@
+# What throws allocates what it throws. A function that catches it and returns has allocated, whatever the effects of what threw say
+# FORM: Prepared
+# RUN: effects summaries f1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="catches" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b1():
+    v1 = RequireObject v0 runtimeError=IteratorResultNotObject
+    Return v1
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+function f1 name="caller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK: f0 return: {{*}}collects
+# CHECK-LABEL: function f1
+# CHECK: v1 CallDirect: {{*}}collects

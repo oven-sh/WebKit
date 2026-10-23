@@ -519,7 +519,11 @@ public:
 #endif
     ArrayStoragePolicy arrayStoragePolicy() const { return hasCompiledCode() || Options::keepDenseArraysDense() ? ArrayStoragePolicy::KeepsDenseArraysDense : ArrayStoragePolicy::UsesArrayStorageForSpeed; }
     PropertyRunTable propertyRuns;
+#if ENABLE(AOT)
     bool mayHaveUncacheableTransitions() const { return m_mayHaveUncacheableTransitions; }
+#else
+    static constexpr bool mayHaveUncacheableTransitions() { return false; }
+#endif
     void setMayHaveUncacheableTransitions() { m_mayHaveUncacheableTransitions = true; }
     bool m_mayHaveUncacheableTransitions { false };
     

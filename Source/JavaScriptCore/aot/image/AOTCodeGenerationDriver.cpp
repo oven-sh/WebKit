@@ -85,9 +85,10 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
     const Typed::Program& program = *pipeline.program;
 
     CodeGenerationPlan plan;
+    BitVector bodiesWithoutCode = Typed::findBodiesWithoutCode(program, context, pipeline.calledFunctions.span());
     runTasksInParallel(context.parallelLoops(), {
         [&] {
-            plan.uses = collectProgramUses(pipeline, context);
+            plan.uses = collectProgramUses(pipeline, bodiesWithoutCode, context);
 
             IdentifierNumbering numbering = numberIdentifiers(program, plan.uses.keys, pipeline.slots->keysWithColumn(), context);
             StubPolicy policy = chooseStubPolicy(plan.uses.keys, numbering, context);
@@ -100,7 +101,7 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
             if (!InstanceLayout::isAddressable(plan.instanceSizes))
                 context.reportLimitExceeded(LimitID::MaxStaticsSize, std::max(InstanceLayout::bytesReservedBelowInstance(plan.instanceSizes), InstanceLayout::bytesReservedFromInstance(plan.instanceSizes)));
         },
-        [&] { plan.bodyFactsForTables = Typed::collectBodyFactsForTables(program, context); },
+        [&] { plan.bodyFactsForTables = Typed::collectBodyFactsForTables(program, bodiesWithoutCode, context); },
         [&] {
             plan.branchCounters = Typed::numberBranchCounters(program, context);
             plan.arrivalSites = Typed::numberArrivalSites(program, context);

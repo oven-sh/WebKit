@@ -148,7 +148,7 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
         Object::ensureStructureForExtraPropertiesIfNeeded(*instance->vm, object);
         createClassObjectsOnChain(*instance->vm, object, name.uid);
     }
-    Structure* structureBefore = object->structure();
+    Structure* structureBefore = WTF::opaque(object->structure());
     PresenceLookup lookup { instance, object, structureBefore, name, shouldFile };
     bool result = question == Question::In ? hasPropertyAndCache(lookup) : hasOwnPropertyAndCache(lookup);
 #if !CPU(X86_64)

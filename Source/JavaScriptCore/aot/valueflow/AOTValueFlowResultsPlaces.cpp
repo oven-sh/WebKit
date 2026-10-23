@@ -9,8 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTCFG.h"
+#include "AOTFlowSiteData.h"
 #include "AOTFlowUnseenCode.h"
+#include "AOTKnownClosures.h"
 #include "AOTRemovableFeature.h"
 #include "AOTSchemaOperandPositions.h"
 #include "AOTSort.h"
@@ -21,6 +24,7 @@
 #include "IntlObject.h"
 #include <algorithm>
 #include <tuple>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -259,6 +263,280 @@ Witness ValueFlowPlacesInProgram::whereNamed(BuiltinID builtin) const
     if (Witness way = wayTo(m_namedInLibrary[builtin.index()]); hasFunction(way))
         return way;
     return m_hasEscaped.quickGet(builtin.index()) ? m_readUnderKeyNobodyKnows : noWitness;
+}
+
+namespace {
+
+struct SpelledBuiltin {
+    std::span<const uint8_t> text;
+    BuiltinID builtin;
+    bool isMethod { false };
+};
+
+struct NamesFoundByWorker {
+    using CandidateList = Vector<BuiltinID, 2>;
+    using ListBySets = HashMap<uint64_t, CandidateList, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+
+    BitVector named;
+    BitVector literals;
+    BitVector stringsInData;
+    ListBySets candidatesUnderKeys;
+};
+
+} // anonymous namespace
+
+static bool isWordCharacter(uint8_t character)
+{
+    return isASCIIAlphanumeric(character) || character == '_' || character == '$';
+}
+
+static void forEachWord(std::span<const uint8_t> text, NOESCAPE const Invocable<void(std::span<const uint8_t>)> auto& functor)
+{
+    for (size_t start = 0; start < text.size();) {
+        if (!isWordCharacter(text[start])) {
+            ++start;
+            continue;
+        }
+        size_t end = start + 1;
+        while (end < text.size() && isWordCharacter(text[end]))
+            ++end;
+        functor(text.subspan(start, end - start));
+        start = end;
+    }
+}
+
+// `Intl` and `globalThis.Intl`.
+static BuiltinID builtinBoundTo(const Program& program, const Function& function, ValueID value)
+{
+    const BuiltinTable& builtins = program.builtins();
+    const Value& definition = function.at(definitionThroughSameValues(function, value));
+    if (definition.opcode == Opcode::Builtin)
+        return builtins.canonicalID(definition.builtin());
+    if (definition.opcode != Opcode::PropGet || !definition.key())
+        return { };
+    const Value& holder = function.at(definitionThroughSameValues(function, definition.objectOperand()));
+    if (holder.opcode != Opcode::Builtin)
+        return { };
+    BuiltinID member = findOwnMember(program, builtins.canonicalID(holder.builtin()), definition.key());
+    return member ? builtins.canonicalID(member) : BuiltinID();
+}
+
+static unsigned wordFilterIndex(std::span<const uint8_t> word)
+{
+    return (word.size() * 131 + word.front() * 31 + word.back()) & 4095;
+}
+
+ValueFlowNamedBuiltins::ValueFlowNamedBuiltins(const ValueFlowResultInputs& inputs, const BitVector& candidates, std::span<const Member> members)
+    : m_named(inputs.program.builtins().builtinCount())
+{
+    if (candidates.isEmpty())
+        return;
+
+    using CandidateList = NamesFoundByWorker::CandidateList;
+    using ListByIndex = HashMap<uint32_t, CandidateList, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    const Program& program = inputs.program;
+    const BuiltinTable& builtins = program.builtins();
+    const ValueFlowBodies& bodies = inputs.bodies();
+    const ValueFlowUniverse& universe = inputs.universe();
+    const ValueFlowSolver& solver = inputs.solver();
+    const ValueSets& sets = inputs.sets();
+
+    ListByIndex candidatesByKey;
+    ListByIndex candidatesByNamespace;
+    Vector<SpelledBuiltin> spelledBuiltins;
+    BuiltinID globalObject = builtins.canonicalID(Builtins::GlobalThis);
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        const Builtin& entry = builtins.at(BuiltinID(index));
+        BuiltinID candidate = builtins.canonicalID(BuiltinID(index));
+        if (!candidates.quickGet(candidate.index()) || !entry.name || entry.kind == BuiltinKind::Prototype)
+            continue;
+        // `instance.constructor` needs an instance.
+        if (entry.kind == BuiltinKind::Constructor && entry.holder && builtins.at(entry.holder).kind == BuiltinKind::Prototype)
+            continue;
+        if (PropertyKeyID key = program.keyOf(entry.name))
+            candidatesByKey.add(key.index(), CandidateList()).iterator->value.appendIfNotContains(candidate);
+        if (!builtins.isSymbolName(entry.name))
+            spelledBuiltins.append({ builtins.textOf(entry.name), candidate, entry.holder && builtins.at(entry.holder).kind == BuiltinKind::Prototype });
+        BuiltinID holder = entry.holder ? builtins.canonicalID(entry.holder) : BuiltinID();
+        if (holder && holder != globalObject && builtins.at(holder).kind == BuiltinKind::Namespace)
+            candidatesByNamespace.add(holder.index(), CandidateList()).iterator->value.appendIfNotContains(candidate);
+    }
+
+    auto lists = [&](ValueSetID set, ValueFlowObjectID object) {
+        return !ValueSets::isComplement(set) && sets.contains(set, object);
+    };
+    auto holds = [&](const ValueFlowOperand& operand, ValueFlowObjectID object) {
+        return (operand.constant && lists(operand.constant, object)) || (operand.node && lists(solver.valueOf(operand.node), object));
+    };
+    auto mayBeAnyObject = [&](ValueSetID set) {
+        return sets.contains(set, ValueFlowUniverse::unknownObject()) || sets.contains(set, ValueFlowUniverse::untrackedObject());
+    };
+    auto mayBeAnyKey = [&](ValueSetID set) {
+        return mayBeAnyObject(set) || sets.contains(set, ValueFlowUniverse::primitive(PrimitiveSet::String));
+    };
+    auto isKeyKnown = [&](const ValueFlowOperand& operand) {
+        return !(operand.constant && mayBeAnyKey(operand.constant)) && !(operand.node && mayBeAnyKey(solver.valueOf(operand.node)));
+    };
+    auto setsOf = [&](const ValueFlowOperand& operand) {
+        uint64_t constant = operand.constant ? operand.constant.index() : ValueSets::nothing.index();
+        uint64_t arriving = operand.node ? solver.valueOf(operand.node).index() : ValueSets::nothing.index();
+        return constant << 32 | arriving;
+    };
+    auto mayAnswer = [&](ValueSetID answers, BuiltinID candidate) {
+        if (!isObjectKind(builtins.at(candidate).kind))
+            return true;
+        return sets.contains(answers, universe.objectOf(candidate)) || mayBeAnyObject(answers);
+    };
+
+    ListByIndex candidatesBehindFunction;
+    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
+        if (!entry.function || !builtins.contains(entry.id))
+            continue;
+        for (BuiltinID implemented : builtins.at(entry.id).implements) {
+            for (const Member& member : members) {
+                if (member.builtin == builtins.canonicalID(implemented))
+                    candidatesBehindFunction.add(entry.function.index(), CandidateList()).iterator->value.appendIfNotContains(member.candidate);
+            }
+        }
+    }
+
+    auto findNamesIn = [&](uint32_t index, NamesFoundByWorker& found) {
+        found.named.ensureSize(builtins.builtinCount());
+        auto noteReadUnder = [&](std::span<const BuiltinID> list, ValueFlowNodeID result) {
+            ValueSetID answers = solver.valueOf(result);
+            for (BuiltinID candidate : list) {
+                if (mayAnswer(answers, candidate))
+                    found.named.quickSet(candidate.index());
+            }
+        };
+        if (!solver.isReached(FunctionID(index)))
+            return;
+        const Function& function = program.functions[index];
+        bool isOfProgram = isWrittenInProgram(function) && !isOfLibrary(program, function);
+        for (const Value& value : function.values) {
+            if (value.opcode == Opcode::String && isOfProgram)
+                found.literals.set(value.string().index());
+            if (value.opcode == Opcode::Data && isOfProgram) {
+                forEachDataNodeInPreorder(program.at(value.data()).root, [&](uint32_t, const DataNode& node) {
+                    if (const auto* text = node.tryAs<DataNode::String>())
+                        found.stringsInData.set(text->value.index());
+                });
+            }
+            if (value.opcode != Opcode::Builtin)
+                continue;
+            for (BuiltinID bound = value.builtin(); bound; bound = builtins.at(bound).holder) {
+                bound = builtins.canonicalID(bound);
+                if (candidates.quickGet(bound.index()))
+                    found.named.quickSet(bound.index());
+            }
+        }
+
+        for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || !statement.site || !statement.result)
+                continue;
+            switch (statement.opcode) {
+            case Opcode::PropGet:
+            case Opcode::SuperGet: {
+                PropertyKeyID key = function.at(statement.site).key();
+                auto list = key ? candidatesByKey.find(key.index()) : candidatesByKey.end();
+                if (list != candidatesByKey.end())
+                    noteReadUnder(list->value.span(), statement.result);
+                break;
+            }
+            case Opcode::ElemGet: {
+                std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
+                const ValueFlowOperand& property = operands[*OperandPosition::property(statement.opcode)];
+                auto underKeys = found.candidatesUnderKeys.add(setsOf(property), CandidateList());
+                if (underKeys.isNewEntry && isKeyKnown(property)) {
+                    for (auto& [key, list] : candidatesByKey) {
+                        if (holds(property, universe.keyConstant(PropertyKeyID(key))))
+                            underKeys.iterator->value.appendVector(list);
+                    }
+                }
+                noteReadUnder(underKeys.iterator->value.span(), statement.result);
+
+                BuiltinID holder = builtinBoundTo(program, function, function.at(statement.site).objectOperand());
+                auto inNamespace = holder ? candidatesByNamespace.find(holder.index()) : candidatesByNamespace.end();
+                if (inNamespace == candidatesByNamespace.end())
+                    break;
+                for (BuiltinID candidate : inNamespace->value)
+                    found.named.quickSet(candidate.index());
+                break;
+            }
+            default:
+                break;
+            }
+        }
+    };
+
+    constexpr uint32_t functionsPerTask = 64;
+    uint32_t numberOfFunctions = program.functions.size();
+    Vector<NamesFoundByWorker> foundByWorker(inputs.loops().width());
+    forEachIndexInParallel(inputs.loops(), (numberOfFunctions + functionsPerTask - 1) / functionsPerTask, [&](unsigned task, unsigned worker) {
+        for (uint32_t index = task * functionsPerTask; index < std::min(numberOfFunctions, (task + 1) * functionsPerTask); ++index) {
+            if (!candidatesBehindFunction.contains(index))
+                findNamesIn(index, foundByWorker[worker]);
+        }
+    });
+
+    BitVector literals;
+    BitVector stringsInData;
+    for (NamesFoundByWorker& found : foundByWorker) {
+        m_named.merge(found.named);
+        literals.merge(found.literals);
+        stringsInData.merge(found.stringsInData);
+        found = { };
+    }
+
+    for (bool hasEntered = true; std::exchange(hasEntered, false);) {
+        Vector<uint32_t, 8> entered;
+        for (auto& [function, behind] : candidatesBehindFunction) {
+            if (std::ranges::any_of(behind, [&](BuiltinID candidate) { return m_named.quickGet(candidate.index()); }))
+                entered.append(function);
+        }
+        for (uint32_t function : entered) {
+            candidatesBehindFunction.remove(function);
+            findNamesIn(function, foundByWorker[0]);
+            hasEntered = true;
+        }
+        m_named.merge(foundByWorker[0].named);
+    }
+
+    spelledBuiltins.removeAllMatching([&](const SpelledBuiltin& spelled) {
+        return spelled.text.empty() || m_named.quickGet(spelled.builtin.index());
+    });
+    if (spelledBuiltins.isEmpty())
+        return;
+    BitVector wordFilter(4096);
+    for (const SpelledBuiltin& spelled : spelledBuiltins)
+        wordFilter.quickSet(wordFilterIndex(spelled.text));
+    // A list of names is a list of keys, and a key alone leads to a method: `Intl.Segmenter` takes `Intl` too.
+    stringsInData.exclude(literals);
+    Vector<uint32_t> literalList;
+    for (size_t literal : literals)
+        literalList.append(static_cast<uint32_t>(literal));
+    size_t numberOfWholeLiterals = literalList.size();
+    for (size_t string : stringsInData)
+        literalList.append(static_cast<uint32_t>(string));
+
+    constexpr uint32_t literalsPerTask = 1024;
+    Vector<BitVector> spelledByWorker(inputs.loops().width());
+    forEachIndexInParallel(inputs.loops(), (literalList.size() + literalsPerTask - 1) / literalsPerTask, [&](unsigned task, unsigned worker) {
+        BitVector& spelledHere = spelledByWorker[worker];
+        spelledHere.ensureSize(builtins.builtinCount());
+        for (size_t position = task * literalsPerTask; position < std::min<size_t>(literalList.size(), (task + 1) * literalsPerTask); ++position) {
+            forEachWord(program.string(StringID(literalList[position])), [&](std::span<const uint8_t> word) {
+                if (!wordFilter.quickGet(wordFilterIndex(word)))
+                    return;
+                for (const SpelledBuiltin& spelled : spelledBuiltins) {
+                    if ((position < numberOfWholeLiterals || spelled.isMethod) && std::ranges::equal(spelled.text, word))
+                        spelledHere.quickSet(spelled.builtin.index());
+                }
+            });
+        }
+    });
+    for (const BitVector& spelledHere : spelledByWorker)
+        m_named.merge(spelledHere);
 }
 
 namespace {

@@ -942,7 +942,11 @@ public:
 
     StructureVariant variant() const { return m_structureVariant; }
     bool isBrandedStructure() { return variant() == StructureVariant::Branded; }
+#if ENABLE(AOT)
     bool isCompiledStructure() const { return variant() == StructureVariant::Compiled; }
+#else
+    static constexpr bool isCompiledStructure() { return false; }
+#endif
 
     uint8_t& markingStamp() { return m_markingStamp; }
     CellVisitKind cellVisitKind() const { return m_cellVisitKind; }

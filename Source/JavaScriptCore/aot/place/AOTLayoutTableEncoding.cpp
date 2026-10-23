@@ -330,7 +330,7 @@ static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t s
     data.kind = layout.kind;
     data.index = id.index();
     data.shape = shape;
-    data.name = encoder.shownStringNumber(layout.name);
+    data.name = encoder.shownNameNumber(layout.name);
     data.size = planned.size;
     data.numberOfDescribedVariables = static_cast<uint32_t>(described.size());
     data.referencesOffset = distanceFromRecord(offset, referencesOffset);
@@ -437,7 +437,7 @@ static void fillLayoutData(TableEncoder& encoder, LayoutID id, const PlacedShape
     data.hasFieldThatKeepsStateOfBirth = std::ranges::any_of(parts.fields, [](const FieldData& field) { return field.keepsStateOfBirth; });
     data.hasExtraPropertiesSlot = parts.hasExtraPropertiesSlot;
     data.index = id.index();
-    data.name = encoder.shownStringNumber(layout.name);
+    data.name = encoder.shownNameNumber(layout.name);
     data.size = encoder.slots.layout(id).size;
     data.numberOfFields = static_cast<uint16_t>(parts.fields.size());
     data.numberOfFieldOperands = static_cast<uint16_t>(parts.fieldOperands.size());

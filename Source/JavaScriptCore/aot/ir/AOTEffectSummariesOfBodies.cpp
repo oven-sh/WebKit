@@ -235,11 +235,20 @@ public:
             addDependency(SummaryNode::onThrow(m_id), SummaryNode::onReturn(m_id));
         for (unsigned index = 0; index < m_function.blocks.size(); ++index) {
             BlockID block(index);
+            // What throws allocates what it throws, whatever its effects say.
+            if (const std::optional<Target>& handler = m_function.at(block).handler)
+                m_gatheredForExits[exitsOf(handler->block)].mayCollect = true;
             for (ValueID id : m_function.at(block).values)
                 summarizeValue(block, id);
             summarizeTerminator(block);
         }
         handOverToExits();
+        // The caller of such a body gets a rejected promise back where the body throws.
+        if (m_function.role == FunctionRole::CoroutineBody && m_function.creator.as<CreatorRecord::Coroutine>().kind == CoroutineKind::AsyncFunction) {
+            if (m_summary.onReturn.mayThrow || m_summary.onThrow.mayThrow || !m_summary.dependencies.isEmpty())
+                m_summary.onReturn.merge(declaredBoundOf(Opcode::RejectPromise));
+            addDependency(SummaryNode::onThrow(m_id), SummaryNode::onReturn(m_id));
+        }
         removeRepeatedDependencies(m_summary.dependencies);
         moveToExactBuffer(m_summary.dependencies);
         return WTF::move(m_summary);

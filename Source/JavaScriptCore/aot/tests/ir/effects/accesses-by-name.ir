@@ -50,24 +50,23 @@ function f4 name="slots" parameters=[{type=L0}, {type=null|L0}, {type=undefined|
     Return
 }
 # CHECK-LABEL: function f4
-# CHECK-NEXT: v3 PropGet: reads(ObjectFields/1)
-# CHECK-NEXT: v4 PropGet: reads(ObjectFields/1)
-# CHECK-NEXT: v5 PropGet: reads(ObjectFields/1) throws
-# CHECK-NEXT: v6 PropGet: reads(ObjectFields/1) throws
-# CHECK-NEXT: v7 PropGet: reads(ObjectFields/1)
-# CHECK-NEXT: v8 PropGet: reads(ObjectFields/1)
+# CHECK-NEXT: v3 PropGet: reads(ObjectFields/1) collects
+# CHECK-NEXT: v4 PropGet: reads(ObjectFields/1) collects
+# CHECK-NEXT: v5 PropGet: reads(ObjectFields/1) throws collects
+# CHECK-NEXT: v6 PropGet: reads(ObjectFields/1) throws collects
+# CHECK-NEXT: v7 PropGet: reads(ObjectFields/1) collects
+# CHECK-NEXT: v8 PropGet: reads(ObjectFields/1) collects
 # PLAIN-LABEL: function f4
-# PLAIN-NEXT: v3 PropGet: reads(ObjectFields/1)
-# PLAIN-NEXT: v4 PropGet: reads(ObjectFields/1)
-# PLAIN-NEXT: v5 PropGet: reads(ObjectFields/1) throws
-# PLAIN-NEXT: v6 PropGet: reads(ObjectFields/1) throws
-# PLAIN-NEXT: v7 PropGet: reads(ObjectFields/1)
-# PLAIN-NEXT: v8 PropGet: reads(ObjectFields/1)
+# PLAIN-NEXT: v3 PropGet: reads(ObjectFields/1) collects
+# PLAIN-NEXT: v4 PropGet: reads(ObjectFields/1) collects
+# PLAIN-NEXT: v5 PropGet: reads(ObjectFields/1) throws collects
+# PLAIN-NEXT: v6 PropGet: reads(ObjectFields/1) throws collects
+# PLAIN-NEXT: v7 PropGet: reads(ObjectFields/1) collects
+# PLAIN-NEXT: v8 PropGet: reads(ObjectFields/1) collects
 # ONLY-NOT: v3 PropGet:{{*}}throws
 # ONLY-NOT: v4 PropGet:{{*}}throws
 # ONLY-NOT: v7 PropGet:{{*}}throws
 # ONLY-NOT: writes(
-# ONLY-NOT: collects
 function f5 name="getters" parameters=[{type=L1}, {type=L0|L1}] results=[{type=undefined}] {
   b0(v0: L1, v1: L0|L1):
     v2 = PropGet v0 key="x" receivers=[L1]

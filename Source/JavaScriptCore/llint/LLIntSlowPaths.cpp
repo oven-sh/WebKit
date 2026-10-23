@@ -993,7 +993,7 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    Structure* structureBefore = vm.hasCompiledCode() && baseValue.isObject() ? baseValue.asCell()->structure() : nullptr;
+    Structure* structureBefore = vm.hasCompiledCode() && baseValue.isObject() ? WTF::opaque(baseValue.asCell()->structure()) : nullptr;
     if (structureBefore) {
         if (std::optional<JSValue> result = AOT::Interpreter::tryGetById(globalObject, baseValue.asCell(), ident))
             RELEASE_AND_RETURN(throwScope, *result);
@@ -1095,7 +1095,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
     const Identifier& ident = codeBlock->identifier(bytecode.m_property);
     JSValue baseValue = getOperand(callFrame, bytecode.m_base);
 #if ENABLE(AOT)
-    Structure* structureOfCompiledObject = baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType ? baseValue.asCell()->structure() : nullptr;
+    Structure* structureOfCompiledObject = baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType ? WTF::opaque(baseValue.asCell()->structure()) : nullptr;
 #endif
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
@@ -1305,7 +1305,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
         if (newStructure->propertyAccessesAreCacheable() && baseCell == slot.base()) {
             if (slot.type() == PutPropertySlot::NewProperty) {
                 DeferGC deferGC(vm);
-                if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && newStructure->previousID() == oldStructure) {
+                if (!newStructure->isDictionary() && (!vm.mayHaveUncacheableTransitions() || newStructure->isCacheableTransitionFrom(oldStructure)) && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && newStructure->previousID() == oldStructure) {
                     ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
                     bool sawPolyProto = false;
@@ -1629,7 +1629,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
         if (newStructure->propertyAccessesAreCacheable() && baseCell == slot.base()) {
             if (slot.type() == PutPropertySlot::NewProperty) {
                 DeferGC deferGC(vm);
-                if (!newStructure->isDictionary() && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && oldStructure == newStructure->previousID()) {
+                if (!newStructure->isDictionary() && (!vm.mayHaveUncacheableTransitions() || newStructure->isCacheableTransitionFrom(oldStructure)) && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && oldStructure == newStructure->previousID()) {
                     ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
                     bool sawPolyProto = false;

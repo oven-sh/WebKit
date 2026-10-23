@@ -1,6 +1,6 @@
 # A program that is not very large goes through B3 and Air whole, its cold functions too
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsCold disable=pass:InlineCalls
+# OPTIONS: heat=EverythingIsCold testing=GenerateColdCodeDirectly disable=pass:InlineCalls
 # RUN: generate-code FunctionsGeneratedDirectly
 # CHECK: statistic FunctionsGeneratedDirectly 0
 

@@ -25,10 +25,12 @@ class Program;
 struct BodyFactsForTables {
     FastBitVector usedTypeSites;
     BitVector functionsThatOnlyReturn;
+    // Those that have code, and those that were inlined into it.
+    BitVector functionsWithFrames;
     Vector<ModuleImportSite> importSites;
 };
 
-JS_EXPORT_PRIVATE BodyFactsForTables collectBodyFactsForTables(const Program&, BuildContext&);
+JS_EXPORT_PRIVATE BodyFactsForTables collectBodyFactsForTables(const Program&, const BitVector& bodiesWithoutCode, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

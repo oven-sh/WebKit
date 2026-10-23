@@ -616,6 +616,7 @@ static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder
         builder.emitJump(awaiting, { result });
     else {
         BlockID resolving = builder.addBlock(rarerOf(frequency, BlockFrequency::Unlikely));
+        builder.emitFailureOfPredictions(Target { resolving, { }, { } });
         builder.emitBranch(builder.append(Opcode::IsNotThenable, { result }), Target { awaiting, { result }, { } }, Target { resolving, { }, { } });
 
         builder.moveToEndOf(resolving);

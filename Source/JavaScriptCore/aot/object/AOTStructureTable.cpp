@@ -143,7 +143,8 @@ struct StructureTable::VariantMaps {
     {
     }
 
-    static CompiledStructure* decode(StructureID id) { return uncheckedDowncast<CompiledStructure>(id.decode()); }
+    // A variant may have no object yet or no more. Whoever gets one out of these tables holds it by this pointer alone, which the compiler must not make anew from the ID behind an allocation.
+    static CompiledStructure* decode(StructureID id) { return WTF::opaque(uncheckedDowncast<CompiledStructure>(id.decode())); }
     static unsigned recentIndex(const Variant& variant) { return (variant.extraPropertiesStructure->id().bits() * 0x9e3779b1u ^ variant.shape * 0x85ebca6bu) >> (32 - recentIndexBits); }
     static unsigned requestedIndex(const Structure& extraPropertiesStructure) { return extraPropertiesStructure.id().bits() * 0x9e3779b1u >> (32 - requestedIndexBits); }
 
@@ -554,7 +555,7 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
     uint32_t before = current.id().bits();
     PrototypeTransition& recent = std::span { m_state.instance.objects.prototypeTransitions, numberOfPrototypeTransitions }[indexOfPrototypeTransition(before, encodedPrototype)];
     if (recent.before == before && recent.prototype == encodedPrototype)
-        return uncheckedDowncast<CompiledStructure>(std::bit_cast<StructureID>(recent.after).decode());
+        return VariantMaps::decode(std::bit_cast<StructureID>(recent.after));
 
     Variant variant = variantOf(current);
     variant.prototype = prototype;

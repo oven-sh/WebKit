@@ -20,6 +20,7 @@
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
+#include "MarkStack.h"
 #include "MarkedBlock.h"
 #include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
@@ -353,6 +354,37 @@ static void runInProcessWithCage()
         failNativeTest(__FILE__, __LINE__, name.characters());
     }
 }
+
+#if OS(LINUX) && !ASAN_ENABLED
+static constexpr ASCIILiteral markStackTest = "heap-cage/cage/mark-stack-that-cannot-grow-says-why"_s;
+
+// A collection at the end of what a limit on address space leaves finds no memory for its mark stack. It cannot go on, and the process says what it ran out of.
+static void testMarkStackThatCannotGrowSaysWhy()
+{
+    if (MarkedBlockCage::isEnabled()) {
+        AOT_TEST_CHECK(MarkedBlockCage::require().has_value() && MarkedBlockCage::isRequired());
+        void* taken = nullptr;
+        for (size_t size : { 64 * MB, MB, 64 * KB, 4 * KB, KB, static_cast<size_t>(256), static_cast<size_t>(64), static_cast<size_t>(16) }) {
+            void* block;
+            while (tryFastMalloc(size).getValue(block)) {
+                *static_cast<void**>(block) = taken;
+                taken = block;
+            }
+        }
+        MarkStackArray stack;
+        return;
+    }
+
+    ChildProcessLauncher launcher("/bin/sh"_s, { });
+    Vector<String> arguments { "-c"_s, "ulimit -c 0 && ulimit -v 2097152 && exec \"$0\" \"$@\""_s, String(programPath()), String(nativeSubcommandName), String(singleProcessFlag), String(markStackTest), "--useAOT=true"_s };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (result.outcome != ChildProcessOutcome::Crashed || !result.output.contains("FATAL: out of memory. The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s)) {
+        dataLogLn(result.output);
+        dataLogLn("The process under a limit on address space ", result.description());
+        failNativeTest(__FILE__, __LINE__, markStackTest.characters());
+    }
+}
+#endif
 
 static bool covers(MarkedBlockCage::Indices indices, uintptr_t base, const void* pointer, size_t size)
 {
@@ -704,6 +736,9 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },
         { "heap-cage/cage/off-without-compiled-code"_s, testCageIsOffWithoutCompiledCode },
+#if OS(LINUX) && !ASAN_ENABLED
+        { markStackTest, testMarkStackThatCannotGrowSaysWhy },
+#endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
         { "heap-cage/cage/every-cell-is-inside"_s, withCage<checkEveryCellIsInside> },
         { "heap-cage/cage/precise-cell-is-inside"_s, withCage<checkPreciseCellIsInside> },

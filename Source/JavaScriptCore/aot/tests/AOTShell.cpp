@@ -89,8 +89,9 @@ static std::optional<MappedImage> mapFile(const char* path)
     LARGE_INTEGER size;
     if (file == INVALID_HANDLE_VALUE || !GetFileSizeEx(file, &size))
         return std::nullopt;
-    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
-    void* bytes = mapping ? MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0) : nullptr;
+    // As MAP_PRIVATE elsewhere: the image is brought to its address in the process's own copy of the pages.
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_WRITECOPY, 0, 0, nullptr);
+    void* bytes = mapping ? MapViewOfFile(mapping, FILE_MAP_COPY, 0, 0, 0) : nullptr;
     if (!bytes)
         return std::nullopt;
     return MappedImage { { static_cast<const uint8_t*>(bytes), static_cast<size_t>(size.QuadPart) }, reinterpret_cast<intptr_t>(file) };

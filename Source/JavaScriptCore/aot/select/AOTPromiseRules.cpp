@@ -154,8 +154,10 @@ static void emitArms(GroupRewriter& rewriter, const PromiseMatch& match, ValueID
 
     ValueID guard;
     if (match.testsThenable) {
+        BlockID failedUnasked = builder.beginPrediction();
         ValueID test = builder.append(Opcode::IsNotThenable, { value });
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Rare);
+        builder.endPrediction(failedUnasked, branch.notTaken);
         guard = branch.provenOnTaken;
         builder.moveToEndOf(branch.notTaken);
         rewriter.endArm(rewriter.appendOriginals());
@@ -197,8 +199,10 @@ static void rewriteResolution(GroupRewriter& rewriter, const PromiseMatch& match
 
     rewriter.beginArms();
     IRBuilder& builder = rewriter.builder();
+    BlockID failedUnasked = builder.beginPrediction();
     ValueID test = builder.append(Opcode::IsNotThenable, { value });
     IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Rare);
+    builder.endPrediction(failedUnasked, branch.notTaken);
     builder.moveToEndOf(branch.notTaken);
     rewriter.appendOriginals();
     rewriter.endArm(std::nullopt);
@@ -319,7 +323,9 @@ static void rewriteAwaitOfPrimitive(GroupRewriter& rewriter, const AwaitOfPrimit
 
     rewriter.beginArms();
     IRBuilder& builder = rewriter.builder();
+    BlockID failedUnasked = builder.beginPrediction();
     IRBuilder::BranchBlocks arms = builder.emitBranch(builder.append(Opcode::AwaitMayContinue, { }));
+    builder.endPrediction(failedUnasked, arms.notTaken);
     rewriter.endArm(builder.appendUpcast(awaited, type));
 
     builder.moveToEndOf(arms.notTaken);

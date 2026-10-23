@@ -38,7 +38,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* inst
 
     JSObject* constructorObject = asObject(constructor);
     createClassObjectsOnChain(vm, constructorObject, vm.propertyNames->hasInstanceSymbol.impl());
-    Structure* structureBeforeHasInstance = constructorObject->structure();
+    Structure* structureBeforeHasInstance = WTF::opaque(constructorObject->structure());
     PropertySlot hasInstanceSlot(constructorObject, PropertySlot::InternalMethodType::Get);
     bool hasHasInstance = constructorObject->getPropertySlot(globalObject, vm.propertyNames->hasInstanceSymbol, hasInstanceSlot);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
@@ -50,7 +50,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* inst
 
     // OrdinaryHasInstance reads "prototype" only for an object, so for any other value the lookup that fills the cache may run no code.
     bool readsPrototype = value.isObject();
-    Structure* structureBeforePrototype = constructorObject->structure();
+    Structure* structureBeforePrototype = WTF::opaque(constructorObject->structure());
     PropertySlot prototypeSlot(constructorObject, readsPrototype ? PropertySlot::InternalMethodType::Get : PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool hasPrototype = constructorObject->getPropertySlot(globalObject, vm.propertyNames->prototype, prototypeSlot);
     prototypeSlot.disallowVMEntry.reset();

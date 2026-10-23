@@ -2867,7 +2867,13 @@ JSC_DEFINE_JIT_OPERATION(operationAcquireSortScratch, JSCell*, (VM* vmPointer))
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto* scratch = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, sortScratchSlotCount);
+    RELEASE_ASSERT_RESOURCE_AVAILABLE(scratch, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+    OPERATION_RETURN(scope, static_cast<JSCell*>(scratch));
+#else
     OPERATION_RETURN(scope, static_cast<JSCell*>(JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, sortScratchSlotCount)));
+#endif
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSize, char*, (JSGlobalObject* globalObject, Structure* arrayStructure, int32_t size, Butterfly* butterfly))

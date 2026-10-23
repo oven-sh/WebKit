@@ -521,6 +521,7 @@ ALWAYS_INLINE CompactTable::QuickAddition CompactTable::tryAddQuickly(JSGlobalOb
         });
     }
     if (validatesRuntime(vm)) [[unlikely]] {
+        DeferTerminationForAWhile deferTermination(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         std::optional<uint32_t> expected = find(globalObject, key);
         scope.releaseAssertNoException();

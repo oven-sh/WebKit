@@ -845,6 +845,10 @@ private:
             return;
         connectOperands(BuiltinOperand::argument(0), escaped());
         connectOperands(BuiltinOperand::argument(1), escaped());
+        forEachOperandAt(BuiltinOperand::argument(0), [&](const ValueFlowOperand& target) {
+            if (ValueFlowNodeID exports = exportsOfHoldersIn(m_context, target))
+                m_context.connect(exports, escaped());
+        });
         // A built-in object of the realm behind a proxy is held by the program as an object nobody knows: what compiled code stores through the proxy arrives there.
         m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_universe.objectsOfRealm()));
         // No statement spells out the call of a trap. The run time finds it on the handler under the name of a member of Reflect.

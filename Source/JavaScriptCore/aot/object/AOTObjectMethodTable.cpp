@@ -248,7 +248,7 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
             break;
         case StoreThroughChain::CallsSetter:
             slot.setCacheableSetter(walk.holder, walk.offset);
-            RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(walk.holder->getDirect(walk.offset))->callSetter(globalObject, object, value, slot.isStrictMode()));
+            RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(valueAtOffset(walk.holder, walk.offset))->callSetter(globalObject, object, value, slot.isStrictMode()));
         case StoreThroughChain::Unknown:
         case StoreThroughChain::CallsCustomSetter:
         case StoreThroughChain::IsRefused:

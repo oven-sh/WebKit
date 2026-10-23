@@ -118,7 +118,7 @@ static PendingAccess prepareAccess(VM& vm, JSObject* object, UniquedStringImpl* 
 {
     Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
     createClassObjectsOnChain(vm, object, uid);
-    return { object, object->structure(), uid };
+    return { object, WTF::opaque(object->structure()), uid };
 }
 
 static CachedAccess cachedAccess(const PendingAccess& pending, SlotAccess access)
@@ -149,7 +149,7 @@ static OperationReturnType<EncodedJSValue> getFromObjectAndCache(Instance* insta
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertyCaches& caches = *instance->state->propertyCaches;
     bool shouldFile = caches.shouldFile(object->structureID(), name.impl(), SlotAccess::Read);
-    PendingAccess pending = shouldFile ? prepareAccess(vm, object, name.impl()) : PendingAccess { object, object->structure(), name.impl() };
+    PendingAccess pending = shouldFile ? prepareAccess(vm, object, name.impl()) : PendingAccess { object, WTF::opaque(object->structure()), name.impl() };
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
 
     JSObject* lookupStart = object;
@@ -232,7 +232,7 @@ static bool tryStoreExtraProperty(Instance* instance, Object& object, PendingAcc
         object.ensureStructureForExtraProperties(vm);
         flags.add(Flag::NamesExtraPropertiesStructure);
     }
-    pending.structureBefore = object.structure();
+    pending.structureBefore = WTF::opaque(object.structure());
     if (object.tryStoreExtraProperty(vm, pending.uid, value, flags).kind == Object::ExtraPropertyStore::NotHandled)
         return false;
     if (!isRepeated)

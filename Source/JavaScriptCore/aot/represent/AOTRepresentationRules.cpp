@@ -46,6 +46,8 @@ bool isGeneratedWithoutOptimizing(const BuildContext& build, const Heat& heat, c
 {
     if (build.recordedOptions().has(TestingSwitch::GenerateAllCodeDirectly))
         return true;
+    if (!build.recordedOptions().has(TestingSwitch::GenerateColdCodeDirectly))
+        return false;
     return heat.isOfVeryLargeProgram() && !isHot(heat.of(program, id)) && !heat.hasWarmCode(program, id);
 }
 

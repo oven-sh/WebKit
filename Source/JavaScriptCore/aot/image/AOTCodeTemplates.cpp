@@ -93,6 +93,17 @@ std::expected<CodeTemplates, LinkFailure> CodeTemplates::create(const AssemblerP
     };
 }
 
+void CodeTemplates::fillWithBreakpoints(std::span<uint8_t> bytes) const
+{
+    RELEASE_ASSERT(!(bytes.size() % breakpoint.size()));
+    if (breakpoint.size() == 1) {
+        memsetSpan(bytes, breakpoint[0]);
+        return;
+    }
+    for (; !bytes.empty(); bytes = bytes.subspan(breakpoint.size()))
+        memcpySpan(bytes, breakpoint.span());
+}
+
 void fillWithNops(std::span<uint8_t> bytes)
 {
 #if CPU(ARM64)

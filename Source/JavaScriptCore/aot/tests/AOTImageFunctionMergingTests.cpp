@@ -1021,7 +1021,7 @@ static constexpr NativeTest mergingTests[] = {
     { "image/folding/equal-moves"_s, [] { checkFolded(bodies(thunkCallBody(1, 1), thunkCallBody(2, 1)), { 1 }); } },
     { "image/folding/other-bytes"_s, [] { checkNotFolded(bodies(duplicateBody(1), duplicateBody(2, 8))); } },
     { "image/folding/other-size"_s, [] { checkNotFolded(bodies(duplicateBody(1), duplicateBody(2, 7, catchException(), 2))); } },
-    { "image/folding/other-stub"_s, [] { checkNotFolded(bodies(duplicateBody(1), duplicateBody(2, 7, rejectInFrame()))); } },
+    { "image/folding/other-stub"_s, [] { checkNotFolded(bodies(duplicateBody(1), duplicateBody(2, 7, rejectInFrame(false)))); } },
     { "image/folding/other-callee"_s, [] { checkNotFolded(bodies(movesAndJump(1, 3), movesAndJump(2, 4), framed(3), framed(4))); } },
     { "image/folding/other-moves"_s, [] { checkNotFolded(bodies(thunkCallBody(1, 1), thunkCallBody(2, 2))); } },
     { "image/folding/other-site-cache-pattern"_s, [] { checkNotFolded(bodies(siteCacheBody(1, { 10, 10 }), siteCacheBody(2, { 10, 11 }))); } },

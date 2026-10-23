@@ -278,16 +278,21 @@ bool allocatesOwnLayout(const Program& program, const Value& allocation)
 }
 
 // The object of a literal is born with what the literal lists. The fields of a class are stored by its constructor, and some of them hold raw values that a listed undefined would not be.
-static bool fillsEveryFieldOfBirth(const Program& program, const Value& allocation)
+static bool fillsEveryFieldOfBirth(const Program& program, const Function& function, const Value& allocation)
 {
-    if (allocation.opcode != Opcode::NewObject || program.at(allocation.layout()).kind != LayoutKind::Record)
+    if (allocation.opcode != Opcode::NewObject)
         return false;
+    bool mayListPlaceholders = program.at(allocation.layout()).kind != LayoutKind::Record;
     std::span<const uint32_t> listed = allocation.fields();
+    std::span<const ValueID> values = allocation.variadicOperands();
     bool hasFieldOfBirth = false;
     for (uint32_t field = 0; field < program.at(allocation.layout()).fields.size(); ++field) {
         if (!isFilledAtBirth(program, { allocation.layout(), field }))
             continue;
-        if (!std::ranges::contains(listed, field))
+        size_t index = std::ranges::find(listed, field) - listed.begin();
+        if (index == listed.size())
+            return false;
+        if (mayListPlaceholders && (index >= values.size() || program.typeOf(function, values[index]).mayBeUndefinedOrNull()))
             return false;
         hasFieldOfBirth = true;
     }
@@ -303,7 +308,7 @@ ProofSet proofsOfAllocation(const Program& program, const Function& function, co
         return { };
     bool hasAllocationRule = resultRuleOf(allocation.opcode) == ResultRule::Allocation;
     if (hasAllocationRule && Value::opcodesWithLayout.contains(allocation.opcode) && allocation.layout())
-        return fillsEveryFieldOfBirth(program, allocation) ? proofsOfNewLayoutInstance | ProofSet { Proof::BirthFieldsFilled } : proofsOfNewLayoutInstance;
+        return fillsEveryFieldOfBirth(program, function, allocation) ? proofsOfNewLayoutInstance | ProofSet { Proof::BirthFieldsFilled } : proofsOfNewLayoutInstance;
     const ClassPart* classPart = allocation.type ? program.at(allocation.type).singleBuiltinClass() : nullptr;
     if (!classPart || newTargetOf(allocation.opcode))
         return { };

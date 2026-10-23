@@ -29,6 +29,7 @@
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3CheckValue.h"
+#include "B3Common.h"
 #include "B3ExtractValue.h"
 #include "B3FenceValue.h"
 #include "B3MemoryValue.h"
@@ -47,6 +48,7 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <wtf/DataLog.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -844,7 +846,10 @@ private:
     void emitReturn(B3::Value*);
     void passPhiArguments(bool terminatorReadsValues);
     void leaveFor(DirectBlock& target);
-    void didBranchTo(DirectBlock& target, const DirectBlock& from);
+    void didBranchTo(DirectBlock& target, const DirectBlock& from, bool registersChangeAfterward = false);
+    void noteEdgeTo(DirectBlock& target);
+    void noteEntryOf(DirectBlock&);
+    void checkEdge(const RegisterFile& atJump, uint32_t from, DirectBlock& target);
     void jumpTo(DirectBlock& target, const DirectBlock& from);
     void link(Jump, DirectBlock& target);
     void linkConditional(Jump, DirectBlock& target);
@@ -960,6 +965,14 @@ private:
     uint64_t m_locked { 0 };
     uint32_t m_position { 0 };
     uint32_t m_stateIsFor { UINT32_MAX };
+    struct UncheckedEdge {
+        uint32_t target;
+        uint32_t from;
+        RegisterFile atJump;
+    };
+    bool m_checksEdges { false };
+    Vector<UncheckedEdge> m_uncheckedEdges;
+    Vector<uint32_t> m_snapshotAtEntry;
     unsigned m_numberOfLatePathsNoted { 0 };
     Label m_unitBegin;
 };
@@ -3434,6 +3447,8 @@ void DirectCodeGenerator::layOutFrame()
         Vector<uint32_t, 32> freeAt;
         for (unsigned index = m_valuesWithReservedHomes.size(); index--;) {
             ValueState& state = stateOf(m_valuesWithReservedHomes[index]);
+            if (state.flags & NeedsHome)
+                continue;
             unsigned slot = 0;
             unsigned limit = std::min<unsigned>(freeAt.size(), maxSlotsSearched);
             while (slot < limit && freeAt[slot] > state.position)
@@ -3660,6 +3675,7 @@ Reg DirectCodeGenerator::findFree(uint64_t candidates)
 
 Reg DirectCodeGenerator::allocate(uint64_t candidates, Reg preferred)
 {
+    bool wantsGeneralRegister = m_generalRegisters & candidates;
     candidates &= ~m_locked;
     if (preferred && (candidates & bitOfRegister(preferred))) {
         uint32_t holder = holderOf(preferred);
@@ -3686,7 +3702,7 @@ Reg DirectCodeGenerator::allocate(uint64_t candidates, Reg preferred)
     }
     if (!victim) {
         fail();
-        return Reg::fromIndex(std::countr_zero(m_generalRegisters & candidates ? m_generalRegisters : m_doubleRegisters));
+        return Reg::fromIndex(std::countr_zero(wantsGeneralRegister ? m_generalRegisters : m_doubleRegisters));
     }
     if (victimIsDirty)
         writeBack(victim);
@@ -5262,8 +5278,67 @@ void DirectCodeGenerator::passPhiArguments(bool terminatorReadsValues)
     m_pendingUpsilons.shrink(0);
 }
 
+// Where B3 validates: on every way into a block the registers hold, at the jump, what the block's code takes them to hold.
+void DirectCodeGenerator::checkEdge(const RegisterFile& atJump, uint32_t from, DirectBlock& target)
+{
+    uint32_t order = static_cast<uint32_t>(&target - m_blocks.span().data());
+    const RegisterFile& atEntry = m_snapshots[m_snapshotAtEntry[order] - 1];
+    auto stop = [&](const char* what, unsigned index) {
+        dataLogLn("AOT: code made without optimizing: on the way from block ", from, " to block ", order, " (#", target.block->index(), ") ", what, ": ", Reg::fromIndex(index));
+        dataLogLn(m_procedure);
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    for (uint64_t bits = atEntry.occupied; bits; bits &= bits - 1) {
+        unsigned index = std::countr_zero(bits);
+        uint64_t bit = static_cast<uint64_t>(1) << index;
+        if (!(atJump.occupied & bit) || atJump.holder[index] != atEntry.holder[index])
+            stop("a register does not hold the value that the block takes it to hold", index);
+        else if (!(atEntry.dirty & bit) && (atJump.dirty & bit) && !target.storedAtEntry)
+            stop("a value is not saved that the block takes for saved", index);
+    }
+    for (uint64_t bits = atJump.dirty & atJump.occupied; bits; bits &= bits - 1) {
+        unsigned index = std::countr_zero(bits);
+        uint32_t holder = atJump.holder[index];
+        if (!isLiveInto(holder - 1, target))
+            continue;
+        bool isBound = false;
+        for (uint64_t others = atEntry.occupied; others && !isBound; others &= others - 1)
+            isBound = atEntry.holder[std::countr_zero(others)] == holder;
+        if (!isBound)
+            stop("a value that the block needs is neither saved nor in a register there", index);
+    }
+}
+
+void DirectCodeGenerator::noteEdgeTo(DirectBlock& target)
+{
+    if (!m_checksEdges || m_hasFailed)
+        return;
+    uint32_t order = static_cast<uint32_t>(&target - m_blocks.span().data());
+    if (m_snapshotAtEntry[order]) {
+        checkEdge(m_file, m_currentBlock, target);
+        return;
+    }
+    m_uncheckedEdges.append(UncheckedEdge { order, m_currentBlock, m_file });
+}
+
+void DirectCodeGenerator::noteEntryOf(DirectBlock& block)
+{
+    if (!m_checksEdges || m_hasFailed)
+        return;
+    uint32_t order = static_cast<uint32_t>(&block - m_blocks.span().data());
+    m_snapshots.append(m_file);
+    m_snapshotAtEntry[order] = m_snapshots.size();
+    m_uncheckedEdges.removeAllMatching([&](const UncheckedEdge& edge) {
+        if (edge.target != order)
+            return false;
+        checkEdge(edge.atJump, edge.from, block);
+        return true;
+    });
+}
+
 void DirectCodeGenerator::link(Jump jump, DirectBlock& target)
 {
+    noteEdgeTo(target);
     if (target.label.isSet())
         jump.linkTo(target.label, m_jit);
     else
@@ -5277,6 +5352,7 @@ void DirectCodeGenerator::linkConditional(Jump jump, DirectBlock& target)
         link(jump, target);
         return;
     }
+    noteEdgeTo(target);
     uint32_t order = static_cast<uint32_t>(&target - m_blocks.span().data());
     uint32_t now = static_cast<uint32_t>(bytesSoFar());
     for (unsigned index = m_islands.size(); index--;) {
@@ -5575,13 +5651,13 @@ void DirectCodeGenerator::emitEdgeStubs()
     }
 }
 
-void DirectCodeGenerator::didBranchTo(DirectBlock& target, const DirectBlock& from)
+void DirectCodeGenerator::didBranchTo(DirectBlock& target, const DirectBlock& from, bool registersChangeAfterward)
 {
     if (target.startsEmpty) {
         arriveAt(target);
         return;
     }
-    if (isNext(target, from)) {
+    if (isNext(target, from) && !registersChangeAfterward) {
         m_stateIsFor = target.emissionIndex;
         return;
     }
@@ -5600,6 +5676,7 @@ void DirectCodeGenerator::jumpTo(DirectBlock& target, const DirectBlock& from)
         uint32_t order = static_cast<uint32_t>(&target - m_blocks.span().data());
         for (unsigned index = m_islands.size(); index-- && !isLinked && bytesSoFar() - m_islands[index].offset <= 120;) {
             if (m_islands[index].target == order) {
+                noteEdgeTo(target);
                 jump.linkTo(m_islands[index].label, m_jit);
                 isLinked = true;
             }
@@ -5651,7 +5728,7 @@ void DirectCodeGenerator::emitSwitch(B3::SwitchValue* value, DirectBlock& block)
         for (unsigned index = 0; index + 1 < numberOfSuccessors; ++index) {
             DirectBlock& successor = targetOf(block, index);
             if (!successor.snapshot)
-                didBranchTo(successor, block);
+                didBranchTo(successor, block, jumpsToOtherwise);
         }
         if (jumpsToOtherwise) {
             conformTo(otherwise);
@@ -5695,6 +5772,8 @@ void DirectCodeGenerator::emitSwitch(B3::SwitchValue* value, DirectBlock& block)
             finishUnit(CodeUnit::Kind::Pinned);
             jit.load32SignedExtendTo64(MacroAssembler::BaseIndex(table, index, MacroAssembler::TimesFour), index);
             jit.add64(table, index);
+            for (unsigned successor = 0; successor < numberOfSuccessors; ++successor)
+                noteEdgeTo(targetOf(block, successor));
             jit.farJump(index, NoPtrTag);
             finishUnit(CodeUnit::Kind::Pinned);
             m_codeIsReachable = false;
@@ -5777,7 +5856,7 @@ void DirectCodeGenerator::emitSwitch(B3::SwitchValue* value, DirectBlock& block)
     for (unsigned index = 0; index + 1 < numberOfSuccessors; ++index) {
         DirectBlock& successor = targetOf(block, index);
         if (!successor.snapshot)
-            didBranchTo(successor, block);
+            didBranchTo(successor, block, true);
     }
     DirectBlock& fallThrough = targetOf(block, numberOfSuccessors - 1);
     conformTo(fallThrough);
@@ -6220,8 +6299,16 @@ void DirectCodeGenerator::emitBlock(DirectBlock& block)
 
     m_locked = 0;
     m_position = block.firstPosition;
+    if (m_codeIsReachable && !m_isInGap && block.emissionIndex && m_currentBlock < m_blocks.size()) {
+        bool isSuccessor = false;
+        for (unsigned successor = 0; successor < m_blocks[m_currentBlock].block->numSuccessors(); ++successor)
+            isSuccessor |= &targetOf(m_blocks[m_currentBlock], successor) == &block;
+        if (isSuccessor)
+            noteEdgeTo(block);
+    }
     m_currentBlock = static_cast<uint32_t>(&block - m_blocks.span().data());
     enterBlock(block);
+    noteEntryOf(block);
     m_stateIsFor = UINT32_MAX;
     m_pendingUpsilons.shrink(0);
     for (uint32_t id : m_valuesLetGoUnsaved)
@@ -6254,6 +6341,9 @@ bool DirectCodeGenerator::generate(CCallHelpers& jit, CodeRecords& records, cons
     chooseWhereToSetUpFrame();
     estimateFrequencies();
     m_isPlanning = false;
+    m_checksEdges = B3::shouldValidateIR(m_procedure);
+    if (m_checksEdges)
+        m_snapshotAtEntry.fill(0, m_blocks.size());
     m_jit = &jit;
     m_records = &records;
     m_coldness = &coldness;

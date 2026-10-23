@@ -62,14 +62,21 @@ bool simplifyCFG(Code& code)
     bool changed = false;
     bool validateAtEachPhase = shouldValidateIRAtEachPhase(code.proc());
     LargePredecessorLists<BasicBlock> lists;
+    // We rely on predecessors being conservatively correct. Verify this here: the whole graph around the loop, and in the loop the block at hand.
+    auto checkPredecessorValidity = [&](BasicBlock* block) {
+        for (BasicBlock* successor : block->successorBlocks())
+            RELEASE_ASSERT(successor->containsPredecessor(block));
+    };
+    auto checkPredecessorValidityOfAllBlocks = [&] {
+        if (!validateAtEachPhase) [[likely]]
+            return;
+        for (BasicBlock* block : code)
+            checkPredecessorValidity(block);
+    };
+    checkPredecessorValidityOfAllBlocks();
     for (BasicBlock* block : code) {
-        // We rely on predecessors being conservatively correct. Verify this here.
-        if (validateAtEachPhase) [[unlikely]] {
-            for (BasicBlock* block : code) {
-                for (BasicBlock* successor : block->successorBlocks())
-                    RELEASE_ASSERT(successor->containsPredecessor(block));
-            }
-        }
+        if (validateAtEachPhase) [[unlikely]]
+            checkPredecessorValidity(block);
 
         // We don't care about blocks that don't have successors.
         if (!block->numSuccessors())
@@ -181,6 +188,7 @@ bool simplifyCFG(Code& code)
             }
         }
     }
+    checkPredecessorValidityOfAllBlocks();
 
     if (changed)
         code.resetReachability();

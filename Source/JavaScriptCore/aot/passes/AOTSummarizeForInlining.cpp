@@ -464,6 +464,7 @@ private:
         }
 
         Vector<uint32_t, 16> enclosingSubtrees;
+        Vector<uint32_t> innermostSubtrees(FillWith { }, m_function.blocks.size(), noSubtree);
         uint32_t nextPreorderIndex = 0;
         auto enter = [&](BlockID block) {
             uint32_t preorderIndex = nextPreorderIndex++;
@@ -473,6 +474,7 @@ private:
             }
             if (enclosingSubtrees.isEmpty())
                 return;
+            innermostSubtrees[block.index()] = enclosingSubtrees.last();
             Subtree& innermost = subtrees[enclosingSubtrees.last()];
             *innermost.ownBytes = saturatingSum<uint32_t>(*innermost.ownBytes, m_blockBytes[block.index()]);
             innermost.totalBytes = saturatingSum<uint32_t>(innermost.totalBytes, m_blockBytes[block.index()]);
@@ -491,18 +493,17 @@ private:
         };
         m_analyses.dominators().walkTree(enter, leave);
 
-        Vector<uint32_t, 4> totalBytesIfFalse(branchingBlocks.size(), [&](size_t i) {
-            uint32_t subtree = subtreeAtRoot[m_function.at(branchingBlocks[i]).terminator.notTaken().block.index()];
-            return subtree == noSubtree ? 0 : subtrees[subtree].totalBytes;
+        findBytesBehindFailedTests(summary, branchingBlocks.span(), [&](BlockID block) {
+            uint32_t subtree = innermostSubtrees[block.index()];
+            return subtree == noSubtree ? DominatedRange { } : *subtrees[subtree].range;
         });
-        findBytesBehindFailedTests(summary, branchingBlocks.span(), totalBytesIfFalse.span());
 
         summary.conditions.removeAllMatching([](const ParameterCondition& condition) {
             return condition.rangeIfTrue.begin == condition.rangeIfTrue.end && condition.rangeIfFalse.begin == condition.rangeIfFalse.end && !condition.isTestInFrontOfSharedBytes;
         });
     }
 
-    void findBytesBehindFailedTests(InliningSummary& summary, std::span<const BlockID> branchingBlocks, std::span<const uint32_t> totalBytesIfFalse)
+    void findBytesBehindFailedTests(InliningSummary& summary, std::span<const BlockID> branchingBlocks, NOESCAPE const Invocable<DominatedRange(BlockID)> auto& rangeAround)
     {
         CFG& cfg = m_analyses.cfg();
         BitVector failedTargets(m_function.blocks.size());
@@ -518,23 +519,30 @@ private:
             return;
 
         BitVector reachedWhereTestsPass = cfg.blocksReachableFrom(cfg.root(), failedTargets);
-        uint32_t bytesBehindTests = 0;
         for (BlockID block : cfg.reversePostOrder()) {
-            if (!reachedWhereTestsPass.get(block.index()))
-                bytesBehindTests = saturatingSum<uint32_t>(bytesBehindTests, m_blockBytes[block.index()]);
-        }
-        uint32_t ownedBytes = 0;
-        for (size_t i : tests) {
-            bool isNested = std::ranges::any_of(tests, [&](size_t other) {
-                return other != i && summary.conditions[other].rangeIfFalse.contains(summary.conditions[i].rangeIfFalse);
+            uint32_t bytes = m_blockBytes[block.index()];
+            if (!bytes || reachedWhereTestsPass.get(block.index()))
+                continue;
+            DominatedRange range = rangeAround(block);
+            bool isOwnedByOneTest = std::ranges::any_of(tests, [&](size_t i) {
+                return summary.conditions[i].rangeIfFalse.contains(range);
             });
-            if (!isNested)
-                ownedBytes = saturatingSum<uint32_t>(ownedBytes, totalBytesIfFalse[i]);
+            if (isOwnedByOneTest)
+                continue;
+            summary.bytesOnlyIfSomeTestFails = saturatingSum<uint32_t>(summary.bytesOnlyIfSomeTestFails, bytes);
+            size_t part = summary.partsOfBytesOnlyIfSomeTestFails.findIf([&](const BytesBehindFailedTests& other) {
+                return other.rangeAround.begin == range.begin;
+            });
+            if (part == notFound) {
+                part = summary.partsOfBytesOnlyIfSomeTestFails.size();
+                summary.partsOfBytesOnlyIfSomeTestFails.append({ range, 0 });
+            }
+            uint32_t& bytesOfPart = summary.partsOfBytesOnlyIfSomeTestFails[part].bytes;
+            bytesOfPart = saturatingSum<uint32_t>(bytesOfPart, bytes);
         }
-        if (bytesBehindTests <= ownedBytes)
+        if (!summary.bytesOnlyIfSomeTestFails)
             return;
 
-        summary.bytesOnlyIfSomeTestFails = bytesBehindTests - ownedBytes;
         for (size_t i : tests)
             summary.conditions[i].isTestInFrontOfSharedBytes = true;
     }

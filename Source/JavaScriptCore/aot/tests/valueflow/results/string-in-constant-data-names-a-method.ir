@@ -1,0 +1,24 @@
+# new Function(input)(); input[["Segmenter", "localeCompare"][input] + input]()
+# RUN: valueflow-results
+# CHECK-NOT: feature 9 StringPrototypeLocaleCompare Unnamed
+# CHECK: feature 9 StringPrototypeLocaleCompare
+# CHECK: feature 11 DatePrototypeToLocaleString Unnamed
+# CHECK: feature 13 IntlSegmenter Unnamed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+data d0 root=Array { contents=string elements=[String { value="Segmenter" }, String { value="localeCompare" }] }
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Data data=d0
+    v3 = ElemGet v2, v1
+    v4 = Add v3, v1
+    v5 = ElemGet v1, v4
+    v6 = Call v5, v1
+    v7 = Builtin builtin=Function
+    v8 = Construct v7, -, v1
+    v9 = Call v8, -
+    Return
+}

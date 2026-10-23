@@ -22,6 +22,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSGlobalProxy.h"
 
@@ -69,6 +70,7 @@ static ALWAYS_INLINE auto lookUpGeneric(JSObject* object, UniquedStringImpl* uid
 static NEVER_INLINE void validateLookupResult(VM& vm, JSObject* object, UniquedStringImpl* uid, bool isPresent, JSValue value)
 {
     DeferGCForAWhile deferGC(vm);
+    DeferTerminationForAWhile deferTermination(vm);
     JSGlobalObject* globalObject = object->realm();
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
     auto* proxy = dynamicDowncast<JSGlobalProxy>(object);
@@ -142,9 +144,9 @@ static StructuralRead readByFiledSlot(const JSObject* receiver, const Slot& slot
         return { jsUndefined(), LeafPresence::Absent };
     case Slot::Kind::Value:
         if (slot.has(Slot::isOwn))
-            return { receiver->getDirect(slot.offsetInStorage()), LeafPresence::Own };
+            return { valueAtOffset(receiver, slot.offsetInStorage()), LeafPresence::Own };
         // The own properties of a global proxy are those of its target, which a slot names as their holder.
-        return { asObject(slot.holder)->getDirect(slot.offsetInStorage()), receiver->type() == GlobalProxyType ? LeafPresence::TakeSlowPath : LeafPresence::Inherited };
+        return { valueAtOffset(asObject(slot.holder), slot.offsetInStorage()), receiver->type() == GlobalProxyType ? LeafPresence::TakeSlowPath : LeafPresence::Inherited };
     default:
         return { };
     }

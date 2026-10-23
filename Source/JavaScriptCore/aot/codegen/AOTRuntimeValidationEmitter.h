@@ -39,6 +39,9 @@ public:
     using PhotographedOperands = Vector<ValueID, 4>;
     PhotographedOperands photographOperands(const OperationContext&, const Effects& effectsOfCall);
     void compareWithPhotographs(const OperationContext&, const PhotographedOperands&, uint32_t callee);
+    // Around a call that collects nothing by what its operation is proven to do, while its callee may collect where less is known.
+    Integer countStopsForCollector();
+    void checkCollectorDidNotStop(const OperationContext&, Integer stopsBeforeCall, CalledCode::Kind, uint32_t callee);
     void noteFailedGuard(Opcode, uint32_t ordinal);
     void validateExit(const TerminatorContext&);
 

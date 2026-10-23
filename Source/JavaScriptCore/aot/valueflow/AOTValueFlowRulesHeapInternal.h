@@ -277,9 +277,12 @@ private:
     ClimbingSet builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet hostObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers);
+    bool isInProgramCode();
     ClimbingSet holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers);
+    void readExportsOfListedHolders(const ValueFlowOperand& object, ClimbingSet receivers);
 public:
     ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object);
+    ValueFlowNodeID exportsOfHoldersIn(const ValueFlowOperand& object);
 private:
     bool m_keepsHoldersOfExportsItStartsFrom { false };
     void notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);

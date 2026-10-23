@@ -33,11 +33,14 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
-#if OS(LINUX) || OS(FREEBSD)
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 #include <sys/mman.h>
 #endif
-#if OS(LINUX)
+#if OS(DARWIN) || OS(LINUX)
 #include <fcntl.h>
+#endif
+#if OS(WINDOWS)
+#include <windows.h>
 #endif
 
 namespace JSC::AOT {
@@ -95,10 +98,10 @@ static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
     return copy;
 }
 
-// On Linux nothing makes memory executable: the code is mapped from the file, as it is for an executable. The descriptor stays open for as long as the process lives.
+// On Linux and on macOS nothing makes the copy executable: the code is mapped from the file, as it is for an executable. The descriptor stays open for as long as the process lives.
 static std::optional<ImageFile> fileToMapCodeFrom(const String& path)
 {
-#if OS(LINUX)
+#if OS(DARWIN) || OS(LINUX)
     int descriptor = open(byteCast<char>(FileSystem::fileSystemRepresentation(path).data()), O_RDONLY | O_CLOEXEC);
     AOT_TEST_CHECK(descriptor >= 0);
     return ImageFile { descriptor, 0 };
@@ -124,11 +127,17 @@ static void useImageAt(const String& path)
 void overwriteWordInImage(const uint32_t& word, uint32_t value)
 {
     auto* address = const_cast<uint32_t*>(&word);
-#if OS(LINUX) || OS(FREEBSD)
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
     void* page = std::bit_cast<void*>(std::bit_cast<uintptr_t>(address) & ~(pageSize() - 1));
     AOT_TEST_CHECK(!mprotect(page, pageSize(), PROT_READ | PROT_WRITE));
     *address = value;
     AOT_TEST_CHECK(!mprotect(page, pageSize(), PROT_READ));
+#elif OS(WINDOWS)
+    DWORD protectionOfPage;
+    DWORD protectionForStore;
+    AOT_TEST_CHECK(VirtualProtect(address, sizeof(uint32_t), PAGE_READWRITE, &protectionOfPage));
+    *address = value;
+    AOT_TEST_CHECK(VirtualProtect(address, sizeof(uint32_t), protectionOfPage, &protectionForStore));
 #else
     *address = value;
 #endif

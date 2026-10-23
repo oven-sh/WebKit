@@ -311,6 +311,16 @@ void RuntimeValidationEmitter::compareWithPhotographs(const OperationContext& co
     }
 }
 
+Integer RuntimeValidationEmitter::countStopsForCollector()
+{
+    return callWithoutSite<Integer>(RuntimeOperation::CountStopsForCollector, { });
+}
+
+void RuntimeValidationEmitter::checkCollectorDidNotStop(const OperationContext& context, Integer stopsBeforeCall, CalledCode::Kind kind, uint32_t callee)
+{
+    failUnless(equal(countStopsForCollector(), stopsBeforeCall), ValidationFailureKind::CallCollected, boxedConstant(jsNumber(CalledCode::encode(kind, callee))), context.valueID());
+}
+
 void RuntimeValidationEmitter::noteFailedGuard(Opcode opcode, uint32_t ordinal)
 {
     Operand arguments[] { word32(m_id.index()), word32(static_cast<int32_t>(opcode)), word32(static_cast<int32_t>(ordinal)) };

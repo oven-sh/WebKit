@@ -35,9 +35,11 @@ StubSignature signatureOfPollAtLoop(StubKey) { return { }; }
 StubSignature signatureOfPollBeforeEntering(StubKey) { return { }; }
 
 #if CPU(X86_64)
-// The return address of the stub is on top of the stack.
-static void leaveFunctionAtPrologue(StubAssembler& jit, StubKey throwingStubAtPrologue, StubKey throwingStub)
+// The return address of the stub is on top of the stack. The throwing stub finds the stack as the caller of the function left it: a caller without a frame record is found by the stack pointer alone.
+static void leaveFunctionAtPrologue(StubAssembler& jit, StubKey throwingStub)
 {
+    constexpr GPRReg returnAddress = CCallHelpers::s_scratchRegister;
+    static_assert(noOverlap(returnAddress, GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2, instanceGPR));
     jit.loadPtr(Address(sp), A1);
     jit.move(instanceGPR, A0);
     jit.subPtr(TrustedImm32(sizeof(void*)), sp);
@@ -46,8 +48,15 @@ static void leaveFunctionAtPrologue(StubAssembler& jit, StubKey throwingStubAtPr
         jit.callOperation(Entry::operationAOTBytesAllocatedAtPrologueCheck, T11);
     });
     jit.addPtr(TrustedImm32(sizeof(void*)), sp);
-    jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR), throwingStubAtPrologue);
+    Jump hasNoFrameRecord = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR);
+    jit.emitFunctionEpilogue();
+    Jump isAtReturnAddress = jit.jump();
+    hasNoFrameRecord.link(&jit);
     jit.getEffectiveAddress(CCallHelpers::BaseIndex(sp, GPRInfo::returnValueGPR, CCallHelpers::TimesOne, sizeof(void*)), sp);
+    isAtReturnAddress.link(&jit);
+    jit.pop(returnAddress);
+    jit.addPtr(GPRInfo::returnValueGPR2, sp);
+    jit.push(returnAddress);
     jit.jumpToStub(throwingStub);
 }
 #endif
@@ -76,12 +85,12 @@ void generatePollAtPrologue(StubAssembler& jit)
 
     hasThrown.link(&jit);
     jit.emitFunctionEpilogue();
-    leaveFunctionAtPrologue(jit, handleExceptionAtPrologue(), handleException(false));
+    leaveFunctionAtPrologue(jit, handleException(false));
 
     mustThrow.link(&jit);
     jit.emitFunctionEpilogue();
     doesNotFit.link(&jit);
-    leaveFunctionAtPrologue(jit, throwStackOverflow(true), throwStackOverflow(false));
+    leaveFunctionAtPrologue(jit, throwStackOverflow(false));
 #else
     jit.linkToStub(jit.branchPtr(CCallHelpers::Below, sp, softStackLimitWord), throwStackOverflow(true));
     jit.preservingCallerSavedRegisters(false, [&](unsigned bytes) {

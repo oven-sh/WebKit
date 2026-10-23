@@ -277,8 +277,11 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
         return chain;
     };
 
-    if (key.keyClass != HeapKeyClass::Name)
-        return withoutLockedLocations(chainFrom(receivers));
+    if (key.keyClass != HeapKeyClass::Name) {
+        HeapChain chain = chainFrom(receivers);
+        chain.objects = m_context.unite(chain.objects, m_context.restrict(chain.start, m_tables.holdersOfMembersThatHostMakes()));
+        return withoutLockedLocations(chain);
+    }
     ValueSetID answering = m_tables.holdersThatAnswerUnder(key.name);
     if (ValueSetID storedTo = m_tables.objectsStoredToAtCreationUnder(key.name); storedTo != ValueSets::nothing) {
         ClimbingSet storedToAmongReceivers = m_context.restrict(receivers, storedTo);
@@ -694,7 +697,10 @@ ClimbingSet HeapRule::prototypesOf(ClimbingSet start, ValueSetID atCreation)
 {
     // A link that is locked is the one that the table names.
     ClimbingSet objects = m_context.restrict(known(start), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink()));
-    ClimbingSet above = m_context.unite(valueOfNodeIfAny(readWhereWritten(objects, prototypeLinkName)), ClimbingSet(atCreation ? atCreation : prototypesAtCreationOf(start)));
+    ValueFlowNodeID links = readWhereWritten(objects, prototypeLinkName);
+    ClimbingSet above = m_context.unite(valueOfNodeIfAny(links), ClimbingSet(atCreation ? atCreation : prototypesAtCreationOf(start)));
+    if (links && mayBeUnknownObject(above))
+        above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), links));
     forEachNodeStoredThroughPlaceholdersInto(objects, prototypeLinkName, [&](ValueFlowNodeID stored) {
         above = m_context.unite(above, m_context.valueOf(stored));
     });
@@ -729,6 +735,11 @@ void HeapRule::collectChain()
     ValueFlowNodeID chainAbove = m_context.lookup(known(above), prototypeLinkName);
     connect(chainAbove, m_statement.result);
     add(m_statement.result, m_context.restrict(above, m_universe.placeholdersAlone()));
+    if (mayBeUnknownObject(above)) {
+        ValueSetID objectsOfProgram = m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()));
+        if (ValueFlowNodeID links = readWhereWritten(m_context.restrict(known(start), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())), prototypeLinkName))
+            connect(m_context.masked(m_context.lookup(m_context.valueWithin(ClimbingSet(objectsOfProgram), links), prototypeLinkName), m_universe.holdersOfLibraryExports()), m_statement.result);
+    }
     // A copy takes the own properties of its source: what lies above the source stays behind.
     above = m_context.unite(above, withSourcesOfCopies(m_context, known(valueOfNodeIfAny(readWhereWritten(known(start), copiedFromName)))));
     add(m_statement.result, known(above));
@@ -1094,7 +1105,21 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         return;
 
     Members getters;
-    forEachMemberUnder(m_context.restrict(chainFrom(m_context.valueOf(object), key).objects, holders), key, [&](BuiltinID member, ModuleID module) {
+    HeapChain chain = chainFrom(m_context.valueOf(object), key);
+    ClimbingSet found = m_context.restrict(chain.objects, holders);
+    // Beside the unknown object nobody is shown a holder that has escaped, and the unknown object answers with no evaluator. So the links are walked by what they list.
+    if (chain.holdsUnknownObject) {
+        constexpr unsigned longestChain = 8;
+        ClimbingSet above = known(chain.start);
+        for (unsigned step = 0; step < longestChain && holdsAnything(above); ++step) {
+            found = m_context.unite(found, m_context.restrict(above, holders));
+            ClimbingSet next(prototypesAtCreationOf(above));
+            if (ValueFlowNodeID links = readWhereWritten(above, prototypeLinkName))
+                next = m_context.unite(next, m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), links));
+            above = known(next);
+        }
+    }
+    forEachMemberUnder(found, key, [&](BuiltinID member, ModuleID module) {
         if (m_tables.letsInUnseenCode(member))
             readMember(member, module, m_statement.result, getters);
     });
@@ -1575,6 +1600,12 @@ ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(ValueFlowRuleContext& 
 {
     ValueFlowStatement statement;
     return HeapRule(statement, context).exportsOfHoldersListedBesideUnknownObject(object);
+}
+
+ValueFlowNodeID exportsOfHoldersIn(ValueFlowRuleContext& context, const ValueFlowOperand& object)
+{
+    ValueFlowStatement statement;
+    return HeapRule(statement, context).exportsOfHoldersIn(object);
 }
 
 } } } // namespace JSC::AOT::Typed

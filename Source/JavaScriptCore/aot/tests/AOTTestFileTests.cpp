@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCodeSites.h"
 #include "AOTNativeTest.h"
 #include "AOTRuntimeTable.h"
 #include "AOTTestFile.h"
@@ -85,6 +86,16 @@ static void testRequiresSelectsRuns()
 #else
     expectRunLines(codeOfOtherSystems, Architecture::X86_64, { 1, 2 });
 #endif
+
+    static constexpr ASCIILiteral codeWithFaultingPolls =
+        "# RUN: print\n"
+        "# RUN(X64): print\n"
+        "# REQUIRES(X64): x86_64 faulting-loop-polls\n"
+        "# X64: a\n"_s;
+    if (hasFaultingLoopPolls)
+        expectRunLines(codeWithFaultingPolls, Architecture::X86_64, { 1, 2 });
+    else
+        expectRunLines(codeWithFaultingPolls, Architecture::X86_64, { 1 });
 }
 
 static void testRequiresMalformed()
@@ -94,6 +105,7 @@ static void testRequiresMalformed()
     expectErrorLines("# RUN: print\n# REQUIRES: x86_64 arm64\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: unsanitized-code unsanitized-code\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: not-windows not-windows\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REQUIRES: faulting-loop-polls faulting-loop-polls\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES(OTHER): arm64\n"_s, { 2 });
     expectErrorLines("# RUN(ONLY): print\n# ONLY: x\n# REQUIRES: arm64\n"_s, { 3 });
     expectErrorLines("# RUN: print\n# REQUIRES: arm64\n# REQUIRES: x86_64\n"_s, { 3 });

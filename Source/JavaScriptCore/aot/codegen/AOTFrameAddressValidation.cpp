@@ -75,10 +75,11 @@ bool isLateUse(B3::ValueRep::Kind constraint)
 
 class FrameAddressValidation {
 public:
-    FrameAddressValidation(B3::Procedure& proc, Vector<FrameAddressViolation>& violations, const BitVector& originsOfSuspensions)
+    FrameAddressValidation(B3::Procedure& proc, Vector<FrameAddressViolation>& violations, const BitVector& originsOfSuspensions, const BitVector& originsOfParametersWithoutObjects)
         : m_proc(proc)
         , m_violations(violations)
         , m_originsOfSuspensions(originsOfSuspensions)
+        , m_originsOfParametersWithoutObjects(originsOfParametersWithoutObjects)
     {
     }
 
@@ -127,6 +128,12 @@ private:
         return false;
     }
 
+    bool holdsNoObject(const B3::Value* phi) const
+    {
+        Typed::ValueID origin = Typed::valueOfOrigin(phi->origin());
+        return origin && m_originsOfParametersWithoutObjects.get(origin.index());
+    }
+
     bool isDerived(B3::Value* value) const
     {
         return m_derivedValueSet.contains(value);
@@ -154,7 +161,7 @@ private:
             for (B3::BasicBlock* block : m_proc) {
                 for (B3::Value* value : *block) {
                     if (auto* upsilon = value->as<B3::UpsilonValue>()) {
-                        if (isDerived(upsilon->child(0)))
+                        if (isDerived(upsilon->child(0)) && !holdsNoObject(upsilon->phi()))
                             changed |= m_derivedValueSet.add(upsilon->phi());
                         continue;
                     }
@@ -247,6 +254,7 @@ private:
     B3::Procedure& m_proc;
     Vector<FrameAddressViolation>& m_violations;
     const BitVector& m_originsOfSuspensions;
+    const BitVector& m_originsOfParametersWithoutObjects;
     IndexSet<B3::Value*> m_derivedValueSet;
     Vector<B3::Value*> m_derivedValues;
     IndexMap<B3::Value*, unsigned> m_numberOf;
@@ -257,13 +265,13 @@ private:
 
 } // anonymous namespace
 
-B3::ClientPhase validateFrameAddresses(Vector<FrameAddressViolation>& violations, BitVector&& originsOfSuspensions)
+B3::ClientPhase validateFrameAddresses(Vector<FrameAddressViolation>& violations, BitVector&& originsOfSuspensions, BitVector&& originsOfParametersWithoutObjects)
 {
     return {
         B3::ClientPhase::Point::BeforeLowerToAir,
         "validateFrameAddresses"_s,
-        createSharedTask<bool(B3::Procedure&)>([&violations, originsOfSuspensions = WTF::move(originsOfSuspensions)](B3::Procedure& proc) {
-            FrameAddressValidation(proc, violations, originsOfSuspensions).run();
+        createSharedTask<bool(B3::Procedure&)>([&violations, originsOfSuspensions = WTF::move(originsOfSuspensions), originsOfParametersWithoutObjects = WTF::move(originsOfParametersWithoutObjects)](B3::Procedure& proc) {
+            FrameAddressValidation(proc, violations, originsOfSuspensions, originsOfParametersWithoutObjects).run();
             return false;
         })
     };

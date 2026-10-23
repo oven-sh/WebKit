@@ -97,7 +97,7 @@ export default b.declarations(
           returns: b.any,
           throws: true,
           // The getter that is found on the target runs with the receiver as `this`: it is called on what it does not hang above.
-          uses: { target: [b.everything, b.accessorReadByKey("Getter", key, b.nativeMemory)], receiver: [b.everything] },
+          uses: { target: [b.everything, b.readByKey(key), b.accessorReadByKey("Getter", key, b.nativeMemory)], receiver: [b.everything] },
           implementation: b.compiled("ReflectObject", "get"),
         },
       ],

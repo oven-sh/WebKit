@@ -320,7 +320,7 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
             return boolean(false);
         std::optional<Receiver> receiver = receiverWithTestedStructure(classID);
         RELEASE_ASSERT(receiver);
-        return equal(loadStructureID(cell), loadImmutable32(Instance::offsetOfReceiverStructureID(*receiver)));
+        return equal(loadStructureID(cell), loadMutable32(Instance::offsetOfReceiverStructureID(*receiver)));
     }
     }
     RELEASE_ASSERT_NOT_REACHED();

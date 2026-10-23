@@ -17,6 +17,7 @@ namespace JSC { namespace AOT {
 
 using Typed::PropertyKeyID;
 
+// The numbers of the constants and of the keys count every body. A body without code names no string.
 struct StringUses {
     BitVector isNamed;
     // Named by something else than the operation that makes the cell of a string constant and those that have the text for a message: an operation that reads the text, a key, a regular expression.
@@ -47,7 +48,7 @@ struct ProgramUses {
     KeyUses keys;
 };
 
-ProgramUses collectProgramUses(const Typed::PipelineOutput&, BuildContext&);
+ProgramUses collectProgramUses(const Typed::PipelineOutput&, const BitVector& bodiesWithoutCode, BuildContext&);
 
 } } // namespace JSC::AOT
 

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTChainDependents.h"
 #include "AOTImmortalCells.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
@@ -99,7 +100,7 @@ static JSValue readExtraProperty(const Slot& slot, Object& object)
 
 static JSValue valueInStorage(const Slot& slot, JSCell* base)
 {
-    return asObject(slot.has(Slot::isOwn) ? base : slot.holder)->getDirect(slot.offsetInStorage());
+    return valueAtOffset(asObject(slot.has(Slot::isOwn) ? base : slot.holder), slot.offsetInStorage());
 }
 
 // callCustomGetterAndReturn() in the stubs.
@@ -262,7 +263,8 @@ static bool tryAddExtraProperty(Instance& instance, const Slot& slot, Object& ob
     if (object.isNotExtensible() || slot.has(Slot::isOutOfLine))
         return false;
     VM& vm = *instance.vm;
-    auto* newStructure = uncheckedDowncast<CompiledStructure>(slot.extraPropertyAddition.newStructureID.decode());
+    // As in operationAOTAddPropertyBySlot(): this pointer alone keeps the Structure alive across the allocation below.
+    auto* newStructure = WTF::opaque(uncheckedDowncast<CompiledStructure>(slot.extraPropertyAddition.newStructureID.decode()));
     PropertyOffset offset = Slot::offsetFor(slot.extraPropertyAddition.wordIndex);
     JSObject* extraProperties = object.extraProperties();
     if (!extraProperties) {

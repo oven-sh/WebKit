@@ -17,6 +17,7 @@
 #include "WasmCodeInImage.h"
 #include <wtf/AccessibleAddress.h>
 #include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/threads/Signals.h>
@@ -154,6 +155,7 @@ static void* moveLoadedCode(std::span<const uint8_t> code)
     return target;
 }
 
+#if !defined(BUN_HARDENED)
 static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code)
 {
     void* copy = mmap(nullptr, code.size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -167,6 +169,7 @@ static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code)
     __builtin___clear_cache(static_cast<char*>(copy), static_cast<char*>(copy) + code.size());
     return copy;
 }
+#endif
 #endif
 
 #elif OS(WINDOWS)
@@ -227,7 +230,9 @@ public:
     static std::optional<CodeMapping> protectLoadedSection(std::span<const uint8_t> code);
 #if OS(LINUX)
     static std::optional<CodeMapping> moveExecutableSegment(std::span<const uint8_t> code);
+#if !defined(BUN_HARDENED)
     static std::optional<CodeMapping> copy(std::span<const uint8_t> code);
+#endif
 #endif
 
     const uint8_t* code() const { return static_cast<const uint8_t*>(m_code); }
@@ -287,6 +292,7 @@ std::optional<CodeMapping> CodeMapping::moveExecutableSegment(std::span<const ui
     return CodeMapping { Kind::FileMapping, moved, code.size() };
 }
 
+#if !defined(BUN_HARDENED)
 std::optional<CodeMapping> CodeMapping::copy(std::span<const uint8_t> code)
 {
     void* anonymousCopy = copyCodeToAnonymousMemory(code);
@@ -294,6 +300,7 @@ std::optional<CodeMapping> CodeMapping::copy(std::span<const uint8_t> code)
         return std::nullopt;
     return CodeMapping { Kind::AnonymousCopy, anonymousCopy, code.size() };
 }
+#endif
 #endif
 
 void CodeMapping::release()
@@ -413,7 +420,7 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
 {
     refusal = Wire::ImageVerdict::CannotMapCode;
     size_t size = header.size - header.codeOffset;
-#if OS(LINUX)
+#if OS(LINUX) && !defined(BUN_HARDENED)
     if (Options::useAOTPerfMap()) [[unlikely]]
         return CodeMapping::copy(bytes.subspan(header.codeOffset, size));
 #endif
@@ -436,8 +443,13 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
 #endif
     if (mapping) {
         // Compiled code reads the constants in the code part through pointers into the loaded image.
+#if defined(BUN_HARDENED)
+        if (isLoadedExecutable)
+            OSAllocator::protect(const_cast<uint8_t*>(code.data()), code.size(), true, false);
+#else
         if (isLoadedExecutable)
             mprotect(const_cast<uint8_t*>(code.data()), code.size(), PROT_READ);
+#endif
         return mapping;
     }
 #if OS(LINUX)
@@ -491,10 +503,12 @@ static void didPublishImage(const Image& image)
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     if (auto directory = image.section<uint8_t>(ImageSection::WebAssemblyDirectory); !directory.empty())
         Wasm::CodeInImage::setImage(directory.data(), image.webAssemblyCode());
+#else
+    UNUSED_PARAM(image);
 #endif
-    if (hasFaultSites(image.header()))
-        activateSignalHandlersFor(Signal::AccessFault);
-#if OS(LINUX)
+    // An image without fault sites still has returns that are diverted to a page without code.
+    activateSignalHandlersFor(Signal::AccessFault);
+#if OS(LINUX) && !defined(BUN_HARDENED)
     if (Options::useAOTPerfMap()) [[unlikely]]
         writePerfMap();
 #endif

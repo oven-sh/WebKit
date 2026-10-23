@@ -260,7 +260,7 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
     bool hasSeenAll = true;
     Vector<ValueID, maxNames> names { maker };
     auto addName = [&](ValueID name) {
-        if (names.contains(name))
+        if (names.contains(name) || !mayBeReference(analyses.program().typeOf(function, name)))
             return;
         if (names.size() < maxNames)
             names.append(name);

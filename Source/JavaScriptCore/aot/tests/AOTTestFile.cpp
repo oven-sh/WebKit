@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCodeSites.h"
 #include "AOTProgramFile.h"
 #include "AOTRuntimeTable.h"
 #include "AOTVector.h"
@@ -61,6 +62,7 @@ private:
         bool hasRequiredArchitecture { false };
         bool requiresUnsanitizedCode { false };
         bool requiresOtherThanWindows { false };
+        bool requiresFaultingLoopPolls { false };
     };
 
     void collectDirectiveLines();
@@ -393,6 +395,8 @@ void TestFileParser::parseRun(const DirectiveLine& directive)
 static constexpr ASCIILiteral unsanitizedCode = "unsanitized-code"_s;
 // For Windows the direct generator is left out, and the code of x86-64 follows another calling convention.
 static constexpr ASCIILiteral notWindows = "not-windows"_s;
+// A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
+static constexpr ASCIILiteral faultingLoopPolls = "faulting-loop-polls"_s;
 #if OS(WINDOWS)
 static constexpr bool isForWindows = true;
 #else
@@ -414,12 +418,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode || word == notWindows)
+        if (word == unsanitizedCode || word == notWindows || word == faultingLoopPolls)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -636,7 +640,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE) || (group.requiresOtherThanWindows && isForWindows)) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls)) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

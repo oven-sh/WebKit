@@ -1,0 +1,63 @@
+# Every function goes through B3 and Air, the cold ones of a very large program too
+# FORM: AsRead
+# OPTIONS: limit=MaxWarmCodeValues:1 heat=EverythingIsCold disable=pass:InlineCalls
+# RUN: generate-code FunctionsGeneratedDirectly DirectGenerationsAbandoned
+# CHECK: statistic FunctionsGeneratedDirectly 0
+# CHECK: statistic DirectGenerationsAbandoned 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="total" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    PutModuleVariable v4 variable=g0
+    v6 = CallDirect v4, v4 function=f1
+    v7 = CallDirect v4, v4 function=f2
+    v8 = Add v6, v7
+    Return v8
+}
+function f1 name="exitsEarly" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=7
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b2(), notTaken b1()
+  b1():
+    v4 = BitXor v0, v1
+    Return v4
+  b2():
+    v5 = CallDirect v0 function=f3
+    v6 = CallDirect v1 function=f3
+    v7 = BitXor v5, v6
+    v8 = BitXor v7, v0
+    v9 = BitXor v8, v1
+    Return v9
+}
+function f2 name="callsFirst" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallDirect v1 function=f3
+    v3 = Integer integer=7
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b2(), notTaken b1()
+  b1():
+    v5 = BitXor v0, v2
+    Return v5
+  b2():
+    v6 = CallDirect v0 function=f3
+    v7 = CallDirect v1 function=f3
+    v8 = BitXor v6, v7
+    v9 = BitXor v8, v0
+    v10 = BitXor v9, v2
+    Return v10
+}
+function f3 name="changesTotal" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = BitXor v1, v0
+    PutModuleVariable v2 variable=g0
+    Return v2
+}

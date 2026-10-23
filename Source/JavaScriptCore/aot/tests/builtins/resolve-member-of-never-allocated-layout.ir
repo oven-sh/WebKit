@@ -15,7 +15,7 @@ function f0 name="sizeOfNeverMade" parameters=[{type=L0}] results=[{type=anythin
 # CHECK-NOT: CallBuiltin
 # CHECK: v1: anything = PropGet v0 key="size"
 # EFFECTS-LABEL: function f0
-# EFFECTS: v1 PropGet: none
+# EFFECTS: v1 PropGet: collects
 
 function f1 name="sizeOfMade" parameters=[{type=L1}] results=[{type=anything}] {
   b0(v0: L1):

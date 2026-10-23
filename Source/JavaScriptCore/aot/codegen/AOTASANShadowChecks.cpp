@@ -53,13 +53,14 @@ static bool isFrameAddress(const B3::Value* pointer)
     return pointer->opcode() == B3::SlotBase || pointer->opcode() == B3::FramePointer;
 }
 
-static void emitReport(CCallHelpers& jit, unsigned size, bool isStore)
+static void emitReport(CCallHelpers& jit, unsigned size, bool isStore, unsigned bytesPushedByCheck)
 {
     jit.move(CCallHelpers::TrustedImm32(size | isStore << 8), GPRInfo::argumentGPR2);
+    jit.addPtr(CCallHelpers::TrustedImm32(bytesPushedByCheck), CCallHelpers::stackPointerRegister, GPRInfo::argumentGPR3);
     jit.andPtr(CCallHelpers::TrustedImm32(-16), CCallHelpers::stackPointerRegister);
     jit.move(instanceGPR, GPRInfo::argumentGPR0);
-    jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), GPRInfo::argumentGPR3);
-    jit.call(CCallHelpers::Address(GPRInfo::argumentGPR3, offsetInRuntimeTable(Entry::operationAOTReportPoisonedAccess)), OperationPtrTag);
+    jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), GPRInfo::argumentGPR4);
+    jit.call(CCallHelpers::Address(GPRInfo::argumentGPR4, offsetInRuntimeTable(Entry::operationAOTReportPoisonedAccess)), OperationPtrTag);
     jit.breakpoint();
 }
 
@@ -94,7 +95,9 @@ void ShadowCheck::generateLatePath(CCallHelpers& jit, GPRReg base, GPRReg shadow
         jit.branch32(CCallHelpers::LessThan, last, shadow).linkTo(done, &jit);
     }
     jit.addPtr(CCallHelpers::TrustedImm32(offset), base, GPRInfo::argumentGPR1);
-    emitReport(jit, size, isStore);
+    emitReport(jit, size, isStore, 0);
+    // Never runs. The report reads from it where the access is.
+    jit.jump().linkTo(done, &jit);
 }
 
 static void emitEffectiveAddress(CCallHelpers& jit, CCallHelpers::Address address, GPRReg result)
@@ -149,7 +152,7 @@ static void emitStandaloneCheck(CCallHelpers& jit, AddressType address, GPRReg i
         isPartiallyAddressable = jit.branch32(CCallHelpers::LessThan, last, shadow);
     }
     emitEffectiveAddress(jit, address, GPRInfo::argumentGPR1);
-    emitReport(jit, size, isStore);
+    emitReport(jit, size, isStore, redZoneSize + (size < 8 ? 3 : 2) * sizeof(void*));
     if (size < 8) {
         isPartiallyAddressable.link(&jit);
         jit.pop(last);

@@ -252,7 +252,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetSuperPropertyById, EncodedJSValue, (Inst
     }
     ClassPrototype::ensureMembers(parent);
     Object::ensureStructureForExtraPropertiesIfNeeded(vm, parent);
-    Structure* structureBefore = parent->structure();
+    Structure* structureBefore = WTF::opaque(parent->structure());
     PropertySlot slot(JSValue::decode(receiver), PropertySlot::InternalMethodType::Get);
     bool has = parent->getPropertySlot(globalObject, identifier, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());

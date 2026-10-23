@@ -34,6 +34,24 @@ private:
     Vector<Witness> m_wayInto;
 };
 
+// The candidates that reached code binds to or reads by name, or that a string literal of the program spells.
+class ValueFlowNamedBuiltins {
+    WTF_MAKE_NONCOPYABLE(ValueFlowNamedBuiltins);
+public:
+    struct Member {
+        BuiltinID builtin;
+        BuiltinID candidate;
+    };
+
+    // By canonical entry. The library's code behind a member counts once the member's candidate is named.
+    ValueFlowNamedBuiltins(const ValueFlowResultInputs&, const BitVector& candidates, std::span<const Member>);
+
+    bool contains(BuiltinID builtin) const { return m_named.quickGet(builtin.index()); }
+
+private:
+    BitVector m_named;
+};
+
 // The locales that the calls of the built-ins whose code runs name. One that is no constant, and one that is left to the host, keeps the data of every language.
 Vector<FlowLocaleUse> collectLocaleUses(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& builtinsWhoseCodeRuns, std::span<const UnseenCodeRecord>);
 

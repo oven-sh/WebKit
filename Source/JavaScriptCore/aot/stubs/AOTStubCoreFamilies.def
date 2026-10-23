@@ -16,7 +16,7 @@ v(HandleExceptionPreservingRegisters, CalledByCode, (), NeverReturns, 0, 0, AllI
 v(HandleExceptionAtPrologue, CalledByCode, (), NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, HandleExceptionAtPrologue)
 v(ThrowStackOverflow, CalledByCode, (InBody, AtPrologue), FormAxis | NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, ThrowStackOverflow)
 v(Catch, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, Catch)
-v(RejectInFrame, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RejectInFrame)
+v(RejectInFrame, EnteredByRuntime, (Plain, BelowSpilledArguments), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RejectInFrame)
 
 // AOTStubsPolls.cpp
 v(PollAtPrologue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtPrologue)

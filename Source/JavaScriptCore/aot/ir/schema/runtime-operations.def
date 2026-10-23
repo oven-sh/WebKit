@@ -169,6 +169,7 @@ runtime ReportValidationFailure : void (EncodedJSValue value, uint32_t kind, uin
 runtime PhotographOperand : void (EncodedJSValue operand, uint64_t writtenHeaps, uint32_t position) ; reads(all) writes(ValidationState)
 runtime CompareOperandWithPhotograph : void (EncodedJSValue operand, uint32_t positionAndCallee, uint32_t function, uint32_t valueIndex) ; reads(all) writes(ValidationState)
 runtime NoteFailedGuard : void (uint32_t function, uint32_t opcode, uint32_t ordinal) ; reads(ValidationState) writes(ValidationState)
+runtime CountStopsForCollector : uint64_t () ; reads(ValidationState) writes(ValidationState)
 runtime ContentsHaveType : size_t (JSCell* container, uint32_t contentsSlot, uint32_t type) ; reads(all)
 runtime ValidateLookup : size_t (JSCell* receiver, uint32_t key, JSCell* expected) ; RuntimeCreatesConstant
 runtime PollSlow : void () ; reads(all) writes(AllocatorState, RuntimeState) terminates collects

@@ -28,6 +28,7 @@
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
@@ -40,7 +41,7 @@
 
 namespace JSC { namespace AOT {
 
-static_assert(static_cast<unsigned>(ValidationFailureKind::UnspecifiedValueInspected) + 1 == numberOfValidationFailureKinds);
+static_assert(static_cast<unsigned>(ValidationFailureKind::CallCollected) + 1 == numberOfValidationFailureKinds);
 
 ASCIILiteral nameOf(ValidationFailureKind kind)
 {
@@ -141,6 +142,8 @@ ASCIILiteral nameOf(ValidationFailureKind kind)
         return "OperationWroteHeap"_s;
     case ValidationFailureKind::UnspecifiedValueInspected:
         return "UnspecifiedValueInspected"_s;
+    case ValidationFailureKind::CallCollected:
+        return "CallCollected"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -285,10 +288,32 @@ static void dumpChangedRegister(PrintStream& out, JSValue found)
         out.print(" callee f", callee);
 }
 
+static void dumpCalledCode(PrintStream& out, JSValue found)
+{
+    uint32_t bits = static_cast<uint32_t>(found.asInt32());
+    uint32_t number = bits & CalledCode::maxNumber;
+    switch (static_cast<CalledCode::Kind>(bits >> CalledCode::kindShift)) {
+    case CalledCode::Kind::Operation:
+        out.print(nameOf(static_cast<Entry>(number)));
+        return;
+    case CalledCode::Kind::Stub:
+        out.print("stub ", descriptorOf(static_cast<StubFamily>(number)).name);
+        return;
+    case CalledCode::Kind::Function:
+        out.print("f", number);
+        return;
+    case CalledCode::Kind::Address:
+        out.print("a function value");
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 namespace {
 
 MAKE_PRINT_ADAPTOR(ClassDump, JSValue, dumpClassOf);
 MAKE_PRINT_ADAPTOR(ChangedRegisterDump, JSValue, dumpChangedRegister);
+MAKE_PRINT_ADAPTOR(CalledCodeDump, JSValue, dumpCalledCode);
 
 class IndexDump {
 public:
@@ -322,6 +347,8 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
     dataLog("AOT validation: ", nameOf(failure.kind), " f", IndexDump(failure.function), " v", IndexDump(failure.value), " ");
     if (failure.kind == ValidationFailureKind::CallChangedKeptRegister || failure.kind == ValidationFailureKind::UnwindingChangedKeptRegister)
         dataLogLn(ChangedRegisterDump(failure.found));
+    else if (failure.kind == ValidationFailureKind::CallCollected)
+        dataLogLn(CalledCodeDump(failure.found));
     else
         dataLogLn(ClassDump(failure.found));
     CRASH_WITH_INFO(static_cast<uint64_t>(failure.kind), failure.function.index(), failure.value.index());
@@ -421,6 +448,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFailedGuard, void, (Instance*,
     uint64_t guard = (static_cast<uint64_t>(function) << (bitsOfOpcode + bitsOfOrdinal)) | (static_cast<uint64_t>(opcode) << bitsOfOrdinal) | (ordinal & ((1u << bitsOfOrdinal) - 1));
     if (noted->add(guard + 1).isNewEntry)
         dataLogLn("AOT guard failed: f", function, " ", nameOf(static_cast<Typed::Opcode>(opcode)), " ", ordinal);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountStopsForCollector, uint64_t, (Instance* instance))
+{
+    return instance->vm->heap.mutatorExecutionVersion();
 }
 
 OperationPermissions permissionsOf(Entry entry)
@@ -605,6 +637,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance*
 {
     VM& vm = *instance->vm;
     DeferGCForAWhile deferGC(vm);
+    DeferTerminationForAWhile deferTermination(vm);
     JSGlobalObject* globalObject = instance->globalObject;
     const Identifier& name = identifierAt(instance, key);
     JSObject* object = asObject(receiver);

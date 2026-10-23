@@ -664,6 +664,17 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     if (generator().validates() && context && comesBack && !effects.mayRunOtherCode() && !options.runsCodeOfHost && !generator().isInitializingCell())
         photographedOperands = emitter<RuntimeValidationEmitter>().photographOperands(*context, effects);
     uint32_t photographedCallee = request.entry ? static_cast<uint32_t>(*request.entry) : PhotographedCall::calleeIsStub | static_cast<uint32_t>(key.family());
+    std::optional<Integer> stopsBeforeCall;
+    if (generator().validates() && context && comesBack && request.effectsOfCallee.mayCollect && !effects.mayCollect && !options.followsThrow)
+        stopsBeforeCall = emitter<RuntimeValidationEmitter>().countStopsForCollector();
+    auto checkCollectorDidNotStop = [&] {
+        if (!stopsBeforeCall)
+            return;
+        if (request.entry)
+            emitter<RuntimeValidationEmitter>().checkCollectorDidNotStop(*context, *stopsBeforeCall, CalledCode::Kind::Operation, static_cast<uint32_t>(*request.entry));
+        else
+            emitter<RuntimeValidationEmitter>().checkCollectorDidNotStop(*context, *stopsBeforeCall, CalledCode::Kind::Stub, static_cast<uint32_t>(key.family()));
+    };
 
     B3::PatchpointValue* patchpoint = m_out.patchpoint(patchpointTypeOf(m_proc, signature.result));
     patchpoint->effects.terminal = request.end != CallEnd::Returns;
@@ -711,7 +722,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     patchpoint->setGenerator([callGenerator = WTF::move(callGenerator)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         callGenerator.generate(jit, params);
     });
-    if (branchesOnFlags && photographedOperands.isEmpty()) {
+    if (branchesOnFlags && photographedOperands.isEmpty() && !stopsBeforeCall) {
         m_out.m_block->appendSuccessor(request.targets->notTaken);
         m_out.m_block->appendSuccessor(request.targets->taken);
     } else if (branchesOnFlags) {
@@ -722,6 +733,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         m_out.m_block->appendSuccessor(B3::FrequentedBlock(taken, request.targets->taken.frequency()));
         for (auto [block, target] : { std::pair { notTaken, request.targets->notTaken.block() }, std::pair { taken, request.targets->taken.block() } }) {
             m_out.appendTo(block);
+            checkCollectorDidNotStop();
             emitter<RuntimeValidationEmitter>().compareWithPhotographs(*context, photographedOperands, photographedCallee);
             m_out.jump(target);
         }
@@ -734,6 +746,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         return { };
     }
     StubCallResult result = resultOfCall(signature.result, patchpoint);
+    checkCollectorDidNotStop();
     if (!cellsBeforeCall.isEmpty())
         emitter<RuntimeValidationEmitter>().checkCellsWereNotConverted(cellsBeforeCall);
     if (!photographedOperands.isEmpty())

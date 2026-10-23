@@ -200,7 +200,7 @@ static bool tryStoreExtraProperty(const NamedAccess& access, Object& object, JSV
         object.ensureStructureForExtraProperties(vm);
         flags.add(Flag::NamesExtraPropertiesStructure);
     }
-    structureBefore = object.structure();
+    structureBefore = WTF::opaque(object.structure());
     if (mode == PutMode::Define)
         flags.add(Flag::IsDefinition);
     if (object.tryStoreExtraProperty(vm, access.ident, value, flags).kind == Object::ExtraPropertyStore::NotHandled)
@@ -267,7 +267,8 @@ static bool tryAddFirstPropertyOfSlimClosure(const NamedAccess& access, SlimClos
     const Slot* filed = access.caches.findByKey(withoutProperty, access.ident.impl(), SlotAccess::Store);
     if (!filed || filed->kind != Slot::Kind::Transition)
         return false;
-    closure.reifyWithAddedProperty(vm, filed->transition.newStructureID.decode(), filed->offsetInStorage(), value);
+    // As in operationAOTAddPropertyBySlot(): this pointer alone keeps the Structure alive across the allocations of the callee.
+    closure.reifyWithAddedProperty(vm, WTF::opaque(filed->transition.newStructureID.decode()), filed->offsetInStorage(), value);
     return true;
 }
 
@@ -277,7 +278,7 @@ static void putToSlimClosureAndCache(const NamedAccess& access, SlimClosure& clo
         return;
     VM& vm = access.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Structure* structureOfSlimClosures = closure.structure();
+    Structure* structureOfSlimClosures = WTF::opaque(closure.structure());
     closure.reify(vm);
     NamedAccess accessWithoutSite = access;
     accessWithoutSite.site = nullptr;
@@ -321,7 +322,8 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     // Only what is filed has to name the extra properties by their Structure.
     if (shouldFile)
         Object::ensureStructureForExtraPropertiesIfNeeded(vm, cell);
-    structureBefore = cell->structure();
+    // The store may give the cell another Structure, and then this pointer alone keeps the one before alive. The collector knows no StructureID on the stack, so the compiler must not make the pointer anew from the ID behind a call.
+    structureBefore = WTF::opaque(cell->structure());
     const uint32_t orderWordBefore = object ? object->orderWord() : 0;
     bool repeatsAddition = object || !cell->isObject() || repeatsPropertyAddition(structureBefore, uid);
     if (mode == PutMode::Define && cell->isObject())

@@ -279,14 +279,24 @@ static size_t findFirstDerivedFunction(std::span<const FunctionTraceRecord> trac
     return firstDerived;
 }
 
+// A frame shows the name of its function, and a closure that of its entrypoint: both have code. Nothing asks for the name of any other function.
+static BitVector findFunctionsWithShownName(const TableEncoder& encoder, std::span<const FunctionTraceRecord> traces)
+{
+    BitVector isShown(traces.size());
+    for (size_t index : encoder.inputs.bodyFacts.functionsWithFrames)
+        isShown.quickSet(traces[index].sourceFunctionIndex);
+    return isShown;
+}
+
 static void appendFunctionNames(TableEncoder& encoder, std::span<const FunctionTraceRecord> traces)
 {
     // Not context.limit(): a test that lowers it means the list of long strings.
     bool numbersFit = encoder.program.strings.size() <= Number24::max;
     if (!numbersFit)
         encoder.build.reportLimitExceeded(LimitID::MaxListedStrings, encoder.program.strings.size());
+    BitVector isShown = findFunctionsWithShownName(encoder, traces);
     auto nameOf = [&](size_t index) {
-        uint32_t number = encoder.shownStringNumber(encoder.obfuscates() ? StringID() : functionNameOf(encoder.program, FunctionID(index), traces[index]));
+        uint32_t number = encoder.shownNameNumber(isShown.quickGet(index) ? functionNameOf(encoder.program, FunctionID(index), traces[index]) : StringID());
         return Number24(numbersFit ? number : 0);
     };
     size_t firstDerived = findFirstDerivedFunction(traces);
@@ -295,6 +305,8 @@ static void appendFunctionNames(TableEncoder& encoder, std::span<const FunctionT
     for (size_t index = 0; index < firstDerived; ++index) {
         if (!(index % 32))
             groups[index / 32 * 2 + 1] = names.size();
+        if (!isShown.quickGet(index))
+            continue;
         Number24 name = nameOf(index);
         if (!name)
             continue;
@@ -307,6 +319,9 @@ static void appendFunctionNames(TableEncoder& encoder, std::span<const FunctionT
     Vector<FunctionNameRunData> runs;
     for (size_t index = firstDerived; index < traces.size(); ++index) {
         if (traces[index].sourceFunctionIndex != index)
+            continue;
+        // ProgramTables::nameOfFunction() looks for the run in front of any function.
+        if (!isShown.quickGet(index) && !runs.isEmpty())
             continue;
         uint32_t name = nameOf(index);
         if (runs.isEmpty() || runs.last().name != name)

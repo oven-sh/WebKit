@@ -12,7 +12,9 @@
 #include "AOTCompiledFrame.h"
 #include "AOTImage.h"
 #include "AOTOperationScope.h"
+#include "AOTStackTrace.h"
 #include "AOTState.h"
+#include "AOTStubDescriptor.h"
 #include "AOTUnwinding.h"
 #include "CallFrameInlines.h"
 #include "DeferGCInlines.h"
@@ -114,28 +116,111 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
     return makeUGPRPair(0, 0);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, size_t, (Instance*, const void* returnAddress))
+// First what the function has allocated below its return address, zero if it has a frame record. Second what its entry has put above its return address.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBytesAllocatedAtPrologueCheck, UGPRPair, (Instance*, const void* returnAddress))
 {
     const Image& image = *Image::current();
     std::optional<PrologueCheck> check = image.prologueCheckAt(returnAddress);
     RELEASE_ASSERT(check);
     const ImageFrame& frame = image.frameOf(check->function);
-    return frame.hasFrameRecord() ? 0 : frame.frameSizeInBytes() + sizeof(void*);
+    size_t bytesBelowReturnAddress = frame.hasFrameRecord() ? 0 : frame.frameSizeInBytes() + sizeof(void*);
+    size_t bytesAboveReturnAddress = image.function(check->function).has(ImageFunctionFlag::SpillsArgumentRegisters) ? sizeOfSpilledArgumentRegisters : 0;
+    return makeUGPRPair(bytesBelowReturnAddress, bytesAboveReturnAddress);
 }
 
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportPoisonedAccess, void, (Instance*, void* address, uint32_t sizeAndIsStore))
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+// Behind the report of a check whose slow half lies at the end of the function stands a jump to the access.
+static const void* addressOfAccess(const void* returnAddress)
+{
+    constexpr uint8_t breakpoint = 0xcc;
+    constexpr uint8_t nearJump = 0xe9;
+    auto* bytes = static_cast<const uint8_t*>(returnAddress);
+    if (bytes[0] != breakpoint || bytes[1] != nearJump)
+        return returnAddress;
+    int32_t distance;
+    memcpy(&distance, bytes + 2, sizeof(distance));
+    return bytes + 2 + sizeof(distance) + distance;
+}
+
+static bool isBehindCall(const void* address)
+{
+    constexpr uint8_t nearCall = 0xe8;
+    constexpr uint8_t group5 = 0xff;
+    auto* bytes = static_cast<const uint8_t*>(address);
+    if (bytes[-5] == nearCall)
+        return true;
+    for (int length : { 2, 3, 4, 6, 7 }) {
+        if (bytes[-length] == group5 && (bytes[1 - length] & 0x38) == 0x10)
+            return true;
+    }
+    return false;
+}
+
+static void printNameOfStubAt(const Image& image, uint32_t offsetInSharedCode)
+{
+    const StubAddressInImage* stub = nullptr;
+    for (const StubAddressInImage& candidate : image.section<StubAddressInImage>(ImageSection::StubAddresses)) {
+        if (candidate.offset <= offsetInSharedCode && (!stub || candidate.offset > stub->offset))
+            stub = &candidate;
+    }
+    if (!stub)
+        return;
+    StubKey key = StubKey::fromBits(stub->key);
+    const StubDescriptor& descriptor = descriptorOf(key.family());
+    dataLog(" ", descriptor.name);
+    if (key.form() < descriptor.formNames.size())
+        dataLog(".", descriptor.formNames[key.form()]);
+}
+
+// A stub without a frame record, and a function without one, have their return address somewhere between the stack pointer and the frame record above.
+SUPPRESS_ASAN static void collectCompiledFrames(const Image& image, bool hasFrameRecord, void* const* stackPointer, void* const* frameRecord, WTF::Vector<const void*, 64>& addresses)
+{
+    const StackBounds& stack = Thread::currentSingleton().stack();
+    if (!stack.contains(const_cast<void**>(frameRecord)))
+        return;
+    if (!hasFrameRecord && stack.contains(const_cast<void**>(stackPointer))) {
+        for (void* const* word = stackPointer; word < frameRecord; ++word) {
+            if (image.locate(*word).kind == CodeKind::Function && isBehindCall(*word))
+                addresses.append(*word);
+        }
+    }
+    while (addresses.size() < addresses.capacity()) {
+        addresses.append(frameRecord[1]);
+        auto* next = static_cast<void* const*>(frameRecord[0]);
+        if (next <= frameRecord || !stack.contains(const_cast<void**>(next)))
+            break;
+        frameRecord = next;
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportPoisonedAccess, void, (Instance*, void* address, uint32_t sizeAndIsStore, void* const* stackPointer))
 {
     void* returnAddress = __builtin_return_address(0);
     void* frame = __builtin_frame_address(1);
-    CodeLocation location = Image::current()->locate(returnAddress);
-    if (location.kind == CodeKind::Stub)
-        dataLogLn("AOT: compiled code touches poisoned memory: a stub, at ", imageCodeOffset(returnAddress).value_or(0), " bytes into the code of the image");
-    else
+    const Image& image = *Image::current();
+    CodeLocation location = image.locate(returnAddress);
+    WTF::Vector<const void*, 64> addresses;
+    bool hasFrameRecord = false;
+    if (location.kind == CodeKind::Stub) {
+        dataLog("AOT: compiled code touches poisoned memory: a stub");
+        printNameOfStubAt(image, location.offset);
+        dataLogLn(", at ", imageCodeOffset(returnAddress).value_or(0), " bytes into the code of the image");
+    } else {
         dataLogLn("AOT: compiled code touches poisoned memory: function ", location.function, ", at ", imageCodeOffset(returnAddress).value_or(0), " bytes into the code of the image");
+        const void* access = addressOfAccess(returnAddress);
+        addresses.append(access);
+        CodeLocation locationOfAccess = image.locate(access);
+        hasFrameRecord = image.frameOf(location.function).hasFrameRecord() && image.hasFrameAt(locationOfAccess.function, locationOfAccess.offset);
+    }
+    collectCompiledFrames(image, hasFrameRecord, stackPointer, static_cast<void* const*>(frame), addresses);
+    dataLog(describeCodeAddresses(addresses.span()));
     __asan_report_error(returnAddress, frame, frame, address, sizeAndIsStore >> 8, sizeAndIsStore & 0xff);
     CRASH();
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
 } } // namespace JSC::AOT

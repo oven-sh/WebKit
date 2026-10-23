@@ -28,6 +28,7 @@
 #include "AOTPositionTable.h"
 #include "AOTProgramTables.h"
 #include "AOTRegExpRecordEncoder.h"
+#include "AOTRuntimeTable.h"
 #include "AOTSectionWriter.h"
 #include "AOTSort.h"
 #include "AOTStubDescriptor.h"
@@ -445,7 +446,8 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
 {
     Vector<StubAddressInImage> addresses;
     for (auto& placement : blob.placements) {
-        if (hasAddressInImage(descriptorOf(placement.key.family()).linkage))
+        // A report of poisoned memory names the stub it comes from.
+        if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || hasAddressInImage(descriptorOf(placement.key.family()).linkage))
             addresses.append({ placement.key.bits(), placement.offset, 0 });
     }
     AOT::sort(addresses, { }, &StubAddressInImage::key);

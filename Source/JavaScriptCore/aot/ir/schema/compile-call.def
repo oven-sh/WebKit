@@ -15,6 +15,7 @@ enum UnprovenCause (family: UnprovenCauseFamily) {
 enum CheckCause { Unknown UnknownObject UnknownCallee UnprovenContents MayFail LimitReached ResultDisabled AddedByPass }
 enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode LimitReached FlowResultDisabled RunsMachineCode }
 flags BuiltinUse { Tested Read Called Constructed Written Escaped }
+enum FeatureUseKind { Named Unnamed }
 enum LocaleUseKind { Unknown HostDefault Constant }
 enum TypeTestFailure { TakesGenericPath Throws }
 enum ArrivalStamp { None Open Complete }
@@ -77,7 +78,7 @@ record InternalErrorRecord abi {
 }
 record UnseenCodeRecord abi { cause: UnseenCodeCause builtin: Builtin? witness: Witness }
 record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness }
-record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness }
+record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
 record AccessRecord abi {
     location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause limit: LimitID layout: Layout? copies: UInt32 witness: Witness
@@ -116,13 +117,14 @@ enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FlowFixpoint FunctionsGetPastEntry UsedValuesAreListed }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals PassCodeBytes }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime FailPredictions }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime FailPredictions GenerateColdCodeDirectly }
 enum Sabotage {
     None
     StackNamesNoInnerCell NarrowReferenceOnStackNamesNoInnerCell InnerObjectIsVisitedWithoutItsFields InnerArrayIsVisitedWithoutItsElements InnerCellVisitedInPlaceStaysWhite
     InnerCellIsMarkedWithoutItsOuterCell InnerCellLetGoKeepsItsHeader
     RoomIsNotInReferenceList RoomsLeftEmptyAreNotZeroed NoBarrierBehindFreshStoreIntoRoom NoBarrierForStoreThroughBorrowedObject StoreLeavesRoomAsItIs
     FlattenedObjectIsMadeWithoutBarrier MakingLeavesRoomAsItIs
+    NoCallCollects
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

@@ -90,8 +90,9 @@ bool isNeverCachedName(VM& vm, UniquedStringImpl* uid)
 
 Structure* structureForPrimitive(JSGlobalObject* globalObject, JSValue primitive)
 {
+    // Whoever asks keeps the answer across code that may give the cell another Structure: see putAndCache().
     if (primitive.isCell())
-        return primitive.asCell()->structure();
+        return WTF::opaque(primitive.asCell()->structure());
     if (primitive.isNumber())
         return globalObject->numberObjectStructure();
     if (primitive.isBoolean())
@@ -112,7 +113,7 @@ static bool findsLengthGetterOfTypedArrays(Structure* receiverStructure, const C
     JSType type = receiverStructure->typeInfo().type();
     if (!isTypedArrayType(type) || !isValidOffset(walk.offset))
         return false;
-    auto* accessors = uncheckedDowncast<GetterSetter>(walk.holder->getDirect(walk.offset).asCell());
+    auto* accessors = uncheckedDowncast<GetterSetter>(valueAtOffset(walk.holder, walk.offset).asCell());
     auto* getter = dynamicDowncast<JSFunction>(accessors->getter());
     // A host function has its intrinsic only where the JIT is on.
     if (!getter || !getter->isHostFunction())

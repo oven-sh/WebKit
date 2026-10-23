@@ -13,6 +13,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsCallFrames.h"
 #include "AOTVector.h"
 #include "CallFrame.h"
 #include "JSCJSValue.h"
@@ -34,9 +35,10 @@ static constexpr GPRReg savedVM = GPRInfo::regCS0;
 
 static_assert(noOverlap(T10, T11, A0, GPRInfo::regT1) && noOverlap(T11, A1));
 static_assert(noOverlap(GPRInfo::returnValueGPR, A2));
-static_assert(exists(handleException(false)) && exists(handleException(true)) && exists(handleExceptionAtPrologue()) && exists(catchException()) && exists(rejectInFrame()));
+static_assert(exists(handleException(false)) && exists(handleException(true)) && exists(handleExceptionAtPrologue()) && exists(catchException()) && exists(rejectInFrame(false)) && exists(rejectInFrame(true)));
 static_assert(exists(throwStackOverflow(false)) && exists(throwStackOverflow(true)));
 static_assert(descriptorOf(StubFamily::ThrowStackOverflow).numberOfForms == static_cast<unsigned>(StackOverflowForm::AtPrologue) + 1);
+static_assert(descriptorOf(StubFamily::RejectInFrame).numberOfForms == static_cast<unsigned>(RejectedFrameForm::BelowSpilledArguments) + 1);
 
 // The VM is in T10, the function in T11. Afterwards the VM is in savedVM.
 static void callLookupExceptionHandler(StubAssembler& jit)
@@ -210,13 +212,18 @@ void generateCatch(StubAssembler& jit)
 
 void generateRejectInFrame(StubAssembler& jit)
 {
+    bool liesBelowSpilledArguments = static_cast<RejectedFrameForm>(jit.key().form()) == RejectedFrameForm::BelowSpilledArguments;
     jit.move(CCallHelpers::stackPointerRegister, T9);
     jit.andPtr(TrustedImm32(-static_cast<int32_t>(stackAlignmentBytes())), T9);
     jit.move(T9, CCallHelpers::stackPointerRegister);
     jit.move(instanceGPR, A0);
     jit.move(GPRInfo::callFrameRegister, A1);
     jit.callOperation(Entry::operationAOTRejectWithException, T9);
+    if (liesBelowSpilledArguments)
+        jit.bindReturnLabel(StubFrameKind::BelowSpilledArguments);
     jit.emitFunctionEpilogue();
+    if (liesBelowSpilledArguments)
+        emitDropSpilledArgumentRegisters(jit);
     jit.ret();
 }
 

@@ -374,6 +374,8 @@ void ElementAccessEmitter::appendOutOfLine(const ValueContext& store, CellPointe
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Operand operand = get(element);
+    if (operand.is<Number>() && typeOf(element).isInt32())
+        operand = Operand(boxInt32(conversions.toInt32(operand.as<Number>())));
     if (operand.is<Number>()) {
         callStub(store, arrayPushDouble(), { array.value(), conversions.bitsOf(operand).value() });
         return;

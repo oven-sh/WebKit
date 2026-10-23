@@ -171,6 +171,19 @@ static BitVector findNarrowReferences(const Function& function)
     return references;
 }
 
+static BitVector findParametersWithoutObjects(const Program& program, const Function& function)
+{
+    BitVector parameters;
+    for (uint32_t index = 0; index < function.values.size(); ++index) {
+        if (function.values[index].opcode != Opcode::Parameter)
+            continue;
+        const Type& type = program.typeOf(function, ValueID(index));
+        if (type.isJavaScriptValue() && !type.hasObjects())
+            parameters.set(index);
+    }
+    return parameters;
+}
+
 static void appendClientPhases(B3::Policy& policy, const Program& program, const Function& function, const FunctionBackEndTraits& traits)
 {
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
@@ -217,7 +230,7 @@ bool FunctionCodeGenerator::generateB3(DirectCodeAttempt attempt)
     policy.clientPhases.append(throwWhereTrapsAreCertain(m_records, m_inputs.stubCatalog));
     appendClientPhases(policy, program, m_function, traits);
     if (traits.savesFrameOnSuspend && options.verifiesProgram)
-        policy.clientPhases.append(validateFrameAddresses(m_frameAddressViolations, frameMaps.suspensionValues()));
+        policy.clientPhases.append(validateFrameAddresses(m_frameAddressViolations, frameMaps.suspensionValues(), findParametersWithoutObjects(program, m_function)));
     if (!options.recorded.useWideReferences() && !options.recorded.has(TestingSwitch::DropReferenceGuards)) {
         NarrowReferenceOrigins origins { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand };
         if (std::optional<DroppedGuard> dropped = droppedGuardIn(options.recorded, m_id)) {

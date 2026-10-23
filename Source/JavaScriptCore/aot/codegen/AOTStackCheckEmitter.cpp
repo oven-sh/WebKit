@@ -14,6 +14,7 @@
 #include "AOTSort.h"
 #include "AOTStubBodyConvention.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsCallFrames.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPolls.h"
 #include "AOTVector.h"
@@ -98,17 +99,26 @@ void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckS
         RELEASE_ASSERT(!check.doesNotFit.empty() && check.resume.isSet());
         check.doesNotFit.link(&jit);
         switch (check.limit) {
-        case StackLimit::Soft:
-            if (check.bytesAllocatedBelowReturnAddress) {
-                CCallHelpers::Label begin = jit.label();
-                if (*check.bytesAllocatedBelowReturnAddress)
-                    jit.addPtr(CCallHelpers::TrustedImm32(*check.bytesAllocatedBelowReturnAddress), CCallHelpers::stackPointerRegister);
-                records.units.pin(begin, jit.label());
-                records.stubCalls.tailCall(jit, throwStackOverflow(false));
+        case StackLimit::Soft: {
+            // A caller without a frame record is found by the stack pointer alone, so the stub has to find the stack as that caller left it.
+            bool dropsSpilledArgumentRegisters = isX86_64() && records.frame.spillsArgumentRegisters;
+            if (!check.bytesAllocatedBelowReturnAddress && !dropsSpilledArgumentRegisters) {
+                records.stubCalls.tailCall(jit, throwStackOverflow(true));
                 break;
             }
-            records.stubCalls.tailCall(jit, throwStackOverflow(true));
+            CCallHelpers::Label begin = jit.label();
+            if (!check.bytesAllocatedBelowReturnAddress)
+                jit.emitFunctionEpilogue();
+            else if (*check.bytesAllocatedBelowReturnAddress)
+                jit.addPtr(CCallHelpers::TrustedImm32(*check.bytesAllocatedBelowReturnAddress), CCallHelpers::stackPointerRegister);
+            if (dropsSpilledArgumentRegisters) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                emitDropSpilledArgumentRegisters(jit);
+            }
+            records.units.pin(begin, jit.label());
+            records.stubCalls.tailCall(jit, throwStackOverflow(false));
             break;
+        }
         case StackLimit::TrapAwareSoft: {
             // The stub returns to the resume offset of the PrologueCheck, never to the address after the call.
             CCallHelpers::Label call = jit.label();

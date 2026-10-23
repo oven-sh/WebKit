@@ -447,6 +447,25 @@ static void testMaterializeDoesNotSplitPhiOfSlotAndOtherValue()
     checkPhiIsNotSplit(proc, appendJoinOfAddresses(proc, buildSlotBase, buildArgument));
 }
 
+static void testParameterWithoutObjectsTakesNoFrameAddress()
+{
+    B3::Procedure proc;
+    auto buildSlotBase = [&](B3::BasicBlock* block) {
+        return appendSlotBase(proc, block, proc.addStackSlot(8), firstAddressOrigin);
+    };
+    auto buildArgument = [&](B3::BasicBlock* block) -> B3::Value* {
+        return block->appendNew<B3::ArgumentRegValue>(proc, originOf(otherOrigin), GPRInfo::argumentGPR1);
+    };
+    appendJoinOfAddresses(proc, buildSlotBase, buildArgument);
+    AOT_TEST_CHECK(findFrameAddressViolations(proc).size() == 1);
+
+    BitVector parametersWithoutObjects;
+    parametersWithoutObjects.set(secondAddressOrigin);
+    Vector<FrameAddressViolation> violations;
+    AOT_TEST_CHECK(!validateFrameAddresses(violations, originsOfSuspensions(), WTF::move(parametersWithoutObjects)).run->run(proc));
+    AOT_TEST_CHECK(violations.isEmpty());
+}
+
 static void testMaterializeSplitsSharedFramePointer()
 {
     B3::Procedure proc;
@@ -1087,6 +1106,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "materialize-unused-slot-base"_s, testMaterializeUnusedSlotBase },
         { "materialize-splits-shared-slot-base"_s, testMaterializeSplitsSharedSlotBase },
         { "pure-function-at-suspension-is-no-suspension"_s, testPureFunctionAtSuspensionIsNoSuspension },
+        { "parameter-without-objects-takes-no-frame-address"_s, testParameterWithoutObjectsTakesNoFrameAddress },
         { "materialize-phi-of-one-slot"_s, testMaterializePhiOfOneSlot },
         { "materialize-phi-of-one-distance-into-slot"_s, testMaterializePhiOfOneDistanceIntoSlot },
         { "materialize-phi-that-goes-around-loop"_s, testMaterializePhiThatGoesAroundLoop },

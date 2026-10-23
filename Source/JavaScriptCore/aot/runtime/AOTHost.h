@@ -31,7 +31,9 @@ class VM;
 namespace AOT {
 
 JS_EXPORT_PRIVATE uint64_t operationCallCount(VM&, Entry);
+#if !defined(BUN_HARDENED)
 JS_EXPORT_PRIVATE void writePerfMap();
+#endif
 JS_EXPORT_PRIVATE void setMismatchLog(intptr_t descriptor, bool isJSON);
 JS_EXPORT_PRIVATE void setMismatchLogFormat(bool isJSON);
 JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);

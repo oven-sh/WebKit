@@ -4,7 +4,7 @@
 # CHECK: f0 return: {{*}} p0: [{{*}}] reads({{*}}) writes(EnvironmentFields/1, ObjectFields, ShapeWords, {{*}}) p1: [Inspects]
 # CHECK-NEXT: f1 return: {{*}} p0: [{{*}}] reads({{*}}) writes(EnvironmentFields/1, ObjectFields, ShapeWords, {{*}}) p1: [Inspects]
 # CHECK-NEXT: f2 return: {{*}} p0: [Inspects, DefinesName] reads({{*}}) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties) p1:
-# CHECK-NEXT: f3 return: writes(ObjectFields/1) throw: none p0: [{{*}}] writes(ObjectFields/1) p1: [Inspects]
+# CHECK-NEXT: f3 return: writes(ObjectFields/1) collects throw: none p0: [{{*}}] writes(ObjectFields/1) p1: [Inspects]
 # CHECK-NOT: f4 return: {{*}}writes
 # CHECK: f5 return: {{*}} p0: [] p1: [{{*}}] reads({{*}}) writes({{*}}) p2: [Inspects]
 # CHECK-NEXT: f6 return: {{*}} p0: [] p1: [{{*}}] reads({{*}}) writes({{*}}) p2: [Inspects]

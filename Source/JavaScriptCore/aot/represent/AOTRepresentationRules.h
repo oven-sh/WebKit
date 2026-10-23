@@ -33,7 +33,7 @@ struct RepresentationInputs {
     const Type& typeOf(ValueID value) const { return program.typeOf(function, value); }
 };
 
-// Nothing says that the function runs often, so its code is made without the optimizing back end.
+// Only where a testing switch asks for it: the code of the function is made without the optimizing back end.
 bool isGeneratedWithoutOptimizing(const BuildContext&, const Heat&, const Program&, FunctionID);
 
 inline constexpr RepresentationSet integerRepresentations { Representation::Int32, Representation::Int64 };

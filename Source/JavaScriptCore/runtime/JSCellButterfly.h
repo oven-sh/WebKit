@@ -80,8 +80,14 @@ public:
 
     static JSCellButterfly* create(VM& vm, IndexingType indexingType, unsigned length)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(length <= IndexingHeader::maximumLength, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+        auto* array = new (NotNull, allocateCell<JSCellButterfly>(vm, allocationSize(length))) JSCellButterfly(vm, vm.cellButterflyStructure(indexingType), length);
+        array->finishCreation(vm);
+#else
         auto* array = tryCreate(vm, indexingType, length);
         RELEASE_ASSERT_RESOURCE_AVAILABLE(array, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+#endif
         return array;
     }
 

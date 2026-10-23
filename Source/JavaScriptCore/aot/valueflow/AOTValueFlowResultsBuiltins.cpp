@@ -651,6 +651,45 @@ private:
 
 } // anonymous namespace
 
+// Intl.Collator for Intl.Collator.prototype.compare.
+static BuiltinID outermostHolderWithFeature(const BuiltinTable& builtins, BuiltinID builtin, uint32_t feature)
+{
+    BuiltinID outermost = builtin;
+    for (BuiltinID holder = builtins.at(builtin).holder; holder; holder = builtins.at(holder).holder) {
+        holder = builtins.canonicalID(holder);
+        bool hasFeature = std::ranges::any_of(builtins.featureUsesOf(holder), [&](const BuiltinFeatureUse& line) {
+            return static_cast<uint32_t>(line.feature) == feature;
+        });
+        if (hasFeature)
+            outermost = holder;
+    }
+    return outermost;
+}
+
+// Evaluated text and computed keys reach every language built-in without naming one. Host built-ins are only ever reached by name.
+static void markUnnamedFeatureUses(const ValueFlowResultInputs& inputs, Vector<FeatureUseRecord>& uses)
+{
+    const BuiltinTable& builtins = inputs.program.builtins();
+    auto candidateOf = [&](const FeatureUseRecord& use) {
+        if (builtins.at(BuiltinID(use.builtin)).origin == BuiltinOrigin::Host)
+            return BuiltinID();
+        return outermostHolderWithFeature(builtins, BuiltinID(use.builtin), use.feature);
+    };
+    BitVector candidates(builtins.builtinCount());
+    Vector<ValueFlowNamedBuiltins::Member> members;
+    for (const FeatureUseRecord& use : uses) {
+        if (BuiltinID candidate = candidateOf(use)) {
+            candidates.quickSet(candidate.index());
+            members.append({ BuiltinID(use.builtin), candidate });
+        }
+    }
+    ValueFlowNamedBuiltins named(inputs, candidates, members.span());
+    for (FeatureUseRecord& use : uses) {
+        if (BuiltinID candidate = candidateOf(use); candidate && !named.contains(candidate))
+            use.kind = FeatureUseKind::Unnamed;
+    }
+}
+
 static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders, const BitVector& builtinsWhoseCodeRuns)
 {
     auto orderOf = [](const FeatureUseRecord& use) {
@@ -681,6 +720,7 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
     }
     AOT::sort(uses, { }, orderOf);
     uses.shrink(std::ranges::unique(uses, { }, orderOf).begin() - uses.begin());
+    markUnnamedFeatureUses(inputs, uses);
     return uses;
 }
 

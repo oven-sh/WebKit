@@ -1,3 +1,4 @@
+//@ skip if !$aot
 //@ $skipModes << :lockdown # every array has slow-put array storage there, and no such array has pristine elements.
 //@ requireOptions("--useDollarVM=1")
 // The two pristine bits of a Structure: what marking needs, which transitions keep them, and what marking does to the Structures and

@@ -307,6 +307,8 @@ private:
             beginLine("feature"_s);
             m_out.print(use.feature);
             printOptionalBuiltin(use.builtin);
+            if (use.kind != FeatureUseKind::Named)
+                m_out.print(" "_s, nameOf(use.kind));
             printOptionalWitness(use.witness);
             m_printer.endLine();
         }

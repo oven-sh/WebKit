@@ -125,10 +125,18 @@ void GCSegmentedArray<T>::fillVector(Vector<T>& vector)
     }
 }
 
+// MarkedBlockCage.cpp. It says nothing and returns where no compiled program runs under a limit on address space.
+JS_EXPORT_PRIVATE void logExhaustedAddressSpace();
+
 template <typename T>
 inline GCArraySegment<T>* GCArraySegment<T>::create()
 {
-    return new (NotNull, GCSegmentedArrayMalloc::malloc(blockSize)) GCArraySegment<T>();
+    void* memory = GCSegmentedArrayMalloc::tryMalloc(blockSize);
+    if (!memory) [[unlikely]] {
+        logExhaustedAddressSpace();
+        memory = GCSegmentedArrayMalloc::malloc(blockSize);
+    }
+    return new (NotNull, memory) GCArraySegment<T>();
 }
 
 template <typename T>

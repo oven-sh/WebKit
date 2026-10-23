@@ -303,9 +303,10 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
         constexpr uint64_t typeAndStateMask = 0xff00ff0000000000ull;
         constexpr uint64_t typeAndStateOfFrameCell = static_cast<uint64_t>(AOT::frameCellState) << 56 | static_cast<uint64_t>(CompiledObjectType) << 40;
         uint64_t word = std::bit_cast<uintptr_t>(bits);
-        if ((word & typeAndStateMask) != typeAndStateOfFrameCell || !static_cast<uint32_t>(word)) [[likely]]
+        StructureID structureID = std::bit_cast<StructureID>(static_cast<uint32_t>(word));
+        if ((word & typeAndStateMask) != typeAndStateOfFrameCell || !structureID.decontaminate()) [[likely]]
             return;
-        if (Structure* structure = std::bit_cast<StructureID>(static_cast<uint32_t>(word)).tryDecode())
+        if (Structure* structure = structureID.tryDecode())
             genericAddPointer<false>(std::bit_cast<char*>(structure), markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
 #else
         UNUSED_PARAM(bits);

@@ -15,6 +15,7 @@
 #include "AOTTableInImage.h"
 #include "AOTVector.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
@@ -314,6 +315,7 @@ JSSet* CompactTable::tryCreateSetOfNumbers(JSGlobalObject* globalObject, JSArray
     vm.mutatorFence();
 
     if (validatesRuntime(vm)) [[unlikely]] {
+        DeferTerminationForAWhile deferTermination(vm);
         JSSet* expected = JSSet::create(vm, globalObject->setStructure());
         for (EncodedJSValue number : numbers) {
             expected->add(globalObject, JSValue::decode(number));
@@ -425,6 +427,7 @@ JSMap* CompactTable::tryCreateMapOfStringKeys(JSGlobalObject* globalObject, JSAr
     vm.mutatorFence();
 
     if (validatesRuntime(vm)) [[unlikely]] {
+        DeferTerminationForAWhile deferTermination(vm);
         JSMap* expected = JSMap::create(vm, globalObject->mapStructure());
         for (auto& pair : pairs) {
             const WriteBarrier<Unknown>* elements = asArray(pair.get())->butterfly()->contiguous().data();

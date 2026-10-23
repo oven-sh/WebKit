@@ -97,7 +97,7 @@ static void encodeLayoutSets(TableEncoder& encoder, LayoutSetRecords& records)
         LayoutID namingLayout = namingLayouts[set.index()];
         LayoutSetData data { };
         data.members = shapes.dataOf(shapes.testOf(set));
-        data.name = encoder.shownStringNumber(namingLayout ? program.at(namingLayout).name : StringID());
+        data.name = encoder.shownNameNumber(namingLayout ? program.at(namingLayout).name : StringID());
         return data;
     }));
     records.tableOffset = encoder.header.ranges[static_cast<unsigned>(ProgramTableIndex::layoutSets)].offset;

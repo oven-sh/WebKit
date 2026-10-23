@@ -26,6 +26,8 @@ namespace JSC { namespace AOT {
 
 static constexpr int32_t generatorSlotOffset = Generator::generatorSlotInStubFrame * static_cast<int32_t>(sizeof(void*));
 static_assert(generatorSlotOffset < 0 && -generatorSlotOffset <= static_cast<int32_t>(stackAlignmentBytes()));
+// A body's first step may be a direct call, which tests the stack where its frame ends. A later step from the same caller has to fit wherever that one did.
+static constexpr int32_t sizeOfStepGeneratorFrame = sizeof(CallerFrameAndPC) + stackAlignmentBytes();
 
 CodePtr<JSEntryPtrTag> handlerOfJobEntrypoint()
 {
@@ -461,7 +463,7 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     emitLoadNumbersOfWords(jit, saved, count, destination, scratch);
     jit.lshift64(TrustedImm32(3), scratch);
     jit.subPtr(sp, scratch, second);
-    jit.subPtr(TrustedImm32(maxStackUsedWithoutCheck), second);
+    jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(void*))), second);
     jit.linkToStub(jit.branchPtr(CCallHelpers::Below, second, softStackLimit()), throwStackOverflow());
 
     jit.emitFunctionPrologue();
@@ -504,7 +506,7 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     emitLoadNumbersOfWords(jit, saved, count, skippedAtBottom, inFrame);
     jit.move(sp, destination);
     jit.subLeftShift64(destination, inFrame, TrustedImm32(3), destination);
-    jit.subPtr(destination, TrustedImm32(maxStackUsedWithoutCheck), source);
+    jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(CallerFrameAndPC))), destination, source);
     jit.linkToStub(jit.branchPtr(CCallHelpers::Below, source, softStackLimit()), throwStackOverflow());
 
     jit.emitFunctionPrologue();

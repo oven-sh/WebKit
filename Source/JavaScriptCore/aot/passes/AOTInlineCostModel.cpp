@@ -191,14 +191,22 @@ static uint32_t computeFoldedBytes(const Program& program, const Function& calle
             foldedRanges.append(parameterSwitch.rangeOtherwise);
     }
 
-    uint32_t foldedBytes = everyTestPasses ? summary.bytesOnlyIfSomeTestFails : 0;
-    auto addIfFolded = [&](const DominatedRange& range, uint32_t bytes) {
-        bool isFolded = foldedRanges.containsIf([&](const DominatedRange& folded) {
+    uint32_t foldedBytes = 0;
+    auto isFolded = [&](const DominatedRange& range) {
+        return foldedRanges.containsIf([&](const DominatedRange& folded) {
             return folded.contains(range);
         });
-        if (isFolded)
+    };
+    auto addIfFolded = [&](const DominatedRange& range, uint32_t bytes) {
+        if (isFolded(range))
             foldedBytes = saturatingSum<uint32_t>(foldedBytes, bytes);
     };
+    if (everyTestPasses) {
+        for (const BytesBehindFailedTests& part : summary.partsOfBytesOnlyIfSomeTestFails) {
+            if (!isFolded(part.rangeAround))
+                foldedBytes = saturatingSum<uint32_t>(foldedBytes, part.bytes);
+        }
+    }
     for (const ParameterCondition& condition : summary.conditions) {
         addIfFolded(condition.rangeIfTrue, condition.bytesOnlyIfTrue);
         addIfFolded(condition.rangeIfFalse, condition.bytesOnlyIfFalse);

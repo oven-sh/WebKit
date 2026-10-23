@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTProvisionalFunctions.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
@@ -328,7 +329,13 @@ void copyIn(FunctionPassContext& context, IRBuilder& builder, const InlineReques
     Value call = caller.at(request.call);
     RELEASE_ASSERT(call.opcode == Opcode::CallDirect);
     FunctionID calleeID = call.function();
-    const Function& callee = context.program.at(calleeID);
+    // The task that asked for a derived function first built it, with ids of its own arena.
+    std::optional<Function> calleeWithAdoptedIDs;
+    if (ProvisionalFunctions::contains(calleeID)) {
+        calleeWithAdoptedIDs.emplace(context.program.at(calleeID));
+        adoptIDs(*calleeWithAdoptedIDs, context.types);
+    }
+    const Function& callee = calleeWithAdoptedIDs ? *calleeWithAdoptedIDs : context.program.at(calleeID);
     BlockFrequency callBlockFrequency = caller.at(request.point.block).frequency;
     uint32_t firstFrame = appendInlineFrames(caller, InlineFrame {
         .callee = calleeID,

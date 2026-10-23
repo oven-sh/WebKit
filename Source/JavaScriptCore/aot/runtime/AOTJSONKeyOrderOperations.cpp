@@ -187,7 +187,7 @@ static bool addExtraProperty(VM& vm, ExtraMembers& members, UniquedStringImpl* n
         }
         return true;
     }
-    Structure* before = properties->structure();
+    Structure* before = WTF::opaque(properties->structure());
     unsigned attributes;
     if (PropertyOffset offset = before->get(vm, name, attributes); isValidOffset(offset)) {
         properties->putDirectOffset(vm, offset, value);
@@ -211,7 +211,8 @@ static ParsedExtraMember parseKnownExtraMember(VM& vm, ExtraMembers& members, JS
     auto* entry = vm.jsonCache().findName(beforeID, JSONCache::nameIndex(beforeID), std::span<const Latin1Character> { byteCast<Latin1Character>(quote), jsonSourcePadding });
     if (!entry || (words.sourceEncoding != JSONSourceEncoding::Latin1 && !entry->textIsASCII && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
         return { };
-    Structure* after = entry->to.unvalidatedGet();
+    // The cache is weak and no object need have this Structure: this pointer alone keeps it alive while the value is parsed.
+    Structure* after = WTF::opaque(entry->to.unvalidatedGet());
     PropertyOffset offset = entry->offset;
     const uint8_t* valueStart = quote + entry->textLength;
     if (members.instance.state->objects->layouts.field(vm, members.layout, after->transitionPropertyName()))

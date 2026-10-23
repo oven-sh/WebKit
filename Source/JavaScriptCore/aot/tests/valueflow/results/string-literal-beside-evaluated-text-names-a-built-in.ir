@@ -1,0 +1,20 @@
+# new Function("return new Intl.NumberFormat()." + input)()
+# RUN: valueflow-results
+# CHECK: feature 9 IntlCollator Unnamed
+# CHECK-NOT: feature 10 IntlNumberFormat Unnamed
+# CHECK: feature 10 IntlNumberFormat
+# CHECK: feature 11 IntlDateTimeFormat Unnamed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = String string="return new Intl.NumberFormat()."
+    v3 = Add v2, v1
+    v4 = Builtin builtin=Function
+    v5 = Construct v4, -, v3
+    v6 = Call v5, -
+    Return
+}

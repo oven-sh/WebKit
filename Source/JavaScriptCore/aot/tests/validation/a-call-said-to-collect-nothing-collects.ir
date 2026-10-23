@@ -1,0 +1,25 @@
+# function collects() { gc() }  register(collects)
+# The lie: sabotage=NoCallCollects says that no call reaches a collection. A validating build counts how often the collector has stopped the program in front of and behind each call that is said to reach none
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = collects => { collects(); print("came back"); };
+# OPTIONS: validate sabotage=NoCallCollects
+# CHECK: AOT validation: CallCollected f{{*}} stub CallValueWithoutThis
+# CHECK: crashed with
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="collects" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="gc" [isFreeName]
+    v2 = Call v1, -
+    Return v2
+}

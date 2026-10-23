@@ -2,7 +2,7 @@
 # FORM: AsRead
 # f3 is the typed body of f1: its one poll is that of the rare copy, which reads `length` by name.
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
-# REQUIRES: x86_64 not-windows
+# REQUIRES: x86_64 faulting-loop-polls
 # RUN: generate-code
 # CHECK: f3: size={{*}} polls=1
 

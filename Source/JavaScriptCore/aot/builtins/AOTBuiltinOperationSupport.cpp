@@ -38,7 +38,10 @@ JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSVa
     list.append(first);
     if (second)
         list.append(second);
-    RELEASE_AND_RETURN(scope, call(globalObject, callee, callData, holder, list));
+    // Where the stack has no room for the call, what it answers is not empty.
+    JSValue result = call(globalObject, callee, callData, holder, list);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
 }
 
 static bool isOriginalStructureOfLazyClass(JSGlobalObject* realm, Structure* structure)

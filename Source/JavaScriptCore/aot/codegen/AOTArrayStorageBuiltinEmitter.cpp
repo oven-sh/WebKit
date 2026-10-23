@@ -196,6 +196,8 @@ Operand ArrayStorageBuiltinEmitter::pushOutOfLine(const InlineCall& call, CellPo
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Operand operand = get(pushed);
+    if (operand.is<Number>() && typeOf(pushed).isInt32())
+        operand = Operand(boxInt32(conversions.toInt32(operand.as<Number>())));
     StubCallResult newLength = operand.is<Number>()
         ? callStub(call.context(), arrayPushDouble(), { array.value(), conversions.bitsOf(operand).value() })
         : callStub(call.context(), arrayPush(), { array.value(), conversions.box(call.context(), operand, typeOf(pushed)).value() });

@@ -1,0 +1,19 @@
+# Native code that makes a number of a string reads its characters, and a rope is made flat for that, which may collect. A number is taken as it is
+# FORM: Prepared
+# RUN: effects f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ofListOfStrings" parameters=[{type=Array<string, proven>}] results=[{type=number}] {
+  b0(v0: Array<string, proven>):
+    v1 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK: v1 CallBuiltin: {{*}}collects
+function f1 name="ofListOfNumbers" parameters=[{type=Array<number, proven>}] results=[{type=number}] {
+  b0(v0: Array<number, proven>):
+    v1 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: collects

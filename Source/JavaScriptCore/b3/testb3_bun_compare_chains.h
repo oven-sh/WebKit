@@ -93,6 +93,13 @@ static void checkBranchEqualsValue(const Policy& policy, const Functor& buildCon
     }
 }
 
+inline Policy compareChainPolicy()
+{
+    Policy policy = Policy::fromProcessOptions();
+    policy.selection.extendsInstructionSelection = true;
+    return policy;
+}
+
 inline bool isPredictedAsCompareChain(Procedure& proc, Value* condition)
 {
     UseCounts useCounts(proc);
@@ -120,13 +127,13 @@ static void checkCompareChain(const Policy& policy, bool isSelectedOnARM64, cons
 template<typename Functor>
 static void checkIsCompareChain(const Functor& buildCondition)
 {
-    checkCompareChain(Policy::fromProcessOptions(), true, buildCondition);
+    checkCompareChain(compareChainPolicy(), true, buildCondition);
 }
 
 template<typename Functor>
 static void checkIsNotCompareChain(const Functor& buildCondition)
 {
-    checkCompareChain(Policy::fromProcessOptions(), false, buildCondition);
+    checkCompareChain(compareChainPolicy(), false, buildCondition);
 }
 
 static void testCompareChainsMatchSelection()
@@ -232,8 +239,10 @@ static void testCompareChainSearchLimit()
     static_assert(loweredLimit < defaultValueOf(limit));
 
     for (uint64_t searchLimit : { defaultValueOf(limit), loweredLimit }) {
-        Policy policy = Policy::fromProcessOptions();
+        Policy policy = compareChainPolicy();
         policy.limits.set(limit, searchLimit);
+        Policy policyOfJIT = Policy::fromProcessOptions();
+        policyOfJIT.limits.set(limit, searchLimit);
         for (bool exceedsLimit : { false, true }) {
             auto joinWithMaskedWord = [&](CompareChainGraph& test) {
                 Value* masked = test.word(test.x);
@@ -250,6 +259,12 @@ static void testCompareChainSearchLimit()
             CHECK_EQ(isPredictedAsCompareChain(test.proc, joinWithMaskedWord(test)), isARM64() && !exceedsLimit);
             CHECK_EQ(limitHits(test.proc, limit), reachesLimit ? 1u : 0u);
             CHECK_EQ(hasNumber(test.proc.report().firstOriginOf(limit), 1), reachesLimit);
+
+            CompareChainGraph unfiltered(policyOfJIT);
+            unfiltered.branchOn(joinWithMaskedWord(unfiltered));
+            lowerToAirForTesting(unfiltered.proc);
+            CHECK_EQ(numberOfInsts(unfiltered.proc, Air::BranchOnFlags), isARM64() ? 1u : 0u);
+            CHECK_EQ(limitHits(unfiltered.proc, limit), 0u);
         }
     }
 }

@@ -77,8 +77,6 @@ static BitVector findRetainedStrings(const TextInputs& inputs, const BitVector& 
     isRetained.merge(inputs.stringsNamedByTables);
     isRetained.merge(inputs.uses.isNamed);
     isRetained.merge(isName);
-    for (StringID string : inputs.constants.strings())
-        isRetained.quickSet(string.index());
     isRetained.quickSet(inputs.program.strings.emptyString().index());
     return isRetained;
 }

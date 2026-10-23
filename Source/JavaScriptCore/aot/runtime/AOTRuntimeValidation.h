@@ -70,9 +70,10 @@ enum class ValidationFailureKind : uint8_t {
     OperationConvertedCell,
     OperationWroteHeap,
     UnspecifiedValueInspected,
+    CallCollected,
 };
 
-static constexpr unsigned numberOfValidationFailureKinds = 48;
+static constexpr unsigned numberOfValidationFailureKinds = 49;
 
 ASCIILiteral nameOf(ValidationFailureKind);
 
@@ -100,6 +101,15 @@ struct ChangedRegister {
     {
         return encode(unknownRegister, calleeIsStub | static_cast<uint32_t>(family));
     }
+};
+
+// What ValidationFailure::found holds for CallCollected: an int32 that says who was called.
+struct CalledCode {
+    enum class Kind : uint32_t { Operation, Stub, Function, Address };
+    static constexpr unsigned kindShift = 28;
+    static constexpr uint32_t maxNumber = (1u << kindShift) - 1;
+
+    static constexpr int32_t encode(Kind kind, uint32_t number) { return static_cast<int32_t>(static_cast<uint32_t>(kind) << kindShift | std::min(number, maxNumber)); }
 };
 
 // The third argument of operationAOTCompareOperandWithPhotograph: which photograph, and who was called between it and the comparison: an entry of the run-time table or a family of stubs.

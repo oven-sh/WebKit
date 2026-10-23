@@ -14,6 +14,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "DeferTermination.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "JSGlobalLexicalEnvironment.h"
@@ -420,6 +421,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateGlobalBinding, void, (Inst
 {
     VM& vm = *instance->vm;
     DeferGCForAWhile deferGC(vm);
+    DeferTerminationForAWhile deferTermination(vm);
     GlobalBindings& bindings = *instance->state->globalBindings;
     Identifier identifier = bindings.nameOf(binding);
     JSValue answered = JSValue::decode(value);

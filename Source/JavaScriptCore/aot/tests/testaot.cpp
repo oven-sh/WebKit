@@ -331,6 +331,8 @@ int main(int argc, char** argv)
     using namespace JSC::AOT;
 
     JSC::Config::configureForTesting();
+    // As Bun says where it runs compiled code: on macOS a process without the JIT that says nothing has no SharedArrayBuffer.
+    JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 
     WTF::initializeMainThread();
 

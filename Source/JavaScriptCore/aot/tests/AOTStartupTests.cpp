@@ -11,6 +11,7 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRealmTestSupport.h"
+#include "AOTRuntimeTable.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsPropertyKeys.h"
@@ -187,7 +188,7 @@ static void testStubsOfFamilyLieSideBySide(LoadedProgram& program)
 
     std::span<const StubAddressInImage> single = image.stubAddressesOf(StubFamily::EnterClosure);
     AOT_TEST_CHECK(single.size() == 1 && single[0].key == StubKey(StubFamily::EnterClosure).bits());
-    AOT_TEST_CHECK(image.stubAddressesOf(StubFamily::WriteBarrier).empty());
+    AOT_TEST_CHECK(AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || image.stubAddressesOf(StubFamily::WriteBarrier).empty());
 }
 
 template<LoadedProgramTest body>

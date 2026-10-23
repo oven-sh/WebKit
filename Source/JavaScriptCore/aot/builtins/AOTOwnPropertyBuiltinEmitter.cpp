@@ -155,7 +155,7 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
         lists.add(reader.keyListOrElse(object, rareEdge(outOfLine), KeyListKey::Structure));
     };
     bool mayBeCompiledObject = type.anyObject || type.layouts;
-    if (!listsSymbols && type.hasOnlyLayouts(m_program))
+    if (!listsSymbols && shapeTests.hasOnlyCompiledObjects(type))
         listCompiledObjectKeys();
     else {
         B3::FrequentedBlock isNotCachedOnStructure = mayBeCompiledObject ? unlikelyEdge(newBlock()) : rareEdge(outOfLine);

@@ -177,6 +177,7 @@ static void emitReverseSearch(FunctionPassContext& context, IRBuilder& builder, 
     read.setStartOperand(start);
     read.setEndOperand(end);
     read.type = resultTypeOf(context.program, function, read, context.types);
+    read.setExpected({ });
     checkRewrite(context, piece.read, replaced);
 }
 

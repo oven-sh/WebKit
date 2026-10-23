@@ -340,6 +340,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTypedArrayIsDetached, void, (Instanc
 
 static JSValue callMethodInEngine(JSGlobalObject* globalObject, BuiltinID method, JSValue receiver, JSValue first, JSValue second = JSValue())
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSCell* function = Instance::of(globalObject)->state->builtinCells->findObject(method);
     RELEASE_ASSERT(function);
     MarkedArgumentBuffer arguments;
@@ -347,7 +348,10 @@ static JSValue callMethodInEngine(JSGlobalObject* globalObject, BuiltinID method
     if (second)
         arguments.append(second);
     ASSERT(!arguments.hasOverflowed());
-    return call(globalObject, function, JSC::getCallData(function), receiver, arguments);
+    // Where the stack has no room for the call, what it answers is not empty.
+    JSValue result = call(globalObject, function, JSC::getCallData(function), receiver, arguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
 }
 
 // A view over the buffer that has lost its memory with it. The constructor refuses such a buffer, so the view loses the memory of a buffer of its own, and is then handed the other.

@@ -1,7 +1,7 @@
 # The frame is set up behind the test, so the cheap early exit runs without one. A function that calls before it tests has its frame on every path
 # FORM: AsRead
 # REQUIRES: x86_64
-# OPTIONS: limit=MaxWarmCodeValues:1 disable=pass:InlineCalls
+# OPTIONS: limit=MaxWarmCodeValues:1 testing=GenerateColdCodeDirectly disable=pass:InlineCalls
 # RUN: generate-code FunctionsWithFrameOnSomePaths
 # CHECK: statistic FunctionsWithFrameOnSomePaths 1
 

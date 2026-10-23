@@ -114,7 +114,7 @@ static bool tryDefineExtraPropertyAndCache(Instance* instance, JSObject* object,
     if (!compiled || compiled->fieldNamed(compiled->state(), name) || !compiled->repeatsExtraPropertyStore(vm, name))
         return false;
     compiled->ensureStructureForExtraProperties(vm);
-    Structure* structureBefore = compiled->structure();
+    Structure* structureBefore = WTF::opaque(compiled->structure());
     if (compiled->tryStoreExtraProperty(vm, name, value, { Flag::IsKnownNotToBeField, Flag::IsDefinition, Flag::NamesExtraPropertiesStructure }).kind == Object::ExtraPropertyStore::NotHandled)
         return false;
     instance->state->propertyCaches->cache({ structureBefore, { name.uid(), std::nullopt }, SlotAccess::Define }, classifyStore({ instance->globalObject, object, structureBefore, name.uid(), slot, PutMode::Define }));
@@ -137,7 +137,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
     bool isKeyUniqued = key.isSymbol() || atomOfKey(key);
     auto name = key.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    Structure* structureBefore = object->structure();
+    Structure* structureBefore = WTF::opaque(object->structure());
     bool files = isKeyUniqued && !parseIndex(name) && instance->state->propertyCaches->shouldFile(structureBefore->id(), name.impl(), SlotAccess::Define);
     if (instance->state->propertyCaches->countsNames()) [[unlikely]]
         instance->state->propertyCaches->countMiss("definition by key"_s, files, object, name.impl());

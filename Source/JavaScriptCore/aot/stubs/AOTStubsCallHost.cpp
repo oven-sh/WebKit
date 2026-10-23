@@ -75,8 +75,29 @@ void generateCallDirectFunction(StubAssembler& jit)
     if (form == DirectFunctionCall::WithFrame)
         jit.emitFunctionPrologue();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
-    jit.storePtr(form == DirectFunctionCall::WithHostFrame ? CCallHelpers::stackPointerRegister : GPRInfo::callFrameRegister, Address(vm, VM::offsetOfTopCallFrame()));
+    GPRReg topCallFrame = form == DirectFunctionCall::WithHostFrame ? CCallHelpers::stackPointerRegister : GPRInfo::callFrameRegister;
+#if CPU(ARM64)
+    // In a store the number of sp names the zero register.
+    if (form == DirectFunctionCall::WithHostFrame) {
+        static_assert(noOverlap(gprOf(StubRegister::T10), gprOf(StubRegister::Operation), gprOf(stubImmediateRegister), operationArgumentGPR(0), operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3), operationArgumentGPR(4), operationArgumentGPR(5)));
+        topCallFrame = jit.allocateScratch(StubRegister::T10);
+        jit.move(CCallHelpers::stackPointerRegister, topCallFrame);
+    }
+#endif
+    jit.storePtr(topCallFrame, Address(vm, VM::offsetOfTopCallFrame()));
     jit.call(function, HostFunctionPtrTag);
+    if (jit.options().validates) {
+        RELEASE_ASSERT(vm != GPRInfo::returnValueGPR);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+        Jump isEmpty = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
+        Jump answered = jit.branchTestPtr(CCallHelpers::Zero, Address(vm, VM::exceptionOffset()));
+        jit.breakpoint();
+        isEmpty.link(&jit);
+        Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, Address(vm, VM::exceptionOffset()));
+        jit.breakpoint();
+        answered.link(&jit);
+        threw.link(&jit);
+    }
     jit.emitFunctionEpilogue();
     Jump exception = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     jit.returnToCaller();

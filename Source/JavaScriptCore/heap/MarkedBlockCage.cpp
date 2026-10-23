@@ -297,12 +297,14 @@ MarkedBlockCage::ReservationFailure MarkedBlockCage::reservationFailure()
     return s_reservationFailure;
 }
 
+static constexpr ASCIILiteral noRoomUnderLimitOnAddressSpace = "The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s;
+
 String describeLimitOfMarkedBlockCage()
 {
     if (!MarkedBlockCage::isRequired())
         return { };
     if (s_isGrowable)
-        return "The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s;
+        return noRoomUnderLimitOnAddressSpace;
     size_t size = g_jscConfig.markedBlockCageSize;
     bool isInGB = !(size % GB);
     if (size < static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB)
@@ -334,9 +336,19 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
 {
     if (!isRequired())
         return;
-    dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
+    // Under a limit on address space nothing may be left to make a String of.
+    if (exhaustedHeap == ExhaustedHeap::Cells && s_isGrowable)
+        dataLogLn("FATAL: out of memory. ", noRoomUnderLimitOnAddressSpace);
+    else
+        dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
     if (ExhaustionHandler handler = s_exhaustionHandler.load(std::memory_order_relaxed))
         handler();
+}
+
+void logExhaustedAddressSpace()
+{
+    if (s_isGrowable)
+        MarkedBlockCage::logExhaustion(MarkedBlockCage::ExhaustedHeap::Cells);
 }
 
 void MarkedBlockCage::setExhaustionHandler(ExhaustionHandler handler)

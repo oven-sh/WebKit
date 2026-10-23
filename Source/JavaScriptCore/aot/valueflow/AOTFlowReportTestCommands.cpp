@@ -89,6 +89,10 @@ static void printFeatureUse(IRPrinter& printer, const FeatureUseRecord& record)
     printBlank(printer);
     printer.print(record.feature);
     printOptionalBuiltin(printer, record.builtin);
+    if (record.kind != FeatureUseKind::Named) {
+        printBlank(printer);
+        printer.print(record.kind);
+    }
     printWitness(printer, record.witness);
     printer.endLine();
 }

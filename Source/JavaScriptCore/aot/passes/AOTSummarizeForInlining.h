@@ -69,6 +69,12 @@ struct ParameterSwitch {
     DominatedRange rangeOtherwise;
 };
 
+// A part of InliningSummary::bytesOnlyIfSomeTestFails, and the innermost side of a condition or a switch that it lies on, which counts it among its own. No range: it lies on none.
+struct BytesBehindFailedTests {
+    DominatedRange rangeAround;
+    uint32_t bytes { 0 };
+};
+
 struct ReceiverParameter {
     uint32_t entryParameter { 0 };
     uint32_t accessesByName { 0 };
@@ -93,6 +99,7 @@ struct InliningSummary {
     BitVector iteratedParameters;
     Vector<ParameterCondition, 2> conditions;
     Vector<ParameterSwitch, 0> switches;
+    Vector<BytesBehindFailedTests, 0> partsOfBytesOnlyIfSomeTestFails;
     Vector<ReceiverParameter, 1> receiverParameters;
     bool neverReturns { false };
     bool hasBareReturn { false };

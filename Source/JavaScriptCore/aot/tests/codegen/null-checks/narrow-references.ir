@@ -7,7 +7,7 @@
 # RUN: generate-code NullChecksFoldedIntoAccesses
 # REQUIRES: unsanitized-code
 # RUN(X64): generate-code
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code faulting-loop-polls
 # RUN(SLOTS): pass PlanSlots
 # CHECK: f0: size={{*}} faults=1
 # CHECK: f1: size={{*}} faults=2

@@ -227,13 +227,18 @@ static void countTableBytes(const ImageExtent& extent, BuildContext& context)
     context.statistics().count(StatisticID::TableBytesEmitted, extent.codeOffset);
 }
 
-static Vector<uint8_t> allocateZeroedImage(size_t size, const ParallelLoops& loops)
+// The tables start as zeros. The code starts as breakpoints: that is what lies between two functions and behind the last one.
+static Vector<uint8_t> allocateImage(const ImageExtent& extent, const CodeTemplates& templates, const ParallelLoops& loops)
 {
+    static_assert(!(bytesPerChunk % codeOffsetUnit) && !(imagePageSize % codeOffsetUnit));
     Vector<uint8_t> image;
-    image.grow(size);
+    image.grow(extent.size);
     forEachIndexInParallel(loops, static_cast<unsigned>((image.size() + bytesPerChunk - 1) / bytesPerChunk), [&](unsigned i) {
         size_t start = i * bytesPerChunk;
-        zeroSpan(image.mutableSpan().subspan(start, std::min(bytesPerChunk, image.size() - start)));
+        size_t end = std::min(start + bytesPerChunk, image.size());
+        size_t codeStart = std::clamp<size_t>(extent.codeOffset, start, end);
+        zeroSpan(image.mutableSpan().subspan(start, codeStart - start));
+        templates.fillWithBreakpoints(image.mutableSpan().subspan(codeStart, end - codeStart));
     });
     return image;
 }
@@ -449,7 +454,7 @@ Vector<uint8_t> writeImage(const ImageWriterInputs& inputs, BuildContext& contex
         return { };
 
     const ParallelLoops& loops = context.parallelLoops();
-    Vector<uint8_t> image = allocateZeroedImage(extent->size, loops);
+    Vector<uint8_t> image = allocateImage(*extent, inputs.linker.layoutInputs.templates, loops);
     writeHeader(*reinterpret_cast<ImageHeader*>(image.mutableSpan().data()), inputs, *extent, context);
     runTasksInParallel(loops, {
         [&] {

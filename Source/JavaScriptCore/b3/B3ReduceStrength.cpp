@@ -5235,11 +5235,12 @@ private:
             m_changedCFG = true;
         };
 
+        checkPredecessorValidity();
         for (BasicBlock* block : m_proc.cachedBlocksInPostOrder()) {
             if (B3ReduceStrengthInternal::verbose)
                 dataLog("Considering block ", *block, ":\n");
 
-            checkPredecessorValidity();
+            checkPredecessorValidity(block);
 
             // We don't care about blocks that don't have successors.
             if (!block->numSuccessors())
@@ -5327,6 +5328,7 @@ private:
                     mergeWithSuccessor(block);
             }
         }
+        checkPredecessorValidity();
 
         if (m_changedCFG && B3ReduceStrengthInternal::verbose) {
             dataLog("B3 after simplifyCFG:\n");
@@ -5352,10 +5354,17 @@ private:
         if (!m_validatesIRAtEachPhase) [[likely]]
             return;
 
-        for (BasicBlock* block : m_proc) {
-            for (BasicBlock* successor : block->successorBlocks())
-                RELEASE_ASSERT(successor->containsPredecessor(block));
-        }
+        for (BasicBlock* block : m_proc)
+            checkPredecessorValidity(block);
+    }
+
+    void checkPredecessorValidity(BasicBlock* block)
+    {
+        if (!m_validatesIRAtEachPhase) [[likely]]
+            return;
+
+        for (BasicBlock* successor : block->successorBlocks())
+            RELEASE_ASSERT(successor->containsPredecessor(block));
     }
 
     void simplifySSA()

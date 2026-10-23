@@ -48,6 +48,11 @@ uint32_t TableEncoder::shownStringNumber(StringID id)
     return id.index();
 }
 
+uint32_t TableEncoder::shownNameNumber(StringID id)
+{
+    return shownStringNumber(obfuscates() ? StringID() : id);
+}
+
 uint32_t TableEncoder::stringConstantNumber(StringID id)
 {
     stringNumber(id);
@@ -151,12 +156,29 @@ static void fillHeader(TableEncoder& encoder)
     header.closureFunctions = { closureFunctions.first.index(), closureFunctions.end.index(), closureFunctions.omittedWordCount };
 }
 
-BodyFactsForTables collectBodyFactsForTables(const Program& program, BuildContext& build)
+static BitVector findFunctionsWithFrames(const Program& program, const BitVector& bodiesWithoutCode)
+{
+    BitVector hasFrames(program.functions.size());
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody() || bodiesWithoutCode.get(index))
+            continue;
+        hasFrames.quickSet(index);
+        for (const InlineFrame& frame : function.inlineFrames) {
+            if (frame.callee)
+                hasFrames.quickSet(frame.callee.index());
+        }
+    }
+    return hasFrames;
+}
+
+BodyFactsForTables collectBodyFactsForTables(const Program& program, const BitVector& bodiesWithoutCode, BuildContext& build)
 {
     BodyFactsForTables facts;
     if (build.recordedOptions().policy() == MismatchPolicy::Report)
         facts.usedTypeSites = findUsedTypeSites(program, build.parallelLoops());
     facts.functionsThatOnlyReturn = findModuleBodiesThatOnlyReturn(program);
+    facts.functionsWithFrames = findFunctionsWithFrames(program, bodiesWithoutCode);
     facts.importSites = findImportSites(program, build.parallelLoops());
     return facts;
 }

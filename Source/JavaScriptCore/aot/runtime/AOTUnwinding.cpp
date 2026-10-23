@@ -113,10 +113,10 @@ static CompiledUnwindResult finishAtHandler(Instance& instance, const CompiledHa
 }
 
 // The stub takes the thrown value, hands it to whoever waits for the coroutine and returns from the frame.
-static CompiledUnwindResult finishInRejectingStub(Instance& instance, CallFrame* callFrame, unsigned frameSize)
+static CompiledUnwindResult finishInRejectingStub(Instance& instance, CallFrame* callFrame, const ImageFrame& frame)
 {
-    static void* const code = addressOfStubInCurrentImage(rejectInFrame());
-    return finishAtHandler(instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, frameSize);
+    static void* const code[] = { addressOfStubInCurrentImage(rejectInFrame(false)), addressOfStubInCurrentImage(rejectInFrame(true)) };
+    return finishAtHandler(instance, { callFrame, code[frame.liesBelowSpilledArguments()], CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
 }
 
 bool needsExceptionForEveryThrow(const Instance& instance)
@@ -136,7 +136,7 @@ CompiledUnwindResult unwindCompiledFrames(VM& vm, CompiledFrameIterator& frames,
     const Image& image = *vm.aotState().image;
     static const std::span<const int8_t> bufferSlots = RegisterSet::vmCalleeSaveBufferSlotsByRegIndex();
     CallFrame* leftFrame = nullptr;
-    unsigned leftFrameSize = 0;
+    ImageFrame leftImageFrame { };
     Instance* instance = nullptr;
 
     unwindStubFrames(record, bufferSlots, frames);
@@ -149,7 +149,7 @@ CompiledUnwindResult unwindCompiledFrames(VM& vm, CompiledFrameIterator& frames,
         if (!isTermination && frames.asyncGeneratorStubFrameLeft()) {
             CallFrame* bodyFrame = frames.asyncGeneratorBodyFrameLeft();
             RELEASE_ASSERT(bodyFrame);
-            return finishInRejectingStub(*instance, bodyFrame, bodyFrame == leftFrame ? leftFrameSize : 0);
+            return finishInRejectingStub(*instance, bodyFrame, bodyFrame == leftFrame ? leftImageFrame : ImageFrame { });
         }
 
         unsigned frameSize = site.frame.frameSizeInBytes();
@@ -162,17 +162,17 @@ CompiledUnwindResult unwindCompiledFrames(VM& vm, CompiledFrameIterator& frames,
         copyFrameSavedRegisters(record, bufferSlots, callFrame, site.frame);
 
         if (!isTermination && site.rejectsOnThrow)
-            return finishInRejectingStub(*instance, callFrame, frameSize);
+            return finishInRejectingStub(*instance, callFrame, site.frame);
 
         leftFrame = callFrame;
-        leftFrameSize = frameSize;
+        leftImageFrame = site.frame;
         frames.advanceToCallerMachineFrame();
         unwindStubFrames(record, bufferSlots, frames);
     }
 
     const CompiledFrameIterator::RunEnd& end = frames.runEnd();
     if (end.resumesSavedFrame && leftFrame && !isTermination)
-        return finishInRejectingStub(*instance, leftFrame, leftFrameSize);
+        return finishInRejectingStub(*instance, leftFrame, leftImageFrame);
 
     if (end.adapterFrame) {
         copyStubSavedRegisters(record, bufferSlots, end.adapterFrame, AdapterFrame::savedRegisters);

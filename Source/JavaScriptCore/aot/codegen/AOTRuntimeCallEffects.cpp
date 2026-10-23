@@ -16,7 +16,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 Effects RuntimeCallEmitter::effectsOfCall(const OperationContext& context, const Effects& effectsOfCallee) const
 {
-    return context.effects().onAnyEdge().intersectedWith(effectsOfCallee);
+    Effects effects = context.effects().onAnyEdge().intersectedWith(effectsOfCallee);
+    if (m_options.recorded.isSabotaged(Sabotage::NoCallCollects))
+        effects.mayCollect = false;
+    return effects;
 }
 
 const StubSummary& RuntimeCallEmitter::summaryOf(StubKey key) const

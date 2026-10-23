@@ -100,7 +100,7 @@ struct SharedUses {
 
 class FunctionWalk {
 public:
-    FunctionWalk(const Typed::PipelineOutput&, BuildContext&, FunctionID, SharedUses&);
+    FunctionWalk(const Typed::PipelineOutput&, BuildContext&, FunctionID, bool hasCode, SharedUses&);
 
     Vector<uint32_t> run();
 
@@ -117,6 +117,7 @@ private:
     const Typed::Function& m_function;
     FunctionID m_id;
     Typed::AnalysisContext m_context;
+    bool m_hasCode;
     bool m_functionRunsAtMostOnce;
     std::optional<Typed::FunctionAnalyses> m_analyses;
     SharedUses& m_shared;
@@ -154,11 +155,12 @@ static StringID impliedNameOf(const Typed::Program& program, const Typed::Value&
     return key ? program.at(key).text : StringID();
 }
 
-FunctionWalk::FunctionWalk(const Typed::PipelineOutput& pipeline, BuildContext& context, FunctionID id, SharedUses& shared)
+FunctionWalk::FunctionWalk(const Typed::PipelineOutput& pipeline, BuildContext& context, FunctionID id, bool hasCode, SharedUses& shared)
     : m_program(*pipeline.program)
     , m_function(m_program.at(id))
     , m_id(id)
     , m_context { context, m_program, pipeline.flow.get(), nullptr, id }
+    , m_hasCode(hasCode)
     , m_functionRunsAtMostOnce(pipeline.flow->runsAtMostOnce(m_program, id))
     , m_shared(shared)
 {
@@ -272,7 +274,8 @@ void FunctionWalk::nameString(StringID string)
 {
     if (!string || !m_namedStringSet.add(string).isNewEntry)
         return;
-    m_shared.isNamed.atomicSetAndCheck(string.index(), true);
+    if (m_hasCode)
+        m_shared.isNamed.atomicSetAndCheck(string.index(), true);
     m_namedStrings.append(string.index());
 }
 
@@ -353,8 +356,12 @@ static void collectNamesInTables(const Typed::Program& program, const Typed::Flo
             keys.stringsNamedAsKeysByTables.quickSet(text.index());
     };
 
-    for (const Typed::Layout& layout : program.layouts) {
+    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+        const Typed::Layout& layout = program.layouts[index];
         if (layout.isEnvironment())
+            continue;
+        // The tables describe the classes and the layouts that have a shape: see encodeLayoutRecords().
+        if (layout.kind != Typed::LayoutKind::Instance && placement.shapes().shapesOf(Typed::LayoutID(index)).isEmpty())
             continue;
         for (const Typed::Field& field : layout.fields)
             nameKey(field.key);
@@ -413,7 +420,7 @@ static void collectNamesInTables(const Typed::Program& program, const Typed::Flo
     }
 }
 
-ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, BuildContext& context)
+ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, const BitVector& bodiesWithoutCode, BuildContext& context)
 {
     const Typed::Program& program = *pipeline.program;
     const ParallelLoops& loops = context.parallelLoops();
@@ -424,7 +431,7 @@ ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, BuildConte
     uses.strings.namedByFunction.grow(numberOfFunctions);
     forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
         if (program.functions[index].hasBody())
-            uses.strings.namedByFunction[index] = FunctionWalk(pipeline, context, FunctionID(index), shared).run();
+            uses.strings.namedByFunction[index] = FunctionWalk(pipeline, context, FunctionID(index), !bodiesWithoutCode.get(index), shared).run();
     });
 
     uses.strings.isNamed = toBitVector(shared.isNamed);

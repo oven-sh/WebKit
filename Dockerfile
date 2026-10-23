@@ -414,6 +414,8 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # -k 0: the log of a lane that does not compile names every source that fails, not the first few.
 #
 # The programs ship without debug info: each of them would carry another copy of the library's.
+#
+# find-structures-decoded-behind-calls.py (Tools/Scripts/aot/README.md) reads the machine code of jsc in the optimized lanes: their code is what ships. It fails the lane on x86-64. On ARM64 it only prints its rows so far: the list of expected rows was made on x86-64.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     unset C_INCLUDE_PATH && \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
@@ -461,6 +463,9 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cd /webkitbuild && \
     cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" --target "testaot" $(for program in $TEST_PROGRAMS; do echo "--target $program"; done) -- -k 0 && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    if [ "$USE_MIMALLOC" = ON ] && [ "$ENABLE_ASSERTS" != ON ] && [ "$ENABLE_FUZZILLI" != ON ]; then \
+        python3 /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py $WEBKIT_OUT_DIR/bin/jsc --expected /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt || { [ "$LINUX_ARCH" = aarch64 ] && echo "find-structures-decoded-behind-calls.py: not yet fatal here"; }; \
+    fi && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q "Machine:.*$(if [ "$LINUX_ARCH" = aarch64 ]; then echo AArch64; else echo X86-64; fi)" && \
     llvm-readelf -d $WEBKIT_OUT_DIR/bin/jsc | grep NEEDED && \
@@ -507,6 +512,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -r /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
     mkdir /output/Source/JavaScriptCore/aot/builtins/generated && \
     (cd $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/aot && cp AOTBuiltinEngineDeclarations.json AOTBuiltinFeatures.h AOTBuiltinIDs.h AOTBuiltinTableEngineBindings.cpp AOTBuiltinTableWords.h /output/Source/JavaScriptCore/aot/builtins/generated) && \
+    mkdir -p /output/Tools/Scripts/aot && \
+    cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
     cp -r /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
     find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete
 

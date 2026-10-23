@@ -22,7 +22,7 @@ function f1 name="handlerReturns" parameters=[{type=boolean}] results=[{type=und
     v2 = CatchValue
     Return
 }
-# CHECK-NEXT: f1 return: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws throw: throws p0:
+# CHECK-NEXT: f1 return: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws collects throw: throws collects p0:
 function f2 name="handlerRethrows" parameters=[{type=boolean}] results=[{type=undefined}] {
   b0(v0: boolean) handler=b1():
     v1 = CallDirect v0 function=f0
@@ -31,7 +31,7 @@ function f2 name="handlerRethrows" parameters=[{type=boolean}] results=[{type=un
     v2 = CatchException
     Rethrow v2
 }
-# CHECK-NEXT: f2 return: throws throw: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws
+# CHECK-NEXT: f2 return: throws collects throw: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws collects
 function f3 name="noHandler" parameters=[{type=boolean}] results=[{type=undefined}] {
   b0(v0: boolean):
     v1 = CallDirect v0 function=f0
@@ -46,4 +46,4 @@ function f4 name="ownThrowIsCaught" parameters=[{type=boolean}] results=[{type=u
     v2 = CatchValue
     Return
 }
-# CHECK-NEXT: f4 return: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws throw: throws p0:
+# CHECK-NEXT: f4 return: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws collects throw: throws collects p0:

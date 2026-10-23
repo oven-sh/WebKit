@@ -1,6 +1,6 @@
 # A hot function goes through B3 and Air
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# OPTIONS: limit=MaxWarmCodeValues:1 heat=EverythingIsHot testing=GenerateColdCodeDirectly disable=pass:InlineCalls
 # RUN: generate-code FunctionsGeneratedDirectly
 # CHECK: statistic FunctionsGeneratedDirectly 0
 

@@ -171,6 +171,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateField, void, (Instance* i
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryFinishBirth, void, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryFinishBirth);
+    // A field that lives among the extra properties is looked up by name, which may make a property table. The object is in the middle of its birth.
+    DeferGCForAWhile deferGC(vm);
     if (isCompiledObject(cell))
         uncheckedDowncast<Object>(cell)->tryFinishBirth();
 }
@@ -238,6 +240,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetFieldOutsideSlot, EncodedJSValu
 {
     constexpr Entry entry = Entry::operationAOTGetFieldOutsideSlot;
     AOT_OPERATION_BEGIN(instance, entry);
+    DeferGCForAWhile deferGC(vm);
     auto* object = cellArgument<Object>(cell, entry);
     JSObject* extra = object->extraProperties();
     JSValue value = extra ? extra->getDirect(vm, identifierAt(instance, key)) : JSValue();
@@ -273,7 +276,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetExtraProperty, EncodedJSValue, (Instance
     const Identifier& identifier = identifierAt(instance, key);
 
     Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
-    Structure* structure = object->structure();
+    Structure* structure = WTF::opaque(object->structure());
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     bool found = object->getPropertySlot(globalObject, identifier, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -328,7 +331,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutExtraProperty, void, (Instance* instance
     const Identifier& identifier = identifierAt(instance, key);
 
     Object::ensureStructureForExtraPropertiesIfNeeded(vm, object);
-    Structure* structure = object->structure();
+    Structure* structure = WTF::opaque(object->structure());
     PutPropertySlot slot(object, true);
     object->methodTable()->put(object, globalObject, identifier, JSValue::decode(encodedValue), slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);

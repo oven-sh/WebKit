@@ -26,9 +26,9 @@ public:
     Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known);
     void branchOnShapeIn(CellPointer, LayoutSetID tested, const Type& known, BranchTargets);
     void switchOnShape(CellPointer, std::span<const LayoutSetID> cases, std::span<const B3::FrequentedBlock> targets, B3::FrequentedBlock otherwise);
+    bool hasOnlyCompiledObjects(const Type& known) const;
 
 private:
-    bool hasOnlyCompiledObjects(const Type& known) const;
     Condition passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);
     Condition passesRange(Word32 shapeWord, const ShapeTest&);
     Condition passesBitSet(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);

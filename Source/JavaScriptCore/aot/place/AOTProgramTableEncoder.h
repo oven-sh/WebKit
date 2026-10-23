@@ -93,6 +93,8 @@ struct TableEncoder {
 
     uint32_t stringNumber(StringID);
     uint32_t shownStringNumber(StringID);
+    // Of a function, a class, a type: an obfuscated build has the empty string in its place.
+    uint32_t shownNameNumber(StringID);
     uint32_t stringConstantNumber(StringID);
     uint32_t identifierNumber(PropertyKeyID) const;
     uint32_t identifierNumberOfText(StringID) const;

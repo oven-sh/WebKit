@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTHostEntriesTestSupport.h"
+#include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"
 #include "AOTVector.h"
@@ -672,6 +673,9 @@ static void checkValidationFails(ASCIILiteral programText, ValidationFailureKind
 {
     ChildProcessResult result = runValidatingBuildInShell(programText, optionWords, statementsBeforeProgram);
     bool hasFailed = result.outcome == ChildProcessOutcome::Crashed && result.output.contains(makeString("AOT validation: "_s, nameOf(kind), ' '));
+    // A read behind the end of a cell is reported by AddressSanitizer first.
+    if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)
+        hasFailed |= result.output.contains("AOT: compiled code touches poisoned memory"_s);
     if (!hasFailed)
         dataLogLn(result.description(), "\n", result.output);
     AOT_TEST_CHECK(hasFailed);

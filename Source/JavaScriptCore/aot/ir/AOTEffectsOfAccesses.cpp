@@ -249,6 +249,13 @@ void describeAccess(const Program& program, const Function& function, const Valu
         return;
     }
 
+    // An access that is still one by name when code is generated goes through a cache, and a miss allocates what it files.
+    if (declared.mayCollect) {
+        Effects collects = Effects::none();
+        collects.mayCollect = true;
+        description.addOwn(collects);
+    }
+
     const Type* computedKey = findComputedKeyType(program, function, value);
     for (Opcode operation : proven.operations) {
         Effects form = effectsOfAccessForm(program, operation, proven.key, proven.receivers);

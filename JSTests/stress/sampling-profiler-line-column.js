@@ -25,7 +25,7 @@ function shouldBe(actual, expected) {
         let data = samplingProfilerStackTraces();
         for (let trace of data.traces) {
             for (let frame of trace.frames) {
-                if (frame.name === 'test' && (frame.line >= 11 && frame.line <= 16) && (frame.column >= 5 && frame.line <= 38))
+                if (frame.name === 'test' && (frame.line >= 13 && frame.line <= 18) && (frame.column >= 5 && frame.line <= 38)) // Bun: upstream has 11 and 16; the two lines at the top move test() down by two.
                     return;
             }
         }
