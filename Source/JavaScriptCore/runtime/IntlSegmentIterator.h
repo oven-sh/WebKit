@@ -59,7 +59,7 @@ public:
 private:
     IntlSegmentIterator(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, IntlSegmenter::Granularity, JSString*);
 
-    DECLARE_DEFAULT_FINISH_CREATION;
+    void finishCreation(VM&);
 
     std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
     Box<Vector<char16_t>> m_buffer;

@@ -43,6 +43,9 @@ namespace IntlCollatorInternal {
 constexpr bool verbose = false;
 }
 
+// Approximate size of UCollator for GC memory pressure reporting, measured empirically with ucol_open + compare (ICU 78).
+static constexpr size_t estimatedUCollatorSize = 1500;
+
 IntlCollator* IntlCollator::create(VM& vm, Structure* structure)
 {
     IntlCollator* format = new (NotNull, allocateCell<IntlCollator>(vm)) IntlCollator(vm, structure);
@@ -69,6 +72,9 @@ void IntlCollator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     visitor.append(thisObject->m_boundCompare);
+
+    if (thisObject->m_collator)
+        visitor.reportExtraMemoryVisited(estimatedUCollatorSize);
 }
 
 DEFINE_VISIT_CHILDREN(IntlCollator);
@@ -230,6 +236,7 @@ void IntlCollator::initializeCollator(JSGlobalObject* globalObject, JSValue loca
         throwTypeError(globalObject, scope, "failed to initialize Collator"_s);
         return;
     }
+    vm.heap.reportExtraMemoryAllocated(this, estimatedUCollatorSize);
 
     UColAttributeValue strength = UCOL_PRIMARY;
     UColAttributeValue caseLevel = UCOL_OFF;
