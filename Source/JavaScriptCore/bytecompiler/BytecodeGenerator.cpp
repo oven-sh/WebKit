@@ -2116,15 +2116,15 @@ void BytecodeGenerator::emitProfileControlFlow(int textOffset)
     if (shouldEmitControlFlowProfilerHooks()) {
         RELEASE_ASSERT(textOffset >= 0);
 
-        OpProfileControlFlow::emit(this, textOffset, 0);
+        OpProfileControlFlow::emit(this, textOffset, 0, false);
         m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
     }
 }
 
-void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOffset)
+void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isInLoopHeader)
 {
     RELEASE_ASSERT(textOffset >= 0 && textOffset < textEndOffset);
-    OpProfileControlFlow::emit(this, textOffset, textEndOffset);
+    OpProfileControlFlow::emit(this, textOffset, textEndOffset, isInLoopHeader);
     m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
 }
 
