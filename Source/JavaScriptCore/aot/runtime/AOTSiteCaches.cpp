@@ -28,7 +28,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static_assert(!((1u << SiteCaches::regionShift) % sizeof(Slot)));
-static_assert(std::is_same_v<decltype(SiteCacheState::missesLeft), uint8_t>, "recordMiss and the stub's countSiteCacheMiss both wrap from 0 to 255");
+static_assert(std::is_same_v<decltype(SiteCacheState::missesLeft), uint8_t>, "the stub's countSiteCacheMiss wraps from 0 to 255");
 
 static void stopWatchingReplacedConstant(State& state, SiteCache site)
 {

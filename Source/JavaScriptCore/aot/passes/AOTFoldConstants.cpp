@@ -222,7 +222,7 @@ private:
             return becomeBoolean(id, evaluateTestByTypes(m_program, m_function, value));
         case Opcode::StrictEq:
         case Opcode::Eq:
-            return becomeBoolean(id, evaluateTestByTypes(m_program, m_function, value)) || foldTypeOfComparison(id, value);
+            return becomeBoolean(id, evaluateTestByTypes(m_program, m_function, value)) || foldComparisonOfOneClosure(id, value) || foldTypeOfComparison(id, value);
         case Opcode::ToBoolean:
             return foldToBoolean(id, value);
         case Opcode::ToString:
@@ -245,6 +245,29 @@ private:
         default:
             return false;
         }
+    }
+
+    // `stream.emit === emit`: the program makes one closure of the function, so whatever is a closure of it is that object.
+    bool foldComparisonOfOneClosure(ValueID id, const Value& comparison)
+    {
+        for (unsigned i = 0; i < 2; ++i) {
+            const Type& closure = typeOf(comparison.operand(i));
+            FunctionID function = closure.singleFunction();
+            if (!function || closure.mayBeUndefinedOrNull() || !m_context.inputs.flow.hasOneClosure(function))
+                continue;
+            ValueID other = comparison.operand(1 - i);
+            const Type& otherType = typeOf(other);
+            if (!otherType.isJavaScriptValue() || otherType.withOnlyObjects().singleFunction() != function)
+                continue;
+            if (otherType.singleFunction() == function && !otherType.mayBeUndefinedOrNull())
+                return becomeBoolean(id, KnownBoolean::True);
+            Value& test = m_function.edit(id);
+            test.become(Opcode::TypeTest);
+            test.setValueOperand(other);
+            test.setTestedType(m_context.types.intern(Type::forFunction(function)));
+            return true;
+        }
+        return false;
     }
 
     static bool isPrimitive(KnownValue value) { return value.isKnown() && !value.isObject(); }

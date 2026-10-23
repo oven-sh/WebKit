@@ -184,6 +184,17 @@ ClosureUse FlowResults::closureUseOfBoundFunction(FunctionID target, uint32_t nu
     return use ? use->closureUse : ClosureUse::Unknown;
 }
 
+bool FlowResults::closuresAreNeverCompared(FunctionID id) const
+{
+    FunctionID analyzed = findAnalyzedFunction(id);
+    return analyzed && m_tables.functions.functionsWhoseClosuresAreNeverCompared.get(analyzed.index());
+}
+
+bool FlowResults::hasOneClosure(FunctionID id) const
+{
+    return id.index() < m_tables.functions.functionCountAsRead && m_tables.functions.functionsWithOneClosure.get(id.index());
+}
+
 OperandSummary FlowResults::parameterSummary(FunctionID function, uint32_t entryParameter) const
 {
     FunctionID analyzed = function;

@@ -310,6 +310,24 @@ static void appendFlowFields(const Program& program, TypeArena& arena, std::span
     }
 }
 
+// A key that is no field goes to the extra properties, and no object with extra properties has one of the orders.
+static void appendLiteralKeyOrders(Layout& layout, const FlowLayoutUpdate& update)
+{
+    // Lists of different keys are lists of different fields, so an order can only repeat one that was listed by index.
+    size_t numberOfIndexOrders = layout.flow.constructorOrders.size();
+    for (const Vector<PropertyKeyID>& keys : update.literalKeyOrders) {
+        FieldOrder order;
+        bool listsOnlyFields = std::ranges::all_of(keys, [&](PropertyKeyID key) {
+            std::optional<uint32_t> field = layout.findField(key);
+            if (field)
+                order.fields.append(*field);
+            return field.has_value();
+        });
+        if (listsOnlyFields && !std::ranges::contains(layout.flow.constructorOrders.span().first(numberOfIndexOrders), order))
+            layout.flow.constructorOrders.append(WTF::move(order));
+    }
+}
+
 static LayoutID provenBaseOfLayout(const Layout& layout)
 {
     return layout.flow.baseState == BaseState::Layout ? layout.flow.base : LayoutID();
@@ -327,6 +345,7 @@ static void completeFields(const FlowApplyContext& context, TypeArena& arena, co
         const FlowLayoutUpdate& update = context.application.layouts[current.index()];
         appendInheritedFields(program, current);
         appendFlowFields(program, arena, inputs.typesDeclaredInFamilies[current.index()].span(), inputs.layoutsNeverStoredOtherTypes.get(current.index()), program.at(current), update);
+        appendLiteralKeyOrders(program.at(current), update);
     }
 }
 

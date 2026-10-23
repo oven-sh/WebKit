@@ -144,6 +144,8 @@ static std::optional<FramePlan> planFunction(const Program& program, const Optim
     bool namesCauses = build.options().collectsAllocationRemarks() || build.options().logging.dumpedPass == PassID::AllocateInFrames;
     if (!namesCauses && !areAllFilledArrays && keepsEveryCellOnHeapByForm(program, inputs.flow, build, function, allocations)) {
         FramePlan plan = createHeapPlan(program, function, findListedAllocations(program, build, analyses, allocations));
+        for (FrameDecision& decision : plan.decisions)
+            decision.isHeldByClosureTable = FramePlanner::isLikeEveryClosureOfItsFunction(program, &inputs.flow, function, function.at(decision.allocation));
         RELEASE_ASSERT(!build.options().verifiesAfterEveryPass || keepsSameCellsOnHeap(plan, FramePlanner(analyses, inputs.heat).run()));
         return plan;
     }

@@ -193,6 +193,13 @@ private:
 
     void dumpBoundFunctionUses()
     {
+        for (uint32_t index = 0; index < m_tables.functions.functions.size(); ++index) {
+            if (m_tables.functions.functions[index].closureUse != ClosureUse::CalledOnly || m_tables.functions.functionsWhoseClosuresAreNeverCompared.get(index))
+                continue;
+            beginLine("closures-compared"_s);
+            m_printer.print(FunctionID(index));
+            m_printer.endLine();
+        }
         for (const FlowBoundFunctionUse& use : m_tables.functions.boundFunctionUses) {
             if (use.closureUse == ClosureUse::Unknown)
                 continue;

@@ -44,6 +44,9 @@ bool ClosureTestEmitter::isDecidedByClosureWord(FunctionID function, const Type&
 {
     if (!closureWordNames(function))
         return false;
+    const Function& callee = m_program.at(function);
+    if (callee.role != FunctionRole::BoundFunction && inputs().flow.function(function).closureUse == ClosureUse::CalledOnly && inputs().flow.closuresAreNeverCompared(function))
+        return true;
     return (tested.anyFunction || tested.anyObject) && !m_options.recorded.validates;
 }
 

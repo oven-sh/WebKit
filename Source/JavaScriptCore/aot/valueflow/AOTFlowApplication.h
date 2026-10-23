@@ -61,6 +61,8 @@ struct FlowLayoutUpdate {
     ClassFlow classFlow;
     Vector<FlowFieldUpdate> fields;
     Vector<FlowAppendedField> appendedFields;
+    // More constructor orders. They list keys, because an appended field has no index before it is appended.
+    Vector<Vector<PropertyKeyID>> literalKeyOrders;
     // The literals with this layout make ordinary objects, and no type names the layout.
     bool objectsAreDictionaries { false };
 };

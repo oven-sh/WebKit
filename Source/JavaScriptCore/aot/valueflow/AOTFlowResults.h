@@ -144,6 +144,8 @@ struct FlowFunctionTables {
     // Ascending by target and number of bound arguments.
     Vector<FlowBoundFunctionUse> boundFunctionUses;
     BitVector functionsSeeingOnlyFinishedObjects;
+    BitVector functionsWhoseClosuresAreNeverCompared;
+    BitVector functionsWithOneClosure;
 };
 
 struct FlowSiteTables {
@@ -225,6 +227,10 @@ public:
     bool runsAtMostOnce(const Program&, FunctionID) const;
     // A bound function is derived from its target, so function() answers for closures of the target.
     ClosureUse closureUseOfBoundFunction(FunctionID target, uint32_t numberOfBoundArguments) const;
+    // No operation and no built-in that flow has followed can tell two closures of the function apart: none stands on both sides of `==` or `===`, none is looked at by a built-in, none is a key of a Map or a Set.
+    bool closuresAreNeverCompared(FunctionID) const;
+    // The program makes a closure of the function at one place, which runs at most once: two values that are closures of it are one object.
+    bool hasOneClosure(FunctionID) const;
     OperandSummary parameterSummary(FunctionID, uint32_t entryParameter) const;
     void removeEntryParameters(FunctionID, const BitVector& removedEntryParameters);
     // By function as read and entry parameter, and by layout and field.

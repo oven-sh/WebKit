@@ -135,6 +135,33 @@ static void appendClosuresMadeBy(const ValueFlowResultInputs& inputs, const Flow
     }
 }
 
+// `const emit = function () { .. }` in the code of a module. What a class definition, a variable that declares a function or the run time makes is not counted here: such a function is not listed.
+void computeClosuresMadeOnce(const ValueFlowResultInputs& inputs, FlowResultTables& tables)
+{
+    const Program& program = inputs.program;
+    Vector<ClosureMade> closures = collectInParallel<ClosureMade>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<ClosureMade>& found) {
+        appendClosuresMadeBy(inputs, tables, FunctionID(index), found);
+    });
+
+    BitVector isMadeSomewhere(program.functions.size());
+    BitVector& hasOneClosure = tables.functions.functionsWithOneClosure;
+    hasOneClosure = BitVector(program.functions.size());
+    for (const ClosureMade& closure : closures) {
+        bool isMadeElsewhere = isMadeSomewhere.set(closure.function.index());
+        hasOneClosure.set(closure.function.index(), closure.isMadeAtMostOnce && !isMadeElsewhere);
+    }
+    for (const Variable& variable : program.variables) {
+        if (variable.initialization == VariableInitialization::Function && variable.function)
+            hasOneClosure.clear(variable.function.index());
+    }
+    for (const Layout& layout : program.layouts) {
+        for (const ClassMember& member : layout.classFlow.members) {
+            if (member.function && !layout.has(LayoutFlags::IsConstructorFunction))
+                hasOneClosure.clear(member.function.index());
+        }
+    }
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)
