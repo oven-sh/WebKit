@@ -508,12 +508,12 @@ static void encodeClasses(TableEncoder& encoder, const Vector<uint32_t>& classes
     encoder.setTable(ProgramTableIndex::classes, classGroups);
 }
 
-static Vector<Vector<uint32_t>> collectSubclasses(const Program& program, const Placement& placement)
+static Vector<Vector<uint32_t>> collectSubclasses(const Program& program)
 {
     Vector<Vector<uint32_t>> subclasses(program.layouts.size());
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
-        if (layout.kind != LayoutKind::Instance || !placement.isInUse(LayoutID(index)))
+        if (layout.kind != LayoutKind::Instance)
             continue;
         LayoutID assumedBase = expectedBaseOf(layout);
         if (assumedBase && program.at(assumedBase).kind == LayoutKind::Instance)
@@ -526,21 +526,19 @@ static void encodeLayoutRecords(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
     const ShapeTable& shapes = encoder.placement.shapes();
-    encoder.subclasses = collectSubclasses(program, encoder.placement);
+    encoder.subclasses = collectSubclasses(program);
     Vector<uint32_t> layouts(FillWith { }, shapes.numberOfShapes() + 1, 0);
     for (uint32_t shape = 1; shape <= shapes.numberOfShapes(); ++shape) {
         if (!shapes.isAssigned(shape))
             continue;
         LayoutID id = shapes.shape(shape).layout;
-        if (!encoder.placement.isInUse(id))
-            continue;
         layouts[shape] = shape < shapes.firstEnvironmentShape() ? appendObjectLayout(encoder, id, shape) : appendEnvironment(encoder, id, shape);
     }
 
     Vector<uint32_t> classes(FillWith { }, program.layouts.size(), 0);
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
         LayoutID id(i);
-        if (program.at(id).kind != LayoutKind::Instance || !encoder.placement.isInUse(id))
+        if (program.at(id).kind != LayoutKind::Instance)
             continue;
         classes[i] = shapes.shapesOf(id).isEmpty() ? appendObjectLayout(encoder, id, 0) : layouts[shapes.generalShapeOf(id)];
     }

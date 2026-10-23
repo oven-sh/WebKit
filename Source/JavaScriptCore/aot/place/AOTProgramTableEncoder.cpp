@@ -180,7 +180,6 @@ BodyFactsForTables collectBodyFactsForTables(const Program& program, const BitVe
     facts.functionsThatOnlyReturn = findModuleBodiesThatOnlyReturn(program);
     facts.functionsWithFrames = findFunctionsWithFrames(program, bodiesWithoutCode);
     facts.importSites = findImportSites(program, build.parallelLoops());
-    findModulesNamedByCode(program, bodiesWithoutCode, build.parallelLoops(), facts);
     return facts;
 }
 

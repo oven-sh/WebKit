@@ -37,7 +37,6 @@ struct CodeGenerationPlan {
     StringConstantNumbering stringConstants;
     InstanceSizes instanceSizes { };
     Typed::BodyFactsForTables bodyFactsForTables;
-    BitVector bodiesWithoutCode;
     Typed::BranchCounterNumbers branchCounters;
     Typed::ArrivalSiteNumbers arrivalSites;
     Typed::PromisedResults promisedResults;
@@ -56,7 +55,7 @@ class CodeGenerationJob {
     WTF_MAKE_NONCOPYABLE(CodeGenerationJob);
 public:
     // Takes the bodies out of the program, so no other thread may be reading its functions.
-    CodeGenerationJob(const Typed::CodeGenerationInputs&, Typed::Program&, BuildContext&, const BitVector* bodiesWithoutCode = nullptr);
+    CodeGenerationJob(const Typed::CodeGenerationInputs&, Typed::Program&, BuildContext&, std::span<const Vector<FunctionID>> calledFunctions = { });
     ~CodeGenerationJob();
 
     GeneratedCode run();

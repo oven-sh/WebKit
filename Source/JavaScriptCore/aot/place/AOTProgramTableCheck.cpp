@@ -219,16 +219,8 @@ static void checkModuleTables(const TableEncoder& encoder, const ProgramTables& 
     };
     ModuleNumbers modulesByPath(tables.modulesByPath(), modules.size());
     bool everyPathExists = everyModuleExists(modulesByPath);
-    BitVector isFoundByPath(numberOfModules);
-    for (size_t index = 0; everyPathExists && index < modulesByPath.size(); ++index)
-        isFoundByPath.quickSet(modulesByPath[index]);
-    // A module that nobody asks for its path has none.
-    auto hasNoPath = [&](size_t index) {
-        return modules[index].publicPathOrName == strings.emptyString().index() && modules[index].directory == Number24::max
-            && modules[index].charactersInFrontOfDisplayPath == ModuleData::hasNoDisplayPath && !isFoundByPath.quickGet(index);
-    };
     for (size_t index = 0; everyPathExists && index < numberOfModules; ++index)
-        everyPathExists = hasNoPath(index) || hasPathOfProgram(index);
+        everyPathExists = hasPathOfProgram(index);
     bool everyDisplayPathExists = std::ranges::is_sorted(tables.moduleDisplayPaths(), { }, [](const ModuleDisplayPathData& entry) -> uint32_t { return entry.module; })
         && std::ranges::all_of(tables.moduleDisplayPaths(), [&](const ModuleDisplayPathData& entry) {
             return entry.module < numberOfModules && modules[entry.module].charactersInFrontOfDisplayPath == ModuleData::displayPathIsListed && entry.path < strings.size();
@@ -287,7 +279,7 @@ static void checkListedFunctions(const TableEncoder& encoder, const ProgramTable
     }
     for (size_t index = 0; index < program.layouts.size(); ++index) {
         FunctionID constructor = program.layouts[index].constructor;
-        FunctionID entrypoint = encoder.placement.isInUse(LayoutID(index)) ? encoder.findEntrypoint(constructor) : FunctionID();
+        FunctionID entrypoint = encoder.findEntrypoint(constructor);
         if (entrypoint &&!std::ranges::binary_search(tables.constructors(), entrypoint.index(), { }, &ConstructorData::function))
             encoder.fail(ProgramTableRule::FunctionNotListed, LayoutID(index), constructor);
     }
@@ -442,8 +434,6 @@ static void checkLayoutRecords(const TableEncoder& encoder, const ProgramTables&
     for (uint32_t shape = 0; shape < endOfShapes; ++shape) {
         uint32_t offset = shape < offsets.size() ? offsets[shape] : 0;
         LayoutID id = shapes.isAssigned(shape) ? shapes.shape(shape).layout : LayoutID();
-        if (id && !encoder.placement.isInUse(id))
-            id = { };
         if (!offset != !id)
             encoder.fail(ProgramTableRule::ShapeWithoutLayout, id);
         else if (id && shape < tables.firstEnvironmentShape)
