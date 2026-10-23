@@ -71,6 +71,8 @@ public:
     RefPtr<NativeImage> nativeImage(const ColorSpace& = ColorSpace::SRGB()) { return primaryNativeImage(); }
     RefPtr<NativeImage> currentNativeImage() { return m_source->currentNativeImage(); }
 
+    RefPtr<NativeImage> nativeImageForUnpremultipliedPixels() { return m_source->primaryNativeImageForUnpremultipliedPixels(); }
+
     // A bitmap has a size of its own, so these ignore the concrete object size.
     RefPtr<NativeImage> nativeImage(ConcreteObjectSize, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr) final { return primaryNativeImage(); }
     RefPtr<NativeImage> currentNativeImage(ConcreteObjectSize, const ImageDrawingExtras* = nullptr) final { return currentNativeImage(); }
@@ -155,9 +157,9 @@ private:
 
     bool hasHDRContentForTesting() const { return m_source->hasHDRContentForTesting(); }
 
-    ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) final;
-    void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) final;
-    void drawLuminanceMaskPattern(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions);
+    ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions = { }, const ImageDrawingExtras* = nullptr) final;
+    void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }, const ImageDrawingExtras* = nullptr) final;
+    void drawLuminanceMaskPattern(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions);
 
     void dump(WTF::TextStream&) const final;
 

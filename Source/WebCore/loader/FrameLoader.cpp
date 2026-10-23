@@ -50,6 +50,7 @@
 #include "ContentSecurityPolicy.h"
 #include "CrossOriginAccessControl.h"
 #include "CrossOriginEmbedderPolicy.h"
+#include "CrossOriginOpenerPolicy.h"
 #include "DNS.h"
 #include "DOMWrapperWorld.h"
 #include "DatabaseManager.h"
@@ -122,6 +123,7 @@
 #include "PluginDocument.h"
 #include "PolicyChecker.h"
 #include "ProgressTracker.h"
+#include "RFC8941.h"
 #include "RemoteFrame.h"
 #include "RemoteFrameClient.h"
 #include "RenderWidgetInlines.h"
@@ -149,6 +151,7 @@
 #include "UnloadCountIncrementer.h"
 #include "UserContentController.h"
 #include "UserGestureIndicator.h"
+#include "ViewTransition.h"
 #include "WindowFeatures.h"
 #include "XMLDocumentParser.h"
 #include <ranges>
@@ -856,6 +859,67 @@ static AtomString extractContentLanguageFromHeader(const String& header)
     return StringView(header).left(commaIndex).trim(isASCIIWhitespace).toAtomString();
 }
 
+// Tells developers when COOP or COEP headers are not doing what they asked for: values WebKit does not act on (which
+// are parsed as 'unsafe-none'), and, for a top-level document, why it is still not cross-origin isolated since script
+// otherwise only sees crossOriginIsolated == false and no SharedArrayBuffer. COOP only applies to top-level documents.
+static void logCrossOriginIsolationDiagnostics(Document& document, const ResourceResponse& response, bool isMainFrame)
+{
+    auto& headers = response.httpHeaderFields();
+    String coepHeader = headers.get(HTTPHeaderName::CrossOriginEmbedderPolicy);
+    String coepReportOnlyHeader = headers.get(HTTPHeaderName::CrossOriginEmbedderPolicyReportOnly);
+    String coopHeader;
+    String coopReportOnlyHeader;
+    if (isMainFrame) {
+        coopHeader = headers.get(HTTPHeaderName::CrossOriginOpenerPolicy);
+        coopReportOnlyHeader = headers.get(HTTPHeaderName::CrossOriginOpenerPolicyReportOnly);
+    }
+    if (coepHeader.isEmpty() && coepReportOnlyHeader.isEmpty() && coopHeader.isEmpty() && coopReportOnlyHeader.isEmpty())
+        return;
+
+    auto checkValue = [&](const String& header, ASCIILiteral headerLabel, bool (*isRecognizedToken)(StringView), bool (*isUnsupportedToken)(StringView)) {
+        if (header.isEmpty())
+            return false;
+
+        auto parsed = RFC8941::parseItemStructuredFieldValue(header);
+        auto* token = parsed ? std::get_if<RFC8941::Token>(&parsed->first) : nullptr;
+        if (token && isRecognizedToken(token->string()))
+            return false;
+
+        if (token && isUnsupportedToken && isUnsupportedToken(token->string())) {
+            document.addConsoleMessage(MessageSource::Security, MessageLevel::Warning, makeString("The "_s, headerLabel, " header value '"_s, header, "' is not supported and is ignored (treated as 'unsafe-none')."_s));
+            return true;
+        }
+        document.addConsoleMessage(MessageSource::Security, MessageLevel::Warning, makeString("The "_s, headerLabel, " header value '"_s, header, "' is not recognized and is ignored (treated as 'unsafe-none')."_s));
+        return true;
+    };
+
+    bool coepValueReported = checkValue(coepHeader, "Cross-Origin-Embedder-Policy"_s, isRecognizedCrossOriginEmbedderPolicyToken, isUnsupportedCrossOriginEmbedderPolicyToken);
+    checkValue(coepReportOnlyHeader, "Cross-Origin-Embedder-Policy-Report-Only"_s, isRecognizedCrossOriginEmbedderPolicyToken, isUnsupportedCrossOriginEmbedderPolicyToken);
+    bool coopValueReported = checkValue(coopHeader, "Cross-Origin-Opener-Policy"_s, isRecognizedCrossOriginOpenerPolicyToken, nullptr);
+    checkValue(coopReportOnlyHeader, "Cross-Origin-Opener-Policy-Report-Only"_s, isRecognizedCrossOriginOpenerPolicyToken, nullptr);
+
+    if (!isMainFrame || (coopHeader.isEmpty() && coepHeader.isEmpty()) || document.crossOriginIsolated())
+        return;
+
+    String reason;
+    if (!document.isSecureContext())
+        reason = "the document is not a secure context (cross-origin isolation requires HTTPS)"_s;
+    else if (coopHeader.isEmpty())
+        reason = "the Cross-Origin-Opener-Policy header is missing (it must be 'same-origin')"_s;
+    else if (auto coopValue = document.crossOriginOpenerPolicy().value; !coopValueReported && coopValue != CrossOriginOpenerPolicyValue::SameOrigin && coopValue != CrossOriginOpenerPolicyValue::SameOriginPlusCOEP)
+        reason = makeString("the Cross-Origin-Opener-Policy header value '"_s, coopHeader, "' is not 'same-origin'"_s);
+    else if (coepHeader.isEmpty())
+        reason = "the Cross-Origin-Embedder-Policy header is missing (it must be 'require-corp')"_s;
+    else if (!coepValueReported && document.crossOriginEmbedderPolicy().value != CrossOriginEmbedderPolicyValue::RequireCORP)
+        reason = makeString("the Cross-Origin-Embedder-Policy header value '"_s, coepHeader, "' is not 'require-corp'"_s);
+
+    // An unrecognized or unsupported value was already reported above; any other remaining cause is not one this message can name.
+    if (reason.isEmpty())
+        return;
+
+    document.addConsoleMessage(MessageSource::Security, MessageLevel::Warning, makeString("This document is not cross-origin isolated because "_s, reason, ". window.crossOriginIsolated is false and SharedArrayBuffer is unavailable."_s));
+}
+
 void FrameLoader::didBeginDocument(bool dispatch, LocalDOMWindow* previousWindow)
 {
     m_needsClear = true;
@@ -900,7 +964,13 @@ void FrameLoader::didBeginDocument(bool dispatch, LocalDOMWindow* previousWindow
                 auto& agentClusterAssignment = documentLoader->agentClusterAssignment();
                 if (frame->settings().originAgentClusterEnabled())
                     document->setIsOriginKeyed(agentClusterAssignment.isOriginKeyed);
-                document->setDocumentIsolationPolicy(agentClusterAssignment.documentIsolationPolicy);
+                // The UI process decides the value, since it determines the agent cluster. The rest is only for reporting.
+                DocumentIsolationPolicy documentIsolationPolicy;
+                if (settings->documentIsolationPolicyEnabled() && settings->siteIsolationEnabled())
+                    documentIsolationPolicy = obtainDocumentIsolationPolicy(documentLoader->response(), isSecureContext);
+                ASSERT(documentIsolationPolicy.value == agentClusterAssignment.documentIsolationPolicy);
+                documentIsolationPolicy.value = agentClusterAssignment.documentIsolationPolicy;
+                document->setDocumentIsolationPolicy(documentIsolationPolicy);
             }
         }
 
@@ -928,6 +998,9 @@ void FrameLoader::didBeginDocument(bool dispatch, LocalDOMWindow* previousWindow
             if (auto crossOriginOpenerPolicy = documentLoader->crossOriginOpenerPolicy())
                 document->setCrossOriginOpenerPolicy(WTF::move(*crossOriginOpenerPolicy));
         }
+
+        if (!m_stateMachine.creatingInitialEmptyDocument() && document->url().protocolIsInHTTPFamily())
+            logCrossOriginIsolationDiagnostics(document, documentLoader->response(), frame->isMainFrame());
 
         if (auto integrityPolicy = documentLoader->integrityPolicy())
             document->setIntegrityPolicy(WTF::move(integrityPolicy));
@@ -1832,6 +1905,28 @@ SubstituteData FrameLoader::defaultSubstituteDataForURL(const URL& url)
     return SubstituteData(SharedBuffer::create(encodedSrcdoc.span()), URL(), WTF::move(response), iframeElement->srcdocSessionHistoryVisibility());
 }
 
+bool FrameLoader::isDocumentCompletelyLoaded() const
+{
+    return !m_stateMachine.committedFirstRealDocumentLoad() || !m_documentLoader || m_documentLoader->wasOnloadDispatched();
+}
+
+static bool navigationFromAnotherProcessMustReplace(const FrameLoader& frameLoader, const FrameLoadRequest& request)
+{
+    if (request.shouldTreatAsContinuingLoad() != ShouldTreatAsContinuingLoad::YesAfterNavigationPolicyDecision || request.navigationHistoryBehavior() != NavigationHistoryBehavior::Auto || frameLoader.client().isProvisionalFrame())
+        return false;
+
+    RefPtr documentLoader = frameLoader.documentLoader();
+    if (!documentLoader)
+        return false;
+
+    // https://html.spec.whatwg.org/multipage/browsing-the-web.html#the-navigation-must-be-a-replace
+    if (documentLoader->isInitialAboutBlank() == IsInitialAboutBlank::Yes && protect(frameLoader.frame())->tree().parent())
+        return true;
+
+    // https://html.spec.whatwg.org/multipage/nav-history-apis.html#location-object-navigate
+    return request.replaceIfNotCompletelyLoaded() == ReplaceIfNotCompletelyLoaded::Yes && !frameLoader.isDocumentCompletelyLoaded();
+}
+
 void FrameLoader::load(FrameLoadRequest&& request, std::optional<NavigationRequester>&& crossSiteRequester)
 {
     FRAMELOADER_RELEASE_LOG_FORWARDABLE(FrameLoaderLoadFrameLoadRequest);
@@ -1889,6 +1984,10 @@ void FrameLoader::load(FrameLoadRequest&& request, std::optional<NavigationReque
 
     if (request.shouldTreatAsContinuingLoad() != ShouldTreatAsContinuingLoad::No) {
         loader->setClientRedirectSourceForHistory(request.clientRedirectSourceForHistory());
+        if (request.lockBackForwardList() == LockBackForwardList::No && navigationFromAnotherProcessMustReplace(*this, request)) {
+            loader->setNavigationHistoryBehavior(NavigationHistoryBehavior::Replace);
+            request.setLockBackForwardList(LockBackForwardList::Yes);
+        }
         if (request.lockBackForwardList() == LockBackForwardList::Yes) {
             loader->setIsClientRedirect(true);
             m_loadType = FrameLoadType::RedirectWithLockedBackForwardList;
@@ -4651,7 +4750,9 @@ void FrameLoader::dispatchPageswapEvent(DocumentLoader* provisionalLoader, bool 
     auto canTriggerCrossDocumentViewTransition = CanTriggerCrossDocumentViewTransition::No;
     RefPtr<NavigationActivation> activation;
     if (provisionalLoader) {
-        canTriggerCrossDocumentViewTransition = provisionalLoader->navigationCanTriggerCrossDocumentViewTransition(*document, fromBackForwardCache);
+        // A navigation that can't wait would tear down the old document, and its subframes, before the capture completes.
+        if (proceedWithNavigation)
+            canTriggerCrossDocumentViewTransition = provisionalLoader->navigationCanTriggerCrossDocumentViewTransition(*document, fromBackForwardCache);
 
         RefPtr window = document->window();
         auto navigationAPIType = provisionalLoader->triggeringAction().navigationAPIType();
@@ -4701,9 +4802,15 @@ void FrameLoader::loadProvisionalItemFromCachedPage()
     
     provisionalLoader->setCommitted(true);
     waitForOutboundViewTransitionCapture(*provisionalLoader, true, [frame = Ref { m_frame.get() }, provisionalLoader] {
-        // Another navigation may have started meanwhile.
-        if (frame->loader().provisionalDocumentLoader() != provisionalLoader.get())
+        // Another navigation may have started meanwhile. Unless it waits for a transition of its own,
+        // the current document may stay, so it stops holding its rendering for this one.
+        if (RefPtr currentLoader = frame->loader().provisionalDocumentLoader(); currentLoader != provisionalLoader.get()) {
+            RefPtr document = frame->document();
+            RefPtr viewTransition = document ? document->activeViewTransition() : nullptr;
+            if (viewTransition && (!currentLoader || !currentLoader->hasDispatchedPageswapEvent()))
+                viewTransition->skipTransition();
             return;
+        }
         protect(frame->loader())->commitProvisionalLoad();
     });
 }

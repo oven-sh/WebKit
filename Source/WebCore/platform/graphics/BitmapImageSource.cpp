@@ -338,7 +338,7 @@ bool BitmapImageSource::hasEverAnimated() const
     return m_frameAnimator && m_frameAnimator->hasEverAnimated();
 }
 
-DecodingDestination BitmapImageSource::preferredDecodingDestination(GraphicsContext& context, ImagePaintingOptions options) const
+DecodingDestination BitmapImageSource::preferredDecodingDestination(GraphicsContext& context, ImageDrawingOptions options) const
 {
     if (options.drawsHDRContent() == DrawsHDRContent::No || options.dynamicRangeLimit() == PlatformDynamicRangeLimit::standard() || !hasHDRGainMap())
         return DecodingDestination::Base;
@@ -519,7 +519,7 @@ void BitmapImageSource::cacheNativeImageAtIndex(unsigned index, SubsamplingLevel
     decodedSizeIncreased(destination.sizeInBytes());
 }
 
-void BitmapImageSource::drawNativeImage(GraphicsContext& context, NativeImage& nativeImage, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions options)
+void BitmapImageSource::drawNativeImage(GraphicsContext& context, NativeImage& nativeImage, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions options)
 {
     Ref protectedNativeImage { nativeImage };
     auto sizeBeforeDrawing = protectedNativeImage->sizeInBytes();
@@ -690,6 +690,25 @@ RefPtr<NativeImage> BitmapImageSource::nativeImageAtIndex(unsigned index)
     if (!nativeImage)
         return nullptr;
     return RefPtr { nativeImage->ptr() };
+}
+
+RefPtr<NativeImage> BitmapImageSource::primaryNativeImageForUnpremultipliedPixels()
+{
+    if (!m_decoder)
+        return nullptr;
+
+    auto index = primaryFrameIndex();
+    if (index >= m_frames.size())
+        return nullptr;
+
+    if (isPendingDecodingAtIndex(index, SubsamplingLevel::Default, DecodingMode::Asynchronous))
+        return nullptr;
+
+    auto result = protect(m_decoder)->createNativeImageAtIndex(index, SubsamplingLevel::Default, { DecodingMode::Synchronous, DecodingDestination::Base });
+    if (!result)
+        return nullptr;
+
+    return RefPtr { std::get<Ref<NativeImage>>(*result).ptr() };
 }
 
 RefPtr<NativeImage> BitmapImageSource::preTransformedNativeImageAtIndex(unsigned index, ImageOrientation orientation)
