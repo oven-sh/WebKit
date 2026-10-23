@@ -1467,8 +1467,6 @@ void AssemblyHelpers::emitConvertValueToBoolean(VM& vm, GPRReg value, GPRReg res
     //     result = !!unboxInt32(value)
     // } else if (value is number) {
     //     result = !!unboxDouble(value)
-    // } else if (value is BigInt32) {
-    //     result = !!unboxBigInt32(value)
     // } else {
     //     result = value == jsTrue
     // }
@@ -1518,15 +1516,6 @@ void AssemblyHelpers::emitConvertValueToBoolean(VM& vm, GPRReg value, GPRReg res
     done.append(jump());
 
     notDouble.link(this);
-#if USE(BIGINT32)
-    auto isNotBigInt32 = branchIfNotBigInt32(value.gpr(), result);
-    move(value.gpr(), result);
-    urshift64(TrustedImm32(16), result);
-    compare32(invert ? Equal : NotEqual, result, TrustedImm32(0), result);
-    done.append(jump());
-
-    isNotBigInt32.link(this);
-#endif // USE(BIGINT32)
     compare64(invert ? NotEqual : Equal, value, TrustedImm32(JSValue::ValueTrue), result);
 
     done.link(this);
@@ -1546,8 +1535,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, G
     //     result = !!unboxInt32(value)
     // } else if (value is number) {
     //     result = !!unboxDouble(value)
-    // } else if (value is BigInt32) {
-    //     result = !!unboxBigInt32(value)
     // } else {
     //     result = value == jsTrue
     // }
@@ -1614,15 +1601,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, G
     }
 
     notDouble.link(this);
-#if USE(BIGINT32)
-    auto isNotBigInt32 = branchIfNotBigInt32(value.gpr(), scratch);
-    move(value.gpr(), scratch);
-    urshift64(TrustedImm32(16), scratch);
-    truthy.append(branchTest32(invert ? Zero : NonZero, scratch));
-    done.append(jump());
-
-    isNotBigInt32.link(this);
-#endif // USE(BIGINT32)
     truthy.append(branch64(invert ? NotEqual : Equal, value, TrustedImm64(JSValue::encode(jsBoolean(true)))));
 
     done.link(this);

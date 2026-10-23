@@ -204,14 +204,8 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
             name = jsEmptyString(vm);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    SourceTaintedOrigin taintedness = vm.mightBeExecutingTaintedCode() ? sourceTaintedOriginFromStack(vm, callFrame).first : SourceTaintedOrigin::Untainted;
+    SourceTaintedOrigin taintedness = sourceTaintedOriginFromStack(vm, callFrame).first;
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, taintedness)));
-#else
-    auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
-    SourceCode source = makeSource("[bound function]"_s, SourceOrigin(url), taintedness);
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, source)));
-#endif
 }
 
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#isallowedreceiverfunctionforcallerandargumentsfunc-expectedrealm (except step 3)

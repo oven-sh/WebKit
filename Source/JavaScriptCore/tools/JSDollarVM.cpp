@@ -5809,10 +5809,10 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES accessor(JSGlobalObject* globalOb
             return JSValue::encode(jsNumber(purifyNaN(std::bit_cast<double>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address))))));
         else if constexpr (kind == Kind::BigInt64) {
             int64_t loaded = static_cast<int64_t>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address)));
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, loaded)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, loaded)));
         } else {
             uint64_t loaded = swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address));
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, loaded)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, loaded)));
         }
     } else {
         if constexpr (isFloat) {

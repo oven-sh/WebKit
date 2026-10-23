@@ -104,6 +104,7 @@
 #include "StoredCellLog.h"
 #include "StringSplitCache.h"
 #include "StructureAlignedMemoryAllocator.h"
+#include "StructureArrayStorageInlines.h"
 #include "SubspaceInlines.h"
 #include "SuperSampler.h"
 #include "SweepingScope.h"
@@ -494,6 +495,11 @@ void Heap::shutDown()
     if (hadJoined) {
         waitForMembershipChange(m_collector->requestMembershipChange({ Collector::MembershipChange::Kind::Leave, this, nullptr }));
         dataLogIf(Options::logGC(), "left the collector, ");
+    }
+
+    if (m_localCollector) {
+        m_localCollector->shutDown();
+        dataLogIf(Options::logGC(), "stopped the collector's threads, ");
     }
 
     if (Options::dumpHeapStatisticsAtVMDestruction()) [[unlikely]]
@@ -2344,7 +2350,7 @@ void Heap::sweepAndClearCachesInEpilogue()
     });
     m_stringsFoundOnStack.clear();
 
-    immutableButterflyToStringCache.clear();
+    vm().immutableButterflyToStringCache.clear();
 }
 
 void Heap::runCollectionEpilogue()

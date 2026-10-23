@@ -803,7 +803,7 @@ def isRegExpTest?
     "#{$collectionName}/#{$benchmark}" =~ /regex/i
 end
 
-COLLECT_CONTINUOUSLY_OPTIONS = shouldCollectContinuously? ? ["--collectContinuously=true", "--useGenerationalGC=false", "--verifyGC=true"] : []
+COLLECT_CONTINUOUSLY_OPTIONS = shouldCollectContinuously? ? ["--collectContinuously=true", "--useGenerationalGC=false", "--verifyGC=true", "--initialHeapVersion=#{2**32 - 1 - rand(32)}"] : []
 REGEXP_IMAGE_MODE_OPTIONS = ["--useRegExpImageMode=true"]
 REGEXP_FLAT_PROGRAM_OPTIONS = ["--useRegExpJIT=false", "--validateRegExpFlatProgram=true"]
 
@@ -1445,6 +1445,9 @@ BASE_MODES = [
             "--useSourceProviderCache=false",
             "--useRandomizingExecutableIslandAllocation=true",
             "--useLLIntICs=false",
+            # Wrap on the second collection, so the first has populated the marks and newly
+            # allocated bits.
+            "--initialHeapVersion=#{2**32 - 2}",
         ] +
         NO_CJIT_OPTIONS
     ],

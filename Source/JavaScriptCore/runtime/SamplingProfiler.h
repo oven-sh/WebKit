@@ -192,10 +192,7 @@ public:
         Vector<StackFrame> frames;
         StackTrace()
         { }
-        StackTrace(StackTrace&& other)
-            : timestamp(other.timestamp)
-            , frames(WTF::move(other.frames))
-        { }
+        StackTrace(StackTrace&&) = default;
     };
 
     SamplingProfiler(VM&, Ref<Stopwatch>&&);

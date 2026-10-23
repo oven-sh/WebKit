@@ -92,7 +92,6 @@ class IncrementalSweeper;
 class JITStubRoutine;
 class JITStubRoutineSet;
 class JSCell;
-class JSCellButterfly;
 class JSRopeString;
 class JSString;
 class JSValue;
@@ -727,9 +726,6 @@ public:
     void removeGCCompletionCallback(const GCCompletionCallback&);
     
     Seconds totalGCTime() const { return m_totalGCTime; }
-
-    UncheckedKeyHashMap<JSCellButterfly*, JSString*> immutableButterflyToStringCache;
-
 
     void appendPossiblyAccessedStringFromConcurrentThreadsOrGCOwnedDataScope(const JSString* owner, String&& string)
     {

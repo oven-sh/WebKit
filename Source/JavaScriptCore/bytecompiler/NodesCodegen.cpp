@@ -4612,6 +4612,7 @@ void WhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     Ref<LabelScope> scope = generator.newLabelScope(LabelScope::Loop);
     Ref<Label> topOfLoop = generator.newLabel();
 
+    generator.emitProfileControlFlowForLoopHeader(m_expr);
     generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
 
     generator.emitLabel(topOfLoop.get());
@@ -4622,6 +4623,7 @@ void WhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
     generator.emitLabel(*scope->continueTarget());
 
+    generator.emitProfileControlFlowForLoopHeader(m_expr);
     generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
 
     generator.emitLabel(scope->breakTarget());
@@ -4650,6 +4652,7 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
             }
 
             Ref<Label> topOfLoop = generator.newLabel();
+            generator.emitProfileControlFlowForLoopHeader(m_expr2);
             if (m_expr2)
                 generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
 
@@ -4661,9 +4664,11 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
             generator.emitLabel(*scope->continueTarget());
             generator.prepareLexicalScopeForNextForLoopIteration(this, forLoopSymbolTable);
+            generator.emitProfileControlFlowForLoopHeader(m_expr3);
             if (m_expr3)
                 generator.emitNodeInIgnoreResultPosition(m_expr3);
 
+            generator.emitProfileControlFlowForLoopHeader(m_expr2);
             if (m_expr2)
                 generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
             else
@@ -4826,6 +4831,9 @@ void ForInNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
         generator.emitEnumeratorNext(propertyName.get(), mode.get(), index.get(), base.get(), enumerator.get());
         generator.emitJumpIfSentinelString(propertyName.get(), scope->breakTarget());
 
+        // The left side, up to `in`. The initializer of `for (var x = 1 in o)` ran once, before the loop.
+        if (!m_lexpr->isAssignResolveNode())
+            generator.emitProfileControlFlowForLoopHeader(divotStart().offset, divot().offset);
         this->emitLoopHeader(generator, propertyName.get());
 
         generator.emitProfileControlFlow(m_statement->startOffset(), m_statement->endOffset());
@@ -4863,6 +4871,8 @@ void ForOfNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     auto extractor = [this, dst, isUsingDeclaration, isAwaitUsingDeclaration](BytecodeGenerator& generator, RegisterID* value)
     {
         auto emitBody = [&](BytecodeGenerator& generator) {
+            // The left side, up to `of`.
+            generator.emitProfileControlFlowForLoopHeader(divotStart().offset, divot().offset);
             if (m_lexpr->isResolveNode()) {
                 const Identifier& ident = static_cast<ResolveNode*>(m_lexpr)->identifier();
                 Variable var = generator.variable(ident);
