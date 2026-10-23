@@ -138,7 +138,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxLengthCopiedInline(Select, CodeSize, CallByOperation, 16, 16, "characters copied inline")
 
     FieldsInKeyOrder(PlanSlots, BitWidth, OutOfLineStorage, 4095, 4095, "properties per object type")
-    KeyOrdersPerLayout(NumberAndEncode, BitWidth, OutOfLineStorage, 32767, 32767, "property orders per object type")
+    KeyOrdersPerLayout(NumberAndEncode, BitWidth, OutOfLineStorage, 4096, 4096, "property orders per object type")
     MaxShapes(NumberAndEncode, BitWidth, BuildError, 2147483647, 2147483647, "object shapes in a program")
     MaxShapeSetBits(NumberAndEncode, BitWidth, BuildError, 4294967295, 4294967295, "the size of the shape test tables")
     MaxIdentifiers(NumberAndEncode, BitWidth, BuildError, 16777216, 16777216, "property names in a program")

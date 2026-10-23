@@ -23,7 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 using FieldList = std::span<const FieldIndex>;
 using KeyOrderList = Vector<Vector<FieldIndex>>;
 
-static_assert(defaultLimitValue(LimitID::KeyOrdersPerLayout, hostArchitecture()) == maxKeyOrdersPerLayout);
+static_assert(defaultLimitValue(LimitID::KeyOrdersPerLayout, hostArchitecture()) <= maxKeyOrdersPerLayout);
 static_assert(defaultLimitValue(LimitID::FieldsInKeyOrder, hostArchitecture()) == maxFieldsInOrder);
 
 static constexpr auto isLexicographicallyLess = [](FieldList a, FieldList b) {

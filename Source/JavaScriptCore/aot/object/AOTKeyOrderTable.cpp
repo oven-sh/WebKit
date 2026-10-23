@@ -39,7 +39,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static_assert(defaultLimitValue(LimitID::FieldsInKeyOrder, hostArchitecture()) == maxFieldsInOrder);
-static_assert(defaultLimitValue(LimitID::KeyOrdersPerLayout, hostArchitecture()) == maxKeyOrdersPerLayout);
+static_assert(defaultLimitValue(LimitID::KeyOrdersPerLayout, hostArchitecture()) <= maxKeyOrdersPerLayout);
 static_assert(maxKeyOrdersPerLayout <= UINT16_MAX);
 
 static constexpr uint32_t initialTransitionTableSize = 1024;
