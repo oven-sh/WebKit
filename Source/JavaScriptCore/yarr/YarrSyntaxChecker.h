@@ -39,7 +39,10 @@ struct SyntaxSummary {
     unsigned maxParenthesesDepth { 0 };
     bool hasNamedCaptureGroups { false };
     bool isOnlyPatternCharacters { true };
+    // False when YarrPatternConstructor::setupOffsets() cannot refuse the pattern (OffsetTooLarge, FrameTooLarge).
+    bool mayExceedOffsetLimits { false };
 };
+static_assert(sizeof(SyntaxSummary) <= 16, "checkSyntax() returns it in registers");
 
 ErrorCode checkSyntax(StringView pattern, StringView flags);
 SyntaxSummary checkSyntax(StringView pattern, OptionSet<Flags>);
