@@ -118,6 +118,10 @@ public:
     {
         return offset && offset < s.length() && U16_IS_TRAIL(s[offset]) && U16_IS_LEAD(s[offset - 1]);
     }
+
+    // Throws for a search Yarr abandoned (Yarr::isAbandoned): the stack overflow RangeError when its
+    // backtracking state ran out of memory, a RangeError when Options::regExpMatchLimit ran out.
+    JS_EXPORT_PRIVATE static void throwMatchAbandoned(JSGlobalObject*, Yarr::JSRegExpResult);
     
     unsigned numSubpatterns() const { return m_numSubpatterns; }
 
@@ -225,6 +229,15 @@ private:
     int matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, std::span<int> ovector);
     template<Yarr::MatchFrom thread>
     MatchResult matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset);
+    template<Yarr::MatchFrom thread>
+    int interpretInline(VM&, StringView, unsigned startOffset, int* offsetVector);
+    template<Yarr::MatchFrom thread>
+    int matchParseError(JSGlobalObject* nullOrGlobalObject, VM&);
+    JS_EXPORT_PRIVATE void throwParseError(JSGlobalObject* nullOrGlobalObject, VM&);
+    template<Yarr::MatchFrom thread>
+    static int matchAbandoned(JSGlobalObject* nullOrGlobalObject, int code);
+    template<Yarr::MatchFrom thread>
+    static MatchResult matchAbandonedResult(JSGlobalObject* nullOrGlobalObject, int code);
 
     friend class RegExpCache;
     RegExp(VM&, const String&, OptionSet<Yarr::Flags>);

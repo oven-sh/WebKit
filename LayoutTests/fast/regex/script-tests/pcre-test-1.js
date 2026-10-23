@@ -5075,8 +5075,8 @@ shouldBe('regex631.exec(input0);', 'results');
 
 var regex632 = /(a+)*b/;
 var input0 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-var results = null;
-shouldBe('regex632.exec(input0);', 'results');
+// Bun: upstream expects null, which is the true answer. The search is abandoned at Options::regExpMatchLimit before it can rule a match out, and this fork throws for that instead of reporting no match.
+shouldThrow('regex632.exec(input0);', '"RangeError: Regular expression backtracking limit exceeded"');
 
 var regex633 = /reg(?:ul(?:[a\xc3\xa4]|ae)r|ex)/i;
 var input0 = "REGular";

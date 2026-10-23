@@ -32,6 +32,18 @@ namespace TestWebKitAPI {
 
 using JSC::Yarr::RegularExpression;
 
+// Bun: RegularExpression::match() returns a MatchStatus, which tells an abandoned search from a
+// miss. Upstream's form returns the start of the match, or -1, which is what these tests compare.
+static int match(const RegularExpression& re, StringView string, unsigned startFrom, int* matchLength)
+{
+    int position;
+    int length;
+    if (re.match(string, startFrom, position, length) != JSC::Yarr::MatchStatus::Match)
+        return -1;
+    *matchLength = length;
+    return position;
+}
+
 TEST(JavaScriptCore_RegularExpression, DuplicateNamedCaptureGroupSimple)
 {
     JSC::initialize();
@@ -40,10 +52,10 @@ TEST(JavaScriptCore_RegularExpression, DuplicateNamedCaptureGroupSimple)
     EXPECT_TRUE(re.isValid());
 
     int matchLength = 0;
-    EXPECT_EQ(0, re.match("x"_s, 0, &matchLength));
+    EXPECT_EQ(0, match(re, "x"_s, 0, &matchLength));
     EXPECT_EQ(1, matchLength);
 
-    EXPECT_EQ(0, re.match("y"_s, 0, &matchLength));
+    EXPECT_EQ(0, match(re, "y"_s, 0, &matchLength));
     EXPECT_EQ(1, matchLength);
 }
 
@@ -55,10 +67,10 @@ TEST(JavaScriptCore_RegularExpression, DuplicateNamedCaptureGroupMultiple)
     EXPECT_TRUE(re.isValid());
 
     int matchLength = 0;
-    EXPECT_EQ(0, re.match("x"_s, 0, &matchLength));
+    EXPECT_EQ(0, match(re, "x"_s, 0, &matchLength));
     EXPECT_EQ(1, matchLength);
 
-    EXPECT_EQ(0, re.match("y"_s, 0, &matchLength));
+    EXPECT_EQ(0, match(re, "y"_s, 0, &matchLength));
     EXPECT_EQ(1, matchLength);
 }
 
@@ -70,7 +82,7 @@ TEST(JavaScriptCore_RegularExpression, DuplicateNamedCaptureGroupNoMatch)
     EXPECT_TRUE(re.isValid());
 
     int matchLength = 0;
-    EXPECT_EQ(-1, re.match("z"_s, 0, &matchLength));
+    EXPECT_EQ(-1, match(re, "z"_s, 0, &matchLength));
 }
 
 TEST(JavaScriptCore_RegularExpression, DuplicateNamedCaptureGroupSearchRev)

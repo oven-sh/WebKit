@@ -2293,12 +2293,12 @@ public:
     }
 
     // WTF_IGNORES_THREAD_SAFETY_ANALYSIS because this function does conditional locking.
-    unsigned interpret() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    JSRegExpResult interpret() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=195970
         // [Yarr Interpreter] The interpreter doesn't have checks for stack overflow due to deep recursion
         if (!input.isAvailableInput(0))
-            return offsetNoMatch;
+            return JSRegExpResult::NoMatch;
 
         if (pattern->hasEndAnchoredFixedSize() && input.end() >= pattern->m_endAnchoredFixedSize)
             input.setPos(std::max(input.getPos(), input.end() - pattern->m_endAnchoredFixedSize));
@@ -2314,19 +2314,18 @@ public:
         allocatorPool = pattern->m_allocator->startAllocator(Options::maxRegExpStackSize());
         RELEASE_ASSERT(allocatorPool);
 
-        DisjunctionContext* context = allocDisjunctionContext(pattern->m_body.get());
-        if (!context) [[unlikely]]
-            return offsetNoMatch;
+        JSRegExpResult result = JSRegExpResult::ErrorNoMemory;
+        if (DisjunctionContext* context = allocDisjunctionContext(pattern->m_body.get())) [[likely]] {
+            dataLogLnIf(verbose, "  Interpret input: ", input, "\n  Matching");
 
-        dataLogLnIf(verbose, "  Interpret input: ", input, "\n  Matching");
+            result = matchDisjunction(pattern->m_body.get(), context, /* btrack= */ false);
+            if (result == JSRegExpResult::Match) {
+                output[0] = context->matchBegin;
+                output[1] = context->matchEnd;
+            }
 
-        JSRegExpResult result = matchDisjunction(pattern->m_body.get(), context, /* btrack= */ false);
-        if (result == JSRegExpResult::Match) {
-            output[0] = context->matchBegin;
-            output[1] = context->matchEnd;
+            freeDisjunctionContext(context);
         }
-
-        freeDisjunctionContext(context);
 
         // Keep a few overflow pools mapped between matches: patterns whose backtracking contexts
         // outgrow the head page would otherwise map and unmap them around every match.
@@ -2335,7 +2334,7 @@ public:
 
         ASSERT((result == JSRegExpResult::Match) == (output[0] != offsetNoMatch));
 
-        return output[0];
+        return result;
     }
 
     Interpreter(BytecodePattern* pattern, unsigned* output, std::span<const CharType> input, unsigned start)
@@ -2345,7 +2344,7 @@ public:
         , input(input, start, pattern->eitherUnicode())
         , startOffset(start)
         , noNewlineBefore(start)
-        , remainingMatchCount(matchLimit)
+        , remainingMatchCount(Options::regExpMatchLimit())
     {
     }
 
@@ -3317,7 +3316,7 @@ std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAl
     return ByteCompiler(pattern).compile(allocator, lock, errorCode);
 }
 
-unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+JSRegExpResult interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     SuperSamplerScope superSamplerScope(false);
     if (input.is8Bit())

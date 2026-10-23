@@ -3,8 +3,16 @@
 
 // Pattern from slow.js that was hanging:
 // (?:[^(?!)]||){23}z - FixedCount with 3 alternatives, 2 empty
-if (/(?:[^(?!)]||){23}z/.test("/(?:[^(?!)]||){23}z/"))
-    throw new Error("Should not match");
+// Bun: upstream expects test() to return false. The search is abandoned at Options::regExpMatchLimit
+// before it reaches the match at index 14, and this fork throws for that instead of reporting no match.
+var abandoned = null;
+try {
+    /(?:[^(?!)]||){23}z/.test("/(?:[^(?!)]||){23}z/");
+} catch (e) {
+    abandoned = e;
+}
+if (!(abandoned instanceof RangeError) || abandoned.message !== "Regular expression backtracking limit exceeded")
+    throw new Error("Expected RangeError: Regular expression backtracking limit exceeded, got " + abandoned);
 
 // FixedCount with empty alternatives - should allow zero-length iterations
 if (!/(?:a||){5}z/.test("aaaz"))

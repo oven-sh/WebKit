@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 122 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 125 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A9 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -114,6 +114,22 @@ Rules for an edit to an upstream test:
 - Fork code: `DecoderStringTable::jsStringFor` (`runtime/CachedTypes.h:132`): loading a cache interns nothing.
 - File: `stress/jsstring-definitely-atom-bit.js`: `$skipModes << "bytecode-cache"`. The other modes run it unchanged.
 
+### A10. A RegExp search that is abandoned throws a `RangeError`, it is not a failed match
+
+- Upstream: a search that uses up its step limit or its backtracking memory returns what a failed match returns
+  (`false`, `null`, `-1`).
+- Fork code: `Yarr::interpret()` returns the `JSRegExpResult` (`yarr/YarrInterpreter.cpp`) and JIT code returns
+  `ErrorHitLimit` (`generateJITFailReturn`, `yarr/YarrJIT.cpp`). `RegExp::matchInlineOnce` (`runtime/RegExpInlines.h`)
+  throws through `RegExp::throwMatchAbandoned` (`runtime/RegExp.cpp`), and `RegExp::matchConcurrently` does not let the
+  DFG fold such a search. The step limit is `Options::regExpMatchLimit`.
+- Recognize: `RangeError: Regular expression backtracking limit exceeded` (the step limit) or
+  `RangeError: Maximum call stack size exceeded.` (the backtracking memory) from a pattern that backtracks
+  exponentially, where upstream expects `false` or `null`.
+- Files (3): `stress/regexp-fixedcount-zero-length-content-backtrack.js` and `LayoutTests/fast/regex/` `slow` (upstream
+  expects `false`; the pattern does match, at index 14), `LayoutTests/fast/regex/` `pcre-test-1` (`regex632`: upstream
+  expects `null`, which is the true answer). For the two layout tests: the script under `script-tests/` and the
+  `-expected.txt`.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -156,7 +172,7 @@ Rules for an edit to an upstream test:
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A9 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.

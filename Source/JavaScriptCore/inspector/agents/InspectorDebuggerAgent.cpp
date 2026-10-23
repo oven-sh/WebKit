@@ -257,7 +257,16 @@ bool InspectorDebuggerAgent::ProtocolBreakpoint::matchesScriptURL(const String& 
 
     if (m_isRegex) {
         JSC::Yarr::RegularExpression regex(m_url);
-        return regex.match(scriptURL) != -1;
+        int position;
+        int matchLength;
+        switch (regex.match(scriptURL, 0, position, matchLength)) {
+        case JSC::Yarr::MatchStatus::Match:
+            return true;
+        case JSC::Yarr::MatchStatus::NoMatch:
+        case JSC::Yarr::MatchStatus::Abandoned: // Nothing here can report it: the breakpoint is not set in this script.
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
     return m_url == scriptURL;
 }

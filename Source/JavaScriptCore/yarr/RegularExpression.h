@@ -37,6 +37,14 @@ enum class MatchMode : uint8_t {
     EntireInput // Anchored: pattern must match the entire input (equivalent to ^(?:pattern)$).
 };
 
+enum class MatchStatus : uint8_t {
+    NoMatch,
+    Match,
+    // The search ran out of steps (Options::regExpMatchLimit) or of backtracking memory
+    // (Options::maxRegExpStackSize) before it had an answer. The pattern may match: this is not a miss.
+    Abandoned,
+};
+
 class JS_EXPORT_PRIVATE RegularExpression {
     WTF_MAKE_TZONE_ALLOCATED(RegularExpression);
 public:
@@ -48,7 +56,13 @@ public:
     RegularExpression(RegularExpression&&);
     RegularExpression& operator=(RegularExpression&&);
 
+    // On Match, position and matchLength describe the match.
+    [[nodiscard]] MatchStatus match(StringView, unsigned startFrom, int& position, int& matchLength) const;
+#if !USE(BUN_JSC_ADDITIONS)
+    // Returns -1 for an abandoned search too, so its caller reads it as a miss. Nothing Bun builds
+    // may do that; the WebCore callers Bun does not build still use this.
     int match(StringView, unsigned startFrom = 0, int* matchLength = nullptr) const;
+#endif
     int searchRev(StringView) const;
 
     int LEGACY_NODELETE matchedLength() const;

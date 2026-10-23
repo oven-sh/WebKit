@@ -992,6 +992,11 @@ void Options::notifyOptionsChanged()
     else if (Options::randomIntegrityAuditRate() > 1.0)
         Options::randomIntegrityAuditRate() = 1.0;
 
+    // Both RegExp engines count the steps of a search down to zero, so zero would wrap around to
+    // 2^32 steps. One is the lowest limit: the first step abandons the search.
+    if (!Options::regExpMatchLimit())
+        Options::regExpMatchLimit() = 1;
+
     if (!Options::allowUnsupportedTiers()) {
 #define DISABLE_TIERS(option, flags, ...) do { \
             if (!Options::option())            \

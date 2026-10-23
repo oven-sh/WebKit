@@ -101,13 +101,16 @@ RegularExpression& RegularExpression::operator=(const RegularExpression&) = defa
 RegularExpression::RegularExpression(RegularExpression&&) = default;
 RegularExpression& RegularExpression::operator=(RegularExpression&&) = default;
 
-int RegularExpression::match(StringView str, unsigned startFrom, int* matchLength) const
+MatchStatus RegularExpression::match(StringView str, unsigned startFrom, int& position, int& matchLength) const
 {
+    position = -1;
+    matchLength = -1;
+
     if (!d->m_regExpByteCode)
-        return -1;
+        return MatchStatus::NoMatch;
 
     if (str.isNull())
-        return -1;
+        return MatchStatus::NoMatch;
 
     int offsetVectorSize = d->m_regExpByteCode->m_offsetsSize;
     unsigned* offsetVector;
@@ -120,26 +123,40 @@ int RegularExpression::match(StringView str, unsigned startFrom, int* matchLengt
     for (unsigned j = 0, i = 0; i < d->m_numSubpatterns + 1; j += 2, i++)
         offsetVector[j] = offsetNoMatch;
 
-    unsigned result;
+    // This code can't handle unsigned offsets. Limit our processing to strings with offsets that
+    // can be represented as ints.
+    JSRegExpResult result = JSRegExpResult::NoMatch;
     if (str.length() <= INT_MAX)
         result = interpret(d->m_regExpByteCode.get(), str, startFrom, offsetVector);
-    else {
-        // This code can't handle unsigned offsets. Limit our processing to strings with offsets that
-        // can be represented as ints.
-        result = offsetNoMatch;
-    }
 
-    if (result == offsetNoMatch) {
-        d->lastMatchLength = -1;
-        return -1;
+    d->lastMatchLength = -1;
+    switch (result) {
+    case JSRegExpResult::Match:
+        // 1 means 1 match; 0 means more than one match. First match is recorded in offsetVector.
+        position = offsetVector[0];
+        matchLength = offsetVector[1] - offsetVector[0];
+        d->lastMatchLength = matchLength;
+        return MatchStatus::Match;
+    case JSRegExpResult::NoMatch:
+        return MatchStatus::NoMatch;
+    default:
+        ASSERT(isAbandoned(result));
+        return MatchStatus::Abandoned;
     }
-
-    // 1 means 1 match; 0 means more than one match. First match is recorded in offsetVector.
-    d->lastMatchLength = offsetVector[1] - offsetVector[0];
-    if (matchLength)
-        *matchLength = d->lastMatchLength;
-    return offsetVector[0];
 }
+
+#if !USE(BUN_JSC_ADDITIONS)
+int RegularExpression::match(StringView str, unsigned startFrom, int* matchLength) const
+{
+    int position;
+    int length;
+    if (match(str, startFrom, position, length) != MatchStatus::Match)
+        return -1;
+    if (matchLength)
+        *matchLength = length;
+    return position;
+}
+#endif
 
 int RegularExpression::searchRev(StringView str) const
 {
@@ -147,21 +164,27 @@ int RegularExpression::searchRev(StringView str) const
     // Instead, it just searches forwards, multiple times until it finds the last match.
 
     int start = 0;
-    int pos;
     int lastPos = -1;
     int lastMatchLength = -1;
-    do {
+    while (true) {
+        int pos;
         int matchLength;
-        pos = match(str, start, &matchLength);
-        if (pos >= 0) {
-            if (pos + matchLength > lastPos + lastMatchLength) {
-                // replace last match if this one is later and not a subset of the last match
-                lastPos = pos;
-                lastMatchLength = matchLength;
-            }
-            start = pos + 1;
+        MatchStatus status = match(str, start, pos, matchLength);
+        if (status == MatchStatus::Abandoned) {
+            // A later match may exist, so none of the matches so far is known to be the last.
+            lastPos = -1;
+            lastMatchLength = -1;
+            break;
         }
-    } while (pos != -1);
+        if (status == MatchStatus::NoMatch)
+            break;
+        if (pos + matchLength > lastPos + lastMatchLength) {
+            // replace last match if this one is later and not a subset of the last match
+            lastPos = pos;
+            lastMatchLength = matchLength;
+        }
+        start = pos + 1;
+    }
     d->lastMatchLength = lastMatchLength;
     return lastPos;
 }
@@ -175,10 +198,12 @@ void replace(String& string, const RegularExpression& target, StringView replace
 {
     int index = 0;
     while (index < static_cast<int>(string.length())) {
+        int position;
         int matchLength;
-        index = target.match(string, index, &matchLength);
-        if (index < 0)
+        // An abandoned search ends the replacing the way a miss does: the rest of the string stays.
+        if (target.match(string, index, position, matchLength) != MatchStatus::Match)
             break;
+        index = position;
         string = makeStringByReplacing(string, index, matchLength, replacement);
         if (!matchLength)
             break; // Avoid infinite loop on 0-length matches, e.g. [a-z]*

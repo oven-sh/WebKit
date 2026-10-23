@@ -169,8 +169,7 @@ std::optional<Vector<unsigned>> URLPatternComponent::componentExec(StringView co
     Vector<unsigned> output(outputSize);
     std::ranges::fill(output, std::numeric_limits<unsigned>::max());
 
-    unsigned result = JSC::Yarr::interpret(m_compiledPattern->bytecode.ptr(), comparedString, 0, output.begin());
-    if (result == std::numeric_limits<unsigned>::max())
+    if (JSC::Yarr::interpret(m_compiledPattern->bytecode.ptr(), comparedString, 0, output.begin()) != JSC::Yarr::JSRegExpResult::Match)
         return std::nullopt;
 
     return output;

@@ -2269,7 +2269,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         if (!m_hitMatchLimit.empty()) {
             m_hitMatchLimit.link(&m_jit);
-            m_jit.move(MacroAssembler::TrustedImmPtr((void*)static_cast<size_t>(JSRegExpResult::ErrorNoMatch)), m_regs.returnRegister);
+            m_jit.move(MacroAssembler::TrustedImmPtr((void*)static_cast<size_t>(JSRegExpResult::ErrorHitLimit)), m_regs.returnRegister);
         }
 
         finishExiting.link(&m_jit);
@@ -9586,7 +9586,7 @@ public:
 #else
             ASSERT(GPRInfo::argumentGPR4 == m_regs.matchingContext);
 #endif
-            m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
+            m_jit.move(MacroAssembler::TrustedImm32(static_cast<int32_t>(Options::regExpMatchLimit())), m_regs.remainingMatchCount);
 
             // Initialize freelist to null - contexts will be allocated from stack
             // and freed contexts will be added to the freelist for reuse
