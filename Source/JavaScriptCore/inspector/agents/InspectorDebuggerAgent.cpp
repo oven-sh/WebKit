@@ -336,6 +336,9 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::enable()
 
 Protocol::ErrorStringOr<void> InspectorDebuggerAgent::disable()
 {
+    if (!enabled())
+        return { };
+
     internalDisable(false);
 
     return { };
