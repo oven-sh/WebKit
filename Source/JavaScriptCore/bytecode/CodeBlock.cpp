@@ -4041,7 +4041,7 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
     });
 
     for (size_t i = 0; i < offsetsLength; i++) {
-        auto& metadata = bytecodeAt(i).metadata(this);
+        auto bytecode = bytecodeAt(i);
         auto [basicBlockStartOffset, basicBlockEndOffset] = basicBlocks[i];
 
         BasicBlockLocation* basicBlockLocation = vm().controlFlowProfiler()->getBasicBlockLocation(ownerExecutable()->sourceID(), basicBlockStartOffset, basicBlockEndOffset);
@@ -4058,8 +4058,9 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
             inner = std::ranges::upper_bound(inner, ranges.end(), inner->endOffset, { }, &Range::startOffset);
         }
         basicBlockLocation->insertGaps(gaps);
+        basicBlockLocation->setIsInLoopHeader(bytecode.m_isInLoopHeader);
 
-        metadata.m_basicBlockLocation = basicBlockLocation;
+        bytecode.metadata(this).m_basicBlockLocation = basicBlockLocation;
     }
 }
 

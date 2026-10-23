@@ -3547,6 +3547,7 @@ void Document::fontsNeedUpdate(FontSelector&)
 {
     ASSERT(!deletionHasBegun());
     invalidateMatchedPropertiesCacheAndForceStyleRecalc();
+    InspectorInstrumentation::fontDataChanged(*this);
 }
 
 void Document::invalidateMatchedPropertiesCacheAndForceStyleRecalc()
@@ -8937,7 +8938,7 @@ bool Document::isInCrossOriginIsolatedAgentCluster() const
 {
     if (crossOriginOpenerPolicy().value == CrossOriginOpenerPolicyValue::SameOriginPlusCOEP)
         return true;
-    return documentIsolationPolicy() != DocumentIsolationPolicy::None && ScriptExecutionContext::crossOriginMode() == CrossOriginMode::Isolated;
+    return documentIsolationPolicy().value != DocumentIsolationPolicyValue::None && ScriptExecutionContext::crossOriginMode() == CrossOriginMode::Isolated;
 }
 
 bool Document::crossOriginIsolated() const
@@ -8965,7 +8966,7 @@ bool Document::originAgentCluster() const
 {
     if (securityOrigin().isOpaque())
         return true;
-    if (isInCrossOriginIsolatedAgentCluster() || documentIsolationPolicy() != DocumentIsolationPolicy::None)
+    if (isInCrossOriginIsolatedAgentCluster() || documentIsolationPolicy().value != DocumentIsolationPolicyValue::None)
         return true;
     return m_isOriginKeyed == OriginKeyed::Yes;
 }
@@ -9355,27 +9356,24 @@ void Document::transferViewTransitionParams(Document& newDocument)
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#deactivate-a-document-for-a-cross-document-navigation
 void Document::dispatchPageswapEvent(CanTriggerCrossDocumentViewTransition canTriggerCrossDocumentViewTransition, RefPtr<NavigationActivation>&& activation, CompletionHandler<void()>&& proceedWithNavigation)
 {
+    ASSERT(canTriggerCrossDocumentViewTransition == CanTriggerCrossDocumentViewTransition::No || proceedWithNavigation);
     RefPtr<ViewTransition> oldViewTransition;
-    bool navigationWaitsForCapture = !!proceedWithNavigation;
 
     auto startTime = MonotonicTime::now();
     PageSwapEvent::Init swapInit;
     swapInit.activation = WTF::move(activation);
     if (canTriggerCrossDocumentViewTransition == CanTriggerCrossDocumentViewTransition::Yes && globalObject()) {
-        ViewTransition::OutboundPostCaptureSteps outboundPostCaptureSteps;
-        if (navigationWaitsForCapture) {
-            outboundPostCaptureSteps = [weakThis = WeakPtr<Document, WeakPtrImplWithEventTargetData> { *this }, startTime, proceedWithNavigation = std::exchange(proceedWithNavigation, nullptr)](std::unique_ptr<ViewTransitionParams>&& params) mutable {
-                if (RefPtr protectedThis = weakThis.get(); protectedThis && params) {
-                    params->startTime = startTime;
-                    params->oldDocumentOrigin = &protectedThis->securityOrigin();
-                    // FIXME: This should set the params on the new Document, but it doesn't exist yet.
-                    // Store it on the old, and we'll call transferViewTransitionParams soon.
-                    protectedThis->m_inboundViewTransitionParams = WTF::move(params);
-                }
-                // Not from within whatever skipped or completed the capture, which may be script.
-                callOnMainThread(WTF::move(proceedWithNavigation));
-            };
-        }
+        auto outboundPostCaptureSteps = [weakThis = WeakPtr<Document, WeakPtrImplWithEventTargetData> { *this }, startTime, proceedWithNavigation = std::exchange(proceedWithNavigation, nullptr)](std::unique_ptr<ViewTransitionParams>&& params) mutable {
+            if (RefPtr protectedThis = weakThis; protectedThis && params) {
+                params->startTime = startTime;
+                params->oldDocumentOrigin = &protectedThis->securityOrigin();
+                // FIXME: This should set the params on the new Document, but it doesn't exist yet.
+                // Store it on the old, and we'll call transferViewTransitionParams soon.
+                protectedThis->m_inboundViewTransitionParams = WTF::move(params);
+            }
+            // Not from within whatever skipped or completed the capture, which may be script.
+            callOnMainThread(WTF::move(proceedWithNavigation));
+        };
         oldViewTransition = ViewTransition::setupCrossDocumentViewTransition(*this, WTF::move(outboundPostCaptureSteps));
         swapInit.viewTransition = oldViewTransition;
     }
@@ -9383,28 +9381,14 @@ void Document::dispatchPageswapEvent(CanTriggerCrossDocumentViewTransition canTr
     dispatchWindowEvent(PageSwapEvent::create(eventNames().pageswapEvent, WTF::move(swapInit)), this);
 
     // Proceeds from the transition's outbound post-capture steps instead, if there is one.
-    if (navigationWaitsForCapture) {
-        if (proceedWithNavigation) {
-            proceedWithNavigation();
-            return;
-        }
-        // FIXME: This should capture in the next rendering update, but there is none until the new
-        // document paints: the layer tree is frozen from when the provisional load started.
-        if (oldViewTransition && oldViewTransition->phase() == ViewTransitionPhase::PendingCapture)
-            oldViewTransition->setupViewTransition();
+    if (proceedWithNavigation) {
+        proceedWithNavigation();
         return;
     }
-
-    // The navigation cannot wait, so capture now.
-    if (oldViewTransition && oldViewTransition->phase() != ViewTransitionPhase::Done) {
+    // FIXME: This should capture in the next rendering update, but there is none until the new
+    // document paints: the layer tree is frozen from when the provisional load started.
+    if (oldViewTransition && oldViewTransition->phase() == ViewTransitionPhase::PendingCapture)
         oldViewTransition->setupViewTransition();
-
-        // FIXME: This should set the params on the new Document, but it doesn't exist yet.
-        // Store it on the old, and we'll call transferViewTransitionParams soon.
-        m_inboundViewTransitionParams = oldViewTransition->takeViewTransitionParams().moveToUniquePtr();
-        m_inboundViewTransitionParams->startTime = startTime;
-        m_inboundViewTransitionParams->oldDocumentOrigin = &securityOrigin();
-    }
 }
 
 void Document::enqueueSecurityPolicyViolationEvent(SecurityPolicyViolationEventInit&& eventInit)
@@ -12021,7 +12005,7 @@ void Document::navigateFromServiceWorker(const URL& url, CompletionHandler<void(
             callback(ScheduleLocationChangeResult::Stopped);
             return;
         }
-        protect(frame->navigationScheduler())->scheduleLocationChange(*weakThis, protect(weakThis->securityOrigin()), url, frame->loader().outgoingReferrer(), LockHistory::Yes, LockBackForwardList::No, NavigationHistoryBehavior::Auto, [callback = WTF::move(callback)](auto result) mutable {
+        protect(frame->navigationScheduler())->scheduleLocationChange(*weakThis, protect(weakThis->securityOrigin()), url, frame->loader().outgoingReferrer(), LockHistory::Yes, LockBackForwardList::No, NavigationHistoryBehavior::Auto, ReplaceIfNotCompletelyLoaded::No, [callback = WTF::move(callback)](auto result) mutable {
             callback(result);
         });
     });

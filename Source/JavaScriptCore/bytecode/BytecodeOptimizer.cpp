@@ -159,7 +159,6 @@ static bool isPure(const Insn& insn)
     case op_is_undefined_or_null:
     case op_is_boolean:
     case op_is_number:
-    case op_is_big_int:
     case op_is_object:
     case op_is_callable:
     case op_is_constructor:

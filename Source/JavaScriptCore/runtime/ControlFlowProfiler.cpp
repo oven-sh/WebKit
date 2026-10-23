@@ -83,6 +83,7 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
         for (BasicBlockLocation::Gap gap : blockRanges) {
             BasicBlockRange range;
             range.m_hasExecuted = hasExecuted;
+            range.m_isInLoopHeader = block->isInLoopHeader();
             range.m_executionCount = executionCount;
             range.m_startOffset = gap.first;
             range.m_endOffset = gap.second;

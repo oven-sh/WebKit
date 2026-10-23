@@ -1465,11 +1465,6 @@ public:
         return m_flags & NodeMayHaveNonNumericResult;
     }
 
-    bool mayHaveBigInt32Result()
-    {
-        return m_flags & NodeMayHaveBigInt32Result;
-    }
-
     bool mayHaveHeapBigIntResult()
     {
         return m_flags & NodeMayHaveHeapBigIntResult;
@@ -1477,7 +1472,7 @@ public:
 
     bool mayHaveBigIntResult()
     {
-        return mayHaveBigInt32Result() || mayHaveHeapBigIntResult();
+        return mayHaveHeapBigIntResult();
     }
 
     bool hasNewArrayBufferData()
@@ -3369,13 +3364,6 @@ public:
         return isSymbolSpeculation(prediction());
     }
 
-#if USE(BIGINT32)
-    bool shouldSpeculateBigInt32()
-    {
-        return isBigInt32Speculation(prediction());
-    }
-#endif
-
     bool shouldSpeculateHeapBigInt()
     {
         return isHeapBigIntSpeculation(prediction());
@@ -3610,13 +3598,6 @@ public:
         return op1->shouldSpeculateBigInt() && op2->shouldSpeculateBigInt();
     }
 
-#if USE(BIGINT32)
-    static bool shouldSpeculateBigInt32(Node* op1, Node* op2)
-    {
-        return op1->shouldSpeculateBigInt32() && op2->shouldSpeculateBigInt32();
-    }
-#endif
-
     static bool shouldSpeculateHeapBigInt(Node* op1, Node* op2)
     {
         return op1->shouldSpeculateHeapBigInt() && op2->shouldSpeculateHeapBigInt();
@@ -3641,11 +3622,6 @@ public:
     {
         return nodeCanSpeculateInt52(arithNodeFlags(), source);
     }
-
-    bool canSpeculateBigInt32(RareCaseProfilingSource source)
-    {
-        return nodeCanSpeculateBigInt32(arithNodeFlags(), source);
-    }
     
     RareCaseProfilingSource sourceFor(PredictionPass pass)
     {
@@ -3662,11 +3638,6 @@ public:
     bool canSpeculateInt52(PredictionPass pass)
     {
         return canSpeculateInt52(sourceFor(pass));
-    }
-
-    bool canSpeculateBigInt32(PredictionPass pass)
-    {
-        return canSpeculateBigInt32(sourceFor(pass));
     }
 
     bool hasTypeLocation()

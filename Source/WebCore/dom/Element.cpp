@@ -73,6 +73,7 @@
 #include "HTMLBDIElement.h"
 #include "HTMLBodyElement.h"
 #include "HTMLCanvasElement.h"
+#include "HTMLDataListElement.h"
 #include "HTMLDialogElement.h"
 #include "HTMLDocument.h"
 #include "HTMLFrameOwnerElement.h"
@@ -1255,22 +1256,20 @@ static HTMLSelectElement* LEGACY_NODELETE owningSelectElement(const Element& ele
     return nullptr;
 }
 
-static bool isListBoxItem(const Element& element)
+static HTMLSelectElement* LEGACY_NODELETE listBoxSelectElement(const Element& element)
 {
     auto* selectElement = owningSelectElement(element);
-    return selectElement && is<RenderListBox>(selectElement->renderer());
+    return selectElement && is<RenderListBox>(selectElement->renderer()) ? selectElement : nullptr;
 }
 
 static std::optional<std::pair<SingleThreadWeakPtr<RenderElement>, LayoutRect>> listBoxElementScrollIntoView(const Element& element)
 {
-    RefPtr selectElement = owningSelectElement(element);
+    RefPtr selectElement = listBoxSelectElement(element);
     if (!selectElement)
         return std::nullopt;
 
-    CheckedPtr renderListBox = dynamicDowncast<RenderListBox>(selectElement->renderer());
-    if (!renderListBox)
-        return std::nullopt;
-    
+    CheckedPtr renderListBox = downcast<RenderListBox>(selectElement->renderer());
+
     auto itemIndex = selectElement->listItems().find(&element);
     if (itemIndex != notFound)
         renderListBox->scrollToRevealElementAtListIndex(itemIndex);
@@ -2131,13 +2130,11 @@ LayoutRect Element::absoluteEventHandlerBounds(bool& includesFixedPositionElemen
 
 static std::optional<std::pair<CheckedRef<RenderListBox>, LayoutRect>> listBoxElementBoundingBox(const Element& element)
 {
-    RefPtr selectElement = owningSelectElement(element);
+    RefPtr selectElement = listBoxSelectElement(element);
     if (!selectElement)
         return std::nullopt;
 
-    CheckedPtr listBoxRenderer = dynamicDowncast<RenderListBox>(selectElement->renderer());
-    if (!listBoxRenderer)
-        return std::nullopt;
+    CheckedPtr listBoxRenderer = downcast<RenderListBox>(selectElement->renderer());
 
     std::optional<LayoutRect> boundingBox;
     if (RefPtr optionElement = dynamicDowncast<HTMLOptionElement>(element))
@@ -2205,7 +2202,11 @@ std::optional<std::pair<CheckedPtr<RenderElement>, FloatRect>> Element::bounding
 FloatRect Element::boundingClientRect()
 {
     Ref document = this->document();
-    document->updateLayoutIfDimensionsOutOfDate(*this, { DimensionsCheck::Left, DimensionsCheck::Top, DimensionsCheck::Width, DimensionsCheck::Height, DimensionsCheck::IgnoreOverflow }, { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible, LayoutOptions::CanDeferUpdateLayerPositions, LayoutOptions::IgnorePendingStylesheets });
+    OptionSet<DimensionsCheck> dimensionsCheck { DimensionsCheck::Left, DimensionsCheck::Top, DimensionsCheck::Width, DimensionsCheck::Height, DimensionsCheck::IgnoreOverflow };
+    OptionSet<LayoutOptions> layoutOptions { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible, LayoutOptions::CanDeferUpdateLayerPositions, LayoutOptions::IgnorePendingStylesheets };
+    document->updateLayoutIfDimensionsOutOfDate(*this, dimensionsCheck, layoutOptions);
+    if (RefPtr selectElement = listBoxSelectElement(*this))
+        document->updateLayoutIfDimensionsOutOfDate(*selectElement, dimensionsCheck, layoutOptions);
     LocalFrameView::AutoPreventLayerAccess preventAccess(document->view());
     auto pair = boundingAbsoluteRectWithoutLayout();
     if (!pair)
@@ -3146,6 +3147,18 @@ void Element::updateEffectiveLangState()
     ensureElementRareData().setEffectiveLang(lang);
 }
 
+void Element::updateIsInSelectOrDataListSubtree()
+{
+    auto* parent = parentElement();
+    setStateFlag(StateFlag::IsInSelectOrDataListSubtree, (parent && parent->isInSelectOrDataListSubtree()) || isAnyOf<HTMLSelectElement, HTMLDataListElement>(*this));
+}
+
+void Element::notifyDescendantsChanged()
+{
+    for (RefPtr element = this; element && element->isInSelectOrDataListSubtree(); element = element->parentElement())
+        element->descendantsChanged();
+}
+
 bool Element::hasAttributes() const
 {
     synchronizeAllAttributes();
@@ -3255,6 +3268,8 @@ Node::NeedsPostConnectionSteps Element::insertionSteps(InsertionType insertionTy
             shadowRoot->hostChildElementDidChange(*this);
     }
 
+    updateIsInSelectOrDataListSubtree();
+
     if (parentNode() == &parentOfInsertedTree && is<Document>(*parentNode())) {
         clearEffectiveLangStateOnNewDocumentElement();
         protect(document())->setDocumentElementLanguage(langFromAttribute());
@@ -3358,6 +3373,9 @@ void Element::removingSteps(RemovalType removalType, ContainerNode& oldParentOfR
             shadowRoot->hostChildElementDidChange(*this);
     }
 
+    if (isInSelectOrDataListSubtree())
+        updateIsInSelectOrDataListSubtree();
+
     if (!parentNode()) {
         if (is<Document>(oldParentOfRemovedTree)) {
             setEffectiveLangStateOnOldDocumentElement();
@@ -3399,6 +3417,8 @@ void Element::movingSteps(MovingType movingType, ContainerNode& oldParent)
         updateEffectiveTextDirectionIfNeeded();
 
     updateEffectiveLangState();
+
+    updateIsInSelectOrDataListSubtree();
 
     if (!movingType.isSubtreeRoot || !hasFocusWithin())
         return;
@@ -6611,7 +6631,7 @@ bool Element::checkVisibility(const CheckVisibilityOptions& options)
     protect(document())->updateStyleIfNeeded();
 
     // List box items are painted by the list box renderer and have no renderer of their own.
-    if (!renderer() && !isListBoxItem(*this))
+    if (!renderer() && !listBoxSelectElement(*this))
         return false;
 
     CheckedPtr style = computedStyle();
