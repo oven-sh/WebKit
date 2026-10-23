@@ -37,6 +37,7 @@
 #include "MarkedSpaceInlines.h"
 #include "Options.h"
 #include "ResourceExhaustion.h"
+#include "StructureAlignedMemoryAllocator.h"
 #include "SuperSampler.h"
 
 #if ENABLE(AOT)
@@ -199,11 +200,11 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
                 return result;
             block = m_directory->tryAllocateBlock(heap);
         }
-        if (!block && failureMode == AllocationFailureMode::Assert && heap.tryUseReserveOfExhaustedCage())
+        if (!block && failureMode == AllocationFailureMode::Assert && heap.tryUseReserveOfExhaustedCage(m_directory->subspace()->alignedMemoryAllocator()))
             block = m_directory->tryAllocateBlock(heap);
         if (!block) {
             if (failureMode == AllocationFailureMode::Assert)
-                MarkedBlockCage::logExhaustion();
+                MarkedBlockCage::logExhaustion(m_directory->subspace()->alignedMemoryAllocator() == heap.structureAllocator.get() ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
             RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
             return nullptr;
         }

@@ -2900,10 +2900,17 @@ bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
     return true;
 }
 
-bool Heap::tryUseReserveOfExhaustedCage()
+bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)
 {
     if (!MarkedBlockCage::isRequired())
         return false;
+    if (exhaustedAllocator == structureAllocator.get()) {
+        if (!StructureAlignedMemoryAllocator::releaseReserve())
+            return false;
+        cage().setExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Structures);
+        vm().traps().setNeedsOutOfMemoryError(true);
+        return true;
+    }
     if (cage().releaseReserve()) {
         vm().traps().setNeedsOutOfMemoryError(true);
         return true;

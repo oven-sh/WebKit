@@ -10,6 +10,7 @@
 
 #include "AOTAllocationCounts.h"
 #include "AOTBuiltinCells.h"
+#include "AOTBuiltinTableBindings.h"
 #include "AOTInstance.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
@@ -22,6 +23,8 @@
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include <wtf/DataLog.h>
+#include <wtf/WTFProcess.h>
 
 namespace JSC { namespace AOT {
 
@@ -47,11 +50,31 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTKeyConstant, JSCell*, (Instance* i
     return instance->state->strings->keyCell(vm, index);
 }
 
+// Compiled code reads through the cell without a test.
+static void exitIfRealmLacksHostOf(State& state, uint32_t numberOfCell)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(state.tables.builtinCells()[numberOfCell], table);
+    RELEASE_ASSERT(key);
+    if (BuiltinBindings::provides(table.at(key->builtin()).origin))
+        return;
+    // A call of such a row enters the compiler's own function, whatever the cell holds.
+    for (const BuiltinOverloadSummary& overload : table.overloadSummariesOf(key->builtin())) {
+        if (overload.kind == BuiltinImplementationKind::Compiled || overload.kind == BuiltinImplementationKind::Inline)
+            return;
+    }
+    dataLogLn("AOT: the program needs the host's ", table.textOf(key->builtin()), ", and this realm has no host");
+    exitProcess(4);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBuiltinCell, JSCell*, (Instance* instance, uint32_t index))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTBuiltinCell);
     DeferGCForAWhile deferGC(vm);
-    OPERATION_RETURN(scope, instance->state->builtinCells->cell(index));
+    JSCell* cell = instance->state->builtinCells->cell(index);
+    if (!cell) [[unlikely]]
+        exitIfRealmLacksHostOf(*instance->state, index);
+    OPERATION_RETURN(scope, cell);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBigIntConstant, EncodedJSValue, (Instance* instance, uint32_t index))

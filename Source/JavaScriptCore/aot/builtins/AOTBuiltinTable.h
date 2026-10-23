@@ -1050,6 +1050,8 @@ struct BuiltinNamesReadByNativeCode {
 enum class BuiltinMark : uint8_t {
     // A flag of the command line or an option of the engine puts it on the global object or on process.
     IsAddedByOption,
+    // The realm of a run may lack it: an option of the engine takes it away, or a host that is built without some of its parts. So nothing is decided at the build that hangs on its being there.
+    MayBeAbsent,
     // Compiles text: a script or a function in the global scope of this realm, or code in a realm of its own, which has of this one what it is handed.
     EvaluatesTextInGlobalScope,
     // Who reads it has a loader of modules in hand.

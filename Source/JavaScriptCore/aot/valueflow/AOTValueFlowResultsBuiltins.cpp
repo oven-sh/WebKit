@@ -738,6 +738,9 @@ static void warnAboutLoadsUnderComputedNames(BuildContext& build, std::span<cons
 static BuiltinLocationState stateOfLocation(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders, BuiltinID member)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
+    // Whether the name is there is known when the program runs. A read looks it up as it looks up a name of the program's own, so `typeof`, `in` and a test for truth answer for the realm of the run.
+    if (builtins.has(BuiltinMark::MayBeAbsent, member))
+        return BuiltinLocationState::Unknown;
     if (isLockedLocation(builtins, member))
         return BuiltinLocationState::Constant;
     switch (builtins.at(member).mutability) {

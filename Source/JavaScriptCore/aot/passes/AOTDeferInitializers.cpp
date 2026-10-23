@@ -273,6 +273,7 @@ private:
     bool givesTheSameWheneverDone(ValueID) const;
     void forEachValueTakenBy(const Item&, NOESCAPE const Invocable<void(ValueID)> auto&);
     bool mayMove(const Item&, const Knowledge&);
+    bool handsOnWhatVariablesHold(const Item&) const;
     bool areSetInFrontOf(uint32_t item, std::span<const VariableID>);
     bool runsCompiledCode(const Item&);
     unsigned estimatedCostOf(const Item&) const;
@@ -2092,6 +2093,16 @@ bool DeferredInitializerScanner::mayMove(const Item& item, const Knowledge& know
     return true;
 }
 
+// What follows looks into the object under its other name, so the item goes where the object is made.
+bool DeferredInitializerScanner::handsOnWhatVariablesHold(const Item& item) const
+{
+    if (!item.isRegion())
+        return isCast(m_function.at(item.value).opcode) || m_function.at(item.value).opcode == Opcode::FinishClass;
+    return std::ranges::any_of(m_function.at(item.join).parameters, [&](ValueID parameter) {
+        return m_known.made.get(parameter.index()) && !m_knownIfVariablesHoldWhatWasMadeElsewhere.made.get(parameter.index());
+    });
+}
+
 bool DeferredInitializerScanner::areSetInFrontOf(uint32_t item, std::span<const VariableID> variables)
 {
     ModuleID evaluated = m_context.moduleWithBody[m_id.index()];
@@ -2213,6 +2224,7 @@ void DeferredInitializerScanner::classify(uint32_t index)
         return stay();
 
     bool takesWhatStays = false;
+    bool isAlias = handsOnWhatVariablesHold(item);
     Vector<uint32_t, 8> united;
     Vector<ValueID, 4> read;
     forEachValueTakenBy(item, [&](ValueID taken) {
@@ -2223,7 +2235,6 @@ void DeferredInitializerScanner::classify(uint32_t index)
         }
         if (definingItem == index || m_states[definingItem] == State::IsRepeated)
             return;
-        bool isAlias = !item.isRegion() && (isCast(m_function.at(item.value).opcode) || m_function.at(item.value).opcode == Opcode::FinishClass);
         bool mayReadVariable = m_variableHolding[taken.index()] && m_storeOfHeldValue[taken.index()] < index && !looksIntoWhatVariablesHold && !isStore && !isAlias;
         if (mayReadVariable) {
             read.append(taken);

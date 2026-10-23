@@ -60,7 +60,7 @@ public:
 
     Boxed callValue(const OperationContext&, const ValueCall&, const CallOptions& = { });
     Boxed callByConvention(const OperationContext&, const ConventionCall&, const CallOptions& = { });
-    Boxed constructValue(const OperationContext&, ConstructSyntax, Boxed callee, Boxed newTarget, std::span<const ValueID> arguments);
+    Boxed constructValue(const OperationContext&, ConstructSyntax, Boxed callee, Boxed newTarget, std::span<const ValueID> arguments, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
     Boxed superConstructWithList(const OperationContext&, Boxed parent, Boxed newTarget, Word32 count, Pointer list);
     Boxed callWithList(const OperationContext&, Boxed callee, Boxed thisValue, Word32 count, Pointer list, const CallOptions& = { });
     Operand callDirect(const OperationContext&, FunctionID, std::span<const Operand> arguments, const CallOptions& = { });

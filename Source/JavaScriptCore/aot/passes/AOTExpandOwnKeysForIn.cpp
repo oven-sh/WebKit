@@ -314,6 +314,7 @@ private:
         BlockFrequency frequency = function.at(turn.header).frequency;
         builder().setOrigin(function.at(turn.step).origin());
         IRBuilder::Expansion expansion = builder().beginExpansion({ turn.header, static_cast<uint32_t>(function.at(turn.header).values.find(turn.step)) });
+        builder().emitFailureOfPredictions(Target { m_loop.header, Arguments(carriedValues), { } });
         ValueID position = builder().appendInteger(turn.position);
         ValueID isCurrent = builder().append(Opcode::IsEnumeratorCurrent, { enumerator, object, position });
         IRBuilder::ProvenBranch branch = builder().emitBranchWithProof(isCurrent, 0, frequency, rarerOf(frequency, BlockFrequency::Unlikely));

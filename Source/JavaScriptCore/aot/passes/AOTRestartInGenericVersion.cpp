@@ -109,10 +109,14 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
         const Block& block = function.at(id);
         if (!endsBeforeAnyEffect.quickGet(id.index()) || block.frequency != BlockFrequency::Normal || block.handler)
             continue;
-        if (!block.terminator.isConditionalBranch() || !testsThatMayRestartInGenericVersion.contains(function.at(block.terminator.conditionOperand()).opcode))
+        if (!block.terminator.isConditionalBranch())
             continue;
-        bool testsState = testsStateOfObject(function, block.terminator);
-        if (!testsState && !failsOnlyForUndefinedAndNull(pass, block.terminator))
+        // What fails without being asked goes where the test behind it would send it.
+        const Terminator& branch = function.at(block.terminator.conditionOperand()).opcode == Opcode::ShouldFailPrediction ? function.at(block.terminator.notTaken().block).terminator : block.terminator;
+        if (!branch.isConditionalBranch() || !testsThatMayRestartInGenericVersion.contains(function.at(branch.conditionOperand()).opcode))
+            continue;
+        bool testsState = testsStateOfObject(function, branch);
+        if (!testsState && !failsOnlyForUndefinedAndNull(pass, branch))
             continue;
         for (uint32_t index = 0; index < block.terminator.targets.size(); ++index) {
             BlockID target = block.terminator.targets[index].block;

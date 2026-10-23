@@ -742,9 +742,11 @@ void AccessResolver::expandReadsOfFieldsThatMayBeEmpty()
         ValueID object = expansion.original().objectOperand();
         Value test = makeObjectTest(Proof::SlotFilled, object, stamp);
         test.setHoldsDeclaredType(testsDeclaredType);
+        BlockID failedUnasked = m_builder.beginPrediction();
         ValueID isFilled = m_builder.append(WTF::move(test));
         BlockFrequency frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
         IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(isFilled, OperandIndex::IsSlotFilled::object, expansion.frequency(), frequencyOfFailure);
+        m_builder.endPrediction(failedUnasked, branch, object);
 
         m_builder.moveToEndOf(branch.taken);
         if (read.plan.form == AccessForm::GetterInSlot)

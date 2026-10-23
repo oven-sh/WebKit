@@ -56,6 +56,7 @@ public:
         decideBranches(reachableBlocks);
         for (BlockID block : reachableBlocks)
             m_numberOfChanges += simplifyTerminator(block);
+        dropFailuresOfPredictionsThatNobodyTests();
         if (m_numberOfChanges)
             m_analyses.didChangeControlFlow();
 
@@ -78,6 +79,52 @@ public:
     bool mayFindMoreAtOnce() const { return m_mayFindMoreAtOnce; }
 
 private:
+    bool leadsTo(BlockID from, BlockID place, unsigned mostSteps) const
+    {
+        if (from == place)
+            return true;
+        return mostSteps && std::ranges::any_of(m_function.at(from).terminator.targets, [&](const Target& target) {
+            return leadsTo(target.block, place, mostSteps - 1);
+        });
+    }
+
+    bool isLedToByTestBehind(BlockID block, BlockID place) const
+    {
+        constexpr unsigned mostBlocks = 32;
+        constexpr unsigned mostStepsBehindFailure = 3;
+        for (unsigned blocks = 0; blocks < mostBlocks; ++blocks) {
+            const Terminator& terminator = m_function.at(block).terminator;
+            if (terminator.kind == TerminatorKind::Jump) {
+                block = terminator.next().block;
+                continue;
+            }
+            if (terminator.kind == TerminatorKind::SwitchOnShape)
+                return leadsTo(terminator.otherwise().block, place, mostStepsBehindFailure);
+            if (!terminator.isConditionalBranch() || provesOf(m_function.at(terminator.conditionOperand()).opcode) == Proof::None)
+                return false;
+            if (leadsTo(terminator.notTaken().block, place, mostStepsBehindFailure))
+                return true;
+            block = terminator.taken().block;
+        }
+        return false;
+    }
+
+    // Without TestingSwitch::FailPredictions nothing leaves where no test is left.
+    void dropFailuresOfPredictionsThatNobodyTests()
+    {
+        if (!m_builder.failsPredictions())
+            return;
+        for (BlockID id : Vector<BlockID>(m_analyses.cfg().reversePostOrder())) {
+            const Terminator& terminator = m_function.at(id).terminator;
+            if (terminator.kind != TerminatorKind::Branch || m_function.at(terminator.conditionOperand()).opcode != Opcode::ShouldFailPrediction)
+                continue;
+            if (isLedToByTestBehind(terminator.notTaken().block, terminator.taken().block))
+                continue;
+            m_builder.convertBranchToJump(id, 1);
+            ++m_numberOfChanges;
+        }
+    }
+
     static bool mayStrictlyEqual(const Type& subject, int64_t integer)
     {
         bool mayBeNegativeZero = subject.primitives & Primitive::WholeNumber;

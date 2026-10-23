@@ -47,7 +47,7 @@ void CallEmitter::generateCallList(const ValueContext& value)
     tailCallByConvention(value, call);
 }
 
-Boxed CallEmitter::constructValue(const OperationContext& context, ConstructSyntax syntax, Boxed callee, Boxed newTarget, std::span<const ValueID> argumentsAfterNewTarget)
+Boxed CallEmitter::constructValue(const OperationContext& context, ConstructSyntax syntax, Boxed callee, Boxed newTarget, std::span<const ValueID> argumentsAfterNewTarget, std::optional<ThrowSite> siteThatNamesCallee)
 {
     Vector<LValue, 8> arguments { newTarget.value() };
     for (ValueID argument : argumentsAfterNewTarget)
@@ -61,7 +61,7 @@ Boxed CallEmitter::constructValue(const OperationContext& context, ConstructSynt
         .thisValue = undefined().value(),
         .arguments = arguments.span(),
     };
-    return callByConvention(context, call, { .constructs = true });
+    return callByConvention(context, call, { .throwSite = siteThatNamesCallee, .constructs = true });
 }
 
 Boxed CallEmitter::superConstructWithList(const OperationContext& context, Boxed parent, Boxed newTarget, Word32 count, Pointer list)
@@ -75,7 +75,10 @@ void CallEmitter::generateConstruct(const ValueContext& value)
     Boxed callee = in<Boxed>(value->calleeOperand());
     emitter<AccessEmitter>().recordArrival(value, callee);
     Boxed newTarget = inOptional<Boxed>(value->newTargetOperand()).value_or(callee);
-    define(value, constructValue(value, ConstructSyntax::NewExpression, callee, newTarget, value->argumentsOperands()));
+    std::optional<ThrowSite> siteThatNamesCallee;
+    if (value->calleeName())
+        siteThatNamesCallee = ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
+    define(value, constructValue(value, ConstructSyntax::NewExpression, callee, newTarget, value->argumentsOperands(), siteThatNamesCallee));
 }
 
 void CallEmitter::generateConstructList(const ValueContext& value)

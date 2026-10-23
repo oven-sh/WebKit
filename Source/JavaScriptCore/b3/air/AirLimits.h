@@ -25,6 +25,7 @@ inline constexpr unsigned estimatedBytesPerInst = 4;
 
 inline constexpr size_t maxWordsPerLivenessMatrix = 1 << 20;
 inline constexpr size_t maxWordsOfLivenessAtTails = 1 << 24;
+inline constexpr unsigned minBlocksToSolveLivenessInPostOrder = 256;
 
 inline constexpr unsigned maxClobberSitesPerSplit = 32;
 inline constexpr unsigned maxBlocksOnClusterPaths = 6;

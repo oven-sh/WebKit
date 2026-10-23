@@ -481,6 +481,7 @@ static Function createChecks(const AnalysisContext& context, TypeArena& types, c
         arguments.append(builder.addParameter(entry, declaredEntryTypeOf(typing, tests, index)));
 
     BlockID failed = builder.addBlock(BlockFrequency::Unlikely);
+    builder.emitFailureOfPredictions(Target { failed, { }, { } });
     Vector<ValueID, 8> testedArguments = arguments;
     for (const EntryCheck& check : checks) {
         if (check.sharesTest)
@@ -651,6 +652,10 @@ static std::optional<Entrance> readEntrance(const Function& function)
     Entrance entrance;
     BlockID block = entryBlock;
     BlockID failed;
+    if (const Block& first = function.at(block); first.terminator.kind == TerminatorKind::Branch && function.at(first.terminator.conditionOperand()).opcode == Opcode::ShouldFailPrediction) {
+        failed = first.terminator.taken().block;
+        block = first.terminator.notTaken().block;
+    }
     while (function.at(block).terminator.kind == TerminatorKind::Branch) {
         const Terminator& branch = function.at(block).terminator;
         if (function.at(block).values.size() != 1 || entrance.tests.size() == 32)
@@ -720,6 +725,8 @@ static Function createShorterEntrance(const AnalysisContext& context, TypeArena&
 
     bool hasTests = key.answered != (uint64_t { 1 } << entrance.tests.size()) - 1;
     BlockID failed = hasTests ? builder.addBlock(BlockFrequency::Unlikely) : BlockID();
+    if (hasTests)
+        builder.emitFailureOfPredictions(Target { failed, { }, { } });
     Vector<ValueID, 8> testedArguments = arguments;
     for (uint32_t index = 0; index < entrance.tests.size(); ++index) {
         if (key.answered & 1u << index)

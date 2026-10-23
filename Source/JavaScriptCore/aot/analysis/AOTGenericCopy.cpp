@@ -892,6 +892,7 @@ void GenericCopy::emitRejoin(const RejoinPlan& plan, BlockID target)
         m_builder.redirectEdge(edge, plan.testBlock, Arguments(targetOf(m_function, edge).arguments));
 
     m_builder.moveToEndOf(plan.testBlock);
+    m_builder.emitFailureOfPredictions(Target { copy, Arguments(plan.carriedValues), { } });
     Arguments narrowed = plan.carriedValues;
     for (const RejoinTest& test : plan.tests) {
         ValueID subject = test.parameterIndex ? plan.carriedValues[*test.parameterIndex] : nameInCopy(test.value);

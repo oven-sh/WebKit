@@ -56,6 +56,7 @@ JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, JSValue key);
 JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView name);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, const Identifier& name);
+JSObject* createNotAConstructorError(JSGlobalObject*, JSValue callee, StringView name);
 
 JSObject* createBuiltinModulesUnavailableError(JSGlobalObject*);
 JSObject* createNativeBindingsUnavailableError(JSGlobalObject*);

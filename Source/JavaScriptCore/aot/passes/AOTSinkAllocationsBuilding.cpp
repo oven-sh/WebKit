@@ -247,14 +247,19 @@ void ObjectInterpreter::buildMembers(std::span<const VirtualObjectID> members, c
     Vector<MemberVisit, 4> visits;
     BitVector membersBeingVisited;
     BitVector membersBuiltInArms;
-    if (isRewriting()) {
-        for (VirtualObjectID member : members) {
-            for (const HeldObject& held : stateOf(member)->heldObjects) {
-                if (stateOf(held.object)->isCell() || !isBuiltInArmsOf(member, held))
-                    continue;
-                for (VirtualObjectID memberOfArms : collectVirtualMembers(held.object))
-                    membersBuiltInArms.set(memberOfArms.index());
+    for (VirtualObjectID member : members) {
+        const ObjectState& state = *stateOf(member);
+        for (const HeldObject& held : state.heldObjects) {
+            if (stateOf(held.object)->isCell() || !isBuiltInArmsOf(member, held))
+                continue;
+            if (isStoredInAnyVariant(m_sinking.familyOf(member), state, held.field) && !isReachedOnlyThrough(member, held.object)) {
+                RELEASE_ASSERT(!isRewriting());
+                m_sinking.abandon(held.object);
             }
+            if (!isRewriting())
+                continue;
+            for (VirtualObjectID memberOfArms : collectVirtualMembers(held.object))
+                membersBuiltInArms.set(memberOfArms.index());
         }
     }
 

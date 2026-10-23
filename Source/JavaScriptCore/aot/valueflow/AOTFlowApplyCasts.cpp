@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAddGenericVersion.h"
+#include "AOTCFG.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -77,31 +79,14 @@ static void assumeCheckedType(Value& check)
     check.setCastType(castType);
 }
 
-// An Upcast tests nothing: what goes in comes out.
-static void admitWhatArrivesBehind(const FlowBodyApplication& body, std::span<const ValueID> replacedChecks)
+// An Upcast tests nothing: what goes in comes out. Its type was written down while the check stood.
+static void forgetWhatReplacedChecksProved(const FlowBodyApplication& body, std::span<const ValueID> replacedChecks)
 {
     Function& function = body.function;
-    BitVector handsOn(function.values.size());
-    for (ValueID check : replacedChecks)
-        handsOn.quickSet(check.index());
-    // A value that a pass has put in has a higher number than its users.
-    for (bool hasChanged = true; hasChanged;) {
-        hasChanged = false;
-        for (uint32_t index = 0; index < function.values.size(); ++index) {
-            Value& value = function.edit(ValueID(index));
-            if (familyOf(value.opcode) != OperationFamily::Cast || handsOn.quickGet(index) || !value.numberOfOperands() || !value.operand(0) || !handsOn.quickGet(value.operand(0).index()))
-                continue;
-            handsOn.quickSet(index);
-            hasChanged = true;
-        }
-    }
-    Type arriving = Type::never();
-    for (ValueID check : replacedChecks)
-        arriving = arriving.unionWith(body.types.at(function.at(check).castType()), body.types);
-    for (size_t index : handsOn) {
-        Value& value = function.edit(ValueID(index));
-        if (value.opcode == Opcode::Upcast)
-            value.setCastType(body.types.intern(body.types.at(value.castType()).unionWith(arriving, body.types)));
+    TypeID anyValue = body.types.withPrimitives(TypeTable::anything, Primitive::Absent);
+    for (size_t index : computeTaintedValues(function, CFG(function), replacedChecks)) {
+        if (function.values[index].opcode == Opcode::Upcast)
+            function.edit(ValueID(index)).setCastType(anyValue);
     }
 }
 
@@ -134,7 +119,7 @@ uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBodyUpdate
         ++numberOfRemovedChecks;
     }
     if (!replacedChecks.isEmpty())
-        admitWhatArrivesBehind(body, replacedChecks.span());
+        forgetWhatReplacedChecksProved(body, replacedChecks.span());
     return numberOfRemovedChecks;
 }
 

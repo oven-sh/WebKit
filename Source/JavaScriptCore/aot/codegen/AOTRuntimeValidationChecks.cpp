@@ -305,6 +305,20 @@ void RuntimeValidationEmitter::generateValidateFirstRun(const ValueContext& valu
     statics.storeVariable(value->variable(), boxedConstant(jsBoolean(true)), Type::fromPrimitives(Primitive::Boolean));
 }
 
+void RuntimeValidationEmitter::generateShouldFailPrediction(const ValueContext& value)
+{
+    TypedPointer state = instanceField(m_heaps.counters, AOT_INSTANCE_OFFSET(runtime.exceptions.predictionFailureState));
+    LValue drawn = m_out.load32(state);
+    drawn = m_out.bitXor(drawn, m_out.shl(drawn, m_out.constInt32(13)));
+    drawn = m_out.bitXor(drawn, m_out.lShr(drawn, m_out.constInt32(17)));
+    drawn = m_out.bitXor(drawn, m_out.shl(drawn, m_out.constInt32(5)));
+    m_out.store32(drawn, state);
+    uint32_t period = build().recordedOptions().predictionFailurePeriod;
+    RELEASE_ASSERT(period);
+    build().statistics().count(StatisticID::PlacesWherePredictionsFailUnasked);
+    defineTest(value, Condition(m_out.belowOrEqual(drawn, m_out.constInt32(static_cast<int32_t>(UINT32_MAX / period)))));
+}
+
 // One number may be held as an integer and as a double.
 void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& value)
 {

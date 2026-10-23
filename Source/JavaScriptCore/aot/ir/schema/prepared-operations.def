@@ -152,6 +152,7 @@ operation ValidateCallee (callee: Any/inspects, validatedType: Type) -> none ; w
 operation ValidateLookup (object: Any/inspects, expected: Callable/inspects, key: PropertyKey) -> none ; reads(NamedProperties, PrototypeLinks) writes(ValidationState)
 operation ValidateFirstRun (variable: Variable) -> none ; reads(ModuleVariables[variable]) writes(ModuleVariables[variable], ValidationState)
 operation ValidateSameValue (kept: Any/inspects, replacement: Any/inspects) -> none ; writes(ValidationState)
+operation ShouldFailPrediction () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState)
 
 family Control Prepared..Placed
 terminator SwitchOnShape (subject: Object/inspects, layoutSets: List<LayoutSet>) -> case...(proof), otherwise ; reads(ShapeWords) ; proves = Shape

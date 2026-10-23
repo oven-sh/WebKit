@@ -319,6 +319,10 @@ static void initializeRuntimeWords(Instance& instance, VM& vm)
     size_t numberOfPropertyRuns = propertyRuns.empty() ? 0 : propertyRuns[0] - 1;
     words.literals.propertyRuns = state.tableArena.allocate<const PropertyRun*>(numberOfPropertyRuns);
 
+    // Never zero: the generator would stay there.
+    if (instance.options().has(TestingSwitch::FailPredictions))
+        words.exceptions.predictionFailureState = 2 * instance.options().predictionFailureSeed + 1;
+
     if (instance.options().countsBranches) {
         words.counters.branchCounts = static_cast<uint64_t*>(state.pages.allocate(runtimeLimitValue(vm, LimitID::BranchCounters) * sizeof(uint64_t)));
         words.counters.allocationCounts = static_cast<uint64_t*>(state.pages.allocate(ExactAllocationCounts::sizeInBytes(state.tables.allocations().size())));

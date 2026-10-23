@@ -64,6 +64,7 @@ static constexpr OpcodeSet opcodesWithoutCode {
     Opcode::ValidateCallee,
     Opcode::ValidateFirstRun,
     Opcode::ValidateSameValue,
+    Opcode::ShouldFailPrediction,
 };
 
 static bool isTypeCheck(Opcode opcode)

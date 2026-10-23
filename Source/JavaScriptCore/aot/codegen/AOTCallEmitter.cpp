@@ -196,7 +196,7 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     B3::Air::StackSlot* keptRegisterStorage = generator().checksKeptRegisters() ? calls.keptRegisterStorage() : nullptr;
     RegisterSet clobbered = request.lateClobbered;
     clobbered.merge(request.earlyClobbered);
-    RELEASE_ASSERT(!options.throwSite || (target.kind == TargetKind::Stub && !target.immediate));
+    RELEASE_ASSERT(!options.throwSite || target.kind == TargetKind::Stub);
     Vector<uint32_t, 3> wordsOfThrowSite;
     if (options.throwSite)
         wordsOfThrowSite = throwSiteWords(*options.throwSite, Representation::Void, 0);
@@ -231,13 +231,14 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
             stubCalls->callRegister(jit, valueEntryGPR, site, keptRegisters);
             return;
         case TargetKind::Stub:
-            if (immediate)
-                stubCalls->call(jit, calledStub, *immediate, site, keptRegisters);
-            else if (wordsOfThrowSite.isEmpty())
-                stubCalls->call(jit, calledStub, site, keptRegisters);
-            else {
+            if (wordsOfThrowSite.isEmpty()) {
+                if (immediate)
+                    stubCalls->call(jit, calledStub, *immediate, site, keptRegisters);
+                else
+                    stubCalls->call(jit, calledStub, site, keptRegisters);
+            } else {
                 CCallHelpers::Label begin = jit.label();
-                uint32_t returnSite = stubCalls->call(jit, calledStub, site, keptRegisters);
+                uint32_t returnSite = immediate ? stubCalls->call(jit, calledStub, *immediate, site, keptRegisters) : stubCalls->call(jit, calledStub, site, keptRegisters);
                 records->units.pin(begin, jit.label());
                 records->traps.callThrowSites.append({ returnSite, wordsOfThrowSite });
             }

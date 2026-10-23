@@ -229,8 +229,10 @@ static void emitCalleeSplit(SiteExpansion& expansion, const CalleeSplit& split)
             }
 
             // A passed test defines a value of the tested type, and the overloads of the method are matched against that.
+            BlockID failedUnasked = builder.beginPrediction();
             ValueID test = builder.appendTypeTest(receiver, *testedReceiver);
             IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, expansion.frequency(), BlockFrequency::Unlikely);
+            builder.endPrediction(failedUnasked, branch, receiver);
             builder.moveToEndOf(branch.notTaken);
             finishArmWithCallOn(branch.provenOnNotTaken);
             builder.moveToEndOf(branch.taken);

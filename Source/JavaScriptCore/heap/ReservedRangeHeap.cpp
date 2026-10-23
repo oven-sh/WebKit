@@ -73,6 +73,10 @@ static constexpr unsigned maxReservationAttempts = 10;
 static_assert(!(sizeStep % granuleSize));
 // mimalloc divides a range into chunks of this size and refuses a range that holds none.
 static constexpr size_t mallocChunkSize = 32 * MB;
+#if OS(LINUX) && USE(MIMALLOC)
+static constexpr size_t minSegmentSize = 2 * mallocChunkSize;
+static constexpr unsigned maxSegmentPlacements = 8;
+#endif
 #if OS(LINUX)
 static constexpr unsigned maxRandomPlacements = 16;
 static constexpr uintptr_t lowestRandomAddress = 64 * GB;
@@ -84,6 +88,16 @@ static bool usesMalloc()
 #if USE(LIBPAS) || USE(MIMALLOC)
     return bmalloc::api::isEnabled();
 #else
+    return false;
+#endif
+}
+
+static bool canGrow(const ReservedRangeHeap::Request& request)
+{
+#if OS(LINUX) && USE(MIMALLOC)
+    return usesMalloc() && request.initialAccess == ReservedRangeHeap::InitialAccess::None && request.initialSegmentSize && request.initialSegmentSize < request.size;
+#else
+    UNUSED_PARAM(request);
     return false;
 #endif
 }
@@ -135,7 +149,8 @@ ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
     RELEASE_ASSERT(!request.alignment || hasOneBitSet(request.alignment), request.alignment);
     RELEASE_ASSERT(!(request.unusedPrefixSize % granuleSize) && request.unusedPrefixSize < request.minSize, request.unusedPrefixSize, request.minSize);
 
-    size_t size = std::max(std::min(request.size, request.addressSpaceBudget / sizeStep * sizeStep), request.minSize);
+    bool isGrowable = canGrow(request);
+    size_t size = std::max(std::min(isGrowable ? request.initialSegmentSize : request.size, request.addressSpaceBudget / sizeStep * sizeStep), request.minSize);
     for (unsigned attempt = 0; attempt < maxReservationAttempts; ++attempt) {
         size_t nextSize = std::max(size / 2 / sizeStep * sizeStep, request.minSize);
         bool hasAnotherAttempt = attempt + 1 < maxReservationAttempts && nextSize < size;
@@ -144,7 +159,7 @@ ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
             if (!backing && !(hasAnotherAttempt && nextSize >= request.unusedPrefixSize + mallocChunkSize))
                 backing = Backing { BackEnd::Granules, nullptr, size };
             if (backing)
-                return new ReservedRangeHeap(start, *backing, request);
+                return new ReservedRangeHeap(start, isGrowable && backing->backEnd == BackEnd::Malloc ? request.size : backing->size, *backing, request);
             releaseReservation(start, size);
         }
         if (!hasAnotherAttempt)
@@ -241,15 +256,25 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
 #endif
 }
 
-ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, const Backing& backing, const Request& request)
+ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, const Backing& backing, const Request& request)
     : m_start(start)
-    , m_size(backing.size)
+    , m_size(size)
+    , m_initialSegmentSize(backing.size)
     , m_backEnd(backing.backEnd)
+    , m_isGrowable(size > backing.size)
+    , m_usage(request.usage)
+    , m_name(request.name)
     , m_mallocHeap(backing.mallocHeap)
+    , m_reservedSize(backing.size)
 {
-    RELEASE_ASSERT((m_backEnd == BackEnd::Malloc) == !!m_mallocHeap);
-    if (m_backEnd != BackEnd::Granules)
+    RELEASE_ASSERT((m_backEnd == BackEnd::Malloc) == !!backing.mallocHeap);
+    RELEASE_ASSERT(!m_isGrowable || m_backEnd == BackEnd::Malloc);
+    if (m_backEnd != BackEnd::Granules) {
+        Locker locker { m_lock };
+        m_segmentHeaps.append(backing.mallocHeap);
+        m_segmentsEnd = backing.size;
         return;
+    }
 
     size_t prefixGranuleCount = request.unusedPrefixSize / granuleSize;
     m_usedGranules.ensureSize(prefixGranuleCount);
@@ -262,7 +287,7 @@ void* ReservedRangeHeap::tryAllocateAligned(size_t alignment, size_t size)
 {
 #if USE(LIBPAS)
     if (m_backEnd == BackEnd::Malloc) [[likely]] {
-        void* result = bmalloc_try_allocate_auxiliary_with_alignment_inline(static_cast<pas_primitive_heap_ref*>(m_mallocHeap), size, alignment);
+        void* result = bmalloc_try_allocate_auxiliary_with_alignment_inline(static_cast<pas_primitive_heap_ref*>(m_mallocHeap.load(std::memory_order_relaxed)), size, alignment);
 #if PLATFORM(PLAYSTATION)
         // libpas isn't calling pas_page_malloc commit, so we've got to commit the region ourselves
         // https://bugs.webkit.org/show_bug.cgi?id=292771
@@ -272,8 +297,12 @@ void* ReservedRangeHeap::tryAllocateAligned(size_t alignment, size_t size)
         return result;
     }
 #elif USE(MIMALLOC)
-    if (m_backEnd == BackEnd::Malloc) [[likely]]
-        return mi_heap_malloc_aligned(static_cast<mi_heap_t*>(m_mallocHeap), size, alignment);
+    if (m_backEnd == BackEnd::Malloc) [[likely]] {
+        void* result = mi_heap_malloc_aligned(static_cast<mi_heap_t*>(m_mallocHeap.load(std::memory_order_acquire)), size, alignment);
+        if (!result && m_isGrowable) [[unlikely]]
+            return tryAllocateSlow(alignment, size);
+        return result;
+    }
 #endif
     RELEASE_ASSERT(alignment <= granuleSize, alignment);
     return tryAllocateGranules(size);
@@ -283,10 +312,14 @@ void* ReservedRangeHeap::tryAllocate(size_t size)
 {
 #if USE(LIBPAS)
     if (m_backEnd == BackEnd::Malloc) [[likely]]
-        return bmalloc_try_allocate_auxiliary_inline(static_cast<pas_primitive_heap_ref*>(m_mallocHeap), size);
+        return bmalloc_try_allocate_auxiliary_inline(static_cast<pas_primitive_heap_ref*>(m_mallocHeap.load(std::memory_order_relaxed)), size);
 #elif USE(MIMALLOC)
-    if (m_backEnd == BackEnd::Malloc) [[likely]]
-        return mi_heap_malloc(static_cast<mi_heap_t*>(m_mallocHeap), size);
+    if (m_backEnd == BackEnd::Malloc) [[likely]] {
+        void* result = mi_heap_malloc(static_cast<mi_heap_t*>(m_mallocHeap.load(std::memory_order_acquire)), size);
+        if (!result && m_isGrowable) [[unlikely]]
+            return tryAllocateSlow(0, size);
+        return result;
+    }
 #endif
     return tryAllocateGranules(size);
 }
@@ -295,10 +328,19 @@ void* ReservedRangeHeap::tryReallocate(void* pointer, size_t size)
 {
 #if USE(LIBPAS)
     if (m_backEnd == BackEnd::Malloc) [[likely]]
-        return bmalloc_try_reallocate_auxiliary_inline(pointer, static_cast<pas_primitive_heap_ref*>(m_mallocHeap), size, pas_reallocate_free_if_successful);
+        return bmalloc_try_reallocate_auxiliary_inline(pointer, static_cast<pas_primitive_heap_ref*>(m_mallocHeap.load(std::memory_order_relaxed)), size, pas_reallocate_free_if_successful);
 #elif USE(MIMALLOC)
-    if (m_backEnd == BackEnd::Malloc) [[likely]]
-        return mi_heap_realloc(static_cast<mi_heap_t*>(m_mallocHeap), pointer, size);
+    if (m_backEnd == BackEnd::Malloc) [[likely]] {
+        void* result = mi_heap_realloc(static_cast<mi_heap_t*>(m_mallocHeap.load(std::memory_order_acquire)), pointer, size);
+        if (result || !m_isGrowable) [[likely]]
+            return result;
+        result = tryAllocateSlow(0, size);
+        if (!result)
+            return nullptr;
+        memcpy(result, pointer, std::min(size, mi_usable_size(pointer)));
+        mi_free(pointer);
+        return result;
+    }
 #endif
     size_t first = granuleIndexOf(m_start, m_size, pointer);
     size_t oldSize;
@@ -338,8 +380,84 @@ void ReservedRangeHeap::releaseFreeMemory()
 {
     // The scavenger of libpas does this by itself, and a freed run of granules is decommitted at once.
 #if USE(MIMALLOC)
-    if (m_backEnd == BackEnd::Malloc)
-        mi_heap_collect(static_cast<mi_heap_t*>(m_mallocHeap), true);
+    if (m_backEnd == BackEnd::Malloc) {
+        Locker locker { m_lock };
+        for (void* heap : m_segmentHeaps)
+            mi_heap_collect(static_cast<mi_heap_t*>(heap), true);
+    }
+#endif
+}
+
+void* ReservedRangeHeap::tryAllocateSlow(size_t alignment, size_t size)
+{
+#if OS(LINUX) && USE(MIMALLOC)
+    auto tryAllocateIn = [&](void* heap) {
+        return alignment ? mi_heap_malloc_aligned(static_cast<mi_heap_t*>(heap), size, alignment) : mi_heap_malloc(static_cast<mi_heap_t*>(heap), size);
+    };
+
+    Locker locker { m_lock };
+    for (size_t index = m_segmentHeaps.size(); index--;) {
+        if (void* result = tryAllocateIn(m_segmentHeaps[index])) {
+            m_mallocHeap.store(m_segmentHeaps[index], std::memory_order_release);
+            return result;
+        }
+    }
+    if (!tryAddSegment(size + alignment))
+        return nullptr;
+    m_mallocHeap.store(m_segmentHeaps.last(), std::memory_order_release);
+    return tryAllocateIn(m_segmentHeaps.last());
+#else
+    UNUSED_PARAM(alignment);
+    UNUSED_PARAM(size);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
+{
+#if OS(LINUX) && USE(MIMALLOC)
+    size_t minSize = std::max(minSegmentSize, roundUpToMultipleOf<mallocChunkSize>(allocationSize) + mallocChunkSize);
+    size_t size = std::max(minSize, roundUpToMultipleOf<mallocChunkSize>(reservedSize() / 2));
+    Request request { .name = m_name, .usage = m_usage, .initialAccess = InitialAccess::None };
+    unsigned placements = 0;
+    while (true) {
+        size_t offset = roundUpToMultipleOf<mallocChunkSize>(m_segmentsEnd);
+        if (offset >= m_size || m_size - offset < minSize)
+            return false;
+        size = std::min(size, (m_size - offset) / mallocChunkSize * mallocChunkSize);
+
+        void* address = std::bit_cast<void*>(m_start + offset);
+        void* reserved = OSAllocator::tryReserveUncommitted(size, m_usage, address, false);
+        if (!reserved) {
+            size = size / 2 / mallocChunkSize * mallocChunkSize;
+            if (size < minSize)
+                return false;
+            continue;
+        }
+        if (reserved != address) {
+            OSAllocator::releaseDecommitted(reserved, size, 0);
+            if (++placements == maxSegmentPlacements)
+                return false;
+            m_segmentsEnd = offset + size;
+            continue;
+        }
+        RELEASE_ASSERT(!mprotect(address, size, PROT_NONE));
+
+        std::optional<Backing> backing = tryCreateBacking(m_start + offset, size, request);
+        if (!backing) {
+            releaseReservation(m_start + offset, size);
+            return false;
+        }
+        m_segmentHeaps.append(backing->mallocHeap);
+        m_segmentsEnd = offset + size;
+        m_reservedSize.fetch_add(size, std::memory_order_relaxed);
+        return true;
+    }
+#else
+    UNUSED_PARAM(allocationSize);
+    UNUSED_PARAM(m_usage);
+    UNUSED_PARAM(m_name);
+    return false;
 #endif
 }
 

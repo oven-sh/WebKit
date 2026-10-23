@@ -75,12 +75,14 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
     return true;
 }
 
+static StringView nameOfCalleeAtCallSite(VM&);
+
 static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue callee, JSValue newTarget, const ArgList& arguments)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto constructData = JSC::getConstructData(callee);
     if (constructData.type == CallData::Type::None) {
-        throwException(globalObject, scope, createNotAConstructorError(globalObject, callee));
+        throwException(globalObject, scope, createNotAConstructorError(globalObject, callee, nameOfCalleeAtCallSite(vm)));
         return { };
     }
     RELEASE_AND_RETURN(scope, construct(globalObject, callee, constructData, arguments, newTarget));
@@ -313,8 +315,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallable, void, (Instance* insta
     DeferGCForAWhile deferGC(vm);
     JSValue value = calleeOfDecodedReference(instance, callee);
     uint32_t namePlusOne = std::exchange(instance->runtime.exceptions.nameOfUncallableMethod, 0);
-    if (!value.isCallable())
-        throwException(globalObject, scope, namePlusOne ? createNotAFunctionError(globalObject, value, identifierAt(instance, namePlusOne - 1)) : createNotAFunctionError(globalObject, value, nameOfCalleeAtCallSite(vm)));
+    if (!value.isCallable()) {
+        StringView nameAtCallSite = nameOfCalleeAtCallSite(vm);
+        throwException(globalObject, scope, namePlusOne && nameAtCallSite.isNull() ? createNotAFunctionError(globalObject, value, identifierAt(instance, namePlusOne - 1)) : createNotAFunctionError(globalObject, value, nameAtCallSite));
+    }
     OPERATION_RETURN(scope);
 }
 
@@ -323,8 +327,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallableNamed, void, (Instance* 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessCallableNamed);
     DeferGCForAWhile deferGC(vm);
     JSValue value = calleeOfDecodedReference(instance, callee);
-    if (!value.isCallable())
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, identifierAt(instance, name)));
+    if (!value.isCallable()) {
+        StringView nameAtCallSite = nameOfCalleeAtCallSite(vm);
+        throwException(globalObject, scope, nameAtCallSite.isNull() ? createNotAFunctionError(globalObject, value, identifierAt(instance, name)) : createNotAFunctionError(globalObject, value, nameAtCallSite));
+    }
     OPERATION_RETURN(scope);
 }
 

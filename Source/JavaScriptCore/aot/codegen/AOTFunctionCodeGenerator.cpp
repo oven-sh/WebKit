@@ -61,6 +61,7 @@ FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, F
         .readsCallerFrame = readsCallerFrame(inputs, id, function),
         .isAsync = function.has(FunctionFlags::IsAsync),
         .rejectsOnThrow = rejectsOnThrow(inputs.program, function),
+        .hasHandlers = std::ranges::any_of(function.blocks, [](const Block& block) { return !!block.handler; }),
         .isCold = isCold(inputs.heat.of(inputs.program, id)),
         .runsOnce = inputs.heat.of(inputs.program, id) == HeatClass::RunsOnce,
         .isHot = isHot(inputs.heat.of(inputs.program, id)),
@@ -260,7 +261,7 @@ bool FunctionCodeGenerator::generateB3(DirectCodeAttempt attempt)
     }
 
     bool isWorthOptimizing = !isGeneratedWithoutOptimizing(build, m_inputs.heat, m_inputs.program, m_id);
-    bool checksAir = options.validatesBackEnd || options.validatesReferences || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
+    bool checksAir = options.validatesBackEnd || options.validatesReferences;
     if (!isWorthOptimizing && !checksAir && attempt != DirectCodeAttempt::None && traits.convention == BackEndConvention::Function)
         m_directCode = planDirectCode(proc, attempt);
     return true;

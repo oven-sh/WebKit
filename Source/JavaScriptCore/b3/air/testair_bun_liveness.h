@@ -300,11 +300,50 @@ static void checkTerminalLateUses()
     CHECK(!isLiveAtTail(code, entry, definedInRoot));
 }
 
+static void checkDeepLoopNestLiveness()
+{
+    constexpr unsigned depth = B3::AirLimits::minBlocksToSolveLivenessInPostOrder / 2;
+    B3::Procedure proc;
+    Code& code = proc.code();
+    BasicBlock* entry = code.addBlock();
+    BasicBlock* exit = code.addBlock();
+    Vector<BasicBlock*> headers;
+    Vector<BasicBlock*> bodies;
+    Vector<BasicBlock*> latches;
+    Vector<Tmp> counters;
+    for (unsigned i = 0; i < depth; ++i) {
+        headers.append(code.addBlock());
+        bodies.append(code.addBlock());
+        latches.append(code.addBlock());
+        counters.append(code.newTmp(GP));
+    }
+    entry->append(Move, nullptr, Arg::imm(0), counters[0]);
+    appendJump(entry, headers[0]);
+    for (unsigned i = 0; i < depth; ++i) {
+        appendBranchTest(headers[i], counters[i], bodies[i], i ? latches[i - 1] : exit);
+        if (i + 1 < depth) {
+            bodies[i]->append(Move, nullptr, Arg::imm(0), counters[i + 1]);
+            appendJump(bodies[i], headers[i + 1]);
+        } else
+            appendJump(bodies[i], latches[i]);
+        latches[i]->append(Add64, nullptr, Arg::imm(1), counters[i]);
+        appendJump(latches[i], headers[i]);
+    }
+    appendReturn(exit, 0);
+    code.resetReachability();
+
+    CHECK(code.size() >= B3::AirLimits::minBlocksToSolveLivenessInPostOrder);
+    checkTailLivenessMatchesReference(code);
+    CHECK(isLiveAtTail(code, bodies.last(), counters[0]));
+    CHECK(!isLiveAtTail(code, latches[0], counters.last()));
+}
+
 void testBitMatrixLivenessMatchesLiveness()
 {
     for (unsigned seed = 1; seed <= 50; ++seed)
         checkRandomGraphLiveness(seed);
     checkTerminalLateUses();
+    checkDeepLoopNestLiveness();
 
     B3::Procedure proc;
     Code& code = proc.code();

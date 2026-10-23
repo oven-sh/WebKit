@@ -1,0 +1,42 @@
+# function numbers(text: string): number[] { return JSON.parse(text) }   function values(text: string): any[] { return JSON.parse(text) }
+# The loop of a parser over white space ends in a branch that feeds two phis: the character, for the head of the loop, and the cursor, for the block behind the loop.
+# A phi is not live into its own block, so the two once counted as free of each other and had one slot of the frame: the cursor read back was its high half and the character
+# FORM: AsRead
+# OPTIONS: testing=GenerateAllCodeDirectly
+# RUN: run-in-shell globalThis.register = (numbers, values) => { for (const text of ["[1.5, -0, 2147483648,  3]", "[ 1 , 2 ]", "[1,2]", "[]", " [ ] "]) print(JSON.stringify(numbers(text)), JSON.stringify(values(text))); };
+# RUN(IR): pipeline SelectTypedResults
+# IR: function {{*}}role=Parser {{*}}creator=Parser{type=Array<number>
+# CHECK: [1.5,0,2147483648,3] [1.5,0,2147483648,3]
+# CHECK-NEXT: [1,2] [1,2]
+# CHECK-NEXT: [1,2] [1,2]
+# CHECK-NEXT: [] []
+# CHECK-NEXT: [] []
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="numbers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = Builtin builtin=JSONParse
+    v3 = Call v2, -, v1
+    v4 = Convert v3 declared={type=Array<number>} illTypedCause=FromLooseType
+    Return v4
+}
+function f2 name="values" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = Builtin builtin=JSONParse
+    v3 = Call v2, -, v1
+    v4 = Convert v3 declared={type=Array<anything>} illTypedCause=FromLooseType
+    Return v4
+}

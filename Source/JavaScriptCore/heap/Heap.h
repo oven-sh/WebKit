@@ -395,7 +395,7 @@ public:
     JS_EXPORT_PRIVATE MarkedBlockCage& cage();
     JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
     bool tryCollectForExhaustedCage(GCDeferralContext*);
-    bool tryUseReserveOfExhaustedCage();
+    bool tryUseReserveOfExhaustedCage(AlignedMemoryAllocator*);
 
     bool validatesCellVisits() const { return m_validatesCellVisits; }
     void setValidatesCellVisits(bool validates) { m_validatesCellVisits = validates; }

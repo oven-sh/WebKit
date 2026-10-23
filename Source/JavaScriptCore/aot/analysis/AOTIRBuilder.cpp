@@ -493,6 +493,57 @@ void IRBuilder::appendValidationOfTestedValue(ValueID test)
     append(WTF::move(validation));
 }
 
+bool IRBuilder::failsPredictions() const
+{
+    return context().build.recordedOptions().has(TestingSwitch::FailPredictions);
+}
+
+void IRBuilder::emitFailureOfPredictions(Target&& whenFailed)
+{
+    if (!failsPredictions())
+        return;
+    BlockID tests = addBlock(m_function.at(m_block).frequency);
+    emitBranch(append(Opcode::ShouldFailPrediction, { }), WTF::move(whenFailed), Target { tests, { }, { } });
+    moveToEndOf(tests);
+}
+
+BlockID IRBuilder::beginPrediction()
+{
+    if (!failsPredictions())
+        return { };
+    BlockID failedUnasked = addBlock(rarerOf(m_function.at(m_block).frequency, BlockFrequency::Unlikely));
+    emitFailureOfPredictions(Target { failedUnasked, { }, { } });
+    return failedUnasked;
+}
+
+void IRBuilder::endPrediction(BlockID failedUnasked, BlockID whenFailed)
+{
+    if (!failedUnasked)
+        return;
+    BlockID current = m_block;
+    moveToEndOf(failedUnasked);
+    emitJump(whenFailed);
+    m_block = current;
+}
+
+void IRBuilder::endPrediction(BlockID failedUnasked, ProvenBranch& branch, ValueID tested)
+{
+    if (!failedUnasked || !branch.provenOnNotTaken) {
+        endPrediction(failedUnasked, branch.notTaken);
+        return;
+    }
+    BlockID current = m_block;
+    BlockID failed = addBlock(m_function.at(branch.notTaken).frequency);
+    ValueID unknown = addParameter(failed, m_function.at(tested).type);
+    moveToEndOf(branch.notTaken);
+    emitJump(failed, { branch.provenOnNotTaken });
+    moveToEndOf(failedUnasked);
+    emitJump(failed, { tested });
+    branch.notTaken = failed;
+    branch.provenOnNotTaken = unknown;
+    m_block = current;
+}
+
 IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken)
 {
     Proof proof = provesOf(m_function.at(test).opcode);

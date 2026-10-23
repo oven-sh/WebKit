@@ -138,11 +138,11 @@ void* CompleteSubspace::tryAllocateInLargerCell(JSC::Heap& heap, BlockDirectory&
 void* CompleteSubspace::allocateSlow(VM& vm, size_t size, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
     void* result = tryAllocateSlow(vm, size, deferralContext);
-    if (!result && failureMode == AllocationFailureMode::Assert && vm.heap.tryUseReserveOfExhaustedCage()) [[unlikely]]
+    if (!result && failureMode == AllocationFailureMode::Assert && vm.heap.tryUseReserveOfExhaustedCage(alignedMemoryAllocator())) [[unlikely]]
         result = tryAllocateSlow(vm, size, deferralContext);
     if (!result) [[unlikely]] {
         if (failureMode == AllocationFailureMode::Assert)
-            MarkedBlockCage::logExhaustion();
+            MarkedBlockCage::logExhaustion(MarkedBlockCage::ExhaustedHeap::Cells);
         RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
     }
     return result;

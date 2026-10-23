@@ -17,11 +17,8 @@
 
 namespace JSC {
 
-// malloc, stacks and mapped files get 1/N of the address space still free under RLIMIT_AS.
-static constexpr unsigned unreservedAddressSpaceDivisor = 2;
-
 // Returns SIZE_MAX when there is no limit, and on every system but Linux.
-inline size_t addressSpaceToReserve()
+inline size_t availableAddressSpace()
 {
 #if OS(LINUX)
     static const size_t result = [] {
@@ -35,8 +32,7 @@ inline size_t addressSpaceToReserve()
             fclose(file);
         }
         size_t mapped = mappedPages * pageSize();
-        size_t free = limit.rlim_cur > mapped ? limit.rlim_cur - mapped : 0;
-        return free - free / unreservedAddressSpaceDivisor;
+        return limit.rlim_cur > mapped ? limit.rlim_cur - mapped : 0;
     }();
     return result;
 #else
@@ -44,14 +40,42 @@ inline size_t addressSpaceToReserve()
 #endif
 }
 
+inline bool hasAddressSpaceLimit()
+{
+    return availableAddressSpace() != std::numeric_limits<size_t>::max();
+}
+
+// malloc, stacks and mapped files get 1/N of the address space still free under RLIMIT_AS.
+static constexpr unsigned unreservedAddressSpaceDivisor = 2;
+
+inline size_t addressSpaceToReserve()
+{
+    size_t available = availableAddressSpace();
+    if (!hasAddressSpaceLimit())
+        return available;
+    return available - available / unreservedAddressSpaceDivisor;
+}
+
 // The structure heap gets 1/N of addressSpaceToReserve().
-static constexpr unsigned addressSpaceDivisorForStructures = 8;
+static constexpr unsigned addressSpaceDivisorForStructures = 4;
 
 // All cages of the process together get the rest.
 inline size_t addressSpaceForMarkedBlockCages()
 {
     size_t whole = addressSpaceToReserve();
     return whole - whole / addressSpaceDivisorForStructures;
+}
+
+static constexpr unsigned initialCageSegmentDivisor = 8;
+static constexpr size_t maxInitialCageSegmentSize = GB;
+
+inline size_t initialCageSegmentSize(size_t minSize)
+{
+    size_t share = availableAddressSpace() / initialCageSegmentDivisor;
+    size_t size = maxInitialCageSegmentSize;
+    while (size > share && size > minSize)
+        size /= 2;
+    return std::max(size, minSize);
 }
 
 // No share is so small that the structure heap gets less than this.

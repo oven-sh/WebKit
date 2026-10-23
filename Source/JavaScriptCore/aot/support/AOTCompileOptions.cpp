@@ -31,7 +31,7 @@ static constexpr unsigned bitsPerWordOfSwitches = 64;
 static constexpr uint64_t fnvOffsetBasis = 0xcbf29ce484222325ull;
 static constexpr uint64_t fnvPrime = 0x100000001b3ull;
 
-static_assert(sizeof(WireOptions) == 256);
+static_assert(sizeof(WireOptions) == 264);
 static_assert(sizeof(LimitID) == 4);
 static_assert(std::is_same_v<decltype(WireOptions::sizeClassProgression), decltype(CompileOptions::sizeClassProgression)>);
 static_assert(std::is_same_v<decltype(Wire::BisectionSwitches::disabledPasses), PassSet>);
@@ -352,6 +352,16 @@ void WireOptionsReader::readTestingSwitches(RecordedOptions& recorded)
         } else {
             reportInvalid(offsetOf(droppedGuard.opcode));
             testing = withoutFlag(testing, TestingSwitch::DropGuard);
+        }
+    }
+    if (hasFlag(testing, TestingSwitch::FailPredictions)) {
+        const Wire::PredictionFailureWords& failure = m_wire.bisection.predictionFailure;
+        if (failure.period && failure.period <= UINT16_MAX && failure.seed <= UINT16_MAX) {
+            recorded.predictionFailurePeriod = static_cast<uint16_t>(failure.period);
+            recorded.predictionFailureSeed = static_cast<uint16_t>(failure.seed);
+        } else {
+            reportInvalid(offsetOf(failure.period));
+            testing = withoutFlag(testing, TestingSwitch::FailPredictions);
         }
     }
     recorded.testing = static_cast<uint16_t>(testing);

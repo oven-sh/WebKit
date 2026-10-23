@@ -57,6 +57,9 @@ struct ExpectedDecline {
 
 static constexpr unsigned numberOfWorkers = 8;
 
+static_assert(sizeof(Vector<void*>) == sizeof(WTF::Vector<void*>) && sizeof(Vector<void*, 4>) == sizeof(WTF::Vector<void*, 4>) && sizeof(Vector<uint8_t, 3>) == sizeof(WTF::Vector<uint8_t, 3>));
+static_assert(Vector<void*, 4>::dataMemoryOffset() == WTF::Vector<void*, 4>::dataMemoryOffset() && Vector<void*, 4>::sizeMemoryOffset() == WTF::Vector<void*, 4>::sizeMemoryOffset());
+
 static constexpr ASCIILiteral derivedFunctions = R"IR(module m0 path="/a.ts" displayPath="a.ts"
 function f0 name="first" results=[{type=anything}]
 function f1 name="second" parameters=[{type=anything}] results=[{type=anything}]

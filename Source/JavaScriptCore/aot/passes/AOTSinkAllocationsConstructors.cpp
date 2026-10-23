@@ -369,8 +369,10 @@ static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& input
 
     if (program.at(original.layout()).classFlow.staticLink != MemberMutability::Fixed || !isBaseProven(program.at(original.layout()))) {
         MemberCondition condition { .kind = MemberCondition::Kind::PrototypeLinkUnchanged, .layout = original.layout(), .side = ClassSide::Static };
+        BlockID failedUnasked = builder.beginPrediction();
         ValueID isUnchanged = builder.append(makeConditionsTest(inputs.types, singleElementSpan(condition)));
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isUnchanged, 0, BlockFrequency::Normal, BlockFrequency::Rare);
+        builder.endPrediction(failedUnasked, branch, { });
         builder.moveToEndOf(branch.notTaken);
         // An arm that came back would make of `this` one of two objects for all the code that follows.
         if (canStartOver)

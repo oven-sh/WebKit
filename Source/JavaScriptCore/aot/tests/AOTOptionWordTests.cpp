@@ -270,6 +270,18 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "heat=everything-is-cold"_s, [](WireOptions& options) { options.heatOverride = Wire::HeatOverride::EverythingIsCold; } },
     { "testing=ignore-branch-hints"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreBranchHints; } },
     { "testing=IgnoreExpectedTypes"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreExpectedTypes; } },
+    { "testing=FailPredictions"_s, [](WireOptions& options) {
+        options.testing = Wire::TestingSwitch::FailPredictions;
+        options.bisection.predictionFailure = { .period = 1, .seed = 0 };
+    } },
+    { "testing=fail-predictions:7"_s, [](WireOptions& options) {
+        options.testing = Wire::TestingSwitch::FailPredictions;
+        options.bisection.predictionFailure = { .period = 7, .seed = 0 };
+    } },
+    { "testing=FailPredictions:100:3"_s, [](WireOptions& options) {
+        options.testing = Wire::TestingSwitch::FailPredictions;
+        options.bisection.predictionFailure = { .period = 100, .seed = 3 };
+    } },
     { "sabotage=InnerCellLetGoKeepsItsHeader"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::InnerCellLetGoKeepsItsHeader; } },
     { "sabotage=room-is-not-in-reference-list"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::RoomIsNotInReferenceList; } },
     { "count-branches"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountBranches; } },
@@ -371,6 +383,10 @@ static void testOptionWordsRejected()
     AOT_TEST_CHECK(applyRejectedWord(options, "validate=1"_s) == "validate takes no value"_s);
     AOT_TEST_CHECK(applyRejectedWord(options, "check"_s) == "check needs a value"_s);
     AOT_TEST_CHECK(applyRejectedWord(options, "threads=0"_s) == "the number of threads is at least 1"_s);
+    AOT_TEST_CHECK(applyRejectedWord(options, "testing=FailPredictions:0"_s) == "a prediction fails one time in n, and n is at least 1"_s);
+    AOT_TEST_CHECK(applyRejectedWord(options, "testing=FailPredictions:x"_s) == "x is not a number"_s);
+    AOT_TEST_CHECK(applyRejectedWord(options, "testing=FailPredictions:2:65536"_s) == "65536 is not a number"_s);
+    AOT_TEST_CHECK(applyRejectedWord(options, "testing=IgnoreBranchHints:2"_s) == "IgnoreBranchHints takes no number"_s);
     AOT_TEST_CHECK(applyRejectedWord(options, "erase-types"_s) == "erase-types is an option of the front end"_s);
     AOT_TEST_CHECK(applyRejectedWord(options, "out=x"_s) == "out is an option of the front end"_s);
 
@@ -619,6 +635,11 @@ static constexpr InvalidMemberCase invalidMemberCases[] = {
         wire.testing = Wire::TestingSwitch::DropGuard;
         wire.bisection.droppedGuard.opcode = numberOfEnumerators<Opcode>;
     } },
+    { offsetof(WireOptions, bisection.predictionFailure.period), [](WireOptions& wire) { wire.testing = Wire::TestingSwitch::FailPredictions; } },
+    { offsetof(WireOptions, bisection.predictionFailure.period), [](WireOptions& wire) {
+        wire.testing = Wire::TestingSwitch::FailPredictions;
+        wire.bisection.predictionFailure = { .period = 1, .seed = UINT16_MAX + 1 };
+    } },
     { offsetof(WireOptions, threadCount), [](WireOptions& wire) { wire.threadCount = 0; }, [](CompileOptions& options) { options.threadCount = 1; } },
     { offsetof(WireOptions, target.architecture), [](WireOptions& wire) { wire.target.architecture = otherArchitecture; }, [](CompileOptions& options) {
         options.recorded.architecture = static_cast<uint8_t>(otherArchitecture);
@@ -825,6 +846,9 @@ static void testInstrumentationAndTestingSwitchesAreRecorded()
     RecordedOptions dropping = readWords({ "drop-guard=TypeTest:2"_s }).recorded;
     AOT_TEST_CHECK(dropping.has(Wire::TestingSwitch::DropGuard) && dropping.usesExpectedTypes());
     AOT_TEST_CHECK(dropping.droppedGuard() && dropping.droppedGuard()->opcode == Opcode::TypeTest && dropping.droppedGuard()->ordinal == 2);
+    AOT_TEST_CHECK(!readWords({ }).recorded.has(Wire::TestingSwitch::FailPredictions) && !readWords({ }).recorded.predictionFailurePeriod && !readWords({ }).recorded.predictionFailureSeed);
+    RecordedOptions failing = readWords({ "testing=FailPredictions:7:3"_s }).recorded;
+    AOT_TEST_CHECK(failing.has(Wire::TestingSwitch::FailPredictions) && failing.predictionFailurePeriod == 7 && failing.predictionFailureSeed == 3);
 }
 
 std::span<const NativeTest> optionWordTests()

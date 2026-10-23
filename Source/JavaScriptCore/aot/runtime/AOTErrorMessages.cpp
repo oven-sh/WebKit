@@ -540,6 +540,14 @@ JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, 
     });
 }
 
+JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue callee, StringView name)
+{
+    String source = name.isNull() ? String() : tryMakeString("new "_s, name);
+    return createQuoting(source, [&] {
+        return JSC::createNotAConstructorError(globalObject, callee);
+    });
+}
+
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, const Identifier& name)
 {
     return createNotAFunctionError(globalObject, callee, name.isNull() || name.isSymbol() || name.isPrivateName() ? StringView() : StringView(name.impl()));

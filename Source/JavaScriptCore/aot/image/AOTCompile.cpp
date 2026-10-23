@@ -29,6 +29,8 @@
 #include "AOTWasmModules.h"
 #include "JSLock.h"
 #include "VM.h"
+#include <cstdlib>
+#include <mutex>
 #include <optional>
 #include <tuple>
 #include <type_traits>
@@ -36,6 +38,7 @@
 #include <wtf/Condition.h>
 #include <wtf/DataLog.h>
 #include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StackAllocation.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -113,6 +116,26 @@ private:
 };
 
 } // anonymous namespace
+
+#if ASAN_ENABLED
+// What still waits for its destruction when the process ends is held by memory that LeakSanitizer does not read.
+static void waitAtExitFor(Ref<Thread>&& thread)
+{
+    static Lock lock;
+    static LazyNeverDestroyed<WTF::Vector<Ref<Thread>>> threads;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        threads.construct();
+        std::atexit([] {
+            Locker locker { lock };
+            for (auto& thread : threads.get())
+                thread->waitForCompletion();
+        });
+    });
+    Locker locker { lock };
+    threads->append(WTF::move(thread));
+}
+#endif
 
 static CodeAndTables generateCodeAndTables(Typed::PipelineOutput& pipeline, const CodeGenerationPlan& plan, NOESCAPE const ScopedLambda<void()>& buildReport, BuildContext& context)
 {
@@ -456,7 +479,7 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
 {
     auto output = makeUnique<CompileOutput>();
     Ref<CallerOfBuildThread> caller = CallerOfBuildThread::create();
-    Thread::create("AOT build"_s, [&, caller] {
+    Ref<Thread> buildThread = Thread::create("AOT build"_s, [&, caller] {
         BuildContext context(options, hostPool);
         run([&](const Typed::ReaderOfFinishedBodies& readBesideLastEffectSummaries) {
             return Typed::runPipeline(program, owner.externalBodies, context, [&] {
@@ -467,7 +490,12 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
         takeResults(context, *output, WhatTheBuildLeaves::DiesBesideTheCaller);
         context.parallelLoops().sendRestingThreadsBack();
         caller->release();
-    }, ThreadType::Compiler, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize))->detach();
+    }, ThreadType::Compiler, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize));
+#if ASAN_ENABLED
+    waitAtExitFor(WTF::move(buildThread));
+#else
+    buildThread->detach();
+#endif
     caller->wait();
     return output;
 }

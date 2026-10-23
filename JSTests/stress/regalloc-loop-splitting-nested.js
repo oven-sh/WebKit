@@ -1,4 +1,4 @@
-//@ requireOptions("--airGreedyRegAllocSplitAroundLoops=true")
+//@ requireOptions("--airGreedyRegAllocSplitAroundLoops=true", "--useConcurrentJIT=false", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=20", "--thresholdForFTLOptimizeSoon=20")
 
 // A value that is live over a nest of loops is split around the outer loop, and the outer loop's part once more around an inner loop.
 

@@ -289,6 +289,21 @@ private:
         }
 
         const Matrices matrices { liveAtHead, liveAtTail, gens, kills, wordsPerSet };
+        if (m_code.size() >= AirLimits::minBlocksToSolveLivenessInPostOrder) {
+            const Vector<unsigned> blocksInPostOrder = computeBlocksInPostOrder();
+            Vector<unsigned> positionOfBlock(FillWith { }, m_code.size(), 0u);
+            for (unsigned position = 0; position < blocksInPostOrder.size(); ++position)
+                positionOfBlock[blocksInPostOrder[position]] = position;
+            LowestFirstWorklist orderedWorklist(blocksInPostOrder.size());
+            for (unsigned blockIndex : worklist)
+                orderedWorklist.add(positionOfBlock[blockIndex]);
+            worklist.shrink(0);
+            while (auto position = orderedWorklist.takeLowest()) {
+                propagateLiveness(matrices, blocksInPostOrder[*position], [&](unsigned predecessorIndex) {
+                    orderedWorklist.add(positionOfBlock[predecessorIndex]);
+                });
+            }
+        }
         while (!worklist.isEmpty()) {
             unsigned blockIndex = worklist.takeLast();
             isDirty[blockIndex] = 0;

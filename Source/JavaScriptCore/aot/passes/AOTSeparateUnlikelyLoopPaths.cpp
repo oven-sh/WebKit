@@ -554,9 +554,15 @@ bool LoopPathSeparator::passesTests(const Arguments& arguments, std::span<const 
 void LoopPathSeparator::emitTests(IRBuilder& builder, const Arguments& carried, std::span<const TypeID> tested, BlockID whenPassed, BlockID whenFailed, BlockFrequency whenPassedFrequency)
 {
     Arguments narrowed = carried;
+    bool isFirstTest = true;
     for (size_t index = 0; index < tested.size(); ++index) {
         if (!tested[index] || typeOf(carried[index]).isSubsetOf(m_context.types.at(tested[index]), m_program))
             continue;
+        if (std::exchange(isFirstTest, false)) {
+            Arguments argumentsWhenFailed;
+            argumentsWhenFailed.append(carried.span().first(m_function.at(whenFailed).parameters.size()));
+            builder.emitFailureOfPredictions(Target { whenFailed, WTF::move(argumentsWhenFailed), { } });
+        }
         ValueID test = builder.appendTypeTest(carried[index], tested[index]);
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, whenPassedFrequency, m_function.at(whenFailed).frequency);
         narrowed[index] = branch.provenOnTaken;

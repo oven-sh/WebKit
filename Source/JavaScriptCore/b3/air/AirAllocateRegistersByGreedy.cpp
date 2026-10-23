@@ -2227,14 +2227,17 @@ public:
             checkWidths(Tmp(reg));
         });
 
+        auto isSameCount = [](float count, float referenceCount) {
+            return count == referenceCount || (std::isnan(count) && std::isnan(referenceCount));
+        };
         for (unsigned i = 0; i < AbsoluteTmpMapper<GP>::absoluteIndex(m_code.numTmps(GP)); ++i) {
-            RELEASE_ASSERT(m_useCounts.numWarmUsesAndDefs<GP>(i) == referenceUseCounts.numWarmUsesAndDefs<GP>(i));
+            RELEASE_ASSERT(isSameCount(m_useCounts.numWarmUsesAndDefs<GP>(i), referenceUseCounts.numWarmUsesAndDefs<GP>(i)));
             RELEASE_ASSERT(m_useCounts.isConstDef<GP>(i) == referenceUseCounts.isConstDef<GP>(i));
             if (m_useCounts.isConstDef<GP>(i))
                 RELEASE_ASSERT(m_useCounts.constant<GP>(i) == referenceUseCounts.constant<GP>(i));
         }
         for (unsigned i = 0; i < AbsoluteTmpMapper<FP>::absoluteIndex(m_code.numTmps(FP)); ++i) {
-            RELEASE_ASSERT(m_useCounts.numWarmUsesAndDefs<FP>(i) == referenceUseCounts.numWarmUsesAndDefs<FP>(i));
+            RELEASE_ASSERT(isSameCount(m_useCounts.numWarmUsesAndDefs<FP>(i), referenceUseCounts.numWarmUsesAndDefs<FP>(i)));
             RELEASE_ASSERT(m_useCounts.isConstDef<FP>(i) == referenceUseCounts.isConstDef<FP>(i));
             if (m_useCounts.isConstDef<FP>(i)) {
                 RELEASE_ASSERT(m_useCounts.constant<FP>(i).u64x2[0] == referenceUseCounts.constant<FP>(i).u64x2[0]);
@@ -4949,9 +4952,7 @@ private:
             do {
                 ClusterGroup group;
                 remaining = forEachUseDefWithin(tmp, remaining, cursor, [&](Point point, Inst& inst, BasicBlock& block) {
-                    inst.forEachTmp([&](Tmp& t, Arg::Role role, Bank, Width) {
-                        if (t != tmp)
-                            return;
+                    auto noteMention = [&](Tmp& t, Arg::Role role) NEVER_INLINE {
                         Point early = point + PointOffsets::Early;
                         Interval timingInterval = intervalForTiming(early, Arg::timing(role));
                         if (Arg::isColdUse(role)) {
@@ -4964,6 +4965,10 @@ private:
                             group.lastDefPoint = early; // Remember where the fixup store to spill is needed
                         group.cluster |= timingInterval;
                         group.block = &block;
+                    };
+                    inst.forEachTmp([&](Tmp& t, Arg::Role role, Bank, Width) ALWAYS_INLINE_LAMBDA {
+                        if (t == tmp) [[unlikely]]
+                            noteMention(t, role);
                     });
                 });
                 if (!group.block) {

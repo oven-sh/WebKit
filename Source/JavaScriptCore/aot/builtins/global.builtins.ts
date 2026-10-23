@@ -121,4 +121,26 @@ export default b.declarations(
       },
     },
   }),
+
+  // JSGlobalObject::init() asks an option before it puts each of these on the global object: useExplicitResourceManagement, useShadowRealm, useSharedArrayBuffer, useTemporal, useWasm.
+  [
+    "AsyncDisposableStack",
+    "DisposableStack",
+    "ShadowRealm",
+    "SharedArrayBuffer",
+    "SuppressedError",
+    "Temporal",
+    "WebAssembly",
+  ].flatMap(path => b.extend(path, { marks: ["MayBeAbsent"] })),
+  // And each of these on its holder: useIteratorSequencing, useJointIteration, useIteratorChunking, useJSPI.
+  [
+    "Iterator.concat",
+    "Iterator.zip",
+    "Iterator.zipKeyed",
+    "Iterator.prototype.chunks",
+    "Iterator.prototype.windows",
+    "WebAssembly.promising",
+    "WebAssembly.Suspending",
+    "WebAssembly.SuspendError",
+  ].flatMap(path => b.extend(path, { marks: ["MayBeAbsent"] })),
 );

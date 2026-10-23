@@ -1261,6 +1261,9 @@ export function checkMutability(model: Pick<TableModel, "builtins">, problems: P
         `${builtin.text} is an object and changes on its own: a read of it answers that object, so it lies there until the program writes. What its holder only inherits is a member of the object that has it`,
       );
     }
+    if (builtin.mutability === "AlwaysLocked" && builtin.marks.includes("MayBeAbsent")) {
+      problems.add(null, `${builtin.text} may be absent and is AlwaysLocked: whoever reads a locked name takes what the table says for what is there`);
+    }
     if (builtin.mutability !== "AlwaysLocked" || holder === null) continue;
     const isLockedByDefault = defaultMutabilityOf(builtin) === "AlwaysLocked";
     if (isLockedByDefault || holder.scope === "Realm") continue;

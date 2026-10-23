@@ -10,12 +10,22 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTPropertyCaches.h"
+#include "AOTRealmTestSupport.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsPropertyKeys.h"
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include <wtf/StackBounds.h>
+
+#if OS(LINUX)
+#include <link.h>
+#include <stdio.h>
+#include <sys/auxv.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace JSC::AOT {
 
@@ -183,9 +193,82 @@ static void testStubsOfFamilyLieSideBySide(LoadedProgram& program)
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<startupTests, programText, body>;
 
+#if OS(LINUX)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+static uintptr_t endOfMappingThatHolds(const void* address)
+{
+    FILE* maps = fopen("/proc/self/maps", "r");
+    AOT_TEST_CHECK(maps);
+    char line[512];
+    uintptr_t result = 0;
+    while (!result && fgets(line, sizeof(line), maps)) {
+        unsigned long begin = 0;
+        unsigned long end = 0;
+        if (sscanf(line, "%lx-%lx", &begin, &end) == 2 && begin <= reinterpret_cast<uintptr_t>(address) && reinterpret_cast<uintptr_t>(address) < end)
+            result = end;
+    }
+    fclose(maps);
+    return result;
+}
+
+// The collector scans the main thread's stack up to this address: too low and it misses the first frames, too high and it reads what is not mapped.
+static void testMainThreadStackEndsAboveItsFirstFrame()
+{
+    char** environment = environ;
+    // Pages below the first frame, whatever the size of a page.
+    char planted[256 * KB] = "/path/that/a/tracer/keeps/below/the/first/frame";
+    bool isMainThread = getpid() == static_cast<pid_t>(syscall(SYS_gettid));
+    if (!isMainThread || reinterpret_cast<char*>(environment) < planted)
+        return;
+    uintptr_t endOfMapping = endOfMappingThatHolds(planted);
+    AOT_TEST_CHECK(endOfMapping && endOfMapping == endOfMappingThatHolds(environment));
+
+    auto isRight = [&](StackBounds bounds) {
+        uintptr_t origin = reinterpret_cast<uintptr_t>(bounds.origin());
+        return origin >= reinterpret_cast<uintptr_t>(environment) && origin <= endOfMapping;
+    };
+    AOT_TEST_CHECK(isRight(StackBounds::currentThreadStackBoundsForEmbedder()));
+
+    char** end = environment;
+    while (*end)
+        ++end;
+    auto* entry = reinterpret_cast<ElfW(auxv_t)*>(end + 1);
+    while (entry->a_type != AT_NULL && entry->a_type != AT_EXECFN)
+        ++entry;
+    if (entry->a_type != AT_EXECFN || entry->a_un.a_val != getauxval(AT_EXECFN))
+        return;
+    auto original = entry->a_un.a_val;
+    entry->a_un.a_val = reinterpret_cast<uintptr_t>(planted);
+    bool isPlanted = getauxval(AT_EXECFN) == reinterpret_cast<uintptr_t>(planted);
+    StackBounds boundsUnderTracer = StackBounds::currentThreadStackBoundsForEmbedder();
+    entry->a_un.a_val = original;
+    AOT_TEST_CHECK(!isPlanted || isRight(boundsUnderTracer));
+}
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#endif
+
+// Without an image the collector keeps upstream's accounts: what a string borrows counts as memory that the heap holds on to, and so decides when the next collection starts.
+static void testBorrowedTextOfStringIsCountedWithoutImage()
+{
+    if (Image::isRegistered())
+        return;
+    static Latin1Character text[MB];
+    memsetSpan(std::span { text }, 'a');
+    Realms realms;
+    VM& vm = realms.vm();
+    Strong<JSString> string(vm, jsString(vm, String(StringImpl::createWithoutCopying(std::span<const Latin1Character> { text }))));
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(vm.heap.extraMemorySize() >= sizeof(text));
+    string.clear();
+}
+
 std::span<const NativeTest> startupTests()
 {
     static constexpr NativeTest tests[] = {
+        { "startup/borrowed-text-of-a-string-is-counted-without-an-image"_s, testBorrowedTextOfStringIsCountedWithoutImage },
+#if OS(LINUX)
+        { "startup/main-thread-stack-ends-above-its-first-frame"_s, testMainThreadStackEndsAboveItsFirstFrame },
+#endif
         { "startup/property-caches-are-created-at-first-use"_s, withProgram<testPropertyCachesAreCreatedAtFirstUse> },
         { "startup/global-object-reports-changes-once-an-answer-depends-on-it"_s, withProgram<testGlobalObjectReportsChangesOnceAnAnswerDependsOnIt> },
         { "startup/stubs-find-their-words-before-first-use"_s, withProgram<testStubsFindTheirWordsBeforeFirstUse> },

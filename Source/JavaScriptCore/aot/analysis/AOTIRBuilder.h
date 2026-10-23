@@ -99,6 +99,12 @@ public:
     };
     ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken, ProvenBranchTargets&&);
     void appendValidationOfTestedValue(ValueID test);
+    // TestingSwitch::FailPredictions: in front of tests whose failing side is right for every value, a branch that goes there now and then without asking them.
+    bool failsPredictions() const;
+    void emitFailureOfPredictions(Target&& whenFailed);
+    BlockID beginPrediction();
+    void endPrediction(BlockID failedUnasked, ProvenBranch&, ValueID tested);
+    void endPrediction(BlockID failedUnasked, BlockID whenFailed);
 
     void emitSwitch(ValueID, Vector<std::pair<int64_t, Target>>&& cases, Target&& otherwise);
     void emitSwitchString(ValueID, Vector<std::pair<StringID, Target>>&& cases, Target&& otherwise);

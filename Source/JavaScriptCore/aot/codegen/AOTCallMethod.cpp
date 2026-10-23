@@ -33,6 +33,10 @@ void FusedAccessEmitter::generateCallMethod(const ValueContext& value)
     std::optional<uint32_t> number = build().identifierNumbering().numberOf(value->key());
     RELEASE_ASSERT(number);
 
+    // The stubs know the key. The site knows what the program calls the method: `a.b.key`.
+    std::optional<ThrowSite> siteThatNamesCallee;
+    if (value->calleeName())
+        siteThatNamesCallee = ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
     CallEmitter& calls = emitter<CallEmitter>();
     ConventionCall call {
         .stub = callMethodById(count),
@@ -43,13 +47,13 @@ void FusedAccessEmitter::generateCallMethod(const ValueContext& value)
     SiteCacheID siteCache = value->siteCache();
     if (!siteCache || value.shape() != CodeShape::Fast) {
         // One site stands for the read and the call. It has the position of the call, which every stack trace taken in the callee shows.
-        define(value, calls.callByConvention(value, call, { .immediate = *number, .isTailCall = value->isDemotedTailCall() }));
+        define(value, calls.callByConvention(value, call, { .immediate = *number, .throwSite = siteThatNamesCallee, .isTailCall = value->isDemotedTailCall() }));
         return;
     }
 
     call.callee = callStub(value, findMethodByIdAtSite(), { receiver.value(), m_out.constInt64(*number), siteCacheAddress(siteCache).value() }, { .origin = value->readOrigin() }).first;
     call.stub = callValue(count);
-    define(value, calls.callByConvention(value, call, { .isTailCall = value->isDemotedTailCall() }));
+    define(value, calls.callByConvention(value, call, { .throwSite = siteThatNamesCallee, .isTailCall = value->isDemotedTailCall() }));
 }
 
 } } } // namespace JSC::AOT::Typed

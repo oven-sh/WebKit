@@ -10,7 +10,6 @@
 #include <JavaScriptCore/AOTRecordTypes.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/MarkedBlockCage.h>
-#include <array>
 #include <optional>
 #include <span>
 #include <wtf/Assertions.h>
@@ -125,16 +124,6 @@ enum class SlotValueKind : uint8_t {
     DeferredClosure,
 };
 
-// The one test that parts a usual value from every marker.
-enum class SlotComparison : uint8_t {
-    None,
-    SignedAtLeast,
-    SignedAtMost,
-    UnsignedAtLeast,
-    Ordered,
-    NonZero,
-};
-
 struct SlotMarkers {
     uint64_t absent;
     uint64_t undefined;
@@ -185,17 +174,12 @@ struct SlotTraits {
     bool hasAbsent { false };
     bool hasUndefined { false };
     bool hasNull { false };
-    SlotComparison ordinary { SlotComparison::None };
     uint64_t absentBits { 0 };
     uint64_t undefinedBits { 0 };
     uint64_t nullBits { 0 };
-    int64_t ordinaryBound { 0 };
-    // Of a slot of integers: what it holds beside its markers.
-    int64_t minInteger { 0 };
-    int64_t maxInteger { 0 };
 };
 
-constexpr SlotTraits declaredTraitsOf(SlotRepresentation representation)
+constexpr SlotTraits traitsOf(SlotRepresentation representation)
 {
     switch (representation) {
     case SlotRepresentation::Uint8:
@@ -243,54 +227,6 @@ constexpr SlotTraits declaredTraitsOf(SlotRepresentation representation)
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
-
-constexpr SlotTraits withDerivedColumns(SlotTraits traits)
-{
-    auto ordinary = [&](SlotComparison comparison, int64_t bound) {
-        traits.ordinary = comparison;
-        traits.ordinaryBound = bound;
-    };
-    switch (traits.valueKind) {
-    case SlotValueKind::SignedInteger:
-    case SlotValueKind::UnsignedInteger: {
-        bool isWide = traits.width == sizeof(int64_t);
-        int64_t count = isWide ? 0 : 1ll << 8 * traits.width;
-        bool isSigned = traits.valueKind == SlotValueKind::SignedInteger;
-        traits.minInteger = isWide ? -maxSlotInteger : !isSigned ? 0 : traits.hasAbsent ? minInlineInt32 : -count / 2;
-        traits.maxInteger = isWide ? maxSlotInteger : isSigned ? count / 2 - 1 : count - 1;
-        if (traits.hasAbsent)
-            isWide ? ordinary(SlotComparison::SignedAtMost, traits.maxInteger) : ordinary(SlotComparison::SignedAtLeast, traits.minInteger);
-        break;
-    }
-    case SlotValueKind::Float:
-    case SlotValueKind::Double:
-        ordinary(SlotComparison::Ordered, 0);
-        break;
-    case SlotValueKind::Boolean:
-    case SlotValueKind::Boxed:
-        if (traits.hasAbsent)
-            ordinary(SlotComparison::NonZero, 0);
-        break;
-    case SlotValueKind::Cell:
-        traits.isNarrowReference ? ordinary(SlotComparison::UnsignedAtLeast, minCell32) : ordinary(SlotComparison::NonZero, 0);
-        break;
-    case SlotValueKind::LiteralString:
-    case SlotValueKind::DeferredClosure:
-        ordinary(SlotComparison::UnsignedAtLeast, minCell32);
-        break;
-    }
-    return traits;
-}
-
-// One row a representation, in memory: whoever asks reads the row.
-inline constexpr auto slotTraits = [] {
-    std::array<SlotTraits, numberOfEnumerators<SlotRepresentation>> rows { };
-    for (SlotRepresentation representation : allMembersOf<SlotRepresentation>)
-        rows[static_cast<unsigned>(representation)] = withDerivedColumns(declaredTraitsOf(representation));
-    return rows;
-}();
-
-constexpr const SlotTraits& traitsOf(SlotRepresentation representation) { return slotTraits[static_cast<unsigned>(representation)]; }
 
 constexpr unsigned widthOf(SlotRepresentation representation) { return traitsOf(representation).width; }
 constexpr bool representsAbsentAsZero(SlotRepresentation representation) { return traitsOf(representation).hasAbsent && !traitsOf(representation).absentBits; }

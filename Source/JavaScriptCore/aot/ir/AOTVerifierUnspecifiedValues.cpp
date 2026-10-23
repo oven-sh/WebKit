@@ -17,6 +17,8 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void FunctionVerifier::verifyUnspecifiedValues()
 {
+    if (m_form != IRForm::Prepared)
+        return;
     UsesOfUnspecifiedValues found = findUsesOfUnspecifiedValues(analyses(), 1, m_inputs.otherFunctionsMayChange ? OtherFunctions::MayChange : OtherFunctions::AreAtRest);
     for (const UseOfUnspecifiedValue& use : found.uses)
         fail(InternalErrorKind::UnspecifiedValueInspected, use.block, use.user, use.operand.index());

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT) && (CPU(X86_64) || CPU(ARM64)) && !OS(WINDOWS)
 
+#include "AOTASANShadowChecks.h"
 #include "AOTCodeGenerator.h"
 #include "AOTCodeRecords.h"
 #include "AOTFunctionCodeGenerator.h"
@@ -789,6 +790,21 @@ private:
         if (operand.hasIndex())
             return functor(operand.baseIndex());
         return functor(operand.address());
+    }
+
+    void checkASANShadow(const MemoryOperand& operand, unsigned size, bool isStore)
+    {
+#if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
+        finishUnit();
+        withAddress(operand, [&](auto address) {
+            emitASANShadowCheck(*m_jit, address, size, isStore);
+        });
+        finishUnit(CodeUnit::Kind::Pinned);
+#else
+        UNUSED_PARAM(operand);
+        UNUSED_PARAM(size);
+        UNUSED_PARAM(isStore);
+#endif
     }
 
     void emitBlock(DirectBlock&);
@@ -3065,6 +3081,11 @@ bool DirectCodeGenerator::writeClobbers(uint32_t written, uint32_t other)
             return true;
         for (uint32_t record = m_homes[written].firstUpsilon; record; record = m_upsilons[record - 1].nextForPhi) {
             const UpsilonRecord& upsilon = m_upsilons[record - 1];
+            bool leadsToPhi = false;
+            for (unsigned index = 0; index < m_blocks[upsilon.block].block->numSuccessors(); ++index)
+                leadsToPhi |= successorOrderOf(m_blocks[upsilon.block], index) == writtenState.block;
+            if (!leadsToPhi)
+                return true;
             if (resolve(upsilon.upsilon->child(0))->index() == m_homes[other].value && written != other) {
                 if (isLiveOut(other, m_blocks[upsilon.block]))
                     return true;
@@ -4002,6 +4023,8 @@ void DirectCodeGenerator::emitIntegerBinary(B3::Value* value)
         GPRReg left = gprFor(plan.left);
         GPRReg result = defineGPR(value, left);
         moveRegister(Reg(left), Reg(result));
+        if (plan.shape == OperandShape::Load)
+            checkASANShadow(operand, isWide ? 8 : 4, false);
         withAddress(operand, [&](auto address) {
             switch (opcode) {
             case B3::Add:
@@ -4204,6 +4227,7 @@ void DirectCodeGenerator::emitLoad(B3::Value* value)
         operand = MemoryOperand { address };
     }
 #endif
+    checkASANShadow(operand, value->as<B3::MemoryValue>()->accessByteSize(), false);
     Label begin = jit.labelIgnoringWatchpoints();
     withAddress(operand, [&](auto address) {
         switch (value->opcode()) {
@@ -4266,6 +4290,7 @@ void DirectCodeGenerator::emitStore(B3::Value* value)
         int64_t constant = 0;
         constantOf(stored, constant);
         TrustedImm32 immediate(static_cast<int32_t>(constant));
+        checkASANShadow(operand, memory->accessByteSize(), true);
         withAddress(operand, [&](auto address) {
             switch (opcode) {
             case B3::Store8:
@@ -4286,6 +4311,7 @@ void DirectCodeGenerator::emitStore(B3::Value* value)
         return;
     }
     Reg source = registerFor(stored);
+    checkASANShadow(operand, memory->accessByteSize(), true);
     withAddress(operand, [&](auto address) {
         switch (opcode) {
         case B3::Store8:
@@ -4359,6 +4385,7 @@ MacroAssembler::Jump DirectCodeGenerator::branchOnTest(const B3::Value* left, co
 #if CPU(X86_64)
         MemoryOperand operand = operandForLoad(plan.load);
         TrustedImm32 mask(static_cast<int32_t>(plan.immediate));
+        checkASANShadow(operand, plan.loadWidth / 8, false);
         return withAddress(operand, [&](auto address) {
             switch (plan.loadWidth) {
             case 8:
@@ -4430,6 +4457,7 @@ MacroAssembler::Jump DirectCodeGenerator::branchOnComparison(const B3::Value* co
         MemoryOperand operand = operandForLoad(plan.load);
         if (plan.shape == OperandShape::Immediate) {
             TrustedImm32 immediate(static_cast<int32_t>(plan.immediate));
+            checkASANShadow(operand, plan.loadWidth / 8, false);
             if (operand.hasIndex() && plan.loadWidth == 64) {
                 GPRReg scratch = jit.scratchRegister();
                 jit.load64(operand.baseIndex(), scratch);
@@ -4449,6 +4477,7 @@ MacroAssembler::Jump DirectCodeGenerator::branchOnComparison(const B3::Value* co
         GPRReg other = gprFor(plan.loadIsLeft ? plan.right : plan.left);
         if (!plan.loadIsLeft)
             condition = MacroAssembler::commute(condition);
+        checkASANShadow(operand, isWide ? 8 : 4, false);
         return withAddress(operand, [&](auto address) {
             return isWide ? jit.branch64(condition, address, other) : jit.branch32(condition, address, other);
         });
@@ -4484,7 +4513,9 @@ MacroAssembler::Jump DirectCodeGenerator::branchOn(const B3::Value* condition, b
         if (B3::isLoad(condition->opcode())) {
 #if CPU(X86_64)
             MacroAssembler::ResultCondition result = whenTrue ? MacroAssembler::NonZero : MacroAssembler::Zero;
-            return withAddress(operandForLoad(condition), [&](auto address) {
+            MemoryOperand operand = operandForLoad(condition);
+            checkASANShadow(operand, condition->as<B3::MemoryValue>()->accessByteSize(), false);
+            return withAddress(operand, [&](auto address) {
                 switch (condition->opcode()) {
                 case B3::Load8Z:
                     return m_jit->branchTest8(result, address);

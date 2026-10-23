@@ -19,8 +19,9 @@ ALWAYS_INLINE bool throwOutOfMemoryErrorIfOwed(VM& vm, JSGlobalObject* globalObj
     if (!vm.traps().needsOutOfMemoryError()) [[likely]]
         return false;
     vm.traps().setNeedsOutOfMemoryError(false);
+    String limit = vm.heap.cage().describeExhaustedLimit();
     vm.heap.cage().didThrowOutOfMemoryError();
-    throwOutOfMemoryError(globalObject, scope, describeLimitOfMarkedBlockCage());
+    throwOutOfMemoryError(globalObject, scope, limit);
     return true;
 }
 

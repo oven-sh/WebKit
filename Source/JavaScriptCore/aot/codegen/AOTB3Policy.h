@@ -30,6 +30,7 @@ struct FunctionBackEndTraits {
     bool readsCallerFrame { false };
     bool isAsync { false };
     bool rejectsOnThrow { false };
+    bool hasHandlers { false };
     bool isCold { false };
     bool runsOnce { false };
     bool isHot { false };

@@ -541,6 +541,7 @@ ValueID ArmDispatcher::emitClassArm(const IterationArm& arm, ValueID value, Bloc
 
     if (!arm.namesAreProven) {
         RELEASE_ASSERT(protocolEntry);
+        m_builder.emitFailureOfPredictions(Target { protocolEntry, { chooseArgumentOfProtocolEntry(m_pass, protocolEntry, subject, value) }, { } });
         ValueID test = m_builder.append(makeNamesTest(arm, patternRead, subject));
         IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
         m_builder.moveToEndOf(branch.notTaken);

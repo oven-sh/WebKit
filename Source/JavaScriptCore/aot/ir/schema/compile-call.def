@@ -116,7 +116,7 @@ enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FlowFixpoint FunctionsGetPastEntry }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals PassCodeBytes }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime FailPredictions }
 enum Sabotage {
     None
     StackNamesNoInnerCell NarrowReferenceOnStackNamesNoInnerCell InnerObjectIsVisitedWithoutItsFields InnerArrayIsVisitedWithoutItsElements InnerCellVisitedInPlaceStaysWhite
@@ -130,9 +130,10 @@ flags ExcludedCode { EvaluatedText FunctionSource }
 flags OutputOptions { Obfuscate }
 record SwitchRange abi { firstID: UInt32 count: UInt32 }
 record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }
+record PredictionFailureWords abi { period: UInt32 seed: UInt32 }
 record BisectionSwitches abi {
     disabledFlowResults: UInt64 disabledPasses: UInt64[4] disabledSelectionRules: UInt64 disabledBackEndSwitches: UInt64 switchRange: SwitchRange
-    droppedGuard: DroppedGuardWords
+    droppedGuard: DroppedGuardWords predictionFailure: PredictionFailureWords
 }
 record TargetOptions abi { features: UInt64 architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {

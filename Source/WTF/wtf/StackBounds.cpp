@@ -153,7 +153,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 static void* endOfMainThreadStack()
 {
     auto* path = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
-    if (!path || path < currentStackPointer())
+    // The pointers to the environment lie above every frame and below the strings, of which the path is the last; execve() takes 6 MB of strings at the most.
+    // A path that lies elsewhere was written into the auxiliary vector by a tracer or an emulator (PRoot keeps it below the first frame) and says nothing about the mapping.
+    auto* environment = reinterpret_cast<const char*>(environ);
+    if (!path || environment < currentStackPointer() || path < environment || static_cast<size_t>(path - environment) > 8 * MB)
         return nullptr;
     uintptr_t pageSize = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
     uintptr_t end = reinterpret_cast<uintptr_t>(path) + strlen(path) + 1;

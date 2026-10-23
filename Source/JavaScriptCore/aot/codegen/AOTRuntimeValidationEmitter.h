@@ -47,6 +47,7 @@ public:
     void generateValidateLookup(const ValueContext&);
     void generateValidateFirstRun(const ValueContext&);
     void generateValidateSameValue(const ValueContext&);
+    void generateShouldFailPrediction(const ValueContext&);
     void reportUnreachable(ValueID);
     void checkSlotAccessWithoutGuard(const OperationContext&);
     void checkAssumedType(const ValueContext&);

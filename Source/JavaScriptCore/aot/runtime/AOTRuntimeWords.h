@@ -36,6 +36,8 @@ struct ExceptionWords {
     void* stackPointerOfHandler;
     // One more than the identifier number of the method that FindMethodById read, from there to the call of what it read, if that is not a cell. Zero otherwise.
     uint32_t nameOfUncallableMethod;
+    // Not about exceptions: it fills what was padding, so that no other word moves.
+    uint32_t predictionFailureState;
 };
 
 // What the last lookup of a bound name of the global scope found.

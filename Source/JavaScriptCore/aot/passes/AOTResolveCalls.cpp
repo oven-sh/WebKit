@@ -515,8 +515,10 @@ void CallResolver::branchOnConditions(std::span<const MemberCondition> condition
         return;
 
     BlockFrequency frequency = m_function.at(m_builder.currentBlock()).frequency;
+    BlockID failedUnasked = m_builder.beginPrediction();
     ValueID areUnchanged = m_expansion.append(makeConditionsTest(m_context.types, conditions));
     IRBuilder::BranchBlocks branch = m_builder.emitBranch(areUnchanged, frequency, rarerOf(frequency, BlockFrequency::Unlikely));
+    m_builder.endPrediction(failedUnasked, branch.notTaken);
     m_builder.moveToEndOf(branch.notTaken);
     m_expansion.finishArm(m_expansion.appendOriginal(original));
     m_builder.moveToEndOf(branch.taken);

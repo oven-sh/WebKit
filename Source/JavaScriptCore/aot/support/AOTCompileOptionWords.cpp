@@ -471,14 +471,35 @@ static std::optional<String> applySabotage(Wire::CompileOptions& options, String
     return std::nullopt;
 }
 
+static std::optional<String> applyNumbersOfFailPredictions(Wire::CompileOptions& options, std::optional<StringView> numbers)
+{
+    auto [periodText, seedText] = splitAtFirst(numbers.value_or("1"_s), ':');
+    auto period = parseNumber<uint16_t>(periodText);
+    if (!period)
+        return notANumberSentence(periodText);
+    if (!*period)
+        return "a prediction fails one time in n, and n is at least 1"_s;
+    auto seed = parseNumber<uint16_t>(seedText.value_or("0"_s));
+    if (!seed)
+        return notANumberSentence(*seedText);
+    options.bisection.predictionFailure = { .period = *period, .seed = *seed };
+    return std::nullopt;
+}
+
 static std::optional<String> applyTesting(Wire::CompileOptions& options, StringView value)
 {
-    return forEachListedName("testing"_s, value, [&](StringView name) -> std::optional<String> {
+    return forEachListedName("testing"_s, value, [&](StringView written) -> std::optional<String> {
+        auto [name, numbers] = splitAtFirst(written, ':');
         auto testingSwitch = findMember<Wire::TestingSwitch>(name);
         if (!testingSwitch)
             return unknownNameSentence("testing switch"_s, name);
         if (*testingSwitch == Wire::TestingSwitch::DropGuard)
             return "use drop-guard=<Opcode>:<n>"_s;
+        if (*testingSwitch == Wire::TestingSwitch::FailPredictions) {
+            if (auto sentence = applyNumbersOfFailPredictions(options, numbers))
+                return sentence;
+        } else if (numbers)
+            return makeString(name, " takes no number"_s);
         addFlag(options.testing, *testingSwitch);
         return std::nullopt;
     });

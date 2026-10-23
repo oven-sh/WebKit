@@ -316,6 +316,8 @@ BuiltinLocationAnswer builtinLocationAnswerOf(const PropertyAccessContext& conte
     if (!member)
         return BuiltinLocationAnswer::Unknown;
     const BuiltinTable& table = context.program.builtins();
+    if (table.has(BuiltinMark::MayBeAbsent, member))
+        return BuiltinLocationAnswer::Unknown;
     if (table.at(member).mutability == BuiltinMutability::AlwaysLocked || table.isLocationOfLockedObject(member))
         return BuiltinLocationAnswer::Constant;
     if (context.flow && context.flow->builtinLocation(member) == BuiltinLocationState::Constant)

@@ -128,17 +128,20 @@ static bool comesFrom(const Function& function, ValueID value, ValueID source)
     return value == source;
 }
 
-static bool isOnlyWalked(FunctionPassContext& context, ValueID iterable, UnbuiltObject& object)
+// A second walk of an iterator goes on where the first one ended. A second walk of the array that stands in for it would begin anew.
+static bool isWalkedOnce(FunctionPassContext& context, ValueID iterator, UnbuiltObject& object)
 {
-    return forEachUseThroughCasts(context, iterable, object.valuesLeftWithoutUsers, [&](const Use& use, ValueID) {
-        return context.function.at(use.user).opcode == Opcode::IteratorOpen;
+    const UseLists& useLists = context.analyses.useLists();
+    unsigned numberOfWalks = 0;
+    return forEachUseThroughCasts(context, iterator, object.valuesLeftWithoutUsers, [&](const Use& use, ValueID) {
+        return context.function.at(use.user).opcode == Opcode::IteratorOpen && useLists.blockOf(use.user) == useLists.blockOf(iterator) && !numberOfWalks++;
     });
 }
 
 static bool addCall(FunctionPassContext& context, const CallOfMember& call, UnbuiltObject& object)
 {
     object.calls.append(call);
-    return !walksPairs(call.member) || isOnlyWalked(context, call.call, object);
+    return !walksPairs(call.member) || isWalkedOnce(context, call.call, object);
 }
 
 static bool collectCallsOfMember(FunctionPassContext& context, ValueID readOfMember, BuiltinID member, ValueID searchParams, UnbuiltObject& object)

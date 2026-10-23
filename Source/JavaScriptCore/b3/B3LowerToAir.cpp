@@ -5654,7 +5654,7 @@ private:
                     append(VectorExtractLaneInt64, Arg::imm(1), v, upper);
                     append(Rshift64, m_ecx, lower);
                     append(Rshift64, m_ecx, upper);
-                    append(VectorReplaceLaneInt64, Arg::imm(0), lower, result);
+                    append(VectorSplatInt64, lower, result);
                     append(VectorReplaceLaneInt64, Arg::imm(1), upper, result);
                     return;
                 }

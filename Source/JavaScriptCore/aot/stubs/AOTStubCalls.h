@@ -80,7 +80,7 @@ public:
 
     // Returns the index of the call in CodeBody::returnSites. Under validation no label beside the call is its address or its return address.
     uint32_t call(CCallHelpers&, StubKey, OptionalIndex site, const KeptRegisterCheck* = nullptr);
-    void call(CCallHelpers&, StubKey, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* = nullptr);
+    uint32_t call(CCallHelpers&, StubKey, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* = nullptr);
     void call(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves&);
     void callForTwoReads(CCallHelpers&, StubKey, OptionalIndex firstRead, OptionalIndex secondRead);
     void tailCall(CCallHelpers&, StubKey);

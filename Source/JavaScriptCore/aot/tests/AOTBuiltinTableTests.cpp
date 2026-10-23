@@ -118,7 +118,8 @@ static void testMarks()
     AOT_TEST_CHECK(table().has(BuiltinMark::EvaluatesTextInGlobalScope, Builtins::ShadowRealmPrototypeEvaluate) && !table().has(BuiltinMark::EvaluatesTextInGlobalScope, Builtins::ArrayPrototypePush));
     AOT_TEST_CHECK(table().has(BuiltinMark::IsSpy, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::HoldsLoader, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::IsSpy, BuiltinID()));
     AOT_TEST_CHECK(table().marked(BuiltinMark::IsNotEnumerable).size() == 2 && table().has(BuiltinMark::IsNotEnumerable, hostBuiltin("Console_stdout"_s)));
-    for (BuiltinMark mark : { BuiltinMark::IsAddedByOption, BuiltinMark::EvaluatesTextInGlobalScope, BuiltinMark::HoldsLoader, BuiltinMark::IsSpy, BuiltinMark::IsNotEnumerable }) {
+    AOT_TEST_CHECK(table().has(BuiltinMark::MayBeAbsent, Builtins::ShadowRealm) && !table().has(BuiltinMark::MayBeAbsent, Builtins::ArrayBuffer));
+    for (BuiltinMark mark : { BuiltinMark::IsAddedByOption, BuiltinMark::MayBeAbsent, BuiltinMark::EvaluatesTextInGlobalScope, BuiltinMark::HoldsLoader, BuiltinMark::IsSpy, BuiltinMark::IsNotEnumerable }) {
         std::span<const BuiltinMarkedEntry> marked = table().marked(mark);
         AOT_TEST_CHECK(!marked.empty() && std::ranges::is_sorted(marked, { }, &BuiltinMarkedEntry::builtin));
         for (const BuiltinMarkedEntry& entry : marked)

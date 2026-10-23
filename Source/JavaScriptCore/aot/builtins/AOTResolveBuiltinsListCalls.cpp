@@ -230,8 +230,10 @@ static void expandTestedListCall(SiteExpansion& expansion, const ListCallSite& l
         test.setOperand(testedOperandIndex, iterable);
         bool narrowsIterable = provesForever(provesOf(test.opcode));
 
+        BlockID failedUnasked = builder.beginPrediction();
         ValueID condition = builder.append(WTF::move(test));
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(condition, testedOperandIndex, expansion.frequency(), BlockFrequency::Unlikely);
+        builder.endPrediction(failedUnasked, branch, iterable);
         builder.moveToEndOf(branch.notTaken);
         expansion.finishArm(appendGenericCall());
         builder.moveToEndOf(branch.taken);

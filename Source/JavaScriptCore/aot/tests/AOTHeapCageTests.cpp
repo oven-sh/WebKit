@@ -231,6 +231,60 @@ static void testExhaustionReturnsNull()
     AOT_TEST_CHECK(range.tryAllocate(MB));
 }
 
+static void testRangeGrowsBySegments()
+{
+    constexpr size_t size = GB;
+    constexpr size_t initialSegmentSize = 64 * MB;
+    ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
+        .name = "Growable range"_s,
+        .size = size,
+        .minSize = initialSegmentSize,
+        .initialSegmentSize = initialSegmentSize,
+        .alignment = GB,
+        .unusedPrefixSize = blockSize,
+        .placement = ReservedRangeHeap::Placement::RandomWindow,
+        .initialAccess = ReservedRangeHeap::InitialAccess::None,
+    });
+    AOT_TEST_CHECK(range && !(range->start() % GB));
+    if (range->size() == range->initialSegmentSize())
+        return;
+    AOT_TEST_CHECK(range->size() == size && range->initialSegmentSize() == initialSegmentSize && range->reservedSize() == initialSegmentSize);
+
+    Vector<void*> blocks;
+    while (blocks.size() * blockSize < 3 * initialSegmentSize) {
+        void* block = range->tryAllocateAligned(blockSize, blockSize);
+        AOT_TEST_CHECK(block && isInside(*range, block, blockSize) && !(std::bit_cast<uintptr_t>(block) % blockSize));
+        fill(block, 64, static_cast<uint8_t>(blocks.size()));
+        blocks.append(block);
+    }
+    size_t reservedSize = range->reservedSize();
+    AOT_TEST_CHECK(reservedSize > 3 * initialSegmentSize && reservedSize <= size);
+
+    void* large = range->tryAllocate(100 * MB);
+    AOT_TEST_CHECK(large && isInside(*range, large, 100 * MB));
+    fill(large, 64, 7);
+    large = range->tryReallocate(large, 200 * MB);
+    AOT_TEST_CHECK(large && isInside(*range, large, 200 * MB) && isFilled(large, 64, 7));
+    range->free(large);
+
+    for (size_t index = 0; index < blocks.size(); ++index)
+        AOT_TEST_CHECK(isFilled(blocks[index], 64, static_cast<uint8_t>(index)));
+    for (void* block : blocks)
+        range->free(block);
+    range->releaseFreeMemory();
+
+    reservedSize = range->reservedSize();
+    for (size_t index = 0; index < blocks.size(); ++index)
+        blocks[index] = range->tryAllocateAligned(blockSize, blockSize);
+    AOT_TEST_CHECK(!blocks.contains(nullptr) && range->reservedSize() == reservedSize);
+
+    AOT_TEST_CHECK(!range->tryAllocate(size));
+    size_t count = 0;
+    while (range->tryAllocate(MB))
+        ++count;
+    AOT_TEST_CHECK(count < size / MB && range->reservedSize() <= size);
+}
+
 static void testEncodeDecodeRoundTrip()
 {
     static_assert(MarkedBlockCage::shift == 3 && MarkedBlockCage::maxSize == 32 * GB && MarkedBlockCage::minIndex == 1u << 21);
@@ -646,6 +700,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/free-then-allocate-again"_s, testFreeThenAllocateAgain },
         { "heap-cage/reserved-range/takes-what-the-budget-leaves"_s, testRangeTakesWhatBudgetLeaves },
         { "heap-cage/reserved-range/exhaustion-returns-null"_s, testExhaustionReturnsNull },
+        { "heap-cage/reserved-range/grows-by-segments"_s, testRangeGrowsBySegments },
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },
         { "heap-cage/cage/off-without-compiled-code"_s, testCageIsOffWithoutCompiledCode },

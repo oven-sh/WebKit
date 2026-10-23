@@ -1,0 +1,23 @@
+# One more branch in front of the tests that PlaceTypeTests places, to where they lead when they fail
+# FORM: Prepared
+# OPTIONS: testing=FailPredictions:7
+# RUN: pass PlaceTypeTests VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="mulOfExpectedNumbers" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ number, v1: anything ~ number):
+    v2 = Mul v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="mulOfExpectedNumbers"
+# CHECK-NEXT: b0(v0: anything ~ number, v1: anything ~ number):
+# CHECK-NEXT: [[fails]]: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch [[fails]] -> taken [[copy]](), notTaken [[tests]]()
+# CHECK: [[copy]]() frequency=Unlikely:
+# CHECK-NEXT: = Mul v0, v1
+# CHECK: [[tests]]():
+# CHECK-NEXT: [[first]]:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[first]] -> taken [[next]](| 0), notTaken [[copy]]()
+# CHECK: [[second]]:{{*}}= TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[second]] -> taken {{*}}(| 0), notTaken [[copy]]()

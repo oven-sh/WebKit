@@ -31,9 +31,10 @@ namespace JSC { namespace AOT {
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
 namespace {
 
-struct ShadowCheck {
-    static constexpr int32_t shadowOffset = 0x7fff8000;
+constexpr int32_t shadowOffset = 0x7fff8000;
+constexpr int32_t redZoneSize = 128;
 
+struct ShadowCheck {
     void generate(CCallHelpers&, const B3::StackmapGenerationParams&) const;
     void generateLatePath(CCallHelpers&, GPRReg base, GPRReg shadow, GPRReg last, CCallHelpers::Label done) const;
 
@@ -50,6 +51,16 @@ static_assert(FaultSite::reach <= static_cast<uintptr_t>(std::numeric_limits<int
 static bool isFrameAddress(const B3::Value* pointer)
 {
     return pointer->opcode() == B3::SlotBase || pointer->opcode() == B3::FramePointer;
+}
+
+static void emitReport(CCallHelpers& jit, unsigned size, bool isStore)
+{
+    jit.move(CCallHelpers::TrustedImm32(size | isStore << 8), GPRInfo::argumentGPR2);
+    jit.andPtr(CCallHelpers::TrustedImm32(-16), CCallHelpers::stackPointerRegister);
+    jit.move(instanceGPR, GPRInfo::argumentGPR0);
+    jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), GPRInfo::argumentGPR3);
+    jit.call(CCallHelpers::Address(GPRInfo::argumentGPR3, offsetInRuntimeTable(Entry::operationAOTReportPoisonedAccess)), OperationPtrTag);
+    jit.breakpoint();
 }
 
 void ShadowCheck::generate(CCallHelpers& jit, const B3::StackmapGenerationParams& params) const
@@ -83,12 +94,70 @@ void ShadowCheck::generateLatePath(CCallHelpers& jit, GPRReg base, GPRReg shadow
         jit.branch32(CCallHelpers::LessThan, last, shadow).linkTo(done, &jit);
     }
     jit.addPtr(CCallHelpers::TrustedImm32(offset), base, GPRInfo::argumentGPR1);
-    jit.move(CCallHelpers::TrustedImm32(size | isStore << 8), GPRInfo::argumentGPR2);
-    jit.andPtr(CCallHelpers::TrustedImm32(-16), CCallHelpers::stackPointerRegister);
-    jit.move(instanceGPR, GPRInfo::argumentGPR0);
-    jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), GPRInfo::argumentGPR3);
-    jit.call(CCallHelpers::Address(GPRInfo::argumentGPR3, offsetInRuntimeTable(Entry::operationAOTReportPoisonedAccess)), OperationPtrTag);
-    jit.breakpoint();
+    emitReport(jit, size, isStore);
+}
+
+static void emitEffectiveAddress(CCallHelpers& jit, CCallHelpers::Address address, GPRReg result)
+{
+    jit.addPtr(CCallHelpers::TrustedImm32(address.offset), address.base, result);
+}
+
+static void emitEffectiveAddress(CCallHelpers& jit, CCallHelpers::BaseIndex address, GPRReg result)
+{
+    jit.getEffectiveAddress(address, result);
+}
+
+static GPRReg scratchOtherThan(GPRReg first, GPRReg second, GPRReg third)
+{
+    for (GPRReg candidate : { GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2, GPRInfo::regT3 }) {
+        if (candidate != first && candidate != second && candidate != third)
+            return candidate;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static void pushFlags(CCallHelpers& jit) { jit.m_assembler.buffer().putByte(static_cast<int8_t>(0x9c)); }
+static void popFlags(CCallHelpers& jit) { jit.m_assembler.buffer().putByte(static_cast<int8_t>(0x9d)); }
+
+template<typename AddressType>
+static void emitStandaloneCheck(CCallHelpers& jit, AddressType address, GPRReg index, unsigned size, bool isStore)
+{
+    if (address.base == CCallHelpers::stackPointerRegister || address.base == CCallHelpers::framePointerRegister)
+        return;
+    if (size > 8) {
+        RELEASE_ASSERT(!(size % 8));
+        for (unsigned offset = 0; offset < size; offset += 8)
+            emitStandaloneCheck(jit, address.withOffset(offset), index, 8, isStore);
+        return;
+    }
+
+    GPRReg shadow = scratchOtherThan(address.base, index, InvalidGPRReg);
+    GPRReg last = scratchOtherThan(address.base, index, shadow);
+    jit.addPtrNoFlags(CCallHelpers::TrustedImm32(-redZoneSize), CCallHelpers::stackPointerRegister);
+    pushFlags(jit);
+    jit.push(shadow);
+    emitEffectiveAddress(jit, address, shadow);
+    jit.urshiftPtr(CCallHelpers::TrustedImm32(3), shadow);
+    CCallHelpers::Jump isAddressable = jit.branchTest8(CCallHelpers::Zero, CCallHelpers::Address(shadow, shadowOffset));
+    CCallHelpers::Jump isPartiallyAddressable;
+    if (size < 8) {
+        jit.push(last);
+        jit.load8SignedExtendTo32(CCallHelpers::Address(shadow, shadowOffset), shadow);
+        emitEffectiveAddress(jit, address, last);
+        jit.and32(CCallHelpers::TrustedImm32(7), last);
+        jit.add32(CCallHelpers::TrustedImm32(size - 1), last);
+        isPartiallyAddressable = jit.branch32(CCallHelpers::LessThan, last, shadow);
+    }
+    emitEffectiveAddress(jit, address, GPRInfo::argumentGPR1);
+    emitReport(jit, size, isStore);
+    if (size < 8) {
+        isPartiallyAddressable.link(&jit);
+        jit.pop(last);
+    }
+    isAddressable.link(&jit);
+    jit.pop(shadow);
+    popFlags(jit);
+    jit.addPtrNoFlags(CCallHelpers::TrustedImm32(redZoneSize), CCallHelpers::stackPointerRegister);
 }
 
 static bool insertShadowChecks(B3::Procedure& proc)
@@ -119,6 +188,16 @@ static bool insertShadowChecks(B3::Procedure& proc)
         insertionSet.execute(block);
     }
     return changed;
+}
+
+void emitASANShadowCheck(CCallHelpers& jit, CCallHelpers::Address address, unsigned size, bool isStore)
+{
+    emitStandaloneCheck(jit, address, InvalidGPRReg, size, isStore);
+}
+
+void emitASANShadowCheck(CCallHelpers& jit, CCallHelpers::BaseIndex address, unsigned size, bool isStore)
+{
+    emitStandaloneCheck(jit, address, address.index, size, isStore);
 }
 #endif
 

@@ -14,6 +14,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
@@ -67,7 +68,7 @@ public:
     void keepReserveOnceHalfFull();
     bool releaseReserve();
     bool releaseLastReserve();
-    void didThrowOutOfMemoryError() { m_hasReleasedReserve = false; }
+    JS_EXPORT_PRIVATE void didThrowOutOfMemoryError();
     size_t reserveSize() const;
 
     struct ReservationFailure {
@@ -76,7 +77,10 @@ public:
     };
     JS_EXPORT_PRIVATE static ReservationFailure reservationFailure();
 
-    static void logExhaustion();
+    enum class ExhaustedHeap : bool { Cells, Structures };
+    static void logExhaustion(ExhaustedHeap);
+    void setExhaustedHeap(ExhaustedHeap exhaustedHeap) { m_exhaustedHeap = exhaustedHeap; }
+    JS_EXPORT_PRIVATE String describeExhaustedLimit() const;
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
 
@@ -94,6 +98,7 @@ private:
     size_t m_size { 0 };
     bool m_sharesRange { false };
     bool m_hasReleasedReserve { false };
+    ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
     Vector<void*> m_reserve;
     std::atomic<uintptr_t> m_lowestAllocation { std::numeric_limits<uintptr_t>::max() };
     std::atomic<uintptr_t> m_endOfHighestAllocation { 0 };

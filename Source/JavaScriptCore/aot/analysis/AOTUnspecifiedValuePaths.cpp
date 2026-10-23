@@ -188,9 +188,17 @@ private:
 struct RemainingKinds {
     uint16_t primitives { 0 };
     bool mayBeObject { false };
+    // An object may leave its layout between two tests, and never its built-in class.
+    bool isObjectOfBuiltinClassesOnly { false };
+    const Type* type { nullptr };
 
     bool mayPass(const Type& tested) const { return (mayBeObject && tested.hasObjects()) || primitives & primitivesThatMayPass(tested); }
-    bool mayFail(const Type& tested) const { return mayBeObject || primitives & ~primitivesThatAlwaysPass(tested); }
+    bool mayFail(const Type& tested, const Program& program) const
+    {
+        if (primitives & ~primitivesThatAlwaysPass(tested))
+            return true;
+        return mayBeObject && !(isObjectOfBuiltinClassesOnly && type->withOnlyObjects().isSubsetOf(tested, program));
+    }
     bool isUndefinedOrNull() const { return !mayBeObject && !(primitives & ~Primitive::UndefinedOrNull); }
 
     static uint16_t primitivesThatMayPass(const Type& tested)
@@ -290,10 +298,11 @@ std::optional<RemainingKinds> Folder::remainingKindsOf(const Facts& facts, Value
     if (!m_analyses)
         return std::nullopt;
     ValueID identity = m_analyses->identityOf(id);
-    const Type& type = m_program.typeOf(m_function, identity);
+    const Type& type = m_program.typeOf(m_function, id);
     if (!type.isJavaScriptValue())
         return std::nullopt;
-    RemainingKinds remaining { type.primitives, type.hasObjects() };
+    bool hasBuiltinClassesOnly = !type.anyObject && !type.anyFunction && !type.layouts && type.functions.isEmpty() && type.builtins.isEmpty();
+    RemainingKinds remaining { type.primitives, type.hasObjects(), hasBuiltinClassesOnly, &type };
     bool isTested = false;
     facts.forEachTestOf(identity, [&](TypeID testedType, const Integers& outcome) {
         const Type& tested = m_program.at(testedType);
@@ -392,7 +401,7 @@ std::optional<Integers> Folder::fold(const Facts& facts, const Value& value, uns
         }
         if (std::optional<RemainingKinds> remaining = remainingKindsOf(facts, value.operand(0))) {
             const Type& tested = m_program.at(value.testedType());
-            if (remaining->mayPass(tested) != remaining->mayFail(tested))
+            if (remaining->mayPass(tested) != remaining->mayFail(tested, m_program))
                 return Integers(remaining->mayPass(tested));
         }
         return std::nullopt;
@@ -631,6 +640,8 @@ void MergingWalker::walkBlock(BlockID blockID, Facts&& facts, MarkedValues&& mar
             listUsesBy(marked, blockID, id, value);
         if (endsPath(facts, value))
             return;
+        if (value.opcode == Opcode::RequireObjectCoercible)
+            facts.set(m_analyses.identityOf(id), TypeTable::nullish, Integers(0));
         facts.remove(id);
         if (Folder::canFold(value.opcode)) {
             if (std::optional<Integers> integers = m_folder.fold(facts, value))

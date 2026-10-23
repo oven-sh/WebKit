@@ -12,6 +12,7 @@
 #include "Options.h"
 #include "OwedOutOfMemoryError.h"
 #include "ReservedRangeHeap.h"
+#include "StructureAlignedMemoryAllocator.h"
 #include <mutex>
 #include <optional>
 #include <wtf/CryptographicallyRandomNumber.h>
@@ -56,6 +57,7 @@ static size_t s_totalReservedSize WTF_GUARDED_BY_LOCK(s_poolLock);
 static std::once_flag s_initializeOnce;
 static std::optional<MarkedBlockCage::Error> s_initializationError;
 static MarkedBlockCage::ReservationFailure s_reservationFailure;
+static bool s_isGrowable;
 
 #if ENABLE(AOT)
 static void makeEmptyExtensionReadable(uintptr_t start)
@@ -77,7 +79,7 @@ static size_t remainingAddressSpace() WTF_REQUIRES_LOCK(s_poolLock)
     return budget > s_totalReservedSize ? budget - s_totalReservedSize : 0;
 }
 
-static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t randomPrefixRange) WTF_REQUIRES_LOCK(s_poolLock)
+static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t randomPrefixRange, size_t initialSegmentSize = 0) WTF_REQUIRES_LOCK(s_poolLock)
 {
     RELEASE_ASSERT(minSize >= smallestUsableSize && minSize <= size, minSize, size);
     RELEASE_ASSERT(randomPrefixRange >= randomPrefixGranule && unusedPrefixSize + randomPrefixRange < minSize, randomPrefixRange, minSize);
@@ -93,6 +95,7 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
         .name = "Cell Cage"_s,
         .size = size,
         .minSize = minSize,
+        .initialSegmentSize = initialSegmentSize,
         .alignment = MarkedBlockCage::maxSize,
         .unusedPrefixSize = prefixSize,
         .addressSpaceBudget = remaining,
@@ -104,7 +107,7 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
         return nullptr;
 
     RELEASE_ASSERT(!(range->start() & (MarkedBlockCage::maxSize - 1)), range->start(), range->size());
-    s_totalReservedSize += range->size();
+    s_totalReservedSize += range->reservedSize();
 #if ENABLE(AOT)
     makeEmptyExtensionReadable(range->start());
 #endif
@@ -129,13 +132,18 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
             g_jscConfig.markedBlockCageSize = size;
             return;
         }
-        s_firstRange = tryCreateRange(size, smallestUsableSize, std::max(size >> maxHalvingsOfFirstRange, smallestUsableSize) / randomPrefixDivisor);
+        size_t randomPrefixRange = std::max(size >> maxHalvingsOfFirstRange, smallestUsableSize) / randomPrefixDivisor;
+        if (hasAddressSpaceLimit())
+            s_firstRange = tryCreateRange(std::clamp(availableAddressSpace() / MB * MB, smallestUsableSize, size), smallestUsableSize, randomPrefixRange, initialCageSegmentSize(smallestUsableSize));
+        else
+            s_firstRange = tryCreateRange(size, smallestUsableSize, randomPrefixRange);
         if (!s_firstRange) {
             s_initializationError = Error::ReservationFailed;
             s_reservationFailure = { std::min(size, remainingAddressSpace()), smallestUsableSize };
             return;
         }
         s_freeRanges->append(s_firstRange);
+        s_isGrowable = s_firstRange->size() > s_firstRange->initialSegmentSize();
         g_jscConfig.markedBlockCageSize = s_firstRange->size();
     });
     if (s_initializationError)
@@ -154,6 +162,8 @@ MarkedBlockCage::MarkedBlockCage()
 
     if (!s_freeRanges->isEmpty())
         m_range = s_freeRanges->takeLast();
+    else if (s_isGrowable)
+        m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, smallestUsableSize, smallestUsableSize / randomPrefixDivisor, smallestUsableSize);
     else
         m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize / randomPrefixDivisor);
     if (!m_range) {
@@ -220,8 +230,8 @@ void MarkedBlockCage::keepReserveOnceHalfFull()
 #if CPU(X86_64) || CPU(ARM64)
     if (!m_range || m_hasReleasedReserve)
         return;
-    size_t size = std::clamp(m_size / reserveDivisor, smallestReserveSize, largestReserveSize);
-    if (reserveSize() >= size || m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_size / 2)
+    size_t size = std::clamp(m_range->reservedSize() / reserveDivisor, smallestReserveSize, largestReserveSize);
+    if (reserveSize() >= size || m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_range->initialSegmentSize() / 2)
         return;
     if (void* chunk = m_range->tryAllocateAligned(MarkedBlock::blockSize, reserveChunkSize))
         m_reserve.append(chunk);
@@ -291,6 +301,8 @@ String describeLimitOfMarkedBlockCage()
 {
     if (!MarkedBlockCage::isRequired())
         return { };
+    if (s_isGrowable)
+        return "The limit on address space (ulimit -v) leaves no room for more JavaScript objects. Raise the limit."_s;
     size_t size = g_jscConfig.markedBlockCageSize;
     bool isInGB = !(size % GB);
     if (size < static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB)
@@ -298,11 +310,31 @@ String describeLimitOfMarkedBlockCage()
     return makeString("Each thread of a compiled executable can use "_s, size / (isInGB ? GB : MB), isInGB ? " GB"_s : " MB"_s, " for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower."_s);
 }
 
-void MarkedBlockCage::logExhaustion()
+static String describeLimitOfStructureHeap()
+{
+    size_t size = g_jscConfig.sizeOfStructureHeap;
+    if (hasAddressSpaceLimit() && !Options::structureHeapSizeInKB())
+        return makeString("The limit on address space (ulimit -v) leaves this executable "_s, size / MB, " MB for the shapes of JavaScript objects (Structures). Raise the limit, or set BUN_JSC_structureHeapSizeInKB to a larger power of two."_s);
+    return makeString("This executable can use "_s, size / MB, " MB for the shapes of JavaScript objects (Structures)."_s);
+}
+
+String MarkedBlockCage::describeExhaustedLimit() const
+{
+    return m_exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage();
+}
+
+void MarkedBlockCage::didThrowOutOfMemoryError()
+{
+    m_hasReleasedReserve = false;
+    if (std::exchange(m_exhaustedHeap, ExhaustedHeap::Cells) == ExhaustedHeap::Structures)
+        StructureAlignedMemoryAllocator::didThrowOutOfMemoryError();
+}
+
+void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
 {
     if (!isRequired())
         return;
-    dataLogLn("FATAL: out of memory. ", describeLimitOfMarkedBlockCage());
+    dataLogLn("FATAL: out of memory. ", exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage());
     if (ExhaustionHandler handler = s_exhaustionHandler.load(std::memory_order_relaxed))
         handler();
 }

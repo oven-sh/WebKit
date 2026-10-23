@@ -1110,6 +1110,8 @@ bool HeapRule::answers(BuiltinID member) const
     const Builtin& entry = m_builtins.at(member);
     if (entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) || entry.mutability == BuiltinMutability::ChangesOnItsOwn || !m_builtins.existsOn(member, targetOfThisBuild().platform))
         return false;
+    if (m_builtins.has(BuiltinMark::MayBeAbsent, member))
+        return false;
     return entry.kind != BuiltinKind::Accessor || m_tables.hasGetEntry(member);
 }
 

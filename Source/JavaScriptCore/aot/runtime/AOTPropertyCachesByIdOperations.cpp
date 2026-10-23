@@ -301,7 +301,9 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     if (access.caches.countsNames()) [[unlikely]]
         access.caches.countMiss(mode == PutMode::Define ? "definition"_s : "store"_s, shouldFile, cell, uid);
     if (mode != PutMode::Define && cell->isObject() && cell->structure()->isDictionary() && !cell->structure()->isCompiledStructure()) {
-        if (tryStoreToPermanentDictionary(access, asObject(cell), value, mode, slot))
+        bool isStored = tryStoreToPermanentDictionary(access, asObject(cell), value, mode, slot);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (isStored)
             return;
     }
 

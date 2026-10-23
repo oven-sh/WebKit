@@ -130,6 +130,7 @@ void TestPlacer::emitChain(TestChain&& chain, std::span<const uint32_t> plannedT
 
     m_builder.setHandler(std::nullopt);
     m_builder.moveToEndOf(chain.block);
+    m_builder.emitFailureOfPredictions(Target { chain.failedTarget.block, Arguments(chain.failedTarget.arguments), { } });
     for (uint32_t plannedTest : plannedTests.first(plannedTests.size() - 1))
         emitTest(chain, plannedTest, IsLastOfChain::No);
     emitTest(chain, plannedTests.back(), IsLastOfChain::Yes);

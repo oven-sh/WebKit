@@ -58,7 +58,11 @@ private:
 
 } // anonymous namespace
 
-static constexpr int exitCodeOfRealmWithoutHost = 4;
+[[noreturn]] static void exitForWantOfHost(const BuiltinTable& table, BuiltinID builtin)
+{
+    dataLogLn("AOT: the program needs the host's ", table.textOf(builtin), ", and this realm has no host");
+    exitProcess(4);
+}
 
 static bool isNearEndOfStack(VM& vm)
 {
@@ -275,11 +279,6 @@ JSCell* BuiltinCells::cell(uint32_t number)
             dataLogLn("AOT: built-in cell ", number, " (key ", key->encoded(), ", ", table.textOf(key->builtin()), ") is not in this realm: ", static_cast<unsigned>(found.error()));
             CRASH();
         }
-        // Compiled code reads through the cell without a test.
-        if (!BuiltinBindings::provides(table.at(key->builtin()).origin)) {
-            dataLogLn("AOT: the program needs the host's ", table.textOf(key->builtin()), ", and this realm has no host");
-            exitProcess(exitCodeOfRealmWithoutHost);
-        }
         m_isUnavailable.ensureSizeAndSet(number, keys.size());
         return nullptr;
     }
@@ -332,6 +331,8 @@ JSValue BuiltinCells::fillValue(JSGlobalObject* realm, BuiltinCellKey key)
     const Builtin& member = table.at(key.builtin());
     JSCell* holder = findObject(member.holder);
     if (!holder) {
+        if (!BuiltinBindings::provides(member.origin))
+            exitForWantOfHost(table, key.builtin());
         dataLogLn("AOT: the holder of the built-in value ", table.textOf(key.builtin()), " (key ", key.encoded(), ") is not in this realm");
         CRASH();
     }
@@ -556,7 +557,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTFillBuiltinValue, EncodedJSValue, (Instance
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFillBuiltinValue);
     std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(cellKey, BuiltinTable::singleton());
     RELEASE_ASSERT(key);
-    OPERATION_RETURN(scope, JSValue::encode(instance->state->builtinCells->fillValue(globalObject, *key)));
+    JSValue value = instance->state->builtinCells->fillValue(globalObject, *key);
+    // Compiled code takes the value for what the host makes, without a test.
+    if (value && value.isUndefined() && !BuiltinBindings::provides(BuiltinTable::singleton().at(key->builtin()).origin)) [[unlikely]]
+        exitForWantOfHost(BuiltinTable::singleton(), key->builtin());
+    OPERATION_RETURN(scope, JSValue::encode(value));
 }
 
 } } // namespace JSC::AOT

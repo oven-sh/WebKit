@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <bit>
 #include <limits>
 #include <optional>
@@ -13,6 +14,7 @@
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
+#include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
@@ -28,6 +30,8 @@ public:
         ASCIILiteral name;
         size_t size { 0 };
         size_t minSize { 0 };
+        // When nonzero and smaller than size, only this much is reserved up front and the rest of the range is reserved on demand.
+        size_t initialSegmentSize { 0 };
         size_t alignment { 0 };
         size_t unusedPrefixSize { 0 };
         size_t addressSpaceBudget { std::numeric_limits<size_t>::max() };
@@ -40,6 +44,8 @@ public:
 
     uintptr_t start() const { return m_start; }
     size_t size() const { return m_size; }
+    size_t initialSegmentSize() const { return m_initialSegmentSize; }
+    size_t reservedSize() const { return m_reservedSize.load(std::memory_order_relaxed); }
     bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_start < m_size; }
 
     void* tryAllocateAligned(size_t alignment, size_t);
@@ -57,12 +63,15 @@ private:
         size_t size { 0 };
     };
 
-    ReservedRangeHeap(uintptr_t start, const Backing&, const Request&);
+    ReservedRangeHeap(uintptr_t start, size_t, const Backing&, const Request&);
     ~ReservedRangeHeap() = delete;
 
     static uintptr_t tryReserve(size_t, const Request&);
     static void releaseReservation(uintptr_t start, size_t);
     static std::optional<Backing> tryCreateBacking(uintptr_t start, size_t, const Request&);
+
+    void* tryAllocateSlow(size_t alignment, size_t);
+    bool tryAddSegment(size_t allocationSize) WTF_REQUIRES_LOCK(m_lock);
 
     void* tryAllocateGranules(size_t);
     void freeGranules(void*);
@@ -72,10 +81,17 @@ private:
 
     const uintptr_t m_start;
     const size_t m_size;
+    const size_t m_initialSegmentSize;
     const BackEnd m_backEnd;
-    void* const m_mallocHeap;
+    const bool m_isGrowable;
+    const OSAllocator::Usage m_usage;
+    const ASCIILiteral m_name;
+    std::atomic<void*> m_mallocHeap;
+    std::atomic<size_t> m_reservedSize;
 
     Lock m_lock;
+    Vector<void*, 4> m_segmentHeaps WTF_GUARDED_BY_LOCK(m_lock);
+    size_t m_segmentsEnd WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     BitVector m_usedGranules WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_firstGranulesOfRuns WTF_GUARDED_BY_LOCK(m_lock);
     size_t m_firstGranuleToSearch WTF_GUARDED_BY_LOCK(m_lock) { 0 };

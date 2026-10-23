@@ -62,7 +62,7 @@ ALWAYS_INLINE void JSString::visitFields(JSString* thisObject, Visitor& visitor)
     }
     if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer)) {
 #if ENABLE(AOT)
-        if (AOT::Image::isBackedByStaticData(*impl)) [[unlikely]]
+        if (AOT::Image::isRegistered() && AOT::Image::isBackedByStaticData(*impl)) [[unlikely]]
             return;
 #endif
         visitor.reportExtraMemoryVisited(impl->costDuringGC());

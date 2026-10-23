@@ -193,7 +193,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteral, EncodedJSValue, (Instan
         matchForm = RegExpMatchForm::Exec;
     }
 
-    ASSERT(static_cast<uint32_t>(cell->offsetVectorSize()) <= vm.aotState().image->header().counts.maxRegExpOutputSize);
+    ASSERT(static_cast<size_t>(cell->offsetVectorSize()) <= std::max<size_t>(vm.aotState().image->header().counts.maxRegExpOutputSize, 2 * (VMState::maxGroupsInRegExpMatchOutput + 1)));
     auto offsets = unsafeMakeSpan(vm.aotState().regExpMatchOutput.get(), static_cast<size_t>(cell->offsetVectorSize()));
     MatchResult result(offsets[0], offsets[1]);
     RELEASE_ASSERT(result.end >= result.start);

@@ -97,7 +97,9 @@ struct RecordedOptions {
     uint8_t admittedCode { 0 };
     uint8_t sabotage { 0 };
     uint8_t imageForm { static_cast<uint8_t>(imageFormOfThisRuntime()) };
-    std::array<uint8_t, 5> unused { };
+    uint8_t unused { 0 };
+    uint16_t predictionFailurePeriod { 0 };
+    uint16_t predictionFailureSeed { 0 };
 
     bool useWideReferences() const { return referenceWidth == static_cast<uint8_t>(ReferenceWidth::Wide); }
     ImageForm form() const { return static_cast<ImageForm>(imageForm); }

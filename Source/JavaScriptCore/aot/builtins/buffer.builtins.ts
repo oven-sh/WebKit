@@ -229,7 +229,6 @@ export default b.declarations(
     slots: { bytes: rawBytes },
     stateHeap: storage,
     lockedMembers: ["constructor", "prototype"],
-    mutability: "AlwaysLocked",
     types: [b.exactType("SharedArrayBuffer")],
     call: requiresNew,
     construct: bufferConstruction("SharedArrayBuffer"),

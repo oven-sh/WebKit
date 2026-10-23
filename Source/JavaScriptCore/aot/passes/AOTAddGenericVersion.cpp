@@ -765,6 +765,13 @@ void GenericVersionBuilder::lowerCheck(GenericCopy& copy, const CheckSite& site)
     m_analyses.didChangeControlFlow();
 
     m_builder.moveToEndOf(site.block);
+    BlockID failedUnasked;
+    ValueID valueInCopy;
+    if (m_builder.failsPredictions()) {
+        failedUnasked = m_builder.addBlock(m_function.at(genericContinuation).frequency);
+        valueInCopy = m_builder.addParameter(failedUnasked, m_function.at(operand).type);
+        m_builder.emitFailureOfPredictions(Target { failedUnasked, { operand }, { } });
+    }
     ValueID test = m_builder.appendTypeTest(operand, castType);
     IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, m_function.at(site.block).frequency, m_function.at(genericContinuation).frequency);
 
@@ -776,8 +783,14 @@ void GenericVersionBuilder::lowerCheck(GenericCopy& copy, const CheckSite& site)
     m_builder.moveToEndOf(branch.notTaken);
     if (m_reportsMismatches)
         m_builder.append(createMismatchReport(branch.provenOnNotTaken, castType, typeSite));
+    if (failedUnasked) {
+        m_builder.emitJump(failedUnasked, { branch.provenOnNotTaken });
+        m_builder.moveToEndOf(failedUnasked);
+        m_valuesTurnedAway.append(valueInCopy);
+    } else
+        valueInCopy = branch.provenOnNotTaken;
     m_builder.emitJump(genericContinuation);
-    copy.addDefinition(site.check, branch.provenOnNotTaken);
+    copy.addDefinition(site.check, valueInCopy);
     m_valuesTurnedAway.append(branch.provenOnNotTaken);
     if (ValueID checkInCopy = copy.copyOf(site.check))
         m_valuesTurnedAway.append(checkInCopy);
