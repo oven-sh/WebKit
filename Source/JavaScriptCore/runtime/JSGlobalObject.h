@@ -427,6 +427,7 @@ public:
     WriteBarrierStructureID m_mapIteratorStructure;
     WriteBarrierStructureID m_setIteratorStructure;
     WriteBarrierStructureID m_wrapForValidIteratorStructure;
+    WriteBarrierStructureID m_stringObjectStructureWithImmutableProperties;
     WriteBarrierStructureID m_regExpMatchesArrayStructure;
     WriteBarrierStructureID m_regExpMatchesArrayWithIndicesStructure;
     WriteBarrierStructureID m_regExpMatchesIndicesArrayStructure;
@@ -573,6 +574,7 @@ public:
     InlineWatchpointSet m_numberToStringWatchpointSet { IsWatched };
     InlineWatchpointSet m_stringToStringWatchpointSet { IsWatched };
     InlineWatchpointSet m_stringValueOfWatchpointSet { IsWatched };
+    InlineWatchpointSet m_stringObjectImmutablePropertiesWatchpointSet { IsWatched };
     InlineWatchpointSet m_objectPrototypeValueOfWatchpointSet { IsWatched };
     InlineWatchpointSet m_arrayPrototypeValueOfWatchpointSet { IsWatched };
     InlineWatchpointSet m_structureCacheClearedWatchpointSet { IsWatched };
@@ -635,6 +637,8 @@ public:
     InlineWatchpointSet& arraySymbolToPrimitiveWatchpointSet() LIFETIME_BOUND { return m_arraySymbolToPrimitiveWatchpointSet; }
     InlineWatchpointSet& stringToStringWatchpointSet() LIFETIME_BOUND { return m_stringToStringWatchpointSet; }
     InlineWatchpointSet& stringValueOfWatchpointSet() LIFETIME_BOUND { return m_stringValueOfWatchpointSet; }
+    // Valid until stringObjectStructureWithImmutableProperties() is set.
+    InlineWatchpointSet& stringObjectImmutablePropertiesWatchpointSet() LIFETIME_BOUND { return m_stringObjectImmutablePropertiesWatchpointSet; }
     InlineWatchpointSet& objectPrototypeValueOfWatchpointSet() LIFETIME_BOUND { return m_objectPrototypeValueOfWatchpointSet; }
     InlineWatchpointSet& arrayPrototypeValueOfWatchpointSet() LIFETIME_BOUND { return m_arrayPrototypeValueOfWatchpointSet; }
     InlineWatchpointSet& regExpPrimordialPropertiesWatchpointSet() LIFETIME_BOUND { return m_regExpPrimordialPropertiesWatchpointSet; }
@@ -1052,6 +1056,8 @@ public:
     Structure* setIteratorStructure() const { return m_setIteratorStructure.get(); }
     Structure* wrapForValidIteratorStructure() const { return m_wrapForValidIteratorStructure.get(); }
     Structure* stringObjectStructure() const { return m_stringObjectStructure.get(); }
+    // What JSObject::makePropertiesImmutable() makes of stringObjectStructure(). Null until it has: see didMakePropertiesImmutable().
+    Structure* stringObjectStructureWithImmutableProperties() const { return m_stringObjectStructureWithImmutableProperties.get(); }
     Structure* symbolObjectStructure() const { return m_symbolObjectStructure.get(); }
     Structure* iteratorResultObjectStructure() const { return m_iteratorResultObjectStructure.get(this); }
     Structure* iteratorResultObjectStructureConcurrently() const { return m_iteratorResultObjectStructure.getConcurrently(); }
@@ -1255,6 +1261,7 @@ public:
     }
         
     void haveABadTime(VM&);
+    void didMakePropertiesImmutable(VM&, Structure* oldStructure, Structure* newStructure);
 
     void notifyArrayBufferDetaching();
 
