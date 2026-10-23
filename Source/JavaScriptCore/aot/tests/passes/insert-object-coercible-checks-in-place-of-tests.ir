@@ -1,11 +1,13 @@
 # `p.name.length`: a test that only undefined and null fail, where what follows on the failing side is an access that throws for them, becomes the check, which costs nothing where the access goes through the value.
-# It stays a test where another value fails it too, where the tested type holds null, where something that can be seen comes first on the failing side, where that side reads another value or none, and under a handler
+# It stays a test where another value fails it too, where the tested type holds null, where something that can be seen comes first on the failing side, where that side reads another value or none, under a handler,
+# and where the type is owed to a Check that still stands: the failing side is what runs where that Check fails
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass InsertObjectCoercibleChecks
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
+typesite w0 module=m0 position=10 kind=Parameter
 variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="lengthOfText" parameters=[{type=undefined|null|string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -132,4 +134,19 @@ function f7 name="underHandler" parameters=[{type=undefined|string}] results=[{t
 }
 # CHECK-LABEL: function f7
 # CHECK: = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch
+
+function f8 name="behindACheckThatStillStands" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=undefined|null|string site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|string):
+    v1 = Check v0 castType=undefined|null|string site=w0
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3: string):
+    Return v3
+  b2(v4: undefined|null) frequency=Unlikely:
+    v5 = PropGet v4 key="length"
+    Return v5
+}
+# CHECK-LABEL: function f8
+# CHECK: = TypeTest v1 testedType=string
 # CHECK-NEXT: Branch

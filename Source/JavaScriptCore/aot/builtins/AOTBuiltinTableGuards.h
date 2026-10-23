@@ -27,11 +27,11 @@ struct GuardedEngineSymbol {
     std::string_view symbol;
     RemovableFeature feature;
     RemovedFeatureStub stub;
-    uint32_t builtin;
+    uint32_t positionOfBuiltin;
 };
 
 inline constexpr GuardedEngineSymbol guardedEngineSymbols[] = {
-#define AOT_GUARDED_ENGINE_SYMBOL(symbol, feature, stub, builtin) { #symbol, RemovableFeature::feature, RemovedFeatureStub::stub, builtin },
+#define AOT_GUARDED_ENGINE_SYMBOL(symbol, feature, stub, positionOfBuiltin) { #symbol, RemovableFeature::feature, RemovedFeatureStub::stub, positionOfBuiltin },
     FOR_EACH_GUARDED_ENGINE_SYMBOL(AOT_GUARDED_ENGINE_SYMBOL)
 #undef AOT_GUARDED_ENGINE_SYMBOL
 };
@@ -65,7 +65,7 @@ ALWAYS_INLINE constexpr auto registeredEntryPoint()
     if constexpr (!!guarded) {
         static_assert(guarded->stub == RemovedFeatureStub::Throw, "the entry point of a removed built-in throws");
         if !consteval {
-            recordRemovableEntryPoint<guarded->feature, guarded->stub, entryPoint, GuardOrigin::Builtin, guarded->builtin>();
+            recordRemovableEntryPoint<guarded->feature, guarded->stub, entryPoint, GuardOrigin::BuiltinNamedByEngine, guarded->positionOfBuiltin>();
         }
     }
     return entryPoint;

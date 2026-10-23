@@ -14,7 +14,9 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 # -g is added per-stage below for Debug only — with -O3 + tmpfs, debug info
 # OOMs the linux-x64-gh runner during Release builds (not seen on Android,
 # but FreeBSD's libc++ headers generate notably more DWARF).
-ARG DEBUG_CFLAGS="-g"
+# -fno-standalone-debug is what clang does for Linux by itself: a type is described in full only by the unit that defines
+# it, which lies in the same library. With FreeBSD's default a debug lane's package passes the 2 GiB that GitHub takes.
+ARG DEBUG_CFLAGS="-g -fno-standalone-debug"
 
 FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]

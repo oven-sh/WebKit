@@ -44,6 +44,20 @@ function f1 name="make" parameters=[{type=anything}, {type=anything}] results=[{
 }
 )IR"_s;
 
+static NEVER_INLINE void overwriteUnusedStack()
+{
+    volatile uint64_t words[32 * KB];
+    for (volatile uint64_t& word : words)
+        word = 0;
+}
+
+// The collector reads every word of the stack above it. What calls that have returned left there would lie in the parts of its own frames that nothing writes.
+static NEVER_INLINE void collect(VM& vm, CollectionScope scope)
+{
+    overwriteUnusedStack();
+    vm.heap.collectNow(Sync, scope);
+}
+
 static const LayoutData& layoutNamed(LoadedProgram& program, ASCIILiteral name)
 {
     const ProgramTables& tables = program.state().tables;
@@ -190,17 +204,17 @@ static void checkBothLast(LoadedProgram& program, Kept kept)
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     for (const auto& order : ordersOfCollections) {
-        vm.heap.collectNow(Sync, CollectionScope::Full);
+        collect(vm, CollectionScope::Full);
         Strong<JSCell> root;
         Strong<JSCell> anchor;
         makeHiddenPairInBlockThatLasts(program, *hidden, root, kept, anchor);
         for (CollectionScope scope : order) {
-            vm.heap.collectNow(Sync, scope);
+            collect(vm, scope);
             AOT_TEST_CHECK(isMarked(vm, hidden->outer) && isMarked(vm, hidden->inner));
             AOT_TEST_CHECK(isLive(hidden->outer) && isLive(hidden->inner));
         }
         root.clear();
-        vm.heap.collectNow(Sync, CollectionScope::Full);
+        collect(vm, CollectionScope::Full);
         AOT_TEST_CHECK(!isMarked(vm, hidden->outer) && !isMarked(vm, hidden->inner));
         AOT_TEST_CHECK(!isLive(hidden->outer) && !isLive(hidden->inner));
     }
@@ -241,12 +255,12 @@ static void testInnerObjectNobodyHoldsIsNotVisitedAndLosesItsHeader(LoadedProgra
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
     makeHiddenPair(program, *hidden, root, Kept::Outer);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(hasHeader(hidden->inner));
     pointFieldElsewhere(program, *hidden);
-    vm.heap.collectNow(Sync, CollectionScope::Eden);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Eden);
+    collect(vm, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(isMarked(vm, hidden->outer) && !isMarked(vm, hidden->inner) && !isMarked(vm, hidden->other));
     AOT_TEST_CHECK(isLive(hidden->outer) && !hasHeader(hidden->inner));
 }
@@ -254,7 +268,7 @@ static void testInnerObjectNobodyHoldsIsNotVisitedAndLosesItsHeader(LoadedProgra
 static NEVER_INLINE void collectWithWordOnStack(VM& vm, uintptr_t hiddenCell, ptrdiff_t distance)
 {
     volatile uintptr_t word = ~hiddenCell + distance;
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(word);
 }
 
@@ -268,10 +282,10 @@ static void testStaleWordOfStackNamesInnerObjectNobodyHeld(LoadedProgram& progra
     for (ptrdiff_t distance : { 0, 8, 24 }) {
         Strong<JSCell> root;
         makeHiddenPair(program, *hidden, root, Kept::Outer);
-        vm.heap.collectNow(Sync, CollectionScope::Full);
+        collect(vm, CollectionScope::Full);
         pointFieldElsewhere(program, *hidden);
-        vm.heap.collectNow(Sync, CollectionScope::Full);
-        vm.heap.collectNow(Sync, CollectionScope::Full);
+        collect(vm, CollectionScope::Full);
+        collect(vm, CollectionScope::Full);
         vm.heap.sweepSynchronously();
         AOT_TEST_CHECK(!isLive(hidden->other));
         collectWithWordOnStack(vm, hidden->inner, distance);
@@ -288,7 +302,7 @@ static void testWordOfStackHoldsInnerObject(LoadedProgram& program)
         for (ptrdiff_t distance : { 0, 8, 24 }) {
             Strong<JSCell> root;
             makeHiddenPair(program, *hidden, root, Kept::Outer);
-            vm.heap.collectNow(Sync, CollectionScope::Full);
+            collect(vm, CollectionScope::Full);
             pointFieldElsewhere(program, *hidden);
             if (!outerObjectIsHeld)
                 root.clear();
@@ -301,7 +315,7 @@ static void testWordOfStackHoldsInnerObject(LoadedProgram& program)
 static NEVER_INLINE void collectWithComplementOnStack(VM& vm, uint64_t complement)
 {
     volatile uint64_t word = ~complement;
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(word);
 }
 
@@ -322,7 +336,7 @@ static void testHalfOfStackWordHoldsInnerObject(LoadedProgram& program)
         for (unsigned shift : { 0, 32 }) {
             Strong<JSCell> root;
             makeHiddenPair(program, *hidden, root, Kept::Outer);
-            vm.heap.collectNow(Sync, CollectionScope::Full);
+            collect(vm, CollectionScope::Full);
             pointFieldElsewhere(program, *hidden);
             if (!outerObjectIsHeld)
                 root.clear();
@@ -350,11 +364,11 @@ static void testYoungCellStoredIntoOldCell(LoadedProgram& program)
         for (bool throughInnerObject : { true, false }) {
             Strong<JSCell> root;
             makeHiddenPair(program, *hidden, root, kept);
-            vm.heap.collectNow(Sync, CollectionScope::Full);
-            vm.heap.collectNow(Sync, CollectionScope::Eden);
+            collect(vm, CollectionScope::Full);
+            collect(vm, CollectionScope::Eden);
             storeYoungCell(program, *hidden, throughInnerObject);
             for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Eden, CollectionScope::Full }) {
-                vm.heap.collectNow(Sync, scope);
+                collect(vm, scope);
                 AOT_TEST_CHECK(isMarked(vm, hidden->other));
             }
         }
@@ -373,16 +387,16 @@ static void testInnerCellsAreNotCounted(LoadedProgram& program)
         return;
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     Strong<JSCell> first;
     makeHiddenPair(program, *hidden, first, Kept::Inner);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     size_t before = markCountOfBlockOf(hidden->outer);
     uintptr_t cellOfBlock = hidden->outer;
     Strong<JSCell> second;
     makeHiddenPair(program, *hidden, second, Kept::Outer);
     AOT_TEST_CHECK(&std::bit_cast<JSCell*>(~cellOfBlock)->markedBlock() == &std::bit_cast<JSCell*>(~hidden->outer)->markedBlock());
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(markCountOfBlockOf(cellOfBlock) == before + 1);
 }
 
@@ -398,9 +412,9 @@ static void testCellIsUsedAgain(LoadedProgram& program)
     makeHiddenPairInBlockThatLasts(program, *hidden, root, Kept::Outer, anchor);
     uintptr_t freed = hidden->outer;
     // What the making of the pair has left on the stack is overwritten by the first collection.
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     root.clear();
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(!isLive(freed));
     bool wasUsedAgain = false;
     for (unsigned attempt = 0; attempt < 4096 && !wasUsedAgain; ++attempt) {
@@ -408,7 +422,7 @@ static void testCellIsUsedAgain(LoadedProgram& program)
         wasUsedAgain = hidden->outer == freed;
     }
     AOT_TEST_CHECK(wasUsedAgain);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(isLive(hidden->outer) && isLive(hidden->inner));
 }
 
@@ -421,7 +435,7 @@ static void testSabotagedStackScanNamesNoInnerObject(LoadedProgram& program)
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
     makeHiddenPair(program, *hidden, root, Kept::Outer);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     pointFieldElsewhere(program, *hidden);
     collectWithWordOnStack(vm, hidden->inner, 0);
     AOT_TEST_CHECK(isMarked(vm, hidden->outer) && !isMarked(vm, hidden->inner) && !isMarked(vm, hidden->other));
@@ -436,7 +450,7 @@ static void testSabotagedScanOfHalvesNamesNoInnerObject(LoadedProgram& program)
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
     makeHiddenPair(program, *hidden, root, Kept::Outer);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     pointFieldElsewhere(program, *hidden);
     collectWithComplementOnStack(vm, complementOfNarrowReference(hidden->inner, 32));
     AOT_TEST_CHECK(isMarked(vm, hidden->outer) && !isMarked(vm, hidden->inner) && !isMarked(vm, hidden->other));
@@ -451,7 +465,7 @@ static void testSabotagedVisitInPlaceLeavesOutFields(LoadedProgram& program)
     Strong<JSCell> root;
     makeHiddenPair(program, *hidden, root, Kept::Outer);
     storeYoungCell(program, *hidden, true);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(isMarked(vm, hidden->outer) && isMarked(vm, hidden->inner) && !isMarked(vm, hidden->other));
 }
 
@@ -461,7 +475,7 @@ static void testSabotagedVisitInPlaceLeavesCellWhite(LoadedProgram& program)
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
     makeHiddenPair(program, *hidden, root, Kept::Outer);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(isMarked(vm, hidden->inner) && std::bit_cast<JSCell*>(~hidden->inner)->cellState() == CellState::DefinitelyWhite);
     AOT_TEST_CHECK(std::bit_cast<JSCell*>(~hidden->outer)->cellState() == CellState::PossiblyBlack);
 }
@@ -477,7 +491,7 @@ static void testSabotagedMarkerLeavesOuterCellUnmarked(LoadedProgram& program)
     auto other = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> otherRoot;
     makeHiddenPair(program, *other, otherRoot, Kept::Outer);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(isMarked(vm, hidden->inner) && !isMarked(vm, hidden->outer));
 }
 
@@ -489,12 +503,12 @@ static void testSabotagedInnerObjectLetGoKeepsItsHeader(LoadedProgram& program)
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
     makeHiddenPair(program, *hidden, root, Kept::Outer);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     pointFieldElsewhere(program, *hidden);
     // As in testInnerObjectNobodyHoldsIsNotVisitedAndLosesItsHeader(), whose last line this sabotage turns false. One collection is not enough: a slot of the stack that nobody uses any more may still hold the inner object.
-    vm.heap.collectNow(Sync, CollectionScope::Eden);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    collect(vm, CollectionScope::Eden);
+    collect(vm, CollectionScope::Full);
+    collect(vm, CollectionScope::Full);
     AOT_TEST_CHECK(isMarked(vm, hidden->outer) && !isMarked(vm, hidden->inner) && !isMarked(vm, hidden->other) && hasHeader(hidden->inner));
 }
 

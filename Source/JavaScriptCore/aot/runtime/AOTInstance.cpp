@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
+#include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTCellFormat.h"
 #include "AOTGlobalBindings.h"
@@ -272,7 +273,8 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
 
 static void fillInstanceClassInfos(Instance& instance)
 {
-    std::span classInfos = unsafeMakeSpan(instance.state->tableArena.allocate<const ClassInfo*>(numberOfBuiltinClasses), numberOfBuiltinClasses);
+    unsigned numberOfClasses = BuiltinTable::singleton().classCount();
+    std::span classInfos = unsafeMakeSpan(instance.state->tableArena.allocate<const ClassInfo*>(numberOfClasses), numberOfClasses);
     BuiltinBindings::fillInstanceClassInfos(classInfos);
     instance.realm.instanceClassInfos = classInfos.data();
 }

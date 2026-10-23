@@ -23,6 +23,7 @@ struct Fact {
     ValueID value;
     bool isUnspecified { false };
     int64_t integer { 0 };
+    TypeID testedType;
 
     friend bool operator==(const Fact&, const Fact&) = default;
 };
@@ -41,19 +42,31 @@ enum class BranchesTeach : bool { No, Yes };
 
 class PathWalker {
 public:
-    PathWalker(FunctionAnalyses& analyses, size_t maxUses, BranchesTeach branchesTeach)
-        : m_analyses(analyses)
+    PathWalker(FunctionAnalyses& analyses, size_t maxUses, size_t maxStates, BranchesTeach branchesTeach)
+        : maxStates(maxStates)
+        , m_analyses(analyses)
         , m_function(analyses.function())
         , m_visited(m_function.blocks.size())
         , m_maxUses(maxUses)
         , m_branchesTeach(branchesTeach == BranchesTeach::Yes)
     {
+        if (m_branchesTeach)
+            findRepeatedTests();
     }
 
     UsesOfUnspecifiedValues run();
 
 private:
-    static constexpr size_t maxStates = 1 << 16;
+    const size_t maxStates;
+
+    struct TestedIdentity {
+        ValueID identity;
+        TypeID type;
+        friend bool operator==(const TestedIdentity&, const TestedIdentity&) = default;
+    };
+    void findRepeatedTests();
+    std::optional<TestedIdentity> repeatedTestOf(const Value&) const;
+    bool alwaysThrows(const Facts&, const Value&) const;
 
     std::optional<Fact> factOf(const Facts&, ValueID) const;
     std::optional<int64_t> integerOf(const Facts&, ValueID, unsigned depth = 0) const;
@@ -79,7 +92,45 @@ private:
     bool m_branchesTeach;
     bool m_gaveUp { false };
     Vector<UseOfUnspecifiedValue> m_uses;
+    Vector<TestedIdentity> m_repeatedTests;
 };
+
+void PathWalker::findRepeatedTests()
+{
+    const Program& program = m_analyses.context().program;
+    Vector<TestedIdentity> seen;
+    for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {
+        for (ValueID id : m_function.at(BlockID(index)).values) {
+            const Value& value = m_function.at(id);
+            bool refusesWhatIsNoString = value.opcode == Opcode::RequireObjectCoercible && program.typeOf(m_function, value.operand(0)).isStringOrNullish();
+            if (!refusesWhatIsNoString && (value.opcode != Opcode::TypeTest || program.at(value.testedType()).hasObjects()))
+                continue;
+            TestedIdentity tested { m_analyses.identityOf(value.operand(0)), refusesWhatIsNoString ? TypeTable::string : value.testedType() };
+            if (!seen.contains(tested))
+                seen.append(tested);
+            else if (!m_repeatedTests.contains(tested))
+                m_repeatedTests.append(tested);
+        }
+    }
+}
+
+bool PathWalker::alwaysThrows(const Facts& facts, const Value& value) const
+{
+    if (value.opcode != Opcode::RequireObjectCoercible || !m_analyses.context().program.typeOf(m_function, value.operand(0)).isStringOrNullish())
+        return false;
+    ValueID identity = m_analyses.identityOf(value.operand(0));
+    return std::ranges::any_of(facts, [&](const Fact& fact) {
+        return fact.value == identity && fact.testedType == TypeTable::string && !fact.integer;
+    });
+}
+
+std::optional<PathWalker::TestedIdentity> PathWalker::repeatedTestOf(const Value& value) const
+{
+    if (value.opcode != Opcode::TypeTest || m_repeatedTests.isEmpty())
+        return std::nullopt;
+    TestedIdentity tested { m_analyses.identityOf(value.operand(0)), value.testedType() };
+    return m_repeatedTests.contains(tested) ? std::optional(tested) : std::nullopt;
+}
 
 std::optional<Fact> PathWalker::factOf(const Facts& facts, ValueID id) const
 {
@@ -91,7 +142,7 @@ std::optional<Fact> PathWalker::factOf(const Facts& facts, ValueID id) const
     if (value.opcode == Opcode::Boolean)
         return Fact { id, false, value.boolean() };
     for (const Fact& fact : facts) {
-        if (fact.value == id)
+        if (fact.value == id && !fact.testedType)
             return fact;
     }
     return std::nullopt;
@@ -129,7 +180,7 @@ bool PathWalker::isUnspecified(const Facts& facts, ValueID id) const
 void PathWalker::set(Facts& facts, Fact added)
 {
     for (Fact& fact : facts) {
-        if (fact.value == added.value) {
+        if (fact.value == added.value && fact.testedType == added.testedType) {
             fact = added;
             return;
         }
@@ -207,6 +258,12 @@ std::optional<int64_t> PathWalker::fold(const Facts& facts, const Value& value, 
             const Program& program = m_analyses.context().program;
             return Type::integer({ *operand, *operand }).isSubsetOf(program.at(value.testedType()), program);
         }
+        if (std::optional<TestedIdentity> tested = repeatedTestOf(value)) {
+            for (const Fact& fact : facts) {
+                if (fact.value == tested->identity && fact.testedType == tested->type)
+                    return fact.integer;
+            }
+        }
         return std::nullopt;
     default:
         return std::nullopt;
@@ -216,6 +273,9 @@ std::optional<int64_t> PathWalker::fold(const Facts& facts, const Value& value, 
 void PathWalker::evaluate(Facts& facts, ValueID id)
 {
     const Value& value = m_function.at(id);
+    facts.removeAllMatching([&](const Fact& fact) {
+        return fact.value == id && fact.testedType;
+    });
     if (value.opcode == Opcode::Unspecified) {
         set(facts, Fact { id, true, 0 });
         return;
@@ -244,10 +304,12 @@ void PathWalker::enter(BlockID target, Facts&& facts)
     const Liveness& liveness = m_analyses.liveness();
     const Block& block = m_function.at(target);
     facts.removeAllMatching([&](const Fact& fact) {
-        return !block.parameters.contains(fact.value) && !liveness.isLiveAtHead(fact.value, target);
+        return !fact.testedType && !block.parameters.contains(fact.value) && !liveness.isLiveAtHead(fact.value, target);
     });
-    std::ranges::sort(facts, { }, [](const Fact& fact) {
-        return fact.value.index();
+    std::ranges::sort(facts, [](const Fact& left, const Fact& right) {
+        if (left.value != right.value)
+            return left.value.index() < right.value.index();
+        return (left.testedType ? left.testedType.index() + 1 : 0) < (right.testedType ? right.testedType.index() + 1 : 0);
     });
     Vector<Facts>& visited = m_visited[target.index()];
     if (visited.contains(facts))
@@ -317,6 +379,8 @@ void PathWalker::walk(size_t stateIndex)
             set(facts, Fact { value.operand(0), false, 1 });
         }
         listUsesBy(facts, state.block, id, value);
+        if (m_branchesTeach && alwaysThrows(facts, value))
+            return;
         evaluate(facts, id);
     }
 
@@ -341,6 +405,15 @@ void PathWalker::walk(size_t stateIndex)
                 follow(facts, Edge { state.block, 1 }, Fact { terminator.conditionOperand(), false, 0 });
                 return;
             }
+        }
+        if (std::optional<TestedIdentity> tested = repeatedTestOf(m_function.at(terminator.conditionOperand()))) {
+            Facts whenPassed = facts;
+            set(whenPassed, Fact { tested->identity, false, 1, tested->type });
+            Facts whenFailed = facts;
+            set(whenFailed, Fact { tested->identity, false, 0, tested->type });
+            follow(whenPassed, Edge { state.block, 0 }, Fact { terminator.conditionOperand(), false, 1 });
+            follow(whenFailed, Edge { state.block, 1 }, Fact { terminator.conditionOperand(), false, 0 });
+            return;
         }
         follow(facts, Edge { state.block, 0 }, Fact { terminator.conditionOperand(), false, 1 });
         follow(facts, Edge { state.block, 1 }, Fact { terminator.conditionOperand(), false, 0 });
@@ -379,14 +452,14 @@ UsesOfUnspecifiedValues PathWalker::run()
 
 } // anonymous namespace
 
-UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses& analyses, size_t maxUses)
+UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses& analyses, size_t maxUses, size_t maxStates)
 {
     if (!analyses.opcodesOfValues().contains(Opcode::Unspecified))
         return { };
-    UsesOfUnspecifiedValues found = PathWalker(analyses, maxUses, BranchesTeach::No).run();
+    UsesOfUnspecifiedValues found = PathWalker(analyses, maxUses, maxStates, BranchesTeach::No).run();
     if (found.uses.isEmpty())
         return found;
-    UsesOfUnspecifiedValues left = PathWalker(analyses, maxUses, BranchesTeach::Yes).run();
+    UsesOfUnspecifiedValues left = PathWalker(analyses, maxUses, maxStates, BranchesTeach::Yes).run();
     return left.wasEveryPathFollowed || !left.uses.isEmpty() ? left : found;
 }
 

@@ -42,7 +42,7 @@ static constexpr RuntimeDescription::OperatingSystem describedOperatingSystem()
 #endif
 }
 
-extern "C" constinit const DescribedRuntime describedRuntime = {
+extern "C" AOT_KEPT_BY_EVERY_LINKER constinit const DescribedRuntime describedRuntime = {
     {
         RuntimeDescription::expectedMagic,
         sizeOfDescribedRuntime,

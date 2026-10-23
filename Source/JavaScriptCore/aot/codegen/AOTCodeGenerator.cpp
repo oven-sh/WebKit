@@ -717,7 +717,7 @@ Operand CodeGenerator::convert(const OperationContext& context, ValueID source, 
     if (source) {
         if (std::optional<Operand> shared = findSharedForm(source, wanted))
             return *shared;
-        bool isConstant = constantsInFormOfUses.contains(function().at(source).opcode) && isLegalRepresentation(type, wanted) && !(wanted == Representation::Cell32 && type.hasCells());
+        bool isConstant = constantsInFormOfUses.contains(function().at(source).opcode) && isLegalRepresentation(type, wanted) && !(wanted == Representation::Cell32 && type.hasCells()) && !isSameWord(operand.representation, wanted);
         if (isConstant)
             return share(makeConstantIn(context, source, wanted));
         if (ValueID sameValue = earlierValue == EarlierValue::MayStandIn ? findSameValueMadeBefore(source, wanted) : ValueID())

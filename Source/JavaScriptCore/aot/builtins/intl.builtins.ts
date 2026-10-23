@@ -84,12 +84,20 @@ const formatterCreation = (className: string, optionNames: readonly string[]) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
+// What native code makes of a Date, of a wrapper or of an array depends on what that holds.
+const readByFormatting = [hostSettings, "InternalFields", "Elements", "ArrayStorage", "TypedArrayElements", "TypedArrayStorage", "NamedProperties", "ObjectFields", "ShapeWords", "PrototypeLinks"];
+
+// A receiver that has the prototype object above it and is no formatter may hold one, under a symbol: what `Intl.DateTimeFormat.call(object)` has put there.
+const mayHoldFormatter = b.runs("PrototypeChain", b.named());
+
 const boundFormat = (inlineBuiltin: string, parameter: string) =>
   ({
+    this: b.any,
     getter: b.callable,
-    capability: "heap",
+    capability: "js",
     throws: true,
-    uses: { this: [b.retained] },
+    runsOnlyOperandCode: true,
+    uses: { this: [b.retained, mayHoldFormatter] },
     implementation: b.hostCall,
     call: [
       {
@@ -107,10 +115,11 @@ const boundFormat = (inlineBuiltin: string, parameter: string) =>
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
-        uses: { this: b.inspected, [parameter]: [b.runs("ToPrimitive")] },
-        reads: [hostSettings],
+        uses: { this: b.inspected, [parameter]: [b.runs("ToPrimitive"), b.readsContents()] },
+        reads: readByFormatting,
         implementation: b.generic,
       },
+      b.otherwise,
     ],
   }) satisfies b.GetterField;
 
@@ -134,8 +143,7 @@ const formatterClass = (
         this: b.inspected,
         ...Object.fromEntries(operands.map(operand => [operand, [b.runs("ToPrimitive"), b.readsContents()]])),
       },
-      // What native code makes of a Date, of a wrapper or of an array depends on what that holds.
-      reads: [hostSettings, "InternalFields", "Elements", "ArrayStorage", "TypedArrayElements", "TypedArrayStorage", "NamedProperties", "ObjectFields", "ShapeWords", "PrototypeLinks"],
+      reads: readByFormatting,
       implementation: b.hostCall,
     }) satisfies b.FunctionField;
   const creation = formatterCreation(`Intl.${name}`, optionNames);
@@ -167,14 +175,13 @@ const formatterClass = (
       formatToParts: method(["value"], b.plainData.fresh),
       formatRange: method(["start", "end"], b.string),
       formatRangeToParts: method(["start", "end"], b.plainData.fresh),
-      // A receiver that has the prototype object above it and is no formatter may hold one, under a symbol: what `Intl.DateTimeFormat.call(object)` has put there.
       resolvedOptions: {
         this: b.any,
         returns: b.plainData.fresh,
         capability: "js",
         throws: true,
         runsOnlyOperandCode: true,
-        uses: { this: [b.runs("PrototypeChain", b.named())] },
+        uses: { this: [mayHoldFormatter] },
         implementation: b.hostCall,
       },
     },

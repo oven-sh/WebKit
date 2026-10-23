@@ -31,7 +31,6 @@ static bool hasSortedLists(const BuiltinBindingSet& set)
         && std::ranges::is_sorted(set.appendFunctions, { }, &BuiltinAppendFunctionBinding::builtin)
         && std::ranges::is_sorted(set.directFunctions, { }, &BuiltinDirectFunctionBinding::overload)
         && std::ranges::is_sorted(set.nativeFunctions, { }, &BuiltinNativeFunctionBinding::builtin)
-        && std::ranges::is_sorted(set.linkTimeConstants, { }, &BuiltinLinkTimeConstantBinding::builtin)
         && std::ranges::is_sorted(set.hostNumbers, { }, &BuiltinHostNumberBinding::builtin);
 }
 #endif
@@ -39,7 +38,6 @@ static bool hasSortedLists(const BuiltinBindingSet& set)
 void BuiltinBindings::registerHost(const BuiltinBindingSet& set)
 {
     RELEASE_ASSERT(!hasHost());
-    ASSERT(hasSortedLists(engineBuiltinBindings));
     ASSERT(hasSortedLists(set));
     s_host.store(&set, std::memory_order_release);
 }
@@ -66,14 +64,32 @@ static const Binding* findBindingIn(std::span<const Binding> bindings, ID Bindin
 template<typename Binding, typename ID>
 static const Binding* findBinding(std::span<const Binding> BuiltinBindingSet::* list, ID Binding::* key, ID id)
 {
-    if (const Binding* binding = findBindingIn(engineBuiltinBindings.*list, key, id))
-        return binding;
     const BuiltinBindingSet* host = registeredHost();
     return host ? findBindingIn(host->*list, key, id) : nullptr;
 }
 
+template<typename Binding, typename ID>
+static const Binding* findEngineBinding(std::span<const Binding> bindings, NamedTableID<ID> Binding::* key, ID id)
+{
+    auto found = std::ranges::find_if(bindings, [&](const Binding& binding) {
+        return static_cast<ID>(binding.*key) == id;
+    });
+    return found == bindings.end() ? nullptr : &*found;
+}
+
+template<typename ID>
+static bool isOfEngine(ID id)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    return table.contains(id) && table.at(id).origin == BuiltinOrigin::Engine;
+}
+
 const ClassInfo* BuiltinBindings::instanceClassInfoOf(BuiltinClassID id)
 {
+    if (isOfEngine(id)) {
+        auto* binding = findEngineBinding(engineBuiltinBindings.classes, &EngineClassBinding::builtinClass, id);
+        return binding ? binding->instanceClassInfo : nullptr;
+    }
     auto* binding = findBinding(&BuiltinBindingSet::classes, &BuiltinClassBinding::builtinClass, id);
     return binding ? binding->instanceClassInfo : nullptr;
 }
@@ -82,25 +98,26 @@ void BuiltinBindings::fillInstanceClassInfos(std::span<const ClassInfo*> infosBy
 {
     for (const BuiltinClassBinding& binding : classesOfHost())
         infosByClass[binding.builtinClass.index()] = binding.instanceClassInfo;
-    for (const BuiltinClassBinding& binding : engineBuiltinBindings.classes)
+    for (const EngineClassBinding& binding : engineBuiltinBindings.classes)
         infosByClass[binding.builtinClass.index()] = binding.instanceClassInfo;
 }
 
-static BuiltinClassID findClassWithInfo(const BuiltinBindingSet& set, const ClassInfo* info)
+template<typename Binding>
+static BuiltinClassID findClassWithInfo(std::span<const Binding> classes, const ClassInfo* info)
 {
-    auto found = std::ranges::find(set.classes, info, &BuiltinClassBinding::instanceClassInfo);
-    return found == set.classes.end() ? BuiltinClassID() : found->builtinClass;
+    auto found = std::ranges::find(classes, info, &Binding::instanceClassInfo);
+    return found == classes.end() ? BuiltinClassID() : BuiltinClassID(found->builtinClass);
 }
 
 BuiltinClassID BuiltinBindings::classOf(const ClassInfo* info)
 {
     const BuiltinBindingSet* host = registeredHost();
     for (; info; info = info->parentClass) {
-        if (BuiltinClassID found = findClassWithInfo(engineBuiltinBindings, info))
+        if (BuiltinClassID found = findClassWithInfo(engineBuiltinBindings.classes, info))
             return found;
         if (!host)
             continue;
-        if (BuiltinClassID found = findClassWithInfo(*host, info))
+        if (BuiltinClassID found = findClassWithInfo(host->classes, info))
             return found;
     }
     return { };
@@ -193,9 +210,14 @@ std::span<const BuiltinDirectFunctionBinding> BuiltinBindings::directFunctions()
     return host ? host->directFunctions : std::span<const BuiltinDirectFunctionBinding>();
 }
 
-const BuiltinNativeFunctionBinding* BuiltinBindings::nativeFunctionOf(BuiltinID id)
+std::optional<BuiltinNativeFunction> BuiltinBindings::nativeFunctionOf(BuiltinID id)
 {
-    return findBinding(&BuiltinBindingSet::nativeFunctions, &BuiltinNativeFunctionBinding::builtin, id);
+    if (isOfEngine(id)) {
+        auto* binding = findEngineBinding(engineBuiltinBindings.nativeFunctions, &EngineNativeFunctionBinding::builtin, id);
+        return binding ? std::optional(BuiltinNativeFunction { binding->function, binding->length }) : std::nullopt;
+    }
+    auto* binding = findBinding(&BuiltinBindingSet::nativeFunctions, &BuiltinNativeFunctionBinding::builtin, id);
+    return binding ? std::optional(BuiltinNativeFunction { binding->function, binding->length }) : std::nullopt;
 }
 
 std::optional<uint32_t> BuiltinBindings::nativeFunctionNumberOf(BuiltinID id)
@@ -217,7 +239,7 @@ std::span<const BuiltinNativeFunctionBinding> BuiltinBindings::nativeFunctionsOf
 
 std::optional<LinkTimeConstant> BuiltinBindings::linkTimeConstantOf(BuiltinID id)
 {
-    auto* binding = findBinding(&BuiltinBindingSet::linkTimeConstants, &BuiltinLinkTimeConstantBinding::builtin, id);
+    auto* binding = isOfEngine(id) ? findEngineBinding(engineBuiltinBindings.linkTimeConstants, &EngineLinkTimeConstantBinding::builtin, id) : nullptr;
     if (!binding)
         return std::nullopt;
     return binding->constant;

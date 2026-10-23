@@ -82,7 +82,7 @@ void initializeStubWords(Instance& instance)
 
     unsigned numberOfUsedEntries = 0;
     for (const BuiltinBoxedCall& call : BuiltinTable::singleton().boxedCalls()) {
-        const BuiltinNativeFunctionBinding* binding = BuiltinBindings::nativeFunctionOf(call.builtin);
+        std::optional<BuiltinNativeFunction> binding = BuiltinBindings::nativeFunctionOf(call.builtin);
         if (!binding || !binding->function)
             continue;
 

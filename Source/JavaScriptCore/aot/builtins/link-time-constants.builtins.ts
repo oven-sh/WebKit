@@ -13,12 +13,12 @@ const otherConstructor = b.otherwiseBy(b.hostCall);
 
 const keptByIterator = b.storedIn(b.resultSlot("iterated"));
 
-const iteratorCreation = (className: string, ...kept: readonly string[]) =>
+const iteratorCreation = (className: string, kept: Readonly<Record<string, b.TableType>>) =>
   ({
-    args: Object.fromEntries(kept.map(name => [name, b.any])),
+    args: kept,
     returns: b.instance(className).fresh,
     capability: "heap",
-    uses: Object.fromEntries(kept.map(name => [name, [keptByIterator]])),
+    uses: Object.fromEntries(Object.keys(kept).map(name => [name, [keptByIterator]])),
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
@@ -45,6 +45,8 @@ const copyOfItems = (constructor: b.TableType, className: string) =>
     capability: "heap",
     throws: true,
     uses: { constructor: b.inspected, items: [b.readsContents()] },
+    // The items may be a view.
+    reads: [typedArrayStorage, "TypedArrayElements"],
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
@@ -183,8 +185,9 @@ export default b.declarations(
       implementation: b.hostCall,
     },
 
-    iteratorHelperCreate: iteratorCreation("IteratorHelper", "generator", "underlyingIterator"),
-    wrapForValidIteratorCreate: iteratorCreation("WrapForValidIterator", "iterator", "nextMethod"),
+    // Each step of the helper resumes the generator without asking whether it is one.
+    iteratorHelperCreate: iteratorCreation("IteratorHelper", { generator: b.instance("Generator"), underlyingIterator: b.any }),
+    wrapForValidIteratorCreate: iteratorCreation("WrapForValidIterator", { iterator: b.any, nextMethod: b.any }),
     asyncFromSyncIteratorCreate: {
       ...operandCodeEffects,
       args: { iterator: b.any },

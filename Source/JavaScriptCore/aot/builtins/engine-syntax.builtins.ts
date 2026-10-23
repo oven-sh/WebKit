@@ -119,8 +119,19 @@ export default b.declarations(
     isAsyncDisposableStack: "AsyncDisposableStackType",
     isDisposableStack: "DisposableStackType",
     isIteratorHelper: "JSIteratorHelperType",
+    isJSArray: "ArrayType",
+    isMap: "JSMapType",
+    isPromise: "JSPromiseType",
+    isProxyObject: "ProxyObjectType",
+    isRegExpObject: "RegExpObjectType",
+    isSet: "JSSetType",
     isShadowRealm: "ShadowRealmType",
     isWrapForValidIterator: "JSWrapForValidIteratorType",
+  }),
+  b.intrinsic("isTypedArrayView", "Call", {
+    intrinsic: "HasJSType",
+    first: "Int8ArrayType",
+    last: "BigUint64ArrayType",
   }),
 
   enumerators("JSAsyncDisposableStack::Field", {
@@ -137,6 +148,7 @@ export default b.declarations(
     iteratorHelperFieldGenerator: [0, "Generator"],
     iteratorHelperFieldUnderlyingIterator: [1, "UnderlyingIterator"],
   }),
+  enumerators("ProxyObject::Field", { proxyFieldTarget: [0, "Target"], proxyFieldHandler: [1, "Handler"] }),
   enumerators("JSWrapForValidIterator::Field", {
     wrapForValidIteratorFieldIteratedIterator: [0, "IteratedIterator"],
     wrapForValidIteratorFieldIteratedNextMethod: [1, "IteratedNextMethod"],
@@ -177,6 +189,8 @@ export default b.declarations(
     "evalInRealm",
     "importInRealm",
     "performPromiseThen",
+    "rejectPromise",
+    "resolvePromise",
   ]),
   intrinsics("Value", { intrinsic: "LinkTimeConstant" }, ["promiseReturnUndefinedOnFulfilled"]),
 
@@ -215,6 +229,11 @@ export default b.declarations(
   operation("StepArrayIterator", "stepArrayIterator"),
   operation("StepGenerator", "stepGenerator"),
 
+  enumerators("Typed::ArrayStorage", {
+    arrayStorageInt32: [1, "Int32"],
+    arrayStorageDouble: [2, "Double"],
+    arrayStorageContiguous: [3, "Contiguous"],
+  }),
   enumerators("Typed::GeneratorStepCheck", { generatorStepCheckIsGenerator: [1, "IsGenerator"] }),
   enumerators("Typed::GeneratorStepStatus", {
     generatorStepStatusCompleted: [1, "Completed"],

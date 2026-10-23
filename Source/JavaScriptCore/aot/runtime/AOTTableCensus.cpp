@@ -9,7 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationSiteRecord.h"
-#include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -239,7 +239,7 @@ static void countTablesOf(TableCensus& census, Instance& instance)
         census.count("names of functions"_s, constants.functionNameCache, ConstantCellWords::numberOfCachedFunctionNames * sizeof(uint64_t));
     census.count("BigInt cells"_s, constants.bigIntCells, tables.bigIntConstants().size() * sizeof(JSCell*));
     census.count("cells of built-ins"_s, instance.prefix().builtinCells, tables.builtinCells().size() * sizeof(JSCell*));
-    census.count("class infos of built-in classes"_s, instance.realm.instanceClassInfos, numberOfBuiltinClasses * sizeof(const ClassInfo*));
+    census.count("class infos of built-in classes"_s, instance.realm.instanceClassInfos, BuiltinTable::singleton().classCount() * sizeof(const ClassInfo*));
     census.count("property runs"_s, instance.runtime.literals.propertyRuns, numberOfPropertyRuns * sizeof(const PropertyRun*));
     census.count("global bindings"_s, counters.globalBindings, tables.globalBindings().size() * sizeof(GlobalBinding));
     census.count("branch counts"_s, counters.branchCounts, runtimeLimitValue(*instance.vm, LimitID::BranchCounters) * sizeof(uint64_t));

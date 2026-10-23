@@ -10,9 +10,11 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableArrays.h"
 #include "AOTBuiltinTypes.h"
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTResultRules.h"
+#include "AOTRuntimeDescription.h"
 #include "AOTTypeArena.h"
 #include "IdentifierInlines.h"
 #include "JSLock.h"
@@ -84,6 +86,51 @@ static void testCountsAgreeWithGeneratedIDs()
     AOT_TEST_CHECK(&BuiltinTable::singleton() == &BuiltinTable::singleton());
 }
 
+static void testTableDescribesItself()
+{
+    auto bytesOf = [](const BuiltinTableDescription& description) {
+        return std::span(reinterpret_cast<const uint8_t*>(&description), sizeof(description));
+    };
+    AOT_TEST_CHECK(describedBuiltinTable.numberOfBuiltins == table().builtinCount() && describedBuiltinTable.numberOfClasses == table().classCount());
+    AOT_TEST_CHECK(describedBuiltinTable.hashOfBuiltinTokens == builtinTableHashOfBuiltinTokens);
+    AOT_TEST_CHECK(!findDifferenceFromThisRuntime(bytesOf(describedBuiltinTable)));
+
+    BuiltinTableDescription other = describedBuiltinTable;
+    ++other.numberOfBuiltins;
+    std::optional<RuntimeDifference> difference = findDifferenceFromThisRuntime(bytesOf(other));
+    AOT_TEST_CHECK(difference && difference->name == "the number of built-ins"_s && difference->there == difference->here + 1);
+
+    other = describedBuiltinTable;
+    other.size += 4;
+    difference = findDifferenceFromThisRuntime(bytesOf(other));
+    AOT_TEST_CHECK(difference && difference->name.isNull());
+}
+
+static void testNamedListsTranslate()
+{
+    AOT_TEST_CHECK(table().tokenOf(Builtins::ArrayPrototypePush) == "ArrayPrototypePush"_s && table().tokenOf(Builtins::BunServe) == "BunServe"_s);
+    AOT_TEST_CHECK(table().at(Builtins::ArrayPrototypePush).origin == BuiltinOrigin::Engine && table().at(Builtins::BunServe).origin == BuiltinOrigin::Host);
+    AOT_TEST_CHECK(table().tokenOf(BuiltinClasses::Array) == "Array"_s && table().tokenOf(BuiltinClasses::URLSearchParams) == "URLSearchParams"_s);
+    for (unsigned position = 0; position < numberOfNamedBuiltins; ++position)
+        AOT_TEST_CHECK(table().contains(BuiltinID(NamedBuiltin(position))));
+}
+
+static void testMarks()
+{
+    AOT_TEST_CHECK(table().has(BuiltinMark::EvaluatesTextInGlobalScope, Builtins::ShadowRealmPrototypeEvaluate) && !table().has(BuiltinMark::EvaluatesTextInGlobalScope, Builtins::ArrayPrototypePush));
+    AOT_TEST_CHECK(table().has(BuiltinMark::IsSpy, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::HoldsLoader, hostBuiltin("BunTestSpyOn"_s)) && !table().has(BuiltinMark::IsSpy, BuiltinID()));
+    AOT_TEST_CHECK(table().marked(BuiltinMark::IsNotEnumerable).size() == 2 && table().has(BuiltinMark::IsNotEnumerable, hostBuiltin("Console_stdout"_s)));
+    for (BuiltinMark mark : { BuiltinMark::IsAddedByOption, BuiltinMark::EvaluatesTextInGlobalScope, BuiltinMark::HoldsLoader, BuiltinMark::IsSpy, BuiltinMark::IsNotEnumerable }) {
+        std::span<const BuiltinMarkedEntry> marked = table().marked(mark);
+        AOT_TEST_CHECK(!marked.empty() && std::ranges::is_sorted(marked, { }, &BuiltinMarkedEntry::builtin));
+        for (const BuiltinMarkedEntry& entry : marked)
+            AOT_TEST_CHECK(entry.mark == mark && table().contains(entry.builtin) && table().has(mark, entry.builtin));
+    }
+    AOT_TEST_CHECK(std::ranges::any_of(table().loadersOfMachineCode(), [](const BuiltinLoaderOfMachineCode& loader) {
+        return loader.callee == Builtins::ProcessDlopen && loader.named == Builtins::ProcessDlopen;
+    }));
+}
+
 static void testGlobalThisIsFirst()
 {
     AOT_TEST_CHECK(!Builtins::GlobalThis.index());
@@ -140,7 +187,7 @@ static void testHiddenRootsAscendByPath()
         previousPath = path;
     }
     AOT_TEST_CHECK(table().rootOf(Builtins::ArrayPrototypePush) == Builtins::Array && table().rootOf(Builtins::Array) == Builtins::Array);
-    AOT_TEST_CHECK(table().rootOf(Builtins::NodeFsReadFile) == Builtins::NodeFs && !table().at(Builtins::NodeFs).holder);
+    AOT_TEST_CHECK(table().rootOf(hostBuiltin("NodeFsReadFile"_s)) == hostBuiltin("NodeFs"_s) && !table().at(hostBuiltin("NodeFs"_s)).holder);
 }
 
 static void testNamesAreThreeRuns()
@@ -244,7 +291,7 @@ static void testTokensRoundTrip()
     });
 
     AOT_TEST_CHECK(table().tokenOf(Builtins::ArrayPrototypePush) == "ArrayPrototypePush"_s && table().tokenOf(Builtins::MapPrototypeSymbolIterator) == "MapPrototypeSymbolIterator"_s);
-    AOT_TEST_CHECK(table().tokenOf(Builtins::NodeFsReadFile) == "NodeFsReadFile"_s && table().tokenOf(Builtins::GlobalThis) == "GlobalThis"_s);
+    AOT_TEST_CHECK(table().tokenOf(hostBuiltin("NodeFsReadFile"_s)) == "NodeFsReadFile"_s && table().tokenOf(Builtins::GlobalThis) == "GlobalThis"_s);
     AOT_TEST_CHECK(table().tokenOf(BuiltinClasses::Map) == "Map"_s && table().tokenOf(BuiltinSlots::MapKey) == "MapKey"_s && table().tokenOf(BuiltinLayouts::IteratorResult) == "IteratorResult"_s);
 }
 
@@ -396,8 +443,8 @@ static void testClassRelations()
     AOT_TEST_CHECK(table().receiverClassOf(Builtins::ArrayPrototypePush) == BuiltinClasses::Array && table().receiverClassOf(Builtins::MapPrototypeEntries) == BuiltinClasses::Map);
     AOT_TEST_CHECK(!table().receiverClassOf(Builtins::ArrayOf) && !table().receiverClassOf(Builtins::MathMax) && !table().receiverClassOf(Builtins::GlobalThis));
 
-    AOT_TEST_CHECK(table().at(BuiltinClasses::Array).origin == BuiltinOrigin::Engine && table().at(BuiltinClasses::Request).origin == BuiltinOrigin::Host);
-    AOT_TEST_CHECK(table().at(BuiltinClasses::Request).instanceTest == BuiltinInstanceTest::ClassInfoInherits);
+    AOT_TEST_CHECK(table().at(BuiltinClasses::Array).origin == BuiltinOrigin::Engine && table().at(hostClass("Request"_s)).origin == BuiltinOrigin::Host);
+    AOT_TEST_CHECK(table().at(hostClass("Request"_s)).instanceTest == BuiltinInstanceTest::ClassInfoInherits);
     AOT_TEST_CHECK(table().at(BuiltinClasses::Map).instanceTest == BuiltinInstanceTest::JSTypeEquals);
     AOT_TEST_CHECK(table().at(BuiltinClasses::ArrayBuffer).instanceTest == BuiltinInstanceTest::SharingModeEquals && table().at(BuiltinClasses::ArrayBuffer).sharingMode == ArrayBufferSharingMode::Default);
     AOT_TEST_CHECK(table().at(BuiltinClasses::SharedArrayBuffer).instanceTest == BuiltinInstanceTest::SharingModeEquals && table().at(BuiltinClasses::SharedArrayBuffer).sharingMode == ArrayBufferSharingMode::Shared);
@@ -447,7 +494,7 @@ static void testMemberLookup()
 
 static void testMemberMissingOnTargetIsNotFound()
 {
-    BuiltinID member = Builtins::ProcessCwd;
+    BuiltinID member = hostBuiltin("ProcessCwd"_s);
     BuiltinID holder = table().at(member).holder;
     BuiltinName name = table().at(member).name;
     AOT_TEST_CHECK(table().findOwnMember(holder, name) == member);
@@ -470,7 +517,7 @@ static void testCanonicalID()
     AOT_TEST_CHECK(table().canonicalID(Builtins::SetPrototypeSymbolIterator) == table().canonicalID(Builtins::SetPrototypeValues));
     AOT_TEST_CHECK(table().canonicalID(Builtins::ArrayPrototypeSymbolIterator) == table().canonicalID(Builtins::ArrayPrototypeValues));
     AOT_TEST_CHECK(table().canonicalID(Builtins::MapPrototypeSymbolIterator) == table().canonicalID(Builtins::MapPrototypeEntries));
-    AOT_TEST_CHECK(table().canonicalID(Builtins::Int8ArrayPrototypeConstructor) == Builtins::Int8Array);
+    AOT_TEST_CHECK(table().canonicalID(hostBuiltin("Int8ArrayPrototypeConstructor"_s)) == Builtins::Int8Array);
     AOT_TEST_CHECK(table().canonicalID(Builtins::ArrayPrototypePush) == Builtins::ArrayPrototypePush);
     AOT_TEST_CHECK(table().canonicalID(Builtins::MapPrototypeEntries) != table().canonicalID(Builtins::SetPrototypeValues));
 
@@ -483,14 +530,14 @@ static void testCanonicalID()
 
 static void testHostEntries()
 {
-    for (BuiltinID id : { Builtins::Bun, Builtins::BunServe, Builtins::Process, Builtins::Buffer, Builtins::BufferFrom, Builtins::NodeFs, Builtins::NodeFsReadFile, Builtins::Request, Builtins::RequestPrototype, Builtins::Worker })
+    for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::Bun, Builtins::BunServe, hostBuiltin("Process"_s), hostBuiltin("Buffer"_s), hostBuiltin("BufferFrom"_s), hostBuiltin("NodeFs"_s), hostBuiltin("NodeFsReadFile"_s), hostBuiltin("Request"_s), hostBuiltin("RequestPrototype"_s), hostBuiltin("Worker"_s) })
         AOT_TEST_CHECK(table().at(id).origin == BuiltinOrigin::Host);
     for (BuiltinID id : { Builtins::GlobalThis, Builtins::Math, Builtins::MathMax, Builtins::Array, Builtins::ArrayPrototypePush, Builtins::Promise, Builtins::Symbol })
         AOT_TEST_CHECK(table().at(id).origin == BuiltinOrigin::Engine);
 
-    AOT_TEST_CHECK(table().findGlobal(BuiltinNames::Bun) == Builtins::Bun && table().at(Builtins::BunServe).holder == Builtins::Bun);
-    AOT_TEST_CHECK(table().namespaceOf(RuntimeModules::NodeFs) == Builtins::NodeFs && table().isUnder(Builtins::NodeFsReadFile, Builtins::NodeFs));
-    AOT_TEST_CHECK(!table().isUnder(Builtins::NodeFsReadFile, Builtins::GlobalThis) && table().isUnder(Builtins::BunServe, Builtins::GlobalThis));
+    AOT_TEST_CHECK(table().findGlobal(hostName("Bun"_s)) == Builtins::Bun && table().at(Builtins::BunServe).holder == Builtins::Bun);
+    AOT_TEST_CHECK(table().namespaceOf(hostModule("NodeFs"_s)) == hostBuiltin("NodeFs"_s) && table().isUnder(hostBuiltin("NodeFsReadFile"_s), hostBuiltin("NodeFs"_s)));
+    AOT_TEST_CHECK(!table().isUnder(hostBuiltin("NodeFsReadFile"_s), Builtins::GlobalThis) && table().isUnder(Builtins::BunServe, Builtins::GlobalThis));
     forEachID<RuntimeModuleID>(table().moduleCount(), [&](RuntimeModuleID id) {
         AOT_TEST_CHECK(table().at(id).id == id && table().namespaceOf(id) == table().at(id).namespaceObject);
     });
@@ -581,10 +628,10 @@ static void testMutabilityFollowsTheLock()
 
 static void testLockedObjects()
 {
-    for (BuiltinID id : { Builtins::ObjectPrototype, Builtins::RegExpPrototype, Builtins::PromisePrototype, Builtins::GeneratorPrototype, Builtins::RequestPrototype, Builtins::ResponsePrototype, Builtins::BlobPrototype, Builtins::URLPrototype, Builtins::URLSearchParamsPrototype, Builtins::HeadersPrototype })
+    for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::ObjectPrototype, Builtins::RegExpPrototype, Builtins::PromisePrototype, Builtins::GeneratorPrototype, hostBuiltin("RequestPrototype"_s), hostBuiltin("ResponsePrototype"_s), hostBuiltin("BlobPrototype"_s), hostBuiltin("URLPrototype"_s), hostBuiltin("URLSearchParamsPrototype"_s), hostBuiltin("HeadersPrototype"_s) })
         AOT_TEST_CHECK(table().at(id).flags.contains(BuiltinFlag::IsLockedObject));
     AOT_TEST_CHECK(table().at(Builtins::ObjectPrototype).flags.contains(BuiltinFlag::ListsAllMembers) && table().at(Builtins::ArrayPrototype).flags.contains(BuiltinFlag::ListsAllMembers));
-    for (BuiltinID id : { Builtins::GlobalThis, Builtins::Math, Builtins::Array, Builtins::ArrayPrototype, Builtins::Object, Builtins::Map, Builtins::MapPrototype, Builtins::Promise, Builtins::Symbol, Builtins::IteratorPrototype, Builtins::ArrayIteratorPrototype, Builtins::Bun, Builtins::Request })
+    for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::GlobalThis, Builtins::Math, Builtins::Array, Builtins::ArrayPrototype, Builtins::Object, Builtins::Map, Builtins::MapPrototype, Builtins::Promise, Builtins::Symbol, Builtins::IteratorPrototype, Builtins::ArrayIteratorPrototype, Builtins::Bun, hostBuiltin("Request"_s) })
         AOT_TEST_CHECK(!table().at(id).flags.contains(BuiltinFlag::IsLockedObject));
 
     AOT_TEST_CHECK(table().at(Builtins::ArrayPrototypePush).mutability == BuiltinMutability::AlwaysLocked);
@@ -614,7 +661,7 @@ static void testLockedMembers()
     AOT_TEST_CHECK(table().openNamesOf(Builtins::FunctionPrototype).size() == 2 && std::ranges::is_sorted(table().openNamesOf(Builtins::FunctionPrototype)));
     for (BuiltinName name : table().openNamesOf(Builtins::FunctionPrototype))
         AOT_TEST_CHECK(!table().isClosedKey(Builtins::FunctionPrototype, name));
-    for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::then, BuiltinNames::push, BuiltinNames::Bun, table().nameOf(WellKnownSymbol::ToPrimitive) })
+    for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::then, BuiltinNames::push, hostName("Bun"_s), table().nameOf(WellKnownSymbol::ToPrimitive) })
         AOT_TEST_CHECK(table().isClosedKey(Builtins::FunctionPrototype, name));
     AOT_TEST_CHECK(!table().isClosedKey(Builtins::FunctionPrototype, BuiltinNames::toString) && !table().isClosedKey(Builtins::FunctionPrototype, BuiltinNames::call));
     AOT_TEST_CHECK(table().at(Builtins::FunctionPrototypeCall).mutability == BuiltinMutability::AlwaysLocked);
@@ -663,7 +710,7 @@ static void testLockedMembers()
 
     for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::then, BuiltinNames::hasOwnProperty, BuiltinNames::valueOf, table().nameOf(WellKnownSymbol::ToPrimitive), table().nameOf(WellKnownSymbol::IsConcatSpreadable) })
         AOT_TEST_CHECK(table().isClosedKey(Builtins::MapPrototype, name));
-    AOT_TEST_CHECK(!table().isClosedKey(Builtins::MapPrototype, BuiltinNames::push) && !table().isClosedKey(Builtins::MapPrototype, BuiltinNames::Bun));
+    AOT_TEST_CHECK(!table().isClosedKey(Builtins::MapPrototype, BuiltinNames::push) && !table().isClosedKey(Builtins::MapPrototype, hostName("Bun"_s)));
     AOT_TEST_CHECK(!table().isClosedKey(Builtins::MapPrototype, BuiltinNames::toJSON) && !table().isClosedKey(Builtins::SetPrototype, BuiltinNames::toJSON));
     AOT_TEST_CHECK(table().isClosedKey(Builtins::ArrayPrototype, BuiltinNames::toJSON) && table().isClosedKey(Builtins::ArrayPrototype, BuiltinNames::then));
     for (BuiltinName textOfPrimitive : { BuiltinNames::undefined, BuiltinNames::null, BuiltinNames::trueKeyword, BuiltinNames::falseKeyword }) {
@@ -683,13 +730,13 @@ static void testLockedMembers()
         AOT_TEST_CHECK(table().at(id).flags.contains(BuiltinFlag::HasLockedMembers) && !table().isClosedKey(id, BuiltinNames::push));
     AOT_TEST_CHECK(!table().hasLockedPrototypeLink(Builtins::Intl));
     // A constructor without a lock of its own keeps what a call of it looks for, and takes every other name.
-    for (BuiltinID id : { Builtins::Error, Builtins::TypeError, Builtins::Function, Builtins::WeakRef, Builtins::Blob, Builtins::FormData, Builtins::URL }) {
+    for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::Error, Builtins::TypeError, Builtins::Function, Builtins::WeakRef, hostBuiltin("Blob"_s), hostBuiltin("FormData"_s), Builtins::URL }) {
         AOT_TEST_CHECK(table().closesOnlyNamesOfCalls(id) && table().hasLockedPrototypeLink(id) && !table().closesIndexKeys(id));
         for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
             AOT_TEST_CHECK(table().isClosedKey(id, name));
         AOT_TEST_CHECK(!table().isClosedKey(id, BuiltinNames::toString) && !table().isClosedKey(id, BuiltinNames::then) && !table().isClosedKey(id, table().nameOf(WellKnownSymbol::Species)));
     }
-    for (BuiltinID id : { Builtins::Object, Builtins::Array, Builtins::Math, Builtins::ArrayPrototype, Builtins::ArrayPrototypeMap, Builtins::BunGlob })
+    for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::Object, Builtins::Array, Builtins::Math, Builtins::ArrayPrototype, Builtins::ArrayPrototypeMap, hostBuiltin("BunGlob"_s) })
         AOT_TEST_CHECK(!table().closesOnlyNamesOfCalls(id));
     AOT_TEST_CHECK(std::ranges::is_sorted(table().closedKeysOf(Builtins::MapPrototype)));
 }
@@ -758,11 +805,11 @@ static void testAttributesReadByPasses()
         return table().at(id).flags.contains(flag);
     };
     // Nothing of Bun's makes a second realm that runs the compiled program in the VM of its caller: a Worker has a VM of its own. The column stays for a host that does.
-    AOT_TEST_CHECK(!has(Builtins::Worker, BuiltinFlag::StartsInstance) && !has(Builtins::ShadowRealm, BuiltinFlag::StartsInstance) && !has(Builtins::Map, BuiltinFlag::StartsInstance));
+    AOT_TEST_CHECK(!has(hostBuiltin("Worker"_s), BuiltinFlag::StartsInstance) && !has(Builtins::ShadowRealm, BuiltinFlag::StartsInstance) && !has(Builtins::Map, BuiltinFlag::StartsInstance));
     AOT_TEST_CHECK(has(Builtins::Eval, BuiltinFlag::EvaluatesText) && has(Builtins::Function, BuiltinFlag::EvaluatesText) && !has(Builtins::ParseInt, BuiltinFlag::EvaluatesText));
     AOT_TEST_CHECK(has(Builtins::ArrayOf, BuiltinFlag::RequiresHolderAsThis) && has(Builtins::PromiseResolve, BuiltinFlag::RequiresHolderAsThis) && !has(Builtins::MathMax, BuiltinFlag::RequiresHolderAsThis));
     AOT_TEST_CHECK(has(Builtins::MathAbs, BuiltinFlag::IsDeterministic) && !has(Builtins::MathRandom, BuiltinFlag::IsDeterministic));
-    AOT_TEST_CHECK(has(Builtins::BunPlugin, BuiltinFlag::RunsUnseenCode) && !has(Builtins::ProcessDlopen, BuiltinFlag::RunsUnseenCode) && !has(Builtins::MathAbs, BuiltinFlag::RunsUnseenCode));
+    AOT_TEST_CHECK(has(hostBuiltin("BunPlugin"_s), BuiltinFlag::RunsUnseenCode) && !has(Builtins::ProcessDlopen, BuiltinFlag::RunsUnseenCode) && !has(Builtins::MathAbs, BuiltinFlag::RunsUnseenCode));
 
     AOT_TEST_CHECK(table().at(Builtins::Math).kind == BuiltinKind::Namespace && table().at(Builtins::Map).kind == BuiltinKind::Constructor && table().at(Builtins::ParseInt).kind == BuiltinKind::Function);
     AOT_TEST_CHECK(table().at(Builtins::MapPrototype).kind == BuiltinKind::Prototype && table().at(Builtins::ArrayPrototypePush).kind == BuiltinKind::Method);
@@ -824,14 +871,14 @@ static void testSummariesRepeatTheOverloads()
 
 static void testStringConstantsFollowTheTarget()
 {
-    for (BuiltinID id : { Builtins::ProcessPlatform, Builtins::ProcessArch })
+    for (BuiltinID id : std::initializer_list<BuiltinID> { hostBuiltin("ProcessPlatform"_s), hostBuiltin("ProcessArch"_s) })
         AOT_TEST_CHECK(table().at(id).kind == BuiltinKind::Constant && table().at(id).mutability == BuiltinMutability::ConstantUnlessWritten);
-    AOT_TEST_CHECK(table().nameOfString(Builtins::ProcessPlatform, { BuiltinPlatform::Windows, BuiltinArchitecture::X86_64 }) == nameOf("win32"_s));
-    AOT_TEST_CHECK(table().nameOfString(Builtins::ProcessPlatform, { BuiltinPlatform::Darwin, BuiltinArchitecture::ARM64 }) == nameOf("darwin"_s));
-    AOT_TEST_CHECK(table().nameOfString(Builtins::ProcessArch, { BuiltinPlatform::Linux, BuiltinArchitecture::ARM64 }) == nameOf("arm64"_s));
-    AOT_TEST_CHECK(table().nameOfString(Builtins::ProcessArch, { BuiltinPlatform::Linux, BuiltinArchitecture::X86_64 }) == nameOf("x64"_s));
-    AOT_TEST_CHECK(table().nameOfString(Builtins::ProcessPlatform) == table().nameOfString(Builtins::ProcessPlatform, targetOfThisBuild()));
-    AOT_TEST_CHECK(table().stringOf(Builtins::ProcessPlatform) && !table().stringOf(Builtins::ProcessExecPath) && !table().stringOf(Builtins::MathPI));
+    AOT_TEST_CHECK(table().nameOfString(hostBuiltin("ProcessPlatform"_s), { BuiltinPlatform::Windows, BuiltinArchitecture::X86_64 }) == nameOf("win32"_s));
+    AOT_TEST_CHECK(table().nameOfString(hostBuiltin("ProcessPlatform"_s), { BuiltinPlatform::Darwin, BuiltinArchitecture::ARM64 }) == nameOf("darwin"_s));
+    AOT_TEST_CHECK(table().nameOfString(hostBuiltin("ProcessArch"_s), { BuiltinPlatform::Linux, BuiltinArchitecture::ARM64 }) == nameOf("arm64"_s));
+    AOT_TEST_CHECK(table().nameOfString(hostBuiltin("ProcessArch"_s), { BuiltinPlatform::Linux, BuiltinArchitecture::X86_64 }) == nameOf("x64"_s));
+    AOT_TEST_CHECK(table().nameOfString(hostBuiltin("ProcessPlatform"_s)) == table().nameOfString(hostBuiltin("ProcessPlatform"_s), targetOfThisBuild()));
+    AOT_TEST_CHECK(table().stringOf(hostBuiltin("ProcessPlatform"_s)) && !table().stringOf(hostBuiltin("ProcessExecPath"_s)) && !table().stringOf(Builtins::MathPI));
 
     std::span<const BuiltinStringConstant> constants = builtinTableData.attachments.stringConstants;
     AOT_TEST_CHECK(!constants.empty());
@@ -1002,18 +1049,18 @@ static const BuiltinHostCall* findCallOfOnlyFunction(BuiltinID builtin, size_t n
 static void testHostUsesOfLibraryFunctions()
 {
     // What initializeNextTickQueue answers is process.nextTick.
-    const BuiltinHostCall* call = findCallOfOnlyFunction(Builtins::ProcessNextTick, 1);
+    const BuiltinHostCall* call = findCallOfOnlyFunction(hostBuiltin("ProcessNextTick"_s), 1);
     AOT_TEST_CHECK(call && call->times == BuiltinCallbackTimes::Once && call->listsArguments && call->arguments.size() == 3);
     AOT_TEST_CHECK(call->arguments[0].kind == BuiltinPlaceKind::NewValue && call->arguments[1].kind == BuiltinPlaceKind::NativeCell && call->arguments[2].kind == BuiltinPlaceKind::NativeCell);
     AOT_TEST_CHECK(call->result.areListed && call->result.list.size() == 1);
-    AOT_TEST_CHECK(call->result.list[0].use == BuiltinHostReadUse::IsValueOf && call->result.list[0].builtin == Builtins::ProcessNextTick);
+    AOT_TEST_CHECK(call->result.list[0].use == BuiltinHostReadUse::IsValueOf && call->result.list[0].builtin == hostBuiltin("ProcessNextTick"_s));
 
     // Whoever reads the property only has it made. A native that queues with it also calls it, and drops what it answers: for a warning with a function of its own and the warning.
-    AOT_TEST_CHECK(std::ranges::any_of(table().calledFunctionsOf(Builtins::ProcessEmitWarning), [](const BuiltinCalledFunction& called) {
+    AOT_TEST_CHECK(std::ranges::any_of(table().calledFunctionsOf(hostBuiltin("ProcessEmitWarning"_s)), [](const BuiltinCalledFunction& called) {
         if (!called.uses.areListed || called.uses.list.size() != 1 || called.uses.list[0].use != BuiltinHostReadUse::Called)
             return false;
         const BuiltinHostUses& answer = called.uses.list[0].call->result;
-        if (!answer.areListed || answer.list.size() < 2 || answer.list[0].use != BuiltinHostReadUse::IsValueOf || answer.list[0].builtin != Builtins::ProcessNextTick)
+        if (!answer.areListed || answer.list.size() < 2 || answer.list[0].use != BuiltinHostReadUse::IsValueOf || answer.list[0].builtin != hostBuiltin("ProcessNextTick"_s))
             return false;
         return std::ranges::all_of(answer.list.subspan(1), [](const BuiltinHostUse& use) {
             return use.use == BuiltinHostReadUse::Called && use.call->result.areListed && use.call->result.list.empty()
@@ -1033,9 +1080,9 @@ static void testHostUsesOfLibraryFunctions()
     AOT_TEST_CHECK(drainMicrotasks != table().hostObjects().end() && drainMicrotasks->function && table().at(drainMicrotasks->function).kind == BuiltinKind::Function && table().at(drainMicrotasks->function).holder == Builtins::NativeFunctions);
 
     // The stream is the first element of what getStdioWriteStream answers.
-    for (BuiltinID stream : { Builtins::ProcessStdout, Builtins::ProcessStderr }) {
+    for (BuiltinID stream : std::initializer_list<BuiltinID> { hostBuiltin("ProcessStdout"_s), hostBuiltin("ProcessStderr"_s) }) {
         const BuiltinHostCall* creation = findCallOfOnlyFunction(stream, 2);
-        AOT_TEST_CHECK(creation && creation->arguments.size() == 4 && creation->result.list.size() == (stream == Builtins::ProcessStdout ? 2 : 4));
+        AOT_TEST_CHECK(creation && creation->arguments.size() == 4 && creation->result.list.size() == (stream == hostBuiltin("ProcessStdout"_s) ? 2 : 4));
         const BuiltinHostUse& first = creation->result.list[0];
         AOT_TEST_CHECK(first.use == BuiltinHostReadUse::IsValueOf && first.builtin == stream && first.memberPath.size() == 1 && first.memberPath[0] == nameOf("0"_s));
         const BuiltinHostUse& last = creation->result.list.back();
@@ -1043,21 +1090,21 @@ static void testHostUsesOfLibraryFunctions()
     }
 
     // Whoever prints a warning calls `write` of the stream, with the stream as the receiver, and drops what that answers.
-    std::span<const BuiltinHostUse> usesOfStandardError = findCallOfOnlyFunction(Builtins::ProcessStderr, 2)->result.list;
+    std::span<const BuiltinHostUse> usesOfStandardError = findCallOfOnlyFunction(hostBuiltin("ProcessStderr"_s), 2)->result.list;
     const BuiltinHostUse& write = usesOfStandardError[2];
     AOT_TEST_CHECK(usesOfStandardError[1].use == BuiltinHostReadUse::Kept && write.use == BuiltinHostReadUse::Called);
     AOT_TEST_CHECK(write.memberPath.size() == 2 && write.memberPath[0] == nameOf("0"_s) && write.memberPath[1] == nameOf("write"_s));
     AOT_TEST_CHECK(write.call->thisValue.nativeCell == usesOfStandardError[1].nativeCell && write.call->arguments.size() == 1 && write.call->result.areListed && write.call->result.list.empty());
 
     // A row that says nothing leaves everything open.
-    for (const BuiltinCalledFunction& called : table().calledFunctionsOf(Builtins::BunBuild))
+    for (const BuiltinCalledFunction& called : table().calledFunctionsOf(hostBuiltin("BunBuild"_s)))
         AOT_TEST_CHECK(!called.uses.areListed && called.uses.list.empty());
-    AOT_TEST_CHECK(!table().calledFunctionsOf(Builtins::BunBuild).empty());
+    AOT_TEST_CHECK(!table().calledFunctionsOf(hostBuiltin("BunBuild"_s)).empty());
 
     // The object of a function may itself be what an entry holds.
-    std::span<const BuiltinCalledFunction> functionsOfPeek = table().calledFunctionsOf(Builtins::BunPeek);
+    std::span<const BuiltinCalledFunction> functionsOfPeek = table().calledFunctionsOf(hostBuiltin("BunPeek"_s));
     AOT_TEST_CHECK(functionsOfPeek.size() == 2 && functionsOfPeek[0].uses.list.size() == 1);
-    AOT_TEST_CHECK(functionsOfPeek[0].uses.list[0].use == BuiltinHostReadUse::IsValueOf && functionsOfPeek[0].uses.list[0].builtin == Builtins::BunPeek && !functionsOfPeek[0].uses.list[0].call);
+    AOT_TEST_CHECK(functionsOfPeek[0].uses.list[0].use == BuiltinHostReadUse::IsValueOf && functionsOfPeek[0].uses.list[0].builtin == hostBuiltin("BunPeek"_s) && !functionsOfPeek[0].uses.list[0].call);
 }
 
 static void testHostUsesOfStartupLoads()
@@ -1162,6 +1209,9 @@ std::span<const NativeTest> builtinTableTests()
     static constexpr NativeTest tests[] = {
         { "builtin-table/id-types"_s, testIDTypes },
         { "builtin-table/counts-agree-with-generated-ids"_s, testCountsAgreeWithGeneratedIDs },
+        { "builtin-table/describes-itself"_s, testTableDescribesItself },
+        { "builtin-table/named-lists-translate"_s, testNamedListsTranslate },
+        { "builtin-table/marks"_s, testMarks },
         { "builtin-table/global-this-is-first"_s, testGlobalThisIsFirst },
         { "builtin-table/members-are-one-run-in-name-order"_s, testMembersAreOneRunInNameOrder },
         { "builtin-table/hidden-roots-ascend-by-path"_s, testHiddenRootsAscendByPath },

@@ -14,18 +14,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // The events of the solved program, in the order of the program: each operation of a reached function that lets in code the build has not seen, or that names a module at run time.
-struct LoaderOfMachineCode {
-    NamedBuiltin callee;
-    NamedBuiltin named;
-};
-inline constexpr LoaderOfMachineCode loadersOfMachineCode[] = {
-    { Builtins::ProcessDlopen, Builtins::ProcessDlopen },
-    { Builtins::NativeFunctionsFfiRsBun__FFI__cc, Builtins::BunFfiCc },
-    { Builtins::BunFFIDlopen, Builtins::BunFfiDlopen },
-    { Builtins::BunFFILinkSymbols, Builtins::BunFfiLinkSymbols },
-    { Builtins::BunFFICfunction, Builtins::BunFfiCFunction },
-};
-
 // Among them, with a cause of its own, each call that may load machine code. That is no event of the solve: see FlowProgramTables::loadsOfMachineCode.
 Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution&);
 bool unseenCodeCanRun(const ValueFlowSolution&);

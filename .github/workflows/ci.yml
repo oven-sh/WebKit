@@ -235,9 +235,13 @@ jobs:
             !Websites/
             !ManualTests/
             !WebDriverTests/
+      # BuildKit clips the log of a step at 2 MiB, which a lane that keeps going behind an error passes.
       - uses: docker/setup-buildx-action@885d1462b80bc1c1c7f0b00334ad271f09369c55 # v2.10.0
         with:
           install: true
+          driver-opts: |
+            env.BUILDKIT_STEP_LOG_MAX_SIZE=-1
+            env.BUILDKIT_STEP_LOG_MAX_SPEED=-1
       # The lane is built into bun-webkit/ inside Docker, and that is packaged as bun-webkit.tar.gz.
       - name: Build
         env:
@@ -480,6 +484,14 @@ jobs:
             { i = index($0, ": "); if (i > 0) { name = substr($0, 1, i - 1); if (name in failing) out[name] = out[name] substr($0, i + 2) "\n" } }
             END { for (k = 1; k <= n; k++) { print "=== " order[k]; printf "%s\n", out[order[k]] } }
           ' "$RUNNER_TEMP/jsc-tests.log" "$RUNNER_TEMP/jsc-tests.log" > "$RUNNER_TEMP/jsc-failures.log" || true
+          # Each of testaot's failing tests once more, alone, with all that it prints.
+          grep -a '^FAIL ' "$RUNNER_TEMP/jsc-tests.log" | sed -E 's/^FAIL //; s/(\.ir):.*/\1/; s/: .*//' | sort -u | while read -r name; do
+            echo "=== testaot $name"
+            case "$name" in
+              *.ir) timeout 300 "$root/bin/testaot" run "$name" --show-output ;;
+              *) timeout 300 "$root/bin/testaot" native "$name" ;;
+            esac
+          done >> "$RUNNER_TEMP/jsc-failures.log" 2>&1
           exit "$status"
       - name: Summary
         if: always()

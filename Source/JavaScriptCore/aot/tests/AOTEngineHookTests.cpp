@@ -402,7 +402,7 @@ static void testInstanceClassInfos(LoadedProgram& program)
     AOT_TEST_CHECK(!BuiltinBindings::hasHost());
     const BuiltinTable& table = BuiltinTable::singleton();
     unsigned numberOfHostClasses = 0;
-    for (unsigned index = 0; index < numberOfBuiltinClasses; ++index) {
+    for (unsigned index = 0; index < BuiltinTable::singleton().classCount(); ++index) {
         if (table.at(BuiltinClassID(index)).origin != BuiltinOrigin::Host)
             continue;
         ++numberOfHostClasses;

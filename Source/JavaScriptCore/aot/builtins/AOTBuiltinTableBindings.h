@@ -105,11 +105,6 @@ struct BuiltinNativeFunctionBinding {
     unsigned length { 0 };
 };
 
-struct BuiltinLinkTimeConstantBinding {
-    BuiltinID builtin { };
-    LinkTimeConstant constant { };
-};
-
 // What the hook of the host takes for a native binding. The numbers depend on how the host is built, the table does not.
 struct BuiltinHostNumberBinding {
     BuiltinID builtin { };
@@ -123,11 +118,38 @@ struct BuiltinBindingSet {
     std::span<const BuiltinAppendFunctionBinding> appendFunctions { };
     std::span<const BuiltinDirectFunctionBinding> directFunctions { };
     std::span<const BuiltinNativeFunctionBinding> nativeFunctions { };
-    std::span<const BuiltinLinkTimeConstantBinding> linkTimeConstants { };
     std::span<const BuiltinHostNumberBinding> hostNumbers { };
 };
 
-extern const BuiltinBindingSet engineBuiltinBindings;
+// What the engine binds. The lists are compiled with the engine and the table is not, so they name an entry by its position in the engine's list of names.
+struct EngineClassBinding {
+    NamedBuiltinClass builtinClass;
+    const ClassInfo* instanceClassInfo { nullptr };
+};
+
+struct EngineNativeFunctionBinding {
+    NamedBuiltin builtin;
+    NativeFunction::Ptr function { nullptr };
+    unsigned length { 0 };
+};
+
+struct EngineLinkTimeConstantBinding {
+    NamedBuiltin builtin;
+    LinkTimeConstant constant { };
+};
+
+struct EngineBindingSet {
+    std::span<const EngineClassBinding> classes { };
+    std::span<const EngineNativeFunctionBinding> nativeFunctions { };
+    std::span<const EngineLinkTimeConstantBinding> linkTimeConstants { };
+};
+
+extern const EngineBindingSet engineBuiltinBindings;
+
+struct BuiltinNativeFunction {
+    NativeFunction::Ptr function { nullptr };
+    unsigned length { 0 };
+};
 
 class BuiltinBindings {
 public:
@@ -151,7 +173,7 @@ public:
     static std::optional<uint32_t> directFunctionNumberOf(BuiltinOverloadID, size_t argumentCount);
     static const BuiltinDirectFunctionBinding& directFunctionAt(uint32_t number);
     static std::span<const BuiltinDirectFunctionBinding> directFunctions();
-    static const BuiltinNativeFunctionBinding* nativeFunctionOf(BuiltinID);
+    static std::optional<BuiltinNativeFunction> nativeFunctionOf(BuiltinID);
     // The number of the built-in's function among nativeFunctionsOfHost().
     static std::optional<uint32_t> nativeFunctionNumberOf(BuiltinID);
     static std::span<const BuiltinNativeFunctionBinding> nativeFunctionsOfHost();

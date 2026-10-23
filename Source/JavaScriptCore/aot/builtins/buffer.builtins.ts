@@ -72,10 +72,12 @@ const bufferSlice = (className: string) =>
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
+// A buffer of a fixed length is refused before the length is converted.
 const lengthChange = {
   args: { newLength: b.index.loose },
   capability: "heap",
   throws: true,
+  readsStateBeforeConversions: true,
   uses: { this: changesState },
   implementation: b.hostCall,
 } satisfies b.FunctionField;

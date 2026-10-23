@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTIRParser.h"
 #include "AOTReaderTestSupport.h"
 #include "AOTWireBody.h"
@@ -164,7 +165,7 @@ void testStrings()
     uint32_t ordinaryName = wireStringOf(fixture, "handled"_s);
     uint32_t builtinName = wireStringOf(fixture, "stream"_s);
     AOT_TEST_CHECK(fixture.word(stringOffset(fixture, ordinaryName, offsetof(Wire::String, builtinName))) == Wire::none);
-    AOT_TEST_CHECK(fixture.word(stringOffset(fixture, builtinName, offsetof(Wire::String, builtinName))) == BuiltinNames::stream.index());
+    AOT_TEST_CHECK(fixture.word(stringOffset(fixture, builtinName, offsetof(Wire::String, builtinName))) == hostName("stream"_s).index());
     expectEach(fixture, {
         { "String.length"_s, stringOffset(fixture, ordinaryName, offsetof(Wire::String, length)), hugeCount, Kind::ListOutOfBounds },
         { "String.offset"_s, stringOffset(fixture, ordinaryName, offsetof(Wire::String, offset)), fixture.countOf(List::Bytes), Kind::ListOutOfBounds },

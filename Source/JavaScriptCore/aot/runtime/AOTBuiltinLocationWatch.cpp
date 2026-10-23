@@ -47,9 +47,9 @@ static bool isSameNumber(double a, double b)
 
 BuiltinLocationWatch::BuiltinLocationWatch(State& state)
     : m_state(state)
-    , m_states(unsafeMakeSpan(state.instance.tableAt<WatchedLocationState>(InstanceLayout::offsetOfBuiltinLocationStates), numberOfBuiltins))
+    , m_states(unsafeMakeSpan(state.instance.tableAt<WatchedLocationState>(InstanceLayout::offsetOfBuiltinLocationStates), BuiltinTable::singleton().builtinCount()))
 {
-    static_assert(InstanceLayout::holdsBuiltinLocationStates(numberOfBuiltins * sizeof(WatchedLocationState)));
+    static_assert(InstanceLayout::holdsBuiltinLocationStates(maxNumberOfBuiltins * sizeof(WatchedLocationState)));
     state.instance.builtins.locationStates = std::bit_cast<uint8_t*>(m_states.data());
 }
 

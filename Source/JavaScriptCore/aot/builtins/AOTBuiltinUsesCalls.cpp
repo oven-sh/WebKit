@@ -157,6 +157,14 @@ static bool mayBeAmongCallees(const Program& program, const Value& call, Builtin
     return !callees.isComplete || callees.builtins.contains(program.builtins().canonicalID(callee));
 }
 
+static bool isOnlyBuiltinSeenAtCall(const Program& program, const Value& call, BuiltinID callee)
+{
+    if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
+        return false;
+    const CalleeSet& callees = program.at(call.callees());
+    return callees.builtins.size() == 1 && program.builtins().canonicalID(callees.builtins[0]) == callee;
+}
+
 static CalleeAnswer findCalleeByTypes(const BuiltinUseInputs&, const Value& call);
 
 static CalleeAnswer findCallee(const BuiltinUseInputs& inputs, const Value& call)
@@ -297,7 +305,7 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     bool calleeIsProven = !answer.testedReceiverType && !answer.testedCalleeType && !answer.testsCodeOfCallee;
     if (inputs.asksOnlyForProvenPlans && calleeIsProven && plan.kind == BuiltinUseKind::Call && !plan.isProven() && !isCalledOnlyDirectly(inputs.program.builtins(), answer.callee))
         degradeToUnmatchedCall(plan);
-    if (plan.kind == BuiltinUseKind::UnmatchedCall && answer.testedCalleeType)
+    if (plan.kind == BuiltinUseKind::UnmatchedCall && answer.testedCalleeType && !(answer.testedReceiverType && isOnlyBuiltinSeenAtCall(inputs.program, call, answer.callee)))
         return { };
 
     bool isPossible = true;

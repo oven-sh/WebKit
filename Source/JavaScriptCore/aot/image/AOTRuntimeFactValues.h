@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinTableArrays.h"
+#include "AOTBuiltinIDTypes.h"
 #include "AOTIdentifierTable.h"
 #include "AOTImageFormat.h"
 #include "AOTImageText.h"
@@ -47,16 +47,8 @@ constexpr uint32_t checkedRuntimeFact(uint64_t value)
     return static_cast<uint32_t>(value);
 }
 
-#if OS(DARWIN)
-#define AOT_RUNTIME_DESCRIPTION_SECTION __attribute__((used, section("__TEXT,__bun_aot")))
-#elif OS(WINDOWS)
-#define AOT_RUNTIME_DESCRIPTION_SECTION __attribute__((used, section(".bunaot")))
-#else
-#define AOT_RUNTIME_DESCRIPTION_SECTION __attribute__((used, retain, section(".bun_aot")))
-#endif
-
 // Defined beside imageStamp(), which every run time has, so that no linker leaves it out.
-extern "C" AOT_RUNTIME_DESCRIPTION_SECTION const DescribedRuntime describedRuntime;
+extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION const DescribedRuntime describedRuntime;
 
 } } // namespace JSC::AOT
 

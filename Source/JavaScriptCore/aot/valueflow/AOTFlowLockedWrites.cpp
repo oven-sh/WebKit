@@ -237,7 +237,7 @@ static bool isSpy(const LockedWriteContext& context, const Function& function, c
     if (write.opcode != Opcode::Call)
         return false;
     BuiltinID callee = context.program.typeOf(function, write.calleeOperand()).singleBuiltin();
-    return callee == Builtins::BunTestSpyOn || callee == Builtins::BunTestJestSpyOn || callee == Builtins::BunTestViSpyOn;
+    return context.program.builtins().has(BuiltinMark::IsSpy, callee);
 }
 
 static const Type* storedTypeOf(const LockedWriteContext& context, const Function& function, const Value& write)

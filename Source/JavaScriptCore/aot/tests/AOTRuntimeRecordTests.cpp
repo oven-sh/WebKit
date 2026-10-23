@@ -610,7 +610,7 @@ static void testInstanceLayoutOffsets()
 
     // The small tables between the key order steps and the string cells: each ends where the next begins, and a table that is one entry too large is not held.
     size_t endOfKeyOrderSteps = InstanceLayout::offsetOfKeyOrderSteps + numberOfKeyOrderStepCaches * sizeof(KeyOrderStepCache);
-    AOT_TEST_CHECK(endOfKeyOrderSteps <= InstanceLayout::offsetOfBuiltinLocationStates && InstanceLayout::holdsBuiltinLocationStates(numberOfBuiltins));
+    AOT_TEST_CHECK(endOfKeyOrderSteps <= InstanceLayout::offsetOfBuiltinLocationStates && InstanceLayout::holdsBuiltinLocationStates(maxNumberOfBuiltins));
     size_t roomForStates = InstanceLayout::offsetOfGlobalBindings - InstanceLayout::offsetOfBuiltinLocationStates;
     AOT_TEST_CHECK(InstanceLayout::holdsBuiltinLocationStates(roomForStates) && !InstanceLayout::holdsBuiltinLocationStates(roomForStates + 1));
     size_t roomForBindings = InstanceLayout::offsetOfBuiltinCells - InstanceLayout::offsetOfGlobalBindings;

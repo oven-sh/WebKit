@@ -31,7 +31,7 @@ struct UsesOfUnspecifiedValues {
     bool wasEveryPathFollowed { true };
 };
 
-UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses&, size_t maxUses);
+UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses&, size_t maxUses, size_t maxStates = 1 << 16);
 
 } } } // namespace JSC::AOT::Typed
 

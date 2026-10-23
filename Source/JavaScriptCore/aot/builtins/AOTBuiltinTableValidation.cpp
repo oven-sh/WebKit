@@ -102,39 +102,13 @@ static bool hasHookThatCreates(JSGlobalObject* realm, BuiltinID id)
     return true;
 }
 
-// A flag of the command line or an option of the engine puts these on the global object or on process.
-static bool isAddedByOption(BuiltinID id)
-{
-    static constexpr NamedBuiltin members[] {
-        Builtins::Dollarvm,
-        Builtins::Gc,
-        Builtins::Loader,
-        Builtins::ProcessNoDeprecation,
-        Builtins::ProcessNoProcessWarnings,
-        Builtins::ProcessPendingDeprecation,
-        Builtins::ProcessThrowDeprecation,
-        Builtins::ProcessTraceDeprecation,
-        Builtins::ProcessTraceProcessWarnings,
-        Builtins::__disableSamplingProfiler,
-        Builtins::__disableSuperSampler,
-        Builtins::__dumpAndClearSamplingProfilerSamples,
-        Builtins::__enableSamplingProfiler,
-        Builtins::__enableSuperSampler,
-        Builtins::__signpostStart,
-        Builtins::__signpostStop,
-        Builtins::__tracePointStart,
-        Builtins::__tracePointStop,
-    };
-    return std::ranges::contains(members, id);
-}
-
 static bool isExpectedInRealm(const RealmComparison& comparison, BuiltinID id)
 {
     auto& table = comparison.table;
     auto& builtin = table.at(id);
     if (builtin.kind == BuiltinKind::NativeBinding || builtin.scope == BuiltinScope::Module || !table.existsOn(id, currentPlatform))
         return false;
-    if (!hasHookThatCreates(comparison.realm, id) || isAddedByOption(id))
+    if (!hasHookThatCreates(comparison.realm, id) || table.has(BuiltinMark::IsAddedByOption, id))
         return false;
     return BuiltinBindings::provides(builtin.origin);
 }
@@ -299,7 +273,7 @@ static void checkEntries(RealmComparison& comparison)
     }
 }
 
-static void checkNativeFunction(RealmComparison& comparison, BuiltinID id, JSObject* object, const BuiltinNativeFunctionBinding& binding)
+static void checkNativeFunction(RealmComparison& comparison, BuiltinID id, JSObject* object, const BuiltinNativeFunction& binding)
 {
     auto* function = dynamicDowncast<JSFunction>(object);
     if (!function || !function->isHostFunction() || function->nativeFunction() != toTagged(NativeFunction(binding.function))) {
@@ -314,7 +288,7 @@ static void checkNativeFunction(RealmComparison& comparison, BuiltinID id, JSObj
 static void checkNativeFunctions(RealmComparison& comparison)
 {
     forEachFoundObject(comparison, [&](BuiltinID id, JSObject* object) {
-        if (auto* binding = BuiltinBindings::nativeFunctionOf(id))
+        if (auto binding = BuiltinBindings::nativeFunctionOf(id))
             checkNativeFunction(comparison, id, object, *binding);
     });
 }

@@ -1,0 +1,107 @@
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: UnspecifiedValueInspected 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
+function f0 name="goodReadBehindASecondTestOfTheSameValue" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: string):
+    Jump -> next b3(v2)
+  b2():
+    v3 = Unspecified valueType=string
+    Jump -> next b3(v3)
+  b3(v4: string):
+    v5 = TypeTest v0 testedType=string
+    Branch v5 -> taken b4(), notTaken b5()
+  b4():
+    v6 = GetStringLength v4
+    Return v6
+  b5():
+    Return
+}
+function f1 name="goodReadBehindATestOfTheSameValueUnderAnotherName" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: string):
+    Jump -> next b3(v2)
+  b2():
+    v3 = Unspecified valueType=string
+    Jump -> next b3(v3)
+  b3(v4: string):
+    v5 = RequireObjectCoercible v0 name="length"
+    v6 = TypeTest v5 testedType=string
+    Branch v6 -> taken b4(), notTaken b5()
+  b4():
+    v7 = GetStringLength v4
+    Return v7
+  b5():
+    Return
+}
+function f2 name="goodReadBehindARefusalOfWhatIsNoString" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: string):
+    Jump -> next b3(v2)
+  b2():
+    v3 = Unspecified valueType=string
+    Jump -> next b3(v3)
+  b3(v4: string):
+    v5 = RequireObjectCoercible v0 name="length"
+    v6 = GetStringLength v4
+    Return v6
+}
+function f3 name="badReadBehindATestOfAnotherValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: string):
+    Jump -> next b3(v3)
+  b2():
+    v4 = Unspecified valueType=string
+    Jump -> next b3(v4)
+  b3(v5: string):
+    v6 = TypeTest v1 testedType=string
+    Branch v6 -> taken b4(), notTaken b5()
+  b4():
+    v7 = GetStringLength v5
+    Return v7
+  b5():
+    Return
+}
+function f4 name="badReadBehindASecondTestForALayoutWhichAnObjectMayLeave" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: L0):
+    v2 = TypeTest v0 testedType=L0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v3 = Unspecified valueType=null|L0
+    Jump -> next b3(v3)
+  b3(v4: null|L0):
+    v5 = TypeTest v0 testedType=L0
+    Branch v5 -> taken b4(), notTaken b5()
+  b4():
+    v6 = TypeTest v4 testedType=L0
+    Return v6
+  b5():
+    Return
+}
+function f5 name="badReadInFrontOfTheRefusal" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: string):
+    Jump -> next b3(v2)
+  b2():
+    v3 = Unspecified valueType=string
+    Jump -> next b3(v3)
+  b3(v4: string):
+    v5 = GetStringLength v4
+    v6 = RequireObjectCoercible v0 name="length"
+    Return v5
+}

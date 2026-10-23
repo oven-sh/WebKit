@@ -15,6 +15,11 @@ list(APPEND JavaScriptCore_SOURCES
     ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES}
 )
 
+# A shared library has no undefined symbols.
+if (NOT ENABLE_STATIC_JSC)
+    list(APPEND JavaScriptCore_SOURCES ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES})
+endif ()
+
 # Written by aot-source-lists.ts: every folder under aot/ that has a header.
 list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/aot/analysis"
@@ -753,6 +758,7 @@ function(AOT_CHECK_SOURCE_LISTS)
         ${librarySources}
         ${JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES}
         ${JavaScriptCore_AOT_TEST_SOURCES}
         ${JavaScriptCore_AOT_PROGRAM_SOURCES}
         ${JavaScriptCore_AOT_SHELL_SOURCES}

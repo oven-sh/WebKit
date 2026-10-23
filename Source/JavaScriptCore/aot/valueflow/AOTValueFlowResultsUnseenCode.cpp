@@ -155,9 +155,9 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
         BuiltinID builtin;
         ValueSetID objects;
     };
-    Vector<Loader, std::size(loadersOfMachineCode)> loaders;
+    Vector<Loader, 8> loaders;
     ValueSetID objectsOfLoaders = ValueSets::nothing;
-    for (const LoaderOfMachineCode& loader : loadersOfMachineCode) {
+    for (const BuiltinLoaderOfMachineCode& loader : program.builtins().loadersOfMachineCode()) {
         Vector<ValueFlowObjectID, 32> objects;
         universe.appendObjectsOf(loader.callee, objects);
         loaders.append(Loader { loader.named, makers.of(0).of(objects.span()) });

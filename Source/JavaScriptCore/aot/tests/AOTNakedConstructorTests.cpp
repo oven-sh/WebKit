@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinTableArrays.h"
 #include "AOTClosureTable.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTModuleHost.h"

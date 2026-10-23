@@ -313,87 +313,6 @@ static void passCountersOnEdges(FunctionPassContext& context, IRBuilder& builder
     context.analyses.didChangeValues();
 }
 
-static bool widenUpcastsOfIntegers(FunctionPassContext& context)
-{
-    Function& function = context.function;
-    bool hasWidened = false;
-    for (const Block& block : function.blocks) {
-        for (ValueID id : block.values) {
-            const Value& cast = function.at(id);
-            if (cast.opcode != Opcode::Upcast)
-                continue;
-            const Type& source = context.program.typeOf(function, cast.operand(0));
-            const Type& castType = context.types.at(cast.castType());
-            if (!source.isInteger() || !castType.isInteger() || source.integers.isSubsetOf(castType.integers))
-                continue;
-            Range widened = castType.integers.unionWith(source.integers).widenedFrom(castType.integers);
-            function.edit(id, ValueEdit::Definition).setCastType(context.types.intern(Type::integer(widened)));
-            hasWidened = true;
-        }
-    }
-    if (hasWidened)
-        context.analyses.didChangeValues();
-    return hasWidened;
-}
-
-static void typeValuesBehindWiderCounters(FunctionPassContext& context)
-{
-    do {
-        typeValuesFromNever({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo });
-    } while (widenUpcastsOfIntegers(context));
-}
-
-static bool isBelowIntegerBoundIn(FunctionPassContext& context, const InductionVariable& variable, BlockID block)
-{
-    return std::ranges::any_of(variable.tests, [&](const InductionTest& test) {
-        return test.tested == TestedValue::BeforeStep
-            && isBoundingRelation(test.relation, variable.direction)
-            && context.program.typeOf(context.function, test.bound).isInteger()
-            && context.analyses.dominates(test.stayingEdge, block);
-    });
-}
-
-static Vector<BlockID, 2> findTestsOfBoundedCountersForNarrowerIntegers(FunctionPassContext& context)
-{
-    const Function& function = context.function;
-    const NaturalLoops& loops = context.analyses.naturalLoops();
-    Vector<BlockID, 2> blocks;
-    for (const LoopInduction& induction : context.analyses.inductionVariables().loops()) {
-        const NaturalLoop& loop = loops.loop(induction.loopIndex);
-        for (unsigned index = 0; index < loop.size(); ++index) {
-            BlockID block = loop.at(index);
-            const Terminator& terminator = function.at(block).terminator;
-            if (terminator.kind != TerminatorKind::Branch || !loops.belongsTo(terminator.taken().block, loop))
-                continue;
-            if (function.at(terminator.notTaken().block).frequency == BlockFrequency::Normal)
-                continue;
-            const Value& test = function.at(terminator.conditionOperand());
-            if (test.opcode != Opcode::TypeTest)
-                continue;
-            if (!context.program.typeOf(function, test.valueOperand()).isInteger() || !context.types.at(test.testedType()).isInteger())
-                continue;
-            const InductionVariable* variable = induction.find(context.analyses.identityOf(test.valueOperand()));
-            if (!variable || variable->step.kind != InductionStepKind::Constant || !isBelowIntegerBoundIn(context, *variable, block))
-                continue;
-            if (!blocks.contains(block))
-                blocks.append(block);
-        }
-    }
-    return blocks;
-}
-
-static bool dropTestsOfBoundedCountersForNarrowerIntegers(FunctionPassContext& context, IRBuilder& builder)
-{
-    constexpr uint32_t takenTargetIndex = 0;
-    Vector<BlockID, 2> blocks = findTestsOfBoundedCountersForNarrowerIntegers(context);
-    for (BlockID block : blocks)
-        builder.convertBranchToJump(block, takenTargetIndex);
-    if (blocks.isEmpty())
-        return false;
-    typeValuesBehindWiderCounters(context);
-    return true;
-}
-
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
     if (!hasNumberParameter(context.program, context.function))
@@ -420,9 +339,6 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
             return context.program.typeOf(context.function, candidate.parameter).isInteger();
         });
     }
-
-    if (outcome == PassOutcome::Changed)
-        dropTestsOfBoundedCountersForNarrowerIntegers(context, builder);
 
     if (numberOfConvertedCounters)
         context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableArrays.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"
 

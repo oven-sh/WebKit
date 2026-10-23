@@ -220,20 +220,17 @@ namespace AOT {
     macro(BuiltinClassID, builtinTableNamedClasses, numberOfNamedBuiltinClasses) \
     macro(BuiltinLayoutID, builtinTableNamedLayouts, numberOfNamedBuiltinLayouts)
 
+// The name of the namespace says which list the engine was compiled with, so a table that was compiled for another list does not link.
 #define AOT_DECLARE_LIST_OF_NAMED_IDS(ID, array, count) \
-    extern const ID array[count]; \
+    inline namespace AOT_NAMESPACE_OF_ENGINE_LIST { extern const ID array[count]; } \
     template<> struct NamedIDsOf<ID> { \
         static const ID* list() { return array; } \
     };
 FOR_EACH_AOT_LIST_OF_NAMED_IDS(AOT_DECLARE_LIST_OF_NAMED_IDS)
 #undef AOT_DECLARE_LIST_OF_NAMED_IDS
 
-static_assert(numberOfBuiltins <= BuiltinID::hashTableDeletedIndex);
-static_assert(numberOfBuiltinNames <= BuiltinName::hashTableDeletedIndex);
-static_assert(numberOfBuiltinClasses <= BuiltinClassID::hashTableDeletedIndex);
-static_assert(numberOfBuiltinSlots <= BuiltinSlotID::hashTableDeletedIndex);
-static_assert(numberOfBuiltinLayouts <= BuiltinLayoutID::hashTableDeletedIndex);
-static_assert(numberOfRuntimeModules <= RuntimeModuleID::hashTableDeletedIndex);
+// An instance keeps one byte for each built-in. How many the table has is known where the table is compiled, which checks it against this.
+inline constexpr unsigned maxNumberOfBuiltins = 16384;
 
 } // namespace AOT
 } // namespace JSC

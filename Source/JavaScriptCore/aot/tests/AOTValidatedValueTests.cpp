@@ -9,6 +9,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableArrays.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTIRParser.h"

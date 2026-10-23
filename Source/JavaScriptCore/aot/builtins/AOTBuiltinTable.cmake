@@ -8,6 +8,7 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS
     aot/builtins/function.builtins.ts
     aot/builtins/global.builtins.ts
     aot/builtins/holders.builtins.ts
+    aot/builtins/host-roles.builtins.ts
     aot/builtins/intl.builtins.ts
     aot/builtins/iterator.builtins.ts
     aot/builtins/json.builtins.ts
@@ -54,9 +55,14 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS
 )
 
 set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES
+    aot/builtins/generated/AOTBuiltinTableEngineBindings.cpp
+)
+
+# The table itself. A static JavaScriptCore names its symbols and does not define them: whoever links the library compiles a table.
+# Bun compiles its own, from its own declarations. These are for the programs that WebKit's build links.
+set(JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES
     aot/builtins/generated/AOTBuiltinTableAttachments.cpp
     aot/builtins/generated/AOTBuiltinTableBuiltins.cpp
-    aot/builtins/generated/AOTBuiltinTableEngineBindings.cpp
     aot/builtins/generated/AOTBuiltinTableNames.cpp
     aot/builtins/generated/AOTBuiltinTableOverloads.cpp
     aot/builtins/generated/AOTBuiltinTableTypes.cpp

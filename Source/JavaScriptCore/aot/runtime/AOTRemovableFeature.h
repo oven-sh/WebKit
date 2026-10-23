@@ -42,7 +42,8 @@ FOR_EACH_ENGINE_REMOVABLE_FEATURE(JSC_CHECK_REMOVABLE_FEATURE)
 
 enum class RemovedFeatureStub : uint8_t { Abort, Throw, ReturnUndefined, ReturnDefault };
 enum class FeatureRemoval : uint8_t { Present, Unused, Requested };
-enum class GuardOrigin : uint8_t { NativeCode, Builtin, Definition };
+// Builtin: the record has the number of a built-in in the table. BuiltinNamedByEngine: it has the position of one in the engine's list of names, which is all that code compiled with the engine knows.
+enum class GuardOrigin : uint8_t { NativeCode, Builtin, Definition, BuiltinNamedByEngine };
 
 struct RemovableFeatureState {
     uint8_t magic[8];
@@ -142,7 +143,7 @@ inline __attribute__((__always_inline__)) void recordRemovableEntryPoint()
 {
     static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
     static_assert(origin != GuardOrigin::Definition);
-    static_assert(origin == GuardOrigin::Builtin || !builtin);
+    static_assert(origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
     __asm__ volatile(
         "771:\n" JSC_REMOVABLE_RECORD_SECTION
         ".p2align 3\n"
@@ -162,7 +163,7 @@ inline __attribute__((__always_inline__)) void recordRemovableTableEntry()
 {
     static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
     static_assert(origin != GuardOrigin::Definition);
-    static_assert(origin == GuardOrigin::Builtin || !builtin);
+    static_assert(origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
     __asm__ volatile(
         JSC_REMOVABLE_RECORD_SECTION
         ".p2align 3\n"
@@ -211,7 +212,7 @@ ALWAYS_INLINE void recordRemovableEntryPoint()
 {
     static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
     static_assert(origin != GuardOrigin::Definition);
-    static_assert(origin == GuardOrigin::Builtin || !builtin);
+    static_assert(origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
 }
 
 template<auto& table, RemovableFeature feature, RemovedFeatureStub stub, auto entryPoint, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0>
@@ -219,7 +220,7 @@ ALWAYS_INLINE void recordRemovableTableEntry()
 {
     static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
     static_assert(origin != GuardOrigin::Definition);
-    static_assert(origin == GuardOrigin::Builtin || !builtin);
+    static_assert(origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
 }
 
 template<RemovableFeature feature, auto function, RemovedFeatureStub stub = RemovedFeatureStub::Abort, uint32_t builtin = 0>

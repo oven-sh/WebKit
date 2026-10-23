@@ -1054,6 +1054,31 @@ struct BuiltinNamesReadByNativeCode {
     std::span<const BuiltinName> namesOnlyInspected { };
 };
 
+// What code of the engine asks about an entry, and few entries have. The table lists the entries of each mark, so the engine names none of them.
+enum class BuiltinMark : uint8_t {
+    // A flag of the command line or an option of the engine puts it on the global object or on process.
+    IsAddedByOption,
+    // Compiles text: a script or a function in the global scope of this realm, or code in a realm of its own, which has of this one what it is handed.
+    EvaluatesTextInGlobalScope,
+    // Who reads it has a loader of modules in hand.
+    HoldsLoader,
+    // Replaces a member of its first operand by a function of its own.
+    IsSpy,
+    // Whoever goes over the enumerable properties of its holder passes it by: Object.keys, values, entries and assign, a spread, JSON.stringify.
+    IsNotEnumerable,
+};
+
+struct BuiltinMarkedEntry {
+    BuiltinMark mark { };
+    BuiltinID builtin { };
+};
+
+// A call of `callee` loads machine code that nobody has seen. A report names `named`, which is what a program writes.
+struct BuiltinLoaderOfMachineCode {
+    BuiltinID callee { };
+    BuiltinID named { };
+};
+
 struct RuntimeFunctionData {
     RuntimeFunctionID id { };
     RuntimeFunctionRole role { RuntimeFunctionRole::EngineBuiltin };
@@ -1162,6 +1187,8 @@ struct BuiltinTableRuntime {
     std::span<const RuntimeFunctionID> moduleLoaderFunctions { };
     std::span<const BuiltinHostRead> hostReads { };
     std::span<const BuiltinID> lockedObjects { };
+    std::span<const BuiltinMarkedEntry> marks { };
+    std::span<const BuiltinLoaderOfMachineCode> loadersOfMachineCode { };
     std::span<const BuiltinClosedKeys> closedKeys { };
     std::span<const BuiltinNamesReadByNativeCode> namesReadByNativeCode { };
     std::span<const BuiltinID> lockedMembers { };
@@ -1184,6 +1211,23 @@ struct BuiltinTableData {
 };
 
 extern const BuiltinTableData builtinTableData;
+
+// The arrays that leave an executable together with the compiler. Their readers name them: see keptByThisReader() in AOTBuiltinTable.cpp.
+struct BuiltinClassTokenStorage;
+extern const BuiltinPackedOverload builtinTableOverloads[];
+extern const BuiltinDispatch builtinTableDispatches[];
+extern const BuiltinDispatchNode builtinTableDispatchNodes[];
+extern const BuiltinType builtinTableTypes[];
+extern const BuiltinFeatureUse builtinTableFeatureUses[];
+extern const BuiltinModuleLoad builtinTableModuleLoads[];
+extern const BuiltinCalledFunction builtinTableCalledFunctions[];
+extern const BuiltinCalledFunction builtinTableStartupCalledFunctions[];
+extern const BuiltinHostObject builtinTableHostObjects[];
+extern const BuiltinNamedMemberCall builtinTableNamedMemberCalls[];
+extern const BuiltinHostMethodCall builtinTableHostMethodCalls[];
+extern const BuiltinForms builtinTableForms[];
+extern const BuiltinNameClasses builtinTableClassesByMemberName[];
+extern const BuiltinClassTokenStorage builtinTableClassTokens;
 
 struct BuiltinMemberLookup {
     enum class Outcome : uint8_t {
@@ -1309,6 +1353,10 @@ public:
     std::span<const BuiltinBoxedCall> boxedCalls() const { return m_data.attachments.boxedCalls; }
 
     std::span<const BuiltinID> lockedObjects() const { return m_data.runtime.lockedObjects; }
+    // Ascending.
+    std::span<const BuiltinMarkedEntry> marked(BuiltinMark) const;
+    bool has(BuiltinMark, BuiltinID) const;
+    std::span<const BuiltinLoaderOfMachineCode> loadersOfMachineCode() const { return m_data.runtime.loadersOfMachineCode; }
     std::span<const BuiltinID> lockedMembers() const { return m_data.runtime.lockedMembers; }
     std::span<const RuntimeFunctionData> runtimeFunctions() const { return m_data.runtime.functions; }
     std::span<const RuntimeModuleID> startupModules() const { return m_data.runtime.startupModules; }

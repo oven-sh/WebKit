@@ -6,15 +6,8 @@ AOT_RUNTIME_FACT("the number of operations of the run time", numberOfRuntimeOper
 AOT_RUNTIME_FACT("Entry::HandleException", static_cast<uint32_t>(Entry::HandleException))
 AOT_RUNTIME_FACT("Entry::CallLinkInfoForCall", static_cast<uint32_t>(Entry::CallLinkInfoForCall))
 
-AOT_RUNTIME_FACT("the names of the built-ins in the order of their numbers", builtinTableHashOfBuiltinTokens)
-AOT_RUNTIME_FACT("the number of built-ins", numberOfBuiltins)
-AOT_RUNTIME_FACT("the number of overloads of built-ins", std::size(builtinTableOverloads))
-AOT_RUNTIME_FACT("the number of types of built-ins", std::size(builtinTableTypes))
-AOT_RUNTIME_FACT("the number of classes of built-ins", std::size(builtinTableClasses))
-AOT_RUNTIME_FACT("the number of slots of built-ins", std::size(builtinTableSlots))
-AOT_RUNTIME_FACT("the number of layouts of built-ins", std::size(builtinTableLayouts))
-AOT_RUNTIME_FACT("the number of modules of the run time", std::size(builtinTableRuntimeModules))
-AOT_RUNTIME_FACT("the number of functions of the run time", std::size(builtinTableRuntimeFunctions))
+AOT_RUNTIME_FACT("the built-ins that the engine names (low word)", static_cast<uint32_t>(engineListStamp))
+AOT_RUNTIME_FACT("the built-ins that the engine names (high word)", static_cast<uint32_t>(engineListStamp >> 32))
 
 AOT_RUNTIME_FACT("the number of sections of an image", numberOfImageSections)
 AOT_RUNTIME_FACT("sizeof(ImageHeader)", sizeof(ImageHeader))

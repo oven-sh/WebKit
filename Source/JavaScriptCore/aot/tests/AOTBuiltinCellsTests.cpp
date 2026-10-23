@@ -9,6 +9,7 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramTables.h"
@@ -105,7 +106,7 @@ static void checkKeys(LoadedProgram& program)
     AOT_TEST_CHECK(!BuiltinCellKey::getter(Builtins::ArrayPrototypeLength).hasCell(table));
     AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::ModuleObjectExports).hasCell(table) && !BuiltinCellKey::object(Builtins::ImportMeta).hasCell(table));
     AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::CompilerHelpers).hasCell(table) && BuiltinCellKey::object(Builtins::CompilerHelpersHoldsRule).hasCell(table));
-    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::JSONText).hasCell(table) && BuiltinCellKey::object(Builtins::JSONTextResponseJson).hasCell(table));
+    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::JSONText).hasCell(table) && BuiltinCellKey::object(hostBuiltin("JSONTextResponseJson"_s)).hasCell(table));
 }
 
 static void checkObjects(LoadedProgram& program)

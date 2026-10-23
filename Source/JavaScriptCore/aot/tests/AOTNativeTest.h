@@ -71,6 +71,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(runtimeOperationTests) \
     v(supportTests) \
     v(builtinTableTests) \
+    v(builtinValidationTests) \
     v(b3PolicyTests) \
     v(b3HeapTests) \
     v(backEndPhaseTests) \
@@ -105,6 +106,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(programIdentifiersTests) \
     v(programStringsTests) \
     v(programStaticsTests) \
+    v(builtinCellsTests) \
     v(runtimeCounterTests) \
     v(typeErrorMessageTests) \
     v(compiledFrameTests) \

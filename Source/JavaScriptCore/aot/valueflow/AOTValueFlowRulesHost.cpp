@@ -860,17 +860,12 @@ static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
     });
 }
 
-// node:vm and ShadowRealm compile text too: a script or a function in the global scope of this realm, or code in a realm of its own, which has of this one what it is handed.
-static constexpr NamedBuiltin textEvaluatorsOfHost[] {
-    Builtins::NodeVMBindingScript, Builtins::NodeVMBindingModule, Builtins::NodeVMBindingCompileFunction, Builtins::ShadowRealmPrototypeEvaluate, Builtins::BunTranspiler,
-};
-
 // The evaluators take text and nothing else, and the text finds the realm closed and locked like everybody else. Whatever else lets in code starts it in a way of its own, with a loader in its hands.
 static UnseenCodeReach reachOfCodeBehind(const BuiltinTable& builtins, BuiltinID builtin)
 {
     const Builtin& entry = builtins.at(builtin);
     bool runsOnlyText = entry.origin == BuiltinOrigin::Engine && entry.flags.contains(BuiltinFlag::EvaluatesText) && !entry.flags.contains(BuiltinFlag::RunsUnseenCode) && !builtins.unseenCodeOf(builtin);
-    return runsOnlyText || std::ranges::contains(textEvaluatorsOfHost, builtins.canonicalID(builtin)) ? UnseenCodeReach::GlobalScope : UnseenCodeReach::Realm;
+    return runsOnlyText || builtins.has(BuiltinMark::EvaluatesTextInGlobalScope, builtins.canonicalID(builtin)) ? UnseenCodeReach::GlobalScope : UnseenCodeReach::Realm;
 }
 
 // `result` takes what the call answers: none where nobody reads it.
@@ -902,7 +897,7 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
         std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, context.refusesEvaluatedText());
         if (!cause && someCallPassesPropertyThatRunsUnseenCode(context, builtin))
             cause = UnseenCodeCause::RunsUnseenCode;
-        bool loadsMachineCode = std::ranges::contains(loadersOfMachineCode, builtin, &LoaderOfMachineCode::callee);
+        bool loadsMachineCode = std::ranges::contains(builtins.loadersOfMachineCode(), builtin, &BuiltinLoaderOfMachineCode::callee);
         if ((!cause && !loadsMachineCode) || !isCalledBySeenCode())
             return;
         // For the records: unseenCodeRecordsOf() names every built-in that has raised an event, and the loader of machine code, whose application is none.
@@ -1016,20 +1011,9 @@ static void letModulesImportMembersOf(ValueFlowRuleContext& context, BuiltinID h
     }
 }
 
-static constexpr NamedBuiltin locationsOfLoaders[] {
-    Builtins::ModuleRequireCache,
-    Builtins::NodeModule_cache,
-    Builtins::ModuleObjectRequire,
-    Builtins::NodeModulePrototypeRequire,
-    Builtins::NodeModuleWrap,
-    Builtins::NodeModuleWrapper,
-    Builtins::NodeModule_load,
-    Builtins::NodeModule_resolveFilename,
-};
-
 bool isLocationOfLoader(BuiltinID member)
 {
-    return std::ranges::contains(locationsOfLoaders, member);
+    return BuiltinTable::singleton().has(BuiltinMark::HoldsLoader, member);
 }
 
 bool isFoundByNameAlone(BuiltinID member)

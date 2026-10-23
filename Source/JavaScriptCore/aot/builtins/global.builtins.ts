@@ -36,6 +36,8 @@ export default b.declarations(
   b.static("Infinity", b.constant(b.checked(Infinity, "std::numeric_limits<double>::infinity()"))),
 
   b.name("default", "module.exports", "require", "children", "parent", "__esModule", "callee"),
+  b.name("configurable", "done", "enumerable", "errors", "writable"),
+  b.name("app", "fetch", "routes"),
 
   b.fn("isNaN", { ...numberTest("IsNaN"), boxedCallStub: "IsNaN" }),
   b.fn("isFinite", numberTest("IsFinite")),
@@ -104,6 +106,7 @@ export default b.declarations(
         uses: { this: b.inspected, sourceText: [b.evaluatedAsText] },
         usesFeature: realmFeatures,
         nativeSymbols: ["evalInRealm"],
+        marks: ["EvaluatesTextInGlobalScope"],
         implementation: b.compiled("ShadowRealmPrototype", "evaluate"),
       },
       importValue: {

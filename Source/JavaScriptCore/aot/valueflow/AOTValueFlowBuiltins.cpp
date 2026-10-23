@@ -81,9 +81,6 @@ static ClimbingSet withHostObjectsAmongMembers(ValueFlowRuleContext& context, Cl
     return ClimbingSet(context.maker().of(found.span()));
 }
 
-// The host defines these as not enumerable, so whoever goes over the enumerable properties of their holder passes them by: Object.keys, values, entries and assign, a spread, JSON.stringify.
-static constexpr NamedBuiltin membersThatWalksPassBy[] { Builtins::Console_stdout, Builtins::Console_stderr };
-
 // What native code reads that goes over the own properties of objects of the table.
 static void forEachNodeReadByWalkOver(ValueFlowRuleContext& context, ClimbingSet holders, Protocols protocols, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
 {
@@ -95,7 +92,7 @@ static void forEachNodeReadByWalkOver(ValueFlowRuleContext& context, ClimbingSet
         return;
     }
     Vector<ValueFlowObjectID, 2> holdersOfSuchMembers;
-    for (BuiltinID member : membersThatWalksPassBy) {
+    for (auto [mark, member] : builtins.marked(BuiltinMark::IsNotEnumerable)) {
         ValueFlowObjectID holder = universe.objectOf(builtins.at(member).holder);
         if (context.contains(holders, holder) && !holdersOfSuchMembers.contains(holder))
             holdersOfSuchMembers.append(holder);
@@ -107,7 +104,7 @@ static void forEachNodeReadByWalkOver(ValueFlowRuleContext& context, ClimbingSet
         // What the program has put there is enumerable for all that anybody knows.
         functor(context.read(only(context, holder), everyProperty));
         for (BuiltinID member : builtins.membersOf(universe.builtinOf(holder))) {
-            if (builtins.at(member).name && !std::ranges::contains(membersThatWalksPassBy, builtins.canonicalID(member)))
+            if (builtins.at(member).name && !builtins.has(BuiltinMark::IsNotEnumerable, builtins.canonicalID(member)))
                 functor(context.lookup(only(context, holder), property(context, builtins.at(member).name)));
         }
     }

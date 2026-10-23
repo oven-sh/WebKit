@@ -47,6 +47,38 @@ struct RuntimeDescription {
 };
 static_assert(sizeof(RuntimeDescription) == 32 && offsetof(RuntimeDescription, imageForm) == 26);
 
+// The table of built-ins is compiled with the program that embeds the engine. It describes itself in a record of its own in the same section.
+struct BuiltinTableDescription {
+    static constexpr uint64_t expectedMagic = 0x4254544f414e5542ULL;
+
+    uint64_t magic { expectedMagic };
+    uint32_t size { sizeof(BuiltinTableDescription) };
+    uint32_t hashOfBuiltinTokens;
+    uint32_t numberOfBuiltins;
+    uint32_t numberOfOverloads;
+    uint32_t numberOfTypes;
+    uint32_t numberOfClasses;
+    uint32_t numberOfSlots;
+    uint32_t numberOfLayouts;
+    uint32_t numberOfModules;
+    uint32_t numberOfFunctions;
+};
+static_assert(sizeof(BuiltinTableDescription) == 48);
+
+// A declaration says the section and the definition says that no linker leaves it out.
+#if OS(DARWIN)
+#define AOT_IN_RUNTIME_DESCRIPTION_SECTION __attribute__((section("__TEXT,__bun_aot")))
+#define AOT_KEPT_BY_EVERY_LINKER __attribute__((used))
+#elif OS(WINDOWS)
+#define AOT_IN_RUNTIME_DESCRIPTION_SECTION __attribute__((section(".bunaot")))
+#define AOT_KEPT_BY_EVERY_LINKER __attribute__((used))
+#else
+#define AOT_IN_RUNTIME_DESCRIPTION_SECTION __attribute__((section(".bun_aot")))
+#define AOT_KEPT_BY_EVERY_LINKER __attribute__((used, retain))
+#endif
+
+extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION const BuiltinTableDescription describedBuiltinTable;
+
 struct RuntimeDifference {
     ASCIILiteral name;
     uint64_t here { 0 };
@@ -54,6 +86,7 @@ struct RuntimeDifference {
 };
 
 JS_EXPORT_PRIVATE std::span<const uint8_t> runtimeDescription();
+// Takes the record of the engine or the record of the table.
 JS_EXPORT_PRIVATE std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const uint8_t> other);
 
 } } // namespace JSC::AOT

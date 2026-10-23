@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinNameSlots.h"
-#include "AOTBuiltinTableArrays.h"
 #include "AOTRemovableFeature.h"
 #include "CommonIdentifiers.h"
 #include "IdentifierInlines.h"
@@ -39,19 +38,18 @@ static ALWAYS_INLINE void letArrayLeaveWithCompiler()
 }
 
 // Whoever reads an element of such an array names the array in its own code, so the array stays in an executable for as long as one of its readers does.
-template<typename T, size_t count>
-static ALWAYS_INLINE std::span<const T> keptByThisReader(std::span<const T> listed, const T (&array)[count])
+template<typename T>
+static ALWAYS_INLINE std::span<const T> keptByThisReader(std::span<const T> listed, const T* array)
 {
 #if COMPILER(CLANG)
-    __asm__ volatile("" : : "r"(static_cast<const T*>(array)));
+    __asm__ volatile("" : : "r"(array));
 #else
     UNUSED_PARAM(array);
 #endif
     return listed;
 }
 
-template<size_t numberOfTexts, size_t numberOfCharacters>
-static ALWAYS_INLINE BuiltinTexts keptByThisReader(BuiltinTexts listed, const BuiltinTextStorage<numberOfTexts, numberOfCharacters>& storage)
+static ALWAYS_INLINE BuiltinTexts keptByThisReader(BuiltinTexts listed, const BuiltinClassTokenStorage& storage)
 {
 #if COMPILER(CLANG)
     __asm__ volatile("" : : "r"(&storage));
@@ -614,6 +612,18 @@ bool BuiltinTable::letsInUnseenCode(BuiltinID id) const
 const BuiltinForms* BuiltinTable::formsOf(BuiltinID id) const
 {
     return findRecord(keptByThisReader(m_data.attachments.forms, builtinTableForms), &BuiltinForms::builtin, id);
+}
+
+std::span<const BuiltinMarkedEntry> BuiltinTable::marked(BuiltinMark mark) const
+{
+    std::span<const BuiltinMarkedEntry> marks = m_data.runtime.marks;
+    auto found = std::ranges::equal_range(marks, mark, { }, &BuiltinMarkedEntry::mark);
+    return marks.subspan(found.begin() - marks.begin(), found.size());
+}
+
+bool BuiltinTable::has(BuiltinMark mark, BuiltinID id) const
+{
+    return std::ranges::binary_search(marked(mark), id, { }, &BuiltinMarkedEntry::builtin);
 }
 
 std::optional<BuiltinBoxedStub> BuiltinTable::boxedCallStubOf(BuiltinID id) const

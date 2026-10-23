@@ -196,7 +196,7 @@ private:
             if (ValueID access = findAccessBehindFailedTest(block.terminator))
                 replacedTests.append({ id, access });
         }
-        if (replacedTests.isEmpty())
+        if (replacedTests.isEmpty() || waitsForGenericVersion(m_program, m_function))
             return false;
 
         IRBuilder builder(m_context.analyses.context(), m_function, m_context.types, &m_context.analyses);

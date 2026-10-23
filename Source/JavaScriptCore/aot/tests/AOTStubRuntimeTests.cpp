@@ -66,7 +66,7 @@ static void testBoxedCallHandlers()
     WTF::BitSet<numberOfBuiltinBoxedStubs> stubsInTable;
     for (const BuiltinBoxedCall& call : BuiltinTable::singleton().boxedCalls()) {
         AOT_TEST_CHECK(!stubsInTable.testAndSet(static_cast<size_t>(call.stub)));
-        const BuiltinNativeFunctionBinding* binding = BuiltinBindings::nativeFunctionOf(call.builtin);
+        std::optional<BuiltinNativeFunction> binding = BuiltinBindings::nativeFunctionOf(call.builtin);
         AOT_TEST_CHECK(binding && binding->function);
 
         BoxedCallForm form = boxedCallFormOf(call.stub);

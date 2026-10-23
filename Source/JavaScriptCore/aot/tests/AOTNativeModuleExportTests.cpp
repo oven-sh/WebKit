@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTModuleHost.h"
 #include "AOTNativeTest.h"
@@ -63,7 +64,7 @@ static void checkNativeModuleExportsWhatHostLists(LoadedProgram& program)
     JSObject* namespaceObject = namespaceStoredAs(program, "nativeModule"_s);
 
     AOT_TEST_CHECK(exportOf(program, namespaceObject, "listedByHost"_s) == jsNumber(2));
-    AOT_TEST_CHECK(exportOf(program, namespaceObject, "default"_s) == jsNumber(RuntimeModules::BunJsc.index()));
+    AOT_TEST_CHECK(exportOf(program, namespaceObject, "default"_s) == jsNumber(hostModule("BunJsc"_s).index()));
     AOT_TEST_CHECK(exportOf(program, namespaceObject, "propertyOfModuleObject"_s).isUndefined());
 }
 

@@ -534,7 +534,7 @@ static Lookup findOrCreateMember(JSGlobalObject* realm, BuiltinID id)
     }
     if (found || found.error() != BuiltinLookupFailure::HolderIsMissing)
         return found;
-    if (auto* binding = BuiltinBindings::nativeFunctionOf(id))
+    if (auto binding = BuiltinBindings::nativeFunctionOf(id))
         return JSValue(JSFunction::create(realm->vm(), realm, binding->length, String(), binding->function, ImplementationVisibility::Private));
     if (JSFunction* function = createLibraryFunction(realm, id))
         return JSValue(function);
