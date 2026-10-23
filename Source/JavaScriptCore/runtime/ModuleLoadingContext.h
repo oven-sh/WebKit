@@ -70,6 +70,11 @@ public:
     const AbstractModuleRecord::ModuleRequest& moduleRequest() const { return m_moduleRequest; }
     JSCell* payload() const { return m_payload.get(); }
     ModuleRegistryEntry* entry() const { return m_entry.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    // A loadModule() context has none until the load has one. What the load then stores, it stores there: removeEntry()
+    // and clearAll() can leave another load's entry, or none, under the key while this one is in flight.
+    void setEntry(VM&, ModuleRegistryEntry*);
+#endif
     ScriptFetcher* scriptFetcher() const { return m_scriptFetcher.get(); }
     AbstractModuleRecord* module() const { return m_module.get(); }
     void module(VM& vm, AbstractModuleRecord* mod) { m_module.set(vm, this, mod); }
