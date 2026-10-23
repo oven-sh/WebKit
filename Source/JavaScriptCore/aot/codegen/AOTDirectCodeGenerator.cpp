@@ -1136,7 +1136,7 @@ void DirectCodeGenerator::orderEmission()
 void DirectCodeGenerator::chooseWhereToSetUpFrame()
 {
     constexpr unsigned maxBlocksAheadOfFrame = 8;
-    if (!m_hasFrame || m_reservesSpareSlots || !m_code.policy().frame.shrinkWraps)
+    if (!m_hasFrame || m_reservesSpareSlots || !m_code.policy().frame.shrinkWraps || m_code.policy().frame.setsUpFrameAtEntry)
         return;
     for (const HomeState& home : m_homes) {
         const ValueState& state = m_states[home.value];

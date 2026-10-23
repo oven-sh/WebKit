@@ -438,7 +438,7 @@ PassOutcome Pipeline::numberLiteralStrings()
 {
     internPiecesOfModulePaths(m_program);
     *m_output->literalStrings = read(PassID::NumberLiteralStrings, [&] {
-        return Typed::numberLiteralStrings(m_program, m_build);
+        return Typed::numberLiteralStrings(m_program, flow(), m_build);
     });
     return m_runner.lastProgramPassOutcome();
 }
@@ -515,7 +515,7 @@ void Pipeline::planSlotsBesideOtherReadersOfPreparedBodies()
         return Typed::planSlots(m_program, inputs, m_build);
     }, [&] {
         *m_output->literalStrings = m_runner.runAnalysisBeside(PassID::NumberLiteralStrings, m_program, [&] {
-            return Typed::numberLiteralStrings(m_program, m_build);
+            return Typed::numberLiteralStrings(m_program, flow(), m_build);
         }, [&] {
             m_analyses.effects(flow());
         });

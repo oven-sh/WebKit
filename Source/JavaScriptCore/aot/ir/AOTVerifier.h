@@ -53,6 +53,7 @@ bool hoistsFunctionsIntoVariables(ModuleKind);
 bool verifyFunction(const Program&, FunctionID, const Function&, IRForm, BuildContext&, const VerifierInputs& = { });
 // For a caller that has something to add to the errors before they are reported. A valid body has none.
 Vector<InternalError> findErrorsInFunction(const Program&, FunctionID, const Function&, IRForm, BuildContext&, const VerifierInputs& = { });
+String findValueListedWrongly(const Function&);
 
 // A provisional id means nothing to a reader of the diagnostics. This is the function of the source text that the provisional function descends from.
 FunctionID findFunctionAsReadOfProvisional(const Program&, const Function& provisional);

@@ -690,7 +690,7 @@ private:
         }
     }
 
-    static bool isStrictlyEqualOnlyToItself(const Type& type) { return type.isSingleValue() && !(type.primitives & Primitive::Number); }
+    static bool isStrictlyEqualOnlyToItself(const Type& type) { return (type.isSingleValue() || !type.hasObjects()) && !(type.primitives & Primitive::Number); }
 
     uint32_t maskOfCase(const Terminator& terminator, uint32_t caseIndex)
     {

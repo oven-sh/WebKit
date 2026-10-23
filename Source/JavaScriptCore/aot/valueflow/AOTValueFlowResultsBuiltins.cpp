@@ -738,9 +738,6 @@ static void warnAboutLoadsUnderComputedNames(BuildContext& build, std::span<cons
 static BuiltinLocationState stateOfLocation(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders, BuiltinID member)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
-    // Whether the name is there is known when the program runs. A read looks it up as it looks up a name of the program's own, so `typeof`, `in` and a test for truth answer for the realm of the run.
-    if (builtins.has(BuiltinMark::MayBeAbsent, member))
-        return BuiltinLocationState::Unknown;
     if (isLockedLocation(builtins, member))
         return BuiltinLocationState::Constant;
     switch (builtins.at(member).mutability) {
@@ -1152,7 +1149,9 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         if (!entry.holder || !entry.name)
             continue;
         BuiltinLocationState state = stateOfLocation(inputs, holders, member);
-        if (state == BuiltinLocationState::Constant)
+        // Whether a name that the realm may lack is there is known when the program runs: a read looks it up, so `typeof`, `in` and a test for truth answer for the realm of the run.
+        // Its record says Constant all the same: start-up locks the name, there or not, so what the first lookup finds holds for the whole run, whatever a script declares or stores behind the analysis.
+        if (state == BuiltinLocationState::Constant && !builtins.has(BuiltinMark::MayBeAbsent, member))
             tables.constantMembers.quickSet(index);
         if (!inputs.solver().usesOf(member).isEmpty())
             tables.locations.append(BuiltinLocationFlow { entry.holder, program.keyOf(entry.name), state, noWitness });

@@ -1,3 +1,4 @@
+//@ skip if !$aot
 //@ runDefault("--useAOT=1", "--sizeClassProgression=1.3")
 
 const sizeClassProgression = jscOptions().sizeClassProgression;

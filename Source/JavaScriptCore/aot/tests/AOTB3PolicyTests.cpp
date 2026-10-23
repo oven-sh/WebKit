@@ -268,16 +268,16 @@ static void testFunctionTraits()
     traits = traitsFor(7);
     traits.rejectsOnThrow = true;
     B3::Policy rejectingPolicy = policyWith({ }, traits, lowering);
-    AOT_TEST_CHECK(!rejectingPolicy.air.frame.mayOmitFrameRecord && !rejectingPolicy.air.frame.shrinkWraps);
+    AOT_TEST_CHECK(!rejectingPolicy.air.frame.mayOmitFrameRecord && rejectingPolicy.air.frame.setsUpFrameAtEntry);
     rejectingPolicy.air.frame.mayOmitFrameRecord = isX86_64();
-    rejectingPolicy.air.frame.shrinkWraps = true;
+    rejectingPolicy.air.frame.setsUpFrameAtEntry = false;
     AOT_TEST_CHECK(WTF::toString(rejectingPolicy) == description);
 
     traits = traitsFor(7);
     traits.hasHandlers = true;
     B3::Policy policyWithHandlers = policyWith({ }, traits, lowering);
-    AOT_TEST_CHECK(warmPolicy.air.frame.shrinkWraps && !policyWithHandlers.air.frame.shrinkWraps);
-    policyWithHandlers.air.frame.shrinkWraps = true;
+    AOT_TEST_CHECK(!warmPolicy.air.frame.setsUpFrameAtEntry && policyWithHandlers.air.frame.shrinkWraps && policyWithHandlers.air.frame.setsUpFrameAtEntry);
+    policyWithHandlers.air.frame.setsUpFrameAtEntry = false;
     AOT_TEST_CHECK(WTF::toString(policyWithHandlers) == description);
 
     traits = traitsFor(7);

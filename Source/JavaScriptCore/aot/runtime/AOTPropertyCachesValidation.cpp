@@ -95,8 +95,10 @@ static void validateSlotAnswer(VM& vm, const Slot& slot, SlotAccess access, Uniq
     Structure* structure = slot.structureID.decode();
     if (!structure->isObject())
         return;
-    if (!slotAgreesWithStructures(vm, slot, access, uid))
+    if (!slotAgreesWithStructures(vm, slot, access, uid)) {
+        dataLogLn("AOT validation: a row of the property caches does not agree with the Structure it is filed under: name ", uid ? String(uid) : "(none)"_str, ", kind of row ", static_cast<unsigned>(slot.kind), ", access ", static_cast<unsigned>(access), ", kind of dictionary ", static_cast<unsigned>(structure->dictionaryKind()), ", flattened before ", structure->hasBeenFlattenedBefore(), ", may be a prototype ", structure->mayBePrototype(), ", properties up to offset ", structure->maxOffset());
         crashOnValidationFailure(vm, { ValidationFailureKind::CacheHitDiffers, { }, { }, structure });
+    }
     if (!dependents || !slot.has(Slot::dependsOnChain) || !requiresFinishedWalk(slot.kind))
         return;
     if (JSObject* object = findUnregisteredChainObject(*dependents, structure, lookUpByStructure(vm, structure, uid), uid))

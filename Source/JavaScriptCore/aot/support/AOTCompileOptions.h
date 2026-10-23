@@ -166,6 +166,7 @@ struct CompileOptions {
     bool checksFlowFixpoint { false };
     // A function that is reached and cannot get past its first block but by a throw of its own is dead code that nobody has called dead, or a value there has lost a source: an error.
     bool checksThatFunctionsGetPastEntry { false };
+    bool checksThatUsedValuesAreListed { false };
     bool validatesReferenceGuards { false };
     bool countsChangesBehindSimplify { false };
     ReportSet reports { };

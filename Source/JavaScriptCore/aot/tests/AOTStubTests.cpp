@@ -844,7 +844,7 @@ static void runInMappingOfThisProcess(std::span<const uint8_t> code)
 static void testValidatedCalls()
 {
     WTF::fastDisableScavenger();
-    constexpr GPRReg preserved = gprOf(StubRegister::T12);
+    static constexpr GPRReg preserved = gprOf(StubRegister::T12);
     StubCatalog catalog(createValidatingOptions(), StubPolicy { });
     StubKey key = findStubPreserving(catalog, preserved);
 

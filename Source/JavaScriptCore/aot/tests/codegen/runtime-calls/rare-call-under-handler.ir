@@ -1,14 +1,12 @@
-# Under a handler a failed check is a branch to a rare block whose throw site unwinds to a landing pad: the function has a handler, and a frame that is not set up at its entry
+# Under a handler a failed check is a branch to a rare block whose throw site unwinds to a landing pad: the function has a handler, and so a frame that is set up at its entry:
+# the stack is tested where the frame is set up, and a frame that does not fit is an error in the caller, which would pass the handler by
 # FORM: AsRead
 # RUN: generate-code
 # OPTIONS: heat=everything-is-hot disable=pass:InlineCalls check=validate-back-end
 # STATISTIC: ThrowSites = 2
 # CHECK: f1: size={{*}} frame={{*}}@[[setup]]-
 # CHECK: f2: size={{*}} frame=none entries=1 sites=1 handlers=0
-# CHECK: f3: size=
-# CHECK-NOT: frame=none
-# CHECK-NOT: @[[setup]]-
-# CHECK: entries=1 sites=1 handlers=1
+# CHECK: f3: size={{*}} frame={{*}}@[[setup]]-{{*}} entries=1 sites=1 handlers=1
 # CHECK: f5: size=
 
 module m0 path="main.js" displayPath="main.js" body=f0

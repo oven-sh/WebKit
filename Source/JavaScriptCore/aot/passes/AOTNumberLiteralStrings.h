@@ -20,6 +20,7 @@ class BuildContext;
 
 namespace Typed {
 
+class FlowResults;
 class Program;
 
 class LiteralStringTable {
@@ -32,14 +33,14 @@ public:
     void dump(PrintStream&, const Program&) const;
 
 private:
-    friend LiteralStringTable numberLiteralStrings(const Program&, BuildContext&);
+    friend LiteralStringTable numberLiteralStrings(const Program&, const FlowResults&, BuildContext&);
 
     Vector<StringID> m_strings;
     Vector<StringID> m_stringsWithoutWord;
     UncheckedKeyHashMap<StringID, uint32_t> m_indexes;
 };
 
-LiteralStringTable numberLiteralStrings(const Program&, BuildContext&);
+LiteralStringTable numberLiteralStrings(const Program&, const FlowResults&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -2,6 +2,9 @@
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: generate-code calls ExactIntegersBehindNumbers
+# Where the target converts a number to an int32 in one instruction (ARM64 with FEAT_JSCVT) there is no call to see.
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): x86_64
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -69,8 +72,9 @@ function f5 name="elementAtTwoProducts" parameters=[{type=i32}, {type=i32}, {typ
 # CHECK-LABEL: f1:
 # CHECK-NOT: operationAOTToInt32
 # CHECK-LABEL: f2:
-# CHECK: operation operationAOTToInt32 x1
-# CHECK-LABEL: f3:
-# CHECK: operation operationAOTToInt32 x1
+# CALLS-LABEL: f2:
+# CALLS: operation operationAOTToInt32 x1
+# CALLS-LABEL: f3:
+# CALLS: operation operationAOTToInt32 x1
 # One in f1 and three in f4, where the test that the element is there and the read on either side of it each take the position. None in f5.
 # CHECK: statistic ExactIntegersBehindNumbers 4

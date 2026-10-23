@@ -201,6 +201,38 @@ void testValueNotListed()
     expectSuccessAfterTyping(addDetachedValue, IRForm::Prepared);
 }
 
+void testUsedValuesAreListed()
+{
+    Typed::Function function = createFunction({ Opcode::Null });
+    ValueID used = function.at(b0).values[0];
+    ValueID user = addValue(function, b0, Opcode::Negate, { used });
+    AOT_TEST_CHECK(used == v0 && user == v1);
+    AOT_TEST_CHECK(findValueListedWrongly(function).isNull());
+
+    Typed::Function listedTwice = function;
+    listedTwice.edit(b0).values.append(used);
+    AOT_TEST_CHECK(findValueListedWrongly(listedTwice) == "v0 is listed twice"_s);
+
+    Typed::Function notListed = function;
+    AOT_TEST_CHECK(notListed.edit(b0).values.removeFirst(used));
+    AOT_TEST_CHECK(findValueListedWrongly(notListed) == "v1 uses v0, which no reachable block lists"_s);
+
+    Typed::Function listedWhereNothingArrives = notListed;
+    listedWhereNothingArrives.edit(addBlock(listedWhereNothingArrives)).values.append(used);
+    AOT_TEST_CHECK(findValueListedWrongly(listedWhereNothingArrives) == "v1 uses v0, which no reachable block lists"_s);
+
+    Typed::Function usedWhereNothingArrives = function;
+    addValue(usedWhereNothingArrives, addBlock(usedWhereNothingArrives), Opcode::Negate, { addUnlistedValue(usedWhereNothingArrives, Opcode::Null) });
+    AOT_TEST_CHECK(findValueListedWrongly(usedWhereNothingArrives).isNull());
+
+    Typed::Function usedByEndOfBlock = function;
+    ValueID condition = addUnlistedValue(usedByEndOfBlock, Opcode::Null);
+    BlockID taken = addBlock(usedByEndOfBlock);
+    branch(usedByEndOfBlock, b0, condition, taken, addBlock(usedByEndOfBlock));
+    AOT_TEST_CHECK(condition == v2);
+    AOT_TEST_CHECK(findValueListedWrongly(usedByEndOfBlock) == "the end of a block uses v2, which no reachable block lists"_s);
+}
+
 void testOperandIDOutOfRange()
 {
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
@@ -669,6 +701,7 @@ std::span<const NativeTest> verifierTests()
         { "verifier/parameter-not-in-list"_s, testParameterNotInList },
         { "verifier/listed-id-out-of-range"_s, testListedIDOutOfRange },
         { "verifier/value-not-listed"_s, testValueNotListed },
+        { "verifier/used-values-are-listed"_s, testUsedValuesAreListed },
         { "verifier/operand-id-out-of-range"_s, testOperandIDOutOfRange },
         { "verifier/target-id-out-of-range"_s, testTargetIDOutOfRange },
         { "verifier/target-count"_s, testTargetCount },

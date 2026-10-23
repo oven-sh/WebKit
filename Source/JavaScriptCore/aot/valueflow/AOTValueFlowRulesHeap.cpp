@@ -568,12 +568,20 @@ ClimbingSet HeapRule::hostObjectsListedBesideUnknownObject(const ValueFlowOperan
 
 ClimbingSet HeapRule::holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers)
 {
-    if (!object.node || !mayBeUnknownObject(receivers) || !m_statement.function)
+    // What a built-in does to its operand has no statement of its own: it is done where the built-in is called.
+    FunctionID function = m_statement.function ? m_statement.function : m_context.functionOfStatement();
+    if (!object.node || !mayBeUnknownObject(receivers) || !function)
         return { };
-    FunctionRole role = m_program.at(m_statement.function).role;
+    FunctionRole role = m_program.at(function).role;
     if (role == FunctionRole::Library || role == FunctionRole::Model)
         return { };
     return m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), object.node);
+}
+
+ValueFlowNodeID HeapRule::exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object)
+{
+    ClimbingSet holdersOfExports = holdersOfExportsListedBesideUnknownObjectInProgram(object, m_context.valueOf(object));
+    return holdsAnything(holdersOfExports) ? m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports) : ValueFlowNodeID();
 }
 
 void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const ValueFlowOperand& value)

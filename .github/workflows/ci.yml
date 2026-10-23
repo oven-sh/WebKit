@@ -469,6 +469,8 @@ jobs:
           # --quick on the small runners: see lanes.mjs.
           if [ "$QUICK" = true ]; then platform+=(--quick); fi
           for program in testair testb3; do [ -x "$root/bin/$program" ] || platform+=("--no-$program"); done
+          # A lane built with ENABLE_AOT=0 ships no testaot (`programs` in lanes.mjs).
+          [ -x "$root/bin/testaot" ] || platform+=(--without-aot)
           # --root: <root>/bin/jsc. Of the C++ test programs a lane has testaot, and testair and testb3 where lanes.mjs
           # says so (testPrograms); the others are not built, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.
@@ -499,7 +501,7 @@ jobs:
           echo "run-javascriptcore-tests exited with $status"
           # AOTNativeTestsOfHostEntries.inc: bun's CI runs them.
           left_out=$(grep -a -E '^[0-9]+ passed, [0-9]+ failed, [0-9]+ todo' "$RUNNER_TEMP/jsc-tests.log" | tail -n 1 | grep -o -E '[0-9]+ left out' || echo "0 left out")
-          if [ "$left_out" != "33 left out" ]; then echo "::error::testaot: $left_out, and 33 are expected"; status=1; fi
+          if [ -x "$root/bin/testaot" ] && [ "$left_out" != "33 left out" ]; then echo "::error::testaot: $left_out, and 33 are expected"; status=1; fi
           # What each failing run printed (exception, stack, exit code), grouped under its name: the part of the full
           # log that is needed to fix a test.
           awk '

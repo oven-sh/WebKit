@@ -1115,7 +1115,8 @@ public:
 
     void lshift64(TrustedImm32 imm, RegisterID shiftAmount, RegisterID dest)
     {
-        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        RegisterID scratch = getCachedDataTempRegisterIDAndInvalidate();
+        imm.m_value < 0 ? signExtend32ToPtr(imm, scratch) : move(imm, scratch);
         m_assembler.lsl<64>(dest, dataTempRegister, shiftAmount);
     }
 
@@ -4633,7 +4634,7 @@ public:
             else
                 m_assembler.cmn<64>(left, u12, shift);
         } else {
-            moveToCachedReg(right, dataMemoryTempRegister());
+            moveSignExtendedToCachedReg(right, dataMemoryTempRegister());
             m_assembler.cmp<64>(left, dataTempRegister);
         }
         m_assembler.csel<64>(dest, thenCase, elseCase, ARM64Condition(cond));
@@ -4765,7 +4766,7 @@ public:
             else
                 m_assembler.cmn<64>(left, u12, shift);
         } else {
-            moveToCachedReg(right, dataMemoryTempRegister());
+            moveSignExtendedToCachedReg(right, dataMemoryTempRegister());
             m_assembler.cmp<64>(left, dataTempRegister);
         }
         m_assembler.fcsel<64>(dest, thenCase, elseCase, ARM64Condition(cond));
@@ -4899,7 +4900,7 @@ public:
             else
                 m_assembler.cmn<64>(left, u12, shift);
         } else {
-            moveToCachedReg(right, dataMemoryTempRegister());
+            moveSignExtendedToCachedReg(right, dataMemoryTempRegister());
             m_assembler.cmp<64>(left, dataTempRegister);
         }
         return Jump(makeBranch(cond));
@@ -5362,7 +5363,8 @@ public:
             return Jump(makeBranch(cond));
         }
 
-        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        RegisterID scratch = getCachedDataTempRegisterIDAndInvalidate();
+        imm.m_value < 0 ? signExtend32ToPtr(imm, scratch) : move(imm, scratch);
         return branchAdd64(cond, op1, dataTempRegister, dest);
     }
 
@@ -5508,7 +5510,8 @@ public:
             return Jump(makeBranch(cond));
         }
 
-        move(imm, getCachedDataTempRegisterIDAndInvalidate());
+        RegisterID scratch = getCachedDataTempRegisterIDAndInvalidate();
+        imm.m_value < 0 ? signExtend32ToPtr(imm, scratch) : move(imm, scratch);
         return branchSub64(cond, op1, dataTempRegister, dest);
     }
 
@@ -8215,6 +8218,15 @@ protected:
 
         moveInternal<TrustedImm32, int32_t>(imm, dest.registerIDNoInvalidate());
         dest.setValue(static_cast<intptr_t>(static_cast<uint32_t>(imm.m_value)));
+    }
+
+    // The 32-bit immediate of a 64-bit operation stands for its sign extension, as on x86-64. A 32-bit move clears the high half.
+    void moveSignExtendedToCachedReg(TrustedImm32 imm, CachedTempRegister& dest)
+    {
+        if (imm.m_value < 0)
+            signExtend32ToPtr(imm, dest.registerIDInvalidate());
+        else
+            moveToCachedReg(imm, dest);
     }
 
     void moveToCachedReg(TrustedImmPtr imm, CachedTempRegister& dest)

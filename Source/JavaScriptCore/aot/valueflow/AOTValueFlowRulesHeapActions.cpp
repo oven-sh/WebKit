@@ -76,6 +76,11 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         for (ValueFlowNodeID node : nodesTakingCopies)
             connect(members, node);
     }
+    // A module of the library that the source lists is copied all the same, though it has escaped.
+    if (ValueFlowNodeID exports = exportsOfHoldersListedBesideUnknownObject(source)) {
+        for (ValueFlowNodeID node : nodesTakingCopies)
+            connect(exports, node);
+    }
 
     // What was defined on a source by the descriptors of another object has the accessors of that object.
     ClimbingSet getters = m_context.valueOf(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyGetter));

@@ -28,6 +28,8 @@ void runLookup(const ValueFlowStatement&, ValueFlowRuleContext&);
 ClimbingSet objectsHeldFromCreation(ValueFlowRuleContext&, ClimbingSet objects);
 // What lies right above the objects, none of which is a placeholder: what they inherit from, and not the objects themselves.
 ClimbingSet objectsRightAbove(ValueFlowRuleContext&, ClimbingSet knownObjects);
+// Holds every export of the modules of the library that the operand lists beside the unknown object, where a function of the program walks the operand. No node where it lists none.
+ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(ValueFlowRuleContext&, const ValueFlowOperand&);
 
 // What an entry of the table does to the properties of an operand. An operand that is not there has no node and no constant.
 struct ValueFlowPropertyActionOperands {

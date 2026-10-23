@@ -3,6 +3,9 @@
 # OPTIONS: check=validate-back-end
 # RUN: pass ChooseRepresentations
 # RUN(CODE): generate-code calls
+# Where the target converts a number to an int32 in one instruction (ARM64 with FEAT_JSCVT) there is no call to see.
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): x86_64
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="xorWithIntegerOrUndefined" parameters=[{type=i32}, {type=undefined|i32}] results=[{type=i32}] {
@@ -44,7 +47,8 @@ function f2 name="xorWithNumberOrUndefined" parameters=[{type=i32}, {type=undefi
 # CHECK: b0(v0: i32 @Int32, v1: undefined|number @OptionalDouble):
 # CHECK-NEXT: i32 @Int32 = BitXor v0, v1 form=Numbers
 # CODE-LABEL: f2:
-# CODE: operation operationAOTToInt32 x1
+# CALLS-LABEL: f2:
+# CALLS: operation operationAOTToInt32 x1
 
 function f3 name="sumWithIntegerOrUndefined" parameters=[{type=i32}, {type=undefined|i32}] results=[{type=number}] {
   b0(v0: i32, v1: undefined|i32):

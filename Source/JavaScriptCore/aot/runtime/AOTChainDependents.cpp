@@ -228,12 +228,15 @@ void didFlattenStructure(VM& vm, Structure* structure)
     if (!validatesRuntime(vm) || !structure->isUncacheableDictionary())
         return;
     VMPropertyCaches& caches = *vm.aotState().propertyCaches;
-    bool isCached = caches.front().hasRow(structure->id());
+    bool hasRowInFront = caches.front().hasRow(structure->id());
+    unsigned numberOfHashedRows = 0;
     caches.hashedTable().forEachEntry([&](const HashedSlot& entry) {
-        isCached |= entry.slot.structureID == structure->id();
+        numberOfHashedRows += entry.slot.structureID == structure->id();
     });
-    if (isCached)
+    if (hasRowInFront || numberOfHashedRows) {
+        dataLogLn("AOT validation: an uncacheable dictionary is flattened while the property caches hold rows under its Structure: in the front table ", hasRowInFront, ", in the hashed table ", numberOfHashedRows, ", flattened before ", structure->hasBeenFlattenedBefore(), ", may be a prototype ", structure->mayBePrototype(), ", properties up to offset ", structure->maxOffset());
         crashOnValidationFailure(vm, { ValidationFailureKind::CacheHitDiffers, { }, { }, structure });
+    }
 }
 
 void didChangeGlobalLexicalBindings(JSGlobalObject* realm)

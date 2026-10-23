@@ -378,6 +378,7 @@ void WireOptionsReader::readChecks(CompileOptions& options)
     options.validatesBackEnd = hasFlag(checks, CheckSet::ValidateBackEnd);
     options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
     options.checksThatFunctionsGetPastEntry = hasFlag(checks, CheckSet::FunctionsGetPastEntry);
+    options.checksThatUsedValuesAreListed = ASSERT_ENABLED || hasFlag(checks, CheckSet::UsedValuesAreListed) || hasFlag(static_cast<TestingSwitch>(options.recorded.testing), TestingSwitch::CheckProofsAtRunTime);
     options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
     options.validatesReferences = options.validatesReferenceGuards || hasFlag(checks, CheckSet::ValidateReferences);
     options.countsChangesBehindSimplify = hasFlag(checks, CheckSet::CountChangesBehindSimplify);

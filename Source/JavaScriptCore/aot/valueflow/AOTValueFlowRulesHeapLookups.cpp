@@ -1571,6 +1571,12 @@ ClimbingSet objectsRightAbove(ValueFlowRuleContext& context, ClimbingSet knownOb
     return HeapRule(statement, context).prototypesOf(knownObjects);
 }
 
+ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(ValueFlowRuleContext& context, const ValueFlowOperand& object)
+{
+    ValueFlowStatement statement;
+    return HeapRule(statement, context).exportsOfHoldersListedBesideUnknownObject(object);
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

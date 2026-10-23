@@ -14,6 +14,7 @@
 #include "AOTVerifierInternal.h"
 #include <algorithm>
 #include <utility>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -447,6 +448,61 @@ bool verifyFunction(const Program& program, FunctionID id, const Function& funct
         return true;
     build.diagnostics().append(WTF::move(errors));
     return false;
+}
+
+String findValueListedWrongly(const Function& function)
+{
+    Vector<uint8_t, 1024> isListed(FillWith { }, function.values.size(), 0);
+    Vector<uint8_t, 128> isReachable(FillWith { }, function.blocks.size(), 0);
+    Vector<BlockID, 128> reachable;
+    isReachable[entryBlock.index()] = 1;
+    reachable.append(entryBlock);
+    for (size_t next = 0; next < reachable.size(); ++next) {
+        function.at(reachable[next]).forEachTarget([&](const Target& target) {
+            if (!std::exchange(isReachable[target.block.index()], 1))
+                reachable.append(target.block);
+        });
+    }
+
+    ValueID listedTwice;
+    auto list = [&](ValueID value) {
+        if (std::exchange(isListed[value.index()], 1))
+            listedTwice = value;
+    };
+    for (BlockID id : reachable) {
+        const Block& block = function.at(id);
+        for (ValueID parameter : block.parameters)
+            list(parameter);
+        for (ValueID value : block.values)
+            list(value);
+    }
+    if (listedTwice)
+        return makeString('v', listedTwice.index(), " is listed twice"_s);
+
+    ValueID user;
+    ValueID notListed;
+    for (BlockID blockID : reachable) {
+        const Block& block = function.at(blockID);
+        for (ValueID id : block.values) {
+            function.at(id).forEachChild([&](ValueID child) {
+                if (isListed[child.index()])
+                    return;
+                user = id;
+                notListed = child;
+            });
+        }
+        block.forEachChildOutsideValues([&](ValueID child) {
+            if (isListed[child.index()])
+                return;
+            user = { };
+            notListed = child;
+        });
+    }
+    if (!notListed)
+        return { };
+    if (user)
+        return makeString('v', user.index(), " uses v"_s, notListed.index(), ", which no reachable block lists"_s);
+    return makeString("the end of a block uses v"_s, notListed.index(), ", which no reachable block lists"_s);
 }
 
 } } } // namespace JSC::AOT::Typed

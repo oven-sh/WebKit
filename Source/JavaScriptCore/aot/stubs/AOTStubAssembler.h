@@ -193,14 +193,29 @@ public:
     v(branchAdd32, 4, Update) v(branchAdd64, 8, Update) v(branchSub32, 4, Update) v(branchMul32, 4, Update) v(atomicXchg32, 4, Update)
 
 #define AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS(name, size, kind) \
-    template<typename... Arguments> decltype(auto) name(Arguments&&... arguments) \
+    template<typename... Arguments> decltype(auto) name(Arguments... arguments) \
     { \
         checkASANShadow<size, MemoryAccess::kind>(arguments...); \
-        return CCallHelpers::name(std::forward<Arguments>(arguments)...); \
+        return CCallHelpers::name(arguments...); \
     }
     AOT_FOR_EACH_STUB_MEMORY_ACCESS(AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS)
 #undef AOT_DEFINE_CHECKED_STUB_MEMORY_ACCESS
 #undef AOT_FOR_EACH_STUB_MEMORY_ACCESS
+
+#define AOT_FOR_EACH_STUB_CELL_BYTE_TEST(v) \
+    v(branchIfType, typeInfoTypeOffset) v(branchIfNotType, typeInfoTypeOffset) v(branchIfObject, typeInfoTypeOffset) v(branchIfNotObject, typeInfoTypeOffset) \
+    v(branchIfString, typeInfoTypeOffset) v(branchIfNotString, typeInfoTypeOffset) v(branchIfSymbol, typeInfoTypeOffset) v(branchIfNotSymbol, typeInfoTypeOffset) \
+    v(barrierBranchWithoutFence, cellStateOffset)
+
+#define AOT_DEFINE_CHECKED_STUB_CELL_BYTE_TEST(name, offset) \
+    template<typename... Arguments> Jump name(GPRReg cell, Arguments... arguments) \
+    { \
+        checkASANShadow<1, MemoryAccess::Read>(Address(cell, JSCell::offset())); \
+        return CCallHelpers::name(cell, arguments...); \
+    }
+    AOT_FOR_EACH_STUB_CELL_BYTE_TEST(AOT_DEFINE_CHECKED_STUB_CELL_BYTE_TEST)
+#undef AOT_DEFINE_CHECKED_STUB_CELL_BYTE_TEST
+#undef AOT_FOR_EACH_STUB_CELL_BYTE_TEST
 #endif
 
     struct BoundEntry {

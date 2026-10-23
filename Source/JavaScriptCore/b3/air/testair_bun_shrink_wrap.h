@@ -616,6 +616,22 @@ void testShrinkWrappingOff()
     leaf.checkRun({ .result = 1 });
 }
 
+void testFrameIsSetUpAtEntry()
+{
+    B3::Policy policy = shrinkWrappingPolicy();
+    policy.air.frame.setsUpFrameAtEntry = true;
+
+    EarlyExitGraph graph(policy);
+    graph.prepareAndCheck({ .coverage = FrameCoverage::EveryPathNeedsFrame, .sites = { 1, 2 }, .setUpAtHead = { graph.early, graph.caller } });
+    CHECK(graph.entry->at(0).kind.opcode == EnterFrame);
+    graph.checkRuns();
+
+    FrameGraph leaf(policy);
+    leaf.appendAddAndReturn(leaf.entry, 1);
+    leaf.prepareAndCheck({ .coverage = FrameCoverage::NoPath, .sites = { 0, 0 } });
+    leaf.checkRun({ .result = 1 });
+}
+
 void testTerminalPatchSuccessorsKeepFrame()
 {
     for (bool runsWithoutFrame : { false, true }) {
@@ -1310,6 +1326,7 @@ void testLiveRangeSplitPutsShufflesOnBorder()
         RUN(testSeveralEntrypoints()); \
         RUN(testLargeFrameCoversEveryPath()); \
         RUN(testShrinkWrappingOff()); \
+        RUN(testFrameIsSetUpAtEntry()); \
         RUN(testTerminalPatchSuccessorsKeepFrame()); \
         RUN(testEntryBlockWithPredecessors()); \
         RUN(testCriticalEdgesAreSplit()); \

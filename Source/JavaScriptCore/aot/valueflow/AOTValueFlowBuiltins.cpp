@@ -1280,6 +1280,38 @@ private:
         return uses;
     }
 
+    bool isConvertedToObject(BuiltinOperand operand) const
+    {
+        if (operand.isReceiver())
+            return m_overload->receiver && m_overload->receiver->conversion == BuiltinConversion::ToObject;
+        for (const BuiltinParameter& parameter : m_overload->parameters) {
+            if (parameter.operand == operand)
+                return parameter.conversion == BuiltinConversion::ToObject;
+        }
+        return false;
+    }
+
+    // What the entry hands on of an operand: to a callback, into its result, into what it stores. Behind ToObject that is an object as it came, and in place of a primitive the wrapper that the entry has made of it.
+    void forEachOperandHandedOnAt(BuiltinOperand position, NOESCAPE const Invocable<void(const ValueFlowOperand&)> auto& functor)
+    {
+        if (!isConvertedToObject(position)) {
+            forEachOperandAt(position, functor);
+            return;
+        }
+        ValueSetID wrapped = m_context.maker().intersect(m_universe.primitives(), ValueSets::complement(m_universe.undefinedValue()));
+        bool makesWrapper = false;
+        forEachOperandAt(position, [&](const ValueFlowOperand& operand) {
+            makesWrapper |= m_context.meet(m_context.valueOf(operand), wrapped);
+            ValueFlowOperand object = operand;
+            object.constant = operand.constant ? m_context.maker().intersect(operand.constant, m_universe.objects()) : operand.constant;
+            object.mask = m_context.maker().intersect(operand.mask, m_universe.objects());
+            if (isPassed(object))
+                functor(object);
+        });
+        if (makesWrapper)
+            functor(operandHolding(unknownObjectSet(m_context, ValueFlowUnknownSource::ObjectWithoutLayout)));
+    }
+
     OptionSet<Protocol> protocolsOf(BuiltinOperand operand) const
     {
         if (operand.isReceiver())
@@ -1390,6 +1422,8 @@ private:
                 forEachOperandAt(*place.operand, [&](const ValueFlowOperand& operand) {
                     if (operand.node)
                         holders = m_context.unite(holders, m_context.valueWithin(ClimbingSet(m_tables.heap().holdersOfMembersThatHostMakes()), operand.node));
+                    if (ValueFlowNodeID exports = exportsOfHoldersListedBesideUnknownObject(m_context, operand))
+                        functor(exports);
                 });
             }
             ClimbingSet visited = holders;
@@ -1511,7 +1545,12 @@ private:
     // What lies at the place as it stands in this round.
     ClimbingSet valueAt(const BuiltinPlace& place)
     {
-        ClimbingSet value = place.kind == BuiltinPlaceKind::Operand ? valueAt(*place.operand) : ClimbingSet();
+        ClimbingSet value;
+        if (place.kind == BuiltinPlaceKind::Operand) {
+            forEachOperandHandedOnAt(*place.operand, [&](const ValueFlowOperand& operand) {
+                value = m_context.unite(value, m_context.valueOf(operand));
+            });
+        }
         if (place.kind == BuiltinPlaceKind::NewValue) {
             forEachPlaceHandedOnIn(place.newValueType, [&](const BuiltinPlace& handedOn) {
                 value = m_context.unite(value, valueAt(handedOn));
@@ -1536,7 +1575,7 @@ private:
             return;
         }
         if (place.kind == BuiltinPlaceKind::Operand) {
-            forEachOperandAt(*place.operand, functor);
+            forEachOperandHandedOnAt(*place.operand, functor);
             return;
         }
         if (place.kind == BuiltinPlaceKind::NewValue) {

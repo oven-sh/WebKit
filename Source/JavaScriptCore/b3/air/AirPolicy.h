@@ -48,6 +48,8 @@ struct FramePolicy {
 
     bool emitsFrame { false };
     bool shrinkWraps { false };
+    // With shrinkWraps: a function of which no path needs a frame has none, and a frame that some path needs is set up at the entry.
+    bool setsUpFrameAtEntry { false };
     unsigned maxBytesAllocatedBeforeStackCheck { 0 };
     RegisterSet registersClobberedByFrameSetup;
 

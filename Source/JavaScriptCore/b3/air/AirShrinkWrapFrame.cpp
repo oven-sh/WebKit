@@ -329,7 +329,7 @@ std::optional<FrameCoverage> FrameShrinkWrapper::findReasonToCoverEveryPath(bool
         return reason;
     if (!m_isInRegion.isEmpty() && isFrameLarge)
         return FrameCoverage::EveryPathBecauseFrameIsLarge;
-    if (isInRegion(m_code[0]))
+    if (isInRegion(m_code[0]) || (!m_isInRegion.isEmpty() && m_code.policy().frame.setsUpFrameAtEntry))
         return FrameCoverage::EveryPathNeedsFrame;
     return std::nullopt;
 }

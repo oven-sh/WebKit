@@ -331,6 +331,112 @@ static void testKeptRegisterCheckNamesTheChangedRegister()
     }
 }
 
+template<typename Functor>
+static MacroAssemblerCodeRef<JSEntryPtrTag> compileOperationOnWord(const Functor& emit)
+{
+    CCallHelpers jit;
+    jit.emitFunctionPrologue();
+    jit.move(GPRInfo::argumentGPR0, GPRInfo::argumentGPR1);
+    emit(jit, GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+    LinkBuffer linkBuffer(jit, nullptr);
+    return FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "AOT operation with an immediate");
+}
+
+static uint64_t callOperationOnWord(const MacroAssemblerCodeRef<JSEntryPtrTag>& code, int64_t operand)
+{
+    return std::bit_cast<uint64_t (SYSV_ABI *)(int64_t)>(untagCFunctionPtr<JSEntryPtrTag>(code.code().taggedPtr()))(operand);
+}
+
+static bool holds(CCallHelpers::RelationalCondition condition, int64_t left, int64_t right)
+{
+    switch (condition) {
+    case CCallHelpers::Equal:
+        return left == right;
+    case CCallHelpers::NotEqual:
+        return left != right;
+    case CCallHelpers::LessThan:
+        return left < right;
+    case CCallHelpers::GreaterThanOrEqual:
+        return left >= right;
+    case CCallHelpers::Above:
+        return static_cast<uint64_t>(left) > static_cast<uint64_t>(right);
+    case CCallHelpers::Below:
+        return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+// ARM64 has no instruction for most of these immediates and moves them into a register first. A 32-bit move clears the high half of the register.
+static void testImmediatesOf64BitOperationsAreSignExtended()
+{
+    constexpr int32_t least = std::numeric_limits<int32_t>::min();
+    constexpr int32_t most = std::numeric_limits<int32_t>::max();
+    constexpr uint64_t overflowed = 0x0123456789abcdefull;
+    for (int32_t immediate : { least, least + 1, least + 8, -0x12345, -0x1001, -1, 0, 1, 0x12345, most - 1, most }) {
+        int64_t wide = immediate;
+        CCallHelpers::TrustedImm32 imm(immediate);
+        int64_t operands[] = { wide, static_cast<int64_t>(static_cast<uint32_t>(immediate)), wide - 1, wide + 1, 0, std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max() };
+
+        for (auto condition : { CCallHelpers::Equal, CCallHelpers::NotEqual, CCallHelpers::LessThan, CCallHelpers::GreaterThanOrEqual, CCallHelpers::Above, CCallHelpers::Below }) {
+            auto branch = compileOperationOnWord([&](CCallHelpers& jit, GPRReg operand, GPRReg result) {
+                CCallHelpers::Jump taken = jit.branch64(condition, operand, imm);
+                jit.move(CCallHelpers::TrustedImm32(0), result);
+                CCallHelpers::Jump done = jit.jump();
+                taken.link(&jit);
+                jit.move(CCallHelpers::TrustedImm32(1), result);
+                done.link(&jit);
+            });
+            auto select = compileOperationOnWord([&](CCallHelpers& jit, GPRReg operand, GPRReg result) {
+                jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2);
+                jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR3);
+                jit.moveConditionally64(condition, operand, imm, GPRInfo::argumentGPR2, GPRInfo::argumentGPR3, result);
+            });
+            auto selectDouble = compileOperationOnWord([&](CCallHelpers& jit, GPRReg operand, GPRReg result) {
+                jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2);
+                jit.move64ToDouble(GPRInfo::argumentGPR2, FPRInfo::fpRegT0);
+                jit.moveZeroToDouble(FPRInfo::fpRegT1);
+                jit.moveDoubleConditionally64(condition, operand, imm, FPRInfo::fpRegT0, FPRInfo::fpRegT1, FPRInfo::fpRegT2);
+                jit.moveDoubleTo64(FPRInfo::fpRegT2, result);
+            });
+            for (int64_t operand : operands) {
+                uint64_t expected = holds(condition, operand, wide);
+                AOT_TEST_CHECK(callOperationOnWord(branch, operand) == expected);
+                AOT_TEST_CHECK(callOperationOnWord(select, operand) == expected);
+                AOT_TEST_CHECK(callOperationOnWord(selectDouble, operand) == expected);
+            }
+        }
+
+        auto emitChecked = [&](bool adds) {
+            return compileOperationOnWord([&](CCallHelpers& jit, GPRReg operand, GPRReg result) {
+                CCallHelpers::Jump overflow = adds ? jit.branchAdd64(CCallHelpers::Overflow, imm, operand) : jit.branchSub64(CCallHelpers::Overflow, imm, operand);
+                jit.move(operand, result);
+                CCallHelpers::Jump done = jit.jump();
+                overflow.link(&jit);
+                jit.move(CCallHelpers::TrustedImm64(overflowed), result);
+                done.link(&jit);
+            });
+        };
+        auto sum = emitChecked(true);
+        auto difference = emitChecked(false);
+        for (int64_t operand : operands) {
+            int64_t expected;
+            AOT_TEST_CHECK(callOperationOnWord(sum, operand) == (__builtin_add_overflow(operand, wide, &expected) ? overflowed : static_cast<uint64_t>(expected)));
+            AOT_TEST_CHECK(callOperationOnWord(difference, operand) == (__builtin_sub_overflow(operand, wide, &expected) ? overflowed : static_cast<uint64_t>(expected)));
+        }
+
+#if CPU(ARM64)
+        auto shifted = compileOperationOnWord([&](CCallHelpers& jit, GPRReg operand, GPRReg result) {
+            jit.lshift64(imm, operand, result);
+        });
+        for (int64_t amount : { 0, 1, 31, 32, 63 })
+            AOT_TEST_CHECK(callOperationOnWord(shifted, amount) == static_cast<uint64_t>(wide) << amount);
+#endif
+    }
+}
+
 std::span<const NativeTest> callingConventionTests()
 {
     static constexpr NativeTest tests[] = {
@@ -342,6 +448,7 @@ std::span<const NativeTest> callingConventionTests()
         { "calling-convention-unwinding-restores-what-landing-pads-keep"_s, testUnwindingRestoresWhatLandingPadsKeep },
         { "calling-convention-suspensions-cover-every-register-that-functions-save"_s, testSuspensionsCoverEveryRegisterThatFunctionsSave },
         { "calling-convention-kept-register-check-names-the-changed-register"_s, testKeptRegisterCheckNamesTheChangedRegister },
+        { "macro-assembler/a-32-bit-immediate-of-a-64-bit-operation-is-sign-extended"_s, testImmediatesOf64BitOperationsAreSignExtended },
 #if OS(UNIX)
         { "calling-convention-back-end-refuses-use-of-pinned-register"_s, testBackEndRefusesUseOfPinnedRegister },
 #endif

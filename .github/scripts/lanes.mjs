@@ -114,9 +114,8 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
-//                   the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
-//                   what bun-aot ships, and nothing else runs "lto-hardened-aot". The job runs testaot too, so it cannot
-//                   take a lane without the compiler. The asan lanes
+//                   the runner it does that on: a machine of the lane's own platform and architecture. "lto" is what
+//                   bun ships and "lto-aot" what bun-aot ships, and nothing else runs "lto-hardened-aot". The asan lanes
 //                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
 //                   on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
@@ -132,8 +131,8 @@ const platforms = [
     packageOS: "linux",
     lanes: { amd64: [...ALL, ...FUZZING, ...HARDENED], arm64: ALL },
     tested: {
-      amd64: { on: "linux-x64-gh", variants: ["lto-aot", "lto-hardened-aot"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto-aot"] },
+      amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot"] },
     },
     testPrograms: ["testb3", "testair", "TestWTF"],
     bunTests: arch => (arch === "arm64" ? ["lto"] : ["lto", "asan"]),
@@ -258,6 +257,7 @@ const platforms = [
 //                                  bun's build looks for them in the tarball (scripts/build/deps/webkit.ts).
 function programs(platform, arch, variant, test) {
   const objects = ["jsc-objects", "testaot-objects"];
+  if (test && variants[variant].aot === false) return ["jsc", "testFFI"];
   if (test) return ["jsc", "testFFI", "testaot", ...objects];
   if (platform.bunTests?.(arch).includes(withoutAOT(variant))) return variants[variant].aot === false ? ["jsc", "testFFI"] : ["jsc", "testFFI", ...objects];
   return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan" ? ["jsc", ...objects] : ["jsc"];

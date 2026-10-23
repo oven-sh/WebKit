@@ -3,6 +3,9 @@
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: generate-code calls ExactIntegersBehindNumbers
+# Where the target converts a number to an int32 in one instruction (ARM64 with FEAT_JSCVT) there is no call to see.
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): x86_64
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -74,5 +77,6 @@ function f5 name="lowWordOfRemainderAndTerm" parameters=[{type=i32}, {type=i32}]
 # CHECK-LABEL: f4:
 # CHECK-NOT: operationAOTToInt32
 # CHECK-LABEL: f5:
-# CHECK: operation operationAOTToInt32 x1
+# CALLS-LABEL: f5:
+# CALLS: operation operationAOTToInt32 x1
 # CHECK: statistic ExactIntegersBehindNumbers 3

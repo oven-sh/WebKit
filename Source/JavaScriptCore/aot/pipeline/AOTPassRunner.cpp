@@ -580,6 +580,12 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     if (functionBeforeRun || isTimed) [[unlikely]]
         logBeforeRun = context.changes.end();
     PassOutcome outcome = descriptor.run(context);
+    if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]] {
+        if (String problem = findValueListedWrongly(context.function); !problem.isNull()) {
+            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });
+            run.isStopped = true;
+        }
+    }
     if (functionBeforeRun) [[unlikely]] {
         if (String problem = findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun); !problem.isNull()) {
             m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });

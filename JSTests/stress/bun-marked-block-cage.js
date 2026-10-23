@@ -1,3 +1,4 @@
+//@ skip if !$aot
 //@ runDefault("--useAOT=true", "--markedBlockCageSizeInMB=32")
 //@ runDefault("--useAOT=true")
 //@ runDefault("--useAOT=true", "--markedBlockCageSizeInMB=48")

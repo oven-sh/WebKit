@@ -569,7 +569,17 @@ void ObjectInterpreter::didBuild(VirtualObjectID object, const BuildCause& cause
 ValueID ObjectInterpreter::resolve(ValueID value)
 {
     VirtualObjectID object = objectOf(value);
-    return object ? cellOf(object) : value;
+    if (!object)
+        return value;
+
+    ValueID cell = cellOf(object);
+    if (m_enteredEdge.edge && m_enteredEdge.edge->edge.isHandlerEdge())
+        return cell;
+    // A test that was answered while the object was virtual had narrowed the name, and a type assumed of the object may admit more than that.
+    TypeID type = function().at(value).type;
+    if (!type || function().at(cell).type == type || program().typeOf(function(), cell).isSubsetOf(program().at(type), program()))
+        return cell;
+    return cursor().emit(makeAssumeType(cell, type));
 }
 
 ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
@@ -585,7 +595,11 @@ ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
 
     // The casts went while the object was virtual.
     for (TypeID assumedType : state.assumedTypes) {
-        if (program().typeOf(function(), cell).isSubsetOf(program().at(assumedType), program()))
+        const Type& type = program().typeOf(function(), cell);
+        if (type.isSubsetOf(program().at(assumedType), program()))
+            continue;
+        // A cast to a type that admits objects of other classes would forget which class the cell has.
+        if (!type.castTo(program().at(assumedType), cursor().builder().types()).isSubsetOf(type, program()))
             continue;
         if (m_sinking.context().build.validates())
             cursor().emit(makeValidateType(cell, assumedType));

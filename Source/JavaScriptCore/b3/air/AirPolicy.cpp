@@ -78,6 +78,7 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_DIFFERENT(frame, coalescesSpillSlots);
     AIR_POLICY_PRINT_IF_SET(frame, emitsFrame);
     AIR_POLICY_PRINT_IF_SET(frame, shrinkWraps);
+    AIR_POLICY_PRINT_IF_SET(frame, setsUpFrameAtEntry);
     AIR_POLICY_PRINT_IF_DIFFERENT(frame, maxBytesAllocatedBeforeStackCheck);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(frame, registersClobberedByFrameSetup);
     AIR_POLICY_PRINT_IF_SET(frame, mayPlaceSlotsAboveFrameRecord);

@@ -278,6 +278,9 @@ private:
     ClimbingSet unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet hostObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers);
     ClimbingSet holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers);
+public:
+    ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object);
+private:
     bool m_keepsHoldersOfExportsItStartsFrom { false };
     void notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);

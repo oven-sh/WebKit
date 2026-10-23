@@ -275,19 +275,36 @@ private:
         return next;
     }
 
+    bool isPositionBehind(ValueID step, ValueID position)
+    {
+        const Function& function = builder().function();
+        const Value& next = function.at(definitionThroughUpcasts(function, position));
+        if (next.opcode != Opcode::Add)
+            return false;
+        const Value& found = function.at(next.operand(0));
+        const Value& distance = function.at(next.operand(1));
+        return found.opcode == Opcode::ResultAt && found.operand(OperandIndex::ResultAt::results) == step && found.index() == static_cast<uint32_t>(ForInStepResult::Position)
+            && distance.opcode == Opcode::Integer && distance.integer() == 1;
+    }
+
     BlockID cloneTurn(PropertyKeyID name, size_t position, BlockID nextTurn)
     {
         Function& function = builder().function();
         auto cloner = makeUniqueWithoutFastMallocCheck<RegionCloner>(builder(), function);
         cloner->cloneBlocks(m_loop.region.span(), [](ValueID, Value&) { });
         BlockID header = cloner->cloneOf(m_loop.header);
+        ValueID step = cloner->cloneOf(m_loop.step);
+        size_t positionIndex = function.at(header).parameters.find(function.at(step).positionOperand());
         for (BlockID block : cloner->clonedBlocks()) {
             for (Target& target : function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets) {
-                if (target.block == header)
-                    target.block = nextTurn;
+                if (target.block != header)
+                    continue;
+                // The region may hold a cycle with a step of its own, which goes on to any position. The loop as written takes them all.
+                bool isAtNextPosition = positionIndex < target.arguments.size() && isPositionBehind(step, target.arguments[positionIndex]);
+                target.block = isAtNextPosition ? nextTurn : m_loop.header;
             }
         }
-        m_turns.append(Turn { header, cloner->cloneOf(m_loop.step), name, position });
+        m_turns.append(Turn { header, step, name, position });
         m_cloners.append(WTF::move(cloner));
         return header;
     }

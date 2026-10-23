@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTIR.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSlotPlan.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
@@ -34,6 +35,8 @@ struct StringsNeedingWords {
     StringsNeedingWords(const Program& program, const ParallelLoops& loops)
         : typesToVisit(program.types.size())
         , strings(program.strings.size())
+        , constantsOfCode(program.strings.size())
+        , variablesNamedByCode(program.variables.size())
     {
         constexpr unsigned typesInShare = 4096;
         static_assert(!(typesInShare % 32));
@@ -54,6 +57,8 @@ struct StringsNeedingWords {
 
     FastBitVector typesToVisit;
     FastBitVector strings;
+    FastBitVector constantsOfCode;
+    FastBitVector variablesNamedByCode;
 };
 
 } // anonymous namespace
@@ -112,11 +117,15 @@ static void collectStringsNeedingWords(const Program& program, FunctionID id, St
     auto collectFromValue = [&](const Value& value) {
         if (value.opcode != Opcode::String)
             collectLiteralsOf(program, value.type, found);
+        else
+            found.constantsOfCode.atomicSetAndCheck(value.string().index(), true);
         forEachType(value, [&](TypeID type) {
             collectLiteralsOf(program, type, found);
         });
         if (equalityComparisonsOfLiterals.contains(value.opcode))
             collectComparedConstants(program, function, value, found);
+        if (VariableID variable = Value::opcodesWithVariable.contains(value.opcode) ? value.variable() : VariableID())
+            found.variablesNamedByCode.atomicSetAndCheck(variable.index(), true);
     };
     auto collectFromTerminator = [&](const Terminator& terminator) {
         if (terminator.kind == TerminatorKind::SwitchString && program.typeOf(function, terminator.subjectOperand()).hasLiteralStrings())
@@ -143,24 +152,35 @@ static void collectStringsNeedingWords(const Program& program, FunctionID id, St
     }
 }
 
-static void collectStoredLiterals(const Program& program, StringsNeedingWords& found)
+static void collectStoredLiterals(const Program& program, const FlowResults& flow, StringsNeedingWords& found)
 {
     for (const Layout& layout : program.layouts) {
         for (const Field& field : layout.fields)
             collectLiteralsOf(program, field.declared.type, found);
     }
-    for (const Variable& variable : program.variables)
-        collectLiteralsOf(program, variable.declared.type, found);
+    BitVector described = findVariablesDescribedToRunTime(program, flow);
+    for (unsigned index = 0; index < program.variables.size(); ++index) {
+        TypeID type = program.variables[index].declared.type;
+        if (described.quickGet(index) || found.variablesNamedByCode.at(index)) {
+            collectLiteralsOf(program, type, found);
+            continue;
+        }
+        // The text of a constant that was folded into its readers is in the image with them.
+        for (StringID literal : program.at(type).stringLiterals) {
+            if (found.constantsOfCode.at(literal.index()))
+                found.add(literal);
+        }
+    }
 }
 
-LiteralStringTable numberLiteralStrings(const Program& program, BuildContext& build)
+LiteralStringTable numberLiteralStrings(const Program& program, const FlowResults& flow, BuildContext& build)
 {
     StringsNeedingWords found(program, build.parallelLoops());
     forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
         if (hasBody(program, FunctionID(index)))
             collectStringsNeedingWords(program, FunctionID(index), found);
     });
-    collectStoredLiterals(program, found);
+    collectStoredLiterals(program, flow, found);
 
     StringID emptyString = program.strings.emptyString();
     LiteralStringTable table;

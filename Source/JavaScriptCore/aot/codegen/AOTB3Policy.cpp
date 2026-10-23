@@ -208,7 +208,8 @@ static B3::Air::FramePolicy framePolicyFor(const BuildContext& build, const Func
     B3::Air::FramePolicy frame;
     frame.emitsFrame = true;
     // The stack is tested where the frame is set up, and a frame that does not fit is an error at the call in the caller. Behind the entry the function may have done something, and may stand in a try of its own, which the error would pass by.
-    frame.shrinkWraps = !traits.savesFrameOnSuspend && !traits.hasHandlers && !traits.rejectsOnThrow;
+    frame.shrinkWraps = !traits.savesFrameOnSuspend;
+    frame.setsUpFrameAtEntry = traits.hasHandlers || traits.rejectsOnThrow;
     frame.maxBytesAllocatedBeforeStackCheck = maxBytesAllocatedBeforeStackCheck;
     if constexpr (isARM64())
         frame.registersClobberedByFrameSetup = RegisterSet::macroClobberedGPRs();

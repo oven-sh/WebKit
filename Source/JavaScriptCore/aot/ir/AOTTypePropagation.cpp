@@ -518,7 +518,7 @@ void TypePropagation::propagate(TypeLevel level, Direction direction)
             size_t numberOfWaitingValues = m_worklist.size();
             enqueueUsersOf(id);
             if (m_worklist.size() != numberOfWaitingValues)
-                m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id });
+                m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = "a user of the value was not waiting to be typed again"_s });
         }
     }
 }
@@ -639,7 +639,7 @@ TypeID TypePropagation::computeValue(const TypingContext& context, ValueID id)
     const Value& value = context.function.at(id);
     TypeID type = computeResultTypeID(context, value);
     if (m_inputs.build.options().verifiesAfterEveryPass && type != context.types.intern(context.types.adopt(computeResultType(context, value)))) [[unlikely]]
-        m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id });
+        m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = "the rule that answers with a type id disagrees with the rule that answers with a type"_s });
     // A proof that leaves nothing of what its operand was expected to be: as in partOfExpectedTypeInside().
     if (type == TypeTable::never && context.level == TypeLevel::Expected && value.opcode == Opcode::AssumeType && context.typeIDOf(value.valueOperand()) != TypeTable::never)
         return value.type;
@@ -708,7 +708,7 @@ TypeID TypePropagation::computeTypeOnEdge(const TypingContext& context, EdgeResu
     if (!known)
         context.memo->results.add(hasher.hash(), type);
     else if (known != type)
-        m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = result.test });
+        m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = result.test, .detail = "the type remembered for the edge is not what the rule gives now"_s });
     return type;
 }
 
@@ -1750,7 +1750,7 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
         if (typedFromNever) {
             if (ValueID value = findValueTypedWider(inputs, *typedFromNever))
-                inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value });
+                inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
         }
     }
     // An upcast that was replaced has still to be typed.

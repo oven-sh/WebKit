@@ -126,7 +126,11 @@ static ChildProgress progressOf(StringView output, NativeTestList tests)
         size_t lineEnd = output.find('\n', lineStart);
         if (lineEnd == notFound)
             break;
-        if (output.substring(lineStart, lineEnd - lineStart) == tests[progress.startedTestCount]->name) {
+        StringView line = output.substring(lineStart, lineEnd - lineStart);
+        // C's stdout ends a line with \r\n on Windows.
+        if (line.endsWith('\r'))
+            line = line.left(line.length() - 1);
+        if (line == tests[progress.startedTestCount]->name) {
             ++progress.startedTestCount;
             progress.lastTestOutput = output.substring(lineEnd + 1);
         }

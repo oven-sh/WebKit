@@ -119,6 +119,7 @@ my $runCLoopMode = 0;
 my $runQuickMode = 0;
 my $noSlowTests = 0; # Bun
 my $asanBuild = 0; # Bun
+my $withoutAOT = 0; # Bun
 
 my $forceCollectContinuously = 0;
 my $envVars = "";
@@ -322,6 +323,7 @@ Usage: $programName [options] [options to pass to build system]
                                 Note, this will not change the behavior of tests that specify their own modes.
   --no-slow                     Bun: skip the tests marked //\@ slow! (run-jsc-stress-tests --no-slow).
   --asan                        Bun: the build under test has AddressSanitizer; skip the tests marked //\@ skip if \$asan.
+  --without-aot                 Bun: the build under test has ENABLE_AOT=0; no testaot, and skip the tests marked //\@ skip if !\$aot.
 
   --[no-]fail-fast              Stop this script when a test family reports an error or failure (default: $failFastDefault)
   --[no-]force-collectContinuously Enable the collectContinuously mode even if it was disabled on this platform.
@@ -415,6 +417,7 @@ GetOptions(
     'quick!' => \$runQuickMode,
     'no-slow' => \$noSlowTests,
     'asan' => \$asanBuild,
+    'without-aot' => \$withoutAOT,
     'fail-fast!' => \$failFast,
     'force-collectContinuously!' => \$forceCollectContinuously,
     'copy!' => \$copyJSC,
@@ -462,6 +465,10 @@ GetOptions(
 if ($asanBuild) {
     push(@ARGV, "--asan");
     asanIsEnabled();
+}
+
+if ($withoutAOT) {
+    $runTestAOT = DONT_RUN;
 }
 
 my $specificTestsSpecified = 0;
@@ -1015,6 +1022,10 @@ sub runJSCStressTests
 
     if ($asanBuild) {
         push(@jscStressDriverCmd, "--asan");
+    }
+
+    if ($withoutAOT) {
+        push(@jscStressDriverCmd, "--without-aot");
     }
 
     if (!$runJITStressTests) {

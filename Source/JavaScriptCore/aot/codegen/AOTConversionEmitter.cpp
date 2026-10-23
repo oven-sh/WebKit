@@ -485,6 +485,11 @@ Integer ConversionEmitter::toInteger(Number value)
     patchpoint->setRunsWithoutFrame(true);
     patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+#if CPU(ARM64)
+        // Beyond int64 x86-64 answers with the least int64, which made a number again is never the operand. ARM64 answers with the nearest int64, and the greatest one made a number again is 2^63.
+        jit.m_assembler.cmn<64>(params[0].gpr(), UInt12(1));
+        jit.m_assembler.cinc<64>(params[0].gpr(), params[0].gpr(), ARM64Assembler::ConditionVS);
+#endif
     });
     return Integer(patchpoint);
 }

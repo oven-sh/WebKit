@@ -275,7 +275,8 @@ JSCell* BuiltinCells::cell(uint32_t number)
 
     bool isImmutable = isImmutableLocation(table, m_tables.constantBuiltinMembers(), key->builtin());
     if (!found) {
-        if (isImmutable && BuiltinBindings::provides(table.at(key->builtin()).origin)) {
+        // Compiled code tests what it has looked up against the cell of a built-in that the realm may lack, and reads through it only behind the test.
+        if (isImmutable && BuiltinBindings::provides(table.at(key->builtin()).origin) && !table.has(BuiltinMark::MayBeAbsent, key->builtin())) {
             dataLogLn("AOT: built-in cell ", number, " (key ", key->encoded(), ", ", table.textOf(key->builtin()), ") is not in this realm: ", static_cast<unsigned>(found.error()));
             CRASH();
         }
