@@ -47,6 +47,7 @@ Vector<.*(appendSlowCase|expandCapacity)
 ^AOT::repeatsPropertyAddition$
 ^__aarch64_
 ^JSCellLock::(lock|unlock)Slow$
+^WTF::LockAlgorithm<
 ^AOT::crashOnValidationFailure$
 ^AOT::ChainDependents::hasDependents$
 ^AOT::slotAgreesWithStructures$
