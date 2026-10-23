@@ -279,6 +279,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useConcurrentGC, true, Normal, nullptr) \
     v(Bool, collectContinuously, false, Normal, nullptr) \
     v(Double, collectContinuouslyPeriodMS, 1, Normal, nullptr) \
+    v(Unsigned, initialHeapVersion, 0, Restricted, "If nonzero, the version each heap's marking, newly allocated and Eden versions start at. A value near the maximum makes them wrap within a few collections."_s) \
     v(Bool, forceFencedBarrier, false, Normal, nullptr) \
     v(Bool, verboseVisitRace, false, Normal, nullptr) \
     v(Bool, verboseHeapSnapshotLogging, true, Normal, nullptr) \
@@ -775,8 +776,10 @@ bool hasCapacityToUseLargeGigacage();
     FOR_EACH_JSC_WEB_PREFERENCE_OPTION(v) \
     /* Restricted so some app doesn't set this environment variable and start using it. */ \
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
-    /* Not sourced from UnifiedWebPreferences.yaml: force-enabled via the cross-origin-isolation path and consumed in WebCore. */ \
+    /* Not sourced from UnifiedWebPreferences.yaml: exposes SharedArrayBuffer to every global object. */ \
     v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
+    /* Not sourced from UnifiedWebPreferences.yaml: lets an embedder expose SharedArrayBuffer to some global objects, see JSGlobalObject::exposeSharedArrayBuffer(). */ \
+    v(Bool, allowSharedArrayBuffer, true, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
 

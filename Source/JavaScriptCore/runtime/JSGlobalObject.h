@@ -1221,6 +1221,7 @@ public:
     inline Structure* arrayBufferStructureConcurrently(ArrayBufferSharingMode) const;
     template<ArrayBufferSharingMode sharingMode> Structure* arrayBufferStructureWithSharingMode() const { return arrayBufferStructure(sharingMode); }
     inline JSObject* arrayBufferConstructor(ArrayBufferSharingMode) const;
+    JS_EXPORT_PRIVATE void exposeSharedArrayBuffer();
     inline GetterSetter* arrayBufferSpeciesGetterSetter(ArrayBufferSharingMode) const;
 
 #define DEFINE_ACCESSORS_FOR_SIMPLE_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \

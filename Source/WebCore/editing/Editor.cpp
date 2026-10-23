@@ -115,6 +115,7 @@
 #include "RenderImage.h"
 #include "RenderLayer.h"
 #include "RenderObjectStyle.h"
+#include "RenderText.h"
 #include "RenderTextControl.h"
 #include "RenderedDocumentMarker.h"
 #include "RenderedPosition.h"
@@ -1421,6 +1422,7 @@ void Editor::clear()
     m_oldSelectionForEditorUIUpdate = { };
     m_editorUIUpdateTimer.stop();
     m_alternativeTextController->stopAlternativeTextUITimer();
+    m_matchFinder = nullptr;
 
 #if ENABLE(TELEPHONE_NUMBER_DETECTION) && !PLATFORM(IOS_FAMILY)
     m_telephoneNumberDetectionUpdateTimer.stop();
@@ -5090,8 +5092,12 @@ const Style::ComputedStyle* Editor::styleForSelectionStart(RefPtr<Node>& nodeToR
         return nullptr;
 
     RefPtr typingStyle { document->selection().typingStyle() };
-    if (!typingStyle || !typingStyle->style())
+    if (!typingStyle || !typingStyle->style()) {
+        // Callers read non-inherited properties like the background color. For text these are its parent's.
+        if (CheckedPtr text = dynamicDowncast<RenderText>(position.deprecatedNode()->renderer()))
+            return &text->parent()->style();
         return &position.deprecatedNode()->renderer()->style();
+    }
 
     auto styleElement = HTMLSpanElement::create(document);
 

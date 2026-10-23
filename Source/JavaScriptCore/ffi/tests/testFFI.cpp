@@ -2437,7 +2437,7 @@ static void testOptimizingTierPointerArgumentWithNonViewCells()
         }
 
         MarkedArgumentBuffer bigIntArgument;
-        bigIntArgument.append(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(0x100000001)));
+        bigIntArgument.append(JSBigInt::createFrom(globalObject, static_cast<int64_t>(0x100000001)));
         FFI_CHECK(!scope.exception());
         FFI_CHECK(callFunction(hot, bigIntArgument) == jsNumber(4294967297.0));
 

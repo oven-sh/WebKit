@@ -34,6 +34,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/credentialless-video.https.tentative.window.js.headers
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/credentialless-websocket.https.tentative.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-frame.tentative.https.html
+/LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-isolated-permissions-policy.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-isolated.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/dedicated-worker.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/header-parsing.tentative.https.html
@@ -50,6 +51,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/partial-deployment.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-cache-storage-corp.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-subresource-corp.tentative.https.html
+/LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/reporting.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/service-worker-coep-credentialless-proxy.https.tentative.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/service-worker-coep-none-proxy.https.tentative.window.js
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/shared-array-buffer.tentative.https.html

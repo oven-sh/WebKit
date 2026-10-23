@@ -49,7 +49,7 @@
 #include "FTLOSREntry.h"
 #include "FrameTracers.h"
 #include "GCMemoryOperations.h"
-#include "HasOwnPropertyCache.h"
+#include "HasOwnPropertyCacheInlines.h"
 #include "Interpreter.h"
 #include "InterpreterInlines.h"
 #include "IntlCollator.h"
@@ -4785,9 +4785,8 @@ JSC_DEFINE_JIT_OPERATION(operationFunctionBind, JSBoundFunction*, (JSGlobalObjec
             name = jsEmptyString(vm);
     }
 
-    auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
-    SourceCode source = makeSource("[bound function]"_s, SourceOrigin(url), taintedness);
-    OPERATION_RETURN(scope, JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, source));
+    SourceTaintedOrigin taintedness = sourceTaintedOriginFromStack(vm, callFrame).first;
+    OPERATION_RETURN(scope, JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, taintedness));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewBoundFunction, JSBoundFunction*, (JSGlobalObject* globalObject, JSFunction* function, EncodedJSValue boundThisValue, EncodedJSValue arg0Value, EncodedJSValue arg1Value, EncodedJSValue arg2Value))
@@ -4804,9 +4803,8 @@ JSC_DEFINE_JIT_OPERATION(operationNewBoundFunction, JSBoundFunction*, (JSGlobalO
     boundArgsLength += !!(arg0);
     boundArgsLength += !!(arg1);
     boundArgsLength += !!(arg2);
-    auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
-    SourceCode source = makeSource("[bound function]"_s, SourceOrigin(url), taintedness);
-    OPERATION_RETURN(scope, JSBoundFunction::createRaw(vm, globalObject, function, boundArgsLength, boundThis, arg0, arg1, arg2, source));
+    SourceTaintedOrigin taintedness = sourceTaintedOriginFromStack(vm, callFrame).first;
+    OPERATION_RETURN(scope, JSBoundFunction::createRaw(vm, globalObject, function, boundArgsLength, boundThis, arg0, arg1, arg2, taintedness));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationSingleCharacterString, JSString*, (VM* vmPointer, int32_t character))
@@ -6388,7 +6386,7 @@ JSC_DEFINE_JIT_OPERATION(operationInt64ToBigInt, EncodedJSValue, (JSGlobalObject
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    OPERATION_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, value)));
+    OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, value)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationUInt64ToBigInt, EncodedJSValue, (JSGlobalObject* globalObject, uint64_t value))
@@ -6397,7 +6395,7 @@ JSC_DEFINE_JIT_OPERATION(operationUInt64ToBigInt, EncodedJSValue, (JSGlobalObjec
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    OPERATION_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, value)));
+    OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, value)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationThrowDFG, void, (JSGlobalObject* globalObject, EncodedJSValue valueToThrow))

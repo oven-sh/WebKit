@@ -475,11 +475,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionDisassembleBase64);
 
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateHeapBigInt);
-#if USE(BIGINT32)
-static JSC_DECLARE_HOST_FUNCTION(functionCreateBigInt32);
-#endif
-static JSC_DECLARE_HOST_FUNCTION(functionUseBigInt32);
-static JSC_DECLARE_HOST_FUNCTION(functionIsBigInt32);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHeapBigInt);
 static JSC_DECLARE_HOST_FUNCTION(functionIs8BitString);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateNonRopeNonAtomString);
@@ -933,11 +928,6 @@ private:
 
         addFunction(vm, "createGlobalObject"_s, functionCreateGlobalObject, 0);
         addFunction(vm, "createHeapBigInt"_s, functionCreateHeapBigInt, 1);
-#if USE(BIGINT32)
-        addFunction(vm, "createBigInt32"_s, functionCreateBigInt32, 1);
-#endif
-        addFunction(vm, "useBigInt32"_s, functionUseBigInt32, 0);
-        addFunction(vm, "isBigInt32"_s, functionIsBigInt32, 1);
         addFunction(vm, "isHeapBigInt"_s, functionIsHeapBigInt, 1);
 
         addFunction(vm, "is8BitString"_s, functionIs8BitString, 1);
@@ -3189,6 +3179,9 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarIsRemoteFunction, (JSGlobalObject* global
     return JSValue::encode(jsBoolean(isRemoteFunction(arg)));
 }
 
+constexpr unsigned maxLiveAgentsInFuzzerMode = 64;
+static std::atomic<unsigned> numLiveAgents;
+
 JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -3217,7 +3210,13 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
         workerPath = callFrame->argument(1).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
-    
+
+    unsigned previousLiveAgents = numLiveAgents.fetch_add(1);
+    if (Options::useFuzzerMode() && previousLiveAgents >= maxLiveAgentsInFuzzerMode) {
+        numLiveAgents.fetch_sub(1);
+        return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Too many live agents"_s)));
+    }
+
     Thread::create(
         "JSC Agent"_s,
         [sourceCode = WTF::move(sourceCode).isolatedCopy(), workerPath = WTF::move(workerPath).isolatedCopy(), &didStartLock, &didStartCondition, &didStart] () {
@@ -3242,6 +3241,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
                     if (!success)
                         exitProcess(EXIT_FAILURE);
                 });
+            numLiveAgents.fetch_sub(1);
         })->detach();
     
     {
@@ -3669,63 +3669,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateHeapBigInt, (JSGlobalObject* globalObject
     JSValue argument = callFrame->argument(0);
     JSValue bigInt = argument.toBigInt(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-#if USE(BIGINT32)
-    if (bigInt.isHeapBigInt())
-        return JSValue::encode(bigInt);
-    ASSERT(bigInt.isBigInt32());
-    int32_t value = bigInt.bigInt32AsInt32();
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, value)));
-#else
     return JSValue::encode(bigInt);
-#endif
-}
-
-#if USE(BIGINT32)
-JSC_DEFINE_HOST_FUNCTION(functionCreateBigInt32, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue argument = callFrame->argument(0);
-    JSValue bigIntValue = argument.toBigInt(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (bigIntValue.isBigInt32())
-        return JSValue::encode(bigIntValue);
-    ASSERT(bigIntValue.isHeapBigInt());
-    JSBigInt* bigInt = uncheckedDowncast<JSBigInt>(bigIntValue);
-    if (!bigInt->length())
-        return JSValue::encode(jsBigInt32(0));
-    if (bigInt->length() == 1) {
-        JSBigInt::Digit digit = bigInt->digit(0);
-        if (bigInt->sign()) {
-            if (digit <= static_cast<uint64_t>(-static_cast<int64_t>(INT32_MIN)))
-                return JSValue::encode(jsBigInt32(static_cast<int32_t>(-static_cast<int64_t>(digit))));
-        } else {
-            if (digit <= INT32_MAX)
-                return JSValue::encode(jsBigInt32(static_cast<int32_t>(digit)));
-        }
-    }
-    throwTypeError(globalObject, scope, "Out of range of BigInt32"_s);
-    return { };
-}
-#endif
-
-JSC_DEFINE_HOST_FUNCTION(functionUseBigInt32, (JSGlobalObject*, CallFrame*))
-{
-#if USE(BIGINT32)
-    return JSValue::encode(jsBoolean(true));
-#else
-    return JSValue::encode(jsBoolean(false));
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionIsBigInt32, (JSGlobalObject*, CallFrame* callFrame))
-{
-#if USE(BIGINT32)
-    return JSValue::encode(jsBoolean(callFrame->argument(0).isBigInt32()));
-#else
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsBoolean(false));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionIsHeapBigInt, (JSGlobalObject*, CallFrame* callFrame))

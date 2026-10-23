@@ -29,6 +29,7 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "APIFindClient.h"
+#import "ContentInversion.h"
 #import "DataDetectionResult.h"
 #import "FrontBoardServicesSPI.h"
 #import "ImageOptions.h"
@@ -5374,6 +5375,50 @@ static std::optional<WebCore::ViewportArguments> viewportArgumentsFromDictionary
 {
 }
 
+- (_WKEffectivePageAppearance)_effectivePageAppearance
+{
+    switch (_page->effectivePageAppearance()) {
+    case WebKit::WebPageProxy::EffectivePageAppearance::Unknown:
+        return _WKEffectivePageAppearanceUnknown;
+    case WebKit::WebPageProxy::EffectivePageAppearance::Light:
+        return _WKEffectivePageAppearanceLight;
+    case WebKit::WebPageProxy::EffectivePageAppearance::Dark:
+        return _WKEffectivePageAppearanceDark;
+    }
+    ASSERT_NOT_REACHED();
+    return _WKEffectivePageAppearanceUnknown;
+}
+
+- (_WKContentInversion)_contentInversionForAccessibility
+{
+    switch (_page->contentInversion()) {
+    case WebKit::ContentInversion::System:
+        return _WKContentInversionSystem;
+    case WebKit::ContentInversion::Inverted:
+        return _WKContentInversionInverted;
+    case WebKit::ContentInversion::NotInverted:
+        return _WKContentInversionNotInverted;
+    }
+    ASSERT_NOT_REACHED();
+    return _WKContentInversionSystem;
+}
+
+- (void)_setContentInversionForAccessibility:(_WKContentInversion)contentInversion
+{
+    _page->setContentInversion([&] {
+        switch (contentInversion) {
+        case _WKContentInversionSystem:
+            return WebKit::ContentInversion::System;
+        case _WKContentInversionInverted:
+            return WebKit::ContentInversion::Inverted;
+        case _WKContentInversionNotInverted:
+            return WebKit::ContentInversion::NotInverted;
+        }
+        ASSERT_NOT_REACHED();
+        return WebKit::ContentInversion::System;
+    }());
+}
+
 - (UIView *)_fullScreenPlaceholderView
 {
 #if ENABLE(FULLSCREEN_API)
@@ -5714,9 +5759,9 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     [_contentView _commitPotentialTapFailed];
 }
 
-- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
+- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
 {
-    [_contentView _didGetTapHighlightForRequest:requestID color:color quads:highlightedQuads topLeftRadius:topLeftRadius topRightRadius:topRightRadius bottomLeftRadius:bottomLeftRadius bottomRightRadius:bottomRightRadius nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
+    [_contentView _didGetTapHighlightForRequest:requestID color:color quads:highlightedQuads cornerRadii:WTF::move(cornerRadii) nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
 }
 
 - (BOOL)_isPotentialTapInProgress

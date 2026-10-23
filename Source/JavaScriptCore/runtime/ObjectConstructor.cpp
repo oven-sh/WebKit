@@ -655,12 +655,11 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
         if (canUseFastPath) {
             unsigned indexedPropertyCount = 0;
             if (target->canHaveExistingOwnIndexedProperties()) {
-                target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>(globalObject, [&](unsigned, JSValue) {
+                target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>([&](unsigned, JSValue) {
                     ++indexedPropertyCount;
                     return IterationStatus::Continue;
                 });
             }
-            RETURN_IF_EXCEPTION(scope, { });
 
             JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), indexedPropertyCount + namedPropertyCount);
             if (!result) [[unlikely]] {
@@ -671,11 +670,10 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
             auto values = result->butterfly()->contiguous();
             unsigned index = 0;
             if (indexedPropertyCount) {
-                target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>(globalObject, [&](unsigned, JSValue value) {
+                target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>([&](unsigned, JSValue value) {
                     values.at(result, index++).setWithoutWriteBarrier(value);
                     return IterationStatus::Continue;
                 });
-                RETURN_IF_EXCEPTION(scope, { });
             }
             target->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 if (entry.attributes() & PropertyAttribute::DontEnum)

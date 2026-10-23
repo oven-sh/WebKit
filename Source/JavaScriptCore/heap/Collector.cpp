@@ -165,10 +165,19 @@ Collector& Collector::globalCollector()
 
 Collector::~Collector()
 {
-    ASSERT(m_heaps.isEmpty());
+    RELEASE_ASSERT(m_heaps.isEmpty());
+    RELEASE_ASSERT(!m_collectContinuouslyThread);
+    {
+        Locker locker { *m_threadLock };
+        RELEASE_ASSERT(m_threadShouldStop);
+    }
+    m_raceMarkStack->clear();
+}
+
+void Collector::shutDown()
+{
     stopCollectingContinuously();
     stopThread();
-    m_raceMarkStack->clear();
 }
 
 void Collector::stopThread()
@@ -1216,6 +1225,7 @@ void Collector::stopCollectingContinuously()
         m_collectContinuouslyCondition.notifyOne();
     }
     RefPtr { m_collectContinuouslyThread }->waitForCompletion();
+    m_collectContinuouslyThread = nullptr;
 }
 
 } // namespace JSC
