@@ -1,12 +1,13 @@
-//@ runDefault("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=20", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=400")
+//@ runDefault("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=20", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=400", "--maxPerThreadStackUsage=4294967295")
 
 // The stack check of an FTL function must cover the frame that a direct tail
 // call builds for its callee. The callee does check the stack, but only once
 // its arguments are in place, and the LLInt prologue calls into C++ before it.
 //
 // The callee's frame here is 192KB, more than the zone that is reserved below
-// the stack limit. At the limit of a small stack (an agent's is 512KB on
-// Darwin) a frame that nothing checked reaches past the end of the stack.
+// the stack limit, so at the limit a frame that nothing checked reaches past
+// the end of the stack. With no cap on the stack usage the limit is that zone
+// above the end of the stack, however large the agent's stack is.
 
 "use strict";
 
