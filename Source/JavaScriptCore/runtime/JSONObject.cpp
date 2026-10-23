@@ -155,6 +155,9 @@ private:
 
     MarkedArgumentBufferWithSize<16> m_objectStack;
     Vector<Holder, 16, UnsafeVectorOverflow> m_holderStack;
+    // The objects of m_holderStack, while the stack is deeper than holderScanLimit.
+    UncheckedKeyHashSet<JSObject*> m_holderSet;
+    bool m_holderSetActive { false };
     String m_repeatedGap;
     StringView m_indent;
 };
@@ -340,6 +343,14 @@ ALWAYS_INLINE JSValue Stringifier::toJSON(JSValue baseValue, const PropertyNameF
 
 // We clamp recursion well beyond anything reasonable.
 constexpr unsigned maximumSideStackRecursion = 40000;
+// A holder with fewer than this many ancestors finds a cycle by a scan of m_holderStack. Deeper holders use
+// m_holderSet, so that a chain of depth N costs O(N) and not O(N^2). The limit is the measured point where
+// the scan and the hash lookup cost the same, and is well past the depth of any ordinary document. The set
+// is let go once the stack is back at half the limit, so that a document with one deep pocket pays for the
+// set only while it is in that pocket, and one that crosses the limit again and again pays one copy of the
+// stack per crossing, which costs about one scan at that depth.
+constexpr unsigned holderScanLimit = 256;
+static_assert(holderScanLimit < maximumSideStackRecursion);
 Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& builder, JSValue value, const Holder& holder, const PropertyNameForFunctionCall& propertyName)
 {
     VM& vm = m_globalObject->vm();
@@ -440,16 +451,30 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
         return StringifyFailed;
 
     // Handle cycle detection, and put the holder on the stack.
-    for (unsigned i = 0; i < m_holderStack.size(); i++) {
-        if (m_holderStack[i].object() == object) {
+    if (!m_holderSetActive) [[likely]] {
+        for (unsigned i = 0; i < m_holderStack.size(); i++) {
+            if (m_holderStack[i].object() == object) {
+                throwTypeError(m_globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
+                return StringifyFailed;
+            }
+        }
+        if (m_holderStack.size() >= holderScanLimit) [[unlikely]] {
+            // From here on the set stands in for the scan. It holds every object on the stack, in lock-step with it.
+            m_holderSet.reserveInitialCapacity(holderScanLimit + 1);
+            for (const Holder& holder : m_holderStack)
+                m_holderSet.add(holder.object());
+            m_holderSet.add(object);
+            m_holderSetActive = true;
+        }
+    } else {
+        if (!m_holderSet.add(object).isNewEntry) {
             throwTypeError(m_globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
             return StringifyFailed;
         }
-    }
-
-    if (m_holderStack.size() >= maximumSideStackRecursion) [[unlikely]] {
-        throwStackOverflowError(m_globalObject, scope);
-        return StringifyFailed;
+        if (m_holderStack.size() >= maximumSideStackRecursion) [[unlikely]] {
+            throwStackOverflowError(m_globalObject, scope);
+            return StringifyFailed;
+        }
     }
 
     bool holderStackWasEmpty = m_holderStack.isEmpty();
@@ -457,6 +482,7 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
     m_holderStack.append(Holder(m_globalObject, object, structure));
     m_objectStack.appendWithCrashOnOverflow(object);
     m_objectStack.appendWithCrashOnOverflow(structure);
+    ASSERT(!m_holderSetActive || m_holderSet.size() == m_holderStack.size());
     RETURN_IF_EXCEPTION(scope, StringifyFailed);
     if (!holderStackWasEmpty)
         return StringifySucceeded;
@@ -467,9 +493,17 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
         RETURN_IF_EXCEPTION(scope, StringifyFailed);
         if (builder.hasOverflowed()) [[unlikely]]
             return StringifyFailed;
+        if (m_holderSetActive) [[unlikely]] {
+            m_holderSet.remove(m_holderStack.last().object());
+            if (m_holderStack.size() <= holderScanLimit / 2) {
+                m_holderSet.clear();
+                m_holderSetActive = false;
+            }
+        }
         m_holderStack.removeLast();
         m_objectStack.removeLast();
         m_objectStack.removeLast();
+        ASSERT(!m_holderSetActive || m_holderSet.size() == m_holderStack.size());
     } while (!m_holderStack.isEmpty());
     return StringifySucceeded;
 }
