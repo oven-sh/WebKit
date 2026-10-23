@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFICallHost.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 
 #include "CallFrame.h"
@@ -132,4 +132,4 @@ JSC_DEFINE_JIT_OPERATION(operationFFICallSlowPath, EncodedJSValue, (JSGlobalObje
 } // namespace JSC
 
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

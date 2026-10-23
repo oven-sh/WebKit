@@ -6,7 +6,7 @@
 #include "config.h"
 #include "FFICallbackEntryPool.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "FFIStubs.h"
 #include <mutex>
@@ -86,4 +86,4 @@ unsigned CallbackEntryPool::numberOfEntries() const
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

@@ -57,7 +57,7 @@ extern "C" AOT_KEPT_BY_EVERY_LINKER constinit const DescribedRuntime describedRu
         RuntimeDescription::ImageForm::Absolute,
 #endif
         (ASSERT_ENABLED ? RuntimeDescription::Assertions : 0) | (ASAN_ENABLED ? RuntimeDescription::AddressSanitizer : 0),
-        0,
+        imageFormatVersion,
     },
     {
 #define AOT_RUNTIME_FACT(name, value) checkedRuntimeFact(value),

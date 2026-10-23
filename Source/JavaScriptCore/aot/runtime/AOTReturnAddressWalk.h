@@ -68,6 +68,7 @@ SUPPRESS_ASAN void forEachReturnAddressIntoCompiledFunctions(VM& vm, const Funct
             callee = frame;
             site = findSite(callee);
             if (!site) {
+                checkReturnAddressInRun(image, removeCodePtrTag(placeOfReturnAddress(callee)), callee);
                 frameOutsideImage = framePointer;
                 break;
             }

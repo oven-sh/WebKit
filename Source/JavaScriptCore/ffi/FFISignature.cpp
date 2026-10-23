@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFISignature.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "Options.h"
 #include <mutex>
@@ -169,4 +169,4 @@ Ref<Signature> SignatureRegistry::intern(std::span<const Type> arguments, Type r
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

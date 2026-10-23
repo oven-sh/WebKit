@@ -6,7 +6,7 @@
 #include "config.h"
 #include "FFIStubs.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "FFICallbackEntryPool.h"
 #include "FFICallbackThunk.h"
@@ -216,4 +216,4 @@ uint64_t normalizeSlot(Type type, uint64_t rawBits)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

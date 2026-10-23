@@ -411,7 +411,6 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
 #
-# -k 0: the log of a lane that does not compile names every source that fails, not the first few.
 #
 # The programs ship without debug info: each of them would carry another copy of the library's.
 #
@@ -461,7 +460,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
-    cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" --target "testaot" $(for program in $TEST_PROGRAMS; do echo "--target $program"; done) -- -k 0 && \
+    cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" --target "testaot" $(for program in $TEST_PROGRAMS; do echo "--target $program"; done) && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     if [ "$USE_MIMALLOC" = ON ] && [ "$ENABLE_ASSERTS" != ON ] && [ "$ENABLE_FUZZILLI" != ON ]; then \
         python3 /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py $WEBKIT_OUT_DIR/bin/jsc --expected /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt || { [ "$LINUX_ARCH" = aarch64 ] && echo "find-structures-decoded-behind-calls.py: not yet fatal here"; }; \

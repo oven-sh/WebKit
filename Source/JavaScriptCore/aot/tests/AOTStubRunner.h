@@ -411,7 +411,7 @@ inline StubRunner::StubRunner(const StubOptions& options, StubPolicy&& policy, s
     instance.prefix().structureIDBase = std::bit_cast<uintptr_t>(m_environment->emptyStructures.data());
     for (SlotHandlerTable table : allSlotHandlerTables) {
         for (Slot::Kind kind : allSlotKinds)
-            instance.propertyCaches.handlers[static_cast<unsigned>(table)][static_cast<unsigned>(kind)] = addressOf(slotHandlerFor(table, kind));
+            instance.slotHandlers()[static_cast<unsigned>(table)][static_cast<unsigned>(kind)] = addressOf(slotHandlerFor(table, kind));
     }
     compileLandings();
 }

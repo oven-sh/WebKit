@@ -26,7 +26,7 @@
 #include "config.h"
 #include "BunFFI.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "Error.h"
 #include "FFIContext.h"
@@ -146,4 +146,4 @@ JSFFICallback* createCallback(JSGlobalObject* globalObject, Ref<Signature>&& sig
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

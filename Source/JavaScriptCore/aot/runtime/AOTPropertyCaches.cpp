@@ -397,13 +397,13 @@ bool VMPropertyCaches::hasChainDependent(VM&, uint32_t structureIDBits, UniquedS
     return m_hashedTable.hasChainDependentEntry(id, uid);
 }
 
-static void fillHandlerTables(PropertyCacheWords& words, const Image& image)
+static void fillHandlerTables(Instance& instance, const Image& image)
 {
     if (image.sharedCodeCopies().empty())
         return;
     uint8_t* sharedCode = const_cast<uint8_t*>(image.sharedCodeCopy(0));
     std::span offsets = image.slotHandlerOffsets();
-    std::span handlers(&words.handlers[0][0], numberOfSlotHandlerTables * numberOfSlotKinds);
+    std::span handlers(&instance.slotHandlers()[0][0], numberOfSlotHandlerTables * numberOfSlotKinds);
     RELEASE_ASSERT(offsets.size() == handlers.size());
     for (size_t index = 0; index < handlers.size(); ++index)
         handlers[index] = offsets[index] == offsetOfAbsentStub ? nullptr : sharedCode + offsets[index];
@@ -426,7 +426,7 @@ void initializePropertyCacheWords(Instance& instance)
     words.hasInstanceUID = vm.propertyNames->hasInstanceSymbol.impl();
     words.prototypeUID = vm.propertyNames->prototype.impl();
     words.defaultHasInstanceFunction = globalObject->functionProtoHasInstanceSymbolFunction();
-    fillHandlerTables(words, *vm.aotState().image);
+    fillHandlerTables(instance, *vm.aotState().image);
 }
 
 LazyPropertyCaches::LazyPropertyCaches(State& state)

@@ -456,18 +456,16 @@ static JSValue createConsoleProperty(VM& vm, JSObject* object)
     return ConsoleObject::create(vm, global, ConsoleObject::createStructure(vm, global, constructEmptyObject(global)));
 }
 
+#if ENABLE(WEBASSEMBLY)
 static JSValue createWebAssemblyProperty(VM& vm, JSObject* object)
 {
-#if ENABLE(WEBASSEMBLY)
     if (Wasm::isSupported()) {
         JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
         return JSWebAssembly::create(vm, global, JSWebAssembly::createStructure(vm, global, global->objectPrototype()));
     }
-#endif
-    UNUSED_PARAM(vm);
-    UNUSED_PARAM(object);
     return jsUndefined();
 }
+#endif
 
 // FIXME: use a bytecode or intrinsic for creating a private symbol.
 // https://bugs.webkit.org/show_bug.cgi?id=212782
@@ -768,7 +766,9 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
   JSON                  createJSONProperty                           DontEnum|PropertyCallback
   Math                  createMathProperty                           DontEnum|PropertyCallback
   Atomics               createAtomicsProperty                        DontEnum|PropertyCallback
+#if ENABLE(WEBASSEMBLY)
   WebAssembly           createWebAssemblyProperty                    DontEnum|PropertyCallback
+#endif
   console               createConsoleProperty                        DontEnum|PropertyCallback
   Int8Array             JSGlobalObject::m_typedArrayInt8             DontEnum|ClassStructure
   Int16Array            JSGlobalObject::m_typedArrayInt16            DontEnum|ClassStructure
@@ -2292,7 +2292,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         vm, vm.propertyNames->builtinNames().asyncContextPrivateName(),
         asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     m_asyncContextData.set(vm, this, asyncContext);
+#endif
 
+#if ENABLE(FFI)
     m_ffiFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
             init.set(JSFFIFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
@@ -3224,6 +3226,8 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContextData);
     visitor.append(thisObject->m_internalFieldTupleStructure);
+#endif
+#if ENABLE(FFI)
     thisObject->m_ffiFunctionStructure.visit(visitor);
     thisObject->m_ffiCallbackStructure.visit(visitor);
     if (thisObject->m_ffiContext)
@@ -4078,7 +4082,7 @@ void JSGlobalObject::queueMicrotaskSlow(VM& vm, QueuedTask&& task)
     microtaskQueue().enqueue(WTF::move(task));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 FFI::FFIContext& JSGlobalObject::ffiContext()
 {
     if (!m_ffiContext) [[unlikely]] {

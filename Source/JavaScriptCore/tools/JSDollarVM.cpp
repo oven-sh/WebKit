@@ -2363,6 +2363,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionWeakBlockCount);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
+#endif
+#if ENABLE(FFI)
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -5287,7 +5289,7 @@ JSC_DEFINE_HOST_FUNCTION(functionWeakBlockCount, (JSGlobalObject* globalObject, 
     return JSValue::encode(jsNumber(globalObject->vm().heap.weakBlockCount()));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 static bool dollarVMFFIJITIsUnavailable()
 {
@@ -5698,7 +5700,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject
     return JSValue::encode(counts);
 }
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)
 
 #if USE(BUN_JSC_ADDITIONS)
 namespace BufferAccessorTest {
@@ -6294,6 +6296,8 @@ void JSDollarVM::finishCreation(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
+#endif
+#if ENABLE(FFI)
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);

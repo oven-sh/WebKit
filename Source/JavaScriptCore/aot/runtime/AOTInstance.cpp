@@ -421,6 +421,9 @@ Instance* Instance::create(JSGlobalObject* realm)
     }
     vmState.propertyCaches->didCreateInstance(*instance);
     RuntimeHooks::didChangeMicrotaskQueueing(vm);
+#if defined(BUN_HARDENED)
+    OSAllocator::protect(instance->tableAt<uint8_t>(InstanceLayout::offsetOfWordsWrittenOnce), InstanceLayout::offsetOfKeyOrderSteps - InstanceLayout::offsetOfWordsWrittenOnce, true, false);
+#endif
     return instance;
 }
 

@@ -257,6 +257,18 @@ static void testFrameAddressFramePointer()
     });
 }
 
+static void testFrameAddressPatchpointThatRunsWithoutFrame()
+{
+    checkNoViolation([](B3::Procedure& proc, Suspends suspends) {
+        B3::BasicBlock* root = proc.addBlock();
+        appendSuspension(proc, root, suspends);
+        B3::Value* base = appendSlotBase(proc, root, addressOrigin);
+        appendSuspension(proc, root, suspends)->setRunsWithoutFrame(true);
+        appendStore(proc, root, base);
+        appendReturn(proc, root);
+    });
+}
+
 static void testFrameAddressPatchpointWithSuspensionOrigin()
 {
     checkOneViolation([](B3::Procedure& proc, Suspends suspends) {
@@ -788,6 +800,7 @@ std::span<const NativeTest> backEndReportTests()
         { "frame-address-identity"_s, testFrameAddressIdentity },
         { "frame-address-frame-pointer"_s, testFrameAddressFramePointer },
         { "frame-address-patchpoint-with-suspension-origin"_s, testFrameAddressPatchpointWithSuspensionOrigin },
+        { "frame-address-patchpoint-that-runs-without-a-frame"_s, testFrameAddressPatchpointThatRunsWithoutFrame },
         { "frame-address-phi"_s, testFrameAddressPhi },
         { "frame-address-select"_s, testFrameAddressSelect },
         { "frame-address-loop"_s, testFrameAddressLoop },

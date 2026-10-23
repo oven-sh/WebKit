@@ -2642,7 +2642,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                 if (executable->intrinsic() == WasmFunctionIntrinsic && !Options::forceICFailure())
                     return inliningResult;
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
                 if (Options::useFFICallInDFG() && (callOp == Call || callOp == TailCall) && callee.function() && callee.function()->inherits<JSFFIFunction>()
                     && !uncheckedDowncast<JSFFIFunction>(callee.function())->isHostPathOnly() // hooked => host path only
                     && uncheckedDowncast<JSFFIFunction>(callee.function())->signature().invokeThunk()) {

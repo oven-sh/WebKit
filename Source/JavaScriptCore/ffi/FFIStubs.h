@@ -22,7 +22,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 
-#if ENABLE(CODE_GENERATION) && !ENABLE(JIT_CAGE) && (CPU(X86_64) || (CPU(ARM64) && !CPU(ARM64E)))
+#if ENABLE(FFI) && ENABLE(CODE_GENERATION) && !ENABLE(JIT_CAGE) && (CPU(X86_64) || (CPU(ARM64) && !CPU(ARM64E)))
 #define FFI_STUBS_SUPPORTED 1
 #else
 #define FFI_STUBS_SUPPORTED 0

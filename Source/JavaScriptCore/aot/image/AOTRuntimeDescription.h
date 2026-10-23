@@ -43,9 +43,10 @@ struct RuntimeDescription {
     OperatingSystem operatingSystem;
     ImageForm imageForm;
     uint8_t checks;
-    uint32_t reserved;
+    // The one ImageHeader::formatVersion that this run time takes. A run time from before this member has 0 here.
+    uint32_t imageFormatVersion;
 };
-static_assert(sizeof(RuntimeDescription) == 32 && offsetof(RuntimeDescription, imageForm) == 26);
+static_assert(sizeof(RuntimeDescription) == 32 && offsetof(RuntimeDescription, imageForm) == 26 && offsetof(RuntimeDescription, imageFormatVersion) == 28, "whoever reads an executable without this header finds the members at these places");
 
 // The table of built-ins is compiled with the program that embeds the engine. It describes itself in a record of its own in the same section.
 struct BuiltinTableDescription {

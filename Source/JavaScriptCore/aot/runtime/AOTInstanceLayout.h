@@ -34,6 +34,10 @@ struct InstanceLayout {
     static constexpr unsigned stringCellCardShift = 7;
     static constexpr size_t sizeOfSiteCache = 16;
     static constexpr size_t offsetOfStringCells = 384 * KB;
+#if defined(BUN_HARDENED)
+    // From here to the key order steps: what nothing writes once the instance has been created. The pages are read-only from then on.
+    static constexpr size_t offsetOfWordsWrittenOnce = 16 * KB;
+#endif
     // Between the instance and the string cells.
     static constexpr size_t offsetOfKeyOrderSteps = 32 * KB;
     // Small tables of which compiled code reads one word at a time.
@@ -76,6 +80,9 @@ private:
 
 static_assert(!(InstanceLayout::bytesReservedForPrefixAndPollPage % InstanceLayout::granuleBelowInstance));
 static_assert(!(InstanceLayout::offsetOfStringCells % InstanceLayout::granuleAboveInstance));
+#if defined(BUN_HARDENED)
+static_assert(!(InstanceLayout::offsetOfWordsWrittenOnce % InstanceLayout::granuleAboveInstance) && !(InstanceLayout::offsetOfKeyOrderSteps % InstanceLayout::granuleAboveInstance));
+#endif
 static_assert(InstanceLayout::offsetOfStringCells - InstanceLayout::offsetOfBuiltinValues == InstanceLayout::offsetOfBuiltinValues - InstanceLayout::offsetOfBuiltinCells);
 static_assert(!(InstanceLayout::granuleAboveInstance % InstanceLayout::sizeOfSiteCache));
 static_assert(InstanceLayout::offsetOfSiteCaches({ 0, 1, 0, 0 }) == InstanceLayout::offsetOfStringCells + InstanceLayout::granuleAboveInstance);

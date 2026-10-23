@@ -69,6 +69,8 @@ JSObject* createExternalModuleNotLoadedError(JSGlobalObject*, const String& path
 JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code);
 #if ENABLE(SHADOW_REALM)
 JSObject* createModuleInShadowRealmError(JSGlobalObject*, StringView path);
+#else
+JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 #endif
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer);

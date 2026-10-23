@@ -356,6 +356,8 @@ int main(int argc, char** argv)
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useExplicitResourceManagement() = true;
+            for (const String& option : parsedCommandLine->jscOptions)
+                JSC::Options::setOption(byteCast<char>(option.utf8().span().subspan(2).data()), /* verify = */ false);
         }
         JSC::Options::notifyOptionsChanged();
     }

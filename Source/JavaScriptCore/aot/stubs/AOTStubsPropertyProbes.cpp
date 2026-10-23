@@ -1187,7 +1187,7 @@ void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg 
     const SlotHandlerTableTraits traits = traitsOf(table);
     const SlotHandlerOperands operands = operandsOfSlotHandler(table);
     const std::array<StubKey, numberOfSlotKinds> handlers = slotHandlerKeys(table);
-    const int32_t offsetOfHandlers = static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches) + PropertyCacheWords::offsetOfHandlers(table));
+    const int32_t offsetOfHandlers = static_cast<int32_t>(Instance::offsetOfSlotHandlers(table));
     RELEASE_ASSERT(header == operands.header);
     RELEASE_ASSERT(noOverlap(scratch, operands.receiver, operands.header, operands.payload, operands.value, operands.keyCell, operands.identifierNumber, siteRegisterOf(traits).value_or(InvalidGPRReg), instanceGPR));
 #if CPU(ARM64)
@@ -1202,8 +1202,13 @@ void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg 
 void callSlotHandler(StubAssembler& jit, SlotHandlerTable table, GPRReg kind)
 {
     const std::array<StubKey, numberOfSlotKinds> handlers = slotHandlerKeys(table);
-    const int32_t offsetOfHandlers = static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches) + PropertyCacheWords::offsetOfHandlers(table));
+    const int32_t offsetOfHandlers = static_cast<int32_t>(Instance::offsetOfSlotHandlers(table));
+#if CPU(ARM64) && defined(BUN_HARDENED)
+    jit.add32(TrustedImm32(offsetOfHandlers / static_cast<int32_t>(sizeof(void*))), kind);
+    jit.callThroughHandlerTable(BaseIndex(instanceGPR, kind, CCallHelpers::TimesEight), handlers);
+#else
     jit.callThroughHandlerTable(BaseIndex(instanceGPR, kind, CCallHelpers::TimesEight, offsetOfHandlers), handlers);
+#endif
 }
 
 void linkToSlotExit(StubAssembler& jit, JumpList& jumps, SlotHandlerTable table, SlotExit exit)

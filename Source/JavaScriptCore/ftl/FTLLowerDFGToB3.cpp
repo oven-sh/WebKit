@@ -1586,10 +1586,10 @@ private:
             compileCallWasm();
             break;
         case CallFFI:
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
             compileCallFFI();
 #else
-            DFG_CRASH(m_graph, m_node, "CallFFI is unreachable without USE(BUN_JSC_ADDITIONS)"_s);
+            DFG_CRASH(m_graph, m_node, "CallFFI is unreachable without ENABLE(FFI)"_s);
 #endif
             break;
         case CallCustomAccessorGetter:
@@ -15274,7 +15274,7 @@ IGNORE_CLANG_WARNINGS_END
 #endif // ENABLE(WEBASSEMBLY)
     }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
     template<bool DirectCall>
     void compileCallFFIImpl()
@@ -15695,7 +15695,7 @@ IGNORE_CLANG_WARNINGS_END
         else
             compileCallFFIImpl<false>();
     }
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)
 
     void compileCallCustomAccessorGetter()
     {

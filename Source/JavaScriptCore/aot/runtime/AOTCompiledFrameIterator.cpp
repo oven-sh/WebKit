@@ -18,6 +18,10 @@
 #include "SourceOrigin.h"
 #include "VM.h"
 
+#if defined(BUN_HARDENED)
+#include <link.h>
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
@@ -58,6 +62,17 @@ static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSite(CallSiteCache& c
     return cache.resolve(image, pc);
 }
 
+#if defined(BUN_HARDENED)
+template<typename Cursor>
+static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSiteInRun(CallSiteCache& cache, const Image& image, const Cursor& cursor)
+{
+    const void* pc = removeCodePtrTag(cursor.rawPC);
+    if (const CallSiteCache::Entry* site = cache.find(pc)) [[likely]]
+        return site;
+    return resolveReturnAddressInRun(cache, image, pc, cursor.calleeFrame);
+}
+#endif
+
 static ALWAYS_INLINE const CallSiteCache::Entry* findReturnSite(VM& vm, const void* pc)
 {
     const VMState& state = vm.aotState();
@@ -91,6 +106,109 @@ static bool isOperationReturnSite(const CodeLocation& location)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+#if defined(BUN_HARDENED)
+
+static bool isInCodeOfEngine(const void* address)
+{
+    struct Segments {
+        std::array<std::pair<uintptr_t, uintptr_t>, 4> startAndSize { };
+    };
+    static const Segments segments = [] {
+        Segments result;
+        // The program itself comes first.
+        dl_iterate_phdr([](dl_phdr_info* info, size_t, void* data) {
+            size_t count = 0;
+            auto& found = static_cast<Segments*>(data)->startAndSize;
+            for (const auto& header : std::span { info->dlpi_phdr, info->dlpi_phnum }) {
+                if (header.p_type == PT_LOAD && (header.p_flags & PF_X) && count < found.size())
+                    found[count++] = { info->dlpi_addr + header.p_vaddr, header.p_memsz };
+            }
+            return 1;
+        }, &result);
+        return result;
+    }();
+    return std::ranges::any_of(segments.startAndSize, [&](auto segment) {
+        return std::bit_cast<uintptr_t>(address) - segment.first < segment.second;
+    });
+}
+
+static bool callEndsAt(std::span<const uint8_t> code, const void* address)
+{
+    size_t offset = static_cast<const uint8_t*>(address) - code.data();
+#if CPU(X86_64)
+    constexpr uint8_t opcodeOfNearCall = 0xe8;
+    constexpr uint8_t opcodeOfGroup5 = 0xff;
+    if (offset >= sizeOfNearCall && code[offset - sizeOfNearCall] == opcodeOfNearCall)
+        return true;
+    for (size_t length : { 2, 3, 4, 6, 7 }) {
+        if (offset >= length && code[offset - length] == opcodeOfGroup5 && (code[offset - length + 1] >> 3 & 7) == 2)
+            return true;
+    }
+    return false;
+#elif CPU(ARM64)
+    if (offset < sizeof(uint32_t) || offset % sizeof(uint32_t))
+        return false;
+    uint32_t instruction;
+    memcpy(&instruction, code.data() + offset - sizeof(uint32_t), sizeof(uint32_t));
+    bool isBL = (instruction & 0xfc000000) == 0x94000000;
+    bool isBLR = (instruction & 0xfffffc1f) == 0xd63f0000;
+    return isBL || isBLR;
+#else
+#error "Not implemented on this CPU"
+#endif
+}
+
+// The fault handler enters a stub as if the instruction that faulted had called it.
+static bool isBehindFaultSite(const Image& image, const void* address)
+{
+    auto hasSite = [&](FaultSiteKind kind, size_t size) {
+        std::optional<FaultSite> site = image.faultSiteAt(static_cast<const uint8_t*>(address) - size);
+        return site && site->kind == kind;
+    };
+    return hasSite(FaultSiteKind::NullCheck, sizeOfNearCall) || (hasFaultingLoopPolls && hasSite(FaultSiteKind::LoopPoll, sizeOfLoopPoll));
+}
+
+ASCIILiteral faultOfReturnAddressInRun(const Image& image, const void* returnAddress)
+{
+    CodeLocation location = image.locate(returnAddress);
+    switch (location.kind) {
+    case CodeKind::Stub:
+        if (location.stubFrameKind != StubFrameKind::Plain)
+            return { };
+        [[fallthrough]];
+    case CodeKind::Function:
+        if (callEndsAt(image.code(), returnAddress) || isBehindFaultSite(image, returnAddress))
+            return { };
+        return "points into compiled code, at a place that no call returns to"_s;
+    case CodeKind::NotInImage:
+        if (isInCodeOfEngine(returnAddress))
+            return { };
+        [[fallthrough]];
+    case CodeKind::RegExp:
+    case CodeKind::WebAssembly:
+    case CodeKind::FFI:
+        return "points neither into a compiled function nor into the code of the engine"_s;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+NEVER_INLINE void checkReturnAddressInRun(const Image& image, const void* returnAddress, const CallFrame* callee)
+{
+    ASCIILiteral fault = faultOfReturnAddressInRun(image, returnAddress);
+    if (fault.isNull()) [[likely]]
+        return;
+    dataLogLn("AOT: a walk over the stack has lost it: the word ", RawPointer(returnAddress), ", which lies where the frame at ", RawPointer(callee), " has its return address, ", fault);
+    CRASH();
+}
+
+NEVER_INLINE const CallSiteCache::Entry* resolveReturnAddressInRun(CallSiteCache& cache, const Image& image, const void* returnAddress, const CallFrame* callee)
+{
+    checkReturnAddressInRun(image, returnAddress, callee);
+    return cache.resolve(image, returnAddress);
+}
+
+#endif // defined(BUN_HARDENED)
+
 static bool hasZombieCallee(VM& vm, const CallFrame* callFrame, const void* returnAddress)
 {
     CallFrame* callee = vm.topCallFrame;
@@ -101,7 +219,11 @@ SUPPRESS_ASAN Instance* CompiledFrameIterator::findEnclosingAdapterInstance(Curs
 {
     Exit exit;
     do {
+#if defined(BUN_HARDENED)
+        const CallSiteCache::Entry* site = findReturnSiteInRun(*m_cache, *m_image, cursor);
+#else
         const CallSiteCache::Entry* site = findReturnSite(*m_cache, *m_image, removeCodePtrTag(cursor.rawPC));
+#endif
         if (!site)
             return nullptr;
         enterFrame(cursor, *site);
@@ -273,7 +395,11 @@ bool CompiledFrameIterator::passOverFrame(Cursor& cursor, Exit& exit)
 const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cursor, Exit& exit, RunEnd& runEnd)
 {
     for (;;) {
+#if defined(BUN_HARDENED)
+        const CallSiteCache::Entry* site = findReturnSiteInRun(*m_cache, *m_image, cursor);
+#else
         const CallSiteCache::Entry* site = findReturnSite(*m_cache, *m_image, removeCodePtrTag(cursor.rawPC));
+#endif
         if (!site || isInHostCallFrame(*site)) {
             exit = { cursor.framePointer, cursor.rawPC, cursor.entryFrame, false, cursor.calleeFrame };
             return nullptr;

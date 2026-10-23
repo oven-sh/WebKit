@@ -241,8 +241,13 @@ bool mayHaveWebAssemblyModules(const Typed::Program& program)
 
 WebAssemblyImageInputs compileWebAssemblyModules(VM&, const Typed::Program& program, const CodeTemplates&, BuildContext& context, const BitVector*)
 {
+#if ENABLE(WEBASSEMBLY)
+    constexpr UserDiagnosticKind reason = UserDiagnosticKind::WasmUnsupportedCPU;
+#else
+    constexpr UserDiagnosticKind reason = UserDiagnosticKind::WasmLeftOutOfThisBuild;
+#endif
     for (auto& entry : program.webAssemblyModules)
-        reportDecline(context, entry.module, UserDiagnosticKind::WasmUnsupportedCPU, LimitID::None, 1);
+        reportDecline(context, entry.module, reason, LimitID::None, 1);
     return { };
 }
 

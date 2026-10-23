@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "FFISignature.h"
 #include "JSObject.h"
@@ -113,4 +113,4 @@ private:
 
 } // namespace JSC
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

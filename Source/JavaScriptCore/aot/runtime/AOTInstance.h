@@ -98,7 +98,11 @@ struct InstancePrefix {
 };
 
 struct InstanceHeader {
+#if defined(BUN_HARDENED)
+    uint64_t unused;
+#else
     void** runtimeTable;
+#endif
     const uint64_t* shapeSets;
     VM* vm;
     ZeroedStorage<StackManager::Mirror> stackMirror;
@@ -223,9 +227,10 @@ struct NumberWords {
     uint64_t hashSecrets[2];
 };
 
-#define FOR_EACH_AOT_INSTANCE_PART(v) \
+// Nothing writes to a part of the second kind once Instance::create() has returned.
+#define FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, writtenOnce) \
     v(propertyCaches, PropertyCacheWords) \
-    v(image, ImageWords) \
+    writtenOnce(image, ImageWords) \
     v(allocation, AllocationWords) \
     v(heap, HeapWords) \
     v(realm, RealmWords) \
@@ -241,16 +246,30 @@ struct NumberWords {
     v(iteration, IterationWords) \
     v(json, JSONWords) \
     v(stringBuilder, StringBuilderWords) \
-    v(stubs, StubWords) \
+    writtenOnce(stubs, StubWords) \
     v(scratch, CodegenScratchWords) \
     v(constructWords, ConstructWordCache) \
     v(lazyStrings, LazyStringWords)
+#define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
 struct Instance : InstanceHeader {
 #define AOT_DECLARE_INSTANCE_PART(member, Type) Type member;
-    FOR_EACH_AOT_INSTANCE_PART(AOT_DECLARE_INSTANCE_PART)
-#undef AOT_DECLARE_INSTANCE_PART
+#if defined(BUN_HARDENED)
+#define AOT_SKIP_INSTANCE_PART(member, Type)
+#define AOT_ADD_SIZE_OF_INSTANCE_PART(member, Type) + sizeof(Type)
+    FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_DECLARE_INSTANCE_PART, AOT_SKIP_INSTANCE_PART)
     State* state;
+    uint8_t unusedBelowWordsWrittenOnce[InstanceLayout::offsetOfWordsWrittenOnce - (sizeof(InstanceHeader) + sizeof(State*) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_ADD_SIZE_OF_INSTANCE_PART, AOT_SKIP_INSTANCE_PART))];
+    void** runtimeTable;
+    SlotHandlers handlers;
+    FOR_EACH_AOT_INSTANCE_PART_BY_KIND(AOT_SKIP_INSTANCE_PART, AOT_DECLARE_INSTANCE_PART)
+#undef AOT_ADD_SIZE_OF_INSTANCE_PART
+#undef AOT_SKIP_INSTANCE_PART
+#else
+    FOR_EACH_AOT_INSTANCE_PART(AOT_DECLARE_INSTANCE_PART)
+    State* state;
+#endif
+#undef AOT_DECLARE_INSTANCE_PART
 
     static Instance* of(JSGlobalObject* realm) { return realm->aotInstance(); }
     static Instance* create(JSGlobalObject* realm);
@@ -304,6 +323,13 @@ struct Instance : InstanceHeader {
 
     static constexpr ptrdiff_t offsetOfNewCopyOnWriteArrayHeader(IndexingType);
 
+#if defined(BUN_HARDENED)
+    SlotHandlers& slotHandlers() { return handlers; }
+#else
+    SlotHandlers& slotHandlers() { return propertyCaches.handlers; }
+#endif
+    static constexpr ptrdiff_t offsetOfSlotHandlers(SlotHandlerTable);
+
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
@@ -328,6 +354,16 @@ constexpr ptrdiff_t Instance::offsetOfNewCopyOnWriteArrayHeader(IndexingType ind
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+constexpr ptrdiff_t Instance::offsetOfSlotHandlers(SlotHandlerTable table)
+{
+#if defined(BUN_HARDENED)
+    constexpr ptrdiff_t offsetOfHandlers = AOT_INSTANCE_OFFSET(handlers);
+#else
+    constexpr ptrdiff_t offsetOfHandlers = AOT_INSTANCE_OFFSET(propertyCaches.handlers);
+#endif
+    return offsetOfHandlers + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKinds * sizeof(void*));
+}
+
 static_assert(std::is_trivially_default_constructible_v<Instance>, "Instance lives in zeroed pages and is never constructed, so default member initializers would be ignored");
 static_assert(std::is_trivially_default_constructible_v<InstancePrefix>);
 static_assert(std::is_trivially_default_constructible_v<InstanceHeader>);
@@ -335,7 +371,11 @@ static_assert(std::is_trivially_default_constructible_v<InstanceHeader>);
 FOR_EACH_AOT_INSTANCE_PART(AOT_CHECK_INSTANCE_PART)
 #undef AOT_CHECK_INSTANCE_PART
 static_assert(OBJECT_OFFSETOF(InstanceHeader, vm) == 16, "JSWebAssemblyInstance::offsetOfVM()");
+#if defined(BUN_HARDENED)
+static_assert(AOT_INSTANCE_OFFSET(runtimeTable) == InstanceLayout::offsetOfWordsWrittenOnce);
+#else
 static_assert(!OBJECT_OFFSETOF(InstanceHeader, runtimeTable));
+#endif
 static_assert(OBJECT_OFFSETOF(InstanceHeader, globalObject) <= 128);
 static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == -128);
 static_assert(sizeof(Instance) <= 32 * KB, "On ARM64, the immediate offset of a 64-bit load reaches 32 KB.");

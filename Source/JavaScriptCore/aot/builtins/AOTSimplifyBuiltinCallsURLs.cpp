@@ -383,7 +383,7 @@ static void expandRead(FunctionPassContext& context, IRBuilder& builder, const U
 
     builder.moveToEndOf(isUnbuilt.taken);
     if (read.member == Builtins::URLSearchParamsPrototypeSize) {
-        // The word is not negative where nothing was built, which its type does not say. The result of an unsigned shift is a size whatever the word is.
+        // Unsigned: the type of the word does not say that it is not negative here.
         builder.endExpansion(expansion, builder.append(Opcode::URShift, { parts.packed, builder.appendInteger(PlainURL::shiftOfPairCount) }));
         return;
     }

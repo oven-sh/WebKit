@@ -187,8 +187,7 @@ static Modules* modulesOrThrow(JSGlobalObject* realm, ModuleID module, LoadByNam
 #if ENABLE(SHADOW_REALM)
     throwException(realm, scope, createModuleInShadowRealmError(realm, modulePath(module)));
 #else
-    scope.release();
-    throwLoadByNameRefused(realm, modulePath(module), form);
+    throwException(realm, scope, createModuleInOtherRealmError(realm, modulePath(module)));
 #endif
     return nullptr;
 }

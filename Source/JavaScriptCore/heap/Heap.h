@@ -218,7 +218,7 @@ class Heap;
 #define FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(v)
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 #define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
     v(ffiFunctionSpace, ffiFunctionHeapCellType, JSFFIFunction) \
     v(ffiCallbackSpace, ffiCallbackHeapCellType, JSFFICallback)
@@ -1142,7 +1142,7 @@ public:
     IsoHeapCellType intlSegmentIteratorHeapCellType;
     IsoHeapCellType intlSegmenterHeapCellType;
     IsoHeapCellType intlSegmentsHeapCellType;
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
     IsoHeapCellType ffiFunctionHeapCellType;
     IsoHeapCellType ffiCallbackHeapCellType;
 #endif

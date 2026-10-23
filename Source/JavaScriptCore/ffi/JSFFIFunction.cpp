@@ -26,7 +26,7 @@
 #include "config.h"
 #include "JSFFIFunction.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "Error.h"
 #include "FFICallHost.h"
@@ -149,4 +149,4 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 
 } // namespace JSC
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

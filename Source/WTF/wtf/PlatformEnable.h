@@ -761,6 +761,15 @@
 #define ENABLE_SHADOW_REALM 1
 #endif
 
+/* Calls of native functions by a signature: JSFFIFunction, JSFFICallback, and CallFFI in the DFG and the FTL. */
+#if !defined(ENABLE_FFI)
+#if USE(BUN_JSC_ADDITIONS)
+#define ENABLE_FFI 1
+#else
+#define ENABLE_FFI 0
+#endif
+#endif
+
 #if !defined(ENABLE_AOT)
 #if ENABLE(FTL_JIT) && (CPU(ARM64) || CPU(X86_64)) && (OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS))
 #define ENABLE_AOT 1

@@ -156,7 +156,7 @@ private:
             const void* pc = removeCodePtrTag(m_rawPC);
             m_site = m_cache.find(pc);
             if (!m_site) [[unlikely]] {
-                m_site = m_cache.resolve(m_image, pc);
+                m_site = resolveReturnAddressInRun(m_cache, m_image, pc, m_callFrame);
                 if (!m_site) {
                     m_exit = { m_framePointer, m_rawPC, m_entryFrame, false, m_callFrame };
                     return;

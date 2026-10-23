@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFIConversions.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 
 #include "CallFrame.h"
@@ -554,4 +554,4 @@ JSC_DEFINE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject* globalObj
 } // namespace JSC
 
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

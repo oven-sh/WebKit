@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFICallbackThunk.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "ArgList.h"
 #include "CCallHelpers.h"
@@ -599,4 +599,4 @@ void runThreadsafeInvocation(ThreadsafeInvocation&)
 
 } // namespace JSC
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

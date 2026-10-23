@@ -7,11 +7,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompiledFrame.h"
 #include "AOTConstantPool.h"
 #include "AOTFFIStubs.h"
 #include "AOTImageStamp.h"
 #include "AOTImageTestBodies.h"
 #include "AOTRegExpCompiler.h"
+#include "AOTRuntimeFactValues.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsCallAdapters.h"
 #include "AOTStubsPropertyKeys.h"
@@ -715,6 +717,30 @@ static void testStubReturnSites()
     }
 }
 
+#if defined(BUN_HARDENED)
+static void testWordsInThePlaceOfAReturnAddress()
+{
+    const TestImage& image = smallImage();
+    const Image& loaded = *image.image;
+    const uint8_t* stubs = loaded.sharedCodeCopy(0);
+    for (const StubReturnSite& site : loaded.stubReturnSites())
+        AOT_TEST_CHECK(faultOfReturnAddressInRun(loaded, stubs + site.offset).isNull());
+    AOT_TEST_CHECK(faultOfReturnAddressInRun(loaded, reinterpret_cast<const void*>(&testWordsInThePlaceOfAReturnAddress)).isNull());
+
+    AOT_TEST_CHECK(!faultOfReturnAddressInRun(loaded, image.address(1, 0)).isNull());
+    AOT_TEST_CHECK(!faultOfReturnAddressInRun(loaded, stubs).isNull());
+
+    auto onHeap = makeUniqueArray<uint8_t>(1);
+    static const uint8_t constant = 0;
+    AOT_TEST_CHECK(!faultOfReturnAddressInRun(loaded, &onHeap).isNull());
+    AOT_TEST_CHECK(!faultOfReturnAddressInRun(loaded, onHeap.get()).isNull());
+    AOT_TEST_CHECK(!faultOfReturnAddressInRun(loaded, &constant).isNull());
+    AOT_TEST_CHECK(!faultOfReturnAddressInRun(loaded, &loaded.header()).isNull());
+    AOT_TEST_CHECK(!faultOfReturnAddressInRun(loaded, loaded.code().data() + loaded.header().codeSize).isNull());
+    AOT_TEST_CHECK(!faultOfReturnAddressInRun(loaded, nullptr).isNull());
+}
+#endif
+
 static void testOutside()
 {
     const Image& loaded = *smallImage().image;
@@ -814,6 +840,26 @@ static void testStamp()
     AOT_TEST_CHECK(imageStamp(noFeatures, testIdentity) != imageStamp(oneFeature, testIdentity));
     AOT_TEST_CHECK(imageStamp(buildTarget, testIdentity) == imageStamp(buildTarget, testIdentity, imageFormOfThisRuntime()));
     AOT_TEST_CHECK(imageStamp(buildTarget, testIdentity, Wire::ImageForm::Absolute) != imageStamp(buildTarget, testIdentity, Wire::ImageForm::PositionIndependent));
+}
+
+static void testRuntimeDescriptionNamesFormatVersion()
+{
+    std::span<const uint8_t> record(reinterpret_cast<const uint8_t*>(&describedRuntime), sizeOfDescribedRuntime);
+    uint32_t named;
+    memcpy(&named, record.data() + 28, sizeof(named));
+    AOT_TEST_CHECK(named == imageFormatVersion && named == smallImage().image->header().formatVersion);
+    AOT_TEST_CHECK(!findDifferenceFromThisRuntime(record));
+
+    Vector<uint8_t> other(record);
+    ++named;
+    memcpy(other.mutableSpan().data() + 28, &named, sizeof(named));
+    std::optional<RuntimeDifference> difference = findDifferenceFromThisRuntime(other.span());
+    AOT_TEST_CHECK(difference && difference->name == "the version of the image format"_s && difference->here == imageFormatVersion && difference->there == imageFormatVersion + 1);
+
+    named = 0;
+    memcpy(other.mutableSpan().data() + 28, &named, sizeof(named));
+    difference = findDifferenceFromThisRuntime(other.span());
+    AOT_TEST_CHECK(difference && difference->name == "the version of the image format"_s && !difference->there);
 }
 
 static void testAdmittedCodeIsInHeader()
@@ -1029,12 +1075,16 @@ std::span<const NativeTest> imageTableTests()
         { "image/locate/every-byte"_s, testEveryByte },
         { "image/locate/stub-bytes"_s, testStubBytes },
         { "image/locate/stub-return-sites"_s, testStubReturnSites },
+#if defined(BUN_HARDENED)
+        { "image/locate/words-in-the-place-of-a-return-address"_s, testWordsInThePlaceOfAReturnAddress },
+#endif
         { "image/locate/outside"_s, testOutside },
         { "image/locate/regexp-and-wasm-code"_s, testRegExpAndWebAssemblyCode },
         { "image/locate/constants-and-ffi-code"_s, testConstantsAndFFICode },
         { "image/locate/stub-address"_s, testStubAddress },
         { "image/locate/slot-handler-offsets"_s, testSlotHandlerOffsets },
         { "image/stamp/stamp"_s, testStamp },
+        { "image/stamp/runtime-description-names-format-version"_s, testRuntimeDescriptionNamesFormatVersion },
         { "image/admitted-code/in-header"_s, testAdmittedCodeIsInHeader },
         { "image/admitted-code/needs-header-of-this-format"_s, testAdmittedCodeNeedsHeaderOfThisFormat },
         { "image/flags/need-header-of-this-format"_s, testFlagsNeedHeaderOfThisFormat },

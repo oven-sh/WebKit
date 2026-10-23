@@ -240,8 +240,11 @@ bool nearestHandlerIgnoresValue(VM& vm, const Instance&, CallFrame* stubFrame)
     void* stackPointer = stackPointerOfCaller(stubFrame);
     for (CallFrame* callee = stubFrame; framePointer != vm.topEntryFrame;) {
         const CallSiteCache::Entry* site = cache.resolve(*state.image, removeCodePtrTag(callee->rawReturnPC()));
-        if (!site)
+        if (!site) {
+            if (callee != stubFrame)
+                checkReturnAddressInRun(*state.image, removeCodePtrTag(callee->rawReturnPC()), callee);
             return false;
+        }
         if (site->isStubReturnSite()) {
             if (!letsThrowPass(site->stubFrameKind))
                 return false;

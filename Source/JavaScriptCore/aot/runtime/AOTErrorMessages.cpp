@@ -620,6 +620,11 @@ JSObject* createModuleInShadowRealmError(JSGlobalObject* globalObject, StringVie
 {
     return createSyntaxError(globalObject, withAOTErrorNote(makeString("The module "_s, path, " was compiled ahead of time and can't be imported inside a ShadowRealm"_s)));
 }
+#else
+JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView path)
+{
+    return createSyntaxError(globalObject, withAOTErrorNote(makeString("The module "_s, path, " was compiled ahead of time and can't be imported in another realm"_s)));
+}
 #endif
 
 static String describe(LoaderChange change, StringView changed)

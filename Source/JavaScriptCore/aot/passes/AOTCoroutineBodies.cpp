@@ -363,7 +363,6 @@ void CoroutineBodyBuilder::moveProofsOfSentValueBehindMode(BlockID block, ValueI
         }
     }
 
-    // A value that is put into a block is available neither at the head of the block, where the arguments of its handler are read, nor in the handler.
     for (size_t index = 0; index < otherArms.size(); ++index) {
         if (m_body.at(otherArms[index]).handler)
             otherArms[index] = m_builder.splitEdge(edgesIntoOtherArms[index]);

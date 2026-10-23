@@ -740,6 +740,9 @@ static ProgramTableRule findBrokenRule(const ProgramTables& tables, DataNodeHead
     case DataNodeHeader::Kind::ObjectBody:
         if (header.operand >= tables.allocations().size())
             return ProgramTableRule::TableOutOfBounds;
+        // forEachDataWordInBody() finds the references of the body by the record of the layout.
+        if (!tables.hasLayoutForShape(tables.allocations()[header.operand].shape))
+            return ProgramTableRule::ShapeWithoutLayout;
         return tables.allocations()[header.operand].size() == offsetOfFirstField + header.count * sizeof(uint64_t) ? ProgramTableRule::None : ProgramTableRule::DataNotEncoded;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -761,22 +764,35 @@ static bool holdsDataWords(DataNodeHeader header)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void forEachDataWordInBody(const ProgramTables& tables, std::span<const uint64_t> words, size_t position, const Invocable<void(uint64_t)> auto& functor)
+// False where the record of the layout has a reference outside the body.
+static bool forEachDataWordInBody(const ProgramTables& tables, std::span<const uint64_t> words, size_t position, const Invocable<void(uint64_t)> auto& functor)
 {
     DataNodeHeader header = DataNodeHeader::decode(words[position]);
     const LayoutData& layout = tables.layoutForShape(tables.allocations()[header.operand].shape);
     std::span<const uint32_t> references = inlineReferenceTableOf(layout);
     if (references.empty())
-        return;
+        return true;
     const uint8_t* fields = reinterpret_cast<const uint8_t*>(words.subspan(position + 1, header.count).data()) - offsetOfFirstField;
+    size_t endOfBody = offsetOfFirstField + header.count * sizeof(uint64_t);
+    auto isInBody = [&](uint32_t offset, size_t width) {
+        return offset >= offsetOfFirstField && offset + width <= endOfBody;
+    };
     size_t numberOfWideSlots = references[0] + references[1];
     std::span<const uint32_t> offsets = references.subspan(numberOfInlineReferenceCounts);
-    for (uint32_t offset : offsets.first(numberOfWideSlots))
+    if (numberOfWideSlots > offsets.size())
+        return false;
+    for (uint32_t offset : offsets.first(numberOfWideSlots)) {
+        if (!isInBody(offset, sizeof(uint64_t)))
+            return false;
         functor(*reinterpret_cast<const uint64_t*>(fields + offset));
+    }
     for (uint32_t offset : offsets.subspan(numberOfWideSlots)) {
+        if (!isInBody(offset, sizeof(uint32_t)))
+            return false;
         if (uint32_t word = *reinterpret_cast<const uint32_t*>(fields + offset); !NarrowDataWord::isFinal(word))
             functor(NarrowDataWord::widen(word));
     }
+    return true;
 }
 
 static std::span<const uint64_t> valuesOfNode(std::span<const uint64_t> words, size_t position)
@@ -867,11 +883,13 @@ static ProgramTableRule findBrokenDataRule(const TableEncoder& encoder, const Pr
             return ProgramTableRule::DataNotEncoded;
         if (header.kind() == DataNodeHeader::Kind::ObjectBody) {
             ProgramTableRule broken = ProgramTableRule::None;
-            forEachDataWordInBody(tables, words, position, [&](uint64_t word) {
+            bool everyReferenceIsInBody = forEachDataWordInBody(tables, words, position, [&](uint64_t word) {
                 if (broken != ProgramTableRule::None)
                     return;
                 broken = namesNodeOfKind(words, *headers, word, DataNodeHeader::Kind::OtherMembers) ? ProgramTableRule::DataNotEncoded : findBrokenRule(encoder, tables, *headers, word);
             });
+            if (!everyReferenceIsInBody)
+                return ProgramTableRule::TableOutOfBounds;
             if (broken != ProgramTableRule::None)
                 return broken;
         }

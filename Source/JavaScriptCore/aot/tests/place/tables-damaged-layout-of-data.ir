@@ -1,0 +1,19 @@
+# The check of the encoded tables finds the references in the body of a constant object by the record of its layout. Where the shape has no record, it reports that and reads no body.
+# RUN(SHAPE): tables damage=ShapeWithoutLayout
+# DIAGNOSTIC: ProgramTableCheckFailed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Outer" fields=[{key="mixed" declared={type=anything} flags=[IsRequired]}, {key="doubles" declared={type=anything} flags=[IsRequired]}, {key="integers" declared={type=anything} flags=[IsRequired]}, {key="untyped" declared={type=anything} flags=[IsRequired]}, {key="inner" declared={type=anything} flags=[IsRequired]}, {key="big" declared={type=anything} flags=[IsRequired]}, {key="text" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Inner" fields=[{key="zero" declared={type=number} flags=[IsRequired]}, {key="nan" declared={type=number} flags=[IsRequired]}, {key="nothing" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+data d0 root=Object{layout=L0 members=[{key="mixed" value=Array{contents=anything elements=[Number{value=1}, Hole, String{value="pear"}, Boolean{value=true}, Undefined]}}, {key="doubles" value=Array{contents=number elements=[Number{value=1.5}, Hole, Number{value=2}]}}, {key="integers" value=Array{contents=number elements=[Number{value=1}, Number{value=2}]}}, {key="untyped" value=Array{contents=anything elements=[Number{value=1}, Number{value=2}]}}, {key="inner" value=Object{layout=L1 members=[{key="zero" value=Number{value=-0}}, {key="nan" value=Number{value=NaN}}, {key="nothing" value=Null}]}}, {key="big" value=BigInt{digits="12345678901234567890"}}, {key="text" value=String{value="plum"}}]} module=m0
+
+# SHAPE: rule ShapeWithoutLayout

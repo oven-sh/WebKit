@@ -61,6 +61,16 @@ ALWAYS_INLINE unsigned bytesAboveReturnAddressOf(const CallSiteCache::Entry& sit
     return site.isStubReturnSite() ? bytesAboveReturnAddressOf(site.stubFrameKind) : bytesAboveReturnAddressOf(site.frame);
 }
 
+#if defined(BUN_HARDENED)
+// Ends the process at a word that neither follows a call in compiled code nor lies in the code of the engine.
+JS_EXPORT_PRIVATE void checkReturnAddressInRun(const Image&, const void* returnAddress, const CallFrame* callee);
+JS_EXPORT_PRIVATE const CallSiteCache::Entry* resolveReturnAddressInRun(CallSiteCache&, const Image&, const void* returnAddress, const CallFrame* callee);
+JS_EXPORT_PRIVATE ASCIILiteral faultOfReturnAddressInRun(const Image&, const void* returnAddress);
+#else
+ALWAYS_INLINE void checkReturnAddressInRun(const Image&, const void*, const CallFrame*) { }
+ALWAYS_INLINE const CallSiteCache::Entry* resolveReturnAddressInRun(CallSiteCache& cache, const Image& image, const void* returnAddress, const CallFrame*) { return cache.resolve(image, returnAddress); }
+#endif
+
 struct MachineFrame {
     CallFrame* callFrame { nullptr };
     const void* pc { nullptr };

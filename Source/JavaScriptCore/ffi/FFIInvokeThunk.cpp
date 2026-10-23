@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFIInvokeThunk.h"
 
-#if USE(BUN_JSC_ADDITIONS) && ENABLE(CODE_GENERATION)
+#if ENABLE(FFI) && ENABLE(CODE_GENERATION)
 
 #include "CCallHelpers.h"
 #include "FFICallingConvention.h"
@@ -397,4 +397,4 @@ void invokeThroughStub(InvokeStubFunction stub, const Signature& signature, void
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

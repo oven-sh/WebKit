@@ -111,7 +111,7 @@ private:
     bool isSuspension(const B3::Value* value) const
     {
         const auto* patchpoint = value->as<B3::PatchpointValue>();
-        if (!patchpoint || patchpoint->pureFunction)
+        if (!patchpoint || patchpoint->pureFunction || patchpoint->runsWithoutFrame())
             return false;
         Typed::ValueID origin = Typed::valueOfOrigin(value->origin());
         return origin && m_originsOfSuspensions.get(origin.index());

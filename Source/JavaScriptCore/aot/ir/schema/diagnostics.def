@@ -31,6 +31,7 @@ enum UserDiagnosticKind (severity: DiagnosticSeverity, stage: Stage, code: UInt3
     WasmSavedRegisterOrder(Warning, BuildImage, 100058, "a WebAssembly function runs in the interpreter: its saved registers are not in order")
     WasmProcessAddressInCode(Warning, BuildImage, 100058, "a WebAssembly function runs in the interpreter: its code contains an absolute address")
     WasmCodeGeneratorFailed(Warning, BuildImage, 100058, "a WebAssembly function runs in the interpreter: the code generator failed")
+    WasmLeftOutOfThisBuild(Warning, BuildImage, 100058, "the WebAssembly module can't run: this build of Bun has no WebAssembly")
 }
 
 enum InternalErrorKind (stage: Stage, message: Text) {

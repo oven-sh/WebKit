@@ -208,6 +208,8 @@ struct FrontWords {
     const PackedSlot* plane;
 };
 
+using SlotHandlers = void*[numberOfSlotHandlerTables][numberOfSlotKinds];
+
 struct PropertyCacheWords {
     FrontWords front[numberOfSlotAccesses];
     const HashedSlot* hashedSlots;
@@ -237,10 +239,11 @@ struct PropertyCacheWords {
     UniquedStringImpl* hasInstanceUID;
     UniquedStringImpl* prototypeUID;
     JSCell* defaultHasInstanceFunction;
-    void* handlers[numberOfSlotHandlerTables][numberOfSlotKinds];
+#if !defined(BUN_HARDENED)
+    SlotHandlers handlers;
+#endif
 
     static constexpr ptrdiff_t offsetOfFront(SlotAccess access) { return OBJECT_OFFSETOF(PropertyCacheWords, front) + static_cast<ptrdiff_t>(static_cast<unsigned>(access) * sizeof(FrontWords)); }
-    static constexpr ptrdiff_t offsetOfHandlers(SlotHandlerTable table) { return OBJECT_OFFSETOF(PropertyCacheWords, handlers) + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKinds * sizeof(void*)); }
 };
 
 static_assert(sizeof(HashedSlot) == 1u << HashedSlot::sizeShift && alignof(HashedSlot) == sizeof(HashedSlot));

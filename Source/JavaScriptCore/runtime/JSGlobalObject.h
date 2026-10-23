@@ -398,6 +398,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrierStructureID m_internalFieldTupleStructure;
+#endif
+#if ENABLE(FFI)
     LazyProperty<JSGlobalObject, Structure> m_ffiFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_ffiCallbackStructure;
 #endif
@@ -530,6 +532,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
+#endif
+#if ENABLE(FFI)
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
 
@@ -1140,6 +1144,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }
+#endif
+#if ENABLE(FFI)
     Structure* ffiFunctionStructure() const { return m_ffiFunctionStructure.get(this); }
     Structure* ffiCallbackStructure() const { return m_ffiCallbackStructure.get(this); }
     JS_EXPORT_PRIVATE FFI::FFIContext& ffiContext();

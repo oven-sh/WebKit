@@ -55,6 +55,8 @@ const beginPattern = /^@begin\s+([:\w]+)\s*\d*$/;
 const conditionPattern = /^#if\s+(!?)OS\((WINDOWS|DARWIN|LINUX)\)$/;
 // A row that only some builds of the host have. b.leftOut() lists the names that are defined.
 const definedPattern = /^#if\s+(!?)defined\((\w+)\)$/;
+// A row that an engine built without the feature leaves out. The table has it: MayBeAbsent says that a realm may lack it.
+const enabledPattern = /^#if\s+ENABLE\(\w+\)$/;
 
 const platformsByOS: Readonly<Record<string, readonly TargetPlatform[]>> = {
   WINDOWS: ["Windows"],
@@ -99,6 +101,10 @@ function parseDirective(
   }
   const match = conditionPattern.exec(line);
   const defined = definedPattern.exec(line);
+  if (enabledPattern.test(line)) {
+    if (condition !== null) report(lineNumber, "nested #if");
+    return condition ?? { platforms: targetPlatforms, isElse: false };
+  }
   if (match === null && defined === null) {
     report(lineNumber, `unsupported directive: ${line}`);
     return condition;

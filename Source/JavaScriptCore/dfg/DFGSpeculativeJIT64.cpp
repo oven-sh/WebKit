@@ -6064,7 +6064,7 @@ void SpeculativeJIT::compile(Node* node)
         break;
 
     case CallFFI:
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
         compileCallFFI(node);
 #else
         DFG_CRASH(m_graph, node, "Unexpected node"_s);

@@ -118,7 +118,7 @@ static void testStubsFindTheirWordsBeforeFirstUse(LoadedProgram& program)
     unsigned numberOfHandlers = 0;
     for (SlotHandlerTable table : allSlotHandlerTables) {
         for (Slot::Kind kind : allSlotKinds) {
-            const void* handler = words.handlers[static_cast<unsigned>(table)][static_cast<unsigned>(kind)];
+            const void* handler = instance.slotHandlers()[static_cast<unsigned>(table)][static_cast<unsigned>(kind)];
             AOT_TEST_CHECK(handler == image.stubAddress(slotHandlerFor(table, kind)));
             numberOfHandlers += !!handler;
         }

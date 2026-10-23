@@ -392,7 +392,6 @@ TypeID DominatedUseReplacer::castTypeFor(Narrowing& narrowing, const Type& prove
     return *narrowing.castType;
 }
 
-// A parameter is available at the head of its block and in the handler of that block. A cast that is put into the block is not.
 bool DominatedUseReplacer::isReachedByCastIn(BlockID target, const Use& use) const
 {
     if (use.block != target)

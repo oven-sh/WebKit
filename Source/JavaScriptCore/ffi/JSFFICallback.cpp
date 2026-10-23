@@ -26,7 +26,7 @@
 #include "config.h"
 #include "JSFFICallback.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "Error.h"
 #include "ExceptionHelpers.h"
@@ -244,4 +244,4 @@ DEFINE_VISIT_CHILDREN(JSFFICallback);
 
 } // namespace JSC
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)
