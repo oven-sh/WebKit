@@ -28,6 +28,7 @@
 
 #include "ArgList.h"
 #include "BuiltinNames.h"
+#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
@@ -229,7 +230,7 @@ void SyntheticModuleRecord::initializeExports(JSGlobalObject* globalObject, cons
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, PropertyName localName)
+void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, PropertyName localName, UserDefinedGetter userDefinedGetter)
 {
     JSObject* source = m_lazyExportsSource.get();
     if (!source)
@@ -258,8 +259,22 @@ void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, 
     if (environment->variableAt(scopeOffset).get())
         return;
 
-    JSValue value = source->get(globalObject, localName);
+    PropertySlot slot(source, PropertySlot::InternalMethodType::Get);
+    bool hasProperty = source->getPropertySlot(globalObject, localName, slot);
     RETURN_IF_EXCEPTION(scope, void());
+
+    JSValue value = jsUndefined();
+    if (hasProperty) {
+        bool skipGetter = false;
+        if (userDefinedGetter == UserDefinedGetter::Skip && slot.isAccessor()) {
+            auto* getter = dynamicDowncast<JSFunction>(slot.getterSetter()->getter());
+            skipGetter = !getter || !(getter->isNonBoundHostFunction() || getter->isBuiltinFunction());
+        }
+        if (!skipGetter) {
+            value = slot.getValue(globalObject, localName);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
 
     // The getter may have re-entered and filled this binding itself. Whatever got there first is what any binding
     // created in the meantime has observed, so keep it.
@@ -274,12 +289,12 @@ void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, 
     ASSERT(putResult);
 }
 
-void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, AbstractModuleRecord* moduleRecord, PropertyName localName)
+void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, AbstractModuleRecord* moduleRecord, PropertyName localName, UserDefinedGetter userDefinedGetter)
 {
     auto* syntheticModuleRecord = dynamicDowncast<SyntheticModuleRecord>(moduleRecord);
     if (!syntheticModuleRecord || !syntheticModuleRecord->hasLazyExports()) [[likely]]
         return;
-    syntheticModuleRecord->materializeLazyExport(globalObject, localName);
+    syntheticModuleRecord->materializeLazyExport(globalObject, localName, userDefinedGetter);
 }
 #endif
 
