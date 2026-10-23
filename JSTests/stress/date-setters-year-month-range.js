@@ -119,25 +119,30 @@ shouldBe(new Date(946688523001).setUTCMonth(12 * 298000, -108842264), 9466885230
 shouldBe(new Date(2000, 0, 1, 1, 2, 3, 457).setFullYear(300000, 0, -108842264), new Date(300000, 0, -108842264, 1, 2, 3, 457).getTime());
 shouldBe(new Date(275760, 8, 1, 1, 2, 3, 457).setDate(-199000000), new Date(275760, 8, -199000000, 1, 2, 3, 457).getTime());
 
-// The 64-bit split of the month count is exact for every safe integer, up to the last one.
+// The 64-bit split of the month count is exact, also beyond the safe integers. 12 * 2^53 is the last month
+// count whose floor(month / 12) is an exact Number.
 shouldBe(new Date(0).setUTCFullYear(2000 - 750599937895082, 2 ** 53 - 1, 1), 965088000000); // 2000-08-01
 shouldBe(Date.UTC(2000 - 750599937895082, 2 ** 53 - 1, 1), 965088000000);
 shouldBe(new Date(0).setUTCFullYear(2000 + 750599937895083, -(2 ** 53 - 1), 1), 959817600000); // 2000-06-01
 shouldBe(Date.UTC(2000 + 750599937895083, -(2 ** 53 - 1), 1), 959817600000);
 shouldBe(new Date(0).setUTCFullYear(-1000000000, 12 * 1000002000 + 1, 1), 949363200000); // 2000-02-01
-// A year or a month count beyond the safe integers is NaN: a double cannot split it exactly
-// (2 ** 56 months from this year is 2000-05-01).
-shouldBeNaN(new Date(0).setUTCFullYear(-6004799503158661, 2 ** 56, 1));
-shouldBeNaN(Date.UTC(-6004799503158661, 2 ** 56, 1));
-shouldBeNaN(new Date(0).setUTCFullYear(-750599937893082, 2 ** 53));
-shouldBeNaN(Date.UTC(-750599937893082, 2 ** 53));
-shouldBeNaN(new Date(0).setUTCFullYear(750599937897083, -(2 ** 53)));
-shouldBeNaN(Date.UTC(750599937897083, -(2 ** 53)));
-shouldBeNaN(new Date(0).setUTCMonth(2 ** 53));
-shouldBeNaN(new Date(0).setUTCMonth(-(2 ** 53)));
-shouldBeNaN(new Date(0).setUTCFullYear(2 ** 53));
-shouldBeNaN(new Date(0).setUTCFullYear(-9007197107257351, 108086391056891980, 784353026671));
-shouldBeNaN(Date.UTC(-9007197107257351, 108086391056891980, 784353026671));
+shouldBe(new Date(0).setUTCFullYear(-750599937893082, 2 ** 53, 1), 967766400000); // 2000-09-01
+shouldBe(Date.UTC(-750599937893082, 2 ** 53, 1), 967766400000);
+shouldBe(new Date(0).setUTCFullYear(750599937897083, -(2 ** 53), 1), 957139200000); // 2000-05-01
+shouldBe(Date.UTC(750599937897083, -(2 ** 53), 1), 957139200000);
+shouldBe(new Date(0).setUTCFullYear(-6004799503158661, 2 ** 56, 1), 957139200000); // A double split gave 2000-01-01.
+shouldBe(Date.UTC(-6004799503158661, 2 ** 56, 1), 957139200000);
+shouldBe(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53, 1), 946684800000); // 2000-01-01
+shouldBe(Date.UTC(2000 - 2 ** 53, 12 * 2 ** 53, 1), 946684800000);
+shouldBe(new Date(0).setUTCFullYear(2000 + 2 ** 53, -12 * 2 ** 53, 1), 946684800000);
+shouldBe(Date.UTC(2000 + 2 ** 53, -12 * 2 ** 53, 1), 946684800000);
+// Beyond 12 * 2^53 MakeDay rounds floor(month / 12) to a Number. The answer is NaN there.
+shouldBeNaN(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53 + 16, 1));
+shouldBeNaN(Date.UTC(2000 - 2 ** 53, 12 * 2 ** 53 + 16, 1));
+shouldBeNaN(new Date(0).setUTCFullYear(2000 + 2 ** 53, -12 * 2 ** 53 - 16, 1));
+shouldBeNaN(Date.UTC(2000 + 2 ** 53, -12 * 2 ** 53 - 16, 1));
+shouldBeNaN(new Date(0).setUTCMonth(2 ** 60));
+shouldBeNaN(new Date(0).setUTCFullYear(2 ** 60, -12 * 2 ** 53));
 
 // year + floor(month / 12) has to fit an int32. The day count can pull the last such year back.
 shouldBe(new Date(0).setUTCFullYear(2 ** 31 - 1, 0, -784353015467), -124334438400000);
@@ -150,6 +155,9 @@ shouldBe(Date.UTC(-(2 ** 31), 0, 784353015833), -86400000);
 shouldBeNaN(new Date(0).setUTCFullYear(-(2 ** 31) - 1, 0, 784353015833));
 shouldBeNaN(new Date(0).setUTCFullYear(-(2 ** 31), -1, 784353015833));
 // A year or a month count beyond int32 does not wrap into range.
+shouldBeNaN(new Date(0).setUTCMonth(2 ** 53));
+shouldBeNaN(new Date(0).setUTCMonth(-(2 ** 53)));
+shouldBeNaN(new Date(0).setUTCFullYear(2 ** 53));
 shouldBeNaN(new Date(0).setUTCFullYear(2 ** 31 + 2000));
 shouldBeNaN(new Date(0).setUTCFullYear(2 ** 32 + 2000));
 shouldBeNaN(new Date(0).setUTCFullYear(2 ** 32 + 2000, 5, 6));
