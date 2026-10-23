@@ -2,7 +2,7 @@
 
 // DFG and FTL model CheckPrivateBrand as writing nothing, so they go on using a butterfly that was
 // loaded before it. Flattening a dictionary whose out-of-line capacity shrinks replaces the butterfly,
-// so the check's inline cache miss must not do that.
+// so the check's inline cache miss must not do that in their code.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -81,3 +81,27 @@ test("check in a loop", () => class {
         return a;
     }
 });
+
+// A miss in Baseline code does flatten. To an optimized caller that is a call, after which it loads the
+// butterfly again.
+(function () {
+    class C {
+        #m() { }
+        static check(o) { o.#m; }
+    }
+    noDFG(C.check);
+    noInline(C.check);
+
+    function f(o, v) { const a = o[0]; C.check(o); o[1] = v; return a; }
+    noInline(f);
+
+    const c = new C;
+    c[0] = c[1] = 2;
+    for (let i = 0; i < testLoopCount; i++)
+        f(c, 7);
+
+    const d = makeUncacheableDictionary(C);
+    shouldBe(f(d, 7), 2, "check in a Baseline callee");
+    shouldBe(d[1], 7, "check in a Baseline callee");
+    shouldBe(d.k99, 99, "check in a Baseline callee");
+})();
