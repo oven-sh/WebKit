@@ -1836,6 +1836,11 @@ static InlineCacheAction tryCacheCheckPrivateBrand(
 
         Structure* structure = base->structure();
 
+        // actionForCell would flatten it, which can replace the butterfly. DFG and FTL model CheckPrivateBrand
+        // as writing nothing, and a brand has no property offset for flattening to settle.
+        if (structure->isUncacheableDictionary())
+            return RetryCacheLater;
+
         InlineCacheAction action = actionForCell(vm, base);
         if (action != AttemptToCache)
             return action;
