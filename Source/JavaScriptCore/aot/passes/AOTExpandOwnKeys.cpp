@@ -45,6 +45,22 @@ struct SpreadOfMergedLiterals {
 
 } // anonymous namespace
 
+static bool isExpandedByPlan(OwnKeyWalk walk)
+{
+    switch (walk) {
+    case OwnKeyWalk::Values:
+    case OwnKeyWalk::Entries:
+    case OwnKeyWalk::Assign:
+    case OwnKeyWalk::Spread:
+    case OwnKeyWalk::Copy:
+        return true;
+    case OwnKeyWalk::Stringify:
+    case OwnKeyWalk::StringifyIntoText:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
 {
     Vector<OwnKeyWalkSite, 4> sites = findOwnKeyWalkSites(context);
@@ -55,10 +71,19 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
         // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
         return isCold(heat) || (site.walk == OwnKeyWalk::Copy && !isHot(heat));
     });
-    UnchangedAllocations unchanged(context, sites.span());
+    Vector<OwnKeyWalkSite, 4> sitesExpandedByPlan;
+    for (const OwnKeyWalkSite& site : sites) {
+        if (isExpandedByPlan(site.walk))
+            sitesExpandedByPlan.append(site);
+    }
+    UnchangedAllocations unchanged(context, sitesExpandedByPlan.span());
 
     Vector<PlannedWalk, 4> walks;
     for (const OwnKeyWalkSite& site : sites) {
+        if (!isExpandedByPlan(site.walk)) {
+            walks.append(PlannedWalk { site, std::nullopt, std::nullopt });
+            continue;
+        }
         if (site.walk == OwnKeyWalk::Assign) {
             if (std::optional<AssignPlan> plan = planAssign(context, unchanged, site))
                 walks.append(PlannedWalk { site, std::nullopt, WTF::move(plan) });
@@ -407,8 +432,10 @@ PassOutcome expandOwnKeys(FunctionPassContext& context)
         if (walk.assignPlan) {
             expander.expandAssign(walk.site, *walk.assignPlan);
             numberOfWalks = walk.assignPlan->walkedSources.size();
-        } else
+        } else if (walk.plan)
             expander.expand(walk.site, *walk.plan);
+        else if (!expander.expandStringify(walk.site))
+            continue;
         context.build.statistics().count(StatisticID::OwnKeyWalksExpanded, numberOfWalks);
         changed = true;
     }

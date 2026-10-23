@@ -13,6 +13,7 @@
 #include "AOTBuildContext.h"
 #include "AOTEffectSummaries.h"
 #include "AOTFrameAllocationPlanner.h"
+#include "AOTFreshResults.h"
 #include "AOTHeat.h"
 #include "AOTIRPrinter.h"
 #include "AOTPipeline.h"
@@ -113,6 +114,10 @@ static void printFramePointers(TestCommandContext& context, FunctionID, Function
                 dumpLine(out, pointer, " "_s, use, " may leak: "_s, *mayLeak);
         }
     }
+
+    Vector<InternalError> found;
+    verifyFramePointers(analyses, found);
+    context.build.diagnostics().append(WTF::move(found));
 }
 
 static std::optional<ASCIILiteral> forcingOperationOf(const AllocationRemark& remark)
@@ -279,6 +284,11 @@ static void printSinkingStates(TestCommandContext& context, FunctionID, Function
     }
 }
 
+static void printFreshResults(TestCommandContext& context, FunctionID, FunctionAnalyses& analyses)
+{
+    context.out.println(computeFreshResults(analyses));
+}
+
 static ASCIILiteral describeBorrowing(const BorrowedParameters& borrowed, FunctionID id, uint32_t entryParameter)
 {
     if (!borrowed.isBorrowed(id, entryParameter))
@@ -383,6 +393,7 @@ std::span<const TestCommand> allocationTestCommands()
         { "allocation-remarks"_s, IRForm::AsRead, runAllocationRemarks, ProgramAsRead::WithLibrary },
         { "virtual-objects"_s, IRForm::Prepared, runOnFunctions<printVirtualObjects>, ProgramAsRead::TypedAndVerified },
         { "sinking-states"_s, IRForm::Prepared, runOnFunctions<printSinkingStates>, ProgramAsRead::TypedAndVerified },
+        { "fresh-results"_s, IRForm::Prepared, runOnFunctions<printFreshResults>, ProgramAsRead::TypedAndVerified },
         { "frame-plan"_s, IRForm::Prepared, runOnFunctions<printFramePlan>, ProgramAsRead::TypedAndVerified },
         { "borrowed-parameters"_s, IRForm::Prepared, runBorrowedParameters, ProgramAsRead::TypedAndVerified },
         { "frame-array-parameters"_s, IRForm::Prepared, runFrameArrayParameters, ProgramAsRead::TypedAndVerified },

@@ -61,6 +61,7 @@ bool isBoundToFrame(const Function& function, const Block& block, uint32_t index
 bool isWrapperCreatedByEngine(const Function& function)
 {
     switch (function.creator.kind()) {
+    case CreatorRecord::Kind::ResultWrapper:
     case CreatorRecord::Kind::ParameterWrapper:
     case CreatorRecord::Kind::EntryChecks:
     case CreatorRecord::Kind::BoundFunction:
@@ -70,9 +71,11 @@ bool isWrapperCreatedByEngine(const Function& function)
     case CreatorRecord::Kind::None:
     case CreatorRecord::Kind::Entrypoint:
     case CreatorRecord::Kind::Version:
+    case CreatorRecord::Kind::ResultWorker:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
     case CreatorRecord::Kind::Validator:
+    case CreatorRecord::Kind::ChainStep:
     case CreatorRecord::Kind::StubBody:
     case CreatorRecord::Kind::TableLookup:
         return false;

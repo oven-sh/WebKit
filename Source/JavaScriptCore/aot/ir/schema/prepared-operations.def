@@ -102,6 +102,8 @@ operation CreateAsyncFromSyncIterator (iterator: Object/retains(result), next: A
 operation ThrowNotIterable (iterable: Any/inspects) [isSpread] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowNotIterable
 
 family CollectionIntrinsic Prepared..Placed
+operation IsCollectionTableFull (collection: Object/inspects) -> natural(boolean) ; reads(CollectionStorage) ; branches = May
+operation ReserveCollectionCapacity (collection: Object/inspects+writesContents, remaining: Integer/inspects, finished: Integer/inspects, sizeAtEntry: Integer/inspects) -> none ; reads(CollectionStorage, CollectionEntries, AllocatorState) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects ; runtime = ReserveCollectionCapacity
 
 family SavedFrame Prepared..Placed
 operation NewGenerator (function: Function(Dispatch), callee: Callable/inspects, allocationSite?: AllocationSite) -> allocation(Generator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator ; interpreted = Allocation

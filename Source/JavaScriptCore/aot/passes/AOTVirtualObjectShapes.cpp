@@ -142,52 +142,6 @@ void VirtualFamily::forgetTagBits()
     m_numberOfTagBits = m_numberOfReservedTagBits;
 }
 
-static void dumpDescription(PrintStream& out, const VirtualObjectDescription& description)
-{
-    out.print("v", description.allocation.index(), " ", nameOf(description.kind));
-    if (description.layout)
-        out.print(" L", description.layout.index());
-    if (description.function)
-        out.print(" f", description.function.index());
-    if (description.absentResult)
-        out.print(" absent=", nameOf(*description.absentResult));
-}
-
-static void dumpShape(PrintStream& out, const VirtualShape& shape)
-{
-    switch (shape.kind) {
-    case VirtualShapeKind::Cell:
-        out.print("cell");
-        return;
-    case VirtualShapeKind::Constant:
-        out.print(nameOf(shape.constant));
-        return;
-    case VirtualShapeKind::Fields:
-        break;
-    }
-    out.print("description=", shape.descriptionIndex, " stored(");
-    CommaPrinter comma(","_s);
-    for (size_t field : shape.stored)
-        out.print(comma, field);
-    out.print(") order=", shape.order.index(), " length=", shape.length);
-}
-
-void VirtualFamily::dump(PrintStream& out) const
-{
-    for (uint32_t index = 0; index < m_descriptions.size(); ++index) {
-        out.print("description ", index, ": ");
-        dumpDescription(out, m_descriptions[index]);
-        out.println();
-    }
-    for (uint32_t field = 0; field < m_fields.size(); ++field)
-        out.println("field ", field, ": ", m_fields[field]);
-    for (uint32_t shape = 0; shape < m_shapes.size(); ++shape) {
-        out.print("s", shape, ": ");
-        dumpShape(out, m_shapes[shape]);
-        out.println();
-    }
-}
-
 TypeID typeOfShape(const ShapeContext& context, const VirtualShape& shape)
 {
     switch (shape.kind) {

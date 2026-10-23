@@ -711,13 +711,6 @@ private:
         m_plan.users[candidate] = user;
     }
 
-    void rejectAllOf(LayoutID layout, Obstacle obstacle, Opcode user = Opcode::Undefined)
-    {
-        m_candidates.forEachCandidateOf(layout, [&](uint32_t candidate) {
-            reject(candidate, obstacle, user);
-        });
-    }
-
     void noteCallee(uint32_t candidate, FunctionID callee)
     {
         if (!m_plan.callees[candidate])

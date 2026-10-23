@@ -752,7 +752,6 @@ public:
     uint32_t numberOfBodies() const { return m_ranges.size() - 1; }
     uint32_t hostBody() const { return numberOfBodies() - 1; }
     std::span<const ValueFlowStatement> statementsOf(uint32_t body) const LIFETIME_BOUND { return m_statements.span().subspan(m_ranges[body].statement, m_ranges[body + 1].statement - m_ranges[body].statement); }
-    std::span<const ValueFlowStatement> statementsStayingInside(uint32_t body) const LIFETIME_BOUND { return m_statements.span().subspan(m_ranges[body].statement, m_ranges[body].statementLeavingBody - m_ranges[body].statement); }
     std::span<const ValueFlowEdge> edgesOnceReached(uint32_t body) const LIFETIME_BOUND { return m_edgesOnceReached.subspan(m_ranges[body].edgeOnceReached, m_ranges[body + 1].edgeOnceReached - m_ranges[body].edgeOnceReached); }
     std::span<const ValueFlowNodeSet> seedsOnceReached(uint32_t body) const LIFETIME_BOUND { return m_seedsOnceReached.subspan(m_ranges[body].seedOnceReached, m_ranges[body + 1].seedOnceReached - m_ranges[body].seedOnceReached); }
     std::span<const FunctionID> functionsEnteredOnceReached(uint32_t body) const LIFETIME_BOUND { return m_functionsEnteredOnceReached.subspan(m_ranges[body].functionEntered, m_ranges[body + 1].functionEntered - m_ranges[body].functionEntered); }

@@ -191,7 +191,7 @@ public:
     {
         if (m_tookProofsFromEdges)
             return { };
-        PassSet passes;
+        PassSet passes { PassID::PropagateBranchConditions };
         if (!m_context.foldingAskedForUses)
             passes.add(PassID::FoldConstants);
         if (!mayHaveGivenControlFlowWork())

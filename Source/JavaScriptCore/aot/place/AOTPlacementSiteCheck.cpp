@@ -831,16 +831,6 @@ void checkSiteCaches(const PlacementCheckContext& context)
     }
 }
 
-void checkPlacement(const Program& program, const PlacementInputs& inputs, const Placement& placement, const SiteCaches& siteCaches, BuildContext& build)
-{
-    if (build.diagnostics().hasErrors())
-        return;
-    PlacementFailureSink failures(build);
-    PlacementCheckContext context { program, inputs, placement, siteCaches, build, failures };
-    checkSites(context);
-    checkSiteCaches(context);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

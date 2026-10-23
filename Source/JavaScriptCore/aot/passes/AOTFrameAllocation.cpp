@@ -144,8 +144,6 @@ static std::optional<FramePlan> planFunction(const Program& program, const Optim
     bool namesCauses = build.options().collectsAllocationRemarks() || build.options().logging.dumpedPass == PassID::AllocateInFrames;
     if (!namesCauses && !areAllFilledArrays && keepsEveryCellOnHeapByForm(program, inputs.flow, build, function, allocations)) {
         FramePlan plan = createHeapPlan(program, function, findListedAllocations(program, build, analyses, allocations));
-        for (FrameDecision& decision : plan.decisions)
-            decision.isHeldByClosureTable = FramePlanner::isLikeEveryClosureOfItsFunction(program, &inputs.flow, function, function.at(decision.allocation));
         RELEASE_ASSERT(!build.options().verifiesAfterEveryPass || keepsSameCellsOnHeap(plan, FramePlanner(analyses, inputs.heat).run()));
         return plan;
     }
@@ -698,31 +696,6 @@ void FrameAllocation::finish()
     AOT::sort(m_capturesHoldingFramePointers);
     removeRepeatedElements(m_capturesHoldingFramePointers);
     m_isFinished = true;
-}
-
-static void dumpStorage(PrintStream& out, ASCIILiteral prefix, const BitVector& inFrames, const BitVector& onHeap)
-{
-    for (size_t index : inFrames) {
-        if (onHeap.get(index))
-            out.println(prefix, index, " may be in a frame");
-        else
-            out.println(prefix, index, " only in frames");
-    }
-}
-
-void FrameAllocation::dump(PrintStream& out, const Program&) const
-{
-    RELEASE_ASSERT(m_isFinished);
-    if (m_layoutsInFrames.isEmpty() && m_closuresInFrames.isEmpty()) {
-        out.println("nothing in frames");
-        return;
-    }
-    dumpStorage(out, "L"_s, m_layoutsInFrames, m_layoutsOnHeap);
-    dumpStorage(out, "f"_s, m_closuresInFrames, m_closuresOnHeap);
-    for (FieldReference field : m_fieldsHoldingFramePointers)
-        out.println("L", field.layout.index(), ".", field.field, " holds frame pointers");
-    for (CaptureReference capture : m_capturesHoldingFramePointers)
-        out.println("f", capture.function.index(), " capture ", capture.capture, " holds frame pointers");
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -3,7 +3,7 @@
 # REQUIRES: x86_64 unsanitized-code
 # OPTIONS: heat=EverythingIsHot testing=GenerateAllCodeDirectly disable=pass:InlineCalls
 # RUN: generate-code FunctionsGeneratedDirectly
-# CHECK: statistic FunctionsGeneratedDirectly 5
+# CHECK: statistic FunctionsGeneratedDirectly 4
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -1,0 +1,45 @@
+# A test of an array holds across JSON.stringify of an object that brings no code of the program, and still holds across the call of the serializer that takes its place. The serializer of a layout that may hold anything ends it, as the call it replaces does
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 2
+# STATISTIC: SerializersCreated = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Link" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="next" declared={type=null|L0} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="HoldsAnything" fields=[{key="member" declared={type=anything} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0]}] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+
+function f0 name="guardAcrossTheSerializer" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L0}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: L0):
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    v4 = Undefined
+    v5 = CallBuiltin -, v1, v4, v4 overload=JSONStringify/0
+    v6 = Integer integer=0
+    v7 = GetArrayElement v0, v6, v3 arrayStorage=Int32 level=Expected [keyIsIntegral]
+    Return v7
+  b2():
+    v8 = Undefined
+    Return v8
+}
+# CHECK-LABEL: function f0 name="guardAcrossTheSerializer"
+# CHECK: = CallDirect v1, {{*}} function=
+# CHECK: = GetArrayElement v0, v6, v3 arrayStorage=Int32
+
+function f1 name="testedAgainBehindUnknownCode" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L1}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: L1):
+    v2 = Undefined
+    v3 = CallBuiltin -, v1, v2, v2 overload=JSONStringify/0
+    v4 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5: guard):
+    v6 = Integer integer=0
+    v7 = GetArrayElement v0, v6, v5 arrayStorage=Int32 level=Expected [keyIsIntegral]
+    Return v7
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="testedAgainBehindUnknownCode"
+# CHECK: = CallDirect v1, {{*}} function=

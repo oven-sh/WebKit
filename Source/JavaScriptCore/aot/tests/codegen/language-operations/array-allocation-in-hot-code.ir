@@ -1,6 +1,6 @@
 # Where every block counts as hot, an array of holes and a rest array take their cell from the stub all the same
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations
+# OPTIONS: heat=EverythingIsHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
 # RUN: generate-code calls
 # CHECK: f1: size=
 # CHECK: stub NewArrayWithLength.Contiguous x2

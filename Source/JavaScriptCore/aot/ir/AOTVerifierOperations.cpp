@@ -173,6 +173,7 @@ void FunctionVerifier::verifyOperations()
         for (uint32_t indexInBlock = 0; indexInBlock < block.values.size(); ++indexInBlock) {
             ValueID id = block.values[indexInBlock];
             const Value& value = m_function.at(id);
+            m_hasFrameAllocation |= hasFrameStorage(value);
             m_hasTypedDataOperations |= hasTypedDataRules(value.opcode) || referencesFunctionWithCursor(m_program, value);
             verifyOperation(blockID, indexInBlock, id, value);
             if (hasFailed())
@@ -541,6 +542,8 @@ void FunctionVerifier::runSubsystemCheckers()
 {
     if (hasFailed())
         return;
+    if ((m_form >= IRForm::Prepared || isOptimizing()) && m_hasFrameAllocation)
+        verifyFramePointers(analyses(), m_errors);
     if (m_hasTypedDataOperations || hasCursorInSignature(m_program, m_function))
         verifyTypedDataRules(m_program, m_id, m_function, analyses(), m_form, m_errors);
 }

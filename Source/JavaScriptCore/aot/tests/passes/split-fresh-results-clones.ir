@@ -1,0 +1,202 @@
+# A function with several results gets one version per set of results that call sites read
+# FORM: Prepared
+# RUN: pass SplitFreshResults VerifyProgram
+# STATISTIC: ResultClonesCreated = 1
+# LOSS: MaxResultClones f2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoHalves" role=ResultWrapper parameters=[{type=number}, {type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f17}
+function f1 name="recursiveHalves" role=ResultWrapper parameters=[{type=number}, {type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f18}
+function f2 name="threeParts" role=ResultWrapper parameters=[{type=number}, {type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f19}
+function f3 name="sharedWork" role=ResultWrapper parameters=[{type=number}, {type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f20}
+
+function f4 name="readsFirst" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f17
+    v2 = ResultAt v1 index=0
+    Return v2
+}
+# CHECK-LABEL: function f4 name="readsFirst"
+# CHECK: v1: number = CallDirect v0, v0 function=f17
+# CHECK-NOT: ResultAt
+
+function f5 name="readsSecond" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f17
+    v2 = ResultAt v1 index=1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="readsSecond"
+# CHECK: v1: number = CallDirect v0, v0 function=[[second]]
+# CHECK-NOT: ResultAt
+
+function f6 name="readsInBlockPrintedEarlier" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Jump -> next b2()
+  b1():
+    v1 = ResultAt v2 index=1
+    Return v1
+  b2():
+    v2 = CallDirect v0, v0 function=f17
+    Jump -> next b1()
+}
+# CHECK-LABEL: function f6 name="readsInBlockPrintedEarlier"
+# CHECK-NOT: ResultAt
+# CHECK: v2: number = CallDirect v0, v0 function=[[second]]
+
+function f7 name="readsSecondOfRecursive" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f18
+    v2 = ResultAt v1 index=1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="readsSecondOfRecursive"
+# CHECK: [[call7]]:{{*}}= CallDirect v0, v0 function=f18
+# CHECK-NEXT: = ResultAt [[call7]] index=1
+
+function f8 name="set0" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f19
+    v2 = ResultAt v1 index=0
+    Return v2
+}
+function f9 name="set1" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f19
+    v2 = ResultAt v1 index=1
+    Return v2
+}
+function f10 name="set2" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f19
+    v2 = ResultAt v1 index=2
+    Return v2
+}
+function f11 name="set01" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f19
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = Add v2, v3
+    Return v4
+}
+function f12 name="set12" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f19
+    v2 = ResultAt v1 index=1
+    v3 = ResultAt v1 index=2
+    v4 = Add v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f12 name="set12"
+# CHECK: [[call12]]:{{*}}= CallDirect v0, v0 function=f19
+# CHECK-NEXT: = ResultAt [[call12]] index=1
+# CHECK-NEXT: = ResultAt [[call12]] index=2
+
+function f13 name="readsFirstOfShared" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f20
+    v2 = ResultAt v1 index=0
+    Return v2
+}
+function f14 name="readsSecondOfShared" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f20
+    v2 = ResultAt v1 index=1
+    Return v2
+}
+# CHECK-LABEL: function f14 name="readsSecondOfShared"
+# CHECK: [[call14]]:{{*}}= CallDirect v0, v0 function=f20
+# CHECK-NEXT: = ResultAt [[call14]] index=1
+
+function f15 name="readsBothOfOneSet" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0, v0 function=f21
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = Add v2, v3
+    Return v4
+}
+function f16 name="oneSet" role=ResultWrapper parameters=[{type=number}, {type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f21}
+
+function f17 name="twoHalves" role=ResultWorker parameters=[{type=number}, {type=number}] results=[{type=number}, {type=number}] derivation={source=f0} creator=ResultWorker{origin=f0} {
+  b0(v0: number, v1: number):
+    v2 = Mul v0, v0
+    v3 = Add v2, v0
+    v4 = Mul v3, v0
+    v5 = Add v4, v0
+    v6 = Mul v5, v0
+    v7 = Add v6, v0
+    v8 = Mul v7, v0
+    v9 = Add v8, v0
+    v10 = Mul v1, v1
+    v11 = Add v10, v1
+    v12 = Mul v11, v1
+    v13 = Add v12, v1
+    v14 = Mul v13, v1
+    v15 = Add v14, v1
+    v16 = Mul v15, v1
+    v17 = Add v16, v1
+    v18 = Results v9, v17
+    Return v18
+}
+# CHECK-LABEL: function f17 name="twoHalves" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}] 
+# CHECK: = Mul v0, v0
+# CHECK-NOT: = Mul v1, v1
+# CHECK-NOT: = Results
+
+function f18 name="recursiveHalves" role=ResultWorker parameters=[{type=number}, {type=number}] results=[{type=number}, {type=number}] derivation={source=f1} creator=ResultWorker{origin=f1} {
+  b0(v0: number, v1: number):
+    v2 = CallDirect v0, v1 function=f18
+    v3 = ResultAt v2 index=0
+    v4 = Mul v1, v1
+    v5 = Results v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f18 name="recursiveHalves" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}, {type=number}] 
+
+function f19 name="threeParts" role=ResultWorker parameters=[{type=number}, {type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f2} creator=ResultWorker{origin=f2} {
+  b0(v0: number, v1: number):
+    v2 = Mul v0, v0
+    v3 = Mul v1, v1
+    v4 = Add v0, v1
+    v5 = Results v2, v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f19 name="threeParts" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}, {type=number}, {type=number}] 
+
+function f20 name="sharedWork" role=ResultWorker parameters=[{type=number}, {type=number}] results=[{type=number}, {type=number}] derivation={source=f3} creator=ResultWorker{origin=f3} {
+  b0(v0: number, v1: number):
+    v2 = Mul v0, v0
+    v3 = Add v2, v0
+    v4 = Mul v3, v0
+    v5 = Add v4, v0
+    v6 = Mul v5, v0
+    v7 = Add v6, v0
+    v8 = Mul v7, v0
+    v9 = Add v8, v0
+    v10 = Add v9, v1
+    v11 = Results v9, v10
+    Return v11
+}
+# CHECK-LABEL: function f20 name="sharedWork" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}, {type=number}] 
+
+function f21 name="oneSet" role=ResultWorker parameters=[{type=number}, {type=number}] results=[{type=number}, {type=number}] derivation={source=f16} creator=ResultWorker{origin=f16} {
+  b0(v0: number, v1: number):
+    v2 = Mul v0, v0
+    v3 = Mul v1, v1
+    v4 = Results v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f21 name="oneSet" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}, {type=number}] 
+# CHECK: function [[second]] name="twoHalves" module=m0 role=ResultWorker {{*}}results=[{type=number}] {{*}}derivation={source=f0} creator=ResultWorker{origin=f0}
+# CHECK-NOT: = Mul v0, v0
+# CHECK: = Mul v1, v1
+# CHECK-NOT: = Results
+# CHECK-NOT: function f

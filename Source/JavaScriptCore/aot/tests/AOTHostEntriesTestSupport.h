@@ -40,7 +40,6 @@ inline RuntimeModuleID hostModule(ASCIILiteral token)
     return id;
 }
 
-// The numbers of the library's functions are the table's: no constant of the engine has them.
 inline RuntimeFunctionID functionImplementing(BuiltinID builtin)
 {
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {

@@ -6,12 +6,15 @@
 #pragma once
 
 #define RUN_BUN_PASS_TESTS() do { \
+        RUN(testHoistCommonMoves()); \
         RUN(testTerminalResultsOnEdge()); \
+        RUN(testMovesBeforePatch()); \
         RUN(testForwardRegisterCopies()); \
         RUN(testForwardRegisterCopiesDropsZeroExtensions()); \
         RUN(testMergeIdenticalBlocks()); \
         RUN(testMergeChainsOfIdenticalBlocks()); \
         RUN(testMergeInvertsBranchIntoFallThrough()); \
+        RUN(testDuplicateReturns()); \
         RUN(testShuffleOrderFollowsPairs()); \
         RUN(testShuffleMovesValuesInEitherOrder()); \
         RUN(testSpilledOperandIsReadInPlaceOnRequest()); \
@@ -283,6 +286,68 @@ void testSpilledOperandIsReadInPlaceOnRequest()
     }
 }
 
+void testHoistCommonMoves()
+{
+    enum class Case : uint8_t { Hoisted, BranchOnFlags, BranchTestsDestination, BranchDefinesSource, SecondPredecessor, DifferentSources, Move32 };
+    constexpr int64_t maxInt32 = std::numeric_limits<int32_t>::max();
+    auto [a0, a1, a2, a3, a4, ret] = PassRegisters { };
+    for (Case testCase : { Case::Hoisted, Case::BranchOnFlags, Case::BranchTestsDestination, Case::BranchDefinesSource, Case::SecondPredecessor, Case::DifferentSources, Case::Move32 }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        bool hasSecondPredecessor = testCase == Case::SecondPredecessor;
+        BasicBlock* entry = hasSecondPredecessor ? code.addBlock() : nullptr;
+        BasicBlock* root = code.addBlock();
+        BasicBlock* other = hasSecondPredecessor ? code.addBlock() : nullptr;
+        BasicBlock* taken = code.addBlock();
+        BasicBlock* notTaken = code.addBlock();
+
+        if (hasSecondPredecessor) {
+            appendBranchTest(entry, a3, root, other);
+            appendJump(other, taken);
+        }
+        if (testCase == Case::BranchOnFlags) {
+            appendChecked(root, CompareOnFlags32, a0, a1);
+            appendChecked(root, BranchOnFlags, Arg::relCond(MacroAssembler::Equal));
+            root->setSuccessors(taken, notTaken);
+        } else if (testCase == Case::BranchDefinesSource) {
+            appendChecked(root, BranchAdd32, Arg::resCond(MacroAssembler::Overflow), Arg::imm(1), a1);
+            root->setSuccessors(taken, notTaken);
+        } else
+            appendBranchTest(root, testCase == Case::BranchTestsDestination ? a2 : a0, taken, notTaken);
+        auto appendSuccessor = [&](BasicBlock* block, Tmp source, int32_t addend) {
+            appendChecked(block, testCase == Case::Move32 ? Move32 : Move, source, a2);
+            appendChecked(block, Add64, Arg::imm(addend), a2);
+            appendChecked(block, Move, a2, ret);
+            appendReturn(block);
+        };
+        appendSuccessor(taken, a1, 1);
+        appendSuccessor(notTaken, testCase == Case::DifferentSources ? a3 : a1, 2);
+
+        unsigned branchIndex = root->size() - 1;
+        if (testCase == Case::Hoisted || (testCase == Case::BranchOnFlags && preservesFlags(Move))) {
+            checkPassChangesCode(code, hoistCommonMoves);
+            CHECK(root->size() == branchIndex + 2);
+            CHECK(isInst(root->at(branchIndex), Move, { a1, a2 }));
+            CHECK(root->last().isTerminal());
+            CHECK(taken->size() == 3);
+            CHECK(notTaken->size() == 3);
+        } else
+            checkPassLeavesCodeUnchanged(code, hoistCommonMoves);
+        CHECK(!findUseOfUndefinedFlags(code));
+        auto compilation = compile(proc);
+        if (testCase == Case::BranchDefinesSource) {
+            CHECK(invokeInt64(*compilation, 0, 10) == 13);
+            CHECK(invokeInt64(*compilation, 0, maxInt32) == maxInt32 + 2);
+            continue;
+        }
+        CHECK(invokeInt64(*compilation, 10, 10, 1, 20) == 11);
+        CHECK(invokeInt64(*compilation, 0, 10, 0, 20) == (testCase == Case::DifferentSources ? 22 : 12));
+        if (hasSecondPredecessor)
+            CHECK(invokeInt64(*compilation, 0, 10, 0, 0) == 11);
+    }
+}
+
 static void checkTerminalWithoutSuccessors()
 {
     B3::Procedure proc;
@@ -488,6 +553,65 @@ void testTerminalResultsOnEdge()
     checkManyTerminalResults();
     checkSuccessorWithEntryClobber(false);
     checkSuccessorWithEntryClobber(true);
+}
+
+void testMovesBeforePatch()
+{
+    enum class Case : uint8_t { Chain, Swap, WideImmediate, ClobberedAndUsed };
+    constexpr int64_t wideImmediate = 0x123456789;
+    auto [a0, a1, a2, a3, a4, ret] = PassRegisters { };
+    for (Case testCase : { Case::Chain, Case::Swap, Case::WideImmediate, Case::ClobberedAndUsed }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        B3::Air::Special* special = patchpointSpecialOf(code);
+
+        B3::PatchpointValue* value = addPatchpoint(proc, B3::Int64);
+        value->effects = B3::Effects::none();
+        value->resultConstraints = { B3::ValueRep::reg(GPRInfo::returnValueGPR) };
+
+        if (testCase == Case::Swap) {
+            appendChecked(root, Move, a0, a2);
+            appendChecked(root, Move, a1, a0);
+            appendChecked(root, Move, a2, a1);
+            appendRegisterChild(proc, value, a0);
+            appendRegisterChild(proc, value, a1);
+            value->clobberLate(RegisterSet { a2.reg() });
+            value->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+                jit.sub64(GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+            });
+            appendCheckedPatch(root, value, special, ret, a0, a1);
+        } else {
+            appendChecked(root, Move, testCase == Case::WideImmediate ? Arg::bigImm(wideImmediate) : Arg(a0), a1);
+            appendChecked(root, Move, a1, a2);
+            appendRegisterChild(proc, value, a2);
+            value->clobberLate(RegisterSet { a1.reg() });
+            value->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+                jit.add64(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR2, GPRInfo::returnValueGPR);
+                jit.move(CCallHelpers::TrustedImm32(-1), GPRInfo::argumentGPR1);
+            });
+            if (testCase == Case::ClobberedAndUsed) {
+                appendRegisterChild(proc, value, a1);
+                appendCheckedPatch(root, value, special, ret, a2, a1);
+            } else
+                appendCheckedPatch(root, value, special, ret, a2);
+        }
+        appendReturn(root);
+
+        if (testCase == Case::Chain) {
+            checkPassChangesCode(code, resequenceMovesBeforePatches);
+            CHECK(numberOfInsts(root, Move) == 1);
+            CHECK(isInst(root->at(0), Move, { a0, a2 }));
+            CHECK(root->at(1).kind.opcode == Patch);
+        } else
+            checkPassLeavesCodeUnchanged(code, resequenceMovesBeforePatches);
+        auto compilation = compile(proc);
+        if (testCase == Case::Swap)
+            CHECK(invokeInt64(*compilation, 3, 10) == 10 - 3);
+        else
+            CHECK(invokeInt64(*compilation, 5) == (testCase == Case::WideImmediate ? wideImmediate + 1 : 6));
+    }
 }
 
 static void appendCopiesAndAdd(BasicBlock* root, bool sourceChanges)
@@ -794,6 +918,7 @@ void testMergeInvertsBranchIntoFallThrough()
 static unsigned countDefaultFrameReturns(bool savesRegister)
 {
     B3::Policy policy;
+    policy.air.layout.duplicatesReturns = true;
     B3::Procedure proc(policy);
     proc.setOptLevel(2);
     Code& code = proc.code();
@@ -819,3 +944,57 @@ static unsigned countDefaultFrameReturns(bool savesRegister)
     return numberOfInsts(code, Ret64);
 }
 
+void testDuplicateReturns()
+{
+    enum class Case : uint8_t { Leaf, ReturnBlockHasTwoInsts, ReturnBlockIsNext, DefaultFrame };
+    for (Case testCase : { Case::Leaf, Case::ReturnBlockHasTwoInsts, Case::ReturnBlockIsNext, Case::DefaultFrame }) {
+        B3::Policy policy;
+        if (testCase != Case::DefaultFrame)
+            letAirEmitFrame(policy.air);
+        B3::Procedure proc(policy);
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        bool hasBranch = testCase != Case::ReturnBlockIsNext;
+        BasicBlock* root = code.addBlock();
+        BasicBlock* first = hasBranch ? code.addBlock() : root;
+        BasicBlock* second = hasBranch ? code.addBlock() : nullptr;
+        BasicBlock* exit = code.addBlock();
+
+        if (hasBranch) {
+            appendBranchTest(root, argumentTmp(0), first, second);
+            appendMoveAndJump(second, 2, exit);
+        }
+        appendMoveAndJump(first, 1, exit);
+        if (testCase == Case::ReturnBlockHasTwoInsts)
+            appendAddAndReturn(exit, 0);
+        else
+            appendReturn(exit);
+
+        switch (testCase) {
+        case Case::Leaf:
+            checkPassChangesCode(code, duplicateReturns);
+            CHECK(isInst(first->last(), Ret64, { returnTmp() }));
+            CHECK(!first->numSuccessors());
+            CHECK(second->last().kind.opcode == Jump);
+            CHECK(second->successorBlock(0) == exit);
+            break;
+        case Case::ReturnBlockHasTwoInsts:
+        case Case::ReturnBlockIsNext:
+            checkPassLeavesCodeUnchanged(code, duplicateReturns);
+            break;
+        case Case::DefaultFrame:
+            code.resetReachability();
+            CHECK(duplicateReturns(code) == isX86());
+            break;
+        }
+        auto compilation = compile(proc);
+        CHECK(code.frameLayout().isPlanned == (testCase != Case::DefaultFrame));
+        CHECK(code.frameLayout().hasFrame == (testCase == Case::DefaultFrame));
+        CHECK(invokeInt64(*compilation, 1) == 1);
+        if (hasBranch)
+            CHECK(invokeInt64(*compilation, 0) == 2);
+    }
+
+    CHECK(countDefaultFrameReturns(false) == (isX86() ? 2u : 1u));
+    CHECK(countDefaultFrameReturns(true) == 1);
+}

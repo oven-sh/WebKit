@@ -127,11 +127,6 @@ struct NarrowedCopy {
     friend auto operator<=>(const NarrowedCopy&, const NarrowedCopy&) = default;
 };
 
-constexpr bool slotsOverlap(ObjectSlot a, ObjectSlot b)
-{
-    return !a || !b || *a == *b;
-}
-
 constexpr bool isSummarizedCall(Opcode opcode)
 {
     switch (effectRuleOf(opcode)) {

@@ -343,6 +343,7 @@ static void checkInEveryPipeline(ASCIILiteral program, ASCIILiteral answers, Opt
     check({ "references=narrow"_s, "disable=pass:SinkAllocations"_s });
     check({ "references=narrow"_s, "disable=pass:InlineCalls"_s });
     check({ "references=narrow"_s, "disable=pass:OutlineColdOperations"_s });
+    check({ "references=narrow"_s, "disable=pass:SinkConstants"_s });
     check({ "references=narrow"_s, "disable=pass:EliminateDeadCode"_s });
     check({ "references=narrow"_s, "disable=pass:DeferClosuresInFields"_s });
     check({ "references=narrow"_s, "heat=EverythingIsHot"_s });

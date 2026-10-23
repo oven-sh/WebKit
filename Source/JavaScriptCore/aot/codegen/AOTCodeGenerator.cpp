@@ -117,7 +117,7 @@ GenerationResult CodeGenerator::run()
     createBlocks();
 
     m_out.initializeConstants(m_proc, m_out.m_block);
-    definePinnedValues(m_out, m_inputs.program.instanceSizes, m_pinned);
+    definePinnedValues(m_out, m_proc, m_inputs.program.instanceSizes, m_pinned);
     emitter<EntryEmitter>().generateEntry();
     if (m_hasFailed)
         return GenerationResult::Failed;
@@ -133,6 +133,7 @@ GenerationResult CodeGenerator::run()
         if (m_hasFailed)
             return GenerationResult::Failed;
     }
+    publishInductionVariables();
     finishProcedure();
     return GenerationResult::Generated;
 }
@@ -190,6 +191,7 @@ void CodeGenerator::createPhis()
             LValue& lowered = m_values[parameter.index()];
             RELEASE_ASSERT(!lowered);
             lowered = block->appendNew<B3::Value>(m_proc, B3::Phi, b3TypeOf(representation), b3OriginOf(parameter));
+            publishKnownProperties(parameter, lowered);
         }
     }
 }
@@ -682,9 +684,12 @@ Operand CodeGenerator::convert(const OperationContext& context, ValueID source, 
 {
     if (operand.representation == wanted)
         return operand;
+    bool hasTypeOfSource = source && &type == &typeOf(source);
     auto share = [&](Operand form) {
         if (source)
             shareForm(source, form);
+        if (hasTypeOfSource && form.value)
+            publishKnownPropertiesOfConvertedValue(source, form);
         return form;
     };
     if (source) {
@@ -734,6 +739,7 @@ void CodeGenerator::defineValue(ValueID id, Operand operand)
     LValue& lowered = m_values[id.index()];
     RELEASE_ASSERT(!lowered && operand.value && operand.value->type() == b3TypeOf(operand.representation));
     lowered = operand.value;
+    publishKnownProperties(id, lowered);
 }
 
 void CodeGenerator::define(const ValueContext& value, Operand result)

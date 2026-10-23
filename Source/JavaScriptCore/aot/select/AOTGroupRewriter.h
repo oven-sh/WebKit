@@ -83,7 +83,6 @@ public:
     Value& replaceRoot(Opcode);
     void eraseRoot();
     void replaceWithResult(ValueID member, ValueID producer, uint32_t index);
-    void replaceWithValue(ValueID member, ValueID replacement);
     void leaveUnclaimed(ValueID rootOrCreated);
 
     void emitTestAndBranch();

@@ -197,6 +197,7 @@ private:
     SlotsInReceivers* m_slotsInReceivers { nullptr };
     Vector<InternalError> m_errors;
     bool m_hasValidStructure { false };
+    bool m_hasFrameAllocation { false };
     bool m_hasTypedDataOperations { false };
     ValueID m_initialYield;
     Vector<ValueID, 4> m_yields;

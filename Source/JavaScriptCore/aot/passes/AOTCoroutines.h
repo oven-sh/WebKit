@@ -28,12 +28,6 @@ inline const CreatorRecord::Coroutine& coroutineOfBody(const Function& body)
     return body.creator.as<CreatorRecord::Coroutine>();
 }
 
-// An async function that never suspends has a worker in place of a body: an ordinary function without a driver, which returns and throws what settles the promise.
-inline bool isAsyncWorker(const Function& function)
-{
-    return function.role == FunctionRole::AsyncWorker;
-}
-
 // The promise of an async function (undefined when the caller awaits the call itself), or the generator object.
 inline ValueID driverOf(const Function& body)
 {

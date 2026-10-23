@@ -109,12 +109,6 @@ public:
         m_numberOfSettledValues = m_values.size();
         m_numberOfSettledBlocks = m_blocks.size();
     }
-    // The cursor for a reader that may be asked while a pass holds such a reference: it reads what is not settled again the next time.
-    Cursor endOfSettledEntries() const
-    {
-        didShowEntries();
-        return { m_generation, static_cast<uint32_t>(m_numberOfSettledValues), static_cast<uint32_t>(m_numberOfSettledBlocks) };
-    }
 
     // The entries behind the cursor are gone: blocks and values were renumbered, the body was replaced, or there were more edits than a walk of the function costs.
     bool hasForgottenSince(const Cursor& cursor) const { return cursor.m_generation != m_generation; }
@@ -137,24 +131,6 @@ public:
         RELEASE_ASSERT(!hasForgottenSince(cursor));
         didShowEntries();
         return m_blocks.span().subspan(cursor.m_blocks);
-    }
-
-    // One entry at a time, for a reader that edits the function while it reads: its own edits come in their turn. None where the cursor stands at the end.
-    std::optional<ValueChange> takeValueChange(Cursor& cursor) const
-    {
-        RELEASE_ASSERT(!hasForgottenSince(cursor));
-        if (cursor.m_values == m_values.size())
-            return std::nullopt;
-        didShowEntries();
-        return m_values[cursor.m_values++];
-    }
-    std::optional<BlockChange> takeBlockChange(Cursor& cursor) const
-    {
-        RELEASE_ASSERT(!hasForgottenSince(cursor));
-        if (cursor.m_blocks == m_blocks.size())
-            return std::nullopt;
-        didShowEntries();
-        return m_blocks[cursor.m_blocks++];
     }
 
     bool wasAddedAndShownToNobody(BlockID block) const { return block.index() >= m_firstBlockShownToNobody; }

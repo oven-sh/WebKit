@@ -852,7 +852,6 @@ void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&,
 void forEachBuiltinApplicationOnAllThreads(const ValueFlowResultInputs&, const ValueFlowHeapView&, ValueSetMakers&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ScopedLambda<void(unsigned worker, const ValueFlowBuiltinApplication&)>&);
 
 // Defined in AOTValueFlowResultsFunctions.cpp.
-void computeClosuresNeverCompared(const ValueFlowResultInputs&, ValueFlowHeapView&, FlowResultTables&);
 
 BitVector builtinsWithOverload(const BuiltinTable& builtins, NOESCAPE const Invocable<bool(const BuiltinOverload&)> auto& predicate)
 {
@@ -926,8 +925,6 @@ struct ValueFlowConstructions {
 
 // Asks the solver, and which functions are reached. Defined in AOTFlowConstructionOrders.cpp.
 ValueFlowConstructions computeConstructions(const ValueFlowResultInputs&, ValueFlowHeapView&, const FlowResultTables&);
-// The orders in which object literals that are completed piece by piece get their keys. Rests on the field results. Defined in AOTFlowLiteralOrderResults.cpp.
-void computeLiteralKeyOrders(const ValueFlowResultInputs&, ValueFlowHeapView&, Vector<PropertyKeyKind>&& kindsOfKeys, FlowResultTables&);
 
 // A write that a built-in object may refuse, under a text that names no property anywhere else in the program.
 struct ValueFlowWriteUnderNewName {
@@ -949,7 +946,6 @@ void computeFunctionResults(const ValueFlowResultInputs&, ValueFlowStampedCalls&
 void computeExecutionResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 // By key: the symbols that one call creates, which runs at most once. Rests on the executions.
 BitVector computeCreatedSymbolResults(const ValueFlowResultInputs&, const FlowResultTables&);
-void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
 // How the namespace objects are used, and who gets at a variable through the object that it is a property of. Rests on the functions that unsolved code names.
 struct ValueFlowAccessesThroughObjects;
 struct ValueFlowAccessesThroughObjectsDeleter {

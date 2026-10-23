@@ -1,6 +1,6 @@
 # An array of holes and a rest array take their cell from the stub in code of every shape
 # FORM: AsRead
-# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
 # RUN: generate-code calls
 # CHECK: f1: size=
 # CHECK: stub NewArrayWithLength.Contiguous x2

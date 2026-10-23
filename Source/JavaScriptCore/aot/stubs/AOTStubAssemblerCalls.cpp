@@ -125,14 +125,6 @@ void StubAssembler::callEngineThunk(Entry pointer, GPRReg scratch)
     call(scratch, JSEntryPtrTag);
 }
 
-void StubAssembler::jumpToEngineThunk(Entry pointer, GPRReg scratch)
-{
-    RELEASE_ASSERT(!isOperation(pointer) && canWrite(scratch));
-    recordClobber(scratch);
-    loadRuntimePointer(pointer, scratch);
-    farJump(scratch, JSEntryPtrTag);
-}
-
 void StubAssembler::callCode(CodeSymbol symbol)
 {
     RELEASE_ASSERT(symbol.space == SymbolSpace::RegExp);

@@ -351,11 +351,14 @@ static bool canChangeCaptures(const Function& function)
     case CreatorRecord::Kind::TableLookup:
     case CreatorRecord::Kind::Coroutine:
     case CreatorRecord::Kind::BoundFunction:
+    case CreatorRecord::Kind::ResultWrapper:
+    case CreatorRecord::Kind::ResultWorker:
     case CreatorRecord::Kind::ParameterWrapper:
     case CreatorRecord::Kind::EntryChecks:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
     case CreatorRecord::Kind::Validator:
+    case CreatorRecord::Kind::ChainStep:
     case CreatorRecord::Kind::StubBody:
         return false;
     }

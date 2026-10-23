@@ -44,6 +44,8 @@ static ASCIILiteral originName(RegExpRequestOrigin origin)
     switch (origin) {
     case RegExpRequestOrigin::Literal:
         return "literal"_s;
+    case RegExpRequestOrigin::Evaluated:
+        return "evaluated"_s;
     case RegExpRequestOrigin::Candidate:
         return "candidate"_s;
     }
@@ -473,7 +475,10 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
     case PassID::AllocateInnerObjects:
     case PassID::ReadCapturesFromEnvironments:
     case PassID::RemoveUnreadFields:
+    case PassID::RemoveUnusedResults:
+    case PassID::RemoveUnusedParameters:
     case PassID::RemoveUnreachableFunctions:
+    case PassID::SplitFreshResults:
     case PassID::PromoteAggregateParameters:
     case PassID::SplitCoroutines:
     case PassID::CallModules:

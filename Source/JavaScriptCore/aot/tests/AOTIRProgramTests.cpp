@@ -76,9 +76,9 @@ static void verifierRejectsRecordOfAnotherRole()
     TestProgram test;
     FunctionID id = test.addFunction(createFunctionWithRole(FunctionRole::Source));
     AOT_TEST_CHECK(verifyAndCollectErrors(test.program, IRForm::Prepared).isEmpty());
-    test.program.at(id).creator = CreatorRecord::Serializer { };
+    test.program.at(id).creator = CreatorRecord::ChainStep { };
     AOT_TEST_CHECK(hasElements(verifyAndCollectErrors(test.program, IRForm::Prepared), { InternalErrorKind::InvalidCreatorRecord }));
-    test.program.at(id) = createFunctionWithRole(FunctionRole::Serializer, CreatorRecord::Serializer { });
+    test.program.at(id) = createFunctionWithRole(FunctionRole::ChainStep, CreatorRecord::ChainStep { });
     AOT_TEST_CHECK(verifyAndCollectErrors(test.program, IRForm::Prepared).isEmpty());
     test.program.at(id).capabilities.add(FunctionCapabilities::MayChangeSignature);
     AOT_TEST_CHECK(hasElements(verifyAndCollectErrors(test.program, IRForm::Prepared), { InternalErrorKind::InvalidCreatorRecord }));

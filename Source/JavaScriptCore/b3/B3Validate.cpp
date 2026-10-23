@@ -32,6 +32,7 @@
 #include "AirCode.h"
 #include "B3ArgumentRegValue.h"
 #include "B3AtomicValue.h"
+#include "B3CountedLoops.h"
 #include "B3Dominators.h"
 #include "B3IntRange.h"
 #include "B3MemoryValue.h"
@@ -1010,6 +1011,14 @@ public:
             }
 
             VALIDATE(!(value->effects().writes && value->key()), ("At ", *value));
+            if (std::optional<IntRange> range = m_procedure.knownRange(value)) {
+                VALIDATE_RULE(ValidationRule::KnownRange, mayHaveKnownRange(value->opcode()), ("At ", *value, ": ", *range));
+                VALIDATE_RULE(ValidationRule::KnownRange, value->type().isInt(), ("At ", *value, ": ", *range));
+                VALIDATE_RULE(ValidationRule::KnownRange, range->min() <= range->max() && range->isSubsetOf(IntRange::top(value->type())), ("At ", *value, ": ", *range));
+                VALIDATE_RULE(ValidationRule::KnownRange, isKnownRangePlausible(m_procedure, value), ("At ", *value, ": ", *range));
+            }
+            if (m_procedure.knownDereferenceableBytes(value))
+                VALIDATE_RULE(ValidationRule::KnownDereferenceableBytes, value->type() == pointerType(), ("At ", *value));
             // Conceptually, if you exit sideways, you will almost certainly read Top or (AbstractHeapRepository) root. 
             // Since we can't easily find out what root is here, we settle for checking that you at least read *something*.
             // This is technically overly strict, but in practice violating this is almost certainly a bug.
@@ -1028,6 +1037,7 @@ public:
         }
 
         validatePhisAreDominatedByUpsilons();
+        validateKnownInductions(valueOwner, dominators);
     }
 
 private:
@@ -1156,6 +1166,41 @@ private:
         VALIDATE_RULE(ValidationRule::PureFunction, !effects.terminal, ("At ", *patchpoint));
         VALIDATE_RULE(ValidationRule::PureFunction, !effects.readsPinned && !effects.writesPinned, ("At ", *patchpoint));
         VALIDATE_RULE(ValidationRule::PureFunction, !effects.readsLocalState && !effects.writesLocalState, ("At ", *patchpoint));
+    }
+
+    void validateKnownInductions(const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner, Dominators& dominators)
+    {
+        if (m_violatedRule || m_procedure.knownInductions().isEmpty())
+            return;
+        m_procedure.knownInductions().forEach([&](const InductionRecord& record) {
+            validateKnownInduction(record, valueOwner);
+        });
+        if (m_violatedRule)
+            return;
+        NaturalLoops loops(m_procedure, dominators);
+        for (Value* value : m_procedure.values()) {
+            if (auto* upsilon = value->as<UpsilonValue>())
+                validateKnownInductionStep(upsilon, valueOwner, loops);
+        }
+    }
+
+    void validateKnownInduction(const InductionRecord& record, const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner)
+    {
+        VALIDATE_RULE(ValidationRule::KnownInduction, valueOwner.contains(record.phi) && valueOwner.contains(record.next), ("At ", *record.phi));
+        VALIDATE_RULE(ValidationRule::KnownInduction, !record.test || valueOwner.contains(record.test), ("At ", *record.phi));
+        VALIDATE_RULE(ValidationRule::KnownInduction, record.phi->type().isInt() && record.step, ("At ", *record.phi));
+    }
+
+    void validateKnownInductionStep(UpsilonValue* upsilon, const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner, const NaturalLoops& loops)
+    {
+        std::optional<InductionRecord> record = m_procedure.knownInduction(upsilon->phi());
+        if (!record)
+            return;
+        const NaturalLoop* loop = loops.headerOf(valueOwner.get(record->phi));
+        if (!loop || !loops.belongsTo(valueOwner.get(upsilon), *loop))
+            return;
+        auto form = affineFormOf(m_procedure, upsilon->child(0), record->phi, Signedness::Signed);
+        VALIDATE_RULE(ValidationRule::KnownInduction, !form || form->offset == record->step, ("At ", *upsilon, " of ", *record->phi));
     }
 
     // A simple backwards analysis to check that we cannot reach a Phi without going through a corresponding Upsilon

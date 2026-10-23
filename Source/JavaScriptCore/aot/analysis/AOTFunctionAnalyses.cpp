@@ -443,6 +443,7 @@ FunctionAnalyses::FunctionAnalyses(const AnalysisContext& context, const Functio
     , m_effectContext { context.program, context.effects ? *context.effects : m_unknownSummaries.emplace() }
     , m_effects(m_effectContext, function, context.build.options().verifiesAfterEveryPass)
     , m_countsBuilds(context.build.options().logging.logsPhaseTimes)
+    , m_verifiesUpdates(context.build.options().verifiesAfterEveryPass)
 {
 }
 
@@ -537,6 +538,8 @@ void FunctionAnalyses::didBringUseListsUpToDate(const UseLists::Update& update)
         didBuild(FunctionAnalysis::UseLists);
         return;
     }
+    if (m_verifiesUpdates) [[unlikely]]
+        verifyUseLists();
     if (!m_countsBuilds) [[likely]]
         return;
     useListUpdatesByChangingPass[static_cast<unsigned>(m_passesThatDropped[indexOf(FunctionAnalysis::UseLists)])].fetch_add(1, std::memory_order_relaxed);
@@ -666,6 +669,8 @@ void FunctionAnalyses::dropFrequenciesOfFormerFunction()
         (isSameEstimate ? numberOfKeptFrequencies : numberOfFormerFrequencies).fetch_add(1, std::memory_order_relaxed);
     if (!isSameEstimate)
         m_values.blockFrequencies.reset();
+    else if (m_verifiesUpdates) [[unlikely]]
+        verifyFrequencies();
 }
 
 CFG& FunctionAnalyses::cfg()
@@ -744,6 +749,8 @@ const UseLists& FunctionAnalyses::useLists()
     } else if (m_values.didDropBesideUseLists) [[unlikely]] {
         m_values.didDropBesideUseLists = false;
         m_values.useLists->didHandOut();
+        if (m_verifiesUpdates && !m_values.useLists->hasSilentChanges())
+            verifyUseLists();
     }
     checkBlockCount();
     checkValueCount();
@@ -772,8 +779,8 @@ static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass)
 
 // These passes see the same identities whether the table is completed before they start or when they first ask.
 static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatMayCompleteIdentitiesLate {
-    PassID::FoldConstants, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
-    PassID::InferSwitches, PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::CompactBlocks,
+    PassID::FoldConstants, PassID::PropagateBranchConditions, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
+    PassID::InferSwitches, PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::MergeDuplicateBlocks, PassID::CompactBlocks,
 };
 
 // Any other pass may edit the function without reporting it and ask afterwards. It has to get the identities from before its edits.
@@ -793,13 +800,16 @@ const ValueIdentities& FunctionAnalyses::identities()
         m_values.identities.emplace(m_function, cfg(), ValueIdentities::RepeatedWalks::StartAtFirstChangedBlock, &opcodesOfValues(), evaluation);
         m_values.didUpdateIdentities = false;
         didBuild(FunctionAnalysis::Identities);
+        if (m_verifiesUpdates && m_values.identities->isComplete()) [[unlikely]]
+            verifyIdentities(cfg());
     } else {
         if (!m_values.identities->isComplete()) {
             m_values.identities->setGraph(&cfg());
             if (evaluation == ValueIdentities::Evaluation::Complete)
                 m_values.identities->complete();
         }
-        m_values.didUpdateIdentities = false;
+        if (std::exchange(m_values.didUpdateIdentities, false) && m_verifiesUpdates) [[unlikely]]
+            verifyIdentities(cfg());
     }
     checkBlockCount();
     checkValueCount();
@@ -823,6 +833,8 @@ const Liveness& FunctionAnalyses::liveness()
         options.opcodesOfValues = &opcodesOfValues();
         m_values.liveness.emplace(m_function, cfg(), useLists(), options);
         didBuild(FunctionAnalysis::Liveness);
+        if (m_verifiesUpdates) [[unlikely]]
+            verifyLiveness();
     }
     checkBlockCount();
     checkValueCount();

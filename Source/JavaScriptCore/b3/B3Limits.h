@@ -25,6 +25,14 @@ enum class LimitPurpose : uint8_t {
 };
 
 #define FOR_EACH_B3_LIMIT(macro) \
+    macro(MaxClonedValuesPerLoopVersion, 48, CodeSize, "the loop is not versioned"_s) \
+    macro(MaxValuesPerHotRegion, 96, CompileTime, "the loop is not versioned"_s) \
+    macro(MaxClonedValuesPerUnswitchedLoop, 64, CodeSize, "the branch is not unswitched"_s) \
+    macro(MaxClonedValuesPerExcursion, 128, CodeSize, "the remaining rare blocks are not copied, and their edges leave the fast loop"_s) \
+    macro(MaxBlocksScannedBeforeLoop, 4, CompileTime, "values computed farther above the loop are not reused"_s) \
+    macro(MaxValuesScannedForExecutedLoad, 512, CompileTime, "the load counts as not executed"_s) \
+    macro(MaxSourcesOfLoopTest, 16, CompileTime, "the test counts as loop-variant"_s) \
+    macro(MaxRangeCheckBoundsPerLoop, 4, CodeSize, "further range checks stay in the loop"_s) \
     macro(MaxCopiedValuesPerRotatedLoop, 12, CodeSize, "the loop is not rotated"_s) \
     macro(MaxRareBlocksPerRotatedLoop, 8, CompileTime, "the loop is not rotated"_s) \
     macro(MaxThreadedTestCopyCost, 8, CodeSize, "the threaded path ends at the block"_s) \
@@ -33,6 +41,10 @@ enum class LimitPurpose : uint8_t {
     macro(MaxThreadedTestDepth, 8, CompileTime, "the test is undecided"_s) \
     macro(MaxPredecessorsForConditionQueries, 8, CompileTime, "the test is undecided"_s) \
     macro(MaxConditionQueriesPerBlock, 32, CompileTime, "the remaining dominating conditions are not asked"_s) \
+    macro(MaxSelectNestingDepth, 1, SpeculatedWork, "the branch is not converted to a select"_s) \
+    macro(MaxSpeculatedValuesPerSelect, 4, SpeculatedWork, "the branch is not converted to a select"_s) \
+    macro(MaxSelectsPerJoin, 3, SpeculatedWork, "the branch is not converted to a select"_s) \
+    macro(MaxValuesSearchedForDominatingLoad, 16, CompileTime, "the branch is not converted to a select"_s) \
     macro(MaxLoopsLeftBySinking, 8, CompileTime, "the value is not sunk"_s) \
     macro(MaxHoistedLoadsPerLoop, 8, RegisterPressure, "the load stays in the loop"_s) \
     macro(MaxRecordedWritesPerMemoryState, 256, CompileTime, "the state starts a new epoch"_s) \
@@ -132,6 +144,21 @@ inline constexpr unsigned minPredecessorsForIndexedList = 64;
 inline constexpr unsigned maxSizeToBubbleSort = 16;
 
 } // namespace Limits
+
+enum class GaveUpReason : uint8_t {
+    None,
+    NotInnermost,
+    SeveralEntries,
+    NoSingleLikelyPath,
+    UncloneableValue,
+    NothingToHoist,
+    NotCounted,
+    CounterMayWrap,
+    BoundNotInvariant,
+    TestNotOnLikelyPath,
+    EffectsBeforeTopTest,
+    LimitReached,
+};
 
 } } // namespace JSC::B3
 

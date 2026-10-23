@@ -43,7 +43,6 @@ public:
     static constexpr uint32_t maxNumberOfMissBits = 1u << 17;
     static constexpr size_t numberOfMissWords(size_t numberOfSites) { return (std::min<size_t>(numberOfSites, maxNumberOfMissBits) + 63) / 64; }
     uint32_t missBitOf(SiteCache site) const { return indexOf(site) % maxNumberOfMissBits; }
-    bool hasMissed(SiteCache site) const { return m_sitesThatMissed[missBitOf(site) / 64] >> (missBitOf(site) % 64) & 1; }
     std::span<const uint64_t> sitesThatMissed() const { return { m_sitesThatMissed, numberOfMissWords(m_slots.size()) }; }
     std::span<const uint8_t> cards() { return { m_writtenRegions.cards(), RememberedSlotSet::numberOfCardsFor(m_slots.size_bytes(), regionShift) }; }
 
@@ -57,7 +56,6 @@ public:
         std::span<JSObject* const> changeableObjects;
     };
 
-    bool recordMiss(SiteCache);
     bool didMissBefore(SiteCache);
     void didMissRepeatedly(SiteCache);
     void didFailToFill(SiteCache);

@@ -610,29 +610,6 @@ inline bool mayEndBlockWith(const Program& program, FunctionID id, const Termina
     return true;
 }
 
-// False where the function names no record whose bit is set: see NamesInBody. True says nothing.
-template<typename IDType>
-bool mayNameAnyOf(std::span<const IDType> names, const BitVector& wanted)
-{
-    return std::ranges::any_of(names, [&](IDType name) {
-        return wanted.get(name.index());
-    });
-}
-
-inline bool mayNameLayoutIn(const Program& program, FunctionID id, const BitVector& wanted)
-{
-    BodyIndex* index = program.bodyIndex();
-    std::optional<NamesInBody> names = index ? index->namesIn(program, id) : std::nullopt;
-    return !names || mayNameAnyOf(names->layouts, wanted);
-}
-
-inline bool mayNameVariableIn(const Program& program, FunctionID id, const BitVector& wanted)
-{
-    BodyIndex* index = program.bodyIndex();
-    std::optional<NamesInBody> names = index ? index->namesIn(program, id) : std::nullopt;
-    return !names || mayNameAnyOf(names->variables, wanted);
-}
-
 // Hands the functor (BlockID) for each block of the function that ends in a terminator of one of the kinds, in ascending order. With a row of the index no block is read.
 template<typename Functor>
 void forEachBlockEndingWith(const Program& program, FunctionID id, const TerminatorKindSet& wanted, const Functor& functor)

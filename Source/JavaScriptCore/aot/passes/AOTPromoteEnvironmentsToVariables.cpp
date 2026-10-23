@@ -13,6 +13,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTPromoteEnvironmentsToVariablesPlan.h"
+#include "AOTRemoveUnusedParameters.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <utility>

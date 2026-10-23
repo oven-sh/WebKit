@@ -369,7 +369,7 @@ bool FunctionCodeGenerator::reportBackEnd()
 {
     BuildContext& build = m_worker.build;
     const B3::CompilationReport& report = m_procedure->report();
-    BackEndReport collected = collectBackEndReport(report, m_frameAddressViolations.span());
+    BackEndReport collected = collectBackEndReport(report, m_frameAddressViolations.span(), build.options().collectsDeclines());
     // Every narrow reference must be in a form that the scan of the stack finds. That a pointer lies beside it is asked for by a check of its own.
     if (!build.options().validatesReferenceGuards) {
         m_narrowReferenceFindings.violations.removeAllMatching([](const NarrowReferenceViolation& violation) {

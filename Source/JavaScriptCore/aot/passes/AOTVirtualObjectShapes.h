@@ -90,7 +90,6 @@ public:
     std::optional<uint8_t> findTagBit(BlockID, VirtualShapeID) const;
     void shareTagBit(BlockID, VirtualShapeID, uint8_t existingTagBit);
     std::optional<uint8_t> reserveConsecutiveTagBits(unsigned count, uint64_t maxTagBits);
-    unsigned numberOfTagBits() const { return m_numberOfTagBits; }
     void forgetTagBits();
 
     void dump(PrintStream&) const;

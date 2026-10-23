@@ -44,9 +44,14 @@ static void enableEveryOptimizationSwitch(Policy& policy)
     optimization.reducesWithRanges = true;
     optimization.narrowsIntegers = true;
     optimization.chainsAssociativeOperations = true;
+    optimization.convertsBranchesToSelects = true;
+    optimization.mergesAdjacentConstantStores = true;
     optimization.sinksValues = true;
     optimization.placesConstantsByFrequency = true;
     policy.selection.extendsInstructionSelection = true;
+    policy.knownProperties.trustsKnownRanges = true;
+    policy.knownProperties.trustsKnownDereferenceableBytes = true;
+    policy.knownProperties.trustsKnownInductions = true;
 }
 
 static void enableEveryAirSwitch(Air::Policy& air)
@@ -75,9 +80,12 @@ static void enableEveryAirSwitch(Air::Policy& air)
     air.layout.ordersBlocksByEdgeFrequency = true;
     air.layout.recordsRareCodeStart = true;
     air.layout.mergesIdenticalBlocks = true;
+    air.layout.duplicatesReturns = true;
     air.peepholes.forwardsRegisterCopies = true;
+    air.peepholes.hoistsCommonMoves = true;
     air.peepholes.reusesConditionFlags = true;
     air.peepholes.pairsMemoryAccesses = true;
+    air.peepholes.resequencesMovesBeforePatches = true;
     air.peepholes.trapReach = 4096;
 }
 
@@ -87,6 +95,10 @@ static Policy policyWithEverySwitchOn()
     policy.addressing.findPinnedConstant = findNoPinnedConstant;
     enableEveryOptimizationSwitch(policy);
     policy.upstream.hoistsLoopInvariantValues = true;
+    policy.loops.rotates = true;
+    policy.loops.foldsComparisonsWithBounds = true;
+    policy.loops.versions = true;
+    policy.loops.clampsLoopBounds = true;
     policy.switchLowering.usesBitTests = true;
     enableEveryAirSwitch(policy.air);
     return policy;
@@ -151,13 +163,21 @@ static std::span<const SwitchFields> switchFields()
         SWITCH_FIELD(ReduceWithRanges, optimization, reducesWithRanges),
         SWITCH_FIELD(NarrowIntegers, optimization, narrowsIntegers),
         SWITCH_FIELD(ChainAssociativeOperations, optimization, chainsAssociativeOperations),
+        SWITCH_FIELD(ConvertBranchesToSelects, optimization, convertsBranchesToSelects),
+        SWITCH_FIELD(MergeAdjacentConstantStores, optimization, mergesAdjacentConstantStores),
         SWITCH_FIELD(SinkValues, optimization, sinksValues),
         SWITCH_FIELD(PlaceConstantsByFrequency, optimization, placesConstantsByFrequency),
         SWITCH_FIELD(ExtendInstructionSelection, selection, extendsInstructionSelection),
         SWITCH_FIELD(PinnedConstants, addressing, findPinnedConstant),
         SWITCH_FIELD(HoistLoopInvariantValues, upstream, hoistsLoopInvariantValues),
         SWITCH_FIELD(RotateLoops, loops, rotates),
+        SWITCH_FIELD(FoldComparisonsWithBounds, loops, foldsComparisonsWithBounds),
+        SWITCH_FIELD(VersionLoops, loops, versions),
+        SWITCH_FIELD(ClampLoopBounds, loops, clampsLoopBounds),
         SWITCH_FIELD(BitTests, switchLowering, usesBitTests),
+        SWITCH_FIELD(KnownRanges, knownProperties, trustsKnownRanges),
+        SWITCH_FIELD(KnownDereferenceableBytes, knownProperties, trustsKnownDereferenceableBytes),
+        SWITCH_FIELD(KnownInductions, knownProperties, trustsKnownInductions),
         SWITCH_FIELD(ChargeForCalleeSaves, air.registers, chargesForCalleeSaves),
         SwitchFields { PolicySwitch::PreferredRegisters, "usesSecondPreferredRegister"_s, hasSamePreferredRegisters },
         SwitchFields { PolicySwitch::SplitLiveRanges, "splitsAroundClobbersEarly"_s, hasSameLiveRangeSplitting },
@@ -168,9 +188,12 @@ static std::span<const SwitchFields> switchFields()
         SWITCH_FIELD(MoveBlocksWithoutSuccessorsToEnd, air.layout, movesBlocksWithoutSuccessorsToEnd),
         SwitchFields { PolicySwitch::RareBlockLayout, "placesRareBlocksInGaps"_s, hasSameRareBlockLayout },
         SWITCH_FIELD(MergeIdenticalBlocks, air.layout, mergesIdenticalBlocks),
+        SWITCH_FIELD(DuplicateReturns, air.layout, duplicatesReturns),
         SWITCH_FIELD(ForwardRegisterCopies, air.peepholes, forwardsRegisterCopies),
+        SWITCH_FIELD(HoistCommonMoves, air.peepholes, hoistsCommonMoves),
         SWITCH_FIELD(ReuseConditionFlags, air.peepholes, reusesConditionFlags),
         SWITCH_FIELD(PairMemoryAccesses, air.peepholes, pairsMemoryAccesses),
+        SWITCH_FIELD(ResequenceMovesBeforePatches, air.peepholes, resequencesMovesBeforePatches),
         SWITCH_FIELD(FoldTrapsIntoAccesses, air.peepholes, trapReach),
     };
     static_assert(std::size(fields) == numberOfSwitches);
@@ -201,6 +224,7 @@ static void testDefaultPolicyDumpsNothing()
     CHECK(dumpOf(sinking) == "sinksValues"_s);
 
     Policy duplicating;
+    duplicating.air.layout.duplicatesReturns = true;
     CHECK(dumpOf(duplicating) == "duplicatesReturns"_s);
 
     CHECK(dumpOf(policyWithEverySwitchOff()) == "hoistsLoopInvariantValues = false"_s);
@@ -265,6 +289,25 @@ static void testConstructorAppliesDisabledSwitches()
     CHECK(procWithFrameLayout.policy().air.frame.ordersSlotsByUse);
 }
 
+static void testRandomProgramPolicyCoversSwitches()
+{
+    RandomProgramState state;
+    RandomProgramRelocationLowering lowering(state);
+    const Policy policy = randomProgramPolicy(lowering);
+    const Policy disabledPolicy = policyWithEverySwitchOff();
+    for (const SwitchFields& fields : switchFields()) {
+        bool isLeftOff = fields.policySwitch == PolicySwitch::PinnedConstants
+            || fields.policySwitch == PolicySwitch::ShrinkWrapFrame
+            || fields.policySwitch == PolicySwitch::OmitFrameRecord
+            || fields.policySwitch == PolicySwitch::DuplicateReturns;
+        if (fields.areEqual(policy, disabledPolicy) == isLeftOff)
+            continue;
+        crashLock.lock();
+        dataLogLn("randomProgramPolicy() ", isLeftOff ? "enables " : "does not enable ", nameOf(fields.policySwitch));
+        CRASH();
+    }
+}
+
 static void testLimitTableIsConsistent()
 {
     HashSet<String> names;
@@ -298,6 +341,7 @@ static void testReportStartsEmpty()
         Procedure proc(policy);
         const CompilationReport& report = proc.report();
         CHECK(!report.failure);
+        CHECK(report.remarks.isEmpty());
         for (unsigned i = 0; i < numberOfLimits; ++i) {
             auto limit = static_cast<Limit>(i);
             CHECK(!report.hitsOf(limit));
@@ -306,6 +350,22 @@ static void testReportStartsEmpty()
         for (uint32_t count : report.counters)
             CHECK(!count);
     }
+}
+
+static void testLimitHitKeepsFirstOrigin()
+{
+    Procedure proc;
+    proc.didReachLimit(Limit::MaxHoistedLoadsPerLoop, numberedOrigin(1));
+    proc.didReachLimit(Limit::MaxHoistedLoadsPerLoop, numberedOrigin(2));
+    proc.didReachLimit(Limit::MaxSelectsPerJoin);
+    proc.didReachLimit(Limit::MaxSelectsPerJoin, numberedOrigin(3));
+
+    const CompilationReport& report = proc.report();
+    CHECK_EQ(report.hitsOf(Limit::MaxHoistedLoadsPerLoop), 2u);
+    CHECK(hasNumber(report.firstOriginOf(Limit::MaxHoistedLoadsPerLoop), 1));
+    CHECK_EQ(report.hitsOf(Limit::MaxSelectsPerJoin), 2u);
+    CHECK(!report.firstOriginOf(Limit::MaxSelectsPerJoin));
+    CHECK(!report.hitsOf(Limit::MaxLoopsLeftBySinking));
 }
 
 static void checkBlockChainOrders(Procedure& proc, const Vector<BasicBlock*>& chain)
@@ -459,6 +519,50 @@ static void testFirstFailureWins()
     proc.fail(FailureKind::AbsoluteAddress, numberedOrigin(2));
     CHECK(hasFailure(proc, FailureKind::RelocationNotLowered));
     CHECK(hasNumber(proc.report().failure->origin, 1));
+}
+
+static void testRemarksAreCollectedOnRequest()
+{
+    for (bool collectsRemarks : { false, true }) {
+        Procedure proc(policyWith([&](Policy& policy) {
+            policy.collectsRemarks = collectsRemarks;
+        }));
+        proc.addRemark({ RemarkKind::RangeChecksRemoved, GaveUpReason::None, Origin(), std::nullopt }, 3);
+        proc.addRemark({ RemarkKind::LoopNotVersioned, GaveUpReason::LimitReached, Origin(), Limit::MaxClonedValuesPerLoopVersion });
+
+        const CompilationReport& report = proc.report();
+        for (unsigned i = 0; i < numberOfCounters; ++i) {
+            auto counter = static_cast<Counter>(i);
+            CHECK_EQ(report.countOf(counter), counter == Counter::RangeChecksRemoved ? 3u : 0u);
+        }
+        CHECK(report.remarks.size() == (collectsRemarks ? 2u : 0u));
+        CHECK_EQ(report.hitsOf(Limit::MaxClonedValuesPerLoopVersion), 0u);
+    }
+}
+
+static void testKnownRangeFollowsCloneAndDelete()
+{
+    Procedure proc(policyWith([](Policy&) { }));
+    Value* pointer = proc.add<ArgumentRegValue>(Origin(), GPRInfo::argumentGPR0);
+    Value* value = proc.add<MemoryValue>(Load, Int32, Origin(), pointer);
+
+    CHECK(!proc.knownRange(value));
+    proc.setKnownRange(value, IntRange(0, 39));
+    CHECK(*proc.knownRange(value) == IntRange(0, 39));
+    CHECK(*proc.knownRange(proc.clone(value)) == IntRange(0, 39));
+    proc.setKnownRange(value, IntRange(1, 2));
+    CHECK(*proc.knownRange(value) == IntRange(1, 2));
+
+    unsigned index = value->index();
+    proc.deleteValue(value);
+    Value* reused = nullptr;
+    for (unsigned attempt = 0; attempt < 2 && !reused; ++attempt) {
+        Value* candidate = proc.add<MemoryValue>(Load, Int32, Origin(), pointer);
+        if (candidate->index() == index)
+            reused = candidate;
+    }
+    CHECK(reused);
+    CHECK(!proc.knownRange(reused));
 }
 
 static void testPinnedRegistersOfPolicy()
@@ -805,6 +909,13 @@ static void buildRepeatedLoad(Graph& graph, BasicBlock* block)
     graph.ret(block, graph.make(block, Add, first, second));
 }
 
+static void buildSmallWordExtension(Graph& graph, BasicBlock* block)
+{
+    Value* word = cCallArgumentValues<int64_t>(graph.proc, block)[0];
+    graph.proc.setKnownRange(word, IntRange(0, 100));
+    graph.ret(block, graph.make(block, SExt32, graph.make(block, Trunc, word)));
+}
+
 static void buildTaggedInt32Comparison(Graph& graph, BasicBlock* block)
 {
     constexpr int64_t tag = static_cast<int64_t>(0xfffe000000000000ull);
@@ -825,6 +936,50 @@ static void buildComparisonOfReplacedConstant(Graph& graph, BasicBlock* block)
     Value* word = cCallArgumentValues<int64_t>(graph.proc, block)[0];
     Value* select = graph.select(block, graph.make(block, Equal, word, graph.int64(block, 4)), graph.int64(block, 10), word);
     graph.ret(block, graph.make(block, AboveEqual, select, graph.int64(block, 16)));
+}
+
+struct StrengthReductionCase {
+    PolicySwitch policySwitch;
+    void (*build)(Graph&, BasicBlock*);
+    B3::Opcode countedOpcode;
+    unsigned reducedCount;
+    unsigned upstreamCount;
+};
+
+static constexpr StrengthReductionCase strengthReductionCases[] = {
+    { PolicySwitch::MemoryNumbering, buildRepeatedLoad, Load, 1, 2 },
+    { PolicySwitch::ReduceWithRanges, buildSmallWordExtension, SExt32, 0, 1 },
+    { PolicySwitch::ReduceWithRanges, buildTaggedInt32Comparison, AboveEqual, 0, 1 },
+    { PolicySwitch::NarrowIntegers, buildLowWordOfWideSum, SExt32, 0, 2 },
+    { PolicySwitch::FoldImpliedComparisons, buildComparisonOfReplacedConstant, Select, 0, 1 },
+};
+
+static unsigned countAfterStrengthReduction(const StrengthReductionCase& reduction, const Policy& policy)
+{
+    Procedure proc(policy);
+    Graph graph { proc };
+    reduction.build(graph, proc.addBlock());
+    reduceStrengthOnce(proc);
+    return numberOfValues(proc, reduction.countedOpcode);
+}
+
+static void testStrengthReductionSwitchesRestoreUpstream()
+{
+    for (const StrengthReductionCase& reduction : strengthReductionCases) {
+        CHECK_EQ(countAfterStrengthReduction(reduction, strengthReductionPolicy()), reduction.reducedCount);
+        CHECK_EQ(countAfterStrengthReduction(reduction, Policy()), reduction.upstreamCount);
+
+        Policy othersDisabled = strengthReductionPolicy();
+        for (const StrengthReductionCase& other : strengthReductionCases) {
+            if (other.policySwitch != reduction.policySwitch)
+                othersDisabled.disable(other.policySwitch);
+        }
+        CHECK_EQ(countAfterStrengthReduction(reduction, othersDisabled), reduction.reducedCount);
+
+        Policy ownDisabled = strengthReductionPolicy();
+        ownDisabled.disable(reduction.policySwitch);
+        CHECK_EQ(countAfterStrengthReduction(reduction, ownDisabled), reduction.upstreamCount);
+    }
 }
 
 static unsigned invariantProductCountInLoops(const Policy& policy)
@@ -865,14 +1020,18 @@ void addBunPolicyTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testDisableResetsOnlyOwnFields());
     RUN(testDisabledSwitchSurvivesLaterWrites());
     RUN(testConstructorAppliesDisabledSwitches());
+    RUN(testRandomProgramPolicyCoversSwitches());
     RUN(testLimitTableIsConsistent());
     RUN(testReportStartsEmpty());
+    RUN(testLimitHitKeepsFirstOrigin());
     RUN(testCachedBlockOrdersAreInvalidated());
     RUN(testCachedBlockOrdersFollowSwappedSuccessors());
     RUN(testCachedBlockOrdersAreReused());
     RUN(testHasCycle());
     RUN(testPointerConstantFailsWhenPositionIndependent());
     RUN(testFirstFailureWins());
+    RUN(testRemarksAreCollectedOnRequest());
+    RUN(testKnownRangeFollowsCloneAndDelete());
     RUN(testPinnedRegistersOfPolicy());
     RUN(testAddressOfRuntimeFunction());
     RUN(testRuntimeFunctionAddresses());
@@ -881,6 +1040,7 @@ void addBunPolicyTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testPatchpointDump());
     RUN(testLowerMacrosPredicateCoversSwitch());
     RUN(testOpcodeSetIsValidated());
+    RUN(testStrengthReductionSwitchesRestoreUpstream());
     RUN(testDisabledHoistingLeavesValuesInLoops());
     addPipelineTests(config, tasks);
 }

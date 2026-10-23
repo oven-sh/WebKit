@@ -197,11 +197,6 @@ GuardBitID GuardBitTable::find(std::span<const GuardUse> guards) const
     return GuardBitID(first);
 }
 
-std::span<const PlacedGuardBit> GuardBitTable::ofSets() const
-{
-    return bits.span().subspan(numberOfClassBits);
-}
-
 std::span<const GuardBitID> GuardBitTable::membersOf(GuardBitID set) const
 {
     if (set.index() < numberOfClassBits || set.index() >= bits.size())

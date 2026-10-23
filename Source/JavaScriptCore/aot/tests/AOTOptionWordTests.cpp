@@ -256,7 +256,7 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "disable=flow:NarrowedTypes"_s, [](WireOptions& options) { options.bisection.disabledFlowResults = switchBit(Wire::FlowResultKind::NarrowedTypes); } },
     { "disable=pass:FoldConstants"_s, [](WireOptions& options) { disablePass(options.bisection.disabledPasses, PassID::FoldConstants); } },
     { "disable=rule:DescriptorLiteral"_s, [](WireOptions& options) { options.bisection.disabledSelectionRules = switchBit(Wire::SelectionRuleID::DescriptorLiteral); } },
-    { "disable=b3:ThreadJumps"_s, [](WireOptions& options) { options.bisection.disabledBackEndSwitches = switchBit(B3::PolicySwitch::ThreadJumps); } },
+    { "disable=b3:RotateLoops"_s, [](WireOptions& options) { options.bisection.disabledBackEndSwitches = switchBit(B3::PolicySwitch::RotateLoops); } },
     { "disable-in=5:3"_s, [](WireOptions& options) {
         options.bisection.switchRange.firstID = 5;
         options.bisection.switchRange.count = 3;
@@ -728,7 +728,7 @@ static void checkSwitchRange(uint32_t firstID, uint32_t idCount, std::initialize
     disablePass(options.switches.disabledPasses, PassID::FoldConstants);
     options.switches.disabledFlowResults = switchBit(Wire::FlowResultKind::ProvenLayoutSets);
     options.switches.disabledSelectionRules = switchBit(Wire::SelectionRuleID::DescriptorLiteral);
-    options.switches.disabledBackEndSwitches = switchBit(B3::PolicySwitch::ThreadJumps);
+    options.switches.disabledBackEndSwitches = switchBit(B3::PolicySwitch::RotateLoops);
 
     auto isFlowResultEnabled = [&](Wire::FlowResultKind kind, uint32_t id) {
         return id == nullID ? options.isEnabledForProgram(kind) : options.isEnabled(kind, id);
@@ -736,7 +736,7 @@ static void checkSwitchRange(uint32_t firstID, uint32_t idCount, std::initialize
     auto checkFunctionSwitches = [&](FunctionID function, bool expectsEnabled) {
         AOT_TEST_CHECK(options.isEnabled(PassID::FoldConstants, function) == expectsEnabled);
         AOT_TEST_CHECK(options.isEnabled(Wire::SelectionRuleID::DescriptorLiteral, function) == expectsEnabled);
-        AOT_TEST_CHECK(options.isEnabled(B3::PolicySwitch::ThreadJumps, function) == expectsEnabled);
+        AOT_TEST_CHECK(options.isEnabled(B3::PolicySwitch::RotateLoops, function) == expectsEnabled);
         AOT_TEST_CHECK(options.isEnabled(PassID::VerifyProgram, function));
         AOT_TEST_CHECK(options.isEnabled(Wire::SelectionRuleID::PropertyRun, function));
         AOT_TEST_CHECK(options.isEnabled(B3::PolicySwitch::ThreadJumps, function));

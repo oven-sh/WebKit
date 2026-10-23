@@ -5,9 +5,15 @@
 
 #pragma once
 
+static constexpr unsigned numberOfProgramPairs = 20;
 static constexpr unsigned seedsPerSwitch = 3;
 static constexpr unsigned numberOfSwitchParts = 4;
 static constexpr unsigned switchesPerPart = (numberOfSwitches + numberOfSwitchParts - 1) / numberOfSwitchParts;
+
+static unsigned firstSeedAtDefaultLevel(unsigned numberOfSeeds)
+{
+    return Options::defaultB3OptLevel() * numberOfSeeds + 1;
+}
 
 static void buildAddition(Procedure& proc, int64_t addend)
 {
@@ -17,6 +23,88 @@ static void buildAddition(Procedure& proc, int64_t addend)
     graph.ret(root, graph.make(root, Add, x, graph.int64(root, addend)));
 }
 
+struct ProgramPair {
+    WTF_MAKE_NONCOPYABLE(ProgramPair);
+
+    template<typename Functor>
+    ProgramPair(unsigned seed, const Functor& makePolicy, CompilationScratch* secondScratch = nullptr)
+        : lowering(state)
+        , first(makePolicy(lowering, false))
+        , second(makePolicy(lowering, true), secondScratch)
+    {
+        RandomProgram(first, seed, state, { });
+        RandomProgram(second, seed, state, { });
+        first.setOptLevel(2);
+        second.setOptLevel(2);
+    }
+
+    RandomProgramState state;
+    ReproducibleRelocationLowering lowering;
+    Procedure first;
+    Procedure second;
+};
+
+struct GeneratedPair {
+    Vector<uint8_t> first;
+    Vector<uint8_t> second;
+};
+
+static GeneratedPair generatePair(Procedure& first, Procedure& second)
+{
+    GeneratedPair result;
+    generateAndLink(first, &result.first);
+    generateAndLink(second, &result.second);
+    return result;
+}
+
+static void checkBytesAreEqual(unsigned seed, const GeneratedPair& bytes)
+{
+    if (bytes.first == bytes.second)
+        return;
+    crashLock.lock();
+    dataLogLn("The two copies of the random program with seed ", seed, " compiled to different code: ", bytes.first.size(), " and ", bytes.second.size(), " bytes");
+    CRASH();
+}
+
+static void checkBatchEqualsOneAtATime(CompilationScratch* scratch)
+{
+    unsigned firstSeed = firstSeedAtDefaultLevel(numberOfProgramPairs);
+    Vector<std::unique_ptr<ProgramPair>> pairs;
+    for (unsigned index = 0; index < numberOfProgramPairs; ++index) {
+        pairs.append(makeUniqueWithoutFastMallocCheck<ProgramPair>(firstSeed + index, [](RelocationLowering& lowering, bool) {
+            return randomProgramPolicy(lowering);
+        }, scratch));
+    }
+
+    Vector<Procedure*> batch;
+    for (auto& pair : pairs) {
+        prepareForGeneration(pair->first);
+        batch.append(&pair->second);
+    }
+    prepareForGeneration(batch.span());
+
+    Vector<Vector<uint8_t>> bytesBySeed;
+    for (unsigned index = 0; index < pairs.size(); ++index) {
+        GeneratedPair bytes = generatePair(pairs[index]->first, pairs[index]->second);
+        checkBytesAreEqual(firstSeed + index, bytes);
+        bytesBySeed.append(WTF::move(bytes.second));
+    }
+    CHECK(bytesBySeed[0] != bytesBySeed[1]);
+}
+
+static void testBatchEqualsOneAtATime()
+{
+    prepareForGeneration(std::span<Procedure* const>());
+    checkBatchEqualsOneAtATime(nullptr);
+}
+
+static void testBatchOnOneScratchEqualsOneAtATime()
+{
+    CompilationScratch scratch;
+    checkBatchEqualsOneAtATime(&scratch);
+    checkBatchEqualsOneAtATime(&scratch);
+}
+
 static void disableEverySwitchExcept(Policy& policy, std::initializer_list<PolicySwitch> enabledSwitches)
 {
     for (unsigned i = 0; i < numberOfSwitches; ++i) {
@@ -24,6 +112,51 @@ static void disableEverySwitchExcept(Policy& policy, std::initializer_list<Polic
         if (std::ranges::find(enabledSwitches, policySwitch) == enabledSwitches.end())
             policy.disable(policySwitch);
     }
+}
+
+static GeneratedPair compileAgainstUpstreamPolicy(unsigned seed, bool disablesSwitches)
+{
+    ProgramPair pair(seed, [&](RelocationLowering& lowering, bool isSecond) {
+        Policy policy = Policy::fromProcessOptions();
+        if (isSecond) {
+            policy = policyWithEverySwitchOn();
+            if (disablesSwitches)
+                disableEverySwitchExcept(policy, { PolicySwitch::HoistLoopInvariantValues });
+        }
+        policy.addressing.isPositionIndependent = true;
+        policy.addressing.dataSectionSpace = testDataSectionSpace;
+        policy.addressing.jumpTableSpace = testJumpTableSpace;
+        policy.addressing.relocationLowering = &lowering;
+        policy.switchLowering.minCasesForJumpTable = std::numeric_limits<unsigned>::max();
+        return policy;
+    });
+    prepareForGeneration(pair.first);
+    prepareForGeneration(pair.second);
+    return generatePair(pair.first, pair.second);
+}
+
+static void testDefaultPolicyIsUpstream()
+{
+    Procedure plain;
+    Procedure fromOptions(Policy::fromProcessOptions());
+    for (Procedure* proc : { &plain, &fromOptions }) {
+        buildAddition(*proc, 1);
+        prepareForGeneration(*proc);
+    }
+    GeneratedPair additions = generatePair(plain, fromOptions);
+    CHECK(additions.first == additions.second);
+
+    unsigned firstSeed = firstSeedAtDefaultLevel(numberOfProgramPairs);
+    unsigned endSeed = firstSeed + numberOfProgramPairs;
+    for (unsigned seed = firstSeed; seed < endSeed; ++seed)
+        checkBytesAreEqual(seed, compileAgainstUpstreamPolicy(seed, true));
+
+    bool switchesChangeCode = false;
+    for (unsigned seed = firstSeed; seed < endSeed && !switchesChangeCode; ++seed) {
+        GeneratedPair bytes = compileAgainstUpstreamPolicy(seed, false);
+        switchesChangeCode = bytes.first != bytes.second;
+    }
+    CHECK(switchesChangeCode);
 }
 
 static void testFailedProcedureLeavesBatch()
@@ -177,6 +310,44 @@ static int64_t randomArgument(WeakRandom& random)
         return random.getUint32(100);
     uint64_t highBits = random.getUint32();
     return static_cast<int64_t>(highBits << 32 | random.getUint32());
+}
+
+static void checkSwitchAlone(PolicySwitch policySwitch, unsigned seed, RandomProgramVersion& reference)
+{
+    RandomProgramVersion alone("with one switch alone"_s, [&](RelocationLowering&) {
+        Policy policy = policyWithEverySwitchOn();
+        disableEverySwitchExcept(policy, { policySwitch, PolicySwitch::HoistLoopInvariantValues });
+        policy.validation.level = ValidationLevel::AtEachPhase;
+        return policy;
+    });
+    RandomProgram(alone.proc, seed, alone.state, { });
+    alone.code = compileAndCheckReport(alone.proc, 2);
+
+    WeakRandom random(seed);
+    for (int64_t limit : { 0, -1, 0 }) {
+        Vector<int64_t> memory = randomInitialMemory(random);
+        int64_t first = randomArgument(random);
+        int64_t second = randomArgument(random);
+        reference.call(first, second, memory, limit);
+        alone.call(first, second, memory, limit);
+        if (alone.agreesWith(reference))
+            continue;
+        crashLock.lock();
+        dataLogLn("With ", nameOf(policySwitch), " as the only switch, the random program with seed ", seed, " ", alone.differenceFrom(reference, first, second));
+        CRASH();
+    }
+}
+
+static void testEachSwitchAlone(unsigned part)
+{
+    unsigned firstSeed = firstSeedAtDefaultLevel(seedsPerSwitch);
+    for (unsigned seed = firstSeed; seed < firstSeed + seedsPerSwitch; ++seed) {
+        RandomProgramVersion reference("at level 0"_s);
+        RandomProgram(reference.proc, seed, reference.state, { true, true });
+        reference.code = compileAndCheckReport(reference.proc, 0);
+        for (unsigned i = part * switchesPerPart; i < std::min((part + 1) * switchesPerPart, numberOfSwitches); ++i)
+            checkSwitchAlone(static_cast<PolicySwitch>(i), seed, reference);
+    }
 }
 
 static unsigned g_numberOfCountedRepositories;
@@ -916,10 +1087,17 @@ static void testPinnedConstantsSwitchedOff()
 
 static void addPipelineTests(const TestConfig* config, BunTestTasks& tasks)
 {
+    RUN(testBatchEqualsOneAtATime());
+    RUN(testBatchOnOneScratchEqualsOneAtATime());
+    RUN(testDefaultPolicyIsUpstream());
     RUN(testFailedProcedureLeavesBatch());
     RUN(testClientPhasesRunInOrder());
     RUN(testClientPhasesStopAfterFailure());
     RUN(testThreadJumpsReplacesTailDuplication());
+    RUN(testEachSwitchAlone(0));
+    RUN(testEachSwitchAlone(1));
+    RUN(testEachSwitchAlone(2));
+    RUN(testEachSwitchAlone(3));
     RUN(testScratchHandsOutDistinctRepositories());
     RUN(testScratchRepositoryIsDetached());
     RUN(testArenaReusesFirstChunk());

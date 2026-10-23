@@ -1,6 +1,6 @@
 # An object and a closure on the heap come from their stubs in code of every shape
 # FORM: AsRead
-# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
 # RUN: generate-code calls
 # The module body runs once: compact.
 # CHECK: f0: size=

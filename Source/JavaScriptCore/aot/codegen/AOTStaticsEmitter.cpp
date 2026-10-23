@@ -99,12 +99,6 @@ uint8_t StaticsEmitter::guardMaskOf(GuardBitID id) const
     return static_cast<uint8_t>(1u << m_placement.guardBit(id).bit % bitsPerByte);
 }
 
-TypedPointer StaticsEmitter::runtimeCounter(RuntimeCounterID id)
-{
-    RELEASE_ASSERT(id != RuntimeCounterID::None);
-    return instanceField(m_heaps.counters, AOT_INSTANCE_OFFSET(runtime.counters) + CounterWords::offsetOfValue(id));
-}
-
 TypedPointer StaticsEmitter::branchCounter(uint32_t number)
 {
     Pointer branchCounts = loadImmutablePointer(AOT_INSTANCE_OFFSET(runtime.counters.branchCounts));

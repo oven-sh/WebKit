@@ -15,7 +15,6 @@
 #include "AOTProgramCaches.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
-#include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -112,73 +111,6 @@ void simplifyEditedFunction(const PassRunner& runner, const Program& program, co
     FunctionPassContext context { program, inputs, id, function, analyses, arenas.types, arenas.strings, runner.build() };
     if (runner.runFunctionPass(PassID::RemoveDeadCountedLoops, context) == PassOutcome::Changed)
         runner.runSchedule(FunctionSchedule::Simplify, program, inputs, id, function, arenas);
-}
-
-namespace {
-
-struct EntryParameterPosition {
-    unsigned index;
-    EntryParameter kind;
-};
-
-} // anonymous namespace
-
-template<typename List>
-static void removeAtPositions(List& list, const BitVector& removed)
-{
-    size_t newSize = 0;
-    for (size_t index = 0; index < list.size(); ++index) {
-        if (!removed.get(index))
-            list[newSize++] = list[index];
-    }
-    list.shrink(newSize);
-}
-
-void removeEntryParameters(Function& function, const BitVector& removed)
-{
-    unsigned firstParameter = function.firstParameterIndex();
-    Vector<EntryParameterPosition, 8> positions;
-    for (size_t index : removed)
-        positions.append({ static_cast<unsigned>(index), function.entryParameterKind(index) });
-
-    for (size_t i = positions.size(); i--;) {
-        auto [index, kind] = positions[i];
-        switch (kind) {
-        case EntryParameter::Capture:
-            function.captures.removeAt(index);
-            break;
-        case EntryParameter::This:
-            function.flags.remove(FunctionFlags::HasThis);
-            function.thisType = DeclaredType { .type = TypeTable::anything };
-            break;
-        case EntryParameter::Parameter: {
-            unsigned parameter = index - firstParameter;
-            if (function.has(FunctionFlags::HasRestParameter) && parameter + 1 == function.parameters.size())
-                function.flags.remove(FunctionFlags::HasRestParameter);
-            function.parameters.removeAt(parameter);
-            break;
-        }
-        case EntryParameter::Callee:
-            function.flags.remove(FunctionFlags::TakesCallee);
-            break;
-        case EntryParameter::ArgumentCount:
-            function.flags.remove(FunctionFlags::HasArgumentCount);
-            break;
-        case EntryParameter::HiddenRest:
-            function.flags.remove(FunctionFlags::HasHiddenRest);
-            break;
-        case EntryParameter::NewTarget:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
-
-    if (function.hasBody()) {
-        auto& entryParameters = function.edit(entryBlock, BlockEdit::Parameters).parameters;
-        for (size_t index : removed)
-            becomeUndefined(function, entryParameters[index]);
-        removeAtPositions(entryParameters, removed);
-    }
-    removeAtPositions(function.derivation.parameterMap, removed);
 }
 
 } } } // namespace JSC::AOT::Typed

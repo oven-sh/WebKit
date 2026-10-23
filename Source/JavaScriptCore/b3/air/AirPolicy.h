@@ -69,14 +69,17 @@ struct LayoutPolicy {
     bool ordersBlocksByEdgeFrequency { false };
     bool recordsRareCodeStart { false };
     bool mergesIdenticalBlocks { false };
+    bool duplicatesReturns { false };
 };
 
 struct PeepholePolicy {
     bool pairsSpillAccesses { true };
 
     bool forwardsRegisterCopies { false };
+    bool hoistsCommonMoves { false };
     bool reusesConditionFlags { false };
     bool pairsMemoryAccesses { false };
+    bool resequencesMovesBeforePatches { false };
     bool emitsShufflesInPairOrder { false };
     uint32_t trapReach { 0 };
 };

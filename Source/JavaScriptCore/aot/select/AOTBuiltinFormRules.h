@@ -15,8 +15,6 @@ InlineForm wholeOrTwoWay(const InlineBuiltinSite&, bool handlesEveryValue);
 
 const Type& receiverTypeOf(const InlineBuiltinSite&);
 const Type* argumentTypeOf(const InlineBuiltinSite&, unsigned index);
-bool allArgumentsAreNumbers(const InlineBuiltinSite&);
-bool isObjectArgument(const InlineBuiltinSite&, unsigned index);
 
 inline bool isNumberArgument(const InlineBuiltinSite& site, unsigned index)
 {

@@ -82,6 +82,7 @@ static bool isEnteredBehindStackCheck(const Function& function, EntrySet entrySe
     case FunctionRole::Library:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ResultWrapper:
     case FunctionRole::GenericEntrypoint:
         return true;
     default:

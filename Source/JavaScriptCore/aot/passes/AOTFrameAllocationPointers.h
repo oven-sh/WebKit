@@ -171,6 +171,7 @@ bool holdsOnlyHeapValues(const Program&, const FlowResults*, TypeID);
 
 
 inline constexpr OperandUses unfollowedLeakingUses = usesLeakingFramePointers - usesLeakingContents - OperandUses { OperandUse::Retains, OperandUse::Returns };
+void verifyFramePointers(FunctionAnalyses&, Vector<InternalError>&);
 
 } } } // namespace JSC::AOT::Typed
 

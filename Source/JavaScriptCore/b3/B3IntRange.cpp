@@ -80,8 +80,7 @@ static bool mayHaveOwnRange(Value* value)
 
 static bool mayHaveRange(const Procedure& proc, Value* value)
 {
-    UNUSED_PARAM(proc);
-    return mayHaveOwnRange(value);
+    return mayHaveOwnRange(value) || proc.knownRange(value);
 }
 
 static IntRange rangeFor(const Procedure&, Value*, uint64_t timeToLive);
@@ -179,12 +178,21 @@ static IntRange computedRangeFor(const Procedure& proc, Value* value, uint64_t t
 
 static IntRange rangeFor(const Procedure& proc, Value* value, uint64_t timeToLive)
 {
-    return computedRangeFor(proc, value, timeToLive);
+    IntRange result = computedRangeFor(proc, value, timeToLive);
+    if (std::optional<IntRange> known = proc.knownRange(value); known && known->overlaps(result))
+        result = result.intersectWith(*known);
+    return result;
 }
 
 IntRange rangeFor(const Procedure& proc, Value* value)
 {
     return rangeFor(proc, value, proc.limit(Limit::MaxRangeAnalysisDepth));
+}
+
+bool isKnownRangePlausible(const Procedure& proc, Value* value)
+{
+    std::optional<IntRange> known = proc.knownRange(value);
+    return !known || known->overlaps(computedRangeFor(proc, value, proc.limit(Limit::MaxRangeAnalysisDepth)));
 }
 
 template<typename T>

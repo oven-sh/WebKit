@@ -191,7 +191,6 @@ struct GuardBitTable {
     JS_EXPORT_PRIVATE GuardBitID find(PayloadListView<MemberConditionRecord>) const;
     GuardBitID find(std::span<const struct GuardUse> guardsInOrder) const;
     JS_EXPORT_PRIVATE std::span<const PlacedGuardBit> ofClass(LayoutID) const;
-    JS_EXPORT_PRIVATE std::span<const PlacedGuardBit> ofSets() const;
     JS_EXPORT_PRIVATE std::span<const GuardBitID> membersOf(GuardBitID set) const;
     JS_EXPORT_PRIVATE std::span<const GuardBitID> setsContaining(GuardBitID member) const;
 

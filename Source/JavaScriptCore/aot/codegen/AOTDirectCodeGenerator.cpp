@@ -582,7 +582,6 @@ private:
     void emitFrameSetup();
     bool tryReusePureCall(const B3::PatchpointValue*, ValueState&);
 
-    DirectBlock& blockStateOf(B3::BasicBlock* block) { return m_blocks[m_orderOf[block->index()]]; }
     uint32_t successorOrderOf(const DirectBlock& block, unsigned index) const { return m_successorOrders[block.firstSuccessor + index]; }
     DirectBlock& successorOf(const DirectBlock& block, unsigned index) { return m_blocks[successorOrderOf(block, index)]; }
     DirectBlock& targetOf(const DirectBlock& block, unsigned index)

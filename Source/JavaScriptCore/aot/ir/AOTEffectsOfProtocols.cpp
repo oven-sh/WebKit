@@ -305,11 +305,6 @@ Effects readsOfMemberLookups(const Type& operand, Protocols protocols)
     return readsOfMemberLookup;
 }
 
-bool protocolMayRunUserCode(const Program& program, TypeID operandType, Protocol protocol)
-{
-    return membersRunBy(program, program.at(operandType), protocol, { }, { }, NamedMembers::AreOnlyRead).mayRunUserCode();
-}
-
 bool protocolMayFindMember(const Program& program, const Type& operand, Protocol protocol)
 {
     Type receivers = operand.withoutPrimitives(static_cast<uint16_t>(~primitiveReceiversOf(protocol)));

@@ -342,6 +342,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTNativeStoreTests.cpp
     aot/tests/AOTNativeTestRunner.cpp
     aot/tests/AOTObjectCreateProgramTests.cpp
+    aot/tests/AOTObjectPlacementDumps.cpp
     aot/tests/AOTObjectSlotExitTests.cpp
     aot/tests/AOTOperationScopeTests.cpp
     aot/tests/AOTOptionWordTests.cpp

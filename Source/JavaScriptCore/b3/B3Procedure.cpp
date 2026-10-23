@@ -105,6 +105,15 @@ void Procedure::fail(FailureKind kind, Origin origin)
         m_report.failure = Failure { kind, origin };
 }
 
+void Procedure::addRemark(const Remark& remark, uint32_t count)
+{
+    ASSERT((remark.reason == GaveUpReason::LimitReached) == remark.limit.has_value());
+    if (std::optional<Counter> counter = counterOf(remark.kind))
+        m_report.counters[static_cast<size_t>(*counter)] += count;
+    if (m_policy.collectsRemarks)
+        m_report.remarks.append(remark);
+}
+
 void Procedure::printOrigin(PrintStream& out, Origin origin) const
 {
     if (m_originPrinter)
@@ -162,6 +171,7 @@ Value* Procedure::clone(Value* value)
     clone->m_index = UINT_MAX;
     clone->owner = nullptr;
     Value* result = m_values.add(WTF::move(clone));
+    m_knownProperties.copy(value, result);
     return result;
 }
 
@@ -312,6 +322,39 @@ void Procedure::invalidateCFG()
     m_areFrequenciesCurrent = false;
 }
 
+static void dumpKnownProperties(const Procedure& proc, PrintStream& out)
+{
+    bool didPrintHeading = false;
+    auto printHeadingOnce = [&] {
+        if (!std::exchange(didPrintHeading, true))
+            out.print(tierName, "Known properties:\n");
+    };
+    for (Value* value : proc.values()) {
+        std::optional<IntRange> range = proc.knownRange(value);
+        uint32_t dereferenceableBytes = proc.knownDereferenceableBytes(value);
+        if (!range && !dereferenceableBytes)
+            continue;
+        printHeadingOnce();
+        out.print(tierName, "    ", *value, ":");
+        if (range)
+            out.print(" range = ", *range);
+        if (dereferenceableBytes)
+            out.print(" dereferenceableBytes = ", dereferenceableBytes);
+        out.print("\n");
+    }
+    proc.knownInductions().forEach([&](const InductionRecord& record) {
+        printHeadingOnce();
+        out.print(tierName, "    ", *record.phi, ": induction, next = ", *record.next, ", step = ", record.step);
+        if (record.test)
+            out.print(", test = ", *record.test);
+        if (record.doesNotWrap)
+            out.print(", doesNotWrap");
+        if (record.relationHoldsOnEntry)
+            out.print(", relationHoldsOnEntry");
+        out.print("\n");
+    });
+}
+
 static void dumpReport(const Procedure& proc, PrintStream& out)
 {
     auto printOrigin = [&](Origin origin) {
@@ -324,6 +367,17 @@ static void dumpReport(const Procedure& proc, PrintStream& out)
     if (report.failure) {
         out.print(tierName, "Failure: ", report.failure->kind);
         printOrigin(report.failure->origin);
+    }
+    if (report.remarks.isEmpty())
+        return;
+    out.print(tierName, "Remarks:\n");
+    for (const Remark& remark : report.remarks) {
+        out.print(tierName, "    ", remark.kind);
+        if (remark.reason != GaveUpReason::None)
+            out.print(", ", remark.reason);
+        if (remark.limit)
+            out.print(", ", *remark.limit);
+        printOrigin(remark.origin);
     }
 }
 
@@ -360,6 +414,7 @@ void Procedure::dump(PrintStream& out) const
     }
     if (auto policyDump = toUTF8CString(m_policy); policyDump.length())
         out.print(tierName, "Policy: ", policyDump, "\n");
+    dumpKnownProperties(*this, out);
     dumpReport(*this, out);
     if (m_byproducts->count())
         out.print(*m_byproducts);
@@ -493,7 +548,66 @@ void Procedure::deleteAllVariables()
 
 void Procedure::deleteValue(Value* value)
 {
+    m_knownProperties.remove(value);
+    m_knownInductions.willDelete(value, m_values);
     m_values.remove(value);
+}
+
+void Procedure::setKnownRange(Value* value, IntRange range)
+{
+    ASSERT(value->type().isInt());
+    ASSERT(range.isSubsetOf(IntRange::top(value->type())));
+    if (m_policy.knownProperties.trustsKnownRanges)
+        m_knownProperties.setRange(value, range);
+}
+
+void Procedure::setKnownDereferenceableBytes(Value* value, uint32_t bytes)
+{
+    ASSERT(value->type() == pointerType());
+    if (m_policy.knownProperties.trustsKnownDereferenceableBytes)
+        m_knownProperties.setDereferenceableBytes(value, bytes);
+}
+
+bool Procedure::isKnownDereferenceable(const MemoryValue* memory) const
+{
+    return isKnownDereferenceable(memory->lastChild(), memory->offset(), memory->accessByteSize());
+}
+
+bool Procedure::isKnownDereferenceable(const Value* address, int64_t offset, size_t byteSize) const
+{
+    if (m_knownProperties.isEmpty())
+        return false;
+    uint32_t bytes = m_knownProperties.dereferenceableBytes(address->foldIdentity());
+    return offset >= 0 && offset + static_cast<int64_t>(byteSize) <= static_cast<int64_t>(bytes);
+}
+
+Effects Procedure::effectsOf(const Value* value) const
+{
+    Effects effects = value->effects();
+    if (!effects.controlDependent)
+        return effects;
+    const MemoryValue* memory = value->as<MemoryValue>();
+    if (memory && memory->isLoad() && !memory->traps() && isKnownDereferenceable(memory))
+        effects.controlDependent = false;
+    return effects;
+}
+
+void Procedure::setKnownInduction(const InductionRecord& record)
+{
+    ASSERT(record.phi->opcode() == Phi && record.phi->type().isInt());
+    ASSERT(record.next && record.next->type() == record.phi->type());
+    ASSERT(record.step);
+    if (m_policy.knownProperties.trustsKnownInductions)
+        m_knownInductions.add(record);
+}
+
+void Procedure::setKnownInduction(const DemotedInduction& demoted)
+{
+    ASSERT(demoted.variable->type().isInt());
+    ASSERT(demoted.header && demoted.next && demoted.next->type() == demoted.variable->type());
+    ASSERT(demoted.step);
+    if (m_policy.knownProperties.trustsKnownInductions)
+        m_knownInductions.addDemoted(demoted);
 }
 
 void Procedure::deleteOrphans()
@@ -708,6 +822,7 @@ void Procedure::freeUnneededB3ValuesAfterLowering()
 {
     m_blocksInPreOrder.clear();
     m_blocksInPostOrder.clear();
+    m_knownInductions.clear();
     m_blockRarity = nullptr;
     m_frequencyEstimate = nullptr;
     // We cannot clear m_stackSlots() or m_tuples here, as they are unfortunately modified and read respectively by Air.
@@ -725,6 +840,7 @@ void Procedure::freeUnneededB3ValuesAfterLowering()
     if (m_policy.allocation.keepsValuesAfterLowering)
         return;
 
+    m_knownProperties.clear();
     BitVector valuesToPreserve;
     valuesToPreserve.ensureSize(m_values.size());
     for (Value* value : m_values) {

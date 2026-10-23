@@ -14,13 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-EffectsOnEdges effectsOfDeclaredEntry(const EffectContext& context, const Function& function, const Value& value, const Effects& declared)
-{
-    EffectDescription description;
-    describeDeclaredEntry(context.program, function, value, declared, description);
-    return resolveEffects(context, description);
-}
-
 EffectsOnEdges effectsOfOperator(const EffectContext& context, const Function& function, const Value& value, const Effects& declared)
 {
     EffectDescription description;
@@ -35,38 +28,10 @@ EffectsOnEdges effectsOfOperator(const EffectContext& context, Opcode opcode, st
     return resolveEffects(context, description);
 }
 
-EffectsOnEdges effectsOfAccess(const EffectContext& context, const Function& function, const Value& value, const Effects& declared)
-{
-    EffectDescription description;
-    describeAccess(context.program, function, value, declared, description);
-    return resolveEffects(context, description);
-}
-
 EffectsOnEdges effectsOfCall(const EffectContext& context, const Function& function, const Value& value, const Effects& declared)
 {
     EffectDescription description;
     describeCall(context.program, function, value, declared, description);
-    return resolveEffects(context, description);
-}
-
-EffectsOnEdges effectsOfBuiltinCall(const EffectContext& context, const Function& function, const Value& value, const Effects& declared)
-{
-    EffectDescription description;
-    describeBuiltinCall(context.program, function, value, declared, description);
-    return resolveEffects(context, description);
-}
-
-EffectsOnEdges effectsOfInlineBuiltin(const EffectContext& context, const Function& function, const Value& value, const Effects& declared)
-{
-    EffectDescription description;
-    describeInlineBuiltin(context.program, function, value, declared, description);
-    return resolveEffects(context, description);
-}
-
-EffectsOnEdges effectsOfInlineBuiltin(const EffectContext& context, const Function& function, const Terminator& terminator, const Effects& declared)
-{
-    EffectDescription description;
-    describeInlineBuiltin(context.program, function, terminator, declared, description);
     return resolveEffects(context, description);
 }
 

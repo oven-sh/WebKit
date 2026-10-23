@@ -18,6 +18,8 @@ public:
     void generateCollectionTable(const ValueContext&);
     void generateMapNext(const ValueContext&);
     void generateSetNext(const ValueContext&);
+    void generateIsCollectionTableFull(const ValueContext&);
+    void generateReserveCollectionCapacity(const ValueContext&);
 
 private:
     enum class Collection : uint8_t { Map, Set };

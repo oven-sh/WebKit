@@ -55,6 +55,8 @@ void Policy::disable(PolicySwitch policySwitch)
     CLEAR_FIELD_CASE(ReduceWithRanges, optimization.reducesWithRanges);
     CLEAR_FIELD_CASE(NarrowIntegers, optimization.narrowsIntegers);
     CLEAR_FIELD_CASE(ChainAssociativeOperations, optimization.chainsAssociativeOperations);
+    CLEAR_FIELD_CASE(ConvertBranchesToSelects, optimization.convertsBranchesToSelects);
+    CLEAR_FIELD_CASE(MergeAdjacentConstantStores, optimization.mergesAdjacentConstantStores);
     CLEAR_FIELD_CASE(SinkValues, optimization.sinksValues);
     CLEAR_FIELD_CASE(PlaceConstantsByFrequency, optimization.placesConstantsByFrequency);
     CLEAR_FIELD_CASE(ExtendInstructionSelection, selection.extendsInstructionSelection);
@@ -63,7 +65,13 @@ void Policy::disable(PolicySwitch policySwitch)
         break;
     CLEAR_FIELD_CASE(HoistLoopInvariantValues, upstream.hoistsLoopInvariantValues);
     CLEAR_FIELD_CASE(RotateLoops, loops.rotates);
+    CLEAR_FIELD_CASE(FoldComparisonsWithBounds, loops.foldsComparisonsWithBounds);
+    CLEAR_FIELD_CASE(VersionLoops, loops.versions);
+    CLEAR_FIELD_CASE(ClampLoopBounds, loops.clampsLoopBounds);
     CLEAR_FIELD_CASE(BitTests, switchLowering.usesBitTests);
+    CLEAR_FIELD_CASE(KnownRanges, knownProperties.trustsKnownRanges);
+    CLEAR_FIELD_CASE(KnownDereferenceableBytes, knownProperties.trustsKnownDereferenceableBytes);
+    CLEAR_FIELD_CASE(KnownInductions, knownProperties.trustsKnownInductions);
     CLEAR_FIELD_CASE(ChargeForCalleeSaves, air.registers.chargesForCalleeSaves);
     case PolicySwitch::PreferredRegisters:
         air.registers.discountsPreferredRegisterMoves = false;
@@ -95,9 +103,12 @@ void Policy::disable(PolicySwitch policySwitch)
         air.layout.ordersBlocksByEdgeFrequency = false;
         break;
     CLEAR_FIELD_CASE(MergeIdenticalBlocks, air.layout.mergesIdenticalBlocks);
+    CLEAR_FIELD_CASE(DuplicateReturns, air.layout.duplicatesReturns);
     CLEAR_FIELD_CASE(ForwardRegisterCopies, air.peepholes.forwardsRegisterCopies);
+    CLEAR_FIELD_CASE(HoistCommonMoves, air.peepholes.hoistsCommonMoves);
     CLEAR_FIELD_CASE(ReuseConditionFlags, air.peepholes.reusesConditionFlags);
     CLEAR_FIELD_CASE(PairMemoryAccesses, air.peepholes.pairsMemoryAccesses);
+    CLEAR_FIELD_CASE(ResequenceMovesBeforePatches, air.peepholes.resequencesMovesBeforePatches);
     case PolicySwitch::FoldTrapsIntoAccesses:
         air.peepholes.trapReach = 0;
         break;
@@ -208,6 +219,8 @@ static void dumpOptimization(PrintStream& out, CommaPrinter& comma, const Optimi
     PRINT_IF_SET(optimization, narrowsIntegers);
     PRINT_IF_SET(optimization, chainsAssociativeOperations);
     PRINT_IF_SET(optimization, stopsSwitchInferenceAtRareEdges);
+    PRINT_IF_SET(optimization, convertsBranchesToSelects);
+    PRINT_IF_SET(optimization, mergesAdjacentConstantStores);
     PRINT_IF_SET(optimization, sinksValues);
     PRINT_IF_SET(optimization, placesConstantsByFrequency);
     PRINT_IF_SET(optimization, mergesBlocksAfterForwardingJumps);
@@ -222,6 +235,9 @@ static void dumpSelection(PrintStream& out, CommaPrinter& comma, const Selection
 static void dumpLoops(PrintStream& out, CommaPrinter& comma, const LoopPolicy& loops)
 {
     PRINT_IF_SET(loops, rotates);
+    PRINT_IF_SET(loops, foldsComparisonsWithBounds);
+    PRINT_IF_SET(loops, versions);
+    PRINT_IF_SET(loops, clampsLoopBounds);
     PRINT_IF_SET(loops, hoistsOnlyFromLikelyPaths);
     PRINT_IF_SET(loops, hoistsImmutableLoadsPastWrites);
 }
@@ -233,10 +249,18 @@ static void dumpSwitchLowering(PrintStream& out, CommaPrinter& comma, const Swit
     PRINT_IF_DIFFERENT(switchLowering, minCasesForJumpTable);
 }
 
+static void dumpKnownProperties(PrintStream& out, CommaPrinter& comma, const KnownPropertyPolicy& knownProperties)
+{
+    PRINT_IF_SET(knownProperties, trustsKnownRanges);
+    PRINT_IF_SET(knownProperties, trustsKnownDereferenceableBytes);
+    PRINT_IF_SET(knownProperties, trustsKnownInductions);
+}
+
 static void dumpValidation(PrintStream& out, CommaPrinter& comma, const ValidationPolicy& validation)
 {
     if (validation.level != ValidationLevel::FromOptions)
         out.print(comma, "validation = "_s, validation.level);
+    PRINT_IF_SET(validation, checksKnownPropertiesAtRunTime);
 }
 
 #undef PRINT_IF_DIFFERENT
@@ -292,11 +316,14 @@ void Policy::dump(PrintStream& out) const
     dumpSelection(out, comma, selection);
     dumpLoops(out, comma, loops);
     dumpSwitchLowering(out, comma, switchLowering);
+    dumpKnownProperties(out, comma, knownProperties);
     dumpValidation(out, comma, validation);
     dumpLimits(out, comma, limits);
     if (targetFeatures != CPUFeatureSet::host())
         out.print(comma, "targetFeatures = "_s, targetFeatures.bits());
     dumpAir(out, comma, air);
+    if (collectsRemarks)
+        out.print(comma, "collectsRemarks"_s);
     dumpClientPhases(out, comma, clientPhases);
     if (m_disabledSwitches)
         dumpDisabledSwitches(out, comma, *this);

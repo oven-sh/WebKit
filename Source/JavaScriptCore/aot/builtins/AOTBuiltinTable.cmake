@@ -29,7 +29,9 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS
 
 # The host of the programs that WebKit's own build links.
 set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_DECLARATIONS
+    aot/tests/host/classes.builtins.ts
     aot/tests/host/compiler-helpers.builtins.ts
+    aot/tests/host/modules.builtins.ts
     aot/tests/host/stand-in.builtins.ts
 )
 set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_OWN_PROPERTIES aot/tests/host/own-properties.txt)

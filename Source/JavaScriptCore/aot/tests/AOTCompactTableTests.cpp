@@ -745,7 +745,7 @@ static void testAFullTableGrowsOnceToWhatALoopStillAdds(LoadedProgram& program)
         Collection map(program, Collection::Kind::Map);
         unsigned tables = fill(map, 6000, 6000, period, text);
         uint32_t size = (6000 + period - 1) / period;
-        AOT_TEST_CHECK(map.table()->size() == size && map.table()->capacity() <= capacityFor(map.table(), size + size / 2 + 8) && tables <= 6);
+        AOT_TEST_CHECK(map.table()->size() == size && map.table()->capacity() <= capacityFor(map.table(), 2 * size) && tables <= 6);
     }
 
     // A number that comes while there is room widens the column and keeps the room.

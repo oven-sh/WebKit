@@ -306,6 +306,9 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
                     return nullptr;
                 
                 Value* phi = proc.add<Value>(Phi, variable->type(), block->at(0)->origin());
+                if (proc.knownInductions().hasDemoted()) [[unlikely]]
+                    proc.knownInductions().didCreatePhi(variable, block, phi);
+                proc.knownProperties().didCreatePhi(variable, phi);
                 if (B3FixSSAInternal::verbose) {
                     dataLog(
                         "Adding Phi for ", pointerDump(variable), " at ", *block, ": ",
@@ -436,6 +439,8 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& value
 
 void forgetDemotedValues(Procedure& proc)
 {
+    proc.knownInductions().clearDemoted();
+    proc.knownProperties().clearDemoted();
 }
 
 } // anonymous namespace
@@ -460,7 +465,9 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
 
     // Create stack slots.
     auto addVariableFor = [&](Value* value) {
-        return proc.addVariable(value->type());
+        Variable* variable = proc.addVariable(value->type());
+        proc.knownProperties().didDemote(value, variable);
+        return variable;
     };
     for (Value* value : values.values(proc.values())) {
         map.add(value, addVariableFor(value));

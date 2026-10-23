@@ -117,9 +117,6 @@ public:
     // For a rule that is a function of what holds now: see readWhereWritten().
     void askWithoutNodesWhereNothingIsWritten() { m_asksWithoutNodes = true; }
 
-    // The accessors are handed to the functor as well. The operation then looks through the chain by itself, where it would share a lookup.
-    void reportAccessorsTo(const ValueFlowAccessorFunctor& functor) { m_accessorFunctor = &functor; }
-
 private:
     using Members = Vector<ValueFlowObjectID, 8>;
 

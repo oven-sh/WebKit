@@ -44,7 +44,6 @@ public:
 
     bool isInStretch(ValueID value) const { return m_valuesInStretch.get(value.index()); }
     bool isInStretchAtHead(BlockID block) const { return m_headsInStretch.get(block.index()); }
-    bool isTerminatorInStretch(BlockID block) const { return m_terminatorsInStretch.get(block.index()); }
 
     // In front of the tests that stand at the point.
     bool isAnyProofWantedAt(ProgramPoint);

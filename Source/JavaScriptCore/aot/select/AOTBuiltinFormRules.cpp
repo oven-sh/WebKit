@@ -35,19 +35,6 @@ const Type* argumentTypeOf(const InlineBuiltinSite& site, unsigned index)
     return index < arguments.size() ? &site.typeOf(arguments[index]) : nullptr;
 }
 
-bool allArgumentsAreNumbers(const InlineBuiltinSite& site)
-{
-    return std::ranges::all_of(site.arguments(), [&](ValueID argument) {
-        return site.typeOf(argument).isNumber();
-    });
-}
-
-bool isObjectArgument(const InlineBuiltinSite& site, unsigned index)
-{
-    const Type* type = argumentTypeOf(site, index);
-    return type && type->isObject();
-}
-
 static InlineForm callIf(const InlineBuiltinSite& site, bool condition, InlineForm otherwise)
 {
     if (!condition)

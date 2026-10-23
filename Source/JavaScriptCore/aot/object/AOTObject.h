@@ -238,7 +238,6 @@ public:
     void didChangeExtraProperties(VM&);
     void ensureStructureForExtraProperties(VM&);
     static bool ensureStructureForExtraPropertiesIfNeeded(VM&, JSCell*);
-    static std::optional<PropertyOffset> offsetOfExtraProperty(VM&, JSCell*, PropertyName, unsigned& attributes);
     enum class ExtraPropertyStore : uint8_t { NotHandled, Replaced, Added };
     enum class ExtraPropertyStoreFlag : uint8_t {
         IsKnownNotToBeField = 1,

@@ -23,7 +23,69 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture::ARM64) <= maxTagBitsInInt32);
 static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture::X86_64) <= maxTagBitsInInt32);
 
-static FreshResultShape shapeOfReturns(const AllocationSinking&);
+static bool isWrapperOrWorker(FunctionRole role)
+{
+    switch (role) {
+    case FunctionRole::AsyncWorker:
+    case FunctionRole::ResultWrapper:
+    case FunctionRole::ResultWorker:
+    case FunctionRole::ParameterWrapper:
+    case FunctionRole::EntryChecks:
+        return true;
+    case FunctionRole::Source:
+    case FunctionRole::Library:
+    case FunctionRole::Model:
+    case FunctionRole::Signature:
+    case FunctionRole::GenericEntrypoint:
+    case FunctionRole::TableEntrypoint:
+    case FunctionRole::TableLookup:
+    case FunctionRole::GenericVersion:
+    case FunctionRole::AllocatedThisVersion:
+    case FunctionRole::ConstructBody:
+    case FunctionRole::CallSiteVersion:
+    case FunctionRole::CalleeVersion:
+    case FunctionRole::CoroutineRamp:
+    case FunctionRole::CoroutineBody:
+    case FunctionRole::BoundFunction:
+    case FunctionRole::OutlinedBody:
+    case FunctionRole::Serializer:
+    case FunctionRole::Parser:
+    case FunctionRole::ValidatingParser:
+    case FunctionRole::Validator:
+    case FunctionRole::ChainStep:
+    case FunctionRole::StubBody:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool canReturnParts(const Function& function)
+{
+    if (!function.hasBody() || !function.mayChangeSignature() || !function.mayBeCloned() || !function.hasOrdinaryFrame())
+        return false;
+    if (function.results.size() != 1 || function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
+        return false;
+    if (isWrapperOrWorker(function.role))
+        return false;
+    // A construction by value names the function itself, and is resolved only while that is no wrapper. The body that a resolved construction calls is split like any other.
+    if (function.role == FunctionRole::Source && function.constructedClass)
+        return false;
+    switch (function.kind) {
+    case FunctionKind::Plain:
+    case FunctionKind::Arrow:
+    case FunctionKind::Method:
+        return true;
+    case FunctionKind::Getter:
+    case FunctionKind::Setter:
+    case FunctionKind::BaseConstructor:
+    case FunctionKind::DerivedConstructor:
+    case FunctionKind::Initializer:
+    case FunctionKind::Module:
+    case FunctionKind::CommonJsModule:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 static bool returnsWithoutValue(const Terminator& terminator)
 {
@@ -69,7 +131,7 @@ static bool mayBeAllocation(FunctionAnalyses& analyses, ValueID value)
     return false;
 }
 
-static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses)
+static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
 {
     const Function& function = analyses.function();
     bool hasAllocation = false;
@@ -94,13 +156,20 @@ static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses)
     if (!sinking.collectCandidates())
         return { .state = FreshResultsState::NotFresh };
     sinking.analyze();
-    return shapeOfReturns(sinking);
+    return shapeOfReturns(sinking, objectsThatBecomeOneCell);
+}
+
+FreshResultShape computeFreshResults(FunctionAnalyses& analyses)
+{
+    if (!canReturnParts(analyses.function()))
+        return { .state = FreshResultsState::NotFresh };
+    return computeShapeOfReturns(analyses, ObjectsThatBecomeOneCell::StayWhole);
 }
 
 bool returnsFreshAggregate(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
-    return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses).isFresh();
+    return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses, ObjectsThatBecomeOneCell::AreFreshLikeOthers).isFresh();
 }
 
 FreshResultVariant variantOfShape(const AllocationSinking& sinking, VirtualObjectID object, const VirtualShape& shape)
@@ -224,7 +293,7 @@ static void assignParts(const AllocationSinking& sinking, FreshResultShape& shap
     }
 }
 
-static FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
+FreshResultShape shapeOfReturns(const AllocationSinking& sinking, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
 {
     std::span<const VirtualReturn> returns = sinking.virtualReturns();
     if (returns.empty())

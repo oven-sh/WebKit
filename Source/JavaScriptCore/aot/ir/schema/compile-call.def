@@ -112,7 +112,7 @@ enum CompileAction { Compile VerifyOnly CheckOnly }
 enum Architecture { ARM64 X86_64 }
 enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
-enum MismatchPolicy { Throw Report }
+enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FunctionsGetPastEntry }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals PassCodeBytes }

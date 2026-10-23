@@ -85,7 +85,6 @@ public:
     ValueSetID& rememberedByStatement();
     // None for a statement that a rule has made and for one of the host.
     FunctionID functionOfStatement() const;
-    ValueID siteOfStatement() const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) const LIFETIME_BOUND;
     // Of a statement that a rule has made: what lookup(), group() or hub() was asked for.
     ClimbingSet setOfKey() const;
@@ -95,7 +94,6 @@ public:
     ValueFlowCallKind callKindOfKey() const;
     // Of a group: none for the group of calls that are not told apart from the other calls of their callees.
     ValueFlowObjectID markerOfKey() const;
-    ValueFlowBehaviorID behaviorOfKey() const;
 
     // The moving state, in the normal form.
     ClimbingSet valueOf(ValueFlowNodeID);
@@ -141,8 +139,6 @@ public:
     // One node for each (set, name). What is written through a set reaches what is read under the same name through every set that shares an object with it.
     ValueFlowNodeID read(ClimbingSet objects, ValueFlowName);
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
-    // Whether each of the objects is still in the hands of the program alone, followed, and nothing but its properties.
-    bool isPlainSoFar(ClimbingSet objects);
     // False while read(objects, a name of the kind) could only answer a node that holds nothing.
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
     ValueFlowNodeID notPlain();

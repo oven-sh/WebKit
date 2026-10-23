@@ -1,0 +1,39 @@
+# A pass that is switched off leaves the counter a number
+# FORM: Prepared
+# OPTIONS: disable=pass:ConvertCountersToIntegers
+# RUN: pass ConvertCountersToIntegers
+# STATISTIC: CountersConverted = 0
+# STATISTIC: ConvertCountersToIntegersChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="countsUpBelowBound" parameters=[{type=i32}] results=[{type=undefined}] {
+  b0(v0: i32):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0 name="countsUpBelowBound"
+# CHECK-NEXT: b0(v0: i32):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v2: int|whole):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v4: boolean = Less v2, v0
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: int|whole = Add v2, v5
+# CHECK-NEXT: Jump -> next b1(v6)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }

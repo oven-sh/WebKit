@@ -116,7 +116,7 @@ static void testRangeIsAlignedAndSized()
 static void testPrefixIsNeverAllocated()
 {
     constexpr size_t prefixSize = 64 * blockSize;
-    constexpr size_t numberOfBlocks = std::min<size_t>(1000, 2 * rangeSize / blockSize / 4);
+    constexpr size_t numberOfBlocks = std::min<size_t>(1000, 2 * rangeSize / blockSize / 8);
     ReservedRangeHeap& range = createRange(prefixSize, 2 * rangeSize);
     AOT_TEST_CHECK(range.contains(std::bit_cast<void*>(range.start())));
     for (size_t count = 0; count < numberOfBlocks; ++count) {

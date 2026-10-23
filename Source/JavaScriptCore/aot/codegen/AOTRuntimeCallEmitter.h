@@ -57,7 +57,6 @@ public:
     StubCallResult callStubWithoutSite(StubKey, std::span<const LValue> operands, const CallOptions& = { });
     void callStubAndBranch(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions&, BranchTargets);
     void callStubWithoutSiteAndBranch(StubKey, std::span<const LValue> operands, BranchTargets);
-    void tailCallStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
     StubCallResult callStubForTwoReads(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions&, Origin firstRead);
 
     B3::PatchpointValue* createCallPatchpoint(const OperationContext&, const CallPatchpointRequest&);

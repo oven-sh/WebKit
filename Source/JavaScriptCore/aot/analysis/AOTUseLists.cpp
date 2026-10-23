@@ -186,15 +186,6 @@ void UseLists::didChangeBlock(BlockID)
     m_hasChangedBlocks = true;
 }
 
-void UseLists::didChangeBlockSilently(BlockID block)
-{
-    if (!m_isUpToDate || m_takesSilentChangesAtOnce) {
-        didChangeBlock(block);
-        return;
-    }
-    m_hasSilentChanges = true;
-}
-
 void UseLists::endSilence()
 {
     if (m_hasSilentChanges)

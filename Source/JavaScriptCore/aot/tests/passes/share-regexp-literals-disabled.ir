@@ -1,0 +1,16 @@
+# With the pass switched off a literal that nobody can observe is still created at each evaluation
+# FORM: Prepared
+# OPTIONS: disable=pass:ShareRegExpLiterals
+# RUN: pass ShareRegExpLiterals
+# STATISTIC: ShareRegExpLiteralsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="test" parameters=[{type=string}] results=[{type=boolean}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="a"
+    v2 = CallBuiltin v1, v0 overload=RegExpPrototypeTest/0
+    Return v2
+}
+# CHECK: = NewRegExp pattern="a"
+# CHECK-NOT: SharedRegExpLiteral

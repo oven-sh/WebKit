@@ -45,6 +45,8 @@ static bool visitsSymbolKeys(OwnKeyWalk walk)
         return true;
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
+    case OwnKeyWalk::Stringify:
+    case OwnKeyWalk::StringifyIntoText:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -191,6 +193,9 @@ void OwnKeyWalkExpander::emitArms(const OwnKeyWalkSite& site, const OwnKeyWalkPl
             return { };
         case OwnKeyWalk::Copy:
             return emitCopy(object, arm, fields.span());
+        case OwnKeyWalk::Stringify:
+        case OwnKeyWalk::StringifyIntoText:
+            break;
         }
         RELEASE_ASSERT_NOT_REACHED();
     };

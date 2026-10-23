@@ -1,7 +1,7 @@
 # Where most slots of an object are born empty, the stub hands out a cell whose body is zero and no store of an empty slot is left in the code, in fast code too.
 # Outside fast code one store of zero that is saved is enough, were it that of a hidden word. Fast code stores the few zeros of a full object itself
 # FORM: AsRead
-# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
 # RUN: generate-code calls
 # CHECK: f1: size=
 # CHECK-NEXT: stub AllocateCell.HeaderAndWordsAndZeros{{*}} x1

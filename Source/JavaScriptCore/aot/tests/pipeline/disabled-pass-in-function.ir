@@ -1,8 +1,10 @@
 # A switch that is limited to one function as read holds in that function and in what is derived from it, and nowhere else
 # FORM: Prepared
-# OPTIONS: disable=pass:FoldConstants disable-in=1:1
+# OPTIONS: disable=pass:FoldConstants,pass:RemoveUnusedResults disable-in=1:1
 # RUN: pass FoldConstants
+# RUN(PROGRAM): pass RemoveUnusedResults
 # CHECK: outcome: Changed
+# PROGRAM: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="foldsBefore" results=[{type=number}] {
@@ -33,6 +35,8 @@ function f4 name="readsThirdOfDisabled" parameters=[{type=number}] results=[{typ
     v2 = ResultAt v1 index=2
     Return v2
 }
+# PROGRAM-LABEL: function f4 name="readsThirdOfDisabled"
+# PROGRAM: = ResultAt v1 index=2
 
 function f5 name="readsFirstOfTrimmed" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
@@ -47,6 +51,8 @@ function f6 name="readsThirdOfTrimmed" parameters=[{type=number}] results=[{type
     v2 = ResultAt v1 index=2
     Return v2
 }
+# PROGRAM-LABEL: function f6 name="readsThirdOfTrimmed"
+# PROGRAM: = ResultAt v1 index=1
 
 function f7 name="disabledFunction" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f1} creator=ResultWorker{origin=f1} {
   b0(v0: number):
@@ -60,6 +66,8 @@ function f7 name="disabledFunction" role=ResultWorker parameters=[{type=number}]
 }
 # CHECK-LABEL: function f7 name="disabledFunction"
 # CHECK: = Add v1, v2
+# PROGRAM-LABEL: function f7 name="disabledFunction" {{*}}results=[{type=number}, {type=number}, {type=number}]
+# PROGRAM: = Mul
 
 function f8 name="trimmed" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f2} creator=ResultWorker{origin=f2} {
   b0(v0: number):
@@ -73,3 +81,5 @@ function f8 name="trimmed" role=ResultWorker parameters=[{type=number}] results=
 }
 # CHECK-LABEL: function f8 name="trimmed"
 # CHECK-NOT: = Add
+# PROGRAM-LABEL: function f8 name="trimmed" {{*}}results=[{type=number}, {type=number}]
+# PROGRAM-NOT: = Mul

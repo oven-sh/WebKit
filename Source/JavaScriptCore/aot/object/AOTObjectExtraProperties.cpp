@@ -712,18 +712,6 @@ bool Object::ensureStructureForExtraPropertiesIfNeeded(VM& vm, JSCell* cell)
     return cell->structure() != structure;
 }
 
-std::optional<PropertyOffset> Object::offsetOfExtraProperty(VM& vm, JSCell* cell, PropertyName name, unsigned& attributes)
-{
-    const CompiledStructure* structure = compiledObjectStructureOrNull(cell->structure());
-    if (!structure)
-        return std::nullopt;
-    Structure* extraPropertiesStructure = structure->extraPropertiesStructure();
-    if (!extraPropertiesStructure || parseIndex(name) || name.isPrivateName())
-        return std::nullopt;
-    PropertyOffset offset = extraPropertiesStructure->get(vm, name, attributes);
-    return isValidOffset(offset) ? std::optional(offset) : std::nullopt;
-}
-
 Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyName name, JSValue value, OptionSet<ExtraPropertyStoreFlag> flags)
 {
     bool isDefinition = flags.contains(ExtraPropertyStoreFlag::IsDefinition);

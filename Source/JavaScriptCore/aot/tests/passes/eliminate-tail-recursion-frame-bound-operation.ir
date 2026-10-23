@@ -1,0 +1,63 @@
+# A function with an operation that belongs to the frame of one activation keeps its tail call
+# FORM: Prepared
+# RUN: pass EliminateTailRecursion
+# STATISTIC: TailRecursionsEliminated = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+evalscope e0
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="evaluatesText" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = Undefined
+    v3 = DirectEval v1, v2 evalScope=e0
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallDirect v0, v1 function=f0
+    ReturnCall v5
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="evaluatesText"
+# CHECK-NOT: LoopHint
+# CHECK: v5: number = CallDirect v0, v1 function=f0
+# CHECK-NEXT: ReturnCall v5
+# CHECK-NOT: LoopHint
+
+function f1 name="releasesEnvironment" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    ReleaseEnvironment v1
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallDirect v0 function=f1
+    ReturnCall v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="releasesEnvironment"
+# CHECK-NOT: LoopHint
+# CHECK: v4: number = CallDirect v0 function=f1
+# CHECK-NEXT: ReturnCall v4
+# CHECK-NOT: LoopHint
+
+function f2 name="operationOnThePathWithoutTheCall" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v0, v1 function=f2
+    ReturnCall v3
+  b2():
+    v4 = Undefined
+    v5 = DirectEval v1, v4 evalScope=e0
+    Return v0
+}
+# CHECK-LABEL: function f2 name="operationOnThePathWithoutTheCall"
+# CHECK-NOT: LoopHint
+# CHECK: v3: number = CallDirect v0, v1 function=f2
+# CHECK-NEXT: ReturnCall v3
+# CHECK-NOT: LoopHint

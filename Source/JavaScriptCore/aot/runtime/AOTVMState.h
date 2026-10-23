@@ -45,7 +45,6 @@ public:
     template<typename Visitor> void visitAggregate(Visitor&);
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
-    static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(VMState, runtimeTable); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
     // regExpMatchOutput has room for the literals of the image, and for any pattern made at run time with so many groups.
     static constexpr unsigned maxGroupsInRegExpMatchOutput = 15;

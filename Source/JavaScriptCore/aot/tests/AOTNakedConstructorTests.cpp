@@ -76,7 +76,6 @@ static void checkCallThrowsTypeError(LoadedProgram& program, JSValue callee, ASC
 
 static void checkCompiledClosureNamesConstructor(LoadedProgram& program)
 {
-    // The program text names the Promise constructor as runtime function 0.
     AOT_TEST_CHECK(!functionImplementing(Builtins::Promise).index());
     const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(0);
     AOT_TEST_CHECK(entry);

@@ -8,7 +8,7 @@
 # RUN(ABSENT): pass ExpandIteration
 # RUN(AWAITS): pass ExpandIteration
 # RUN(TURNS): pass ExpandIteration
-# RUN(PROVEN): pass ExpandIteration
+# RUN(PROVEN): pass ExpandProvenIterations ExpandIteration
 # RUN(LEFT): pass ExpandIteration
 # STATISTIC: IterationsExpandedByClass = 12
 # STATISTIC: IterationsExpandedGenerically = 2

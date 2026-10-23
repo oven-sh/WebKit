@@ -1,0 +1,46 @@
+# A function that is called directly and by value: the closure still names the function, which forwards, and the direct calls go to the reduced function
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ignoresSecond" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="ignoresSecond"{{*}}parameters=[{type=number}, {type=number}] results=[{type=number}]
+# CHECK: b0(v0: number, v1: number):
+# CHECK-NEXT: [[forwarded]]: number = CallDirect v0 function=f3
+# CHECK-NEXT: ReturnCall [[forwarded]] requirement=Allowed
+
+function f1 name="onlyCalledByValue" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="onlyCalledByValue"{{*}}parameters=[{type=number}, {type=number}] results=[{type=number}]
+# CHECK: b0(v0: number, v1: number):
+# CHECK-NEXT: = Add v0, v0
+
+function f2 name="callsBothWays" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = NewClosure function=f0
+    v4 = Call v3, -, v2, v1
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v4, v1
+    Return v6
+}
+# CHECK-LABEL: function f2 name="callsBothWays"
+# CHECK: [[direct]]: number = CallDirect v0 function=f3
+# CHECK-NEXT: [[closure]]: f0 = NewClosure function=f0
+# CHECK-NEXT: [[byValue]]: number = Call [[closure]], -, [[direct]], v1
+# CHECK-NEXT: [[other]]: f1 = NewClosure function=f1
+# CHECK-NEXT: = Call [[other]], -, [[byValue]], v1
+
+# CHECK-LABEL: function f3 name="ignoresSecond"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}HasOnlyDirectCallers{{*}}derivation={source=f0 parameterMap=[{original=0}]}
+# CHECK: b0(v0: number):
+# CHECK-NEXT: = Add v0, v0
+# CHECK-NOT: function f4

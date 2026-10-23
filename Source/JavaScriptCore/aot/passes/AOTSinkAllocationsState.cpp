@@ -257,11 +257,6 @@ void SinkingState::setAlias(ValueID value, VirtualObjectID object, AliasKind kin
     setEntry(aliases, &AliasEntry::value, AliasEntry { value, object, kind });
 }
 
-void SinkingState::removeAlias(ValueID value)
-{
-    removeEntry(aliases, &AliasEntry::value, value);
-}
-
 bool SinkingState::isDestructured(VirtualObjectID object) const
 {
     return aliases.containsIf([&](const AliasEntry& alias) {
@@ -277,118 +272,6 @@ const TestEntry* SinkingState::findTest(ValueID test) const
 void SinkingState::setTest(const TestEntry& entry)
 {
     setEntry(tests, &TestEntry::test, entry);
-}
-
-void SinkingState::becomeUnreachable()
-{
-    isReachable = false;
-    objects.clear();
-    aliases.clear();
-    tests.clear();
-}
-
-static void dumpVariant(PrintStream& out, const ObjectVariant& variant)
-{
-    if (variant.tagBit)
-        out.print("b", static_cast<unsigned>(*variant.tagBit), ":");
-    if (variant.shape == cellShape)
-        out.print("cell");
-    else
-        out.print("s", variant.shape.index());
-}
-
-static void dumpObject(PrintStream& out, const ObjectEntry& entry)
-{
-    const ObjectState& state = entry.state;
-    out.print("o", entry.object.index(), ": {");
-    CommaPrinter variantSeparator(" "_s);
-    for (const ObjectVariant& variant : state.variants) {
-        out.print(variantSeparator);
-        dumpVariant(out, variant);
-    }
-    out.print("}");
-
-    if (!state.heldObjects.isEmpty()) {
-        out.print(" holds(");
-        CommaPrinter separator(","_s);
-        for (const HeldObject& held : state.heldObjects)
-            out.print(separator, held.field, "->o", held.object.index());
-        out.print(")");
-    }
-    if (!state.fieldsValidInCell.isEmpty()) {
-        out.print(" valid(");
-        CommaPrinter separator(","_s);
-        for (size_t field : state.fieldsValidInCell)
-            out.print(separator, field);
-        out.print(")");
-    }
-    if (state.cellJoinedAt)
-        out.print(" joined(b", state.cellJoinedAt.index(), ")");
-    out.print("\n");
-}
-
-static void dumpAlias(PrintStream& out, const AliasEntry& alias)
-{
-    out.print("v", alias.value.index(), "=");
-    switch (alias.kind) {
-    case AliasKind::Object:
-        out.print("o", alias.object.index());
-        return;
-    case AliasKind::Guard:
-        out.print("guard(o", alias.object.index(), ")");
-        return;
-    case AliasKind::Results:
-        out.print("results(o", alias.object.index(), ")");
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpTest(PrintStream& out, const TestEntry& entry)
-{
-    out.print("v", entry.test.index(), "=");
-    if (entry.result) {
-        out.print(*entry.result ? "true" : "false");
-        return;
-    }
-    if (!entry.tagBitsWhenTrue) {
-        out.print("unknown");
-        return;
-    }
-    out.print("tag(o", entry.object.index(), ":");
-    for (unsigned tagBit = 0; tagBit < maxTagBitsInInt32; ++tagBit) {
-        if (entry.tagBitsWhenTrue >> tagBit & 1)
-            out.print(" b", tagBit);
-    }
-    out.print(")");
-}
-
-void SinkingState::dump(PrintStream& out) const
-{
-    if (!isReachable) {
-        out.print("unreachable\n");
-        return;
-    }
-
-    for (const ObjectEntry& entry : objects)
-        dumpObject(out, entry);
-
-    if (!aliases.isEmpty()) {
-        CommaPrinter separator(" "_s);
-        for (const AliasEntry& alias : aliases) {
-            out.print(separator);
-            dumpAlias(out, alias);
-        }
-        out.print("\n");
-    }
-    if (!tests.isEmpty()) {
-        CommaPrinter separator(" "_s);
-        for (const TestEntry& entry : tests) {
-            out.print(separator);
-            dumpTest(out, entry);
-        }
-        out.print("\n");
-    }
 }
 
 bool SinkingDecisions::isBuiltAtHead(BlockID block, VirtualObjectID object) const

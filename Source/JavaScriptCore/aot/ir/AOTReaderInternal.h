@@ -219,7 +219,6 @@ public:
     template<typename IDType> uint32_t checkedID(uint32_t word, bool& isValid) const;
     template<typename External> External external(uint32_t word);
     template<typename External> External optionalExternalID(uint32_t word);
-    template<typename External> std::optional<External> optionalExternalEnumerator(uint32_t word);
     template<typename E> E enumerator(uint32_t word);
     template<typename E> std::optional<E> optionalEnumerator(uint32_t word);
     template<typename F> OptionSet<F> flags(uint32_t word);
@@ -495,14 +494,6 @@ External RecordChecker::optionalExternalID(uint32_t word)
 {
     if (word == Wire::none)
         return External { };
-    return external<External>(word);
-}
-
-template<typename External>
-std::optional<External> RecordChecker::optionalExternalEnumerator(uint32_t word)
-{
-    if (word == Wire::none)
-        return std::nullopt;
     return external<External>(word);
 }
 

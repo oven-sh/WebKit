@@ -131,7 +131,6 @@ public:
     void exitOnCannot(Entry finisher, RuntimeCounterID reason, GPRReg reasonArgument, const OperationCall&);
 
     void callEngineThunk(Entry pointer, GPRReg scratch);
-    void jumpToEngineThunk(Entry pointer, GPRReg scratch);
     void callCode(CodeSymbol);
 
     void callStub(StubKey);
@@ -141,7 +140,6 @@ public:
     void loadStubAddress(StubKey, GPRReg);
     void returnStubAddress(StubKey);
     void loadLabelAddress(Label, GPRReg);
-    void callStubAndReturn(StubKey, const ScopedLambda<void()>& setUpOperands);
     void jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
     void callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
 

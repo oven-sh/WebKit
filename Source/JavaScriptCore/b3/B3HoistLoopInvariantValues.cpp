@@ -247,7 +247,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
         bool trapBarrierInBlock = false;
         for (Value*& value : *block) {
             Effects effects = value->effects();
-            bool isControlDependent = effects.controlDependent;
+            bool isControlDependent = effects.controlDependent && proc.effectsOf(value).controlDependent;
             bool trappingLoad = isTrappingLoad(value);
             bool hoisted = false;
 

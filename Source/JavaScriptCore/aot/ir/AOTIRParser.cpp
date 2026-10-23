@@ -102,6 +102,7 @@ static bool canBeRoleOfFunctionAsRead(FunctionRole role)
 {
     switch (role) {
     case FunctionRole::CoroutineRamp:
+    case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
     case FunctionRole::StubBody:

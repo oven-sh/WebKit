@@ -85,7 +85,6 @@ struct RuntimeDifference {
     uint64_t there { 0 };
 };
 
-JS_EXPORT_PRIVATE std::span<const uint8_t> runtimeDescription();
 // Takes the record of the engine or the record of the table.
 JS_EXPORT_PRIVATE std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const uint8_t> other);
 

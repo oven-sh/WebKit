@@ -26,32 +26,6 @@ constexpr bool isRarerThan(BlockFrequency a, BlockFrequency b) { return b < a; }
 
 inline constexpr WTF::FrequencyEstimatorConstants frequencyConstants { };
 
-constexpr WTF::EdgeClass edgeClassOf(BlockFrequency frequency)
-{
-    switch (frequency) {
-    case BlockFrequency::Normal:
-        return WTF::EdgeClass::Normal;
-    case BlockFrequency::Unlikely:
-        return WTF::EdgeClass::Unlikely;
-    case BlockFrequency::Rare:
-        return WTF::EdgeClass::Rare;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-constexpr BlockFrequency blockFrequencyOf(WTF::EdgeClass edgeClass)
-{
-    switch (edgeClass) {
-    case WTF::EdgeClass::Normal:
-        return BlockFrequency::Normal;
-    case WTF::EdgeClass::Unlikely:
-        return BlockFrequency::Unlikely;
-    case WTF::EdgeClass::Rare:
-        return BlockFrequency::Rare;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
 // All that an estimate reads of a function beside its graph and the cycles of the graph. It names blocks and no value.
 struct FrequencyFacts {
     enum class BranchSide : uint8_t { Unknown, Taken, NotTaken };

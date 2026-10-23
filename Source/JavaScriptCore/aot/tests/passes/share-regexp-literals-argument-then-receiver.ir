@@ -1,0 +1,46 @@
+# A literal that is first an argument of a String method and then the receiver of test is shared, unless a flag makes the second use advance lastIndex
+# The type of the parameter has no site and is not only expected: every entrypoint assumes it, so flow lets nothing but a string in, whoever calls
+# FORM: AsRead
+# RUN: pipeline ShareRegExpLiterals
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    Return
+}
+function f1 name="argumentThenReceiver" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="a" @10
+    v2 = String string="b"
+    v3 = PropGet v0 key="replace"
+    v4 = Call v3, v0, v1, v2 calleeKey="replace"
+    v5 = PropGet v1 key="test"
+    v6 = Call v5, v1, v4 calleeKey="test"
+    Return v6
+}
+# CHECK-LABEL: function f1 name="argumentThenReceiver"
+# CHECK: [[shared]]:{{*}}= SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp
+# CHECK: CallBuiltin {{*}}overload=StringPrototypeReplace/0
+# CHECK: CallBuiltin {{*}}overload=RegExpPrototypeTest/0
+function f2 name="globalArgumentThenReceiver" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="a" regExpFlags=[Global] @20
+    v2 = String string="b"
+    v3 = PropGet v0 key="replace"
+    v4 = Call v3, v0, v1, v2 calleeKey="replace"
+    v5 = PropGet v1 key="test"
+    v6 = Call v5, v1, v4 calleeKey="test"
+    Return v6
+}
+# CHECK-LABEL: function f2 name="globalArgumentThenReceiver"
+# CHECK: = NewRegExp pattern="a" regExpFlags=[Global]
+# CHECK-NOT: SharedRegExpLiteral
+# CHECK-LABEL: function f3

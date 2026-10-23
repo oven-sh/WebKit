@@ -138,9 +138,6 @@ void loadFrontRowOfCell(CCallHelpers&, SlotAccess, GPRReg cell, GPRReg row, GPRR
 void locateFrontCell(StubAssembler&, SlotAccess, GPRReg structureIDAndIndex, GPRReg column, GPRReg plane);
 // Answers what most reads find, each by a comparison with the cell where it lies: a value of the receiver's own in its cell, then that nothing has the name.
 void returnByFrontCell(StubAssembler&, GPRReg receiver, GPRReg column, GPRReg plane, GPRReg index, GPRReg cell, JumpList& hasOtherName);
-// Where branchUnlessOwnInlineValue branches, its scratch register holds the upper half of the cell, with the bits of the name cleared if the cell has that name.
-Jump branchIfUpperHalfHasOtherName(StubAssembler&, GPRReg upperHalf);
-void jumpToPackedSlotHandlerByUpperHalf(StubAssembler&, SlotHandlerTable, GPRReg header, GPRReg upperHalf);
 #endif
 void loadIdentifier(StubAssembler&, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated);
 

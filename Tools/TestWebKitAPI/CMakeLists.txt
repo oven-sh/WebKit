@@ -238,6 +238,12 @@ endif ()
 
 WEBKIT_EXECUTABLE_DECLARE(TestWTF)
 
+# It prints with std::cout. From libstdc++ 13 on the library constructs the streams, before that each unit that includes
+# <iostream> did. CI runs the tests on a machine whose libstdc++ may be older than the one that this is compiled against.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND COMPILER_IS_GCC_OR_CLANG)
+    target_link_options(TestWTF PRIVATE -static-libstdc++)
+endif ()
+
 # TestJavaScriptCore definitions
 if (ENABLE_JAVASCRIPTCORE)
     set(TestJavaScriptCore_SOURCES

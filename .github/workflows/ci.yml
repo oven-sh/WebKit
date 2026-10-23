@@ -507,11 +507,9 @@ jobs:
               }'
           status=${PIPESTATUS[0]}
           echo "run-javascriptcore-tests exited with $status"
-          # This testaot has the table of the stand-in host, and leaves out the native tests of bun's entries
-          # (AOTNativeTestsOfHostEntries.inc): the testaot that bun links with its own table runs them, in bun's CI. Its last
-          # line says how many. The number is written here so that no test joins them unseen.
+          # AOTNativeTestsOfHostEntries.inc: bun's CI runs them.
           left_out=$(grep -a -E '^[0-9]+ passed, [0-9]+ failed, [0-9]+ todo' "$RUNNER_TEMP/jsc-tests.log" | tail -n 1 | grep -o -E '[0-9]+ left out' || echo "0 left out")
-          if [ "$left_out" != "53 left out" ]; then echo "::error::testaot: $left_out, and 53 are expected"; status=1; fi
+          if [ "$left_out" != "33 left out" ]; then echo "::error::testaot: $left_out, and 33 are expected"; status=1; fi
           # What each failing run printed (exception, stack, exit code), grouped under its name: the part of the full
           # log that is needed to fix a test.
           awk '

@@ -2,6 +2,7 @@
 # RemoveUnusedParameters changes `ignoresSecond` and its caller. With VerifyEachPass every kept summary is compared with a fresh one.
 # OPTIONS: heat=EverythingIsHot check=VerifyEachPass disable=pass:InlineCalls
 # RUN: pipeline AllocateInFrames
+# STATISTIC: UnusedParametersRemoved >= 1
 # STATISTIC: BodySummariesKept >= 1
 
 module m0 path="/main.js" displayPath="main.js" body=f0

@@ -951,6 +951,38 @@ static void testFoldPathConstantsSwitchCases()
         CHECK_EQ(invoke<int64_t>(*code, value), value + 10);
 }
 
+static void testFoldPathConstantsKeepsUsesOfConstantPredicate()
+{
+    Procedure proc(impliedComparisonPolicy());
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* taken = proc.addBlock();
+    BasicBlock* neverEntered = proc.addBlock();
+    BasicBlock* loop = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+    Value* one = graph.int64(root, 1);
+    graph.branch(root, one, taken, neverEntered);
+    graph.ret(taken, bound);
+    Value* index = graph.phi(loop, Int64);
+    graph.upsilon(neverEntered, graph.int64(neverEntered, 0), index);
+    graph.jump(neverEntered, loop);
+    Value* next = graph.make(loop, Add, index, one);
+    Value* test = graph.make(loop, LessThan, next, bound);
+    graph.upsilon(loop, next, index);
+    graph.branch(loop, test, loop, exit);
+    graph.ret(exit, next);
+    proc.setKnownInduction({ index, next, test, 1, false, false });
+    proc.resetReachability();
+    validate(proc);
+
+    foldPathConstants(proc);
+    validate(proc);
+    CHECK(next->child(1) == one);
+    CHECK(proc.knownInduction(index));
+    CHECK_EQ(invoke<int64_t>(*compileProc(proc), 7), 7);
+}
+
 void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testThreadJumpsOnConstantPhi());
@@ -987,6 +1019,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testFoldPathConstantsManyComparisonsOfOneValue());
     RUN(testFoldPathConstantsIgnoresJoinedSuccessor());
     RUN(testFoldPathConstantsSwitchCases());
+    RUN(testFoldPathConstantsKeepsUsesOfConstantPredicate());
 }
 
 #endif // ENABLE(B3_JIT)

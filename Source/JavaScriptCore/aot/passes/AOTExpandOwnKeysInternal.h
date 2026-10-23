@@ -27,6 +27,8 @@ enum class OwnKeyWalk : uint8_t {
     Assign,
     Spread,
     Copy,
+    Stringify,
+    StringifyIntoText,
 };
 
 constexpr bool copiesNothingFromNullish(OwnKeyWalk walk)
@@ -39,6 +41,8 @@ constexpr bool copiesNothingFromNullish(OwnKeyWalk walk)
     case OwnKeyWalk::Copy:
     case OwnKeyWalk::Values:
     case OwnKeyWalk::Entries:
+    case OwnKeyWalk::Stringify:
+    case OwnKeyWalk::StringifyIntoText:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
@@ -52,6 +56,7 @@ struct OwnKeyWalkSite {
     ValueID source;
     ValueID target;
     uint32_t sourceArgument { 0 };
+    BuiltinID textForm;
     Vector<ValueID, 1> laterSources;
 };
 
@@ -121,6 +126,7 @@ public:
 
     void expand(const OwnKeyWalkSite&, const OwnKeyWalkPlan&);
     void expandAssign(const OwnKeyWalkSite&, const AssignPlan&);
+    bool expandStringify(const OwnKeyWalkSite&);
 
 private:
     struct WalkedField {

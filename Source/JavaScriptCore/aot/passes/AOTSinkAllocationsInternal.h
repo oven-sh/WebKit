@@ -181,7 +181,6 @@ public:
 
     IRBuilder& builder() { return m_builder; }
     BlockID block() const { return m_builder.currentBlock(); }
-    BlockID originalBlock() const { return m_originalBlock; }
 
     void beginBlock(BlockID original, std::optional<Target>&& handler, ObjectInterpreter&);
     void finishBlock(Terminator&&);
@@ -233,7 +232,7 @@ public:
     bool hasCandidates() const;
     bool splitEdgesNeedingCode(IRBuilder&);
     bool duplicateLiveRange(IRBuilder&);
-    void rewrite(IRBuilder&);
+    void rewrite(IRBuilder&, const FreshResultShape* = nullptr);
     void recordLosses();
     void countStatistics();
     Vector<SunkAllocation> outcomes() const;
@@ -280,7 +279,6 @@ public:
         return !edge.isHandlerEdge() && m_ignoredEdges.isEmpty() && !m_names.terminatorsMentioningNames.quickGet(edge.from.index()) && !m_names.blocksBindingNames.quickGet(target.index());
     }
     bool checksShortcuts() const { return m_checksShortcuts; }
-    bool buildsSomeObjectBeforeBranches() const { return m_buildsSomeObjectBeforeBranches; }
     const BitVector& loadableFieldsOf(VirtualObjectID);
     bool storesByNameWaitIn(BlockID) const;
     // The object has to be built where no store by name may stand. It is built where the store stands instead, in the rare arm, as an object that takes no such value always was.
@@ -303,6 +301,7 @@ public:
         return head && head->objects.isEmpty() && head->aliases.isEmpty() && head->tests.isEmpty();
     }
     std::span<const VirtualReturn> virtualReturns() const LIFETIME_BOUND { return m_returns.span(); }
+    const FreshResultShape* resultShape() const { return m_resultShape; }
     void addTracesOfFruitlessAllocations(Vector<uint64_t>&) const;
 
     // While the function is analyzed. Few of its values name an object or a test of one.
@@ -448,6 +447,7 @@ private:
     Vector<VirtualReturn, 2> m_returns;
     Vector<Edge, 2> m_ignoredEdges;
     Vector<Edge, 2> m_edgesNeedingCode;
+    const FreshResultShape* m_resultShape { nullptr };
     bool m_mustSolveAgain { false };
     uint64_t m_work { 0 };
     // Since the analysis last started over: how often it went through the function, and through how many blocks it carried each candidate.

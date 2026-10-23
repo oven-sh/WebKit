@@ -309,7 +309,6 @@ public:
     // A number for a table with an entry for each set of several members: no two of them have the same, and all lie below the end; that of a set of one member lies beyond it. They are not dense: see InternedRuns.
     static constexpr uint32_t indexInTableBySet(ValueSetID set) { return (set.index() >> 2) * 2 + (set.index() & 1); }
     uint32_t endOfTableBySet() const { return m_lists.endOfNumbers() + 2; }
-    size_t numberOfStoredBlocks() const { return m_blocks.size(); }
     size_t memoryInBytes() const { return m_lists.memoryInBytes() + m_groups.memoryInBytes() + m_blocks.memoryInBytes() + (sizeof(RememberedByAll) << m_bitsOfRememberedByAll); }
     // While no thread makes a set.
     void freeOutgrownTables()

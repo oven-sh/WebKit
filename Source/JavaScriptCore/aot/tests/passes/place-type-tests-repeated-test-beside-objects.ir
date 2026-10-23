@@ -1,8 +1,8 @@
 # A class beside objects of no known class: the edge of a test cannot keep what the type proves about the class, and its failing edge cannot take the class out of the type.
 # The test on the entry of the loop decides the tests in both copies all the same, so a second run finds nothing to place. Behind the passing edge the value is used with what the test and its type say together
 # FORM: Prepared optimizing
-# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
-# RUN(TWICE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks PlaceTypeTests
+# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+# RUN(TWICE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks PlaceTypeTests
 # TWICE-COUNT-10: outcome:
 # TWICE-NEXT: outcome: Unchanged
 

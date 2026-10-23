@@ -96,64 +96,27 @@ void SlotEmitter::storeBits(TypedPointer pointer, SlotRepresentation slot, LValu
 
 Operand SlotEmitter::load(TypedPointer pointer, SlotRepresentation slot)
 {
-    Operand loaded;
-    switch (slot) {
-    case SlotRepresentation::Uint8:
-        loaded = Word32(m_out.load8ZeroExt32(pointer));
-        break;
-    case SlotRepresentation::Int8:
-        loaded = Word32(m_out.load8SignExt32(pointer));
-        break;
-    case SlotRepresentation::Uint16:
-        loaded = Word32(m_out.load16ZeroExt32(pointer));
-        break;
-    case SlotRepresentation::Int16:
-        loaded = Word32(m_out.load16SignExt32(pointer));
-        break;
-    case SlotRepresentation::Int32:
-        loaded = Word32(m_out.load32(pointer));
-        break;
-    case SlotRepresentation::Boolean:
-        loaded = Condition(m_out.load8ZeroExt32(pointer));
-        break;
-    case SlotRepresentation::Uint32:
-        loaded = zeroExtended(Word32(m_out.load32(pointer)));
-        break;
-    case SlotRepresentation::Int64:
-    case SlotRepresentation::OptionalInt64:
-    case SlotRepresentation::JSValue:
-    case SlotRepresentation::Cell:
-    case SlotRepresentation::LiteralString:
-        loaded = Operand(Typed::representationOf(slot), m_out.load64(pointer));
-        break;
-    case SlotRepresentation::Double:
-    case SlotRepresentation::OptionalDouble:
-        loaded = Operand(Typed::representationOf(slot), m_out.loadDouble(pointer));
-        break;
-    case SlotRepresentation::Float:
-        loaded = Number(m_out.floatToDouble(m_out.loadFloat(pointer)));
-        break;
-    case SlotRepresentation::Cell32:
-    case SlotRepresentation::OptionalCell32:
-        loaded = NarrowReference(m_out.load32(pointer));
-        break;
-    case SlotRepresentation::LiteralString32: {
-        NarrowReference word(m_out.load32(pointer));
-        loaded = LiteralStringWord(m_out.select(isCellReferenceAmongAllWords(word).value(), decode(word).value(), m_out.zeroExtPtr(word.value())));
-        break;
+    const SlotTraits& traits = traitsOf(slot);
+    Representation representation = Typed::representationOf(slot);
+    if (traits.valueKind == SlotValueKind::Float)
+        return Number(m_out.floatToDouble(m_out.loadFloat(pointer)));
+    if (traits.valueKind == SlotValueKind::Double)
+        return Operand(representation, m_out.loadDouble(pointer));
+
+    LValue bits;
+    if (traits.valueKind == SlotValueKind::SignedInteger && traits.width < sizeof(int32_t))
+        bits = traits.width == 1 ? m_out.load8SignExt32(pointer) : m_out.load16SignExt32(pointer);
+    else
+        bits = loadBits(pointer, slot);
+    if (slot == SlotRepresentation::OptionalInt32)
+        return widenOptionalInt32(Word32(bits), AbsentReadsAs::Absent);
+    if (slot == SlotRepresentation::LiteralString32) {
+        NarrowReference word(bits);
+        return LiteralStringWord(m_out.select(isCellReferenceAmongAllWords(word).value(), decode(word).value(), m_out.zeroExtPtr(bits)));
     }
-    case SlotRepresentation::OptionalBoolean:
-        loaded = Boxed(m_out.zeroExtPtr(m_out.load8ZeroExt32(pointer)));
-        break;
-    case SlotRepresentation::DeferredClosure:
-        loaded = Pointer(m_out.zeroExtPtr(m_out.load32(pointer)));
-        break;
-    case SlotRepresentation::OptionalInt32:
-        loaded = widenOptionalInt32(Word32(m_out.load32(pointer)), AbsentReadsAs::Absent);
-        break;
-    }
-    RELEASE_ASSERT(loaded.representation == Typed::representationOf(slot));
-    return loaded;
+    if (bits->type() == B3::Int32 && b3TypeOf(representation) == B3::Int64)
+        bits = m_out.zeroExtPtr(bits);
+    return Operand(representation, bits);
 }
 
 Operand SlotEmitter::loadWithoutMarkers(TypedPointer pointer, SlotRepresentation slot)
@@ -211,53 +174,24 @@ Word32 SlotEmitter::narrowOptionalInt32(OptionalInteger value)
 void SlotEmitter::store(TypedPointer pointer, SlotRepresentation slot, Operand operand)
 {
     RELEASE_ASSERT(operand.representation == Typed::representationOf(slot));
-    switch (slot) {
-    case SlotRepresentation::Uint8:
-    case SlotRepresentation::Int8:
-    case SlotRepresentation::Boolean:
-        m_out.store32As8(operand.value, pointer);
-        return;
-    case SlotRepresentation::Uint16:
-    case SlotRepresentation::Int16:
-        m_out.store32As16(operand.value, pointer);
-        return;
-    case SlotRepresentation::Int32:
-    case SlotRepresentation::Cell32:
-    case SlotRepresentation::OptionalCell32:
-        m_out.store32(operand.value, pointer);
-        return;
-    case SlotRepresentation::Uint32:
-    case SlotRepresentation::DeferredClosure:
-        m_out.store32(m_out.castToInt32(operand.value), pointer);
-        return;
-    case SlotRepresentation::OptionalInt32:
-        m_out.store32(narrowOptionalInt32(operand.as<OptionalInteger>()).value(), pointer);
-        return;
-    case SlotRepresentation::Int64:
-    case SlotRepresentation::OptionalInt64:
-    case SlotRepresentation::Cell:
-    case SlotRepresentation::JSValue:
-    case SlotRepresentation::LiteralString:
-        m_out.store64(operand.value, pointer);
-        return;
-    case SlotRepresentation::LiteralString32: {
-        LiteralStringWord word = operand.as<LiteralStringWord>();
-        Condition isStringCell = emitter<ConversionEmitter>().isStringCell(word);
-        m_out.store32(m_out.select(isStringCell.value(), compress(CellPointer(word.value())).value(), m_out.castToInt32(word.value())), pointer);
+    const SlotTraits& traits = traitsOf(slot);
+    LValue bits = operand.value;
+    if (traits.valueKind == SlotValueKind::Float) {
+        m_out.storeFloat(m_out.doubleToFloat(bits), pointer);
         return;
     }
-    case SlotRepresentation::OptionalBoolean:
-        m_out.store32As8(m_out.castToInt32(operand.value), pointer);
-        return;
-    case SlotRepresentation::Float:
-        m_out.storeFloat(m_out.doubleToFloat(operand.value), pointer);
-        return;
-    case SlotRepresentation::Double:
-    case SlotRepresentation::OptionalDouble:
-        m_out.storeDouble(operand.value, pointer);
+    if (traits.valueKind == SlotValueKind::Double) {
+        m_out.storeDouble(bits, pointer);
         return;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    if (slot == SlotRepresentation::OptionalInt32)
+        bits = narrowOptionalInt32(operand.as<OptionalInteger>()).value();
+    else if (slot == SlotRepresentation::LiteralString32) {
+        Condition isStringCell = emitter<ConversionEmitter>().isStringCell(operand.as<LiteralStringWord>());
+        bits = m_out.select(isStringCell.value(), compress(CellPointer(bits)).value(), m_out.castToInt32(bits));
+    } else if (traits.width < sizeof(uint64_t) && bits->type() == B3::Int64)
+        bits = m_out.castToInt32(bits);
+    storeBits(pointer, slot, bits);
 }
 
 void SlotEmitter::storeAbsent(TypedPointer pointer, SlotRepresentation slot)

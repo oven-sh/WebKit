@@ -132,26 +132,6 @@ void GroupRewriter::replaceWithResult(ValueID member, ValueID producer, uint32_t
     m_session.m_resultsAfter.add(m_group.root, Vector<ValueID, 2> { }).iterator->value.append(member);
 }
 
-void GroupRewriter::replaceWithValue(ValueID member, ValueID replacement)
-{
-    RELEASE_ASSERT(findMember(m_group, member) && !m_group.hasSlowPath);
-    m_session.substitution().replace(member, replacement);
-    m_session.m_isErasedFromBlock.set(member.index());
-    m_session.m_needsCompaction = true;
-    if (member == m_group.root) {
-        m_didReplaceRoot = false;
-        unfuseBranch(function().edit(state().block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, m_group.root);
-    }
-
-    TypeID previous = function().at(member).type;
-    TypeID narrowed = function().at(replacement).type;
-    if (previous == narrowed)
-        return;
-    SelectionContext& context = m_session.m_context;
-    const TypeArena& types = context.pass().types;
-    context.didRetype(replacement, types.at(previous), types.at(narrowed));
-}
-
 void GroupRewriter::leaveUnclaimed(ValueID rootOrCreated)
 {
     RELEASE_ASSERT(rootOrCreated.index() >= m_firstCreatedValue || (rootOrCreated == m_group.root && isRootListed()));

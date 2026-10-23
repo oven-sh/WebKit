@@ -12,7 +12,6 @@
 namespace JSC { namespace AOT {
 
 constexpr StubKey toNumberAsDouble() { return StubKey(StubFamily::ToNumberAsDouble); }
-constexpr StubKey toStringFrontEnd() { return StubKey(StubFamily::ToStringFrontEnd); }
 
 } } // namespace JSC::AOT
 

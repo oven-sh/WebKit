@@ -28,6 +28,10 @@ static CheckedRegisters collectCheckedRegisters(const RegisterSet& clobbered)
     checked.exclude(RegisterSet::reservedHardwareRegisters());
     checked.exclude(RegisterSet::macroClobberedGPRs());
     checked.exclude(RegisterSet::macroClobberedFPRs());
+#if CPU(ARM64)
+    // Compiled code pins x18 and no stub names it. Where the platform does not reserve it, an operation may change it.
+    checked.remove(ARM64Registers::x18);
+#endif
 
     CheckedRegisters registers;
     checked.forEach([&](Reg reg) {

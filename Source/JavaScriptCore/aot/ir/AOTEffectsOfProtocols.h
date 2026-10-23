@@ -65,8 +65,6 @@ CalleeList membersRunBy(const Program&, const Type& operand, Protocols, std::spa
 // What the protocols that look a member up read in an object and in the objects it inherits from, whether or not they find code to run.
 Effects readsOfMemberLookups(const Type& operand, Protocols);
 
-bool protocolMayRunUserCode(const Program&, TypeID operandType, Protocol);
-
 // False where the type proves that each lookup of the protocol ends without a member: no field, method, accessor or built-in under any of its keys.
 bool protocolMayFindMember(const Program&, const Type& operand, Protocol);
 

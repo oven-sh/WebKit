@@ -134,6 +134,7 @@ static bool showsSourceText(FunctionRole role)
     switch (role) {
     case FunctionRole::Source:
     case FunctionRole::CoroutineRamp:
+    case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
         return true;
@@ -151,11 +152,13 @@ static bool showsSourceText(FunctionRole role)
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
+    case FunctionRole::ResultWorker:
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
+    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return false;
     }

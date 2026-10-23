@@ -122,6 +122,20 @@ void TableEncoder::fail(ProgramTableRule rule, LayoutID layout, FunctionID funct
     build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .function = function, .layout = layout, .count = static_cast<uint32_t>(rule) });
 }
 
+ASCIILiteral nameOf(ProgramTableRule rule)
+{
+    switch (rule) {
+    case ProgramTableRule::None:
+        return "None"_s;
+#define AOT_PROGRAM_TABLE_RULE_NAME(name) \
+    case ProgramTableRule::name: \
+        return #name ""_s;
+    FOR_EACH_AOT_PROGRAM_TABLE_RULE(AOT_PROGRAM_TABLE_RULE_NAME)
+#undef AOT_PROGRAM_TABLE_RULE_NAME
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static void fillHeader(TableEncoder& encoder)
 {
     ProgramTables& header = encoder.header;
@@ -183,6 +197,11 @@ EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, Build
     encoder.writer.at<ProgramTables>(0) = encoder.header;
 
     Vector<uint8_t> bytes = encoder.writer.take();
+    if (build.options().verifiesProgram) {
+        checkProgramTables(encoder, bytes.span());
+        if (build.diagnostics().hasErrors())
+            return { };
+    }
     BitVector stringsOnlyShown = encoder.namedStrings;
     stringsOnlyShown.exclude(encoder.stringsWithOtherUses);
     return { WTF::move(bytes), WTF::move(encoder.namedStrings), WTF::move(stringsOnlyShown) };

@@ -48,7 +48,6 @@ public:
 
     JSValue resume(JSGlobalObject*, ResumeMode, JSValue);
     JSValue resume(JSGlobalObject*, ResumeMode, JSValue, bool& isDone);
-    bool hasUnmodifiedIteratorProtocol() const;
     bool isSuspendedAtStart() const { return m_state == State::SuspendedAtStart; }
 
     State state() const { return m_state; }

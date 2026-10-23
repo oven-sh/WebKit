@@ -32,6 +32,7 @@
 #include "AirAllocateRegistersByGreedy.h"
 #include "AirAllocateStackByGraphColoring.h"
 #include "AirCode.h"
+#include "AirDuplicateReturns.h"
 #include "AirEliminateDeadCode.h"
 #include "AirFixObviousSpills.h"
 #include "AirFixPartialRegisterStalls.h"
@@ -39,6 +40,7 @@
 #include "AirForwardRegisterCopies.h"
 #include "AirFrameStates.h"
 #include "AirGenerationContext.h"
+#include "AirHoistCommonMoves.h"
 #include "AirInstObserver.h"
 #include "AirLogRegisterPressure.h"
 #include "AirLowerAfterRegAlloc.h"
@@ -50,9 +52,10 @@
 #include "AirOptimizePairedLoadStore.h"
 #include "AirPlanFrame.h"
 #include "AirReportUsedRegisters.h"
+#include "AirResequenceMovesBeforePatches.h"
+#include "AirReuseConditionFlags.h"
 #include "AirShrinkWrapFrame.h"
 #include "AirSplitLiveRangesAroundFrame.h"
-#include "AirReuseConditionFlags.h"
 #include "AirSimplifyCFG.h"
 #include "AirStackColoring.h"
 #include "AirValidate.h"
@@ -225,6 +228,11 @@ static constexpr Step steps[] = {
     // phase.
     { "simplifyCFG"_s, always, runPass<simplifyCFG> },
 
+    {
+        "hoistCommonMoves"_s,
+        [](Code& code, const PipelineState&) { return code.policy().peepholes.hoistsCommonMoves; },
+        [](Code& code, PipelineState& state) { state.cfgMayHaveChanged = hoistCommonMoves(code); }
+    },
     simplifyCFGIfChanged,
 
     // Only reportUsedRegisters() removes the moves that this makes dead.
@@ -271,11 +279,21 @@ static constexpr Step steps[] = {
     // frequency successor is also the fall-through target.
     { "optimizeBlockOrder"_s, always, runPass<optimizeBlockOrder> },
 
-    // These read the block order through findNextBlock().
+    // These three read the block order through findNextBlock().
+    {
+        "resequenceMovesBeforePatches"_s,
+        [](Code& code, const PipelineState&) { return code.policy().peepholes.resequencesMovesBeforePatches; },
+        runPass<resequenceMovesBeforePatches>
+    },
     {
         "mergeIdenticalBlocks"_s,
         [](Code& code, const PipelineState&) { return code.policy().layout.mergesIdenticalBlocks; },
         runPass<mergeIdenticalBlocks>
+    },
+    {
+        "duplicateReturns"_s,
+        [](Code& code, const PipelineState&) { return code.policy().layout.duplicatesReturns; },
+        runPass<duplicateReturns>
     },
     {
         "routeRareBranchesThroughJumps"_s,

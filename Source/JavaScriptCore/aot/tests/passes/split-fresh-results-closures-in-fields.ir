@@ -1,0 +1,98 @@
+# A function whose literal gives a field an arrow function or a plain function stays whole: DeferClosuresInFields makes such a closure when the field is first read, and only where the allocation names it.
+# Both passes ask one question (canLeaveClosureUnmade). A closure that the run time cannot make on demand (it has two captures) is a part like any other value
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+# STATISTIC: FreshResultsSplit = 1
+# STATISTIC: FreshResultsKeptWholeForClosures = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Counter" fields=[{key="start" declared={type=number}}, {key="get" declared={type=anything}}]
+layout L1 kind=Environment name="scope" fields=[{key="count" declared={type=anything}}]
+
+function f0 name="listsArrow" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: function f0 name="listsArrow"
+# CHECK-NOT: role=
+# CHECK: v1:{{*}}= NewClosure function=f5
+# CHECK-NEXT: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+
+function f1 name="storesArrowBehindTheAllocation" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="start" receivers=[L0]
+    v3 = NewClosure function=f5
+    PropDefine v1, v3 key="get" receivers=[L0]
+    Return v1
+}
+# CHECK-LABEL: function f1 name="storesArrowBehindTheAllocation"
+# CHECK-NOT: role=
+# CHECK: v3:{{*}}= NewClosure function=f5
+
+function f2 name="listsArrowOverEnvironment" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f6
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
+    Return v3
+}
+# CHECK-LABEL: function f2 name="listsArrowOverEnvironment"
+# CHECK-NOT: role=
+# CHECK: v2:{{*}}= NewClosure v1 function=f6
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0, v2 layout=L0 fields=[0, 1]
+
+function f3 name="listsFunctionThatCanConstruct" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewClosure function=f7
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: function f3 name="listsFunctionThatCanConstruct"
+# CHECK-NOT: role=
+# CHECK: v1:{{*}}= NewClosure function=f7
+# CHECK-NEXT: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+
+function f4 name="listsArrowWithTwoCaptures" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewClosure v0, v0 function=f8
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: function f4 name="listsArrowWithTwoCaptures" module=m0 role=ResultWrapper
+# CHECK-NOT: NewClosure
+# CHECK: = NewObject
+
+function f5 name="overNothing" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="overEnvironment" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    Return
+}
+function f7 name="canConstruct" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f8 name="overTwoNumbers" kind=Arrow captures=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    Return
+}
+
+# Whoever calls them needs no object
+function f9 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number, v2: number, v3: number, v4: number):
+    v5 = CallDirect v0 function=f0
+    v6 = CallDirect v1 function=f1
+    v7 = CallDirect v2 function=f2
+    v8 = CallDirect v3 function=f3
+    v9 = CallDirect v4 function=f4
+    v10 = CallDirect function=f7
+    v11 = Undefined
+    Return v11
+}

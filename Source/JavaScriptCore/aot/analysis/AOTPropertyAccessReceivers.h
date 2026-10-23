@@ -37,8 +37,6 @@ OwnPropertyGain ownPropertyGainOf(const Program&, LayoutID, PropertyKeyID);
 
 enum class LayoutTestKind : uint8_t { Type };
 
-constexpr LayoutTestKind layoutTestKindFor(const Program&, std::span<const LayoutID>) { return LayoutTestKind::Type; }
-
 enum class InstanceCount : uint8_t { Unknown, AtMostOne };
 
 InstanceCount instanceCountOf(const PropertyAccessContext&);

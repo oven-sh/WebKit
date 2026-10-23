@@ -495,24 +495,6 @@ CellPointer CellAllocationEmitter::newArrayInFrameFromBuffer(const OperationCont
     return join.finish();
 }
 
-CellPointer CellAllocationEmitter::allocateRope(LBasicBlock slowPath)
-{
-    CellPointer rope = allocateHeapCell(loadImmutablePointer(AOT_INSTANCE_PREFIX_OFFSET(ropeStringAllocator)), sizeof(JSRopeString), slowPath);
-    CodeGenerator::InitializationScope scope(generator());
-    storeHeader(rope, loadImmutable64(AOT_INSTANCE_PREFIX_OFFSET(stringHeader)));
-    return rope;
-}
-
-void CellAllocationEmitter::storeRopeFibers(CellPointer rope, Integer fiber0, Integer length, Integer fiber1, Integer fiber2)
-{
-    using CompactFibers = JSRopeString::CompactFibers;
-    LValue lengthWord = m_out.bitOr(length.value(), m_out.shl(fiber1.value(), m_out.constInt32(CompactFibers::shiftOfFiber1LowerInLengthWord)));
-    LValue upperWord = m_out.bitOr(m_out.lShr(fiber1.value(), m_out.constInt32(CompactFibers::widthOfFiber1LowerInLengthWord)), m_out.shl(fiber2.value(), m_out.constInt32(CompactFibers::shiftOfFiber2InUpperWord)));
-    m_out.store64(fiber0.value(), rope.value(), m_heaps.JSRopeString_fiber0);
-    m_out.store64(lengthWord, rope.value(), m_heaps.JSRopeString_fiber1);
-    m_out.store64(upperWord, rope.value(), m_heaps.JSRopeString_fiber2);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

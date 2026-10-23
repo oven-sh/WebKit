@@ -146,7 +146,7 @@ A directive is a whole comment line: `#`, a name in capitals, then `:`. A commen
 directive.
 
 Each `RUN` parses the file again (directives are comments to the parser), sends the wire records through the reader in the form and
-applies the engine-only fields. In form `AsRead` that is all for `print`, `round-trip`, `verify`, `verify-relations`, `result-types`, `pass`, `pipeline`, `compile` and the commands that run
+applies the engine-only fields. In form `AsRead` that is all for `print`, `round-trip`, `verify`, `result-types`, `pass`, `pipeline`, `compile` and the commands that run
 the pipeline themselves: a test runs `pass TypeValues` or `verify` itself, and `verify` refuses a program that still has a `Convert` (`RequestAfterTyping`). A command registered with `ProgramAsRead::TypedAndVerified` (the commands of the flow analysis, of the
 analyses and of effects) gets the program after the read stage of the pipeline: every value typed, every request resolved, the program verified. In a later form every
 value is typed by its rule, the types the text states are applied again, and the program is verified. Then the command runs on a new

@@ -28,6 +28,7 @@
 #include "AOTFactsOfSelectedBodies.h"
 #include "AOTFlowApply.h"
 #include "AOTFrameAllocation.h"
+#include "AOTFreshResults.h"
 #include "AOTHeat.h"
 #include "AOTCreatedObjectLayouts.h"
 #include "AOTNameCreatedSymbols.h"
@@ -45,6 +46,8 @@
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
+#include "AOTRemoveUnusedParameters.h"
+#include "AOTRemoveUnusedResults.h"
 #include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
@@ -306,6 +309,23 @@ PassOutcome Pipeline::removeUnreadFields()
     return m_runner.lastProgramPassOutcome();
 }
 
+PassOutcome Pipeline::removeUnusedResults()
+{
+    edit(PassID::RemoveUnusedResults, [&](ProgramEditor& editor) {
+        Typed::removeUnusedResults(editor, inputsFor(PassID::RemoveUnusedResults), m_runner);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::removeUnusedParameters()
+{
+    edit(PassID::RemoveUnusedParameters, [&](ProgramEditor& editor) {
+        Typed::removeUnusedParameters(editor, inputsFor(PassID::RemoveUnusedParameters), m_runner);
+    });
+    didAddFunctions();
+    return m_runner.lastProgramPassOutcome();
+}
+
 PassOutcome Pipeline::callModules()
 {
     edit(PassID::CallModules, [&](ProgramEditor& editor) {
@@ -324,6 +344,17 @@ PassOutcome Pipeline::removeUnreachableFunctions()
         Typed::removeUnreachableFunctions(editor, m_analyses.callGraph(flow()), m_build);
     });
     m_output->derivedFunctions->forgetFunctionsWithoutBody(m_program);
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::splitFreshResults()
+{
+    edit(PassID::SplitFreshResults, [&](ProgramEditor& editor) {
+        OptimizationInputs inputs = inputsFor(PassID::SplitFreshResults);
+        inputs.callGraph.computeRanks(m_build);
+        Typed::splitFreshResults(editor, inputs, m_runner);
+    });
+    didAddFunctions();
     return m_runner.lastProgramPassOutcome();
 }
 
@@ -661,8 +692,14 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return readCapturesFromEnvironments();
     case PassID::RemoveUnreadFields:
         return removeUnreadFields();
+    case PassID::RemoveUnusedResults:
+        return removeUnusedResults();
+    case PassID::RemoveUnusedParameters:
+        return removeUnusedParameters();
     case PassID::RemoveUnreachableFunctions:
         return removeUnreachableFunctions();
+    case PassID::SplitFreshResults:
+        return splitFreshResults();
     case PassID::PromoteAggregateParameters:
         return promoteAggregateParameters();
     case PassID::SplitCoroutines:

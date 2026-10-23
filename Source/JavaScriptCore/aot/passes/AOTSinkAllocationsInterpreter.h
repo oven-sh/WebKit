@@ -94,6 +94,7 @@ public:
     ValueID valueOfField(VirtualObjectID, uint32_t field);
     ValueID emitTagTest(VirtualObjectID, uint32_t tagBits);
 
+    void returnParts(const Terminator&);
 
 private:
     const Program& program() const { return m_sinking.program(); }
@@ -208,6 +209,8 @@ private:
     void didBuild(VirtualObjectID, const BuildCause&);
     BlockFrequency frequencyOfBuild() const;
 
+    void returnVariant(uint32_t resultVariant, VirtualObjectID, const VirtualShape*, ValueID cell);
+    uint32_t findResultVariant(VirtualObjectID, const VirtualShape&) const;
 
     AllocationSinking& m_sinking;
     const SinkingMode m_mode;

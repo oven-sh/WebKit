@@ -361,7 +361,6 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     std::unique_ptr<ValueFlowWritesToContainers, ValueFlowWritesToContainersDeleter> writesToContainers;
     BitVector layoutsOfDictionaries;
     ValueFlowContainerResults containers;
-    Vector<PropertyKeyKind> kindsOfKeys;
 
     Ref<ResultSteps> steps = ResultSteps::create(build.parallelLoops());
     auto add = [&](ASCIILiteral name, std::initializer_list<ResultSteps::StepID> awaited, WTF::Function<void(PhaseTimes&)>&& run, TaskPriority priority = TaskPriority::Foreground) {
@@ -410,7 +409,6 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         timesOfStep.didFinish("functions"_s);
         computeExecutionResults(inputs, calls, tables);
         symbolsCreatedOnce = computeCreatedSymbolResults(inputs, tables);
-        computeClosuresMadeOnce(inputs, tables);
         inputs.symbolsCreatedOnce = &symbolsCreatedOnce;
         for (unsigned index = 0; index < inputs.program.types.numberOfPropertyKeys(); ++index) {
             if (inputs.program.at(PropertyKeyID(index)).kind == PropertyKeyKind::CreatedSymbol && !symbolsCreatedOnce.get(index))
@@ -459,23 +457,13 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto builtins = add("built-ins"_s, { stampedCalls }, [&](PhaseTimes&) {
         writesUnderNewNames = computeBuiltinResults(inputs, tables);
     }, TaskPriority::Background);
-    auto closuresNeverCompared = add("closures never compared"_s, { storesListed }, [&](PhaseTimes&) {
-        ValueFlowHeapView heap(inputs);
-        computeClosuresNeverCompared(inputs, heap, tables);
-    }, TaskPriority::Background);
     auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed }, [&](PhaseTimes&) {
         fieldContents = computeFieldResults(inputs, *usesOfHeap, constructions, tables);
-        kindsOfKeys = Vector<PropertyKeyKind>(program.types.numberOfPropertyKeys(), [&](size_t index) {
-            return program.at(PropertyKeyID(static_cast<uint32_t>(index))).kind;
-        });
     });
     auto writes = add("writes to containers"_s, { numbers, builtins }, [&](PhaseTimes&) {
         writesToContainers = collectWritesToContainers(inputs, tables, types);
     }, TaskPriority::Background);
-    auto literalKeyOrders = add("literal key orders"_s, { fields }, [&](PhaseTimes&) {
-        computeLiteralKeyOrders(inputs, heapViewOf(*usesOfHeap), WTF::move(kindsOfKeys), tables);
-    });
-    auto contents = add("contents"_s, { fields, writes, order, closuresNeverCompared }, [&](PhaseTimes& timesOfStep) {
+    auto contents = add("contents"_s, { fields, writes, order }, [&](PhaseTimes& timesOfStep) {
         layoutsOfDictionaries = computeLayoutsOfDictionaries(inputs, types, tables);
         inputs.layoutsOfDictionaries = &layoutsOfDictionaries;
         inputs.typesBehindDictionaries = tables.application->typesBehindDictionaries.span();
@@ -498,7 +486,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         timesOfStep.didFinish("types"_s);
         computeAccessResults(inputs, types, tables);
     });
-    add("accesses"_s, { stampsOfAccesses, literalKeyOrders }, [&](PhaseTimes&) {
+    add("accesses"_s, { stampsOfAccesses }, [&](PhaseTimes&) {
         computeStoreNamingResults(inputs, *usesOfHeap, tables);
         build.destroyLater(WTF::move(usesOfHeap));
     });

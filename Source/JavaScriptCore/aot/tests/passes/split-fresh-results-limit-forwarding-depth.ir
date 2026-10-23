@@ -1,0 +1,57 @@
+# A chain of functions that forward a fresh result is split as many levels deep as the limit
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot limit=MaxForwardingDepth:1
+# RUN: pass SplitFreshResults VerifyProgram
+# LOSS: MaxForwardingDepth
+# STATISTIC: FreshResultsSplit = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="point" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v1
+}
+# CHECK-LABEL: function f0 name="point" module=m0 role=ResultWrapper
+
+function f1 name="firstLevel" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="firstLevel" module=m0 role=ResultWrapper
+
+function f2 name="secondLevel" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK-LABEL: function f2 name="secondLevel"
+# CHECK-NOT: role=
+# CHECK: b0(
+# CHECK-NEXT: v1:{{*}}= CallDirect v0 function=f1
+# CHECK-NEXT: Return v1
+
+function f3 name="anotherFirstLevel" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    v2 = CallDirect v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="anotherFirstLevel" module=m0 role=ResultWrapper
+# CHECK: name="point" module=m0 role=ResultWorker
+# CHECK: name="firstLevel" module=m0 role=ResultWorker
+# CHECK: name="anotherFirstLevel" module=m0 role=ResultWorker
+# CHECK-NOT: role=ResultWorker
+
+# Whoever calls them needs no object
+function f4 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number, v2: number, v3: number):
+    v4 = CallDirect v0 function=f0
+    v5 = CallDirect v1 function=f1
+    v6 = CallDirect v2 function=f2
+    v7 = CallDirect v3 function=f3
+    v8 = Undefined
+    Return v8
+}

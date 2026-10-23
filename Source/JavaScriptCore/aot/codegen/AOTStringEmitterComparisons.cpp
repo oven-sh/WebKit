@@ -11,6 +11,7 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
+#include "B3IntRange.h"
 #include "B3MemoryValue.h"
 #include "JSGlobalObjectFunctions.h"
 #include <cmath>
@@ -79,6 +80,7 @@ Condition StringEmitter::areEqual(const OperationContext& context, CellPointer a
 Word32 StringEmitter::order(const OperationContext& context, CellPointer a, CellPointer b)
 {
     LValue result = callStub(context, compareStrings(), { a.value(), b.value() }).first;
+    m_proc.setKnownRange(result, B3::IntRange(-1, 1));
     return Word32(m_out.castToInt32(result));
 }
 

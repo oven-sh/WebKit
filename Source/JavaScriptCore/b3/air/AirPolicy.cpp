@@ -95,11 +95,14 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_SET(layout, ordersBlocksByEdgeFrequency);
     AIR_POLICY_PRINT_IF_SET(layout, recordsRareCodeStart);
     AIR_POLICY_PRINT_IF_SET(layout, mergesIdenticalBlocks);
+    AIR_POLICY_PRINT_IF_SET(layout, duplicatesReturns);
 
     AIR_POLICY_PRINT_IF_DIFFERENT(peepholes, pairsSpillAccesses);
     AIR_POLICY_PRINT_IF_SET(peepholes, forwardsRegisterCopies);
+    AIR_POLICY_PRINT_IF_SET(peepholes, hoistsCommonMoves);
     AIR_POLICY_PRINT_IF_SET(peepholes, reusesConditionFlags);
     AIR_POLICY_PRINT_IF_SET(peepholes, pairsMemoryAccesses);
+    AIR_POLICY_PRINT_IF_SET(peepholes, resequencesMovesBeforePatches);
     AIR_POLICY_PRINT_IF_SET(peepholes, emitsShufflesInPairOrder);
     AIR_POLICY_PRINT_IF_DIFFERENT(peepholes, trapReach);
 }

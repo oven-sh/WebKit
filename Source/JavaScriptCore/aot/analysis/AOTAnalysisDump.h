@@ -51,7 +51,6 @@ void dumpObjects(PrintStream&, ObjectSet);
 
 void dumpOperandUses(PrintStream&, OperandUses);
 void dumpEscapeReasons(PrintStream&, EscapeReasons);
-void dumpProofs(PrintStream&, ProofSet);
 void dumpGuardFacts(PrintStream&, const Program&, const GuardFacts&);
 
 void dumpLiveness(PrintStream&, const CFG&, const Liveness&, const BitVector* trackedBlocks);

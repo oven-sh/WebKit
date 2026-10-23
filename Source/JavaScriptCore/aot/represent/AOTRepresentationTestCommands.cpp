@@ -19,6 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
+enum class Report : uint8_t { Rules, Errors };
 
 } // anonymous namespace
 
@@ -93,6 +94,26 @@ static void printRules(PrintStream& out, const RepresentationInputs& inputs)
     }
 }
 
+static void printError(PrintStream& out, const InternalError& error)
+{
+    out.print("error "_s, nameOf(error.kind));
+    if (error.block)
+        out.print(" b"_s, error.block.index());
+    if (error.value)
+        out.print(" v"_s, error.value.index());
+    out.println();
+}
+
+static void printErrors(PrintStream& out, const RepresentationInputs& inputs)
+{
+    Vector<InternalError> errors;
+    checkRepresentations(inputs, errors);
+    for (const InternalError& error : errors)
+        printError(out, error);
+    if (errors.isEmpty())
+        out.println("valid"_s);
+}
+
 static void printRowsWithDeclaredOperands(PrintStream& out)
 {
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -106,10 +127,16 @@ static void printRowsWithDeclaredOperands(PrintStream& out)
     }
 }
 
-static void printFunction(PrintStream& out, const RepresentationInputs& inputs)
+static void printFunction(PrintStream& out, const RepresentationInputs& inputs, Report report)
 {
     out.println("function f"_s, inputs.id.index());
-    printRules(out, inputs);
+    switch (report) {
+    case Report::Rules:
+        return printRules(out, inputs);
+    case Report::Errors:
+        return printErrors(out, inputs);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static void forEachFunctionWithBody(const Program& program, NOESCAPE const Invocable<void(FunctionID)> auto& functor)
@@ -121,25 +148,26 @@ static void forEachFunctionWithBody(const Program& program, NOESCAPE const Invoc
     }
 }
 
-static void printPlacedProgram(TestCommandContext& context)
+static void printPlacedProgram(TestCommandContext& context, Report report)
 {
     forEachFunctionWithBody(*context.program, [&](FunctionID id) {
         SelectionTestSession session(context, id);
         const FunctionPassContext& pass = session.pass();
         RELEASE_ASSERT(pass.inputs.placement && pass.inputs.callingConventions);
-        printFunction(context.out, { pass.program, pass.id, pass.function, *pass.inputs.placement, *pass.inputs.callingConventions });
+        printFunction(context.out, { pass.program, pass.id, pass.function, *pass.inputs.placement, *pass.inputs.callingConventions }, report);
     });
 }
 
-static void placeAndPrintProgram(TestCommandContext& context)
+static void placeAndPrintProgram(TestCommandContext& context, Report report)
 {
-    std::unique_ptr<PlacedProgram> placed = runPipelineForPlacementTest(context, PassID::PlaceSiteCaches);
+    PassID last = report == Report::Errors ? PassID::ChooseRepresentations : PassID::CheckPlacement;
+    std::unique_ptr<PlacedProgram> placed = runPipelineForPlacementTest(context, last);
     if (!placed)
         return;
 
     const Program& program = placed->program();
     forEachFunctionWithBody(program, [&](FunctionID id) {
-        printFunction(context.out, { program, id, program.at(id), placed->placement(), *placed->output->callingConventions });
+        printFunction(context.out, { program, id, program.at(id), placed->placement(), *placed->output->callingConventions }, report);
     });
     context.program = WTF::move(placed->output->program);
     context.form = context.program->form();
@@ -153,14 +181,16 @@ void runRepresentationRulesTestCommand(TestCommandContext& context)
     if (isOnlyWord(context.arguments, "declared-rows"_s))
         return printRowsWithDeclaredOperands(out);
 
-    if (!context.arguments.empty())
+    bool shouldCheck = isOnlyWord(context.arguments, "check"_s);
+    if (!shouldCheck && !context.arguments.empty())
         return printBadArgument(out, context.arguments.front());
+    Report report = shouldCheck ? Report::Errors : Report::Rules;
 
     switch (context.form) {
     case IRForm::AsRead:
-        return placeAndPrintProgram(context);
+        return placeAndPrintProgram(context, report);
     case IRForm::Placed:
-        return printPlacedProgram(context);
+        return printPlacedProgram(context, report);
     case IRForm::Prepared:
     case IRForm::Selected:
         return out.println("error: representation-rules reads AsRead or Placed"_s);

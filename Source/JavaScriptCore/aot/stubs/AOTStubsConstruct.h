@@ -14,9 +14,6 @@ namespace JSC { namespace AOT {
 
 enum class ConstructSyntax : uint8_t { NewExpression, SuperCall };
 
-constexpr StubKey constructFrontEnd() { return StubKey(StubFamily::ConstructFrontEnd); }
-constexpr StubKey superConstructFrontEnd() { return StubKey(StubFamily::SuperConstructFrontEnd); }
-
 PreludeExit emitGetConstructPrototypePrelude(StubAssembler&);
 PreludeExit emitGetSuperBasePrelude(StubAssembler&);
 

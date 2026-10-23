@@ -291,8 +291,6 @@ public:
     std::span<const std::unique_ptr<ValueSetMaker>> makersIdleAfterSolve() const LIFETIME_BOUND { return m_makers.span(); }
     // As the graph holds it: beside a placeholder it may or may not list what the placeholder covers.
     ValueSetID valueOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
-    // After the solve: no rule runs for it and nothing flows on.
-    void setSolvedValue(ValueFlowNodeID node, ValueSetID value) { m_graph.setSolvedValue(node, value); }
     bool isReached(FunctionID function) const { return m_isReached.quickGet(function.index()); }
     OptionSet<BuiltinUse> usesOf(BuiltinID) const;
     // After the solve. What was done through the untracked object counts as done to every object that the analysis has stopped following.

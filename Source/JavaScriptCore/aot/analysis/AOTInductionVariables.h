@@ -94,7 +94,6 @@ public:
 
     std::span<const LoopInduction> loops() const LIFETIME_BOUND { return m_loops.span(); }
     const LoopInduction& of(const NaturalLoop&) const LIFETIME_BOUND;
-    const LoopInduction* ofHeader(BlockID) const LIFETIME_BOUND;
     const InductionVariable* find(ValueID headerParameter) const LIFETIME_BOUND;
 
     void dump(PrintStream&) const;

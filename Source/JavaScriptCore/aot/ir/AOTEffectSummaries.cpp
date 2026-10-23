@@ -446,6 +446,10 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
         for (Opcode row : { Opcode::JSONHasStackSpace, Opcode::JSONParseValue })
             description.addOwn(declaredBoundOf(row));
         return true;
+    case FunctionRole::ChainStep:
+        description.addFunction(function.derivation.source);
+        description.addOwn(declaredBoundOf(Opcode::NewArray));
+        return true;
     case FunctionRole::BoundFunction:
         description.addFunction(function.creator.as<CreatorRecord::BoundFunction>().target);
         return true;

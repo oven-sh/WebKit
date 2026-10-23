@@ -60,67 +60,6 @@ Type ValueKinds::type() const
     return type;
 }
 
-bool alwaysFailsConversion(const Type& entering, const Type& tested, TypeArena& types)
-{
-    return entering.isJavaScriptValue() && !ValueKinds::of(entering).isEmpty() && entering.castTo(tested, types).isNever();
-}
-
-ValueKinds kindsOutside(const Program& program, const Type& entering, const Type& tested, ValueKinds followed, TypeArena& types)
-{
-    ValueKinds outside;
-    followed.forEachKind([&](ValueKinds kind) {
-        Type part = entering.castTo(kind.type(), types);
-        if (!part.isNever() && !part.isSubsetOf(tested, program))
-            outside.add(kind);
-    });
-    return outside;
-}
-
-void admitKinds(DeclaredType& declared, ValueKinds kinds, TypeArena& types)
-{
-    declared.type = types.unionOf(declared.type, types.intern(kinds.type()));
-}
-
-static std::optional<Type> tryTypeWithoutOperands(const Value& value)
-{
-    switch (value.opcode) {
-    case Opcode::Boolean:
-        return Type::fromPrimitives(value.boolean() ? Primitive::True : Primitive::False);
-    case Opcode::Integer:
-        if (!Range::full().contains(value.integer()))
-            return Type::fromPrimitives(Primitive::WholeNumber);
-        return Type::integer(Range::one(value.integer()));
-    case Opcode::Double:
-        return Type::number(value.number());
-    case Opcode::String:
-        return Type::stringLiteral(value.string());
-    case Opcode::BigInt:
-        return Type::fromPrimitives(Primitive::BigInt);
-    default:
-        if (resultRuleOf(value.opcode) == ResultRule::Allocation)
-            return Type::object();
-        return std::nullopt;
-    }
-}
-
-bool mayHaveConversionThatAlwaysFails(const Program& program, const Function& function)
-{
-    for (const Value& value : function.values) {
-        if (value.opcode != Opcode::Convert)
-            continue;
-        DeclaredType declared = value.declared();
-        if (declared.flags.contains(PositionFlags::IsExpected))
-            continue;
-        std::optional<Type> entering = tryTypeWithoutOperands(function.at(definitionThroughSameValues(function, value.valueOperand())));
-        if (!entering)
-            continue;
-        const Type& tested = program.at(declared.type);
-        if (!entering->isSubsetOf(tested, program) && !(entering->hasObjects() && tested.hasObjects()))
-            return true;
-    }
-    return false;
-}
-
 static Type typeOfMember(const DataNode& node, TypeArena& types)
 {
     switch (node.kind()) {
@@ -142,28 +81,6 @@ static Type typeOfMember(const DataNode& node, TypeArena& types)
         return node.as<DataNode::Object>().layout ? Type::forLayout(node.as<DataNode::Object>().layout, types) : Type::object();
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-void forEachDataMemberThatAlwaysFailsConversion(const Program& program, TypeArena& types, NOESCAPE const ScopedLambda<void(FieldReference, ValueKinds)>& functor)
-{
-    for (const Data& data : program.data) {
-        forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
-            const auto* object = node.tryAs<DataNode::Object>();
-            if (!object || !object->layout)
-                return;
-            for (const DataMember& member : object->members) {
-                std::optional<FieldReference> field = findField(program, object->layout, member.key, BaseChain::Predicted);
-                if (!field)
-                    continue;
-                const DeclaredType& declared = fieldAt(program, *field).declared;
-                if (declared.flags.contains(PositionFlags::IsExpected))
-                    continue;
-                Type entering = typeOfMember(member.value, types);
-                if (alwaysFailsConversion(entering, program.at(declared.type), types))
-                    functor(*field, ValueKinds::of(entering));
-            }
-        });
-    }
 }
 
 static bool includesLayout(const Program& program, const Type& type, LayoutID layout)

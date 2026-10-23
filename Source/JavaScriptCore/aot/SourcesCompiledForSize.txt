@@ -1,4 +1,5 @@
 aot/analysis/AOTAnalysisDump.cpp
+aot/analysis/AOTAnalysisVerification.cpp
 aot/analysis/AOTCheckCause.cpp
 aot/analysis/AOTUnspecifiedValuePaths.cpp
 aot/analysis/AOTWholeLiterals.cpp
@@ -76,19 +77,24 @@ aot/ir/AOTVerifierOperations.cpp
 aot/ir/AOTVerifierTypes.cpp
 aot/ir/AOTVerifierUnspecifiedValues.cpp
 aot/passes/AOTAllocateTaggedLayouts.cpp
+aot/passes/AOTArrayChainInterleaving.cpp
+aot/passes/AOTArrayChainStep.cpp
 aot/passes/AOTCalleeVersions.cpp
 aot/passes/AOTCheckTypesAtEntry.cpp
 aot/passes/AOTChooseCallingConventionsStubBodies.cpp
 aot/passes/AOTCoroutineSplit.cpp
 aot/passes/AOTCreateBoundFunctions.cpp
 aot/passes/AOTCreatedObjectLayouts.cpp
+aot/passes/AOTEliminateTailRecursion.cpp
 aot/passes/AOTExpandIterationCollections.cpp
 aot/passes/AOTExpandIterationForIn.cpp
 aot/passes/AOTExpandIterationGenerators.cpp
 aot/passes/AOTExpandIterationIndexed.cpp
 aot/passes/AOTExpandIterationProtocol.cpp
 aot/passes/AOTExpandIterationSupport.cpp
+aot/passes/AOTExpandOwnKeysStringify.cpp
 aot/passes/AOTFrameAllocationMaterialization.cpp
+aot/passes/AOTFrameAllocationVerifier.cpp
 aot/passes/AOTFuseGeneratorLoops.cpp
 aot/passes/AOTFuseGeneratorLoopsMerge.cpp
 aot/passes/AOTInlineHeads.cpp
@@ -106,6 +112,7 @@ aot/passes/AOTJSONSupport.cpp
 aot/passes/AOTJSONVerification.cpp
 aot/passes/AOTJSONVerificationCapacity.cpp
 aot/passes/AOTPlaceTypeTestsDump.cpp
+aot/passes/AOTReduceIntegerDivisions.cpp
 aot/passes/AOTRemoveUnreadExports.cpp
 aot/passes/AOTResolveAccessesVariables.cpp
 aot/passes/AOTResolveCallsLists.cpp
@@ -116,6 +123,7 @@ aot/passes/AOTSelectTypedResultsTargets.cpp
 aot/passes/AOTSelectTypedResultsTypeNodes.cpp
 aot/passes/AOTSinkAllocationsArguments.cpp
 aot/passes/AOTSinkAllocationsBuiltinResults.cpp
+aot/passes/AOTStartGeneratorsAtFirstStep.cpp
 aot/passes/AOTValidationPlanText.cpp
 aot/passes/AOTValidationRules.cpp
 aot/passes/AOTValidatorBuilder.cpp
@@ -129,6 +137,7 @@ aot/place/AOTEnvironmentPacking.cpp
 aot/place/AOTGlobalBindingPlacement.cpp
 aot/place/AOTGuardBits.cpp
 aot/place/AOTMethodTableEncoding.cpp
+aot/place/AOTProgramTableCheck.cpp
 aot/place/AOTPropertyRuns.cpp
 aot/place/AOTRequestRecords.cpp
 aot/place/AOTRequestTableEncoding.cpp

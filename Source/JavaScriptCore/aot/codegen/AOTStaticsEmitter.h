@@ -23,7 +23,6 @@ public:
     void storeVariable(VariableID, Operand, const Type& storedType);
     TypedPointer guardByteOf(GuardBitID);
     uint8_t guardMaskOf(GuardBitID) const;
-    TypedPointer runtimeCounter(RuntimeCounterID);
     TypedPointer branchCounter(uint32_t number);
 };
 

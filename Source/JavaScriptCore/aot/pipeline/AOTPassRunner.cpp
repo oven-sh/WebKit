@@ -171,7 +171,7 @@ void PassRunner::prepare(ScheduleRun& run) const
 
 static constexpr PassSet optionalPassesOfGenericVersions {
     PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
-    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
+    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::MergeDuplicateBlocks, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
 };
 
 static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
@@ -690,8 +690,10 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
             errors.append(InternalError { .kind = InternalErrorKind::BrokenResultRule, .function = context.id, .value = broken->value, .detail = makeString("operand "_s, broken->operandIndex, "; laws-of-result-rules of testaot prints the types"_s) });
         }
     }
-    if (errors.isEmpty())
+    if (errors.isEmpty()) {
+        context.analyses.verifyCached();
         return;
+    }
 
     // A listing of many errors is cut short, so the line that names the pass also says what the verifier found.
     InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = descriptor.id, .detail = describeError(errors.first(), context.function) };

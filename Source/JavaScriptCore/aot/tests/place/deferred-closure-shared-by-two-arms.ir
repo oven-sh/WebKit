@@ -1,7 +1,7 @@
 # One created closure may be the value of both arms of a store into a slot that defers it: the arm by slot writes nothing, the arm by name brings the cell
 # TODO: closures-in-fields: a closure that both arms of a store hold, by slot and by name, is no longer made on demand
 # FORM: AsRead
-# OPTIONS: references=narrow disable=pass:InlineCalls
+# OPTIONS: references=narrow disable=pass:SinkConstants disable=pass:InlineCalls
 # RUN: place program
 # STATISTIC: DeferredClosureSlots = 1
 

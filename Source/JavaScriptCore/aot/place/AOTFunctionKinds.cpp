@@ -85,6 +85,7 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
     case FunctionRole::Source:
     case FunctionRole::Library:
     case FunctionRole::BoundFunction:
+    case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
         break;
@@ -104,11 +105,13 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
     case FunctionRole::CalleeVersion:
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
+    case FunctionRole::ResultWorker:
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
+    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return ClosureForm::Full;
     }
@@ -310,6 +313,8 @@ static bool hasClosureWord(FunctionRole role)
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
+    case FunctionRole::ResultWrapper:
+    case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
@@ -317,6 +322,7 @@ static bool hasClosureWord(FunctionRole role)
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
+    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return false;
     }
@@ -403,6 +409,7 @@ static TraceVisibility visibilityOf(const Function& function)
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
+    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return TraceVisibility::Hidden;
     case FunctionRole::Source:
@@ -421,6 +428,8 @@ static TraceVisibility visibilityOf(const Function& function)
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
+    case FunctionRole::ResultWrapper:
+    case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;

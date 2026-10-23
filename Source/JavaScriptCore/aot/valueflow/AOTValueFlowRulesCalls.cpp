@@ -626,15 +626,6 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
     return { ValueSets::complement(context.maker().unite(universe.knownObjects(), neverReceivers)), receivers.rest };
 }
 
-// Beside a placeholder a set does not list what the placeholder covers: a function that has escaped beside the unknown object, one that the analysis has stopped following beside the untracked object.
-static bool standsForAnswerOf(ValueFlowRuleContext& context, ValueFlowObjectID placeholder, ClimbingSet answered)
-{
-    if (context.contains(answered, placeholder))
-        return true;
-    ValueFlowNodeID covered = placeholder == ValueFlowUniverse::unknownObject() ? ValueFlowProgramNodes::escaped() : ValueFlowProgramNodes::lost();
-    return context.holdsAnyOf(context.restrict(answered, context.universe().callables()), covered);
-}
-
 // The operands go into the group of the placeholder as into any group. The rule of that group says what the placeholder stands for.
 static void callPlaceholder(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ValueFlowObjectID placeholder, ValueFlowCallKind kind)
 {

@@ -157,13 +157,6 @@ static void dumpProofNames(PrintStream& out, ProofSet proofs)
     }
 }
 
-void dumpProofs(PrintStream& out, ProofSet proofs)
-{
-    out.print("[");
-    dumpProofNames(out, proofs);
-    out.print("]");
-}
-
 static void dumpGuardOrigin(PrintStream& out, const GuardOrigin& origin)
 {
     switch (origin.source) {

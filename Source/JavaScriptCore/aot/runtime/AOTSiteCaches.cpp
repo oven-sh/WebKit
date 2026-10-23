@@ -57,11 +57,6 @@ SiteCaches::SiteCaches(State& state)
     state.caches->add(CacheKind::StrongRoots, "Structures that sites name"_s, *this);
 }
 
-bool SiteCaches::recordMiss(SiteCache site)
-{
-    return !stateOf(site).missesLeft--;
-}
-
 // A site that runs once would write a cache that nothing reads, on a page that holds 256 of them. A page of these bits stands for 32,768 sites.
 bool SiteCaches::didMissBefore(SiteCache site)
 {

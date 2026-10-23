@@ -1,6 +1,6 @@
 # The operations behind a read of a code unit at an unproven integer work on integers: the joined value is tested for them, the edge from inside the string skips the test, and NaN takes a copy of its own
 # FORM: Prepared optimizing
-# RUN: pass SimplifyBuiltinCalls RetypeValues PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+# RUN: pass SimplifyBuiltinCalls RetypeValues PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="comparesUnit" parameters=[{type=string}, {type=int[0, 1000]}] results=[{type=number}] {

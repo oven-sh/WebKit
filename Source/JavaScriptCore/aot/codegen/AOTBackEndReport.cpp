@@ -56,9 +56,65 @@ static InternalErrorKind internalErrorKindOf(B3::FailureKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static std::optional<Wire::DeclineKind> declineKindOf(B3::RemarkKind kind)
+{
+    switch (kind) {
+    case B3::RemarkKind::LoopNotVersioned:
+        return Wire::DeclineKind::LoopNotVersioned;
+    case B3::RemarkKind::LoopBoundNotClamped:
+        return Wire::DeclineKind::LoopBoundNotClamped;
+    case B3::RemarkKind::LoopVersioned:
+    case B3::RemarkKind::LoopRotated:
+    case B3::RemarkKind::RangeChecksRemoved:
+        return std::nullopt;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static Wire::LoopDeclineReason declineReasonOf(B3::GaveUpReason reason)
+{
+    switch (reason) {
+    case B3::GaveUpReason::None:
+        return Wire::LoopDeclineReason::None;
+    case B3::GaveUpReason::NotInnermost:
+        return Wire::LoopDeclineReason::NotInnermost;
+    case B3::GaveUpReason::SeveralEntries:
+        return Wire::LoopDeclineReason::SeveralEntries;
+    case B3::GaveUpReason::NoSingleLikelyPath:
+        return Wire::LoopDeclineReason::NoSingleLikelyPath;
+    case B3::GaveUpReason::UncloneableValue:
+        return Wire::LoopDeclineReason::UncloneableValue;
+    case B3::GaveUpReason::NothingToHoist:
+        return Wire::LoopDeclineReason::NothingToHoist;
+    case B3::GaveUpReason::NotCounted:
+        return Wire::LoopDeclineReason::NotCounted;
+    case B3::GaveUpReason::CounterMayWrap:
+        return Wire::LoopDeclineReason::CounterMayWrap;
+    case B3::GaveUpReason::BoundNotInvariant:
+        return Wire::LoopDeclineReason::BoundNotInvariant;
+    case B3::GaveUpReason::TestNotOnLikelyPath:
+        return Wire::LoopDeclineReason::TestNotOnLikelyPath;
+    case B3::GaveUpReason::EffectsBeforeTopTest:
+        return Wire::LoopDeclineReason::EffectsBeforeTopTest;
+    case B3::GaveUpReason::LimitReached:
+        return Wire::LoopDeclineReason::LimitReached;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static StatisticID statisticOf(B3::Counter counter)
 {
     switch (counter) {
+    case B3::Counter::LoopsVersioned:
+        return StatisticID::LoopsVersioned;
+    case B3::Counter::LoopsRotated:
+        return StatisticID::LoopsRotated;
+    case B3::Counter::RangeChecksRemoved:
+        return StatisticID::RangeChecksRemoved;
+    case B3::Counter::LoopBoundsClamped:
+        return StatisticID::LoopBoundsClamped;
+    case B3::Counter::KnownInductionsUsed:
+        return StatisticID::KnownInductionsUsed;
     case B3::Counter::TrapsFoldedIntoAccesses:
         return StatisticID::NullChecksFoldedIntoAccesses;
     }
@@ -73,6 +129,16 @@ static void collectFindings(const B3::CompilationReport& report, std::span<const
         findings.append(BackEndFinding { InternalErrorKind::FrameAddressAcrossSuspension, violation.address });
 }
 
+static void collectDeclines(const B3::CompilationReport& report, Vector<BackEndDecline>& declines)
+{
+    for (const B3::Remark& remark : report.remarks) {
+        std::optional<Wire::DeclineKind> kind = declineKindOf(remark.kind);
+        if (!kind || remark.reason == B3::GaveUpReason::NotInnermost)
+            continue;
+        declines.append(BackEndDecline { *kind, remark.limit ? limitIDOf(*remark.limit) : LimitID::None, declineReasonOf(remark.reason), remark.origin });
+    }
+}
+
 static void collectLimitHits(const B3::CompilationReport& report, Vector<BackEndLimitHit, 2>& limitHits)
 {
     for (unsigned i = 0; i < B3::numberOfLimits; ++i) {
@@ -82,10 +148,12 @@ static void collectLimitHits(const B3::CompilationReport& report, Vector<BackEnd
     }
 }
 
-BackEndReport collectBackEndReport(const B3::CompilationReport& report, std::span<const FrameAddressViolation> violations)
+BackEndReport collectBackEndReport(const B3::CompilationReport& report, std::span<const FrameAddressViolation> violations, bool collectsDeclines)
 {
     BackEndReport result;
     collectFindings(report, violations, result.findings);
+    if (collectsDeclines)
+        collectDeclines(report, result.declines);
     collectLimitHits(report, result.limitHits);
     return result;
 }
@@ -130,6 +198,14 @@ bool reportBackEnd(BuildContext& build, Typed::FunctionID id, const Typed::Funct
         Subject subject = subjectOf(id, function, finding.origin);
         Typed::ValueID safepoint = Typed::valueOfOrigin(finding.safepoint);
         build.diagnostics().add(InternalError { .kind = finding.kind, .function = subject.function, .value = subject.value, .count = safepoint ? safepoint.index() : 0, .location = subject.location, .detail = finding.detail });
+    }
+    for (const BackEndDecline& decline : report.declines) {
+        build.addDecline({
+            .kind = decline.kind,
+            .limit = decline.limit,
+            .reason = encodeDeclineReason(decline.kind, decline.reason),
+            .witness = witnessOf(subjectOf(id, function, decline.origin)),
+        });
     }
     for (const BackEndLimitHit& hit : report.limitHits) {
         Subject subject = subjectOf(id, function, hit.firstOrigin);

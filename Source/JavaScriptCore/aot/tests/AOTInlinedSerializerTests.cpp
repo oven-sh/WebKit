@@ -133,6 +133,7 @@ static void testOtherSchedules()
     checkBothPrograms({ "heat=EverythingIsHot"_s, "disable=pass:InlineCalls"_s });
     checkBothPrograms({ "heat=EverythingIsHot"_s, "disable=pass:SinkAllocations"_s });
     checkBothPrograms({ "heat=EverythingIsHot"_s, "disable=pass:ThreadJumps"_s });
+    checkBothPrograms({ "heat=EverythingIsHot"_s, "disable=pass:MergeDuplicateBlocks"_s });
 }
 
 std::span<const NativeTest> inlinedSerializerTests()

@@ -208,11 +208,17 @@ bool ProgramVerifier::isValidCreatorRecord(FunctionID id, const Function& functi
         [&](const CreatorRecord::Version& record) { return record.provenVersion && record.provenVersion != id; },
         [&](const CreatorRecord::Coroutine& record) { return isValidCoroutineRecord(m_program, id, record); },
         [](const CreatorRecord::BoundFunction& record) { return record.target && record.numberOfCapturedArguments <= record.numberOfBoundArguments; },
+        [&](const CreatorRecord::ResultWrapper& record) {
+            auto* worker = findCreatorRecord<CreatorRecord::ResultWorker>(m_program, record.worker, FunctionRole::ResultWorker);
+            return worker && worker->origin == id;
+        },
+        [&](const CreatorRecord::ResultWorker& record) { return record.origin && m_program.at(record.origin).numberOfEntryParameters() == function.numberOfEntryParameters(); },
         [&](const CreatorRecord::ParameterWrapper& record) { return record.body && record.parameter < function.parameters.size(); },
         [&](const CreatorRecord::EntryChecks& record) { return record.body && record.fallback; },
         [&](const CreatorRecord::Serializer& record) { return isNullOrObjectLayout(m_program, record.layout); },
         [&](const CreatorRecord::Parser& record) { return record.type && isNullOrObjectLayout(m_program, record.layout); },
         [&](const CreatorRecord::Validator& record) { return record.type && isNullOrObjectLayout(m_program, record.layout); },
+        [](const CreatorRecord::ChainStep&) { return true; },
         [&](const CreatorRecord::StubBody& record) {
             const BuiltinTable& builtins = m_program.builtins();
             return builtins.contains(record.builtin) && isCallableBuiltin(builtins, record.builtin);

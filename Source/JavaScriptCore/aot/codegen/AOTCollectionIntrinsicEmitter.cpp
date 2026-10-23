@@ -305,6 +305,30 @@ void CollectionIntrinsicEmitter::generateSetNext(const ValueContext& value)
     generateNext(Collection::Set, value);
 }
 
+// Storage of another kind answers anything: the operation that follows looks again.
+void CollectionIntrinsicEmitter::generateIsCollectionTableFull(const ValueContext& value)
+{
+    static_assert(std::max(CompactTable::offsetOfUsed(), CompactTable::offsetOfCapacity()) + sizeof(uint32_t) <= JSCellButterfly::offsetOfData() + JSMap::Helper::hashTableStartIndex() * sizeof(EncodedJSValue));
+    TableReader reader(generator());
+    LBasicBlock hasTable = newBlock();
+    LBasicBlock continuation = newBlock();
+    LValue storage = reader.storageOf(in<CellPointer>(value->collectionOperand()));
+    ValueFromBlock withoutTable = m_out.anchor(m_out.constInt32(0));
+    m_out.branch(m_out.isNull(storage), unlikelyEdge(continuation), normalEdge(hasTable));
+
+    m_out.appendTo(hasTable);
+    ValueFromBlock withTable = m_out.anchor(m_out.equal(m_out.load32(reader.tableField(storage, CompactTable::offsetOfUsed())), m_out.load32(reader.tableField(storage, CompactTable::offsetOfCapacity()))));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    defineTest(value, Condition(m_out.phi(B3::Int32, withoutTable, withTable)));
+}
+
+void CollectionIntrinsicEmitter::generateReserveCollectionCapacity(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::ReserveCollectionCapacity, { in<CellPointer>(value->collectionOperand()), integerOf(value->remainingOperand()), integerOf(value->finishedOperand()), integerOf(value->sizeAtEntryOperand()) });
+}
+
 void CollectionIntrinsicEmitter::generateCollectionTable(const ValueContext& value)
 {
     LValue storage = TableReader(generator()).storageOf(in<CellPointer>(value->collectionOperand()));

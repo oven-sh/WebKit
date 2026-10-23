@@ -3,7 +3,7 @@
 # REQUIRES: x86_64 unsanitized-code
 # OPTIONS: limit=MaxWarmCodeValues:1 disable=pass:InlineCalls
 # RUN: generate-code FunctionsGeneratedDirectly DirectGenerationsAbandoned
-# CHECK: statistic FunctionsGeneratedDirectly 5
+# CHECK: statistic FunctionsGeneratedDirectly 4
 # CHECK: statistic DirectGenerationsAbandoned 0
 
 module m0 path="main.js" displayPath="main.js" body=f0

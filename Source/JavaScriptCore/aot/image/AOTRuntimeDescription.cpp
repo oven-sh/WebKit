@@ -20,11 +20,6 @@ static constexpr ASCIILiteral namesOfFacts[] = {
 };
 static_assert(std::size(namesOfFacts) == numberOfRuntimeFacts);
 
-std::span<const uint8_t> runtimeDescription()
-{
-    return { reinterpret_cast<const uint8_t*>(&describedRuntime), sizeOfDescribedRuntime };
-}
-
 static std::optional<RuntimeDifference> findDifferenceFromThisTable(const BuiltinTableDescription& there)
 {
     struct Fact {

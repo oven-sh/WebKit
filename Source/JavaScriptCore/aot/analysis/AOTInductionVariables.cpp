@@ -683,15 +683,6 @@ const LoopInduction& InductionVariables::of(const NaturalLoop& loop) const
     return m_loops[loop.index()];
 }
 
-const LoopInduction* InductionVariables::ofHeader(BlockID block) const
-{
-    for (const LoopInduction& loop : m_loops) {
-        if (loop.header == block)
-            return &loop;
-    }
-    return nullptr;
-}
-
 const InductionVariable* InductionVariables::find(ValueID headerParameter) const
 {
     for (const LoopInduction& loop : m_loops) {

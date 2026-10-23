@@ -53,7 +53,7 @@ static_assert(numberOfEnumerators<Typed::IRForm> <= 8);
 
 static_assert(CompileAction { } == CompileAction::Compile);
 static_assert(ReferenceWidth { } == ReferenceWidth::Wide);
-static_assert(MismatchPolicy { } == MismatchPolicy::Throw);
+static_assert(MismatchPolicy { } == MismatchPolicy::Silent);
 static_assert(HeatOverride { } == HeatOverride::None);
 static_assert(LimitID { } == LimitID::None);
 

@@ -458,6 +458,7 @@ static void checkUnderEveryOption(ASCIILiteral statementsBeforeProgram, ASCIILit
         "disable=pass:PlaceTypeTests"_s,
         "disable=pass:RemoveUnreadFields"_s,
         "disable=pass:SinkAllocations"_s,
+        "disable=pass:EliminateGuards"_s,
     };
     checkOutputOfProgramInShell(programText, expectedOutput, { }, statementsBeforeProgram);
     for (ASCIILiteral word : words)

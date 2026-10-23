@@ -1,7 +1,7 @@
 # The test whether a key is an object folds for a key that has no object part, and the cleanup passes remove the conversion of the key around it
 # FORM: Prepared
 # RUN: pass FoldConstants
-# RUN(SIMPLIFIED): pass FoldConstants SimplifyControlFlow RemoveTrivialParameters HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode InferSwitches EliminateRedundantReads CompactBlocks
+# RUN(SIMPLIFIED): pass FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode InferSwitches EliminateRedundantReads MergeDuplicateBlocks CompactBlocks
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"

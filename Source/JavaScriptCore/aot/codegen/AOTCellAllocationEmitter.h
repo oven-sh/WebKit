@@ -59,8 +59,6 @@ public:
     // The cell, the indexing header and the elements lie in the frame one after the other. On the heap where the realm has no pristine arrays, or the buffer holds more than the frame has room for.
     CellPointer newArrayInFrameOf(const OperationContext&, std::span<const Boxed> elements);
     CellPointer newArrayInFrameFromBuffer(const OperationContext&, Word32 count, Pointer buffer, unsigned capacity);
-    CellPointer allocateRope(LBasicBlock slowPath);
-    void storeRopeFibers(CellPointer rope, Integer fiber0, Integer length, Integer fiber1, Integer fiber2);
 
 private:
     CellPointer allocateWithoutPlace(const OperationContext&, AllocationID, ZeroedBy);

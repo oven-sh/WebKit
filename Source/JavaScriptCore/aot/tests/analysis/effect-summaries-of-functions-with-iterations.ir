@@ -1,9 +1,9 @@
 # The steps of an iteration that is not expanded are unknown code, to the function and through its summary to every caller. A for..of over a proven pristine array is expanded before the summaries are computed that the optimizations read: with the read of the length resolved it has the summary of the counted loop, and a caller keeps what it read in front of the call. An iteration that needs a test stays unknown code
 # TODO: nobody: a caller reads a field again behind a call of a function whose for..of over a proven pristine array was expanded: the summary of that function still says that unknown code runs
 # FORM: Prepared optimizing
-# RUN: pass ResolveBuiltins ResolveAccesses EliminateRedundantReads
+# RUN: pass ExpandProvenIterations ResolveBuiltins ResolveAccesses EliminateRedundantReads
 # RUN(UNEXPANDED): pass ResolveBuiltins ResolveAccesses EliminateRedundantReads
-# RUN(SUMMARIES): pass ResolveBuiltins ComputeEffectSummaries
+# RUN(SUMMARIES): pass ExpandProvenIterations ResolveBuiltins ComputeEffectSummaries
 # RUN(BEFORE): pass ResolveBuiltins ComputeEffectSummaries
 
 module m0 path="main.js" displayPath="main.js"

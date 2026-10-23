@@ -22,7 +22,6 @@ public:
     void generateCallNumberConstructor(const InlineCall&);
     Number stringToNumber(const InlineCall&, CellPointer string);
     void generateNumberToString(const InlineCall&);
-    void generateNumberToStringAppend(const InlineCall&);
     void generateParseInt(const InlineCall&);
     void generateMathAbs(const InlineCall&);
     void generateMathFloor(const InlineCall&);

@@ -151,12 +151,6 @@ void MathBuiltinEmitter::generateNumberToString(const InlineCall& call)
     finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::NumberToStringWithRadix, { numberOperand(receiver), radix }));
 }
 
-void MathBuiltinEmitter::generateNumberToStringAppend(const InlineCall& call)
-{
-    fail(call.context(), InternalErrorKind::OpcodeWithoutCode);
-    finishWithUndefined(call);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

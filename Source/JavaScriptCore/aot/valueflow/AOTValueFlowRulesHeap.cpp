@@ -1255,13 +1255,6 @@ void runHeapOperation(const ValueFlowStatement& statement, ValueFlowRuleContext&
     rule.runOperation();
 }
 
-void forEachAccessorRunBy(const ValueFlowStatement& statement, ValueFlowRuleContext& context, const ValueFlowAccessorFunctor& functor)
-{
-    HeapRule rule(statement, context);
-    rule.reportAccessorsTo(functor);
-    rule.runOperation();
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

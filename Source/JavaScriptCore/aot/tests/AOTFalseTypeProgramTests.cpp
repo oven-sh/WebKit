@@ -253,6 +253,7 @@ static void checkUnderEveryOption(ASCIILiteral programText, ASCIILiteral expecte
         "disable=pass:ResolveCalls"_s,
         "disable=pass:InlineCalls"_s,
         "disable=pass:EliminateDeadCode"_s,
+        "disable=pass:RemoveUnusedParameters"_s,
     };
     checkOutputOfProgramInShell(programText, expectedOutput, { });
     for (ASCIILiteral word : words)

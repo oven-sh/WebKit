@@ -3,7 +3,7 @@
 # OPTIONS: limit=MaxDestructuredElements:2
 # RUN: pass ExpandIteration
 # RUN(ABSENT): pass ExpandIteration
-# RUN(SIMPLIFIED): pass ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues VerifyProgram
+# RUN(SIMPLIFIED): pass ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues VerifyProgram
 # RUN(LEFT): pass ExpandIteration
 # SIMPLIFIED: outcome: Changed
 # LOSS: MaxDestructuredElements x1 f13 v1

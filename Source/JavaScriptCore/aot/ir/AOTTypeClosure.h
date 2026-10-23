@@ -28,12 +28,6 @@ public:
 
     Type type() const;
 
-    void forEachKind(const auto& functor) const
-    {
-        for (uint8_t bits = m_bits; bits; bits &= bits - 1)
-            functor(ValueKinds(bits & -bits));
-    }
-
     friend constexpr bool operator==(ValueKinds, ValueKinds) = default;
 
 private:
@@ -46,16 +40,6 @@ private:
 
     uint8_t m_bits { 0 };
 };
-
-bool alwaysFailsConversion(const Type& entering, const Type& tested, TypeArena&);
-
-ValueKinds kindsOutside(const Program&, const Type& entering, const Type& tested, ValueKinds followed, TypeArena&);
-
-void admitKinds(DeclaredType&, ValueKinds, TypeArena&);
-
-bool mayHaveConversionThatAlwaysFails(const Program&, const Function&);
-
-void forEachDataMemberThatAlwaysFailsConversion(const Program&, TypeArena&, NOESCAPE const ScopedLambda<void(FieldReference, ValueKinds)>&);
 
 bool includesData(const Program&, const Type&, const DataNode&);
 // The run time stores the members of constant data without a test.

@@ -133,6 +133,8 @@ static B3::OptimizationPolicy optimizationPolicyFor(const FunctionBackEndTraits&
     optimization.narrowsIntegers = true;
     optimization.chainsAssociativeOperations = true;
     optimization.stopsSwitchInferenceAtRareEdges = true;
+    optimization.convertsBranchesToSelects = true;
+    optimization.mergesAdjacentConstantStores = true;
     optimization.sinksValues = true;
     optimization.placesConstantsByFrequency = true;
     optimization.mergesBlocksAfterForwardingJumps = true;
@@ -143,6 +145,9 @@ static B3::LoopPolicy loopPolicy()
 {
     B3::LoopPolicy loops;
     loops.rotates = true;
+    loops.foldsComparisonsWithBounds = true;
+    loops.versions = true;
+    loops.clampsLoopBounds = true;
     loops.hoistsOnlyFromLikelyPaths = true;
     loops.hoistsImmutableLoadsPastWrites = true;
     return loops;
@@ -157,6 +162,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
         validation.level = B3::ValidationLevel::AtBoundaries;
     else
         validation.level = B3::ValidationLevel::FromOptions;
+    validation.checksKnownPropertiesAtRunTime = build.validates();
     return validation;
 }
 
@@ -227,6 +233,7 @@ static B3::Air::LayoutPolicy layoutPolicyFor(const FunctionBackEndTraits& traits
     layout.ordersBlocksByEdgeFrequency = true;
     layout.recordsRareCodeStart = true;
     layout.mergesIdenticalBlocks = true;
+    layout.duplicatesReturns = true;
     return layout;
 }
 
@@ -235,8 +242,10 @@ static B3::Air::PeepholePolicy peepholePolicy()
     B3::Air::PeepholePolicy peepholes;
     peepholes.pairsSpillAccesses = true;
     peepholes.forwardsRegisterCopies = true;
+    peepholes.hoistsCommonMoves = true;
     peepholes.reusesConditionFlags = true;
     peepholes.pairsMemoryAccesses = true;
+    peepholes.resequencesMovesBeforePatches = true;
     peepholes.emitsShufflesInPairOrder = true;
     peepholes.trapReach = trapReach;
     return peepholes;
@@ -257,9 +266,13 @@ B3::Policy b3PolicyFor(const BuildContext& build, const FunctionBackEndTraits& t
     policy.loops = loopPolicy();
     policy.switchLowering.usesBitTests = true;
     policy.switchLowering.minCasesForJumpTable = minCasesForJumpTableInConstantData;
+    policy.knownProperties.trustsKnownRanges = true;
+    policy.knownProperties.trustsKnownDereferenceableBytes = true;
+    policy.knownProperties.trustsKnownInductions = true;
     policy.validation = validationPolicyFor(build);
     policy.limits = b3LimitValuesFrom(build);
     policy.targetFeatures = build.targetFeatures();
+    policy.collectsRemarks = build.options().collectsDeclines();
 
     policy.air.registers = registerPolicyFor(traits);
     policy.air.splitting = liveRangeSplitPolicy();

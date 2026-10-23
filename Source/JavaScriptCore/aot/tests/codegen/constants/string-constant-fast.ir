@@ -39,6 +39,6 @@ function f2 name="onUnlikelyPath" parameters=[{type=boolean}] results=[{type=any
 # CHECK-NEXT: stub CreateConstant.String x1
 # CHECK: f2: size={{*}}
 # CHECK-NEXT: stub CreateConstant.String x1
-# X64: f0: size=31 frame
+# X64: f0: size=27 frame
 # X64-NEXT: f1: size=21 frame
 # X64-NEXT: f2: size=37 frame

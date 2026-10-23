@@ -1066,29 +1066,6 @@ ValueID exclusiveSubjectOf(FunctionAnalyses& analyses, const GuardFact& fact)
     return readsOnlySubject ? fact.subject : ValueID();
 }
 
-static ValueID subjectNamedBy(const Function& function, const GuardOrigin& origin)
-{
-    switch (origin.source) {
-    case GuardSource::Test: {
-        const Value& test = function.at(origin.test);
-        return test.numberOfOperands() ? test.operand(subjectOperandIndex) : ValueID();
-    }
-    case GuardSource::SwitchCase:
-        return function.at(origin.switchBlock).terminator.subjectOperand();
-    case GuardSource::Allocation:
-        return origin.test;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool hasRenamedSubject(FunctionAnalyses& analyses, const GuardFact& fact)
-{
-    return std::ranges::any_of(fact.origins, [&](const GuardOrigin& origin) {
-        ValueID named = subjectNamedBy(analyses.function(), origin);
-        return fact.subject != (named ? analyses.identityOf(named) : ValueID());
-    });
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

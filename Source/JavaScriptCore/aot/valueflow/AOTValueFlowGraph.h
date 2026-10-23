@@ -51,8 +51,6 @@ public:
     size_t numberOfEdges() const { return m_numberOfEdges; }
     std::span<const ValueSetID> values() const LIFETIME_BOUND { return m_value.first(m_numberOfNodes); }
     ValueSetID valueOf(ValueFlowNodeID node) const { return m_value[node.index()]; }
-    // Once nothing moves any more. Nothing follows from it.
-    void setSolvedValue(ValueFlowNodeID node, ValueSetID value) { m_value[node.index()] = value; }
     ValueSetID maskOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].admitted; }
     ValueFlowMaskKind maskKindOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].kind; }
     // None where a placeholder passes the mask of the node as a member like any other.

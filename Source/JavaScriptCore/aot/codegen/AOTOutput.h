@@ -157,10 +157,7 @@ public:
     LValue loadPtr(TypedPointer pointer) { return load(pointer, B3::pointerType()); }
     LValue loadFloat(TypedPointer pointer) { return load(pointer, B3::Float); }
     LValue loadDouble(TypedPointer pointer) { return load(pointer, B3::Double); }
-    LValue loadTrapping(TypedPointer pointer, LType type) { return loadAs(B3::trapping(B3::Load), type, pointer); }
     LValue load8ZeroExt32Trapping(TypedPointer pointer) { return loadAs(B3::trapping(B3::Load8Z), B3::Int32, pointer); }
-    LValue load32Trapping(TypedPointer pointer) { return loadTrapping(pointer, B3::Int32); }
-    LValue load64Trapping(TypedPointer pointer) { return loadTrapping(pointer, B3::Int64); }
     LValue load8SignExt32(LValue base, const B3::AbstractHeap& field) { return load8SignExt32(address(base, field)); }
     LValue load8ZeroExt32(LValue base, const B3::AbstractHeap& field) { return load8ZeroExt32(address(base, field)); }
     LValue load16SignExt32(LValue base, const B3::AbstractHeap& field) { return load16SignExt32(address(base, field)); }
@@ -171,8 +168,6 @@ public:
     LValue loadPtr(LValue base, const B3::AbstractHeap& field) { return loadPtr(address(base, field)); }
     LValue loadDouble(LValue base, const B3::AbstractHeap& field) { return loadDouble(address(base, field)); }
     LValue load8ZeroExt32Trapping(LValue base, const B3::AbstractHeap& field) { return load8ZeroExt32Trapping(address(base, field)); }
-    LValue load32Trapping(LValue base, const B3::AbstractHeap& field) { return load32Trapping(address(base, field)); }
-    LValue load64Trapping(LValue base, const B3::AbstractHeap& field) { return load64Trapping(address(base, field)); }
     LValue store(LValue value, TypedPointer pointer) { return storeAs(B3::Store, value, pointer); }
     LValue store32As8(LValue value, TypedPointer pointer) { return storeAs(B3::Store8, value, pointer); }
     LValue store32As16(LValue value, TypedPointer pointer) { return storeAs(B3::Store16, value, pointer); }
@@ -181,7 +176,6 @@ public:
     LValue storePtr(LValue value, TypedPointer pointer) { return store(value, pointer); }
     LValue storeFloat(LValue value, TypedPointer pointer) { return store(value, pointer); }
     LValue storeDouble(LValue value, TypedPointer pointer) { return store(value, pointer); }
-    LValue storeTrapping(LValue value, TypedPointer pointer) { return storeAs(B3::trapping(B3::Store), value, pointer); }
     void store32As8(LValue value, LValue base, const B3::AbstractHeap& field) { store32As8(value, address(base, field)); }
     void store32As16(LValue value, LValue base, const B3::AbstractHeap& field) { store32As16(value, address(base, field)); }
     void store32(LValue value, LValue base, const B3::AbstractHeap& field) { store32(value, address(base, field)); }

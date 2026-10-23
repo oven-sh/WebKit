@@ -3,7 +3,7 @@
 # RUN: pass PlaceTypeTests
 # RUN(PLAN): test-placement
 # RUN(NONE): pass PlaceTypeTests
-# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
 # STATISTIC: ElementPresenceTestsPlaced = 9
 
 module m0 path="main.js" displayPath="main.js"

@@ -189,13 +189,6 @@ FunctionID ValueFlowRuleContext::functionOfStatement() const
     return m_solver.statementAt(m_statement).function;
 }
 
-ValueID ValueFlowRuleContext::siteOfStatement() const
-{
-    if (m_keyOfStatementOfThisTurn)
-        return { };
-    return m_solver.statementAt(m_statement).site;
-}
-
 std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement) const
 {
     if (!m_operandsInPlace.empty())
@@ -350,11 +343,6 @@ ValueFlowCallKind ValueFlowRuleContext::callKindOfKey() const
 ValueFlowObjectID ValueFlowRuleContext::markerOfKey() const
 {
     return keyOfStatement().markerOfCallGroup();
-}
-
-ValueFlowBehaviorID ValueFlowRuleContext::behaviorOfKey() const
-{
-    return keyOfStatement().behavior();
 }
 
 // What is left out of the normal form has been handed on by what earlier rounds have logged, and the rules for what a placeholder covers deal with it from now on.
@@ -669,15 +657,6 @@ ValueFlowNodeID ValueFlowRuleContext::mutationNode(ObjectMutation mutation)
         cached = node;
     }
     return cached;
-}
-
-bool ValueFlowRuleContext::isPlainSoFar(ClimbingSet objects)
-{
-    if (!m_solver.m_input.nodes || !m_solver.m_input.universe || !m_solver.m_input.escaped || !m_solver.m_input.lost)
-        return false;
-    if (meet(objects, universe().placeholdersAlone()))
-        return false;
-    return !holdsAnyOf(objects, m_solver.m_input.escaped) && !holdsAnyOf(objects, m_solver.m_input.lost) && !holdsAnyOf(objects, notPlain());
 }
 
 bool ValueFlowRuleContext::mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind kind)

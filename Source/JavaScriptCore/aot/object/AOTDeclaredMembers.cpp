@@ -187,15 +187,6 @@ GetterSetter* ClassTable::createDeclaredAccessor(VM& vm, const LayoutData& class
     return createGetterSetter(vm, m_state, *member);
 }
 
-bool ClassTable::hasPrototypeMembers(const LayoutData& layout) const
-{
-    for (const LayoutData* next = &layout; next; next = baseOf(*next)) {
-        if (!next->methods().empty())
-            return true;
-    }
-    return false;
-}
-
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

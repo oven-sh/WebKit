@@ -782,13 +782,6 @@ void RuntimeCallEmitter::callStubWithoutSiteAndBranch(StubKey key, std::span<con
     emitCall(nullptr, request);
 }
 
-void RuntimeCallEmitter::tailCallStub(const OperationContext& context, StubKey key, std::span<const LValue> operands, const CallOptions& options)
-{
-    CallRequest request = createRequest(key, operands, options);
-    request.end = CallEnd::LeavesFunction;
-    emitCall(&context, request);
-}
-
 StubCallResult RuntimeCallEmitter::callStubForTwoReads(const OperationContext& context, StubKey key, std::span<const LValue> operands, const CallOptions& options, Origin firstRead)
 {
     CallRequest request = createRequest(key, operands, options);

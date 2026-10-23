@@ -90,7 +90,7 @@ static constexpr NamedValue<Wire::ImageForm> imageForms[] = {
 };
 
 static constexpr NamedValue<Wire::MismatchPolicy> mismatchPolicies[] = {
-    { "throw"_s, Wire::MismatchPolicy::Throw },
+    { "silent"_s, Wire::MismatchPolicy::Silent },
     { "log"_s, Wire::MismatchPolicy::Report },
 };
 
@@ -625,7 +625,7 @@ static constexpr OptionWord optionWords[] = {
     { "drop-guard"_s, ValueForm::Required, "<Opcode>:<n>"_s, WordOwner::Engine, applyDropGuard, listNoValues },
     { "references"_s, ValueForm::Required, "narrow|wide"_s, WordOwner::Engine, applyReferences, listReferenceWidths },
     { "image-form"_s, ValueForm::Required, "absolute|position-independent"_s, WordOwner::Engine, applyImageForm, listImageForms },
-    { "type-errors"_s, ValueForm::Required, "throw|log"_s, WordOwner::Engine, applyTypeErrors, listMismatchPolicies },
+    { "type-errors"_s, ValueForm::Required, "silent|log"_s, WordOwner::Engine, applyTypeErrors, listMismatchPolicies },
     { "layout-seed"_s, ValueForm::Required, "<n>"_s, WordOwner::Engine, applyLayoutSeed, listNoValues },
     { "threads"_s, ValueForm::Required, "<n>"_s, WordOwner::Engine, applyThreads, listNoValues },
     { "report"_s, ValueForm::Required, "<name>,.."_s, WordOwner::Engine, applyReport, listMembers<Wire::ReportSet> },

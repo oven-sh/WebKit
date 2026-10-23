@@ -196,11 +196,6 @@ struct Function : FunctionRecord {
         m_changes.didEditEverything();
         blocks = WTF::move(others);
     }
-    void replaceValues(Values&& others)
-    {
-        m_changes.didEditEverything();
-        values = WTF::move(others);
-    }
     // For whoever changes nothing that a reader of the body can see: the room that a list takes.
     Blocks::Storage& storageOfBlocks() LIFETIME_BOUND { return blocks.m_storage; }
     Values::Storage& storageOfValues() LIFETIME_BOUND { return values.m_storage; }

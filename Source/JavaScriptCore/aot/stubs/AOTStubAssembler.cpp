@@ -496,22 +496,6 @@ void StubAssembler::loadLabelAddress(Label target, GPRReg result)
     m_pendingLabelAddresses.append({ movePCRelativeAddress(result, PCRelativeReach::Near), target });
 }
 
-void StubAssembler::callStubAndReturn(StubKey target, const ScopedLambda<void()>& setUpOperands)
-{
-    if (key().callerFrame() == CallerFrame::StubFrame) {
-        setUpOperands();
-        jumpToStub(target);
-        return;
-    }
-    RELEASE_ASSERT(key().callerFrame() == CallerFrame::HasFrame);
-    checkHasNoBorrowedFPRs();
-    emitFunctionPrologue();
-    setUpOperands();
-    callStub(target);
-    emitFunctionEpilogue();
-    ret();
-}
-
 void StubAssembler::jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers)
 {
     for (StubKey handler : handlers)

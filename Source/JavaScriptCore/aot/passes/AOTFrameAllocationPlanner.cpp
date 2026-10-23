@@ -457,24 +457,9 @@ void FramePlanner::takeClosuresOfTable()
 {
     for (size_t index : m_isCandidate) {
         ObjectID object(index);
-        if (!mayBeInFrame(object) && (isOnlyCalled(object) || isLikeEveryClosureOfItsFunction(definitionOf(object))))
+        if (!mayBeInFrame(object) && isOnlyCalled(object))
             m_decisions[index].isHeldByClosureTable = true;
     }
-}
-
-// Flow has followed the closures of the function to every place that they reach.
-bool FramePlanner::isLikeEveryClosureOfItsFunction(const Program& program, const FlowResults* flow, const Function& maker, const Value& closure)
-{
-    if (!flow || closure.opcode != Opcode::NewClosure || !closure.capturesOperands().empty() || closure.isMadeOnDemand())
-        return false;
-    // The code of a module runs once. There the closure of the table is no closure less, and it is made by the run time.
-    if (maker.kind == FunctionKind::Module || maker.kind == FunctionKind::CommonJsModule)
-        return false;
-    FunctionID function = closure.function();
-    // What `new` makes has the prototype of the closure that made it.
-    if (program.at(function).has(FunctionFlags::TakesCallee) || program.at(function).constructorForm() != ConstructorForm::NotConstructor)
-        return false;
-    return flow->function(function).closureUse == ClosureUse::CalledOnly && flow->closuresAreNeverCompared(function);
 }
 
 // Without captures one closure of a function does what any other does, and the function does not get hold of the closure it is entered through.
@@ -1240,7 +1225,7 @@ void FramePlanner::finishPlan()
                 continue;
             }
             if (value.storage() == AllocationStorage::Heap)
-                m_plan.decisions.append(FrameDecision { .allocation = id, .cause = AllocationHeapCause::NotTracked, .isHeldByClosureTable = isLikeEveryClosureOfItsFunction(value), .limit = reachedLimitOf(m_escape) });
+                m_plan.decisions.append(FrameDecision { .allocation = id, .cause = AllocationHeapCause::NotTracked, .limit = reachedLimitOf(m_escape) });
             addAllocation(m_plan, m_program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
         }
     }

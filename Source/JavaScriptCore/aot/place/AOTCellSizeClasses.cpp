@@ -26,14 +26,6 @@ size_t CellSizeClasses::cellSizeFor(size_t bytes) const
     return sizeClass == m_sizes.end() ? WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(bytes) : *sizeClass;
 }
 
-unsigned CellSizeClasses::roundInlineCapacity(unsigned inlineCapacity) const
-{
-    if (!inlineCapacity)
-        return 0;
-    size_t size = cellSizeFor(JSFinalObject::allocationSize(inlineCapacity));
-    return std::min<unsigned>((size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue), JSFinalObject::maxInlineCapacity);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

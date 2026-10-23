@@ -5,7 +5,7 @@
 # Nor a test for anything but functions: each run takes one step along a row of equal tests, and a row of tests of one object in a large function is long
 # FORM: Prepared optimizing
 # RUN: pass ThreadJumps VerifyProgram
-# RUN(FOLDED): pass ThreadJumps SimplifyControlFlow EliminateDeadCode RetypeValues VerifyProgram
+# RUN(FOLDED): pass ThreadJumps PropagateBranchConditions SimplifyControlFlow EliminateDeadCode RetypeValues VerifyProgram
 
 module m0 path="main.ts" displayPath="main.ts"
 function f0 name="sameTestTwice" parameters=[{type=function|f4}, {type=number}] results=[{type=anything}] {

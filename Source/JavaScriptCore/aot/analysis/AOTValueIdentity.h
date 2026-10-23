@@ -210,7 +210,6 @@ std::optional<ValueID> constantThroughCasts(const Program&, const Function&, Val
 std::optional<int64_t> integerConstantThroughCasts(const Program&, const Function&, ValueID);
 bool isRematerializable(const Value&);
 bool isDeferredClosure(const Function&, ValueID);
-bool hasCodeAtDefinition(const Function&, ValueID);
 
 } } } // namespace JSC::AOT::Typed
 

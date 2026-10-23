@@ -625,19 +625,9 @@ BuiltinClassID TextParser::parseBuiltinClass()
     return parseBuiltinToken(*this, &BuiltinTable::classFromToken);
 }
 
-BuiltinName TextParser::parseBuiltinName()
-{
-    return parseBuiltinNumber<BuiltinName>(*this);
-}
-
 BuiltinLayoutID TextParser::parseBuiltinLayout()
 {
     return parseBuiltinToken(*this, &BuiltinTable::layoutFromToken);
-}
-
-BuiltinSlotID TextParser::parseBuiltinSlot()
-{
-    return parseBuiltinToken(*this, &BuiltinTable::slotFromToken);
 }
 
 BuiltinOverloadID TextParser::parseBuiltinOverload()

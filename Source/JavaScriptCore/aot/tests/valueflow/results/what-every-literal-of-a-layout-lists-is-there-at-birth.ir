@@ -4,11 +4,21 @@
 # The allocation that lists all of them answers for the test of its own object.
 # A literal that goes on with a getter, a computed key or a spread may put something outside the slots, which marks the cell for good: nothing of its layout is taken to be there at birth.
 # RUN: valueflow-apply
-# OPTIONS: disable=pass:InlineCalls,pass:SinkAllocations heat=EverythingIsHot
+# RUN(READER): pipeline EliminateGuards
+# OPTIONS: disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults heat=EverythingIsHot
 # CHECK: layout L0 name="Both" fields=[{key="a" {{*}}flow={occupancy=FilledAtBirth}}, {key="b" {{*}}flow={occupancy=FilledAtBirth}}, {key="c" declared={type=anything} flags=[IsEnforced]}]
 # CHECK: layout L1 name="One" fields=[{key="a" {{*}}flow={occupancy=FilledAtBirth}}, {key="b" declared={type=anything} flags=[IsEnforced]}]
 # CHECK: layout L2 name="None" fields=[{key="a" declared={type=anything} flags=[IsEnforced]}, {key="b" declared={type=anything} flags=[IsEnforced]}]
 # CHECK: layout L3 name="WithGetter" fields=[{key="a" declared={type=anything} flags=[IsEnforced]}, {key="g" declared={type=anything} flags=[IsEnforced] form=[IsAccessor] slotType=f3}]
+# READER-LABEL: name="readBoth"
+# READER: HasBirthFieldsFilled
+# READER-NOT: HasBirthFieldsFilled
+# READER-NOT: IsSlotFilled
+# READER: Return
+# READER-LABEL: name="storeIntoFresh"
+# READER-NOT: HasBirthFieldsFilled
+# READER: PutSlot
+# READER: Return
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 layout L0 name="Both" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]

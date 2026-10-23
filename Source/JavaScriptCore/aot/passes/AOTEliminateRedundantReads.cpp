@@ -217,7 +217,6 @@ private:
     const Type& typeOf(ValueID id) const { return m_program.typeOf(m_function, id); }
     const Access& accessOf(size_t bit) const { return m_accesses[m_bits[bit].access]; }
     IndexRange bitsOf(IndexRange classes) const { return { m_classes[classes.first].bits.first, m_classes[classes.end - 1].bits.end }; }
-    std::span<const Action> actionsIn(IndexRange range) const { return m_actions.span().subspan(range.first, range.size()); }
 
     std::optional<bool> m_makesObjectsOnEdges;
     Vector<uint8_t> m_namesNoObjectMadeHere;

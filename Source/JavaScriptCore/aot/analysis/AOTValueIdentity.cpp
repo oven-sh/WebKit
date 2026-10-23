@@ -806,11 +806,6 @@ bool isDeferredClosure(const Function& function, ValueID id)
     return definition.opcode == Opcode::NewClosure && definition.closureForm() == ClosureForm::Deferred;
 }
 
-bool hasCodeAtDefinition(const Function& function, ValueID id)
-{
-    return !isRematerializable(function.at(id)) && !isDeferredClosure(function, id);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

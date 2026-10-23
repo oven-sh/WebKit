@@ -35,50 +35,6 @@ Jump loadConstantSlotAtSite(CCallHelpers& jit, GPRReg site, GPRReg header, GPRRe
     return isNotConstant;
 }
 
-// The stubs that `otherwise` leads to take the entire cell in FrontProbe::cell.
-static BaseIndex locateOwnInlineValue(CCallHelpers& jit, SlotAccess access, GPRReg receiver, uint32_t column, JumpList& otherwise)
-{
-    RELEASE_ASSERT(RowDisplacementTable::hasColumn(column));
-    RELEASE_ASSERT(!registersOfFrontProbe().contains(receiver, IgnoreVectors));
-    const TrustedImm32 upperHalf(static_cast<int32_t>(PackedSlot::upperHalfForOwnInlineValue(static_cast<uint16_t>(column))));
-#if CPU(X86_64)
-    const int32_t offsetOfCell = static_cast<int32_t>(column * sizeof(PackedSlot));
-    const int32_t offsetOfUpperHalf = offsetOfCell + static_cast<int32_t>(PackedSlot::offsetOfLocation());
-    jit.load32(Address(receiver, JSCell::structureIDOffset()), FrontProbe::structureID);
-    loadFrontRow(jit, access, FrontProbe::structureID, FrontProbe::row, FrontProbe::scratch);
-    jit.load64(Address(FrontProbe::row, offsetOfCell), FrontProbe::cell);
-    otherwise.append(jit.branch32(CCallHelpers::NotEqual, Address(FrontProbe::row, offsetOfUpperHalf), upperHalf));
-    jit.zeroExtend32ToWord(FrontProbe::cell, FrontProbe::cell);
-    return BaseIndex(receiver, FrontProbe::cell, CCallHelpers::TimesEight);
-#elif CPU(ARM64)
-    constexpr int upperHalfShift = 8 * PackedSlot::offsetOfLocation();
-    jit.move(TrustedImm32(static_cast<int32_t>(column)), FrontProbe::column);
-    jit.load32(Address(receiver, JSCell::structureIDOffset()), FrontProbe::structureID);
-    loadFrontRow(jit, access, FrontProbe::structureID, FrontProbe::row, FrontProbe::scratch);
-    jit.load64(BaseIndex(FrontProbe::row, FrontProbe::column, CCallHelpers::TimesEight), FrontProbe::cell);
-    jit.move(upperHalf, FrontProbe::scratch);
-    jit.m_assembler.sub<64>(FrontProbe::scratch, FrontProbe::scratch, FrontProbe::cell, ARM64Assembler::LSR, upperHalfShift);
-    otherwise.append(jit.branchTest64(CCallHelpers::NonZero, FrontProbe::scratch));
-    return BaseIndex(receiver, FrontProbe::cell, CCallHelpers::TimesEight, 0, CCallHelpers::Extend::ZExt32);
-#endif
-}
-
-JumpList loadOwnInlineValueByFront(CCallHelpers& jit, GPRReg receiver, uint32_t column, GPRReg result)
-{
-    JumpList otherwise;
-    jit.load64(locateOwnInlineValue(jit, SlotAccess::Read, receiver, column, otherwise), result);
-    return otherwise;
-}
-
-JumpList storeOwnInlineValueByFront(CCallHelpers& jit, GPRReg receiver, uint32_t column, GPRReg value, SlotAccess access)
-{
-    RELEASE_ASSERT(access != SlotAccess::Read);
-    RELEASE_ASSERT(!registersOfFrontProbe().contains(value, IgnoreVectors));
-    JumpList otherwise;
-    jit.store64(value, locateOwnInlineValue(jit, access, receiver, column, otherwise));
-    return otherwise;
-}
-
 RegisterSet registersOfFrontProbe()
 {
 #if CPU(X86_64)

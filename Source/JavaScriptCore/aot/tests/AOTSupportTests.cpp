@@ -61,9 +61,9 @@ static constexpr ASCIILiteral derivedFunctions = R"IR(module m0 path="/a.ts" dis
 function f0 name="first" results=[{type=anything}]
 function f1 name="second" parameters=[{type=anything}] results=[{type=anything}]
 function f2 name="genericVersion" role=GenericVersion results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f0}
-function f3 name="resultWorkerOfVersion" role=AllocatedThisVersion results=[{type=anything}] derivation={source=f2} creator=Version{provenVersion=f2}
+function f3 name="resultWorkerOfVersion" role=ResultWorker results=[{type=anything}] derivation={source=f2} creator=ResultWorker{origin=f2}
 function f4 name="outlinedFromWorkerOfVersion" role=OutlinedBody results=[{type=anything}] derivation={source=f3}
-function f5 name="resultWorker" role=AllocatedThisVersion parameters=[{type=anything}] results=[{type=anything}] derivation={source=f1} creator=Version{provenVersion=f1}
+function f5 name="resultWorker" role=ResultWorker parameters=[{type=anything}] results=[{type=anything}] derivation={source=f1} creator=ResultWorker{origin=f1}
 function f6 name="serializer" role=Serializer results=[{type=anything}] creator=Serializer{}
 function f7 name="outlinedFromSerializer" role=OutlinedBody results=[{type=anything}] derivation={source=f6}
 )IR"_s;

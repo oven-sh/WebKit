@@ -16,14 +16,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 struct Type;
 
-EffectsOnEdges effectsOfDeclaredEntry(const EffectContext&, const Function&, const Value&, const Effects& declared);
 EffectsOnEdges effectsOfOperator(const EffectContext&, const Function&, const Value&, const Effects& declared);
 EffectsOnEdges effectsOfOperator(const EffectContext&, Opcode, std::span<const Type> operandTypes, const Type& result);
-EffectsOnEdges effectsOfAccess(const EffectContext&, const Function&, const Value&, const Effects& declared);
 EffectsOnEdges effectsOfCall(const EffectContext&, const Function&, const Value&, const Effects& declared);
-EffectsOnEdges effectsOfBuiltinCall(const EffectContext&, const Function&, const Value&, const Effects& declared);
-EffectsOnEdges effectsOfInlineBuiltin(const EffectContext&, const Function&, const Value&, const Effects& declared);
-EffectsOnEdges effectsOfInlineBuiltin(const EffectContext&, const Function&, const Terminator&, const Effects& declared);
 
 EffectsOnEdges effectsOfUnknownCode(const EffectContext&);
 EffectsOnEdges effectsOfCalling(const EffectContext&, FunctionID);

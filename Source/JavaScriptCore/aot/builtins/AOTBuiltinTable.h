@@ -787,12 +787,6 @@ struct Builtin {
     bool isNamedByText { false };
 };
 
-// Every object leads to a built-in prototype, from there to a constructor, and from that to Function, which evaluates text. Native code follows the link only to find a species.
-constexpr bool isConstructorLink(const Builtin& holder, const Builtin& member)
-{
-    return holder.kind == BuiltinKind::Prototype && member.kind == BuiltinKind::Constructor;
-}
-
 struct BuiltinSlot {
     BuiltinSlotID id { };
     BuiltinClassID owner { };
@@ -1132,9 +1126,6 @@ public:
         return { reinterpret_cast<const char*>(starts + count + 1) + starts[index], starts[index + 1] - starts[index] - 1 };
     }
 
-    // A text has a zero behind it and lasts as long as the program.
-    ASCIILiteral literalAt(size_t index) const { return ASCIILiteral::fromLiteralUnsafe((*this)[index].data()); }
-
 private:
     const uint32_t* m_storage { nullptr };
 };
@@ -1267,7 +1258,6 @@ public:
     unsigned layoutCount() const { return m_data.layouts.size(); }
     unsigned nameCount() const { return m_data.names.textNames.size() + m_data.names.symbolNames.size() + m_data.names.registeredSymbolNames.size(); }
     unsigned moduleCount() const { return m_data.runtime.modules.size(); }
-    unsigned realmStructureCount() const { return m_data.runtime.realmStructures.size(); }
 
     JS_EXPORT_PRIVATE const Builtin& at(BuiltinID) const;
     const BuiltinOverload& at(BuiltinOverloadID) const;

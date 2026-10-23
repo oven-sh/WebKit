@@ -214,18 +214,6 @@ Vector<std::optional<typename Problem::State>> FunctionAnalyses::solveForward(Pr
     return ForwardDataflowSolver<Problem>(*this, problem).run();
 }
 
-template<typename Problem>
-void replayBlock(FunctionAnalyses& analyses, Problem& problem, typename Problem::State& state, BlockID id, uint32_t endIndex)
-{
-    const Function& function = analyses.function();
-    const Block& block = function.at(id);
-    RELEASE_ASSERT(endIndex <= block.values.size());
-    for (uint32_t index = 0; index < endIndex; ++index) {
-        ValueID value = block.values[index];
-        problem.execute(state, DataflowStep { id, index, value, function.at(value), ReadsNoEffects<Problem> ? noEffectsOnEdges : analyses.effectsOf(value) });
-    }
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

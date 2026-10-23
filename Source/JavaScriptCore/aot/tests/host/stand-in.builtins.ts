@@ -49,7 +49,7 @@ export default b.declarations(
     "setDecoratorMetadata",
   ),
   b.frontEndFunctions("prelude/json", "stringifyElement", "stringifyProperties", "stringifyProperty"),
-  b.frontEndFunctions("prelude/validation", "copyOwnProperties", "holdsRule", "interpretNode", "validateByPlan"),
+  b.frontEndFunctions("prelude/validation", "copyOwnProperties", "holdsRule", "interpretNode", "validate", "validateByPlan"),
   b.frontEndFunctions(
     "prelude/written-lists",
     "arrayFromLength",

@@ -31,6 +31,8 @@
 #include "B3Arena.h"
 #include "B3CompilationReport.h"
 #include "B3HeapSet.h"
+#include "B3InductionRecords.h"
+#include "B3KnownProperties.h"
 #include "B3Origin.h"
 #include "B3PCToOriginMap.h"
 #include "B3Policy.h"
@@ -210,6 +212,21 @@ public:
     // Short for values().remove(). It's better to call this method since it's out of line.
     JS_EXPORT_PRIVATE void deleteValue(Value*);
 
+    JS_EXPORT_PRIVATE void setKnownRange(Value*, IntRange);
+    std::optional<IntRange> knownRange(const Value* value) const { return m_knownProperties.range(value); }
+
+    JS_EXPORT_PRIVATE void setKnownDereferenceableBytes(Value*, uint32_t);
+    uint32_t knownDereferenceableBytes(const Value* value) const { return m_knownProperties.dereferenceableBytes(value); }
+    JS_EXPORT_PRIVATE bool isKnownDereferenceable(const MemoryValue*) const;
+    JS_EXPORT_PRIVATE bool isKnownDereferenceable(const Value* address, int64_t offset, size_t byteSize) const;
+    JS_EXPORT_PRIVATE Effects effectsOf(const Value*) const;
+    KnownProperties& knownProperties() LIFETIME_BOUND { return m_knownProperties; }
+
+    JS_EXPORT_PRIVATE void setKnownInduction(const InductionRecord&);
+    JS_EXPORT_PRIVATE void setKnownInduction(const DemotedInduction&);
+    std::optional<InductionRecord> knownInduction(const Value* phi) const { return m_knownInductions.find(phi); }
+    const InductionRecords& knownInductions() const LIFETIME_BOUND { return m_knownInductions; }
+    InductionRecords& knownInductions() LIFETIME_BOUND { return m_knownInductions; }
 
     // A valid procedure cannot contain any orphan values. An orphan is a value that is not in
     // any basic block. It is possible to create an orphan value during code generation or during
@@ -324,6 +341,7 @@ public:
         if (!hit.count++)
             hit.firstOrigin = origin;
     }
+    JS_EXPORT_PRIVATE void addRemark(const Remark&, uint32_t count = 1);
     void count(Counter counter, uint32_t amount = 1) { m_report.counters[static_cast<size_t>(counter)] += amount; }
     
     // You can turn off used registers calculation. This may speed up compilation a bit. But if
@@ -447,6 +465,8 @@ private:
     CompilationScratch* m_scratch { nullptr };
     mutable CompilationReport m_report;
     HeapSetTable m_heapSets;
+    KnownProperties m_knownProperties;
+    InductionRecords m_knownInductions;
     Vector<DataSectionRecord, 1> m_dataSections;
     Vector<std::unique_ptr<JumpTableRecord>> m_jumpTables;
     Vector<BasicBlock*> m_blocksInPreOrder;

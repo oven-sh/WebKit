@@ -1180,20 +1180,6 @@ void jumpToSlotHandler(StubAssembler& jit, SlotHandlerTable table, GPRReg header
 }
 
 #if CPU(X86_64)
-Jump branchIfUpperHalfHasOtherName(StubAssembler& jit, GPRReg upperHalf)
-{
-    return jit.branch32(CCallHelpers::AboveOrEqual, upperHalf, TrustedImm32(1 << (nameShiftInCell - locationShiftInCell)));
-}
-
-void jumpToPackedSlotHandlerByUpperHalf(StubAssembler& jit, SlotHandlerTable table, GPRReg header, GPRReg upperHalf)
-{
-    static_assert(PackedSlot::kindMask == (1u << PackedSlot::kindBits) - 1 && kindShiftInCell > locationShiftInCell && kindShiftInCell + PackedSlot::kindBits <= nameShiftInCell);
-    RELEASE_ASSERT(traitsOf(table).form == SlotForm::PackedSlot);
-    jit.urshift32(TrustedImm32(kindShiftInCell - locationShiftInCell), upperHalf);
-    jit.and32(TrustedImm32(PackedSlot::kindMask), upperHalf);
-    jit.xor32(TrustedImm32(PackedSlot::ownInlineValueBits & PackedSlot::kindMask), upperHalf);
-    jumpToSlotHandlerOfKind(jit, table, header, upperHalf);
-}
 #endif
 
 void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg header, GPRReg scratch)

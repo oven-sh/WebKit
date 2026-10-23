@@ -73,7 +73,6 @@ public:
 
     // Of a closure or an object: run() leaves it on the heap, whatever the analyses say of its uses, and records no more than that and whether the closure table holds it.
     static bool staysOnHeapByForm(const Program&, const FlowResults&, const BuildContext&, const Value& allocation);
-    static bool isLikeEveryClosureOfItsFunction(const Program&, const FlowResults*, const Function& maker, const Value& closure);
 
 private:
     const Value& definitionOf(ObjectID object) const LIFETIME_BOUND { return m_function.at(m_escape.at(object).definition); }
@@ -98,7 +97,6 @@ private:
     bool willHaveLongFormsInLine(BlockID);
     void takeClosuresOfTable();
     bool isOnlyCalled(ObjectID closure) const;
-    bool isLikeEveryClosureOfItsFunction(const Value& closure) const { return isLikeEveryClosureOfItsFunction(m_program, m_flow, m_function, closure); }
     bool mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const;
     bool isLent(ObjectID object) const { return m_decisions[object.index()].isLent; }
     bool isKeptUntilItLeaves(ObjectID object) const { return isLent(object) || !m_decisions[object.index()].madeAgainAt.isEmpty(); }

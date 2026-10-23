@@ -1,6 +1,6 @@
 # A code unit is the position of the next read. The joined answer of a read is a number, so the next read tests it for an int32, and the edge from inside the string skips that test: on the path that stays inside the string only the first of the three reads tests its position
 # FORM: Prepared optimizing
-# RUN: pass SimplifyBuiltinCalls RetypeValues PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+# RUN: pass SimplifyBuiltinCalls RetypeValues PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="chainOfReads" parameters=[{type=string}, {type=number}] results=[{type=number}] {

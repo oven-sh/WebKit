@@ -15,4 +15,4 @@ function f0 name="inNormalCode" results=[{type=anything}] {
 }
 # CHECK: f0: size={{*}}
 # CHECK-NEXT: stub CreateConstant.Key x1
-# X64: f0: size=31 frame
+# X64: f0: size=27 frame

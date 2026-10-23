@@ -198,6 +198,7 @@ public:
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
     bool mayBeUnspecified(ValueID);
+    bool hasTypeOnlyBehindTest(ValueID parameter);
 
     class InitializationScope {
         WTF_MAKE_NONCOPYABLE(InitializationScope);
@@ -270,6 +271,10 @@ private:
     void shareForm(ValueID source, Operand);
     void dropSharedFormsSince(size_t mark);
     void forgetSharedForms() { m_firstSharedFormInReach = m_sharedForms.size(); }
+    void publishKnownProperties(ValueID, LValue);
+    void publishKnownPropertiesOfConvertedValue(ValueID, Operand);
+    void publishKnownProperties(ValueID, Operand, bool isConverted);
+    void publishInductionVariables();
     void checkInlineStores(const OperationContext&, const B3::AbstractHeapRepository::DecorationMark&);
     bool currentBlockIsOpen() const;
 
@@ -303,6 +308,7 @@ private:
     ValueID m_callWithLandingOfMisfit;
     LandingOfMisfit m_landingOfMisfit;
     std::optional<BitVector> m_unspecifiedValues;
+    std::optional<BitVector> m_parametersTypedOnlyBehindTest;
     Vector<uint32_t> m_numberOfGuardsSeen;
     unsigned m_initializationDepth { 0 };
     bool m_validates { false };

@@ -15,6 +15,8 @@
     v(TableEntrypoint, buildTableEntrypoint, FunctionAndSelector, TableEntrypoints) \
     v(TableLookup, buildTableLookup, Selector, TableLookups) \
     v(BoundFunction, buildBoundFunction, Function, BoundFunctions) \
+    v(ResultWorker, buildResultWorker, Function, FreshResultsSplit) \
+    v(ChainStep, buildChainStep, Function, None) \
     v(OutlinedBody, buildOutlinedIteration, ValidationNode, None) \
     v(Serializer, buildSerializer, Layout, SerializersCreated) \
     v(Parser, buildParser, Type, ParsersCreated) \

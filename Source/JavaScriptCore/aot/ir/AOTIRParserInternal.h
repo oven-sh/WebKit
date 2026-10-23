@@ -141,9 +141,7 @@ public:
 
     BuiltinID parseBuiltin();
     BuiltinClassID parseBuiltinClass();
-    BuiltinName parseBuiltinName();
     BuiltinLayoutID parseBuiltinLayout();
-    BuiltinSlotID parseBuiltinSlot();
     BuiltinOverloadID parseBuiltinOverload();
     RuntimeModuleID parseRuntimeModule();
     RuntimeFunctionID parseRuntimeFunction();

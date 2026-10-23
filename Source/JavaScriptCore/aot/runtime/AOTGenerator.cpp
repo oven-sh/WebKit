@@ -79,13 +79,6 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     return createIteratorResultObject(globalObject, result, isDone);
 }
 
-bool Generator::hasUnmodifiedIteratorProtocol() const
-{
-    if (m_hasOtherPrototype || butterfly())
-        return false;
-    return structure()->storedPrototypeObject()->structureID().bits() == Instance::of(realm())->coroutines.emptyGeneratorPrototypeStructureID;
-}
-
 JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue value, bool& isDone)
 {
     VM& vm = globalObject->vm();

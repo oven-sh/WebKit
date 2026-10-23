@@ -154,7 +154,6 @@ public:
     };
     enum class MemberCreation : uint8_t { Allowed, Forbidden };
     std::optional<LazyPrototypeLookupResult> findThroughLazyPrototypes(VM&, JSObject* base, UniquedStringImpl*, bool isAbsentFromBase, MemberCreation = MemberCreation::Allowed);
-    bool hasPrototypeMembers(const LayoutData&) const;
 
     JSObject* createThis(JSGlobalObject*, JSObject* constructor, JSObject* newTarget);
     JSObject* prototypeForInstancesOf(VM&, JSObject* compiledCallee);

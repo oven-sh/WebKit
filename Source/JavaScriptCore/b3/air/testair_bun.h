@@ -402,10 +402,13 @@ void testPolicyDumpNamesEveryField()
     CHECK_POLICY_DUMP_NAMES(layout, ordersBlocksByEdgeFrequency, true);
     CHECK_POLICY_DUMP_NAMES(layout, recordsRareCodeStart, true);
     CHECK_POLICY_DUMP_NAMES(layout, mergesIdenticalBlocks, true);
+    CHECK_POLICY_DUMP_NAMES(layout, duplicatesReturns, true);
     CHECK_POLICY_DUMP_NAMES(peepholes, pairsSpillAccesses, false);
     CHECK_POLICY_DUMP_NAMES(peepholes, forwardsRegisterCopies, true);
+    CHECK_POLICY_DUMP_NAMES(peepholes, hoistsCommonMoves, true);
     CHECK_POLICY_DUMP_NAMES(peepholes, reusesConditionFlags, true);
     CHECK_POLICY_DUMP_NAMES(peepholes, pairsMemoryAccesses, true);
+    CHECK_POLICY_DUMP_NAMES(peepholes, resequencesMovesBeforePatches, true);
     CHECK_POLICY_DUMP_NAMES(peepholes, emitsShufflesInPairOrder, true);
     CHECK_POLICY_DUMP_NAMES(peepholes, trapReach, 4096);
 }
@@ -484,9 +487,12 @@ static void enableLayoutAndPeepholesExceptMerging(B3::Air::Policy& policy)
     policy.layout.makesGapsForRareBlocks = true;
     policy.layout.ordersBlocksByEdgeFrequency = true;
     policy.layout.recordsRareCodeStart = true;
+    policy.layout.duplicatesReturns = true;
     policy.peepholes.forwardsRegisterCopies = true;
+    policy.peepholes.hoistsCommonMoves = true;
     policy.peepholes.reusesConditionFlags = true;
     policy.peepholes.pairsMemoryAccesses = true;
+    policy.peepholes.resequencesMovesBeforePatches = true;
     policy.peepholes.emitsShufflesInPairOrder = true;
 }
 
@@ -641,6 +647,68 @@ static unsigned numberOfBlocksReturningOne(Code& code)
         result += returnsOne;
     }
     return result;
+}
+
+void testDefaultPolicyRunsNoForkStep()
+{
+    constexpr ASCIILiteral requestedForkSteps[] = { "shrinkWrapFrame"_s, "planFrame"_s, "mergeIdenticalBlocks"_s, "duplicateReturns"_s, "reuseConditionFlags"_s };
+    constexpr ASCIILiteral otherForkSteps[] = { "moveBlocksWithoutSuccessorsToEnd"_s, "hoistCommonMoves"_s, "forwardRegisterCopies"_s, "resequenceMovesBeforePatches"_s, "foldTrapsIntoAccesses"_s };
+    for (bool runsForkSteps : { false, true }) {
+        B3::Policy policy;
+        policy.validation.level = B3::ValidationLevel::AtEachPhase;
+        if (runsForkSteps) {
+            policy.air.layout.mergesIdenticalBlocks = true;
+            policy.air.layout.duplicatesReturns = true;
+            policy.air.peepholes.reusesConditionFlags = true;
+            letAirEmitFrame(policy.air);
+        }
+        B3::Procedure proc(policy);
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        BasicBlock* next = code.addBlock();
+        BasicBlock* first = code.addBlock();
+        BasicBlock* second = code.addBlock();
+        BasicBlock* third = code.addBlock();
+        BasicBlock* exit = code.addBlock();
+        PhaseRecordingSpecial* recorder = appendPhaseRecorder(code, root);
+        root->append(Branch32, nullptr, Arg::relCond(MacroAssembler::Equal), argumentTmp(0), Arg::imm(5));
+        root->setSuccessors(first, next);
+        next->append(Branch32, nullptr, Arg::relCond(MacroAssembler::LessThan), argumentTmp(0), Arg::imm(5));
+        next->setSuccessors(second, third);
+        for (BasicBlock* block : { first, second, third }) {
+            block->append(Move, nullptr, Arg::imm(block == third ? 2 : 1), returnTmp());
+            appendJump(block, exit);
+        }
+        appendReturn(exit);
+
+        prepareForGeneration(code);
+        CHECK(recorder->didRun("allocateRegistersByGreedy"_s));
+        for (ASCIILiteral step : requestedForkSteps)
+            CHECK(recorder->didRun(step) == runsForkSteps);
+        for (ASCIILiteral step : otherForkSteps)
+            CHECK(!recorder->didRun(step));
+        if (runsForkSteps) {
+            CHECK(!code.frameLayout().hasFrame);
+            CHECK(!numberOfInsts(code, Branch32));
+            CHECK(numberOfBlocksReturningOne(code) == 1);
+            CHECK(numberOfInsts(code, Ret64) > 1);
+        } else {
+            CHECK(!code.frameLayout().isPlanned);
+            CHECK(!numberOfInsts(code, EnterFrame));
+            CHECK(!numberOfInsts(code, LeaveFrame));
+            CHECK(numberOfInsts(code, Branch32) == 2);
+            CHECK(!numberOfInsts(code, CompareOnFlags32));
+            CHECK(!numberOfInsts(code, BranchOnFlags));
+            CHECK(numberOfBlocksReturningOne(code) == 2);
+            CHECK(numberOfInsts(code, Ret64) == 1);
+        }
+
+        GeneratedCode generated = generateCode(proc);
+        CHECK(invoke<int64_t>(*generated.compilation, static_cast<int64_t>(5)) == 1);
+        CHECK(invoke<int64_t>(*generated.compilation, static_cast<int64_t>(4)) == 1);
+        CHECK(invoke<int64_t>(*generated.compilation, static_cast<int64_t>(6)) == 2);
+    }
 }
 
 static unsigned numberOfSavedRegisters(bool enablesAllocatorFields, unsigned numberOfCalls, bool hasUnsavedCalleeSaves = false)
@@ -852,6 +920,7 @@ void testStorePairOfCallArguments()
         RUN(testOopsTraps()); \
         RUN(testDeadCodeIsEliminated()); \
         RUN(testInstObserver()); \
+        RUN(testDefaultPolicyRunsNoForkStep()); \
         RUN(testCalleeSaveCost()); \
         RUN(testUnsavedCalleeSaves()); \
         RUN(testManyValuesLiveAcrossCall()); \

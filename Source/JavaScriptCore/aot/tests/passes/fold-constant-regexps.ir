@@ -1,0 +1,122 @@
+# RegExp calls on constants that Yarr accepts become literals
+# FORM: Prepared
+# RUN: pass FoldConstantRegExps
+# STATISTIC: FoldConstantRegExpsChanges = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="patternAndFlags" results=[{type=RegExp}] {
+  b0():
+    v0 = String string="a+"
+    v1 = String string="gi"
+    v2 = CallBuiltin -, v0, v1 overload=RegExp/4
+    Return v2
+}
+# CHECK-LABEL: function f0 name="patternAndFlags"
+# CHECK: v2: RegExp<"a+"[Global, IgnoreCase]> = NewRegExp pattern="a+" regExpFlags=[Global, IgnoreCase]
+# CHECK-NOT: CallBuiltin
+
+function f1 name="calledWithoutNew" results=[{type=RegExp}] {
+  b0():
+    v0 = String string="a"
+    v1 = CallBuiltin -, v0 overload=RegExp/0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="calledWithoutNew"
+# CHECK: NewRegExp pattern="a"
+
+function f2 name="undefinedFlags" results=[{type=RegExp}] {
+  b0():
+    v0 = String string="a"
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=RegExp/4
+    Return v2
+}
+# CHECK-LABEL: function f2 name="undefinedFlags"
+# CHECK: NewRegExp pattern="a"
+
+function f3 name="underHandler" results=[{type=RegExp}] {
+  b0() handler=b2():
+    v0 = String string="a"
+    v1 = CallBuiltin -, v0 overload=RegExp/4
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Throw v2
+}
+# CHECK-LABEL: function f3 name="underHandler"
+# CHECK: NewRegExp
+# CHECK-NEXT: Jump -> next b1()
+
+function f4 name="unbalancedParenthesis" results=[{type=RegExp}] {
+  b0():
+    v0 = String string="("
+    v1 = CallBuiltin -, v0 overload=RegExp/4
+    Return v1
+}
+# CHECK-LABEL: function f4 name="unbalancedParenthesis"
+# CHECK: CallBuiltin
+# CHECK-NOT: NewRegExp
+
+function f5 name="quantifierOutOfOrder" results=[{type=RegExp}] {
+  b0():
+    v0 = String string="a{2,1}"
+    v1 = CallBuiltin -, v0 overload=RegExp/4
+    Return v1
+}
+# CHECK-LABEL: function f5 name="quantifierOutOfOrder"
+# CHECK: CallBuiltin
+# CHECK-NOT: NewRegExp
+
+function f6 name="repeatedFlag" results=[{type=RegExp}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="gg"
+    v2 = CallBuiltin -, v0, v1 overload=RegExp/4
+    Return v2
+}
+# CHECK-LABEL: function f6 name="repeatedFlag"
+# CHECK: CallBuiltin
+# CHECK-NOT: NewRegExp
+
+function f7 name="unknownFlag" results=[{type=RegExp}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="x"
+    v2 = CallBuiltin -, v0, v1 overload=RegExp/4
+    Return v2
+}
+# CHECK-LABEL: function f7 name="unknownFlag"
+# CHECK: CallBuiltin
+# CHECK-NOT: NewRegExp
+
+function f8 name="unicodeAndUnicodeSets" results=[{type=RegExp}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="uv"
+    v2 = CallBuiltin -, v0, v1 overload=RegExp/4
+    Return v2
+}
+# CHECK-LABEL: function f8 name="unicodeAndUnicodeSets"
+# CHECK: CallBuiltin
+# CHECK-NOT: NewRegExp
+
+function f9 name="patternIsParameter" parameters=[{type=string}] results=[{type=RegExp}] {
+  b0(v0: string):
+    v1 = CallBuiltin -, v0 overload=RegExp/4
+    Return v1
+}
+# CHECK-LABEL: function f9 name="patternIsParameter"
+# CHECK: CallBuiltin
+# CHECK-NOT: NewRegExp
+
+function f10 name="replacedRegExp" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = Construct v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f10 name="replacedRegExp"
+# CHECK: Construct v0
+# CHECK-NOT: NewRegExp

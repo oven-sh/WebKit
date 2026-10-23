@@ -1,6 +1,6 @@
 # In the array copy of a pattern step i is an element read at the constant index i
 # FORM: Prepared optimizing
-# RUN: pass ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues CompactBlocks
+# RUN: pass ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues CompactBlocks
 # RUN(LEFT): pass ExpandIteration
 # STATISTIC: IterationsExpandedByClass = 2
 

@@ -116,13 +116,11 @@ struct SinkingState {
 
     const AliasEntry* findAlias(ValueID) const;
     void setAlias(ValueID, VirtualObjectID, AliasKind);
-    void removeAlias(ValueID);
     bool isDestructured(VirtualObjectID) const;
 
     const TestEntry* findTest(ValueID) const;
     void setTest(const TestEntry&);
 
-    void becomeUnreachable();
     void dump(PrintStream&) const;
 
     friend bool operator==(const SinkingState&, const SinkingState&) = default;

@@ -175,7 +175,6 @@ protected:
     Condition hasCellType(CellPointer cell, JSType type) { return hasCellTypeIn(cell, { type, type }); }
     Condition hasMutableCellType(CellPointer, JSType);
     Condition isObjectCell(CellPointer cell) { return hasCellTypeIn(cell, { ObjectType, MaxJSType }); }
-    Word32 loadUsefulBytes(CellPointer cell) { return Word32(m_out.load32(cell.value(), m_heaps.JSCell_usefulBytes)); }
     Word32 loadStructureID(CellPointer cell) { return Word32(m_out.load32(cell.value(), m_heaps.JSCell_structureID)); }
     Pointer loadStructure(CellPointer);
     Pointer decodeStructureID(Word32 structureID);
@@ -220,7 +219,7 @@ protected:
 
 bool isStableCellTypeRange(JSTypeRange);
 void pinRegisters(B3::Procedure&);
-void definePinnedValues(Output&, InstanceSizes, PinnedValues&);
+void definePinnedValues(Output&, B3::Procedure&, InstanceSizes, PinnedValues&);
 
 inline void PrimitiveEmitter::branchUnless(Condition condition, LBasicBlock rareTarget)
 {

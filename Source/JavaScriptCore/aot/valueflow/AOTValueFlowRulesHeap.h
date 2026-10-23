@@ -48,7 +48,6 @@ void applyPropertyAction(ValueFlowRuleContext&, const BuiltinPropertyAction&, co
 
 // For the results, after the solve: the getters (Get) and setters (Set) that a heap operation of a reached function may run.
 using ValueFlowAccessorFunctor = ScopedLambda<void(ValueFlowObjectID function, ValueFlowCallKind)>;
-void forEachAccessorRunBy(const ValueFlowStatement&, ValueFlowRuleContext&, const ValueFlowAccessorFunctor&);
 
 } } } // namespace JSC::AOT::Typed
 

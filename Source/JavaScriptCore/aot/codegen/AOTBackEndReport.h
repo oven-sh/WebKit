@@ -38,6 +38,13 @@ struct BackEndFinding {
     String detail { };
 };
 
+struct BackEndDecline {
+    Wire::DeclineKind kind;
+    LimitID limit;
+    Wire::LoopDeclineReason reason;
+    B3::Origin origin;
+};
+
 struct BackEndLimitHit {
     LimitID limit;
     uint32_t count;
@@ -46,10 +53,11 @@ struct BackEndLimitHit {
 
 struct BackEndReport {
     Vector<BackEndFinding, 1> findings;
+    Vector<BackEndDecline> declines;
     Vector<BackEndLimitHit, 2> limitHits;
 };
 
-JS_EXPORT_PRIVATE BackEndReport collectBackEndReport(const B3::CompilationReport&, std::span<const FrameAddressViolation>);
+JS_EXPORT_PRIVATE BackEndReport collectBackEndReport(const B3::CompilationReport&, std::span<const FrameAddressViolation>, bool collectsDeclines);
 JS_EXPORT_PRIVATE void appendFindings(BackEndReport&, std::span<const NarrowReferenceViolation>);
 JS_EXPORT_PRIVATE bool reportBackEnd(BuildContext&, Typed::FunctionID, const Typed::Function&, const BackEndReport&, const B3::CompilationReport&);
 
