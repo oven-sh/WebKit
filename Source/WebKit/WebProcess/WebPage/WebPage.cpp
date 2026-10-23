@@ -38,6 +38,7 @@
 #include "APIInjectedBundlePageUIClient.h"
 #include "Connection.h"
 #include "ContentAsStringIncludesChildFrames.h"
+#include "ContentInversion.h"
 #include "DragControllerAction.h"
 #include "DragEventForwardingData.h"
 #include "DrawingArea.h"
@@ -995,6 +996,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 
     m_backgroundColor = parameters.backgroundColor;
     setUseColorAppearance(parameters.useDarkAppearance, parameters.useElevatedUserInterfaceLevel);
+    setContentInversion(parameters.contentInversion);
 
     // We need to set the device scale factor before creating the drawing area
     // to ensure it's created with the right size.
@@ -1790,6 +1792,7 @@ void WebPage::reinitializeWebPage(WebPageCreationParameters&& parameters)
 #endif
 
     setUseColorAppearance(parameters.useDarkAppearance, parameters.useElevatedUserInterfaceLevel);
+    setContentInversion(parameters.contentInversion);
 
     if (auto& remotePageParameters = parameters.remotePageParameters) {
         if (RefPtr page = m_page; page && is<RemoteFrame>(page->mainFrame()))
@@ -2698,6 +2701,7 @@ void WebPage::loadRequest(LoadParameters&& loadParameters)
     frameLoadRequest.setLockHistory(loadParameters.lockHistory);
     frameLoadRequest.setLockBackForwardList(loadParameters.lockBackForwardList);
     frameLoadRequest.setNavigationHistoryBehavior(loadParameters.navigationHistoryBehavior);
+    frameLoadRequest.setReplaceIfNotCompletelyLoaded(loadParameters.replaceIfNotCompletelyLoaded);
     frameLoadRequest.setClientRedirectSourceForHistory(WTF::move(loadParameters.clientRedirectSourceForHistory));
     frameLoadRequest.setIsHandledByAboutSchemeHandler(loadParameters.isHandledByAboutSchemeHandler);
     if (loadParameters.isRequestFromClientOrUserInput)
@@ -5554,17 +5558,19 @@ void WebPage::adjustSettingsForLockdownMode(Settings& settings, const WebPrefere
 {
     bool originalSiteIsolationEnabled = settings.siteIsolationEnabled();
     bool originalUseUIProcessForBackForwardItemLoading = settings.useUIProcessForBackForwardItemLoading();
+    bool originalDocumentIsolationPolicyEnabled = settings.documentIsolationPolicyEnabled();
     // Disable unstable Experimental settings, even if the user enabled them for local use.
     settings.disableUnstableFeaturesForModernWebKit();
     Settings::disableGlobalUnstableFeaturesForModernWebKit();
     settings.disableFeaturesForLockdownMode();
 
-    // Though SiteIsolationEnabled is still unstable, web process must stay in sync with the UI process
-    // setting to avoid IPC state mismatch.
+    // Though these settings are still unstable, the web process must stay in sync with the UI process to avoid state mismatches.
     if (originalSiteIsolationEnabled)
         settings.setSiteIsolationEnabled(true);
     if (originalUseUIProcessForBackForwardItemLoading)
         settings.setUseUIProcessForBackForwardItemLoading(true);
+    if (originalDocumentIsolationPolicyEnabled)
+        settings.setDocumentIsolationPolicyEnabled(true);
 
 #if PLATFORM(COCOA)
     if (settings.downloadableBinaryFontTrustedTypes() != DownloadableBinaryFontTrustedTypes::None) {
@@ -5860,6 +5866,9 @@ void WebPage::finalizeRenderingUpdate(OptionSet<FinalizeRenderingUpdateFlags> fl
 #endif
 
     protect(corePage())->finalizeRenderingUpdate(flags);
+#if !PLATFORM(COCOA)
+    serviceCanvasPaintEvents();
+#endif
 #if ENABLE(GPU_PROCESS)
     if (m_remoteRenderingBackendProxy)
         m_remoteRenderingBackendProxy->finalizeRenderingUpdate();
@@ -5883,6 +5892,11 @@ void WebPage::didCompleteRenderingUpdateDisplay()
     if (m_isClosed)
         return;
     protect(corePage())->didCompleteRenderingUpdateDisplay();
+}
+
+void WebPage::serviceCanvasPaintEvents()
+{
+    protect(corePage())->serviceCanvasPaintEvents();
 }
 
 void WebPage::didCompleteRenderingFrame()
@@ -7288,6 +7302,30 @@ void WebPage::setCaretBlinkingSuspended(bool suspended)
 }
 
 #endif
+
+void WebPage::setContentInversion(ContentInversion contentInversion)
+{
+    auto forcedColorsAreInverted = [&] {
+        switch (contentInversion) {
+        case ContentInversion::System:
+            // The inverted-colors media feature then uses ScreenData::screenHasInvertedColors.
+            return ForcedAccessibilityValue::System;
+        case ContentInversion::Inverted:
+            return ForcedAccessibilityValue::On;
+        case ContentInversion::NotInverted:
+            return ForcedAccessibilityValue::Off;
+        }
+        ASSERT_NOT_REACHED();
+        return ForcedAccessibilityValue::System;
+    }();
+
+    Ref page = *m_page;
+    if (page->settings().forcedColorsAreInvertedAccessibilityValue() == forcedColorsAreInverted)
+        return;
+
+    page->settings().setForcedColorsAreInvertedAccessibilityValue(forcedColorsAreInverted);
+    page->accessibilitySettingsDidChange();
+}
 
 void WebPage::setUseColorAppearance(bool useDarkAppearance, bool useElevatedUserInterfaceLevel)
 {

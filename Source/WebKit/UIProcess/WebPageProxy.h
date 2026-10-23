@@ -232,7 +232,7 @@ enum class DataOwnerType : uint8_t;
 enum class DeviceOrientationOrMotionPermissionState : uint8_t;
 enum class DevicePostureType : uint8_t;
 enum class DiagnosticLoggingDomain : uint8_t;
-enum class DocumentIsolationPolicy : bool;
+enum class DocumentIsolationPolicyValue : bool;
 enum class DragControllerAction : uint8_t;
 enum class DragEventHandled : bool;
 enum class DragHandlingMethod : uint8_t;
@@ -729,6 +729,7 @@ struct RendererBufferFormat;
 enum class ColorControlSupportsAlpha : bool;
 enum class CompletesDoubleClick : bool;
 enum class ContentAsStringIncludesChildFrames : bool;
+enum class ContentInversion : uint8_t;
 enum class DragControllerAction : uint8_t;
 enum class EnhancedSecurity : uint8_t;
 enum class FindDecorationStyle : uint8_t;
@@ -1142,13 +1143,19 @@ public:
 
     void triggerBrowsingContextGroupSwitchForNavigation(WebCore::NavigationIdentifier, WebCore::BrowsingContextGroupSwitchDecision, const NavigationResponseForProcessSwap&, WebCore::ProcessIdentifier loadingWebProcess, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(NavigationResponseProcessSwapResult&&)>&&);
     void triggerProcessSwapForEnhancedSecurity(WebCore::NavigationIdentifier, const WebCore::Site& responseSite, WebCore::ProcessIdentifier loadingWebProcess, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(NavigationResponseProcessSwapResult&&)>&&);
-    bool needsDocumentIsolationPolicyProcess(const URL&, WebCore::DocumentIsolationPolicy headerPolicy, bool isMainFrame) const;
+    bool needsDocumentIsolationPolicyProcess(const URL&, WebCore::DocumentIsolationPolicyValue headerPolicy, bool isMainFrame) const;
     void triggerProcessSwapForDocumentIsolationPolicy(WebCore::NavigationIdentifier, const NavigationResponseForProcessSwap&, WebCore::ProcessIdentifier loadingWebProcess, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(NavigationResponseProcessSwapResult&&)>&&);
 
     // At this time, pageExtendedBackgroundColor can be set via pageExtendedBackgroundColorDidChange() which is a message
     // from the UIProcess, or by didCommitLayerTree(). When PLATFORM(MAC) adopts UI side compositing, we should get rid of
     // the message entirely.
     WebCore::Color LEGACY_NODELETE pageExtendedBackgroundColor() const;
+
+    // Whether the page as currently displayed is light or dark. Without more specific information, based on the page
+    // extended background color, and Unknown when that color isn't opaque, including when it is invalid because the
+    // web view is transparent or its background doesn't extend beyond the page.
+    enum class EffectivePageAppearance : uint8_t { Unknown, Light, Dark };
+    EffectivePageAppearance LEGACY_NODELETE effectivePageAppearance() const;
 
     WebCore::Color LEGACY_NODELETE sampledPageTopColor() const;
 
@@ -1683,6 +1690,8 @@ public:
     void setCustomDeviceScaleFactor(float, CompletionHandler<void()>&&);
 
     void accessibilitySettingsDidChange();
+    ContentInversion LEGACY_NODELETE contentInversion() const;
+    void setContentInversion(ContentInversion);
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     void updateAccessibilityFrameGeometry();
     void scheduleAccessibilityFrameGeometryUpdate();
@@ -1843,6 +1852,7 @@ public:
     void getContentsAsString(ContentAsStringIncludesChildFrames, CompletionHandler<void(const String&)>&&);
 #if PLATFORM(COCOA)
     void getContentsAsAttributedString(CompletionHandler<void(const WebCore::AttributedString&)>&&);
+    void getSelectionAsAttributedStringForTesting(CompletionHandler<void(const WebCore::AttributedString&)>&&);
     void getAttributedStringsForRemoteFrames(IPC::Connection&, WebCore::FrameIdentifier rootFrameIdentifier, const Vector<WebCore::FrameIdentifier>&, CompletionHandler<void(HashMap<WebCore::FrameIdentifier, WebCore::AttributedString>&&)>&&);
 #endif
     void getBytecodeProfile(CompletionHandler<void(const String&)>&&);
@@ -2146,7 +2156,7 @@ public:
     void disableDoubleTapGesturesDuringTapIfNecessary(TapIdentifier);
     void handleSmartMagnificationInformationForPotentialTap(TapIdentifier, const WebCore::FloatRect& renderRect, bool fitEntireRect, double viewportMinimumScale, double viewportMaximumScale, bool nodeIsRootLevel, bool nodeIsPluginElement);
     void isPotentialTapInProgress(CompletionHandler<void(bool)>&&);
-    void didGetTapHighlightGeometries(TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& geometries, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling);
+    void didGetTapHighlightGeometries(TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& geometries, WebCore::CornerRadii&&, bool nodeHasBuiltInClickHandling);
     void handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint&, OptionSet<WebEventModifier>, TransactionID layerTreeTransactionIdAtLastInteractionStart, WebEventInputSource, WebMouseEventSyntheticClickType);
     void handleDoubleTapForDoubleClickAtPointInFrame(std::optional<WebCore::FrameIdentifier>, const WebCore::IntPoint&, OptionSet<WebEventModifier>, TransactionID layerTreeTransactionIdAtLastInteractionStart, WebEventInputSource, WebMouseEventSyntheticClickType);
 #endif
@@ -2247,6 +2257,8 @@ public:
 
     bool LEGACY_NODELETE isPlayingAudio() const;
     bool LEGACY_NODELETE hasMediaStreaming() const;
+    bool LEGACY_NODELETE hasProtectedMedia() const;
+
     void isPlayingMediaDidChange(WebCore::MediaProducerMediaStateFlags);
     void updateReportedMediaCaptureState();
     void setIsPromptingForGetDisplayMedia(WebCore::MediaProducerMediaStateFlags);
@@ -3433,6 +3445,8 @@ private:
     void LEGACY_NODELETE didChangePageCount(unsigned);
     void themeColorChanged(const WebCore::Color&);
     void pageExtendedBackgroundColorDidChange(const WebCore::Color&);
+    EffectivePageAppearance computeEffectivePageAppearance() const;
+    void effectivePageAppearanceMightHaveChanged();
     void sampledPageTopColorChanged(const WebCore::Color&);
 #if __has_include(<WebKitAdditions/WebPageProxyPrivateAdditions.h>)
 #include <WebKitAdditions/WebPageProxyPrivateAdditions.h>

@@ -2610,20 +2610,6 @@ JSC_DEFINE_JIT_OPERATION(operationCompareStrictEq, size_t, (JSGlobalObject* glob
     OPERATION_RETURN(scope, JSValue::strictEqual(globalObject, src1, src2));
 }
 
-#if USE(BIGINT32)
-JSC_DEFINE_JIT_OPERATION(operationCompareEqHeapBigIntToInt32, size_t, (JSGlobalObject* globalObject, JSCell* heapBigInt, int32_t smallInt))
-{
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    ASSERT(heapBigInt->isHeapBigInt());
-
-    OPERATION_RETURN(scope, static_cast<JSBigInt*>(heapBigInt)->equalsToInt32(smallInt));
-}
-#endif
-
 JSC_DEFINE_JIT_OPERATION(operationNewArrayWithProfile, EncodedJSValue, (JSGlobalObject* globalObject, ArrayAllocationProfile* profile, const JSValue* values, int size))
 {
     VM& vm = globalObject->vm();
@@ -5084,10 +5070,6 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegate, EncodedJSValue, (JSGlobalObject* 
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-#if USE(BIGINT32)
-    if (primValue.isBigInt32())
-        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32())));
-#endif
     if (primValue.isHeapBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt())));
 
@@ -5112,14 +5094,6 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateProfiled, EncodedJSValue, (JSGlobal
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-#if USE(BIGINT32)
-    if (primValue.isBigInt32()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32());
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        arithProfile->observeResult(result);
-        OPERATION_RETURN(scope, JSValue::encode(result));
-    }
-#endif
     if (primValue.isHeapBigInt()) {
         JSValue result = JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt());
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -5156,14 +5130,6 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateProfiledOptimize, EncodedJSValue, (
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-#if USE(BIGINT32)
-    if (primValue.isBigInt32()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32());
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        arithProfile->observeResult(result);
-        OPERATION_RETURN(scope, JSValue::encode(result));
-    }
-#endif
     if (primValue.isHeapBigInt()) {
         JSValue result = JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt());
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -5199,11 +5165,6 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateOptimize, EncodedJSValue, (JSGlobal
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-#if USE(BIGINT32)
-    // FIXME: why does this function profile the argument but not the result?
-    if (primValue.isBigInt32())
-        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32())));
-#endif
     if (primValue.isHeapBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt())));
 
