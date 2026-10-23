@@ -126,6 +126,7 @@ public:
 
     void forEachMember(ClimbingSet set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const { sets().forEachMember(set.m_set, functor); }
     bool contains(ClimbingSet set, ValueFlowObjectID member) const { return sets().contains(set.m_set, member); }
+    bool holdsOneMember(ClimbingSet set) const { return !!sets().onlyMember(set.m_set); }
     bool meet(ClimbingSet first, ClimbingSet second) const { return m_maker.meet(first.m_set, second.m_set); }
     bool meet(ClimbingSet set, ValueSetID constant) const { return m_maker.meet(set.m_set, constant); }
     ClimbingSet unite(ClimbingSet first, ClimbingSet second) { return ClimbingSet(m_maker.unite(first.m_set, second.m_set)); }
@@ -288,6 +289,7 @@ private:
     ValueSetMaker& m_maker;
     ValueFlowStatementID m_statement;
     bool m_isFirstRunOfStatementOfBody { false };
+    bool m_filtersKnownEdges { true };
     // Where what the run logs begins.
     size_t m_firstEdgeOfRun { 0 };
     size_t m_firstNodeReadOfRun { 0 };

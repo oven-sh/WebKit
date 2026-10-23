@@ -207,6 +207,16 @@ ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnder(const HeapKey& key)
         return m_tables.holdersOfUndeclaredPropertiesUnderIndexes();
     if (key.keyClass != HeapKeyClass::Name)
         return m_tables.holdersOfUndeclaredPropertiesUnderAnyKey();
+    if (m_nameOfHoldersOfUndeclaredProperties == key.name && m_holdersOfUndeclaredPropertiesUnderName)
+        return m_holdersOfUndeclaredPropertiesUnderName;
+    m_nameOfHoldersOfUndeclaredProperties = key.name;
+    m_holdersOfUndeclaredPropertiesUnderName = holdersOfUndeclaredPropertiesUnderName(key.name);
+    return m_holdersOfUndeclaredPropertiesUnderName;
+}
+
+ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnderName(PropertyKeyID name)
+{
+    HeapKey key { HeapKeyClass::Name, name };
     PropertyKeyKind kind = m_program.at(key.name).kind;
     if ((kind == PropertyKeyKind::CreatedSymbol || kind == PropertyKeyKind::RegisteredSymbol) && m_tables.under(key.name).holders == ValueSets::nothing && !doesUnseenCodeRun())
         return ValueSets::nothing;
@@ -879,9 +889,11 @@ ClimbingSet HeapRule::receiversBelowAccessorNobodyKnows(ClimbingSet start, const
     if (!holdsAnything(start) || !mayLieAbove(start))
         return { };
 
+    // One receiver has just been looked at.
+    bool isOneReceiver = m_context.holdsOneMember(start);
     Members receivers;
     m_context.forEachMember(start, [&](ValueFlowObjectID receiver) {
-        if (!endsAtPropertyOfCreation(receiver, key) && mayLieAbove(ClimbingSet(only(receiver))))
+        if (!endsAtPropertyOfCreation(receiver, key) && (isOneReceiver || mayLieAbove(ClimbingSet(only(receiver)))))
             receivers.append(receiver);
     });
     return ClimbingSet(m_context.maker().of(receivers.span()));

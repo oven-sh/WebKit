@@ -147,8 +147,19 @@ private:
     ClimbingSet lostAmong(ClimbingSet objects) { return m_context.valueWithin(objects, ValueFlowProgramNodes::lost()); }
     bool hasEscaped(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::escaped()); }
     bool hasBeenLost(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::lost()); }
-    bool doesUnseenCodeRun() { return mayBeUnknownObject(m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::UnseenCodeRuns))); }
-    bool doesUnseenCodeChangeRealm() { return mayBeUnknownObject(m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::UnseenCodeChangesRealm))); }
+    // Nothing moves while a rule runs, and a lookup asks these five times over.
+    bool doesUnseenCodeRun()
+    {
+        if (!m_doesUnseenCodeRun)
+            m_doesUnseenCodeRun = mayBeUnknownObject(m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::UnseenCodeRuns)));
+        return *m_doesUnseenCodeRun;
+    }
+    bool doesUnseenCodeChangeRealm()
+    {
+        if (!m_doesUnseenCodeChangeRealm)
+            m_doesUnseenCodeChangeRealm = mayBeUnknownObject(m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::UnseenCodeChangesRealm)));
+        return *m_doesUnseenCodeChangeRealm;
+    }
     // The statement that runs is an operation of a function, of the program or of the library. A statement that a rule has made belongs to nobody.
     bool isOperationOfFunction();
 
@@ -191,6 +202,7 @@ private:
     bool mayInheritSetter(ClimbingSet objects);
     ValueSetID holdersWithLockedLocationUnder(const HeapKey&) const;
     ValueSetID holdersOfUndeclaredPropertiesUnder(const HeapKey&);
+    ValueSetID holdersOfUndeclaredPropertiesUnderName(PropertyKeyID);
     ValueSetID holdersWithMemberUnder(const HeapKey&) const;
     // None unless something was stored through the placeholder under the name and an object that the store may have reached is among those asked about.
     ValueFlowNodeID storedThroughUnknownObjectInto(ClimbingSet objects, ValueFlowName);
@@ -317,6 +329,11 @@ private:
     std::span<const ValueFlowOperand> m_operands;
     const ValueFlowAccessorFunctor* m_accessorFunctor { nullptr };
     bool m_asksWithoutNodes { false };
+    std::optional<bool> m_doesUnseenCodeRun;
+    std::optional<bool> m_doesUnseenCodeChangeRealm;
+    // Of holdersOfUndeclaredPropertiesUnder(): the name last asked about and the answer.
+    PropertyKeyID m_nameOfHoldersOfUndeclaredProperties;
+    ValueSetID m_holdersOfUndeclaredPropertiesUnderName;
 };
 
 // An object is converted to a key by code that the object names, and the key is whatever that code answers.

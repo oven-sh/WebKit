@@ -60,6 +60,7 @@ void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
     m_statement = statement;
     ++m_runEpoch;
     m_isFirstRunOfStatementOfBody = m_solver.hasStatementOfBodyNeverRun(statement);
+    m_filtersKnownEdges = !m_isFirstRunOfStatementOfBody || m_solver.m_isFullRound;
     m_firstEdgeOfRun = m_log.edges.size();
     m_firstNodeReadOfRun = m_log.nodesRead.size();
     m_firstNodeAskedWhetherEmptyOfRun = m_log.nodesAskedWhetherEmpty.size();
@@ -77,6 +78,7 @@ void ValueFlowRuleContext::beginWhereMade(ValueFlowStatementID statement, const 
 {
     begin(statement);
     m_keyOfStatementOfThisTurn = &key;
+    m_filtersKnownEdges = m_solver.m_isFullRound;
     m_rememberedByStatementOfThisTurn = { };
 }
 
@@ -118,6 +120,13 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
                 m_log.nodesAskedWhetherEmpty[kept++] = node;
         }
         m_log.nodesAskedWhetherEmpty.shrink(kept);
+    }
+    if (!m_filtersKnownEdges) {
+        if (endOfEdges > m_log.mostEdges) [[unlikely]] {
+            m_log.hasDroppedEdges = true;
+            m_log.edges.shrink(std::max<size_t>(m_firstEdgeOfRun, m_log.mostEdges));
+        }
+        return;
     }
     size_t kept = m_firstEdgeOfRun;
     std::span<ValueFlowEdge> edges = m_log.edges.mutableSpan();
@@ -732,7 +741,8 @@ void ValueFlowRuleContext::connectAsNamed(ValueFlowNodeID from, ValueFlowNodeID 
         return;
     cached = { key, m_runEpoch };
     // Whether it is there already: leaveOutWhatIsKnown().
-    m_solver.graph().prefetchLinksThatHold(ValueFlowEdge { from, to });
+    if (m_filtersKnownEdges)
+        m_solver.graph().prefetchLinksThatHold(ValueFlowEdge { from, to });
     m_log.edges.append(ValueFlowEdge { from, to });
     constexpr size_t mostEdgesThatWait = 1 << 16;
     if (m_log.edges.size() - m_firstEdgeOfRun >= mostEdgesThatWait) [[unlikely]] {

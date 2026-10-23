@@ -89,11 +89,36 @@ private:
     bool mayBecomeAnything(uint32_t subject) const { return m_mayBecomeAnything.quickGet(subject - m_firstNode); }
     void addDependency(uint32_t subject, uint32_t source, SinkTransform transform)
     {
-        if (subject != noNode && source != noNode)
-            m_rules.dependencies.append(SinkRule { subject, SinkDependency { source, source, transform } });
+        if (subject == noNode || source == noNode)
+            return;
+        m_rules.dependencies.append(SinkRule { subject, SinkDependency { source, source, transform } });
+        ask(source);
+    }
+
+    bool isOfThisBody(uint32_t node) const { return node - m_firstNode < m_numberOfNodes; }
+    // Somebody who is asked for depends on the node. Where a user of it has had its turn in this walk, all its users have theirs in the next one.
+    void ask(uint32_t node)
+    {
+        if (!m_asksForSources || !isOfThisBody(node) || m_isAsked.quickSet(node - m_firstNode))
+            return;
+        if (m_hasUserThatWasPassed.quickGet(node - m_firstNode))
+            m_nodesOfNextWalk.append(node);
+        else
+            m_isOfThisWalk.quickSet(node - m_firstNode);
+    }
+    // Whether this walk collects what the users of the node do with it.
+    bool isCollectedAtThisUser(uint32_t subject)
+    {
+        if (m_isOfThisWalk.quickGet(subject - m_firstNode))
+            return true;
+        m_hasUserThatWasPassed.quickSet(subject - m_firstNode);
+        return false;
     }
 
     void visitEntryParameters();
+    void walk(bool isFirstWalk);
+    void visitCallBehindItsRules(ValueID);
+    void dropRulesAboutNodesNobodyAsksFor();
     void visit(ValueID, bool isInCycle);
     void visit(const Terminator&);
     void visitEdgesOutOf(BlockID);
@@ -116,6 +141,15 @@ private:
     uint32_t m_firstNode { 0 };
     BitVector m_mayBecomeAnything;
     BitVector m_blocksInCycles;
+    // The summaries are read off the entry parameters and the fields of environments. By node of this body: whether one of them depends on it.
+    BitVector m_isAsked;
+    BitVector m_isOfThisWalk;
+    BitVector m_hasUserThatWasPassed;
+    Vector<uint32_t, 16> m_nodesOfNextWalk;
+    Vector<BlockID, 16> m_blocksInOrder;
+    uint32_t m_numberOfNodes { 0 };
+    bool m_asksForSources { false };
+    bool m_collectsAboutEveryNode { true };
 };
 
 } // anonymous namespace
@@ -180,6 +214,10 @@ void BodyRuleCollector::numberValues()
     m_nodeOfValue.fill(noNode, m_function.values.size());
     m_firstNode = m_nodes.firstNodeOfFunction[m_id.index()];
     m_mayBecomeAnything = BitVector(m_nodes.firstNodeOfFunction[m_id.index() + 1] - m_firstNode);
+    m_numberOfNodes = m_nodes.firstNodeOfFunction[m_id.index() + 1] - m_firstNode;
+    m_isAsked = BitVector(m_numberOfNodes);
+    m_isOfThisWalk = BitVector(m_numberOfNodes);
+    m_hasUserThatWasPassed = BitVector(m_numberOfNodes);
     uint32_t next = m_firstNode;
     for (ValueID parameter : m_function.at(entryBlock).parameters)
         m_nodeOfValue[parameter.index()] = next++;
@@ -193,13 +231,20 @@ void BodyRuleCollector::numberValues()
 void BodyRuleCollector::findBlocksInCycles()
 {
     m_blocksInCycles = BitVector(m_function.blocks.size());
-    if (m_function.blocks.size() == 1)
+    if (m_function.blocks.size() == 1) {
+        m_blocksInOrder.append(entryBlock);
         return;
+    }
     CFG cfg(m_function);
     BlockCycles cycles(cfg);
     for (BlockID block : cfg.reversePostOrder()) {
+        m_blocksInOrder.append(block);
         if (cycles.isInCycle(block))
             m_blocksInCycles.quickSet(block.index());
+    }
+    for (uint32_t index = 0; m_blocksInOrder.size() < m_function.blocks.size() && index < m_function.blocks.size(); ++index) {
+        if (!cfg.isReachable(BlockID(index)))
+            m_blocksInOrder.append(BlockID(index));
     }
 }
 
@@ -212,6 +257,7 @@ void BodyRuleCollector::collect()
         Opcode opcode = m_function.at(id).opcode;
         return opcode == Opcode::Check || effectRuleOf(opcode) == EffectRule::Call;
     };
+    // Of which values anything may become is known before anybody asks what depends on them.
     for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {
         bool isInCycle = m_blocksInCycles.quickGet(index);
         for (ValueID id : m_function.blocks[index].values) {
@@ -219,16 +265,77 @@ void BodyRuleCollector::collect()
                 visit(id, isInCycle);
         }
     }
-    for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {
-        BlockID block(index);
-        bool isInCycle = m_blocksInCycles.quickGet(index);
+
+    m_asksForSources = true;
+    m_collectsAboutEveryNode = false;
+    for (ValueID parameter : m_function.at(entryBlock).parameters)
+        ask(nodeOf(parameter));
+    walk(true);
+    constexpr unsigned mostWalksByDemand = 6;
+    for (unsigned numberOfWalks = 1; !m_nodesOfNextWalk.isEmpty(); ++numberOfWalks) {
+        m_isOfThisWalk.clearAll();
+        m_hasUserThatWasPassed.clearAll();
+        for (uint32_t node : std::exchange(m_nodesOfNextWalk, { }))
+            m_isOfThisWalk.quickSet(node - m_firstNode);
+        // A chain that leads backward step by step: the rest has its turn all at once.
+        for (uint32_t node = 0; numberOfWalks == mostWalksByDemand && node < m_numberOfNodes; ++node) {
+            if (!m_isAsked.quickSet(node))
+                m_isOfThisWalk.quickSet(node);
+        }
+        walk(false);
+    }
+    dropRulesAboutNodesNobodyAsksFor();
+}
+
+void BodyRuleCollector::walk(bool isFirstWalk)
+{
+    for (BlockID block : m_blocksInOrder) {
         for (ValueID id : m_function.at(block).values) {
-            if (!speaksFirst(id))
-                visit(id, isInCycle);
+            const Value& value = m_function.at(id);
+            if (value.opcode == Opcode::Check)
+                continue;
+            if (effectRuleOf(value.opcode) == EffectRule::Call) {
+                visitCallBehindItsRules(id);
+                continue;
+            }
+            // What is read out of a field that is followed is asked for whoever holds the environment.
+            if (value.opcode == Opcode::GetEnvironmentField && hasFollowedFields(m_program.at(value.layout()))) {
+                if (!isFirstWalk)
+                    continue;
+                m_collectsAboutEveryNode = true;
+                visit(id, false);
+                m_collectsAboutEveryNode = false;
+                continue;
+            }
+            visit(id, false);
         }
         visit(m_function.at(block).terminator);
         visitEdgesOutOf(block);
     }
+}
+
+// The rules of the call stand. What they depend on in this body is the result.
+void BodyRuleCollector::visitCallBehindItsRules(ValueID id)
+{
+    const Value& call = m_function.at(id);
+    call.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        uint32_t subject = nodeOf(operand);
+        if (subject == noNode || call.operandKind(operandIndex) == OperandKind::Guard || !isCollectedAtThisUser(subject) || mayBecomeAnything(subject))
+            return;
+        if (declaredBehaviorOf(call.opcode, operandIndex).uses.contains(OperandUse::RetainsContents))
+            visitDeclaredOperand(id, operandIndex, subject);
+        else
+            ask(nodeOf(id));
+    });
+}
+
+void BodyRuleCollector::dropRulesAboutNodesNobodyAsksFor()
+{
+    auto isAboutNodeNobodyAsksFor = [&](const auto& rule) {
+        return isOfThisBody(rule.subject) && !m_isAsked.quickGet(rule.subject - m_firstNode);
+    };
+    m_rules.baseUses.removeAllMatching(isAboutNodeNobodyAsksFor);
+    m_rules.dependencies.removeAllMatching(isAboutNodeNobodyAsksFor);
 }
 
 // These read the arguments of the frame, which are no operands of theirs.
@@ -269,20 +376,22 @@ void BodyRuleCollector::visitEdgesOutOf(BlockID block)
     forEachOutgoingEdge(m_function, block, [&](Edge, const Target& target) {
         const CompactList<ValueID>& parameters = m_function.at(target.block).parameters;
         for (uint32_t index = 0; index < target.arguments.size(); ++index) {
-            if (uint32_t subject = nodeOf(target.arguments[index]); subject != noNode && !mayBecomeAnything(subject))
+            if (uint32_t subject = nodeOf(target.arguments[index]); subject != noNode && isCollectedAtThisUser(subject) && !mayBecomeAnything(subject))
                 addDependency(subject, nodeOf(parameters[index]), SinkTransform::Same);
         }
     });
     forEachEdgeResult(m_function, block, [&](const EdgeResult& result, ValueID parameter) {
         switch (result.kind) {
         case EdgeResultKind::NarrowedOperand:
-            addDependency(nodeOf(result.subject), nodeOf(parameter), SinkTransform::Same);
+            if (uint32_t subject = nodeOf(result.subject); subject != noNode && isCollectedAtThisUser(subject))
+                addDependency(subject, nodeOf(parameter), SinkTransform::Same);
             return;
         case EdgeResultKind::Guard:
             return;
         case EdgeResultKind::DeclaredResult:
             m_function.at(block).terminator.forEachOperand([&](ValueID operand, uint32_t) {
-                addDependency(nodeOf(operand), nodeOf(parameter), SinkTransform::Contents);
+                if (uint32_t subject = nodeOf(operand); subject != noNode && isCollectedAtThisUser(subject))
+                    addDependency(subject, nodeOf(parameter), SinkTransform::Contents);
             });
             return;
         }
@@ -294,7 +403,7 @@ void BodyRuleCollector::visit(const Terminator& terminator)
 {
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         uint32_t subject = nodeOf(operand);
-        if (subject == noNode || mayBecomeAnything(subject) || terminator.operandKind(operandIndex) == OperandKind::Guard)
+        if (subject == noNode || terminator.operandKind(operandIndex) == OperandKind::Guard || !isCollectedAtThisUser(subject) || mayBecomeAnything(subject))
             return;
         addUses(subject, summarizeOperand(m_effects, m_function, terminator, operandIndex).uses);
     });
@@ -308,6 +417,8 @@ void BodyRuleCollector::visit(ValueID id, bool isInCycle)
     user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         uint32_t subject = nodeOf(operand);
         if (subject == noNode || (speaksOfOperandsAlone && mayBecomeAnything(subject)) || user.operandKind(operandIndex) == OperandKind::Guard)
+            return;
+        if (!m_collectsAboutEveryNode && !isCollectedAtThisUser(subject))
             return;
         if (effectRuleOf(user.opcode) != EffectRule::Call) {
             visitDeclaredOperand(id, operandIndex, subject);
@@ -351,10 +462,9 @@ void BodyRuleCollector::visitOperandOfCall(ValueID id, uint32_t operandIndex, ui
 {
     const Value& call = m_function.at(id);
     OperandUses declaredUses = declaredBehaviorOf(call.opcode, operandIndex).uses;
-    if (declaredUses.contains(OperandUse::RetainsContents)) {
-        visitDeclaredOperand(id, operandIndex, subject);
+    // It depends on values of this body: visitCallBehindItsRules().
+    if (declaredUses.contains(OperandUse::RetainsContents))
         return;
-    }
 
     bool isCalledValue = declaredUses.containsAny(callingUses);
     OperandUses usesOfCalledValue = declaredUses | OperandUse::Inspects;

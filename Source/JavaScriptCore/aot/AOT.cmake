@@ -874,7 +874,7 @@ endfunction()
 function(AOT_INCLUDE_STANDARD_LIBRARY_ASSERTIONS_FIRST)
     if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
         AOT_READ_LIBRARY_SOURCES(librarySources problems)
-        set_property(SOURCE ${librarySources} APPEND PROPERTY COMPILE_OPTIONS "SHELL:-include ${JAVASCRIPTCORE_DIR}/aot/support/AOTStandardLibraryAssertions.h")
+        set_property(SOURCE ${librarySources} APPEND PROPERTY COMPILE_OPTIONS -include "${JAVASCRIPTCORE_DIR}/aot/support/AOTStandardLibraryAssertions.h")
     endif ()
 endfunction()
 
