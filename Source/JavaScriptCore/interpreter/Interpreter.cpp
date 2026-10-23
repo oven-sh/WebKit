@@ -186,10 +186,10 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         if (!(lexicallyScopedFeatures & StrictModeLexicallyScopedFeature)) {
             JSValue parsedValue;
             if (programSource.is8Bit()) {
-                LiteralParser<Latin1Character, JSONReviverMode::Disabled> preparser(globalObject, programSource.span8(), SloppyJSON, callerBaselineCodeBlock);
+                LiteralParser<Latin1Character, JSONReviverMode::Disabled> preparser(globalObject, programSource.span8(), SloppyJSON);
                 parsedValue = preparser.tryEval();
             } else {
-                LiteralParser<char16_t, JSONReviverMode::Disabled> preparser(globalObject, programSource.span16(), SloppyJSON, callerBaselineCodeBlock);
+                LiteralParser<char16_t, JSONReviverMode::Disabled> preparser(globalObject, programSource.span16(), SloppyJSON);
                 parsedValue = preparser.tryEval();
 
             }
