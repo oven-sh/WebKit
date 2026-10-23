@@ -1353,7 +1353,7 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
 #if OS(WINDOWS)
         // Bun: file:///D:/x is D:\x. With "file://" cut off it is "/D:/x", which isAbsolutePath() does not take for one.
         if (specifier.startsWith(filePrefix))
-            specifier = URL({ }, specifier).fileSystemPath();
+            specifier = URL({ }, specifier).fileSystemPath().unsafeValue();
 #else
         if (specifier.startsWith(filePrefix))
             specifier = specifier.substringSharingImpl(filePrefix.length());
@@ -1361,7 +1361,7 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
 
         bool specifierIsAbsolute = isAbsolutePath(specifier);
         if (!specifierIsAbsolute && !isDottedRelativePath(specifier)) {
-            throwTypeError(globalObject, scope, makeString("Module specifier, '"_s, specifier, "' is not absolute and does not start with \"./\" or \"../\". Referenced from: "_s, directoryURL.fileSystemPath()));
+            throwTypeError(globalObject, scope, makeString("Module specifier, '"_s, specifier, "' is not absolute and does not start with \"./\" or \"../\". Referenced from: "_s, directoryURL.fileSystemPath().unsafeValue()));
             return { };
         }
 
@@ -1581,7 +1581,7 @@ private:
         if (!cacheEnabled())
             return { };
         String cachePath { Options::diskCachePath() };
-        String filename = FileSystem::encodeForFileName(FileSystem::lastComponentOfPathIgnoringTrailingSlash(sourceOrigin().url().fileSystemPath()));
+        String filename = FileSystem::encodeForFileName(FileSystem::lastComponentOfPathIgnoringTrailingSlash(sourceOrigin().url().fileSystemPath().unsafeValue()));
         return FileSystem::pathByAppendingComponent(cachePath, makeString(source().hash(), '-', filename, ".bytecode-cache"_s));
     }
 
@@ -1644,7 +1644,7 @@ static inline SourceCode jscSource(const Vector& utf8, const SourceOrigin& sourc
 template<typename Vector>
 static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
 {
-    String fileName = fileURL.fileSystemPath();
+    String fileName = fileURL.fileSystemPath().unsafeValue();
 #if OS(WINDOWS)
     // https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247.aspx#maxpath
     // Use long UNC to pass the long path name to the Windows APIs.
@@ -1699,7 +1699,7 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
     URL moduleURL({ }, moduleKey);
     ASSERT(moduleURL.protocolIsFile());
     // Strip the URI from our key so Errors print canonical system paths.
-    moduleKey = moduleURL.fileSystemPath();
+    moduleKey = moduleURL.fileSystemPath().unsafeValue();
 
     Vector<uint8_t> buffer;
     if (!fetchModuleFromLocalFileSystem(moduleURL, buffer))
@@ -2638,11 +2638,11 @@ JSC_DEFINE_HOST_FUNCTION(functionLoad, (JSGlobalObject* globalObject, CallFrame*
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     Vector<char> script;
-    if (!fetchScriptFromLocalFileSystem(path.fileSystemPath(), script))
+    if (!fetchScriptFromLocalFileSystem(path.fileSystemPath().unsafeValue(), script))
         return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Could not open file."_s)));
 
     NakedPtr<Exception> evaluationException;
-    JSValue result = evaluate(globalObject, jscSource(script, SourceOrigin { path }, path.fileSystemPath()), JSValue(), evaluationException);
+    JSValue result = evaluate(globalObject, jscSource(script, SourceOrigin { path }, path.fileSystemPath().unsafeValue()), JSValue(), evaluationException);
     if (evaluationException) {
         if (vm.isTerminationException(evaluationException.get()))
             vm.setExecutionForbidden();
@@ -2687,9 +2687,9 @@ JSC_DEFINE_HOST_FUNCTION(functionReadFile, (JSGlobalObject* globalObject, CallFr
     URL filePath = computeFilePath(vm, globalObject, callFrame);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    RefPtr<Uint8Array> content = fillBufferWithContentsOfFile(filePath.fileSystemPath());
+    RefPtr<Uint8Array> content = fillBufferWithContentsOfFile(filePath.fileSystemPath().unsafeValue());
     if (!content)
-        return throwVMError(globalObject, scope, makeString("Could not open file: "_s, filePath.fileSystemPath()));
+        return throwVMError(globalObject, scope, makeString("Could not open file: "_s, filePath.fileSystemPath().unsafeValue()));
 
     if (!isBinary)
         return JSValue::encode(jsString(vm, String::fromUTF8WithLatin1Fallback(content->span())));
@@ -2893,7 +2893,7 @@ JSC_DEFINE_HOST_FUNCTION(functionOpenFile, (JSGlobalObject* globalObject, CallFr
     URL filePath = computeFilePath(vm, globalObject, callFrame);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    FILE* descriptor = fopen(filePath.fileSystemPath().ascii().data(), "r");
+    FILE* descriptor = fopen(filePath.fileSystemPath().unsafeValue().ascii().data(), "r");
     if (!descriptor)
         return throwVMException(globalObject, scope, createURIError(globalObject, makeString("Could not open file at "_s, filePath.string(), " fopen had error: "_s, safeStrerror(errno))));
 

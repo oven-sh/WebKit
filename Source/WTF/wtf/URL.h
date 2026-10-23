@@ -168,7 +168,14 @@ public:
     WTF_EXPORT_PRIVATE String hostAndPort() const;
     WTF_EXPORT_PRIVATE String user() const;
     WTF_EXPORT_PRIVATE String password() const;
+#if USE(CF)
     WTF_EXPORT_PRIVATE String fileSystemPath() const;
+#else
+    // Empty when this is not a file: URL, or when the percent-decoded path is not valid UTF-8.
+    // A null String would read as "" (the current directory) at the caller, so the type makes
+    // every caller unwrap.
+    WTF_EXPORT_PRIVATE Markable<String> fileSystemPath() const;
+#endif
 
     WTF_EXPORT_PRIVATE URL truncatedForUseAsBase() const;
 
@@ -426,3 +433,6 @@ inline unsigned URL::pathAfterLastSlash() const
 
 using WTF::aboutBlankURL;
 using WTF::aboutSrcDocURL;
+
+// For the return type of fileSystemPath(). Markable.h includes Hasher.h, which needs a complete URL.
+#include <wtf/Markable.h>
