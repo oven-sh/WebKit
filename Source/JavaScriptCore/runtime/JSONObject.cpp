@@ -1149,7 +1149,16 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
         size_t newSize = std::max<size_t>(m_dynamicBuffer.size() * 2, m_dynamicBuffer.size() + size);
         if (newSize > lengthOfBigResult) {
             size_t lengthOfLast = stringifyHints.lengthOfBigResult;
-            newSize = std::max<size_t>(newSize, lengthOfLast + lengthOfLast / 8 + pieceOfLongString * 6);
+            size_t sizeForResultLikeLast = lengthOfLast + lengthOfLast / 8 + pieceOfLongString * 6;
+            if (sizeForResultLikeLast > newSize) {
+                if (StringImpl::isValidLength<CharType>(sizeForResultLikeLast) && m_dynamicBuffer.tryGrow(sizeForResultLikeLast)) [[likely]] {
+                    m_capacity = m_dynamicBuffer.size();
+                    ASSERT(m_capacity - m_length >= size);
+                    return true;
+                }
+                // This result may be far smaller than the last, and what it needs may still be there.
+                stringifyHints.lengthOfBigResult = 0;
+            }
         }
         if (!StringImpl::isValidLength<CharType>(newSize)) [[unlikely]]
             return false;

@@ -307,6 +307,7 @@ public:
 
     FunctionKindData functionKind(FunctionID id) const { return id.index() < m_functions.kinds.size() ? m_functions.kinds[id.index()] : FunctionKindData { }; }
     LayoutID classConstructedBy(FunctionID id) const { return id.index() < m_functions.constructedClasses.size() ? m_functions.constructedClasses[id.index()] : LayoutID(); }
+    bool isInUse(LayoutID id) const { return !m_layoutsOutOfUse.get(id.index()); }
     // How many layouts with a smaller index have a class record: the index of the class's word in ClassWords::classPrototypes.
     std::optional<uint32_t> rankOfClass(LayoutID id) const { return id.index() < m_classRanks.size() ? m_classRanks[id.index()] : std::nullopt; }
     ClosureIdentity closureIdentityOf(FunctionID id) const { return id.index() < m_functions.closureIdentities.size() ? m_functions.closureIdentities[id.index()] : ClosureIdentity::Unknown; }
@@ -357,6 +358,7 @@ private:
     ConstantNumbering m_constants;
     FunctionNumbering m_functions;
     Vector<std::optional<uint32_t>> m_classRanks;
+    BitVector m_layoutsOutOfUse;
     RequestTable m_requests;
     PlacedPropertyRuns m_propertyRuns;
     BitVector m_typesNeededAtRunTime;

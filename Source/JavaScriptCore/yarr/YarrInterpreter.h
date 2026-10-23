@@ -477,6 +477,8 @@ public:
     Vector<ByteTerm> terms;
     unsigned m_numSubpatterns;
     unsigned m_frameSize;
+    // Of a repeated group: jitCountsTurnsOf().
+    bool m_jitCountsTurns { false };
 };
 
 struct BytecodePattern {
@@ -595,6 +597,8 @@ public:
     // A pattern that has only a flat program gets its bytecode out of its text on the day the flat program runs out of frames.
     String m_source;
     std::unique_ptr<BytecodePattern> m_bytecodeBehindFlatProgram;
+    // Where no JIT stands in front of the bytecode: a match is given up where the JIT gives it up, not earlier. See Interpreter::countsTowardMatchLimit().
+    bool m_countsWhatJITCounts { false };
 
 private:
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;

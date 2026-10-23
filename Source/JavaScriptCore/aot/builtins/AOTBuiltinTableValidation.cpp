@@ -111,6 +111,10 @@ static bool isExpectedInRealm(const RealmComparison& comparison, BuiltinID id)
         return false;
     if (!hasHookThatCreates(comparison.realm, id) || table.has(BuiltinMark::IsAddedByOption, id))
         return false;
+#if !ENABLE(WEBASSEMBLY)
+    if (id == Builtins::WebAssembly)
+        return false;
+#endif
     return BuiltinBindings::provides(builtin.origin);
 }
 

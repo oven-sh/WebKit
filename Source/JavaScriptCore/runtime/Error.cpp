@@ -30,6 +30,7 @@
 #include "Interpreter.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
+#include "MarkedBlockCage.h"
 #include "SourceCode.h"
 #include "StackFrame.h"
 #include "TopExceptionScope.h"
@@ -467,6 +468,8 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject)
 {
     auto* error = createRangeError(globalObject, "Out of memory"_s, nullptr);
     uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
+    if (MarkedBlockCage::isRequired())
+        globalObject->vm().heap.cage().didCreateOutOfMemoryError();
     return error;
 }
 
@@ -476,6 +479,8 @@ JSObject* createOutOfMemoryError(JSGlobalObject* globalObject, const String& mes
         return createOutOfMemoryError(globalObject);
     auto* error = createRangeError(globalObject, makeString("Out of memory: "_s, message), nullptr);
     uncheckedDowncast<ErrorInstance>(error)->setOutOfMemoryError();
+    if (MarkedBlockCage::isRequired())
+        globalObject->vm().heap.cage().didCreateOutOfMemoryError();
     return error;
 }
 

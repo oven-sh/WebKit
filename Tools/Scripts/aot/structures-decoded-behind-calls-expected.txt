@@ -18,3 +18,8 @@ JSC::AOT::createAccessorPair                 # the same
 operationAOTDirectEval                       # the same: createAccessorPair() inlined
 JSC::AOT::tryAssignCollectedProperties       # the same
 ZN3JSC3AOT12_GLOBAL__N_115ClassDefinition3runENS_7JSValueES3_    # ClassDefinition::finish(): the class object and the prototype are alive and keep their Structures
+operationAOTResolvePromiseOrReturnResult     # the realm's own Structure of promises, which the global object visits
+operationAOTPromiseCatch                     # the same
+JSC::AOT::SavedFrame::ensurePromise          # the same
+JSC::AOT::createMatchValue                   # the realm's own Structure of the arrays that a match makes, which the global object visits
+JSC::AOT::tryDefineAbsentProperty            # JSObject::tryPutDirectByExistingTransition(): a register holds the pointer to the new Structure across the calls, and what is decoded is its low half, which the object has by then

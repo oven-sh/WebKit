@@ -30,7 +30,9 @@
 #include "BlockDirectoryInlines.h"
 #include "Heap.h"
 #include "HeapInlines.h"
+#include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
+#include "StructureAlignedMemoryAllocator.h"
 #include "SubspaceInlines.h"
 #include "SuperSampler.h"
 
@@ -148,8 +150,11 @@ MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(JSC::Heap& heap)
 {
     bool hasBlocks = m_blocks.size() > m_freeBlockIndices.size();
     MarkedBlock::Handle* handle = MarkedBlock::tryCreate(heap, subspace()->alignedMemoryAllocator(), hasBlocks ? MarkedBlock::IsFirstInDirectory::No : MarkedBlock::IsFirstInDirectory::Yes);
-    if (!handle)
+    if (!handle) {
+        if (MarkedBlockCage::isRequired())
+            heap.cage().didFindNoRoom(heap.vm(), subspace()->alignedMemoryAllocator() == heap.structureAllocator.get() ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
         return nullptr;
+    }
     
     markedSpace().didAddBlock(handle);
     

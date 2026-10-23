@@ -12,6 +12,7 @@
 #include "Options.h"
 #include "OwedOutOfMemoryError.h"
 #include "ReservedRangeHeap.h"
+#include "ResourceExhaustion.h"
 #include "StructureAlignedMemoryAllocator.h"
 #include <mutex>
 #include <optional>
@@ -41,6 +42,13 @@ static constexpr size_t smallestReserveSize = 4 * MB;
 static constexpr size_t largestReserveSize = 32 * MB;
 static constexpr size_t reserveChunkSize = MarkedBlock::blockSize;
 static constexpr size_t lastReserveDivisor = 4;
+// A full collection is barren if the program can allocate less than 1/64 of the heap before there is no room again.
+static constexpr size_t barrenCollectionDivisor = 64;
+// After this many barren collections in a row, with no out-of-memory error in between, the error is owed.
+static constexpr unsigned barrenCollectionsUntilError = 4;
+// While the error finds no place to be thrown: after this many a thread that can end alone is asked to, and after this many the process ends.
+static constexpr unsigned barrenCollectionsUntilThreadEnds = 8;
+static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
 
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
 static_assert(smallestUsableSize / randomPrefixDivisor >= randomPrefixGranule);
@@ -330,6 +338,32 @@ void MarkedBlockCage::didThrowOutOfMemoryError()
     m_hasReleasedReserve = false;
     if (std::exchange(m_exhaustedHeap, ExhaustedHeap::Cells) == ExhaustedHeap::Structures)
         StructureAlignedMemoryAllocator::didThrowOutOfMemoryError();
+}
+
+void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
+{
+    ASSERT(isRequired());
+    uint64_t bytesAllocated = vm.heap.totalBytesAllocated();
+    uint64_t bytesAllocatedSinceLastFull = bytesAllocated - std::exchange(m_bytesAllocatedWhenLastFull, bytesAllocated);
+    // The same request, trying again after its collection.
+    if (!bytesAllocatedSinceLastFull)
+        return;
+    if (bytesAllocatedSinceLastFull >= vm.heap.objectSpace().capacity() / barrenCollectionDivisor) {
+        m_numberOfBarrenCollections = 0;
+        return;
+    }
+    if (++m_numberOfBarrenCollections < barrenCollectionsUntilError)
+        return;
+    if (!vm.traps().needsOutOfMemoryError()) {
+        setExhaustedHeap(exhaustedHeap);
+        vm.traps().setNeedsOutOfMemoryError(true);
+    }
+    if (m_numberOfBarrenCollections == barrenCollectionsUntilThreadEnds)
+        willUseLastReserve(vm);
+    if (m_numberOfBarrenCollections < barrenCollectionsUntilProcessEnds)
+        return;
+    logExhaustion(exhaustedHeap);
+    RELEASE_ASSERT_RESOURCE_AVAILABLE(false, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
 }
 
 void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)

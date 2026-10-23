@@ -365,7 +365,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     , intlSegmentIteratorHeapCellType(IsoHeapCellType::Args<IntlSegmentIterator>())
     , intlSegmenterHeapCellType(IsoHeapCellType::Args<IntlSegmenter>())
     , intlSegmentsHeapCellType(IsoHeapCellType::Args<IntlSegments>())
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
     , ffiFunctionHeapCellType(IsoHeapCellType::Args<JSFFIFunction>())
     , ffiCallbackHeapCellType(IsoHeapCellType::Args<JSFFICallback>())
 #endif

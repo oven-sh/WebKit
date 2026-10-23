@@ -1147,6 +1147,34 @@ size_t FlatProgram::estimatedSizeInBytes() const
         + wideRanges.capacity() * sizeof(CharacterRange) + text.capacity() + wideText.capacity() * sizeof(char16_t);
 }
 
+// As YarrGenerator::disjunctionContainsBacktrackableContent().
+static bool containsBacktrackableContent(const PatternDisjunction& disjunction)
+{
+    if (disjunction.m_alternatives.size() > 1)
+        return true;
+    for (auto& alternative : disjunction.m_alternatives) {
+        for (auto& term : alternative->m_terms) {
+            if (term.quantityType != QuantifierType::FixedCount)
+                return true;
+            if (term.type == PatternTerm::Type::NumberedBackReference || term.type == PatternTerm::Type::NamedBackReference)
+                return true;
+            if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && containsBacktrackableContent(*term.parentheses.disjunction))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool jitCountsTurnsOf(const PatternTerm& term)
+{
+    ASSERT(term.type == PatternTerm::Type::ParenthesesSubpattern);
+    if ((term.quantityMaxCount == 1 && !term.parentheses.isCopy) || term.parentheses.isTerminal)
+        return false;
+    if (term.quantityType != QuantifierType::FixedCount)
+        return true;
+    return term.parentheses.disjunction->m_alternatives.size() != 1 || (term.quantityMaxCount > 1 && containsBacktrackableContent(*term.parentheses.disjunction));
+}
+
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern& pattern)
 {
     ASSERT(pattern.m_executionMode == ExecutionMode::IncludeSubpatterns);

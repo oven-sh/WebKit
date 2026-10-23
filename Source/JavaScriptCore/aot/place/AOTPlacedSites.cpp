@@ -14,6 +14,7 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionKinds.h"
+#include "AOTOpcodesNamingRecords.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
@@ -65,6 +66,8 @@ struct PlacedFunctionSites {
     Vector<TypeID> typesTestedByCode;
     Vector<FunctionID> allocatedClosures;
     Vector<DataID> data;
+    Vector<LayoutID> layouts;
+    Vector<LayoutSetID> layoutSets;
     unsigned maxClosureCaptures { 0 };
     FunctionID function;
     uint32_t numberOfStoresThatMayAdd { 0 };
@@ -194,6 +197,7 @@ private:
     void scanTypes(const Value&);
     void scanValidatedTypes(const Value&);
     void scanVariables(const Value&);
+    template<typename InstructionType> void scanLayouts(const InstructionType&);
 
     const PlacementContext& m_context;
     const Program& m_program;
@@ -370,6 +374,8 @@ void SiteScanner::scanData(const Value& value)
 
 void SiteScanner::scanDataObject(const DataNode::Object& object)
 {
+    if (object.layout)
+        m_sites.layouts.append(object.layout);
     if (!object.layout || !m_context.isCompiledObject(object.layout))
         return;
     const Layout& layout = m_program.at(object.layout);
@@ -519,8 +525,28 @@ void SiteScanner::scanVariables(const Value& value)
     });
 }
 
+template<typename InstructionType>
+void SiteScanner::scanLayouts(const InstructionType& instruction)
+{
+    forEachLayout(instruction, [&](LayoutID layout) {
+        if (layout && (m_sites.layouts.isEmpty() || m_sites.layouts.last() != layout))
+            m_sites.layouts.append(layout);
+    });
+    forEachLayoutSet(instruction, [&](LayoutSetID set) {
+        if (!set || (!m_sites.layoutSets.isEmpty() && m_sites.layoutSets.last() == set))
+            return;
+        if (TypeTable::isProvisional(set))
+            m_sites.layouts.appendVector(m_program.at(set).members);
+        else
+            m_sites.layoutSets.append(set);
+    });
+}
+
 void SiteScanner::scanValue(const Value& value, SiteWeight weight)
 {
+    static const OpcodeSet opcodesNamingLayouts = findOpcodesNaming<LayoutID, LayoutSetID>();
+    if (opcodesNamingLayouts.contains(value.opcode))
+        scanLayouts(value);
     if (slotRowOpcodes.contains(value.opcode))
         scanSlotRow(value, weight);
     if (shapeTestOpcodes.contains(value.opcode))
@@ -586,6 +612,7 @@ PlacedFunctionSites SiteScanner::run()
             scanValue(value, weightWhere(weighedOpcodes.contains(value.opcode) && (m_hasWeighedBlock || isWeightRead(value))));
         }
         scanTerminator(block.terminator, weightWhere(block.terminator.kind == TerminatorKind::SwitchOnShape));
+        scanLayouts(block.terminator);
     }
     sortAndRemoveDuplicates(m_sites.data);
     for (DataID id : m_sites.data)
@@ -597,6 +624,8 @@ PlacedFunctionSites SiteScanner::run()
     sortAndRemoveDuplicates(m_sites.tableCalls);
     sortAndRemoveDuplicates(m_sites.allocations);
     sortAndRemoveDuplicates(m_sites.builtinCells);
+    sortAndRemoveDuplicates(m_sites.layouts);
+    sortAndRemoveDuplicates(m_sites.layoutSets);
     return WTF::move(m_sites);
 }
 
@@ -781,6 +810,60 @@ static void mergeBits(const Program& program, FunctionSitesArray functions, Plac
     }
 }
 
+static bool isMadeOnlyWhereItIsNamed(const Program& program, LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    if (layout.kind != LayoutKind::Record && layout.kind != LayoutKind::Instance)
+        return false;
+    return id.index() < program.numberOfLayoutsAsRead() && !layout.has(LayoutFlags::IsDerived) && !layout.has(LayoutFlags::IsOfCreatedObject) && !layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
+}
+
+static BitVector findLayoutsOutOfUse(const Program& program, FunctionSitesArray functions)
+{
+    Vector<LayoutID> worklist;
+    BitVector inUse(program.layouts.size());
+    auto use = [&](LayoutID layout) {
+        if (layout && !inUse.quickSet(layout.index()))
+            worklist.append(layout);
+    };
+    BitVector layoutSets(program.types.numberOfLayoutSets());
+    BitVector hasEntrypoint(program.functions.size());
+    for (const PlacedFunctionSites* function : functions) {
+        for (LayoutID layout : function->layouts)
+            use(layout);
+        setBits(layoutSets, function->layoutSets);
+        use(program.at(function->function).constructedClass);
+        if (const auto* entrypoint = program.at(function->function).creator.tryAs<CreatorRecord::Entrypoint>())
+            hasEntrypoint.set(entrypoint->target.index());
+    }
+    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+        FunctionID constructor = program.layouts[index].constructor;
+        if (constructor && hasEntrypoint.get(constructor.index()))
+            use(LayoutID(index));
+    }
+    for (size_t index : layoutSets) {
+        for (LayoutID member : program.at(LayoutSetID(static_cast<uint32_t>(index))).members)
+            use(member);
+    }
+    for (const Module& module : program.modules) {
+        if (module.data)
+            forEachLayout(program.at(module.data), use);
+    }
+    for (const ExpectedResult& expected : program.expectedResults)
+        forEachLayout(expected, use);
+    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+        if (!isMadeOnlyWhereItIsNamed(program, LayoutID(index)))
+            use(LayoutID(index));
+    }
+    while (!worklist.isEmpty())
+        forEachLayout(program.at(worklist.takeLast()), use);
+
+    BitVector outOfUse(program.layouts.size());
+    for (unsigned index = 0; index < program.layouts.size(); ++index)
+        outOfUse.quickSet(index, !inUse.quickGet(index));
+    return outOfUse;
+}
+
 static PlacedSites mergeSites(const PlacementContext& context, FunctionSitesArray functions)
 {
     const Program& program = context.program;
@@ -793,6 +876,7 @@ static PlacedSites mergeSites(const PlacementContext& context, FunctionSitesArra
         [&] { mergeLiteralSites(loops, functions, sites); },
         [&] { mergeConstants(loops, functions, sites); },
         [&] { mergeBits(program, functions, sites); },
+        [&] { sites.layoutsOutOfUse = findLayoutsOutOfUse(program, functions); },
     });
     return sites;
 }

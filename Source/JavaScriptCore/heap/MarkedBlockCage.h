@@ -71,20 +71,25 @@ public:
     JS_EXPORT_PRIVATE void didThrowOutOfMemoryError();
     size_t reserveSize() const;
 
+    enum class ExhaustedHeap : bool { Cells, Structures };
+    // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
+    // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
+    JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
+    void didCreateOutOfMemoryError() { m_numberOfBarrenCollections = 0; }
+
     struct ReservationFailure {
         size_t sizeWithinBudget { 0 };
         size_t smallestSize { 0 };
     };
     JS_EXPORT_PRIVATE static ReservationFailure reservationFailure();
 
-    enum class ExhaustedHeap : bool { Cells, Structures };
     static void logExhaustion(ExhaustedHeap);
     void setExhaustedHeap(ExhaustedHeap exhaustedHeap) { m_exhaustedHeap = exhaustedHeap; }
     JS_EXPORT_PRIVATE String describeExhaustedLimit() const;
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
 
-    // Called on the thread of the VM, inside an allocation, when the error that is owed has found no place to be thrown and the last of the reserve is given out.
+    // Called on the thread of the VM, inside an allocation, when the error that is owed has found no place to be thrown and the last of the reserve is given out, or full collections keep freeing next to nothing.
     // A host that can end this thread alone asks for its termination here.
     static void willUseLastReserve(VM&);
     using LastReserveHandler = void (*)(VM&);
@@ -99,6 +104,8 @@ private:
     bool m_sharesRange { false };
     bool m_hasReleasedReserve { false };
     ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
+    unsigned m_numberOfBarrenCollections { 0 };
+    uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;
     std::atomic<uintptr_t> m_lowestAllocation { std::numeric_limits<uintptr_t>::max() };
     std::atomic<uintptr_t> m_endOfHighestAllocation { 0 };

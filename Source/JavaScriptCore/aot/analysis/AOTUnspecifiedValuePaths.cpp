@@ -282,6 +282,9 @@ std::optional<Integers> Folder::integersOf(const Facts& facts, ValueID id, unsig
         return Integers(value.integer());
     if (value.opcode == Opcode::Boolean)
         return Integers(value.boolean());
+    // It adds nothing to what else arrives where it does. Whoever looks at it is listed by the walk that marks it.
+    if (value.opcode == Opcode::Unspecified)
+        return Integers();
     if (const Integers* known = facts.find(id))
         return *known;
     if (depth < maxDepth) {

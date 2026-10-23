@@ -360,7 +360,9 @@ static void collectNamesInTables(const Typed::Program& program, const Typed::Flo
         const Typed::Layout& layout = program.layouts[index];
         if (layout.isEnvironment())
             continue;
-        // The tables describe the classes and the layouts that have a shape: see encodeLayoutRecords().
+        // The tables describe the classes and the layouts that have a shape, where they are in use: see encodeLayoutRecords().
+        if (!placement.isInUse(Typed::LayoutID(index)))
+            continue;
         if (layout.kind != Typed::LayoutKind::Instance && placement.shapes().shapesOf(Typed::LayoutID(index)).isEmpty())
             continue;
         for (const Typed::Field& field : layout.fields)

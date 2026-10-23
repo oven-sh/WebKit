@@ -173,8 +173,12 @@ void* CompleteSubspace::tryAllocateSlow(VM& vm, size_t size, GCDeferralContext* 
 
     size = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(size);
     PreciseAllocation* allocation = PreciseAllocation::tryCreate(vm.heap, size, this, m_space.m_preciseAllocations.size());
-    if (!allocation && vm.heap.tryCollectForExhaustedCage(deferralContext)) [[unlikely]]
-        allocation = PreciseAllocation::tryCreate(vm.heap, size, this, m_space.m_preciseAllocations.size());
+    if (!allocation) [[unlikely]] {
+        if (MarkedBlockCage::isRequired())
+            vm.heap.cage().didFindNoRoom(vm, MarkedBlockCage::ExhaustedHeap::Cells);
+        if (vm.heap.tryCollectForExhaustedCage(deferralContext))
+            allocation = PreciseAllocation::tryCreate(vm.heap, size, this, m_space.m_preciseAllocations.size());
+    }
     if (!allocation)
         return nullptr;
     

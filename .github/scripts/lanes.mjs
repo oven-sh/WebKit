@@ -54,7 +54,7 @@ const SANITIZERS = "address,undefined";
 const HARDENING =
   "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096" +
   " -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -fsanitize=array-bounds -fsanitize-trap=array-bounds" +
-  " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1";
+  " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1 -DENABLE_AOT_GUARDED_PAGES=1";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
@@ -92,7 +92,8 @@ const variants = {
   "assertions": { buildType: "Release", mimalloc: true, assertions: true },
   "coverage": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
-  // "release" and "lto" with ICU and WebKit compiled with HARDENING, and nothing else changed.
+  // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed. Only what ships
+  // has a twin, so "hardened" has the compiler and no "-aot".
   "hardened": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },

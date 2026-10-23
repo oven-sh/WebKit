@@ -26,7 +26,7 @@
 #include <errno.h>
 #include <sys/mman.h>
 #if OS(DARWIN)
-#include <mach-o/dyld.h>
+#include <crt_externs.h>
 #include <mach-o/loader.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -455,23 +455,28 @@ static constexpr bool dataHasSegmentsOfItsOwn = false;
 
 static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
 {
-    auto* executable = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(0));
+    // Not the first image of dyld: that is a library where one was inserted.
+    const mach_header_64* executable = _NSGetMachExecuteHeader();
     if (!executable || executable->magic != MH_MAGIC_64)
         return std::nullopt;
-    uintptr_t slide = _dyld_get_image_vmaddr_slide(0);
-    auto* command = reinterpret_cast<const uint8_t*>(executable + 1);
-    for (uint32_t index = 0; index < executable->ncmds; ++index) {
-        auto& segment = *reinterpret_cast<const segment_command_64*>(command);
-        command += segment.cmdsize;
-        if (segment.cmd != LC_SEGMENT_64)
-            continue;
-        uintptr_t start = segment.vmaddr + slide;
-        uintptr_t position = reinterpret_cast<uintptr_t>(address);
-        if (position < start || position - start >= segment.filesize)
-            continue;
-        return SegmentOfExecutable { segment.filesize - (position - start), !!((segment.initprot | segment.maxprot) & VM_PROT_WRITE), !!(segment.initprot & VM_PROT_EXECUTE) };
-    }
-    return std::nullopt;
+    auto findSegment = [&](auto&& isWanted) -> const segment_command_64* {
+        auto* command = reinterpret_cast<const uint8_t*>(executable + 1);
+        for (uint32_t index = 0; index < executable->ncmds; ++index) {
+            auto* segment = reinterpret_cast<const segment_command_64*>(command);
+            if (segment->cmd == LC_SEGMENT_64 && isWanted(*segment))
+                return segment;
+            command += segment->cmdsize;
+        }
+        return nullptr;
+    };
+    auto* segmentOfHeader = findSegment([](const segment_command_64& candidate) { return !candidate.fileoff && candidate.filesize; });
+    if (!segmentOfHeader)
+        return std::nullopt;
+    uintptr_t position = reinterpret_cast<uintptr_t>(address) - (reinterpret_cast<uintptr_t>(executable) - segmentOfHeader->vmaddr);
+    auto* segment = findSegment([&](const segment_command_64& candidate) { return position >= candidate.vmaddr && position - candidate.vmaddr < candidate.filesize; });
+    if (!segment)
+        return std::nullopt;
+    return SegmentOfExecutable { segment->filesize - (position - segment->vmaddr), !!((segment->initprot | segment->maxprot) & VM_PROT_WRITE), !!(segment->initprot & VM_PROT_EXECUTE) };
 }
 
 #elif OS(WINDOWS)

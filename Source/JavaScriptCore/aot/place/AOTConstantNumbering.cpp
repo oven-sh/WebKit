@@ -24,7 +24,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-BitVector computeTypesNeededAtRunTime(const PlacementContext& context, const PlacedSites& sites, TypesTestedByCode typesTestedByCode)
+BitVector computeTypesNeededAtRunTime(const PlacementContext& context, const PlacedSites& sites, TypesTestedByCode typesTestedByCode, LayoutsOutOfUse layoutsOutOfUse)
 {
     const Program& program = context.program;
     BitVector neededTypes(program.types.size());
@@ -35,7 +35,7 @@ BitVector computeTypesNeededAtRunTime(const PlacementContext& context, const Pla
             worklist.append(type);
     };
     auto addFieldTypes = [&](LayoutID id) {
-        if (!visitedLayouts.add(id.index()))
+        if (!visitedLayouts.add(id.index()) || (layoutsOutOfUse == LayoutsOutOfUse::Exclude && sites.layoutsOutOfUse.get(id.index())))
             return;
         FieldIndex numberOfFields = program.at(id).fields.size();
         for (FieldIndex index = 0; index < numberOfFields; ++index) {

@@ -11,6 +11,7 @@
 #include "AOTChildProcess.h"
 #include "AOTVector.h"
 #include "Collector.h"
+#include "DeferGCInlines.h"
 #include "FastMarkAppender.h"
 #include "HeapHelperPool.h"
 #include "HeapInlines.h"
@@ -390,6 +391,7 @@ struct TableOfRoots {
 
     NEVER_INLINE void fill(JSGlobalObject* realm)
     {
+        DeferGCForAWhile deferGC(realm->vm());
         for (Slot& slot : slots) {
             JSObject* object = constructEmptyObject(realm);
             object->putDirectIndex(realm, 0, constructEmptyObject(realm));

@@ -170,6 +170,7 @@ struct PlacedSites {
     BitVector typesInRunTimePayloads;
     BitVector typesTestedByCode;
     BitVector functionsWithAllocatedClosures;
+    BitVector layoutsOutOfUse;
     unsigned maxClosureCaptures { 0 };
 };
 
@@ -246,6 +247,7 @@ struct PlacementParts {
     ConstantNumbering constants;
     FunctionNumbering functions;
     Vector<std::optional<uint32_t>> classRanks;
+    BitVector layoutsOutOfUse;
     BitVector typesNeededAtRunTime;
     BitVector typesWithCells;
     unsigned numberOfRegExpRecords { 0 };
@@ -322,7 +324,8 @@ using KeyCellUsesOfBodies = ScopedLambda<const Vector<KeyCellUse>&(FunctionID)>;
 ConstantNumbering numberConstants(const PlacementContext&, PlacedSites&, const BitVector& typesWithCells, const KeyCellUsesOfBodies* = nullptr);
 FunctionNumbering numberFunctions(const PlacementContext&, const PlacedSites&);
 enum class TypesTestedByCode : uint8_t { Exclude, Include };
-BitVector computeTypesNeededAtRunTime(const PlacementContext&, const PlacedSites&, TypesTestedByCode);
+enum class LayoutsOutOfUse : uint8_t { Exclude, Include };
+BitVector computeTypesNeededAtRunTime(const PlacementContext&, const PlacedSites&, TypesTestedByCode, LayoutsOutOfUse = LayoutsOutOfUse::Exclude);
 
 struct SiteResolutionInputs {
     const PlacedSites& sites;

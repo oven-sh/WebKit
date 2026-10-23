@@ -20,6 +20,9 @@ namespace JSC { namespace AOT {
 
 #if ENABLE(AOT_GUARDED_PAGES)
 static constexpr unsigned guardPagesOnEachEnd = 1;
+
+// What a check of the file can tell such a build by.
+extern "C" __attribute__((used, retain)) const char JSC__AOT__mapsGuardedPages[] = "guarded pages: what a compiled program maps for good has an address of its own";
 #else
 static constexpr unsigned guardPagesOnEachEnd = 0;
 #endif

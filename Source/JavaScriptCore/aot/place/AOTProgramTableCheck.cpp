@@ -279,7 +279,7 @@ static void checkListedFunctions(const TableEncoder& encoder, const ProgramTable
     }
     for (size_t index = 0; index < program.layouts.size(); ++index) {
         FunctionID constructor = program.layouts[index].constructor;
-        FunctionID entrypoint = encoder.findEntrypoint(constructor);
+        FunctionID entrypoint = encoder.placement.isInUse(LayoutID(index)) ? encoder.findEntrypoint(constructor) : FunctionID();
         if (entrypoint &&!std::ranges::binary_search(tables.constructors(), entrypoint.index(), { }, &ConstructorData::function))
             encoder.fail(ProgramTableRule::FunctionNotListed, LayoutID(index), constructor);
     }
@@ -434,6 +434,8 @@ static void checkLayoutRecords(const TableEncoder& encoder, const ProgramTables&
     for (uint32_t shape = 0; shape < endOfShapes; ++shape) {
         uint32_t offset = shape < offsets.size() ? offsets[shape] : 0;
         LayoutID id = shapes.isAssigned(shape) ? shapes.shape(shape).layout : LayoutID();
+        if (id && !encoder.placement.isInUse(id))
+            id = { };
         if (!offset != !id)
             encoder.fail(ProgramTableRule::ShapeWithoutLayout, id);
         else if (id && shape < tables.firstEnvironmentShape)

@@ -1824,7 +1824,7 @@ public:
         if (!isSafeToRecurse()) [[unlikely]]
             return JSRegExpResult::ErrorNoMemory;
 
-        if (!--remainingMatchCount) {
+        if (countsTowardMatchLimit(disjunction, btrack) && !--remainingMatchCount) {
             dataLogLnIf(verbose, "      Reached match limit - Returning ErrorHitLimit");
             return JSRegExpResult::ErrorHitLimit;
         }
@@ -2362,6 +2362,14 @@ private:
     inline bool LEGACY_NODELETE isEitherUnicodeCompilation() const { return isUnicodeCompilation() || isUnicodeSetsCompilation(); }
 
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
+
+    // The JIT takes one off matchLimit for each turn that a repeated group begins (YarrGenerator::allocateParenContext()), and nothing for going back into a turn.
+    inline bool countsTowardMatchLimit(const ByteDisjunction* disjunction, bool btrack) const
+    {
+        if (!pattern->m_countsWhatJITCounts) [[likely]]
+            return true;
+        return !btrack && disjunction->m_jitCountsTurns;
+    }
 
     BytecodePattern* pattern;
     CompileMode compileMode;
@@ -2929,6 +2937,7 @@ public:
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, inputOffset, matchDirection))
                             return error;
                         atomParenthesesSubpatternEnd(term.parentheses.lastSubpatternId, delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType, term.parentheses.disjunction->m_callFrameSize);
+                        m_allParenthesesInfo.last()->m_jitCountsTurns = jitCountsTurnsOf(term);
                     }
                     break;
                 }
@@ -3330,16 +3339,20 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
     if (!flatProgram) {
         dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs in the bytecode interpreter: ", description(flatProgram.error()));
         auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
-        if (bytecode)
+        if (bytecode) {
             bytecode->m_flatProgramDecline = flatProgram.error();
+            bytecode->m_countsWhatJITCounts = true;
+        }
         return bytecode;
     }
 
     if ((*flatProgram)->runsOnlyOn8BitSubjects) {
         dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs on a flat program where the subject has 8-bit characters, else in the bytecode interpreter: ", description(FlatProgramDecline::UnicodeMode));
         auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
-        if (bytecode)
+        if (bytecode) {
             bytecode->m_flatProgramFor8BitSubjects = WTF::move(*flatProgram);
+            bytecode->m_countsWhatJITCounts = true;
+        }
         return bytecode;
     }
 
@@ -3348,6 +3361,7 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
         ErrorCode ignoredErrorCode { ErrorCode::NoError };
         if (auto bytecode = ByteCompiler(pattern).compile(allocator, lock, ignoredErrorCode)) {
             bytecode->m_flatProgram = WTF::move(*flatProgram);
+            bytecode->m_countsWhatJITCounts = true;
             return bytecode;
         }
     }
@@ -3373,11 +3387,14 @@ static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& pr
     JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
     Vector<unsigned, 32> bytecodeOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
     interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult);
+    // Nothing here can tell whether there is a match. Whoever compares answers with an engine that has a JIT is told where to look.
+    if (bytecodeResult == JSRegExpResult::ErrorHitLimit && flatResult != JSRegExpResult::Match && flatResult != JSRegExpResult::NoMatch)
+        dataLogLn("validateRegExpFlatProgram: given up at the match limit and answered as no match: start ", start, ", a subject of ", input.length());
     validateFlatProgramResult(program, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
 }
 
 // A flat program keeps a frame for each turn of a repeated group, and gives up where they pass Options::maxRegExpStackSize(). It counts every frame that it resumes, and gives up at
-// matchLimit, which the bytecode reaches later or never. Neither is an answer: the bytecode finishes the match.
+// matchLimit, which the bytecode reaches later or never. Neither is an answer: the bytecode finishes the match, and gives it up only where the JIT does.
 static bool hasGivenUp(JSRegExpResult flatResult)
 {
     return flatResult == JSRegExpResult::ErrorNoMemory || flatResult == JSRegExpResult::ErrorHitLimit;
@@ -3396,6 +3413,7 @@ static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecod
             bytecode->m_bytecodeBehindFlatProgram = ByteCompiler(pattern).compile(bytecode->m_allocator, bytecode->m_lock, errorCode);
             if (!bytecode->m_bytecodeBehindFlatProgram)
                 return offsetNoMatch;
+            bytecode->m_bytecodeBehindFlatProgram->m_countsWhatJITCounts = true;
         }
         bytecode = bytecode->m_bytecodeBehindFlatProgram.get();
     }

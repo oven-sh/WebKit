@@ -212,6 +212,8 @@ void encodeConstructors(TableEncoder& encoder)
     const Program& program = encoder.program;
     Vector<ConstructorData> constructors;
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
+        if (!encoder.placement.isInUse(LayoutID(i)))
+            continue;
         if (FunctionID entrypoint = encoder.findEntrypoint(program.layouts[i].constructor))
             constructors.append({ entrypoint.index(), i });
     }

@@ -554,6 +554,50 @@ static void checkErrorWaitsAtFunctionEntriesAlone()
     traps.unregisterMirror(mirror);
 }
 
+// A heap that stays almost full of live objects finds no room again and again, with little allocated in between. The fourth time in a row the error is owed.
+static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+    VMTraps& traps = vm.traps();
+    auto much = [&] {
+        return vm.heap.objectSpace().capacity() / 64;
+    };
+    auto isOwedWhenNoRoomIsFoundAfterAllocating = [&](size_t bytes) {
+        if (bytes)
+            vm.heap.didAllocate(bytes);
+        test.cage().didFindNoRoom(vm, MarkedBlockCage::ExhaustedHeap::Cells);
+        return traps.needsOutOfMemoryError();
+    };
+    auto isOwedAfterThreeTimesLittle = [&] {
+        bool isOwed = false;
+        for (unsigned times = 0; times < 3; ++times)
+            isOwed |= isOwedWhenNoRoomIsFoundAfterAllocating(much() - 1);
+        return isOwed;
+    };
+    AOT_TEST_CHECK(much() > 1);
+
+    AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(much()) && !isOwedAfterThreeTimesLittle());
+    // One request tries again after its collection.
+    AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(0) && !isOwedWhenNoRoomIsFoundAfterAllocating(0));
+    AOT_TEST_CHECK(isOwedWhenNoRoomIsFoundAfterAllocating(1));
+    traps.setNeedsOutOfMemoryError(false);
+
+    // A collection that bought much starts the count anew.
+    AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(much()) && !isOwedAfterThreeTimesLittle());
+    AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(much()) && !isOwedAfterThreeTimesLittle());
+    AOT_TEST_CHECK(isOwedWhenNoRoomIsFoundAfterAllocating(much() - 1));
+    traps.setNeedsOutOfMemoryError(false);
+
+    // So does an error that the program is given in another way.
+    AOT_TEST_CHECK(!isOwedWhenNoRoomIsFoundAfterAllocating(much()) && !isOwedAfterThreeTimesLittle());
+    AOT_TEST_CHECK(createOutOfMemoryError(realm));
+    AOT_TEST_CHECK(!isOwedAfterThreeTimesLittle());
+    AOT_TEST_CHECK(isOwedWhenNoRoomIsFoundAfterAllocating(much() - 1));
+    traps.setNeedsOutOfMemoryError(false);
+}
+
 static void checkRangeIsReused()
 {
     uintptr_t baseOfFirst;
@@ -748,6 +792,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/range-is-reused"_s, withCage<checkRangeIsReused> },
         { "heap-cage/cage/reserve-is-kept-once-half-full"_s, withCage<checkReserveIsKeptOnceHalfFull> },
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
+        { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
         { "heap-cage/cage/other-allocator-warms-up-with-the-cage"_s, withCage<checkOtherAllocatorWarmsUpWithTheCage> },
         { "heap-cage/scan/index-in-low-half"_s, withCage<checkWordKeepsCellsAlive<CellKind::InBlock, WordForm::IndexInLowHalf>> },

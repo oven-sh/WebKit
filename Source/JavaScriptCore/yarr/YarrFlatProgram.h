@@ -184,6 +184,8 @@ struct RegExpMatchOutcome {
 };
 
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern&);
+// Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
+bool jitCountsTurnsOf(const PatternTerm&);
 void removeUnneededLogging(FlatProgram&);
 JSRegExpResult matchFlatProgram(const FlatProgram&, StringView input, unsigned start, unsigned* output);
 JS_EXPORT_PRIVATE JSRegExpResult matchFlatProgram(const FlatProgram&, std::span<const Latin1Character> input, unsigned start, unsigned* output);
