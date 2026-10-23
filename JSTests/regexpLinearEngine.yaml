@@ -1,0 +1,31 @@
+# The RegExp tests of JSTests/stress, run once more with the non-backtracking matcher
+# (--useRegExpLinearEngine=1, yarr/YarrLinear.h). Every RegExp whose pattern the matcher accepts
+# then runs on it. With --verifyRegExpLinearEngine=1 the bytecode interpreter matches again from
+# the same start after each match of the matcher, and the process ends when the two do not agree
+# on the match or on the groups. So a test fails here when the matcher and the backtracking
+# engines differ, also a test that only prints what it finds. A test that comes with a change of
+# YarrPattern runs here too, so the matcher is checked against that change.
+#
+# A run that fails only here: step 4 of section E in BUN-TEST-DIFFERENCES.md says how to find
+# the engine that is wrong.
+#
+# A file with run commands of its own runs in those modes. The others run in the default mode.
+# The tests of the matcher itself (regexp-linear-engine-*.js) name the option in their headers.
+#
+# Not run here:
+# - A test whose run commands set --regExpMatchLimit or --maxRegExpStackSize. It is about a limit
+#   of the backtracking engines, and the matcher has no such limit to reach.
+# - regexp-fixedcount-zero-length-content-backtrack.js expects `false` from
+#   /(?:[^(?!)]||){23}z/.test("/(?:[^(?!)]||){23}z/"), which is what a backtracking engine answers
+#   when it reaches its match limit. The pattern matches "{23}z" at 14, and the matcher finds it.
+
+- path: stress
+  cmd: |
+      name = $benchmark.to_s
+      if name =~ /regexp|regex|yarr|string-(replace|split|match)/i and name !~ /\Aregexp-linear-engine-/ and name != "regexp-fixedcount-zero-length-content-backtrack.js"
+          runCommands = File.binread(($benchmarkDirectory + $benchmark).to_s).lines.grep(/\A\/\/@/).join
+          unless runCommands =~ /--regExpMatchLimit|--maxRegExpStackSize/
+              requireOptions("--useRegExpLinearEngine=1", "--verifyRegExpLinearEngine=1")
+              runDefault unless parseRunCommands
+          end
+      end

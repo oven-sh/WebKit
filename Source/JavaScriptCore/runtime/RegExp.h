@@ -42,6 +42,10 @@ namespace JSC {
 
 namespace Yarr {
 struct YarrPattern;
+#if USE(BUN_JSC_ADDITIONS)
+struct InterpretStatistics;
+enum class LinearRefusal : uint8_t;
+#endif
 }
 
 struct RegExpRepresentation;
@@ -107,6 +111,16 @@ public:
     JS_EXPORT_PRIVATE MatchResult match(JSGlobalObject*, StringView, unsigned startOffset);
 
     bool matchConcurrently(VM&, StringView, unsigned startOffset, MatchResult&);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // For tests. One match, with the engine this RegExp is compiled for, as match() does it, and
+    // a report of which engine that is and what the match cost. Returns the offset of the
+    // match, or -1. With captures: the output vector of a match, appended, with the slots no
+    // reader looks at set to one value for every engine. With byBacktrackingInterpreter: the
+    // match is the bytecode interpreter's, whatever engine this RegExp is compiled for, so that
+    // a test can compare the engines on one RegExp. Throws what match() throws.
+    JS_EXPORT_PRIVATE int matchForTesting(JSGlobalObject*, StringView, unsigned startOffset, Yarr::InterpretStatistics&, Vector<int>* captures = nullptr, bool byBacktrackingInterpreter = false);
+#endif
 
     // Call these versions of the match functions if you're desperate for performance.
     template<Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>
@@ -250,6 +264,11 @@ private:
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool compileForLinearMatcher(VM*, Yarr::YarrPattern&);
+    bool usesLinearMatcher() const;
+#endif
+
     static uint8_t currentUseEpoch(VM&);
     template<Yarr::MatchFrom> void noteUse(VM&);
 
@@ -280,6 +299,13 @@ private:
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
+#if USE(BUN_JSC_ADDITIONS)
+    // With Options::useRegExpLinearEngine(): why the non-backtracking matcher refused this
+    // RegExp, so that it is asked once. A refusal is about the pattern, so it stays for as long
+    // as the RegExp does. A refused RegExp is compiled as it is without the option. This byte is
+    // in the padding: RegExp.cpp asserts the size of a RegExp.
+    Yarr::LinearRefusal m_linearRefusal { };
+#endif
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;

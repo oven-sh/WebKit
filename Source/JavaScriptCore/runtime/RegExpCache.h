@@ -64,6 +64,15 @@ public:
 
     RegExp* lookup(VM&, const WTF::String& patternString, OptionSet<Yarr::Flags>);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // With Options::useRegExpLinearEngine(): how many times the RegExps of this VM have asked
+    // the non-backtracking matcher for a program. A test reads the difference: a RegExp that
+    // has a program does not ask again for a match.
+    unsigned linearCompileCount() const { return m_linearCompileCount; }
+    // For tests: the next RegExp that asks finds the stack of the matcher's compiler used up.
+    void setFailsNextLinearCompileForTesting(bool fails) { m_failsNextLinearCompileForTesting = fails; }
+#endif
+
 private:
     static constexpr unsigned maxStrongCacheablePatternLength = 256;
 
@@ -82,6 +91,10 @@ private:
     RegExpCacheMap m_weakCache WTF_GUARDED_BY_LOCK(m_lock); // Holds all regular expressions currently live.
     std::array<RegExp*, maxStrongCacheableEntries> m_strongCache { }; // Holds a select few regular expressions that have compiled and executed
     RegExp* m_emptyRegExp { nullptr };
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_linearCompileCount { 0 };
+    bool m_failsNextLinearCompileForTesting { false };
+#endif
 };
 
 } // namespace JSC
