@@ -341,8 +341,6 @@ class HeapUtil;
 class Heap {
     WTF_MAKE_NONCOPYABLE(Heap);
 public:
-    friend class JIT;
-    friend class DFG::SpeculativeJIT;
     static JSC::Heap* heap(const JSValue); // 0 for immediate values
     static JSC::Heap* heap(const HeapCell*);
 
@@ -407,6 +405,11 @@ public:
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
     bool worldIsRunning() const { return !worldIsStopped(); }
+#if ASSERT_ENABLED
+    JS_EXPORT_PRIVATE void assertIsMutatorOrMutatorIsStopped() const;
+#else
+    ALWAYS_INLINE void assertIsMutatorOrMutatorIsStopped() const { }
+#endif
 
     // We're always busy on the collection threads. On the main thread, this returns true if we're
     // helping heap.
@@ -537,6 +540,11 @@ public:
     // first such collection: a VM that has not allocated Options::optimizedCodeAgingQuietAllocationMB in total yet reads
     // as quiet since the epoch, which is the right answer for "has it been busy lately".
     ApproximateTime lastActiveCollectionTime() const { return m_lastActiveCollectionTime.load(std::memory_order_relaxed); }
+    // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the
+    // clock for every block it visits.
+    ApproximateTime currentGCStartApproximateTime() const { return m_currentGCStartApproximateTime; }
+    // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
+    bool isIdleCollection() const;
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -569,7 +577,9 @@ public:
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
 
-    const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
+    void addGCAwareJITStubRoutine(GCAwareJITStubRoutine*);
+
+    void noteStringFoundOnStack(const JSString* string) { m_stringsFoundOnStack.add(string); }
     
     // bytesAlreadyReported is the part of the buffer that this heap has already counted as allocated, because the
     // buffer adopted storage that reportExtraMemoryAllocated() had reported. The first reference counts only the rest
@@ -707,27 +717,15 @@ public:
 
 private:
     friend class AllocatingScope;
-    friend class CodeBlock;
     friend class CollectingScope;
     friend class Collector;
-    friend class ConservativeRoots;
     friend class DeferGC;
     friend class DeferGCForAWhile;
-    friend class GCAwareJITStubRoutine;
-    friend class GCLogging;
-    friend class GCThread;
-    friend class HeapUtil;
-    friend class HeapVerifier;
-    friend class JITStubRoutine;
-    friend class LLIntOffsetsExtractor;
     friend class MarkStackMergingConstraint;
     friend class MarkedSpace;
-    friend class BlockDirectory;
-    friend class MarkedBlock;
     friend class RunningScope;
     friend class SlotVisitor;
     friend class SweepingScope;
-    friend class IncrementalSweeper;
     friend class VM;
     friend class WeakBlock;
     friend class WeakSet;
@@ -752,14 +750,6 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
-#if USE(BUN_JSC_ADDITIONS)
-    // Read once when the current (or last) collection began; CodeBlock aging measures against it instead of reading the
-    // clock for every block it visits.
-    ApproximateTime currentGCStartApproximateTime() const { return m_currentGCStartApproximateTime; }
-    // The collection in progress was requested by the embedder because the application went idle (GCRequest::isIdle).
-    bool isIdleCollection() const;
-#endif
-
     void checkConn(GCConductor);
 
     void collectInMutatorThread();
@@ -994,7 +984,7 @@ private:
     // Since this list is walked once to deref all the strings
     // We don't need fast access.
     SegmentedVector<std::pair<const JSString*, String>, 256, 10, SegmentedVectorGrowthPolicy::Doubling> m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope;
-   UncheckedKeyHashSet<const JSString*> m_discoveredAccessedStringsFromGCOwnedDataScope;
+    UncheckedKeyHashSet<const JSString*> m_stringsFoundOnStack;
     
     RefPtr<GCActivityCallback> m_fullActivityCallback;
     RefPtr<GCActivityCallback> m_edenActivityCallback;

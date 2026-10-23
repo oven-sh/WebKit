@@ -77,9 +77,6 @@ using namespace WTF;
     self.delegate = nil;
     self.savedActiveProfileID = nil;
     self.menu = nil;
-#if PLATFORM(IOS_FAMILY) && !PLATFORM(WATCHOS)
-    self.interaction = nil;
-#endif
 
     [super dealloc];
 }
@@ -87,7 +84,7 @@ using namespace WTF;
 - (void)rebuildMenu
 {
     [_menu removeAllItems];
-    auto profileIDs = CaptionUserPreferencesMediaAF::platformProfileIDs();
+    const Vector profileIDs = CaptionUserPreferencesMediaAF::platformProfileIDs();
 
     // Add Caption Profile items
     for (const auto& profileID : profileIDs) {

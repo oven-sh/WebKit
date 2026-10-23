@@ -227,7 +227,6 @@ list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/loader/archive/cf"
     "${WEBCORE_DIR}/loader/cf"
     "${WEBCORE_DIR}/loader/cocoa"
-    "${WEBCORE_DIR}/loader/mac"
     "${WEBCORE_DIR}/page/cocoa"
     "${WEBCORE_DIR}/page/scrolling/cocoa"
     "${WEBCORE_DIR}/page/writing-tools"
@@ -322,6 +321,7 @@ list(APPEND WebCore_SOURCES
 
     editing/cocoa/AlternativeTextUIController.mm
     editing/cocoa/AutofillElements.cpp
+    editing/cocoa/TextAlternativeWithRange.mm
 
     editing/mac/UniversalAccessZoom.mm
 
@@ -366,6 +366,7 @@ list(APPEND WebCore_SOURCES
     platform/cocoa/ParentalControlsContentFilter.mm
     platform/cocoa/PasteboardCocoa.mm
     platform/cocoa/SearchPopupMenuCocoa.mm
+    platform/cocoa/SerializedPlatformDataCueCocoa.mm
     platform/cocoa/SharedBufferCocoa.mm
     platform/cocoa/SharedMemoryCocoa.mm
     platform/cocoa/SharedVideoFrameInfo.mm
@@ -566,10 +567,7 @@ list(APPEND WebCore_SOURCES
     accessibility/mac/AccessibilityObjectMac.mm
     accessibility/mac/WebAccessibilityObjectWrapperMac.mm
 
-    dom/DataTransferMac.mm
-
     editing/mac/EditorMac.mm
-    editing/mac/TextAlternativeWithRange.mm
     editing/mac/TextUndoInsertionMarkupMac.mm
 
     page/mac/EventHandlerMac.mm
@@ -604,7 +602,6 @@ list(APPEND WebCore_SOURCES
     platform/mac/ScrollViewMac.mm
     platform/mac/ScrollbarThemeMac.mm
     platform/mac/ScrollingEffectsController.mm
-    platform/mac/SerializedPlatformDataCueMac.mm
     platform/mac/SuddenTermination.mm
     platform/mac/ThemeMac.mm
     platform/mac/ThreadCheck.mm
@@ -810,38 +807,8 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/WebGPU/GPUVertexState.h
     Modules/WebGPU/GPUVertexStepMode.h
 
-    Modules/WebGPU/Implementation/WebGPUAPIUtilities.h
-    Modules/WebGPU/Implementation/WebGPUAdapterImpl.h
-    Modules/WebGPU/Implementation/WebGPUBindGroupImpl.h
-    Modules/WebGPU/Implementation/WebGPUBindGroupLayoutImpl.h
-    Modules/WebGPU/Implementation/WebGPUBufferImpl.h
-    Modules/WebGPU/Implementation/WebGPUCommandBufferImpl.h
-    Modules/WebGPU/Implementation/WebGPUCommandEncoderImpl.h
     Modules/WebGPU/Implementation/WebGPUCompositorIntegrationImpl.h
-    Modules/WebGPU/Implementation/WebGPUComputePassEncoderImpl.h
-    Modules/WebGPU/Implementation/WebGPUComputePipelineImpl.h
-    Modules/WebGPU/Implementation/WebGPUConvertToBackingContext.h
-    Modules/WebGPU/Implementation/WebGPUDeviceImpl.h
-    Modules/WebGPU/Implementation/WebGPUDowncastConvertToBackingContext.h
-    Modules/WebGPU/Implementation/WebGPUExternalTextureImpl.h
     Modules/WebGPU/Implementation/WebGPUImpl.h
-    Modules/WebGPU/Implementation/WebGPUPipelineLayoutImpl.h
-    Modules/WebGPU/Implementation/WebGPUPresentationContextImpl.h
-    Modules/WebGPU/Implementation/WebGPUPtr.h
-    Modules/WebGPU/Implementation/WebGPUQuerySetImpl.h
-    Modules/WebGPU/Implementation/WebGPUQueueImpl.h
-    Modules/WebGPU/Implementation/WebGPURenderBundleEncoderImpl.h
-    Modules/WebGPU/Implementation/WebGPURenderBundleImpl.h
-    Modules/WebGPU/Implementation/WebGPURenderPassEncoderImpl.h
-    Modules/WebGPU/Implementation/WebGPURenderPipelineImpl.h
-    Modules/WebGPU/Implementation/WebGPUSamplerImpl.h
-    Modules/WebGPU/Implementation/WebGPUShaderModuleImpl.h
-    Modules/WebGPU/Implementation/WebGPUTextureImpl.h
-    Modules/WebGPU/Implementation/WebGPUTextureViewImpl.h
-    Modules/WebGPU/Implementation/WebGPUXRBindingImpl.h
-    Modules/WebGPU/Implementation/WebGPUXRProjectionLayerImpl.h
-    Modules/WebGPU/Implementation/WebGPUXRSubImageImpl.h
-    Modules/WebGPU/Implementation/WebGPUXRViewImpl.h
 
     Modules/compression/CompressionStreamEncoder.h
     Modules/compression/DecompressionStreamDecoder.h
@@ -1177,15 +1144,17 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     editing/cocoa/AutofillElements.h
     editing/cocoa/DataDetection.h
     editing/cocoa/DataDetectorType.h
+    editing/cocoa/DictionaryLookup.h
     editing/cocoa/EditingHTMLConverter.h
     editing/cocoa/NodeHTMLConverter.h
+    editing/cocoa/TextAlternativeWithRange.h
     editing/cocoa/TextAttachmentForSerialization.h
 
     loader/archive/cf/LegacyWebArchive.h
 
     loader/cache/CachedRawResource.h
 
-    loader/mac/LoaderNSURLExtras.h
+    loader/cocoa/LoaderNSURLExtras.h
 
     page/CaptionUserPreferencesMediaAF.h
 
@@ -1194,6 +1163,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/cocoa/DataDetectionResultsStorage.h
     page/cocoa/DataDetectorElementInfo.h
     page/cocoa/ImageOverlayDataDetectionResultIdentifier.h
+    page/cocoa/WebCoreFrameView.h
     page/cocoa/WebTextIndicatorLayer.h
 
     page/ios/WebEventRegion.h
@@ -1230,6 +1200,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/audio/cocoa/CAAudioStreamDescription.h
     platform/audio/cocoa/CARingBuffer.h
     platform/audio/cocoa/MediaSessionManagerCocoa.h
+    platform/audio/cocoa/PitchShiftAudioUnit.h
     platform/audio/cocoa/SpatialAudioExperienceHelper.h
     platform/audio/cocoa/SpatialAudioPlaybackHelper.h
     platform/audio/cocoa/WebAudioBufferList.h
@@ -1240,6 +1211,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/cf/MediaAccessibilitySoftLink.h
 
     platform/cocoa/AppleVisualEffect.h
+    platform/cocoa/CocoaBezierPath.h
     platform/cocoa/CocoaView.h
     platform/cocoa/CocoaWritingToolsTypes.h
     platform/cocoa/CoreLocationGeolocationProvider.h
@@ -1253,11 +1225,14 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/cocoa/ParentalControlsURLFilterParameters.h
     platform/cocoa/PlatformTextAlternatives.h
     platform/cocoa/PlatformViewController.h
+    platform/cocoa/PlaybackSessionInterfaceAVKitLegacy.h
+    platform/cocoa/PlaybackSessionInterfaceCocoa.h
     platform/cocoa/PlaybackSessionModel.h
     platform/cocoa/PlaybackSessionModel.serialization.in
     platform/cocoa/PlaybackSessionModelMediaElement.h
     platform/cocoa/PowerSourceNotifier.h
     platform/cocoa/SearchPopupMenuCocoa.h
+    platform/cocoa/SerializedPlatformDataCueCocoa.h
     platform/cocoa/SharedVideoFrameInfo.h
     platform/cocoa/StringUtilities.h
     platform/cocoa/SystemBattery.h
@@ -1266,6 +1241,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/cocoa/VideoPresentationLayerProvider.h
     platform/cocoa/VideoPresentationModel.h
     platform/cocoa/VideoPresentationModelVideoElement.h
+    platform/cocoa/WebAVPlayerController.h
     platform/cocoa/WebAVPlayerLayer.h
     platform/cocoa/WebAVPlayerLayerView.h
     platform/cocoa/WebCoreNSURLExtras.h
@@ -1289,6 +1265,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/graphics/avfoundation/AudioSourceProviderAVFObjC.h
     platform/graphics/avfoundation/AudioVideoRendererAVFObjC.h
+    platform/graphics/avfoundation/FormatDescriptionUtilities.h
     platform/graphics/avfoundation/ISOFairPlayStreamingPsshBox.h
     platform/graphics/avfoundation/ImageDecoderFactoryAVF.h
     platform/graphics/avfoundation/InbandTextTrackPrivateAVF.h
@@ -1387,8 +1364,6 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/ios/LocalizedDeviceModel.h
     platform/ios/MotionManagerClient.h
     platform/ios/PlatformEventFactoryIOS.h
-    platform/ios/PlaybackSessionInterfaceAVKitLegacy.h
-    platform/ios/PlaybackSessionInterfaceIOS.h
     platform/ios/PlaybackSessionInterfaceTVOS.h
     platform/ios/QuickLook.h
     platform/ios/TileControllerMemoryHandlerIOS.h
@@ -1396,7 +1371,6 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/ios/VideoPresentationInterfaceAVKitLegacy.h
     platform/ios/VideoPresentationInterfaceIOS.h
     platform/ios/VideoPresentationInterfaceTVOS.h
-    platform/ios/WebAVPlayerController.h
     platform/ios/WebBackgroundTaskController.h
     platform/ios/WebCoreMotionManager.h
     platform/ios/WebEvent.h
@@ -1560,7 +1534,7 @@ set(WebCore_USER_AGENT_SCRIPTS
     ${WEBCORE_DIR}/Modules/modern-media-controls/media/CNNCaptionQuirk.js
 )
 
-list(APPEND WebCoreTestSupport_LIBRARIES PRIVATE WebCore)
+list(APPEND WebCoreTestSupport_LIBRARIES PRIVATE WebCore ${IOKIT_LIBRARY})
 list(APPEND WebCoreTestSupport_PRIVATE_HEADERS
     testing/cocoa/CocoaColorSerialization.h
     testing/cocoa/WebArchiveDumpSupport.h
@@ -1593,12 +1567,8 @@ endif ()
 list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     accessibility/mac/WebAccessibilityObjectWrapperMac.h
 
-    editing/mac/DictionaryLookup.h
-    editing/mac/TextAlternativeWithRange.h
     editing/mac/TextUndoInsertionMarkupMac.h
     editing/mac/UniversalAccessZoom.h
-
-    page/mac/WebCoreFrameView.h
 
     platform/gamepad/mac/HIDGamepadProvider.h
     platform/gamepad/mac/MultiGamepadProvider.h
@@ -1693,6 +1663,7 @@ set(WebCore_BUNDLE_RESOURCES
     ${WEBCORE_DIR}/Resources/panIcon.png
     ${WEBCORE_DIR}/Resources/textAreaResizeCorner.png
     ${WEBCORE_DIR}/Resources/textAreaResizeCorner@2x.png
+    ${WEBCORE_DIR}/page/QuirkTable.json
 )
 WEBKIT_COPY_FILES(WebCore_CopyBundleResources
     DESTINATION "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework/Versions/A/Resources"
@@ -1804,14 +1775,10 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/scrolling/mac/ScrollingTreePluginScrollingNodeMac.h
     page/scrolling/mac/ScrollingTreeScrollingNodeDelegateMac.h
 
-    platform/audio/cocoa/PitchShiftAudioUnit.h
-
     platform/audio/mac/SharedRoutingArbitrator.h
 
     platform/gamepad/mac/HIDGamepad.h
     platform/gamepad/mac/HIDGamepadElement.h
-
-    platform/graphics/avfoundation/FormatDescriptionUtilities.h
 
     platform/graphics/mac/AppKitControlSystemImage.h
     platform/graphics/mac/GraphicsChecksMac.h
@@ -1823,7 +1790,6 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/mac/LocalDefaultSystemAppearance.h
     platform/mac/PowerObserverMac.h
     platform/mac/RevealUtilities.h
-    platform/mac/SerializedPlatformDataCueMac.h
     platform/mac/WebCoreFullScreenPlaceholderView.h
     platform/mac/WebPlaybackControlsManager.h
 
@@ -1855,6 +1821,7 @@ add_custom_command(TARGET WebCore POST_BUILD
         "${WEBCORE_DIR}/Resources/modelDefaultSpecularData"
         "${WEBCORE_DIR}/Resources/textAreaResizeCorner.png"
         "${WEBCORE_DIR}/Resources/textAreaResizeCorner@2x.png"
+        "${WEBCORE_DIR}/page/QuirkTable.json"
         "${_wc_fw}/"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${_wc_fw}/audio"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

@@ -65,7 +65,6 @@ class PositionWithAffinity;
 class ReferencedSVGResources;
 class RenderBox;
 class RenderBoxModelObject;
-class RenderInline;
 class RenderBlock;
 class RenderBlockFlow;
 class RenderElement;
@@ -371,8 +370,8 @@ public:
 
     RenderObject* nextInPreOrder() const;
     RenderObject* nextInPreOrder(const RenderObject* stayWithin) const;
-    RenderObject* nextInPreOrderAfterChildren() const;
-    RenderObject* nextInPreOrderAfterChildren(const RenderObject* stayWithin) const;
+    RenderObject* LEGACY_NODELETE nextInPreOrderAfterChildren() const;
+    RenderObject* LEGACY_NODELETE nextInPreOrderAfterChildren(const RenderObject* stayWithin) const;
     RenderObject* previousInPreOrder() const;
     RenderObject* previousInPreOrder(const RenderObject* stayWithin) const;
     WEBCORE_EXPORT RenderObject* childAt(unsigned) const;
@@ -691,7 +690,7 @@ public:
     bool isExcludedFromNormalLayout() const { return m_stateBitfields.hasFlag(StateFlag::IsExcludedFromNormalLayout); }
     void setIsExcludedFromNormalLayout(bool excluded) { m_stateBitfields.setFlag(StateFlag::IsExcludedFromNormalLayout, excluded); }
     bool isExcludedAndPlacedInBorder() const { return isExcludedFromNormalLayout() && isLegend(); }
-    bool isExcludedMarker() const;
+    bool LEGACY_NODELETE isExcludedMarker() const;
 
     bool isYouTubeReplacement() const { return hasRareData() && rareData().isYouTubeReplacement; }
     void markIsYouTubeReplacement();
@@ -872,11 +871,10 @@ public:
 
     inline const Style::ComputedStyle& style() const LIFETIME_BOUND; // Defined in RenderObjectStyle.h.
     inline UsedStyle usedStyle() const LIFETIME_BOUND; // Defined in RenderElementInlines.h.
+    inline UsedStyle firstLineUsedStyle() const LIFETIME_BOUND; // Defined in RenderElementInlines.h.
     inline CheckedRef<const Style::ComputedStyle> firstLineStyle() const LIFETIME_BOUND;
     inline WritingMode writingMode() const; // Defined in RenderObjectStyle.h.
     // writingMode().isHorizontal() is cached by isHorizontalWritingMode() above.
-
-    virtual const Style::ComputedStyle& outlineStyleForRepaint() const LIFETIME_BOUND;
 
     virtual CursorDirective getCursor(const LayoutPoint&, Cursor&) const;
 
@@ -1151,7 +1149,7 @@ private:
     class CachedImageListener final : public CachedImageClient, public RefCounted<CachedImageListener> {
         WTF_MAKE_TZONE_ALLOCATED(CachedImageListener);
     public:
-        static Ref<CachedImageListener> create(RenderObject&);
+        static Ref<CachedImageListener> LEGACY_NODELETE create(RenderObject&);
 
         // CachedImageClient.
         void ref() const final { RefCounted::ref(); }
@@ -1504,7 +1502,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, const RenderObject::RepaintRects&)
 
 enum class ScrollbarWidth : uint8_t;
 WEBCORE_EXPORT IntRect absoluteInteractionBounds(const RenderObject&);
-WEBCORE_EXPORT ScrollbarWidth scrollbarWidth(const RenderObject&);
+WEBCORE_EXPORT ScrollbarWidth LEGACY_NODELETE scrollbarWidth(const RenderObject&);
 #if ENABLE(CSS_TAP_HIGHLIGHT_COLOR)
 WEBCORE_EXPORT Color tapHighlightColor(const RenderObject&);
 #endif

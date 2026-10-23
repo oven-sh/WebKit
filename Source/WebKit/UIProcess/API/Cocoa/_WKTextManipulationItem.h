@@ -61,6 +61,7 @@ WK_CLASS_AVAILABLE(macos(10.15.4), ios(13.4))
 @property (nonatomic, readonly) BOOL isSubframe WK_API_AVAILABLE(macos(14.0), ios(17.0));
 @property (nonatomic, readonly) BOOL isCrossSiteSubframe WK_API_AVAILABLE(macos(14.0), ios(17.0));
 @property (nonatomic, readonly, nullable) _WKTextManipulationViewportProximityInfo *viewportProximityInfo WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+@property (nonatomic, readonly) CGRect webViewBoundingRect WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
 - (BOOL)isEqualToTextManipulationItem:(nullable _WKTextManipulationItem *)otherItem includingContentEquality:(BOOL)includingContentEquality;
 @property (nonatomic, readonly, copy) NSString *debugDescription;

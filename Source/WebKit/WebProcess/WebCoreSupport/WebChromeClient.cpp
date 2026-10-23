@@ -347,6 +347,12 @@ void WebChromeClient::focusedElementDidChangeReadOnly(Element& element)
         page->focusedElementDidChangeReadOnly(element);
 }
 
+void WebChromeClient::focusedElementDidChangeType(Element& element)
+{
+    if (RefPtr page = m_page.get())
+        page->focusedElementDidChangeType(element);
+}
+
 #endif
 
 #if PLATFORM(COCOA)
@@ -377,13 +383,11 @@ void WebChromeClient::takeFocus(FocusDirection direction)
         page->send(Messages::WebPageProxy::TakeFocus(direction));
 }
 
-void WebChromeClient::focusedElementChanged(Element* element, LocalFrame* frame, FocusOptions options, BroadcastFocusedElement broadcast)
+void WebChromeClient::focusedElementChanged(Element* element, LocalFrame* frame, FocusOptions)
 {
     RefPtr coreFrame =  element ? element->document().frame() : frame;
     RefPtr webFrame = coreFrame ? WebFrame::fromCoreFrame(*coreFrame) : nullptr;
     RefPtr page = m_page.get();
-    if (page && broadcast == BroadcastFocusedElement::Yes)
-        protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebPageProxy::FocusedElementChanged(webFrame ? std::make_optional(webFrame->frameID()) : std::nullopt, options), page->identifier());
 
     RefPtr inputElement = dynamicDowncast<HTMLInputElement>(element);
     if (!inputElement || !inputElement->isText())
@@ -1218,6 +1222,21 @@ WebCore::DisplayRefreshMonitorFactory* WebChromeClient::displayRefreshMonitorFac
 }
 
 #if ENABLE(GPU_PROCESS)
+#if HAVE(IOSURFACE)
+bool WebChromeClient::useIOSurfaceWebKitBehavior() const
+{
+#if USE(APPLE_INTERNAL_SDK)
+    RefPtr page = m_page.get();
+    if (!page)
+        return false;
+    auto preferences = page->sharedPreferencesForWebProcess();
+    return preferences && preferences->useIOSurfaceWebKitBehavior;
+#else
+    return false;
+#endif
+}
+#endif
+
 RefPtr<ImageBuffer> WebChromeClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     if (WebProcess::singleton().shouldUseRemoteRenderingFor(purpose)) {
@@ -1307,7 +1326,7 @@ RefPtr<GraphicsContextGL> WebChromeClient::createGraphicsContextGL(const Graphic
 #endif
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
-RefPtr<WebCore::WebGPU::GPU> WebChromeClient::createGPUForWebGPU() const
+RefPtr<WebCore::WebGPUIntegration> WebChromeClient::createGPUForWebGPU() const
 {
 #if ENABLE(GPU_PROCESS)
     RefPtr page = m_page.get();
@@ -1315,7 +1334,7 @@ RefPtr<WebCore::WebGPU::GPU> WebChromeClient::createGPUForWebGPU() const
         return nullptr;
     return RemoteGPUProxy::create(WebGPU::DowncastConvertToBackingContext::create(), ModelDowncastConvertToBackingContext::create(), page.releaseNonNull());
 #else
-    return WebCore::WebGPU::create([](WebCore::WebGPU::WorkItem&& workItem) {
+    return WebCore::createWebGPUIntegration([](Function<void()>&& workItem) {
         callOnMainRunLoop(WTF::move(workItem));
     }, nullptr);
 #endif
@@ -1450,6 +1469,12 @@ void WebChromeClient::renderingUpdateFramesPerSecondChanged()
 
     if (RefPtr drawingArea = page->drawingArea())
         drawingArea->renderingUpdateFramesPerSecondChanged();
+}
+
+void WebChromeClient::syncLocalFrameInfoToRemote()
+{
+    if (RefPtr page = m_page.get())
+        page->broadcastFrameGeometryUpdatesIfNeeded();
 }
 
 unsigned WebChromeClient::remoteImagesCountForTesting() const
@@ -2026,6 +2051,12 @@ void WebChromeClient::continueAccessibilitySearchFromChildFrame(FrameIdentifier 
         page->sendWithAsyncReply(Messages::WebPageProxy::ContinueAccessibilitySearchFromChildFrame(childFrameID, criteria), WTF::move(callback));
     else
         callback({ });
+}
+
+void WebChromeClient::relayAccessibilitySelectedTextChangeToMainFrame(FrameIdentifier frameID, AXRemoteFrameSelectedTextChange&& change)
+{
+    if (RefPtr page = m_page)
+        page->send(Messages::WebPageProxy::RelayAccessibilitySelectedTextChangeToMainFrame(frameID, WTF::move(change)));
 }
 #endif
 

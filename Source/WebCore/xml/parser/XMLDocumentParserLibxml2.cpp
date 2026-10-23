@@ -407,7 +407,7 @@ public:
     {
     }
 
-    int readOutBytes(std::span<char> outputBuffer)
+    int LEGACY_NODELETE readOutBytes(std::span<char> outputBuffer)
     {
         size_t bytesLeft = m_buffer.size() - m_currentOffset;
         size_t lengthToCopy = std::min(outputBuffer.size(), bytesLeft);
@@ -548,7 +548,7 @@ static void* openFunc(const char* uri)
     return new OffsetBuffer(Vector(data->span()));
 }
 
-static int readFunc(void* context, char* buffer, int len)
+static int LEGACY_NODELETE readFunc(void* context, char* buffer, int len)
 {
     // Do 0-byte reads in case of a null descriptor
     if (context == &globalDescriptor)
@@ -1358,6 +1358,15 @@ xmlEntityPtr XMLDocumentParser::getEntity(const xmlChar* name)
 
 void XMLDocumentParser::entityDecl(const xmlChar* name, int type, const xmlChar* publicId, const xmlChar* systemId, xmlChar* content)
 {
+    // External general parsed entities are the only external DTD construct WebKit still loads:
+    // external DTD subsets are never fetched because XML_PARSE_DTDLOAD is not set and
+    // externalSubsetHandler does not call xmlSAX2ExternalSubset, and parameter entities never
+    // resolve because sax.getParameterEntity is null.
+    if (type == XML_EXTERNAL_GENERAL_PARSED_ENTITY) {
+        if (RefPtr document = this->document())
+            document->logXMLExternalEntityDeprecationWarningIfNeeded();
+    }
+
     auto contentString = toString(content);
     if (type == XML_INTERNAL_GENERAL_ENTITY && contentString.contains('&')) {
         m_deferredEntityDeclarations.append({

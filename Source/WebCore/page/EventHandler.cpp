@@ -189,6 +189,10 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
+#if PLATFORM(MAC)
+#include "ServicesOverlayController.h"
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EventHandler);
@@ -492,6 +496,7 @@ void EventHandler::clear()
     m_shouldOnlyFireDragOverEvent = false;
 #endif
     clearLastKnownMousePosition();
+    m_lastMouseMoveWasPassedToRemoteSubframe = false;
     m_mousePressNode = nullptr;
     m_mousePressed = false;
     m_capturesDragging = false;
@@ -1983,7 +1988,7 @@ HandleUserInputEventResult EventHandler::handleMousePressEvent(const PlatformMou
     }
 #endif
 
-    if (page->pageOverlayController().handleMouseEvent(platformMouseEvent))
+    if (page->pageOverlayController().handleMouseEvent(platformMouseEvent, frame))
         return true;
 
 #if ENABLE(TOUCH_EVENTS)
@@ -1992,7 +1997,9 @@ HandleUserInputEventResult EventHandler::handleMousePressEvent(const PlatformMou
         return true;
 #endif
 
-    UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, protect(frame->document()).get(), userGestureTypeForPlatformEvent(platformMouseEvent), UserGestureIndicator::ProcessInteractionStyle::Immediate, platformMouseEvent.authorizationToken());
+    // Activation is notified below once we know the event isn't passed to a subframe. Otherwise, same-origin
+    // descendants of this frame would be activated even when the user clicked in a cross-origin subframe.
+    UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, protect(frame->document()).get(), userGestureTypeForPlatformEvent(platformMouseEvent), UserGestureIndicator::ProcessInteractionStyle::Immediate, platformMouseEvent.authorizationToken(), ActivationNotification::Deferred);
 
     // FIXME (bug 68185): this call should be made at another abstraction layer
     frame->loader().resetMultipleFormSubmissionProtection();
@@ -2076,6 +2083,9 @@ HandleUserInputEventResult EventHandler::handleMousePressEvent(const PlatformMou
             }
         }
     }
+
+    if (RefPtr document = frame->document())
+        gestureIndicator.notifyActivation(*document);
 
 #if ENABLE(PAN_SCROLLING)
     // We store whether pan scrolling is in progress before calling stopAutoscrollTimer()
@@ -2235,11 +2245,13 @@ HandleUserInputEventResult EventHandler::mouseMoved(const PlatformMouseEvent& ev
     RefPtr protectedView { frame->view() };
     MaximumDurationTracker maxDurationTracker(&m_maxMouseMovedDuration);
 
-    if (frame->page() && frame->page()->pageOverlayController().handleMouseEvent(event))
+    m_lastMouseMoveWasPassedToRemoteSubframe = false;
+    if (frame->page() && frame->page()->pageOverlayController().handleMouseEvent(event, frame))
         return true;
 
     HitTestResult hitTestResult;
     auto result = handleMouseMoveEvent(event, &hitTestResult);
+    m_lastMouseMoveWasPassedToRemoteSubframe = result.remoteUserInputEventData().has_value();
 
     RefPtr page = m_frame->page();
     if (!page)
@@ -2267,6 +2279,17 @@ void EventHandler::mouseDidLeaveLocalRoot()
     // FIXME: Dispatch mouseout and mouseleave to m_elementUnderMouse.
     Ref frame = m_frame.get();
     InspectorInstrumentation::mouseDidLeaveLocalRoot(frame);
+
+    if (m_lastMouseMoveWasPassedToRemoteSubframe || !frame->isRootFrame())
+        return;
+
+    RefPtr page { frame->page() };
+    if (!page)
+        return;
+
+#if PLATFORM(MAC) && (ENABLE(SERVICE_CONTROLS) || ENABLE(TELEPHONE_NUMBER_DETECTION))
+    protect(page->servicesOverlayController())->mouseDidLeaveLocalRoot(frame);
+#endif
 }
 
 bool EventHandler::passMouseMovedEventToScrollbars(const PlatformMouseEvent& event)
@@ -2552,7 +2575,7 @@ HandleUserInputEventResult EventHandler::handleMouseReleaseEvent(const PlatformM
     }
 #endif
 
-    if (page->pageOverlayController().handleMouseEvent(platformMouseEvent))
+    if (page->pageOverlayController().handleMouseEvent(platformMouseEvent, frame))
         return true;
 
 #if ENABLE(TOUCH_EVENTS)
@@ -3512,7 +3535,7 @@ bool EventHandler::fetchLatchedWheelEventTarget(const PlatformWheelEvent& wheelE
         return false;
 
     if (scrollableArea && page->isMonitoringWheelEvents())
-        scrollableArea->scrollAnimator().setWheelEventTestMonitor(page->wheelEventTestMonitor());
+        protect(scrollableArea)->scrollAnimator().setWheelEventTestMonitor(page->wheelEventTestMonitor());
     return true;
 #else
     UNUSED_PARAM(wheelEvent);
@@ -3703,7 +3726,7 @@ HandleUserInputEventResult EventHandler::handleWheelEventInternal(const Platform
 #if PLATFORM(COCOA) || PLATFORM(WIN)
     std::unique_ptr<WheelEventTestMonitorCompletionDeferrer> deferrer;
     if (scrollableArea)
-        deferrer = makeUnique<WheelEventTestMonitorCompletionDeferrer>(monitor.get(), scrollableArea->scrollingNodeIDForTesting(), WheelEventTestMonitor::DeferReason::HandlingWheelEventOnMainThread);
+        deferrer = makeUnique<WheelEventTestMonitorCompletionDeferrer>(monitor.get(), protect(scrollableArea)->scrollingNodeIDForTesting(), WheelEventTestMonitor::DeferReason::HandlingWheelEventOnMainThread);
 #endif
 
     if (element) {
@@ -3952,7 +3975,7 @@ void EventHandler::defaultWheelEventHandler(Node* startNode, WheelEvent& wheelEv
 
         if (platformEvent) {
             auto copiedEvent = platformEvent->copyWithDeltaAndVelocity(filteredPlatformDelta, filteredVelocity);
-            if (handleWheelEventInScrollableArea(copiedEvent, *latchedScroller, eventHandling))
+            if (handleWheelEventInScrollableArea(copiedEvent, *protect(latchedScroller), eventHandling))
                 wheelEvent.setDefaultHandled();
             return;
         }

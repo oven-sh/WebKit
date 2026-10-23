@@ -394,6 +394,7 @@ public:
     template<typename T>
     IntRange LEGACY_NODELETE shl(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
         T newMin = static_cast<T>(m_min) << static_cast<T>(shiftAmount);
         T newMax = static_cast<T>(m_max) << static_cast<T>(shiftAmount);
 
@@ -422,6 +423,7 @@ public:
     template<typename T>
     IntRange LEGACY_NODELETE sShr(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
         T newMin = static_cast<T>(m_min) >> static_cast<T>(shiftAmount);
         T newMax = static_cast<T>(m_max) >> static_cast<T>(shiftAmount);
 
@@ -444,6 +446,8 @@ public:
     template<typename T>
     IntRange LEGACY_NODELETE zShr(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
+
         // This is an awkward corner case for all of the other logic.
         if (!shiftAmount)
             return *this;
@@ -726,61 +730,35 @@ public:
     // in any other child order gives the first but not the second.
     void reduceAllBlocksStrengthInDominatorPreOrder()
     {
-        // Three children is the common case: a diamond head dominates both arms and the join.
-        Vector<Vector<BasicBlock*, 3>> children(m_proc.size());
-        BasicBlock* root = nullptr;
-        for (BasicBlock* block : m_proc.blocksInPostOrder() | std::views::reverse) {
-            BasicBlock* parent = m_dominators->idom(block);
-            ASSERT(parent != block);
-            if (parent)
-                children[parent->index()].append(block);
-            else {
-                ASSERT(!root);
-                root = block;
-            }
-        }
-        RELEASE_ASSERT(root);
+        m_dominators->forAllBlocksInDominatorTreePreOrder<DominatorTreeChildOrder::ReversePostOrder>(
+            [&](BasicBlock* block) {
+                m_layeredCSE.startLayer();
 
-        Vector<BasicBlock*, 16> stack;
-        stack.append(root);
-        while (!stack.isEmpty()) {
-            BasicBlock* block = stack.takeLast();
+                m_block = block;
+                m_blockState = computeBlockReachability();
 
-            // A null entry closes the layer that the block pushing it opened.
-            if (!block) {
+                if (m_trackWasmGCAccesses) {
+                    m_wasmGCMap.startLayer();
+                    beginWasmGCBlock(block);
+                }
+
+                // Every block an unreachable block dominates is unreachable too, and the whole region is
+                // deleted right after the walk, so only the Upsilons feeding Phis elsewhere matter.
+                if (m_blockState == BlockState::Unreachable)
+                    removeUpsilonsFromUnreachableBlock();
+                else
+                    reduceBlockStrength();
+
+                if (m_trackWasmGCAccesses)
+                    endWasmGCBlock(block);
+
+                finishBlock(block);
+            },
+            [&](BasicBlock*) {
                 m_layeredCSE.dropLastLayer();
                 if (m_trackWasmGCAccesses)
                     m_wasmGCMap.dropLastLayer();
-                continue;
-            }
-            stack.append(nullptr);
-
-            m_layeredCSE.startLayer();
-
-            m_block = block;
-            m_blockState = computeBlockReachability();
-
-            if (m_trackWasmGCAccesses) {
-                m_wasmGCMap.startLayer();
-                beginWasmGCBlock(block);
-            }
-
-            // Every block an unreachable block dominates is unreachable too, and the whole region is
-            // deleted right after the walk, so only the Upsilons feeding Phis elsewhere matter.
-            if (m_blockState == BlockState::Unreachable)
-                removeUpsilonsFromUnreachableBlock();
-            else
-                reduceBlockStrength();
-
-            if (m_trackWasmGCAccesses)
-                endWasmGCBlock(block);
-
-            finishBlock(block);
-
-            auto& kids = children[block->index()];
-            for (unsigned i = kids.size(); i--;)
-                stack.append(kids[i]);
-        }
+            });
     }
 
 private:
@@ -1986,6 +1964,8 @@ private:
             break;
 
         case Shl:
+            maskConstantShiftAmount();
+
             // Turn this: Shl(constant1, constant2)
             // Into this: constant1 << constant2
             if (Value* constant = m_value->child(0)->shlConstant(m_proc, m_value->child(1))) {
@@ -2010,6 +1990,8 @@ private:
             break;
 
         case SShr:
+            maskConstantShiftAmount();
+
             // Turn this: SShr(constant1, constant2)
             // Into this: constant1 >> constant2
             if (Value* constant = m_value->child(0)->sShrConstant(m_proc, m_value->child(1))) {
@@ -2105,6 +2087,8 @@ private:
             break;
 
         case ZShr:
+            maskConstantShiftAmount();
+
             // Turn this: ZShr(constant1, constant2)
             // Into this: (unsigned)constant1 >> constant2
             if (Value* constant = m_value->child(0)->zShrConstant(m_proc, m_value->child(1))) {
@@ -2175,6 +2159,8 @@ private:
             break;
 
         case RotR:
+            maskConstantShiftAmount();
+
             // Turn this: RotR(constant1, constant2)
             // Into this: (constant1 >> constant2) | (constant1 << sizeof(constant1) * 8 - constant2)
             if (Value* constant = m_value->child(0)->rotRConstant(m_proc, m_value->child(1))) {
@@ -2186,6 +2172,8 @@ private:
             break;
 
         case RotL:
+            maskConstantShiftAmount();
+
             // Turn this: RotL(constant1, constant2)
             // Into this: (constant1 << constant2) | (constant1 >> sizeof(constant1) * 8 - constant2)
             if (Value* constant = m_value->child(0)->rotLConstant(m_proc, m_value->child(1))) {
@@ -2589,13 +2577,18 @@ private:
                 int32_t shiftAmountConstant = m_value->child(0)->child(1)->asInt32();
                 auto sshrArg0 = m_value->child(0)->child(0);
 
-                // Turn this: Trunc(SShr(Shl(SExt32(@a), $12), $12))
+                // Turn this: Trunc(SShr(Shl(SExt32(@a), $c), $c)) where (c & 63) <= 32
                 // Into this: @a
+                // SExt32 makes the top 33 bits copies of the sign bit, so shifting out up to 32 of them
+                // and shifting back in loses nothing.
                 if (sshrArg0->opcode() == Shl && sshrArg0->child(1)->hasInt32()
-                    && sshrArg0->child(1)->asInt32() == shiftAmountConstant && shiftAmountConstant < 31
                     && sshrArg0->child(0)->opcode() == SExt32) {
-                    replaceWithIdentity(sshrArg0->child(0)->child(0));
-                    break;
+                    unsigned shlAmount = sshrArg0->child(1)->asInt32() & 63;
+                    unsigned sshrAmount = shiftAmountConstant & 63;
+                    if (shlAmount == sshrAmount && sshrAmount <= 32) {
+                        replaceWithIdentity(sshrArg0->child(0)->child(0));
+                        break;
+                    }
                 }
 
                 // Shl(SExt32(@a), $12)
@@ -2830,7 +2823,7 @@ private:
             break;
         }
 
-        case MemoryCopy: {
+        case MemoryMove: {
             if (m_value->child(2)->hasInt()) {
                 auto* memoryCopy = m_value->as<BulkMemoryValue>();
                 uint64_t count = m_value->child(2)->asInt();
@@ -2839,7 +2832,11 @@ private:
                     int32_t offset = 0;
                     Vector<MemoryValue*, 16> loads;
 
-                    if (count >= 16 && m_proc.usesSIMD()) {
+                    // Only 64-bit accesses are known to be single-copy atomic per word on every target.
+                    if (memoryCopy->isGCSafe())
+                        RELEASE_ASSERT(!(count % sizeof(uint64_t)));
+
+                    if (count >= 16 && !memoryCopy->isGCSafe() && m_proc.usesSIMD()) {
                         while (count >= 16) {
                             MemoryValue* load = m_insertionSet.insert<MemoryValue>(m_index, Load, V128, m_value->origin(), m_value->child(1), offset);
                             load->setRange(memoryCopy->readRange());
@@ -2917,7 +2914,6 @@ private:
                 constexpr uint64_t threshold = 128;
                 if (count <= threshold) {
                     int32_t offset = 0;
-
                     if (count >= 16 && m_proc.usesSIMD()) {
                         uint64_t mask64 = target << 56 | target << 48 | target << 40 | target << 32 | target << 24 | target << 16 | target << 8 | target << 0;
                         v128_t mask { mask64, mask64 };
@@ -3730,18 +3726,15 @@ private:
             //   shr i32x4 by 16 + zip i16x8  -> i16->i32 sign extension
             //   shr i64x2 by 32 + zip i32x4  -> i32->i64 sign extension
             SIMDValue* shr = m_value->as<SIMDValue>();
-            if (shr->signMode() == SIMDSignMode::Signed) {
-                SIMDLane lane = shr->simdLane();
-                bool matches = (lane == SIMDLane::i16x8 && m_value->child(1)->isInt32(8))
-                    || (lane == SIMDLane::i32x4 && m_value->child(1)->isInt32(16))
-                    || (lane == SIMDLane::i64x2 && m_value->child(1)->isInt32(32));
-                if (matches) {
-                    Value* child0 = m_value->child(0);
-                    if ((child0->opcode() == VectorZipLower || child0->opcode() == VectorZipHigher) && child0->child(0) == child0->child(1)) {
-                        Opcode extendOp = child0->opcode() == VectorZipLower ? VectorExtendLow : VectorExtendHigh;
-                        replaceWithNew<SIMDValue>(m_value->origin(), extendOp, B3::V128, lane, SIMDSignMode::Signed, child0->child(0));
-                        break;
-                    }
+            Value* zip = m_value->child(0);
+            if (shr->signMode() == SIMDSignMode::Signed
+                && (zip->opcode() == VectorZipLower || zip->opcode() == VectorZipHigher)
+                && zip->child(0) == zip->child(1)) {
+                SIMDLane zipLane = zip->as<SIMDValue>()->simdLane();
+                if (wideningLaneFor(zipLane) == shr->simdLane() && m_value->child(1)->isInt32(elementByteSize(zipLane) * 8)) {
+                    Opcode extendOp = zip->opcode() == VectorZipLower ? VectorExtendLow : VectorExtendHigh;
+                    replaceWithNew<SIMDValue>(m_value->origin(), extendOp, B3::V128, shr->simdLane(), SIMDSignMode::Signed, zip->child(0));
+                    break;
                 }
             }
             break;
@@ -4685,6 +4678,20 @@ private:
     void replaceWithIdentity(Value* newValue)
     {
         m_value->replaceWithIdentity(newValue);
+        m_changed = true;
+    }
+
+    // Shifts and rotates use their amount modulo the operand width. Reducing a constant amount to
+    // that range up front lets the shift patterns compare and compute with it directly.
+    void maskConstantShiftAmount()
+    {
+        if (!m_value->child(1)->hasInt32())
+            return;
+        int32_t amount = m_value->child(1)->asInt32();
+        int32_t maskedAmount = amount & static_cast<int32_t>(sizeofType(m_value->type()) * 8 - 1);
+        if (amount == maskedAmount)
+            return;
+        m_value->child(1) = m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), maskedAmount);
         m_changed = true;
     }
 

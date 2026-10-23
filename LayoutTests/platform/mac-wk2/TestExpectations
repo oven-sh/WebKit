@@ -745,7 +745,7 @@ http/tests/resourceLoadStatistics/cookies-with-and-without-user-interaction.html
 http/tests/resourceLoadStatistics/cookie-deletion.html [ Pass ]
 http/tests/resourceLoadStatistics/non-prevalent-resources-can-access-cookies-in-a-third-party-context.html [ Pass ]
 http/tests/resourceLoadStatistics/add-blocking-to-redirect.html [ Pass ]
-#http/tests/resourceLoadStatistics/do-not-remove-blocking-in-redirect.https.html [ Pass ]
+http/tests/resourceLoadStatistics/do-not-remove-blocking-in-redirect.https.html [ Pass ]
 http/tests/resourceLoadStatistics/clear-in-memory-and-persistent-store.html [ Pass ]
 http/tests/resourceLoadStatistics/clear-in-memory-and-persistent-store-one-hour.html [ Pass ]
 http/tests/resourceLoadStatistics/grandfathering.html [ Pass ]
@@ -1337,9 +1337,6 @@ fast/webgpu/nocrash/fuzz-286820.html [ Skip ]
 # skipped on macOS Sequoia, where WebGPU is not supported
 [ Sequoia ] fast/webgpu/discard-then-loops-nan.html [ Skip ]
 
-# Skipped: many_query_sets:65536 and many_slots exhaust GPU memory, which Queue.mm turns into a crash.
-http/tests/webgpu/webgpu/api/operation/command_buffer/queries/timestampQuery.html [ Skip Slow ]
-
 # skipped on non-AS due to requiring features unavailable on Intel
 [ x86_64 ] fast/webgpu/nocrash/fuzz-273021.html [ Skip ]
 [ x86_64 ] fast/webgpu/nocrash/fuzz-274171.html [ Skip ]
@@ -1369,6 +1366,7 @@ http/tests/webgpu/webgpu/api/operation/command_buffer/queries/timestampQuery.htm
 
 # skipped on Intel due to intermittently timing out due to the workload
 [ x86_64 ] fast/webgpu/nocrash/fuzz-282052.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-291168.html [ Skip ]
 
 # currently fails with a validation error on Intel (rdar://141529109)
 [ x86_64 ] fast/webgpu/nocrash/fuzz-282710.html [ Skip ]
@@ -1379,6 +1377,12 @@ http/tests/webgpu/webgpu/api/operation/command_buffer/queries/timestampQuery.htm
 webkit.org/b/293808 [ Sequoia+ arm64 ] http/tests/webgpu/webgpu/api [ Slow ]
 webkit.org/b/293808 [ Sequoia+ arm64 ] http/tests/webgpu/webgpu/shader [ Slow ]
 [ Release arm64 Sequoia+ ] http/tests/webgpu/webgpu/web_platform [ Pass Failure Timeout ]
+http/tests/webgpu/webgpu-in-main-thread.html [ Pass ]
+http/tests/webgpu/webgpu-in-dedicated-worker.html [ Pass ]
+http/tests/webgpu/webgpu-in-shared-worker.html [ Pass ]
+http/tests/webgpu/webgpu-in-shared-worker-separate-process.html [ Pass ]
+http/tests/webgpu/webgpu-in-service-worker.html [ Pass ]
+http/tests/webgpu/webgpu-in-service-worker-separate-process.html [ Pass ]
 
 # Thousands of canvases, so context eviction warnings are logged a GC-dependent number of times.
 http/tests/webgpu/webgpu/web_platform/canvas/readbackFromWebGPUCanvas.html [ Pass DumpJSConsoleLogInStdErr ]
@@ -1386,7 +1390,7 @@ http/tests/webgpu/webgpu/web_platform/copyToTexture/canvas.html [ Pass DumpJSCon
 
 # 6 failures: cameraCapture color edges, where 4:2:0 chroma reconstruction is wider than canvas 2D's; Debug's edge texels differ by 2/255.
 [ Debug arm64 ] http/tests/webgpu/webgpu/web_platform/external_texture/video.html [ Pass Failure Slow ]
-[ Release arm64 ] http/tests/webgpu/webgpu/web_platform/external_texture/video.html [ Pass Slow ]
+[ Release arm64 ] http/tests/webgpu/webgpu/web_platform/external_texture/video.html [ Pass Failure Slow ]
 # Fails on Intel, which was not investigated.
 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/external_texture/video.html [ Skip ]
 
@@ -1405,37 +1409,52 @@ http/tests/webgpu/webgpu/api/validation/capability_checks/features/texture_compo
 [ Debug ] http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/distance.html [ Skip ]
 
 # Too slow in Debug; in Release these take 88s and 53s on arm64, within the Slow budget.
+# Both write unexpected stderr output on Intel, which was not investigated.
 [ Debug ] http/tests/webgpu/webgpu/api/operation/command_buffer/copyTextureToTexture.html [ Skip ]
 [ Debug ] http/tests/webgpu/webgpu/api/operation/command_buffer/image_copy.html [ Skip ]
-[ Release ] http/tests/webgpu/webgpu/api/operation/command_buffer/copyTextureToTexture.html [ Slow ]
-[ Release ] http/tests/webgpu/webgpu/api/operation/command_buffer/image_copy.html [ Slow ]
+[ Release arm64 ] http/tests/webgpu/webgpu/api/operation/command_buffer/copyTextureToTexture.html [ Slow ]
+[ Release arm64 ] http/tests/webgpu/webgpu/api/operation/command_buffer/image_copy.html [ Slow ]
+[ Release x86_64 ] http/tests/webgpu/webgpu/api/operation/command_buffer/copyTextureToTexture.html [ Skip ]
+[ Release x86_64 ] http/tests/webgpu/webgpu/api/operation/command_buffer/image_copy.html [ Skip ]
 
 # Too slow in Debug, 22s on Release arm64, and crashes on Release x86_64.
 [ Debug ] http/tests/webgpu/webgpu/api/validation/encoding/cmds/render/draw.html [ Skip ]
 [ Release arm64 ] http/tests/webgpu/webgpu/api/validation/encoding/cmds/render/draw.html [ Slow ]
 [ Release x86_64 ] http/tests/webgpu/webgpu/api/validation/encoding/cmds/render/draw.html [ Skip ]
 
-http/tests/webgpu/webgpu/api/operation/resource_init/texture_zero.html [ Skip Slow ]
-http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxStorageTexturesPerShaderStage.html [ Skip Slow ]
+# Time out in Debug after the October 2026 CTS update.
+[ Debug ] http/tests/webgpu/webgpu/api/operation/rendering/3d_texture_slices.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/operation/resource_init/texture_zero.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/validation/createTexture.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/validation/error_scope.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/validation/image_copy/layout_related.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/validation/render_pipeline/depth_stencil_state.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/validation/resource_usages/texture/in_render_common.html [ Skip ]
+[ Release ] http/tests/webgpu/webgpu/api/validation/error_scope.html [ Pass ]
+[ Release ] http/tests/webgpu/webgpu/api/validation/image_copy/layout_related.html [ Pass ]
+[ Release ] http/tests/webgpu/webgpu/api/validation/render_pipeline/depth_stencil_state.html [ Pass ]
+[ Release ] http/tests/webgpu/webgpu/api/validation/resource_usages/texture/in_render_common.html [ Pass ]
+
+# Unexpected stderr output on Intel, which is no longer supported as of macOS 27.
+[ Release arm64 ] http/tests/webgpu/webgpu/api/validation/createTexture.html [ Pass ]
+[ Release x86_64 ] http/tests/webgpu/webgpu/api/validation/createTexture.html [ Skip ]
+
+[ Release arm64 ] http/tests/webgpu/webgpu/api/operation/resource_init/texture_zero.html [ Pass Slow ]
+[ Release x86_64 ] http/tests/webgpu/webgpu/api/operation/resource_init/texture_zero.html [ Failure Slow ]
+http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxStorageTexturesPerShaderStage.html [ Pass Slow ]
 http/tests/webgpu/webgpu/api/validation/render_pipeline/vertex_state.html [ Pass Timeout ]
-http/tests/webgpu/webgpu/api/validation/createTexture.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/error_scope.html [ Skip ]
 
 # Slow tests or too slow for Intel
 [ arm64 ] http/tests/webgpu/webgpu/api/operation/vertex_state/correctness.html [ Slow ]
 [ x86_64 ] http/tests/webgpu/webgpu/api/operation/vertex_state/correctness.html [ Skip ]
 
-# these tests are flaky failures, potentially a test issue
-http/tests/webgpu/webgpu/api/operation/adapter/info.html [ Skip ]
-http/tests/webgpu/webgpu/api/operation/rendering/basic.html [ Skip ]
-http/tests/webgpu/webgpu/api/operation/storage_texture/read_only.html [ Skip ]
-http/tests/webgpu/webgpu/api/operation/texture_view/write.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/image_copy/layout_related.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/render_pipeline/depth_stencil_state.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/render_pipeline/misc.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/resource_usages/texture/in_render_common.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSampledTexturesPerShaderStage.html [ Skip Slow ]
-http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSamplersPerShaderStage.html [ Skip Slow ]
+http/tests/webgpu/webgpu/api/operation/adapter/info.html [ Pass ]
+http/tests/webgpu/webgpu/api/operation/rendering/basic.html [ Pass ]
+http/tests/webgpu/webgpu/api/operation/storage_texture/read_only.html [ Pass Slow ]
+http/tests/webgpu/webgpu/api/operation/texture_view/write.html [ Pass ]
+http/tests/webgpu/webgpu/api/validation/render_pipeline/misc.html [ Pass ]
+http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSampledTexturesPerShaderStage.html [ Pass Slow ]
+http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSamplersPerShaderStage.html [ Pass Slow ]
 
 # No longer flaky on arm64 over 8 runs; left skipped on Intel, which was not measured.
 [ x86_64 ] http/tests/webgpu/webgpu/api/validation/createBindGroup.html [ Skip ]
@@ -1468,8 +1487,18 @@ http/tests/webgpu/webgpu/idl/javascript.html [ Pass ]
 http/tests/webgpu/webgpu/idl/exposed.http.html [ Skip ]
 http/tests/webgpu/webgpu/idl/exposed.https.html [ Skip ]
 
-# 1 failure: display-p3 to srgb of (0x80, 0, 0x80) rounds to 133 vs ColorSync's 132; no tolerance.
 http/tests/webgpu/webgpu/util/texture/color_space_conversions.html [ Pass ]
+http/tests/webgpu/webgpu/util/texture/texel_data.html [ Pass ]
+http/tests/webgpu/webgpu/util/texture/texture_ok.html [ Pass ]
+
+http/tests/webgpu/webgpu/compat [ Pass ]
+[ arm64 ] http/tests/webgpu/webgpu/idl/constants/flags.html [ Pass ]
+[ arm64 ] http/tests/webgpu/webgpu/idl/constructable.html [ Pass ]
+http/tests/webgpu/webgpu/cts.https.html [ Pass ]
+http/tests/webgpu/webgpu/cts-chunked2sec.https.html [ Pass ]
+http/tests/webgpu/webgpu/cts-withsomeworkers.https.html [ Pass ]
+http/tests/webgpu/webgpu/examples.html [ Pass ]
+http/tests/webgpu/webgpu/print_environment.html [ Pass ]
 
 # 14 failures: the CTS asks for more than the 8192 bytes WGSL allows and does not catch the rejection.
 [ arm64 ] http/tests/webgpu/webgpu/shader/execution/zero_init.html [ Pass Slow ]
@@ -1490,11 +1519,10 @@ webkit.org/b/308252 [ Debug arm64 ] http/tests/webgpu/webgpu/shader/execution/ex
 webkit.org/b/308252 [ Debug arm64 ] http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/atan2.html [ Skip ]
 webkit.org/b/308252 [ Debug arm64 ] http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/length.html [ Skip ]
 
-# test output is out of order
-http/tests/webgpu/webgpu/api/operation/memory_sync/buffer/multiple_buffers.html  [ Skip ]
-http/tests/webgpu/webgpu/api/operation/rendering/depth_clip_clamp.html  [ Skip ]
-http/tests/webgpu/webgpu/api/validation/getBindGroupLayout.html  [ Skip ]
-http/tests/webgpu/webgpu/api/validation/image_copy/buffer_texture_copies.html [ Skip ]
+http/tests/webgpu/webgpu/api/operation/memory_sync/buffer/multiple_buffers.html  [ Pass Slow ]
+http/tests/webgpu/webgpu/api/operation/rendering/depth_clip_clamp.html  [ Pass ]
+http/tests/webgpu/webgpu/api/validation/getBindGroupLayout.html  [ Pass ]
+http/tests/webgpu/webgpu/api/validation/image_copy/buffer_texture_copies.html [ Pass ]
 
 # 4 failures: the CTS fills the 8192-byte function address space, then adds a loop counter. CTS bug.
 [ Release ] http/tests/webgpu/webgpu/shader/execution/limits.html [ Pass ]
@@ -1527,7 +1555,7 @@ http/tests/webgpu/webgpu/api/operation/buffers/map_detach.html [ Pass ]
 http/tests/webgpu/webgpu/api/operation/buffers/map_oom.html [ Pass ]
 http/tests/webgpu/webgpu/api/operation/buffers/threading.html [ Pass ]
 
-http/tests/webgpu/webgpu/api/validation/buffer/create.html [ Pass ]
+http/tests/webgpu/webgpu/api/validation/buffer/create.html [ Pass Slow ]
 http/tests/webgpu/webgpu/api/validation/buffer/destroy.html [ Pass ]
 http/tests/webgpu/webgpu/api/validation/buffer/mapping.html [ Pass ]
 
@@ -1542,6 +1570,7 @@ http/tests/webgpu/webgpu/api/validation/queue/buffer_mapped.html [ Pass ]
 http/tests/webgpu/webgpu/api/validation/queue/submit.html [ Pass ]
 http/tests/webgpu/webgpu/api/validation/queue/destroyed [ Pass ]
 [ arm64 ] http/tests/webgpu/webgpu/api/operation/command_buffer/queries [ Pass ]
+[ arm64 ] http/tests/webgpu/webgpu/api/operation/command_buffer/queries/occlusionQuery.html [ Pass Slow ]
 
 # arm64 release only because the tests are incredibly slow due to their extensiveness
 [ Release arm64 ] http/tests/webgpu/webgpu/shader/execution/shader_io [ Pass ]
@@ -2149,8 +2178,6 @@ webkit.org/b/306047 accessibility/mac/replaced-element-text-selection.html [ Pas
 
 webkit.org/b/306278 [ arm64 ] media/media-source/media-managedmse-resume-after-remove.html [ Pass Failure ]
 
-webkit.org/b/306294 http/wpt/offscreen-canvas/transferToImageBitmap-webgl.html [ ImageOnlyFailure Pass ]
-
 webkit.org/b/306570 [ Tahoe arm64 ] http/tests/webcodecs/video-decoder-callbacks-do-not-leak.html [ Pass Failure ]
 
 webkit.org/b/306629 [ Release arm64 ] imported/w3c/web-platform-tests/media-source/mediasource-config-change-webm-av-video-bitrate.html [ Pass Failure ]
@@ -2250,6 +2277,8 @@ webkit.org/b/309173 imported/w3c/web-platform-tests/html/semantics/scripting-1/t
 webkit.org/b/308326 [ Debug ] imported/w3c/web-platform-tests/fetch/api/basic/error-after-response.any.html [ Pass Failure ]
 
 webkit.org/b/308586 imported/w3c/web-platform-tests/fullscreen/rendering/fullscreen-pseudo-class.html [ Pass Failure ]
+
+webkit.org/b/326318 imported/w3c/web-platform-tests/fullscreen/api/document-fullscreen-keyboard-lock-escape.window.html [ Pass Failure ]
 
 webkit.org/b/308594 imported/w3c/web-platform-tests/media-source/mediasource-config-change-mp4-v-framerate.html [ Pass Failure ]
 
@@ -2484,30 +2513,6 @@ webkit.org/b/323246 [ Debug x86_64 ] accessibility/isolated-tree/canvas-fallback
 webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap.html [ Pass Crash Timeout ]
 webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/expression/binary/f32_matrix_matrix_multiplication.html [ Pass Crash Timeout ]
 
-# webkit.org/b/325194 REGRESSION(macOS 27): 22X fast/text-extraction/debug-text-extraction (layout-tests) are constant timeouts
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-click-offscreen-element.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-lightweight-discretionary.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-lightweight.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-word-limit-with-links.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-all-container-uids.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-autofilled-attributes.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-basic.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-covered-button.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-form-controls-2.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-form-controls.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-hidden-radio-checkbox.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-highlight-text.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-ignore-autofilled-fields.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-interactions.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-markup.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-offscreen-button.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-offscreen-password-fields.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-role-suppression.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-select-options.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-sanitization.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-shorten-urls.html [ Skip ]
-[ GoldenGate ] fast/text-extraction/debug-text-extraction-svg-sprite-sheet.html [ Skip ]  
-
 # webkit.org/b/325200 REGRESSION(macOS GoldenGate)[ Debug ]: 12X http/tests/iframe-monitor/ (layout-tests) are constant timeouts
 [ GoldenGate Debug ] http/tests/iframe-monitor/blob-resource.html [ Skip ] 
 [ GoldenGate Debug ] http/tests/iframe-monitor/cached-resource.html [ Skip ] 
@@ -2591,7 +2596,6 @@ webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/express
 [ GoldenGate Debug ] fast/mediastream/video-rotation2.html [ Failure ]
 [ GoldenGate Debug ] fast/mediastream/video-srcObject-fit-fill.html [ Failure ]
 [ GoldenGate Debug ] http/tests/inspector/network/resource-sizes-network.html [ Failure ]
-[ GoldenGate Debug ] http/tests/ipc/createnewpage-file-body-sandbox-extension.html [ Failure ]
 [ GoldenGate Debug ] http/tests/media/media-source/media-source-video-fit-fill.html [ Failure ]
 [ GoldenGate Debug ] http/tests/xmlhttprequest/abort-should-cancel-load.html [ Failure ]
 [ GoldenGate Debug ] imported/w3c/web-platform-tests/css/css-anchor-position/transform-016.html [ Failure ]
@@ -2606,9 +2610,8 @@ webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/express
 [ GoldenGate Debug ] http/tests/workers/service/page-caching.html [ Pass Crash ]
 [ GoldenGate Debug ] accessibility/element-reflection-ariaowns.html [ Failure ]
 [ GoldenGate Debug ] accessibility/isolated-tree/element-reflection-ariaowns.html [ Pass Failure ]
-[ GoldenGate Debug ] fast/webgpu/nocrash/fuzz-291168.html [ Pass Failure ]
+[ GoldenGate Debug arm64 ] fast/webgpu/nocrash/fuzz-291168.html [ Pass Failure ]
 [ GoldenGate Debug ] http/tests/resourceLoadStatistics/prune-statistics.html [ Pass Timeout ]
-[ GoldenGate Debug ] http/tests/site-isolation/only-broadcast-frame-geometry-from-frames-with-cross-process-descendants.html [ Pass Failure ]
 [ GoldenGate Debug ] http/wpt/webauthn/public-key-credential-get-success-u2f.https.html [ Pass Failure ]
 [ GoldenGate Debug ] imported/w3c/web-platform-tests/css/filter-effects/crashtests/fecomponenttransfer-tablevalues-crash.html [ Pass Timeout ]
 [ GoldenGate Debug ] imported/w3c/web-platform-tests/wasm/core/float_literals.wast.js.html [ Pass Timeout ]
@@ -2661,6 +2664,16 @@ webkit.org/b/327433 [ arm64 ] http/wpt/background-fetch/background-fetch-click.w
 [ Sequoia x86_64 ] css3/images/cross-fade-svg-size-diff.html [ ImageOnlyFailure ]
 [ GoldenGate ] css3/images/cross-fade-svg-size-diff.html [ ImageOnlyFailure ]
 
+# webkit.org/b/324109 The drop-shadow of a filtered ancestor does not sample the backing store of a composited
+# descendant here, so the shadow is missing entirely. Passes on macOS Sequoia Release and iOS 26.
+webkit.org/b/324109 [ Tahoe+ Debug ] imported/w3c/web-platform-tests/css/filter-effects/drop-shadow-outsets-sample-composited-child.html [ ImageOnlyFailure ]
+webkit.org/b/324109 [ Tahoe+ Debug ] imported/w3c/web-platform-tests/css/filter-effects/drop-shadow-outsets-sample-composited-child-preserve-3d.html [ ImageOnlyFailure ]
+
 webkit.org/b/327445 [ Debug arm64 ] imported/w3c/web-platform-tests/content-security-policy/frame-ancestors/frame-ancestors-path-ignored.window.html [ Pass Failure ]
 
 webkit.org/b/319930 [ Release ] media/video-webkit-playsinline.html [ Pass Timeout ]
+webkit.org/b/328134 [ Release ] accessibility/isolated-tree/datetime/time-input-meridiem.html [ Failure ]
+
+webkit.org/b/328239 [ x86_64 ] imported/w3c/web-platform-tests/svg/painting/inline-svg-resize-viewport-dependent-mask.html [ Failure ]
+
+webkit.org/b/328264 [ Debug ] http/tests/ipc/createnewpage-file-body-sandbox-extension.html [ Failure ]

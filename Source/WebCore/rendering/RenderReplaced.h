@@ -33,20 +33,21 @@ class RenderReplaced : public RenderBox {
 public:
     virtual ~RenderReplaced();
 
-    virtual bool shouldRespectZeroIntrinsicWidth() const;
-    virtual bool shouldRespectZeroIntrinsicHeight() const;
+    bool shouldRespectZeroIntrinsicWidth() const;
+    bool shouldRespectZeroIntrinsicHeight() const;
 
     void computeReplacedOutOfFlowPositionedLogicalHeight(LogicalExtentComputedValues&) const;
     void computeReplacedOutOfFlowPositionedLogicalWidth(LogicalExtentComputedValues&) const;
 
     LayoutRect replacedContentRect(NaturalDimensions zoomedNaturalDimensions) const;
     LayoutRect replacedContentRect() const;
+    LayoutRect replacedContentPaintRect() const;
 
     std::optional<FloatRect> resolvedObjectViewBox(const FloatSize& physicalIntrinsicSize) const;
 
     // Out-of-line so callers outside style/rendering/layout code don't need to pull in
     // the (compile-time-expensive) computed style getter headers just to check this.
-    WEBCORE_EXPORT bool hasObjectViewBoxSet() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE hasObjectViewBoxSet() const;
 
     // Returns the full content rect scaled so the view-box sub-region maps onto destRect,
     // or destRect itself when object-view-box is not set.
@@ -115,7 +116,7 @@ protected:
     LayoutUnit computeReplacedLogicalHeightRespectingMinMaxHeight(LayoutUnit logicalHeight) const;
     template<typename T> LayoutUnit computeReplacedLogicalHeightRespectingMinMaxHeight(T logicalHeight) const { return computeReplacedLogicalHeightRespectingMinMaxHeight(LayoutUnit(logicalHeight)); }
 
-    virtual NaturalDimensions zoomedNaturalDimensions() const;
+    virtual NaturalDimensions zoomedNaturalDimensions() const = 0;
 
 private:
     std::optional<LayoutSize> zoomedNaturalSize() const;

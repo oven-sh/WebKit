@@ -1970,6 +1970,9 @@ namespace JSC {
         VariableEnvironment& varDeclarations() LIFETIME_BOUND { return m_varDeclarations; }
 
         SourceElements* statements() const { return m_statements; }
+        unsigned usedPrivateNameCount() const { return m_usedPrivateNameCount; }
+        void setUsedPrivateNameCount(unsigned count) { m_usedPrivateNameCount = count; }
+
         StatementNode* singleStatement() const;
 
         bool isEmptyBody() const { return !m_statements; }
@@ -1990,6 +1993,7 @@ namespace JSC {
         InnerArrowFunctionCodeFeatures m_innerArrowFunctionCodeFeatures;
         SourceCode m_source;
         VariableEnvironment m_varDeclarations;
+        unsigned m_usedPrivateNameCount { 0 };
         SourceElements* m_statements;
     };
 

@@ -86,7 +86,7 @@ class PrintStream;
 
 WTF_EXPORT_PRIVATE void initialize();
 
-WTF_EXPORT_PRIVATE bool processIsShuttingDown();
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE processIsShuttingDown();
 
 class ThreadSuspendLocker {
     WTF_MAKE_NONCOPYABLE(ThreadSuspendLocker);
@@ -135,7 +135,7 @@ public:
     static constexpr SchedulingPolicy defaultSchedulingPolicy = defaultThreadSchedulingPolicy;
 
 #if HAVE(QOS_CLASSES)
-    static dispatch_qos_class_t dispatchQOSClass(QOS);
+    static dispatch_qos_class_t LEGACY_NODELETE dispatchQOSClass(QOS);
 #endif
 
     // Returns nullptr if thread creation failed.
@@ -312,9 +312,9 @@ public:
 #endif
 
 private:
-    void updateSchedulingAttributes(SchedulingState) const;
+    void LEGACY_NODELETE updateSchedulingAttributes(SchedulingState) const;
     // updateSchedulingAttributes for the first time + initialization bookkeeping
-    void initializeSchedulingAttributes();
+    void LEGACY_NODELETE initializeSchedulingAttributes();
 
     static void setCurrentThreadQOS(QOS);
 
@@ -344,7 +344,7 @@ protected:
 #endif
 
 #if HAVE(QOS_CLASSES)
-    static qos_class_t adjustedQOSClass(qos_class_t);
+    static qos_class_t LEGACY_NODELETE adjustedQOSClass(qos_class_t);
 #endif
 
     static const char* LEGACY_NODELETE normalizeThreadName(const char* threadName);

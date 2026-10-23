@@ -1592,9 +1592,14 @@ void JIT::emit_op_to_this(const JSInstruction* currentInstruction)
 
     emitJumpSlowCaseIfNotJSCell(regT0, srcDst);
 
-    addSlowCase(branchIfNotType(regT0, FinalObjectType));
     load32FromMetadata(bytecode, OpToThis::Metadata::offsetOfCachedStructureID(), regT2);
-    addSlowCase(branch32(NotEqual, Address(regT0, JSCell::structureIDOffset()), regT2));
+    Jump done = branch32(Equal, Address(regT0, JSCell::structureIDOffset()), regT2);
+    load32FromMetadata(bytecode, OpToThis::Metadata::offsetOfToThisStatus(), regT2);
+    addSlowCase(branch32(NotEqual, regT2, TrustedImm32(ToThisConflicted)));
+    addSlowCase(branchIfNotObject(regT0));
+    addSlowCase(branchIfType(regT0, JSTypeRange { JSType(FirstScopeType), JSType(LastScopeType) }));
+    emitValueProfilingSite(bytecode, regT0);
+    done.link(this);
 }
 
 void JIT::emit_op_create_this(const JSInstruction* currentInstruction)
@@ -1626,6 +1631,12 @@ void JIT::emit_op_create_this(const JSInstruction* currentInstruction)
     emitAllocateJSObject(resultReg, JITAllocator::variable(), allocatorReg, structureReg, butterfly, scratchReg, slowCases, SlowAllocationResult::UndefinedBehavior);
     load8(Address(structureReg, Structure::inlineCapacityOffset()), scratchReg);
     emitInitializeInlineStorage(resultReg, scratchReg);
+    Jump hasMonoProto = branchTest64(NonZero, Address(structureReg, Structure::prototypeOffset()));
+    emitGetVirtualRegister(callee, scratchReg);
+    loadPtr(Address(scratchReg, JSFunction::offsetOfExecutableOrRareData()), scratchReg);
+    loadPtr(Address(scratchReg, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfPrototype() - JSFunction::rareDataTag), scratchReg);
+    store64(scratchReg, Address(resultReg, offsetRelativeToBase(knownPolyProtoOffset)));
+    hasMonoProto.link(this);
     mutatorFence(*m_vm);
     addSlowCase(slowCases);
     emitPutVirtualRegister(bytecode.m_dst, resultReg);

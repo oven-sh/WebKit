@@ -739,6 +739,12 @@ bool RenderLayerBacking::needsIOSDumpRenderTreeMainFrameRenderViewLayerIsAlwaysO
 void RenderLayerBacking::destroyGraphicsLayers()
 {
     if (m_graphicsLayer) {
+        if (m_graphicsLayer->hasContentsDisplayDelegate()) {
+            if (RefPtr canvas = dynamicDowncast<HTMLCanvasElement>(renderer().element())) {
+                if (RefPtr context = canvas->renderingContext())
+                    context->clearContentsFromLayer();
+            }
+        }
         m_graphicsLayer->setMaskLayer(nullptr);
         m_graphicsLayer->setReplicatedByLayer(nullptr);
         willDestroyLayer(m_graphicsLayer.get());
@@ -916,9 +922,78 @@ void RenderLayerBacking::updateChildrenTransformAndAnchorPoint(const LayoutRect&
     removeChildrenTransformFromLayers(layerForPerspective);
 }
 
+static IntOutsets clampedFilterSamplingOutsets(const IntOutsets& outsets)
+{
+    // Cap like LayoutRect::infiniteRect(), to leave room for expanding clip rects.
+    static constexpr int maximumFilterSamplingOutset = (LayoutUnit::nearlyMax() / 2).toInt();
+
+    auto clampSide = [](int side) {
+        return std::clamp(side, 0, maximumFilterSamplingOutset);
+    };
+    return { clampSide(outsets.top()), clampSide(outsets.right()), clampSide(outsets.bottom()), clampSide(outsets.left()) };
+}
+
+static IntOutsets filterSamplingOutsets(const RenderLayer& layer)
+{
+    auto& renderer = layer.renderer();
+    auto& filter = renderer.style().filter();
+    if (filter.hasReferenceFilter())
+        return { };
+
+    if (auto* backing = layer.backing(); backing && !filter.isNone() && !backing->canCompositeFilters())
+        return { };
+
+    if (!filter.hasFilterThatMovesPixels())
+        return { };
+
+    return clampedFilterSamplingOutsets(renderer.computeFilterOutsets()).xyFlippedCopy();
+}
+
+static void expandClipRectByFilterSamplingOutsets(LayoutRect& clipRect, const IntOutsets& outsets)
+{
+    // Preserve empty / infinite rects.
+    if (outsets.isZero() || clipRect.isEmpty() || clipRect.isInfinite())
+        return;
+    clipRect.expand(toLayoutBoxExtent(outsets));
+}
+
+IntOutsets RenderLayerBacking::intersectClipsSampledByFilters(const RenderLayer& layer, const RenderLayer& rootLayer, LayoutRect& clipRect)
+{
+    auto accumulatedOutsets = filterSamplingOutsets(layer);
+    CheckedPtr<const RenderLayer> pendingClipRoot;
+
+    traverseAncestorLayers(layer, [&](const RenderLayer& ancestorLayer, bool isContainingBlockChain, bool /* isPaintOrderAncestor */) {
+        if (ancestorLayerMayClip(layer, ancestorLayer, isContainingBlockChain))
+            pendingClipRoot = &ancestorLayer;
+
+        auto outsets = filterSamplingOutsets(ancestorLayer);
+        if (outsets.isZero())
+            return AncestorTraversal::Continue;
+
+        if (pendingClipRoot) {
+            // The clips from this layer up to and including 'pendingClipRoot' apply before the filter of ancestorLayer.
+            auto clipsBeforeFilter = layer.backgroundClipRect(RenderLayer::ClipRectsContext(pendingClipRoot.get(), AbsoluteClipRects, RenderLayer::clipRectTemporaryOptions));
+            if (!clipsBeforeFilter.isInfinite()) {
+                auto rect = clipsBeforeFilter.rect();
+                rect.moveBy(pendingClipRoot->convertToLayerCoords(&rootLayer, { }, RenderLayer::AdjustForColumns));
+                expandClipRectByFilterSamplingOutsets(rect, accumulatedOutsets);
+                clipRect.intersect(rect);
+            }
+            pendingClipRoot = nullptr;
+        }
+
+        accumulatedOutsets = clampedFilterSamplingOutsets(accumulatedOutsets + outsets);
+        return AncestorTraversal::Continue;
+    });
+
+    return accumulatedOutsets;
+}
+
 void RenderLayerBacking::updateFilters(const Style::ComputedStyle& style)
 {
-    m_canCompositeFilters = !style.filter().hasReferenceFilter() && m_graphicsLayer->setFilters(Style::toPlatform(style.filter(), style));
+    bool hasReferenceFilter = style.filter().hasReferenceFilter();
+    m_canCompositeFilters = m_graphicsLayer->setFilters(hasReferenceFilter ? FilterOperations { } : Style::toPlatform(style.filter(), style)) && !hasReferenceFilter;
+    m_graphicsLayer->setFilterSamplingOutsets(filterSamplingOutsets(m_owningLayer));
 }
 
 void RenderLayerBacking::updateBackdropFilters(const Style::ComputedStyle& style)
@@ -1129,8 +1204,19 @@ bool RenderLayerBacking::updateCompositedBounds()
         else
             clippingBounds = view.unscaledDocumentRect();
 
-        if (&m_owningLayer != rootLayer)
-            clippingBounds.intersect(m_owningLayer.backgroundClipRect(RenderLayer::ClipRectsContext(rootLayer, AbsoluteClipRects)).rect()); // FIXME: Incorrect for CSS regions.
+        if (&m_owningLayer != rootLayer) {
+            IntOutsets outsetsForFilters;
+            if (view.hasRenderersWithPixelMovingFilter()) {
+                auto clipsSampledByFilters = LayoutRect::infiniteRect();
+                outsetsForFilters = intersectClipsSampledByFilters(m_owningLayer, *rootLayer, clipsSampledByFilters);
+                expandClipRectByFilterSamplingOutsets(clippingBounds, outsetsForFilters);
+                clippingBounds.intersect(clipsSampledByFilters);
+            }
+
+            auto backgroundClipRect = m_owningLayer.backgroundClipRect(RenderLayer::ClipRectsContext(rootLayer, AbsoluteClipRects)).rect(); // FIXME: Incorrect for CSS regions.
+            expandClipRectByFilterSamplingOutsets(backgroundClipRect, outsetsForFilters);
+            clippingBounds.intersect(backgroundClipRect);
+        }
 
         LayoutPoint delta = m_owningLayer.convertToLayerCoords(rootLayer, LayoutPoint(), RenderLayer::AdjustForColumns);
         clippingBounds.move(-delta.x(), -delta.y());
@@ -2618,6 +2704,10 @@ void RenderLayerBacking::ensureOverflowControlsHostLayerAncestorClippingStack(co
 
 static const RenderBox* boxNeedingShapeMaskForClip(const CompositedClipData& clipData)
 {
+    // Rectangular clip entries are an intersection of ancestor clips, and their clippingLayer is the layer being clipped, not the clipper.
+    if (!clipData.clipRect.hasNonZeroRadii())
+        return nullptr;
+
     CheckedPtr clippingLayer = clipData.clippingLayer.get();
     if (!clippingLayer)
         return nullptr;
@@ -3907,8 +3997,11 @@ bool RenderLayerBacking::containsPaintedContent(PaintedContentsInfo& contentsInf
 #endif
 
 #if ENABLE(WEBGL) || ENABLE(OFFSCREEN_CANVAS)
-    if (is<RenderHTMLCanvas>(renderer()) && canvasCompositingStrategy(renderer()) == CanvasAsLayerContents)
+    if (is<RenderHTMLCanvas>(renderer()) && canvasCompositingStrategy(renderer()) == CanvasAsLayerContents) {
+        if (downcast<RenderHTMLCanvas>(renderer()).hasDrawableContent())
+            return true;
         return m_owningLayer.hasVisibleBoxDecorationsOrBackground();
+    }
 #endif
 
     return true;
@@ -4143,8 +4236,8 @@ LayoutRect RenderLayerBacking::contentsBox() const
 
     if (CheckedPtr renderViewTransitionCapture = dynamicDowncast<RenderViewTransitionCapture>(*renderBox))
         contentsRect = renderViewTransitionCapture->captureLocalOverflowRect();
-    else if (CheckedPtr renderReplaced = dynamicDowncast<RenderReplaced>(*renderBox); renderReplaced && !is<RenderWidget>(*renderReplaced))
-        contentsRect = renderReplaced->replacedContentRect();
+    else if (CheckedPtr renderReplaced = dynamicDowncast<RenderReplaced>(*renderBox))
+        contentsRect = renderReplaced->replacedContentPaintRect();
     else
         contentsRect = renderBox->contentBoxRect();
 

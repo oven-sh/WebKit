@@ -31,9 +31,11 @@
 #include "WebPageProxy.h"
 #include "WebPreferencesKeys.h"
 #include "WebProcessPool.h"
+#include "WebsiteDataStore.h"
 #include <WebCore/DeprecatedGlobalSettings.h>
 #include <WebCore/LibWebRTCProvider.h>
 #include <WebCore/StorageBlockingPolicy.h>
+#include <wtf/Borrow.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ThreadingPrimitives.h>
 
@@ -97,11 +99,18 @@ void WebPreferences::forceSiteIsolationAlwaysOnForTesting()
     WebKit::forceSiteIsolationAlwaysOnForTesting = true;
 }
 
+bool WebPreferences::shouldUseUIProcessForBackForwardItemLoading() const
+{
+    // Site Isolation spreads a page's frames across Web processes, so no single Web process can
+    // coordinate a back/forward traversal by itself; the UI process must always drive it.
+    return useUIProcessForBackForwardItemLoading() || siteIsolationEnabled();
+}
+
 const Vector<RefPtr<API::Object>>& WebPreferences::experimentalFeatures()
 {
     static auto experimentalFeatures = NeverDestroyed([]() {
         Vector<RefPtr<API::Object>> result;
-        for (auto& object : features()) {
+        for (auto& object : borrow(features())) {
             API::FeatureStatus status = downcast<API::Feature>(object)->status();
             if (status == API::FeatureStatus::Developer || status == API::FeatureStatus::Testable || status == API::FeatureStatus::Preview || status == API::FeatureStatus::Stable)
                 result.append(object);
@@ -115,7 +124,7 @@ const Vector<RefPtr<API::Object>>& WebPreferences::internalDebugFeatures()
 {
     static auto internalDebugFeatures = NeverDestroyed([]() {
         Vector<RefPtr<API::Object>> result;
-        for (auto& object : features()) {
+        for (auto& object : borrow(features())) {
             API::FeatureStatus status = downcast<API::Feature>(object)->status();
             if (status == API::FeatureStatus::Unstable || status == API::FeatureStatus::Internal)
                 result.append(object);
@@ -213,6 +222,12 @@ void WebPreferences::updateBoolValueForKey(const String& key, bool value, bool e
             page->configuration().processPool().configuration().setProcessSwapsOnNavigation(value);
 
         return;
+    }
+
+    if (key == WebPreferencesKey::exemptAllowlistedCookiesFromItpKey()) {
+        WebsiteDataStore::forEachWebsiteDataStore([value](WebsiteDataStore& dataStore) {
+            dataStore.setExemptAllowlistedCookiesFromITP(value);
+        });
     }
 
     update(); // FIXME: Only send over the changed key and value.

@@ -62,7 +62,7 @@ static inline void setBackForwardItemIdentifiers(FrameState& frameState, BackFor
 {
     frameState.itemID = itemID;
     frameState.frameItemID = BackForwardFrameItemIdentifier::generate();
-    for (auto& child : frameState.children)
+    for (auto& child : borrow(frameState.children))
         setBackForwardItemIdentifiers(child, itemID);
 }
 
@@ -489,11 +489,15 @@ void WebBackForwardList::removeAllItems()
 
     LOG(BackForward, "(Back/Forward) WebBackForwardList %p removeAllItems (has %zu of them)", this, m_entries.size());
 
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
     for (auto& entry : m_entries)
         didRemoveItem(entry);
 
     m_currentIndex = std::nullopt;
-    protect(m_page)->didChangeBackForwardList(nullptr, std::exchange(m_entries, { }));
+    page->didChangeBackForwardList(nullptr, std::exchange(m_entries, { }));
 }
 
 void WebBackForwardList::clear()
@@ -589,6 +593,12 @@ void WebBackForwardList::restoreFromState(BackForwardListState backForwardListSt
         return WebBackForwardListItem::create(WTF::move(stateCopy), m_page->identifier(), itemState.navigatedFrameID);
     });
     m_currentIndex = backForwardListState.currentIndex ? std::optional<size_t>(*backForwardListState.currentIndex) : std::nullopt;
+
+    // A missing or out-of-range current index would leave the list inconsistent, so restore an empty list instead.
+    if (!m_currentIndex || *m_currentIndex >= m_entries.size()) {
+        m_entries.clear();
+        m_currentIndex = std::nullopt;
+    }
 
     LOG(BackForward, "(Back/Forward) WebBackForwardList %p restored from state (has %zu entries)", this, m_entries.size());
 }
@@ -1173,7 +1183,7 @@ Vector<Ref<WebKit::WebBackForwardListItem>> createItemsFromState(const WebKit::B
 {
     Vector<Ref<WebKit::WebBackForwardListItem>> items;
     items.reserveInitialCapacity(state.items.size());
-    for (auto& itemState : state.items)
+    for (auto& itemState : borrow(state.items))
         items.append(createItemFromState(itemState, pageIdentifier));
     return items;
 }

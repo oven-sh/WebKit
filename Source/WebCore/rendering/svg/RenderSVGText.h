@@ -46,6 +46,7 @@ public:
 
     void setNeedsPositioningValuesUpdate() { m_needsPositioningValuesUpdate = true; }
     void setNeedsTextMetricsUpdate() { m_needsTextMetricsUpdate = true; }
+    bool LEGACY_NODELETE usesSVGTextLayoutAlgorithm() const;
 
     // FIXME: [LBSE] Only needed for legacy SVG engine.
     void setNeedsTransformUpdate() override { m_needsTransformUpdate = true; }
@@ -69,11 +70,13 @@ public:
     LayoutRect visualOverflowRectEquivalent() const
     {
         if (!m_cachedVisualOverflowRect)
-            m_cachedVisualOverflowRect = SVGBoundingBoxComputation::computeVisualOverflowRect(*this);
+            updateCachedVisualOverflowRect();
         return *m_cachedVisualOverflowRect;
     }
 
+    void updateCachedVisualOverflowRect() const { m_cachedVisualOverflowRect = SVGBoundingBoxComputation::computeVisualOverflowRect(*this); }
     void invalidateCachedVisualOverflowRect() final { m_cachedVisualOverflowRect = std::nullopt; }
+    void invalidateNonScalingStrokeCaches();
 
     void updatePositionAndOverflow(const FloatRect&);
 
@@ -103,6 +106,7 @@ private:
 
     void willBeDestroyed() override;
 
+    void updateFromStyle() final;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
     // FIXME: [LBSE] Begin code only needed for legacy SVG engine.
@@ -111,6 +115,9 @@ private:
     // FIXME: [LBSE] End code only needed for legacy SVG engine.
 
     bool LEGACY_NODELETE shouldHandleSubtreeMutations() const;
+
+    float strokeInflation(float strokeWidth) const;
+    void updateVisualOverflow();
 
     SVGPaintServerCache* svgPaintServerCache() const final { return &m_svgPaintServerCache; }
 

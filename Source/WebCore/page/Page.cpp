@@ -96,6 +96,7 @@
 #include "FontCache.h"
 #include "FragmentDirectiveGenerator.h"
 #include "FrameConsoleClient.h"
+#include "FrameGeometrySyncData.h"
 #include "FrameInlines.h"
 #include "FrameLoader.h"
 #include "FrameSelection.h"
@@ -147,6 +148,8 @@
 #include "PerformanceLogging.h"
 #include "PerformanceLoggingClient.h"
 #include "PerformanceMonitor.h"
+#include "PhoneNumberPossessionCoordinator.h"
+#include "PhoneNumberPossessionCoordinatorClient.h"
 #include "PlatformMediaEngineConfigurationFactory.h"
 #include "PlatformMediaSessionManager.h"
 #include "PlatformScreen.h"
@@ -157,8 +160,6 @@
 #include "PointerCaptureController.h"
 #include "PointerLockController.h"
 #include "ProgressTracker.h"
-#include "ProofOfPossessionCoordinator.h"
-#include "ProofOfPossessionCoordinatorClient.h"
 #include "Quirks.h"
 #include "RTCController.h"
 #include "Range.h"
@@ -479,8 +480,8 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_authenticatorCoordinator(makeUniqueRefWithoutRefCountedCheck<AuthenticatorCoordinator>(*this, WTF::move(pageConfiguration.authenticatorCoordinatorClient)))
     , m_credentialRequestCoordinator(CredentialRequestCoordinator::create(WTF::move(pageConfiguration.credentialRequestCoordinatorClient), *this))
 #endif
-#if ENABLE(PROOF_OF_POSSESSION)
-    , m_proofOfPossessionCoordinator(makeUniqueRefWithoutRefCountedCheck<ProofOfPossessionCoordinator>(*this, WTF::move(pageConfiguration.proofOfPossessionCoordinatorClient)))
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+    , m_phoneNumberPossessionCoordinator(makeUniqueRefWithoutRefCountedCheck<PhoneNumberPossessionCoordinator>(*this, WTF::move(pageConfiguration.phoneNumberPossessionCoordinatorClient)))
 #endif
 #if ENABLE(APPLICATION_MANIFEST)
     , m_applicationManifest(pageConfiguration.applicationManifest)
@@ -1127,7 +1128,7 @@ void LEGACY_NODELETE Page::setOpenedByDOM()
     m_openedByDOM = true;
 }
 
-void Page::goToItem(LocalFrame& frame, HistoryItem& item, FrameLoadType type, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache shouldRestoreFromBackForwardCache)
+void Page::goToItem(LocalFrame& frame, HistoryItem& item, FrameLoadType type, ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache shouldRestoreFromBackForwardCache, CompletionHandler<void()>&& completionHandler)
 {
     // stopAllLoaders may end up running onload handlers, which could cause further history traversals that may lead to the passed in HistoryItem
     // being deref()-ed. Make sure we can still use it with HistoryController::goToItem later.
@@ -1135,7 +1136,7 @@ void Page::goToItem(LocalFrame& frame, HistoryItem& item, FrameLoadType type, Sh
 
     if (frame.loader().history().shouldStopLoadingForHistoryItem(item))
         frame.loader().stopAllLoadersAndCheckCompleteness();
-    frame.loader().history().goToItem(item, type, shouldTreatAsContinuingLoad, shouldRestoreFromBackForwardCache);
+    frame.loader().history().goToItem(item, type, shouldTreatAsContinuingLoad, shouldRestoreFromBackForwardCache, WTF::move(completionHandler));
 }
 
 void Page::goToItemForNavigationAPI(LocalFrame& frame, HistoryItem& item, FrameLoadType type, LocalFrame& triggeringFrame, NavigationAPIMethodTracker* tracker)
@@ -1183,12 +1184,7 @@ void Page::initGroup()
 void Page::updateStyleAfterChangeInEnvironment()
 {
     forEachDocument([] (Document& document) {
-        if (RefPtr styleResolver = document.styleScope().resolverIfExists())
-            styleResolver->invalidateMatchedDeclarationsCache();
-        document.scheduleFullStyleRebuild();
-        document.styleScope().didChangeStyleSheetEnvironment();
-        document.updateElementsAffectedByMediaQueries();
-        document.scheduleRenderingUpdate(RenderingUpdateStep::MediaQueryEvaluation);
+        document.updateStyleAfterChangeInEnvironment();
     });
 }
 
@@ -1585,7 +1581,7 @@ uint32_t Page::replaceRangesWithText(const Vector<SimpleRange>& rangesToReplace,
     });
 
     replaceRanges(*this, replacementRanges, replacementText);
-    return rangesToReplace.size();
+    return replacementRanges.size();
 }
 
 uint32_t Page::replaceSelectionWithText(const String& replacementText)
@@ -2381,17 +2377,17 @@ unsigned LEGACY_NODELETE Page::renderingUpdateCount() const
     return m_renderingUpdateCount;
 }
 
-void Page::syncLocalFrameInfoToRemote()
+void Page::enumerateLocalFrameGeometry(NOESCAPE const Function<void(LocalFrame&, FrameViewportInfo&&, FrameGeometrySyncData&&)>& function)
 {
-    ASSERT(mainFrame().tree().containsRemoteFrame());
+    if (!mainFrame().tree().containsRemoteFrame())
+        return;
 
-    forEachLocalFrame([] (LocalFrame& frame) {
+    forEachLocalFrame([&](LocalFrame& frame) {
         RefPtr<LocalFrameView> frameView = frame.view();
         if (!frameView)
             return;
 
         auto layoutViewportRect = frameView->layoutViewportRect();
-        bool hasOnScreenRemoteDescendant = false;
         HashMap<FrameIdentifier, Ref<RemoteFrameLayoutInfo>> childrenFrameLayoutInfo;
 
         auto windowClipRectInContentCoordinates = [&frameView, rect = std::optional<LayoutRect> { }]() mutable {
@@ -2408,9 +2404,6 @@ void Page::syncLocalFrameInfoToRemote()
 #endif
 
         for (RefPtr child = frame.tree().firstChild(); child; child = child->tree().nextSibling()) {
-            if (!child->tree().containsRemoteFrame())
-                continue;
-
             auto absoluteToChildFrameOwnerLocalTransform = frameView->absoluteToChildFrameOwnerLocalTransform(*child);
             auto contentBoxLocation = frameView->childFrameOwnerContentBoxLocation(*child);
 
@@ -2422,15 +2415,6 @@ void Page::syncLocalFrameInfoToRemote()
             };
 
             auto visibleRectInParent = frameView->visibleRectOfChild(*child.get());
-
-            if (visibleRectInParent) {
-                auto onScreenRectInParent = *visibleRectInParent;
-
-                // Use edgeInclusiveIntersect instead of intersects with layoutViewportRect to match
-                // how IntersectionObserver performs intersections.
-                if (onScreenRectInParent.edgeInclusiveIntersect(layoutViewportRect))
-                    hasOnScreenRemoteDescendant = true;
-            }
 
             auto onScreenRectInChildView = [&] {
                 if (!visibleRectInParent)
@@ -2479,20 +2463,7 @@ void Page::syncLocalFrameInfoToRemote()
             ));
         }
 
-        frame.loader().client().broadcastFrameViewportInfoToOtherProcessesIfNeeded({
-            layoutViewportRect,
-            frameView->scrollPosition()
-        }, hasOnScreenRemoteDescendant);
-
-        if (childrenFrameLayoutInfo.isEmpty()) {
-            ASSERT(!frame.tree().containsRemoteFrame());
-            return;
-        }
-
-        frame.loader().client().broadcastFrameGeometryToOtherProcesses({
-            frameView->contentsSize(),
-            WTF::move(childrenFrameLayoutInfo)
-        });
+        function(frame, { layoutViewportRect, frameView->scrollPosition() }, { frameView->contentsSize(), WTF::move(childrenFrameLayoutInfo) });
     });
 }
 
@@ -2809,7 +2780,7 @@ void Page::doAfterUpdateRendering()
     m_renderingUpdateRemainingSteps.last().remove(RenderingUpdateStep::SyncLocalFrameInfoToRemote);
 
     if (mainFrame().tree().containsRemoteFrame())
-        syncLocalFrameInfoToRemote();
+        chrome().client().syncLocalFrameInfoToRemote();
 }
 
 void Page::finalizeRenderingUpdate(OptionSet<FinalizeRenderingUpdateFlags> flags)

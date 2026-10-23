@@ -527,6 +527,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case BufferReadInt:
     case BufferReadFloat:
     case BufferWrite:
+    case TypedArraySet:
     case DateNow:
     case DateGetStorage:
     case DateGetInt32OrNaN:

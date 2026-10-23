@@ -36,6 +36,7 @@
 #include <WebCore/ExceptionData.h>
 #include <WebCore/PlatformXR.h>
 #include <WebCore/SecurityOriginData.h>
+#include <WebCore/WebGPUCppAPI.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Variant.h>
@@ -44,9 +45,6 @@ namespace WebCore {
 class SecurityOriginData;
 struct XRCanvasConfiguration;
 
-namespace WebGPU {
-enum class TextureFormat : uint8_t;
-}
 }
 
 namespace WebKit {
@@ -83,6 +81,10 @@ public:
     bool hasActiveSession() const;
     void ensureImmersiveSessionActivity();
 
+    // IPC::MessageReceiver
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
+    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
+
 private:
     explicit PlatformXRSystem(WebPageProxy&);
 
@@ -90,14 +92,10 @@ private:
 
     bool webXREnabled() const;
 
-    // IPC::MessageReceiver
-    void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
-    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
-
     // Message handlers
     void enumerateImmersiveXRDevices(CompletionHandler<void(Vector<XRDeviceInfo>&&)>&&);
     void requestPermissionOnSessionFeatures(IPC::Connection&, IPC::Untrusted<WebCore::SecurityOriginData>&&, PlatformXR::SessionMode, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&&);
-    void initializeTrackingAndRendering(IPC::Connection&, std::optional<WebCore::WebGPU::TextureFormat>, std::optional<WebCore::WebGPU::TextureFormat>);
+    void initializeTrackingAndRendering(IPC::Connection&, std::optional<::WebGPU::TextureFormat>, std::optional<::WebGPU::TextureFormat>);
     void shutDownTrackingAndRendering(IPC::Connection&);
     void requestFrame(IPC::Connection&, std::optional<PlatformXR::RequestData>&&, CompletionHandler<void(PlatformXR::FrameData&&)>&&);
 #if USE(OPENXR)
@@ -136,8 +134,10 @@ private:
     ImmersiveSessionState m_immersiveSessionState { ImmersiveSessionState::Idle };
     void setImmersiveSessionState(ImmersiveSessionState, CompletionHandler<void(bool)>&&);
     void invalidateImmersiveSessionState(ImmersiveSessionState nextSessionState = ImmersiveSessionState::Idle);
+    template<typename Message> void sendToImmersiveSessionProcess(Message&&);
 
     WeakPtr<WebPageProxy> m_page;
+    WeakPtr<WebProcessProxy> m_immersiveSessionProcess;
     Variant<std::monostate, Ref<ProcessThrottler::ForegroundActivity>, Ref<ProcessActivityGroup>> m_immersiveSessionActivity;
 };
 

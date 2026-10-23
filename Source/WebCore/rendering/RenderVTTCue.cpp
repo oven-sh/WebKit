@@ -33,7 +33,6 @@
 #include "InlineIteratorBoxInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderInline.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
@@ -537,16 +536,18 @@ RenderBlockFlow* RenderVTTCue::backdropBox() const
     return dynamicDowncast<RenderBlockFlow>(firstChild);
 }
 
-RenderInline* RenderVTTCue::cueBox() const
+RenderBoxModelObject* RenderVTTCue::cueBox() const
 {
     auto* backdropBox = this->backdropBox();
     if (!backdropBox)
         return nullptr;
 
     auto* firstChild = backdropBox->firstChild();
-    ASSERT(firstChild);
-    ASSERT(firstChild->isInlineBox());
-    return dynamicDowncast<RenderInline>(firstChild);
+    if (!firstChild || !firstChild->isInlineBox()) {
+        ASSERT_NOT_REACHED();
+        return nullptr;
+    }
+    return downcast<RenderBoxModelObject>(firstChild);
 }
 
 } // namespace WebCore

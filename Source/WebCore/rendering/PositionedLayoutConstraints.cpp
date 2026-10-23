@@ -34,7 +34,6 @@
 #include "RenderBoxInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderGrid.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderView.h"
 #include "StyleComputedStyle.h"
@@ -114,7 +113,7 @@ bool PositionedLayoutConstraints::containingCoordsAreFlipped() const
     return !m_useStaticPosition && ((isBlockOpposing() && m_containingAxis == LogicalBoxAxis::Block) || (isOrthogonal() && orthogonalOpposing));
 }
 
-static bool isFlippedOnAxis(WritingMode writingMode, BoxAxis physicalAxis)
+static bool LEGACY_NODELETE isFlippedOnAxis(WritingMode writingMode, BoxAxis physicalAxis)
 {
     bool axisIsBlock = writingMode.isHorizontal() != (physicalAxis == BoxAxis::Horizontal);
     return axisIsBlock ? writingMode.isBlockFlipped() : writingMode.isInlineFlipped();
@@ -836,23 +835,20 @@ void PositionedLayoutConstraints::fixupLogicalLeftPosition(RenderBox::LogicalExt
     // of the first line box when really it should use the last line box. When
     // this is fixed elsewhere, this adjustment should be removed.
 
-    CheckedPtr renderInline = dynamicDowncast<RenderInline>(container());
-    if (!renderInline || m_containingWritingMode.isLogicalLeftInlineStart())
+    if (!container().isInlineBox() || m_containingWritingMode.isLogicalLeftInlineStart())
         return;
 
-    auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(*renderInline);
+    auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(container());
     if (!firstInlineBox)
         return;
 
-    auto lastInlineBox = [&] {
-        auto inlineBox = firstInlineBox;
-        for (; inlineBox->nextInlineBoxLineRightward(); inlineBox.traverseInlineBoxLineRightward()) { }
-        return inlineBox;
-    }();
+    auto lastInlineBox = firstInlineBox;
+    while (auto next = std::ranges::next(lastInlineBox))
+        lastInlineBox = next;
     if (firstInlineBox == lastInlineBox)
         return;
 
-    auto lastInlineBoxPaddingBoxVisualRight = lastInlineBox->logicalLeftIgnoringInlineDirection() + renderInline->borderLogicalLeft();
+    auto lastInlineBoxPaddingBoxVisualRight = lastInlineBox->logicalLeftIgnoringInlineDirection() + container().borderLogicalLeft();
     // FIXME: This does not work with decoration break clone.
     auto firstInlineBoxPaddingBoxVisualRight = firstInlineBox->logicalLeftIgnoringInlineDirection();
     auto adjustment = lastInlineBoxPaddingBoxVisualRight - firstInlineBoxPaddingBoxVisualRight;

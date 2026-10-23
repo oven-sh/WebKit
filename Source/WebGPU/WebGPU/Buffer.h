@@ -46,15 +46,18 @@
 #import <wtf/Ref.h>
 #import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
+#import <wtf/ThreadSafeWeakHashSet.h>
 #import <wtf/WeakPtr.h>
 
 IGNORE_CLANG_WARNINGS_BEGIN("nullability-completeness")
 
 namespace WebGPU::Metal {
 
+class BindGroup;
 class CommandBuffer;
 class CommandEncoder;
 class Device;
+class RenderBundle;
 
 // https://gpuweb.github.io/gpuweb/#gpubuffer
 class Buffer final : public WebGPU::Buffer, public WGPUBufferImpl, public CanBorrow, public TrackedResource {
@@ -77,16 +80,16 @@ public:
 
     ~Buffer();
 
-    void destroy();
-    // A std::nullopt size is the rest of the buffer after the offset.
-    void mapAsync(OptionSet<WebGPU::MapMode>, uint64_t offset, std::optional<uint64_t> size, CompletionHandler<void(bool)>&&);
-    void getMappedRange(uint64_t offset, std::optional<uint64_t> size, NOESCAPE const Function<void(std::span<uint8_t>)>&);
-    void copyFrom(std::span<const uint8_t>, size_t offset);
+    void destroy() final;
+    void mapAsync(OptionSet<WebGPU::MapMode>, uint64_t offset, std::optional<uint64_t> size, CompletionHandler<void(bool)>&&) final;
+    void getMappedRange(uint64_t offset, std::optional<uint64_t> size, NOESCAPE const Function<void(std::span<uint8_t>)>&) final;
+    void copyFrom(std::span<const uint8_t>, size_t offset) final;
     // The mapped range as a span, for the C API. The C++ API has getMappedRange() instead,
     // because a proxy cannot return a pointer into the mapping.
     std::span<uint8_t> getMappedRangeSpan(uint64_t offset, std::optional<uint64_t> size);
-    void unmap();
+    void unmap() final;
     void setLabel(String&&) final;
+    void generateAValidationError() final;
     void generateAValidationError(String&&);
 
     bool LEGACY_NODELETE isValid() const final;
@@ -111,7 +114,9 @@ public:
     bool isDestroyed() const { return state() == State::Destroyed; }
 
     void setCommandEncoder(CommandEncoder&, bool mayModifyBuffer = false) const;
-    std::span<uint8_t> getBufferContents();
+    void addResourceHolder(const BindGroup&) const;
+    void addResourceHolder(const RenderBundle&) const;
+    std::span<uint8_t> getBufferContents() final;
 
     std::optional<DrawIndexCacheContainerIterator> canSkipDrawIndexedValidation(uint32_t firstIndex, uint32_t indexCount, uint32_t vertexCount, MTLIndexType, uint32_t primitiveOffset, id<MTLIndirectCommandBuffer> = nil) const;
     void drawIndexedValidated(uint32_t firstIndex, uint32_t indexCount, uint32_t vertexCount, MTLIndexType, uint32_t primitiveOffset, uint64_t validationGeneration, id<MTLIndirectCommandBuffer> = nil);
@@ -172,6 +177,8 @@ private:
     DrawIndexCacheContainer m_drawIndexedCache;
 
     const Ref<Device> m_device;
+    mutable ThreadSafeWeakHashSet<BindGroup> m_bindGroups;
+    mutable ThreadSafeWeakHashSet<RenderBundle> m_renderBundles;
     mutable HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_gpuResourceMap;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_skippedValidationCommandEncoders;
     bool m_mustTakeSlowIndexValidationPath { false };

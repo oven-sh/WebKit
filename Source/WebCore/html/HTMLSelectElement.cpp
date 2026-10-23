@@ -88,6 +88,7 @@
 #include "StyleDisplay.h"
 #include "Text.h"
 #include "UnicodeBidi.h"
+#include "UserAgentParts.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -127,12 +128,6 @@ static bool LEGACY_NODELETE usesListBoxSlot(const HTMLSelectElement& select)
 static bool LEGACY_NODELETE isFirstElementChildButton(const Node& child)
 {
     return is<HTMLButtonElement>(child) && !child.previousElementSibling();
-}
-
-// The options in a selectedcontent element are clones, not options of its select.
-static bool LEGACY_NODELETE canHoldOptionClones(const Node& node)
-{
-    return is<HTMLSelectedContentElement>(node) && node.document().settings().htmlEnhancedSelectMultipleSelectedContentEnabled();
 }
 
 class SelectSlotAssignment final : public NamedSlotAssignment {
@@ -224,7 +219,7 @@ void HTMLSelectElement::didAddUserAgentShadowRoot(ShadowRoot& root)
     ScriptDisallowedScope::EventAllowedScope buttonSlotScope { buttonSlot };
     buttonSlot->setAttributeWithoutSynchronization(inertAttr, emptyAtom());
     buttonSlot->setAttributeWithoutSynchronization(nameAttr, buttonSlotName());
-    buttonSlot->setAttributeWithoutSynchronization(styleAttr, "text-overflow:inherit"_s);
+    buttonSlot->setUserAgentPart(UserAgentParts::internalSelectButtonSlot());
     root.appendChild(buttonSlot);
     m_buttonSlot = WTF::move(buttonSlot);
 
@@ -272,7 +267,7 @@ HTMLSelectElement* HTMLSelectElement::findOwnerSelect(ContainerNode* startNode, 
             return nullptr;
         return findOwnerSelect(startNode->parentNode(), ExcludeOptGroup::Yes);
     }
-    if (isAnyOf<HTMLDataListElement, HTMLHRElement, HTMLOptionElement>(*startNode) || canHoldOptionClones(*startNode))
+    if (isAnyOf<HTMLDataListElement, HTMLHRElement, HTMLOptionElement, HTMLSelectedContentElement>(*startNode))
         return nullptr;
     return findOwnerSelect(startNode->parentNode(), excludeOptGroup);
 }
@@ -337,10 +332,13 @@ void HTMLSelectElement::optionSelectedByUser(int optionIndex, bool fireOnChangeN
     // autofill when there is no actual change (see https://bugs.webkit.org/show_bug.cgi?id=35256 and <rdar://7467917>).
     // The selectOption function does not behave this way, possibly because other callers need a change event even
     // in cases where the selected option is not change.
-    if (optionIndex == selectedIndex())
+    if (optionIndex == selectedIndex()) {
+        if (RefPtr option = selectedOption())
+            option->setDirty(true);
         return;
+    }
 
-    OptionSet flags = { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::UserDriven };
+    OptionSet flags = { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::UserDriven, SelectOptionFlag::MakeOptionDirty };
     if (fireOnChangeNow)
         flags.add(SelectOptionFlag::DispatchChangeEvent);
     selectOption(optionIndex, flags);
@@ -359,10 +357,6 @@ void HTMLSelectElement::pickOrToggleOption(HTMLOptionElement& option)
     // That script may also have taken the renderer away, which updateListBoxSelection() needs.
     if (!renderer() && !isSingleSelectDropdownBox())
         return;
-
-    // FIXME: Native appearance should set the dirtiness too, but none of its user interaction does yet.
-    if (optionsAreRenderedWithBaseAppearance())
-        option.setDirty(true);
 
     // Toggling rather than picking is not yet in the specification.
     optionSelectedByUser(option.index(), true, m_multiple);
@@ -810,7 +804,7 @@ void HTMLSelectElement::setValue(const String& value)
     for (auto& item : listItems()) {
         if (RefPtr option = dynamicDowncast<HTMLOptionElement>(item.get())) {
             if (option->value() == value) {
-                setSelectedIndex(optionIndex);
+                selectOption(optionIndex, { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::MakeOptionDirty });
                 return;
             }
             ++optionIndex;
@@ -1429,9 +1423,10 @@ void HTMLSelectElement::updateListBoxSelection(bool deselectOtherOptions)
         if (!element || element->isDisabledFormControl())
             continue;
 
-        if (i >= start && i <= end)
+        if (i >= start && i <= end) {
             element->setSelectedState(m_activeSelectionState);
-        else if (deselectOtherOptions || i >= m_cachedStateForActiveSelection.size())
+            element->setDirty(true);
+        } else if (deselectOtherOptions || i >= m_cachedStateForActiveSelection.size())
             element->setSelectedState(false);
         else
             element->setSelectedState(m_cachedStateForActiveSelection[i]);
@@ -1633,7 +1628,7 @@ void HTMLSelectElement::recalcListItems(bool updateSelectedStates, AllowStyleInv
                         optGroupIt.traverseNextSkippingChildren();
                         continue;
                     }
-                    if (isAnyOf<HTMLOptGroupElement, HTMLDataListElement, HTMLSelectElement, HTMLHRElement>(optGroupDescendant) || canHoldOptionClones(optGroupDescendant)) {
+                    if (isAnyOf<HTMLDataListElement, HTMLHRElement, HTMLOptGroupElement, HTMLSelectElement, HTMLSelectedContentElement>(optGroupDescendant)) {
                         optGroupIt.traverseNextSkippingChildren();
                         continue;
                     }
@@ -1647,7 +1642,7 @@ void HTMLSelectElement::recalcListItems(bool updateSelectedStates, AllowStyleInv
                 it.traverseNextSkippingChildren();
                 continue;
             }
-            if (isAnyOf<HTMLDataListElement, HTMLSelectElement>(descendant) || canHoldOptionClones(descendant)) {
+            if (isAnyOf<HTMLDataListElement, HTMLSelectElement, HTMLSelectedContentElement>(descendant)) {
                 it.traverseNextSkippingChildren();
                 continue;
             }
@@ -1695,15 +1690,31 @@ void HTMLSelectElement::setSelectedIndex(int index)
     selectOption(index, SelectOptionFlag::DeselectOtherOptions);
 }
 
+void HTMLSelectElement::setSelectedIndexForBindings(int index)
+{
+    selectOption(index, { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::MakeOptionDirty });
+}
+
 void HTMLSelectElement::optionSelectionStateChanged(HTMLOptionElement& option, bool optionIsSelected)
 {
     ASSERT(option.ownerSelectElement() == this);
-    if (optionIsSelected)
+    if (optionIsSelected) {
         selectOption(option.index());
-    else if (!isSingleSelectDropdownBox())
+        return;
+    }
+
+    if (!isSingleSelectDropdownBox()) {
         selectOption(-1);
-    else
-        selectOption(nextSelectableListIndex(-1));
+        return;
+    }
+
+    for (auto& item : listItems()) {
+        if (RefPtr candidate = dynamicDowncast<HTMLOptionElement>(item); candidate && !candidate->isDisabledFormControl()) {
+            selectOption(candidate->index());
+            return;
+        }
+    }
+    selectOption(-1);
 }
 
 void HTMLSelectElement::selectOption(int optionIndex, OptionSet<SelectOptionFlag> flags)
@@ -1727,6 +1738,8 @@ void HTMLSelectElement::selectOption(int optionIndex, OptionSet<SelectOptionFlag
         if (m_activeSelectionEndIndex < 0 || shouldDeselect)
             setActiveSelectionEndIndex(listIndex);
         option->setSelectedState(true);
+        if (flags.contains(SelectOptionFlag::MakeOptionDirty))
+            option->setDirty(true);
         selectedOption = option;
     }
 
@@ -2055,7 +2068,7 @@ void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
             return;
 
         if (static_cast<size_t>(listIndex) < listItems.size())
-            selectOption(listToOptionIndex(listIndex), { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::DispatchChangeEvent, SelectOptionFlag::UserDriven });
+            selectOption(listToOptionIndex(listIndex), { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::DispatchChangeEvent, SelectOptionFlag::UserDriven, SelectOptionFlag::MakeOptionDirty });
 
         keyboardEvent->setDefaultHandled();
         return;
@@ -2506,7 +2519,7 @@ void HTMLSelectElement::typeAheadFind(KeyboardEvent& event)
     int index = typeAheadMatchIndex(event);
     if (index < 0)
         return;
-    selectOption(listToOptionIndex(index), { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::DispatchChangeEvent, SelectOptionFlag::UserDriven });
+    selectOption(listToOptionIndex(index), { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::DispatchChangeEvent, SelectOptionFlag::UserDriven, SelectOptionFlag::MakeOptionDirty });
     if (!isSingleSelectDropdownBox())
         listBoxOnChange();
 }
@@ -2738,7 +2751,7 @@ ExceptionOr<void> HTMLSelectElement::showPicker()
     return { };
 }
 
-void HTMLSelectElement::updateSelectedContentIfEnabled(HTMLOptionElement* selectedOption) const
+void HTMLSelectElement::updateSelectedContentIfEnabled(HTMLOptionElement* selectedOption)
 {
     ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
 
@@ -2747,13 +2760,16 @@ void HTMLSelectElement::updateSelectedContentIfEnabled(HTMLOptionElement* select
         updateSelectedContent(selectedOption);
 }
 
-void HTMLSelectElement::updateSelectedContent(HTMLOptionElement* selectedOption) const
+void HTMLSelectElement::updateSelectedContent(HTMLOptionElement* selectedOption)
 {
     ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
     ASSERT(document().settings().htmlEnhancedSelectParsingEnabled());
     ASSERT(document().settings().htmlEnhancedSelectEnabled());
     ASSERT(!document().settings().mutationEventsEnabled());
 
+    // For multiple this only updates the clones' selectedness, so a queued re-clone has to stay queued.
+    if (!m_multiple)
+        m_hasQueuedSelectedContentUpdate = false;
     if (!m_selectedContentDescendantCount || !updatesSelectedContent())
         return;
 
@@ -2766,32 +2782,26 @@ void HTMLSelectElement::updateSelectedContent(HTMLOptionElement* selectedOption)
     RefPtr selectedOptionRef = selectedOption;
     if (!selectedOptionRef)
         selectedOptionRef = firstSelectedOption();
+    m_selectedContentShowsOption = !!selectedOptionRef;
 
-    for (Ref selectedContent : selectedContentElements()) {
-        if (!selectedOptionRef)
-            selectedContent->removeChildren();
-        else
-            selectedOptionRef->cloneIntoSelectedContent(selectedContent);
-    }
+    for (Ref selectedContent : selectedContentElements())
+        selectedContent->updateFromOption(selectedOptionRef.get());
 }
 
 // https://html.spec.whatwg.org/#update-a-selectedcontent
-void HTMLSelectElement::updateSelectedContent(HTMLSelectedContentElement& selectedContent) const
+void HTMLSelectElement::updateSelectedContent(HTMLSelectedContentElement& selectedContent)
 {
     ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
-
-    if (selectedContent.isDisabled())
-        return;
+    ASSERT(!selectedContent.isDisabled());
 
     if (m_multiple && updatesSelectedContent()) {
         cloneOptionsIntoSelectedContent(selectedContent);
         return;
     }
 
-    if (RefPtr selectedOption = firstSelectedOption())
-        selectedOption->cloneIntoSelectedContent(selectedContent);
-    else
-        selectedContent.removeChildren();
+    RefPtr selectedOption = firstSelectedOption();
+    m_selectedContentShowsOption = !!selectedOption;
+    selectedContent.updateFromOption(selectedOption.get());
 }
 
 bool HTMLSelectElement::updatesSelectedContent() const
@@ -2810,7 +2820,7 @@ Vector<Ref<HTMLSelectedContentElement>> HTMLSelectElement::selectedContentElemen
     return result;
 }
 
-void HTMLSelectElement::cloneOptionsIntoSelectedContent() const
+void HTMLSelectElement::cloneOptionsIntoSelectedContent()
 {
     ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
 
@@ -2821,7 +2831,7 @@ void HTMLSelectElement::cloneOptionsIntoSelectedContent() const
         cloneOptionsIntoSelectedContent(selectedContent);
 }
 
-void HTMLSelectElement::cloneOptionsIntoSelectedContent(HTMLSelectedContentElement& selectedContent) const
+void HTMLSelectElement::cloneOptionsIntoSelectedContent(HTMLSelectedContentElement& selectedContent)
 {
     ASSERT(document().settings().htmlEnhancedSelectMultipleSelectedContentEnabled());
 
@@ -2831,10 +2841,7 @@ void HTMLSelectElement::cloneOptionsIntoSelectedContent(HTMLSelectedContentEleme
             options.append(option.releaseNonNull());
     }
 
-    NodeVector clones;
-    for (auto& option : options)
-        clones.append(option->cloneForSelectedContent());
-    selectedContent.replaceChildrenWithoutValidityCheck(WTF::move(clones));
+    selectedContent.updateFromOptions(options);
 }
 
 RefPtr<HTMLOptionElement> HTMLSelectElement::selectedOptionForSelectedContent() const
@@ -2852,18 +2859,21 @@ void HTMLSelectElement::resetSelectedness(HTMLOptionElement* oldSelectedOption)
         updateSelectedContentIfEnabled(selectedOption.get());
 }
 
-void HTMLSelectElement::queueSelectedContentUpdate()
+// https://html.spec.whatwg.org/#queue-an-update-of-a-select's-descendant-selectedcontent-elements
+void HTMLSelectElement::queueSelectedContentUpdate(const HTMLOptionElement& option)
 {
     if (m_hasQueuedSelectedContentUpdate || !m_selectedContentDescendantCount || !updatesSelectedContent())
+        return;
+
+    if (!m_multiple && !option.selectedWithoutUpdate() && (m_selectedContentShowsOption || m_size > 1))
         return;
 
     m_hasQueuedSelectedContentUpdate = true;
     Ref document = this->document();
     protect(document->eventLoop())->queueMicrotask(document->vm(), [weakThis = WeakPtr<HTMLSelectElement, WeakPtrImplWithEventTargetData> { *this }] {
         RefPtr select = weakThis;
-        if (!select)
+        if (!select || !std::exchange(select->m_hasQueuedSelectedContentUpdate, false))
             return;
-        select->m_hasQueuedSelectedContentUpdate = false;
         if (select->m_multiple)
             select->cloneOptionsIntoSelectedContent();
         else
@@ -2888,7 +2898,8 @@ void HTMLSelectElement::registerSelectedContentElement()
 void HTMLSelectElement::unregisterSelectedContentElement()
 {
     ASSERT(m_selectedContentDescendantCount > 0);
-    --m_selectedContentDescendantCount;
+    if (!--m_selectedContentDescendantCount)
+        m_selectedContentShowsOption = false;
 }
 
 // PopupMenuClient methods
@@ -2979,7 +2990,7 @@ PopupMenuStyle HTMLSelectElement::itemStyle(unsigned listIndex) const
     return PopupMenuStyle(
         style->visitedDependentColorApplyingColorFilter(),
         itemBackgroundColor,
-        style->fontCascade(),
+        protect(style->fontCascade()),
         element->getAttribute(langAttr),
         style->visibility() == Visibility::Visible,
         style->display() == Style::DisplayType::None,
@@ -3001,7 +3012,7 @@ PopupMenuStyle HTMLSelectElement::menuStyle() const
         return PopupMenuStyle(
             Color::black,
             Color::white,
-            defaultStyle->fontCascade(),
+            protect(defaultStyle->fontCascade()),
             nullString(),
             true,
             false,
@@ -3017,7 +3028,7 @@ PopupMenuStyle HTMLSelectElement::menuStyle() const
     return PopupMenuStyle(
         outerStyle->visitedDependentColorApplyingColorFilter(),
         outerStyle->visitedDependentUsedBackgroundColorApplyingColorFilter(),
-        outerStyle->fontCascade(),
+        protect(outerStyle->fontCascade()),
         nullString(),
         renderer->usedStyle().visibility() == UsedVisibility::Visible,
         outerStyle->display() == Style::DisplayType::None,

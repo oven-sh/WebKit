@@ -41,7 +41,6 @@ messages -> WebPageProxy {
     SetFocus(bool focused, std::optional<WebCore::UserGestureTokenIdentifier> userGestureTokenIdentifier)
     TakeFocus(enum:uint8_t WebCore::FocusDirection direction)
     FocusFromServiceWorker() -> ()
-    FocusedElementChanged(std::optional<WebCore::FrameIdentifier> frameID, struct WebCore::FocusOptions options)
     FocusedFrameChanged(std::optional<WebCore::FrameIdentifier> frameID)
     SetRenderTreeSize(uint64_t treeSize)
     SetIsResizable(bool isResizable)
@@ -171,6 +170,7 @@ messages -> WebPageProxy {
 #if PLATFORM(MAC)
     [EnabledBy=SiteIsolationEnabled] PerformAccessibilitySearchInRemoteFrame(WebCore::FrameIdentifier frameID, struct WebCore::AccessibilitySearchCriteriaIPC criteria) -> (Vector<WebCore::AccessibilityRemoteToken> results)
     [EnabledBy=SiteIsolationEnabled] ContinueAccessibilitySearchFromChildFrame(WebCore::FrameIdentifier childFrameID, struct WebCore::AccessibilitySearchCriteriaIPC criteria) -> (Vector<WebCore::AccessibilityRemoteToken> results)
+    [EnabledBy=SiteIsolationEnabled] RelayAccessibilitySelectedTextChangeToMainFrame(WebCore::FrameIdentifier frameID, struct WebCore::AXRemoteFrameSelectedTextChange change)
 #endif
 
     MainFramePluginHandlesPageScaleGestureDidChange(bool mainFramePluginHandlesPageScaleGesture, double minScale, double maxScale)
@@ -236,6 +236,7 @@ messages -> WebPageProxy {
     ShouldGoToBackForwardListItemSync(WebCore::BackForwardItemIdentifier itemID) -> (enum:uint8_t WebCore::ShouldGoToHistoryItem shouldGoToHistoryItem) Synchronous
     GoToBackForwardItemAtIndex(int32_t steps)
     EnqueueHistoryTraversalDelta(int32_t delta)
+    EnqueueHistoryTraversalToItem(WebCore::BackForwardFrameItemIdentifier frameItemID) -> (bool didTakeTraversal)
 
     # Undo/Redo messages
     RegisterEditCommandForUndo(WebKit::WebUndoStepID commandID, String label) AllowedWhenWaitingForSyncReply
@@ -464,6 +465,8 @@ messages -> WebPageProxy {
 
     DidChangeInspectorFrontendCount(uint32_t count)
     SendMessageToInspectorFrontend(String targetId, String message)
+    FrameDidPauseForDebugger(WebCore::FrameIdentifier frameID)
+    FrameDidContinueForDebugger(WebCore::FrameIdentifier frameID)
 
     # Search popup menus
     SaveRecentSearches(String name, Vector<WebCore::RecentSearch> searchItems)
@@ -659,7 +662,7 @@ messages -> WebPageProxy {
     [EnabledBy=SiteIsolationEnabled] BroadcastAllDocumentSyncData(Ref<WebCore::DocumentSyncData> documentSyncData)
 
     [EnabledBy=SiteIsolationEnabled] BroadcastFrameTreeSyncData(WebCore::FrameIdentifier frameID, struct WebCore::FrameTreeSyncSerializationData frameTreeSyncData)
-    [EnabledBy=SiteIsolationEnabled] BroadcastAllFrameTreeSyncData(WebCore::FrameIdentifier frameID, Ref<WebCore::FrameTreeSyncData> frameTreeSyncData)
+    [EnabledBy=SiteIsolationEnabled] HandleFrameGeometryUpdates(Vector<WebCore::FrameGeometryUpdate> updates)
 
     [EnabledBy=SiteIsolationEnabled] DidNotifyUserActivation(WebCore::FrameIdentifier sourceFrameID, MonotonicTime activationTime, std::optional<WebCore::UserGestureTokenIdentifier> forcedActivationToken)
     [EnabledBy=SiteIsolationEnabled] DidConsumeUserActivation(WebCore::FrameIdentifier sourceFrameID)

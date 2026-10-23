@@ -612,8 +612,8 @@ LayoutRect TextBoxPainter::selectionRectForRange(unsigned startOffset, unsigned 
     // Note that if the text is truncated, we let the thing being painted in the truncation
     // draw its own highlight.
     auto lineBox = makeIterator()->lineBox();
-    auto selectionBottom = LineSelection::logicalBottom(*lineBox);
-    auto selectionTop = LineSelection::logicalTopAdjustedForPrecedingBlock(*lineBox);
+    auto selectionBottom = LineSelection::logicalBottom(lineBox);
+    auto selectionTop = LineSelection::logicalTopAdjustedForPrecedingBlock(lineBox);
     // Use same y positioning and height as for selection, so that when the selection and this subrange are on
     // the same word there are no pieces sticking out.
     auto deltaY = LayoutUnit { writingMode().isLineInverted() ? selectionBottom - m_logicalRect.maxY() : m_logicalRect.y() - selectionTop };
@@ -909,7 +909,7 @@ static inline Style::TextDecorationLine computedTextDecorationType(const Style::
     return textDecorations;
 }
 
-static inline CheckedRef<const Style::ComputedStyle> decoratingBoxStyleForInlineBox(const InlineIterator::InlineBox& inlineBox, bool isFirstLine)
+static inline CheckedRef<const Style::ComputedStyle> LEGACY_NODELETE decoratingBoxStyleForInlineBox(const InlineIterator::InlineBox& inlineBox, bool isFirstLine)
 {
     if (!inlineBox.isRootInlineBox())
         return inlineBox.style();
@@ -1034,7 +1034,7 @@ void TextBoxPainter::collectDecoratingBoxesForBackgroundPainting(DecoratingBoxLi
     }
 }
 
-static float autoTextDecorationInset(const Style::ComputedStyle& style)
+static float LEGACY_NODELETE autoTextDecorationInset(const Style::ComputedStyle& style)
 {
     // A small UA-chosen inset (relative to font size) so that two adjacent identical underlined
     // elements do not appear to share a single continuous underline (important for e.g. Chinese,
@@ -1047,9 +1047,9 @@ struct DecoratingBoxFragmentInlineSizes {
     float current { 0.f };
     float following { 0.f };
 
-    float total() const { return preceding + current + following; }
+    float LEGACY_NODELETE total() const { return preceding + current + following; }
 };
-static DecoratingBoxFragmentInlineSizes decoratingBoxFragmentInlineSizes(const InlineIterator::InlineBox& decoratingInlineBox)
+static DecoratingBoxFragmentInlineSizes LEGACY_NODELETE decoratingBoxFragmentInlineSizes(const InlineIterator::InlineBox& decoratingInlineBox)
 {
     auto inlineSizes = DecoratingBoxFragmentInlineSizes { .current = decoratingInlineBox.logicalWidth() };
     for (auto fragment = decoratingInlineBox.nextInlineBoxLineLeftward(); fragment; fragment.traverseInlineBoxLineLeftward())
@@ -1498,7 +1498,7 @@ float TextBoxPainter::textPosition()
     // from the containing block edge in its measurement. textPosition() should be consistent so the text are rendered in the same width.
     if (!m_logicalRect.x())
         return 0;
-    return m_logicalRect.x() - makeIterator()->lineBox()->contentLogicalLeft();
+    return m_logicalRect.x() - makeIterator()->lineBox().contentLogicalLeft();
 }
 
 void TextBoxPainter::paintCompositionUnderline(const CompositionUnderline& underline, const CornerRadii& radii, bool hasLiveConversion)

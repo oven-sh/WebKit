@@ -87,6 +87,7 @@ class DocumentLoader;
 class DocumentThreadableLoader;
 class EventListener;
 class GPUDevice;
+class HTMLFrameOwnerElement;
 class HTTPHeaderMap;
 class InspectorTimelineAgent;
 class InstrumentingAgents;
@@ -250,6 +251,7 @@ public:
     static void loadEventFired(LocalFrame*);
     static void frameDetachedFromParent(LocalFrame&);
     static void didCommitLoad(LocalFrame&, DocumentLoader*);
+    static void frameOwnerContentFrameChanged(Document&, HTMLFrameOwnerElement&);
     static void frameDocumentUpdated(LocalFrame&);
     static void loaderDetachedFromFrame(LocalFrame&, DocumentLoader&);
     static void frameStartedLoading(LocalFrame&);
@@ -350,7 +352,7 @@ public:
     static void didChangeWebGPURenderPipelineLabel(GPURenderPipeline&);
     static void willDestroyWebGPURenderPipeline(GPURenderPipeline&);
     static bool isWebGPURenderPipelineDisabled(GPURenderPipeline&);
-    static RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
+    static RefPtr<::WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     static void willApplyKeyframeEffect(const Styleable&, KeyframeEffect&, const ComputedEffectTiming&);
     static void didChangeWebAnimationName(WebAnimation&);
@@ -486,6 +488,7 @@ private:
     static void loadEventFiredImpl(InstrumentingAgents&, LocalFrame*);
     static void frameDetachedFromParentImpl(InstrumentingAgents&, LocalFrame&);
     static void didCommitLoadImpl(InstrumentingAgents&, LocalFrame&, DocumentLoader*);
+    static void frameOwnerContentFrameChangedImpl(InstrumentingAgents&, HTMLFrameOwnerElement&);
     static void frameDocumentUpdatedImpl(InstrumentingAgents&, LocalFrame&);
     static void loaderDetachedFromFrameImpl(InstrumentingAgents&, DocumentLoader&);
     static void frameStartedLoadingImpl(InstrumentingAgents&, LocalFrame&);
@@ -574,7 +577,7 @@ private:
     static void willDestroyWebGPURenderPipelineImpl(InstrumentingAgents&, GPURenderPipeline&);
     static void didChangeWebGPURenderPipelineLabelImpl(InstrumentingAgents&, GPURenderPipeline&);
     static bool isWebGPURenderPipelineDisabledImpl(InstrumentingAgents&, GPURenderPipeline&);
-    static RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlightingImpl(InstrumentingAgents&, GPURenderPipeline&, unsigned canvasColorAttachmentMask);
+    static RefPtr<::WebGPU::RenderPipeline> renderPipelineForWebGPUHighlightingImpl(InstrumentingAgents&, GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     static void willApplyKeyframeEffectImpl(InstrumentingAgents&, const Styleable&, KeyframeEffect&, const ComputedEffectTiming&);
     static void didChangeWebAnimationNameImpl(InstrumentingAgents&, WebAnimation&);
@@ -1316,6 +1319,13 @@ inline void InspectorInstrumentation::didCommitLoad(LocalFrame& frame, DocumentL
     didCommitLoadImpl(protect(instrumentingAgents(frame)), frame, loader);
 }
 
+inline void InspectorInstrumentation::frameOwnerContentFrameChanged(Document& document, HTMLFrameOwnerElement& frameOwner)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr agents = instrumentingAgents(document))
+        frameOwnerContentFrameChangedImpl(*agents, frameOwner);
+}
+
 inline void InspectorInstrumentation::frameDocumentUpdated(LocalFrame& frame)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
@@ -1655,7 +1665,7 @@ inline bool InspectorInstrumentation::isWebGPURenderPipelineDisabled(GPURenderPi
     return false;
 }
 
-inline RefPtr<WebGPU::RenderPipeline> InspectorInstrumentation::renderPipelineForWebGPUHighlighting(GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
+inline RefPtr<::WebGPU::RenderPipeline> InspectorInstrumentation::renderPipelineForWebGPUHighlighting(GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
 {
     FAST_RETURN_IF_NO_FRONTENDS(nullptr);
     if (RefPtr device = pipeline.device()) {

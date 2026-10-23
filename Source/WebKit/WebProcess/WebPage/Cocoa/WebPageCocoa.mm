@@ -102,6 +102,7 @@
 #import <WebCore/HTMLIFrameElement.h>
 #import <WebCore/HTMLImageElement.h>
 #import <WebCore/HTMLLabelElement.h>
+#import <WebCore/HTMLMediaElement.h>
 #import <WebCore/HTMLOListElement.h>
 #import <WebCore/HTMLPlugInElement.h>
 #import <WebCore/HTMLSelectElement.h>
@@ -193,7 +194,7 @@
 #import <WebCore/TextEffectController.h>
 #endif
 
-#import "PDFKitSoftLink.h"
+#import <pal/cocoa/PDFKitSoftLink.h>
 
 #define WEBPAGE_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [webPageID=%" PRIu64 "] WebPage::" fmt, this, m_identifier.toUInt64(), ##__VA_ARGS__)
 
@@ -236,7 +237,7 @@ void WebPage::platformInitialize(const WebPageCreationParameters& parameters)
     platformInitializeAccessibility(shouldInitializeAccessibility ? ShouldInitializeNSAccessibility::Yes : ShouldInitializeNSAccessibility::No);
 
 #if ENABLE(MEDIA_STREAM)
-    protect(WebProcess::singleton().userMediaCaptureManager())->setupCaptureProcesses(parameters.shouldCaptureAudioInUIProcess, parameters.shouldCaptureAudioInGPUProcess, parameters.shouldCaptureVideoInUIProcess, parameters.shouldCaptureVideoInGPUProcess, parameters.shouldCaptureDisplayInUIProcess, parameters.shouldCaptureDisplayInGPUProcess,
+    protect(WebProcess::singleton().userMediaCaptureManager())->setupCaptureProcesses(parameters.shouldCaptureAudioInUIProcess, parameters.store.getBoolValueForKey(WebPreferencesKey::captureAudioInGPUProcessEnabledKey()), parameters.shouldCaptureVideoInUIProcess, parameters.store.getBoolValueForKey(WebPreferencesKey::captureVideoInGPUProcessEnabledKey()), parameters.shouldCaptureDisplayInUIProcess, parameters.store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForDisplayCaptureKey()),
 #if ENABLE(WEB_RTC)
         m_page->settings().webRTCRemoteVideoFrameEnabled()
 #else
@@ -331,31 +332,35 @@ bool WebPage::shouldUsePDFPlugin(const String& contentType, StringView path) con
 }
 #endif
 
-void WebPage::performDictionaryLookupAtLocation(const FloatPoint& floatPoint)
+void WebPage::performDictionaryLookupAtLocation(FrameIdentifier frameID, const FloatPoint& floatPoint, CompletionHandler<void(std::optional<RemoteUserInputEventData>)>&& completionHandler)
 {
 #if ENABLE(PDF_PLUGIN)
     if (RefPtr pluginView = mainFramePlugIn()) {
         if (pluginView->performDictionaryLookupAtLocation(floatPoint))
-            return;
+            return completionHandler(std::nullopt);
     }
 #endif
-    
-    RefPtr localMainFrame = corePage()->localMainFrame();
-    if (!localMainFrame)
-        return;
+
+    RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
+    RefPtr localFrame = webFrame ? webFrame->coreLocalFrame() : nullptr;
+    RefPtr view = localFrame ? localFrame->view() : nullptr;
+    if (!view)
+        return completionHandler(std::nullopt);
+
     // Find the frame the point is over.
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
-    auto result = localMainFrame->eventHandler().hitTestResultAtPoint(protect(localMainFrame->view())->windowToContents(roundedIntPoint(floatPoint)), hitType);
+    auto point = roundedIntPoint(floatPoint);
+    auto result = localFrame->eventHandler().hitTestResultAtPoint(view->rootViewToContents(point), hitType);
 
-    RefPtr frame = result.innerNonSharedNode() ? result.innerNonSharedNode()->document().frame() : corePage()->focusController().focusedOrMainFrame();
-    if (!frame)
-        return;
+    if (auto remoteUserInputEventData = remoteUserInputEventDataForHitTestResult(result, *view, point))
+        return completionHandler(WTF::move(remoteUserInputEventData));
 
-    auto rangeResult = DictionaryLookup::rangeAtHitTestResult(result);
-    if (!rangeResult)
-        return;
+    if (auto rangeResult = DictionaryLookup::rangeAtHitTestResult(result)) {
+        if (RefPtr frame = rangeResult->start.document().frame())
+            performDictionaryLookupForRange(*frame, *rangeResult, TextIndicatorPresentationTransition::Bounce);
+    }
 
-    performDictionaryLookupForRange(*frame, *rangeResult, TextIndicatorPresentationTransition::Bounce);
+    completionHandler(std::nullopt);
 }
 
 void WebPage::performDictionaryLookupForSelection(LocalFrame& frame, const VisibleSelection& selection, TextIndicatorPresentationTransition presentationTransition)
@@ -737,6 +742,15 @@ void WebPage::performAccessibilitySearchInRemoteFrame(WebCore::FrameIdentifier f
     auto searchResults = WebCore::performSearchWithCrossProcessCoordination(*webArea, WTF::move(localCriteria));
 
     completionHandler(convertSearchResultsToRemoteTokens(WTF::move(searchResults)));
+}
+
+void WebPage::postAccessibilitySelectedTextChangeFromRemoteFrame(const WebCore::AXRemoteFrameSelectedTextChange& change)
+{
+    RefPtr coreFrame = m_mainFrame->coreLocalFrame();
+    RefPtr document = coreFrame ? coreFrame->document() : nullptr;
+    // This is null if accessibility isn't enabled, in which case no assistive technology is listening.
+    if (CheckedPtr cache = document ? document->axObjectCache() : nullptr)
+        cache->postSelectedTextChangeFromRemoteFrame(change);
 }
 
 void WebPage::continueAccessibilitySearchInParentFrame(WebCore::FrameIdentifier childFrameID, WebCore::AccessibilitySearchCriteriaIPC criteria, CompletionHandler<void(Vector<WebCore::AccessibilityRemoteToken>&&)>&& completionHandler)
@@ -1679,7 +1693,7 @@ static void drawPDFPage(PDFDocument *pdfDocument, CFIndex pageIndex, CGContextRe
 
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in [pdfPage annotations]) {
-        if (![[annotation valueForAnnotationKey:get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
+        if (![[annotation valueForAnnotationKey:PAL::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:PAL::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
             continue;
 
         RetainPtr<NSURL> url = annotation.URL;
@@ -3811,7 +3825,9 @@ void WebPage::completeSyntheticClick(std::optional<WebCore::FrameIdentifier> fra
     if (nodeRespondingToClick.document().settings().contentChangeObserverEnabled()) {
         Ref document = nodeRespondingToClick.document();
         // Dispatch mouseOut to dismiss tooltip content when tapping on the control bar buttons (cc, settings).
-        if (document->quirks().needsYouTubeMouseOutQuirk()) {
+        RefPtr mediaElement = dynamicDowncast<HTMLMediaElement>(nodeRespondingToClick);
+        bool isShowingNativeMediaControls = mediaElement && (mediaElement->controls() || mediaElement->shouldForceControlsDisplay());
+        if (document->quirks().needsYouTubeMouseOutQuirk() && !isShowingNativeMediaControls) {
             if (RefPtr frame = document->frame()) {
                 PlatformMouseEvent event { roundedAdjustedPoint, globalPoint, MouseButton::Left, PlatformEvent::Type::NoType, 0, platformModifiers, MonotonicTime::now(), 0, WebCore::SyntheticClickType::NoTap, m_potentialTapInputSource, pointerId };
                 RefPtr<Element> newHoveredNode;
@@ -4058,6 +4074,17 @@ void WebPage::updateVisibleContentRects(const VisibleContentRectUpdateInfo& visi
     if (!localMainFrame)
         return;
     RefPtr frameView = *localMainFrame->view();
+
+#if ENABLE(PDF_PLUGIN) && PLATFORM(MAC)
+    auto updatePluginTransformsIfStable = makeScopeExit([this, protectedThis = Ref { *this }] {
+        if (!m_isInStableState)
+            return;
+        for (Ref pluginView : m_pluginViews) {
+            if (!pluginView->pluginHandlesPageScaleFactor())
+                pluginView->pageScaleFactorDidChange();
+        }
+    });
+#endif
 
     if (RefPtr scrollingCoordinator = this->scrollingCoordinator()) {
         Ref remoteScrollingCoordinator = downcast<RemoteScrollingCoordinator>(*scrollingCoordinator);

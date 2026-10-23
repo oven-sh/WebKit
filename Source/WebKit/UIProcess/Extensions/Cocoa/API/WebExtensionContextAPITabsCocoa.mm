@@ -109,8 +109,14 @@ void WebExtensionContext::tabsCreate(std::optional<WebPageProxyIdentifier> webPa
         configuration.parentTab = tab->delegate();
     }
 
-    if (parameters.url)
+    if (parameters.url) {
+        if (!canOpenURLInNewTabOrWindow(parameters.url.value())) {
+            completionHandler(toWebExtensionError(apiName, @"url", unsupportedURLForNewTabOrWindowMessage(parameters.url.value())));
+            return;
+        }
+
         configuration.url = parameters.url.value().createNSURL().get();
+    }
 
     [delegate webExtensionController:extensionController->wrapper() openNewTabUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](id<WKWebExtensionTab> newTab, NSError *error) mutable {
         if (error) {
@@ -451,7 +457,8 @@ void WebExtensionContext::tabsCaptureVisibleTab(WebPageProxyIdentifier webPagePr
             }
 
             static NeverDestroyed<Ref<WorkQueue>> queue { WorkQueue::create("org.WebKit.WKWebExtension.tabsCaptureVisibleTab"_s) };
-            queue.get()->dispatch([cgImage = WTF::move(cgImage), imageFormat, imageQuality, completionHandler = WTF::move(completionHandler)]() mutable {
+            // FIXME: rdar://190389704. NeverDestroyed<Ref<T>>::get() is not recognized as safe.
+            SUPPRESS_UNCOUNTED_ARG queue.get()->dispatch([cgImage = WTF::move(cgImage), imageFormat, imageQuality, completionHandler = WTF::move(completionHandler)]() mutable {
                 URL result { WebCore::encodeDataURL(cgImage.get(), toMIMEType(imageFormat), imageQuality) };
                 WorkQueue::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler), result = crossThreadCopy(WTF::move(result))]() mutable {
                     completionHandler(WTF::move(result));

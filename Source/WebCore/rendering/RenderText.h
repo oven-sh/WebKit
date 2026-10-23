@@ -174,8 +174,8 @@ public:
     Vector<std::pair<unsigned, unsigned>> contentRangesBetweenOffsetsForType(const DocumentMarkerType, unsigned startOffset, unsigned endOffset) const;
 
     bool hasInlineWrapperForDisplayContents() const { return m_hasInlineWrapperForDisplayContents; }
-    RenderInline* LEGACY_NODELETE inlineWrapperForDisplayContents();
-    void setInlineWrapperForDisplayContents(RenderInline*);
+    RenderBoxModelObject* LEGACY_NODELETE inlineWrapperForDisplayContents();
+    void setInlineWrapperForDisplayContents(RenderBoxModelObject*);
 
     template <typename MeasureTextCallback>
     static float measureTextConsideringPossibleTrailingSpace(bool currentCharacterIsSpace, unsigned startIndex, unsigned wordLength, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, NOESCAPE const MeasureTextCallback&);
@@ -266,7 +266,7 @@ String applyTextTransform(const Style::ComputedStyle&, const String&, char32_t p
 String applyTextTransform(const Style::ComputedStyle&, const String&);
 String capitalize(const String&, char32_t previousCharacter, const AtomString& locale);
 String capitalize(const String&, const AtomString& locale);
-bool isDutchLocale(const AtomString&);
+bool LEGACY_NODELETE isDutchLocale(const AtomString&);
 TextBreakIterator::LineMode::Behavior LEGACY_NODELETE mapLineBreakToIteratorMode(LineBreak);
 TextBreakIterator::ContentAnalysis LEGACY_NODELETE mapWordBreakToContentAnalysis(WordBreak);
 

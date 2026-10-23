@@ -210,7 +210,7 @@ NaturalDimensions RenderVideo::zoomedNaturalDimensions() const
 {
     if (protect(videoElement())->shouldDisplayPosterImage())
         return RenderImage::zoomedNaturalDimensions();
-    return RenderReplaced::zoomedNaturalDimensions();
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 IntRect RenderVideo::videoBox() const
@@ -482,6 +482,11 @@ HTMLVideoElement& LEGACY_NODELETE RenderVideo::videoElement() const
 RefPtr<ShareableBitmap> RenderVideo::createShareableBitmap(const CreateShareableBitmapFromImageOptions&) const
 {
     return protect(videoElement())->bitmapImageForCurrentTimeSync();
+}
+
+Ref<NativePromise<Ref<ShareableBitmap>, void>> RenderVideo::createShareableBitmapAsync(const CreateShareableBitmapFromImageOptions&) const
+{
+    return protect(videoElement())->bitmapImageForCurrentTime();
 }
 
 void RenderVideo::updateFromElement()

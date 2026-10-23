@@ -27,6 +27,7 @@
 import argparse
 import logging
 import re
+import string
 import sys
 import subprocess
 import textwrap
@@ -39,7 +40,7 @@ from webkitscmpy.program.pull_request import PullRequest as PullRequestProgram
 from webkitpy.common.host import Host
 from webkitpy.common.webkit_finder import WebKitFinder
 from webkitpy.w3c.wpt_linter import WPTLinter
-from webkitpy.w3c.common import TEMPLATED_TEST_WRAPPER_SUFFIXES, WPT_GH_ORG, WPT_GH_REPO_NAME, WPT_GH_URL, WPTPaths
+from webkitpy.w3c.common import TEMPLATED_TEST_WRAPPER_SUFFIXES, WPT_GH_ORG, WPT_GH_REPO_NAME, WPT_GH_URL, WPTPaths, case_mismatches
 from webkitpy.common.memoized import memoized
 
 
@@ -58,6 +59,7 @@ CANONICAL_LINK_RE = re.compile(r'^Canonical[ -]link:\s*(?P<link>\S+)$', re.IGNOR
 CO_AUTHORED_BY_RE = re.compile(r'^Co-authored-by:', re.IGNORECASE)
 WEBKIT_ONLY_TRAILER_RE = re.compile(r'^(Originally-landed-as|Identifier|git-svn-id):')
 WEBKIT_WPT_PATH_RE = re.compile(r'(?<![/\w])(LayoutTests/)?imported/w3c/web-platform-tests/')
+MARKDOWN_ESCAPE_TABLE = str.maketrans({c: rf'\{c}<!---->' for c in string.punctuation})
 
 
 def wpt_commit_message(message, bugs):
@@ -303,6 +305,13 @@ class WebPlatformTestExporter(object):
             self.delete_local_branch(is_success=True)
             sys.exit(0)
 
+        # git apply keeps the case of the patch, even where the file system resolves a path in another case.
+        mismatches = case_mismatches(self._filesystem, self._wpt_repo.path, self._wpt_repo.modified(staged=True))
+        for path, upstream_path in sorted(mismatches.items()):
+            _log.error(f'{WEBKIT_WPT_DIR}/{path} differs only in case from {upstream_path} in web-platform-tests. Rename it to match before exporting.')
+        if mismatches:
+            return False
+
         command = ['commit', '-m', self._commit_message]
         if self._commit_author:
             command.append(f'--author={self._commit_author}')
@@ -355,7 +364,7 @@ class WebPlatformTestExporter(object):
             _log.error('Cannot create a WPT PR since it contains webkit test runner specific changes')
             return
 
-        title = self._bug.title.replace("[", "\\[").replace("]", "\\]")
+        title = self._bug.title.translate(MARKDOWN_ESCAPE_TABLE)
         # wpt-pr-bot identifies WebKit exports by pr_title: https://github.com/web-platform-tests/wpt-pr-bot/blob/main/lib/metadata/webkit.js
         pr_title = f'WebKit export of {self._bug.link}'
         description = f'WebKit export from bug: [{title}]({self._bug.link})\n\n<pre>\n{PullRequest.escape_html(self._commit_message)}\n</pre>'

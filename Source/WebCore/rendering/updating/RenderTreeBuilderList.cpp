@@ -29,7 +29,6 @@
 #include "RenderCombineText.h"
 #include "RenderElementInlines.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderMenuList.h"
 #include "RenderMultiColumnFlow.h"
@@ -49,7 +48,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTreeBuilder::List);
 
-static RenderObject* firstNonMarkerChild(RenderBlock& parent)
+static RenderObject* LEGACY_NODELETE firstNonMarkerChild(RenderBlock& parent)
 {
     RenderObject* child = parent.firstChild();
     while (is<RenderListOutsideMarker>(child))
@@ -80,7 +79,7 @@ static MarkerParentSearchResult parentCandidateForMarker(RenderListItem& listIte
 // An inside marker among the list item's own inline content is not a box of its own: it is an anonymous inline box
 // holding the marker's content renderers, so that they are inline content of the list item's formatting context and are
 // laid out, reordered and painted with the rest of the line.
-static void adjustStyleForInlineMarker(Style::ComputedStyle& markerStyle)
+static void LEGACY_NODELETE adjustStyleForInlineMarker(Style::ComputedStyle& markerStyle)
 {
     markerStyle.setDisplay(Style::DisplayType::InlineFlow);
 }
@@ -122,7 +121,7 @@ void RenderTreeBuilder::List::updateItemMarker(RenderListItem& listItemRenderer)
     // consulted when the marker's parent happens to be unchanged, so rebuild rather than patch the placement in place.
     auto shouldBuildInlineMarker = newStyle.listStylePosition() == ListStylePosition::Inside;
 
-    if (CheckedPtr inlineMarker = listItemRenderer.markerRenderer(); inlineMarker && !listItemRenderer.markerBox()) {
+    if (WeakPtr inlineMarker = listItemRenderer.markerRenderer(); inlineMarker && !listItemRenderer.markerBox()) {
         auto contentChanged = inlineMarker->style().content() != newStyle.content() || inlineMarker->style().textCombine() != newStyle.textCombine();
         if (shouldBuildInlineMarker && !contentChanged) {
             adjustStyleForInlineMarker(newStyle);
@@ -214,7 +213,7 @@ static RenderPtr<RenderText> createMarkerTextRenderer(Document& document, const 
     return WebCore::createRenderer<RenderText>(RenderObject::Type::Text, document, emptyString());
 }
 
-static CheckedRef<RenderBlock> parentForInlineMarker(RenderListItem& listItemRenderer, const RenderInline& marker)
+static CheckedRef<RenderBlock> parentForInlineMarker(RenderListItem& listItemRenderer, const RenderBoxModelObject& marker)
 {
     if (CheckedPtr firstChild = dynamicDowncast<RenderBlock>(firstNonMarkerChild(listItemRenderer)); firstChild && !firstChild->isAnonymous())
         return listItemRenderer;
@@ -227,7 +226,7 @@ static CheckedRef<RenderBlock> parentForInlineMarker(RenderListItem& listItemRen
 void RenderTreeBuilder::List::buildInlineMarker(RenderListItem& listItemRenderer, Style::ComputedStyle&& markerStyle)
 {
     adjustStyleForInlineMarker(markerStyle);
-    auto newMarker = WebCore::createRenderer<RenderInline>(RenderObject::Type::Inline, listItemRenderer.document(), WTF::move(markerStyle));
+    auto newMarker = WebCore::createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, listItemRenderer.document(), WTF::move(markerStyle));
     newMarker->initializeStyle();
     CheckedRef marker = *newMarker;
     CheckedRef markerParent = parentForInlineMarker(listItemRenderer, marker.get());

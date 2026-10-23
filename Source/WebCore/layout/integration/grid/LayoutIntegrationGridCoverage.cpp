@@ -241,7 +241,7 @@ static bool gridItemHasValidHeight(const Style::PreferredSize& height)
     );
 }
 
-static bool isUnsupportedGridTrackSize(const Style::GridTrackSize& trackSize)
+static bool LEGACY_NODELETE isUnsupportedGridTrackSize(const Style::GridTrackSize& trackSize)
 {
     return trackSize.isFitContent();
 }
@@ -274,7 +274,7 @@ static bool hasUnsupportedGridTrackListEntry(const Style::GridTrackList& trackLi
                 return hasUnsupportedRepeatEntry(repeat.list);
             },
             [](const Style::GridTrackEntryAutoRepeat& autoRepeat) {
-                return autoRepeat.type == AutoRepeatType::Fit || hasUnsupportedRepeatEntry(autoRepeat.list);
+                return hasUnsupportedRepeatEntry(autoRepeat.list);
             },
             [](const Style::GridTrackEntrySubgrid&) {
                 return true;

@@ -55,6 +55,7 @@
 #include "HitTestResult.h"
 #include "InspectorDOMAgent.h"
 #include "InspectorHistory.h"
+#include "InspectorIdentifierRegistry.h"
 #include "InspectorNodeFinder.h"
 #include "InspectorOverlayConfigParser.h"
 #include "InstrumentingAgents.h"
@@ -105,13 +106,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FrameDOMAgent);
 static const size_t frameMaxTextSize = 10000;
 static const char16_t frameHorizontalEllipsisUTF16[] = { horizontalEllipsis, 0 };
 
-static bool frameContainsOnlyASCIIWhitespace(Node* node)
+static bool LEGACY_NODELETE frameContainsOnlyASCIIWhitespace(Node* node)
 {
     auto* text = dynamicDowncast<Text>(node);
     return text && text->containsOnlyASCIIWhitespace();
 }
 
-static Inspector::Protocol::DOM::ShadowRootType frameShadowRootType(ShadowRootMode mode)
+static Inspector::Protocol::DOM::ShadowRootType LEGACY_NODELETE frameShadowRootType(ShadowRootMode mode)
 {
     switch (mode) {
     case ShadowRootMode::UserAgent:
@@ -125,7 +126,7 @@ static Inspector::Protocol::DOM::ShadowRootType frameShadowRootType(ShadowRootMo
     return Inspector::Protocol::DOM::ShadowRootType::UserAgent;
 }
 
-static Inspector::Protocol::DOM::CustomElementState frameCustomElementState(const Element& element)
+static Inspector::Protocol::DOM::CustomElementState LEGACY_NODELETE frameCustomElementState(const Element& element)
 {
     if (element.isDefinedCustomElement())
         return Inspector::Protocol::DOM::CustomElementState::Custom;
@@ -136,7 +137,7 @@ static Inspector::Protocol::DOM::CustomElementState frameCustomElementState(cons
     return Inspector::Protocol::DOM::CustomElementState::Builtin;
 }
 
-static bool framePseudoElementType(PseudoElementType pseudoElementType, Inspector::Protocol::DOM::PseudoType* type)
+static bool LEGACY_NODELETE framePseudoElementType(PseudoElementType pseudoElementType, Inspector::Protocol::DOM::PseudoType* type)
 {
     switch (pseudoElementType) {
     case PseudoElementType::Before:
@@ -173,6 +174,7 @@ FrameDOMAgent::FrameDOMAgent(FrameAgentContext& context, InspectorOverlay& overl
     , m_overlay(overlay)
     , m_injectedScriptManager(context.injectedScriptManager)
     , m_destroyedNodesTimer(*this, &FrameDOMAgent::destroyedNodesTimerFired)
+    , m_focusNodeTimer(*this, &FrameDOMAgent::focusNode)
 {
 }
 
@@ -185,9 +187,7 @@ void FrameDOMAgent::didCreateFrontendAndBackend()
 
     Ref { m_instrumentingAgents.get() }->setPersistentFrameDOMAgent(this);
 
-    RefPtr frame = m_inspectedFrame.get();
-    if (frame)
-        m_document = frame->document();
+    m_document = protect(m_inspectedFrame)->document();
 
     // Force a layout so that we can collect additional information from the layout process, as
     // InspectorDOMAgent does. The flex line-start cache is only populated by layouts that run while a
@@ -217,6 +217,7 @@ void FrameDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReason)
 
     m_inspectedNode = nullptr;
     m_nodeToFocus = nullptr;
+    m_focusNodeTimer.stop();
     m_mousedOverNode = nullptr;
 
     m_searchingForNode = false;
@@ -403,6 +404,8 @@ Ref<Inspector::Protocol::DOM::Node> FrameDOMAgent::buildObjectForNode(Node* node
 
         // FIXME: <https://webkit.org/b/298980> Skip if child frame has its own FrameDOMAgent.
         if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(*element)) {
+            if (RefPtr contentFrame = frameOwner->contentFrame())
+                value->setContentFrameId(IdentifierRegistry::protocolFrameId(*contentFrame));
             if (RefPtr document = frameOwner->contentDocument())
                 value->setContentDocument(buildObjectForNode(document.get(), 0));
         }
@@ -435,7 +438,8 @@ Ref<Inspector::Protocol::DOM::Node> FrameDOMAgent::buildObjectForNode(Node* node
         value->setDocumentURL(InspectorDOMAgent::documentURLString(document.get()));
         value->setBaseURL(InspectorDOMAgent::documentBaseURLString(document.get()));
         value->setXmlVersion(document->xmlVersion());
-        // FIXME: <https://webkit.org/b/298980> Set frameId for frame targets to enable frontend frame-to-target association.
+        if (RefPtr frame = document->frame())
+            value->setFrameId(IdentifierRegistry::protocolFrameId(*frame));
     } else if (RefPtr doctype = dynamicDowncast<DocumentType>(*node)) {
         value->setPublicId(doctype->publicId());
         value->setSystemId(doctype->systemId());
@@ -638,6 +642,12 @@ Inspector::CommandResult<Ref<Inspector::Protocol::DOM::Node>> FrameDOMAgent::get
     if (CheckedPtr cssAgent = Ref { m_instrumentingAgents.get() }->enabledFrameCSSAgent())
         cssAgent->didBindDocument();
 
+    // The frontend builds this frame's document tree from this reply, so a node chosen before the document
+    // was requested can only be pushed once the reply has been sent. A timer runs after the reply; pushing
+    // from inside this command would send setChildNodes and DOM.inspect before the frontend has a tree.
+    if (m_nodeToFocus)
+        m_focusNodeTimer.startOneShot(0_s);
+
     return root;
 }
 
@@ -735,6 +745,22 @@ void FrameDOMAgent::didInsertDOMNode(Node& node)
         auto value = buildObjectForNode(&node, 0);
         m_frontendDispatcher->childNodeInserted(parentId, prevId, WTF::move(value));
     }
+}
+
+void FrameDOMAgent::frameOwnerContentFrameChanged(HTMLFrameOwnerElement& frameOwner)
+{
+    auto frameOwnerId = boundNodeId(&frameOwner);
+    if (!frameOwnerId)
+        return;
+
+    auto parentId = boundNodeId(protect(InspectorDOMAgent::innerParentNode(&frameOwner)));
+    m_frontendDispatcher->childNodeRemoved(parentId, frameOwnerId);
+    unbind(frameOwner);
+
+    auto value = buildObjectForNode(&frameOwner, 0);
+    RefPtr previousSibling = InspectorDOMAgent::innerPreviousSibling(&frameOwner);
+    auto prevId = boundNodeId(previousSibling.get());
+    m_frontendDispatcher->childNodeInserted(parentId, prevId, WTF::move(value));
 }
 
 void FrameDOMAgent::didRemoveDOMNode(Node& node)
@@ -896,8 +922,7 @@ void FrameDOMAgent::pseudoElementDestroyed(PseudoElement& pseudoElement)
 
 void FrameDOMAgent::frameDocumentUpdated(LocalFrame& frame)
 {
-    RefPtr inspectedFrame = m_inspectedFrame.get();
-    if (!inspectedFrame || &frame != inspectedFrame.get())
+    if (&frame != m_inspectedFrame.ptr())
         return;
 
     RefPtr document = frame.document();
@@ -1633,6 +1658,35 @@ Inspector::CommandResult<int> FrameDOMAgent::requestNode(const String& objectId)
     return nodeId;
 }
 
+Inspector::CommandResult<int> FrameDOMAgent::requestFrameOwner(const String& frameId)
+{
+    auto parsedFrameId = IdentifierRegistry::parseProtocolFrameId(frameId);
+    if (!parsedFrameId)
+        return makeUnexpected("Invalid frameId format"_s);
+
+    // Only direct children: every frame has its own FrameDOMAgent, and the frontend asks the target of the
+    // child's parent. Compare the FrameIdentifier only: the hosting process in a frame ID can be stale in a
+    // process that holds a RemoteFrame.
+    Ref frame = m_inspectedFrame;
+    for (RefPtr child = frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
+        if (child->frameID() != parsedFrameId->second)
+            continue;
+
+        RefPtr ownerElement = child->ownerElement();
+        if (!ownerElement)
+            return makeUnexpected("Missing owner element for given frameId"_s);
+
+        Inspector::Protocol::ErrorString errorString;
+        auto nodeId = pushNodePathToFrontend(errorString, ownerElement.get());
+        if (!nodeId)
+            return makeUnexpected(errorString);
+
+        return nodeId;
+    }
+
+    return makeUnexpected("Missing child frame for given frameId"_s);
+}
+
 Inspector::CommandResult<void> FrameDOMAgent::setInspectedNode(int nodeId)
 {
     Inspector::Protocol::ErrorString errorString;
@@ -1873,8 +1927,8 @@ bool FrameDOMAgent::ownsElementSelection() const
     // The main frame belongs to the page target.
     // FIXME: A nested local subframe's overlay is not hosted by any compositor, so the page agent
     // keeps it too.
-    RefPtr frame = m_inspectedFrame.get();
-    return m_searchingForNode && frame && frame->isRootFrame() && !frame->isMainFrame();
+    Ref frame = m_inspectedFrame;
+    return m_searchingForNode && frame->isRootFrame() && !frame->isMainFrame();
 }
 
 void FrameDOMAgent::highlightMousedOverNode()
@@ -1964,18 +2018,18 @@ void FrameDOMAgent::focusNode()
     if (!m_documentRequested)
         return;
 
-    ASSERT(m_nodeToFocus);
+    if (!m_document || !m_nodeToId.contains(*m_document))
+        return;
+
     auto node = std::exchange(m_nodeToFocus, nullptr);
-    RefPtr frame = node->document().frame();
-    if (!frame)
+    if (!node)
         return;
 
-    auto& globalObject = mainWorldGlobalObject(*frame);
-    auto injectedScript = m_injectedScriptManager->injectedScriptFor(&globalObject);
-    if (injectedScript.hasNoValue())
-        return;
-
-    injectedScript.inspectObject(InspectorDOMAgent::nodeAsScriptValue(globalObject, node.get()));
+    // Frame targets have no Inspector domain, so Inspector.inspect cannot reach the frontend from here.
+    // DOM.inspect is routed by the frontend to this frame target's tree.
+    Inspector::Protocol::ErrorString ignored;
+    if (auto nodeId = pushNodePathToFrontend(ignored, node.get()))
+        m_frontendDispatcher->inspect(nodeId);
 }
 
 // MARK: - Layout Overlays

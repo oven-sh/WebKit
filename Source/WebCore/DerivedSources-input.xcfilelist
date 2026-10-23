@@ -1224,6 +1224,7 @@ $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDeclarations.cpp.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDeclarations.h.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDefinitions.h.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.h.erb
+$(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.serialization.in.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.cpp.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.h.erb
 $(PROJECT_DIR)/Scripts/SettingsTemplates/InternalSettingsGenerated.cpp.erb
@@ -1786,6 +1787,9 @@ $(PROJECT_DIR)/html/canvas/CanvasElementImage.idl
 $(PROJECT_DIR)/html/canvas/CanvasFillRule.idl
 $(PROJECT_DIR)/html/canvas/CanvasFillStrokeStyles.idl
 $(PROJECT_DIR)/html/canvas/CanvasFilters.idl
+$(PROJECT_DIR)/html/canvas/CanvasFontKerning.idl
+$(PROJECT_DIR)/html/canvas/CanvasFontStretch.idl
+$(PROJECT_DIR)/html/canvas/CanvasFontVariantCaps.idl
 $(PROJECT_DIR)/html/canvas/CanvasGradient.idl
 $(PROJECT_DIR)/html/canvas/CanvasImageData.idl
 $(PROJECT_DIR)/html/canvas/CanvasImageSmoothing.idl
@@ -1805,6 +1809,7 @@ $(PROJECT_DIR)/html/canvas/CanvasText.idl
 $(PROJECT_DIR)/html/canvas/CanvasTextAlign.idl
 $(PROJECT_DIR)/html/canvas/CanvasTextBaseline.idl
 $(PROJECT_DIR)/html/canvas/CanvasTextDrawingStyles.idl
+$(PROJECT_DIR)/html/canvas/CanvasTextRendering.idl
 $(PROJECT_DIR)/html/canvas/CanvasTransform.idl
 $(PROJECT_DIR)/html/canvas/CanvasUserInterface.idl
 $(PROJECT_DIR)/html/canvas/EXTBlendMinMax.idl
@@ -1847,6 +1852,7 @@ $(PROJECT_DIR)/html/canvas/OffscreenCanvasRenderingContext2D.idl
 $(PROJECT_DIR)/html/canvas/PaintRenderingContext2D.idl
 $(PROJECT_DIR)/html/canvas/Path2D.idl
 $(PROJECT_DIR)/html/canvas/PredefinedColorSpace.idl
+$(PROJECT_DIR)/html/canvas/RenderingMode.idl
 $(PROJECT_DIR)/html/canvas/UpdateElementGeometryOptions.idl
 $(PROJECT_DIR)/html/canvas/WebGL2RenderingContext.idl
 $(PROJECT_DIR)/html/canvas/WebGLActiveInfo.idl

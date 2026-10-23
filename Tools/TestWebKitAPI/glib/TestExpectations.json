@@ -247,12 +247,6 @@
             },
             "WebKit.ResizeWindowAfterCrash": {
                 "expected": {"all": {"slow": true}}
-            },
-            "WebKit.EventModifiers": {
-                "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/323622"}}
-            },
-            "WebKit.SpacebarScrolling": {
-                "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/323624"}}
             }
         }
     },
@@ -452,6 +446,9 @@
     },
     "TestMultiprocess": {
         "subtests": {
+            "/webkit/WebKitWebContext/sandbox-rejected-prewarmed-process": {
+                "expected": {"all": {"slow": true}}
+            },
             "/webkit/WebKitWebContext/process-per-web-view": {
                 "expected": {"gtk": {"status": ["TIMEOUT", "FAIL"], "bug": "webkit.org/b/319955"}}
             }
