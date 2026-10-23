@@ -10,18 +10,28 @@
 const boundForResult = function (a, b) { return a - b; }.bind(null);
 const boundForIgnoredResult = function (a, b) { return a - b; }.bind(null);
 const boundForTailCall = function (a, b) { return a - b; }.bind(null);
-const boundWithArgument = function (scale, a, b) { return (a - b) * scale; }.bind(null, 1);
 const boundTwice = function (a, b) { return a - b; }.bind(null).bind(null);
+const boundForLongArray = function (a, b) { return a - b; }.bind(null);
+
+// The result of a target that exited is discarded, so what it sees after the exit has to be recorded to be checked.
+const seen = [];
+const boundWithThisAndArgument = function (scale, a, b, missing) {
+    var difference = a - b;
+    this.push(scale, a, b, missing, arguments.length);
+    return difference * scale;
+}.bind(seen, 1);
 
 // The arrays are built from variables since sort isn't inlined for the copy-on-write array of a constant literal.
 function useResult(x, y) { var array = [x, y]; var result = array.sort(boundForResult); return [array, result]; }
 function ignoreResult(x, y) { var array = [x, y]; array.sort(boundForIgnoredResult); return [array, array]; }
 function tailCall(array) { "use strict"; return array.sort(boundForTailCall); }
 function callTailCall(x, y) { var array = [x, y]; return [array, tailCall(array)]; }
-function withBoundArgument(x, y) { var array = [x, y]; var result = array.sort(boundWithArgument); return [array, result]; }
 function withBoundTwice(x, y) { var array = [x, y]; var result = array.sort(boundTwice); return [array, result]; }
+function withBoundThisAndArgument(x, y) { seen.length = 0; var array = [x, y]; var result = array.sort(boundWithThisAndArgument); return [array, result]; }
+// y meets x, and overflows, once half of the array has been sorted.
+function longArray(x, y) { var array = [9, 3, x, 1, 15, 4, 7, 2, y, 0, 11, 14, 13, 10, 12, 5]; var result = array.sort(boundForLongArray); return [array, result]; }
 
-function run(sort) {
+function run(sort, expected) {
     for (var i = 0; i < testLoopCount; ++i)
         sort(2, 1);
 
@@ -29,12 +39,21 @@ function run(sort) {
     var [array, result] = sort(2147483647, -5);
     if (result !== array)
         throw new Error(sort.name + ": sort returned " + String(result) + " rather than its receiver");
-    if (array.length !== 2 || array[0] !== -5 || array[1] !== 2147483647)
+    if (array.join() !== expected)
         throw new Error(sort.name + ": sorted to [" + array.join() + "]");
 }
 
-run(useResult);
-run(ignoreResult);
-run(callTailCall);
-run(withBoundArgument);
-run(withBoundTwice);
+run(useResult, "-5,2147483647");
+run(ignoreResult, "-5,2147483647");
+run(callTailCall, "-5,2147483647");
+run(withBoundTwice, "-5,2147483647");
+run(longArray, "-5,0,1,2,3,4,5,7,9,10,11,12,13,14,15,2147483647");
+
+run(withBoundThisAndArgument, "-5,2147483647");
+if (!seen.length)
+    throw new Error("withBoundThisAndArgument: the target did not run");
+for (var i = 0; i < seen.length; i += 5) {
+    var call = seen.slice(i, i + 5).join();
+    if (call !== "1,-5,2147483647,,3" && call !== "1,2147483647,-5,,3")
+        throw new Error("withBoundThisAndArgument: the target saw " + call);
+}
