@@ -36,6 +36,11 @@ WTF_EXPORT_PRIVATE size_t ramSize();
 WTF_EXPORT_PRIVATE size_t ramSizeDisregardingJetsamLimit();
 #endif
 
+// The address space this process may map in total (RLIMIT_AS), std::numeric_limits<size_t>::max() when
+// there is no limit. Reserved but uncommitted memory counts towards it.
+WTF_EXPORT_PRIVATE size_t addressSpaceLimit();
+
 }
 
+using WTF::addressSpaceLimit;
 using WTF::ramSize;
