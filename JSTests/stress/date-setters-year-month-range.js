@@ -1,14 +1,15 @@
-// setFullYear, setMonth, setDate, their UTC forms and setYear build the new time value with
-// MakeDate(MakeDay(year, month, date), TimeWithinDay(t)). MakeDay range-checks
-// year + floor(month / 12), never the year or the month count alone, and the result is clipped
-// only at the end. So a year or a month count that is out of range alone is fine when the
-// combination is a date, and a setter gives what Date.UTC and the Date constructor give for the
-// same fields.
-// https://tc39.es/ecma262/#sec-makeday
+// MakeDay range-checks only year + floor(month / 12), not the year or the month count alone, so a
+// date setter gives what Date.UTC and the Date constructor give: https://tc39.es/ecma262/#sec-makeday
 
+// An expected value that is NaN fails: Date.UTC and the Date constructor share MakeDay with the setters.
 function shouldBe(actual, expected) {
-    if (Number.isNaN(expected) ? !Number.isNaN(actual) : actual !== expected)
+    if (actual !== expected)
         throw new Error(`expected ${expected} but got ${actual}`);
+}
+
+function shouldBeNaN(actual) {
+    if (!Number.isNaN(actual))
+        throw new Error(`expected NaN but got ${actual}`);
 }
 
 const startOfYear275760 = 8639977881600000; // The last year that has time values.
@@ -80,29 +81,28 @@ shouldBe(new Date(Date.UTC(2000, 5, 15)).setUTCMonth(-13), 913680000000);
 
 // Only the result has a range. These are the last and the first time values, and one step on.
 shouldBe(new Date(0).setUTCFullYear(275760, 8, 13), maxTimeValue);
-shouldBe(new Date(0).setUTCFullYear(275760, 8, 14), NaN);
-shouldBe(new Date(0).setUTCFullYear(275760, 9, 1), NaN);
-shouldBe(new Date(0).setUTCFullYear(275761), NaN);
-shouldBe(new Date(0).setUTCFullYear(275761, 0, 1), NaN);
+shouldBeNaN(new Date(0).setUTCFullYear(275760, 8, 14));
+shouldBeNaN(new Date(0).setUTCFullYear(275760, 9, 1));
+shouldBeNaN(new Date(0).setUTCFullYear(275761));
+shouldBeNaN(new Date(0).setUTCFullYear(275761, 0, 1));
 shouldBe(new Date(0).setUTCFullYear(275760), startOfYear275760);
 shouldBe(new Date(0).setUTCFullYear(-271821, 3, 20), minTimeValue);
-shouldBe(new Date(0).setUTCFullYear(-271821, 3, 19), NaN);
-shouldBe(new Date(0).setUTCFullYear(-271821), NaN);
-shouldBe(new Date(0).setUTCFullYear(-271822, 0, 1), NaN);
+shouldBeNaN(new Date(0).setUTCFullYear(-271821, 3, 19));
+shouldBeNaN(new Date(0).setUTCFullYear(-271821));
+shouldBeNaN(new Date(0).setUTCFullYear(-271822, 0, 1));
 shouldBe(new Date(0).setUTCFullYear(-271820), Date.UTC(-271820, 0, 1));
 shouldBe(new Date(0).setUTCMonth(12 * 273790 + 8, 13), maxTimeValue);
-shouldBe(new Date(0).setUTCMonth(12 * 273790 + 8, 14), NaN);
-shouldBe(new Date(0).setUTCMonth(12 * 273790 + 9), NaN);
+shouldBeNaN(new Date(0).setUTCMonth(12 * 273790 + 8, 14));
+shouldBeNaN(new Date(0).setUTCMonth(12 * 273790 + 9));
 shouldBe(new Date(0).setUTCMonth(-12 * 273791 + 3, 20), minTimeValue);
-shouldBe(new Date(0).setUTCMonth(-12 * 273791 + 3, 19), NaN);
-shouldBe(new Date(0).setUTCMonth(-12 * 273791 + 2), NaN);
-shouldBe(new Date(0).setFullYear(275761), NaN);
-shouldBe(new Date(0).setFullYear(-271822), NaN);
-shouldBe(new Date(0).setYear(275761), NaN);
-shouldBe(new Date(0).setYear(-271822), NaN);
+shouldBeNaN(new Date(0).setUTCMonth(-12 * 273791 + 3, 19));
+shouldBeNaN(new Date(0).setUTCMonth(-12 * 273791 + 2));
+shouldBeNaN(new Date(0).setFullYear(275761));
+shouldBeNaN(new Date(0).setFullYear(-271822));
+shouldBeNaN(new Date(0).setYear(275761));
+shouldBeNaN(new Date(0).setYear(-271822));
 
-// The day count is part of the same sum. The start of 275761 is out of range and 200 days before
-// it is not. Date.UTC and the Date constructor give the same, and so does V8.
+// The day count is part of the same sum: 200 days before the start of 275761 is in range.
 shouldBe(new Date(0).setUTCFullYear(275761, 0, -200), Date.UTC(275761, 0, -200));
 shouldBe(new Date(0).setUTCFullYear(275761, 0, -200), Date.UTC(275760, 0, 166));
 shouldBe(new Date(0).setUTCFullYear(-271822, 0, 500), Date.UTC(-271821, 0, 135));
@@ -111,82 +111,79 @@ shouldBe(new Date(0).setUTCFullYear(400000, 0, -45379000), 8639867894400000);
 shouldBe(new Date(2000, 0, 1).setFullYear(275761, 0, -200), new Date(275761, 0, -200).getTime());
 shouldBe(new Date(Date.UTC(275760, 0, 1)).setUTCMonth(12, -200), Date.UTC(275760, 0, 166));
 
-// The day count reaches MakeDay as it is. When it was multiplied by msPerDay and added to the
-// milliseconds first, a sum beyond 2^53 lost the last millisecond.
+// days * msPerDay is not added to the milliseconds first: that sum rounds beyond 2^53.
 shouldBe(new Date(8.64e15 - 999).setUTCDate(-199000000), -8553601036800999);
 shouldBe(new Date(8.64e15 - 999).setUTCDate(-199000000), Date.UTC(275760, 8, -199000000, 23, 59, 59, 1));
 shouldBe(new Date(946688523001).setUTCFullYear(300000, 0, -108842264), 946688523001);
 shouldBe(new Date(946688523001).setUTCMonth(12 * 298000, -108842264), 946688523001);
 shouldBe(new Date(2000, 0, 1, 1, 2, 3, 457).setFullYear(300000, 0, -108842264), new Date(300000, 0, -108842264, 1, 2, 3, 457).getTime());
-shouldBe(new Date(2000, 0, 1, 1, 2, 3, 457).setDate(-199000000), new Date(2000, 0, -199000000, 1, 2, 3, 457).getTime());
+shouldBe(new Date(275760, 8, 1, 1, 2, 3, 457).setDate(-199000000), new Date(275760, 8, -199000000, 1, 2, 3, 457).getTime());
 
-// MakeDay splits the month count into years and a month in 64-bit integers. That is exact for
-// every safe integer, up to the last one.
+// The 64-bit split of the month count is exact for every safe integer, up to the last one.
 shouldBe(new Date(0).setUTCFullYear(2000 - 750599937895082, 2 ** 53 - 1, 1), 965088000000); // 2000-08-01
 shouldBe(Date.UTC(2000 - 750599937895082, 2 ** 53 - 1, 1), 965088000000);
 shouldBe(new Date(0).setUTCFullYear(2000 + 750599937895083, -(2 ** 53 - 1), 1), 959817600000); // 2000-06-01
 shouldBe(Date.UTC(2000 + 750599937895083, -(2 ** 53 - 1), 1), 959817600000);
 shouldBe(new Date(0).setUTCFullYear(-1000000000, 12 * 1000002000 + 1, 1), 949363200000); // 2000-02-01
-// A year or a month count beyond the safe integers is NaN. A double cannot split it exactly: it
-// gave a wrong date (2000-01-01 for 2 ** 56 months from this year, which is 2000-05-01) or a
-// year that wrapped in int arithmetic.
-shouldBe(new Date(0).setUTCFullYear(-6004799503158661, 2 ** 56, 1), NaN);
-shouldBe(Date.UTC(-6004799503158661, 2 ** 56, 1), NaN);
-shouldBe(new Date(0).setUTCFullYear(-750599937893082, 2 ** 53), NaN);
-shouldBe(Date.UTC(-750599937893082, 2 ** 53), NaN);
-shouldBe(new Date(0).setUTCFullYear(750599937897083, -(2 ** 53)), NaN);
-shouldBe(Date.UTC(750599937897083, -(2 ** 53)), NaN);
-shouldBe(new Date(0).setUTCMonth(2 ** 53), NaN);
-shouldBe(new Date(0).setUTCMonth(-(2 ** 53)), NaN);
-shouldBe(new Date(0).setUTCFullYear(2 ** 53), NaN);
-shouldBe(new Date(0).setUTCFullYear(-9007197107257351, 108086391056891980, 784353026671), NaN);
-shouldBe(Date.UTC(-9007197107257351, 108086391056891980, 784353026671), NaN);
+// A year or a month count beyond the safe integers is NaN: a double cannot split it exactly
+// (2 ** 56 months from this year is 2000-05-01).
+shouldBeNaN(new Date(0).setUTCFullYear(-6004799503158661, 2 ** 56, 1));
+shouldBeNaN(Date.UTC(-6004799503158661, 2 ** 56, 1));
+shouldBeNaN(new Date(0).setUTCFullYear(-750599937893082, 2 ** 53));
+shouldBeNaN(Date.UTC(-750599937893082, 2 ** 53));
+shouldBeNaN(new Date(0).setUTCFullYear(750599937897083, -(2 ** 53)));
+shouldBeNaN(Date.UTC(750599937897083, -(2 ** 53)));
+shouldBeNaN(new Date(0).setUTCMonth(2 ** 53));
+shouldBeNaN(new Date(0).setUTCMonth(-(2 ** 53)));
+shouldBeNaN(new Date(0).setUTCFullYear(2 ** 53));
+shouldBeNaN(new Date(0).setUTCFullYear(-9007197107257351, 108086391056891980, 784353026671));
+shouldBeNaN(Date.UTC(-9007197107257351, 108086391056891980, 784353026671));
 
 // year + floor(month / 12) has to fit an int32. The day count can pull the last such year back.
 shouldBe(new Date(0).setUTCFullYear(2 ** 31 - 1, 0, -784353015467), -124334438400000);
 shouldBe(Date.UTC(2 ** 31 - 1, 0, -784353015467), -124334438400000);
 shouldBe(new Date(0).setUTCFullYear(2 ** 31 - 2, 12, -784353015467), -124334438400000);
-shouldBe(new Date(0).setUTCFullYear(2 ** 31, 0, -784353015467), NaN);
-shouldBe(new Date(0).setUTCFullYear(2 ** 31 - 1, 12, -784353015467), NaN);
+shouldBeNaN(new Date(0).setUTCFullYear(2 ** 31, 0, -784353015467));
+shouldBeNaN(new Date(0).setUTCFullYear(2 ** 31 - 1, 12, -784353015467));
 shouldBe(new Date(0).setUTCFullYear(-(2 ** 31), 0, 784353015833), -86400000);
 shouldBe(Date.UTC(-(2 ** 31), 0, 784353015833), -86400000);
-shouldBe(new Date(0).setUTCFullYear(-(2 ** 31) - 1, 0, 784353015833), NaN);
-shouldBe(new Date(0).setUTCFullYear(-(2 ** 31), -1, 784353015833), NaN);
+shouldBeNaN(new Date(0).setUTCFullYear(-(2 ** 31) - 1, 0, 784353015833));
+shouldBeNaN(new Date(0).setUTCFullYear(-(2 ** 31), -1, 784353015833));
 // A year or a month count beyond int32 does not wrap into range.
-shouldBe(new Date(0).setUTCFullYear(2 ** 31 + 2000), NaN);
-shouldBe(new Date(0).setUTCFullYear(2 ** 32 + 2000), NaN);
-shouldBe(new Date(0).setUTCFullYear(2 ** 32 + 2000, 5, 6), NaN);
-shouldBe(new Date(0).setUTCFullYear(2000, 12 * 2 ** 32), NaN);
-shouldBe(new Date(0).setUTCMonth(12 * 2 ** 31), NaN);
-shouldBe(new Date(0).setUTCMonth(12 * 2 ** 32), NaN);
-shouldBe(new Date(0).setUTCMonth(-12 * 2 ** 32), NaN);
-shouldBe(new Date(0).setUTCMonth(12 * 2 ** 32 + 5, 6), NaN);
-shouldBe(new Date(0).setFullYear(2 ** 32 + 2000), NaN);
-shouldBe(new Date(0).setMonth(12 * 2 ** 32), NaN);
-shouldBe(new Date(0).setYear(2 ** 31 + 100), NaN);
-shouldBe(new Date(0).setYear(2 ** 32 + 2000), NaN);
-shouldBe(new Date(0).setYear(2 ** 53 + 2000), NaN);
-shouldBe(new Date(0).setUTCFullYear(1e300, 0, -1e300), NaN);
+shouldBeNaN(new Date(0).setUTCFullYear(2 ** 31 + 2000));
+shouldBeNaN(new Date(0).setUTCFullYear(2 ** 32 + 2000));
+shouldBeNaN(new Date(0).setUTCFullYear(2 ** 32 + 2000, 5, 6));
+shouldBeNaN(new Date(0).setUTCFullYear(2000, 12 * 2 ** 32));
+shouldBeNaN(new Date(0).setUTCMonth(12 * 2 ** 31));
+shouldBeNaN(new Date(0).setUTCMonth(12 * 2 ** 32));
+shouldBeNaN(new Date(0).setUTCMonth(-12 * 2 ** 32));
+shouldBeNaN(new Date(0).setUTCMonth(12 * 2 ** 32 + 5, 6));
+shouldBeNaN(new Date(0).setFullYear(2 ** 32 + 2000));
+shouldBeNaN(new Date(0).setMonth(12 * 2 ** 32));
+shouldBeNaN(new Date(0).setYear(2 ** 31 + 100));
+shouldBeNaN(new Date(0).setYear(2 ** 32 + 2000));
+shouldBeNaN(new Date(0).setYear(2 ** 53 + 2000));
+shouldBeNaN(new Date(0).setUTCFullYear(1e300, 0, -1e300));
 shouldBe(new Date(0).setUTCFullYear(500000, -12 * (500000 - 2000)), Date.UTC(2000, 0, 1));
 
 // An argument that is not finite is NaN, also when another one would cancel it.
-shouldBe(new Date(0).setUTCFullYear(Infinity, -Infinity), NaN);
-shouldBe(new Date(0).setUTCFullYear(-Infinity, Infinity, 1), NaN);
-shouldBe(new Date(0).setUTCFullYear(2000, Infinity, -Infinity), NaN);
-shouldBe(new Date(0).setUTCFullYear(NaN, 0, 1), NaN);
-shouldBe(new Date(0).setUTCFullYear(2000, NaN, 1), NaN);
-shouldBe(new Date(0).setUTCFullYear(2000, 0, NaN), NaN);
-shouldBe(new Date(0).setUTCMonth(NaN, 1), NaN);
-shouldBe(new Date(0).setUTCMonth(1, NaN), NaN);
-shouldBe(new Date(0).setUTCDate(Infinity), NaN);
-shouldBe(new Date(0).setFullYear(Infinity, -Infinity), NaN);
-shouldBe(new Date(0).setYear(NaN), NaN);
+shouldBeNaN(new Date(0).setUTCFullYear(Infinity, -Infinity));
+shouldBeNaN(new Date(0).setUTCFullYear(-Infinity, Infinity, 1));
+shouldBeNaN(new Date(0).setUTCFullYear(2000, Infinity, -Infinity));
+shouldBeNaN(new Date(0).setUTCFullYear(NaN, 0, 1));
+shouldBeNaN(new Date(0).setUTCFullYear(2000, NaN, 1));
+shouldBeNaN(new Date(0).setUTCFullYear(2000, 0, NaN));
+shouldBeNaN(new Date(0).setUTCMonth(NaN, 1));
+shouldBeNaN(new Date(0).setUTCMonth(1, NaN));
+shouldBeNaN(new Date(0).setUTCDate(Infinity));
+shouldBeNaN(new Date(0).setFullYear(Infinity, -Infinity));
+shouldBeNaN(new Date(0).setYear(NaN));
 // Every argument is still converted, in order, when an earlier one made the result NaN.
 {
     let log = [];
     let argument = (name, value) => ({ valueOf() { log.push(name); return value; } });
-    shouldBe(new Date(0).setUTCFullYear(argument("year", NaN), argument("month", 2 ** 53), argument("day", 1)), NaN);
-    shouldBe(new Date(0).setUTCMonth(argument("month", Infinity), argument("day", 1)), NaN);
+    shouldBeNaN(new Date(0).setUTCFullYear(argument("year", NaN), argument("month", 2 ** 53), argument("day", 1)));
+    shouldBeNaN(new Date(0).setUTCMonth(argument("month", Infinity), argument("day", 1)));
     shouldBe(log.join(), "year,month,day,month,day");
 }
 
@@ -225,8 +222,8 @@ shouldBe(new Date(0).setYear(NaN), NaN);
     // A NaN date starts from +0 for setFullYear, and stays NaN for the others.
     shouldBe(new Date(NaN).setUTCFullYear(1950, 14, 40), Date.UTC(1951, 3, 9));
     shouldBe(new Date(NaN).setUTCFullYear(1950), Date.UTC(1950, 0, 1));
-    shouldBe(new Date(NaN).setUTCMonth(14, 40), NaN);
-    shouldBe(new Date(NaN).setUTCDate(40), NaN);
+    shouldBeNaN(new Date(NaN).setUTCMonth(14, 40));
+    shouldBeNaN(new Date(NaN).setUTCDate(40));
 }
 
 // The Date holds the value the setter returned.
@@ -238,6 +235,6 @@ shouldBe(new Date(0).setYear(NaN), NaN);
     shouldBe(date.getUTCMonth(), 0);
     shouldBe(date.getUTCDate(), 1);
 
-    shouldBe(date.setUTCMonth(9), NaN); // October 275760 is past the last time value.
-    shouldBe(date.getTime(), NaN);
+    shouldBeNaN(date.setUTCMonth(9)); // October 275760 is past the last time value.
+    shouldBeNaN(date.getTime());
 }

@@ -129,9 +129,8 @@ static void applyToNumberToOtherwiseIgnoredArguments(JSGlobalObject* globalObjec
     }
 }
 
-// The broken-down date a setter builds its new time value from. It is deliberately not a
-// PlainGregorianDateTime: that type is packed and range-checked. The year, month and day a date
-// setter was given are not kept here but in DateSetterFields.
+// The broken-down date a setter builds its new time value from. It is not a PlainGregorianDateTime
+// because a time setter replaces fields, and that type is packed and has no setters.
 struct BrokenDownDate {
     BrokenDownDate() = default;
     explicit BrokenDownDate(PlainGregorianDateTime t)
@@ -201,18 +200,16 @@ static bool fillStructuresUsingTimeArgs(JSGlobalObject* globalObject, CallFrame*
     return std::isfinite(milliseconds);
 }
 
-// The year, month and day a date setter passes to MakeDay, as the caller gave them. MakeDay does
-// not range-check the year or the month count alone, only year + floor(month / 12):
-// setUTCFullYear(275761, -12) is January 275760.
+// The year, month count and day a date setter passes to MakeDay. Only year + floor(month / 12) has
+// a range there: setUTCFullYear(275761, -12) is January 275760.
 struct DateSetterFields {
     int64_t year { 0 };
     int64_t month { 0 };
     double monthDay { 0 };
 };
 
-// Stores the arguments of a Date member function of the form f([years,] [months,] [days]) into
-// fields. Returns false if MakeDay does not take the years or the months, or the days are not
-// finite: the new time value is NaN then.
+// Stores the arguments of a Date member function f([years,] [months,] [days]) into fields. Returns
+// false when the new time value is NaN: MakeDay does not take the years or the months, or the days are not finite.
 static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned maxArgs, DateSetterFields* fields)
 {
     VM& vm = globalObject->vm();
