@@ -40,22 +40,28 @@ void CallLinkInfoBase::unlinkOrUpgrade(VM& vm, CodeBlock* oldCodeBlock, CodeBloc
     switch (callSiteType()) {
     case CallSiteType::CallLinkInfo:
         static_cast<CallLinkInfo*>(this)->unlinkOrUpgradeImpl(vm, oldCodeBlock, newCodeBlock);
-        break;
+        return;
     case CallSiteType::PolymorphicCallNode:
         static_cast<PolymorphicCallNode*>(this)->unlinkOrUpgradeImpl(vm, oldCodeBlock, newCodeBlock);
-        break;
+        return;
 #if ENABLE(JIT)
     case CallSiteType::DirectCall:
         static_cast<DirectCallLinkInfo*>(this)->unlinkOrUpgradeImpl(vm, oldCodeBlock, newCodeBlock);
-        break;
+        return;
 #endif
     case CallSiteType::CachedCall:
         static_cast<CachedCall*>(this)->unlinkOrUpgradeImpl(vm, oldCodeBlock, newCodeBlock);
-        break;
+        return;
     case CallSiteType::MicrotaskCall:
         static_cast<MicrotaskCall*>(this)->unlinkOrUpgradeImpl(vm, oldCodeBlock, newCodeBlock);
-        break;
+        return;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // The type byte is not one of ours: the storage behind this node was reused while the node was still
+    // chained. Returning without removing the node would make CodeBlock::unlinkOrUpgradeIncomingCalls spin
+    // on it forever, so report it here, together with the byte that now sits where the type was.
+    RELEASE_ASSERT_NOT_REACHED(this, static_cast<unsigned>(callSiteType()), oldCodeBlock, newCodeBlock);
+#endif
 }
 
 } // namespace JSC
