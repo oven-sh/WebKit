@@ -16,6 +16,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTEffectsOfProtocols.h"
+#include "AOTEscapeAnalysis.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTNarrowFieldTypes.h"
@@ -659,13 +660,19 @@ static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOper
     });
 }
 
-// An allocation may fill the slot with undefined or null.
-static bool fillsSlotWithDeclaredType(const Program& program, const Function& function, const Value& allocation, PropertyKeyID key)
+// An allocation may fill the slot with undefined or null, and so may a store into what it has made.
+static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID allocationID, PropertyKeyID key)
 {
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    const Value& allocation = function.at(allocationID);
     if (!Value::opcodesWithFields.contains(allocation.opcode))
         return false;
     auto mayBeMarker = [&](ValueID stored) {
         return program.typeOf(function, stored).mayBeUndefinedOrNull();
+    };
+    auto mayStoreIntoWhatIsMade = [&](const Value& store) {
+        return analyses.escape().mayAlias(store.objectOperand(), allocationID);
     };
     std::span<const uint32_t> fields = allocation.fields();
     std::span<const ValueID> values = allocation.variadicOperands();
@@ -683,27 +690,27 @@ static bool fillsSlotWithDeclaredType(const Program& program, const Function& fu
                 PayloadListView<PlacedKey> keys = store.placedKeys();
                 std::span<const ValueID> stored = store.variadicOperands();
                 for (uint32_t index = 0; index < keys.size() && index < stored.size(); ++index) {
-                    if (keys[index].key == key && mayBeMarker(stored[index]))
+                    if (keys[index].key == key && mayBeMarker(stored[index]) && mayStoreIntoWhatIsMade(store))
                         return false;
                 }
                 continue;
             }
-            if ((store.opcode == Opcode::PutSlot || store.opcode == Opcode::PutSlotOrAdd) && store.key() == key && mayBeMarker(store.operand(OperandIndex::PutSlot::value)))
+            if ((store.opcode == Opcode::PutSlot || store.opcode == Opcode::PutSlotOrAdd) && store.key() == key && mayBeMarker(store.operand(OperandIndex::PutSlot::value)) && mayStoreIntoWhatIsMade(store))
                 return false;
         }
     }
     return true;
 }
 
-static bool provesSlotFilledForUser(const Program& program, const Function& function, const GuardOrigin& origin, const Value& user)
+static bool provesSlotFilledForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
 {
     if (!holdsDeclaredType(user))
         return true;
     if (origin.source == GuardSource::Allocation)
-        return fillsSlotWithDeclaredType(program, function, function.at(origin.test), user.key());
+        return fillsSlotWithDeclaredType(analyses, origin.test, user.key());
     if (origin.source != GuardSource::Test)
         return false;
-    const Value& test = function.at(origin.test);
+    const Value& test = analyses.function().at(origin.test);
     return holdsDeclaredType(test) && test.key() == user.key();
 }
 
@@ -723,7 +730,7 @@ bool provesForUser(FunctionAnalyses& analyses, const GuardFact& fact, Proof proo
 
     return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
         if (proof == Proof::SlotFilled)
-            return provesSlotFilledForUser(program, function, origin, user);
+            return provesSlotFilledForUser(analyses, origin, user);
         if (proof == Proof::Pristine)
             return provesPristineForUser(program, function, origin, user);
         if (proof == Proof::ArrayStorage)

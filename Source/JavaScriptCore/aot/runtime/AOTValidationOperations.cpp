@@ -24,8 +24,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportValidationFailure, void, (In
     auto failureKind = static_cast<ValidationFailureKind>(kind);
     if (failureKind == ValidationFailureKind::ArrayElementsNotOrdinary && hasOrdinaryElements(*instance->vm, JSValue::decode(value)))
         return;
-    // The bit of the cell is clear where the elements alone are not pristine.
-    if (failureKind == ValidationFailureKind::ArrayNotPristine && JSValue::decode(value).isCell() && JSValue::decode(value).asCell()->structure()->isPristine())
+    if (failureKind == ValidationFailureKind::ArrayNotPristine && hasPristineNames(*instance->vm, JSValue::decode(value)))
         return;
     crashOnValidationFailure(*instance->vm, { failureKind, Typed::FunctionID(function), Typed::ValueID(valueIndex), JSValue::decode(value) });
 }

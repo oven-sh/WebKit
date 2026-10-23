@@ -35,13 +35,15 @@ std::span<const NativeTest> programIdentifiersTests();
 
 static constexpr ASCIILiteral programWithTextNames =
     "layout L0 name=\"Names\" fields=[{key=\"alpha\" declared={type=number}}, {key=\"beta\" declared={type=number}}]\n"
-    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
-    "entry module=m0\n"
+    "variable g0 name=\"kept\" module=m0 declared={type=anything} initialization=Undefined\n"
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0 exports=[{name=\"kept\" variable=g0}]\n"
+    "entry module=m0 hostReads=[{exportName=\"kept\"}]\n"
     "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
     "  b0():\n"
     "    v0 = Integer integer=1\n"
     "    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]\n"
-    "    Return v1\n"
+    "    PutModuleVariable v1 variable=g0\n"
+    "    Return\n"
     "}\n"_s;
 
 static constexpr ASCIILiteral programWithSymbols =
@@ -53,13 +55,15 @@ static constexpr ASCIILiteral programWithSymbols =
     "{key=#\"secret\"@L0 declared={type=number} flags=[IsPrivate]}, "
     "{key=symbol(\"described\")@m0:120 declared={type=number}}, "
     "{key=symbol@m0:121 declared={type=number}}]\n"
-    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
-    "entry module=m0\n"
+    "variable g0 name=\"kept\" module=m0 declared={type=anything} initialization=Undefined\n"
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0 exports=[{name=\"kept\" variable=g0}]\n"
+    "entry module=m0 hostReads=[{exportName=\"kept\"}]\n"
     "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
     "  b0():\n"
     "    v0 = Integer integer=1\n"
     "    v1 = NewObject -, v0, v0, v0, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6]\n"
-    "    Return v1\n"
+    "    PutModuleVariable v1 variable=g0\n"
+    "    Return\n"
     "}\n"_s;
 
 static const ImageText& imageText()

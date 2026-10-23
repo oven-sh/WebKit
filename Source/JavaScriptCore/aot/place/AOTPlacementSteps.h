@@ -171,6 +171,7 @@ struct PlacedSites {
     BitVector typesTestedByCode;
     BitVector functionsWithAllocatedClosures;
     BitVector layoutsOutOfUse;
+    BitVector bodiesWithoutCode;
     unsigned maxClosureCaptures { 0 };
 };
 

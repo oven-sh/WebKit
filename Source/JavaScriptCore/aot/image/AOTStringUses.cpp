@@ -365,8 +365,12 @@ static void collectNamesInTables(const Typed::Program& program, const Typed::Flo
             continue;
         if (layout.kind != Typed::LayoutKind::Instance && placement.shapes().shapesOf(Typed::LayoutID(index)).isEmpty())
             continue;
-        for (const Typed::Field& field : layout.fields)
-            nameKey(field.key);
+        // The record of a compiled object lists the fields that have storage. A parse by type finds every declared member by its name, and a validating build the fields it took away.
+        bool listsFieldsWithStorageOnly = placement.slots().storageOf(Typed::LayoutID(index)) == Typed::LayoutStorage::CompiledObject && !layout.flow.observedUses.contains(Typed::ObservedUse::ReachesTypedParse);
+        for (Typed::FieldIndex field = 0; field < layout.fields.size(); ++field) {
+            if (!listsFieldsWithStorageOnly || placement.slot(Typed::LayoutID(index), field).indexInLayoutRecord || layout.fields[field].flags.contains(Typed::FieldFlags::IsRemovedAsUnread))
+                nameKey(layout.fields[field].key);
+        }
         for (const Typed::StaticField& field : layout.staticFields)
             nameKey(field.key);
         for (const Typed::ClassMember& member : layout.classFlow.members)

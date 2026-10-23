@@ -10,6 +10,9 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTEffectSummaries.h"
+#include "AOTFlowResults.h"
+#include "AOTFlowSiteData.h"
 #include "AOTIR.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSlotPlan.h"
@@ -28,13 +31,17 @@ static_assert(defaultLimitValue(LimitID::MaxLiteralStrings, Architecture::X86_64
 static_assert(literalStringWord(0) == emptyLiteralStringWord);
 
 static constexpr OpcodeSet equalityComparisonsOfLiterals { Opcode::StrictEq, Opcode::Eq };
+// Their value is one that another value, a field or a variable of the program held before.
+static constexpr OpcodeSet operationsHandingOnValues { Opcode::Parameter, Opcode::Upcast, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::CallDirect };
 
 namespace {
 
 struct StringsNeedingWords {
     StringsNeedingWords(const Program& program, const ParallelLoops& loops)
         : typesToVisit(program.types.size())
+        , typesHandedOnToVisit(program.types.size())
         , strings(program.strings.size())
+        , membersHandedOn(program.strings.size())
         , constantsOfCode(program.strings.size())
         , variablesNamedByCode(program.variables.size())
     {
@@ -42,8 +49,11 @@ struct StringsNeedingWords {
         static_assert(!(typesInShare % 32));
         unsigned numberOfTypes = program.types.size();
         forEachIndexInParallel(loops, (numberOfTypes + typesInShare - 1) / typesInShare, [&](unsigned share) {
-            for (unsigned index = share * typesInShare; index < std::min(numberOfTypes, (share + 1) * typesInShare); ++index)
-                typesToVisit[index] = program.at(TypeID(index)).hasLiteralStrings();
+            for (unsigned index = share * typesInShare; index < std::min(numberOfTypes, (share + 1) * typesInShare); ++index) {
+                bool hasLiteralStrings = program.at(TypeID(index)).hasLiteralStrings();
+                typesToVisit[index] = hasLiteralStrings;
+                typesHandedOnToVisit[index] = hasLiteralStrings;
+            }
         });
     }
 
@@ -56,7 +66,10 @@ struct StringsNeedingWords {
     }
 
     FastBitVector typesToVisit;
+    FastBitVector typesHandedOnToVisit;
     FastBitVector strings;
+    // Each gets a word only if the program spells it.
+    FastBitVector membersHandedOn;
     FastBitVector constantsOfCode;
     FastBitVector variablesNamedByCode;
 };
@@ -88,10 +101,25 @@ static void collectLiteralsOf(const Program& program, TypeID id, StringsNeedingW
         found.add(program.at(id).stringLiterals.span());
 }
 
-static void collectLiteralsOf(const Program& program, std::span<const DeclaredType> positions, StringsNeedingWords& found)
+enum class Source : bool { Program, Anywhere };
+
+// A string from outside the program gets its word where it comes in, so every member has one there. Where the program hands its own values on, a member that it spells nowhere does not occur.
+static void collectLiteralsOf(const Program& program, TypeID id, Source source, StringsNeedingWords& found)
+{
+    if (source == Source::Anywhere) {
+        collectLiteralsOf(program, id, found);
+        return;
+    }
+    if (!found.typesHandedOnToVisit.at(id.index()) || !found.typesHandedOnToVisit.atomicSetAndCheck(id.index(), false))
+        return;
+    for (StringID string : program.at(id).stringLiterals)
+        found.membersHandedOn.atomicSetAndCheck(string.index(), true);
+}
+
+static void collectLiteralsOf(const Program& program, std::span<const DeclaredType> positions, Source source, StringsNeedingWords& found)
 {
     for (const DeclaredType& declared : positions)
-        collectLiteralsOf(program, declared.type, found);
+        collectLiteralsOf(program, declared.type, source, found);
 }
 
 static void collectComparedConstants(const Program& program, const Function& function, const Value& comparison, StringsNeedingWords& found)
@@ -106,17 +134,17 @@ static void collectComparedConstants(const Program& program, const Function& fun
     }
 }
 
-static void collectStringsNeedingWords(const Program& program, FunctionID id, StringsNeedingWords& found)
+static void collectStringsNeedingWords(const Program& program, FunctionID id, Source sourceOfArguments, StringsNeedingWords& found)
 {
     const Function& function = program.at(id);
-    collectLiteralsOf(program, function.captures.span(), found);
-    collectLiteralsOf(program, function.thisType.type, found);
-    collectLiteralsOf(program, function.parameters.span(), found);
-    collectLiteralsOf(program, function.results.span(), found);
+    collectLiteralsOf(program, function.captures.span(), Source::Program, found);
+    collectLiteralsOf(program, function.thisType.type, sourceOfArguments, found);
+    collectLiteralsOf(program, function.parameters.span(), sourceOfArguments, found);
+    collectLiteralsOf(program, function.results.span(), Source::Program, found);
 
     auto collectFromValue = [&](const Value& value) {
         if (value.opcode != Opcode::String)
-            collectLiteralsOf(program, value.type, found);
+            collectLiteralsOf(program, value.type, operationsHandingOnValues.contains(value.opcode) ? Source::Program : Source::Anywhere, found);
         else
             found.constantsOfCode.atomicSetAndCheck(value.string().index(), true);
         forEachType(value, [&](TypeID type) {
@@ -155,14 +183,15 @@ static void collectStringsNeedingWords(const Program& program, FunctionID id, St
 static void collectStoredLiterals(const Program& program, const FlowResults& flow, StringsNeedingWords& found)
 {
     for (const Layout& layout : program.layouts) {
+        bool isFilledByParse = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
         for (const Field& field : layout.fields)
-            collectLiteralsOf(program, field.declared.type, found);
+            collectLiteralsOf(program, field.declared.type, !isFilledByParse && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere, found);
     }
     BitVector described = findVariablesDescribedToRunTime(program, flow);
     for (unsigned index = 0; index < program.variables.size(); ++index) {
         TypeID type = program.variables[index].declared.type;
         if (described.quickGet(index) || found.variablesNamedByCode.at(index)) {
-            collectLiteralsOf(program, type, found);
+            collectLiteralsOf(program, type, !described.quickGet(index) && program.variables[index].flow.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere, found);
             continue;
         }
         // The text of a constant that was folded into its readers is in the image with them.
@@ -173,17 +202,45 @@ static void collectStoredLiterals(const Program& program, const FlowResults& flo
     }
 }
 
+static BitVector leaveOutMembersSpelledNowhere(const Program& program, StringsNeedingWords& found)
+{
+    for (const Data& data : program.data) {
+        forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
+            if (const DataNode::String* string = node.tryAs<DataNode::String>())
+                found.constantsOfCode[string->value.index()] = true;
+        });
+    }
+    BitVector leftOut(program.strings.size());
+    found.membersHandedOn.forEachSetBit([&](size_t index) {
+        if (found.strings.at(index))
+            return;
+        if (found.constantsOfCode.at(index))
+            found.strings[index] = true;
+        else
+            leftOut.quickSet(index);
+    });
+    return leftOut;
+}
+
 LiteralStringTable numberLiteralStrings(const Program& program, const FlowResults& flow, BuildContext& build)
 {
     StringsNeedingWords found(program, build.parallelLoops());
+    BitVector isEnteredOtherwise = functionsCalledByHost(program, build.parallelLoops());
+    for (const FlowIndirectCall& call : flow.indirectCalls())
+        isEnteredOtherwise.set(call.callee.index());
     forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
-        if (hasBody(program, FunctionID(index)))
-            collectStringsNeedingWords(program, FunctionID(index), found);
+        FunctionID id(index);
+        if (!hasBody(program, id))
+            return;
+        bool everyCallIsSeen = !isEnteredOtherwise.get(index) && (program.at(id).hasOnlyDirectCallers() || callerStateOf(flow, id) == CallerState::AllKnown);
+        collectStringsNeedingWords(program, id, everyCallIsSeen ? Source::Program : Source::Anywhere, found);
     });
     collectStoredLiterals(program, flow, found);
+    BitVector leftOut = leaveOutMembersSpelledNowhere(program, found);
 
     StringID emptyString = program.strings.emptyString();
     LiteralStringTable table;
+    table.m_leftOut = WTF::move(leftOut);
     table.m_strings.reserveInitialCapacity(found.strings.bitCount() + 1);
     table.m_strings.append(emptyString);
     found.strings.forEachSetBit([&](size_t index) {

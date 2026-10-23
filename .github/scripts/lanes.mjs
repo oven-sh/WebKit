@@ -54,7 +54,8 @@ const SANITIZERS = "address,undefined";
 const HARDENING =
   "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096" +
   " -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -fsanitize=array-bounds -fsanitize-trap=array-bounds" +
-  " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1 -DENABLE_AOT_GUARDED_PAGES=1";
+  " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1 -DENABLE_AOT_GUARDED_PAGES=1" +
+  " -DBUN_REFUSES_EXECUTE_ONLY_START=1";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));

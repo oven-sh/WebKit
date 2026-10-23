@@ -126,6 +126,7 @@ struct PhotographedCall {
 // Looks at no more than a fixed number of the values a large container holds.
 bool contentsHaveType(Instance&, JSCell* container, Typed::ContentsSlot, const RuntimeType&);
 bool hasOrdinaryElements(VM&, JSValue array);
+bool hasPristineNames(VM&, JSValue array);
 // RegExp.$1, RegExp.lastMatch and their kin. A match of a program that never reads them leaves nothing for them.
 JS_EXPORT_PRIVATE void willReadLegacyRegExpStatics(VM&);
 

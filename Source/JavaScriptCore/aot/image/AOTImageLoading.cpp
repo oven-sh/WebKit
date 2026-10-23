@@ -142,6 +142,7 @@ static void unmapCode(void* code, size_t size)
 }
 
 #if OS(LINUX)
+#if !defined(BUN_REFUSES_EXECUTE_ONLY_START)
 #ifndef MREMAP_DONTUNMAP
 #define MREMAP_DONTUNMAP 4
 #endif
@@ -161,6 +162,7 @@ static void* moveLoadedCode(std::span<const uint8_t> code, size_t executableSize
     }
     return target;
 }
+#endif
 
 #if !defined(BUN_HARDENED)
 static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code, size_t executableSize)
@@ -237,7 +239,9 @@ public:
     static CodeMapping useExecutableSegment(std::span<const uint8_t> code);
     static std::optional<CodeMapping> protectLoadedSection(std::span<const uint8_t> executableCode);
 #if OS(LINUX)
+#if !defined(BUN_REFUSES_EXECUTE_ONLY_START)
     static std::optional<CodeMapping> moveExecutableSegment(std::span<const uint8_t> code, size_t executableSize);
+#endif
 #if !defined(BUN_HARDENED)
     static std::optional<CodeMapping> copy(std::span<const uint8_t> code, size_t executableSize);
 #endif
@@ -292,6 +296,7 @@ std::optional<CodeMapping> CodeMapping::protectLoadedSection(std::span<const uin
 }
 
 #if OS(LINUX)
+#if !defined(BUN_REFUSES_EXECUTE_ONLY_START)
 std::optional<CodeMapping> CodeMapping::moveExecutableSegment(std::span<const uint8_t> code, size_t executableSize)
 {
     void* moved = moveLoadedCode(code, executableSize);
@@ -299,6 +304,7 @@ std::optional<CodeMapping> CodeMapping::moveExecutableSegment(std::span<const ui
         return std::nullopt;
     return CodeMapping { Kind::FileMapping, moved, code.size() };
 }
+#endif
 
 #if !defined(BUN_HARDENED)
 std::optional<CodeMapping> CodeMapping::copy(std::span<const uint8_t> code, size_t executableSize)
@@ -396,16 +402,21 @@ static void rememberPositionOfImage(std::span<const uint8_t> bytes, std::optiona
     std::optional<LoadedSegment> segment = findLoadedSegment(bytes.data());
     if (!segment)
         return;
-    int descriptor = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
-#if OS(LINUX)
-    if (descriptor < 0) {
-        if (auto* path = std::bit_cast<const char*>(getauxval(AT_EXECFN)))
-            descriptor = open(path, O_RDONLY | O_CLOEXEC);
+    auto closeUnlessImageIsInFile = [&](int& descriptor) {
         std::array<uint8_t, offsetof(ImageHeader, codeSize) + sizeof(ImageHeader::codeSize)> header;
         if (descriptor >= 0 && (pread(descriptor, header.data(), header.size(), segment->offsetInFile) != static_cast<ssize_t>(header.size()) || memcmp(header.data(), bytes.data(), header.size()))) {
             close(descriptor);
             descriptor = -1;
         }
+    };
+    // The file of the dynamic loader, where that was started with the executable as its argument.
+    int descriptor = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
+    closeUnlessImageIsInFile(descriptor);
+#if OS(LINUX)
+    if (descriptor < 0) {
+        if (auto* path = std::bit_cast<const char*>(getauxval(AT_EXECFN)))
+            descriptor = open(path, O_RDONLY | O_CLOEXEC);
+        closeUnlessImageIsInFile(descriptor);
     }
 #endif
     if (descriptor >= 0)
@@ -553,7 +564,7 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
     std::optional<CodeMapping> mapping;
     if (s_positionOfImage)
         mapping = CodeMapping::mapFile({ s_positionOfImage->descriptor, s_positionOfImage->offset }, header.codeOffset, size, executableSize);
-#if OS(LINUX)
+#if OS(LINUX) && !defined(BUN_REFUSES_EXECUTE_ONLY_START)
     if (!mapping && isLoadedExecutable)
         mapping = CodeMapping::moveExecutableSegment(code, executableSize);
 #endif
@@ -630,6 +641,11 @@ static void didPublishImage(const Image& image)
 #endif
 }
 
+#if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)
+// What a check of the library or of the file can tell such a build by.
+extern "C" __attribute__((used, retain)) const char JSC__AOT__startsOnlyWhereItsFileCanBeRead[] = "execute-only start: nothing moves the code that the loader mapped";
+#endif
+
 Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::array<uint8_t, 16>& identity)
 {
     using Wire::ImageVerdict;
@@ -656,6 +672,10 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
         return ImageVerdict::CannotMapCode;
 #if OS(LINUX) || OS(FREEBSD)
     rememberPositionOfImage(bytes, file);
+#endif
+#if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)
+    if (!file && !s_positionOfImage)
+        return ImageVerdict::CannotReadExecutable;
 #endif
     ImageVerdict refusal;
     std::optional<CodeMapping> mapping = createCodeMapping(bytes, file, header, refusal);

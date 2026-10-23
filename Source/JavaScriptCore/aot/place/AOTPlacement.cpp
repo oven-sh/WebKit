@@ -323,15 +323,16 @@ static void remapFieldAccesses(const ParallelLoops& loops, const TypeRemap& type
 }
 
 // The rows of the field access table need new types and layout sets.
-static ShapeInputs prepareShapeInputs(const StepRunner& steps, ProgramEditor& editor, const PlacementContext& context, const PlacedSites& sites, NOESCAPE const ScopedLambda<void()>& chainBeside)
+static ShapeInputs prepareShapeInputs(const StepRunner& steps, const PlacementContext& context, const PlacedSites& sites, TypeInterningPhase& phase, NOESCAPE const ScopedLambda<void()>& chainBeside)
 {
     ShapeInputs result;
     if (steps.hasFailed())
         return result;
 
-    auto phase = makeUniqueWithoutFastMallocCheck<TypeInterningPhase>(editor.types(), numberOfFieldAccessTasks(sites.fieldAccesses.size()));
+    unsigned firstTask = phase.addTasks(numberOfFieldAccessTasks(sites.fieldAccesses.size()));
+    RELEASE_ASSERT(!firstTask);
     steps.runBeside({
-        [&] { result.fieldAccesses = steps.runStep("createFieldAccesses"_s, [&] { return createFieldAccessesInTasks(context, sites, *phase); }); },
+        [&] { result.fieldAccesses = steps.runStep("createFieldAccesses"_s, [&] { return createFieldAccessesInTasks(context, sites, phase); }); },
         [&] {
             steps.runStep("computeTypesNeededAtRunTime"_s, [&] {
                 result.typesNeededAtRunTime = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude);
@@ -342,9 +343,6 @@ static ShapeInputs prepareShapeInputs(const StepRunner& steps, ProgramEditor& ed
         [&] { result.variants = steps.runStep("chooseShapeVariants"_s, [&] { return chooseShapeVariants(context, sites); }); },
         [&] { chainBeside(); },
     });
-    TypeRemap types = phase->finish(StringRemap(), &context.build.parallelLoops());
-    context.build.destroyLater(WTF::move(phase));
-    remapFieldAccesses(context.build.parallelLoops(), types, result.fieldAccesses.mutableSpan());
     return result;
 }
 
@@ -421,6 +419,8 @@ Placement PlacementInSteps::numberWhatRepresentationsAsk(ProgramEditor& editor, 
     GuardBitTable guardBits;
     StaticsPlan statics;
     ShapeInputs shapeInputs;
+    // A reader of the bodies makes the types that it asks about in the phase that is open, so none is opened or closed beside it.
+    auto phase = makeUniqueWithoutFastMallocCheck<TypeInterningPhase>(editor.types(), 0u);
     steps.runBeside({
         [&] { readBodiesBesideCollectingSites(); },
         [&] {
@@ -429,13 +429,16 @@ Placement PlacementInSteps::numberWhatRepresentationsAsk(ProgramEditor& editor, 
                 [&] { state.methodTableFunctions = steps.runStep("collectMethodTableFunctions"_s, [&] { return collectMethodTableFunctions(context); }); },
             });
             // The statics wait for nothing that the rows of the field accesses are made from.
-            shapeInputs = prepareShapeInputs(steps, editor, context, sites, [&] {
+            shapeInputs = prepareShapeInputs(steps, context, sites, *phase, [&] {
                 guardBits = steps.runStep("placeGuardBits"_s, [&] { return placeGuardBits(context, sites); });
                 steps.runStep("placeGuardSets"_s, [&] { placeGuardSets(context, sites, guardBits); });
                 std::tie(statics, state.literals) = steps.runStep("placeStatics"_s, [&] { return placeStatics(context, sites, guardBits); });
             });
         },
     });
+    TypeRemap types = phase->finish(StringRemap(), &state.build.parallelLoops());
+    state.build.destroyLater(WTF::move(phase));
+    remapFieldAccesses(state.build.parallelLoops(), types, shapeInputs.fieldAccesses.mutableSpan());
     if (steps.hasFailed())
         return { };
     state.variants = WTF::move(shapeInputs.variants);
@@ -510,6 +513,7 @@ void PlacementInSteps::numberRest(Placement& placement)
     placement.m_functions = WTF::move(functions);
     placement.m_classRanks = WTF::move(classRanks);
     placement.m_layoutsOutOfUse = sites.layoutsOutOfUse;
+    placement.m_bodiesWithoutCodeWhenPlaced = sites.bodiesWithoutCode;
     placement.m_typesNeededAtRunTime = WTF::move(state.typesNeeded);
     placement.m_typesWithCells = WTF::move(state.typesWithCells);
     placement.m_numberOfRegExpRecords = static_cast<unsigned>(state.inputs.regExpRequests.all().size());

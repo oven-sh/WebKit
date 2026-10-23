@@ -11,6 +11,7 @@
 #include "AOTVector.h"
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 
@@ -29,6 +30,8 @@ public:
     // Past the limit. Code that tests for one of them hands its StringID to the run time.
     std::span<const StringID> stringsWithoutWord() const LIFETIME_BOUND { return m_stringsWithoutWord.span(); }
     std::optional<uint32_t> indexOf(StringID) const;
+    // A member of a type that the program spells nowhere else, and no string from outside is tested for it: no value is that string where the type holds, and the image is without its text.
+    bool isLeftOut(StringID string) const { return m_leftOut.get(string.index()); }
     uint32_t numberOf(StringID) const;
     void dump(PrintStream&, const Program&) const;
 
@@ -37,6 +40,7 @@ private:
 
     Vector<StringID> m_strings;
     Vector<StringID> m_stringsWithoutWord;
+    BitVector m_leftOut;
     UncheckedKeyHashMap<StringID, uint32_t> m_indexes;
 };
 

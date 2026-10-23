@@ -522,13 +522,15 @@ static constexpr ASCIILiteral programWithSeparators =
     "{key=\"aa\" declared={type=number}}, "
     "{key=\"caf\\u{e9}\" declared={type=number}}, "
     "{key=\"\\u{65e5}\\u{672c}\" declared={type=number}}]\n"
-    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
-    "entry module=m0\n"
+    "variable g0 name=\"kept\" module=m0 declared={type=anything} initialization=Undefined\n"
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0 exports=[{name=\"kept\" variable=g0}]\n"
+    "entry module=m0 hostReads=[{exportName=\"kept\"}]\n"
     "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
     "  b0():\n"
     "    v0 = Integer integer=1\n"
     "    v1 = NewObject -, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3]\n"
-    "    Return v1\n"
+    "    PutModuleVariable v1 variable=g0\n"
+    "    Return\n"
     "}\n"_s;
 
 static uint32_t findText(StringView wanted)

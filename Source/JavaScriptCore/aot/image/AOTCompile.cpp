@@ -140,7 +140,7 @@ static void waitAtExitFor(Ref<Thread>&& thread)
 static CodeAndTables generateCodeAndTables(Typed::PipelineOutput& pipeline, const CodeGenerationPlan& plan, NOESCAPE const ScopedLambda<void()>& buildReport, BuildContext& context)
 {
     Typed::CodeGenerationInputs inputs = createCodeGenerationInputs(pipeline, plan);
-    CodeGenerationJob codeGeneration(inputs, *pipeline.program, context, pipeline.calledFunctions.span());
+    CodeGenerationJob codeGeneration(inputs, *pipeline.program, context, &plan.bodiesWithoutCode);
 
     CodeAndTables result;
     // Most of encoding the text runs on one thread, so it runs beside code generation, which is longer.

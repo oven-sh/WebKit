@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTDerivedFunctions.h"
+#include "AOTNumberLiteralStrings.h"
 #include "AOTRuntimeType.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
@@ -197,7 +198,7 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
     const TypeTestPlan& plan = planned.plan;
     RuntimeType header { };
     Vector<RuntimeCellTest, 4> cellTests;
-    std::span<const StringID> literalStrings;
+    Vector<StringID, 4> literalStrings;
     std::optional<Range> integers;
     std::optional<uint32_t> contentsOffset;
     std::optional<uint32_t> layoutSet;
@@ -214,7 +215,10 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
             if (std::optional<RuntimeCellTest> encoded = encodeCellTest(encoder, records, test))
                 cellTests.append(*encoded);
         }
-        literalStrings = plan.stringLiterals.span();
+        for (StringID literal : plan.stringLiterals) {
+            if (!encoder.inputs.pipeline.literalStrings->isLeftOut(literal))
+                literalStrings.append(literal);
+        }
         integers = plan.integers;
         if (describesTypes(encoder)) {
             contentsOffset = findContentsOffset(encoder, planned.id);

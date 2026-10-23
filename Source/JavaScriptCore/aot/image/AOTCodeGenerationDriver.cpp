@@ -85,7 +85,12 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
     const Typed::Program& program = *pipeline.program;
 
     CodeGenerationPlan plan;
-    BitVector bodiesWithoutCode = Typed::findBodiesWithoutCode(program, context, pipeline.calledFunctions.span());
+    plan.bodiesWithoutCode = Typed::findBodiesWithoutCode(program, context, pipeline.calledFunctions.span());
+    const BitVector& bodiesWithoutCode = plan.bodiesWithoutCode;
+    for (size_t index : pipeline.placement->bodiesWithoutCodeWhenPlaced()) {
+        if (program.functions[index].hasBody() && !bodiesWithoutCode.get(index))
+            context.diagnostics().add(InternalError { .kind = InternalErrorKind::PlacementCheckFailed, .function = FunctionID(index) });
+    }
     runTasksInParallel(context.parallelLoops(), {
         [&] {
             plan.uses = collectProgramUses(pipeline, bodiesWithoutCode, context);
@@ -133,11 +138,11 @@ Typed::CodeGenerationInputs createCodeGenerationInputs(const Typed::PipelineOutp
     };
 }
 
-static Candidates collectCandidates(const Typed::Program& program, const BuildContext& context, std::span<const Vector<FunctionID>> calledFunctions)
+static Candidates collectCandidates(const Typed::Program& program, const BuildContext& context, const BitVector* bodiesWithoutCode)
 {
     const ParallelLoops& loops = context.parallelLoops();
-    BitVector hasNoCode = Typed::findBodiesWithoutCode(program, context, calledFunctions);
-    RELEASE_ASSERT(calledFunctions.empty() || !context.validates() || hasNoCode == Typed::findBodiesWithoutCode(program, context));
+    BitVector hasNoCode = bodiesWithoutCode ? *bodiesWithoutCode : Typed::findBodiesWithoutCode(program, context);
+    RELEASE_ASSERT(!bodiesWithoutCode || !context.validates() || hasNoCode == Typed::findBodiesWithoutCode(program, context));
     Vector<uint32_t> functionsWithCode = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         return program.functions[index].hasBody() && !hasNoCode.get(index);
     });
@@ -330,11 +335,11 @@ struct CodeGenerationJob::State {
     BodyReleaser releaser;
 };
 
-CodeGenerationJob::CodeGenerationJob(const Typed::CodeGenerationInputs& inputs, Typed::Program& program, BuildContext& context, std::span<const Vector<FunctionID>> calledFunctions)
+CodeGenerationJob::CodeGenerationJob(const Typed::CodeGenerationInputs& inputs, Typed::Program& program, BuildContext& context, const BitVector* bodiesWithoutCode)
     : m_state(makeUnique<State>(inputs, program, context))
 {
     RELEASE_ASSERT(&program == &inputs.program);
-    auto [largestFirst, functionsWithoutCode] = collectCandidates(program, context, calledFunctions);
+    auto [largestFirst, functionsWithoutCode] = collectCandidates(program, context, bodiesWithoutCode);
     m_state->batches = createBatches(largestFirst.span());
     m_state->ids = Vector<FunctionID>(largestFirst.size(), [&](size_t index) {
         return FunctionID(largestFirst[index].function);

@@ -16,6 +16,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTPropertyAccessMembers.h"
+#include "AOTRemoveUnreachableFunctions.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -68,6 +69,7 @@ struct PlacedFunctionSites {
     Vector<DataID> data;
     Vector<LayoutID> layouts;
     Vector<LayoutSetID> layoutSets;
+    Vector<LayoutID> layoutsOfData;
     unsigned maxClosureCaptures { 0 };
     FunctionID function;
     uint32_t numberOfStoresThatMayAdd { 0 };
@@ -375,7 +377,7 @@ void SiteScanner::scanData(const Value& value)
 void SiteScanner::scanDataObject(const DataNode::Object& object)
 {
     if (object.layout)
-        m_sites.layouts.append(object.layout);
+        m_sites.layoutsOfData.append(object.layout);
     if (!object.layout || !m_context.isCompiledObject(object.layout))
         return;
     const Layout& layout = m_program.at(object.layout);
@@ -625,6 +627,7 @@ PlacedFunctionSites SiteScanner::run()
     sortAndRemoveDuplicates(m_sites.allocations);
     sortAndRemoveDuplicates(m_sites.builtinCells);
     sortAndRemoveDuplicates(m_sites.layouts);
+    sortAndRemoveDuplicates(m_sites.layoutsOfData);
     sortAndRemoveDuplicates(m_sites.layoutSets);
     return WTF::move(m_sites);
 }
@@ -813,12 +816,12 @@ static void mergeBits(const Program& program, FunctionSitesArray functions, Plac
 static bool isMadeOnlyWhereItIsNamed(const Program& program, LayoutID id)
 {
     const Layout& layout = program.at(id);
-    if (layout.kind != LayoutKind::Record && layout.kind != LayoutKind::Instance)
+    if (layout.kind != LayoutKind::Record && layout.kind != LayoutKind::Instance && layout.kind != LayoutKind::Container)
         return false;
     return id.index() < program.numberOfLayoutsAsRead() && !layout.has(LayoutFlags::IsDerived) && !layout.has(LayoutFlags::IsOfCreatedObject) && !layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
 }
 
-static BitVector findLayoutsOutOfUse(const Program& program, FunctionSitesArray functions)
+static BitVector findLayoutsOutOfUse(const Program& program, const BitVector& bodiesWithoutCode, FunctionSitesArray functions)
 {
     Vector<LayoutID> worklist;
     BitVector inUse(program.layouts.size());
@@ -829,6 +832,10 @@ static BitVector findLayoutsOutOfUse(const Program& program, FunctionSitesArray 
     BitVector layoutSets(program.types.numberOfLayoutSets());
     BitVector hasEntrypoint(program.functions.size());
     for (const PlacedFunctionSites* function : functions) {
+        for (LayoutID layout : function->layoutsOfData)
+            use(layout);
+        if (bodiesWithoutCode.get(function->function.index()))
+            continue;
         for (LayoutID layout : function->layouts)
             use(layout);
         setBits(layoutSets, function->layoutSets);
@@ -876,7 +883,10 @@ static PlacedSites mergeSites(const PlacementContext& context, FunctionSitesArra
         [&] { mergeLiteralSites(loops, functions, sites); },
         [&] { mergeConstants(loops, functions, sites); },
         [&] { mergeBits(program, functions, sites); },
-        [&] { sites.layoutsOutOfUse = findLayoutsOutOfUse(program, functions); },
+        [&] {
+            sites.bodiesWithoutCode = findBodiesWithoutCode(program, context.build);
+            sites.layoutsOutOfUse = findLayoutsOutOfUse(program, sites.bodiesWithoutCode, functions);
+        },
     });
     return sites;
 }

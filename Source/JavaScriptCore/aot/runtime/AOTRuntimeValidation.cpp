@@ -190,12 +190,64 @@ bool hasOrdinaryElements(VM& vm, JSValue value)
     if (!structure->hasMonoProto() || structure->storedPrototype() != realm->arrayPrototype())
         return false;
 
+    if (!structure->hasAnyKindOfGetterSetterProperties())
+        return true;
     bool hasAccessorUnderNumericName = false;
     structure->forEachProperty(vm, [&](const auto& entry) {
-        hasAccessorUnderNumericName |= isCanonicalNumericIndexString(entry.key()) && (entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue);
+        hasAccessorUnderNumericName |= (entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue) && isCanonicalNumericIndexString(entry.key());
         return !hasAccessorUnderNumericName;
     });
     return !hasAccessorUnderNumericName;
+}
+
+static bool hasOwnSymbol(VM& vm, Structure* structure)
+{
+    // Adding a symbol clears this, in a dictionary too.
+    if (structure->isQuickPropertyAccessAllowedForEnumeration())
+        return false;
+    bool hasSymbol = false;
+    structure->forEachProperty(vm, [&](const auto& entry) {
+        hasSymbol = entry.key()->isSymbol();
+        return !hasSymbol;
+    });
+    return hasSymbol;
+}
+
+// The array may have thousands of names and is asked at every use, so it is asked for the few names that would count: the members of its prototypes and what built-ins probe for.
+static bool shadowsLockedPrototypeChain(VM& vm, Structure* structure)
+{
+    auto hasOwn = [&](PropertyName name) {
+        return isValidOffset(structure->get(vm, name));
+    };
+    if (hasOwn(vm.propertyNames->then) || hasOwn(vm.propertyNames->toJSON) || hasOwnSymbol(vm, structure))
+        return true;
+
+    for (JSObject* prototype = structure->storedPrototypeObject(); prototype; prototype = prototype->getPrototypeDirect().getObject()) {
+        Structure* prototypeStructure = prototype->structure();
+        if (!prototypeStructure->hasImmutablePrototype() || !prototypeStructure->hasImmutableIndexedProperties() || prototypeStructure->hasNonReifiedStaticProperties())
+            return true;
+        bool shadowsMember = false;
+        prototypeStructure->forEachProperty(vm, [&](const auto& entry) {
+            shadowsMember = hasOwn(entry.key());
+            return !shadowsMember;
+        });
+        if (shadowsMember)
+            return true;
+    }
+    return false;
+}
+
+// The bit of the cell is clear where the elements alone are not pristine. A structure that has been a dictionary carries no mark.
+bool hasPristineNames(VM& vm, JSValue value)
+{
+    if (!value.isCell())
+        return false;
+    Structure* structure = value.asCell()->structure();
+    if (structure->isPristine())
+        return true;
+    if (!value.inherits<JSArray>() || !structure->hasBeenDictionary() || !structure->hasMonoProto() || structure->storedPrototype() != structure->realm()->arrayPrototype())
+        return false;
+    return !shadowsLockedPrototypeChain(vm, structure);
 }
 
 bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot slot, const RuntimeType& type)

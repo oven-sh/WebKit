@@ -833,6 +833,36 @@ static void testPristineArray()
     checkValidationFails(leakedArray, ValidationFailureKind::ArrayNotPristine, "globalThis.after = () => { }; globalThis.sink = function () { Object.setPrototypeOf(this.k, { }); };"_s);
 }
 
+// So many names make a dictionary of the structure, and a dictionary carries no mark. What is proven of the names stays true while none of them shadows a member.
+static void testPristineArrayWithManyNames()
+{
+    UTF8CString numberedText = withNumbersOfModels(leakedArray);
+    ASCIILiteral program = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data()));
+    checkOutputOfProgramInShell(program, "number 2\n"_s, { "validate"_s }, "globalThis.after = () => { }; globalThis.sink = function () { for (let i = -300; i < 0; i++) this.k[i] = 1; };"_s);
+    checkOutputOfProgramInShell(program, "number 2\n"_s, { "validate"_s }, "globalThis.after = () => { }; globalThis.sink = function () { for (let i = 0; i < 300; i++) this.k['name' + i] = 1; };"_s);
+    checkOutputOfProgramInShell(program, "number 2\n"_s, { "validate"_s }, "globalThis.after = () => { }; globalThis.sink = function () { for (let i = -300; i < 0; i++) this.k[i] = 1; for (let i = -300; i < 0; i++) delete this.k[i]; };"_s);
+
+    for (ASCIILiteral lastStatement : {
+        "this.k.pop = 1;"_s,
+        "this.k.hasOwnProperty = 1;"_s,
+        "this.k.then = 1;"_s,
+        "this.k.toJSON = 1;"_s,
+        "this.k[Symbol.iterator] = 1;"_s,
+        "this.k[Symbol.isConcatSpreadable] = 1;"_s,
+        "this.k[Symbol('s')] = 1;"_s,
+        "delete this.k[-1]; this.k[Symbol('s')] = 1;"_s,
+        "Object.setPrototypeOf(this.k, { });"_s,
+        "Object.setPrototypeOf(this.k, Object.prototype);"_s,
+        "Object.setPrototypeOf(this.k, null);"_s,
+    }) {
+        UTF8CString statements = makeString("globalThis.after = () => { }; globalThis.sink = function () { for (let i = -300; i < 0; i++) this.k[i] = 1; "_s, lastStatement, " };"_s).utf8();
+        checkValidationFails(leakedArray, ValidationFailureKind::ArrayNotPristine, ASCIILiteral::fromLiteralUnsafe(byteCast<char>(statements.data())));
+    }
+
+    checkValidationFails(leakedArray, ValidationFailureKind::ArrayElementsNotOrdinary, "globalThis.after = () => { }; globalThis.sink = function () { for (let i = -300; i < 0; i++) this.k[i] = 1; Object.defineProperty(this.k, '-5', { get() { return 1; } }); };"_s);
+    checkValidationFails(leakedArray, ValidationFailureKind::ArrayElementsNotOrdinary, "globalThis.after = () => { }; globalThis.sink = function () { for (let i = -300; i < 0; i++) this.k[i] = 1; Object.defineProperty(this.k, '-1000', { get() { return 1; } }); };"_s);
+}
+
 // With a property of its own the names of the array are not proven and its storage is. A data property under "-1" costs the structure its mark and breaks nothing.
 static void testArrayWithProvenStorageAlone()
 {
@@ -973,6 +1003,7 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/storage-of-array"_s, testStorageOfArray },
         { "proof-validation/every-kind-of-mutation"_s, testEveryKindOfMutation },
         { "proof-validation/pristine-array"_s, testPristineArray },
+        { "proof-validation/pristine-array-with-many-names"_s, testPristineArrayWithManyNames },
         { "proof-validation/array-with-proven-storage-alone"_s, testArrayWithProvenStorageAlone },
         { "proof-validation/removed-field-is-read"_s, testRemovedFieldIsRead },
         { "proof-validation/keys-of-object-with-removed-field"_s, testKeysOfObjectWithRemovedField },

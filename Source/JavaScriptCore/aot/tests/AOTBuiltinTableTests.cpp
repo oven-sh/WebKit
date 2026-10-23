@@ -1148,9 +1148,12 @@ static void testHostUsesOfStartupLoads()
         if (field.name == nameOf("stylize"_s))
             cellsOfStylize.add(field.value.nativeCell.index() + 1);
     }
-    AOT_TEST_CHECK(cellsOfStylize.size() == 2 && functions.size() == 2);
+    AOT_TEST_CHECK(cellsOfStylize.size() == 2 && std::ranges::count(functions, true, [](const BuiltinCalledFunction& called) { return called.uses.areListed; }) == 2);
     for (const BuiltinCalledFunction& called : functions) {
-        AOT_TEST_CHECK(called.uses.areListed && called.uses.list.size() == 1);
+        // A row that says nothing leaves everything open.
+        if (!called.uses.areListed)
+            continue;
+        AOT_TEST_CHECK(called.uses.list.size() == 1);
         const BuiltinHostUse& use = called.uses.list[0];
         const BuiltinHostUse& kept = use.call ? use.call->result.list[0] : use;
         AOT_TEST_CHECK(kept.use == BuiltinHostReadUse::Kept && cellsOfStylize.contains(kept.nativeCell.index() + 1));

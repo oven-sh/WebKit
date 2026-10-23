@@ -12,6 +12,7 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTClassMemberTable.h"
 #include "AOTFieldTable.h"
+#include "AOTNumberLiteralStrings.h"
 #include "AOTObjectVisiting.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeType.h"
@@ -575,7 +576,11 @@ static ExpectedRuntimeType computeExpectedRuntimeType(const TableEncoder& encode
         plan.cellTests.removeAllMatching([&](const CellTest& test) {
             return test.kind == CellTestKind::IsClosureOf && !encoder.findEntrypoint(test.function);
         });
-        return { .id = id, .primitives = expectedPrimitivesOf(plan), .integers = plan.integers, .cellTests = WTF::move(plan.cellTests), .literalStrings = WTF::move(plan.stringLiterals) };
+        uint16_t primitives = expectedPrimitivesOf(plan);
+        plan.stringLiterals.removeAllMatching([&](StringID literal) {
+            return encoder.inputs.pipeline.literalStrings->isLeftOut(literal);
+        });
+        return { .id = id, .primitives = primitives, .integers = plan.integers, .cellTests = WTF::move(plan.cellTests), .literalStrings = WTF::move(plan.stringLiterals) };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

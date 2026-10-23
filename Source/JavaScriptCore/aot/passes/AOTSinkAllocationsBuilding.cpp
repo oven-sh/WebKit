@@ -601,7 +601,8 @@ ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
         // A cast to a type that admits objects of other classes would forget which class the cell has.
         if (!type.castTo(program().at(assumedType), cursor().builder().types()).isSubsetOf(type, program()))
             continue;
-        if (m_sinking.context().build.validates())
+        // A parameter is unspecified on a way that does not have the object. Each way that has it has validated what it hands on.
+        if (m_sinking.context().build.validates() && function().at(cell).opcode != Opcode::Parameter)
             cursor().emit(makeValidateType(cell, assumedType));
         cell = cursor().emit(makeAssumeType(cell, assumedType));
     }

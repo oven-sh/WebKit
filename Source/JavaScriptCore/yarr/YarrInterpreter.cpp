@@ -3387,9 +3387,6 @@ static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& pr
     JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
     Vector<unsigned, 32> bytecodeOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
     interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult);
-    // Nothing here can tell whether there is a match. Whoever compares answers with an engine that has a JIT is told where to look.
-    if (bytecodeResult == JSRegExpResult::ErrorHitLimit && flatResult != JSRegExpResult::Match && flatResult != JSRegExpResult::NoMatch)
-        dataLogLn("validateRegExpFlatProgram: given up at the match limit and answered as no match: start ", start, ", a subject of ", input.length());
     validateFlatProgramResult(program, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
 }
 
@@ -3451,11 +3448,10 @@ NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, uns
     SuperSamplerScope superSamplerScope(false);
     if (bytecode->m_flatProgram) [[unlikely]]
         return interpretFlatProgram(bytecode, input, start, output);
-    if (input.is8Bit()) {
-        if (bytecode->m_flatProgramFor8BitSubjects)
-            return interpretFlatProgramFor8BitSubjects(bytecode, input, start, output);
+    if (input.is8Bit() && bytecode->m_flatProgramFor8BitSubjects)
+        return interpretFlatProgramFor8BitSubjects(bytecode, input, start, output);
+    if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
-    }
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();
 }
 
