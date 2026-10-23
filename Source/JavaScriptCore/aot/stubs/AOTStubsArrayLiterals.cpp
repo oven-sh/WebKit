@@ -36,11 +36,11 @@ static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeo
 static_assert(descriptorOf(StubFamily::NewEmptyArray).numberOfForms == static_cast<unsigned>(EmptyArray::ContiguousCapacity3OwnStorage) + 1);
 
 #if CPU(ARM64)
-static constexpr StubRegister allocationScratchRegister = StubRegister::T11;
-static constexpr StubRegister storageRegister = StubRegister::T12;
+static constexpr StubRegister literalAllocationScratchRegister = StubRegister::T11;
+static constexpr StubRegister literalStorageRegister = StubRegister::T12;
 #elif CPU(X86_64)
-static constexpr StubRegister allocationScratchRegister = StubRegister::A0;
-static constexpr StubRegister storageRegister = StubRegister::A5;
+static constexpr StubRegister literalAllocationScratchRegister = StubRegister::A0;
+static constexpr StubRegister literalStorageRegister = StubRegister::A5;
 #endif
 static constexpr StubRegister countAndNumberMaskRegister = StubRegister::T13;
 
@@ -135,9 +135,9 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
     const unsigned countAndCapacity = count | emptyCapacity.value_or(0) << capacityShiftInArrayLiteralCount;
     const ArrayAllocation allocation {
         .array = jit.result(),
-        .storage = jit.allocateScratch(storageRegister),
+        .storage = jit.allocateScratch(literalStorageRegister),
         .allocator = jit.allocateScratch(StubRegister::T9),
-        .scratch = jit.allocateScratch(allocationScratchRegister),
+        .scratch = jit.allocateScratch(literalAllocationScratchRegister),
         .length = count,
         .vectorLength = vectorLength,
         .indexingType = areDoubles ? ArrayWithDouble : ArrayWithContiguous,
@@ -200,7 +200,7 @@ void generateFrameArrayLiteral(StubAssembler& jit)
 {
     const unsigned count = jit.key().count();
     const GPRReg cell = jit.operand(count);
-    const GPRReg scratch = jit.allocateScratch(allocationScratchRegister);
+    const GPRReg scratch = jit.allocateScratch(literalAllocationScratchRegister);
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.frameArrayHeader)), scratch);
     Jump isOnHeap = jit.branchTest64(CCallHelpers::Zero, scratch);
     jit.store64(scratch, Address(cell, 0));
@@ -265,8 +265,8 @@ void generateArrayOfData(StubAssembler& jit)
     // On ARM64 the immediate comes in T9.
     const GPRReg request = jit.allocateScratch(isARM64() ? StubRegister::T13 : StubRegister::T9);
     const GPRReg allocator = jit.allocateScratch(StubRegister::T10);
-    const GPRReg storage = jit.allocateScratch(storageRegister);
-    const GPRReg scratch = jit.allocateScratch(allocationScratchRegister);
+    const GPRReg storage = jit.allocateScratch(literalStorageRegister);
+    const GPRReg scratch = jit.allocateScratch(literalAllocationScratchRegister);
     RELEASE_ASSERT(noOverlap(array, request, allocator, storage, scratch, instanceGPR));
     const IndexingType indexingType = form == ArrayOfData::Int32 ? ArrayWithInt32 : form == ArrayOfData::Double ? ArrayWithDouble : ArrayWithContiguous;
 

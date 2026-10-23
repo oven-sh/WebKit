@@ -442,7 +442,7 @@ static constexpr OperandUses usesOfReaders {
 };
 
 // An entry declares the heaps of its operands. Native code also reads the objects that it finds in them.
-static constexpr Effects readsOfReachableObjects = [] {
+static constexpr Effects readsOfObjectsOperandsReach = [] {
     constexpr AbstractHeapSet heapsOnlyCompiledCodeReads = compiledCodeHeaps | AbstractHeapSet { AbstractHeap::StringBuilderContents };
     Effects effects = Effects::none();
     effects.reads = (perObjectHeaps - heapsOnlyCompiledCodeReads) | AbstractHeapSet { AbstractHeap::TypedArrayStorage, AbstractHeap::TypedArrayElements };
@@ -592,7 +592,7 @@ void ReachableValueWalk::visit(const UnionPart& part)
 
 void ReachableValueWalk::visitLayouts(const Type& layouts)
 {
-    m_description.addOwn(readsOfReachableObjects);
+    m_description.addOwn(readsOfObjectsOperandsReach);
     runProtocolsOn(layouts, m_behavior.protocols);
 
     std::optional<SortedSet<TypeID, 8>> ownValues = provenOwnValueTypesOf(m_program, layouts);
@@ -609,7 +609,7 @@ void ReachableValueWalk::visitInstances(const Type& instances)
 {
     constexpr Protocols stepsOnProperties { Protocol::OwnKeys, Protocol::OwnValues, Protocol::PrototypeChain };
 
-    m_description.addOwn(readsOfReachableObjects);
+    m_description.addOwn(readsOfObjectsOperandsReach);
     // An instance that is pristine in both aspects has the properties its class gives it and no other, none of them an accessor, and inherits from built-in objects alone.
     if (!isFreeOfSettersAndTraps(instances)) {
         m_description.addUnknownCode();

@@ -10,7 +10,6 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTAllocateInnerObjects.h"
-#include "AOTFlattenInnerObjects.h"
 #include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
 #include "AOTCallGraph.h"
@@ -29,7 +28,6 @@
 #include "AOTFactsOfSelectedBodies.h"
 #include "AOTFlowApply.h"
 #include "AOTFrameAllocation.h"
-#include "AOTFreshResults.h"
 #include "AOTHeat.h"
 #include "AOTCreatedObjectLayouts.h"
 #include "AOTNameCreatedSymbols.h"
@@ -47,8 +45,6 @@
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
-#include "AOTRemoveUnusedParameters.h"
-#include "AOTRemoveUnusedResults.h"
 #include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
@@ -174,7 +170,7 @@ PassOutcome Pipeline::analyzeFlow()
 PassOutcome Pipeline::applyFlowResults()
 {
     editProgram(PassID::ApplyFlowResults, [&] {
-        Typed::applyFlowResults(m_program, *m_output->flow, m_build, Typed::LinkedFunctions::ThoseThatTypeResults);
+        Typed::applyFlowResults(m_program, *m_output->flow, m_build);
         m_build.destroyLater(FlowApplyAccess::takeApplication(*m_output->flow));
         if (m_output->flow->hasResults())
             Typed::guardTaintedPositionsAfterFlow(m_program, *m_output->flow, m_build);
@@ -310,23 +306,6 @@ PassOutcome Pipeline::removeUnreadFields()
     return m_runner.lastProgramPassOutcome();
 }
 
-PassOutcome Pipeline::removeUnusedResults()
-{
-    edit(PassID::RemoveUnusedResults, [&](ProgramEditor& editor) {
-        Typed::removeUnusedResults(editor, inputsFor(PassID::RemoveUnusedResults), m_runner);
-    });
-    return m_runner.lastProgramPassOutcome();
-}
-
-PassOutcome Pipeline::removeUnusedParameters()
-{
-    edit(PassID::RemoveUnusedParameters, [&](ProgramEditor& editor) {
-        Typed::removeUnusedParameters(editor, inputsFor(PassID::RemoveUnusedParameters), m_runner);
-    });
-    didAddFunctions();
-    return m_runner.lastProgramPassOutcome();
-}
-
 PassOutcome Pipeline::callModules()
 {
     edit(PassID::CallModules, [&](ProgramEditor& editor) {
@@ -345,17 +324,6 @@ PassOutcome Pipeline::removeUnreachableFunctions()
         Typed::removeUnreachableFunctions(editor, m_analyses.callGraph(flow()), m_build);
     });
     m_output->derivedFunctions->forgetFunctionsWithoutBody(m_program);
-    return m_runner.lastProgramPassOutcome();
-}
-
-PassOutcome Pipeline::splitFreshResults()
-{
-    edit(PassID::SplitFreshResults, [&](ProgramEditor& editor) {
-        OptimizationInputs inputs = inputsFor(PassID::SplitFreshResults);
-        inputs.callGraph.computeRanks(m_build);
-        Typed::splitFreshResults(editor, inputs, m_runner);
-    });
-    didAddFunctions();
     return m_runner.lastProgramPassOutcome();
 }
 
@@ -403,14 +371,6 @@ PassOutcome Pipeline::allocateInFrames()
     }
     *m_output->frameAllocation = edit(PassID::AllocateInFrames, [&](ProgramEditor& editor) {
         return Typed::allocateInFrames(editor, inputsFor(PassID::AllocateInFrames), *m_output->flow, m_build);
-    });
-    return m_runner.lastProgramPassOutcome();
-}
-
-PassOutcome Pipeline::flattenInnerObjects()
-{
-    edit(PassID::FlattenInnerObjects, [&](ProgramEditor& editor) {
-        Typed::flattenInnerObjects(editor, flow(), inputsFor(PassID::FlattenInnerObjects).heat, m_build);
     });
     return m_runner.lastProgramPassOutcome();
 }
@@ -701,14 +661,8 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return readCapturesFromEnvironments();
     case PassID::RemoveUnreadFields:
         return removeUnreadFields();
-    case PassID::RemoveUnusedResults:
-        return removeUnusedResults();
-    case PassID::RemoveUnusedParameters:
-        return removeUnusedParameters();
     case PassID::RemoveUnreachableFunctions:
         return removeUnreachableFunctions();
-    case PassID::SplitFreshResults:
-        return splitFreshResults();
     case PassID::PromoteAggregateParameters:
         return promoteAggregateParameters();
     case PassID::SplitCoroutines:
@@ -723,8 +677,6 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return allocateInFrames();
     case PassID::AllocateInnerObjects:
         return allocateInnerObjects();
-    case PassID::FlattenInnerObjects:
-        return flattenInnerObjects();
     case PassID::ReuseEnvironments:
         return reuseEnvironments();
     case PassID::NumberLiteralStrings:
@@ -751,102 +703,6 @@ PassOutcome Pipeline::runProgramPass(PassID id)
     case PassID::GenerateCode:
     FOR_EACH_AOT_FUNCTION_PASS(AOT_FUNCTION_PASS_CASE)
         break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
-{
-    const PipelineOutput& output = *m_output;
-    switch (id) {
-    case PassID::AnalyzeFlow:
-        output.flow->dump(out, m_program);
-        return;
-    case PassID::BuildCallGraph: {
-        const CallGraph& callGraph = m_analyses.callGraph(flow());
-        callGraph.computeRanks(m_build);
-        callGraph.dump(out, m_program);
-        return;
-    }
-    // A run of all stages that was stopped after a pass has handed these two to the output, and a stopped runner computes nothing again.
-    case PassID::ComputeEffectSummaries:
-        if (m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID()))
-            Typed::computeEffectSummaries(m_program, flow(), m_build).dump(out, m_program);
-        else
-            (m_runner.isStopped() ? *output.effects : m_analyses.effects(flow())).dump(out, m_program);
-        return;
-    case PassID::EstimateHeat:
-        (m_runner.isStopped() ? *output.heat : m_analyses.heat(flow())).dump(out, m_program);
-        return;
-    case PassID::SummarizeForInlining:
-        m_analyses.inlining(flow()).dump(out, m_program);
-        return;
-    case PassID::ChooseCallingConventions:
-        output.callingConventions->dump(out, m_program);
-        return;
-    case PassID::AllocateInFrames:
-        output.frameAllocation->dump(out, m_program);
-        return;
-    case PassID::ReuseEnvironments:
-        output.environmentReuse->dump(out, m_program);
-        return;
-    case PassID::NumberLiteralStrings:
-        output.literalStrings->dump(out, m_program);
-        return;
-    case PassID::EmbedConstantCollections:
-        output.constantCollections->dump(out, m_program);
-        return;
-    case PassID::CollectRegExpLiterals:
-        output.regExpRequests->dump(out, m_program);
-        return;
-    case PassID::ElideStackChecks:
-        output.stackChecks->dump(out, m_program);
-        return;
-    case PassID::PlanSlots:
-        output.slots->dump(out, m_program);
-        return;
-    case PassID::NumberAndEncode:
-        output.placement->dump(out, m_program);
-        return;
-    case PassID::PlaceSiteCaches:
-        output.siteCaches->dump(out, m_program);
-        return;
-    case PassID::None:
-    case PassID::AllocateTaggedLayouts:
-    case PassID::CheckTypesAtEntry:
-    case PassID::SplitBehindEntryChecks:
-    case PassID::SkipAnsweredEntryChecks:
-    case PassID::NarrowFieldTypes:
-    case PassID::NameCreatedSymbols:
-    case PassID::VerifyProgram:
-    case PassID::GuardTaintedPositions:
-    case PassID::ApplyFlowResults:
-    case PassID::CheckLockedBuiltinWrites:
-    case PassID::RemoveUnreadExports:
-    case PassID::PromoteEnvironmentsToVariables:
-    case PassID::DeferDefinitions:
-    case PassID::NarrowConstantVariables:
-    case PassID::DeferInitializers:
-    case PassID::MarkResultsUsedAsKeys:
-    case PassID::DeferClosuresInFields:
-    case PassID::AllocateInnerObjects:
-    case PassID::FlattenInnerObjects:
-    case PassID::ReadCapturesFromEnvironments:
-    case PassID::RemoveUnreadFields:
-    case PassID::RemoveUnusedResults:
-    case PassID::RemoveUnusedParameters:
-    case PassID::RemoveUnreachableFunctions:
-    case PassID::SplitFreshResults:
-    case PassID::PromoteAggregateParameters:
-    case PassID::SplitCoroutines:
-    case PassID::CallModules:
-    case PassID::CreateEntrypoints:
-    case PassID::OutlineColdOperations:
-    case PassID::InlineHeads:
-    case PassID::CheckPlacement:
-    case PassID::GenerateCode:
-    FOR_EACH_AOT_FUNCTION_PASS(AOT_FUNCTION_PASS_CASE)
-        return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

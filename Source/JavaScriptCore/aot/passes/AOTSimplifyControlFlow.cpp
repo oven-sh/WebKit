@@ -709,7 +709,7 @@ PassOutcome simplifyControlFlow(FunctionPassContext& context)
         context.passesThatCanWait.add(PassID::FoldConstants);
     if (!simplifier.onlyJoinedBlocks())
         return outcome;
-    context.passesLeftIdle = { PassID::RemoveTrivialParameters, PassID::PropagateBranchConditions, PassID::EliminateDeadCode };
+    context.passesLeftIdle = { PassID::RemoveTrivialParameters, PassID::EliminateDeadCode };
     if (!context.foldingAskedForUses)
         context.passesLeftIdle.add(PassID::FoldConstants);
     context.reachedFixpoint = !simplifier.mayFindMoreAtOnce();

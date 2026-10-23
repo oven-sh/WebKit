@@ -26,7 +26,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct SpreadSite {
+struct ExpandedSpreadSite {
     ProgramPoint point;
     ValueID value;
     IterationPlan plan;
@@ -51,14 +51,14 @@ struct SpreadLoop {
 
 } // anonymous namespace
 
-static Vector<SpreadSite> collectSpreads(FunctionPassContext& pass)
+static Vector<ExpandedSpreadSite> collectSpreads(FunctionPassContext& pass)
 {
-    Vector<SpreadSite> sites;
+    Vector<ExpandedSpreadSite> sites;
     for (BlockID block : pass.analyses.cfg().reversePostOrder()) {
         const BlockValues& values = pass.function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             if (pass.function.at(values[index]).opcode == Opcode::AppendSpread)
-                sites.append(SpreadSite { ProgramPoint { block, index }, values[index], planSpread(pass, values[index]) });
+                sites.append(ExpandedSpreadSite { ProgramPoint { block, index }, values[index], planSpread(pass, values[index]) });
         }
     }
     return sites;
@@ -83,7 +83,7 @@ static ValueID appendResultAt(IRBuilder& builder, ValueID step, IteratorResumeRe
     return builder.append(WTF::move(read));
 }
 
-static void replaceWithAppendElements(FunctionPassContext& pass, const SpreadSite& site)
+static void replaceWithAppendElements(FunctionPassContext& pass, const ExpandedSpreadSite& site)
 {
     Value& value = pass.function.edit(site.value);
     ReplacedEffects replaced = replacedEffectsOf(pass, value);
@@ -319,7 +319,7 @@ static void finishLoops(FunctionPassContext& pass, IRBuilder& builder, Vector<Sp
     builder.emptyUnreachableBlocks();
 }
 
-static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const SpreadSite& site, Vector<SpreadLoop>& loops)
+static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const ExpandedSpreadSite& site, Vector<SpreadLoop>& loops)
 {
     const IterationPlan& plan = site.plan;
     RELEASE_ASSERT(plan.hasClassArm() || plan.hasProtocolArm());
@@ -350,15 +350,15 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const Sp
 
 PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, Vector<ValueID>& opensOfSpreads)
 {
-    Vector<SpreadSite> sites = collectSpreads(pass);
+    Vector<ExpandedSpreadSite> sites = collectSpreads(pass);
     if (sites.isEmpty())
         return PassOutcome::Unchanged;
 
-    AOT::sort(sites, std::ranges::greater { }, [](const SpreadSite& site) {
+    AOT::sort(sites, std::ranges::greater { }, [](const ExpandedSpreadSite& site) {
         return std::pair { site.point.block, site.point.index };
     });
     Vector<SpreadLoop> loops;
-    for (const SpreadSite& site : sites)
+    for (const ExpandedSpreadSite& site : sites)
         expandSpread(pass, builder, site, loops);
     finishLoops(pass, builder, loops, opensOfSpreads);
     builder.setHandler(std::nullopt);

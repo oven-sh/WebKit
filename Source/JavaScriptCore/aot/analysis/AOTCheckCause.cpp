@@ -21,9 +21,7 @@ Wire::CheckCause computeUnknownObjectCause(const Function& function, ValueID ope
     Opcode opcode = definition->opcode;
 
     switch (effectRuleOf(opcode)) {
-    case EffectRule::Call:
-    case EffectRule::Builtin:
-    case EffectRule::Inline:
+    default:
         return Wire::CheckCause::UnknownCallee;
     case EffectRule::Access:
         if (familyOf(opcode) == OperationFamily::Access && !Value::opcodesWithKey.contains(opcode))

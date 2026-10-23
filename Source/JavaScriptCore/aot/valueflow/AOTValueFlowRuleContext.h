@@ -145,8 +145,6 @@ public:
     bool isPlainSoFar(ClimbingSet objects);
     // False while read(objects, a name of the kind) could only answer a node that holds nothing.
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
-    // In the check of a solve with Rounds::Due: a rule that has a shorter way for a common case leaves it alone.
-    bool usesGeneralRulesOnly() const;
     ValueFlowNodeID notPlain();
     ValueFlowNodeID writtenUnderUnknownKey();
     // The result of a statement of kind Lookup that is made once for each (set, name).
@@ -221,6 +219,7 @@ public:
     bool leavesOut(ValueFlowUnknownSource) const;
     bool leavesOutSomeUnknownSource() const;
     bool refusesEvaluatedText() const;
+    bool isGuardedByRemovedFeature(BuiltinID) const;
 
     // What the mask of the operand lets through of the value, for whoever has the value of the operand's node from somewhere else: the solution after the solve.
     static ValueSetID throughMaskOf(const ValueFlowOperand&, ValueSetID value, const ValueFlowSolver&, ValueSetMaker&);

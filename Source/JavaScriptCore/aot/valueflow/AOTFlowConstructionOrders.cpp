@@ -215,15 +215,13 @@ static auto orderOfEvent(const ConstructionEvent& event)
     return std::tuple { event.point.block, event.point.index, orderWithinPoint(event.kind), event.operandIndex, event.name, event.operand };
 }
 
-static bool isCall(Opcode opcode)
+static bool isDirectOrIndirectCall(Opcode opcode)
 {
     switch (accessClassOf(opcode)) {
     case AccessClass::DirectCall:
     case AccessClass::IndirectCall:
         return true;
-    case AccessClass::None:
-    case AccessClass::Slot:
-    case AccessClass::ByName:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -234,7 +232,7 @@ static bool isExit(TerminatorKind kind)
     return kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall;
 }
 
-static bool isPrivateName(const Program& program, PropertyKeyID key)
+static bool isPrivateKey(const Program& program, PropertyKeyID key)
 {
     PropertyKeyKind kind = program.at(key).kind;
     return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName;
@@ -485,7 +483,7 @@ private:
         Vector<ValueID> calls;
         for (const ObjectUse& objectUse : m_escape.usesOf(object)) {
             const Use& use = objectUse.use;
-            if (use.kind == Use::Kind::Operand && isCall(m_function.at(use.user).opcode))
+            if (use.kind == Use::Kind::Operand && isDirectOrIndirectCall(m_function.at(use.user).opcode))
                 calls.append(use.user);
         }
         m_callsTakingObject = SortedSet<ValueID>(calls.span());
@@ -647,7 +645,7 @@ private:
                 addLeak(use);
             return;
         }
-        if (isCall(opcode)) {
+        if (isDirectOrIndirectCall(opcode)) {
             addCall(object, use);
             return;
         }
@@ -682,7 +680,7 @@ private:
             return true;
         if (objectUse.use.kind != Use::Kind::Operand)
             return false;
-        return isCall(m_function.at(objectUse.use.user).opcode) || mayRunOtherCode(objectUse.use.user);
+        return isDirectOrIndirectCall(m_function.at(objectUse.use.user).opcode) || mayRunOtherCode(objectUse.use.user);
     }
 
     void addContainerUse(ObjectID object, const ObjectUse& objectUse)
@@ -1297,7 +1295,7 @@ private:
             RELEASE_ASSERT_NOT_REACHED();
         }
 
-        bool mayBeStopped = event.kind == ConstructionEventKind::Store && event.isExact && access.opcode == Opcode::PropSet && !isPrivateName(m_program, key) && mayBeStoppedAbove(chain, key);
+        bool mayBeStopped = event.kind == ConstructionEventKind::Store && event.isExact && access.opcode == Opcode::PropSet && !isPrivateKey(m_program, key) && mayBeStoppedAbove(chain, key);
         resolved.doesNotLeak = !entered.leaks;
         resolved.runsOneCallee = !entered.hasFunctionWithoutObject && !mayBeStopped;
     }
@@ -1690,9 +1688,7 @@ private:
         case ConstructionEventKind::Read:
             reaches = stateBeforeOperation.selfReferences.get(bitOf(event));
             break;
-        case ConstructionEventKind::Leak:
-        case ConstructionEventKind::Call:
-        case ConstructionEventKind::Exit:
+        default:
             break;
         }
         return reaches || std::ranges::any_of(resolved.callees, [&](uint32_t callee) {
@@ -1889,7 +1885,7 @@ private:
         if (eventAt(position).kind != ConstructionEventKind::Store || !resolvedAt(position).doesNotLeak)
             return false;
         PropertyKeyID key = nameAt(position).key;
-        return key && !isPrivateName(m_program, key);
+        return key && !isPrivateKey(m_program, key);
     }
 
     bool mayCreateKeys(uint32_t position) const

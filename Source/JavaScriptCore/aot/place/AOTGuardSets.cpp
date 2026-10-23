@@ -27,7 +27,7 @@ struct Membership {
 
 } // anonymous namespace
 
-static std::tuple<LayoutID, ClassSide, MemberGuardKind, PropertyKeyID> keyOf(const GuardUse& guard)
+static std::tuple<LayoutID, ClassSide, MemberGuardKind, PropertyKeyID> guardKeyOf(const GuardUse& guard)
 {
     return { guard.classLayout, guard.side, guard.kind, guard.key };
 }
@@ -56,8 +56,8 @@ Vector<GuardUse, 4> guardsOf(PayloadListView<MemberConditionRecord> conditions)
     Vector<GuardUse, 4> guards(conditions.size(), [&](size_t index) {
         return guardOf(conditions[index]);
     });
-    AOT::sort(guards, { }, keyOf);
-    guards.shrink(guards.size() - std::ranges::unique(guards, { }, keyOf).size());
+    AOT::sort(guards, { }, guardKeyOf);
+    guards.shrink(guards.size() - std::ranges::unique(guards, { }, guardKeyOf).size());
     return guards;
 }
 
@@ -86,8 +86,8 @@ Vector<GuardUse, 4> guardsOf(std::span<const MemberCondition> conditions)
         const MemberCondition& condition = conditions[index];
         return guardOf(MemberConditionRecord { .kind = recordKindOf(condition.kind), .layout = condition.layout, .side = condition.side, .key = condition.key });
     });
-    AOT::sort(guards, { }, keyOf);
-    guards.shrink(guards.size() - std::ranges::unique(guards, { }, keyOf).size());
+    AOT::sort(guards, { }, guardKeyOf);
+    guards.shrink(guards.size() - std::ranges::unique(guards, { }, guardKeyOf).size());
     return guards;
 }
 

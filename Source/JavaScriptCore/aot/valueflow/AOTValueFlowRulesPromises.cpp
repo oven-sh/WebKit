@@ -18,7 +18,6 @@ static constexpr ValueFlowName promiseValue = nameOf(BuiltinSlots::PromiseValue)
 static constexpr ValueFlowName promiseReason = nameOf(BuiltinSlots::PromiseReason);
 static constexpr ValueFlowName resolvedPromises = ValueFlowName::of(ValueFlowNameKind::ResolvedPromises);
 static constexpr ValueFlowName rejectedPromises = ValueFlowName::of(ValueFlowNameKind::RejectedPromises);
-static constexpr ValueFlowName allocatedAs = ValueFlowName::of(ValueFlowNameKind::AllocatedAs);
 
 // What a thenable rejects with comes from native code, like the error for a promise that is resolved with itself.
 void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFlowNodeID reason)
@@ -146,7 +145,7 @@ static ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext& context, Cli
     ValueSetID otherClasses = ValueSets::complement(context.maker().of(universe.builtinTables().objectStandingFor(BuiltinClasses::Promise)));
     Vector<ValueFlowObjectID, 8> promises;
     context.forEachMember(context.restrict(values, context.maker().intersect(universe.objectsThatMayBeAnything(), universe.knownObjects())), [&](ValueFlowObjectID object) {
-        ClimbingSet named = context.valueOf(context.written(only(context, object), allocatedAs));
+        ClimbingSet named = context.valueOf(context.written(only(context, object), allocatedAsName));
         if (holdsSomething(context, named) && !context.meet(named, otherClasses))
             promises.append(object);
     });
@@ -192,7 +191,7 @@ bool applyConstructionOfPromise(BuiltinID builtin, const ValueFlowBuiltinCall& c
     ClimbingSet reject = only(context, universe.resultOf(Builtins::Promise, 1));
     context.connect(context.masked(context.lookup(context.valueOf(call.thisValue), nameOf(context, BuiltinNames::prototype)), universe.objects()), context.written(promise, prototypeLinkName));
     context.add(context.written(context.unite(resolve, reject), prototypeLinkName), only(context, universe.objectOf(Builtins::FunctionPrototype)));
-    context.add(context.written(promise, allocatedAs), only(context, universe.builtinTables().objectStandingFor(BuiltinClasses::Promise)));
+    context.add(context.written(promise, allocatedAsName), only(context, universe.builtinTables().objectStandingFor(BuiltinClasses::Promise)));
     context.add(context.written(resolve, resolvedPromises), promise);
     context.add(context.written(reject, rejectedPromises), promise);
 

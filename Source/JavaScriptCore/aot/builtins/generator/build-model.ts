@@ -9,7 +9,6 @@ import type { SourcedDeclaration } from "./declarations.ts";
 import { buildDispatches } from "./dispatch.ts";
 import type { ModelEngineFile, TableFeature, TableModel } from "./model.ts";
 import { numberModel } from "./number.ts";
-import { applyTextHashes } from "./verification.ts";
 
 export interface ModelInput {
   declarations: readonly SourcedDeclaration[];
@@ -63,7 +62,6 @@ export function buildModel(input: ModelInput): TableModel {
   problems.throwIfAny();
   reportOperandsWithoutUses(builder);
 
-  applyTextHashes(model);
   checkModel(model, schema, problems);
   problems.throwIfAny();
   return model;

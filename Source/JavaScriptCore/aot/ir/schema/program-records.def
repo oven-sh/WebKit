@@ -10,13 +10,12 @@ record Field wire {
 }
 record StaticField wire { key: PropertyKey? computedKey: UInt32? variable: Variable }
 record InnerObject engine { field: UInt32 layout: Layout? arrayCapacity: UInt32 outerFields: List<UInt32> outerAllocationClass: AllocationClass? isAlwaysInPlace: Bool }
-record FlattenedObject engine { field: UInt32 layout: Layout fields: List<UInt32> allocationClass: AllocationClass? }
 record Layout wire extendedEngine {
     kind: LayoutKind name: String? module: Module(Referrer)? position: UInt32 base: Layout? constructor: Function(Constructor)?
     fields: Span<Field> staticFields: Span<StaticField> supertypes: Span<Layout> sorted computedKeyCount: UInt32 flags: LayoutFlags
     declaredOrder: Span<UInt32>
     | engine builtinLayout: BuiltinLayout? namespaceOf: Module(Referrer)? ownFieldCount: UInt32 flow: LayoutFlow classFlow: ClassFlow
-    innerObjects: List<InnerObject> flattenedObjects: List<FlattenedObject>
+    innerObjects: List<InnerObject>
 }
 
 enum VariableInitialization { Uninitialized Undefined Function }
@@ -38,25 +37,10 @@ enum EntryParameter (presentWith: FunctionFlags) {
 }
 record SourceRange wire { start: UInt32 end: UInt32 }
 record Body wire customEngine customText { code: Span<CodeWord> blockCount: UInt32 valueCount: UInt32 }
-flags ValueFate {
-    IsReturned IsThrown IsYielded IsStoredInVariable IsStoredInEnvironment IsStoredInUnknownObject IsHandedToUnknownCode IsCalled IsConstructed
-    HasMembersRead HasMembersWritten HasMembersDeletedOrDefined HasKeysEnumerated IsIterated IsCompared IsConvertedToPrimitive IsIncomplete
-}
-enum RelationSubjectKind { Parameter Allocation CallResult ReadFrom Constant Computed }
-record RelationSubject wire { kind: RelationSubjectKind index: UInt32 source: UInt32 key: PropertyKey? fate: ValueFate results: UInt32 }
-record StoredInto wire {
-    source: UInt32 target: UInt32 key: PropertyKey? creationOperand: UInt32? isOnEveryPath: Bool isBeforeTargetLeaves: Bool
-}
-record HandedTo wire { source: UInt32 call: UInt32 argument: UInt32 }
-record OperandOf wire { source: UInt32 user: UInt32 position: UInt32 }
-record FunctionRelations wire {
-    subjects: Span<RelationSubject> stores: Span<StoredInto> handed: Span<HandedTo> operands: Span<OperandOf> resultsFullyListed: UInt32
-}
 record Function wire extendedEngine {
     name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32
     enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredType> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
-    relations: FunctionRelations
     | engine capabilities: FunctionCapabilities derivation: Derivation creator: CreatorRecord constructedClass: Layout? inlineFrames: List<InlineFrame>
 }
 
@@ -142,10 +126,6 @@ list columnAdjustments : ColumnAdjustment
 list moduleFailures : ModuleFailure as modulefailure prefix q
 list evalScopes : EvalScope as evalscope prefix e
 list evalBindings : EvalBinding
-list relationSubjects : RelationSubject
-list storedIntos : StoredInto
-list handedTos : HandedTo
-list operandsOf : OperandOf
 list functions : Function as function prefix f
 list code : CodeWord
 list dataNodes : DataNode

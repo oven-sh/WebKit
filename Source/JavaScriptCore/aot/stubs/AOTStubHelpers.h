@@ -171,6 +171,11 @@ void toCodeAddress(StubAssembler&, GPRReg word, GPRReg scratch, StackIsTested);
 void checkStubOperands(StubKey target, std::span<const GPRReg>);
 inline void checkStubOperands(StubKey target, std::initializer_list<GPRReg> registers) { checkStubOperands(target, std::span<const GPRReg>(registers.begin(), registers.end())); }
 
+inline Address softStackLimit()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

@@ -173,7 +173,7 @@ static Vector<Vector<StoredKinds>> collectConstantDataKinds(const Program& progr
 namespace {
 
 // What one walk over the bodies finds. Each thread has its own, and all of it is united, so the result does not depend on which thread saw which function.
-struct BodyScan {
+struct FieldTypeScan {
     Vector<TypeID> typesHandedOn;
     Vector<LayoutSetID> layoutSetsKept;
     Vector<std::pair<FunctionID, LayoutSetID>> layoutSetsReturned;
@@ -186,9 +186,9 @@ struct ScannedType {
     bool listsOnlyFunctions : 1 { false };
 };
 
-class BodyScanner {
+class FieldTypeScanner {
 public:
-    BodyScanner(const Program&, const ParallelLoops&);
+    FieldTypeScanner(const Program&, const ParallelLoops&);
 
     // Answers whether the field references of the function are valid.
     bool scan(FunctionID, unsigned worker);
@@ -205,7 +205,7 @@ private:
     const Program& m_program;
     const ParallelLoops& m_loops;
     Vector<ScannedType> m_types;
-    Vector<BodyScan> m_scans;
+    Vector<FieldTypeScan> m_scans;
     // The casts and the operations that retain an operand. No other value says anything here.
     OpcodeSet m_opcodesToLookAt;
 };
@@ -217,7 +217,7 @@ static bool listsInitialValues(Opcode opcode)
     return opcode == Opcode::NewObject || opcode == Opcode::CloneAs;
 }
 
-BodyScanner::BodyScanner(const Program& program, const ParallelLoops& loops)
+FieldTypeScanner::FieldTypeScanner(const Program& program, const ParallelLoops& loops)
     : m_program(program)
     , m_loops(loops)
     , m_types(program.types.size())
@@ -242,7 +242,7 @@ BodyScanner::BodyScanner(const Program& program, const ParallelLoops& loops)
     });
 }
 
-bool BodyScanner::namesItsCallees(const Function& function, const Value& call) const
+bool FieldTypeScanner::namesItsCallees(const Function& function, const Value& call) const
 {
     if (call.opcode == Opcode::CallDirect)
         return true;
@@ -251,10 +251,10 @@ bool BodyScanner::namesItsCallees(const Function& function, const Value& call) c
 }
 
 // The functions that the program hands on as values, to a callee or into memory that no type describes.
-bool BodyScanner::scan(FunctionID id, unsigned worker)
+bool FieldTypeScanner::scan(FunctionID id, unsigned worker)
 {
     const Function& function = m_program.at(id);
-    BodyScan& scan = m_scans[worker];
+    FieldTypeScan& scan = m_scans[worker];
     for (const Value& value : function.values) {
         if (listsInitialValues(value.opcode) && value.fields().size() != value.numberOfVariadicOperands()) {
             scan.hasInvalidFieldReference = true;
@@ -312,21 +312,21 @@ bool BodyScanner::scan(FunctionID id, unsigned worker)
     return true;
 }
 
-bool BodyScanner::hasValidFieldReferences() const
+bool FieldTypeScanner::hasValidFieldReferences() const
 {
-    return std::ranges::none_of(m_scans, &BodyScan::hasInvalidFieldReference);
+    return std::ranges::none_of(m_scans, &FieldTypeScan::hasInvalidFieldReference);
 }
 
 // What the lists of the threads hold, each id once, ascending.
 template<typename IDType>
-static Vector<IDType> uniteLists(const ParallelLoops& loops, Vector<BodyScan>& scans, Vector<IDType> BodyScan::* list)
+static Vector<IDType> uniteLists(const ParallelLoops& loops, Vector<FieldTypeScan>& scans, Vector<IDType> FieldTypeScan::* list)
 {
     forEachIndexInParallel(loops, scans.size(), [&](unsigned worker) {
         AOT::sort(scans[worker].*list);
         removeRepeatedElements(scans[worker].*list);
     });
     Vector<IDType> united;
-    for (BodyScan& scan : scans)
+    for (FieldTypeScan& scan : scans)
         united.appendVector(std::exchange(scan.*list, { }));
     parallelSort(loops, united.mutableSpan(), std::less<IDType> { });
     removeRepeatedElements(united);
@@ -350,25 +350,25 @@ static BitVector uniteBits(const ParallelLoops& loops, size_t numberOfBits, size
     return united;
 }
 
-BitVector BodyScanner::findFunctionsHandedOn()
+BitVector FieldTypeScanner::findFunctionsHandedOn()
 {
-    Vector<TypeID> types = uniteLists(m_loops, m_scans, &BodyScan::typesHandedOn);
+    Vector<TypeID> types = uniteLists(m_loops, m_scans, &FieldTypeScan::typesHandedOn);
     return uniteBits(m_loops, m_program.functions.size(), types.size(), [&](size_t index, BitVector& functions) {
         for (FunctionID function : m_program.at(types[index]).functions)
             functions.quickSet(function.index());
     });
 }
 
-BitVector BodyScanner::findLayoutsKept(const BitVector& functionsHandedOn)
+BitVector FieldTypeScanner::findLayoutsKept(const BitVector& functionsHandedOn)
 {
     forEachIndexInParallel(m_loops, m_scans.size(), [&](unsigned worker) {
-        BodyScan& scan = m_scans[worker];
+        FieldTypeScan& scan = m_scans[worker];
         for (auto [function, set] : scan.layoutSetsReturned) {
             if (functionsHandedOn.quickGet(function.index()))
                 scan.layoutSetsKept.append(set);
         }
     });
-    Vector<LayoutSetID> sets = uniteLists(m_loops, m_scans, &BodyScan::layoutSetsKept);
+    Vector<LayoutSetID> sets = uniteLists(m_loops, m_scans, &FieldTypeScan::layoutSetsKept);
     BitVector layouts = uniteBits(m_loops, m_program.layouts.size(), sets.size(), [&](size_t index, BitVector& members) {
         for (LayoutID member : m_program.at(sets[index]).members)
             members.quickSet(member.index());
@@ -385,7 +385,7 @@ BitVector BodyScanner::findLayoutsKept(const BitVector& functionsHandedOn)
 
 FieldEvidence::FieldEvidence(const Program& program, const ParallelLoops& loops)
 {
-    BodyScanner scanner(program, loops);
+    FieldTypeScanner scanner(program, loops);
     m_visibleStores = VisibleStores(program, loops, [&](FunctionID id, unsigned worker) {
         return scanner.scan(id, worker);
     });
@@ -403,7 +403,7 @@ StoredKinds FieldEvidence::constantData(FieldReference field) const
     return kindsByField.isEmpty() ? StoredKinds { } : kindsByField[field.field];
 }
 
-static uint16_t nullishPrimitives(StoredKinds kinds)
+static uint16_t nullishPrimitivesOf(StoredKinds kinds)
 {
     return (kinds.contains(StoredKind::Undefined) ? Primitive::Undefined : 0) | (kinds.contains(StoredKind::Null) ? Primitive::Null : 0);
 }
@@ -441,7 +441,7 @@ static std::optional<Type> findExpectedIntegers(const Program& program, const Fi
         return std::nullopt;
 
     StoredKinds constants = evidence.constantData(reference);
-    if (constants.contains(StoredKind::Other) || nullishPrimitives(constants) & ~slotType.primitives)
+    if (constants.contains(StoredKind::Other) || nullishPrimitivesOf(constants) & ~slotType.primitives)
         return std::nullopt;
 
     StoredKinds stored = evidence.visibleStores(reference);
@@ -459,7 +459,7 @@ static std::optional<Type> findExpectedIntegers(const Program& program, const Fi
     if (integers.isEmpty())
         return std::nullopt;
 
-    uint16_t nullish = nullishPrimitives(stored | constants);
+    uint16_t nullish = nullishPrimitivesOf(stored | constants);
     if (!field.flags.contains(FieldFlags::IsRequired))
         nullish |= Primitive::Undefined;
     return Type::integer(integers).withPrimitives(nullish & slotType.primitives);
@@ -595,7 +595,7 @@ static NarrowedFields narrowFields(Program& program, const FieldEvidence& eviden
     return narrowed;
 }
 
-static bool hasResolvableOrigin(const Program& program, const Field& field)
+static bool originCanBeResolved(const Program& program, const Field& field)
 {
     bool isInherited = field.flags.contains(FieldFlags::IsInherited);
     if (!field.originLayout)
@@ -610,7 +610,7 @@ static void updateInheritedFields(Program& program, const ParallelLoops& loops)
 {
     forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned layoutIndex) {
         for (Field& field : program.layouts[layoutIndex].fields) {
-            if (!field.flags.contains(FieldFlags::IsInherited) || !hasResolvableOrigin(program, field))
+            if (!field.flags.contains(FieldFlags::IsInherited) || !originCanBeResolved(program, field))
                 continue;
             const Field& declaration = fieldAt(program, { field.originLayout, *field.originField });
             field.declared = declaration.declared;
@@ -643,7 +643,7 @@ static bool hasResolvableFieldOrigins(const Program& program, const ParallelLoop
     std::atomic<bool> areResolvable { true };
     forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned index) {
         for (const Field& field : program.layouts[index].fields) {
-            if (!hasResolvableOrigin(program, field))
+            if (!originCanBeResolved(program, field))
                 areResolvable.store(false, std::memory_order_relaxed);
         }
     });
@@ -804,7 +804,7 @@ static void reportInitialValueOutsideType(IRBuilder& builder, ProgramPoint alloc
     });
 }
 
-static ProgramPoint pointAfter(ProgramPoint point)
+static ProgramPoint programPointAfter(ProgramPoint point)
 {
     return { point.block, point.index + 1 };
 }
@@ -819,7 +819,7 @@ static uint32_t defineBehindAllocation(IRBuilder& builder, ProgramPoint point, u
     for (uint32_t valueIndex = firstValueIndex; valueIndex < numberOfValues; ++valueIndex) {
         Value definition = IRBuilder::make(Opcode::PropDefine, { id, function.at(id).variadicOperands()[valueIndex] });
         definition.setKey(initializedField(program, function.at(id), valueIndex).key);
-        builder.insertBefore(pointAfter(point), WTF::move(definition));
+        builder.insertBefore(programPointAfter(point), WTF::move(definition));
     }
 
     Value& allocation = function.edit(id);
@@ -855,7 +855,7 @@ static uint32_t storeBehindAllocation(IRBuilder& builder, ProgramPoint point)
         store.setMode(ECMAMode::Strict);
         ValueID fillerID = builder.insertBefore(point, WTF::move(*filler));
         function.edit(id).mutableVariadicOperands()[valueIndex] = fillerID;
-        builder.insertBefore(pointAfter(point), WTF::move(store));
+        builder.insertBefore(programPointAfter(point), WTF::move(store));
         ++numberOfStores;
     }
     return numberOfStores;

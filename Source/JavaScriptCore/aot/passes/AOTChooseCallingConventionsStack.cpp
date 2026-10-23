@@ -23,13 +23,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct TailCallEdge {
-    friend auto operator<=>(const TailCallEdge&, const TailCallEdge&) = default;
-
-    FunctionID callee;
-    FunctionID caller;
-};
-
 struct EntryRequest {
     friend auto operator<=>(const EntryRequest&, const EntryRequest&) = default;
 
@@ -142,11 +135,6 @@ void reserveStackWords(const ConventionInputs& context, std::span<const TailCall
         return;
     reservation.propagateToCallers(sites);
     reservation.store(tables);
-}
-
-static ValueID tailCallOf(const Block& block)
-{
-    return block.terminator.kind == TerminatorKind::ReturnCall ? block.terminator.callOperand() : ValueID();
 }
 
 static bool isUndefined(const Function& function, ValueID id)

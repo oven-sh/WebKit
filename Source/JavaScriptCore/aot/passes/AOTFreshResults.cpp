@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTFlattenInnerObjects.h"
 #include "AOTSinkAllocationsInternal.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -24,69 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture::ARM64) <= maxTagBitsInInt32);
 static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture::X86_64) <= maxTagBitsInInt32);
 
-static bool isWrapperOrWorker(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-        return true;
-    case FunctionRole::Source:
-    case FunctionRole::Library:
-    case FunctionRole::Model:
-    case FunctionRole::Signature:
-    case FunctionRole::GenericEntrypoint:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
-    case FunctionRole::ChainStep:
-    case FunctionRole::StubBody:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool canReturnParts(const Function& function)
-{
-    if (!function.hasBody() || !function.mayChangeSignature() || !function.mayBeCloned() || !function.hasOrdinaryFrame())
-        return false;
-    if (function.results.size() != 1 || function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
-        return false;
-    if (isWrapperOrWorker(function.role))
-        return false;
-    // A construction by value names the function itself, and is resolved only while that is no wrapper. The body that a resolved construction calls is split like any other.
-    if (function.role == FunctionRole::Source && function.constructedClass)
-        return false;
-    switch (function.kind) {
-    case FunctionKind::Plain:
-    case FunctionKind::Arrow:
-    case FunctionKind::Method:
-        return true;
-    case FunctionKind::Getter:
-    case FunctionKind::Setter:
-    case FunctionKind::BaseConstructor:
-    case FunctionKind::DerivedConstructor:
-    case FunctionKind::Initializer:
-    case FunctionKind::Module:
-    case FunctionKind::CommonJsModule:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+static FreshResultShape shapeOfReturns(const AllocationSinking&);
 
 static bool returnsWithoutValue(const Terminator& terminator)
 {
@@ -132,7 +69,7 @@ static bool mayBeAllocation(FunctionAnalyses& analyses, ValueID value)
     return false;
 }
 
-static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
+static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
     bool hasAllocation = false;
@@ -157,20 +94,13 @@ static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses, Object
     if (!sinking.collectCandidates())
         return { .state = FreshResultsState::NotFresh };
     sinking.analyze();
-    return shapeOfReturns(sinking, objectsThatBecomeOneCell);
-}
-
-FreshResultShape computeFreshResults(FunctionAnalyses& analyses)
-{
-    if (!canReturnParts(analyses.function()))
-        return { .state = FreshResultsState::NotFresh };
-    return computeShapeOfReturns(analyses, ObjectsThatBecomeOneCell::StayWhole);
+    return shapeOfReturns(sinking);
 }
 
 bool returnsFreshAggregate(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
-    return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses, ObjectsThatBecomeOneCell::AreFreshLikeOthers).isFresh();
+    return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses).isFresh();
 }
 
 FreshResultVariant variantOfShape(const AllocationSinking& sinking, VirtualObjectID object, const VirtualShape& shape)
@@ -294,26 +224,7 @@ static void assignParts(const AllocationSinking& sinking, FreshResultShape& shap
     }
 }
 
-// The parts of such an object would leave the function with the inner object made, and the caller would build the outer one around it: two cells for ever.
-static bool listsObjectThatMayLieInIt(const AllocationSinking& sinking, const FreshResultVariant& variant)
-{
-    if (variant.kind != VirtualShapeKind::Fields)
-        return false;
-    const Function& function = sinking.function();
-    const Value& allocation = function.at(variant.description.allocation);
-    if (allocation.opcode != Opcode::NewObject)
-        return false;
-    auto fields = allocation.fields();
-    auto values = allocation.valuesOperands();
-    for (size_t index = 0; index < fields.size(); ++index) {
-        const Value& listed = function.at(sameObjectThroughCasts(function, values[index]));
-        if (listed.opcode == Opcode::NewObject && mayLieInOuterObject(sinking.program(), { allocation.layout(), fields[index] }, listed.layout()))
-            return true;
-    }
-    return false;
-}
-
-FreshResultShape shapeOfReturns(const AllocationSinking& sinking, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
+static FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
 {
     std::span<const VirtualReturn> returns = sinking.virtualReturns();
     if (returns.empty())
@@ -326,11 +237,6 @@ FreshResultShape shapeOfReturns(const AllocationSinking& sinking, ObjectsThatBec
         addVariantsOfReturn(sinking, returned, shape);
 
     if (!hasVariantOfKind(shape, VirtualShapeKind::Fields))
-        return { .state = FreshResultsState::NotFresh };
-    bool mayBecomeOneObject = objectsThatBecomeOneCell == ObjectsThatBecomeOneCell::StayWhole && sinking.context().build.isEnabled(PassID::FlattenInnerObjects, FunctionID()) && std::ranges::any_of(shape.variants, [&](const FreshResultVariant& variant) {
-        return listsObjectThatMayLieInIt(sinking, variant);
-    });
-    if (mayBecomeOneObject)
         return { .state = FreshResultsState::NotFresh };
     if (shape.variants.size() > sinking.limit(LimitID::MaxVirtualObjectVariants)) {
         shape.state = FreshResultsState::Unknown;
@@ -370,123 +276,6 @@ bool FreshResultVariant::buildsSameValueAs(const FreshResultVariant& other) cons
         && length == other.length
         && haveSameFields(properties.span(), other.properties.span())
         && haveSameFields(parts.span(), other.parts.span());
-}
-
-static ASCIILiteral sourceTextOf(VirtualConstant constant)
-{
-    switch (constant) {
-    case VirtualConstant::Undefined:
-        return "undefined"_s;
-    case VirtualConstant::Null:
-        return "null"_s;
-    case VirtualConstant::False:
-        return "false"_s;
-    case VirtualConstant::True:
-        return "true"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpType(PrintStream& out, TypeID type)
-{
-    using NamedType = std::pair<TypeID, ASCIILiteral>;
-    static constexpr NamedType fixedTypes[] {
-        { TypeTable::never, "never"_s },
-        { TypeTable::undefined, "undefined"_s },
-        { TypeTable::boolean, "boolean"_s },
-        { TypeTable::int32, "int32"_s },
-        { TypeTable::integer, "integer"_s },
-        { TypeTable::number, "number"_s },
-        { TypeTable::string, "string"_s },
-        { TypeTable::function, "function"_s },
-        { TypeTable::object, "object"_s },
-        { TypeTable::anything, "anything"_s },
-        { TypeTable::null, "null"_s },
-        { TypeTable::nullish, "nullish"_s },
-        { TypeTable::absent, "absent"_s },
-        { TypeTable::guard, "guard"_s },
-    };
-    auto fixedType = std::ranges::find(fixedTypes, type, &NamedType::first);
-    if (fixedType != std::end(fixedTypes)) {
-        out.print(fixedType->second);
-        return;
-    }
-    out.print("t", type.index());
-}
-
-static void dumpField(PrintStream& out, const FreshResultField& entry)
-{
-    if (entry.field.kind == VirtualFieldKind::Named)
-        out.print("k", entry.field.key.index());
-    else
-        out.print(entry.field);
-    out.print(":p", entry.part);
-}
-
-static void dumpVariant(PrintStream& out, const FreshResultVariant& variant)
-{
-    switch (variant.kind) {
-    case VirtualShapeKind::Cell:
-        out.print("cell");
-        return;
-    case VirtualShapeKind::Constant:
-        out.print(sourceTextOf(variant.constant));
-        return;
-    case VirtualShapeKind::Fields:
-        break;
-    }
-
-    if (variant.description.layout)
-        out.print("L", variant.description.layout.index());
-    else
-        out.print(nameOf(variant.description.kind));
-    if (variant.description.kind == VirtualObjectKind::Array)
-        out.print("[", variant.length, "]");
-
-    out.print("{");
-    CommaPrinter space(" "_s);
-    for (const FreshResultField& property : variant.properties) {
-        out.print(space);
-        dumpField(out, property);
-    }
-    for (const FreshResultField& part : variant.parts) {
-        out.print(space);
-        dumpField(out, part);
-    }
-    out.print("}");
-}
-
-void FreshResultShape::dump(PrintStream& out) const
-{
-    switch (state) {
-    case FreshResultsState::Unknown:
-        out.print("unknown");
-        return;
-    case FreshResultsState::NotFresh:
-        out.print("not fresh");
-        return;
-    case FreshResultsState::Fresh:
-        break;
-    }
-
-    out.print("fresh");
-    if (hasTag())
-        out.print(" tag");
-
-    out.print(" variants=[");
-    CommaPrinter variantComma;
-    for (const FreshResultVariant& variant : variants) {
-        out.print(variantComma);
-        dumpVariant(out, variant);
-    }
-
-    out.print("] parts=[");
-    CommaPrinter partComma;
-    for (TypeID type : partTypes) {
-        out.print(partComma);
-        dumpType(out, type);
-    }
-    out.print("]");
 }
 
 } } } // namespace JSC::AOT::Typed

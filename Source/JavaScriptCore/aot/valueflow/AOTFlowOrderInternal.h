@@ -83,20 +83,13 @@ struct FlowScopeCalls {
     Vector<FlowCallSite> soleCallSites;
     Vector<FlowScopeCall> byCaller;
     Vector<FlowScopeCall> byCallee;
+    // Where the calls of each function begin in the two lists. One entry more than there are functions.
+    Vector<uint32_t> firstByCaller;
+    Vector<uint32_t> firstByCallee;
     BitVector functionsEnteredByHost;
-};
 
-struct FlowScopeAccesses {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FlowScopeAccesses);
-
-    Vector<FlowScopeLocationAccess> reads;
-    Vector<FlowScopeLocationAccess> stores;
-    Vector<FlowEnvironmentAllocation> allocations;
-    Vector<FlowModuleValueRead> moduleValueReads;
-    Vector<FlowFunctionMention> references;
-    Vector<FlowScopeLocation> opaqueVariables;
-    Vector<LayoutID> opaqueLayouts;
-    Vector<EvalScopeID> evalScopes;
+    std::span<const FlowScopeCall> callsBy(FunctionID caller) const LIFETIME_BOUND { return byCaller.subspan(firstByCaller[caller.index()], firstByCaller[caller.index() + 1] - firstByCaller[caller.index()]); }
+    std::span<const FlowScopeCall> callsOf(FunctionID callee) const LIFETIME_BOUND { return byCallee.subspan(firstByCallee[callee.index()], firstByCallee[callee.index() + 1] - firstByCallee[callee.index()]); }
 };
 
 struct FlowExportedVariable {
@@ -111,7 +104,6 @@ struct FlowScopeOwner {
     ModuleID module;
     Vector<VariableID> variables;
     Vector<LayoutID> environments;
-    Vector<FlowScopeLocation> members;
     Vector<FlowExportedVariable> exports;
     Vector<ModuleID> exporters;
 };
@@ -119,7 +111,11 @@ struct FlowScopeOwner {
 struct FlowScopeIndex {
     const FlowOrderInputs& inputs;
     const FlowModuleOrder& moduleOrder;
-    const FlowScopeAccessesByFunction& bodies;
+    // The reached functions with a body.
+    BitVector bodies;
+    // What each body mentions, in the order of its blocks. One entry more in the second list than there are functions.
+    Vector<FlowFunctionMention> mentions;
+    Vector<uint32_t> firstMention;
     FlowScopeLocationNumbering numbering;
     Vector<FlowScopeLocationAccess> reads;
     Vector<FlowScopeLocationAccess> stores;
@@ -127,11 +123,8 @@ struct FlowScopeIndex {
     Vector<FlowScopeLocationAccess> storesThroughClassObjects;
     Vector<FlowEnvironmentAllocation> allocations;
     Vector<FlowModuleValueRead> moduleValueReads;
-    // The order of the first location holds when the second one is stored before every read.
-    Vector<std::pair<FlowScopeLocation, FlowScopeLocation>> assumedStores;
     BitVector opaqueLocations;
     BitVector syntheticVariables;
-    BitVector staticFieldsOfEscapedClasses;
     // No mention in the body of an owner says when such a function is first entered: the host, or a call that a pass creates later, enters it or a function that leads to it by mentions.
     BitVector functionsEnteredWithoutMention;
     BitVector modulesOfFunctionsEnteredWithoutMention;
@@ -141,9 +134,9 @@ struct FlowScopeIndex {
     Vector<FunctionID> environmentOwners;
     FlowScopeCalls calls;
     Vector<FlowScopeOwner> owners;
-    BitVector modulesLoadedByName;
 
-    const Program& program() const { return inputs.program(); }
+    const Program& program() const { return inputs.program; }
+    std::span<const FlowFunctionMention> mentionsIn(FunctionID function) const LIFETIME_BOUND { return mentions.subspan(firstMention[function.index()], firstMention[function.index() + 1] - firstMention[function.index()]); }
 };
 
 inline std::span<const FlowScopeLocationAccess> accessesAt(std::span<const FlowScopeLocationAccess> sorted, FlowScopeLocation location)
@@ -166,11 +159,7 @@ inline constexpr FlowScopeEntry neverScopeEntry { FlowScopeEntryState::Never, { 
 
 constexpr FlowScopeEntry scopeEntryAfter(FunctionID function, ProgramPoint point) { return { FlowScopeEntryState::AfterPoint, function, point }; }
 
-FlowScopeLocationNumbering createScopeLocationNumbering(const Program&);
-void numberMemberLocations(const FlowOrderInputs&, FlowScopeLocationNumbering&);
-void collectScopeAccesses(const Program&, const FlowScopeLocationNumbering&, FunctionID, FlowScopeAccesses&);
-void ensureScopeAccesses(const FlowOrderInputs&, const FlowScopeLocationNumbering&, FlowScopeAccessesByFunction&);
-FlowScopeIndex createScopeIndex(const FlowOrderInputs&, const FlowModuleOrder&, const FlowScopeAccessesByFunction&, FlowScopeLocationNumbering&&);
+FlowScopeIndex createScopeIndex(const FlowOrderInputs&, const FlowModuleOrder&);
 void computeSyntheticExportOrders(const FlowScopeIndex&, std::span<FlowLocationOrder>);
 
 // The body of the owner, or of a function whose one mention in reached code is a direct call in a frame. Such a function runs only while that call runs.
@@ -277,7 +266,6 @@ private:
     InitializationState initializationOf(FlowScopeLocation, bool isSetAtCreation, bool startsAbsent);
     StoreCount storeCountOf(FlowScopeLocation, bool isSetAtCreation, NOESCAPE const Invocable<bool(const FlowScopeLocationAccess&)> auto& canRunTwice);
     bool canRunTwice(const FlowScopeLocationAccess&);
-    StoreCount storeCountOfMember(FlowScopeLocation);
     bool canRunTwicePerInstance(const FlowScopeLocationAccess& store, BlockID allocation);
     std::optional<BlockID> trackedAllocationBlock(LayoutID, std::span<const FlowEnvironmentAllocation>);
     bool isListedWithUndefinedAlone(std::span<const FlowEnvironmentAllocation>, uint32_t field);

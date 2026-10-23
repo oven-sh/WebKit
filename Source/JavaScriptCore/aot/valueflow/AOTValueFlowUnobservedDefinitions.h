@@ -11,6 +11,7 @@
 #include "AOTVector.h"
 #include <span>
 #include <wtf/HashMap.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT {
 
@@ -28,7 +29,7 @@ struct UnobservedFieldDefinition {
 class UnobservedFieldDefinitions {
 public:
     UnobservedFieldDefinitions() = default;
-    UnobservedFieldDefinitions(const Program&, BuildContext&);
+    UnobservedFieldDefinitions(const Program&, BuildContext&, NOESCAPE const ScopedLambda<bool(FunctionID)>& mayHoldDirectCall);
 
     bool contains(FunctionID initializer, ValueID definition) const;
     std::span<const UnobservedFieldDefinition> all() const LIFETIME_BOUND { return m_definitions.span(); }

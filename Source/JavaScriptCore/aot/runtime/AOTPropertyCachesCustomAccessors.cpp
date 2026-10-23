@@ -100,12 +100,12 @@ static bool isCacheableNonDictionary(Structure* structure)
     return structure->propertyAccessesAreCacheable() && !structure->isDictionary();
 }
 
-static PropertyAnswer uncacheableOnce(SlotAccess access)
+static PropertyAnswer uncacheableAccessorOnce(SlotAccess access)
 {
     return PropertyAnswer::uncacheable(access, true);
 }
 
-static PropertyAnswer uncacheableAfter(SlotAccess access, ChainWalk&& walk)
+static PropertyAnswer uncacheableAccessorAfter(SlotAccess access, ChainWalk&& walk)
 {
     PropertyAnswer answer = PropertyAnswer::uncacheable(access, walk.didFlatten);
     answer.changeableObjects = WTF::move(walk.changeableObjects);
@@ -117,7 +117,7 @@ static PropertyAnswer answerForCustomAccessor(VM& vm, SlotAccess access, ChainWa
     CustomAccessorTable& table = vm.aotState().propertyCaches->customAccessors();
     std::optional<uint32_t> index = mode == ChainWalkMode::MayAllocate ? table.add(record) : table.find(record);
     if (!index)
-        return uncacheableOnce(access);
+        return uncacheableAccessorOnce(access);
     PropertyAnswer answer;
     answer.kind = PropertyAnswerKind::CustomAccessor;
     answer.access = access;
@@ -136,7 +136,7 @@ PropertyAnswer classifyCustomGetter(const ReadQuery& query)
     JSObject* base = asObject(query.base);
     JSObject* holder = slot.slotBase();
     if (base->structure() != query.structureBefore)
-        return uncacheableOnce(SlotAccess::Read);
+        return uncacheableAccessorOnce(SlotAccess::Read);
 
     ChainWalk walk;
     if (holder != base) {
@@ -146,13 +146,13 @@ PropertyAnswer classifyCustomGetter(const ReadQuery& query)
             return PropertyAnswer::uncacheable(SlotAccess::Read);
         walk = walkChain({ query.globalObject, query.structureBefore, base, query.mode }, query.uid);
         if (walk.result != ChainWalkResult::Found || walk.holder != holder || !(walk.attributes & PropertyAttribute::CustomAccessorOrValue))
-            return uncacheableAfter(SlotAccess::Read, WTF::move(walk));
+            return uncacheableAccessorAfter(SlotAccess::Read, WTF::move(walk));
     }
 
     bool passesHolder = !(slot.attributes() & PropertyAttribute::CustomAccessor);
     auto domAttribute = slot.domAttribute();
     if (domAttribute && !(passesHolder ? holder : base)->inherits(domAttribute->classInfo))
-        return uncacheableAfter(SlotAccess::Read, WTF::move(walk));
+        return uncacheableAccessorAfter(SlotAccess::Read, WTF::move(walk));
     uint32_t offsetOfCachedValue = !passesHolder && domAttribute ? BuiltinBindings::cachedValueOffsetOf(domAttribute->classInfo, query.uid).value_or(0) : 0;
 
     // The slot serves every object of the Structure, and each of them holds its own property: a null slotBase passes the receiver.
@@ -167,7 +167,7 @@ PropertyAnswer classifyAbsentClosurePrototype(const ReadQuery& query)
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, asObject(query.base), query.mode }, query.uid);
     if (walk.result != ChainWalkResult::Absent)
-        return uncacheableAfter(SlotAccess::Read, WTF::move(walk));
+        return uncacheableAccessorAfter(SlotAccess::Read, WTF::move(walk));
 
     CustomAccessorRecord record { std::bit_cast<void*>(closurePrototypePropertyGetter().taggedPtr()), nullptr, query.structureBefore->realm(), 0, 0 };
     return answerForCustomAccessor(query.globalObject->vm(), SlotAccess::Read, query.mode, record, true, WTF::move(walk.changeableObjects));
@@ -182,7 +182,7 @@ PropertyAnswer classifyCustomSetter(const StoreQuery& query)
     JSObject* holder = query.slot.base();
     Structure* structureBefore = query.structureBefore;
     if (base->structure() != structureBefore)
-        return uncacheableOnce(access);
+        return uncacheableAccessorOnce(access);
     if (!isCacheableNonDictionary(structureBefore) || structureBefore->typeInfo().overridesPut() || structureBefore->isImmutableProperty(query.uid))
         return PropertyAnswer::uncacheable(access);
 
@@ -192,7 +192,7 @@ PropertyAnswer classifyCustomSetter(const StoreQuery& query)
             return PropertyAnswer::uncacheable(access);
         walk = walkChain({ query.globalObject, structureBefore, base, ChainWalkMode::MayAllocate }, query.uid);
         if (storeThroughChain(walk) != StoreThroughChain::CallsCustomSetter || walk.holder != holder)
-            return uncacheableAfter(access, WTF::move(walk));
+            return uncacheableAccessorAfter(access, WTF::move(walk));
     }
 
     CustomAccessorRecord record { std::bit_cast<void*>(query.slot.customSetter().taggedPtr()), nullptr, holder->realm(), 0, 0 };

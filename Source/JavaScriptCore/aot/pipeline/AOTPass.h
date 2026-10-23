@@ -129,10 +129,6 @@ struct FunctionPassContext {
     bool isLastStepOfSchedule { false };
     bool mayDecideTestsAcrossBlocks { true };
     bool lookedOnlyNearby { false };
-    std::array<ChangeLog::Cursor, numberOfPasses> cursors { };
-
-    // Up to where the pass has read the log. The pass moves it, and nobody else does.
-    ChangeLog::Cursor& seenBy(PassID pass) LIFETIME_BOUND { return cursors[static_cast<unsigned>(pass)]; }
     // Set by the planner of a site where its answer follows from more than the site, the types of its operands and the program: from where the site stands, or from who else uses a value.
     bool planAsksAboutPlace { false };
 

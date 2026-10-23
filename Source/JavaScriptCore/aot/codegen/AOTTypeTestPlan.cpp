@@ -238,7 +238,7 @@ static void appendObjectTests(TypeTestPlan& plan, const Program& program, const 
     appendLayoutTests(plan, program, to, fromObjects);
 }
 
-static unsigned orderOf(CellTestKind kind)
+static unsigned planOrderOf(CellTestKind kind)
 {
     switch (kind) {
     case CellTestKind::CellTypeIs:
@@ -323,7 +323,7 @@ static void fillPlan(TypeTestPlan& plan, const Program& program, const Type& fro
     plan.objects = computeObjectsVerdict(program, from, to, fromObjects);
     appendObjectTests(plan, program, from, to, fromObjects);
     AOT::stableSort(plan.cellTests, { }, [](const CellTest& test) {
-        return std::tuple { orderOf(test.kind), subjectOf(test) };
+        return std::tuple { planOrderOf(test.kind), subjectOf(test) };
     });
     settleVerdict(plan);
 }

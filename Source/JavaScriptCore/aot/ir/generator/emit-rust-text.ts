@@ -4,7 +4,7 @@ import { blocks, indent, indentation, pack, rustMarker } from "./lines.ts";
 import type { Field, Kind, Schema, SchemaRecord, SchemaType, Variant, VariantCase } from "./model.ts";
 import { rustIdentifier, rustTypeName, snakeCase } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
-import { externalPathsOf, idsImport, listedTypesOf, rustLiteral, rustTypeOf } from "./rust-types.ts";
+import { externalPathsOf, idsImport, listedTypesOf, rustLiteral } from "./rust-types.ts";
 
 function textTypes(schema: Schema): SchemaType[] {
   return listedTypesOf(schema).filter(type => !(type.tag === "Record" && type.record.isCustomText));
@@ -135,75 +135,8 @@ function printField(schema: Schema, field: Field, value: string, byReference: bo
   return printedIf(negated(test), [isBool ? 'printer.out.push_str("true");' : statement]);
 }
 
-export function parseValue(schema: Schema, kind: Kind): string {
-  switch (kind.tag) {
-    case "Id":
-      if (kind.id.record?.isCustomText) return `parser.parse_${snakeCase(kind.id.name)}()`;
-      return `parser.parse_id::<${rustTypeOf(kind)}>(${rustLiteral(`an id of kind ${kind.id.name}`)})`;
-    case "External":
-      if (kind.external.isNamedInText) {
-        return `parser.parse_enum(${rustTypeOf(kind)}::from_name, ${rustLiteral(`a member of ${kind.external.name}`)})`;
-      }
-      return `parse_external(parser, ${rustTypeOf(kind)}::from_wire, ${rustLiteral(`a number of ${kind.external.name}`)})`;
-    case "Enum":
-      return `parser.parse_enum(${rustTypeOf(kind)}::from_name, ${rustLiteral(`a member of ${kind.type.name}`)})`;
-    case "Flags":
-      return `parser.parse_flags(&${rustTypeOf(kind)}::NAMES, ${rustLiteral(`a member of ${kind.type.name}`)}).map(${rustTypeOf(kind)})`;
-    case "Record":
-      return `${rustTypeOf(kind)}::parse_nested(parser)`;
-    case "Variant":
-      return `${rustTypeOf(kind)}::parse_variant(parser)`;
-    case "Scalar":
-      return parseScalar(kind);
-    case "PlacedWord":
-    case "Span":
-    case "List":
-      return failWithoutSpelling(kind);
-  }
-}
-
-function parseScalar(kind: Extract<Kind, { tag: "Scalar" }>): string {
-  switch (kind.scalar) {
-    case "Bool":
-      return "parser.parse_bool()";
-    case "Int64":
-      return "parser.parse_i64()";
-    case "Double":
-      return "parser.parse_double()";
-    case "UInt32":
-    case "Field":
-    case "Word":
-    case "CodeWord":
-      return "parser.parse_u32()";
-    case "UInt8":
-    case "UInt64":
-    case "Byte":
-      return failWithoutSpelling(kind);
-  }
-}
-
-function parseFieldValue(schema: Schema, field: Field): string {
-  const kind = field.kind;
-  if (kind.tag === "Span" && isByte(kind.element)) return "parser.parse_bytes()?";
-  if (kind.tag === "Span") return `parser.parse_list(|parser| ${parseValue(schema, kind.element)})?`;
-  const value = `${parseValue(schema, kind)}?`;
-  return field.isOptional ? `Some(${value})` : value;
-}
-
 function textFields(record: SchemaRecord): Field[] {
   return record.wireFields.filter(field => !followsFields(field));
-}
-
-function parseFieldsLoop(arms: readonly string[], owner: string): string[] {
-  return [
-    "while let Some(name) = parser.next_field_name()? {",
-    ...indent([
-      "match name {",
-      ...indent([...arms, `_ => return parser.fail(${rustLiteral(`a field of ${owner}`)}),`]),
-      "}",
-    ]),
-    "}",
-  ];
 }
 
 function isZeroFunction(schema: Schema, record: SchemaRecord): string[] {
@@ -243,25 +176,6 @@ function recordTextImpl(schema: Schema, record: SchemaRecord): string[] {
       "}",
     ]),
     ...isZeroFunction(schema, record),
-    ...indent([
-      `pub fn parse_fields(parser: &mut Parser<'_>) -> Parsed<${name}> {`,
-      ...indent([
-        `let mut record = ${name}::default();`,
-        ...parseFieldsLoop(
-          fields.map(
-            field =>
-              `${rustLiteral(field.name)} => record.${rustIdentifier(field.name)} = ${parseFieldValue(schema, field)},`,
-          ),
-          record.name,
-        ),
-        ...following.map(({ member, suffix }) => `record.${member} = parser.parse_${suffix}()?;`),
-        "Ok(record)",
-      ]),
-      "}",
-      `pub(super) fn parse_nested(parser: &mut Parser<'_>) -> Parsed<${name}> {`,
-      `${indentation}parser.parse_nested(${name}::parse_fields)`,
-      "}",
-    ]),
     "}",
   ];
 }
@@ -281,30 +195,8 @@ function printCaseArm(schema: Schema, variant: Variant, variantCase: VariantCase
   ];
 }
 
-function parseCaseArm(schema: Schema, variant: Variant, variantCase: VariantCase): string[] {
-  const caseValue = casePattern(variant, variantCase);
-  if (variantCase.fields.length === 0) return [`${rustLiteral(variantCase.name)} => Ok(${caseValue}),`];
-  return [
-    `${rustLiteral(variantCase.name)} => parser.parse_nested(|parser| {`,
-    ...indent([
-      ...variantCase.fields.map(
-        field => `let mut ${rustIdentifier(field.name)} = <${rustTypeOf(field.kind, field.isOptional)}>::default();`,
-      ),
-      ...parseFieldsLoop(
-        variantCase.fields.map(
-          field => `${rustLiteral(field.name)} => ${rustIdentifier(field.name)} = ${parseFieldValue(schema, field)},`,
-        ),
-        `${variant.name}::${variantCase.name}`,
-      ),
-      `Ok(${caseValue})`,
-    ]),
-    "}),",
-  ];
-}
-
 function variantTextImpl(schema: Schema, variant: Variant): string[] {
   const name = rustTypeName(variant.name);
-  const expected = rustLiteral(`a case of ${variant.name}`);
   return [
     `impl ${name} {`,
     ...indent([
@@ -315,16 +207,6 @@ function variantTextImpl(schema: Schema, variant: Variant): string[] {
       ...indent([
         "match self {",
         ...indent(variant.cases.flatMap(variantCase => printCaseArm(schema, variant, variantCase))),
-        "}",
-      ]),
-      "}",
-      `pub(super) fn parse_variant(parser: &mut Parser<'_>) -> Parsed<${name}> {`,
-      ...indent([
-        `match parser.parse_word(${expected})? {`,
-        ...indent([
-          ...variant.cases.flatMap(variantCase => parseCaseArm(schema, variant, variantCase)),
-          `_ => parser.fail(${expected}),`,
-        ]),
         "}",
       ]),
       "}",
@@ -351,14 +233,6 @@ pub(super) fn print_flags(printer: &mut Printer<'_>, names: &[&str], bits: u32) 
     let names_of_set_bits = names.iter().enumerate().filter(|&(bit, _)| bits >> bit & 1 != 0).map(|(_, &name)| name);
     printer.print_separated(names_of_set_bits, |printer, name| printer.out.push_str(name));
     printer.out.push(']');
-}
-
-pub(super) fn parse_external<T>(parser: &mut Parser<'_>, from_wire: impl FnOnce(u32) -> Option<T>, expected: &'static str) -> Parsed<T> {
-    let word = parser.parse_u32()?;
-    match from_wire(word) {
-        Some(value) => Ok(value),
-        None => parser.fail(expected),
-    }
 }`.split("\n");
 
 function recordTextRs(schema: Schema): string[] {
@@ -378,7 +252,6 @@ function recordTextRs(schema: Schema): string[] {
     ...externalPathsOf(types).map(path => `use ${path};`),
     idsImport,
     "use crate::ir::print::Printer;",
-    "use crate::ir::text::{Parsed, Parser};",
     "",
     ...blocks(recordHelpers, ...impls),
   ];

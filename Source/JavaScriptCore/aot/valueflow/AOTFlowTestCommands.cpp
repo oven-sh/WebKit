@@ -13,10 +13,9 @@ namespace JSC { namespace AOT { namespace Typed {
 std::span<const TestCommand> flowTestCommands()
 {
     static constexpr TestCommand commands[] = {
-        { "flow"_s, IRForm::AsRead, runFlowTestCommand, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "flow-apply"_s, IRForm::AsRead, runFlowApplyTestCommand, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "flow-validate"_s, IRForm::AsRead, runFlowValidateTestCommand, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "flow-report"_s, IRForm::AsRead, runFlowReportTestCommand, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "flow"_s, IRForm::AsRead, runFlowTestCommand, ProgramAsRead::TypedAndVerified },
+        { "flow-apply"_s, IRForm::AsRead, runFlowApplyTestCommand, ProgramAsRead::TypedAndVerified },
+        { "flow-report"_s, IRForm::AsRead, runFlowReportTestCommand, ProgramAsRead::TypedAndVerified },
     };
     return commands;
 }

@@ -141,7 +141,6 @@ static NEVER_INLINE const BuiltinOverload* unpackOverloads(std::span<const Built
             .effects = builtinTableEffectsOfOverloads[packed.effects],
             .flow = builtinTableFlowsOfOverloads[packed.flow],
             .code = builtinTableCodeOfOverloads[packed.code],
-            .textHash = packed.textHash,
         };
     }
     unpackedOverloads.store(overloads, std::memory_order_release);

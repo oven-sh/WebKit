@@ -271,7 +271,6 @@ struct GlobalBindingSite {
 void collectKeyCellUses(const Program&, FunctionID, Vector<KeyCellUse>&);
 void collectGlobalBindingSites(const Program&, FunctionID, Vector<GlobalBindingSite>&);
 
-void checkPlacementInputs(const PlacementContext&);
 PlacedSites collectPlacedSites(const PlacementContext&);
 
 ShapeVariants chooseShapeVariants(const PlacementContext&, const PlacedSites&);

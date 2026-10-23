@@ -29,11 +29,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t stateOperandIndex = 0;
 static_assert(OperandIndex::Add::left == stateOperandIndex);
 static_assert(OperandIndex::Strcat::parts == stateOperandIndex);
 
-static constexpr OpcodeSet equalityComparisons { Opcode::StrictEq, Opcode::Eq };
+static constexpr OpcodeSet equalityComparisonsOfStrings { Opcode::StrictEq, Opcode::Eq };
 static constexpr OpcodeSet closingOperations { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard };
 static constexpr OpcodeSet redirectableOperations = closingOperations | OpcodeSet {
     Opcode::StringBuilderAppend, Opcode::StringBuilderAppendBuiltin, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
@@ -282,7 +281,7 @@ private:
 
     void rewriteLengthRead(const Use& use, ValueID handle)
     {
-        if (!equalityComparisons.contains(m_function.at(use.user).opcode)) {
+        if (!equalityComparisonsOfStrings.contains(m_function.at(use.user).opcode)) {
             Value& user = m_function.edit(use.user);
             user.become(Opcode::StringBuilderLength);
             user.setBuilderOperand(handle);

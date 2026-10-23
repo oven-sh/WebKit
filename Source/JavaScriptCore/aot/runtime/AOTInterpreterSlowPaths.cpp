@@ -497,7 +497,7 @@ static Structure* fillPlanForFinalObject(Instance& instance, Structure* emptyStr
     return structure;
 }
 
-static bool acceptsEveryValue(const RuntimeType& type)
+static bool typeAcceptsEveryValue(const RuntimeType& type)
 {
     constexpr OptionSet<PrimitiveSet> everyPrimitive {
         PrimitiveSet::Undefined, PrimitiveSet::Null, PrimitiveSet::False, PrimitiveSet::True, PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber,
@@ -526,7 +526,7 @@ std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanForRecord(Insta
             return !!layouts.field(vm, layout, name);
         });
         bool everyFieldAcceptsEveryValue = std::ranges::all_of(layout.fields(), [&](const FieldData& field) {
-            return acceptsEveryValue(layouts.typeOf(field));
+            return typeAcceptsEveryValue(layouts.typeOf(field));
         });
         if (!hasEveryName || !everyFieldAcceptsEveryValue)
             continue;

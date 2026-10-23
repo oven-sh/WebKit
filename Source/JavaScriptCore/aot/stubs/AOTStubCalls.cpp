@@ -23,9 +23,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr size_t numberOfHeaderWords = 2;
-static constexpr uint64_t hasImmediate = 1ull << 32;
-
 static GPRReg immediateGPR(const StubCatalog& catalog, StubKey key)
 {
     std::optional<GPRReg> immediate = catalog.summaryOf(key).signature.immediate;

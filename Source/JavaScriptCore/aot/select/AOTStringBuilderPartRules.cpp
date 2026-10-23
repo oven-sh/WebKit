@@ -30,13 +30,13 @@ struct Part {
     std::optional<StringRangeSource> range { };
 };
 
-using Parts = Vector<Part, 8>;
+using StringBuilderPartList = Vector<Part, 8>;
 
-struct Match {
+struct StringBuilderPartMatch {
     SelectionGroup group;
     ProgramPoint point;
     ValueID builder;
-    Parts parts;
+    StringBuilderPartList parts;
 };
 
 struct ConstantText {
@@ -54,7 +54,7 @@ public:
     }
 
     void add(ValueID part);
-    Parts finish();
+    StringBuilderPartList finish();
 
 private:
     void addConstant(ConstantText&&);
@@ -62,7 +62,7 @@ private:
 
     SelectionContext& m_context;
     CodeShape m_shapeAtAppend;
-    Parts m_parts;
+    StringBuilderPartList m_parts;
     std::optional<ConstantText> m_pendingConstant;
 };
 
@@ -105,7 +105,7 @@ void PartCollector::add(ValueID id)
     m_parts.append(WTF::move(part));
 }
 
-Parts PartCollector::finish()
+StringBuilderPartList PartCollector::finish()
 {
     flushConstant();
     return std::exchange(m_parts, { });
@@ -134,7 +134,7 @@ void PartCollector::flushConstant()
     m_parts.append(Part { .form = StringBuilderPartForm::Constant, .constant = string });
 }
 
-static SelectionGroup groupWithRanges(SelectionContext& context, ValueID append, const Parts& parts)
+static SelectionGroup groupWithRanges(SelectionContext& context, ValueID append, const StringBuilderPartList& parts)
 {
     const UseLists& uses = context.analyses().useLists();
     Vector<ValueID, 4> definitions;
@@ -154,19 +154,19 @@ static SelectionGroup groupWithRanges(SelectionContext& context, ValueID append,
     return group;
 }
 
-static Match createMatch(SelectionContext& context, ValueID append)
+static StringBuilderPartMatch createMatch(SelectionContext& context, ValueID append)
 {
     const Value& value = context.function().at(append);
     PartCollector collector(context, context.shapeAt(append));
     for (ValueID part : value.partsOperands())
         collector.add(part);
 
-    Parts parts = collector.finish();
+    StringBuilderPartList parts = collector.finish();
     SelectionGroup group = groupWithRanges(context, append, parts);
     return { WTF::move(group), context.analyses().useLists().pointOf(append), value.builderOperand(), WTF::move(parts) };
 }
 
-static void demoteFirstRange(Match& match)
+static void demoteFirstRange(StringBuilderPartMatch& match)
 {
     ValueID definition = match.group.members.first().value;
     Part* part = std::ranges::find(match.parts, definition, &Part::value);
@@ -176,7 +176,7 @@ static void demoteFirstRange(Match& match)
     match.group.members.removeAt(0);
 }
 
-static void claim(SelectionContext& context, Match& match)
+static void claim(SelectionContext& context, StringBuilderPartMatch& match)
 {
     // What the nearest range may not cross, the ranges in front of it may not cross either.
     while (context.tryClaim(SelectionRuleID::StringBuilderParts, match.group) != ClaimResult::Claimed) {
@@ -208,7 +208,7 @@ static Opcode rowOf(StringBuilderPartForm form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Value makeRow(GroupRewriter& rewriter, const Match& match, const Part& part)
+static Value makeRow(GroupRewriter& rewriter, const StringBuilderPartMatch& match, const Part& part)
 {
     Value row = IRBuilder::make(rowOf(part.form), { match.builder });
     switch (part.form) {
@@ -236,16 +236,16 @@ static Value makeRow(GroupRewriter& rewriter, const Match& match, const Part& pa
 
 void selectStringBuilderParts(SelectionContext& context)
 {
-    Vector<Match> matches;
+    Vector<StringBuilderPartMatch> matches;
     for (ValueID append : context.valuesWith(Opcode::StringBuilderAppend)) {
         if (context.isClaimed(append))
             continue;
-        Match match = createMatch(context, append);
+        StringBuilderPartMatch match = createMatch(context, append);
         claim(context, match);
         matches.append(WTF::move(match));
     }
 
-    context.rewriteGroups(SelectionRuleID::StringBuilderParts, matches, [](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::StringBuilderParts, matches, [](GroupRewriter& rewriter, const StringBuilderPartMatch& match) {
         for (const Part& part : match.parts)
             rewriter.insert(makeRow(rewriter, match, part));
         rewriter.eraseRoot();

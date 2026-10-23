@@ -22,7 +22,7 @@ struct ParameterPosition {
     uint32_t index { 0 };
 };
 
-size_t removeTrivialParameters(FunctionPassContext&, Vector<ParameterPosition>&& candidatesInReversePostOrder);
+size_t removeTrivialParametersAmong(FunctionPassContext&, Vector<ParameterPosition>&& candidatesInReversePostOrder);
 
 inline bool canReplaceParameter(const Function& function, ValueID argument, ValueID parameter)
 {

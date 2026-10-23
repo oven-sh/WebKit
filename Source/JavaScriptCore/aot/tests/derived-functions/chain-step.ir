@@ -4,7 +4,6 @@
 # RUN(REDUCE): derived-functions ChainStep:f1:1043
 # RUN(JOIN): derived-functions ChainStep:f1:24
 # RUN(SHOWN): derived-functions ChainStep:f2:24
-# RUN(OPTIMIZED): pipeline EliminateGuards
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -211,51 +210,3 @@ function f4 name="shapeKnownAtRunTime" parameters=[{type=anything}, {type=anythi
 # SHOWN-NEXT: Return [[result]]
 # SHOWN-NEXT: }
 # SHOWN-NOT: role=ChainStep
-# OPTIMIZED-LABEL: function f3 name="filterThenMapAsBuilt"
-# OPTIMIZED-NOT: BitAnd
-# OPTIMIZED-NOT: RShift
-# OPTIMIZED-NOT: CallDirect
-# OPTIMIZED-NOT: = NewArray v3
-# OPTIMIZED-NOT: ThrowNewError
-# OPTIMIZED-NOT: ToString
-# OPTIMIZED: = Call v3, v4, [[element]],
-# OPTIMIZED-NEXT: Jump -> next [[rejoin]]([[element]],
-# OPTIMIZED-NOT: BitAnd
-# OPTIMIZED-NOT: RShift
-# OPTIMIZED-NOT: CallDirect
-# OPTIMIZED-NOT: = NewArray v3
-# OPTIMIZED-NOT: ThrowNewError
-# OPTIMIZED-NOT: ToString
-# OPTIMIZED: [[rejoin]]([[kept]]: anything,
-# OPTIMIZED-NOT: BitAnd
-# OPTIMIZED-NOT: RShift
-# OPTIMIZED-NOT: CallDirect
-# OPTIMIZED-NOT: = NewArray v3
-# OPTIMIZED-NOT: ThrowNewError
-# OPTIMIZED-NOT: ToString
-# OPTIMIZED: [[mapped]]: anything = Call v5, v6, [[kept]],
-# OPTIMIZED-NOT: BitAnd
-# OPTIMIZED-NOT: RShift
-# OPTIMIZED-NOT: CallDirect
-# OPTIMIZED-NOT: = NewArray v3
-# OPTIMIZED-NOT: ThrowNewError
-# OPTIMIZED-NOT: ToString
-# OPTIMIZED: = TryPutByValDirect {{*}}, {{*}}, [[mapped]]
-# OPTIMIZED-NOT: BitAnd
-# OPTIMIZED-NOT: RShift
-# OPTIMIZED-NOT: CallDirect
-# OPTIMIZED-NOT: = NewArray v3
-# OPTIMIZED-NOT: ThrowNewError
-# OPTIMIZED-NOT: ToString
-# OPTIMIZED: = TruncateNewArray
-# OPTIMIZED-NOT: BitAnd
-# OPTIMIZED-NOT: RShift
-# OPTIMIZED-NOT: CallDirect
-# OPTIMIZED-NOT: = NewArray v3
-# OPTIMIZED-NOT: ThrowNewError
-# OPTIMIZED-NOT: ToString
-# OPTIMIZED-LABEL: function f4 name="shapeKnownAtRunTime"
-# OPTIMIZED: BitAnd
-# OPTIMIZED: RShift
-# OPTIMIZED: ToString
-# OPTIMIZED: ThrowNewError

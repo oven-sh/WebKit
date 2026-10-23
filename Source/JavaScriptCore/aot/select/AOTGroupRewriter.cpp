@@ -19,16 +19,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static std::optional<size_t> findMember(const SelectionGroup& group, ValueID id)
-{
-    size_t index = group.members.findIf([&](const GroupMember& member) {
-        return member.value == id;
-    });
-    if (index == notFound)
-        return std::nullopt;
-    return index;
-}
-
 static void unfuseBranch(Terminator& terminator, ValueID condition)
 {
     if (terminator.kind != TerminatorKind::TestAndBranch || terminator.conditionOperand() != condition)

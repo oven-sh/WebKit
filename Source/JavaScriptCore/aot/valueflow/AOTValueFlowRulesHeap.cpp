@@ -936,7 +936,11 @@ void HeapRule::runOperation()
     case Opcode::ElemGet: {
         if (readsRestArgumentOfInstance())
             return;
-        bool namesEnumerableProperty = readsUnderNameOfEnumerationOfSameObject();
+        // It follows from the operations of the function alone.
+        ValueSetID& answerOfFirstRun = m_context.rememberedByStatement();
+        if (!answerOfFirstRun)
+            answerOfFirstRun = readsUnderNameOfEnumerationOfSameObject() ? ValueSets::anything : ValueSets::nothing;
+        bool namesEnumerableProperty = answerOfFirstRun == ValueSets::anything;
         forEachKey(operand(At::ElemGet::property), [&](HeapKey key) {
             key.namesEnumerableProperty = namesEnumerableProperty && key.keyClass == HeapKeyClass::Unknown;
             read(receiversUnder(operand(At::ElemGet::object), key), key);

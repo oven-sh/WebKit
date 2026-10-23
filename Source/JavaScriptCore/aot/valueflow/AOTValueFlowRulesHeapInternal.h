@@ -16,11 +16,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
-inline constexpr ValueFlowName copiedFromName = ValueFlowName::of(ValueFlowNameKind::CopiedFrom);
 inline constexpr ValueFlowName addedNamesName = ValueFlowName::of(ValueFlowNameKind::AddedNames);
-inline constexpr ValueFlowName allocatedAsName = ValueFlowName::of(ValueFlowNameKind::AllocatedAs);
-inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
 inline constexpr ValueFlowName internalFieldsName = ValueFlowName::of(ValueFlowNameKind::InternalFields);
 
 enum class HeapKeyClass : uint8_t {
@@ -119,7 +115,7 @@ public:
     ClimbingSet objectsAbove(ClimbingSet start);
 
     // For a rule that is a function of what holds now: see readWhereWritten().
-    void askWithoutNodesWhereNothingIsWritten() { m_asksWithoutNodes = !m_context.usesGeneralRulesOnly(); }
+    void askWithoutNodesWhereNothingIsWritten() { m_asksWithoutNodes = true; }
 
     // The accessors are handed to the functor as well. The operation then looks through the chain by itself, where it would share a lookup.
     void reportAccessorsTo(const ValueFlowAccessorFunctor& functor) { m_accessorFunctor = &functor; }

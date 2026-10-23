@@ -13,36 +13,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-FlowMemberHolder memberHolderKindOf(FlowObjectKind kind)
+FunctionID FlowOrderInputs::host() const
 {
-    switch (kind) {
-    case FlowObjectKind::Closure:
-    case FlowObjectKind::Prototype:
-        return FlowMemberHolder::Always;
-    case FlowObjectKind::Allocation:
-    case FlowObjectKind::Instance:
-    case FlowObjectKind::Opaque:
-        return FlowMemberHolder::WhenPrototype;
-    case FlowObjectKind::Unknown:
-    case FlowObjectKind::ModuleNamespace:
-    case FlowObjectKind::Builtin:
-    case FlowObjectKind::ModuleBuiltin:
-        return FlowMemberHolder::No;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool followsMembersOf(const FlowOrderInputs& inputs, FlowObjectID holder)
-{
-    switch (memberHolderKindOf(inputs.kindOf(holder))) {
-    case FlowMemberHolder::No:
-        return false;
-    case FlowMemberHolder::WhenPrototype:
-        return inputs.isPrototype(holder);
-    case FlowMemberHolder::Always:
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return FunctionID(program.functions.size());
 }
 
 Vector<ModuleID> indexRuntimeModules(const Program& program)

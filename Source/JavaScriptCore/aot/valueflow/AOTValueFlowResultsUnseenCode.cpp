@@ -89,7 +89,7 @@ static bool isInSeenCode(const ValueFlowSolution& solution, FunctionID id)
         && solution.sets().contains(solution.solver().valueOf(bodies.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode)), bodies.universe().namespaceOf(function.module));
 }
 
-static bool callsValue(Opcode opcode)
+static bool opcodeCallsValue(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::Call:
@@ -209,7 +209,7 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
             default:
                 break;
             }
-            if (!callsValue(statement.opcode) || !isSeenCode)
+            if (!opcodeCallsValue(statement.opcode) || !isSeenCode)
                 continue;
             ValueSetMaker& maker = makers.of(worker);
             // As the rule of the call sees them: beside a placeholder, without what the placeholder covers.

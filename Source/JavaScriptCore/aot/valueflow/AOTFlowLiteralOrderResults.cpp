@@ -34,7 +34,7 @@ static_assert(OperandIndex::CopyDataProperties::target == literalOperandOfPiece)
 namespace {
 
 using KeyOrder = Vector<PropertyKeyID>;
-using KeyOrders = Vector<KeyOrder, 2>;
+using LiteralKeyOrders = Vector<KeyOrder, 2>;
 
 enum class PieceKind : uint8_t { DefinesUnknownProperty, DefinesKey, CopiesProperties };
 
@@ -56,11 +56,11 @@ struct CopiedObjects {
 };
 
 // What one literal creates.
-struct Creation {
+struct LiteralCreation {
     uint32_t literal { 0 };
     LayoutID layout;
     Vector<CopiedObjects, 1> copies;
-    KeyOrders orders;
+    LiteralKeyOrders orders;
     bool hasOrdersLeftOut { false };
 };
 
@@ -97,17 +97,17 @@ private:
     void registerReader(uint32_t creation);
     void solve();
     enum class Progress : uint8_t { NothingToRead, MoreToRead };
-    Progress evaluate(Creation&);
-    void leaveOrdersOut(Creation&);
+    Progress evaluate(LiteralCreation&);
+    void leaveOrdersOut(LiteralCreation&);
     void leaveOrdersUnread(LayoutID);
 
     std::optional<KeyOrder> keysAtAllocation(const Literal&) const;
-    KeyOrders copyInto(const KeyOrders&, const CopiedObjects&, const Value& copy);
-    KeyOrders ordersOf(LayoutID);
-    KeyOrders ownOrdersOf(LayoutID);
+    LiteralKeyOrders copyInto(const LiteralKeyOrders&, const CopiedObjects&, const Value& copy);
+    LiteralKeyOrders ordersOf(LayoutID);
+    LiteralKeyOrders ownOrdersOf(LayoutID);
     bool isCopied(LayoutID source, PropertyKeyID, const Value& copy) const;
     void appendCopiedKeys(LayoutID source, const KeyOrder& sourceOrder, const Value& copy, KeyOrder& target) const;
-    void addOrder(KeyOrders&, KeyOrder&&) const;
+    void addOrder(LiteralKeyOrders&, KeyOrder&&) const;
     Vector<KeyOrder> sortedOrdersOf(LayoutID) const;
 
     const ValueFlowResultInputs& m_inputs;
@@ -115,11 +115,11 @@ private:
     Vector<FlowLayoutUpdate>& m_layouts;
     uint64_t m_maxOrders;
     Vector<Literal> m_literals;
-    Vector<Creation> m_creations;
+    Vector<LiteralCreation> m_creations;
     Vector<Vector<uint32_t>> m_creationsOfLayout;
     Vector<Vector<uint32_t>> m_readersOfLayout;
     // What a copy from an object of the layout reads beside the constructor orders: the first distinct orders that the creations of the layout got.
-    Vector<KeyOrders> m_literalOrdersOfLayout;
+    Vector<LiteralKeyOrders> m_literalOrdersOfLayout;
     BitVector m_hasOrdersUnread;
     Vector<PropertyKeyKind> m_kindOfKey;
 };
@@ -236,7 +236,7 @@ void LiteralOrderSolver::addCreationOf(uint32_t index)
     if (flowOf(layout).fieldCreation == FieldCreation::OnlyAtConstruction)
         return;
 
-    Creation creation { .literal = index, .layout = layout };
+    LiteralCreation creation { .literal = index, .layout = layout };
     for (const LiteralPiece& piece : literal.pieces) {
         if (piece.kind == PieceKind::CopiesProperties)
             creation.copies.append(objectsCopiedBy(literal.function, piece.operation));
@@ -246,7 +246,7 @@ void LiteralOrderSolver::addCreationOf(uint32_t index)
 
 void LiteralOrderSolver::registerReader(uint32_t index)
 {
-    const Creation& creation = m_creations[index];
+    const LiteralCreation& creation = m_creations[index];
     m_creationsOfLayout[creation.layout.index()].append(index);
     for (const CopiedObjects& copied : creation.copies) {
         for (LayoutID source : copied.layouts) {
@@ -284,7 +284,7 @@ std::optional<KeyOrder> LiteralOrderSolver::keysAtAllocation(const Literal& lite
     return keys;
 }
 
-void LiteralOrderSolver::addOrder(KeyOrders& orders, KeyOrder&& order) const
+void LiteralOrderSolver::addOrder(LiteralKeyOrders& orders, KeyOrder&& order) const
 {
     if (!orders.contains(order))
         orders.append(WTF::move(order));
@@ -297,10 +297,10 @@ void LiteralOrderSolver::leaveOrdersUnread(LayoutID layout)
 }
 
 // No walk over own keys tests more orders than the limit, so no copy reads more of them.
-KeyOrders LiteralOrderSolver::ownOrdersOf(LayoutID id)
+LiteralKeyOrders LiteralOrderSolver::ownOrdersOf(LayoutID id)
 {
     const Vector<Field>& fields = program().at(id).fields;
-    KeyOrders orders;
+    LiteralKeyOrders orders;
     for (const FieldOrder& order : flowOf(id).constructorOrders) {
         if (orders.size() >= m_maxOrders) {
             leaveOrdersUnread(id);
@@ -326,9 +326,9 @@ KeyOrders LiteralOrderSolver::ownOrdersOf(LayoutID id)
 }
 
 // The keys of an object are those that the constructor of its base creates, then those of its own layout.
-KeyOrders LiteralOrderSolver::ordersOf(LayoutID id)
+LiteralKeyOrders LiteralOrderSolver::ordersOf(LayoutID id)
 {
-    KeyOrders ownOrders = ownOrdersOf(id);
+    LiteralKeyOrders ownOrders = ownOrdersOf(id);
     switch (flowOf(id).baseState) {
     case BaseState::None:
         return ownOrders;
@@ -339,7 +339,7 @@ KeyOrders LiteralOrderSolver::ordersOf(LayoutID id)
         return { };
     }
 
-    KeyOrders orders;
+    LiteralKeyOrders orders;
     for (const KeyOrder& baseOrder : ordersOf(flowOf(id).base)) {
         for (const KeyOrder& ownOrder : ownOrders) {
             if (orders.size() >= m_maxOrders) {
@@ -380,9 +380,9 @@ void LiteralOrderSolver::appendCopiedKeys(LayoutID source, const KeyOrder& sourc
     }
 }
 
-KeyOrders LiteralOrderSolver::copyInto(const KeyOrders& orders, const CopiedObjects& copied, const Value& copy)
+LiteralKeyOrders LiteralOrderSolver::copyInto(const LiteralKeyOrders& orders, const CopiedObjects& copied, const Value& copy)
 {
-    KeyOrders result;
+    LiteralKeyOrders result;
     for (LayoutID source : copied.layouts) {
         for (const KeyOrder& sourceOrder : ordersOf(source)) {
             for (const KeyOrder& order : orders) {
@@ -402,7 +402,7 @@ KeyOrders LiteralOrderSolver::copyInto(const KeyOrders& orders, const CopiedObje
     return result;
 }
 
-void LiteralOrderSolver::leaveOrdersOut(Creation& creation)
+void LiteralOrderSolver::leaveOrdersOut(LiteralCreation& creation)
 {
     if (creation.hasOrdersLeftOut)
         return;
@@ -412,7 +412,7 @@ void LiteralOrderSolver::leaveOrdersOut(Creation& creation)
 }
 
 // An order is never taken back, and a layout shows a limited number of them to its readers, so each creation is evaluated a limited number of times.
-auto LiteralOrderSolver::evaluate(Creation& creation) -> Progress
+auto LiteralOrderSolver::evaluate(LiteralCreation& creation) -> Progress
 {
     if (creation.hasOrdersLeftOut && creation.orders.size() >= m_maxOrders)
         return Progress::NothingToRead;
@@ -423,7 +423,7 @@ auto LiteralOrderSolver::evaluate(Creation& creation) -> Progress
     if (!keys)
         return Progress::NothingToRead;
 
-    KeyOrders orders { WTF::move(*keys) };
+    LiteralKeyOrders orders { WTF::move(*keys) };
     size_t nextCopy = 0;
     for (const LiteralPiece& piece : literal.pieces) {
         switch (piece.kind) {
@@ -444,7 +444,7 @@ auto LiteralOrderSolver::evaluate(Creation& creation) -> Progress
     }
 
     Progress progress = Progress::NothingToRead;
-    KeyOrders& ordersToRead = m_literalOrdersOfLayout[creation.layout.index()];
+    LiteralKeyOrders& ordersToRead = m_literalOrdersOfLayout[creation.layout.index()];
     for (KeyOrder& order : orders) {
         if (creation.orders.contains(order))
             continue;

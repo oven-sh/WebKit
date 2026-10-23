@@ -423,10 +423,6 @@ CastOutcome evaluateCast(const ShapeContext& context, const VirtualShape& shape,
         return isNullish(shape) ? CastOutcome::Throws : CastOutcome::Passes;
     case Opcode::RequireObject:
         return shape.kind == VirtualShapeKind::Fields && context.family.descriptionOf(shape).hasIdentity ? CastOutcome::Passes : CastOutcome::Throws;
-    // Both stand for slots that lie somewhere: in a cell.
-    case Opcode::ReadAgain:
-    case Opcode::BorrowedParameter:
-        return CastOutcome::Unknown;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

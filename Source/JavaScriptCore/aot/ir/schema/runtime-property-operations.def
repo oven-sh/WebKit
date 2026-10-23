@@ -43,7 +43,6 @@ runtime HasExtraProperty : size_t (JSCell* object, uint32_t key) ; reads(all)
 runtime PutExtraProperty : void (JSCell* object, uint32_t key, EncodedJSValue) ; unknownCode
 runtime MaterializeDeferredClosure : JSCell* (JSCell* object, uint32_t key) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects
 runtime GetFieldOutsideSlot : EncodedJSValue (JSCell* object, uint32_t key) ; reads(all)
-runtime MakeFlattenedObjectAt : JSCell* (JSCell* object, uint32_t distance) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects
 
 runtime NewMap, NewSet : JSCell* () ; RuntimeAllocates
 runtime MapGet, MapHas, SetHas : EncodedJSValue (JSCell*, EncodedJSValue lookupKey) ; RuntimeCreatesString writes(CollectionStorage)

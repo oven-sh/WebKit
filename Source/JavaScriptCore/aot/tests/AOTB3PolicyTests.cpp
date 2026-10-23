@@ -101,8 +101,6 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(optimization.narrowsIntegers);
     AOT_TEST_CHECK(optimization.chainsAssociativeOperations);
     AOT_TEST_CHECK(optimization.stopsSwitchInferenceAtRareEdges);
-    AOT_TEST_CHECK(optimization.convertsBranchesToSelects);
-    AOT_TEST_CHECK(optimization.mergesAdjacentConstantStores);
     AOT_TEST_CHECK(optimization.sinksValues);
     AOT_TEST_CHECK(optimization.placesConstantsByFrequency);
     AOT_TEST_CHECK(optimization.mergesBlocksAfterForwardingJumps);
@@ -111,18 +109,12 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(policy.selection.attributesTrapsToAccesses);
 
     AOT_TEST_CHECK(policy.loops.rotates);
-    AOT_TEST_CHECK(policy.loops.foldsComparisonsWithBounds);
-    AOT_TEST_CHECK(policy.loops.versions);
-    AOT_TEST_CHECK(policy.loops.clampsLoopBounds);
     AOT_TEST_CHECK(policy.loops.hoistsOnlyFromLikelyPaths);
     AOT_TEST_CHECK(policy.loops.hoistsImmutableLoadsPastWrites);
 
     AOT_TEST_CHECK(policy.switchLowering.usesBitTests);
     AOT_TEST_CHECK(policy.switchLowering.minCasesForJumpTable == 7);
 
-    AOT_TEST_CHECK(policy.knownProperties.trustsKnownRanges);
-    AOT_TEST_CHECK(policy.knownProperties.trustsKnownDereferenceableBytes);
-    AOT_TEST_CHECK(policy.knownProperties.trustsKnownInductions);
 }
 
 static void checkRegisterAndSplitPolicy(const B3::Air::Policy& air)
@@ -168,14 +160,11 @@ static void checkFrameAndLayoutPolicy(const B3::Air::Policy& air)
     AOT_TEST_CHECK(air.layout.ordersBlocksByEdgeFrequency);
     AOT_TEST_CHECK(air.layout.recordsRareCodeStart);
     AOT_TEST_CHECK(air.layout.mergesIdenticalBlocks);
-    AOT_TEST_CHECK(air.layout.duplicatesReturns);
 
     AOT_TEST_CHECK(air.peepholes.pairsSpillAccesses);
     AOT_TEST_CHECK(air.peepholes.forwardsRegisterCopies);
-    AOT_TEST_CHECK(air.peepholes.hoistsCommonMoves);
     AOT_TEST_CHECK(air.peepholes.reusesConditionFlags);
     AOT_TEST_CHECK(air.peepholes.pairsMemoryAccesses);
-    AOT_TEST_CHECK(air.peepholes.resequencesMovesBeforePatches);
     AOT_TEST_CHECK(air.peepholes.emitsShufflesInPairOrder);
     AOT_TEST_CHECK(air.peepholes.trapReach && JSValue::ValueUndefined + air.peepholes.trapReach <= FaultSite::reach);
     AOT_TEST_CHECK((static_cast<uintptr_t>(undefinedCell32) << cell32Shift) + air.peepholes.trapReach <= FaultSite::reach);
@@ -191,10 +180,8 @@ static void testFunctionPolicy()
     checkUpstreamPolicy(policy.upstream);
     checkOptimizationPolicy(policy);
     AOT_TEST_CHECK(policy.validation.level == B3::ValidationLevel::FromOptions);
-    AOT_TEST_CHECK(!policy.validation.checksKnownPropertiesAtRunTime);
     AOT_TEST_CHECK(policy.limits == B3::LimitValues());
     AOT_TEST_CHECK(policy.targetFeatures == build.targetFeatures());
-    AOT_TEST_CHECK(!policy.collectsRemarks);
     AOT_TEST_CHECK(policy.clientPhases.isEmpty());
     AOT_TEST_CHECK(!policy.disabledSwitches());
     checkRegisterAndSplitPolicy(policy.air);
@@ -321,25 +308,19 @@ static void testBuildOptions()
 
     B3::Policy checkedPolicy = policyWith({ "check=validate-back-end"_s, "report=declines"_s }, traitsFor(7), lowering);
     AOT_TEST_CHECK(checkedPolicy.validation.level == B3::ValidationLevel::AtEachPhase);
-    AOT_TEST_CHECK(!checkedPolicy.validation.checksKnownPropertiesAtRunTime);
-    AOT_TEST_CHECK(checkedPolicy.collectsRemarks);
     AOT_TEST_CHECK(!checkedPolicy.air.frame.mayOmitFrameRecord);
     checkedPolicy.validation.level = B3::ValidationLevel::FromOptions;
-    checkedPolicy.collectsRemarks = false;
     checkedPolicy.air.frame.mayOmitFrameRecord = isX86_64();
     AOT_TEST_CHECK(WTF::toString(checkedPolicy) == description);
 
     B3::Policy verifyingPolicy = policyWith({ "check=verify-each-pass"_s }, traitsFor(7), lowering);
     AOT_TEST_CHECK(verifyingPolicy.validation.level == B3::ValidationLevel::AtBoundaries);
-    AOT_TEST_CHECK(!verifyingPolicy.validation.checksKnownPropertiesAtRunTime);
     verifyingPolicy.validation.level = B3::ValidationLevel::FromOptions;
     AOT_TEST_CHECK(WTF::toString(verifyingPolicy) == description);
 
     B3::Policy validatingPolicy = policyWith({ "validate"_s }, traitsFor(7), lowering);
     AOT_TEST_CHECK(validatingPolicy.validation.level == B3::ValidationLevel::AtBoundaries);
-    AOT_TEST_CHECK(validatingPolicy.validation.checksKnownPropertiesAtRunTime);
     validatingPolicy.validation.level = B3::ValidationLevel::FromOptions;
-    validatingPolicy.validation.checksKnownPropertiesAtRunTime = false;
     AOT_TEST_CHECK(WTF::toString(validatingPolicy) == description);
 
     AOT_TEST_CHECK(B3::shouldValidateIR());
@@ -434,7 +415,7 @@ static void checkPinnedValues(InstanceSizes sizes)
     out.initializeConstants(proc, root);
 
     Typed::PinnedValues pinned;
-    Typed::definePinnedValues(out, proc, sizes, pinned);
+    Typed::definePinnedValues(out, sizes, pinned);
 
     AOT_TEST_CHECK(pinned.instance->opcode() == B3::ArgumentReg && pinned.instance->as<B3::ArgumentRegValue>()->argumentReg() == Reg(instanceGPR));
     AOT_TEST_CHECK(pinned.cellCageBase->opcode() == B3::ArgumentReg && pinned.cellCageBase->as<B3::ArgumentRegValue>()->argumentReg() == Reg(cellCageBaseGPR));
@@ -446,15 +427,6 @@ static void checkPinnedValues(InstanceSizes sizes)
     AOT_TEST_CHECK(pinned.statics->opcode() == B3::Add && pinned.statics->child(0) == pinned.instance);
     AOT_TEST_CHECK(pinned.statics->child(1)->isInt64(InstanceLayout::offsetOfStatics(sizes)));
 
-    AOT_TEST_CHECK(proc.knownDereferenceableBytes(pinned.instance) == InstanceLayout::bytesReservedFromInstance(sizes));
-    AOT_TEST_CHECK(proc.knownDereferenceableBytes(pinned.instancePrefix) == sizeof(InstancePrefix));
-    AOT_TEST_CHECK(proc.knownDereferenceableBytes(pinned.statics) == sizes.sizeOfStatics);
-    AOT_TEST_CHECK(!proc.knownDereferenceableBytes(pinned.cellCageBase));
-
-    AOT_TEST_CHECK(proc.isKnownDereferenceable(pinned.instancePrefix, 0, sizeof(InstancePrefix)));
-    AOT_TEST_CHECK(!proc.isKnownDereferenceable(pinned.instancePrefix, 0, sizeof(InstancePrefix) + 1));
-    AOT_TEST_CHECK(!proc.isKnownDereferenceable(pinned.instance, -static_cast<int64_t>(sizeof(void*)), sizeof(void*)));
-    AOT_TEST_CHECK(proc.isKnownDereferenceable(pinned.statics, 0, sizeof(void*)) == (sizes.sizeOfStatics >= sizeof(void*)));
 }
 
 static void testPinnedValues()

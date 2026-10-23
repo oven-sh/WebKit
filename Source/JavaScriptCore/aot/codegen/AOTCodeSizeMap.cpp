@@ -16,7 +16,6 @@
 #include "AOTCompileOptions.h"
 #include "AOTEdgeResults.h"
 #include "AOTIR.h"
-#include "AOTIRPrinter.h"
 #include "AOTRelocation.h"
 #include "AOTSort.h"
 #include "AOTUseLists.h"
@@ -31,22 +30,26 @@
 #include <wtf/HashMap.h>
 #include <wtf/StringPrintStream.h>
 
+#if ASSERT_ENABLED
+#include "AOTIRPrinter.h"
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct Label {
+struct CodeSizeLabel {
     Opcode opcode { Opcode::Undefined };
     BuiltinOverloadID overload;
     bool hasValue { false };
     bool isInlined { false };
 
-    static Label labelOf(const Function&, ValueID);
+    static CodeSizeLabel labelOf(const Function&, ValueID);
     void print(PrintStream&, const Program&) const;
 };
 
 struct LabelTotal {
-    Label label;
+    CodeSizeLabel label;
     uint64_t bytes { 0 };
 };
 
@@ -58,12 +61,12 @@ struct EmittedRange {
 
 } // anonymous namespace
 
-Label Label::labelOf(const Function& function, ValueID id)
+CodeSizeLabel CodeSizeLabel::labelOf(const Function& function, ValueID id)
 {
     if (!id)
         return { };
     const Value& value = function.at(id);
-    return Label {
+    return CodeSizeLabel {
         .opcode = value.opcode,
         .overload = Value::opcodesWithOverload.contains(value.opcode) ? value.overload() : BuiltinOverloadID(),
         .hasValue = true,
@@ -71,7 +74,7 @@ Label Label::labelOf(const Function& function, ValueID id)
     };
 }
 
-void Label::print(PrintStream& out, const Program& program) const
+void CodeSizeLabel::print(PrintStream& out, const Program& program) const
 {
     if (!hasValue) {
         out.print("-");
@@ -122,7 +125,7 @@ static Vector<EmittedRange> collectCodeRanges(const Function& function, const B3
 
 static void printTotals(PrintStream& out, const Program& program, const Function& function, const Vector<EmittedRange>& ranges)
 {
-    auto keyOf = [](const Label& label) -> uint64_t {
+    auto keyOf = [](const CodeSizeLabel& label) -> uint64_t {
         if (!label.hasValue)
             return 0;
         uint64_t overload = label.overload ? label.overload.index() + 1 : 0;
@@ -130,7 +133,7 @@ static void printTotals(PrintStream& out, const Program& program, const Function
     };
     UncheckedKeyHashMap<uint64_t, LabelTotal, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> totals;
     for (const EmittedRange& range : ranges) {
-        Label label = Label::labelOf(function, range.value);
+        CodeSizeLabel label = CodeSizeLabel::labelOf(function, range.value);
         totals.add(keyOf(label), LabelTotal { label }).iterator->value.bytes += range.size;
     }
     Vector<std::pair<uint64_t, LabelTotal>> sorted;
@@ -149,7 +152,7 @@ static void printRanges(PrintStream& out, const Program& program, const Function
     out.print("\nS");
     for (const EmittedRange& range : ranges) {
         out.print("\t");
-        Label::labelOf(function, range.value).print(out, program);
+        CodeSizeLabel::labelOf(function, range.value).print(out, program);
         BlockID block = range.value ? useLists.blockOf(range.value) : BlockID();
         if (block && cycles.isInCycle(block))
             out.print("*");
@@ -375,10 +378,16 @@ static void printTestOfCounters(PrintStream& out, const Program& program, const 
         return;
     OriginOfTestedValue origin = findOriginOfTestedValue(function, cfg, useLists, test->operand(0));
     out.print("\t", origin.place, "\t", nameOf(origin.opcode), "\t", origin.earlierTypeTests, "\t", origin.earlierOtherTests, "\t", origin.merges, "\t");
+#if ASSERT_ENABLED
     printType(out, program, program.typeOf(function, test->operand(0)));
+#endif
     out.print("\t");
+#if ASSERT_ENABLED
     if (test->opcode == Opcode::TypeTest)
         printType(out, program, test->testedType());
+#else
+    UNUSED_PARAM(program);
+#endif
 }
 
 static void printCounters(PrintStream& out, const CodeGenerationInputs& inputs, FunctionID id, const Function& function)

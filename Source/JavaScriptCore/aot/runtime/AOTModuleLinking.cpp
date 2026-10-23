@@ -69,7 +69,7 @@ static SyntheticExportRule captureRuleOf(const ModuleData& data)
     return data.exportRule;
 }
 
-static void checkSafeToRecurse(JSGlobalObject* realm, ThrowScope& scope)
+static void checkSafeToRecurseWhileLinking(JSGlobalObject* realm, ThrowScope& scope)
 {
     if (!realm->vm().isSafeToRecurse()) [[unlikely]]
         throwException(realm, scope, createModuleGraphTooDeepError(realm));
@@ -289,7 +289,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
         ASSERT(needsPath);
         AbstractModuleRecord* record = uncompiledRecord(module);
         RETURN_IF_EXCEPTION(scope, void());
-        checkSafeToRecurse(realm, scope);
+        checkSafeToRecurseWhileLinking(realm, scope);
         RETURN_IF_EXCEPTION(scope, void());
         // An uncompiled module that imports back must not walk a module on the path again: its own next request comes before theirs.
         if (hasUnvisitedRequests(record, visited)) {
@@ -335,7 +335,7 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         }
         AbstractModuleRecord* record = uncompiledRecord(module);
         RETURN_IF_EXCEPTION(scope, void());
-        checkSafeToRecurse(realm, scope);
+        checkSafeToRecurseWhileLinking(realm, scope);
         RETURN_IF_EXCEPTION(scope, void());
         unsigned index = record->innerModuleLinking(realm, context.stack, context.index, context.scriptFetcher);
         RETURN_IF_EXCEPTION(scope, void());

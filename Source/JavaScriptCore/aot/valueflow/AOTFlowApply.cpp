@@ -12,7 +12,6 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
-#include "AOTRelationalSummaries.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
@@ -168,13 +167,6 @@ void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, co
 }
 
 // Past form AsRead no Check may stay on a terminator, and nothing tests the result of a tail call.
-static void dropRelations(Program& program, BuildContext& build)
-{
-    forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
-        program.functions[index].relations = { };
-    });
-}
-
 static void applyUnknownResults(Program& program, BuildContext& build)
 {
     ProgramEditor editor(program);
@@ -213,12 +205,11 @@ static void nameObjectInPlaceOfDictionaryLayouts(Program& program, const FlowApp
     rewriteList(program.webAssemblyModules);
 }
 
-void applyFlowResults(Program& program, FlowResults& results, BuildContext& build, LinkedFunctions linkedFunctions)
+void applyFlowResults(Program& program, FlowResults& results, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
     if (!results.hasResults()) {
         applyUnknownResults(program, build);
-        dropRelations(program, build);
         return;
     }
     const FlowApplication* application = FlowApplyAccess::applicationOf(results);
@@ -245,28 +236,9 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     applyBodyUpdates(context, editor, fieldsExpectedAsRead);
     cutCallsOfUnreachedVersions(context);
     times.didFinish("applyBodyUpdates"_s);
-    // Both read the bodies and what flow has found. Neither asks for what the other one finds, and much of each runs on one thread.
-    std::unique_ptr<RelationalSummaries> relationalSummaries;
-    {
-        ProgramCaches caches(program, build);
-        runTasksInParallel(build.parallelLoops(), {
-            [&] {
-                computeOperandSummaries(program, results, build);
-                times.didFinish("computeOperandSummaries"_s);
-            },
-            [&] {
-                PhaseTimes timesBeside(build, PassID::ApplyFlowResults);
-                relationalSummaries = linkRelationalSummaries(program, results, build, build.validates() ? LinkedFunctions::All : linkedFunctions);
-                timesBeside.didFinish("linkRelationalSummaries, beside computeOperandSummaries"_s);
-            },
-        });
-    }
-    results.setRelationalSummaries(WTF::move(relationalSummaries));
-    typeResultsByOrigins(program, results, build);
-    if (build.validates())
-        validateResultOriginsAtRunTime(editor, program, results, build);
-    dropRelations(program, build);
-    times.didFinish("typeResultsByOrigins"_s);
+    ProgramCaches caches(program, build);
+    computeOperandSummaries(program, results, build);
+    times.didFinish("computeOperandSummaries"_s);
 }
 
 } } } // namespace JSC::AOT::Typed

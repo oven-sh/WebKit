@@ -26,16 +26,12 @@ namespace JSC { namespace AOT { namespace Typed {
 using ObjectAccess = ValueFlowAccessThroughObject;
 using ObjectAccessKind = ValueFlowAccessThroughObjectKind;
 
-static constexpr OptionSet<ObjectMutation> reachMutations { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
-static constexpr ValueFlowName everyPropertyName = ValueFlowName::of(ValueFlowNameKind::EveryProperty);
+static constexpr OptionSet<ObjectMutation> reachingMutations { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
 
 static bool hasNamespaceOfProgram(ModuleKind kind)
 {
     switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
+    default:
         return true;
     case ModuleKind::Runtime:
     case ModuleKind::External:
@@ -47,7 +43,7 @@ static bool hasNamespaceOfProgram(ModuleKind kind)
 // Somebody holds the object whom nobody follows.
 static bool isInUnknownHands(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
-    return inputs.hasEscaped(object) || inputs.isLost(object) || inputs.isHeldByNativeCode(object) || markedMutationsOf(inputs, object).containsAny(reachMutations);
+    return inputs.hasEscaped(object) || inputs.isLost(object) || inputs.isHeldByNativeCode(object) || markedMutationsOf(inputs, object).containsAny(reachingMutations);
 }
 
 // The names under which a value lies, and under which a read looks for one.

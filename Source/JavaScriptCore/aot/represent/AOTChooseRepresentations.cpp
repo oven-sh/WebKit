@@ -805,12 +805,6 @@ PassOutcome chooseRepresentations(FunctionPassContext& pass)
     function.representationsAreChosen = true;
     countRepresentations(pass, inserter ? inserter->numberOfConversions() : 0);
 
-    if (pass.build.options().verifiesProgram) {
-        Vector<InternalError> errors;
-        checkRepresentations(inputs, errors);
-        if (!errors.isEmpty())
-            pass.build.diagnostics().append(WTF::move(errors));
-    }
     return PassOutcome::Changed;
 }
 

@@ -444,7 +444,6 @@ struct IntegerInterval {
 };
 
 JS_EXPORT_PRIVATE IntRange rangeFor(const Procedure&, Value*);
-JS_EXPORT_PRIVATE bool isKnownRangePlausible(const Procedure&, Value*);
 
 JS_EXPORT_PRIVATE IntegerInterval fullInterval(Type, Signedness);
 JS_EXPORT_PRIVATE IntegerInterval intervalFor(const Procedure&, Value*, Signedness);

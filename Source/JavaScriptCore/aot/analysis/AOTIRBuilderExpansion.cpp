@@ -28,14 +28,14 @@ struct ExpandedResult {
     ValueID firstRead;
 };
 
-struct ResultUse {
+struct ExpansionResultUse {
     uint32_t resultIndex { 0 };
     Use use;
 };
 
-struct ResultReads {
+struct ExpansionResultReads {
     Vector<ExpandedResult, 2> results;
-    Vector<ResultUse, 8> uses;
+    Vector<ExpansionResultUse, 8> uses;
     Vector<BlockID, 4> blocks;
 };
 
@@ -72,9 +72,9 @@ static void replaceProducerWithResults(Function& function, ValueID producer, std
     function.edit(continuation, BlockEdit::Values).values.insert(0, producer);
 }
 
-static ResultReads collectResultReads(const Program& program, const Function& function, TypeArena& types, const UseLists& useLists, ValueID producer, uint32_t numberOfResults)
+static ExpansionResultReads collectResultReads(const Program& program, const Function& function, TypeArena& types, const UseLists& useLists, ValueID producer, uint32_t numberOfResults)
 {
-    ResultReads reads;
+    ExpansionResultReads reads;
     for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex)
         reads.results.append(ExpandedResult { resultTypeAt(program, function, types, producer, resultIndex), { } });
     for (const Use& producerUse : useLists.usesOf(producer)) {
@@ -86,14 +86,14 @@ static ResultReads collectResultReads(const Program& program, const Function& fu
         if (!result.firstRead)
             result.firstRead = read;
         for (const Use& use : useLists.usesOf(read))
-            reads.uses.append(ResultUse { resultIndex, use });
+            reads.uses.append(ExpansionResultUse { resultIndex, use });
         if (reads.blocks.isEmpty() || reads.blocks.last() != producerUse.block)
             reads.blocks.append(producerUse.block);
     }
     return reads;
 }
 
-static Vector<ValueID, 1> replaceResultReads(IRBuilder& builder, ResultReads&& reads, ValueID producer, BlockID cutBlock, BlockID continuation)
+static Vector<ValueID, 1> replaceResultReads(IRBuilder& builder, ExpansionResultReads&& reads, ValueID producer, BlockID cutBlock, BlockID continuation)
 {
     Function& function = builder.function();
     auto blockAfterCut = [&](BlockID block) {
@@ -203,13 +203,13 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point)
 {
     ValueID id = m_function.at(point.block).values[point.index];
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_context.program, m_function, m_function.at(id));
-    ResultReads reads;
+    ExpansionResultReads reads;
     if (numberOfResults) {
         RELEASE_ASSERT(m_analyses);
         reads = collectResultReads(m_context.program, m_function, m_types, m_analyses->useLists(), id, *numberOfResults);
     }
     Vector<BlockID, 8> changedBlocks { point.block };
-    for (const ResultUse& rewritten : reads.uses)
+    for (const ExpansionResultUse& rewritten : reads.uses)
         changedBlocks.append(rewritten.use.block);
 
     Expansion expansion = cutForExpansion(point);

@@ -10,6 +10,7 @@
 #include "AOTInterningPhases.h"
 #include "AOTPass.h"
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
 
@@ -49,6 +50,8 @@ void lowerFunctionsInParallel(ProgramEditor& editor, BuildContext& build, std::s
 {
     editFunctionsInParallelImpl(editor, build, KindOfEdit::Lowering, BehindEdit::FitAndWriteRow, functions, functionsBuiltByEdits, edit);
 }
+
+void removeEntryParameters(Function&, const BitVector& removedEntryParameters);
 
 void simplifyEditedFunction(const PassRunner&, const Program&, const OptimizationInputs&, FunctionID, Function&, TaskArenas&);
 

@@ -39,13 +39,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
-static constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
-
 // Whoever runs one of these on an object sees which keys it has and in which order.
 static constexpr Protocols protocolsListingKeys { Protocol::OwnKeys, Protocol::OwnValues, Protocol::ToJSON };
 
-static constexpr OptionSet<ObjectMutation> reachMutations { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
+static constexpr OptionSet<ObjectMutation> mutationsThatReach { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
 
 static bool hasNodeOfItsOwn(const Field& field)
 {
@@ -353,21 +350,6 @@ ValueSetID ValueFlowHeapView::findWrittenUnder(ValueSetMaker& maker, ValueSetID 
     return maker.uniteAll(parts.span());
 }
 
-static BuiltinClassID classOfFunctionObject(const Function& function)
-{
-    bool isAsync = function.has(FunctionFlags::IsAsync);
-    if (function.has(FunctionFlags::IsGenerator))
-        return isAsync ? BuiltinClasses::AsyncGeneratorFunction : BuiltinClasses::GeneratorFunction;
-    return isAsync ? BuiltinClasses::AsyncFunction : BuiltinClasses::Function;
-}
-
-static BuiltinClassID classAbovePrototypeProperty(const Function& function)
-{
-    if (!function.has(FunctionFlags::IsGenerator))
-        return BuiltinClasses::Object;
-    return function.has(FunctionFlags::IsAsync) ? BuiltinClasses::AsyncGenerator : BuiltinClasses::Generator;
-}
-
 // As the rule of a lookup has it. The unknown object stands for a prototype that nothing names.
 void ValueFlowHeapView::appendPrototypesAtCreation(ValueFlowObjectID object, Vector<ValueFlowObjectID, 8>& prototypes) const
 {
@@ -443,10 +425,7 @@ void ValueFlowHeapView::appendPrototypesAtCreation(ValueFlowObjectID object, Vec
         case LayoutKind::Instance:
             prototypes.append(universe.prototypeOf(site.layout));
             return;
-        case LayoutKind::Environment:
-        case LayoutKind::Closure:
-        case LayoutKind::CoroutineFrame:
-        case LayoutKind::ModuleNamespace:
+        default:
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -673,9 +652,7 @@ ValueSetID ValueFlowBuiltinApplication::valueAt(BuiltinOperand position, ValueSe
 BuiltinCallMode ValueFlowBuiltinApplication::mode() const
 {
     switch (kind) {
-    case ValueFlowCallKind::Call:
-    case ValueFlowCallKind::CallByNativeCode:
-    case ValueFlowCallKind::CallByHost:
+    default:
         return BuiltinCallMode::Call;
     case ValueFlowCallKind::Construct:
     case ValueFlowCallKind::ConstructByNativeCode:
@@ -689,7 +666,7 @@ BuiltinCallMode ValueFlowBuiltinApplication::mode() const
 }
 
 // The first operand of each is the callee, the second is this or new.target, then come the arguments or the list of them.
-static bool callsValue(const ValueFlowStatement& statement)
+static bool statementCallsValue(const ValueFlowStatement& statement)
 {
     if (statement.kind != ValueFlowStatementKind::Operation)
         return false;
@@ -704,11 +681,6 @@ static bool callsValue(const ValueFlowStatement& statement)
     default:
         return false;
     }
-}
-
-static bool passesList(Opcode opcode)
-{
-    return opcode == Opcode::CallList || opcode == Opcode::ConstructList || opcode == Opcode::SuperConstructList;
 }
 
 static bool passesAnyOf(const ValueFlowBuiltinApplication& application, SetsMeetingOneSet* wanted)
@@ -918,7 +890,7 @@ void ValueFlowHeapIndex::collectCalls(const ValueFlowResultInputs& inputs)
             if (!inputs.isReached(FunctionID(function)))
                 continue;
             for (uint32_t index = ranges[function].statement; index < ranges[function + 1].statement; ++index) {
-                if (!callsValue(statements[index]))
+                if (!statementCallsValue(statements[index]))
                     continue;
                 ValueSetID callees = valueSeenByRulesAt(inputs, makers.of(worker), inputs.bodies().operandsOf(statements[index])[0]);
                 if (inputs.sets().meet(callees, wantedCallees))
@@ -1322,11 +1294,6 @@ private:
 };
 
 } // anonymous namespace
-
-static bool isClassLayout(const Layout& layout)
-{
-    return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
-}
 
 LayoutID LayoutsOfObjects::namedLayoutOf(ValueFlowObjectID object) const
 {
@@ -2042,8 +2009,10 @@ void StoresByLayout::findReceiversBehindChecks()
             }
         }
         bool isTypedBody = m_inputs.universe().genericVersionOf(FunctionID(index)) && function.role != FunctionRole::EntryChecks;
-        if (hasCheck && hasTypedReceiver && !isTypedBody)
-            m_valuesBehindChecks[index] = findValuesBehindChecks(program, function, CFG(function));
+        if (hasCheck && hasTypedReceiver && !isTypedBody) {
+            const BitVector* known = m_inputs.bodies().valuesBehindChecks(FunctionID(index));
+            m_valuesBehindChecks[index] = known ? *known : findValuesBehindChecks(program, function, CFG(function));
+        }
         m_hasChecksNotLookedAt[index] = hasCheck && !hasTypedReceiver && !isTypedBody;
     });
 }
@@ -4254,9 +4223,7 @@ auto UsesOfObjects::findNotesOf(ValueSetMaker& maker, ValueSetID builtinFunction
         case BuiltinKeyKind::Operand:
             addOnce(notes->testsUnderOperands, NotesOfBuiltins::TestUnderOperand { action.object, *action.key.operand, looksAtOwnPropertyAlone });
             return;
-        case BuiltinKeyKind::Any:
-        case BuiltinKeyKind::Indexes:
-        case BuiltinKeyKind::ElementsOf:
+        default:
             addOnce(notes->observedUnderAnyKey, action.object);
             return;
         }
@@ -4647,7 +4614,7 @@ static void noteFieldsMissingAtCreation(const FieldResults& results, std::span<c
 // An object that nobody but followed code gets hold of.
 static bool isSeenByFollowedCodeAlone(const FieldResults& results, LayoutID id)
 {
-    return !results.possibleMutationsOf(id).containsAny(reachMutations) && !results.stores.hasObjectOfCodeWithoutSolve(id);
+    return !results.possibleMutationsOf(id).containsAny(mutationsThatReach) && !results.stores.hasObjectOfCodeWithoutSolve(id);
 }
 
 // All that lies in such an object was written there, or the table of built-ins lists it.
@@ -4981,12 +4948,7 @@ static bool canAppendFieldsTo(const FieldResults& results, LayoutID id)
     case LayoutKind::Record:
     case LayoutKind::Instance:
         break;
-    case LayoutKind::Container:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
+    default:
         return false;
     }
     // A derived layout has the fields of the layout it was derived from, and that one takes the names.
@@ -5516,12 +5478,7 @@ static FieldCreation ownFieldCreationOf(const FieldResults& results, const BitVe
         if (!results.constructions.createsFieldsOnlyInListedOrders(id))
             return FieldCreation::Unknown;
         break;
-    case LayoutKind::Container:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
+    default:
         return FieldCreation::Unknown;
     }
     if (results.possibleMutationsOf(id).contains(ObjectMutation::AddProperty) || !results.application.layouts[id.index()].appendedFields.isEmpty())

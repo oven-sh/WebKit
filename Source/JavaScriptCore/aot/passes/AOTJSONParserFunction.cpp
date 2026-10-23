@@ -10,7 +10,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static DerivedSignature signatureOfNode(const EmissionInputs& inputs, const ResultNode& node)
+static DerivedSignature parserSignatureOfNode(const EmissionInputs& inputs, const ResultNode& node)
 {
     Function scratch;
     IRBuilder builder(inputs.analysisContext(), scratch, inputs.types);
@@ -45,7 +45,7 @@ static Function buildParserOf(ResultNodeRef ref, FunctionRole role, DerivedFunct
     EmissionInputs inputs(derived, { });
     ResultNode node = describeNode(inputs.program, ref);
 
-    DerivedFunctionHead head = createDerivedFunction(inputs, role, creatorOf(ref, node), signatureOfNode(inputs, node));
+    DerivedFunctionHead head = createDerivedFunction(inputs, role, creatorOf(ref, node), parserSignatureOfNode(inputs, node));
 
     IRBuilder builder(inputs.analysisContext(), head.function, inputs.types);
     builder.moveToEndOf(head.entry);

@@ -480,7 +480,7 @@ Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& insertion)
     return WTF::move(casts.inserted);
 }
 
-static ValueID calledOperandOf(const Value& call)
+static ValueID operandThatIsCalled(const Value& call)
 {
     ValueID called;
     call.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -507,7 +507,7 @@ static std::optional<Type> typeOfListedCallees(const FlowBodyApplication& body, 
 
     // A class that is called and an arrow function that is constructed throw before they are entered, so no stamp lists them.
     bool isConstruction = !!OperandPosition::newTarget(call.opcode);
-    for (FunctionID function : body.types.at(body.function.at(calledOperandOf(call)).type).functions) {
+    for (FunctionID function : body.types.at(body.function.at(operandThatIsCalled(call)).type).functions) {
         const Function& callee = body.program.at(function);
         bool isClassConstructor = callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
         if (isConstruction ? callee.constructorForm() == ConstructorForm::NotConstructor : isClassConstructor)
@@ -574,7 +574,7 @@ void insertRuntimeValidation(const FlowCastInsertion& insertion)
                 continue;
             }
             if (std::optional<Type> listed = typeOfListedCallees(body, value))
-                builder.insertBefore({ block, index }, makeValidateCallee(calledOperandOf(value), body.types.intern(*listed)));
+                builder.insertBefore({ block, index }, makeValidateCallee(operandThatIsCalled(value), body.types.intern(*listed)));
         }
     }
     builder.applyInsertions();

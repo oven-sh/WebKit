@@ -66,7 +66,7 @@ static_assert(minSlotsPerRun >= minRunMembers, "a run has a last member, which i
 static constexpr size_t minAddingSlotStores = 2;
 
 static constexpr OpcodeSet slotStores { Opcode::PutSlot, Opcode::PutSlotOrAdd };
-static constexpr OpcodeSet storesByName { Opcode::PropSet, Opcode::PropDefine };
+static constexpr OpcodeSet storeRunOpcodes { Opcode::PropSet, Opcode::PropDefine };
 
 // The members of a family hold a field in one place, so the stores of a constructor to whichever member it allocated have one key.
 static RunKey runKeyOf(const Value& store)
@@ -188,7 +188,7 @@ static void setByNameRunPayload(Value& attempt, const StoreRun& run)
     attempt.setIsDefinition(run.key.isDefinition);
 }
 
-static void rewriteRun(GroupRewriter& rewriter, const StoreRun& run)
+static void rewriteStoreRun(GroupRewriter& rewriter, const StoreRun& run)
 {
     if (run.operation == Opcode::PutSlots) {
         Vector<PlacedKey, 4> placedKeys = placedKeysOf(rewriter, run);
@@ -211,7 +211,7 @@ static void rewriteRun(GroupRewriter& rewriter, const StoreRun& run)
 
 static std::optional<RunMember> slotRunMember(SelectionContext& context, ValueID id, const Value& value)
 {
-    if (!slotStores.contains(value.opcode) || isBorrowedInnerObject(context.function(), value.objectOperand()))
+    if (!slotStores.contains(value.opcode))
         return std::nullopt;
     const SlotAgreement& agreement = context.slots().agreementOf(context.program(), value.key(), value.receivers());
     if (!agreement.hasOneLocation() || !agreement.coversEveryMember())
@@ -233,7 +233,7 @@ void selectSlotStoreRun(SelectionContext& context)
 
     Vector<StoreRun> runs;
     collectRuns(context, RunRule { SelectionRuleID::SlotStoreRun, Opcode::PutSlots, minSlotsPerRun, LimitID::MaxSelectionGroupMembers, minAddingSlotStores }, describeMember, runs);
-    context.rewriteGroups(SelectionRuleID::SlotStoreRun, runs, rewriteRun);
+    context.rewriteGroups(SelectionRuleID::SlotStoreRun, runs, rewriteStoreRun);
 }
 
 static bool isOrdinaryObjectReceiver(const Type& receiver)
@@ -275,7 +275,7 @@ static bool paysOnCompiledObject(const Program& program, LayoutSetID receivers, 
 
 static std::optional<RunMember> byNameRunMember(SelectionContext& context, ValueID id, const Value& value, BlockID block)
 {
-    if (!storesByName.contains(value.opcode))
+    if (!storeRunOpcodes.contains(value.opcode))
         return std::nullopt;
     bool isDefinition = value.opcode == Opcode::PropDefine;
     if (!isDefinition && value.isFreeName())
@@ -311,7 +311,7 @@ void selectPropertyRun(SelectionContext& context)
 
     Vector<StoreRun> runs;
     collectRuns(context, RunRule { SelectionRuleID::PropertyRun, Opcode::TryPutByIds, minMembers, LimitID::MaxSelectionGroupMembers }, describeMember, runs);
-    context.rewriteGroups(SelectionRuleID::PropertyRun, runs, rewriteRun);
+    context.rewriteGroups(SelectionRuleID::PropertyRun, runs, rewriteStoreRun);
 }
 
 } } } // namespace JSC::AOT::Typed

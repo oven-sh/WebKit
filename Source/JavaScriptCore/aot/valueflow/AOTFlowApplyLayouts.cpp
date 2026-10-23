@@ -328,7 +328,7 @@ static void appendLiteralKeyOrders(Layout& layout, const FlowLayoutUpdate& updat
     }
 }
 
-static LayoutID provenBaseOf(const Layout& layout)
+static LayoutID provenBaseOfLayout(const Layout& layout)
 {
     return layout.flow.baseState == BaseState::Layout ? layout.flow.base : LayoutID();
 }
@@ -337,7 +337,7 @@ static void completeFields(const FlowApplyContext& context, TypeArena& arena, co
 {
     Program& program = context.program;
     Vector<LayoutID, 8> incompleteChain;
-    for (LayoutID current = id; current && !done.quickSet(current.index()); current = provenBaseOf(program.at(current)))
+    for (LayoutID current = id; current && !done.quickSet(current.index()); current = provenBaseOfLayout(program.at(current)))
         incompleteChain.append(current);
 
     while (!incompleteChain.isEmpty()) {

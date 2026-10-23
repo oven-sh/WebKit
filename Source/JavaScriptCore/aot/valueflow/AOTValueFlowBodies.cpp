@@ -100,8 +100,8 @@ namespace {
 using Body = ValueFlowBody;
 using NodeName = ValueFlowNodeName;
 using ObjectName = ValueFlowObjectName;
-using Form = Body::Operand;
-using Forms = Vector<Form, 1>;
+using OperandForm = Body::Operand;
+using Forms = Vector<OperandForm, 1>;
 
 enum class Role : uint8_t {
     // It carries no value of the program, or no block that is reached holds it.
@@ -115,11 +115,11 @@ enum class Role : uint8_t {
     Passing,
 };
 
-struct Source {
+struct BodySource {
     ValueID value;
     uint32_t mask { 0 };
 
-    friend bool operator==(const Source&, const Source&) = default;
+    friend bool operator==(const BodySource&, const BodySource&) = default;
 };
 
 struct Description {
@@ -186,7 +186,7 @@ bool carriesProgramValues(OpaqueKind kind)
 }
 
 // A literal is a string or a symbol like any other unless it is a key, which is a member of its own.
-uint16_t kindsOf(uint16_t primitives)
+uint16_t bodyKindsOf(uint16_t primitives)
 {
     uint16_t kinds = primitives & ~(Primitive::LiteralString | Primitive::LiteralSymbol);
     if (primitives & Primitive::LiteralString)
@@ -202,9 +202,9 @@ bool isCoroutine(const Function& function)
 }
 
 template<typename Record>
-class InternedRecords {
+class InternedBodyRecords {
 public:
-    explicit InternedRecords(Vector<Record>& records)
+    explicit InternedBodyRecords(Vector<Record>& records)
         : m_records(records)
     {
         m_records.append(Record { });
@@ -282,6 +282,9 @@ public:
         sortAndRemoveRepeats(m_body.edgesOnceReached);
         sortAndRemoveRepeats(m_body.seedsOnceReached);
         sortAndRemoveRepeats(m_body.functionsEnteredOnceReached);
+        m_body.knowsValuesBehindChecks = !m_isTypedBody;
+        if (!m_isTypedBody && !m_isBehindCheck.isEmpty())
+            m_body.valuesBehindChecks = WTF::move(m_isBehindCheck);
         return WTF::move(m_body);
     }
 
@@ -401,7 +404,7 @@ private:
     // What is known of a value by its type alone.
     uint32_t constantOfType(const Type& type)
     {
-        uint16_t primitives = kindsOf(type.primitives);
+        uint16_t primitives = bodyKindsOf(type.primitives);
         if (!type.hasObjects())
             return constantOf(primitives);
         ObjectName unknownObject { ValueFlowObjectKind::UnknownObject, 0, { } };
@@ -452,7 +455,10 @@ private:
     {
         bool isTaken = side == EdgeSide::Taken;
         Vector<TypeID, 1> outside { isTaken ? TypeTable::nullish : TypeTable::object };
-        if (std::optional<TypeID> boolean = m_program.types.find(Type::fromPrimitives(isTaken ? Primitive::False : Primitive::True)))
+        std::optional<std::optional<TypeID>>& known = m_typeOfBoolean[isTaken];
+        if (!known)
+            known = m_program.types.find(Type::fromPrimitives(isTaken ? Primitive::False : Primitive::True));
+        if (std::optional<TypeID> boolean = *known)
             outside.append(*boolean);
         return internMask({ { }, WTF::move(outside), ValueFlowMaskKind::Checked });
     }
@@ -494,9 +500,7 @@ private:
     static ValueFlowMaskKind kindOfResultMask(Opcode opcode)
     {
         switch (flowOf(opcode)) {
-        case ValueFlowEdgeClass::Allocates:
-        case ValueFlowEdgeClass::TableProves:
-        case ValueFlowEdgeClass::Checks:
+        default:
             return ValueFlowMaskKind::Checked;
         case ValueFlowEdgeClass::Copies:
         case ValueFlowEdgeClass::Unsound:
@@ -604,14 +608,14 @@ private:
         if (!value || at(value).role == Role::Nothing)
             return;
         Description& description = at(id);
-        Source source { value, mask };
+        BodySource source { value, mask };
         if (std::ranges::contains(m_sources.subspan(description.firstSource), source))
             return;
         m_sources.append(source);
         ++description.sourceCount;
     }
 
-    std::span<const Source> sourcesOf(ValueID id) LIFETIME_BOUND { return m_sources.subspan(at(id).firstSource, at(id).sourceCount); }
+    std::span<const BodySource> sourcesOf(ValueID id) LIFETIME_BOUND { return m_sources.subspan(at(id).firstSource, at(id).sourceCount); }
 
     void setConstant(ValueID id, uint32_t constant) { at(id) = { .role = Role::Constant, .constant = constant }; }
     void setNode(ValueID id, NodeName name) { at(id) = { .role = Role::Node, .name = name }; }
@@ -639,11 +643,7 @@ private:
             return true;
         case ResultRule::Natural:
             return answersByKindsOfOperands(opcode);
-        case ResultRule::None:
-        case ResultRule::Constant:
-        case ResultRule::Allocation:
-        case ResultRule::Declared:
-        case ResultRule::Results:
+        default:
             return false;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -774,10 +774,7 @@ private:
 
         // What holds for an operation without a rule of its own depends on no set, so it needs no statement. The schema says of each operation how its result comes about, and it takes no operation that leaves that out.
         switch (flowOf(value.opcode)) {
-        case ValueFlowEdgeClass::Allocates:
-        case ValueFlowEdgeClass::Copies:
-        case ValueFlowEdgeClass::TableProves:
-        case ValueFlowEdgeClass::Checks:
+        default:
             describeBySchema(block, id, value);
             return;
         case ValueFlowEdgeClass::Unsound:
@@ -861,7 +858,7 @@ private:
         case Opcode::Integer:
         case Opcode::Double:
         case Opcode::BigInt:
-            setConstant(id, constantOf(kindsOf(typeOf(id).primitives)));
+            setConstant(id, constantOf(bodyKindsOf(typeOf(id).primitives)));
             return;
         case Opcode::String: {
             std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = value.string() });
@@ -1218,7 +1215,7 @@ private:
         }
         // The types of the operands say which boolean a test answers, which text `typeof` and which numbers a conversion.
         if (rule == ResultRule::Natural && isBehindCheck(id) && !type.hasObjects() && type.isJavaScriptValue() && !answersByKindsOfOperands(value.opcode)) {
-            uint16_t kinds = kindsOf(type.primitives);
+            uint16_t kinds = bodyKindsOf(type.primitives);
             for (uint16_t group : { Primitive::Boolean, Primitive::Number }) {
                 if (kinds & group)
                     kinds |= group;
@@ -1433,7 +1430,7 @@ private:
                 continue;
             if (at(value).role != Role::Passing)
                 return false;
-            for (const Source& source : sourcesOf(value))
+            for (const BodySource& source : sourcesOf(value))
                 worklist.append(source.value);
         }
         return true;
@@ -1489,7 +1486,7 @@ private:
                 ValueID value = worklist.takeLast();
                 if (at(value).role != Role::Passing)
                     continue;
-                for (const Source& source : sourcesOf(value))
+                for (const BodySource& source : sourcesOf(value))
                     markLive(source.value);
             }
         };
@@ -1533,7 +1530,7 @@ private:
             ValueID value(index);
             if (!at(value).isLive || at(value).role != Role::Passing)
                 continue;
-            for (const Source& source : sourcesOf(value))
+            for (const BodySource& source : sourcesOf(value))
                 ++at(source.value).otherReaders;
         }
     }
@@ -1594,7 +1591,7 @@ private:
         }
     }
 
-    static void addForm(Forms& forms, const Form& form)
+    static void addForm(Forms& forms, const OperandForm& form)
     {
         if (!forms.contains(form))
             forms.append(form);
@@ -1618,7 +1615,7 @@ private:
         }
     }
 
-    void connectForm(const Form& form, NodeName target, uint32_t maskOfTarget)
+    void connectForm(const OperandForm& form, NodeName target, uint32_t maskOfTarget)
     {
         bool leavesBody = target.kind != NodeName::Kind::OfBody;
         if (form.constant)
@@ -1629,7 +1626,7 @@ private:
         (leavesBody ? m_body.edgesOnceReached : m_body.edges).append({ from, target });
     }
 
-    NodeName filterNodeOf(const Form& form)
+    NodeName filterNodeOf(const OperandForm& form)
     {
         for (auto& [known, node] : m_filterNodes) {
             if (known == form)
@@ -1642,26 +1639,26 @@ private:
     }
 
     // What the mask lets through of the form. Masks of one kind are one mask. A type that is taken on trust keeps nothing out: it only says what an untracked object may be, and a test says that better.
-    Form throughMask(const Form& form, uint32_t mask)
+    OperandForm throughMask(const OperandForm& form, uint32_t mask)
     {
         if (areOfOneKind(form.mask, mask))
             return { form.node, form.constant, intersectMasks(form.mask, mask) };
         return { form.node, form.constant, m_body.masks[mask].kind == ValueFlowMaskKind::Checked ? mask : form.mask };
     }
 
-    Form makeNode(ValueID value, const Forms& forms)
+    OperandForm makeNode(ValueID value, const Forms& forms)
     {
         bool isFilter = forms.size() == 1;
         uint32_t mask = isFilter ? forms[0].mask : 0;
         NodeName node = addNode(isFilter ? ValueFlowBodyNodeKind::Filter : ValueFlowBodyNodeKind::Merge, value, mask);
-        for (const Form& form : forms)
+        for (const OperandForm& form : forms)
             connectForm(form, node, mask);
         if (isFilter)
             m_sharedFilters.append({ node, forms[0] });
         return { node, 0, 0 };
     }
 
-    Form throughSharedFilters(Form form)
+    OperandForm throughSharedFilters(OperandForm form)
     {
         while (form.node && !form.constant) {
             size_t index = m_sharedFilters.findIf([&](const auto& filter) {
@@ -1739,7 +1736,7 @@ private:
             while (!frames.isEmpty()) {
                 Frame& frame = frames.last();
                 ValueID value = frame.value;
-                std::span<const Source> sources = sourcesOf(value);
+                std::span<const BodySource> sources = sourcesOf(value);
                 if (frame.nextSource < sources.size()) {
                     ValueID source = sources[frame.nextSource++].value;
                     if (!isPassing(source))
@@ -1771,7 +1768,7 @@ private:
         };
         bool hasMaskInside = false;
         for (ValueID member : members) {
-            for (const Source& source : sourcesOf(member))
+            for (const BodySource& source : sourcesOf(member))
                 hasMaskInside |= source.mask && isMember(source.value);
         }
         if (hasMaskInside) {
@@ -1789,12 +1786,12 @@ private:
             otherReaders += at(member).otherReaders;
             if (at(member).constant)
                 addForm(forms, { { }, at(member).constant, 0 });
-            for (const Source& source : sourcesOf(member)) {
+            for (const BodySource& source : sourcesOf(member)) {
                 if (isMember(source.value)) {
                     --otherReaders;
                     continue;
                 }
-                for (const Form& form : formsOf(source.value))
+                for (const OperandForm& form : formsOf(source.value))
                     addForm(forms, throughMask(form, source.mask));
             }
         }
@@ -1807,7 +1804,7 @@ private:
         else if (forms.size() > 1)
             staysAsNode = operandReaders || forms.size() * readers > forms.size() + readers;
         if (staysAsNode) {
-            Form node = makeNode(head, forms);
+            OperandForm node = makeNode(head, forms);
             forms = { node };
         }
         m_forms[head.index()] = WTF::move(forms);
@@ -1817,13 +1814,13 @@ private:
     void resolveCycleThroughMasks(std::span<const ValueID> members)
     {
         for (ValueID member : members)
-            m_forms[member.index()] = { Form { addNode(ValueFlowBodyNodeKind::Merge, member), 0, 0 } };
+            m_forms[member.index()] = { OperandForm { addNode(ValueFlowBodyNodeKind::Merge, member), 0, 0 } };
         for (ValueID member : members) {
             NodeName node = m_forms[member.index()][0].node;
             if (at(member).constant)
                 connectForm({ { }, at(member).constant, 0 }, node, 0);
-            for (const Source& source : sourcesOf(member)) {
-                for (const Form& form : formsOf(source.value))
+            for (const BodySource& source : sourcesOf(member)) {
+                for (const OperandForm& form : formsOf(source.value))
                     connectForm(throughMask(form, source.mask), node, 0);
             }
         }
@@ -1850,7 +1847,7 @@ private:
         for (const EdgeToNode& edge : m_edges) {
             if (!mayHaveSummary || edge.target != result)
                 continue;
-            for (const Form& form : formsOf(edge.value))
+            for (const OperandForm& form : formsOf(edge.value))
                 returnsParameter |= !!operandOfCallerAt(throughSharedFilters(form).node);
         }
         NodeName ownResult;
@@ -1867,11 +1864,11 @@ private:
             }
         }
         for (const EdgeToNode& edge : m_edges) {
-            for (const Form& form : formsOf(edge.value)) {
+            for (const OperandForm& form : formsOf(edge.value)) {
                 connectForm(form, edge.target, 0);
                 if (!returnsParameter || edge.target != result)
                     continue;
-                Form source = throughSharedFilters(form);
+                OperandForm source = throughSharedFilters(form);
                 std::optional<uint32_t> parameter = operandOfCallerAt(source.node);
                 if (!parameter) {
                     connectForm(form, ownResult, 0);
@@ -1886,19 +1883,19 @@ private:
         }
     }
 
-    Form operandFormOf(ValueID value)
+    OperandForm operandFormOf(ValueID value)
     {
         if (!value || !at(value).isLive)
             return { };
         const Forms& forms = formsOf(value);
         RELEASE_ASSERT(forms.size() <= 1);
-        return forms.isEmpty() ? Form { } : forms[0];
+        return forms.isEmpty() ? OperandForm { } : forms[0];
     }
 
     // Through a receiver and through a callee a rule looks things up member by member.
-    Form operandFormOf(const Value& operation, uint32_t index, ValueID value)
+    OperandForm operandFormOf(const Value& operation, uint32_t index, ValueID value)
     {
-        Form form = operandFormOf(value);
+        OperandForm form = operandFormOf(value);
         bool isLookedThrough = receiverOf(operation.opcode) == index || (!index && operationsCallingValues.contains(operation.opcode));
         if (!isLookedThrough || !form.node || form.mask)
             return form;
@@ -1920,7 +1917,7 @@ private:
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
         for (uint32_t index = 0; index < pending.operandCount; ++index)
-            m_body.operands.append(isNeverObserved(pending.site, index) ? Form { } : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
+            m_body.operands.append(isNeverObserved(pending.site, index) ? OperandForm { } : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
         if (at(pending.site).role == Role::Result && at(pending.site).isLive)
             statement.result = at(pending.site).name;
         if (mayThrowValue(value.opcode))
@@ -1930,6 +1927,8 @@ private:
 
     void emitStatements()
     {
+        m_body.statements.reserveInitialCapacity(m_statements.size() + 3);
+        m_body.operands.reserveInitialCapacity(m_statementOperands.size());
         for (const PendingStatement& pending : m_statements) {
             if (!pending.leavesBody)
                 emitStatement(pending);
@@ -1991,30 +1990,32 @@ private:
     const Function& m_function;
     CFG m_cfg;
     Body m_body;
-    InternedRecords<Body::Constant> m_constants;
-    InternedRecords<Body::Mask> m_masks;
-    Vector<Description> m_descriptions;
-    Vector<Source> m_sources;
-    Vector<BlockParameter> m_blockParameters;
+    InternedBodyRecords<Body::Constant> m_constants;
+    InternedBodyRecords<Body::Mask> m_masks;
+    Vector<Description, 48> m_descriptions;
+    Vector<BodySource, 48> m_sources;
+    Vector<BlockParameter, 16> m_blockParameters;
     Vector<ValueID, 8> m_returnedValues;
     bool m_returnsCall { false };
-    Vector<NodeName> m_caughtNodes;
+    Vector<NodeName, 16> m_caughtNodes;
     BitVector m_targetsWithHostError;
     BitVector m_targetsWithUnknownValue;
-    Vector<ValueID> m_resultsOfUnknownValue;
-    Vector<EdgeToNode> m_edges;
-    Vector<PendingStatement> m_statements;
-    Vector<ValueID> m_statementOperands;
-    Vector<ObservedValue> m_observedValues;
-    Vector<std::pair<ValueID, ValueID>> m_comparedValues;
-    Vector<ValueID> m_checks;
+    Vector<ValueID, 8> m_resultsOfUnknownValue;
+    Vector<EdgeToNode, 32> m_edges;
+    Vector<PendingStatement, 32> m_statements;
+    Vector<ValueID, 96> m_statementOperands;
+    Vector<ObservedValue, 16> m_observedValues;
+    Vector<std::pair<ValueID, ValueID>, 4> m_comparedValues;
+    Vector<ValueID, 8> m_checks;
     bool m_testsArguments { false };
-    Vector<ValueID> m_readsInTypedBody;
+    Vector<ValueID, 8> m_readsInTypedBody;
     const bool m_isTypedBody;
     BitVector m_isBehindCheck;
-    Vector<Forms> m_forms;
-    Vector<std::pair<Form, NodeName>, 4> m_filterNodes;
-    Vector<std::pair<NodeName, Form>, 4> m_sharedFilters;
+    Vector<Forms, 48> m_forms;
+    Vector<std::pair<OperandForm, NodeName>, 4> m_filterNodes;
+    Vector<std::pair<NodeName, OperandForm>, 4> m_sharedFilters;
+    // The type of `true`, then that of `false`, once somebody has asked.
+    std::array<std::optional<std::optional<TypeID>>, 2> m_typeOfBoolean;
 };
 
 } // namespace
@@ -2055,7 +2056,7 @@ bool startsWithoutValueInSolve(const Program& program, const Variable& variable)
     return variable.initialization == VariableInitialization::Undefined && variable.flags.contains(VariableFlags::IsImmutable) && variable.module && program.at(variable.module).kind == ModuleKind::RuntimeSource;
 }
 
-ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables)
+ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables, std::span<const uint64_t> operationsOfFunctions)
 {
     ValueFlowBody body = makeBodyWithoutOperations({ }, 0, 0, false);
 
@@ -2085,7 +2086,10 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
     }
 
     // So does a `var` that lives in an environment. Its `undefined` stands here, apart from what the code of the program stores: where no read sees the start, the type of the field is that of the stores.
-    for (const Function& function : program.functions) {
+    for (uint32_t functionIndex = 0; functionIndex < program.functions.size(); ++functionIndex) {
+        if (!operationsOfFunctions.empty() && !(operationsOfFunctions[functionIndex] & notedOperations({ ValueFlowNotedOperation::NewObject })))
+            continue;
+        const Function& function = program.functions[functionIndex];
         for (const Value& value : function.values) {
             if (value.opcode != Opcode::NewObject || !program.at(value.layout()).isEnvironment())
                 continue;

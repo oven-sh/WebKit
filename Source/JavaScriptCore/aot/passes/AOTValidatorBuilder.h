@@ -97,6 +97,13 @@ private:
     ValidationRuleEmitter m_rules;
 };
 
+inline constexpr uint32_t valueResultIndex = 1;
+
+inline const Field& fieldOf(const Program& program, const ResultNode& node, const ResultMember& member)
+{
+    return program.at(node.layout).fields[*member.field];
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

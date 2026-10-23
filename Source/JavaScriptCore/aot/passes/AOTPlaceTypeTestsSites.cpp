@@ -79,7 +79,7 @@ static bool mayEndMemberConditions(const Effects& effects)
     return effects.maySuspend || effects.writes.contains(AbstractHeap::MemberGuards);
 }
 
-static auto orderOf(const MemberConditionRecord& condition)
+static auto conditionOrderOf(const MemberConditionRecord& condition)
 {
     return std::tuple { condition.kind, condition.layout, condition.side, condition.key };
 }
@@ -95,7 +95,7 @@ static void shareConditionsTest(FunctionPassContext& context, TestSites& sites, 
         for (MemberConditionRecord condition : sites.tests[test].conditions())
             conditions.append(condition);
     }
-    AOT::sort(conditions, { }, orderOf);
+    AOT::sort(conditions, { }, conditionOrderOf);
     conditions.shrink(conditions.size() - std::ranges::unique(conditions).size());
 
     Value shared = IRBuilder::make(Opcode::AreMembersUnchanged);

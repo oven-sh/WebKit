@@ -192,7 +192,7 @@ static bool canTakeAnotherParameter(FunctionPassContext& context, const RangeOfB
     });
 }
 
-static std::optional<Value> makeCallOfHelper(FunctionPassContext& context, BuiltinID helper, const BuiltinCallStamps& stamps, std::initializer_list<ValueID> arguments)
+static std::optional<Value> makeStampedCallOfHelper(FunctionPassContext& context, BuiltinID helper, const BuiltinCallStamps& stamps, std::initializer_list<ValueID> arguments)
 {
     TypingContext typing { context.program, context.function, context.types };
     for (BuiltinOverloadID overload : context.program.builtins().overloadIDsOf(helper)) {
@@ -238,7 +238,7 @@ unsigned leaveRangesOfBytesUnmade(FunctionPassContext& context, const BuiltinCal
         const Value call = function.at(range.call.value);
         ValueID view = call.receiverOperand();
         ValueID begin = call.argumentsOperands()[0];
-        std::optional<Value> startOfRange = makeCallOfHelper(context, Builtins::CompilerHelpersStartOfRangeOfBytes, { }, { view, begin });
+        std::optional<Value> startOfRange = makeStampedCallOfHelper(context, Builtins::CompilerHelpersStartOfRangeOfBytes, { }, { view, begin });
         if (!startOfRange)
             continue;
 
@@ -264,7 +264,7 @@ unsigned leaveRangesOfBytesUnmade(FunctionPassContext& context, const BuiltinCal
                 builder.appendArgument(edge, startOf(targetOf(function, edge).arguments[location.index]));
         }
 
-        std::optional<Value> viewOrRange = makeCallOfHelper(context, Builtins::CompilerHelpersViewOrRangeOfBytes, stampsOf(call), { view, begin, start });
+        std::optional<Value> viewOrRange = makeStampedCallOfHelper(context, Builtins::CompilerHelpersViewOrRangeOfBytes, stampsOf(call), { view, begin, start });
         RELEASE_ASSERT(viewOrRange);
         auto replace = [&](ValueID id, const Value& replaced, Value&& replacement) {
             replacement.setOrigin(replaced.origin());
@@ -277,13 +277,13 @@ unsigned leaveRangesOfBytesUnmade(FunctionPassContext& context, const BuiltinCal
 
         for (const UseOfRange& use : range.encodings) {
             const Value encoding = function.at(use.user);
-            std::optional<Value> encodingIntoRange = makeCallOfHelper(context, Builtins::CompilerHelpersEncodeIntoRangeOfBytes, stampsOf(encoding), { encoding.receiverOperand(), encoding.argumentsOperands()[0], use.used, startOf(use.used) });
+            std::optional<Value> encodingIntoRange = makeStampedCallOfHelper(context, Builtins::CompilerHelpersEncodeIntoRangeOfBytes, stampsOf(encoding), { encoding.receiverOperand(), encoding.argumentsOperands()[0], use.used, startOf(use.used) });
             RELEASE_ASSERT(encodingIntoRange);
             replace(use.user, encoding, WTF::move(*encodingIntoRange));
         }
         for (const UseOfRange& use : range.otherUses) {
             builder.setOrigin(function.at(use.user).origin());
-            std::optional<Value> made = makeCallOfHelper(context, Builtins::CompilerHelpersRangeOfBytes, { }, { use.used, startOf(use.used) });
+            std::optional<Value> made = makeStampedCallOfHelper(context, Builtins::CompilerHelpersRangeOfBytes, { }, { use.used, startOf(use.used) });
             RELEASE_ASSERT(made);
             function.edit(use.user, ValueEdit::Definition).setOperand(use.operandIndex, builder.insertBefore(use.point, WTF::move(*made)));
         }

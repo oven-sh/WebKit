@@ -34,7 +34,7 @@ static constexpr OptionSet<ObjectMutation> mutationsOfMembers {
 
 namespace {
 
-struct Definition {
+struct ClassMemberDefinition {
     uint32_t index { 0 };
     ClassMember member;
 };
@@ -49,7 +49,7 @@ struct ClassDefinition {
     bool mayHaveUnknownName[2] { false, false };
     // All that some evaluation of the class may extend.
     ValueSetID heritage { ValueSets::nothing };
-    Vector<Definition> definitions;
+    Vector<ClassMemberDefinition> definitions;
     // The functions whose closure goes from the operation that makes it to something else than the definition of a member. Ascending.
     Vector<FunctionID> functionsHandedOnAtDefinition;
 };
@@ -612,9 +612,9 @@ static bool hasOneDefinition(std::span<const ClassMember> membersUnderOneKey)
 }
 
 // Copies of a definition that disagree share an index. Only the copy that runs knows what it defines.
-static Vector<ClassMember> listMembersInDefinitionOrder(Vector<Definition>&& definitions, std::span<const ClassMember> namedMembers)
+static Vector<ClassMember> listMembersInDefinitionOrder(Vector<ClassMemberDefinition>&& definitions, std::span<const ClassMember> namedMembers)
 {
-    auto orderOf = [](const Definition& definition) {
+    auto orderOf = [](const ClassMemberDefinition& definition) {
         return std::tuple { definition.index, memberOrderOf(definition.member) };
     };
     AOT::sort(definitions, { }, orderOf);
@@ -703,7 +703,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
     mutationsOfHolder[static_cast<unsigned>(ClassSide::Prototype)] = markedMutationsOf(inputs, inputs.universe().prototypeOf(id));
     mutationsOfHolder[static_cast<unsigned>(ClassSide::Static)] = markedMutationsOf(inputs, inputs.universe().closureOf(layout.constructor));
     // A store under the name of a static field adds no name to the class object that declares the field, and it leaves a member under another name what it was.
-    bool sharesNameWithStaticField = std::ranges::any_of(definition.definitions, [&](const Definition& entry) {
+    bool sharesNameWithStaticField = std::ranges::any_of(definition.definitions, [&](const ClassMemberDefinition& entry) {
         return entry.member.side == ClassSide::Static && (!entry.member.key || std::ranges::contains(layout.staticFields, entry.member.key, &StaticField::key));
     });
     if (!sharesNameWithStaticField && inputs.variablesOnObjects->classObjectsStoredUnderStaticFieldsAlone.quickGet(id.index()))
@@ -733,7 +733,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
     };
 
     Vector<ClassMember> namedMembers;
-    for (const Definition& entry : definition.definitions) {
+    for (const ClassMemberDefinition& entry : definition.definitions) {
         if (entry.member.key)
             namedMembers.append(entry.member);
     }
@@ -755,7 +755,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
         });
         // What the definition of the class puts on the holder is there from the first moment that anybody has the holder. A store comes at some time: until then a lookup passes the holder by.
         bool isThereFromTheStart = std::ranges::all_of(group, [&](const ClassMember& member) {
-            return std::ranges::contains(definition.definitions, memberOrderOf(member), [](const Definition& entry) {
+            return std::ranges::contains(definition.definitions, memberOrderOf(member), [](const ClassMemberDefinition& entry) {
                 return memberOrderOf(entry.member);
             });
         });
@@ -764,7 +764,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
                 member.mutability = MemberMutability::Fixed;
             // A store through an object below passes a method, unless the holder is frozen.
             member.isWritableData = holdsWhatWasDefined && isEveryValueData && !mutationsOn(side).contains(ObjectMutation::ChangeIntegrity);
-            bool isDefinedByClass = std::ranges::contains(definition.definitions, member.function, [](const Definition& entry) {
+            bool isDefinedByClass = std::ranges::contains(definition.definitions, member.function, [](const ClassMemberDefinition& entry) {
                 return entry.member.function;
             });
             if (followsUses && member.function && isDefinedByClass && isOnlyCalled(inputs, definition, taken, member.function))
@@ -804,7 +804,7 @@ static ValueSetID closuresOfDefinedMembers(const ValueFlowResultInputs& inputs, 
     for (const ClassDefinition& definition : classes) {
         if (!definition.isFollowed)
             continue;
-        for (const Definition& entry : definition.definitions)
+        for (const ClassMemberDefinition& entry : definition.definitions)
             closures.append(inputs.universe().closureOf(entry.member.function));
     }
     return maker.of(closures.span());

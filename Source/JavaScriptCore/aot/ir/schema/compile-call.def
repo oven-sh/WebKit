@@ -114,15 +114,13 @@ enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 enum MismatchPolicy { Throw Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FlowFixpoint FunctionsGetPastEntry }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards CountChangesBehindSimplify FunctionsGetPastEntry }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals PassCodeBytes }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime GenerateDirectCodeByLinearScan }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules GenerateAllCodeDirectly CheckProofsAtRunTime }
 enum Sabotage {
     None
     StackNamesNoInnerCell NarrowReferenceOnStackNamesNoInnerCell InnerObjectIsVisitedWithoutItsFields InnerArrayIsVisitedWithoutItsElements InnerCellVisitedInPlaceStaysWhite
     InnerCellIsMarkedWithoutItsOuterCell InnerCellLetGoKeepsItsHeader
-    RoomIsNotInReferenceList RoomsLeftEmptyAreNotZeroed NoBarrierBehindFreshStoreIntoRoom NoBarrierForStoreThroughBorrowedObject StoreLeavesRoomAsItIs
-    FlattenedObjectIsMadeWithoutBarrier MakingLeavesRoomAsItIs
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }
@@ -136,7 +134,7 @@ record BisectionSwitches abi {
 }
 record TargetOptions abi { features: UInt64 architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {
-    bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double executableIdentity: UInt8[16] size: UInt32
+    bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
     action: CompileAction mismatchPolicy: MismatchPolicy checks: CheckSet reports: ReportSet testing: TestingSwitch instrumentation: Instrumentation
     heatOverride: HeatOverride loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
     excludedCode: ExcludedCode sabotage: Sabotage reserved: UInt32

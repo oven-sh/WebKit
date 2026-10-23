@@ -67,7 +67,7 @@ static constexpr uint16_t primitivesAlwaysInCells = cellPrimitives & ~Primitive:
 static constexpr uint16_t primitivesAlwaysInCells = cellPrimitives;
 #endif
 
-static constexpr uint16_t markerPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
+static constexpr uint16_t slotMarkerPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
 
 bool holdsWideReferences(const SlotPlanContext& context, LayoutID id)
 {
@@ -81,12 +81,12 @@ static bool needsWideReference(const SlotPlanContext& context, FieldReference fi
 
 static bool canHaveExtension(const SlotPlanContext& context, LayoutID id)
 {
-    return context.isCompiledObject(id) && !context.inputs.frameAllocation.mayBeInFrame(id) && !context.layoutsFlattenedInOthers.get(id.index());
+    return context.isCompiledObject(id) && !context.inputs.frameAllocation.mayBeInFrame(id);
 }
 
 static bool isCompressible(const Type& type)
 {
-    if (!type.hasCells() || type.primitives & ~(markerPrimitives | primitivesAlwaysInCells))
+    if (!type.hasCells() || type.primitives & ~(slotMarkerPrimitives | primitivesAlwaysInCells))
         return false;
     return !type.opaque || holdsCells(representationOf(*type.opaque));
 }
@@ -103,7 +103,7 @@ Type contentsOfSharedSlot(const Type& a, const Type& b)
 SlotRepresentation representationFor(const SlotPlanContext& context, const Type& type, RepresentationChoice choice)
 {
     SlotRepresentation representation = defaultSlotRepresentationOf(type);
-    if (representation == SlotRepresentation::JSValue && type.hasOnlyPrimitives(markerPrimitives | Primitive::Boolean))
+    if (representation == SlotRepresentation::JSValue && type.hasOnlyPrimitives(slotMarkerPrimitives | Primitive::Boolean))
         return SlotRepresentation::OptionalBoolean;
     if (choice.prefersInt32 && representation == SlotRepresentation::OptionalInt64 && type.integers.isSubsetOf({ minInlineInt32, INT32_MAX }))
         return SlotRepresentation::OptionalInt32;
@@ -201,7 +201,7 @@ static std::optional<FunctionID> deferredFunctionOf(const SlotPlanContext& conte
     return location.deferredFunction;
 }
 
-static bool fitsInt32Slot(const Type& type)
+static bool typeFitsInt32Slot(const Type& type)
 {
     return type.isInt32OrNullish() && type.integers.isSubsetOf({ minInlineInt32, INT32_MAX });
 }
@@ -242,15 +242,6 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
     claim.existsAtCreation = field.use.initializingSites || claim.isSetAtCreation || isAlwaysFilledByNativeCode;
     claim.isInitializedWithValue = field.use.sitesInitializingWithValue || (claim.isSetAtCreation && !field.use.initializingSites) || isAlwaysFilledByNativeCode;
 
-    // The code is written for this slot already. Nothing that lies in a frame is stored to such a field.
-    if (location.deferral == ClosureDeferral::FlattenedObject) {
-        RELEASE_ASSERT(context.isCompiledObject(field.reference.layout) && !field.members.needsWideReference);
-        claim.needsAbsentState = true;
-        claim.representation = SlotRepresentation::DeferredClosure;
-        claim.defersFlattenedObject = true;
-        return claim;
-    }
-
     if (auto function = deferredFunctionOf(context, field)) {
         claim.needsAbsentState = true;
         claim.representation = SlotRepresentation::DeferredClosure;
@@ -263,7 +254,7 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
     // A narrow reference saves four bytes and is decoded at each read.
     claim.needsWideReference = field.members.needsWideReference || (context.isMadeSeldom(field.reference.layout) && !holdsEnvironmentOfDeferredClosures(field));
     claim.representation = representationOfField(context, field.type, claim.needsAbsentState, {
-        .prefersInt32 = fitsInt32Slot(field.type),
+        .prefersInt32 = typeFitsInt32Slot(field.type),
         .holdsWideReferences = claim.needsWideReference,
     });
     claim.mayBeOutOfLine = mayBeOutOfLine(field, claim);
@@ -533,7 +524,7 @@ void ClaimSharer::collectUnits(const JoinedRows::Set& joined)
         const Type& type = typeHeldBy(program, declaredFieldAt(program, fieldAtRow(m_context, rows[first])));
         auto kind = sharedValueKindOf(m_claims[rows[first]].representation);
         if (kind && type.isJavaScriptValue())
-            m_units.append(ClaimUnit { rows.subspan(first, end - first), &type, type.hasOnlyPrimitives(markerPrimitives) ? SharedValueKind::OnlyMarkers : *kind });
+            m_units.append(ClaimUnit { rows.subspan(first, end - first), &type, type.hasOnlyPrimitives(slotMarkerPrimitives) ? SharedValueKind::OnlyMarkers : *kind });
         first = end;
     }
 }
@@ -549,7 +540,7 @@ SharedClaim ClaimSharer::claimFor(std::span<const ClaimUnit> units) const
         shared.needsWideReference |= claim.needsWideReference;
     }
     shared.representation = representationOfField(m_context, contents, shared.needsAbsentState, {
-        .prefersInt32 = fitsInt32Slot(contents),
+        .prefersInt32 = typeFitsInt32Slot(contents),
         .holdsWideReferences = shared.needsWideReference,
     });
     shared.outOfLineRepresentation = outOfLineRepresentationFor(m_context, contents.withPrimitives(Primitive::Absent), shared.needsWideReference);

@@ -11,7 +11,6 @@
 #include "AOTIRParser.h"
 #include "AOTReaderTestSupport.h"
 #include "AOTVector.h"
-#include "AOTWireBody.h"
 #include <array>
 #include <utility>
 #include <wtf/text/StringBuilder.h>
@@ -61,8 +60,8 @@ void testListCounts()
         { List::TemplateParts, 1 }, { List::ValidationRules, 2 }, { List::ValidationMembers, 1 }, { List::ValidationNodes, 3 }, { List::Layouts, 4 },
         { List::Fields, 4 }, { List::StaticFields, 1 }, { List::Variables, 4 }, { List::Modules, 2 }, { List::ModuleRequests, 1 },
         { List::ModuleExports, 2 }, { List::SyntheticExports, 2 }, { List::RequiredNames, 1 }, { List::ColumnAdjustments, 1 },
-        { List::ModuleFailures, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 }, { List::RelationSubjects, 1 }, { List::StoredIntos, 1 },
-        { List::HandedTos, 1 }, { List::OperandsOf, 1 }, { List::Functions, 9 }, { List::DataNodes, 2 },
+        { List::ModuleFailures, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 },
+        { List::Functions, 9 }, { List::DataNodes, 2 },
         { List::DataMembers, 2 }, { List::Data, 1 }, { List::Entries, 1 }, { List::HostReads, 1 }, { List::RuntimeFunctions, 2 },
         { List::WebAssemblyModules, 1 },
     };
@@ -408,98 +407,6 @@ void testProgramOutlivesBytes()
     AOT_TEST_CHECK(program->buffer().empty());
 }
 
-class BodyTranscript final : public WireBodyVisitor {
-public:
-    static void add(StringPrintStream& out, const Instruction& instruction)
-    {
-        out.print(" @", instruction.position, " flags ", static_cast<unsigned>(instruction.flags), " operands");
-        for (ValueID operand : instruction.operands())
-            out.print(" ", operand.index());
-        out.print(" payload");
-        for (uint32_t word : instruction.inlinePayload())
-            out.print(" ", word);
-        for (uint32_t word : instruction.payloadListFrom(numberOfInlinePayloadWords))
-            out.print(" ", word);
-        out.println();
-    }
-    static void add(StringPrintStream& out, const Target& target)
-    {
-        out.print("  target ", target.block.index(), " arguments");
-        for (ValueID argument : target.arguments)
-            out.print(" ", argument.index());
-        out.print(" proofs");
-        for (uint32_t proof : target.proofs)
-            out.print(" ", proof);
-        out.println();
-    }
-    static void addBlock(StringPrintStream& out, BlockID id, std::span<const ValueID> parameters, BlockRole role, BlockFrequency frequency, ValueID subject, const Target* handler, size_t numberOfValues)
-    {
-        out.print("block ", id.index(), " role ", static_cast<unsigned>(role), " frequency ", static_cast<unsigned>(frequency), " subject ", subject.index(), " values ", numberOfValues, " parameters");
-        for (ValueID parameter : parameters)
-            out.print(" ", parameter.index());
-        out.println();
-        if (handler)
-            add(out, *handler);
-    }
-    static void addValue(StringPrintStream& out, ValueID id, const Value& value)
-    {
-        out.print(" value ", id.index(), " ", nameOf(value.opcode));
-        add(out, value);
-    }
-    static void addTerminator(StringPrintStream& out, const Terminator& terminator)
-    {
-        out.print(" terminator ", nameOf(terminator.kind));
-        add(out, terminator);
-        for (const Target& target : terminator.targets)
-            add(out, target);
-    }
-
-    void beginBody(const WireBodyHead& head) final { text.println("body ", head.function.index(), " kind ", static_cast<unsigned>(head.record.kind), " values ", head.numberOfValues, " blocks ", head.numberOfBlocks); }
-    void beginBlock(const WireBlockHead& head) final { addBlock(text, head.block, head.parameters, head.role, head.frequency, head.subject, head.handler, head.numberOfValues); }
-    void visitValue(ValueID id, const Value& value) final { addValue(text, id, value); }
-    void visitTerminator(BlockID, const Terminator& terminator) final { addTerminator(text, terminator); }
-    void endBody() final { text.println("end"); }
-
-    StringPrintStream text;
-};
-
-void testWireBodiesAreWalkedAsRead()
-{
-    ReaderFixture fixture;
-    auto [program, bodies] = readProgramKeepingWireBodies(fixture.bytes.span(), fixture.build);
-    AOT_TEST_CHECK(program && bodies);
-    unsigned numberOfBodies = 0;
-    for (uint32_t index = 0; index < program->functions.size(); ++index) {
-        FunctionID id(index);
-        const Function& function = program->at(id);
-        AOT_TEST_CHECK(bodies->hasBody(id) == function.hasBody());
-        if (!function.hasBody())
-            continue;
-        ++numberOfBodies;
-
-        StringPrintStream expected;
-        OpcodeSet operations;
-        expected.println("body ", index, " kind ", static_cast<unsigned>(function.kind), " values ", function.values.size(), " blocks ", function.blocks.size());
-        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-            const Block& block = function.blocks[blockIndex];
-            BodyTranscript::addBlock(expected, BlockID(blockIndex), block.parameters.span(), block.role, block.frequency, block.subject, block.handler ? &*block.handler : nullptr, block.values.size());
-            for (ValueID value : block.values) {
-                BodyTranscript::addValue(expected, value, function.at(value));
-                operations.add(function.at(value).opcode);
-            }
-            BodyTranscript::addTerminator(expected, block.terminator);
-        }
-        expected.println("end");
-
-        BodyTranscript transcript;
-        bodies->walk(id, transcript);
-        AOT_TEST_CHECK(transcript.text.toString() == expected.toString());
-        AOT_TEST_CHECK(bodies->operationsOf(id) == operations);
-    }
-    AOT_TEST_CHECK(numberOfBodies > 2);
-    AOT_TEST_CHECK(!bodies->hasBody(FunctionID(static_cast<uint32_t>(program->functions.size()))));
-}
-
 } // anonymous namespace
 
 std::span<const NativeTest> readerTests()
@@ -521,7 +428,6 @@ std::span<const NativeTest> readerTests()
         { "reader/form-parameter"_s, testFormParameter },
         { "reader/parameter-site-functions"_s, testParameterSiteFunctions },
         { "reader/program-outlives-bytes"_s, testProgramOutlivesBytes },
-        { "reader/wire-bodies-are-walked-as-read"_s, testWireBodiesAreWalkedAsRead },
     };
     return tests;
 }

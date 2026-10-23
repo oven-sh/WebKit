@@ -77,21 +77,21 @@ private:
 };
 
 // Where the kinds of a value come from: a node of the graph, or nowhere, because the value alone says them.
-class Source {
+class StoreSource {
 public:
-    Source() = default;
-    Source(Kinds kinds)
+    StoreSource() = default;
+    StoreSource(Kinds kinds)
         : m_bits(isConstantBit | kinds.toRaw())
     {
     }
-    Source(StoredKind kind)
-        : Source(Kinds { kind })
+    StoreSource(StoredKind kind)
+        : StoreSource(Kinds { kind })
     {
     }
 
-    static Source fromNode(Node node)
+    static StoreSource fromNode(Node node)
     {
-        Source source;
+        StoreSource source;
         source.m_bits = node;
         return source;
     }
@@ -107,15 +107,15 @@ private:
     uint32_t m_bits { isConstantBit };
 };
 
-struct Edge {
-    Source from;
+struct StoreEdge {
+    StoreSource from;
     Node to;
 };
 
 // What the reader of a function asks about the type of a value, by TypeID.
 struct TypeFacts {
     LayoutSetID layouts;
-    Source valueSource;
+    StoreSource valueSource;
     Kinds admittedKinds;
     bool isInt32 : 1 { false };
     bool fitsInt32Slot : 1 { false };
@@ -123,7 +123,7 @@ struct TypeFacts {
 };
 
 struct Argument {
-    Source source;
+    StoreSource source;
     bool hasInt32Type { false };
 };
 
@@ -132,13 +132,13 @@ enum class Rule : uint8_t { BitOperation, IntegerArithmetic, Narrowing };
 struct Operation {
     Node result { 0 };
     Rule rule { Rule::Narrowing };
-    Source left;
-    Source right;
+    StoreSource left;
+    StoreSource right;
 };
 
 // The fields that an access by name may mean.
 struct AccessedFields {
-    Source read { StoredKind::Other };
+    StoreSource read { StoredKind::Other };
     std::optional<Node> stored;
     bool areRequired { false };
 };
@@ -162,7 +162,7 @@ struct MethodDefinition {
 };
 
 // No thread knows every method while the functions are read, so a call of a method waits until all of them have been.
-struct MethodCall {
+struct StoringMethodCall {
     LayoutSetID receivers;
     PropertyKeyID key;
     uint32_t firstArgument;
@@ -170,7 +170,7 @@ struct MethodCall {
     Node result;
 };
 
-struct Callees {
+struct StoreCallees {
     Vector<FunctionID, 2> functions;
     bool areAllSeen { false };
 };
@@ -179,15 +179,15 @@ struct Callees {
 struct GraphPart {
     Node nextNode { 0 };
     Node endOfNodes { 0 };
-    Vector<Edge> edges;
+    Vector<StoreEdge> edges;
     Vector<Operation> operations;
     Vector<MethodDefinition> methods;
-    Vector<MethodCall> methodCalls;
+    Vector<StoringMethodCall> methodCalls;
     Vector<Argument> argumentsOfMethodCalls;
     Vector<Node> numbersPassedOtherTypes;
     Vector<Node> fieldsStartedWithOtherTypes;
     Vector<Node> usedAsIntegers;
-    Vector<Source> sourcesOfValues;
+    Vector<StoreSource> sourcesOfValues;
 };
 
 // A node holds the kinds that reach one place (a field, a variable, a parameter, a result, the stores under a name) or one value of a function.
@@ -206,12 +206,12 @@ public:
     bool isStartedWithOtherTypes(FieldReference field) const { return m_fieldsStartedWithOtherTypes.quickGet(nodeOf(field)); }
 
 private:
-    friend class FunctionReader;
+    friend class StoreFunctionReader;
 
     struct alignas(64) AccessTable {
         Lock lock;
         UncheckedKeyHashMap<uint64_t, AccessedFields> fields WTF_GUARDED_BY_LOCK(lock);
-        UncheckedKeyHashMap<uint64_t, Callees> methods WTF_GUARDED_BY_LOCK(lock);
+        UncheckedKeyHashMap<uint64_t, StoreCallees> methods WTF_GUARDED_BY_LOCK(lock);
     };
     static constexpr unsigned numberOfAccessTables = 256;
     static constexpr Node nodesTakenAtOnce = 256;
@@ -240,16 +240,16 @@ private:
     std::span<const FieldWithKey> fieldsWithKey(PropertyKeyID key) const { return m_fieldsWithKey.subspan(m_firstFieldWithKey[key.index()], m_firstFieldWithKey[key.index() + 1] - m_firstFieldWithKey[key.index()]); }
 
     Node addNode(GraphPart&);
-    void connect(GraphPart&, Source from, Node to);
+    void connect(GraphPart&, StoreSource from, Node to);
     AccessedFields accessedFields(GraphPart&, LayoutSetID receivers, PropertyKeyID);
     AccessedFields findAccessedFields(GraphPart&, LayoutSetID receivers, PropertyKeyID);
     void passArgument(GraphPart&, FunctionID callee, unsigned parameter, Argument);
     void passArguments(GraphPart&, FunctionID callee, std::span<const Argument> arguments);
-    Source resultOf(FunctionID callee) const;
+    StoreSource resultOf(FunctionID callee) const;
     void indexMethods();
     std::span<const MethodDefinition> methodsOf(LayoutID, PropertyKeyID) const LIFETIME_BOUND;
-    Callees calledMethods(LayoutSetID receivers, PropertyKeyID);
-    Callees findCalledMethods(LayoutSetID receivers, PropertyKeyID) const;
+    StoreCallees calledMethods(LayoutSetID receivers, PropertyKeyID);
+    StoreCallees findCalledMethods(LayoutSetID receivers, PropertyKeyID) const;
     void connectMethodCalls(GraphPart&);
     void storeConstantData();
     void indexEdges();
@@ -257,8 +257,8 @@ private:
     void forEachShareOfNodes(Node count, NOESCAPE const Invocable<void(unsigned share, Node first, Node end)> auto&) const;
     Kinds kindsAt(Node node) const { return Kinds::fromRaw(m_kinds[node].load()); }
     Kinds seenAt(Node) const;
-    Kinds seenAt(Source source) const { return source.isConstant() ? source.constant() : seenAt(source.node()); }
-    Kinds leaving(Source) const;
+    Kinds seenAt(StoreSource source) const { return source.isConstant() ? source.constant() : seenAt(source.node()); }
+    Kinds leaving(StoreSource) const;
     void join(Vector<Node>& worklist, Node, Kinds);
     void enqueue(Vector<Node>& worklist, Node);
     void propagate(Vector<Node>& worklist);
@@ -297,9 +297,9 @@ private:
     bool m_unseenSourcesAreOther { false };
 };
 
-class FunctionReader {
+class StoreFunctionReader {
 public:
-    FunctionReader(StoreGraph& graph, GraphPart& part, FunctionID id)
+    StoreFunctionReader(StoreGraph& graph, GraphPart& part, FunctionID id)
         : m_graph(graph)
         , m_part(part)
         , m_program(graph.m_program)
@@ -313,23 +313,23 @@ public:
     void run();
 
 private:
-    Source sourceOf(ValueID id) const { return id ? m_sources[id.index()] : Source(StoredKind::Other); }
+    StoreSource sourceOf(ValueID id) const { return id ? m_sources[id.index()] : StoreSource(StoredKind::Other); }
     const TypeFacts& typeFactsOf(ValueID id) const { return m_graph.factsOf(m_function.at(id).type); }
     LayoutSetID expectedLayoutsOf(ValueID id) const { return m_graph.factsOf(m_function.at(id).expectedOrType()).layouts; }
     Argument argumentOf(ValueID id) const { return { sourceOf(id), id && typeFactsOf(id).isInt32 }; }
-    void connect(Source from, Node to) { m_graph.connect(m_part, from, to); }
+    void connect(StoreSource from, Node to) { m_graph.connect(m_part, from, to); }
 
     void readParameters();
     void read(BlockID);
-    Source read(const Value&);
-    Source readByType(const Value&) const;
-    Source readBitOperation(const Value&);
-    Source readOperation(Rule, const Value&);
-    Source readPropertyRead(const Value&);
-    Source readCall(const Value&);
-    Source readMethodCall(const Value&);
-    Source readDirectCall(const Value&);
-    Source readEdgeResult(EdgeResultPosition, ValueID parameter);
+    StoreSource read(const Value&);
+    StoreSource readByType(const Value&) const;
+    StoreSource readBitOperation(const Value&);
+    StoreSource readOperation(Rule, const Value&);
+    StoreSource readPropertyRead(const Value&);
+    StoreSource readCall(const Value&);
+    StoreSource readMethodCall(const Value&);
+    StoreSource readDirectCall(const Value&);
+    StoreSource readEdgeResult(EdgeResultPosition, ValueID parameter);
     void readMethodDefinition(const Value&);
     void readStoreByName(const Value&);
     void readInitialValues(const Value&);
@@ -337,11 +337,11 @@ private:
     void noteUsesAsIntegers(const Value&);
     void noteArgumentsTakenAsIntegers(const Value& call);
     bool hasCountedElements(ValueID object) const;
-    void passArguments(const Target&, NOESCAPE const Invocable<Source(uint32_t resultIndex, ValueID parameter)> auto& readResult);
+    void passArguments(const Target&, NOESCAPE const Invocable<StoreSource(uint32_t resultIndex, ValueID parameter)> auto& readResult);
     bool forEachCallee(const Value& call, NOESCAPE const Invocable<void(FunctionID)> auto&) const;
     bool isFieldDefinitionWithoutValue(const Value& store) const;
-    Source narrow(Source, TypeID);
-    Source unite(std::span<const Source>);
+    StoreSource narrow(StoreSource, TypeID);
+    StoreSource unite(std::span<const StoreSource>);
 
     StoreGraph& m_graph;
     GraphPart& m_part;
@@ -349,7 +349,7 @@ private:
     FunctionID m_id;
     const Function& m_function;
     CodeClass m_code;
-    Vector<Source>& m_sources;
+    Vector<StoreSource>& m_sources;
 };
 
 } // anonymous namespace
@@ -439,7 +439,7 @@ StoreGraph::StoreGraph(const Program& program, const ParallelLoops& loops)
     computeTypeFacts();
 }
 
-static Source sourceOfValueWithType(const Type& type)
+static StoreSource sourceOfValueWithType(const Type& type)
 {
     if (type.isNever())
         return { };
@@ -563,7 +563,7 @@ Node StoreGraph::addNode(GraphPart& part)
     return part.nextNode++;
 }
 
-void StoreGraph::connect(GraphPart& part, Source from, Node to)
+void StoreGraph::connect(GraphPart& part, StoreSource from, Node to)
 {
     if (!from.isConstant()) {
         if (from.node() != to)
@@ -609,15 +609,15 @@ AccessedFields StoreGraph::findAccessedFields(GraphPart& part, LayoutSetID recei
     if (declarations.isEmpty())
         return { };
     if (declarations.size() == 1)
-        return { Source::fromNode(declarations[0]), declarations[0], areRequired };
+        return { StoreSource::fromNode(declarations[0]), declarations[0], areRequired };
 
     Node read = addNode(part);
     Node stored = addNode(part);
     for (Node declaration : declarations) {
-        part.edges.append({ Source::fromNode(declaration), read });
-        part.edges.append({ Source::fromNode(stored), declaration });
+        part.edges.append({ StoreSource::fromNode(declaration), read });
+        part.edges.append({ StoreSource::fromNode(stored), declaration });
     }
-    return { Source::fromNode(read), stored, areRequired };
+    return { StoreSource::fromNode(read), stored, areRequired };
 }
 
 AccessedFields StoreGraph::accessedFields(GraphPart& part, LayoutSetID receivers, PropertyKeyID key)
@@ -649,10 +649,10 @@ void StoreGraph::passArguments(GraphPart& part, FunctionID callee, std::span<con
         passArgument(part, callee, index, index < arguments.size() ? arguments[index] : Argument { StoredKind::Undefined });
 }
 
-Source StoreGraph::resultOf(FunctionID callee) const
+StoreSource StoreGraph::resultOf(FunctionID callee) const
 {
     bool returnsItsResult = !m_program.at(callee).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
-    return returnsItsResult ? Source::fromNode(nodeOfResult(callee)) : Source(StoredKind::Other);
+    return returnsItsResult ? StoreSource::fromNode(nodeOfResult(callee)) : StoreSource(StoredKind::Other);
 }
 
 void StoreGraph::indexMethods()
@@ -678,10 +678,10 @@ std::span<const MethodDefinition> StoreGraph::methodsOf(LayoutID layout, Propert
     return { };
 }
 
-Callees StoreGraph::findCalledMethods(LayoutSetID receivers, PropertyKeyID key) const
+StoreCallees StoreGraph::findCalledMethods(LayoutSetID receivers, PropertyKeyID key) const
 {
     const LayoutSet& family = m_program.at(receivers);
-    Callees callees { .areAllSeen = !family.hasMembersWithoutLayout };
+    StoreCallees callees { .areAllSeen = !family.hasMembersWithoutLayout };
     for (LayoutID member : family.members) {
         const Layout& layout = m_program.at(member);
         if (layout.flow.allocation == AllocationState::NeverAllocated)
@@ -702,12 +702,12 @@ Callees StoreGraph::findCalledMethods(LayoutSetID receivers, PropertyKeyID key) 
     return callees;
 }
 
-Callees StoreGraph::calledMethods(LayoutSetID receivers, PropertyKeyID key)
+StoreCallees StoreGraph::calledMethods(LayoutSetID receivers, PropertyKeyID key)
 {
     uint64_t tableKey = tableKeyOf(receivers, key);
     AccessTable& table = tableOf(tableKey);
     Locker locker { table.lock };
-    auto result = table.methods.add(tableKey, Callees { });
+    auto result = table.methods.add(tableKey, StoreCallees { });
     if (result.isNewEntry)
         result.iterator->value = findCalledMethods(receivers, key);
     return result.iterator->value;
@@ -715,8 +715,8 @@ Callees StoreGraph::calledMethods(LayoutSetID receivers, PropertyKeyID key)
 
 void StoreGraph::connectMethodCalls(GraphPart& part)
 {
-    for (const MethodCall& call : part.methodCalls) {
-        Callees callees = calledMethods(call.receivers, call.key);
+    for (const StoringMethodCall& call : part.methodCalls) {
+        StoreCallees callees = calledMethods(call.receivers, call.key);
         std::span<const Argument> arguments = part.argumentsOfMethodCalls.subspan(call.firstArgument, call.numberOfArguments);
         for (FunctionID callee : callees.functions) {
             passArguments(part, callee, arguments);
@@ -768,7 +768,7 @@ void StoreGraph::build(const VisibleStores::FunctionFilter& shouldRead)
             return;
         FunctionID id(position < numberFirst ? largestFirst[position] : position - numberFirst);
         if (m_program.at(id).hasBody() && shouldRead(id, worker))
-            FunctionReader(*this, m_parts[worker], id).run();
+            StoreFunctionReader(*this, m_parts[worker], id).run();
     });
 
     indexMethods();
@@ -796,7 +796,7 @@ void StoreGraph::indexEdges()
     FilledArray<std::atomic<uint8_t>> constantsOfValues(m_loops, numberOfValues);
     FilledArray<std::atomic<uint32_t>> next(m_loops, numberOfNodes);
     forEachIndexInParallel(m_loops, m_parts.size(), [&](unsigned index) {
-        for (const Edge& edge : m_parts[index].edges) {
+        for (const StoreEdge& edge : m_parts[index].edges) {
             if (edge.from.isConstant())
                 constantsOfValues[edge.to - m_numberOfPlaces].fetch_or(edge.from.constant().toRaw(), std::memory_order_relaxed);
             else
@@ -843,7 +843,7 @@ void StoreGraph::indexEdges()
     m_operations = FilledArray<Operation>::createWithoutFilling(numberOfOperations);
     forEachIndexInParallel(m_loops, m_parts.size(), [&](unsigned index) {
         GraphPart& part = m_parts[index];
-        for (const Edge& edge : part.edges) {
+        for (const StoreEdge& edge : part.edges) {
             if (!edge.from.isConstant())
                 m_successors[next[edge.from.node()].fetch_add(1, std::memory_order_relaxed)] = edge.to;
         }
@@ -873,7 +873,7 @@ Kinds StoreGraph::seenAt(Node node) const
 }
 
 // That a number is no int32 is what the program shows where it stores the number. A place that many fill, the parameter of a helper above all, would hand it on to everything that passes it.
-Kinds StoreGraph::leaving(Source source) const
+Kinds StoreGraph::leaving(StoreSource source) const
 {
     Kinds kinds = seenAt(source);
     return !source.isConstant() && source.node() < m_numberOfPlaces ? kinds - StoredKind::NoInt32 : kinds;
@@ -898,7 +898,7 @@ void StoreGraph::propagate(Vector<Node>& worklist)
     while (!worklist.isEmpty()) {
         Node node = worklist.takeLast();
         m_isEnqueued[node].store(0);
-        Kinds kinds = leaving(Source::fromNode(node));
+        Kinds kinds = leaving(StoreSource::fromNode(node));
 
         if (holdsStoresWithoutReceiver(node)) {
             auto storing = static_cast<CodeClass>((node - m_firstKeyNode) % nodesPerKey);
@@ -1023,30 +1023,30 @@ void StoreGraph::findUsesAsIntegers()
     });
 }
 
-void FunctionReader::readParameters()
+void StoreFunctionReader::readParameters()
 {
     const auto& entryParameters = m_function.blocks[0].parameters;
     unsigned first = m_function.firstParameterIndex();
     unsigned numberOfPositionalParameters = m_function.numberOfPositionalParameters();
     for (unsigned index = 0; index < entryParameters.size(); ++index) {
         bool isPositional = index >= first && index - first < numberOfPositionalParameters;
-        m_sources[entryParameters[index].index()] = isPositional ? Source::fromNode(m_graph.nodeOfParameter(m_id, index - first)) : Source(StoredKind::Other);
+        m_sources[entryParameters[index].index()] = isPositional ? StoreSource::fromNode(m_graph.nodeOfParameter(m_id, index - first)) : StoreSource(StoredKind::Other);
     }
     for (const Block& block : m_function.blocks.subspan(1)) {
         for (ValueID parameter : block.parameters)
-            m_sources[parameter.index()] = Source::fromNode(m_graph.addNode(m_part));
+            m_sources[parameter.index()] = StoreSource::fromNode(m_graph.addNode(m_part));
     }
 }
 
-Source FunctionReader::readByType(const Value& value) const
+StoreSource StoreFunctionReader::readByType(const Value& value) const
 {
-    return value.type ? m_graph.factsOf(value.type).valueSource : Source();
+    return value.type ? m_graph.factsOf(value.type).valueSource : StoreSource();
 }
 
-Source FunctionReader::readOperation(Rule rule, const Value& value)
+StoreSource StoreFunctionReader::readOperation(Rule rule, const Value& value)
 {
-    Source left = sourceOf(value.operand(0));
-    Source right = value.numberOfOperands() > 1 ? sourceOf(value.operand(1)) : left;
+    StoreSource left = sourceOf(value.operand(0));
+    StoreSource right = value.numberOfOperands() > 1 ? sourceOf(value.operand(1)) : left;
     if (left.isConstant() && right.isConstant())
         return apply(rule, left.constant(), right.constant());
     // One operand may decide the result alone.
@@ -1059,10 +1059,10 @@ Source FunctionReader::readOperation(Rule rule, const Value& value)
         m_part.edges.append({ left, result });
     if (!right.isConstant() && right.node() != left.node())
         m_part.edges.append({ right, result });
-    return Source::fromNode(result);
+    return StoreSource::fromNode(result);
 }
 
-Source FunctionReader::readBitOperation(const Value& value)
+StoreSource StoreFunctionReader::readBitOperation(const Value& value)
 {
     bool hasOperandThatIsNoBigInt = false;
     value.forEachOperand([&](ValueID operand, uint32_t) {
@@ -1073,18 +1073,18 @@ Source FunctionReader::readBitOperation(const Value& value)
     return readOperation(Rule::BitOperation, value);
 }
 
-Source FunctionReader::readPropertyRead(const Value& value)
+StoreSource StoreFunctionReader::readPropertyRead(const Value& value)
 {
     if (value.isFreeName())
         return StoredKind::Other;
     LayoutSetID receivers = expectedLayoutsOf(value.operand(*receiverOf(value.opcode)));
     if (!receivers)
-        return Source::fromNode(m_graph.nodeOfAllStores(value.key()));
+        return StoreSource::fromNode(m_graph.nodeOfAllStores(value.key()));
     return m_graph.accessedFields(m_part, receivers, value.key()).read;
 }
 
 // What is left of a value that has passed a test or a cast.
-Source FunctionReader::narrow(Source source, TypeID type)
+StoreSource StoreFunctionReader::narrow(StoreSource source, TypeID type)
 {
     if (!type)
         return source;
@@ -1100,21 +1100,21 @@ Source FunctionReader::narrow(Source source, TypeID type)
     Node result = m_graph.addNode(m_part);
     m_part.operations.append({ result, Rule::Narrowing, source, admitted });
     m_part.edges.append({ source, result });
-    return Source::fromNode(result);
+    return StoreSource::fromNode(result);
 }
 
-Source FunctionReader::unite(std::span<const Source> sources)
+StoreSource StoreFunctionReader::unite(std::span<const StoreSource> sources)
 {
     if (sources.size() == 1)
         return sources[0];
     Node result = m_graph.addNode(m_part);
-    for (Source source : sources)
+    for (StoreSource source : sources)
         connect(source, result);
-    return Source::fromNode(result);
+    return StoreSource::fromNode(result);
 }
 
 // Answers whether the program shows every function that the call may enter.
-bool FunctionReader::forEachCallee(const Value& call, NOESCAPE const Invocable<void(FunctionID)> auto& functor) const
+bool StoreFunctionReader::forEachCallee(const Value& call, NOESCAPE const Invocable<void(FunctionID)> auto& functor) const
 {
     static_assert(!OperandIndex::Call::callee && !OperandIndex::Construct::callee && !OperandIndex::SuperConstruct::parent);
     ValueID operand = call.operand(0);
@@ -1144,12 +1144,12 @@ bool FunctionReader::forEachCallee(const Value& call, NOESCAPE const Invocable<v
     return true;
 }
 
-Source FunctionReader::readCall(const Value& call)
+StoreSource StoreFunctionReader::readCall(const Value& call)
 {
     Vector<Argument, 8> arguments = WTF::map<8>(call.variadicOperands(), [&](ValueID argument) {
         return argumentOf(argument);
     });
-    Vector<Source, maxCalleesOfCall> results;
+    Vector<StoreSource, maxCalleesOfCall> results;
     bool seesEveryCallee = forEachCallee(call, [&](FunctionID callee) {
         m_graph.passArguments(m_part, callee, arguments.span());
         results.append(m_graph.resultOf(callee));
@@ -1159,7 +1159,7 @@ Source FunctionReader::readCall(const Value& call)
     return seesEveryCallee ? unite(results.span()) : readMethodCall(call);
 }
 
-Source FunctionReader::readMethodCall(const Value& call)
+StoreSource StoreFunctionReader::readMethodCall(const Value& call)
 {
     ValueID operand = call.operand(OperandIndex::Call::callee);
     if (!operand)
@@ -1176,10 +1176,10 @@ Source FunctionReader::readMethodCall(const Value& call)
     m_part.methodCalls.append({ receivers, callee.key(), static_cast<uint32_t>(m_part.argumentsOfMethodCalls.size()), static_cast<uint32_t>(arguments.size()), result });
     for (ValueID argument : arguments)
         m_part.argumentsOfMethodCalls.append(argumentOf(argument));
-    return Source::fromNode(result);
+    return StoreSource::fromNode(result);
 }
 
-Source FunctionReader::readDirectCall(const Value& call)
+StoreSource StoreFunctionReader::readDirectCall(const Value& call)
 {
     FunctionID id = call.function();
     const Function& callee = m_program.at(id);
@@ -1191,7 +1191,7 @@ Source FunctionReader::readDirectCall(const Value& call)
     return m_graph.resultOf(id);
 }
 
-void FunctionReader::readMethodDefinition(const Value& definition)
+void StoreFunctionReader::readMethodDefinition(const Value& definition)
 {
     if (definition.side() != ClassSide::Prototype || definition.methodKind() != MethodKind::Method || !definition.key())
         return;
@@ -1204,7 +1204,7 @@ void FunctionReader::readMethodDefinition(const Value& definition)
 }
 
 // `f;` in the body of a class.
-bool FunctionReader::isFieldDefinitionWithoutValue(const Value& store) const
+bool StoreFunctionReader::isFieldDefinitionWithoutValue(const Value& store) const
 {
     if (store.opcode != Opcode::PropDefine || m_function.kind != FunctionKind::Initializer)
         return false;
@@ -1218,12 +1218,12 @@ bool FunctionReader::isFieldDefinitionWithoutValue(const Value& store) const
         && m_function.at(sameObjectThroughCasts(m_function, stored)).opcode == Opcode::Undefined;
 }
 
-void FunctionReader::readStoreByName(const Value& store)
+void StoreFunctionReader::readStoreByName(const Value& store)
 {
     if (store.opcode == Opcode::PropSet && store.isFreeName())
         return;
     PropertyKeyID key = store.key();
-    Source stored = sourceOf(store.operand(*storedOf(store.opcode)));
+    StoreSource stored = sourceOf(store.operand(*storedOf(store.opcode)));
 
     LayoutSetID receivers = expectedLayoutsOf(store.operand(*receiverOf(store.opcode)));
     if (!receivers) {
@@ -1241,14 +1241,14 @@ void FunctionReader::readStoreByName(const Value& store)
         connect(stored, *fields.stored);
 }
 
-void FunctionReader::noteUseAsInteger(ValueID id)
+void StoreFunctionReader::noteUseAsInteger(ValueID id)
 {
-    Source source = sourceOf(id);
+    StoreSource source = sourceOf(id);
     if (!source.isConstant())
         m_part.usedAsIntegers.append(source.node());
 }
 
-bool FunctionReader::hasCountedElements(ValueID object) const
+bool StoreFunctionReader::hasCountedElements(ValueID object) const
 {
     if (!object)
         return false;
@@ -1270,7 +1270,7 @@ static bool makesInteger(BuiltinConversion conversion)
     return conversion == BuiltinConversion::ToIntegerOrInfinity || conversion == BuiltinConversion::ToLength || conversion == BuiltinConversion::ToIndex;
 }
 
-void FunctionReader::noteArgumentsTakenAsIntegers(const Value& call)
+void StoreFunctionReader::noteArgumentsTakenAsIntegers(const Value& call)
 {
     ValueID operand = call.operand(OperandIndex::Call::callee);
     if (!operand)
@@ -1314,7 +1314,7 @@ void FunctionReader::noteArgumentsTakenAsIntegers(const Value& call)
     }
 }
 
-void FunctionReader::noteUsesAsIntegers(const Value& value)
+void StoreFunctionReader::noteUsesAsIntegers(const Value& value)
 {
     static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property && OperandIndex::ElemGet::property == OperandIndex::ElemHas::property && OperandIndex::ElemGet::property == OperandIndex::ElemDelete::property);
     switch (value.opcode) {
@@ -1333,7 +1333,7 @@ void FunctionReader::noteUsesAsIntegers(const Value& value)
     }
 }
 
-void FunctionReader::readInitialValues(const Value& allocation)
+void StoreFunctionReader::readInitialValues(const Value& allocation)
 {
     std::span<const ValueID> initialValues = allocation.variadicOperands();
     for (unsigned index = 0; index < initialValues.size(); ++index) {
@@ -1346,7 +1346,7 @@ void FunctionReader::readInitialValues(const Value& allocation)
     }
 }
 
-Source FunctionReader::read(const Value& value)
+StoreSource StoreFunctionReader::read(const Value& value)
 {
     if (isCast(value.opcode))
         return narrow(sourceOf(value.operand(0)), value.type);
@@ -1372,9 +1372,9 @@ Source FunctionReader::read(const Value& value)
     case Opcode::PropGet:
         return readPropertyRead(value);
     case Opcode::GetModuleVariable:
-        return Source::fromNode(m_graph.nodeOf(value.variable()));
+        return StoreSource::fromNode(m_graph.nodeOf(value.variable()));
     case Opcode::GetEnvironmentField:
-        return Source::fromNode(m_graph.nodeOf(FieldReference { value.layout(), value.field() }));
+        return StoreSource::fromNode(m_graph.nodeOf(FieldReference { value.layout(), value.field() }));
     case Opcode::Call:
     case Opcode::Construct:
     case Opcode::SuperConstruct:
@@ -1404,7 +1404,7 @@ Source FunctionReader::read(const Value& value)
 }
 
 // A value that has passed a test is the tested value.
-Source FunctionReader::readEdgeResult(EdgeResultPosition position, ValueID parameter)
+StoreSource StoreFunctionReader::readEdgeResult(EdgeResultPosition position, ValueID parameter)
 {
     std::optional<EdgeResult> result = tryGetEdgeResult(m_function, position);
     if (!result || result->kind != EdgeResultKind::NarrowedOperand)
@@ -1413,18 +1413,18 @@ Source FunctionReader::readEdgeResult(EdgeResultPosition position, ValueID param
 }
 
 // The parameters behind those that take the arguments take what the edge itself gives.
-void FunctionReader::passArguments(const Target& target, NOESCAPE const Invocable<Source(uint32_t resultIndex, ValueID parameter)> auto& readResult)
+void StoreFunctionReader::passArguments(const Target& target, NOESCAPE const Invocable<StoreSource(uint32_t resultIndex, ValueID parameter)> auto& readResult)
 {
     const auto& parameters = m_function.at(target.block).parameters;
     uint32_t numberOfArguments = target.arguments.size();
     for (uint32_t index = 0; index < parameters.size(); ++index) {
-        Source parameter = sourceOf(parameters[index]);
+        StoreSource parameter = sourceOf(parameters[index]);
         if (!parameter.isConstant())
             connect(index < numberOfArguments ? sourceOf(target.arguments[index]) : readResult(index - numberOfArguments, parameters[index]), parameter.node());
     }
 }
 
-void FunctionReader::read(BlockID id)
+void StoreFunctionReader::read(BlockID id)
 {
     const Block& block = m_function.at(id);
     for (ValueID value : block.values) {
@@ -1440,21 +1440,21 @@ void FunctionReader::read(BlockID id)
     }
     if (block.handler) {
         passArguments(*block.handler, [](uint32_t, ValueID) {
-            return Source(StoredKind::Other);
+            return StoreSource(StoredKind::Other);
         });
     }
 
     if (terminator.kind == TerminatorKind::Return) {
         ValueID result = terminator.operand(OperandIndex::Return::value);
-        connect(result ? sourceOf(result) : Source(StoredKind::Undefined), m_graph.nodeOfResult(m_id));
+        connect(result ? sourceOf(result) : StoreSource(StoredKind::Undefined), m_graph.nodeOfResult(m_id));
     } else if (terminator.kind == TerminatorKind::ReturnCall)
         connect(sourceOf(terminator.operand(OperandIndex::ReturnCall::call)), m_graph.nodeOfResult(m_id));
 }
 
 // A definition comes before its uses in the order of the blocks.
-void FunctionReader::run()
+void StoreFunctionReader::run()
 {
-    m_sources.fill(Source(), m_function.values.size());
+    m_sources.fill(StoreSource(), m_function.values.size());
     readParameters();
     for (uint32_t block = 0; block < m_function.blocks.size(); ++block)
         read(BlockID(block));

@@ -27,15 +27,7 @@ static bool isOwnFunctionProperty(const Program& program, PropertyKeyID key)
     return nameClass == NameClass::Length || nameClass == NameClass::Prototype || program.builtinNameOf(key) == BuiltinNames::name;
 }
 
-static MemberAnswer createProvenAnswer(MemberKind kind)
-{
-    MemberAnswer answer;
-    answer.kind = kind;
-    answer.level = KnowledgeLevel::Proven;
-    return answer;
-}
-
-static void addConditionWithCause(MemberAnswer& walked, const MemberCondition& condition, UnprovenCause cause)
+static void addConditionWithFirstCause(MemberAnswer& walked, const MemberCondition& condition, UnprovenCause cause)
 {
     addCondition(walked.conditions, condition);
     if (walked.cause == UnprovenCause::Unknown)
@@ -54,11 +46,7 @@ static bool mayInterceptStore(MemberKind kind)
     case MemberKind::Method:
     case MemberKind::Variable:
         return false;
-    case MemberKind::Unknown:
-    case MemberKind::Field:
-    case MemberKind::Accessor:
-    case MemberKind::Namespace:
-    case MemberKind::Builtin:
+    default:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -87,16 +75,16 @@ static MemberAnswer finishAtStaticField(const PropertyAccessContext& context, co
         if (isPrivateName || mayInterceptStore(beforeDefinition.kind))
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
         for (const MemberCondition& condition : beforeDefinition.conditions)
-            addConditionWithCause(walked, condition, beforeDefinition.cause);
+            addConditionWithFirstCause(walked, condition, beforeDefinition.cause);
     }
 
     walked.kind = MemberKind::Variable;
     walked.variable = variable;
     walked.holder = holder;
     if (!program.at(holder).classFlow.staticNamesAreComplete)
-        addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
+        addConditionWithFirstCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
     else if (program.at(variable).flow.writers != WriterState::AllKnown)
-        addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownWriter);
+        addConditionWithFirstCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownWriter);
     setLevel(walked);
     return WTF::move(walked);
 }
@@ -122,7 +110,7 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
             return MemberAnswer::unknown(UnprovenCause::NonLayoutObject);
         const ClassFlow& classFlow = layout.classFlow;
         if (classFlow.evaluations != ExecutionCount::AtMostOnce)
-            addConditionWithCause(walked, { MemberCondition::Kind::ClassEvaluatedOnce, current, ClassSide::Prototype, { } }, UnprovenCause::ClassEvaluatedAgain);
+            addConditionWithFirstCause(walked, { MemberCondition::Kind::ClassEvaluatedOnce, current, ClassSide::Prototype, { } }, UnprovenCause::ClassEvaluatedAgain);
 
         // A class may be created while a static initializer of its base runs, so no static field on the chain counts as defined.
         bool skipsStaticField = definition == StaticFieldDefinition::HasNotRun;
@@ -136,7 +124,7 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
         }
         if (member.isDeclared()) {
             if (member.mutability != MemberMutability::Fixed)
-                addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::PropertyRedefined);
+                addConditionWithFirstCause(walked, createMemberUnchangedCondition(query), UnprovenCause::PropertyRedefined);
             setDeclaredMember(walked, member, current);
             setLevel(walked);
             return walked;
@@ -144,7 +132,7 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
         if (member.isListedWithoutDefinition())
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
         if (!classFlow.staticNamesAreComplete)
-            addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
+            addConditionWithFirstCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
         if (query.isOwnLookup) {
             walked.kind = MemberKind::Absent;
             setLevel(walked);

@@ -9,17 +9,13 @@
 
 #if ENABLE(B3_JIT)
 
-#include "B3ClampLoopBound.h"
 #include "B3CompilationReport.h"
 #include "B3DuplicateTails.h"
 #include "B3Limits.h"
 #include "B3NaturalLoops.h"
 #include "B3Policy.h"
-#include "B3RotateLoops.h"
 #include "B3ThreadJumps.h"
 #include "B3Variable.h"
-#include "B3VersionLoops.h"
-
 
 struct Graph {
     Value* int32(BasicBlock* block, int32_t value) { return block->appendNew<Const32Value>(proc, Origin(), value); }
@@ -247,12 +243,10 @@ struct TopTestedLoop {
     void publishInduction(bool doesNotWrap = false, bool relationHoldsOnEntry = false)
     {
         CHECK(counter()->opcode() == Phi);
-        graph.proc.setKnownInduction({ counter(), nextCounter(), header->last()->child(0), step, doesNotWrap, relationHoldsOnEntry });
     }
 
     void rotate()
     {
-        CHECK(rotateLoops(graph.proc));
         fixSSA(graph.proc);
         validate(graph.proc);
     }
@@ -290,9 +284,6 @@ inline Policy policyWith(const Functor& configure)
 {
     Policy policy;
     policy.validation.level = ValidationLevel::AtEachPhase;
-    policy.knownProperties.trustsKnownRanges = true;
-    policy.knownProperties.trustsKnownDereferenceableBytes = true;
-    policy.knownProperties.trustsKnownInductions = true;
     configure(policy);
     return policy;
 }
@@ -311,14 +302,12 @@ inline Policy strengthReductionPolicy()
 inline Policy remarkPolicy()
 {
     return policyWith([](Policy& policy) {
-        policy.collectsRemarks = true;
     });
 }
 
 inline Policy loopPolicy()
 {
     Policy policy = remarkPolicy();
-    policy.loops.clampsLoopBounds = true;
     return policy;
 }
 
@@ -339,8 +328,6 @@ inline Policy optimizingPolicy()
         optimization.narrowsIntegers = true;
         optimization.chainsAssociativeOperations = true;
         optimization.stopsSwitchInferenceAtRareEdges = true;
-        optimization.convertsBranchesToSelects = true;
-        optimization.mergesAdjacentConstantStores = true;
         optimization.sinksValues = true;
         optimization.placesConstantsByFrequency = true;
         optimization.mergesBlocksAfterForwardingJumps = true;
@@ -349,21 +336,16 @@ inline Policy optimizingPolicy()
         policy.selection.attributesTrapsToAccesses = true;
 
         policy.loops.rotates = true;
-        policy.loops.foldsComparisonsWithBounds = true;
-        policy.loops.versions = true;
-        policy.loops.clampsLoopBounds = true;
         policy.loops.hoistsOnlyFromLikelyPaths = true;
         policy.loops.hoistsImmutableLoadsPastWrites = true;
 
         policy.switchLowering.usesBitTests = true;
 
-        policy.air.peepholes.hoistsCommonMoves = true;
         policy.air.peepholes.reusesConditionFlags = true;
         policy.air.peepholes.pairsMemoryAccesses = true;
         policy.air.peepholes.emitsShufflesInPairOrder = true;
         policy.air.frame.prefersStackPointerAddresses = true;
 
-        policy.collectsRemarks = true;
     });
 }
 
@@ -388,15 +370,6 @@ inline bool reduceStrengthOnce(Procedure& proc)
     proc.resetReachability();
     proc.setOptLevel(2);
     bool result = reduceStrength(proc, ReduceStrengthPass::Initial);
-    validate(proc);
-    return result;
-}
-
-inline bool versionLoopsAndValidate(Procedure& proc)
-{
-    Vector<BasicBlock*> topTestedVersionHeaders;
-    bool result = versionLoops(proc, topTestedVersionHeaders);
-    fixSSA(proc);
     validate(proc);
     return result;
 }
@@ -431,20 +404,6 @@ inline PatchpointValue* appendPoll(Graph& graph, BasicBlock* block, PollState& s
         limitIsNotNegative.link(&jit);
     });
     return poll;
-}
-
-inline bool hasRemark(Procedure& proc, RemarkKind kind, GaveUpReason reason)
-{
-    return proc.report().remarks.containsIf([&](const Remark& remark) {
-        return remark.kind == kind && remark.reason == reason;
-    });
-}
-
-inline bool hasRemark(Procedure& proc, RemarkKind kind)
-{
-    return proc.report().remarks.containsIf([&](const Remark& remark) {
-        return remark.kind == kind;
-    });
 }
 
 inline uint32_t limitHits(Procedure& proc, Limit limit) { return proc.report().hitsOf(limit); }
@@ -640,13 +599,6 @@ struct TailWithTwoPredecessors {
 
 using BunTestTasks = Deque<RefPtr<SharedTask<void()>>>;
 
-void addBunLoopTests(const TestConfig*, BunTestTasks&);
-void addBunCountedLoopTests(const TestConfig*, BunTestTasks&);
-void addBunComparisonFoldingTests(const TestConfig*, BunTestTasks&);
-void addBunLoopPhaseTests(const TestConfig*, BunTestTasks&);
-void addBunLoopVersioningTests(const TestConfig*, BunTestTasks&);
-void addBunLoopPlanTests(const TestConfig*, BunTestTasks&);
-void addBunCountedLoopVersioningTests(const TestConfig*, BunTestTasks&);
 void addBunPlacementTests(const TestConfig*, BunTestTasks&);
 void addBunHoistingTests(const TestConfig*, BunTestTasks&);
 void addBunNumberingTests(const TestConfig*, BunTestTasks&);
@@ -654,17 +606,15 @@ void addBunAnalysisTests(const TestConfig*, BunTestTasks&);
 void addBunRegionClonerTests(const TestConfig*, BunTestTasks&);
 void addBunReductionTests(const TestConfig*, BunTestTasks&);
 void addBunRangeTests(const TestConfig*, BunTestTasks&);
-void addBunStoreMergingTests(const TestConfig*, BunTestTasks&);
+
 void addBunJumpThreadingTests(const TestConfig*, BunTestTasks&);
 void addBunControlFlowTests(const TestConfig*, BunTestTasks&);
-void addBunSelectTests(const TestConfig*, BunTestTasks&);
+
 void addBunSelectionTests(const TestConfig*, BunTestTasks&);
 void addBunPolicyTests(const TestConfig*, BunTestTasks&);
 void addBunSharedStepTests(const TestConfig*, BunTestTasks&);
-void addBunRandomTests(const TestConfig*, BunTestTasks&);
 void addBunHeapSetTests(const TestConfig*, BunTestTasks&);
-void addBunKnownPropertyTests(const TestConfig*, BunTestTasks&);
+
 void addBunReadOnlyDataTests(const TestConfig*, BunTestTasks&);
-void addBunOptionTests(const TestConfig*, BunTestTasks&);
 
 #endif // ENABLE(B3_JIT)

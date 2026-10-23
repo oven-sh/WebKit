@@ -34,6 +34,15 @@ bool hasEffectsOfUnknownCode(SelectionContext&, ValueID);
 
 const BuiltinOverload& overloadOf(const Program&, const Value& builtinCall);
 
+inline bool isOwnedByReturnCall(SelectionContext& context, ValueID id)
+{
+    BlockID block = context.analyses().useLists().blockOf(id);
+    if (!block)
+        return false;
+    const Terminator& terminator = context.function().at(block).terminator;
+    return terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id;
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

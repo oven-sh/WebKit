@@ -81,16 +81,6 @@ private:
 
 } // anonymous namespace
 
-static bool has(const Wire::Layout& layout, LayoutFlags flag)
-{
-    return layout.flags & static_cast<uint32_t>(flag);
-}
-
-static bool has(const Wire::Field& field, FieldFlags flag)
-{
-    return field.flags & static_cast<uint32_t>(flag);
-}
-
 // Turns the number of entries of each index into the place of its first entry. One more place follows the last.
 static void sumUp(Vector<uint32_t>& counts)
 {

@@ -10,11 +10,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool isBigInt(const Type& type)
-{
-    return !type.isNever() && type.hasOnlyPrimitives(Primitive::BigInt);
-}
-
 static OperatorForm chooseNumericForm(Opcode opcode, const OperatorTypes& types)
 {
     const Type& left = types.left;

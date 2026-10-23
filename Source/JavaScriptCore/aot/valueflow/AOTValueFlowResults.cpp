@@ -35,17 +35,6 @@ static constexpr OptionSet<ObjectMutation> mutationsOfBuiltinInstancesWithoutMar
     ObjectMutation::StoreOfOtherType,
 };
 
-static unsigned indexOfArrayElementsInType(const BuiltinTable& builtins)
-{
-    std::optional<unsigned> index;
-    for (BuiltinSlotID id : builtins.at(BuiltinClasses::Array).slots) {
-        const BuiltinSlot& slot = builtins.at(id);
-        if (slot.indexInType && slot.contentsSlot == ContentsSlot::Element)
-            index = *slot.indexInType;
-    }
-    return index.value();
-}
-
 // The object that the operation itself allocates as an instance of a built-in class. An allocation with a layout has its stamp from the results about objects, and what a callee allocates belongs to the callee.
 static ValueFlowObjectID builtinInstanceAllocatedBy(const ValueFlowUniverse& universe, FunctionID function, ValueID operation, Opcode opcode)
 {
@@ -196,47 +185,13 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
     });
 }
 
-// A build of the product ends the solve where no rule is due. A rule that adds something all the same has read what nobody has told it of: the sets of that build are too small, and a set that is too small is a false proof.
-static void reportRulesThatWereNotDue(const ValueFlowSolver& solver, BuildContext& build)
-{
-    if (const ValueFlowSolver::AddedByGeneralRules& added = solver.addedByGeneralRules(); added.isAnything()) {
-        StringBuilder detail;
-        detail.append("with every rule on its general way: "_s, added.nodesThatHoldMore, " sets that were there hold more, "_s, added.functionsReached, " functions reached, "_s, added.builtinsUsedMore, " built-ins used in more ways; the first nodes:"_s);
-        for (ValueFlowNodeID node : added.firstNodesThatHoldMore) {
-            detail.append(' ', node.index());
-            if (const ValueFlowNodeKey* key = solver.keyOfMadeNode(node))
-                detail.append(" (made: kind "_s, static_cast<unsigned>(key->kind), ", detail "_s, key->detail, ')');
-        }
-        build.diagnostics().add(InternalError { .kind = InternalErrorKind::FlowEndedTooEarly, .count = static_cast<uint32_t>(std::min<uint64_t>(added.nodesThatHoldMore + added.functionsReached + added.builtinsUsedMore, UINT32_MAX)), .detail = detail.toString() });
-    }
-    uint64_t runs = solver.numberOfRunsThatWereNotDueAndAdded();
-    if (!runs)
-        return;
-    ValueFlowSolver::Round added;
-    for (const ValueFlowSolver::Round& round : solver.rounds()) {
-        if (!round.isFull)
-            continue;
-        added.functionsReached += round.functionsReached;
-        added.nodesMade += round.nodesMade;
-        added.edgesAdded += round.edgesAdded;
-        added.nodesMoved += round.nodesMoved;
-    }
-    String whatWasAdded = makeString(added.functionsReached, " functions reached, "_s, added.nodesMade, " nodes made, "_s, added.edgesAdded, " edges added, "_s, added.nodesMoved, " sets moved"_s);
-    build.diagnostics().add(InternalError { .kind = InternalErrorKind::FlowEndedTooEarly, .count = static_cast<uint32_t>(std::min<uint64_t>(runs, UINT32_MAX)), .detail = WTF::move(whatWasAdded) });
-    for (ValueFlowStatementID id : solver.firstStatementsThatWereNotDueAndAdded()) {
-        const ValueFlowStatement& statement = solver.statementAt(id);
-        String detail = statement.kind == ValueFlowStatementKind::Operation ? makeString(nameOf(statement.opcode)) : makeString("a statement of kind "_s, static_cast<unsigned>(statement.kind), " that the solve has made"_s);
-        build.diagnostics().add(InternalError { .kind = InternalErrorKind::FlowRuleWasNotDue, .function = statement.function, .value = statement.site, .detail = WTF::move(detail) });
-    }
-}
-
 namespace {
 
-class Steps final : public ThreadSafeRefCounted<Steps> {
+class ResultSteps final : public ThreadSafeRefCounted<ResultSteps> {
 public:
     using StepID = unsigned;
 
-    static Ref<Steps> create(const ParallelLoops& loops) { return adoptRef(*new Steps(loops)); }
+    static Ref<ResultSteps> create(const ParallelLoops& loops) { return adoptRef(*new ResultSteps(loops)); }
 
     StepID add(std::initializer_list<StepID> awaited, WTF::Function<void()>&& run, TaskPriority priority = TaskPriority::Foreground)
     {
@@ -300,7 +255,7 @@ private:
         Vector<StepID, 4> followers;
     };
 
-    explicit Steps(const ParallelLoops& loops)
+    explicit ResultSteps(const ParallelLoops& loops)
         : m_loops(loops)
     {
     }
@@ -346,7 +301,7 @@ private:
         for (size_t index = 0; index < number; ++index) {
             ref();
             m_loops.schedule(priority, [](void* steps) {
-                adoptRef(*static_cast<Steps*>(steps))->runOnThreadOfPool(ParallelLoops::currentPriority());
+                adoptRef(*static_cast<ResultSteps*>(steps))->runOnThreadOfPool(ParallelLoops::currentPriority());
             }, this);
         }
     }
@@ -357,7 +312,7 @@ private:
     const ParallelLoops& m_loops;
     Vector<std::unique_ptr<Step>> m_steps;
     Lock m_lock;
-    Condition m_hasChanged;
+    WTF::Condition m_hasChanged;
     std::array<Deque<StepID>, numberOfPriorities> m_due WTF_GUARDED_BY_LOCK(m_lock);
     size_t m_numberUnfinished WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     bool m_callerWaits WTF_GUARDED_BY_LOCK(m_lock) { false };
@@ -366,7 +321,7 @@ private:
 } // anonymous namespace
 
 // Much of a step runs on one thread.
-FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, Vector<String>* setsOutsideTypes)
+FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, const ListenerForSetsOutsideTypes* setsOutsideTypes)
 {
     RELEASE_ASSERT(&types == &program.types);
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -376,16 +331,13 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     if (build.options().admitsUnseenCode())
         return FlowResults(createUnknownResultTables(program, build));
 
-    bool runsEveryRuleOnceMore = build.options().verifiesAfterEveryStage || build.options().checksFlowFixpoint;
     // How the unknown object at a site has come into being is a word of the reports. To every pass one source is like another.
     ReportSet reports = build.options().reports;
     bool showsCauses = setsOutsideTypes || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || hasFlag(reports, ReportSet::Arrivals);
-    auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
+    auto solution = makeUnique<ValueFlowSolution>(program, build, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
         showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor);
     times.didFinish("solve"_s);
     RELEASE_ASSERT(solution->hasResult());
-    if (build.options().checksFlowFixpoint)
-        reportRulesThatWereNotDue(solution->solver(), build);
 
     FlowResultTables tables;
     ValueFlowResultInputs inputs { program, *solution, build };
@@ -411,8 +363,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     ValueFlowContainerResults containers;
     Vector<PropertyKeyKind> kindsOfKeys;
 
-    Ref<Steps> steps = Steps::create(build.parallelLoops());
-    auto add = [&](ASCIILiteral name, std::initializer_list<Steps::StepID> awaited, WTF::Function<void(PhaseTimes&)>&& run, TaskPriority priority = TaskPriority::Foreground) {
+    Ref<ResultSteps> steps = ResultSteps::create(build.parallelLoops());
+    auto add = [&](ASCIILiteral name, std::initializer_list<ResultSteps::StepID> awaited, WTF::Function<void(PhaseTimes&)>&& run, TaskPriority priority = TaskPriority::Foreground) {
         return steps->add(awaited, [&build, name, run = WTF::move(run)] {
             PhaseTimes timesOfStep(build, PassID::AnalyzeFlow);
             run(timesOfStep);

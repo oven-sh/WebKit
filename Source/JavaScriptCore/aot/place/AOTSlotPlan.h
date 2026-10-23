@@ -73,8 +73,6 @@ struct PlacedSlot {
     bool isFilledByConstructor { false };
     bool deferredClosureCapturesObject { false };
     bool deferredClosureCapturesEnvironment { false };
-    // What the slot leaves unmade is no closure: it is the object whose fields lie in this object.
-    bool defersFlattenedObject { false };
     uint32_t offset { 0 };
     std::optional<uint16_t> indexInLayoutRecord;
     FunctionID deferredFunction;
@@ -98,18 +96,6 @@ struct PlacedInnerObject {
     bool isAlwaysInPlace { false };
 };
 
-// An object that is not made yet has its slots in the object that holds it: as far behind `distance` as they lie behind the start of a cell of their own.
-struct PlacedFlattenedObject {
-    uint32_t begin() const { return distance + beginInOwnCell; }
-    uint32_t end() const { return distance + endInOwnCell; }
-
-    FieldIndex field { 0 };
-    LayoutID layout;
-    uint32_t distance { 0 };
-    uint32_t beginInOwnCell { 0 };
-    uint32_t endInOwnCell { 0 };
-};
-
 struct PlannedLayout {
     bool hasSlots() const { return storage == LayoutStorage::CompiledObject || storage == LayoutStorage::Environment; }
     unsigned numberOfFields() const { return slots.isEmpty() ? 0 : slots.size() - numberOfHiddenWords; }
@@ -127,15 +113,6 @@ struct PlannedLayout {
         return nullptr;
     }
 
-    const PlacedFlattenedObject* flattenedObjectIn(FieldIndex field) const
-    {
-        for (const PlacedFlattenedObject& flattened : flattenedObjects) {
-            if (flattened.field == field)
-                return &flattened;
-        }
-        return nullptr;
-    }
-
     LayoutStorage storage { LayoutStorage::None };
     bool holdsWideReferences { false };
     bool keysAreNeverEnumerated { false };
@@ -148,7 +125,6 @@ struct PlannedLayout {
     Vector<PlacedSlot> slots;
     Vector<ReservedBytes> bytesKeptZero;
     Vector<PlacedInnerObject> innerObjects;
-    Vector<PlacedFlattenedObject> flattenedObjects;
 };
 
 struct SlotGroup {

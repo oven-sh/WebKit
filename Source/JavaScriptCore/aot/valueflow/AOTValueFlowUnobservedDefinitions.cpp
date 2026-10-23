@@ -519,10 +519,11 @@ static void collectCallsOfInitializers(const Program& program, BuildContext& bui
     }
 }
 
-UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, BuildContext& build)
+UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, BuildContext& build, NOESCAPE const ScopedLambda<bool(FunctionID)>& mayHoldDirectCall)
 {
     Vector<InitializerCall> calls = collectInParallel<InitializerCall>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<InitializerCall>& found) {
-        collectCallsOfInitializers(program, build, FunctionID(index), found);
+        if (mayHoldDirectCall(FunctionID(index)))
+            collectCallsOfInitializers(program, build, FunctionID(index), found);
     });
     AOT::stableSort(calls, { }, &InitializerCall::initializer);
 

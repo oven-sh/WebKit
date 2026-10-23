@@ -57,14 +57,14 @@ function compareIncludes(left: string, right: string): number {
   return includeRank(left) - includeRank(right) || (left < right ? -1 : left > right ? 1 : 0);
 }
 
-function insideFeatureGuard(includes: Lines, body: Lines): string[] {
+function insideFeatureGuard(includes: Lines, body: Lines, condition = "ENABLE(AOT)"): string[] {
   const sorted = [...includes].sort(compareIncludes);
   return [
-    "#if ENABLE(AOT)",
+    `#if ${condition}`,
     "",
     ...(sorted.length > 0 ? [...sorted.map(include => `#include ${include}`), ""] : []),
     ...(body.length > 0 ? [...body, ""] : []),
-    "#endif // ENABLE(AOT)",
+    `#endif // ${condition}`,
   ];
 }
 
@@ -81,6 +81,13 @@ export function cppSource(includes: Lines, body: Lines): string[] {
   const [own, ...others] = includes;
   return [cppMarker, "", '#include "config.h"', `#include ${own}`, "", ...insideFeatureGuard(others, body)];
 }
+
+/** AOTIRPrinter.h says why. Where it is empty it reads no header either. */
+export function cppSourceThatPrintsIR(includes: Lines, body: Lines): string[] {
+  const condition = "ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))";
+  return [cppMarker, "", '#include "config.h"', "", ...insideFeatureGuard(includes, body, condition)];
+}
+
 
 export function inNamespace(namespace: "Wire" | "Typed", body: Lines): string[] {
   return [

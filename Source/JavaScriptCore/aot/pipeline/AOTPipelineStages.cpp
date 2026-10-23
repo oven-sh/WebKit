@@ -11,7 +11,6 @@
 #include "AOTBackgroundTask.h"
 #include "AOTBuildContext.h"
 #include "AOTChooseCallingConventions.h"
-#include "AOTDefinitions.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsCheck.h"
@@ -35,7 +34,6 @@
 #include "AOTPlacement.h"
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpRequests.h"
-#include "AOTRelationsVerifier.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
@@ -291,8 +289,6 @@ void Pipeline::runReadStage()
     TimedStage stage(*this, Stage::ReadAndVerify);
     forgetLongExpectations(m_program, m_build);
     m_runner.didReachForm(m_program);
-    if (m_build.validates())
-        verifyRelations(m_program, m_build);
     stage.run(PassID::AllocateTaggedLayouts);
     stage.run(PassID::CheckTypesAtEntry);
     markEnforcedFields(m_program, m_build);
@@ -300,8 +296,6 @@ void Pipeline::runReadStage()
     stage.run(PassID::NarrowFieldTypes);
     stage.run(PassID::NameCreatedSymbols);
     stage.verifyAtBoundary(IRForm::AsRead);
-    if (m_build.options().logging.dumpedPass == PassID::AllocateTaggedLayouts) [[unlikely]]
-        Definitions(m_program, m_build).dumpCounts(WTF::dataFile());
 }
 
 void Pipeline::runFlowStage()
@@ -340,7 +334,6 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::NarrowConstantVariables);
     stage.run(PassID::DeferInitializers);
     stage.run(PassID::PromoteAggregateParameters);
-    stage.run(PassID::SplitFreshResults);
     stage.run(PassID::SplitCoroutines);
     stage.run(PassID::CallModules);
     m_analyses.estimateHeatFor(HeatFor::Everything);
@@ -352,12 +345,7 @@ void Pipeline::runOptimizeStage()
     stage.run(FunctionSchedule::Optimize);
     stage.run(PassID::ReadCapturesFromEnvironments);
     stage.run(PassID::RemoveUnreadFields);
-    stage.run(PassID::RemoveUnusedResults);
-    stage.run(PassID::RemoveUnusedParameters);
-    stage.run(PassID::FlattenInnerObjects);
-    stage.run(PassID::SplitFreshResults);
     stage.run(PassID::SkipAnsweredEntryChecks);
-    stage.run(PassID::RemoveUnusedResults);
     stage.run(PassID::MarkResultsUsedAsKeys);
     stage.run(PassID::EmbedConstantCollections);
     stage.run(PassID::RemoveUnreachableFunctions);

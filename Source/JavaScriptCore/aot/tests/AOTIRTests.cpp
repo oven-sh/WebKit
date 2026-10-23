@@ -793,14 +793,11 @@ static void recordFitsRoleForEveryRole()
         { CreatorRecord::Version { }, { FunctionRole::GenericVersion, FunctionRole::AllocatedThisVersion, FunctionRole::ConstructBody, FunctionRole::CallSiteVersion, FunctionRole::CalleeVersion } },
         { CreatorRecord::Coroutine { }, { FunctionRole::CoroutineRamp, FunctionRole::CoroutineBody, FunctionRole::AsyncWorker } },
         { CreatorRecord::BoundFunction { }, { FunctionRole::BoundFunction } },
-        { CreatorRecord::ResultWrapper { }, { FunctionRole::ResultWrapper } },
-        { CreatorRecord::ResultWorker { }, { FunctionRole::ResultWorker } },
         { CreatorRecord::ParameterWrapper { }, { FunctionRole::ParameterWrapper } },
         { CreatorRecord::EntryChecks { }, { FunctionRole::EntryChecks } },
         { CreatorRecord::Serializer { }, { FunctionRole::Serializer } },
         { CreatorRecord::Parser { }, { FunctionRole::Parser, FunctionRole::ValidatingParser } },
         { CreatorRecord::Validator { }, { FunctionRole::Validator } },
-        { CreatorRecord::ChainStep { }, { FunctionRole::ChainStep } },
         { CreatorRecord::StubBody { }, { FunctionRole::StubBody } },
     };
     static_assert(std::size(cases) == WTF::VariantSizeV<CreatorRecord::Cases>);

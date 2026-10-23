@@ -7,8 +7,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIDPrefix.h"
 #include "AOTIR.h"
-#include "AOTIRLexer.h"
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -18,6 +18,10 @@
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
 #include <wtf/text/ASCIILiteral.h>
+
+// Only tests print IR, and dumpAOTIR in a build with assertions. Without assertions the sources that print are empty in the library, so that no Bun ships
+// them, and tests/AOTIRPrinterForTestaot.cpp and AOTIRPrinterTypesForTestaot.cpp include them, so that testaot prints in every build. tools/JSDollarVMShell.cpp
+// does the same with $vm for jsc.
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -163,6 +167,11 @@ void IRPrinter::list(const Range& range, NOESCAPE const Functor& printElement)
         printElement(element);
     }
     m_out.print("]"_s);
+}
+
+inline bool needsEscape(uint8_t byte)
+{
+    return byte < 0x20 || byte >= 0x7f || byte == '"' || byte == '\\';
 }
 
 } } } // namespace JSC::AOT::Typed

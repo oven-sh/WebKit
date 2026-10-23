@@ -74,6 +74,8 @@ struct ValueFlowSolverInput {
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
     // The build excludes evaluated text: the run time refuses eval, Function and its relatives every text, so a call of one throws and runs nothing.
     bool refusesEvaluatedText { false };
+    // CompileOptions::removedFeatures.
+    std::array<uint64_t, 8> removedFeatures { };
     // The functions whose calls the rules tell apart. Null where there are none.
     const ValueFlowInstancedFunctions* instancedFunctions { nullptr };
 };
@@ -126,6 +128,8 @@ public:
 
     void makeRoomToFill(size_t more)
     {
+        if (!more)
+            return;
         if (m_size + more > capacity())
             m_elements.realloc(std::max<size_t>({ 1024, capacity() * 2, m_size + more }) * sizeof(T));
         m_size += more;
@@ -200,6 +204,25 @@ private:
     alignas(64) std::atomic<size_t> m_size { 0 };
 };
 
+// Bits that the threads of a loop set and clear, whichever word they lie in.
+class ValueFlowSharedBits {
+public:
+    size_t size() const { return m_words.size() * 32; }
+    void growTo(size_t size)
+    {
+        if (size > this->size())
+            m_words.insertFill(m_words.size(), 0u, (size + 31) / 32 - m_words.size());
+    }
+    bool get(size_t index) const { return WTF::atomicLoad(const_cast<uint32_t*>(&m_words[index >> 5]), std::memory_order_relaxed) >> (index & 31) & 1; }
+    // Both answer what the bit was.
+    bool set(size_t index) { return WTF::atomicExchangeOr(&m_words[index >> 5], 1u << (index & 31), std::memory_order_relaxed) >> (index & 31) & 1; }
+    bool clear(size_t index) { return WTF::atomicExchangeAnd(&m_words[index >> 5], ~(1u << (index & 31)), std::memory_order_relaxed) >> (index & 31) & 1; }
+    void clearAll() { zeroSpan(m_words.mutableSpan()); }
+
+private:
+    Vector<uint32_t> m_words;
+};
+
 class ValueFlowPairSet {
 public:
     bool add(uint32_t first, uint32_t second);
@@ -223,7 +246,6 @@ class ValueFlowSolver {
 public:
     struct Counters {
         uint32_t rounds { 0 };
-        uint32_t fullRounds { 0 };
         uint64_t statementRuns { 0 };
         uint64_t edgesLogged { 0 };
         uint64_t testsWhetherSetsMeet { 0 };
@@ -239,7 +261,6 @@ public:
 
     // What one round has done.
     struct Round {
-        bool isFull { false };
         uint32_t turns { 0 };
         uint32_t statementRuns { 0 };
         uint32_t functionsReached { 0 };
@@ -254,23 +275,12 @@ public:
         uint64_t runs { 0 };
         // Runs that asked for no edge, node or function that was not there: they need not have been due.
         uint64_t runsThatAddedNothing { 0 };
-        // Runs in a round of every statement that did add something: they should have been due before.
-        uint64_t runsThatWereNotDueAndAdded { 0 };
         // The edges asked for, and those among them that no earlier round had added.
         uint64_t connections { 0 };
         uint64_t edgesLogged { 0 };
     };
 
-    enum class Rounds : uint8_t {
-        // A statement runs when it is due.
-        Due,
-        // The same without the round at the end in which every statement runs once more. That round is a quarter to a third of all runs, and on no program has it added anything.
-        DueWithoutCheck,
-        // Every statement runs in every round. The results are the same.
-        Full,
-    };
-
-    ValueFlowSolver(const ValueFlowSolverInput&, ValueSets&, ValueFlowRule, const ParallelLoops&, Rounds = Rounds::Due);
+    ValueFlowSolver(const ValueFlowSolverInput&, ValueSets&, ValueFlowRule, const ParallelLoops&);
     ~ValueFlowSolver();
 
     // False if the solve has stopped at a limit: then nothing that it holds is a result. That happens only where the input names no node for what is given up.
@@ -292,21 +302,6 @@ public:
     bool holdsObjectOutsideFamily(ValueFlowNodeID node) const { return m_holdsObjectOutsideFamily.get(node.index()); }
     // The set of the node was given up.
     bool isSaturated(ValueFlowNodeID node) const { return m_isSaturated.get(node.index()); }
-
-    // After a solve with Rounds::Due. The runs that added something in a round of every statement: each should have been due before. The solve has gone on from there, so what it holds is at rest all the same.
-    uint64_t numberOfRunsThatWereNotDueAndAdded() const { return m_numberOfRunsThatWereNotDueAndAdded; }
-    // The first of them, by the number of the statement within each round.
-    std::span<const ValueFlowStatementID> firstStatementsThatWereNotDueAndAdded() const LIFETIME_BOUND { return m_firstStatementsThatWereNotDueAndAdded.span(); }
-    // After a solve with Rounds::Due.
-    struct AddedByGeneralRules {
-        bool isAnything() const { return nodesThatHoldMore || functionsReached || builtinsUsedMore; }
-
-        uint64_t nodesThatHoldMore { 0 };
-        uint32_t functionsReached { 0 };
-        uint32_t builtinsUsedMore { 0 };
-        Vector<ValueFlowNodeID> firstNodesThatHoldMore;
-    };
-    const AddedByGeneralRules& addedByGeneralRules() const LIFETIME_BOUND { return m_addedByGeneralRules; }
 
     const ValueFlowSolverInput& input() const LIFETIME_BOUND { return m_input; }
     uint32_t numberOfStatements() const { return m_input.statements.size() + m_madeStatements.size(); }
@@ -549,7 +544,7 @@ private:
     {
         if (statement.index() >= m_input.statements.size())
             return false;
-        return !m_hasStatementOfBodyRun.quickGet(statement.index()) || (m_statementsWait && m_nextStatementWaiting[statement.index()] == hasWaitedAndNotRun);
+        return !m_hasStatementOfBodyRun.get(statement.index()) || (m_statementsWait && m_nextStatementWaiting[statement.index()] == hasWaitedAndNotRun);
     }
     void prefetchWhetherKnownReader(ValueFlowNodeID node, ValueFlowStatementID statement) const
     {
@@ -574,7 +569,6 @@ private:
     void makeDue(ValueFlowStatementID);
     void listIfItMayBecomeDue(ValueFlowStatementID, Vector<ValueFlowStatementID>&) const;
     void makeStatementsDue(uint32_t first, uint32_t end);
-    void makeEveryStatementDue();
     bool reach(uint32_t body, ValueFlowReachWitness);
     void takeReachedFunctions();
     void countRunsAndEdges();
@@ -626,14 +620,19 @@ private:
     void noteFunctionsAsked();
     void noteNodesAskedFor();
     // Records of uses for the threads of a loop: each takes the positions that are its own.
-    struct NewUses {
-        size_t numberTakenFromFreeOnes { 0 };
-        size_t firstFresh { 0 };
+    // The uses that one thread of a loop gives out: it takes a block at a time, of the free ones while there are any.
+    struct UsesOfThread {
+        size_t nextFree { 0 };
+        size_t endOfFree { 0 };
+        size_t nextFresh { 0 };
+        size_t endOfFresh { 0 };
     };
-    NewUses makeUses(size_t count);
+    uint32_t takeUse(UsesOfThread&);
+    void letThreadsTakeUses();
+    void takeBackUsesOfThreads();
+    Vector<UsesOfThread> m_usesOfThreads;
+    std::atomic<size_t> m_numberOfFreeUsesLeft { 0 };
     template<typename T> void growAndFill(ListWithRoomToFill<T>&, size_t size, T value);
-    uint32_t useAt(const NewUses& uses, size_t position) const { return position < uses.numberTakenFromFreeOnes ? m_freeUses[m_freeUses.size() - 1 - position] : static_cast<uint32_t>(uses.firstFresh + position - uses.numberTakenFromFreeOnes); }
-    void didTake(const NewUses& uses) { m_freeUses.shrink(m_freeUses.size() - uses.numberTakenFromFreeOnes); }
     void takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& madeNodes);
     void letGoOf(Vector<uint32_t>&& listsOfUses);
     void makeReadersDue(std::span<const ValueFlowNodeID> moved);
@@ -666,6 +665,7 @@ private:
     void connectWhatStoppedPlaceholdersCover();
     void prepareSaturation();
     bool maySaturate(ValueFlowNodeID) const;
+    bool isMadeForUnknownObject(ValueFlowNodeID) const;
     bool hasTooManyLayoutsAndCallees(ValueSetID);
     void saturate(std::span<const ValueFlowNodeID> moved);
     void spreadMarks();
@@ -678,7 +678,6 @@ private:
     ValueSets& m_sets;
     const ValueFlowRule m_rule;
     const ParallelLoops& m_loops;
-    const Rounds m_rounds;
 
     Vector<std::unique_ptr<ValueSetMaker>> m_makers;
     ValueFlowGraph m_graph;
@@ -806,7 +805,8 @@ private:
     StepTimes m_stepTimes;
 
     BitVector m_isReached;
-    BitVector m_hasStatementOfBodyRun;
+    // Whoever runs a statement notes it here, in m_isDue and in m_hasRunInTurn.
+    ValueFlowSharedBits m_hasStatementOfBodyRun;
     uint64_t m_numberOfTurn { 0 };
     // A read of a property, a call or a construction takes its first operand before it does anything, so while no value has arrived there all that its rule says is that it may throw.
     ValueFlowNodeID nodeAwaitedBy(ValueFlowStatementID, const ValueFlowStatement&) const;
@@ -818,30 +818,26 @@ private:
     ListWithRoomToFill<uint32_t> m_nextStatementWaiting;
     Vector<ValueFlowReachWitness> m_reachedBy;
     Vector<RunsAndEdges> m_runsAndEdges;
-    uint64_t m_numberOfRunsThatWereNotDueAndAdded { 0 };
-    bool m_usesGeneralRulesOnly { false };
-    AddedByGeneralRules m_addedByGeneralRules;
-    Vector<ValueFlowStatementID> m_firstStatementsThatWereNotDueAndAdded;
     HashMap<uint64_t, ValueFlowStatementID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_statementOfEdge;
     Vector<LoggedEdge> m_edgesInOrderLogged;
     Vector<uint32_t> m_bodiesReachedInRound;
     size_t m_numberOfBodiesWhoseStatementsAreDue { 0 };
 
-    BitVector m_isDue;
+    mutable ValueFlowSharedBits m_isDue;
     // The statements whose last run has asked for very many edges.
     BitVector m_isDear;
+    Vector<ValueFlowStatementID> m_dearStatements;
     Vector<ValueFlowStatementID> m_due;
     // For tests (TestingSwitch::DelayFlowRules, DelayOtherFlowRules): each seed is another valid schedule. The programs must answer the same under each, with about the same code.
     uint32_t m_seedOfSchedule { 0 };
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
-    BitVector m_hasRunInTurn;
+    ValueFlowSharedBits m_hasRunInTurn;
     Vector<ValueFlowStatementID> m_dueInNextTurn;
 
     ListWithRoomToFill<uint32_t> m_firstReaderOfNode;
     ListWithRoomToFill<ValueSetID> m_seenByReadersOfNode;
     // A byte a node, so that each has one writer.
     ListWithRoomToFill<uint8_t> m_isWaitedForToHoldSomething;
-    bool m_isFullRound { false };
     struct NodeRead {
         ValueFlowNodeID node;
         ValueFlowStatementID statement;
@@ -943,6 +939,7 @@ private:
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };
     // The built-ins that let in unseen code.
     ValueSetID m_objectsAlwaysFollowed { ValueSets::nothing };
+    ValueSetID m_objectsLookedForBesideUnknownObject { ValueSets::nothing };
     // Those of them of which something says what they are.
     ValueSetID m_objectsSaidToBeSomething { ValueSets::nothing };
     // What the program allocates with a layout of its own, and its closures.

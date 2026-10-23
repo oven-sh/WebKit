@@ -30,7 +30,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct CandidateTable {
+struct UnreadFieldCandidateTable {
     std::optional<uint32_t> find(FieldReference field) const
     {
         auto found = std::ranges::lower_bound(list, field);
@@ -104,7 +104,7 @@ struct ReachedLayouts {
     bool isComplete { false };
 };
 
-struct ScanContext {
+struct UnreadFieldScanContext {
     std::optional<uint32_t> candidateOf(LayoutID layout, uint32_t field) const
     {
         return candidates.find(declarationOf(program, { layout, field }));
@@ -113,7 +113,7 @@ struct ScanContext {
     const Program& program;
     const EffectSummaries& effects;
     const BuildContext& build;
-    const CandidateTable& candidates;
+    const UnreadFieldCandidateTable& candidates;
     LiveCandidates& live;
     OpcodeSet opcodesNamingLayouts;
     OpcodeSet opcodesStoringThroughOperands;
@@ -121,9 +121,9 @@ struct ScanContext {
     BitVector keysOfCandidates;
 };
 
-class FunctionScanner {
+class UnreadFieldScanner {
 public:
-    FunctionScanner(const ScanContext& context, FunctionID id)
+    UnreadFieldScanner(const UnreadFieldScanContext& context, FunctionID id)
         : m_context(context)
         , m_id(id)
         , m_function(context.program.at(id))
@@ -144,7 +144,7 @@ private:
     void addRemovableAccess(const ListedValue&, Vector<uint32_t, 1>&& candidates);
     void markLive(std::span<const uint32_t> candidates);
 
-    const ScanContext& m_context;
+    const UnreadFieldScanContext& m_context;
     FunctionID m_id;
     const Function& m_function;
     bool m_canChangeFunction;
@@ -256,9 +256,9 @@ static BitVector findCandidateVariables(const Program& program, const FlowResult
     return candidates;
 }
 
-static CandidateTable findCandidateFields(const Program& program)
+static UnreadFieldCandidateTable findCandidateFields(const Program& program)
 {
-    CandidateTable candidates;
+    UnreadFieldCandidateTable candidates;
     for (uint32_t layoutIndex = 0; layoutIndex < program.layouts.size(); ++layoutIndex) {
         LayoutID id(layoutIndex);
         const Layout& layout = program.at(id);
@@ -273,7 +273,7 @@ static CandidateTable findCandidateFields(const Program& program)
 }
 
 // The keys under which a lookup finds a candidate, or a field that was inherited from one.
-static BitVector findKeysOfCandidates(const Program& program, const ParallelLoops& loops, const CandidateTable& candidates)
+static BitVector findKeysOfCandidates(const Program& program, const ParallelLoops& loops, const UnreadFieldCandidateTable& candidates)
 {
     Vector<PropertyKeyID> found = collectInParallel<PropertyKeyID>(loops, program.layouts.size(), [&](unsigned index, Vector<PropertyKeyID>& keys) {
         LayoutID layout(index);
@@ -289,7 +289,7 @@ static BitVector findKeysOfCandidates(const Program& program, const ParallelLoop
     return keys;
 }
 
-static OpcodeSet findOpcodesNamingLayouts()
+static OpcodeSet findOpcodesWithLayout()
 {
     return Value::opcodesWithLayout;
 }
@@ -323,7 +323,7 @@ static OpcodeSet findOpcodesStoringThroughOperands()
     return opcodes;
 }
 
-static void markFieldsLive(const ScanContext& context, LayoutID id)
+static void markFieldsLive(const UnreadFieldScanContext& context, LayoutID id)
 {
     context.candidates.forEachCandidateOf(id, [&](uint32_t candidate) {
         context.live.markLive(candidate);
@@ -338,7 +338,7 @@ static void markFieldsLive(const ScanContext& context, LayoutID id)
     }
 }
 
-static void markEvalBindingsLive(const ScanContext& context)
+static void markEvalBindingsLive(const UnreadFieldScanContext& context)
 {
     for (const EvalScope& scope : context.program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {
@@ -350,7 +350,7 @@ static void markEvalBindingsLive(const ScanContext& context)
     }
 }
 
-static void markDataLayoutsLive(const ScanContext& context)
+static void markDataLayoutsLive(const UnreadFieldScanContext& context)
 {
     BitVector isMarked(context.program.layouts.size());
     for (const Data& data : context.program.data) {
@@ -361,7 +361,7 @@ static void markDataLayoutsLive(const ScanContext& context)
     }
 }
 
-static void markParsedLayoutsLive(const ScanContext& context)
+static void markParsedLayoutsLive(const UnreadFieldScanContext& context)
 {
     const Program& program = context.program;
     for (uint32_t layoutIndex = 0; layoutIndex < program.layouts.size(); ++layoutIndex) {
@@ -370,7 +370,7 @@ static void markParsedLayoutsLive(const ScanContext& context)
     }
 }
 
-static LayoutID layoutPayloadOf(const Value& value)
+static LayoutID layoutInPayloadOf(const Value& value)
 {
     return Value::opcodesWithLayout.contains(value.opcode) ? value.layout() : LayoutID();
 }
@@ -436,7 +436,7 @@ static BitVector findUsedValues(const Function& function)
     return isUsed;
 }
 
-Vector<RemovableAccess> FunctionScanner::run()
+Vector<RemovableAccess> UnreadFieldScanner::run()
 {
     forEachListedValue(m_context.program, m_id, m_context.scannedOpcodes, [&](BlockID block, uint32_t, ValueID id, const Value& value) {
         scan(ListedValue { block, id, value });
@@ -444,7 +444,7 @@ Vector<RemovableAccess> FunctionScanner::run()
     return WTF::move(m_removableAccesses);
 }
 
-void FunctionScanner::scan(const ListedValue& listed)
+void UnreadFieldScanner::scan(const ListedValue& listed)
 {
     Opcode opcode = listed.value.opcode;
     if (m_context.opcodesNamingLayouts.contains(opcode))
@@ -457,10 +457,10 @@ void FunctionScanner::scan(const ListedValue& listed)
         scanStoresThroughOperands(listed.value);
 }
 
-void FunctionScanner::scanNamedFields(const ListedValue& listed)
+void UnreadFieldScanner::scanNamedFields(const ListedValue& listed)
 {
     const Value& value = listed.value;
-    LayoutID layout = layoutPayloadOf(value);
+    LayoutID layout = layoutInPayloadOf(value);
     if (!layout)
         return;
 
@@ -478,7 +478,7 @@ void FunctionScanner::scanNamedFields(const ListedValue& listed)
     });
 }
 
-void FunctionScanner::scanVariableAccess(const ListedValue& listed)
+void UnreadFieldScanner::scanVariableAccess(const ListedValue& listed)
 {
     auto candidate = m_context.candidates.find(listed.value.variable());
     if (!candidate)
@@ -489,7 +489,7 @@ void FunctionScanner::scanVariableAccess(const ListedValue& listed)
         m_context.live.markLive(*candidate);
 }
 
-ReachedLayouts FunctionScanner::layoutsReachedBy(const Value& access) const
+ReachedLayouts UnreadFieldScanner::layoutsReachedBy(const Value& access) const
 {
     const Program& program = m_context.program;
     if (LayoutSetID stamp = access.receivers()) {
@@ -503,7 +503,7 @@ ReachedLayouts FunctionScanner::layoutsReachedBy(const Value& access) const
     return { membersOf(program, program.typeOf(m_function, access.operand(*receiver))), false };
 }
 
-void FunctionScanner::scanAccessByKey(const ListedValue& listed)
+void UnreadFieldScanner::scanAccessByKey(const ListedValue& listed)
 {
     const Program& program = m_context.program;
     const Value& value = listed.value;
@@ -544,7 +544,7 @@ void FunctionScanner::scanAccessByKey(const ListedValue& listed)
 }
 
 // The read of a deferred closure fills the slot, so dead code elimination leaves it where nothing uses its value.
-bool FunctionScanner::isUnusedSlotRead(const ListedValue& listed)
+bool UnreadFieldScanner::isUnusedSlotRead(const ListedValue& listed)
 {
     if (!isSlotRead(listed.value.opcode))
         return false;
@@ -553,7 +553,7 @@ bool FunctionScanner::isUnusedSlotRead(const ListedValue& listed)
     return !m_usedValues->quickGet(listed.id.index());
 }
 
-void FunctionScanner::scanStoresThroughOperands(const Value& value)
+void UnreadFieldScanner::scanStoresThroughOperands(const Value& value)
 {
     const Program& program = m_context.program;
     EffectContext effectContext { program, m_context.effects };
@@ -566,7 +566,7 @@ void FunctionScanner::scanStoresThroughOperands(const Value& value)
     });
 }
 
-void FunctionScanner::addRemovableAccess(const ListedValue& listed, Vector<uint32_t, 1>&& candidates)
+void UnreadFieldScanner::addRemovableAccess(const ListedValue& listed, Vector<uint32_t, 1>&& candidates)
 {
     if (m_canChangeFunction)
         m_removableAccesses.append(RemovableAccess { listed.block, listed.id, WTF::move(candidates) });
@@ -574,7 +574,7 @@ void FunctionScanner::addRemovableAccess(const ListedValue& listed, Vector<uint3
         markLive(candidates.span());
 }
 
-void FunctionScanner::markLive(std::span<const uint32_t> candidates)
+void UnreadFieldScanner::markLive(std::span<const uint32_t> candidates)
 {
     for (uint32_t candidate : candidates)
         m_context.live.markLive(candidate);
@@ -591,14 +591,14 @@ static OpcodeSet findScannedOpcodes(const OpcodeSet& opcodesNamingLayouts, const
     return opcodes;
 }
 
-static Vector<FunctionAccesses> scanFunctions(const ScanContext& context)
+static Vector<FunctionAccesses> scanFunctions(const UnreadFieldScanContext& context)
 {
     const Program& program = context.program;
     return collectInParallel<FunctionAccesses>(context.build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FunctionAccesses>& collected) {
         FunctionID id(index);
         if (!mayListValueWith(program, id, context.scannedOpcodes) || !program.at(id).hasBody())
             return;
-        Vector<RemovableAccess> accesses = FunctionScanner(context, id).run();
+        Vector<RemovableAccess> accesses = UnreadFieldScanner(context, id).run();
         if (!accesses.isEmpty())
             collected.append(FunctionAccesses { id, WTF::move(accesses) });
     });
@@ -634,7 +634,7 @@ static void keepAccessesWhole(std::span<const FunctionAccesses> functions, LiveC
 }
 
 // A validating build tells the run time which names it took away, so that a lookup of one from outside compiled code ends the process.
-static uint64_t recordRemovedFields(ProgramEditor& editor, const CandidateTable& candidates, LiveCandidates& live, bool validates)
+static uint64_t recordRemovedFields(ProgramEditor& editor, const UnreadFieldCandidateTable& candidates, LiveCandidates& live, bool validates)
 {
     uint64_t numberOfRemovedFields = 0;
     for (uint32_t candidate = 0; candidate < candidates.list.size(); ++candidate) {
@@ -659,7 +659,7 @@ static uint64_t recordRemovedFields(ProgramEditor& editor, const CandidateTable&
     return numberOfRemovedFields;
 }
 
-static void recordRemovedVariables(ProgramEditor& editor, const CandidateTable& candidates, LiveCandidates& live)
+static void recordRemovedVariables(ProgramEditor& editor, const UnreadFieldCandidateTable& candidates, LiveCandidates& live)
 {
     for (size_t index : candidates.variables) {
         if (live.isLive(*candidates.find(VariableID(index))))
@@ -695,7 +695,7 @@ static void pruneAccessesOfLiveCandidates(Vector<FunctionAccesses>& functions, L
     });
 }
 
-static void rebuildAllocation(const ScanContext& context, Value& allocation)
+static void rebuildAllocation(const UnreadFieldScanContext& context, Value& allocation)
 {
     LayoutID layout = allocation.layout();
     std::span<const uint32_t> fields = allocation.fields();
@@ -715,7 +715,7 @@ static void rebuildAllocation(const ScanContext& context, Value& allocation)
     allocation.setVariadicOperands(remainingValues.span());
 }
 
-static void removeAccessesInBlock(const ScanContext& context, IRBuilder& builder, BlockID block, std::span<const RemovableAccess> accesses)
+static void removeAccessesInBlock(const UnreadFieldScanContext& context, IRBuilder& builder, BlockID block, std::span<const RemovableAccess> accesses)
 {
     Function& function = builder.function();
     const BlockValues& values = function.at(block).values;
@@ -738,7 +738,7 @@ static void removeAccessesInBlock(const ScanContext& context, IRBuilder& builder
         builder.eraseValues(block, erasedIndexes);
 }
 
-static void removeAccesses(const ScanContext& context, IRBuilder& builder, std::span<const RemovableAccess> accesses)
+static void removeAccesses(const UnreadFieldScanContext& context, IRBuilder& builder, std::span<const RemovableAccess> accesses)
 {
     while (!accesses.empty()) {
         BlockID block = accesses.front().block;
@@ -751,7 +751,7 @@ static void removeAccesses(const ScanContext& context, IRBuilder& builder, std::
     }
 }
 
-static void rewriteFunctions(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner, const ScanContext& context, std::span<const FunctionAccesses> functions)
+static void rewriteFunctions(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner, const UnreadFieldScanContext& context, std::span<const FunctionAccesses> functions)
 {
     const Program& program = editor.program();
     BuildContext& build = runner.build();
@@ -783,7 +783,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     const Program& program = editor.program();
     BuildContext& build = runner.build();
 
-    CandidateTable candidates;
+    UnreadFieldCandidateTable candidates;
     if (areReceiverSetsEnabled(program, build))
         candidates = findCandidateFields(program);
     if (inputs.flow.hasResults())
@@ -792,9 +792,9 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         return;
 
     LiveCandidates live(candidates.size());
-    OpcodeSet opcodesNamingLayouts = findOpcodesNamingLayouts();
+    OpcodeSet opcodesNamingLayouts = findOpcodesWithLayout();
     OpcodeSet opcodesStoringThroughOperands = findOpcodesStoringThroughOperands();
-    ScanContext context { program, inputs.effects, build, candidates, live, opcodesNamingLayouts, opcodesStoringThroughOperands, findScannedOpcodes(opcodesNamingLayouts, opcodesStoringThroughOperands), findKeysOfCandidates(program, build.parallelLoops(), candidates) };
+    UnreadFieldScanContext context { program, inputs.effects, build, candidates, live, opcodesNamingLayouts, opcodesStoringThroughOperands, findScannedOpcodes(opcodesNamingLayouts, opcodesStoringThroughOperands), findKeysOfCandidates(program, build.parallelLoops(), candidates) };
     markEvalBindingsLive(context);
     markDataLayoutsLive(context);
     markParsedLayoutsLive(context);

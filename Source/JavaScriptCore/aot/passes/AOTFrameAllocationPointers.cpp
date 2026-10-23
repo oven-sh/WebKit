@@ -34,8 +34,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OperandUses unfollowedLeakingUses = usesLeakingFramePointers - usesLeakingContents - OperandUses { OperandUse::Retains, OperandUse::Returns };
-
 bool hasFrameStorage(const Value& value)
 {
     return Value::opcodesWithStorage.contains(value.opcode) && value.storage() != AllocationStorage::Heap;

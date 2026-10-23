@@ -53,11 +53,6 @@ struct TablesView {
     void (*print)(const TablesContext&);
 };
 
-struct TableDamage {
-    ProgramTableRule rule;
-    bool (*apply)(std::span<uint8_t> bytes);
-};
-
 struct FlagName {
     uint32_t mask;
     ASCIILiteral name;
@@ -89,9 +84,7 @@ static constexpr uint32_t maskOf(std::span<const FlagName> flags)
     return mask;
 }
 
-static constexpr uint16_t unknownFieldFlag = allFieldFlags + 1;
 static_assert(maskOf(fieldFlagNames) == allFieldFlags);
-static_assert(unknownFieldFlag && !(unknownFieldFlag & allFieldFlags));
 
 static ASCIILiteral nameOf(CallableKind kind)
 {
@@ -364,8 +357,7 @@ static void printFieldRecords(const TablesContext& context, ASCIILiteral keyword
         RecordLine line(context, keyword, index);
         line.identifier("name"_s, field.name).flags("flags"_s, field.flags, fieldFlagNames).field("slot"_s, field.slot).field("type"_s, field.type);
         line.flag("isFilledAtBirth"_s, field.isFilledAtBirth).flag("holdsRawValueFromBirth"_s, field.holdsRawValueFromBirth).flag("keepsStateOfBirth"_s, field.keepsStateOfBirth);
-        line.flag("defersFlattenedObject"_s, field.defersFlattenedObject);
-        if (field.slot.representation() != SlotRepresentation::DeferredClosure || field.defersFlattenedObject)
+        if (field.slot.representation() != SlotRepresentation::DeferredClosure)
             continue;
         line.field("function"_s, layout.deferredClosureOf(field));
         if (field.flags & fieldDeferredClosureCapturesEnvironment)
@@ -1040,134 +1032,6 @@ static void printNamedStrings(const TablesContext& context)
     }
 }
 
-template<typename T>
-static std::span<T> mutableTable(std::span<uint8_t> bytes, ProgramTableIndex index)
-{
-    TableRange range = reinterpretCastSpanStartTo<ProgramTables>(bytes).ranges[static_cast<unsigned>(index)];
-    return spanReinterpretCast<T>(bytes.subspan(range.offset, range.count * sizeof(T)));
-}
-
-static bool enlargeTypeTable(std::span<uint8_t> bytes)
-{
-    reinterpretCastSpanStartTo<ProgramTables>(bytes).ranges[static_cast<unsigned>(ProgramTableIndex::types)].count = 1u << 30;
-    return true;
-}
-
-static bool swapFirstConstructors(std::span<uint8_t> bytes)
-{
-    std::span<ConstructorData> constructors = mutableTable<ConstructorData>(bytes, ProgramTableIndex::constructors);
-    if (constructors.size() < 2)
-        return false;
-    std::swap(constructors[0], constructors[1]);
-    return true;
-}
-
-static bool removeFirstLayout(std::span<uint8_t> bytes)
-{
-    std::span<uint32_t> layouts = mutableTable<uint32_t>(bytes, ProgramTableIndex::layouts);
-    if (layouts.size() < 2 || !layouts[1])
-        return false;
-    layouts[1] = 0;
-    return true;
-}
-
-static bool setUnknownFieldFlag(std::span<uint8_t> bytes)
-{
-    const ProgramTables& tables = reinterpretCastSpanStartTo<ProgramTables>(bytes);
-    for (uint32_t shape = 0; shape < tables.layouts().size(); ++shape) {
-        if (!tables.hasLayoutForShape(shape) || !tables.layoutForShape(shape).numberOfFields)
-            continue;
-        reinterpretCastSpanStartTo<FieldData>(bytes.subspan(tables.layouts()[shape] + sizeof(LayoutData))).flags |= unknownFieldFlag;
-        return true;
-    }
-    return false;
-}
-
-static std::span<uint32_t> mutableFieldTableEntries(std::span<uint8_t> bytes)
-{
-    return mutableTable<uint32_t>(bytes, ProgramTableIndex::fieldTable).subspan(reinterpretCastSpanStartTo<ProgramTables>(bytes).numberOfFieldTableRows);
-}
-
-// The first entry of a row of a shape, or of a row of a class.
-static uint32_t* findFieldTableEntry(std::span<uint8_t> bytes, bool inRowOfClass)
-{
-    std::span<uint32_t> entries = mutableFieldTableEntries(bytes);
-    std::span<uint32_t> rowsOfClasses = mutableTable<uint32_t>(bytes, ProgramTableIndex::classMemberRows);
-    for (uint32_t index = 0; index < entries.size(); ++index) {
-        if (entries[index] && std::ranges::contains(rowsOfClasses, index - FieldTableEntry { entries[index] }.name()) == inRowOfClass)
-            return &entries[index];
-    }
-    return nullptr;
-}
-
-static bool clearFirstFieldTableEntry(std::span<uint8_t> bytes)
-{
-    uint32_t* occupied = findFieldTableEntry(bytes, false);
-    if (!occupied)
-        return false;
-    *occupied = 0;
-    return true;
-}
-
-static bool clearFirstEntryOfClass(std::span<uint8_t> bytes)
-{
-    uint32_t* occupied = findFieldTableEntry(bytes, true);
-    if (!occupied)
-        return false;
-    *occupied = 0;
-    return true;
-}
-
-static bool copyFieldTableEntryToFreePlace(std::span<uint8_t> bytes)
-{
-    std::span<uint32_t> entries = mutableFieldTableEntries(bytes);
-    auto occupied = std::ranges::find_if(entries, std::identity { });
-    auto free = std::ranges::find(entries, 0u);
-    if (occupied == entries.end() || free == entries.end())
-        return false;
-    *free = *occupied;
-    return true;
-}
-
-static const TableDamage* findTableDamage(StringView argument)
-{
-    static constexpr TableDamage damages[] {
-        { ProgramTableRule::TableOutOfBounds, enlargeTypeTable },
-        { ProgramTableRule::TableNotSorted, swapFirstConstructors },
-        { ProgramTableRule::ShapeWithoutLayout, removeFirstLayout },
-        { ProgramTableRule::UnknownFieldFlag, setUnknownFieldFlag },
-        { ProgramTableRule::FieldMissingFromFieldTable, clearFirstFieldTableEntry },
-        { ProgramTableRule::MemberMissingFromClassMemberTable, clearFirstEntryOfClass },
-        { ProgramTableRule::FieldTableEntryWithoutField, copyFieldTableEntryToFreePlace },
-    };
-    static constexpr ASCIILiteral prefix = "damage="_s;
-    if (!argument.startsWith(prefix))
-        return nullptr;
-    StringView ruleName = argument.substring(prefix.length());
-    auto found = std::ranges::find_if(damages, [&](const TableDamage& damage) {
-        return ruleName == nameOf(damage.rule);
-    });
-    return found == std::end(damages) ? nullptr : &*found;
-}
-
-static void checkDamagedTables(const TablesContext& context, const TableDamage& damage)
-{
-    static constexpr void (*tableGroups[])(TableEncoder&) {
-        encodeTypeTables, encodeDataTable, encodeLayoutTables, encodePropertyRunTable, encodeFieldTable, encodeStaticsTables,
-        encodeFunctionTables, encodeModuleTables, encodeRequestTable, encodeConstantTables,
-    };
-
-    Vector<uint8_t> damagedBytes(context.bytes);
-    if (!damage.apply(damagedBytes.mutableSpan())) {
-        context.out.println("error: nothing to damage");
-        return;
-    }
-    TableEncoder encoder(context.inputs, context.build);
-    for (auto* encodeGroup : tableGroups)
-        encodeGroup(encoder);
-    checkProgramTables(encoder, damagedBytes.span());
-}
-
 static std::span<const TablesView> tablesViews()
 {
     static constexpr TablesView views[] {
@@ -1205,39 +1069,23 @@ static void printTables(TestCommandContext& context, const PlacedProgram& placed
     if (context.arguments.empty())
         printTableSizes(tablesContext);
     for (const String& argument : context.arguments) {
-        if (const TablesView* view = findView(tablesViews(), argument))
-            view->print(tablesContext);
-        else
-            checkDamagedTables(tablesContext, *findTableDamage(argument));
+        findView(tablesViews(), argument)->print(tablesContext);
     }
-}
-
-static void printFailedRules(TestCommandContext& context, const Program& program)
-{
-    Diagnostics reported = context.build.takeDiagnostics();
-    reported.finish(&program);
-    for (const InternalError& error : reported.internalErrors()) {
-        if (error.kind == InternalErrorKind::ProgramTableCheckFailed)
-            context.out.println("rule ", nameOf(static_cast<ProgramTableRule>(error.count)));
-    }
-    context.build.diagnostics().append(Vector<UserDiagnostic>(reported.userDiagnostics()));
-    context.build.diagnostics().append(Vector<InternalError>(reported.internalErrors()));
 }
 
 void runTables(TestCommandContext& context)
 {
     for (const String& argument : context.arguments) {
-        if (!findView(tablesViews(), argument) && !findTableDamage(argument)) {
+        if (!findView(tablesViews(), argument)) {
             printBadArgument(context.out, argument);
             return;
         }
     }
 
-    std::unique_ptr<PlacedProgram> placed = runPipelineForPlacementTest(context, PassID::CheckPlacement);
+    std::unique_ptr<PlacedProgram> placed = runPipelineForPlacementTest(context, PassID::PlaceSiteCaches);
     if (!placed)
         return;
     printTables(context, *placed);
-    printFailedRules(context, placed->program());
     context.program = WTF::move(placed->output->program);
     context.form = context.program->form();
 }

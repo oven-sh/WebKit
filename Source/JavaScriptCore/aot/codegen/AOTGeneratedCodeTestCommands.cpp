@@ -357,7 +357,7 @@ static void runGenerateCode(TestCommandContext& context)
 std::span<const TestCommand> generatedCodeTestCommands()
 {
     static constexpr TestCommand commands[] {
-        { "generate-code"_s, IRForm::Selected, runGenerateCode, RawWordCheck::Run, ProgramAsRead::WithLibrary },
+        { "generate-code"_s, IRForm::Selected, runGenerateCode, ProgramAsRead::WithLibrary },
     };
     return commands;
 }

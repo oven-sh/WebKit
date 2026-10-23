@@ -24,7 +24,7 @@ static bool hasNeverResult(const Value& value)
     return value.type == TypeTable::never && resultRuleOf(value.opcode) != ResultRule::None;
 }
 
-static OptionSet<BodyTrait> traitsOf(const Block& block, BlockID id)
+static OptionSet<BodyTrait> bodyTraitsOf(const Block& block, BlockID id)
 {
     OptionSet<BodyTrait> traits;
     traits.set(BodyTrait::Handlers, !!block.handler);
@@ -59,7 +59,7 @@ BodyContents contentsOf(const Function& function)
         for (ValueID value : block.values)
             add(value);
         contents.terminators.add(block.terminator.kind);
-        contents.traits.add(traitsOf(block, BlockID(index)));
+        contents.traits.add(bodyTraitsOf(block, BlockID(index)));
     }
     contents.traits.add(traitsBesideBlocks(function, contents.opcodes.contains(Opcode::Parameter), hasNeverValue));
     return contents;
@@ -103,7 +103,7 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
         }
         terminators.add(block.terminator.kind);
         terminatorKinds[index] = block.terminator.kind;
-        hot.traits.add(traitsOf(block, BlockID(index)));
+        hot.traits.add(bodyTraitsOf(block, BlockID(index)));
     }
     hot.terminatorBits = static_cast<uint16_t>(std::bit_cast<uint64_t>(terminators));
     hot.listsParameters = numberOfParameters;

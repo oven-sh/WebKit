@@ -617,6 +617,9 @@ struct ValueFlowBody {
     Vector<ComparedValues> comparedValues;
     // Ascending. Nothing else in the body looks at them: no step behind the solve says anything about them.
     Vector<ValueID> valuesAliveForComparisonsOnly;
+    // What findValuesBehindChecks() answers, where the reduction has asked. Empty where it answers no value.
+    BitVector valuesBehindChecks;
+    bool knowsValuesBehindChecks { false };
 
     uint32_t result(uint32_t index) const { return numberOfEntryParameters + index; }
     uint32_t thrown() const { return numberOfEntryParameters + numberOfResults; }
@@ -628,7 +631,7 @@ struct ValueFlowBody {
 // Reads nothing but the program, so every body can be reduced on a thread of its own.
 ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr, FunctionID genericVersion = { });
 // What the host does of its own accord: it enters the entry points and the functions it calls, with the unknown object as every operand. It has the number of no function.
-ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&);
+ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { });
 bool startsWithoutValueInSolve(const Program&, const Variable&);
 
 struct ValueFlowObservedValue {
@@ -708,6 +711,9 @@ constexpr ValueFlowNotedOperations notedOperationsOf(Opcode opcode)
     return bits;
 }
 
+// Among all the values of the function, whether a block lists them or not.
+ValueFlowNotedOperations notedOperationsOf(const Function&);
+
 // All bodies in the numbers of the program.
 class ValueFlowBodies {
     WTF_MAKE_NONCOPYABLE(ValueFlowBodies);
@@ -737,6 +743,8 @@ public:
     std::span<const ValueFlowValueOfFunction> valuesAliveForComparisonsOnly() const LIFETIME_BOUND { return m_valuesAliveForComparisonsOnly.span(); }
     const UnobservedFieldDefinitions& unobservedDefinitions() const LIFETIME_BOUND { return m_unobservedDefinitions; }
     const ValueFlowBodiesTimes& times() const { return m_times; }
+    // What findValuesBehindChecks() answers for the function, with no bit at all where it answers no value. Null where nobody has asked yet.
+    const BitVector* valuesBehindChecks(FunctionID function) const LIFETIME_BOUND { return m_knowsValuesBehindChecks[function.index()] ? &m_valuesBehindChecks[function.index()] : nullptr; }
     // Among all its values, whether a block lists them or not.
     bool holdsAnyOf(FunctionID function, ValueFlowNotedOperations operations) const { return m_notedOperations[function.index()] & operations; }
 
@@ -770,6 +778,8 @@ private:
     ValueFlowBodiesTimes m_times;
     // By function.
     Vector<ValueFlowNotedOperations> m_notedOperations;
+    Vector<BitVector> m_valuesBehindChecks;
+    Vector<uint8_t> m_knowsValuesBehindChecks;
     // One entry more than there are bodies.
     Vector<ValueFlowBodyRange> m_ranges;
 };
@@ -793,7 +803,14 @@ class ValueFlowInstancedFunctions {
 public:
     // For each function the positional parameter that is a key; noKey for most.
     static constexpr uint32_t noKey = UINT32_MAX;
-    static Vector<uint32_t> findParametersThatAreKeys(const Program&, const ParallelLoops&);
+    // A text that a call or a construction passes, in the order of the program.
+    struct TextPassed {
+        uint32_t positionOfArgument;
+        StringID text;
+    };
+    static constexpr uint32_t mostArgumentsLookedAtForTexts = 64;
+    // The walk is the first over the bodies, so it also notes which operations each function holds.
+    static Vector<uint32_t> findParametersThatAreKeys(const Program&, const ParallelLoops&, Vector<TextPassed>* textsPassed = nullptr, Vector<ValueFlowNotedOperations>* notedOperations = nullptr);
 
     ValueFlowInstancedFunctions(const Program&, const ValueFlowBodies&, std::span<const uint32_t> positionOfKey, ValueSetMaker&, const ParallelLoops&);
 
@@ -819,7 +836,8 @@ private:
 };
 
 // Reduces every body on the threads of the build and numbers objects and nodes by prefix sums over the bodies: but for the numbers of sets the result is the same on any number of threads.
-ValueFlowBodies reduceBodies(const Program&, BuildContext&);
+// By function: notedOperationsOf(). Whoever has none gets them made.
+ValueFlowBodies reduceBodies(const Program&, BuildContext&, Vector<ValueFlowNotedOperations>&& = { });
 
 } } } // namespace JSC::AOT::Typed
 

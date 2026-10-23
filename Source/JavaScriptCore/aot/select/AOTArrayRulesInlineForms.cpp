@@ -19,29 +19,9 @@ static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUILTIN(AOT_COUNT_INLINE_BU
 static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_STORAGE_BUILTIN(AOT_COUNT_INLINE_BUILTIN) == 6, "chooseFormOfArrayStorageBuiltin needs a case for every member of the family");
 #undef AOT_COUNT_INLINE_BUILTIN
 
-static InlineForm twoWayIf(const InlineBuiltinSite& site, bool hasInlineCode)
-{
-    RELEASE_ASSERT(site.hasSlowPath);
-    return hasInlineCode ? InlineForm::TwoWay : InlineForm::Call;
-}
-
-static InlineForm wholeIf(const InlineBuiltinSite& site, bool handlesOperandTypes)
-{
-    // Without a slow path the parameter types of the overload imply the condition.
-    if (handlesOperandTypes || !site.hasSlowPath)
-        return InlineForm::Whole;
-    return InlineForm::Call;
-}
-
 static bool exceeds(const InlineBuiltinSite& site, LimitID limit, size_t amount)
 {
     return site.context.pass().exceeds(limit, amount, site.call);
-}
-
-static bool isNumberArgument(const InlineBuiltinSite& site, unsigned index)
-{
-    const Type* type = argumentTypeOf(site, index);
-    return type && type->isNumber();
 }
 
 static bool areIntegers(const InlineBuiltinSite& site, std::span<const ValueID> values)
@@ -51,7 +31,7 @@ static bool areIntegers(const InlineBuiltinSite& site, std::span<const ValueID> 
     });
 }
 
-static bool isArray(const Type& type)
+static bool isArrayType(const Type& type)
 {
     const ClassPart* part = type.isObject() ? type.singleBuiltinClass() : nullptr;
     return part && part->builtinClass == BuiltinClasses::Array;
@@ -80,7 +60,7 @@ static bool canConcatenateInline(const InlineBuiltinSite& site)
     std::span<const ValueID> arguments = site.arguments();
     bool areElementsOrArrays = std::ranges::all_of(arguments, [&](ValueID argument) {
         const Type& type = site.typeOf(argument);
-        return !type.hasObjects() || isArray(type);
+        return !type.hasObjects() || isArrayType(type);
     });
     return areElementsOrArrays && !exceeds(site, LimitID::MaxInlineConcatOperands, arguments.size());
 }
@@ -127,7 +107,7 @@ InlineForm chooseFormOfArrayBuiltin(const InlineBuiltinSite& site)
         return twoWayIf(site, site.arguments().size() == 1);
     case InlineBuiltin::ArrayIterator:
         // The methods of %TypedArray%.prototype throw on a detached or out-of-bounds view, which the inline code does not test.
-        return wholeIf(site, site.receiver() && isArray(site.typeOf(site.receiver())));
+        return wholeIf(site, site.receiver() && isArrayType(site.typeOf(site.receiver())));
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

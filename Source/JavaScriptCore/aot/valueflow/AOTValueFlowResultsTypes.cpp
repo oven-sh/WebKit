@@ -38,7 +38,6 @@
 #include <optional>
 #include <tuple>
 #include <wtf/Atomics.h>
-#include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
 #include <wtf/Scope.h>
 #include <wtf/text/StringView.h>
@@ -1784,7 +1783,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         prove(test.operand(0), [&] { return held; });
         if (test.opcode != Opcode::Check || mayComeFromUnseenCaller(test.operand(0)) || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
             continue;
-        if (positions.isSurelyInside(held, program.at(test.castType())))
+        if (positions.isSurelyInside(held, test.castType()))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true });
         else if (hasTypeOfNarrowedLocation(application, function.at(test.operand(0)))) {
             // The type of such a location was only expected, or the check would not stand behind the read. Of any other value the proof of its type stands in front of the check, which then fails by the types alone.
@@ -1820,7 +1819,7 @@ static void proveReadsAfterInitialization(const Program& program, const Parallel
     }
 }
 
-void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFieldContents& fieldContents, TypeTable& types, FlowResultTables& tables, Vector<String>* linesAboutSetsOutsideTypes)
+void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFieldContents& fieldContents, TypeTable& types, FlowResultTables& tables, const ListenerForSetsOutsideTypes* listenerForSetsOutsideTypes)
 {
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
@@ -1835,8 +1834,6 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     };
 
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
-    bool logsTimes = inputs.build.options().logging.logsPhaseTimes;
-    Vector<Seconds> timeOfTask(logsTimes ? numberOfTasks : 0);
     LocationsStoredUndefined locationsStoredUndefined = findLocationsStoredUndefined(inputs, application);
     const BitVector& variablesStoredUndefined = locationsStoredUndefined.variables;
     const HashSet<uint32_t>& environmentFieldsStoredUndefined = locationsStoredUndefined.environmentFields;
@@ -1846,7 +1843,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     const auto& numbers = static_cast<const NumbersOfPositions&>(*inputs.numbersOfValues);
 
     // The subject of the switches is the variable, the layout or the function that the positions belong to.
-    ValueFlowPositionCounts counts(linesAboutSetsOutsideTypes);
+    ValueFlowPositionCounts counts(listenerForSetsOutsideTypes);
     auto phase = makeUnique<TypeInterningPhase>(types, numberOfTasks);
     ValueSetMakers makers(inputs);
     constexpr FlowResultKind kindsThatDecideProofs[] {
@@ -1857,18 +1854,11 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         return inputs.build.isEnabledEverywhere(kind);
     });
     std::unique_ptr<ValuesWithoutProof> valuesWithoutProof;
-    if (answersAreTheSameForEverySubject && !inputs.build.validates() && !linesAboutSetsOutsideTypes)
+    if (answersAreTheSameForEverySubject && !inputs.build.validates() && !listenerForSetsOutsideTypes)
         valuesWithoutProof = makeUnique<ValuesWithoutProof>(inputs.loops(), inputs.solver().input().numberOfNodes / 4);
     forEachIndexInParallel(inputs.loops(), numberOfTasks, [&](unsigned task, unsigned worker) {
         if (task >= firstFunctionTask && (!inputs.isReached(FunctionID(task - firstFunctionTask)) || !program.functions[task - firstFunctionTask].hasBody()))
             return;
-        // Two system calls a task would be a fifth of the step's time under the log: small functions are not timed.
-        bool isTimed = logsTimes && (task < firstFunctionTask || program.functions[task - firstFunctionTask].values.size() >= 64);
-        Seconds start = isTimed ? CPUTime::forCurrentThread() : 0_s;
-        auto noteTime = makeScopeExit([&] {
-            if (isTimed)
-                timeOfTask[task] = CPUTime::forCurrentThread() - start;
-        });
         TypeArena arena(*phase, task);
         ValueSetMaker* maker = &makers.of(worker);
         if (task < numberOfLayouts) {
@@ -1894,32 +1884,11 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     inputs.build.destroyLater(WTF::move(valuesWithoutProof));
 
     times.didFinish("types: layouts, variables, functions"_s);
-    if (logsTimes) [[unlikely]] {
-        Seconds timeOfAll;
-        for (Seconds time : timeOfTask)
-            timeOfAll += time;
-        Vector<uint32_t> longestFirst(numberOfTasks, [](size_t task) {
-            return static_cast<uint32_t>(task);
-        });
-        AOT::sort(longestFirst, std::greater { }, [&](uint32_t task) {
-            return timeOfTask[task];
-        });
-        dataLogLn("AOT phase times: pass AnalyzeFlow | types: ", numberOfTasks, " tasks | cpu of those that are timed (layouts, variables, functions of 64 values and more) ", timeOfAll.milliseconds(), " ms");
-        for (uint32_t task : longestFirst.span().first(std::min(5u, numberOfTasks))) {
-            ASCIILiteral kind = task < numberOfLayouts ? "a layout"_s : task < firstFunctionTask ? "variables"_s : "a function"_s;
-            dataLogLn("AOT phase times: pass AnalyzeFlow | types: one of the longest tasks: ", kind, " | cpu ", timeOfTask[task].milliseconds(), " ms | values ", task < firstFunctionTask ? 0 : program.functions[task - firstFunctionTask].values.size());
-        }
-    }
     inputs.build.statistics().count(StatisticID::FlowSetsOutsideTypes, counts.count.load());
     inputs.build.statistics().count(StatisticID::FlowProvenPositions, counts.provenPositions.load());
     inputs.build.statistics().count(StatisticID::FlowUnprovenPositions, counts.unprovenPositions.load());
     inputs.build.statistics().count(StatisticID::FlowNarrowedPositions, counts.narrowedPositions.load());
-    if (inputs.build.options().logging.logsPhaseTimes) [[unlikely]]
-        printAwaits(WTF::dataFile(), inputs.solution);
-    if (linesAboutSetsOutsideTypes)
-        AOT::sort(*linesAboutSetsOutsideTypes, codePointCompareLessThan);
 
-    times.didFinish("types: awaits printed"_s);
     TypeRemap remap = phase->finish(StringRemap { }, &inputs.loops());
     inputs.build.destroyLater(WTF::move(phase));
     times.didFinish("types: arenas merged"_s);

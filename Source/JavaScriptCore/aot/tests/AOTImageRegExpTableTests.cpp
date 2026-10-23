@@ -46,7 +46,6 @@ struct Pattern {
     RegExpFlags flags { };
     bool fitsCodeLimits { true };
     // For a pattern that is no literal: the build put the text together from constants.
-    bool isEvaluated { false };
 };
 
 struct RequestWithForm {
@@ -78,7 +77,7 @@ public:
 
 private:
     RequestWithForm makeRequest(const Pattern&, RegExpRequestOrigin);
-    Vector<RegExpRequest> makeRequests(std::span<const Pattern>, RegExpRequestOrigin originUnlessEvaluated);
+    Vector<RegExpRequest> makeRequests(std::span<const Pattern>, RegExpRequestOrigin origin);
     EncodedText encodeNamedText();
 
     RefPtr<VM> m_vm;
@@ -141,12 +140,11 @@ RequestWithForm RegExpImage::makeRequest(const Pattern& pattern, RegExpRequestOr
     return { WTF::move(request), formFor(summary, pattern.fitsCodeLimits) };
 }
 
-Vector<RegExpRequest> RegExpImage::makeRequests(std::span<const Pattern> patterns, RegExpRequestOrigin originUnlessEvaluated)
+Vector<RegExpRequest> RegExpImage::makeRequests(std::span<const Pattern> patterns, RegExpRequestOrigin origin)
 {
     Vector<RequestWithForm> requestsWithForms;
     for (const Pattern& pattern : patterns) {
-        AOT_TEST_CHECK(!pattern.isEvaluated || originUnlessEvaluated == RegExpRequestOrigin::Candidate);
-        requestsWithForms.append(makeRequest(pattern, pattern.isEvaluated ? RegExpRequestOrigin::Evaluated : originUnlessEvaluated));
+        requestsWithForms.append(makeRequest(pattern, origin));
     }
     std::ranges::sort(requestsWithForms, { }, [](const RequestWithForm& entry) {
         return std::pair { entry.request.pattern.index(), entry.request.flags.toRaw() };
@@ -374,25 +372,6 @@ static void testCandidates()
     AOT_TEST_CHECK(regExps.sections.maxOutputSize == 4);
 }
 
-static void testEvaluatedTexts()
-{
-    String nested = "((n+))"_s;
-    RegExpImage regExps({ { "l+m"_s } }, {
-        { .text = "e+0"_s, .isEvaluated = true },
-        { .text = "e+1"_s, .fitsCodeLimits = false, .isEvaluated = true },
-        { .text = "c+1"_s, .fitsCodeLimits = false },
-        { .text = "abc"_s, .isEvaluated = true },
-        { .text = nested, .isEvaluated = true },
-    }, { .loweredLimit = LimitID::RegExpNestingDepthWithCode, .loweredLimitValue = 1 });
-    AOT_TEST_CHECK(regExps.records().size() == 4);
-    checkFoundLiteral(regExps, "l+m"_s);
-    for (const String& pattern : { String("e+0"_s), String("e+1"_s), String("abc"_s) })
-        checkFound(regExps, pattern, { }, regExps.indexOfRequest(pattern, { }, RegExpRequestOrigin::Evaluated));
-    // With the record the run time creates the object without parsing the text. A record without metadata would save it nothing.
-    AOT_TEST_CHECK(findRegExpRecord(regExps.vm(), "e+1"_s, { })->form() == Form::NoCode);
-    AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), "c+1"_s, { }) && !findRegExpRecord(regExps.vm(), nested, { }));
-}
-
 static void testOrder()
 {
     Vector<Pattern> patterns;
@@ -551,7 +530,7 @@ static void testCharacterSets()
 static void testEncodingIsDeterministic()
 {
     std::array<Pattern, 5> literals { Pattern { "ab+c"_s }, Pattern { "abc"_s }, Pattern { "(?<n>a+)|(?<n>b+)"_s }, Pattern { "[a-z\\u0400-\\u04ff]+"_s }, Pattern { "ab+c"_s, Yarr::Flags::IgnoreCase } };
-    std::array<Pattern, 4> candidates { Pattern { "c+0"_s }, Pattern { "c+1"_s, { }, false }, Pattern { .text = "e+1"_s, .fitsCodeLimits = false, .isEvaluated = true }, Pattern { .text = "e+2"_s, .isEvaluated = true } };
+    std::array<Pattern, 4> candidates { Pattern { "c+0"_s }, Pattern { "c+1"_s, { }, false }, Pattern { .text = "e+1"_s, .fitsCodeLimits = false }, Pattern { .text = "e+2"_s } };
     RegExpImage first(literals, candidates);
     RegExpImage second(literals, candidates, { .threadCount = 4 });
     AOT_TEST_CHECK(!first.sections.records.isEmpty() && !first.sections.hashes.isEmpty() && !first.sections.details.isEmpty());
@@ -572,7 +551,6 @@ std::span<const NativeTest> regExpTableTests()
         { "image/regexps/wide-string-of-narrow-characters"_s, testWideStringOfNarrowCharacters },
         { "image/regexps/forms"_s, testForms },
         { "image/regexps/candidates"_s, testCandidates },
-        { "image/regexps/evaluated-texts"_s, testEvaluatedTexts },
         { "image/regexps/order"_s, testOrder },
         { "image/regexps/other-last-character"_s, testOtherLastCharacter },
         { "image/regexps/other-flags"_s, testOtherFlags },

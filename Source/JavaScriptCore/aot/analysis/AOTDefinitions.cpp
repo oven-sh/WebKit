@@ -14,7 +14,6 @@
 #include "AOTCallGraph.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFunctionAnalyses.h"
-#include "AOTIRPrinter.h"
 #include "AOTKnownClosures.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
@@ -37,7 +36,7 @@ ValueID aliasedOperandOf(const Value& value)
     return value.opcode == Opcode::NewClass ? ValueID() : sameValueOperandOf(value);
 }
 
-struct UseCounts {
+struct DefinitionUseCounts {
     uint32_t definition { noDefinition };
     uint32_t past { 0 };
     uint32_t observing { 0 };
@@ -550,7 +549,7 @@ static Vector<uint8_t> countStores(const Program& program, const ParallelLoops& 
     return counts;
 }
 
-static void countUsesInFunction(const Program& program, BuildContext& build, FunctionID id, const Bindings& bindings, Vector<UseCounts>& found)
+static void countUsesInFunction(const Program& program, BuildContext& build, FunctionID id, const Bindings& bindings, Vector<DefinitionUseCounts>& found)
 {
     const Function& function = program.at(id);
     std::optional<FunctionAnalyses> analyses;
@@ -565,7 +564,7 @@ static void countUsesInFunction(const Program& program, BuildContext& build, Fun
             if (!analyses)
                 analyses.emplace(AnalysisContext { build, program, nullptr, nullptr, id }, function);
             UseClassifier classifier(program, *analyses);
-            UseCounts counts { index };
+            DefinitionUseCounts counts { index };
             classifier.forEachUseThroughSameValues(valueID, [&](const Use& use) {
                 ++(classifier.needsObject(use) ? counts.observing : counts.past);
             });
@@ -604,12 +603,12 @@ Definitions::Definitions(const Program& program, BuildContext& build)
         scan.countUses();
     }
 
-    Vector<UseCounts> uses = collectInParallel<UseCounts>(loops, program.functions.size(), [&](unsigned index, Vector<UseCounts>& found) {
+    Vector<DefinitionUseCounts> uses = collectInParallel<DefinitionUseCounts>(loops, program.functions.size(), [&](unsigned index, Vector<DefinitionUseCounts>& found) {
         const Function& function = program.functions[index];
         if (function.hasBody() && !function.isModuleBody())
             countUsesInFunction(program, build, FunctionID(index), bindings, found);
     });
-    for (const UseCounts& counts : uses) {
+    for (const DefinitionUseCounts& counts : uses) {
         m_definitions[counts.definition].usesThatGoPast += counts.past;
         m_definitions[counts.definition].observingUsesInFunctions += counts.observing;
     }
@@ -632,23 +631,6 @@ bool Definitions::isEverMade(const Definition& definition) const
             return true;
         if (current->holder == Definition::noHolder)
             return false;
-    }
-}
-
-void Definitions::dump(PrintStream& out, const Program& program) const
-{
-    IRPrinter printer(out, program);
-    for (const Definition& definition : m_definitions) {
-        printer.print(definition.moduleBody);
-        out.print(" v"_s, definition.allocation.index(), " "_s, nameOf(definition.kind));
-        if (definition.binding) {
-            out.print(" binding="_s);
-            printer.print(definition.binding);
-        }
-        if (definition.holder != Definition::noHolder)
-            out.print(" in=v"_s, m_definitions[definition.holder].allocation.index());
-        out.print(" past="_s, definition.usesThatGoPast, " observedInModuleBodies="_s, definition.observingUsesInModuleBodies, " observedInFunctions="_s, definition.observingUsesInFunctions);
-        out.print(isMadeAtStart(definition) ? " made at start\n"_s : isEverMade(definition) ? " made on demand\n"_s : " never made\n"_s);
     }
 }
 

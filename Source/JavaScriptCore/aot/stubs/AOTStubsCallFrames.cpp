@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTStubAssembler.h"
 #include "AOTStubFrames.h"
 #include "CallFrame.h"
 #include <wtf/MathExtras.h>
@@ -19,9 +20,6 @@ using Address = CCallHelpers::Address;
 using Jump = CCallHelpers::Jump;
 using Label = CCallHelpers::Label;
 using TrustedImm32 = CCallHelpers::TrustedImm32;
-
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr GPRReg fp = GPRInfo::callFrameRegister;
 
 #if CPU(X86_64)
 static constexpr GPRReg returnAddressGPR = CCallHelpers::s_scratchRegister;

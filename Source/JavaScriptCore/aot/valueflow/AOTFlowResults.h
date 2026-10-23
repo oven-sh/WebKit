@@ -26,11 +26,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class RelationalSummaries;
-struct HandedToCalledParameter;
-struct LinkedFate;
-struct ResultOrigin;
-
 enum class ProgramInstances : uint8_t {
     Unknown,
     AtMostOne,
@@ -238,16 +233,6 @@ public:
     bool hasOneClosure(FunctionID) const;
     OperandSummary parameterSummary(FunctionID, uint32_t entryParameter) const;
     void removeEntryParameters(FunctionID, const BitVector& removedEntryParameters);
-    // Whoever asks includes AOTRelationalSummaries.h. The function may be any version of a function that was read. "Anything" before the table is set.
-    LinkedFate fateOfParameter(FunctionID, uint32_t entryParameter) const;
-    // The same at one call, of the operand with that index: all that the callees which the call may enter do with it. A bit of storedIntoParameters speaks of an operand of the call.
-    LinkedFate fateOfOperandAt(const Function&, const Value& call, uint32_t operandIndex) const;
-    LinkedFate fateApartFromCalledParameters(FunctionID, uint32_t entryParameter) const;
-    // In terms of the entry parameters of the version. Not complete: the version is no longer passed something that it calls, and fateOfParameter() is all there is.
-    Vector<HandedToCalledParameter, 4> handedToCalledParameters(FunctionID, bool& isComplete) const;
-    ResultOrigin originOfResult(FunctionID, uint32_t result) const;
-    void setRelationalSummaries(std::unique_ptr<RelationalSummaries>&&);
-    const RelationalSummaries* relationalSummaries() const LIFETIME_BOUND { return m_relationalSummaries.get(); }
     // By function as read and entry parameter, and by layout and field.
     void setOperandSummaries(Vector<Vector<OperandSummary>>&& parameterSummaries, Vector<Vector<OperandUses>>&& storedValueUses);
     OperandUses storedValueUses(FieldReference) const;
@@ -340,7 +325,6 @@ private:
     FrameArrayParameters m_frameArrayParameters;
     ConstantLists m_constantLists;
     BitVector m_sitesOfWholeLiterals;
-    std::unique_ptr<RelationalSummaries> m_relationalSummaries;
     bool m_unseenCodeCanRun { true };
     bool m_unseenScriptsCanRun { true };
     UnknownRecords m_unknown { };

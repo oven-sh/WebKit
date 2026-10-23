@@ -77,33 +77,7 @@ HeapKey keyOfFoundName(ValueFlowName name)
     case ValueFlowNameKind::EveryGetter:
     case ValueFlowNameKind::EverySetter:
         return unknownHeapKey;
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::Slot:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
+    default:
         return unknownHeapKey;
     case ValueFlowNameKind::MemberWritten:
         return { HeapKeyClass::Name, PropertyKeyID(name.payload) };
@@ -127,23 +101,8 @@ static BuiltinClassID wrapperOf(PrimitiveSet kind)
     return { };
 }
 
-static BuiltinClassID classOfFunctionObject(const Function& function)
-{
-    bool isAsync = function.has(FunctionFlags::IsAsync);
-    if (function.has(FunctionFlags::IsGenerator))
-        return isAsync ? BuiltinClasses::AsyncGeneratorFunction : BuiltinClasses::GeneratorFunction;
-    return isAsync ? BuiltinClasses::AsyncFunction : BuiltinClasses::Function;
-}
-
-static BuiltinClassID classAbovePrototypeProperty(const Function& function)
-{
-    if (!function.has(FunctionFlags::IsGenerator))
-        return BuiltinClasses::Object;
-    return function.has(FunctionFlags::IsAsync) ? BuiltinClasses::AsyncGenerator : BuiltinClasses::Generator;
-}
-
 // The run time answers the same question with FunctionTables::hasPrototypePropertyAtCreation.
-static bool hasPrototypeProperty(const Program& program, const Function& function)
+static bool functionHasPrototypeProperty(const Program& program, const Function& function)
 {
     if (function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor)
         return true;
@@ -157,7 +116,7 @@ static bool hasPrototypeProperty(const Program& program, const Function& functio
 // A generator function has a prototype object too, for which its generators stand.
 static bool hasOrdinaryPrototypeObject(const Program& program, const Function& function)
 {
-    return !function.constructedClass && !function.has(FunctionFlags::IsGenerator) && hasPrototypeProperty(program, function);
+    return !function.constructedClass && !function.has(FunctionFlags::IsGenerator) && functionHasPrototypeProperty(program, function);
 }
 
 bool HeapRule::isOperationOfFunction()
@@ -480,10 +439,7 @@ void HeapRule::appendPrototypeAtCreation(ValueFlowObjectID object, Members& prot
         case LayoutKind::Instance:
             prototypes.append(m_universe.prototypeOf(site.layout));
             return;
-        case LayoutKind::Environment:
-        case LayoutKind::Closure:
-        case LayoutKind::CoroutineFrame:
-        case LayoutKind::ModuleNamespace:
+        default:
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -985,7 +941,7 @@ void HeapRule::readPropertiesAtCreation(ClimbingSet objects, const HeapKey& key,
             else if (function.has(FunctionFlags::IsGenerator))
                 // The prototype object of a generator function lies above its generators and nowhere else, so the object that stands for them stands for it too. Whoever reads it out says that it is no generator.
                 add(result, only(m_universe.coroutineResultOf(m_universe.closureFunction(closure))));
-            else if (hasPrototypeProperty(m_program, function))
+            else if (functionHasPrototypeProperty(m_program, function))
                 add(result, only(m_universe.prototypeObjectOf(m_universe.closureFunction(closure))));
         });
     }
@@ -1583,34 +1539,7 @@ void HeapRule::runLookup()
     case ValueFlowNameKind::EveryGetter:
         collectAccessors(BuiltinCallMode::Get);
         return;
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::Slot:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
+    default:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -110,7 +110,7 @@ static void forEachAtEnds(std::span<const T> values, size_t maxAtEachEnd, const 
         functor(value);
 }
 
-static uint64_t hashBytes(std::span<const uint8_t> bytes)
+static uint64_t hashSnapshotBytes(std::span<const uint8_t> bytes)
 {
     uint64_t hash = 0xcbf29ce484222325ull;
     forEachAtEnds(bytes, maxCheckedBytesAtEachEnd, [&](uint8_t byte) {
@@ -211,15 +211,15 @@ static void captureHashTable(JSObject* object, ptrdiff_t offsetOfStorage, Operan
     // Whoever walks a table notes in the table that it has been walked, or how far the walk has come. No program sees the note.
     if (JSMap::Helper::isCompact(*storage)) {
         constexpr size_t offsetOfFlags = CompactTable::offsetOfKeysShift();
-        state.internalState.append(hashBytes(bytes.subspan(sizeof(JSCell), offsetOfFlags - sizeof(JSCell))));
+        state.internalState.append(hashSnapshotBytes(bytes.subspan(sizeof(JSCell), offsetOfFlags - sizeof(JSCell))));
         state.internalState.append(bytes[offsetOfFlags] & ~CompactTable::wasWalked);
-        state.internalState.append(hashBytes(bytes.subspan(offsetOfFlags + 1)));
+        state.internalState.append(hashSnapshotBytes(bytes.subspan(offsetOfFlags + 1)));
         return;
     }
     static_assert(JSMap::Helper::iterationEntryIndex() == JSSet::Helper::iterationEntryIndex());
     constexpr size_t offsetOfIterationEntry = JSMap::Helper::offsetInStorageForIndex(JSMap::Helper::iterationEntryIndex());
-    state.internalState.append(hashBytes(bytes.subspan(sizeof(JSCell), offsetOfIterationEntry - sizeof(JSCell))));
-    state.internalState.append(hashBytes(bytes.subspan(offsetOfIterationEntry + sizeof(EncodedJSValue))));
+    state.internalState.append(hashSnapshotBytes(bytes.subspan(sizeof(JSCell), offsetOfIterationEntry - sizeof(JSCell))));
+    state.internalState.append(hashSnapshotBytes(bytes.subspan(offsetOfIterationEntry + sizeof(EncodedJSValue))));
 }
 
 // Another thread writes shared memory while the call runs: that the bytes differ behind the call says nothing about the call.
@@ -227,7 +227,7 @@ static void captureBytes(const void* bytes, size_t byteLength, bool isShared, Op
 {
     state.bytes = bytes;
     state.byteLength = byteLength;
-    state.hashOfBytes = bytes && !isShared ? hashBytes(std::span(static_cast<const uint8_t*>(bytes), byteLength)) : 0;
+    state.hashOfBytes = bytes && !isShared ? hashSnapshotBytes(std::span(static_cast<const uint8_t*>(bytes), byteLength)) : 0;
 }
 
 static void captureInternalState(JSObject* object, OperandSnapshot& state)

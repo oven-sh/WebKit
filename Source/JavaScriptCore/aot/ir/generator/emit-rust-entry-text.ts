@@ -1,5 +1,5 @@
 import { groupedArms } from "./emit-rust-references.ts";
-import { canBeZero, parseValue } from "./emit-rust-text.ts";
+import { canBeZero } from "./emit-rust-text.ts";
 import { kindText } from "./hash.ts";
 import { blocks, indent, indentation, rustMarker } from "./lines.ts";
 import type { Entry, IdKind, Kind, Parameter, ScalarKind, Schema, SchemaType } from "./model.ts";
@@ -9,17 +9,14 @@ import type { EmitContext, OutputFile } from "./outputs.ts";
 import { externalPathsOfEntries, idsImport, payloadTypesOf, rustLiteral, rustTypeOf } from "./rust-types.ts";
 
 const entryHelpers = `type PrintWord = fn(&mut Printer<'_>, u32);
-type ParseWord = fn(&mut Parser<'_>) -> Parsed<u32>;
 
 const WELL_FORMED: &str = "the fields are those of the entry";
 
 trait PayloadText: Sized {
     const WORDS: usize;
     fn from_words(words: &[u32]) -> Option<Self>;
-    fn append_to(&self, words: &mut Vec<u32>);
     fn is_omitted(&self) -> bool;
     fn print(&self, printer: &mut Printer<'_>);
-    fn parse(parser: &mut Parser<'_>) -> Parsed<Self>;
 }
 
 struct EntryPrinter<'p, 'a> {
@@ -196,165 +193,6 @@ fn print_entry_flags(printer: &mut Printer<'_>, names: &[&str], bits: u32) {
         printer.out.push(' ');
         print_flags(printer, names, bits);
     }
-}
-
-struct EntryParser<'p, 't, 'w> {
-    parser: &'p mut Parser<'t>,
-    words: &'w mut Vec<u32>,
-    operands: SmallVec<[u32; 8]>,
-    next_operand: usize,
-    field: Option<&'t str>,
-}
-
-impl<'p, 't, 'w> EntryParser<'p, 't, 'w> {
-    fn new(parser: &'p mut Parser<'t>, words: &'w mut Vec<u32>) -> Parsed<EntryParser<'p, 't, 'w>> {
-        let mut operands = SmallVec::new();
-        if is_at_operand(parser) {
-            loop {
-                let operand = parser.parse_optional(|parser| parser.parse_id::<ValueId>("a value"))?;
-                operands.push(optional_id_to_word(operand));
-                if !parser.accept(TokenKind::Comma) {
-                    break;
-                }
-            }
-        }
-        let field = parser.next_field_name()?;
-        Ok(EntryParser { parser, words, operands, next_operand: 0, field })
-    }
-
-    fn operand(&mut self) -> Parsed<()> {
-        let word = self.operands.get(self.next_operand).copied().unwrap_or(ABSENT_WORD);
-        if word == ABSENT_WORD {
-            return self.parser.fail("an operand");
-        }
-        self.optional_operand();
-        Ok(())
-    }
-
-    fn optional_operand(&mut self) {
-        self.words.push(self.operands.get(self.next_operand).copied().unwrap_or(ABSENT_WORD));
-        self.next_operand += 1;
-    }
-
-    fn variadic_operands(&mut self) -> Parsed<()> {
-        let count = self.operands.len().saturating_sub(self.next_operand);
-        self.words.push(count as u32);
-        for _ in 0..count {
-            self.operand()?;
-        }
-        Ok(())
-    }
-
-    fn accept_field(&mut self, name: &str) -> bool {
-        self.field == Some(name)
-    }
-
-    fn finish_field(&mut self) -> Parsed<()> {
-        self.field = self.parser.next_field_name()?;
-        Ok(())
-    }
-
-    fn word(&mut self, name: &str, default: u32, parse: ParseWord) -> Parsed<()> {
-        if !self.accept_field(name) {
-            self.words.push(default);
-            return Ok(());
-        }
-        let word = parse(self.parser)?;
-        self.words.push(word);
-        self.finish_field()
-    }
-
-    fn pair(&mut self, name: &str, parse: fn(&mut Parser<'_>) -> Parsed<u64>) -> Parsed<()> {
-        let bits = if self.accept_field(name) { parse(self.parser)? } else { 0 };
-        self.words.extend([bits as u32, (bits >> 32) as u32]);
-        if self.accept_field(name) { self.finish_field() } else { Ok(()) }
-    }
-
-    fn record<R: PayloadText + Default>(&mut self, name: &str) -> Parsed<()> {
-        if !self.accept_field(name) {
-            R::default().append_to(self.words);
-            return Ok(());
-        }
-        R::parse(self.parser)?.append_to(self.words);
-        self.finish_field()
-    }
-
-    fn list(&mut self, name: &str, parse_element: impl Fn(&mut Parser<'_>, &mut Vec<u32>) -> Parsed<()>) -> Parsed<()> {
-        let count_position = self.words.len();
-        self.words.push(0);
-        if !self.accept_field(name) {
-            return Ok(());
-        }
-        let words = &mut *self.words;
-        let count = self.parser.parse_list(|parser| parse_element(parser, words))?.len();
-        self.words[count_position] = count as u32;
-        self.finish_field()
-    }
-
-    fn word_list(&mut self, name: &str, parse: ParseWord) -> Parsed<()> {
-        self.list(name, |parser, words| parse(parser).map(|word| words.push(word)))
-    }
-
-    fn integer_list(&mut self, name: &str) -> Parsed<()> {
-        self.list(name, |parser, words| parse_integer_bits(parser).map(|bits| words.extend([bits as u32, (bits >> 32) as u32])))
-    }
-
-    fn record_list<R: PayloadText>(&mut self, name: &str) -> Parsed<()> {
-        self.list(name, |parser, words| R::parse(parser).map(|record| record.append_to(words)))
-    }
-
-    fn finish(self, names: &[&str], flags_position: Option<usize>) -> Parsed<()> {
-        if self.field.is_some() {
-            return self.parser.fail("a field of the entry, in the order of its declaration");
-        }
-        if self.next_operand < self.operands.len() {
-            return self.parser.fail("no more operands than the entry takes");
-        }
-        if self.parser.at(TokenKind::LeftBracket) {
-            let Some(position) = flags_position else {
-                return self.parser.fail("no flags: the entry declares none");
-            };
-            self.words[position] = self.parser.parse_flags(names, "a flag of the entry")?;
-        }
-        Ok(())
-    }
-}
-
-fn is_at_operand(parser: &Parser<'_>) -> bool {
-    let digits = parser.word_text().and_then(|word| word.strip_prefix(ValueId::PREFIX));
-    parser.at(TokenKind::Minus) || digits.is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
-fn parse_id<I: Id>(parser: &mut Parser<'_>) -> Parsed<u32> {
-    parser.parse_id::<I>("an id").map(I::to_word)
-}
-
-fn parse_string(parser: &mut Parser<'_>) -> Parsed<u32> {
-    parser.parse_string().map(StringId::to_word)
-}
-
-fn parse_property_key(parser: &mut Parser<'_>) -> Parsed<u32> {
-    parser.parse_property_key().map(PropertyKeyId::to_word)
-}
-
-fn parse_type(parser: &mut Parser<'_>) -> Parsed<u32> {
-    parser.parse_type().map(TypeId::to_word)
-}
-
-fn parse_number(parser: &mut Parser<'_>) -> Parsed<u32> {
-    parser.parse_u32()
-}
-
-fn parse_boolean(parser: &mut Parser<'_>) -> Parsed<u32> {
-    parser.parse_bool().map(u32::from)
-}
-
-fn parse_integer_bits(parser: &mut Parser<'_>) -> Parsed<u64> {
-    parser.parse_i64().map(|value| value as u64)
-}
-
-fn parse_double_bits(parser: &mut Parser<'_>) -> Parsed<u64> {
-    parser.parse_double().map(f64::to_bits)
 }`.split("\n");
 
 function payloadTextImpl(schema: Schema, type: SchemaType): string[] {
@@ -365,18 +203,16 @@ function payloadTextImpl(schema: Schema, type: SchemaType): string[] {
     ...indent([
       `const WORDS: usize = ${name}::WORDS;`,
       `fn from_words(words: &[u32]) -> Option<${name}> { ${name}::from_words(words) }`,
-      `fn append_to(&self, words: &mut Vec<u32>) { ${name}::append_to(self, words); }`,
       `fn is_omitted(&self) -> bool { ${canBeZero(schema, type) ? "self.is_zero()" : "false"} }`,
       `fn print(&self, printer: &mut Printer<'_>) { self.print_${form}(printer); }`,
-      `fn parse(parser: &mut Parser<'_>) -> Parsed<${name}> { ${name}::parse_${form}(parser) }`,
     ]),
     "}",
   ];
 }
 
-function idWordFunction(verb: "print" | "parse", id: IdKind): string {
-  if (id.record !== null && id.record.isCustomText) return `${verb}_${snakeCase(id.record.name)}`;
-  return `${verb}_id::<${rustIdTypeName(id.name)}>`;
+function idWordFunction(id: IdKind): string {
+  if (id.record !== null && id.record.isCustomText) return `print_${snakeCase(id.record.name)}`;
+  return `print_id::<${rustIdTypeName(id.name)}>`;
 }
 
 function isScalar(kind: Kind, scalar: ScalarKind): boolean {
@@ -394,7 +230,7 @@ function throwNotOneWord(kind: Kind): never {
 function printWordFunction(schema: Schema, kind: Kind): string {
   switch (kind.tag) {
     case "Id":
-      return idWordFunction("print", kind.id);
+      return idWordFunction(kind.id);
     case "External":
       if (!kind.external.isNamedInText) return "print_number";
       return `|printer, word| printer.out.push_str(${rustTypeOf(kind)}::from_wire(word).expect(WELL_FORMED).name())`;
@@ -406,28 +242,6 @@ function printWordFunction(schema: Schema, kind: Kind): string {
       if (kind.scalar === "Bool")
         return '|printer, word| printer.out.push_str(if word != 0 { "true" } else { "false" })';
       if (kind.scalar === "UInt32" || kind.scalar === "Field") return "print_number";
-      return throwNotOneWord(kind);
-    case "PlacedWord":
-    case "Record":
-    case "Variant":
-    case "Span":
-    case "List":
-      return throwNotOneWord(kind);
-  }
-}
-
-function parseWordFunction(schema: Schema, kind: Kind): string {
-  switch (kind.tag) {
-    case "Id":
-      return idWordFunction("parse", kind.id);
-    case "External":
-    case "Enum":
-      return `|parser| ${parseValue(schema, kind)}.map(${rustTypeOf(kind)}::to_wire)`;
-    case "Flags":
-      return `|parser| parser.parse_flags(&${rustTypeOf(kind)}::NAMES, ${rustLiteral(`a member of ${kind.type.name}`)})`;
-    case "Scalar":
-      if (kind.scalar === "Bool") return "parse_boolean";
-      if (kind.scalar === "UInt32" || kind.scalar === "Field") return "parse_number";
       return throwNotOneWord(kind);
     case "PlacedWord":
     case "Record":
@@ -456,24 +270,6 @@ function printParameter(schema: Schema, parameter: Parameter): string {
   if (kind.tag === "Flags") return `p.flags(${name}, &${rustTypeOf(kind)}::NAMES);`;
   if (isScalar(kind, "Bool")) return `p.unless_zero(${name}, print_true);`;
   return `p.${isId(kind) ? "always" : "unless_zero"}(${name}, ${printWordFunction(schema, kind)});`;
-}
-
-function parseParameter(schema: Schema, parameter: Parameter): string {
-  if (parameter.tag === "Operand") {
-    if (parameter.isVariadic) return "p.variadic_operands()?;";
-    return parameter.isOptional ? "p.optional_operand();" : "p.operand()?;";
-  }
-  const kind = parameter.kind;
-  const name = rustLiteral(parameter.name);
-  if (kind.tag === "List") {
-    if (isRecordOrVariant(kind.element)) return `p.record_list::<${rustTypeOf(kind.element)}>(${name})?;`;
-    if (isScalar(kind.element, "Int64")) return `p.integer_list(${name})?;`;
-    return `p.word_list(${name}, ${parseWordFunction(schema, kind.element)})?;`;
-  }
-  if (isRecordOrVariant(kind)) return `p.record::<${rustTypeOf(kind)}>(${name})?;`;
-  if (isScalar(kind, "Int64")) return `p.pair(${name}, parse_integer_bits)?;`;
-  if (isScalar(kind, "Double")) return `p.pair(${name}, parse_double_bits)?;`;
-  return `p.word(${name}, ${parameter.isOptional ? "ABSENT_WORD" : "0"}, ${parseWordFunction(schema, kind)})?;`;
 }
 
 function wireFlagNames(entry: Entry): string[] {
@@ -525,23 +321,6 @@ function entryTextFunctions(
       ...(hasFlags ? ["if first == 1 {", `${indentation}print_entry_flags(p.printer, names, fields[0]);`, "}"] : []),
     ]),
     "}",
-    "",
-    `pub fn parse_${suffix}_fields(${parameter}: ${enumName}, parser: &mut Parser<'_>, words: &mut Vec<u32>) -> Parsed<()> {`,
-    ...indent(
-      hasFlags
-        ? [
-            `let names = flag_names(${parameter});`,
-            "let flags_position = (!names.is_empty()).then_some(words.len());",
-            "if flags_position.is_some() {",
-            `${indentation}words.push(0);`,
-            "}",
-          ]
-        : [],
-    ),
-    `${indentation}let mut p = EntryParser::new(parser, words)?;`,
-    ...matchOnEntry(entry => wireParametersOf(entry).map(wireParameter => parseParameter(schema, wireParameter))),
-    `${indentation}${hasFlags ? "p.finish(names, flags_position)" : "p.finish(&[], None)"}`,
-    "}",
   ];
 }
 
@@ -558,13 +337,11 @@ function entryTextRs(schema: Schema): string[] {
     "use super::entries::{Opcode, TerminatorKind};",
     "use super::enums::*;",
     "use super::program_enums::*;",
-    "use super::record_text::{begin_field, parse_external, print_display, print_flags};",
+    "use super::record_text::{begin_field, print_display, print_flags};",
     "use super::records::*;",
     ...externalPathsOfEntries([...operations, ...terminators]).map(externalPath => `use ${externalPath};`),
     idsImport,
     "use crate::ir::print::Printer;",
-    "use crate::ir::text::{Parsed, Parser};",
-    "use crate::ir::text_lexer::TokenKind;",
     "",
     ...entryHelpers,
     "",

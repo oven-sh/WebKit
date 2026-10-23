@@ -15,11 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static const Field& fieldOf(const Program& program, const ResultNode& node, const ResultMember& member)
-{
-    return program.at(node.layout).fields[*member.field];
-}
-
 static bool replacesValue(const Program& program, ResultNodeRef node)
 {
     return describeNode(program, node).isContainer() || appliesDefault(program, node);

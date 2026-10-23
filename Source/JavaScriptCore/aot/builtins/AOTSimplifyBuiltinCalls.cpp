@@ -340,7 +340,7 @@ unsigned simplifyIntrinsics(FunctionPassContext& context)
 
 namespace {
 
-struct OwnPropertyTest {
+struct BuiltinOwnPropertyTest {
     ValueID object;
     PropertyKeyID key;
 };
@@ -348,7 +348,7 @@ struct OwnPropertyTest {
 } // anonymous namespace
 
 // Object.hasOwn(object, "name") and object.hasOwnProperty("name")
-static std::optional<OwnPropertyTest> findOwnPropertyTest(FunctionPassContext& context, const Value& value)
+static std::optional<BuiltinOwnPropertyTest> findOwnPropertyTest(FunctionPassContext& context, const Value& value)
 {
     const Program& program = context.program;
     const BuiltinOverload* overload = findWholeCallOverload(program, value);
@@ -371,7 +371,7 @@ static std::optional<OwnPropertyTest> findOwnPropertyTest(FunctionPassContext& c
     PropertyKeyID key = internKey(context.types, constantKeyOf(program, program.typeOf(context.function, keyOperand)));
     if (!key)
         return std::nullopt;
-    return OwnPropertyTest { object, key };
+    return BuiltinOwnPropertyTest { object, key };
 }
 
 static Value makeOwnPropertyTest(const Value& call, ValueID object, PropertyKeyID key)
@@ -384,7 +384,7 @@ static Value makeOwnPropertyTest(const Value& call, ValueID object, PropertyKeyI
 
 static std::optional<Value> simplifyOwnPropertyTest(FunctionPassContext& context, const Value& value)
 {
-    std::optional<OwnPropertyTest> found = findOwnPropertyTest(context, value);
+    std::optional<BuiltinOwnPropertyTest> found = findOwnPropertyTest(context, value);
     if (!found || !context.program.typeOf(context.function, found->object).isObject())
         return std::nullopt;
     Value test = makeOwnPropertyTest(value, found->object, found->key);
@@ -398,9 +398,9 @@ static unsigned simplifyOwnPropertyTestsOfWhatMayBeMissing(FunctionPassContext& 
 {
     const Program& program = context.program;
     Function& function = context.function;
-    Vector<std::pair<ValueSite, OwnPropertyTest>> tests;
+    Vector<std::pair<ValueSite, BuiltinOwnPropertyTest>> tests;
     for (const ValueSite& site : calls) {
-        std::optional<OwnPropertyTest> found = findOwnPropertyTest(context, function.at(site.value));
+        std::optional<BuiltinOwnPropertyTest> found = findOwnPropertyTest(context, function.at(site.value));
         if (!found)
             continue;
         const Type& object = program.typeOf(function, found->object);

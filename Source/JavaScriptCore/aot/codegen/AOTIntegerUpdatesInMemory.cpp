@@ -67,7 +67,7 @@ static bool isSignedOrder(B3::Opcode opcode)
     return opcode == B3::LessThan || opcode == B3::LessEqual || opcode == B3::GreaterThan || opcode == B3::GreaterEqual;
 }
 
-static bool isUnsignedOrder(B3::Opcode opcode)
+static bool comparesUnsignedOrder(B3::Opcode opcode)
 {
     return opcode == B3::Below || opcode == B3::BelowEqual || opcode == B3::Above || opcode == B3::AboveEqual;
 }
@@ -103,7 +103,7 @@ static std::optional<StoredRange> computeStoredRange(const Update& update, B3::B
 {
     B3::Value* comparison = condition.value;
     B3::Opcode opcode = comparison->opcode();
-    if (!isSignedOrder(opcode) && !isUnsignedOrder(opcode))
+    if (!isSignedOrder(opcode) && !comparesUnsignedOrder(opcode))
         return std::nullopt;
     if (test->successorBlock(0) == test->successorBlock(1) || !comparison->child(1)->hasInt64())
         return std::nullopt;

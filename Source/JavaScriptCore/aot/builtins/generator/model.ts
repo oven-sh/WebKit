@@ -375,7 +375,6 @@ export interface ModelOverload {
   effects: ModelEffects;
   flow: ModelFlow;
   code: ModelCode;
-  textHash: string;
 }
 
 export type ModelDispatchTarget = { node: ModelDispatchNode } | { overload: ModelOverload };

@@ -11,7 +11,7 @@ import {
   blocks,
   cppHeader,
   cppLiteral,
-  cppSource,
+  cppSourceThatPrintsIR,
   groupedCases,
   indent,
   indentation,
@@ -343,7 +343,7 @@ function recordPrinterSource(schema: Schema): string[] {
     ...zeroFunctions(schema, nestedTypeNames(schema)),
     ...functions,
   );
-  return cppSource(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
+  return cppSourceThatPrintsIR(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
 }
 
 const entryHelpers = `template<typename Entry>
@@ -429,7 +429,7 @@ function entryPrinterSource(schema: Schema): string[] {
     entryFunction(schema, schema.operations, "Value", "value", "opcode", "Opcode"),
     entryFunction(schema, schema.terminators, "Terminator", "terminator", "kind", "TerminatorKind"),
   );
-  return cppSource(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
+  return cppSourceThatPrintsIR(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
 }
 
 export function closureOfZeroTests(schema: Schema, names: Iterable<string>): Set<string> {

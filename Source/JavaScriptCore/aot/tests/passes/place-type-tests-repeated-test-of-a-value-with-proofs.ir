@@ -1,7 +1,7 @@
 # A test in a loop of a value that is defined outside is placed on the entry of the loop, where it narrows the value as it is defined. The old test keeps its operand, so what a cast on the way to it has added, such as what flow proved about the class, goes on to the operations behind it; it folds as a test that an equal test dominates
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
-# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="sink" declared={type=anything} initialization=Undefined

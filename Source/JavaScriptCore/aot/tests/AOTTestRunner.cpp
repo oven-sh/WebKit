@@ -213,7 +213,7 @@ static CommandResult runCommand(const TestCommand& command, const TestFile& file
     if (command.defaultForm) {
         form = file.form.value_or(*command.defaultForm);
         bool needsLibrary = form == IRForm::AsRead && command.programAsRead != ProgramAsRead::AsParsed;
-        program = parseProgram(needsLibrary ? withStandInLibrary(file.text) : file.text, form, build, VerifierInputs { .rawWordCheck = command.rawWordCheck, .isOptimizing = file.isOptimizing });
+        program = parseProgram(needsLibrary ? withStandInLibrary(file.text) : file.text, form, build, VerifierInputs { .isOptimizing = file.isOptimizing });
         if (!program) {
             build.diagnostics().finish(nullptr);
             return { emptyString(), build.takeLosses(nullptr) };

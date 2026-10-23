@@ -284,7 +284,7 @@ KnownBoolean TypeTestBranches::outcomeFromDominatingTest(BlockID block) const
     return outcome;
 }
 
-static bool listsOnlyFunctions(const Type& type)
+static bool holdsOnlyKnownFunctions(const Type& type)
 {
     return !type.functions.isEmpty() && type.hasOnlyKnownCallees() && !type.primitives && !type.layouts && type.builtins.isEmpty();
 }
@@ -295,7 +295,7 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
     static constexpr unsigned maxBlocksOnTheWays = 32;
 
     const Value* test = m_repeatsTest.get(block.index()) ? typeTestBranchedOn(m_analyses, block) : nullptr;
-    if (!test || !listsOnlyFunctions(m_analyses.program().at(test->testedType())))
+    if (!test || !holdsOnlyKnownFunctions(m_analyses.program().at(test->testedType())))
         return KnownBoolean::Unknown;
     std::tuple tested { m_analyses.identityOf(test->valueOperand()).index(), test->testedType().index() };
     auto branchesOnTest = std::ranges::equal_range(m_branches, tested, { }, &TestedBranch::test);

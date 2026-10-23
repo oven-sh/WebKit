@@ -73,7 +73,7 @@ static PropertyAnswer answerAboveReceiver(PropertyAnswerKind kind, ChainWalk&& w
     return answer;
 }
 
-static bool isLazyClassPrototype(JSObject* object)
+static bool isClassPrototypeMadeLazily(JSObject* object)
 {
     return object->classInfo() == ClassPrototype::info();
 }
@@ -399,7 +399,7 @@ LazyPrototypeRead classifyReadThroughLazyPrototypes(JSGlobalObject* globalObject
         read.answer.offset = member.offset;
         read.answer.holder = member.holder;
     }
-    for (JSObject* prototype = base->getPrototypeDirect().getObject(); prototype && isLazyClassPrototype(prototype); prototype = prototype->getPrototypeDirect().getObject())
+    for (JSObject* prototype = base->getPrototypeDirect().getObject(); prototype && isClassPrototypeMadeLazily(prototype); prototype = prototype->getPrototypeDirect().getObject())
         read.answer.changeableObjects.append(prototype);
     return read;
 }

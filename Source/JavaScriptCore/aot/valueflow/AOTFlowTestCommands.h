@@ -13,7 +13,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void runFlowTestCommand(TestCommandContext&);
 void runFlowApplyTestCommand(TestCommandContext&);
-void runFlowValidateTestCommand(TestCommandContext&);
 void runFlowReportTestCommand(TestCommandContext&);
 
 } } } // namespace JSC::AOT::Typed

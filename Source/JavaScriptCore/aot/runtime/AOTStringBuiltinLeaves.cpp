@@ -62,7 +62,7 @@ static ALWAYS_INLINE size_t findString(const CharacterType* characters, uint32_t
     auto starts = unsafeMakeSpan(characters, length - otherLength + 1);
     for (size_t i = start;; ++i) {
         i = WTF::find(starts, first, i);
-        if (i == notFound || equal(characters + i + 1, rest))
+        if (i == notFound || WTF::equal(characters + i + 1, rest))
             return i;
     }
 }
@@ -78,7 +78,7 @@ static ALWAYS_INLINE size_t reverseFindString(const CharacterType* characters, u
     CharacterType first = other[0];
     auto rest = unsafeMakeSpan(other + 1, otherLength - 1);
     for (size_t i = start;; --i) {
-        if (characters[i] == first && equal(characters + i + 1, rest))
+        if (characters[i] == first && WTF::equal(characters + i + 1, rest))
             return i;
         if (!i)
             return notFound;

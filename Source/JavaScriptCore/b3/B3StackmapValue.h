@@ -39,7 +39,6 @@ class CCallHelpers;
 
 namespace AOT { namespace Typed {
 class DirectCodeGenerator;
-class LinearScanCodeGenerator;
 } }
 
 namespace B3 {
@@ -327,7 +326,6 @@ private:
     friend class StackmapGenerationParams;
     friend class StackmapSpecial;
     friend class AOT::Typed::DirectCodeGenerator;
-    friend class AOT::Typed::LinearScanCodeGenerator;
     
     Vector<ValueRep> m_reps;
     RefPtr<StackmapGenerator> m_generator;

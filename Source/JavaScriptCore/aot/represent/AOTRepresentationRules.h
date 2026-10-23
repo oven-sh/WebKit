@@ -87,7 +87,6 @@ Representation resultOfDeclaredPosition(const RepresentationInputs&, const Value
 Representation resultOfDeclaredPosition(const RepresentationInputs&, const Value& producer, uint32_t resultIndex);
 Representation representationOfEntryParameter(const RepresentationInputs&, unsigned entryParameterIndex);
 
-void checkRepresentations(const RepresentationInputs&, Vector<InternalError>&);
 
 } } } // namespace JSC::AOT::Typed
 

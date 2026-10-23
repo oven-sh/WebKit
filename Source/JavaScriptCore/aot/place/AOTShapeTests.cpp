@@ -247,7 +247,7 @@ ShapeTest chooseShapeTestForm(std::span<const uint32_t> shapes, std::span<const 
     return shortenForKnownShapes(chooseShapeTestForm(shapes, assigned), shapes, known);
 }
 
-static std::pair<LayoutSetID, LayoutSetID> keyOf(const ShapeTestWithinKnownSet& entry)
+static std::pair<LayoutSetID, LayoutSetID> shapeTestKeyOf(const ShapeTestWithinKnownSet& entry)
 {
     return { entry.tested, entry.known };
 }
@@ -255,8 +255,8 @@ static std::pair<LayoutSetID, LayoutSetID> keyOf(const ShapeTestWithinKnownSet& 
 static const ShapeTest* findTest(std::span<const ShapeTestWithinKnownSet> tests, LayoutSetID tested, LayoutSetID known)
 {
     std::pair key { tested, known };
-    auto found = std::ranges::lower_bound(tests, key, { }, keyOf);
-    return found != tests.end() && keyOf(*found) == key ? &found->test : nullptr;
+    auto found = std::ranges::lower_bound(tests, key, { }, shapeTestKeyOf);
+    return found != tests.end() && shapeTestKeyOf(*found) == key ? &found->test : nullptr;
 }
 
 namespace {
@@ -473,9 +473,9 @@ private:
                 tests.append(ShapeTestWithinKnownSet { access.membersWithField, access.receivers, { } });
         }
         sortAndRemoveDuplicates(loops(), tests, [](const ShapeTestWithinKnownSet& a, const ShapeTestWithinKnownSet& b) {
-            return keyOf(a) < keyOf(b);
+            return shapeTestKeyOf(a) < shapeTestKeyOf(b);
         }, [](const ShapeTestWithinKnownSet& a, const ShapeTestWithinKnownSet& b) {
-            return keyOf(a) == keyOf(b);
+            return shapeTestKeyOf(a) == shapeTestKeyOf(b);
         });
         forEachIndexInParallel(loops(), tests.size(), [&](unsigned index) {
             ShapeTestWithinKnownSet& entry = tests[index];

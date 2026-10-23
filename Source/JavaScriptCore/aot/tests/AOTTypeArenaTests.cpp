@@ -280,7 +280,8 @@ static void sharedMemoIsThreadSafe()
 static void fullSharedMemoRejectsNewEntries()
 {
     constexpr unsigned numberOfKeys = 1200000;
-    SharedTypeMemo memo(false, false);
+    constexpr size_t maxSlotsInShard = 1 << 14;
+    SharedTypeMemo memo(false, false, maxSlotsInShard);
     for (unsigned index = 0; index < numberOfKeys; ++index)
         memo.add(sharedKeyAt(index), TypeID(index));
     uint64_t numberOfKeysFound = 0;

@@ -103,6 +103,64 @@ void planVariableArm(const PropertyAccessContext&, const PropertyAccessQuery&, c
 
 bool needsNoClosure(const Program&, FunctionID);
 
+inline MemberAnswer createProvenAnswer(MemberKind kind)
+{
+    MemberAnswer answer;
+    answer.kind = kind;
+    answer.level = KnowledgeLevel::Proven;
+    return answer;
+}
+
+inline void dumpCondition(PrintStream& out, const MemberCondition& condition)
+{
+    switch (condition.kind) {
+    case MemberCondition::Kind::MemberUnchanged:
+        out.print("MemberUnchanged(L", condition.layout.index(), ", ", nameOf(condition.side), ", K", condition.key.index(), ")");
+        return;
+    case MemberCondition::Kind::PrototypeLinkUnchanged:
+        out.print("PrototypeLinkUnchanged(L", condition.layout.index(), ", ", nameOf(condition.side), ")");
+        return;
+    case MemberCondition::Kind::ClassEvaluatedOnce:
+        out.print("ClassEvaluatedOnce(L", condition.layout.index(), ")");
+        return;
+    case MemberCondition::Kind::InstancePrototypeUnchanged:
+        out.print("InstancePrototypeUnchanged(L", condition.layout.index(), ")");
+        return;
+    case MemberCondition::Kind::MemberNotHidden:
+        out.print("MemberNotHidden(L", condition.layout.index(), ", ", nameOf(condition.side), ", K", condition.key.index(), ")");
+        return;
+    case MemberCondition::Kind::MemberPassedByStores:
+        out.print("MemberPassedByStores(L", condition.layout.index(), ", K", condition.key.index(), ")");
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+inline void dumpConditions(PrintStream& out, const MemberConditions& conditions)
+{
+    CommaPrinter comma;
+    out.print("[");
+    for (const MemberCondition& condition : conditions) {
+        out.print(comma);
+        dumpCondition(out, condition);
+    }
+    out.print("]");
+}
+
+inline void dumpLayouts(PrintStream& out, const LayoutList& layouts)
+{
+    CommaPrinter comma;
+    out.print("[");
+    for (LayoutID layout : layouts)
+        out.print(comma, "L", layout.index());
+    out.print("]");
+}
+
+inline bool isMemberOfClass(const MemberAnswer& answer)
+{
+    return answer.kind == MemberKind::Method || answer.kind == MemberKind::Accessor;
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

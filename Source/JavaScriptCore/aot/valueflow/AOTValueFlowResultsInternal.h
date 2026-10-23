@@ -16,6 +16,7 @@
 #include "AOTTypeTable.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowLog.h"
+#include "AOTValueFlowResults.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -24,6 +25,7 @@
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
@@ -280,6 +282,24 @@ struct ValueFlowResultInputs {
     }
 };
 
+// The sets that a walk over the nodes has met. Most nodes hold what a node just before them held.
+class ValueSetsMet {
+public:
+    // Whether the walk meets the set for the first time.
+    bool add(ValueSetID set)
+    {
+        uint32_t& metLately = m_metLately[(set.index() * 0x9e3779b1u) >> 22];
+        if (metLately == set.index() + 1)
+            return false;
+        metLately = set.index() + 1;
+        return m_met.add(set.index()).isNewEntry;
+    }
+
+private:
+    std::array<uint32_t, 1024> m_metLately { };
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_met;
+};
+
 // A maker of sets takes megabytes to set up. A loop over the functions has one for each of its threads, made when the thread first asks for it.
 class ValueSetMakers {
     WTF_MAKE_NONCOPYABLE(ValueSetMakers);
@@ -361,11 +381,7 @@ inline bool hasObjectsThatCodeAlters(LayoutKind kind)
     case LayoutKind::Instance:
     case LayoutKind::Container:
         return true;
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -968,7 +984,7 @@ std::unique_ptr<ValueFlowNumbersOfValues> prepareNumbersOfPositions(const ValueF
 void computeNumbersOfPositions(ValueFlowNumbersOfValues&, const FlowResultTables&);
 // The class of an instance of a built-in class that the program allocates and that only followed code gets hold of.
 BuiltinClassID classOfFollowedContainer(const ValueFlowResultInputs&, ValueFlowObjectID);
-void computeTypeResults(const ValueFlowResultInputs&, const ValueFlowFieldContents&, TypeTable&, FlowResultTables&, Vector<String>* setsOutsideTypes);
+void computeTypeResults(const ValueFlowResultInputs&, const ValueFlowFieldContents&, TypeTable&, FlowResultTables&, const ListenerForSetsOutsideTypes*);
 // The types of the appended fields, and the layouts none of whose fields is ever stored a value outside its type. Rests on the types.
 void computeLayoutsNeverStoredOtherTypes(const ValueFlowResultInputs&, const ValueFlowFieldContents&, TypeTable&, FlowResultTables&);
 // Receiver sets.
@@ -986,6 +1002,22 @@ BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs&, TypeTable&,
 Type typeBehindDictionaries(const Program&, const BitVector& layoutsOfDictionaries, std::span<const std::pair<TypeID, TypeID>> ascendingTypes, const Type&, TypeArena&);
 // The constant texts that arrive at an argument whose text decides what a built-in makes: the pattern and the flags of a RegExp. Rests on the stamps and on the callers of the functions.
 void computeSinkOperandResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
+
+inline bool isClassLayout(const Layout& layout)
+{
+    return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
+}
+
+inline unsigned indexOfArrayElementsInType(const BuiltinTable& builtins)
+{
+    std::optional<unsigned> index;
+    for (BuiltinSlotID id : builtins.at(BuiltinClasses::Array).slots) {
+        const BuiltinSlot& slot = builtins.at(id);
+        if (slot.indexInType && slot.contentsSlot == ContentsSlot::Element)
+            index = *slot.indexInType;
+    }
+    return index.value();
+}
 
 } } } // namespace JSC::AOT::Typed
 

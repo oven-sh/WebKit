@@ -54,7 +54,7 @@ namespace {
 constexpr unsigned numberOfRegisters = Reg::maxIndex() + 1;
 static_assert(numberOfRegisters <= 64);
 
-inline uint64_t bitOf(Reg reg) { return static_cast<uint64_t>(1) << reg.index(); }
+inline uint64_t bitOfRegister(Reg reg) { return static_cast<uint64_t>(1) << reg.index(); }
 inline uint64_t bitsOf(const RegisterSet& registers) { return registers.toScalarRegisterSet().bitsForDebugging(); }
 inline uint8_t encode(Reg reg) { return static_cast<uint8_t>(reg.index() + 1); }
 inline Reg decode(uint8_t encoded) { return encoded ? Reg::fromIndex(encoded - 1) : Reg(); }
@@ -699,7 +699,7 @@ private:
 
     void release(Reg reg)
     {
-        uint64_t bit = bitOf(reg);
+        uint64_t bit = bitOfRegister(reg);
         if (m_file.dirty & bit) {
             uint32_t id = m_file.holder[reg.index()] - 1;
             m_states[id].flags |= WasLetGoUnsaved;
@@ -712,7 +712,7 @@ private:
 
     void bind(Reg reg, uint32_t id, bool isDirty)
     {
-        uint64_t bit = bitOf(reg);
+        uint64_t bit = bitOfRegister(reg);
         m_file.holder[reg.index()] = id + 1;
         m_file.occupied |= bit;
         if (isDirty)
@@ -736,7 +736,7 @@ private:
         return Reg();
     }
 
-    void lock(Reg reg) { m_locked |= bitOf(reg); }
+    void lock(Reg reg) { m_locked |= bitOfRegister(reg); }
 
     Address addressOfHome(int32_t offset) const
     {
@@ -935,21 +935,21 @@ void DirectCodeGenerator::setUpRegisters()
 {
     uint64_t excluded = bitsOf(RegisterSet::macroClobberedGPRs()) | bitsOf(RegisterSet::stackRegisters());
 #if CPU(X86_64)
-    excluded |= bitOf(Reg(MacroAssembler::fpTempRegister));
+    excluded |= bitOfRegister(Reg(MacroAssembler::fpTempRegister));
 #elif CPU(ARM64)
-    excluded |= bitOf(Reg(MacroAssembler::fpTempRegister));
+    excluded |= bitOfRegister(Reg(MacroAssembler::fpTempRegister));
 #endif
     RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
     calleeSaves.exclude(m_code.unsavedCalleeSaves());
     calleeSaves.merge(m_code.policy().registers.savedByCallee);
     m_calleeSaves = bitsOf(calleeSaves) & bitsOf(m_code.mutableRegs());
     for (Reg reg : m_code.regsInPriorityOrder(B3::GP)) {
-        if (!((excluded | m_calleeSaves) & bitOf(reg)))
-            m_generalRegisters |= bitOf(reg);
+        if (!((excluded | m_calleeSaves) & bitOfRegister(reg)))
+            m_generalRegisters |= bitOfRegister(reg);
     }
     for (Reg reg : m_code.regsInPriorityOrder(B3::FP)) {
-        if (!((excluded | m_calleeSaves) & bitOf(reg)))
-            m_doubleRegisters |= bitOf(reg);
+        if (!((excluded | m_calleeSaves) & bitOfRegister(reg)))
+            m_doubleRegisters |= bitOfRegister(reg);
     }
 }
 
@@ -1230,7 +1230,7 @@ void DirectCodeGenerator::emitFrameSetup()
         }
         operands.append(B3::Air::Tmp(reg));
         operands.append(B3::Air::Arg::imm(word));
-        m_file.dirty &= ~bitOf(reg);
+        m_file.dirty &= ~bitOfRegister(reg);
     }
     B3::Air::Inst enterFrame(B3::Air::EnterFrame, nullptr, operands.span());
     B3::Air::emitFrameSetup(jit, m_context, enterFrame);
@@ -1503,7 +1503,7 @@ bool DirectCodeGenerator::classify(B3::Value* value, ValueState& state, uint32_t
         }
         if (order)
             return refuse();
-        if (!((m_generalRegisters | m_doubleRegisters) & bitOf(reg)))
+        if (!((m_generalRegisters | m_doubleRegisters) & bitOfRegister(reg)))
             return refuse();
         if (const B3::Value* first = m_argumentValues[reg.index()]) {
             makeAlias(state, first, false);
@@ -1692,7 +1692,7 @@ bool DirectCodeGenerator::classify(B3::Value* value, ValueState& state, uint32_t
             case B3::ValueRep::SomeEarlyRegister:
                 break;
             case B3::ValueRep::Register:
-                m_clobberedRegisters |= bitOf(constraint.reg());
+                m_clobberedRegisters |= bitOfRegister(constraint.reg());
                 break;
             default:
                 return refuse();
@@ -2456,7 +2456,7 @@ void DirectCodeGenerator::noteStackmapChildren(B3::StackmapValue* stackmap, unsi
             break;
         case B3::ValueRep::Register:
             noteUse(child.value(), child.rep().reg());
-            m_clobberedRegisters |= bitOf(child.rep().reg());
+            m_clobberedRegisters |= bitOfRegister(child.rep().reg());
             break;
         case B3::ValueRep::StackArgument:
             noteUse(child.value());
@@ -3301,7 +3301,7 @@ void DirectCodeGenerator::layOutFrame()
             int32_t bytesOfPush = isX86_64() && reg.gpr() < 8 ? 1 : isX86_64() ? 2 : 4;
             if (gain <= bytesOfPush * static_cast<int32_t>(1 + m_numberOfTeardowns))
                 break;
-            m_homeRegisters |= bitOf(reg);
+            m_homeRegisters |= bitOfRegister(reg);
             for (uint32_t web : taken) {
                 m_homes[web].homeRegister = encode(reg);
                 candidates.removeFirst(web);
@@ -3598,7 +3598,7 @@ void DirectCodeGenerator::writeBack(Reg reg)
     if (!state.home)
         state.home = takeLateHome();
     storeToFrame(reg, state, state.home);
-    m_file.dirty &= ~bitOf(reg);
+    m_file.dirty &= ~bitOfRegister(reg);
 }
 
 void DirectCodeGenerator::moveRegister(Reg source, Reg destination)
@@ -3617,7 +3617,7 @@ Reg DirectCodeGenerator::findFree(uint64_t candidates)
     candidates &= ~m_locked;
     for (uint64_t bits = candidates; bits; bits &= bits - 1) {
         Reg reg = Reg::fromIndex(std::countr_zero(bits));
-        if (!(m_file.occupied & bitOf(reg)))
+        if (!(m_file.occupied & bitOfRegister(reg)))
             return reg;
         if (!isNeededNow(holderOf(reg) - 1)) {
             release(reg);
@@ -3630,7 +3630,7 @@ Reg DirectCodeGenerator::findFree(uint64_t candidates)
 Reg DirectCodeGenerator::allocate(uint64_t candidates, Reg preferred)
 {
     candidates &= ~m_locked;
-    if (preferred && (candidates & bitOf(preferred))) {
+    if (preferred && (candidates & bitOfRegister(preferred))) {
         uint32_t holder = holderOf(preferred);
         if (!holder || !isNeededNow(holder - 1)) {
             release(preferred);
@@ -3645,7 +3645,7 @@ Reg DirectCodeGenerator::allocate(uint64_t candidates, Reg preferred)
     bool victimIsDirty = true;
     for (uint64_t bits = candidates; bits; bits &= bits - 1) {
         Reg reg = Reg::fromIndex(std::countr_zero(bits));
-        bool isDirty = m_file.dirty & bitOf(reg);
+        bool isDirty = m_file.dirty & bitOfRegister(reg);
         uint32_t lastUse = m_states[holderOf(reg) - 1].lastUse;
         if (!victim || (victimIsDirty && !isDirty) || (victimIsDirty == isDirty && lastUse > farthest)) {
             victim = reg;
@@ -3746,13 +3746,13 @@ Reg DirectCodeGenerator::registerFor(const B3::Value* value, uint64_t avoid)
     const ValueState& state = stateOf(value);
     uint64_t bank = state.flags & IsDouble ? m_doubleRegisters : m_generalRegisters;
     Reg reg = locate(value);
-    if (reg && !(bitOf(reg) & avoid)) {
+    if (reg && !(bitOfRegister(reg) & avoid)) {
         lock(reg);
         return reg;
     }
     Reg destination = allocate(bank & ~avoid, state.form == ValueForm::Plain ? hintFor(state) : Reg());
     if (reg && state.form != ValueForm::FixedRegister) {
-        bool isDirty = m_file.dirty & bitOf(reg);
+        bool isDirty = m_file.dirty & bitOfRegister(reg);
         moveRegister(reg, destination);
         release(reg);
         bind(destination, value->index(), isDirty);
@@ -3783,32 +3783,32 @@ Reg DirectCodeGenerator::define(const B3::Value* value, Reg reusable, Reg otherR
     const ValueState& state = stateOf(value);
     uint64_t bank = (state.flags & IsDouble ? m_doubleRegisters : m_generalRegisters) & ~avoid;
     auto dies = [&](Reg reg) {
-        if (!reg || !(bank & bitOf(reg)))
+        if (!reg || !(bank & bitOfRegister(reg)))
             return false;
         uint32_t holder = holderOf(reg);
         return !holder || !isLiveAfter(holder - 1);
     };
     if (state.home > 0) {
         Reg home = decode(static_cast<uint8_t>(state.home));
-        if (!((m_locked | avoid) & bitOf(home)) || (!(avoid & bitOf(home)) && (home == reusable || home == otherReusable))) {
+        if (!((m_locked | avoid) & bitOfRegister(home)) || (!(avoid & bitOfRegister(home)) && (home == reusable || home == otherReusable))) {
             lock(home);
             return home;
         }
     }
     Reg hint = hintFor(state);
     Reg result;
-    if (hint && (bank & bitOf(hint))) {
+    if (hint && (bank & bitOfRegister(hint))) {
         if ((hint == reusable || hint == otherReusable) && dies(hint))
             result = hint;
-        else if (!(m_locked & bitOf(hint)) && (!holderOf(hint) || !isNeededNow(holderOf(hint) - 1)))
+        else if (!(m_locked & bitOfRegister(hint)) && (!holderOf(hint) || !isNeededNow(holderOf(hint) - 1)))
             result = hint;
-        else if (!(m_locked & bitOf(hint))) {
-            if (!(m_file.dirty & bitOf(hint)))
+        else if (!(m_locked & bitOfRegister(hint))) {
+            if (!(m_file.dirty & bitOfRegister(hint)))
                 result = hint;
             else {
                 uint32_t holder = holderOf(hint) - 1;
                 Reg other = hintFor(m_states[holder]);
-                if (other && other != hint && (bank & bitOf(other)) && !(m_locked & bitOf(other)) && (!holderOf(other) || !isNeededNow(holderOf(other) - 1))) {
+                if (other && other != hint && (bank & bitOfRegister(other)) && !(m_locked & bitOfRegister(other)) && (!holderOf(other) || !isNeededNow(holderOf(other) - 1))) {
                     release(other);
                     moveRegister(hint, other);
                     release(hint);
@@ -3853,7 +3853,7 @@ void DirectCodeGenerator::preserveValuesIn(uint64_t registers, uint64_t avoid, b
             release(reg);
             bind(free, id, true);
             m_valuesLeftBehind[reg.index()] = id + 1;
-            m_registersWithValuesLeftBehind |= bitOf(reg);
+            m_registersWithValuesLeftBehind |= bitOfRegister(reg);
             continue;
         }
         writeBack(reg);
@@ -3876,7 +3876,7 @@ void DirectCodeGenerator::moveIntoRegisters(Vector<Transfer, 8>& transfers)
         transfer.value = resolve(transfer.value);
         transfer.source = locate(transfer.value);
         transfer.isDone = transfer.source == transfer.destination;
-        if ((m_registersWithValuesLeftBehind & bitOf(transfer.destination)) && m_valuesLeftBehind[transfer.destination.index()] == transfer.value->index() + 1)
+        if ((m_registersWithValuesLeftBehind & bitOfRegister(transfer.destination)) && m_valuesLeftBehind[transfer.destination.index()] == transfer.value->index() + 1)
             transfer.isDone = true;
     }
     m_registersWithValuesLeftBehind = 0;
@@ -4119,14 +4119,14 @@ void DirectCodeGenerator::emitShift(B3::Value* value)
     GPRReg amount = gprFor(value->child(1));
 #if CPU(X86_64)
     Reg counter(X86Registers::ecx);
-    if (amount != counter.gpr() && left != counter.gpr() && !(m_locked & bitOf(counter)) && (!holderOf(counter) || !isLiveAfter(holderOf(counter) - 1) || !(m_file.dirty & bitOf(counter)))) {
+    if (amount != counter.gpr() && left != counter.gpr() && !(m_locked & bitOfRegister(counter)) && (!holderOf(counter) || !isLiveAfter(holderOf(counter) - 1) || !(m_file.dirty & bitOfRegister(counter)))) {
         release(counter);
         moveRegister(Reg(amount), counter);
         lock(counter);
         amount = counter.gpr();
     }
 #endif
-    GPRReg result = define(value, Reg(), Reg(), bitOf(Reg(left)) | bitOf(Reg(amount))).gpr();
+    GPRReg result = define(value, Reg(), Reg(), bitOfRegister(Reg(left)) | bitOfRegister(Reg(amount))).gpr();
     switch (opcode) {
     case B3::Shl:
         isWide ? jit.lshift64(left, amount, result) : jit.lshift32(left, amount, result);
@@ -4560,7 +4560,7 @@ void DirectCodeGenerator::emitSelect(B3::Value* value)
             return;
         }
     }
-    Reg result = define(value, Reg(), Reg(), bitOf(whenTrue) | bitOf(whenFalse));
+    Reg result = define(value, Reg(), Reg(), bitOfRegister(whenTrue) | bitOfRegister(whenFalse));
     moveRegister(whenFalse, result);
     Jump skip = branchOn(condition, false);
     finishUnit();
@@ -4606,7 +4606,7 @@ void DirectCodeGenerator::emitDoubleExtremum(B3::Value* value)
     FPRReg result = defineFPR(value, left, right);
     isMax ? jit.doubleMax(left, right, result) : jit.doubleMin(left, right, result);
 #else
-    FPRReg result = define(value, Reg(), Reg(), bitOf(Reg(left)) | bitOf(Reg(right))).fpr();
+    FPRReg result = define(value, Reg(), Reg(), bitOfRegister(Reg(left)) | bitOfRegister(Reg(right))).fpr();
     MacroAssembler::JumpList done;
     Jump notEqual = jit.branchDouble(MacroAssembler::DoubleNotEqualOrUnordered, left, right);
     isMax ? jit.andDouble(left, right, result) : jit.orDouble(left, right, result);
@@ -4638,7 +4638,7 @@ void DirectCodeGenerator::emitDivision(B3::Value* value)
     bool takesHighHalf = opcode == B3::Mod || opcode == B3::UMod || isMultiplication;
     Reg low(X86Registers::eax);
     Reg high(X86Registers::edx);
-    uint64_t fixed = bitOf(low) | bitOf(high);
+    uint64_t fixed = bitOfRegister(low) | bitOfRegister(high);
     preserveValuesIn(fixed, fixed, true);
     uint64_t left = m_registersWithValuesLeftBehind;
     GPRReg right = registerFor(value->child(1), fixed).gpr();
@@ -4719,7 +4719,7 @@ B3::ValueRep DirectCodeGenerator::repForStackmapChild(const B3::Value* child, co
         Reg copy = allocate(bank & ~(early | late));
         lock(copy);
         moveRegister(source, copy);
-        temporaries |= bitOf(copy);
+        temporaries |= bitOfRegister(copy);
         return B3::ValueRep::reg(copy);
     }
     case B3::ValueRep::WarmAny:
@@ -4731,11 +4731,11 @@ B3::ValueRep DirectCodeGenerator::repForStackmapChild(const B3::Value* child, co
         if (state.form != ValueForm::Plain)
             return B3::ValueRep::reg(registerFor(child, avoid));
         Reg reg = locate(child);
-        if (reg && !(bitOf(reg) & avoid)) {
+        if (reg && !(bitOfRegister(reg) & avoid)) {
             lock(reg);
             return B3::ValueRep::reg(reg);
         }
-        if (reg && (m_file.dirty & bitOf(reg))) {
+        if (reg && (m_file.dirty & bitOfRegister(reg))) {
             if (!(state.flags & NeedsHome)) {
                 if (Reg free = findFree(bank & ~avoid)) {
                     moveRegister(reg, free);
@@ -4753,7 +4753,7 @@ B3::ValueRep DirectCodeGenerator::repForStackmapChild(const B3::Value* child, co
         }
         if (state.home > 0) {
             Reg home = decode(static_cast<uint8_t>(state.home));
-            if (bitOf(home) & avoid)
+            if (bitOfRegister(home) & avoid)
                 fail();
             return B3::ValueRep::reg(home);
         }
@@ -4889,14 +4889,14 @@ void DirectCodeGenerator::emitPatchpoint(B3::PatchpointValue* patchpoint, ValueS
     for (unsigned index = 0; index < numberOfResults; ++index) {
         const B3::ValueRep& constraint = patchpoint->resultConstraints[index];
         if (constraint.kind() == B3::ValueRep::Register)
-            fixedResults |= bitOf(constraint.reg());
+            fixedResults |= bitOfRegister(constraint.reg());
     }
     late &= ~fixedResults;
     uint64_t fixedArguments = 0;
     for (unsigned index = 0; index < numberOfChildren; ++index) {
         B3::ValueRep constraint = patchpoint->constrainedChild(index).rep();
         if (constraint.kind() == B3::ValueRep::Register)
-            fixedArguments |= bitOf(constraint.reg());
+            fixedArguments |= bitOfRegister(constraint.reg());
     }
     uint64_t overwritten = fixedArguments | early | late | fixedResults;
 
@@ -4943,7 +4943,7 @@ void DirectCodeGenerator::emitPatchpoint(B3::PatchpointValue* patchpoint, ValueS
         if (m_hasFailed)
             return;
         lock(scratch);
-        temporaries |= bitOf(scratch);
+        temporaries |= bitOfRegister(scratch);
         generalScratches.append(scratch.gpr());
     }
     for (unsigned index = 0; index < patchpoint->numFPScratchRegisters; ++index) {
@@ -4951,7 +4951,7 @@ void DirectCodeGenerator::emitPatchpoint(B3::PatchpointValue* patchpoint, ValueS
         if (m_hasFailed)
             return;
         lock(scratch);
-        temporaries |= bitOf(scratch);
+        temporaries |= bitOfRegister(scratch);
         doubleScratches.append(scratch.fpr());
     }
 
@@ -4977,11 +4977,11 @@ void DirectCodeGenerator::emitPatchpoint(B3::PatchpointValue* patchpoint, ValueS
 
     uint64_t resultBits = 0;
     for (unsigned index = 0; index < numberOfResults; ++index)
-        resultBits |= bitOf(resultRegisters[index]);
+        resultBits |= bitOfRegister(resultRegisters[index]);
     uint64_t lost = early | late | resultBits | temporaries;
     for (const Transfer& transfer : transfers) {
         if (holderOf(transfer.destination) != transfer.value->index() + 1)
-            lost |= bitOf(transfer.destination);
+            lost |= bitOfRegister(transfer.destination);
     }
 
     RegisterSet usedRegisters;
@@ -5075,7 +5075,7 @@ void DirectCodeGenerator::passPhiArguments(bool terminatorReadsValues)
                 continue;
             if (phiState.home > 0) {
                 Reg home = decode(static_cast<uint8_t>(phiState.home));
-                destinations |= bitOf(home);
+                destinations |= bitOfRegister(home);
                 transfers.append(Transfer { home, source, Reg() });
                 phisInRegisters.append(nullptr);
                 continue;
@@ -5093,19 +5093,19 @@ void DirectCodeGenerator::passPhiArguments(bool terminatorReadsValues)
             Reg chosen;
             Reg hint = decode(phiState.hint);
             Reg current = locate(source);
-            if (hint && (candidates & bitOf(hint)))
+            if (hint && (candidates & bitOfRegister(hint)))
                 chosen = hint;
-            else if (current && (candidates & bitOf(current)))
+            else if (current && (candidates & bitOfRegister(current)))
                 chosen = current;
             else {
                 uint64_t free = candidates & ~m_file.occupied;
                 chosen = Reg::fromIndex(std::countr_zero(free ? free : candidates));
             }
             phiState.arrival = encode(chosen);
-            target.arrivalRegisters |= bitOf(chosen);
+            target.arrivalRegisters |= bitOfRegister(chosen);
         }
         Reg destination = decode(phiState.arrival);
-        destinations |= bitOf(destination);
+        destinations |= bitOfRegister(destination);
         transfers.append(Transfer { destination, source, Reg() });
         phisInRegisters.append(phi);
     }
@@ -5368,12 +5368,12 @@ void DirectCodeGenerator::arriveAt(DirectBlock& target)
     RegisterFile entry = m_file;
     for (uint64_t bits = entry.occupied; bits; bits &= bits - 1) {
         Reg reg = Reg::fromIndex(std::countr_zero(bits));
-        bool isDirty = entry.dirty & bitOf(reg);
+        bool isDirty = entry.dirty & bitOfRegister(reg);
         if (isLiveInto(entry.holder[reg.index()] - 1, target))
             continue;
         entry.holder[reg.index()] = 0;
-        entry.occupied &= ~bitOf(reg);
-        entry.dirty &= ~bitOf(reg);
+        entry.occupied &= ~bitOfRegister(reg);
+        entry.dirty &= ~bitOfRegister(reg);
     }
     m_snapshots.append(entry);
     target.entry = m_snapshots.size();
@@ -5388,7 +5388,7 @@ bool DirectCodeGenerator::planEntry(DirectBlock& target, Vector<Transfer, 8>& tr
     bool mayChangeEntry = !target.label.isSet();
     for (uint64_t bits = entry.occupied; bits; bits &= bits - 1) {
         Reg reg = Reg::fromIndex(std::countr_zero(bits));
-        uint64_t bit = bitOf(reg);
+        uint64_t bit = bitOfRegister(reg);
         uint32_t holder = entry.holder[reg.index()];
         bool isHeld = m_file.holder[reg.index()] == holder;
         if (isHeld) {
@@ -5416,7 +5416,7 @@ bool DirectCodeGenerator::planEntry(DirectBlock& target, Vector<Transfer, 8>& tr
         for (uint64_t others = entry.occupied; others && !isBound; others &= others - 1)
             isBound = entry.holder[std::countr_zero(others)] == holder;
         if (!isBound)
-            registersToWriteBack |= bitOf(reg);
+            registersToWriteBack |= bitOfRegister(reg);
     }
     return !transfers.isEmpty() || registersToWriteBack;
 }
@@ -5568,7 +5568,7 @@ void DirectCodeGenerator::emitSwitch(B3::SwitchValue* value, DirectBlock& block)
     auto subtractFirst = [&]() -> GPRReg {
         if (!cases[0].value)
             return reg;
-        GPRReg index = allocate(m_generalRegisters & ~bitOf(Reg(reg))).gpr();
+        GPRReg index = allocate(m_generalRegisters & ~bitOfRegister(Reg(reg))).gpr();
         lock(Reg(index));
         TrustedImm32 negated(-static_cast<int32_t>(cases[0].value));
         isWide ? jit.add64(negated, reg, index) : jit.add32(negated, reg, index);
@@ -5584,9 +5584,9 @@ void DirectCodeGenerator::emitSwitch(B3::SwitchValue* value, DirectBlock& block)
             everyEdgeIsFree &= !planEntry(targetOf(block, index), transfers, registersToWriteBack);
         }
         if (everyEdgeIsFree) {
-            GPRReg index = allocate(m_generalRegisters & ~bitOf(Reg(reg))).gpr();
+            GPRReg index = allocate(m_generalRegisters & ~bitOfRegister(Reg(reg))).gpr();
             lock(Reg(index));
-            GPRReg table = allocate(m_generalRegisters & ~bitOf(Reg(reg))).gpr();
+            GPRReg table = allocate(m_generalRegisters & ~bitOfRegister(Reg(reg))).gpr();
             lock(Reg(table));
             TrustedImm32 negated(-static_cast<int32_t>(cases[0].value));
             isWide ? jit.add64(negated, reg, index) : jit.add32(negated, reg, index);
@@ -5641,7 +5641,7 @@ void DirectCodeGenerator::emitSwitch(B3::SwitchValue* value, DirectBlock& block)
         }
         if (hasLargeGroup) {
             GPRReg index = subtractFirst();
-            GPRReg mask = allocate(m_generalRegisters & ~(bitOf(Reg(reg)) | bitOf(Reg(index)))).gpr();
+            GPRReg mask = allocate(m_generalRegisters & ~(bitOfRegister(Reg(reg)) | bitOfRegister(Reg(index)))).gpr();
             lock(Reg(mask));
             TrustedImm32 last(static_cast<int32_t>(span));
             linkEdge(isWide ? jit.branch64(MacroAssembler::Above, index, last) : jit.branch32(MacroAssembler::Above, index, last), otherwise);
@@ -5807,7 +5807,7 @@ void DirectCodeGenerator::emitValue(B3::Value* value, ValueState& state, DirectB
                 fail();
                 return;
             }
-            if ((m_file.dirty & bitOf(reg)) && !m_blockThatSetsUpFrame)
+            if ((m_file.dirty & bitOfRegister(reg)) && !m_blockThatSetsUpFrame)
                 writeBack(reg);
         }
         return;

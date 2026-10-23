@@ -803,50 +803,7 @@ bool isRematerializable(const Value& value)
 bool isDeferredClosure(const Function& function, ValueID id)
 {
     const Value& definition = function.at(definitionThroughUpcasts(function, id));
-    if (definition.opcode == Opcode::NewObject)
-        return definition.isMadeOnDemand();
     return definition.opcode == Opcode::NewClosure && definition.closureForm() == ClosureForm::Deferred;
-}
-
-bool isBorrowedInnerObject(const Function& function, ValueID id)
-{
-    for (;;) {
-        const Value& definition = function.at(id);
-        if (definition.opcode == Opcode::GetFlattenedSlot || definition.opcode == Opcode::GetFlattenedSlotOrUndefined || definition.opcode == Opcode::BorrowedParameter)
-            return true;
-        if (!handsOnBorrowedInnerObject(definition.opcode))
-            return false;
-        id = definition.operand(0);
-    }
-}
-
-UseOfBorrowedObject useOfBorrowedInnerObject(const Program& program, const Function& function, const Value& user, uint32_t operandIndex, ValueID borrowed)
-{
-    constexpr OpcodeSet operationsOnCell { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PutSlot, Opcode::IsSlotFilled, Opcode::HasBirthFieldsFilled, Opcode::HasNoFieldOutsideSlot, Opcode::IsNotFrozen, Opcode::HasNoExtraProperties };
-    if (user.opcode == Opcode::ReadAgain || (handsOnBorrowedInnerObject(user.opcode) && operandUsesOf(user.opcode, operandIndex).contains(OperandUse::Returns)))
-        return UseOfBorrowedObject::HandsOn;
-    // Whether it is an object at all: the outer object answers as the inner one would. A test that every object which the value may be passes, or none, asks no more than that.
-    if (user.opcode == Opcode::ToBoolean)
-        return UseOfBorrowedObject::Borrows;
-    if (user.opcode == Opcode::TypeTest) {
-        const Type& tested = program.at(user.testedType());
-        bool looksAtNoCell = !tested.hasObjects() || program.at(function.at(borrowed).type).withOnlyObjects().isSubsetOf(tested.withOnlyObjects(), program);
-        return looksAtNoCell ? UseOfBorrowedObject::Borrows : UseOfBorrowedObject::Holds;
-    }
-    if (user.opcode == Opcode::MakeBorrowedObject)
-        return UseOfBorrowedObject::Borrows;
-    if (!operationsOnCell.contains(user.opcode) || user.objectOperand() != borrowed)
-        return UseOfBorrowedObject::Holds;
-    return user.opcode == Opcode::PutSlot && user.valueOperand() == borrowed ? UseOfBorrowedObject::Holds : UseOfBorrowedObject::Borrows;
-}
-
-ValueID parameterOf(const Function& function, const Value& borrowedParameter)
-{
-    RELEASE_ASSERT(borrowedParameter.opcode == Opcode::BorrowedParameter);
-    ValueID id = borrowedParameter.valueOperand();
-    while (familyOf(function.at(id).opcode) == OperationFamily::Representation)
-        id = function.at(id).operand(0);
-    return function.at(id).opcode == Opcode::Parameter ? id : ValueID();
 }
 
 bool hasCodeAtDefinition(const Function& function, ValueID id)

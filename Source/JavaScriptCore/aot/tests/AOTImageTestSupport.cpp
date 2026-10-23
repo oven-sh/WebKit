@@ -142,7 +142,7 @@ TestBuild::TestBuild(const String& text, const TestOptions& options)
     AOT_TEST_CHECK(m_context->threadCount() == options.threadCount);
     std::unique_ptr<Typed::Program> program = Typed::parseProgram(text, Typed::IRForm::AsRead, *m_context);
     AOT_TEST_CHECK(program);
-    m_pipeline = Typed::runPipelineUntil(PassID::CheckPlacement, WTF::move(program), *m_context);
+    m_pipeline = Typed::runPipelineUntil(PassID::PlaceSiteCaches, WTF::move(program), *m_context);
     AOT_TEST_CHECK(m_pipeline);
 }
 

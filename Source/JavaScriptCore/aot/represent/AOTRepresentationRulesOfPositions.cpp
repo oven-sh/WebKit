@@ -64,7 +64,7 @@ static Representation captureRepresentationOf(const RepresentationInputs& inputs
     return declaredRepresentationOf(inputs.program, inputs.program.at(function).captures[captureIndex]);
 }
 
-static bool isReturned(const Function& function, const Value& results)
+static bool isReturnedByFunction(const Function& function, const Value& results)
 {
     RELEASE_ASSERT(&function.values.first() <= &results && &results <= &function.values.last());
 
@@ -81,7 +81,7 @@ static bool isReturned(const Function& function, const Value& results)
 static Representation wantedByResults(const RepresentationInputs& inputs, const Value& results, uint32_t resultIndex)
 {
     const Function& function = inputs.function;
-    bool isFunctionResult = function.results.size() != 1 && resultIndex < function.results.size() && isReturned(function, results);
+    bool isFunctionResult = function.results.size() != 1 && resultIndex < function.results.size() && isReturnedByFunction(function, results);
     if (isFunctionResult)
         return inputs.conventions.resultRepresentation(inputs.program, inputs.id, resultIndex);
     return declaredRepresentationOf(inputs.program, DeclaredType { .type = function.at(results.valuesOperands()[resultIndex]).type });
@@ -173,8 +173,6 @@ Representation resultOfDeclaredPosition(const RepresentationInputs& inputs, cons
     case Opcode::GetSlotOrUndefined:
     case Opcode::GetDeferredClosureSlot:
     case Opcode::GetDeferredClosureSlotOrUndefined:
-    case Opcode::GetFlattenedSlot:
-    case Opcode::GetFlattenedSlotOrUndefined:
         return loadRepresentationOf(slotOf(inputs, value.fieldAccess()), type);
     case Opcode::GetSlotGetter:
         return Representation::Cell;

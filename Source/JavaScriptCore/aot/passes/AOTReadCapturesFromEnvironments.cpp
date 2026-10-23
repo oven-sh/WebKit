@@ -48,7 +48,7 @@ enum class Obstacle : uint8_t {
     FunctionIsNotEdited,
 };
 
-ASCIILiteral nameOf(Obstacle obstacle)
+ASCIILiteral obstacleNameOf(Obstacle obstacle)
 {
     switch (obstacle) {
     case Obstacle::None:
@@ -76,7 +76,7 @@ ASCIILiteral nameOf(Obstacle obstacle)
 // What becomes of the closure. Whatever it is, a read that only leads to GetCapture is answered by the environment.
 enum class Fate : uint8_t { IsLeftAlone, IsNeverMade, IsMadeAtFirstUse, IsMadeAsBefore };
 
-struct CandidateTable {
+struct CaptureCandidateTable {
     std::optional<uint32_t> find(LayoutID layout, uint32_t field) const
     {
         if (!layouts.get(layout.index()))
@@ -100,7 +100,7 @@ struct CandidateTable {
     BitVector layouts;
 };
 
-struct Found {
+struct FoundCaptures {
     enum class Kind : uint8_t { Store, Reader, Callee, ReadAsValue, Obstacle };
 
     Kind kind { Kind::Obstacle };
@@ -300,7 +300,7 @@ private:
     bool m_isEmpty { true };
 };
 
-struct CaptureSource {
+struct ReadCaptureSource {
     bool isEnvironmentItself { false };
     uint32_t field { 0 };
 };
@@ -336,7 +336,7 @@ struct RemovedStore {
     friend auto operator<=>(const RemovedStore&, const RemovedStore&) = default;
 };
 
-struct Plan {
+struct CaptureReadPlan {
     bool takes(uint32_t candidate) const { return obstacles[candidate] == Obstacle::None; }
 
     std::span<const RemovedStore> storesRemovedIn(FunctionID function) const
@@ -357,7 +357,7 @@ struct Plan {
     Vector<FunctionID> callees;
     // NewClosure, for the closures that are made at their first use.
     Vector<Value> closures;
-    Vector<Vector<CaptureSource, 4>> sources;
+    Vector<Vector<ReadCaptureSource, 4>> sources;
     Vector<TypeID> typeOfEnvironment;
     Vector<AddedField> addedFields;
     // Ascending by function. Within a function the last place comes first.
@@ -475,10 +475,10 @@ private:
     Vector<BlockID> m_blockOf;
 };
 
-struct ScanContext {
+struct CaptureScanContext {
     const Program& program;
     const BuildContext& build;
-    const CandidateTable& candidates;
+    const CaptureCandidateTable& candidates;
     OpcodeSet opcodesNamingLayouts;
 };
 
@@ -494,9 +494,9 @@ static LayoutID layoutNamedBy(const Value& value)
     return Value::opcodesWithLayout.contains(value.opcode) ? value.layout() : LayoutID();
 }
 
-static CandidateTable findCandidates(const Program& program)
+static CaptureCandidateTable findCandidates(const Program& program)
 {
-    CandidateTable candidates;
+    CaptureCandidateTable candidates;
     candidates.layouts.ensureSize(program.layouts.size());
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
@@ -514,7 +514,7 @@ static CandidateTable findCandidates(const Program& program)
     return candidates;
 }
 
-static void rejectWhatMayBeFilledAgain(const Function& function, FunctionID id, Vector<Found>& found, size_t firstFound)
+static void rejectWhatMayBeFilledAgain(const Function& function, FunctionID id, Vector<FoundCaptures>& found, size_t firstFound)
 {
     struct Place {
         uint32_t candidate;
@@ -522,8 +522,8 @@ static void rejectWhatMayBeFilledAgain(const Function& function, FunctionID id, 
         ValueID environment;
     };
     Vector<Place, 16> places;
-    for (const Found& entry : found.span().subspan(firstFound)) {
-        if (entry.kind == Found::Kind::Store)
+    for (const FoundCaptures& entry : found.span().subspan(firstFound)) {
+        if (entry.kind == FoundCaptures::Kind::Store)
             places.append({ entry.candidate, entry.block, entry.environment });
     }
     if (places.isEmpty())
@@ -552,20 +552,20 @@ static void rejectWhatMayBeFilledAgain(const Function& function, FunctionID id, 
         for (const Place& earlier : places) {
             if (earlier.candidate != later.candidate || !mayBeFilledAgain(earlier, later))
                 continue;
-            found.append({ .kind = Found::Kind::Obstacle, .obstacle = Obstacle::MayBeFilledAgain, .user = function.at(later.environment).opcode, .candidate = later.candidate, .function = id });
+            found.append({ .kind = FoundCaptures::Kind::Obstacle, .obstacle = Obstacle::MayBeFilledAgain, .user = function.at(later.environment).opcode, .candidate = later.candidate, .function = id });
             break;
         }
     }
 }
 
-static void scanFunction(const ScanContext& context, FunctionID id, Vector<Found>& found)
+static void scanFunction(const CaptureScanContext& context, FunctionID id, Vector<FoundCaptures>& found)
 {
     const Function& function = context.program.at(id);
-    const CandidateTable& candidates = context.candidates;
+    const CaptureCandidateTable& candidates = context.candidates;
     bool isEdited = context.build.isEnabled(PassID::ReadCapturesFromEnvironments, id);
 
     auto reject = [&](uint32_t candidate, Obstacle obstacle, Opcode user) {
-        found.append({ .kind = Found::Kind::Obstacle, .obstacle = obstacle, .user = user, .candidate = candidate, .function = id });
+        found.append({ .kind = FoundCaptures::Kind::Obstacle, .obstacle = obstacle, .user = user, .candidate = candidate, .function = id });
     };
     Vector<uint8_t> useCounts;
     auto hasOneUse = [&](ValueID used) {
@@ -588,7 +588,7 @@ static void scanFunction(const ScanContext& context, FunctionID id, Vector<Found
             reject(candidate, Obstacle::FilledWithOtherValue, closure.opcode);
             return;
         }
-        found.append({ .kind = Found::Kind::Store, .candidate = candidate, .function = id, .block = block, .indexInBlock = indexInBlock, .environment = environment, .store = function.at(block).values[indexInBlock], .closure = stored, .indexOfClosure = findClosureInFrontOf(function, function.at(block), indexInBlock), .closureHasOtherUses = !hasOneUse(stored), .callee = closure.function() });
+        found.append({ .kind = FoundCaptures::Kind::Store, .candidate = candidate, .function = id, .block = block, .indexInBlock = indexInBlock, .environment = environment, .store = function.at(block).values[indexInBlock], .closure = stored, .indexOfClosure = findClosureInFrontOf(function, function.at(block), indexInBlock), .closureHasOtherUses = !hasOneUse(stored), .callee = closure.function() });
     };
     size_t firstFound = found.size();
 
@@ -628,19 +628,19 @@ static void scanFunction(const ScanContext& context, FunctionID id, Vector<Found
         }
     });
     rejectWhatMayBeFilledAgain(function, id, found, firstFound);
-    bool hasClosureWithOtherUses = std::ranges::any_of(found.span().subspan(firstFound), [](const Found& entry) {
-        return entry.kind == Found::Kind::Store && entry.indexOfClosure && entry.closureHasOtherUses;
+    bool hasClosureWithOtherUses = std::ranges::any_of(found.span().subspan(firstFound), [](const FoundCaptures& entry) {
+        return entry.kind == FoundCaptures::Kind::Store && entry.indexOfClosure && entry.closureHasOtherUses;
     });
     if (!hasRead && !hasClosureWithOtherUses)
         return;
 
-    found.append({ .kind = Found::Kind::Reader, .function = id });
+    found.append({ .kind = FoundCaptures::Kind::Reader, .function = id });
     auto candidateNamedBy = [&](const Value& access) {
         return candidates.find(access.layout(), access.field()).value_or(noCandidate);
     };
     ClosureWebs webs(function, candidateNamedBy, candidateNamedBy);
-    for (Found& entry : found.mutableSpan().subspan(firstFound)) {
-        if (entry.kind == Found::Kind::Store && entry.indexOfClosure)
+    for (FoundCaptures& entry : found.mutableSpan().subspan(firstFound)) {
+        if (entry.kind == FoundCaptures::Kind::Store && entry.indexOfClosure)
             entry.closureHasOtherUses = webs.isObject(entry.closure);
     }
     // A closure that is an object where it is made need not come out of the field.
@@ -652,18 +652,18 @@ static void scanFunction(const ScanContext& context, FunctionID id, Vector<Found
         for (ValueID valueID : block.values) {
             const Value& value = function.at(valueID);
             if (value.opcode == Opcode::GetEnvironmentField && webs.candidateOf(valueID) != noCandidate && webs.isObject(valueID))
-                found.append({ .kind = Found::Kind::ReadAsValue, .user = userOf(webs.candidateOf(valueID)), .candidate = webs.candidateOf(valueID), .function = id });
+                found.append({ .kind = FoundCaptures::Kind::ReadAsValue, .user = userOf(webs.candidateOf(valueID)), .candidate = webs.candidateOf(valueID), .function = id });
             if (value.opcode != Opcode::GetCapture)
                 continue;
             if (uint32_t candidate = webs.candidateOf(value.operand(0)); candidate != noCandidate)
-                found.append({ .kind = Found::Kind::Callee, .candidate = candidate, .function = id, .callee = value.function() });
+                found.append({ .kind = FoundCaptures::Kind::Callee, .candidate = candidate, .function = id, .callee = value.function() });
         }
     }
 }
 
 namespace {
 
-struct Store {
+struct CaptureStore {
     LayoutID layout;
     FunctionID function;
     ValueID environment;
@@ -675,12 +675,12 @@ struct Store {
     // Behind this operation the environment and all that the closure captures are at hand, and nothing has used the closure yet.
     uint32_t indexOfFirstUse { 0 };
 
-    friend auto operator<=>(const Store&, const Store&) = default;
+    friend auto operator<=>(const CaptureStore&, const CaptureStore&) = default;
 };
 
 class Planner {
 public:
-    Planner(const Program& program, const CandidateTable& candidates, Vector<Found>&& found)
+    Planner(const Program& program, const CaptureCandidateTable& candidates, Vector<FoundCaptures>&& found)
         : m_program(program)
         , m_candidates(candidates)
         , m_found(WTF::move(found))
@@ -697,11 +697,11 @@ public:
         m_plan.typeOfEnvironment.grow(size);
     }
 
-    Plan run();
+    CaptureReadPlan run();
 
 private:
     // The stores of one block into one environment.
-    using Run = std::span<const Store>;
+    using Run = std::span<const CaptureStore>;
 
     void reject(uint32_t candidate, Obstacle obstacle, Opcode user = Opcode::Undefined)
     {
@@ -733,18 +733,18 @@ private:
     };
 
     void sortWhatWasFound();
-    Vector<Run, 2> runsOf(std::span<const Store> storesOfLayout) const;
-    void planLayout(LayoutID, std::span<const Store>);
+    Vector<Run, 2> runsOf(std::span<const CaptureStore> storesOfLayout) const;
+    void planLayout(LayoutID, std::span<const CaptureStore>);
     void planGroup(LayoutID, std::span<const Run>, std::span<const Member>, uint32_t& nextField);
 
     const Program& m_program;
-    const CandidateTable& m_candidates;
-    Vector<Found> m_found;
-    Vector<Store> m_stores;
+    const CaptureCandidateTable& m_candidates;
+    Vector<FoundCaptures> m_found;
+    Vector<CaptureStore> m_stores;
     Vector<FunctionID> m_readers;
     BitVector m_isReadAsValue;
     BitVector m_isUsedWhereItIsMade;
-    Plan m_plan;
+    CaptureReadPlan m_plan;
 };
 
 } // anonymous namespace
@@ -759,25 +759,25 @@ void Planner::sortWhatWasFound()
                 reject(*candidate, Obstacle::NamedByEvalScope);
         }
     }
-    for (const Found& found : m_found) {
+    for (const FoundCaptures& found : m_found) {
         switch (found.kind) {
-        case Found::Kind::Store:
+        case FoundCaptures::Kind::Store:
             m_stores.append({ m_candidates.fields[found.candidate].layout, found.function, found.environment, found.block, found.candidate, found.indexInBlock, found.store, found.closure, found.indexOfClosure.value_or(found.indexInBlock) });
             noteCallee(found.candidate, found.callee);
             if (found.closureHasOtherUses)
                 m_isUsedWhereItIsMade.quickSet(found.candidate);
             break;
-        case Found::Kind::ReadAsValue:
+        case FoundCaptures::Kind::ReadAsValue:
             if (!m_isReadAsValue.quickSet(found.candidate))
                 m_plan.users[found.candidate] = found.user;
             break;
-        case Found::Kind::Reader:
+        case FoundCaptures::Kind::Reader:
             m_readers.append(found.function);
             break;
-        case Found::Kind::Callee:
+        case FoundCaptures::Kind::Callee:
             noteCallee(found.candidate, found.callee);
             break;
-        case Found::Kind::Obstacle:
+        case FoundCaptures::Kind::Obstacle:
             reject(found.candidate, found.obstacle, found.user);
             break;
         }
@@ -785,7 +785,7 @@ void Planner::sortWhatWasFound()
     m_found.clear();
     AOT::sort(m_stores);
     BitVector isFilled(m_candidates.fields.size());
-    for (const Store& store : m_stores)
+    for (const CaptureStore& store : m_stores)
         isFilled.quickSet(store.candidate);
     for (uint32_t candidate = 0; candidate < m_candidates.fields.size(); ++candidate) {
         if (!isFilled.quickGet(candidate))
@@ -793,7 +793,7 @@ void Planner::sortWhatWasFound()
     }
 }
 
-auto Planner::runsOf(std::span<const Store> stores) const -> Vector<Run, 2>
+auto Planner::runsOf(std::span<const CaptureStore> stores) const -> Vector<Run, 2>
 {
     Vector<Run, 2> runs;
     for (size_t first = 0; first < stores.size();) {
@@ -806,7 +806,7 @@ auto Planner::runsOf(std::span<const Store> stores) const -> Vector<Run, 2>
     return runs;
 }
 
-void Planner::planLayout(LayoutID layout, std::span<const Store> stores)
+void Planner::planLayout(LayoutID layout, std::span<const CaptureStore> stores)
 {
     Vector<Run, 2> runs = runsOf(stores);
     Vector<Member, 16> members;
@@ -815,7 +815,7 @@ void Planner::planLayout(LayoutID layout, std::span<const Store> stores)
             return;
         Member member { { }, candidate };
         for (uint32_t index = 0; index < runs.size(); ++index) {
-            size_t numberOfStores = std::ranges::count(runs[index], candidate, &Store::candidate);
+            size_t numberOfStores = std::ranges::count(runs[index], candidate, &CaptureStore::candidate);
             if (numberOfStores > 1) {
                 reject(candidate, Obstacle::IsFilledTwiceInOneBlock);
                 return;
@@ -852,7 +852,7 @@ void Planner::planLayout(LayoutID layout, std::span<const Store> stores)
         else
             m_plan.fates[candidate] = m_isUsedWhereItIsMade.quickGet(candidate) ? Fate::IsMadeAsBefore : Fate::IsMadeAtFirstUse;
     }
-    for (const Store& store : stores) {
+    for (const CaptureStore& store : stores) {
         if (m_plan.fates[store.candidate] != Fate::IsMadeAtFirstUse)
             continue;
         m_plan.closures[store.candidate] = m_program.at(store.function).at(store.closure);
@@ -876,7 +876,7 @@ void Planner::planGroup(LayoutID layout, std::span<const Run> runsOfLayout, std:
         for (uint32_t index = 0; index < numberOfCaptures; ++index) {
             Capture capture { member.candidate, index, { }, { } };
             for (uint32_t run : runs) {
-                const Store& store = *std::ranges::find(runsOfLayout[run], member.candidate, &Store::candidate);
+                const CaptureStore& store = *std::ranges::find(runsOfLayout[run], member.candidate, &CaptureStore::candidate);
                 std::span<const ValueID> captured = m_program.at(store.function).at(store.closure).variadicOperands();
                 RELEASE_ASSERT(index < captured.size());
                 capture.operands.append(captured[index]);
@@ -929,13 +929,13 @@ void Planner::planGroup(LayoutID layout, std::span<const Run> runsOfLayout, std:
 
     for (const FieldOfGroup& field : fields) {
         for (size_t position = 0; position < runs.size(); ++position) {
-            const Store& store = runsOfLayout[runs[position]][0];
+            const CaptureStore& store = runsOfLayout[runs[position]][0];
             m_plan.addedStores.append({ store.function, store.block, field.indexesInBlocks[position], layout, store.environment, { field.field }, { captures[field.firstCapture].operands[position] } });
         }
     }
 }
 
-Plan Planner::run()
+CaptureReadPlan Planner::run()
 {
     sortWhatWasFound();
     for (size_t first = 0; first < m_stores.size();) {
@@ -962,7 +962,7 @@ Plan Planner::run()
     return WTF::move(m_plan);
 }
 
-static void changeLayouts(ProgramEditor& editor, const CandidateTable& candidates, const Plan& plan)
+static void changeLayouts(ProgramEditor& editor, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan)
 {
     for (const AddedField& added : plan.addedFields) {
         Layout& layout = editor.at(added.layout);
@@ -1000,7 +1000,7 @@ static void changeLayouts(ProgramEditor& editor, const CandidateTable& candidate
     }
 }
 
-static void storeCaptures(const Plan& plan, FunctionID id, IRBuilder& builder)
+static void storeCaptures(const CaptureReadPlan& plan, FunctionID id, IRBuilder& builder)
 {
     Function& function = builder.function();
     for (const AddedStores& added : plan.storesAddedIn(id)) {
@@ -1016,7 +1016,7 @@ static void storeCaptures(const Plan& plan, FunctionID id, IRBuilder& builder)
     }
 }
 
-static void removeStores(const Plan& plan, FunctionID id, IRBuilder& builder)
+static void removeStores(const CaptureReadPlan& plan, FunctionID id, IRBuilder& builder)
 {
     Function& function = builder.function();
     std::span<const RemovedStore> removed = plan.storesRemovedIn(id);
@@ -1073,7 +1073,7 @@ static void removeStores(const Plan& plan, FunctionID id, IRBuilder& builder)
     }
 }
 
-static void readCaptures(const CandidateTable& candidates, const Plan& plan, const ClosureWebs& webs, IRBuilder& builder)
+static void readCaptures(const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, const ClosureWebs& webs, IRBuilder& builder)
 {
     Function& function = builder.function();
     ValueSubstitution substitution(function);
@@ -1107,7 +1107,7 @@ static void readCaptures(const CandidateTable& candidates, const Plan& plan, con
             if (!webs.standsForCapturesOnly(closure))
                 continue;
             uint32_t candidate = webs.candidateOf(closure);
-            CaptureSource source = plan.sources[candidate][value.index()];
+            ReadCaptureSource source = plan.sources[candidate][value.index()];
             if (source.isEnvironmentItself) {
                 substitution.replace(id, closure);
                 erasedIndexes.set(index);
@@ -1133,7 +1133,7 @@ static Value makeRead(ValueID environment, LayoutID layout, uint32_t field)
 }
 
 // The field holds nothing until somebody wants the object. It stays the same object from then on.
-static void makeClosureAtRead(const CandidateTable& candidates, const Plan& plan, uint32_t candidate, IRBuilder& builder, ProgramPoint point)
+static void makeClosureAtRead(const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, uint32_t candidate, IRBuilder& builder, ProgramPoint point)
 {
     Function& function = builder.function();
     FieldReference reference = candidates.fields[candidate];
@@ -1144,7 +1144,7 @@ static void makeClosureAtRead(const CandidateTable& candidates, const Plan& plan
     IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(held, TypeTable::absent), 0, BlockFrequency::Rare, BlockFrequency::Normal);
 
     Vector<ValueID, 8> captures;
-    for (CaptureSource source : plan.sources[candidate])
+    for (ReadCaptureSource source : plan.sources[candidate])
         captures.append(source.isEnvironmentItself ? environment : builder.append(makeRead(environment, reference.layout, source.field)));
     Value closure(plan.closures[candidate]);
     closure.setVariadicOperands(captures.span());
@@ -1159,7 +1159,7 @@ static void makeClosureAtRead(const CandidateTable& candidates, const Plan& plan
     builder.endExpansion(expansion, branch.provenOnNotTaken);
 }
 
-static void makeClosuresAtReads(const CandidateTable& candidates, const Plan& plan, const ClosureWebs& webs, IRBuilder& builder)
+static void makeClosuresAtReads(const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, const ClosureWebs& webs, IRBuilder& builder)
 {
     Function& function = builder.function();
     uint32_t numberOfBlocks = function.blocks.size();
@@ -1183,7 +1183,7 @@ static void makeClosuresAtReads(const CandidateTable& candidates, const Plan& pl
     }
 }
 
-static void dump(const Program& program, const CandidateTable& candidates, const Plan& plan, PrintStream& out)
+static void dump(const Program& program, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, PrintStream& out)
 {
     for (uint32_t candidate = 0; candidate < candidates.fields.size(); ++candidate) {
         FieldReference reference = candidates.fields[candidate];
@@ -1192,7 +1192,7 @@ static void dump(const Program& program, const CandidateTable& candidates, const
             out.print(" f", callee.index(), " captures ", program.at(callee).captures.size());
         switch (plan.fates[candidate]) {
         case Fate::IsLeftAlone:
-            out.print(": ", nameOf(plan.obstacles[candidate]));
+            out.print(": ", obstacleNameOf(plan.obstacles[candidate]));
             break;
         case Fate::IsNeverMade:
             out.print(": never made");
@@ -1315,7 +1315,7 @@ static bool hasParametersOfSource(const Function& function)
     return true;
 }
 
-static OwnCapturesTable claimOwnCaptures(const Program& program, const CandidateTable& candidates, const Plan& plan)
+static OwnCapturesTable claimOwnCaptures(const Program& program, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan)
 {
     OwnCapturesTable table;
     table.claimOf.fill(noCandidate, program.functions.size());
@@ -1323,8 +1323,8 @@ static OwnCapturesTable claimOwnCaptures(const Program& program, const Candidate
     for (uint32_t candidate = 0; candidate < candidates.fields.size(); ++candidate) {
         if (!plan.takes(candidate) || plan.fates[candidate] == Fate::IsLeftAlone)
             continue;
-        std::span<const CaptureSource> sources = plan.sources[candidate].span();
-        auto itself = std::ranges::find(sources, true, &CaptureSource::isEnvironmentItself);
+        std::span<const ReadCaptureSource> sources = plan.sources[candidate].span();
+        auto itself = std::ranges::find(sources, true, &ReadCaptureSource::isEnvironmentItself);
         if (itself == sources.end())
             continue;
         FunctionID callee = plan.callees[candidate];
@@ -1333,7 +1333,7 @@ static OwnCapturesTable claimOwnCaptures(const Program& program, const Candidate
             continue;
         }
         OwnCaptures claim { candidates.fields[candidate].layout, static_cast<uint32_t>(itself - sources.begin()), { } };
-        for (CaptureSource source : sources)
+        for (ReadCaptureSource source : sources)
             claim.fields.append(source.isEnvironmentItself ? noField : source.field);
         table.claimOf[callee.index()] = table.claims.size();
         table.claims.append(WTF::move(claim));
@@ -1650,7 +1650,7 @@ static void readOwnCaptures(const Program& program, const OwnCaptures& own, IRBu
 }
 
 // A function that lies in an environment runs with that environment among its captures, so what it would read there for a call of itself, or of a function beside it, it has at hand.
-static void passOwnCaptures(ProgramEditor& editor, const FlowResults& flow, BuildContext& build, const CandidateTable& candidates, const Plan& plan)
+static void passOwnCaptures(ProgramEditor& editor, const FlowResults& flow, BuildContext& build, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan)
 {
     const Program& program = editor.program();
     OwnCapturesTable table = claimOwnCaptures(program, candidates, plan);
@@ -1724,18 +1724,18 @@ static void passOwnCaptures(ProgramEditor& editor, const FlowResults& flow, Buil
 void readCapturesFromEnvironments(ProgramEditor& editor, const FlowResults& flow, BuildContext& build)
 {
     const Program& program = editor.program();
-    CandidateTable candidates = findCandidates(program);
+    CaptureCandidateTable candidates = findCandidates(program);
     if (candidates.fields.isEmpty()) {
         passOwnCaptures(editor, flow, build, candidates, { });
         return;
     }
 
-    ScanContext context { program, build, candidates, findOpcodesNamingLayouts() };
-    Vector<Found> found = collectInParallel<Found>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<Found>& foundInFunction) {
+    CaptureScanContext context { program, build, candidates, findOpcodesNamingLayouts() };
+    Vector<FoundCaptures> found = collectInParallel<FoundCaptures>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FoundCaptures>& foundInFunction) {
         if (program.functions[index].hasBody())
             scanFunction(context, FunctionID(index), foundInFunction);
     });
-    Plan plan = Planner(program, candidates, WTF::move(found)).run();
+    CaptureReadPlan plan = Planner(program, candidates, WTF::move(found)).run();
     if (build.options().logging.dumpedPass == PassID::ReadCapturesFromEnvironments) [[unlikely]]
         dump(program, candidates, plan, WTF::dataFile());
     if (std::ranges::none_of(plan.obstacles, [](Obstacle obstacle) { return obstacle == Obstacle::None; })) {

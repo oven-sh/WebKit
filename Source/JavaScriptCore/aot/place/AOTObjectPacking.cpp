@@ -80,7 +80,7 @@ struct OffsetUse {
     uint32_t numberOfRows { 0 };
 };
 
-struct RowSet : WTF::UnionFind<RowSet> { };
+struct PackedRowSet : WTF::UnionFind<PackedRowSet> { };
 
 auto rowsOf(const SlotRows& rows, LayoutID id)
 {
@@ -371,7 +371,7 @@ private:
     BitVector m_rowsTreatedAsStored;
     BitVector m_rowsWithHeirs;
     Vector<uint32_t> m_limitsBeforeGrowth;
-    Vector<RowSet> m_rowSets;
+    Vector<PackedRowSet> m_rowSets;
     Vector<MemberRow> m_memberRows;
     uint32_t m_maxGranules;
     Vector<MemberRow> m_sharedRows;
@@ -517,7 +517,6 @@ void ObjectPacker::chooseStorage(LayoutID id)
         slot.deferredFunction = claim.deferredFunction;
         slot.deferredClosureCapturesObject = claim.deferredClosureCapturesObject;
         slot.deferredClosureCapturesEnvironment = claim.deferredClosureCapturesEnvironment;
-        slot.defersFlattenedObject = claim.defersFlattenedObject;
     }
     RowsOutOfLine outOfLine = countInheritedRowsOutOfLine(id);
     chooseOutOfLineRows(id, outOfLine);
@@ -1005,7 +1004,7 @@ SiteWeight ObjectPacker::weightOf(const BitVector& sets) const
 void ObjectPacker::forgetLocations()
 {
     m_isPlaced.fill(false);
-    m_rowSets = Vector<RowSet>(m_context.rows.count());
+    m_rowSets = Vector<PackedRowSet>(m_context.rows.count());
     m_sharedRows.shrink(0);
     m_groupsInCells.shrink(0);
     for (PlacedSlot& slot : m_packed.slots)

@@ -26,7 +26,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t none = UINT32_MAX;
+static constexpr uint32_t noGraphIndex = UINT32_MAX;
 
 struct ValueFlowGraph::Worker {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Worker);
@@ -814,10 +814,21 @@ void ValueFlowGraph::retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFl
     covering.lowMembersOfWhole = lowMembersOf(whole, *m_makers[0]);
     covering.listedMembersOfWhole = m_makers[0]->intersect(whole, ValueSets::complement(m_lowMembers));
     covering.allButCoverable = ValueSets::complement(coverable);
+    covering.lowMembersNotCoverable = lowMembersOf(covering.allButCoverable, *m_makers[0]);
     covering.flowsIntoCovered.ensureSize(m_capacity);
     covering.isRetired.ensureSize(m_capacity);
     covering.hasStoppedAt.ensureSize(m_capacity);
     m_coverings.append(WTF::move(covering));
+}
+
+void ValueFlowGraph::keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder isMadeForPlaceholder, const void* context)
+{
+    RELEASE_ASSERT(!m_hasSolved);
+    m_coveredNodeThatTakesWhatIsKeptOut = covered.index();
+    m_isMadeForPlaceholder = isMadeForPlaceholder;
+    m_contextOfIsMadeForPlaceholder = context;
+    m_allButKeptOutOfNodesMadeForPlaceholders = ValueSets::complement(keptOut);
+    m_lowMembersKeptOutOfNodesMadeForPlaceholders = lowMembersOf(keptOut, *m_makers[0]);
 }
 
 bool ValueFlowGraph::flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID node) const
@@ -855,6 +866,17 @@ bool ValueFlowGraph::takesNoMore(uint32_t node) const
     return std::ranges::any_of(m_coverings, [&](const Covering& covering) {
         return covering.allButCoverable == ValueSets::nothing && covering.isRetired.quickGet(node);
     });
+}
+
+bool ValueFlowGraph::retiredNodeTakesAnyOf(uint32_t node, uint64_t low, uint32_t set) const
+{
+    for (const Covering& covering : m_coverings) {
+        if (!covering.isRetired.quickGet(node))
+            continue;
+        if (!(low & covering.lowMembersNotCoverable) && (!set || !m_sets.meet(ValueSetID(set), covering.allButCoverable)))
+            return false;
+    }
+    return true;
 }
 
 ValueSetID ValueFlowGraph::whatRetiredNodeTakes(uint32_t node, ValueSetMaker& maker) const
@@ -1069,6 +1091,20 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     ++worker.edgesLookedAt;
 
     Gate gate = m_gates[node];
+    bool bringsWhatIsKeptOut = m_isMadeForPlaceholder && ((low & m_lowMembersKeptOutOfNodesMadeForPlaceholders) || (set != ValueSets::nothing && !m_sets.isSubset(set, m_allButKeptOutOfNodesMadeForPlaceholders)));
+    if (bringsWhatIsKeptOut && m_isMadeForPlaceholder(m_contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))) [[unlikely]] {
+        // What was handed to the placeholder is what the placeholder covers from now on.
+        uint64_t lowKeptOut = low & m_lowMembersKeptOutOfNodesMadeForPlaceholders;
+        ValueSetID setKeptOut = maker.intersect(set, ValueSets::complement(m_allButKeptOutOfNodesMadeForPlaceholders));
+        if (setKeptOut != ValueSets::nothing && (lowKeptOut & lowInNoSet))
+            setKeptOut = maker.unite(setKeptOut, worker.setOfLowMembers(lowKeptOut));
+        Message keptOut { m_coveredNodeThatTakesWhatIsKeptOut, setKeptOut.index(), lowKeptOut };
+        if (!didCoveredNodeHoldAllOf(keptOut.to, keptOut.low, keptOut.set))
+            leave(keptOut);
+        low &= ~m_lowMembersKeptOutOfNodesMadeForPlaceholders;
+        lowInNoSet &= low;
+        set = maker.intersect(set, m_allButKeptOutOfNodesMadeForPlaceholders);
+    }
     if (gate.flags & IsRetired) [[unlikely]] {
         ValueSetID taken = whatRetiredNodeTakes(node, maker);
         for (uint64_t rest = low; rest; rest &= rest - 1) {
@@ -1121,6 +1157,8 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
         if (target.flags & IgnoresArrivals)
             return;
         if ((target.flags & IsCoveredNode) && didCoveredNodeHoldAllOf(successor, message.low, message.set))
+            return;
+        if ((target.flags & IsRetired) && !retiredNodeTakesAnyOf(successor, message.low, message.set))
             return;
         if (!handsOnAll && target.mask) {
             const Mask& mask = m_masks[target.mask];
@@ -1323,11 +1361,16 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
     }
     for (const std::unique_ptr<Worker>& worker : m_workers)
         worker->movedNodes.shrink(0);
-    retireNodes(team.get(), moved.span());
-    if (retiredNodes == RetiredNodes::AreConnectedInSolve)
-        connectPredecessorsOfNodesJustRetired();
-    giveBackLargeBuffers();
+    if (retiredNodes == RetiredNodes::AreFoundAndConnectedInSolve)
+        retireNodesAmong(moved.span());
     m_counters.waving += MonotonicTime::now() - afterRows;
+}
+
+void ValueFlowGraph::retireNodesAmong(std::span<const ValueFlowNodeID> moved)
+{
+    retireNodes(*m_team, moved);
+    connectPredecessorsOfNodesJustRetired();
+    giveBackLargeBuffers();
 }
 
 void ValueFlowGraph::releaseRows()

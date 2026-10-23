@@ -20,11 +20,7 @@ constexpr bool admitsUnknownJavaScript(UnseenCodeCause cause)
     case UnseenCodeCause::RunsUnseenCode:
     case UnseenCodeCause::OptionAdmitsCode:
         return true;
-    case UnseenCodeCause::Unknown:
-    case UnseenCodeCause::LoadsModuleByName:
-    case UnseenCodeCause::LimitReached:
-    case UnseenCodeCause::FlowResultDisabled:
-    case UnseenCodeCause::RunsMachineCode:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();

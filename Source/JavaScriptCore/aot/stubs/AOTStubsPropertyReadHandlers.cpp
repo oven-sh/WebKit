@@ -24,10 +24,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr unsigned receiverOperand = 0;
-static constexpr unsigned headerOperand = 1;
-static constexpr unsigned payloadOperand = 2;
-
 static constexpr unsigned nameOperandOfExit = 1;
 static constexpr unsigned siteOperandOfExit = 2;
 

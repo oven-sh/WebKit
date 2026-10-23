@@ -18,8 +18,8 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr size_t maxVectorSize = defaultLimitValue(LimitID::VectorBytes, hostArchitecture());
-static_assert(WTF::isValidCapacityForVector<uint8_t>(maxVectorSize) && !WTF::isValidCapacityForVector<uint8_t>(maxVectorSize + 1));
+static constexpr size_t maxWrittenVectorSize = defaultLimitValue(LimitID::VectorBytes, hostArchitecture());
+static_assert(WTF::isValidCapacityForVector<uint8_t>(maxWrittenVectorSize) && !WTF::isValidCapacityForVector<uint8_t>(maxWrittenVectorSize + 1));
 
 bool checkSectionSize(uint64_t size, BuildContext& context)
 {
@@ -34,10 +34,10 @@ bool checkSectionSize(uint64_t size, BuildContext& context)
 
 void growSectionTo(Vector<uint8_t>& bytes, size_t newSize)
 {
-    ASSERT(newSize <= maxVectorSize);
+    ASSERT(newSize <= maxWrittenVectorSize);
     // Vector::grow() reserves more than it needs, and crashes when that is more than a Vector can hold.
     if (newSize > bytes.capacity())
-        bytes.reserveCapacity(std::min(maxVectorSize, std::max(newSize, bytes.capacity() + bytes.capacity() / 2)));
+        bytes.reserveCapacity(std::min(maxWrittenVectorSize, std::max(newSize, bytes.capacity() + bytes.capacity() / 2)));
     bytes.grow(newSize);
 }
 

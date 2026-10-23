@@ -53,7 +53,7 @@ jobs:
       # The release the lanes are published as.
       tag: ${{ steps.plan.outputs.tag }}
       # Matrices ({"include": [lane, ...]}) of the lanes that are only built, of the lanes that are also tested, and
-      # of the test job; and the labels of all lanes.
+      # of the test job; and the names of the release's assets: the labels of all lanes, and `SOURCES` of lanes.mjs.
       build: ${{ steps.plan.outputs.build }}
       build_tested: ${{ steps.plan.outputs.build_tested }}
       test: ${{ steps.plan.outputs.test }}
@@ -253,6 +253,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
           TEST: ${{ matrix.test }}
           PROGRAMS: ${{ matrix.programs }}
+          SOURCES: ${{ matrix.sources }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.plan.outputs.tag }}
@@ -273,10 +274,18 @@ jobs:
           for program in jsc testFFI testaot; do
             case " $PROGRAMS " in *" $program "*) ;; *) rm -f "bun-webkit/bin/$program" "bun-webkit/bin/$program.exe" ;; esac
           done
+          for objects in jsc-objects testaot-objects; do
+            case " $PROGRAMS " in *" $objects "*) ls -l bun-webkit/lib/*"$objects".* ;; *) rm -f "bun-webkit/lib/lib$objects.a" "bun-webkit/lib/$objects.lib" ;; esac
+          done
           # For `test` alone: not part of what ships.
           rm -rf test-bin && if [ -d bun-webkit/test-bin ]; then mv bun-webkit/test-bin test-bin; fi
           tar -czf bun-webkit.tar.gz bun-webkit
           du -sh bun-webkit/lib bun-webkit/bin/* && ls -l bun-webkit.tar.gz
+          # `SOURCES` in lanes.mjs: one lane packs it.
+          if [ -n "$SOURCES" ]; then
+            tar -czf "$SOURCES.tar.gz" --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
+            tar -tzf "$SOURCES.tar.gz" | grep -c . && ls -l "$SOURCES.tar.gz"
+          fi
           # What `test` runs.
           if [ "$TEST" = true ]; then
             if [ -d test-bin ]; then mv test-bin/* bun-webkit/bin/; fi
@@ -297,15 +306,19 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.plan.outputs.tag }}
           LABEL: ${{ matrix.label }}
+          SOURCES: ${{ matrix.sources }}
           DIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
           mv "$DIR/bun-webkit.tar.gz" "$DIR/$LABEL.tar.gz"
-          for attempt in 1 2 3 4 5; do
-            gh release upload "$TAG" "$DIR/$LABEL.tar.gz" --clobber && { echo "uploaded $LABEL"; exit 0; }
-            echo "upload of $LABEL failed (attempt $attempt)"; sleep $((attempt * 10))
+          for asset in "$LABEL" $SOURCES; do
+            uploaded=false
+            for attempt in 1 2 3 4 5; do
+              gh release upload "$TAG" "$DIR/$asset.tar.gz" --clobber && { echo "uploaded $asset"; uploaded=true; break; }
+              echo "upload of $asset failed (attempt $attempt)"; sleep $((attempt * 10))
+            done
+            [ "$uploaded" = true ] || exit 1
           done
-          exit 1
 
   build-tested:
     name: ${{ matrix.label }}
@@ -494,6 +507,11 @@ jobs:
               }'
           status=${PIPESTATUS[0]}
           echo "run-javascriptcore-tests exited with $status"
+          # This testaot has the table of the stand-in host, and leaves out the native tests of bun's entries
+          # (AOTNativeTestsOfHostEntries.inc): the testaot that bun links with its own table runs them, in bun's CI. Its last
+          # line says how many. The number is written here so that no test joins them unseen.
+          left_out=$(grep -a -E '^[0-9]+ passed, [0-9]+ failed, [0-9]+ todo' "$RUNNER_TEMP/jsc-tests.log" | tail -n 1 | grep -o -E '[0-9]+ left out' || echo "0 left out")
+          if [ "$left_out" != "53 left out" ]; then echo "::error::testaot: $left_out, and 53 are expected"; status=1; fi
           # What each failing run printed (exception, stack, exit code), grouped under its name: the part of the full
           # log that is needed to fix a test.
           awk '
@@ -554,7 +572,8 @@ jobs:
       - build
       - build-tested
     steps:
-      # Every lane uploads <label>.tar.gz. The lanes are the release: a label missing from it fails the job.
+      # Every lane uploads <label>.tar.gz, and one of them `SOURCES` of lanes.mjs too. Those are the release: one missing
+      # from it fails the job.
       - name: Publish or delete the draft
         env:
           GH_TOKEN: ${{ github.token }}

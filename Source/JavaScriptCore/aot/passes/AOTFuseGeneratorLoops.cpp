@@ -20,7 +20,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t takenTargetIndex = 0;
+static constexpr uint32_t indexOfTakenTarget = 0;
 
 namespace {
 
@@ -134,7 +134,7 @@ static BitVector findBlocksAfterImpossibleStatus(FunctionPassContext& pass, std:
     for (ValueID comparison : comparisons) {
         for (const Use& use : useLists.usesOf(comparison)) {
             if (use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.kind == TerminatorKind::Branch)
-                impossibleEdges.append(Edge { use.block, takenTargetIndex });
+                impossibleEdges.append(Edge { use.block, indexOfTakenTarget });
         }
     }
 

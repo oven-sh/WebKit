@@ -32,7 +32,7 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 using ModuleList = Vector<uint32_t, 4>;
-using Callees = Vector<FunctionID, 1>;
+using ModuleCallees = Vector<FunctionID, 1>;
 
 enum class SiteKind : uint8_t {
     // EvaluateModule in the body of its referrer, where every run of the body passes once and no handler stands around it.
@@ -47,7 +47,7 @@ enum class SiteKind : uint8_t {
     Record,
 };
 
-struct Site {
+struct ModuleCallSite {
     FunctionID function;
     ValueID value;
     ModuleID target;
@@ -85,9 +85,9 @@ struct EvaluationPlan {
     // In the order in which the body comes to them.
     Vector<Vector<BareSite>> bareSites;
     // What stands in the place of each of them.
-    Vector<Vector<Callees>> calleesAtBareSites;
+    Vector<Vector<ModuleCallees>> calleesAtBareSites;
     // For a module with a state: what evaluates all that it imports.
-    Vector<Callees> steps;
+    Vector<ModuleCallees> steps;
 };
 
 // What a program can tell of a `require` beyond the evaluation of the module.
@@ -267,7 +267,7 @@ static std::optional<SiteKind> siteKindOf(const Value& value)
 }
 
 // The front end says which sites are bare, and the passes between it and this one move code.
-static void appendFlaggedSites(const Function& function, Vector<std::pair<BlockID, Site>, 8>& flagged, Vector<Site>& found)
+static void appendFlaggedSites(const Function& function, Vector<std::pair<BlockID, ModuleCallSite>, 8>& flagged, Vector<ModuleCallSite>& found)
 {
     if (flagged.isEmpty())
         return;
@@ -296,7 +296,7 @@ static void appendFlaggedSites(const Function& function, Vector<std::pair<BlockI
             return dominators.dominates(block, end);
         });
     };
-    AOT::stableSort(flagged, { }, [&](const std::pair<BlockID, Site>& entry) {
+    AOT::stableSort(flagged, { }, [&](const std::pair<BlockID, ModuleCallSite>& entry) {
         return cfg.isReachable(entry.first) ? cfg.reversePostOrderIndex(entry.first) : UINT32_MAX;
     });
     for (auto& [block, site] : flagged) {
@@ -306,7 +306,7 @@ static void appendFlaggedSites(const Function& function, Vector<std::pair<BlockI
     }
 }
 
-static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& moduleWithBody, FunctionID id, Vector<Site>& found)
+static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& moduleWithBody, FunctionID id, Vector<ModuleCallSite>& found)
 {
     constexpr OpcodeSet opcodesOfSites { Opcode::EvaluateModule, Opcode::RequireModule, Opcode::ImportModule, Opcode::ModuleNamespace, Opcode::RecordRequire };
     if (!mayListValueWith(plan.program, id, opcodesOfSites))
@@ -319,7 +319,7 @@ static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& module
         return;
 
     ModuleID evaluated = moduleWithBody[id.index()];
-    Vector<std::pair<BlockID, Site>, 8> flagged;
+    Vector<std::pair<BlockID, ModuleCallSite>, 8> flagged;
     for (unsigned blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         const Block& block = function.blocks[blockIndex];
         for (ValueID valueID : block.values) {
@@ -327,7 +327,7 @@ static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& module
             std::optional<SiteKind> kind = siteKindOf(value);
             if (!kind)
                 continue;
-            Site site { id, valueID, value.module(), *kind };
+            ModuleCallSite site { id, valueID, value.module(), *kind };
             bool isFlagged = value.opcode == Opcode::EvaluateModule && value.isBare() && evaluated && value.referrer() == evaluated && !block.handler;
             if (isFlagged && plan.isCalledWhereRequired.quickGet(site.target.index()))
                 flagged.append({ BlockID(blockIndex), site });
@@ -464,7 +464,7 @@ static void walkFrom(EvaluationPlan& plan, ModuleID first)
         List list;
     };
     const Program& program = plan.program;
-    auto calleesOf = [&](List list) -> Callees& {
+    auto calleesOf = [&](List list) -> ModuleCallees& {
         return list.site == stepsOfFirst ? plan.steps[list.module] : plan.calleesAtBareSites[list.module][list.site];
     };
 
@@ -548,7 +548,7 @@ static Value makeModuleOperation(Opcode opcode, ModuleID module)
 }
 
 // To evaluate a module with a state is to call this function: it evaluates what the module imports, in the order of the requests, and then runs the code of the module.
-static void buildStart(const AnalysisContext& context, Function& start, const ModuleToStart& module, const Callees& steps, TypeArena& types)
+static void buildStart(const AnalysisContext& context, Function& start, const ModuleToStart& module, const ModuleCallees& steps, TypeArena& types)
 {
     const Function& code = context.program.at(module.code);
     IRBuilder builder(context, start, types);
@@ -731,7 +731,7 @@ static void replaceSites(const EvaluationPlan& plan, const FlowResults& flow, co
             bareSites.append({ sites[index].value, index });
         AOT::sort(bareSites);
     }
-    auto calleesAtBareSite = [&](ValueID id) -> const Callees* {
+    auto calleesAtBareSite = [&](ValueID id) -> const ModuleCallees* {
         auto found = std::ranges::lower_bound(bareSites, id, { }, &std::pair<ValueID, uint32_t>::first);
         if (found == bareSites.end() || found->first != id)
             return nullptr;
@@ -751,7 +751,7 @@ static void replaceSites(const EvaluationPlan& plan, const FlowResults& flow, co
             continue;
         }
         isErased.quickSet(id.index());
-        if (const Callees* callees = calleesAtBareSite(id)) {
+        if (const ModuleCallees* callees = calleesAtBareSite(id)) {
             for (FunctionID callee : *callees)
                 insertCallOfModule(builder, point, callee);
             continue;
@@ -835,7 +835,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
             plan.startsItself.quickSet(index);
     }
 
-    Vector<Site> sites = collectInParallel<Site>(loops, program.functions.size(), [&](unsigned index, Vector<Site>& found) {
+    Vector<ModuleCallSite> sites = collectInParallel<ModuleCallSite>(loops, program.functions.size(), [&](unsigned index, Vector<ModuleCallSite>& found) {
         findSites(plan, moduleWithBody, FunctionID(index), found);
     });
 
@@ -845,7 +845,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     BitVector isAskedOfLoader(modules.size());
     bool recordsRequires = false;
     unsigned numberOfSitesBound = 0;
-    for (const Site& site : sites) {
+    for (const ModuleCallSite& site : sites) {
         size_t target = site.target.index();
         switch (site.kind) {
         case SiteKind::Bare:
@@ -920,8 +920,8 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     }
 
     plan.steps.grow(modules.size());
-    plan.calleesAtBareSites = Vector<Vector<Callees>>(modules.size(), [&](size_t index) {
-        return Vector<Callees>(plan.bareSites[index].size());
+    plan.calleesAtBareSites = Vector<Vector<ModuleCallees>>(modules.size(), [&](size_t index) {
+        return Vector<ModuleCallees>(plan.bareSites[index].size());
     });
     Vector<uint32_t> modulesWithState;
     for (size_t index : plan.isWalkedByCode) {
@@ -934,13 +934,13 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     });
 
     BitVector isCalled(program.functions.size());
-    auto noteCallees = [&](const Callees& callees) {
+    auto noteCallees = [&](const ModuleCallees& callees) {
         for (FunctionID callee : callees)
             isCalled.quickSet(callee.index());
     };
     for (size_t index = 0; index < modules.size(); ++index) {
         noteCallees(plan.steps[index]);
-        for (const Callees& callees : plan.calleesAtBareSites[index])
+        for (const ModuleCallees& callees : plan.calleesAtBareSites[index])
             noteCallees(callees);
     }
     for (size_t index : isRequiredLate) {
@@ -1012,7 +1012,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     Vector<ModuleID> modulesEvaluatedByThem;
     unsigned numberOfRequiresRecorded = 0;
     FunctionID last;
-    for (const Site& site : sites) {
+    for (const ModuleCallSite& site : sites) {
         bool isReplaced = false;
         switch (site.kind) {
         case SiteKind::Bare:

@@ -235,7 +235,7 @@ const ValueFlowSite* ValueFlowUniverse::siteOf(ValueFlowObjectID object) const
     return &m_sites[m_siteOfObject[object.index() - m_firstSite]];
 }
 
-static bool isDefinedByClass(const Layout& layout)
+static bool layoutIsDefinedByClass(const Layout& layout)
 {
     return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
 }
@@ -257,7 +257,7 @@ LayoutID ValueFlowUniverse::layoutOf(ValueFlowObjectID object) const
 ValueFlowObjectID ValueFlowUniverse::objectAllocatedUnder(const Program& program, ValueFlowObjectID site, ValueFlowObjectID prototype) const
 {
     LayoutID requested = classLayoutOf(prototype);
-    if (!requested || !isDefinedByClass(program.at(requested)))
+    if (!requested || !layoutIsDefinedByClass(program.at(requested)))
         return site;
     // Under the prototype object of its own class the allocation stays as it is, with a layout that may have been derived from that of the class.
     LayoutID allocated = siteOf(site)->layout;
@@ -590,12 +590,13 @@ public:
         return layouts;
     }
 
-    ValueFlowLinker(const Program& program, BuildContext& build)
+    ValueFlowLinker(const Program& program, BuildContext& build, Vector<ValueFlowNotedOperations>&& notedOperations)
         : m_program(program)
         , m_build(build)
         , m_loops(build.parallelLoops())
         , m_numberOfFunctions(program.functions.size())
     {
+        m_result.m_notedOperations = WTF::move(notedOperations);
     }
 
     ValueFlowBodies link()
@@ -611,7 +612,16 @@ public:
 
         m_result.m_universe.m_builtinTables = makeUnique<ValueFlowBuiltinTables>(m_program.builtins());
         const ValueFlowBuiltinTables& tables = *m_result.m_universe.m_builtinTables;
-        m_result.m_unobservedDefinitions = UnobservedFieldDefinitions(m_program, m_build);
+        if (m_result.m_notedOperations.isEmpty()) {
+            m_result.m_notedOperations.fill(0, m_numberOfFunctions);
+            forEachIndexInParallel(m_loops, m_numberOfFunctions, [&](unsigned index) {
+                m_result.m_notedOperations[index] = notedOperationsOf(m_program.functions[index]);
+            });
+        }
+        RELEASE_ASSERT(m_result.m_notedOperations.size() == m_numberOfFunctions);
+        m_result.m_unobservedDefinitions = UnobservedFieldDefinitions(m_program, m_build, [&](FunctionID function) {
+            return m_result.holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::CallDirect }));
+        });
         Vector<FunctionID>& genericVersionOf = m_result.m_universe.m_genericVersionOf;
         genericVersionOf.fill(FunctionID(), m_numberOfFunctions);
         for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
@@ -620,13 +630,6 @@ public:
                 genericVersionOf[entryChecks->body.index()] = entryChecks->fallback;
             }
         }
-        static constexpr auto notedOperationsOfOpcode = [] {
-            std::array<ValueFlowNotedOperations, numberOfEnumerators<Opcode>> table { };
-            for (size_t index = 0; index < table.size(); ++index)
-                table[index] = notedOperationsOf(static_cast<Opcode>(index));
-            return table;
-        }();
-        m_result.m_notedOperations.fill(0, m_numberOfFunctions);
         Vector<uint32_t> largestFirst = largeFunctions(m_program, m_loops);
         largestFirst.insert(0, m_numberOfFunctions);
         runTasksInParallel(m_loops, {
@@ -636,11 +639,7 @@ public:
             [&] {
                 m_bodies = ParallelArray<ValueFlowBody>(m_loops, m_numberOfFunctions + 1, largestFirst.span(), [&](unsigned index) {
                     if (index == m_numberOfFunctions)
-                        return makeHostBody(m_program, tables);
-                    ValueFlowNotedOperations operations = 0;
-                    for (const Value& value : m_program.functions[index].values)
-                        operations |= notedOperationsOfOpcode[static_cast<size_t>(value.opcode)];
-                    m_result.m_notedOperations[index] = operations;
+                        return makeHostBody(m_program, tables, m_result.m_notedOperations.span());
                     return reduceBody(m_program, tables, FunctionID(index), &m_result.m_unobservedDefinitions, genericVersionOf[index]);
                 });
             },
@@ -653,6 +652,15 @@ public:
             ValueFlowBody& reduced = m_bodies[body.index()];
             reduced.statements.append({ { }, { }, static_cast<uint32_t>(reduced.operands.size()), 0, { }, { }, ValueFlowStatementKind::ModuleEvaluation });
         }
+        m_result.m_valuesBehindChecks.grow(m_numberOfFunctions);
+        m_result.m_knowsValuesBehindChecks.fill(0, m_numberOfFunctions);
+        forEachIndexInParallel(m_loops, (m_numberOfFunctions + bodiesInChunk - 1) / bodiesInChunk, [&](unsigned chunk) {
+            unsigned end = std::min(m_numberOfFunctions, (chunk + 1) * bodiesInChunk);
+            for (unsigned index = chunk * bodiesInChunk; index < end; ++index) {
+                m_result.m_knowsValuesBehindChecks[index] = m_bodies[index].knowsValuesBehindChecks;
+                m_result.m_valuesBehindChecks[index] = WTF::move(m_bodies[index].valuesBehindChecks);
+            }
+        });
         takeTime(m_result.m_times.reduce, "solve: bodies: reduced"_s);
         // The numbers of the nodes and the places in the lists come from the sizes of the bodies alone.
         runTasksInParallel(m_loops, {
@@ -916,7 +924,7 @@ private:
         m_result.m_universe.m_instancesOfRootClasses = maker.of(instancesOfRootClasses.span());
         Vector<ValueFlowObjectID> instancesOfClasses;
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
-            if (isDefinedByClass(m_program.layouts[index]))
+            if (layoutIsDefinedByClass(m_program.layouts[index]))
                 instancesOfClasses.append(universe.instanceOf(LayoutID(index)));
         }
         m_result.m_universe.m_instancesOfClasses = maker.of(instancesOfClasses.span());
@@ -1495,9 +1503,23 @@ ValueFlowBodies::ValueFlowBodies(ValueFlowBodies&&) = default;
 ValueFlowBodies& ValueFlowBodies::operator=(ValueFlowBodies&&) = default;
 ValueFlowBodies::~ValueFlowBodies() = default;
 
-ValueFlowBodies reduceBodies(const Program& program, BuildContext& build)
+ValueFlowNotedOperations notedOperationsOf(const Function& function)
 {
-    return ValueFlowLinker(program, build).link();
+    static constexpr auto notedOperationsOfOpcode = [] {
+        std::array<ValueFlowNotedOperations, numberOfEnumerators<Opcode>> table { };
+        for (size_t index = 0; index < table.size(); ++index)
+            table[index] = notedOperationsOf(static_cast<Opcode>(index));
+        return table;
+    }();
+    ValueFlowNotedOperations operations = 0;
+    for (const Value& value : function.values)
+        operations |= notedOperationsOfOpcode[static_cast<size_t>(value.opcode)];
+    return operations;
+}
+
+ValueFlowBodies reduceBodies(const Program& program, BuildContext& build, Vector<ValueFlowNotedOperations>&& notedOperations)
+{
+    return ValueFlowLinker(program, build, WTF::move(notedOperations)).link();
 }
 
 } } } // namespace JSC::AOT::Typed

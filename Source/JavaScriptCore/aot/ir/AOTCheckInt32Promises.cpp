@@ -185,7 +185,7 @@ static bool hasPromises(const Function& function)
 }
 
 // The proof is what the build demands of the program. What the compiled code relies on is the types: a flow that they do not prove is tested like any other conversion.
-static RequestCounts resolveRequests(FunctionPassContext& context)
+static RequestCounts resolveInt32Requests(FunctionPassContext& context)
 {
     Function& function = context.function;
     TypingContext typing { context.program, function, context.types };
@@ -238,7 +238,7 @@ PassOutcome checkInt32Promises(FunctionPassContext& context)
     if (hasReported)
         judgeRequests(context, prover, Judge::FlowsThatTypesProve);
 
-    RequestCounts counts = resolveRequests(context);
+    RequestCounts counts = resolveInt32Requests(context);
     if (counts.erased) {
         compactFunction(context.function);
         context.analyses.didChangeControlFlow();

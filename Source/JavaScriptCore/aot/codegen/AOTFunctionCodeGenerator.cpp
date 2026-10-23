@@ -261,12 +261,8 @@ bool FunctionCodeGenerator::generateB3(DirectCodeAttempt attempt)
 
     bool isWorthOptimizing = !isGeneratedWithoutOptimizing(build, m_inputs.heat, m_inputs.program, m_id);
     bool checksAir = options.validatesBackEnd || options.validatesReferences || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
-    if (!isWorthOptimizing && !checksAir && attempt != DirectCodeAttempt::None && traits.convention == BackEndConvention::Function) {
-        if (build.recordedOptions().has(TestingSwitch::GenerateDirectCodeByLinearScan))
-            m_linearScanCode = planLinearScanCode(proc, attempt, LoopsInDirectCode::AreGenerated);
-        else
-            m_directCode = planDirectCode(proc, attempt);
-    }
+    if (!isWorthOptimizing && !checksAir && attempt != DirectCodeAttempt::None && traits.convention == BackEndConvention::Function)
+        m_directCode = planDirectCode(proc, attempt);
     return true;
 }
 
@@ -304,7 +300,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
     if (generatesDirectly()) {
         BlockColdnessRule coldness(m_inputs, m_id);
         m_records.frameMaps.anotherGeneratorCanTry = true;
-        bool isGenerated = m_linearScanCode ? generateLinearScanCode(*m_linearScanCode, m_jit, m_records, coldness) : generateDirectCode(*m_directCode, m_jit, m_records, coldness);
+        bool isGenerated = generateDirectCode(*m_directCode, m_jit, m_records, coldness);
         if (!isGenerated || m_records.frameMaps.hasSiteWithoutWord) {
             m_didFailToGenerateDirectly = true;
             return { };
@@ -373,7 +369,7 @@ bool FunctionCodeGenerator::reportBackEnd()
 {
     BuildContext& build = m_worker.build;
     const B3::CompilationReport& report = m_procedure->report();
-    BackEndReport collected = collectBackEndReport(report, m_frameAddressViolations.span(), build.options().collectsDeclines());
+    BackEndReport collected = collectBackEndReport(report, m_frameAddressViolations.span());
     // Every narrow reference must be in a form that the scan of the stack finds. That a pointer lies beside it is asked for by a check of its own.
     if (!build.options().validatesReferenceGuards) {
         m_narrowReferenceFindings.violations.removeAllMatching([](const NarrowReferenceViolation& violation) {

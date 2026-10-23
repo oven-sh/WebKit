@@ -690,9 +690,7 @@ Vector<FlowSiteLevel> gradeAccessSites(const FlowResults& flow, AccessSiteObserv
 static Access memberAccessOf(AccessKind kind)
 {
     switch (kind) {
-    case AccessKind::Read:
-    case AccessKind::Call:
-    case AccessKind::Construct:
+    default:
         return Access::Read;
     case AccessKind::Store:
         return Access::Store;
@@ -799,12 +797,7 @@ static IllTypedCause illTypedCauseOf(UnprovenCause cause)
         return IllTypedCause::UnprovenCallee;
     case UnprovenCause::UnprovenContents:
         return IllTypedCause::ContainerWriterUnseen;
-    case UnprovenCause::FieldDeleted:
-    case UnprovenCause::UnknownKeyDelete:
-    case UnprovenCause::PropertyRedefined:
-    case UnprovenCause::PropertyAdded:
-    case UnprovenCause::IntegrityChanged:
-    case UnprovenCause::PrototypeChanged:
+    default:
         return IllTypedCause::StateChanged;
     case UnprovenCause::UnknownKeyStore:
         return IllTypedCause::ComputedKeyStore;
@@ -908,11 +901,7 @@ static std::array<uint32_t, numberOfEnumerators<KnowledgeLevel>>& countersOf(Wir
     switch (kind) {
     case AccessKind::Unknown:
         break;
-    case AccessKind::Read:
-    case AccessKind::Store:
-    case AccessKind::Define:
-    case AccessKind::Has:
-    case AccessKind::Delete:
+    default:
         return record.accesses;
     case AccessKind::Call:
     case AccessKind::Construct:

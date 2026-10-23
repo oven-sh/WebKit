@@ -54,7 +54,7 @@ static const FreeList& freeListOf(const void* allocator)
     return *reinterpret_cast<const FreeList*>(static_cast<const uint8_t*>(allocator) + LocalAllocator::offsetOfFreeList());
 }
 
-static String asWord(StringView text)
+static String countedAsWord(StringView text)
 {
     if (text.isEmpty())
         return "-"_str;
@@ -85,7 +85,7 @@ static uint64_t callSiteKeyOf(const CompiledFrame& frame)
 static String describeFunction(VM& vm, FunctionID function)
 {
     FunctionDescription description(function);
-    return description.codeType() == ModuleCode ? "module"_str : asWord(description.name(vm));
+    return description.codeType() == ModuleCode ? "module"_str : countedAsWord(description.name(vm));
 }
 
 static String describePosition(const Image& image, const CompiledFrame& frame)
@@ -98,7 +98,7 @@ static String describePosition(const Image& image, const CompiledFrame& frame)
     if (!position)
         return "-"_str;
     String path = position->source ? ModuleTable(image.programTables()).pathTextForLineColumns(position->source) : emptyString();
-    return makeString(asWord(path), ':', position->lineColumn.line);
+    return makeString(countedAsWord(path), ':', position->lineColumn.line);
 }
 
 static String describePlace(VM& vm, const std::optional<CompiledFrame>& frame)
@@ -220,7 +220,7 @@ void AllocationCounts::didMake(VM& vm, ASCIILiteral what, const char* detailOrNu
     if (vmState.instances.isEmpty() || !vmState.instances.first()->state)
         return;
     AllocationCounts& counts = ensure(*vmState.instances.first());
-    String words = makeString(describePlace(vm, findAllocatingFrame(vm, FunctionID())), ' ', what, detailOrNull ? ":"_s : ""_s, detailOrNull ? asWord(String::fromLatin1(detailOrNull)) : emptyString());
+    String words = makeString(describePlace(vm, findAllocatingFrame(vm, FunctionID())), ' ', what, detailOrNull ? ":"_s : ""_s, detailOrNull ? countedAsWord(String::fromLatin1(detailOrNull)) : emptyString());
     uint32_t number = counts.m_madeByWords.ensure(words, [&] {
         counts.m_made.append(Line { words });
         return static_cast<uint32_t>(counts.m_made.size() - 1);
@@ -232,7 +232,7 @@ void AllocationCounts::addRefill(const LocalAllocator& allocator, uint64_t cells
 {
     VM& vm = *m_instance.vm;
     const ASCIICString& subspace = allocator.directory().subspace()->name();
-    String words = makeString(describePlace(vm, findAllocatingFrame(vm, FunctionID())), ' ', asWord(String::fromLatin1(subspace.data())), ':', allocator.cellSize());
+    String words = makeString(describePlace(vm, findAllocatingFrame(vm, FunctionID())), ' ', countedAsWord(String::fromLatin1(subspace.data())), ':', allocator.cellSize());
     uint32_t number = m_refillsByWords.ensure(words, [&] {
         m_refills.append(Line { words });
         return static_cast<uint32_t>(m_refills.size() - 1);
@@ -249,12 +249,12 @@ static String describeLayoutOfAllocation(const Instance& instance, uint32_t allo
     uint32_t shape = tables.allocations()[allocation].shape;
     if (shape < tables.firstEnvironmentShape) {
         const LayoutData& layout = tables.layoutForShape(shape);
-        return makeString('L', layout.index, ':', asWord(nameOf(tables, layout)));
+        return makeString('L', layout.index, ':', countedAsWord(nameOf(tables, layout)));
     }
     const EnvironmentData& environment = tables.environmentForShape(shape);
     if (environment.kind == LayoutKind::Closure)
         return "closure"_str;
-    return makeString('L', environment.index, ':', asWord(textOrEmpty(image, StringID(environment.name))));
+    return makeString('L', environment.index, ':', countedAsWord(textOrEmpty(image, StringID(environment.name))));
 }
 
 String AllocationCounts::describeLayout(Allocated allocated) const
@@ -263,7 +263,7 @@ String AllocationCounts::describeLayout(Allocated allocated) const
     case Kind::Allocation:
         return describeLayoutOfAllocation(m_instance, allocated.id);
     case Kind::Closure:
-        return makeString("closure:"_s, asWord(writtenFunctionName(FunctionID(allocated.id))));
+        return makeString("closure:"_s, countedAsWord(writtenFunctionName(FunctionID(allocated.id))));
     case Kind::Map:
         return "Map"_str;
     case Kind::Set:

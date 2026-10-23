@@ -60,7 +60,7 @@ struct CheckSite {
     BlockID continuation;
 };
 
-struct Cut {
+struct GenericVersionCut {
     ProgramPoint point;
     BlockID blockBefore;
     BlockID blockAfter;
@@ -128,7 +128,7 @@ private:
 
     bool tryCreateGenericVersion();
     void splitBlocks(std::span<const ProgramPoint> rejoinPoints);
-    const Cut* findCut(ProgramPoint) const;
+    const GenericVersionCut* findCut(ProgramPoint) const;
     void mergeBlocksCutForNothing();
     void findUnmergeableExits();
     void eraseProof(ValueID, ExpectedTypes);
@@ -153,7 +153,7 @@ private:
     TypeID m_anyValue;
     bool m_reportsMismatches;
     Vector<CheckSite, 8> m_sites;
-    Vector<Cut, 16> m_cuts;
+    Vector<GenericVersionCut, 16> m_cuts;
     // Empty where the function has no generic version, and every block runs with what a check would have turned away.
     BitVector m_isGenericBlock;
     // A check without an exit has become a guard at each use, so the typed blocks behind it run with what it would have turned away too.
@@ -576,9 +576,9 @@ bool GenericVersionBuilder::removeRedundantChecks()
     return true;
 }
 
-const Cut* GenericVersionBuilder::findCut(ProgramPoint point) const
+const GenericVersionCut* GenericVersionBuilder::findCut(ProgramPoint point) const
 {
-    auto found = std::ranges::lower_bound(m_cuts, point, isBefore, &Cut::point);
+    auto found = std::ranges::lower_bound(m_cuts, point, isBefore, &GenericVersionCut::point);
     return found != m_cuts.end() && found->point == point ? &*found : nullptr;
 }
 
@@ -587,14 +587,14 @@ void GenericVersionBuilder::splitBlocks(std::span<const ProgramPoint> rejoinPoin
     for (CheckSite& site : m_sites) {
         site.hasExit = !isAfterTailCall(m_function, pointAfter(site.point));
         if (site.hasExit)
-            m_cuts.append(Cut { pointAfter(site.point), { }, { } });
+            m_cuts.append(GenericVersionCut { pointAfter(site.point), { }, { } });
     }
     for (ProgramPoint point : rejoinPoints) {
         if (point.index && !isAfterTailCall(m_function, point))
-            m_cuts.append(Cut { point, { }, { } });
+            m_cuts.append(GenericVersionCut { point, { }, { } });
     }
-    AOT::sort(m_cuts, isBefore, &Cut::point);
-    removeRepeatedElements(m_cuts, [](const Cut& a, const Cut& b) {
+    AOT::sort(m_cuts, isBefore, &GenericVersionCut::point);
+    removeRepeatedElements(m_cuts, [](const GenericVersionCut& a, const GenericVersionCut& b) {
         return a.point == b.point;
     });
 
@@ -608,7 +608,7 @@ void GenericVersionBuilder::splitBlocks(std::span<const ProgramPoint> rejoinPoin
         m_builder.setOrigin(m_function.at(m_function.at(block).values[indexes.first() - 1]).origin());
         BlockID previous = block;
         for (BlockID part : m_builder.splitBlock(block, indexes.span())) {
-            Cut& cut = m_cuts[next++];
+            GenericVersionCut& cut = m_cuts[next++];
             cut.blockBefore = previous;
             cut.blockAfter = part;
             previous = part;
@@ -618,7 +618,7 @@ void GenericVersionBuilder::splitBlocks(std::span<const ProgramPoint> rejoinPoin
     for (CheckSite& site : m_sites) {
         if (!site.hasExit)
             continue;
-        const Cut* cut = findCut(pointAfter(site.point));
+        const GenericVersionCut* cut = findCut(pointAfter(site.point));
         RELEASE_ASSERT(cut);
         site.block = cut->blockBefore;
         site.continuation = cut->blockAfter;
@@ -632,7 +632,7 @@ void GenericVersionBuilder::mergeBlocksCutForNothing()
     bool hasMerged = false;
     // From the last cut of a block to the first: what has been merged into a part goes on into the part in front of it.
     for (size_t index = m_cuts.size(); index--;) {
-        const Cut& cut = m_cuts[index];
+        const GenericVersionCut& cut = m_cuts[index];
         const Block& blockBefore = m_function.at(cut.blockBefore);
         const Block& after = m_function.at(cut.blockAfter);
         if (blockBefore.terminator.kind != TerminatorKind::Jump || blockBefore.terminator.next().block != cut.blockAfter)
@@ -1134,7 +1134,7 @@ bool GenericVersionBuilder::tryCreateGenericVersion()
     for (ProgramPoint point : rejoinPoints) {
         if (!point.index)
             copy.addRejoinBlock(point.block);
-        else if (const Cut* cut = findCut(point))
+        else if (const GenericVersionCut* cut = findCut(point))
             copy.addRejoinBlock(cut->blockAfter);
     }
 

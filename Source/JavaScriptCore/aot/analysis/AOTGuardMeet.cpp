@@ -174,24 +174,7 @@ static bool allocationImplies(const Program& program, const Value& allocation, c
         return program.at(allocation.type).singleBuiltinClass()->builtinClass == program.at(impliedAllocation.type).singleBuiltinClass()->builtinClass;
     case Proof::ArrayStorage:
         return program.at(allocation.type).singleBuiltinClass()->arrayStorage == program.at(impliedAllocation.type).singleBuiltinClass()->arrayStorage;
-    case Proof::None:
-    case Proof::TestedType:
-    case Proof::Truthiness:
-    case Proof::Equality:
-    case Proof::IntegerBound:
-    case Proof::ExactFunction:
-    case Proof::CaseValue:
-    case Proof::NotNullish:
-    case Proof::InBounds:
-    case Proof::NotThenable:
-    case Proof::MemberUnchanged:
-    case Proof::PrototypeLinkUnchanged:
-    case Proof::EvaluatedOnce:
-    case Proof::UnmodifiedGenerator:
-    case Proof::EnumeratorCurrent:
-    case Proof::PlainData:
-    case Proof::SourceOpen:
-    case Proof::TextMatches:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

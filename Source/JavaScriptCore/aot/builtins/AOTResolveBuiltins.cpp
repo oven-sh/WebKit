@@ -19,7 +19,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet callsByValue { Opcode::Call, Opcode::Construct, Opcode::SuperConstruct };
+static constexpr OpcodeSet resolvedCallsByValue { Opcode::Call, Opcode::Construct, Opcode::SuperConstruct };
 
 // leaveURLsUnbuilt() looks for a Construct or a CallBuiltin, and some of the steps for a Call beside something else.
 static_assert(operationsResolvedToBuiltins.contains(Opcode::Construct) && operationsResolvedToBuiltins.contains(Opcode::CallBuiltin) && operationsResolvedToBuiltins.contains(Opcode::Call));
@@ -138,7 +138,7 @@ Vector<BuiltinSite> BuiltinResolver::collectSites()
     Vector<BuiltinSite> sites;
     for (const ValueSite& site : m_context.sitesIn(SiteList::BuiltinUses)) {
         const Value& value = m_function.at(site.value);
-        if (callsByValue.contains(value.opcode) && m_context.exceeds(LimitID::MaxBuiltinCallArguments, value.argumentsOperands().size(), site.value))
+        if (resolvedCallsByValue.contains(value.opcode) && m_context.exceeds(LimitID::MaxBuiltinCallArguments, value.argumentsOperands().size(), site.value))
             continue;
         std::optional<TailCallRequirement> tailCall = tailCallRequirementOf(m_function, site.block, site.value);
         if (!tailCall && !mayFindProvenPlan(inputs, value)) {

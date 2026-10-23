@@ -12,9 +12,6 @@ namespace JSC { namespace AOT {
 
 static constexpr StubRegister getterSetterRegister = StubRegister::T10;
 
-static constexpr unsigned receiverOperand = 0;
-static constexpr unsigned headerOperand = 1;
-static constexpr unsigned payloadOperand = 2;
 static constexpr unsigned firstOperandOfFinisher = 3;
 
 static_assert(noOverlap(operationArgumentGPR(4), gprOf(firstStubOperandRegister), gprOf(slotHeaderRegister), gprOf(slotPayloadRegister), gprOf(storedValueByIdRegister)));

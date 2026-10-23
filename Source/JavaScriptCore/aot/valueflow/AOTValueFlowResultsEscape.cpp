@@ -504,9 +504,7 @@ OperandUses BodyRuleCollector::usesBesideDeclaredOnes(const Value& user, uint32_
         case Access::Define:
             uses.add(OperandUse::StoresByKey);
             break;
-        case Access::None:
-        case Access::Read:
-        case Access::Has:
+        default:
             break;
         }
     }

@@ -259,7 +259,7 @@ static void applyCandidateBudget(const RegExpRequests& requests, CompiledRegExps
     UncheckedKeyHashMap<std::pair<FunctionID, ValueID>, uint64_t> bytesBySite;
     for (size_t index = 0; index < candidates.size(); ++index) {
         uint64_t size = results[index].codeSize();
-        if (!size || candidates[index].origin == RegExpRequestOrigin::Evaluated)
+        if (!size)
             continue;
         const RegExpSite& site = candidates[index].sites.first();
         uint64_t& chargedBytes = bytesBySite.add(std::pair { site.function, site.value }, 0).iterator->value;

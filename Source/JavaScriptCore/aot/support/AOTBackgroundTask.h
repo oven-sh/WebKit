@@ -114,7 +114,7 @@ private:
     WTF::Function<void()> m_run;
     std::atomic<unsigned> m_numberOfUnfinishedDependencies { 1 };
     Lock m_lock;
-    Condition m_condition;
+    WTF::Condition m_condition;
     State m_state WTF_GUARDED_BY_LOCK(m_lock) { State::Waiting };
     Vector<Ref<BackgroundTask>> m_dependents WTF_GUARDED_BY_LOCK(m_lock);
 };

@@ -189,13 +189,7 @@ void pinRegisters(B3::Procedure& proc)
 #endif
 }
 
-static void publishDereferenceableBytes(B3::Procedure& proc, LValue pointer, size_t bytes)
-{
-    if (bytes)
-        proc.setKnownDereferenceableBytes(pointer, static_cast<uint32_t>(std::min<size_t>(bytes, std::numeric_limits<uint32_t>::max())));
-}
-
-void definePinnedValues(Output& out, B3::Procedure& proc, InstanceSizes sizes, PinnedValues& pinned)
+void definePinnedValues(Output& out, InstanceSizes sizes, PinnedValues& pinned)
 {
     pinned.instance = out.argumentRegister(instanceGPR);
     pinned.cellCageBase = out.argumentRegister(cellCageBaseGPR);
@@ -203,10 +197,6 @@ void definePinnedValues(Output& out, B3::Procedure& proc, InstanceSizes sizes, P
     pinned.notCellMask = out.constInt64(JSValue::NotCellMask);
     pinned.instancePrefix = out.add(pinned.instance, out.constIntPtr(-static_cast<ptrdiff_t>(sizeof(InstancePrefix))));
     pinned.statics = out.add(pinned.instance, out.constIntPtr(InstanceLayout::offsetOfStatics(sizes)));
-
-    publishDereferenceableBytes(proc, pinned.instance, InstanceLayout::bytesReservedFromInstance(sizes));
-    publishDereferenceableBytes(proc, pinned.instancePrefix, sizeof(InstancePrefix));
-    publishDereferenceableBytes(proc, pinned.statics, sizes.sizeOfStatics);
 }
 
 static_assert(absentCell32 < undefinedCell32 && nullCell32 < undefinedCell32 && undefinedCell32 < minCell32);

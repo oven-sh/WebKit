@@ -13,7 +13,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t takenTargetIndex = 0;
+static constexpr uint32_t takenTargetOfTest = 0;
 
 static bool hasLastingAnswer(const Value& test)
 {
@@ -83,7 +83,7 @@ static std::optional<uint32_t> tagBitsOnEdge(const SinkingState& state, const Te
     if (!objectState || hasUntaggedVariant(*objectState))
         return std::nullopt;
     uint32_t tagBits = objectState->tagBits();
-    return targetIndex == takenTargetIndex ? tagBits & answer.tagBitsWhenTrue : tagBits & ~answer.tagBitsWhenTrue;
+    return targetIndex == takenTargetOfTest ? tagBits & answer.tagBitsWhenTrue : tagBits & ~answer.tagBitsWhenTrue;
 }
 
 // A merge assigns new tag bits and drops a test whose entries differ, so an entry leaves its block without its answer.
@@ -387,7 +387,7 @@ bool ObjectInterpreter::isDeadEdge(const Terminator& terminator, uint32_t target
         if (!answer)
             return false;
         if (answer->result)
-            return (targetIndex == takenTargetIndex) != *answer->result;
+            return (targetIndex == takenTargetOfTest) != *answer->result;
         std::optional<uint32_t> tagBits = tagBitsOnEdge(m_state, *answer, targetIndex);
         return tagBits && !*tagBits;
     }

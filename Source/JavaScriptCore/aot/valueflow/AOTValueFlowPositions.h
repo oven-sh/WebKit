@@ -91,11 +91,10 @@ struct ValueFlowPositionCounts {
 public:
     using LayoutsOfSites = HashMap<uint32_t, ValueFlowLayoutsOfSite, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-    // With lines, each set outside its family is described in one of them, in no order.
-    explicit ValueFlowPositionCounts(Vector<String>* lines, ValueFlowTypesOfSets = ValueFlowTypesOfSets::StayTheSame);
+    explicit ValueFlowPositionCounts(const ListenerForSetsOutsideTypes*, ValueFlowTypesOfSets = ValueFlowTypesOfSets::StayTheSame);
     ~ValueFlowPositionCounts();
 
-    void note(const Program&, const String& place, const Type& held, const Type& family);
+    void note(const String& place, const Type& held, const Type& family);
 
     // None until somebody has added it.
     const ValueFlowSharedTypeOfSet* findTypeOfSet(ValueSetID);
@@ -116,7 +115,7 @@ public:
     const bool listsThem;
     const bool sharesTypesOfSets;
     Lock lock;
-    Vector<String>* lines WTF_GUARDED_BY_LOCK(lock);
+    const ListenerForSetsOutsideTypes* listener WTF_GUARDED_BY_LOCK(lock);
 
 private:
     struct alignas(64) TypesOfSets {
@@ -169,6 +168,7 @@ public:
 
     // Whether every member passes a test for the type whatever happens. An allocation that picks its layout does where all that it picks lies inside.
     bool isSurelyInside(ValueSetID, const Type&);
+    bool isSurelyInside(ValueSetID, TypeID);
     std::optional<Type> typeWhereNothingPasses(ValueSetID, const Type&);
     // Whether a member that a proof takes on trust may fail a test for the type: the object that nobody follows, or an allocation that picks its layout and picks one outside.
     bool holdsObjectThatMayLieOutside(ValueSetID, const Type&);
@@ -193,6 +193,7 @@ private:
     };
 
     bool isEnabled(FlowResultKind kind) const { return m_inputs.build.isEnabled(kind, m_switchSubject); }
+    bool isSurelyInside(ValueSetID, const Type&, std::optional<TypeID> number);
     bool holds(ValueSetID set, ValueFlowObjectID member) const { return m_inputs.sets().contains(set, member); }
     const ValueFlowLayoutsOfSite* findLayoutsPickedBy(ValueFlowObjectID);
     void addObjectWithLayout(Type&, Vector<LayoutID, 8>& layouts, ValueFlowObjectID, LayoutID);

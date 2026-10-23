@@ -170,6 +170,8 @@ void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, GPRReg layo
 // Falls through with the new order word stored. Keeps object and slotKey, and writes nothing to memory before it jumps to hasNoTransition.
 void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition);
 
+inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

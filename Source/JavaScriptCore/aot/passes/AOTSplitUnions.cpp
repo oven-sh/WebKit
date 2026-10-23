@@ -36,7 +36,7 @@ struct ChosenPart {
 
 } // anonymous namespace
 
-static std::optional<PropertyAccessQuery> namedAccessQueryOf(const FunctionPassContext& context, const Value& access)
+static std::optional<PropertyAccessQuery> accessQueryWithLimitOf(const FunctionPassContext& context, const Value& access)
 {
     std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(context.program, context.function, access);
     if (query)
@@ -59,7 +59,7 @@ static PropertyAccessPlan planWithReceivers(const FunctionPassContext& context, 
 
 static PropertyAccessPlan planWithReceivers(const FunctionPassContext& context, const Value& access, MemberStart start, ReceiverCandidates&& receivers)
 {
-    std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, access);
+    std::optional<PropertyAccessQuery> query = accessQueryWithLimitOf(context, access);
     if (!query)
         return { };
     return planWithReceivers(context, *query, start, WTF::move(receivers));
@@ -401,7 +401,7 @@ std::optional<PlannedSplit> UnionSplitter::planSplit(const ValueSite& site)
         return planSplitByParts(site, *operandIndex);
     }
 
-    std::optional<PropertyAccessQuery> query = namedAccessQueryOf(m_context, value);
+    std::optional<PropertyAccessQuery> query = accessQueryWithLimitOf(m_context, value);
     if (!query)
         return std::nullopt;
     const ReceiverCandidates& receivers = query->receivers;
@@ -528,7 +528,7 @@ std::optional<PlannedSplit> UnionSplitter::planSplitByKeys(const ValueSite& site
             return std::nullopt;
         Value named = value;
         becomeNamedAccess(named, internKey(m_context.types, constantKey));
-        std::optional<PropertyAccessQuery> query = namedAccessQueryOf(m_context, named);
+        std::optional<PropertyAccessQuery> query = accessQueryWithLimitOf(m_context, named);
         if (!query || !planNamedAccess(m_context, *query).isResolved())
             return std::nullopt;
     }

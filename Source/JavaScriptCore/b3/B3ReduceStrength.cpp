@@ -2490,7 +2490,7 @@ private:
                 if (!sumOverflows<intptr_t>(offset, memory->offset())) {
                     offset += memory->offset();
                     Value::OffsetType smallOffset = static_cast<Value::OffsetType>(offset);
-                    if (smallOffset == offset && !isKnownDereferenceableOnlyThroughAddress(memory, address->child(0), smallOffset)) {
+                    if (smallOffset == offset) {
                         address = address->child(0);
                         memory->lastChild() = address;
                         memory->setOffset(smallOffset);
@@ -4417,15 +4417,6 @@ private:
             return false;
         replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), triState(*holdsForReplacement)));
         return true;
-    }
-
-    // The passes that move a load above a branch all run before the final pass of this phase. A store keeps
-    // its address too, so that it still names a location the way the loads from it do.
-    bool isKnownDereferenceableOnlyThroughAddress(const MemoryValue* memory, const Value* foldedAddress, Value::OffsetType foldedOffset)
-    {
-        return m_pass == ReduceStrengthPass::Initial
-            && m_proc.isKnownDereferenceable(memory)
-            && !m_proc.isKnownDereferenceable(foldedAddress, foldedOffset, memory->accessByteSize());
     }
 
     // FIXME: This should really be a forward analysis. Instead, we uses a bounded-search backwards

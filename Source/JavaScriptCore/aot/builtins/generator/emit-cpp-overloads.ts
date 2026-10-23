@@ -64,7 +64,6 @@ interface Pools {
 
 const inlineParameterCount = 4;
 const receiverPointerType = "BuiltinRecordPointer<BuiltinParameter, BuiltinRecordPool::Parameters>";
-const textHashPattern = /^[0-9a-f]{16}$/;
 const decimalPattern = /^(0|[1-9][0-9]*)$/;
 
 function createPools(): Pools {
@@ -112,10 +111,6 @@ function checkInlineImplementation(
 
 function checkOverload(overload: ModelOverload, problems: Problems): void {
   const { implementation } = overload.code;
-  if (!textHashPattern.test(overload.textHash)) {
-    const message = `the text hash ${JSON.stringify(overload.textHash)} is not 16 hex digits`;
-    problems.add(overload.source, `${overload.builtin.text}: ${message}`);
-  }
   if (implementation.how === "Inline") checkInlineImplementation(overload, implementation, problems);
 }
 
@@ -411,7 +406,6 @@ function formatCode(code: ModelCode, pools: Pools): string | null {
 function formatOverload(overload: ModelOverload, pools: Pools): string {
   const { receiver } = overload;
   return formatAggregate([
-    ["textHash", `0x${overload.textHash}ULL`],
     ["builtin", formatId("BuiltinID", overload.builtin)],
     ["mode", formatUnlessDefault("BuiltinCallMode", overload.mode, "Call")],
     ["flags", formatOptionSet("BuiltinOverloadFlag", orderWords(overloadFlags, overload.flags)) ?? "{ }"],

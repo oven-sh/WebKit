@@ -88,7 +88,6 @@ public:
     // For an edit of which a pass tells nobody.
     void didChangeBlockSilently(BlockID);
     void endSilence();
-    bool hasSilentChanges() const { return m_hasSilentChanges; }
     // The lists describe the function, where a holder that cannot know it throws its lists away: lists made for the next who asks would hold every edit up to then.
     void didOutliveDrop();
     void didHandOut() { m_takesSilentChangesAtOnce = false; }

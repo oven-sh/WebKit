@@ -21,187 +21,86 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-namespace {
-
-// The order of execution is computed from who calls whom and which module loads which.
-class OrderInputs final : public FlowOrderInputs {
-public:
-    OrderInputs(const ValueFlowResultInputs&, const FlowResultTables&);
-
-    unsigned numberOfInstances() const final { return m_numberOfFunctions + 1; }
-    bool isHost(FlowInstanceID instance) const final { return instance.index() == m_numberOfFunctions; }
-    bool isHost(FunctionID function) const final { return function.index() == m_numberOfFunctions; }
-    FunctionID functionOf(FlowInstanceID instance) const final { return FunctionID(instance.index()); }
-    const FlowCallSiteKey& callSiteOf(FlowInstanceID) const LIFETIME_BOUND final { RELEASE_ASSERT_NOT_REACHED(); }
-    bool isReached(FunctionID function) const final { return m_isCompiled.quickGet(function.index()); }
-    std::span<const FlowModuleOperation> moduleOperationsOf(FunctionID function) const LIFETIME_BOUND final { return m_moduleOperations[function.index()].span(); }
-
-    const BitVector& evaluatedModules() const LIFETIME_BOUND final { return m_evaluatedModules; }
-    std::span<const FlowModuleLoadRecord> moduleLoads() const LIFETIME_BOUND final { return m_moduleLoads.span(); }
-    bool mayBeLoadedByName(ModuleID module) const final
-    {
-        bool isEntryPoint = std::ranges::contains(program().entries, module, &Entry::module);
-        return (isEntryPoint ? m_filesOfProgramAreNamedAtRunTime : m_modulesAreNamedAtRunTime) && mayAnswerToName(program(), module);
-    }
-    bool isPastWorkLimit(FunctionID) const final { return false; }
-    std::span<const FlowCallLink> callLinks() const LIFETIME_BOUND final { return m_callLinks.span(); }
-    std::span<const FlowBuiltinCallLink> builtinCallLinks() const LIFETIME_BOUND final { return { }; }
-    std::span<const FlowUnknownCallee> unknownCallees() const LIFETIME_BOUND final { return { }; }
-    std::span<const FlowStaticFieldAccess> staticFieldAccesses() const LIFETIME_BOUND final { return m_staticFieldAccesses.span(); }
-    // Asked about the constructor of a class with static fields.
-    bool hasClassObjectEscaped(FunctionID constructor) const final
-    {
-        LayoutID constructedClass = m_inputs.program.at(constructor).constructedClass;
-        return !constructedClass || std::ranges::any_of(m_inputs.program.at(constructedClass).staticFields, [&](const StaticField& field) {
-            uint32_t variable = field.variable.index();
-            return m_inputs.variablesOnObjects->staticFieldsInUnknownHands.quickGet(variable) || m_inputs.variablesOnObjects->staticFieldsOfEscapedClassObjects.quickGet(variable)
-                || m_staticFieldsLookedAtByNobodyListed.get(variable);
-        });
-    }
-
-    std::span<const FlowMemberAccess> memberAccesses() const LIFETIME_BOUND final { return { }; }
-    std::span<const FlowMemberOperation> uncertainMemberStores() const LIFETIME_BOUND final { return { }; }
-    FlowObjectKind kindOf(FlowObjectID) const final { RELEASE_ASSERT_NOT_REACHED(); }
-    FlowObjectID findPrototype(FlowObjectID) const final { RELEASE_ASSERT_NOT_REACHED(); }
-    std::optional<FlowObjectCreation> creationOf(FlowObjectID) const final { RELEASE_ASSERT_NOT_REACHED(); }
-    bool isPrototype(FlowObjectID) const final { RELEASE_ASSERT_NOT_REACHED(); }
-    bool hasEscaped(FlowObjectID) const final { RELEASE_ASSERT_NOT_REACHED(); }
-    bool mayChangeIntegrity(FlowObjectID) const final { RELEASE_ASSERT_NOT_REACHED(); }
-
-private:
-    FlowInstanceID hostInstance() const { return FlowInstanceID(m_numberOfFunctions); }
-    FunctionID host() const { return FunctionID(m_numberOfFunctions); }
-    FlowCallLink linkFromHost(FunctionID callee) const;
-    void collectOperationsOf(FunctionID, Vector<FlowCallLink>&);
-    void collectOperations();
-    void collectCallsOfClosures();
-    void collectEntriesThatNobodyLists(const FlowResultTables&);
-    void collectModules();
-
-    const ValueFlowResultInputs& m_inputs;
-    uint32_t m_numberOfFunctions;
-    // Reached by the solve, or unsolved code.
-    BitVector m_isCompiled;
-    Vector<Vector<FlowModuleOperation>> m_moduleOperations;
-    Vector<FlowCallLink> m_callLinks;
-    // By function. The threads of a loop set them.
-    Vector<uint8_t> m_hasEntryThatNobodyLists;
-    Vector<FlowModuleLoadRecord> m_moduleLoads;
-    BitVector m_evaluatedModules;
-    bool m_modulesAreNamedAtRunTime;
-    bool m_filesOfProgramAreNamedAtRunTime;
-    bool m_someCallEntersAnything { false };
-    Vector<FlowStaticFieldAccess> m_staticFieldAccesses;
-    // By variable.
-    BitVector m_staticFieldsLookedAtByNobodyListed;
-};
-
-} // anonymous namespace
-
-static FlowCallLink linkBetween(FunctionID caller, ValueID site, FunctionID callee, FlowCallLinkKind kind)
+// Direct calls, and the modules that operations load.
+static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, bool& libraryLoadsItsModulesByName)
 {
-    return { .callerInstance = FlowInstanceID(caller.index()), .site = site, .calleeInstance = FlowInstanceID(callee.index()), .caller = caller, .callee = callee, .kind = kind };
-}
-
-FlowCallLink OrderInputs::linkFromHost(FunctionID callee) const
-{
-    return linkBetween(host(), { }, callee, FlowCallLinkKind::Host);
-}
-
-static std::optional<FlowModuleOperationKind> moduleOperationKindOf(const Value& value)
-{
-    switch (value.opcode) {
-    case Opcode::ModuleNamespace:
-        return FlowModuleOperationKind::Namespace;
-    case Opcode::ImportModule:
-        return FlowModuleOperationKind::Import;
-    case Opcode::RequireModule:
-        return FlowModuleOperationKind::Require;
-    case Opcode::EvaluateModule:
-        return FlowModuleOperationKind::Evaluate;
-    case Opcode::ImportDynamic:
-        return FlowModuleOperationKind::ImportDynamic;
-    case Opcode::RequireDynamic:
-        return FlowModuleOperationKind::RequireDynamic;
-    case Opcode::RequireBuiltinModule:
-        return FlowModuleOperationKind::RequireBuiltinModule;
-    default:
-        return std::nullopt;
-    }
-}
-
-void OrderInputs::collectOperationsOf(FunctionID id, Vector<FlowCallLink>& links)
-{
-    const Program& program = m_inputs.program;
-    const Function& function = program.at(id);
-    Vector<FlowModuleOperation>& moduleOperations = m_moduleOperations[id.index()];
-    for (uint32_t index = 0; index < function.values.size(); ++index) {
-        ValueID site(index);
-        const Value& value = function.values[index];
-        if (value.opcode == Opcode::CallDirect) {
-            links.append(linkBetween(id, site, value.function(), FlowCallLinkKind::Call));
-            continue;
+    struct Row {
+        FlowCall call;
+        ModuleID target;
+        bool isSynchronous;
+    };
+    const Program& program = inputs.program;
+    Vector<ModuleID> moduleOfRuntimeModule = indexRuntimeModules(program);
+    std::atomic<bool> namesModuleAtRunTime { false };
+    Vector<Row> rows = collectInParallel<Row>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<Row>& rows) {
+        if (!order.reachedFunctions.quickGet(index) || !inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect, ValueFlowNotedOperation::Builtin, ValueFlowNotedOperation::ModuleOperation })))
+            return;
+        const Function& function = program.functions[index];
+        for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
+            const Value& value = function.values[valueIndex];
+            auto load = [&](ModuleID target, bool isSynchronous) {
+                if (target)
+                    rows.append({ { FunctionID(index), ValueID(valueIndex), { } }, target, isSynchronous });
+            };
+            auto loadRuntimeModule = [&](RuntimeModuleID module) {
+                if (module && module.index() < moduleOfRuntimeModule.size())
+                    load(moduleOfRuntimeModule[module.index()], true);
+            };
+            switch (value.opcode) {
+            case Opcode::CallDirect:
+                rows.append({ { FunctionID(index), ValueID(valueIndex), value.function() }, { }, false });
+                break;
+            case Opcode::Builtin:
+                // The operation names the object of a module of the library, which loads the module.
+                loadRuntimeModule(findCompiledModuleWithObject(program, program.builtins().canonicalID(value.builtin())));
+                break;
+            case Opcode::RequireBuiltinModule:
+                loadRuntimeModule(value.runtimeModule());
+                break;
+            case Opcode::RequireModule:
+            case Opcode::EvaluateModule:
+                load(value.module(), true);
+                break;
+            case Opcode::ImportModule:
+                load(value.module(), false);
+                break;
+            case Opcode::ImportDynamic:
+            case Opcode::RequireDynamic:
+                namesModuleAtRunTime.store(true, std::memory_order_relaxed);
+                break;
+            default:
+                break;
+            }
         }
-        if (value.opcode == Opcode::Builtin) {
-            // The operation names the object of a module of the library, which loads the module.
-            if (RuntimeModuleID runtimeModule = findCompiledModuleWithObject(program, program.builtins().canonicalID(value.builtin())))
-                moduleOperations.append(FlowModuleOperation { .kind = FlowModuleOperationKind::RequireBuiltinModule, .origin = site, .runtimeModule = runtimeModule });
-            continue;
-        }
-        std::optional<FlowModuleOperationKind> kind = moduleOperationKindOf(value);
-        if (!kind)
-            continue;
-        FlowModuleOperation operation { .kind = *kind, .origin = site };
-        if (PayloadWord::module(value.opcode))
-            operation.module = value.module();
-        if (value.opcode == Opcode::RequireBuiltinModule)
-            operation.runtimeModule = value.runtimeModule();
-        moduleOperations.append(operation);
-    }
-}
-
-void OrderInputs::collectOperations()
-{
-    m_callLinks = collectInParallel<FlowCallLink>(m_inputs.loops(), m_numberOfFunctions, [&](unsigned index, Vector<FlowCallLink>& links) {
-        if (m_isCompiled.quickGet(index) && m_inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect, ValueFlowNotedOperation::Builtin, ValueFlowNotedOperation::ModuleOperation })))
-            collectOperationsOf(FunctionID(index), links);
     });
-}
-
-static FlowCallLinkKind linkKindOf(ValueFlowCallKind kind)
-{
-    switch (kind) {
-    case ValueFlowCallKind::Call:
-        return FlowCallLinkKind::Call;
-    case ValueFlowCallKind::Construct:
-        return FlowCallLinkKind::Construct;
-    case ValueFlowCallKind::Get:
-    case ValueFlowCallKind::Set:
-        return FlowCallLinkKind::Accessor;
-    case ValueFlowCallKind::CallByNativeCode:
-    case ValueFlowCallKind::ConstructByNativeCode:
-    case ValueFlowCallKind::CallByHost:
-        return FlowCallLinkKind::BuiltinCallback;
+    for (const Row& row : rows) {
+        if (row.target)
+            order.moduleLoads.append({ row.call.caller, row.target, row.isSynchronous });
+        else
+            order.calls.append(row.call);
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    libraryLoadsItsModulesByName = namesModuleAtRunTime.load(std::memory_order_relaxed);
 }
 
 // Every rule that enters a closure asks for the group of a set that holds it: a call for its callees, an access for the accessors that it finds, and any operation for what its protocols or the built-ins that it calls enter.
-void OrderInputs::collectCallsOfClosures()
+// An entry by a statement that a rule has made, any entry of unsolved code or of a function with callers that nobody knows, and the entry of a closure that a placeholder among the callees of a call stands for, is the host's.
+static void collectCallsOfClosures(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, FlowOrderInputs& order)
 {
-    const ValueFlowSolver& solver = m_inputs.solver();
-    const ValueFlowUniverse& universe = m_inputs.universe();
+    const ValueFlowSolver& solver = inputs.solver();
+    const ValueFlowUniverse& universe = inputs.universe();
+    uint32_t numberOfFunctions = inputs.program.functions.size();
     std::atomic<bool> someCallEntersAnything { false };
-    m_callLinks.appendVector(collectInParallel<FlowCallLink>(m_inputs.loops(), solver.numberOfStatements(), [&](unsigned index, Vector<FlowCallLink>& links) {
+    Vector<uint8_t> hasEntryThatNobodyLists(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0));
+    order.calls.appendVector(collectInParallel<FlowCall>(inputs.loops(), solver.numberOfStatements(), [&](unsigned index, Vector<FlowCall>& calls) {
         ValueFlowStatementID id(index);
-        m_inputs.prefetchMadeNodesAskedForBy(index + 16, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), false);
+        inputs.prefetchMadeNodesAskedForBy(index + 16, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), false);
         const ValueFlowStatement& statement = solver.statementAt(id);
-        bool hasRun = solver.isMadeByRule(id) ? !solver.isAtRest(id) : !statement.function || m_inputs.isReached(statement.function);
+        bool hasRun = solver.isMadeByRule(id) ? !solver.isAtRest(id) : !statement.function || inputs.isReached(statement.function);
         if (!hasRun)
             return;
 
         bool isOperationOfFunction = statement.kind == ValueFlowStatementKind::Operation && statement.function && statement.site;
-        m_inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
+        inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
             // The statement of a group asks for the nodes of that group.
             if (made == id)
                 return;
@@ -209,65 +108,50 @@ void OrderInputs::collectCallsOfClosures()
                 someCallEntersAnything.store(true, std::memory_order_relaxed);
                 return;
             }
-            m_inputs.sets().forEachMember(key.set, [&](ValueFlowObjectID callee) {
+            inputs.sets().forEachMember(key.set, [&](ValueFlowObjectID callee) {
                 FunctionID function = universe.closureFunction(callee);
                 if (!function)
                     return;
                 if (isOperationOfFunction)
-                    links.append(linkBetween(statement.function, statement.site, function, linkKindOf(key.callKind())));
+                    calls.append({ statement.function, statement.site, function });
                 else
-                    AtomicRef(m_hasEntryThatNobodyLists[function.index()]).store(1, std::memory_order_relaxed);
+                    AtomicRef(hasEntryThatNobodyLists[function.index()]).store(1, std::memory_order_relaxed);
             });
         });
     }));
-    m_someCallEntersAnything = someCallEntersAnything.load(std::memory_order_relaxed);
-}
-
-// An entry by a statement that a rule has made, any entry of unsolved code or of a function with callers that nobody knows, and the entry of a closure that a placeholder among the callees of a call stands for.
-void OrderInputs::collectEntriesThatNobodyLists(const FlowResultTables& tables)
-{
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
-        if (!m_isCompiled.quickGet(index))
-            continue;
-        FunctionID function(index);
-        ValueFlowObjectID closure = m_inputs.universe().closureOf(function);
-        bool isEveryEntryListed = !m_someCallEntersAnything && !m_hasEntryThatNobodyLists[index] && m_inputs.isReached(function)
-            && tables.functions.functions[index].callers == CallerState::AllKnown && !m_inputs.hasEscaped(closure) && !m_inputs.isLost(closure);
+    for (size_t index : order.reachedFunctions) {
+        FunctionID function(static_cast<uint32_t>(index));
+        ValueFlowObjectID closure = universe.closureOf(function);
+        bool isEveryEntryListed = !someCallEntersAnything.load(std::memory_order_relaxed) && !hasEntryThatNobodyLists[index] && inputs.isReached(function)
+            && tables.functions.functions[index].callers == CallerState::AllKnown && !inputs.hasEscaped(closure) && !inputs.isLost(closure);
         if (!isEveryEntryListed)
-            m_callLinks.append(linkFromHost(function));
+            order.calls.append({ order.host(), { }, function });
     }
+    sortAndRemoveDuplicates(inputs.loops(), order.calls);
 }
 
-static bool namesModuleAtRunTime(const FlowModuleOperation& operation)
+static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, bool libraryLoadsItsModulesByName)
 {
-    return operation.kind == FlowModuleOperationKind::ImportDynamic || operation.kind == FlowModuleOperationKind::RequireDynamic;
-}
-
-void OrderInputs::collectModules()
-{
-    const Program& program = m_inputs.program;
+    const Program& program = inputs.program;
     const BuiltinTable& builtins = program.builtins();
+    bool modulesAreNamedAtRunTime = unseenCodeCanRun(inputs.solution) || modulesAreLoadedByName(inputs.solution);
+    bool filesOfProgramAreNamedAtRunTime = filesOfProgramAreLoadedByName(inputs.solution);
+    // Native code loads a module of the library whenever it likes once a built-in is used that does so.
+    // The program's own code that names a module at run time has raised the flag. A function of the library names modules of the library.
+    BitVector isLoadedByNativeCode(program.modules.size());
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (module.body && m_inputs.isReached(module.body))
-            m_evaluatedModules.quickSet(index);
-    }
-
-    // Native code loads a module of the library whenever it likes once a built-in is used that does so.
-    BitVector isLoadedByNativeCode(program.modules.size());
-    // The program's own code that names a module at run time has raised the flag. A function of the library names modules of the library.
-    bool libraryLoadsItsModulesByName = std::ranges::any_of(m_moduleOperations, [](const Vector<FlowModuleOperation>& operations) {
-        return std::ranges::any_of(operations, namesModuleAtRunTime);
-    });
-    if (libraryLoadsItsModulesByName) {
-        for (uint32_t index = 0; index < program.modules.size(); ++index) {
-            if (program.modules[index].kind == ModuleKind::RuntimeSource)
-                isLoadedByNativeCode.quickSet(index);
-        }
+        if (module.body && inputs.isReached(module.body))
+            order.evaluatedModules.quickSet(index);
+        bool isEntryPoint = std::ranges::contains(program.entries, ModuleID(index), &Entry::module);
+        if ((isEntryPoint ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
+            order.modulesLoadedByName.quickSet(index);
+        if (libraryLoadsItsModulesByName && module.kind == ModuleKind::RuntimeSource)
+            isLoadedByNativeCode.quickSet(index);
     }
     Vector<ModuleID> moduleOfRuntimeModule = indexRuntimeModules(program);
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        if (m_inputs.solver().usesOf(BuiltinID(index)).isEmpty())
+        if (inputs.solver().usesOf(BuiltinID(index)).isEmpty())
             continue;
         for (const BuiltinModuleLoad& load : builtins.moduleLoadsOf(BuiltinID(index))) {
             if (ModuleID module = moduleOfRuntimeModule[load.module.index()])
@@ -275,58 +159,66 @@ void OrderInputs::collectModules()
         }
     }
     for (size_t module : isLoadedByNativeCode)
-        m_moduleLoads.append(FlowModuleLoadRecord { hostInstance(), { }, ModuleID(static_cast<uint32_t>(module)) });
+        order.modulesLoadedByHost.append(ModuleID(static_cast<uint32_t>(module)));
 }
 
-OrderInputs::OrderInputs(const ValueFlowResultInputs& inputs, const FlowResultTables& tables)
-    : FlowOrderInputs(inputs.program, inputs.build)
-    , m_inputs(inputs)
-    , m_numberOfFunctions(inputs.program.functions.size())
-    , m_isCompiled(inputs.program.functions.size())
-    , m_moduleOperations(inputs.program.functions.size())
-    , m_hasEntryThatNobodyLists(FillWith { }, inputs.program.functions.size(), static_cast<uint8_t>(0))
-    , m_evaluatedModules(inputs.program.modules.size())
-    , m_modulesAreNamedAtRunTime(unseenCodeCanRun(inputs.solution) || modulesAreLoadedByName(inputs.solution))
-    , m_filesOfProgramAreNamedAtRunTime(filesOfProgramAreLoadedByName(inputs.solution))
+// Whoever looks at a static field holds the class object or an object below it, whether an operation spells the look out or not.
+static void collectStaticFields(const ValueFlowResultInputs& inputs, FlowOrderInputs& order)
 {
-    for (uint32_t index = 0; index < m_numberOfFunctions; ++index) {
-        if (inputs.isReached(FunctionID(index)) || isUnsolvedCode(inputs, tables, FunctionID(index)))
-            m_isCompiled.quickSet(index);
-    }
-    collectOperations();
-    collectCallsOfClosures();
-    collectEntriesThatNobodyLists(tables);
-
-    auto keyOf = [](const FlowCallLink& link) {
-        return std::tuple(link.caller, link.site, link.callee, link.kind);
-    };
-    sortAndRemoveDuplicates(inputs.loops(), m_callLinks, [&](const FlowCallLink& a, const FlowCallLink& b) {
-        return keyOf(a) < keyOf(b);
-    }, [&](const FlowCallLink& a, const FlowCallLink& b) {
-        return keyOf(a) == keyOf(b);
-    });
-    collectModules();
-
-    // Whoever looks at a static field holds the class object or an object below it, whether an operation spells the look out or not.
-    for (const ValueFlowAccessThroughObject& access : inputs.variablesOnObjects->accesses) {
-        if (!inputs.program.at(access.variable).owner)
+    const Program& program = inputs.program;
+    const ValueFlowVariablesOnObjects& variables = *inputs.variablesOnObjects;
+    BitVector isLookedAtByNobodyListed;
+    for (const ValueFlowAccessThroughObject& access : variables.accesses) {
+        if (!program.at(access.variable).owner)
             continue;
         bool isStore = access.kind == ValueFlowAccessThroughObjectKind::Store;
         if (access.function || isStore)
-            m_staticFieldAccesses.append({ access.variable, access.function, access.site, isStore });
+            order.staticFieldAccesses.append({ access.variable, access.function, access.site, isStore });
         else
-            m_staticFieldsLookedAtByNobodyListed.set(access.variable.index());
+            isLookedAtByNobodyListed.set(access.variable.index());
     }
+    for (const Layout& layout : program.layouts) {
+        if (layout.staticFields.isEmpty() || !layout.constructor)
+            continue;
+        LayoutID constructedClass = program.at(layout.constructor).constructedClass;
+        bool hasEscaped = !constructedClass || std::ranges::any_of(program.at(constructedClass).staticFields, [&](const StaticField& field) {
+            uint32_t variable = field.variable.index();
+            return variables.staticFieldsInUnknownHands.quickGet(variable) || variables.staticFieldsOfEscapedClassObjects.quickGet(variable) || isLookedAtByNobodyListed.get(variable);
+        });
+        if (!hasEscaped)
+            continue;
+        for (const StaticField& field : layout.staticFields)
+            order.staticFieldsOfEscapedClasses.set(field.variable.index());
+    }
+}
+
+static FlowOrderInputs collectOrderInputs(const ValueFlowResultInputs& inputs, const FlowResultTables& tables)
+{
+    const Program& program = inputs.program;
+    FlowOrderInputs order { program, inputs.build };
+    order.reachedFunctions = BitVector(program.functions.size());
+    order.evaluatedModules = BitVector(program.modules.size());
+    order.modulesLoadedByName = BitVector(program.modules.size());
+    order.staticFieldsOfEscapedClasses = BitVector(program.variables.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (inputs.isReached(FunctionID(index)) || isUnsolvedCode(inputs, tables, FunctionID(index)))
+            order.reachedFunctions.quickSet(index);
+    }
+    bool libraryLoadsItsModulesByName = false;
+    collectOperations(inputs, order, libraryLoadsItsModulesByName);
+    collectCallsOfClosures(inputs, tables, order);
+    collectModules(inputs, order, libraryLoadsItsModulesByName);
+    collectStaticFields(inputs, order);
+    return order;
 }
 
 void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls&, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
-    OrderInputs orderInputs(inputs, tables);
+    FlowOrderInputs orderInputs = collectOrderInputs(inputs, tables);
     FlowModuleOrder moduleOrder = computeModuleOrder(orderInputs);
-    FlowScopeAccessesByFunction accessesByFunction(program.functions.size());
-    FlowScopeOrders orders = computeScopeOrders(orderInputs, moduleOrder, accessesByFunction);
+    FlowScopeOrders orders = computeScopeOrders(orderInputs, moduleOrder);
 
     // The order counts the function that a variable starts with as a store, and the flow of a location counts operations only.
     auto apply = [&](LocationFlow& flow, FlowLocationOrder order, uint32_t switchSubject, bool startsAsFunction, bool isStaticField) {

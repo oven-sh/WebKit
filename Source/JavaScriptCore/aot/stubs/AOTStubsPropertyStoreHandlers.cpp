@@ -30,36 +30,15 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr unsigned receiverOperand = 0;
-static constexpr unsigned headerOperand = 1;
-static constexpr unsigned payloadOperand = 2;
-
 static constexpr unsigned exitNameOperand = 1;
 static constexpr unsigned exitValueOperand = 2;
 static constexpr unsigned exitSiteOperand = 3;
-
-static constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
 
 static_assert(hasOneBitSet(outOfLineSlotKey) && outOfLineSlotKey <= SlotData::maxOffset);
 static_assert(slotKeyFor(outOfLineSlotKey - 1, false) != noSlotKey && slotKeyFor(outOfLineSlotKey, false) == noSlotKey);
 static_assert(slotKeyFor(1, true) == (1 | outOfLineSlotKey));
 static_assert(operationArgumentGPR(4) == gprOf(StubRegister::A4) && operationArgumentGPR(5) == gprOf(StubRegister::A5));
 static_assert(storedValueByIdRegister != StubRegister::A2 && slotNameRegister == StubRegister::T9);
-
-static constexpr PutMode putModeOf(SlotOperation operation)
-{
-    switch (operation) {
-    case SlotOperation::StoreStrict:
-        return PutMode::Strict;
-    case SlotOperation::StoreSloppy:
-        return PutMode::Sloppy;
-    case SlotOperation::Define:
-        return PutMode::Define;
-    case SlotOperation::Read:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
 
 StubSignature signatureOfStoreSlot(StubKey key)
 {

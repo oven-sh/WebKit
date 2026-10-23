@@ -57,7 +57,7 @@ struct Split {
 
 } // anonymous namespace
 
-static constexpr OptionSet<FunctionCapabilities> inheritedCapabilities {
+static constexpr OptionSet<FunctionCapabilities> capabilitiesSplitBodiesInherit {
     FunctionCapabilities::HasOnlyDirectCallers,
     FunctionCapabilities::IsNeverCalledByHost,
     FunctionCapabilities::IsHiddenInStackTraces,
@@ -93,7 +93,7 @@ static bool canBeSplit(const Program& program, const BuildContext& build, Functi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static BitVector findUsedValues(const Function& function)
+static BitVector findValuesUsedAsOperands(const Function& function)
 {
     BitVector isUsed(function.values.size());
     auto note = [&](ValueID operand, uint32_t) {
@@ -153,7 +153,7 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
     if (checks.isEmpty())
         return checks;
 
-    BitVector isUsed = findUsedValues(function);
+    BitVector isUsed = findValuesUsedAsOperands(function);
     checks.removeAllMatching([&](const EntryCheck& check) {
         return !isUsed.quickGet(check.check.index());
     });
@@ -222,7 +222,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
     if (!hasCheck)
         return { };
 
-    BitVector isUsed = findUsedValues(function);
+    BitVector isUsed = findValuesUsedAsOperands(function);
     auto noteOtherUse = [&](ValueID operand, uint32_t = 0) {
         if (EntryValue* entryValue = operand ? find(operand) : nullptr)
             entryValue->hasOtherUse = true;
@@ -466,7 +466,7 @@ static Function createChecks(const AnalysisContext& context, TypeArena& types, c
     tests.inlineFrames.clear();
     tests.role = FunctionRole::EntryChecks;
     tests.creator = CreatorRecord::EntryChecks { typedBody, fallback };
-    tests.capabilities = (initialCapabilitiesOf(tests) - inheritedCapabilities) | (header.capabilities & inheritedCapabilities);
+    tests.capabilities = (initialCapabilitiesOf(tests) - capabilitiesSplitBodiesInherit) | (header.capabilities & capabilitiesSplitBodiesInherit);
     if (header.isUnsplitCoroutine())
         tests.flags.add(FunctionFlags::IsHiddenInStackTraces);
 

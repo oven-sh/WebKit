@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAnalysisDump.h"
 #include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
 #include "AOTEffectsOfOperands.h"
@@ -1810,35 +1809,6 @@ GuardState GuardAvailability::Cursor::stateOf(ValueID guard, const Value& user) 
     if (!isInSolvedBlock())
         return GuardState::Unknown;
     return m_availability.stateIn(m_available, guard, user);
-}
-
-void GuardAvailability::dump(PrintStream& out) const
-{
-    solveNamedGuards();
-    solveUnnamedAllocations();
-
-    const Program& program = m_analyses.program();
-    for (ValueID guard : m_guards) {
-        dumpID(out, guard);
-        out.print(" facts: ");
-        dumpGuardFacts(out, program, factsOf(guard));
-        out.println();
-    }
-
-    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-        if (!m_solution.solvedBlocks.get(block.index()))
-            continue;
-        dumpID(out, block);
-        out.print(" available at head: [");
-        CommaPrinter separator(" "_s);
-        for (size_t bit : m_solution.availableAtHead[block.index()]) {
-            const Component& component = m_components[bit];
-            out.print(separator);
-            dumpID(out, component.guard);
-            out.print(".", component.factIndex);
-        }
-        out.println("]");
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -386,11 +386,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     }
                 } else {
                     switch (memberEntry.kind) {
-                    case BuiltinKind::Namespace:
-                    case BuiltinKind::Constructor:
-                    case BuiltinKind::Function:
-                    case BuiltinKind::Prototype:
-                    case BuiltinKind::Method:
+                    default:
                         values.append(object);
                         break;
                     case BuiltinKind::Accessor:

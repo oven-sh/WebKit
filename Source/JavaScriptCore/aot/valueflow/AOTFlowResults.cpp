@@ -11,7 +11,6 @@
 #include "AOTEffectSummaries.h"
 #include "AOTFlowUnseenCode.h"
 #include "AOTProvisionalFunctions.h"
-#include "AOTRelationalSummaries.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -218,92 +217,11 @@ OperandSummary FlowResults::parameterSummary(FunctionID function, uint32_t entry
     return summary;
 }
 
-void FlowResults::setRelationalSummaries(std::unique_ptr<RelationalSummaries>&& table)
-{
-    m_relationalSummaries = WTF::move(table);
-}
-
-LinkedFate FlowResults::fateOfParameter(FunctionID function, uint32_t entryParameter) const
-{
-    if (!m_relationalSummaries)
-        return LinkedFate::anything();
-    FunctionID analyzed = function;
-    std::optional<uint32_t> parameter = findAnalyzedParameter(analyzed, entryParameter);
-    if (!parameter)
-        return LinkedFate::anything();
-    LinkedFate fate = m_relationalSummaries->fateOfParameter(analyzed, *parameter);
-    if (analyzed == function || fate.isAnything())
-        return fate;
-
-    // A version numbers its parameters and its results in its own way.
-    uint32_t storedIntoParameters = 0;
-    for (uint32_t rest = fate.storedIntoParameters; rest; rest &= rest - 1) {
-        std::optional<uint32_t> derived = findDerivedParameter(function, static_cast<uint32_t>(std::countr_zero(rest)));
-        if (derived && *derived < 32)
-            storedIntoParameters |= 1u << *derived;
-        else
-            fate.itself.add(ValueFate::IsStoredInUnknownObject);
-    }
-    fate.storedIntoParameters = storedIntoParameters;
-    if (fate.results)
-        fate.results = UINT32_MAX;
-    if (fate.storedIntoResults)
-        fate.storedIntoResults = UINT32_MAX;
-    return fate;
-}
-
-// A call of such a version answers what a call of the function answers that it was derived from. A worker answers parts, a constructor's body takes the object, a ramp answers a promise.
-static bool answersLikeItsSource(FunctionRole role)
-{
-    return role == FunctionRole::Source || role == FunctionRole::Library || role == FunctionRole::GenericVersion || role == FunctionRole::CallSiteVersion || role == FunctionRole::CalleeVersion
-        || role == FunctionRole::EntryChecks || role == FunctionRole::ParameterWrapper || role == FunctionRole::ResultWrapper;
-}
-
-ResultOrigin FlowResults::originOfResult(FunctionID function, uint32_t result) const
-{
-    if (!m_relationalSummaries || !m_tables.program)
-        return { };
-    FunctionID analyzed = function;
-    while (analyzed && !isAnalyzed(m_tables.functions, analyzed)) {
-        const Derivation* derivation = findDerivation(*m_tables.program, analyzed);
-        if (!derivation || !answersLikeItsSource(m_tables.program->at(analyzed).role))
-            return { };
-        analyzed = derivation->source;
-    }
-    if (!analyzed)
-        return { };
-    // It has the body of a constructor function with an object of its own in the place of `this`, and no record. The constructor answers for it.
-    if (const Function& asked = m_tables.program->at(analyzed); asked.has(FunctionFlags::AllocatesOwnThis)) {
-        ResultOrigin made;
-        made.isFresh = asked.derivation.source && m_relationalSummaries->originOfResult(asked.derivation.source, result).isFreshWhenConstructed;
-        return made;
-    }
-    ResultOrigin origin = m_relationalSummaries->originOfResult(analyzed, result);
-    if (analyzed == function || !origin.isFullyListed)
-        return origin;
-
-    // A version numbers its parameters in its own way. One that it no longer takes is a value that nobody can list.
-    for (LinkedOrigin& listed : origin.origins) {
-        if (listed.kind != LinkedOrigin::Kind::Parameter)
-            continue;
-        if (std::optional<uint32_t> derived = findDerivedParameter(function, listed.parameter))
-            listed.parameter = *derived;
-        else
-            listed.kind = LinkedOrigin::Kind::Anything;
-    }
-    bool hasUnlistedRoot = std::ranges::any_of(origin.mayBe, [&](uint32_t root) {
-        return origin.origins[root].kind == LinkedOrigin::Kind::Anything && !origin.origins[root].type;
-    });
-    return hasUnlistedRoot ? ResultOrigin { } : origin;
-}
-
 void FlowResults::removeEntryParameters(FunctionID function, const BitVector& removedEntryParameters)
 {
     if (removedEntryParameters.isEmpty() || !hasResults() || !isAnalyzed(m_tables.functions, function))
         return;
     RELEASE_ASSERT(!m_borrowedParameters.size());
-    if (m_relationalSummaries)
-        m_relationalSummaries->removeEntryParameters(function, removedEntryParameters);
 
     Vector<OperandSummary>& summaries = m_tables.functions.parameterSummaries[function.index()];
     Vector<uint32_t> newIndexes(summaries.size());

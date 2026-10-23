@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHostEntriesTestSupport.h"
 #include "AOTProgramFile.h"
 #include "AOTRuntimeTable.h"
 #include "AOTVector.h"
@@ -89,7 +88,6 @@ private:
     }
 
     const Architecture m_architecture;
-    bool m_requiresHostEntries { false };
     TestFile m_file;
     Vector<DirectiveLine> m_directives;
     Vector<PendingCheckGroup> m_checkGroups;
@@ -392,16 +390,9 @@ void TestFileParser::parseRun(const DirectiveLine& directive)
 
 // Under AddressSanitizer compiled code asks the shadow memory in front of an access: a run that expects sizes, faults or the direct generator finds other code there.
 static constexpr ASCIILiteral unsanitizedCode = "unsanitized-code"_s;
-// For the whole file: it names entries of Bun, or needs roles that the stand-in host leaves out.
-static constexpr ASCIILiteral hostEntries = "host-entries"_s;
 
 void TestFileParser::parseRequires(const DirectiveLine& directive)
 {
-    if (!directive.parenthesized && directive.value == hostEntries) {
-        m_requiresHostEntries = true;
-        return;
-    }
-
     StringView prefix = directive.parenthesized.value_or(defaultPrefix);
     PendingCheckGroup* group = findCheckGroup(prefix);
     if (!group) {
@@ -644,8 +635,6 @@ void TestFileParser::finishCheckGroups()
         }
         m_file.checkGroups.append(CheckGroup { WTF::move(group.prefix), WTF::move(group.lines) });
     }
-    if (m_requiresHostEntries && hasStandInHost())
-        m_file.runs.clear();
 }
 
 std::optional<DiagnosticName> parseDiagnosticName(StringView name)

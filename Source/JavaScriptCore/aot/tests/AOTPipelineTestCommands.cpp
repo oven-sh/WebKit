@@ -459,9 +459,9 @@ std::span<const TestCommand> pipelineTestCommands()
     static constexpr TestCommand commands[] {
         { "pass"_s, IRForm::Prepared, runPassCommand },
         { "function-passes"_s, IRForm::Prepared, runFunctionPassesCommand },
-        { "pipeline"_s, IRForm::AsRead, runPipelineCommand, RawWordCheck::Run, ProgramAsRead::WithLibrary },
-        { "compile"_s, IRForm::AsRead, runCompileCommand, RawWordCheck::Run, ProgramAsRead::WithLibrary },
-        { "run-in-shell"_s, IRForm::AsRead, runInShellCommand, RawWordCheck::Run, ProgramAsRead::WithLibrary },
+        { "pipeline"_s, IRForm::AsRead, runPipelineCommand, ProgramAsRead::WithLibrary },
+        { "compile"_s, IRForm::AsRead, runCompileCommand, ProgramAsRead::WithLibrary },
+        { "run-in-shell"_s, IRForm::AsRead, runInShellCommand, ProgramAsRead::WithLibrary },
         { "crash"_s, std::nullopt, runCrashCommand },
         { "list-passes"_s, std::nullopt, runListPassesCommand },
         { "pass-context"_s, IRForm::Prepared, runPassContextCommand },

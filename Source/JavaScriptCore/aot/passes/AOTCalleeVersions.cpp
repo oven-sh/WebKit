@@ -19,7 +19,7 @@ static constexpr uint32_t mayBeNullishBit = 1u << 31;
 static constexpr uint32_t isForAnyFunctionBit = 1u << 30;
 static constexpr uint32_t isForBuiltinBit = 1u << 29;
 static constexpr uint32_t entryParameterMask = isForBuiltinBit - 1;
-static constexpr OptionSet<FunctionCapabilities> inheritedCapabilities { FunctionCapabilities::IsHiddenInStackTraces };
+static constexpr OptionSet<FunctionCapabilities> capabilitiesVersionsInherit { FunctionCapabilities::IsHiddenInStackTraces };
 
 static uint32_t entryParameterIndex(uint32_t keyParameter)
 {
@@ -118,7 +118,7 @@ Function buildCalleeVersion(const DerivedFunctionKey& key, DerivedFunctionInputs
     Function version = original;
     version.role = FunctionRole::CalleeVersion;
     version.creator = CreatorRecord::Version { .provenVersion = key.target };
-    version.capabilities = initialCapabilitiesOf(version) | (original.capabilities & inheritedCapabilities);
+    version.capabilities = initialCapabilitiesOf(version) | (original.capabilities & capabilitiesVersionsInherit);
     version.derivation = Derivation {
         .source = key.target,
         .parameter = key.parameter,

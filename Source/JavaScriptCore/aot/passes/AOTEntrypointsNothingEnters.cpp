@@ -27,7 +27,7 @@ namespace {
 // Function: a call by value may find it. Set: it may find the members of the callee set. Anything: nobody can say what it finds.
 enum class FoundKind : uint8_t { Function, Set, Anything };
 
-struct Found {
+struct FoundEntrypoints {
     FoundKind kind;
     uint32_t index;
 };
@@ -189,7 +189,7 @@ static bool mayBeCallFromSource(const Function& function, const Value& call)
 }
 
 // The type of the callee lists functions that the call may find.
-static void collectFunctionsThatCallsByValueFind(const Program& program, const CalleesOfSites& sites, FunctionID id, Vector<Found>& found)
+static void collectFunctionsThatCallsByValueFind(const Program& program, const CalleesOfSites& sites, FunctionID id, Vector<FoundEntrypoints>& found)
 {
     const Function& function = program.functions[id.index()];
     forEachCallByValue(program, id, [&](const Value& call) {
@@ -253,13 +253,13 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
     unsigned count = program.functions.size();
-    Vector<Found> found = collectInParallel<Found>(loops, count, [&](unsigned index, Vector<Found>& foundHere) {
+    Vector<FoundEntrypoints> found = collectInParallel<FoundEntrypoints>(loops, count, [&](unsigned index, Vector<FoundEntrypoints>& foundHere) {
         collectFunctionsThatCallsByValueFind(program, sites, FunctionID(index), foundHere);
     });
 
     BitVector mayBeEntered = findFunctionsEnteredBesideCallsInCode(program, flow, loops);
     BitVector isVisitedSet(program.types.numberOfCalleeSets());
-    for (Found entry : found) {
+    for (FoundEntrypoints entry : found) {
         switch (entry.kind) {
         case FoundKind::Anything:
             return;

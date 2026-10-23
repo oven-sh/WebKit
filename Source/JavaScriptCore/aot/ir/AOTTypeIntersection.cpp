@@ -15,18 +15,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-template<typename T>
-struct LiteralPart {
-    uint16_t widenedBit;
-    uint16_t literalBit;
-    SortedSet<T> Type::* literals;
-};
-
-constexpr LiteralPart<StringID> stringPart { Primitive::String, Primitive::LiteralString, &Type::stringLiterals };
-constexpr LiteralPart<PropertyKeyID> symbolPart { Primitive::Symbol, Primitive::LiteralSymbol, &Type::symbolLiterals };
-constexpr uint16_t plainPrimitives = Primitive::Defined & ~(Primitive::Integer | Primitive::AnyString | Primitive::AnySymbol);
-
-using RegExpLiterals = SortedSet<RegExpLiteralInType>;
+using RegExpLiteralSet = SortedSet<RegExpLiteralInType>;
 
 } // namespace
 
@@ -178,11 +167,11 @@ static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeAren
     return result;
 }
 
-static std::optional<RegExpLiterals> intersectRegExpLiterals(const RegExpLiterals& a, const RegExpLiterals& b)
+static std::optional<RegExpLiteralSet> intersectRegExpLiterals(const RegExpLiteralSet& a, const RegExpLiteralSet& b)
 {
     if (a.isEmpty() || b.isEmpty())
         return a.isEmpty() ? b : a;
-    RegExpLiterals common = a;
+    RegExpLiteralSet common = a;
     common.intersect(b);
     if (common.isEmpty())
         return std::nullopt;
@@ -192,7 +181,7 @@ static std::optional<RegExpLiterals> intersectRegExpLiterals(const RegExpLiteral
 static void intersectClasses(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
 {
     const BuiltinTable& builtins = arena.builtins();
-    const RegExpLiterals anyRegExp { };
+    const RegExpLiteralSet anyRegExp { };
     // A listed function of the other type is in the result itself, and its closures need no class part.
     auto overlapsAnyFunction = [&](const ClassPart& part, const Type& type) {
         return !(a.anyFunction && b.anyFunction) && type.anyFunction && isFunctionClass(builtins, part.builtinClass);

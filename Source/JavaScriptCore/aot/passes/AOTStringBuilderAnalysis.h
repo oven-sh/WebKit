@@ -79,6 +79,8 @@ bool canBeMarkedAsLikelyKey(const Program&, const Function&, const Value&);
 void markAsLikelyKey(Function&, ValueID);
 bool isKeyOperand(const Program&, const Function&, const Use&);
 
+inline constexpr uint32_t stateOperandIndex = 0;
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

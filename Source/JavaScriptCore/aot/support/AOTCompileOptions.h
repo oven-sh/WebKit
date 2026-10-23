@@ -150,6 +150,8 @@ struct CompileOptions {
     RecordedOptions recorded;
     LimitValues limits { hostArchitecture() };
     std::array<uint8_t, 16> executableIdentity { };
+    // A bit for each RemovableFeature that the executable is built without, whether or not the program uses it.
+    std::array<uint64_t, 8> removedFeatures { };
     double sizeClassProgression { 0 };
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };
@@ -159,7 +161,6 @@ struct CompileOptions {
     bool validatesBackEnd { false };
     bool validatesReferences { false };
     // Once the flow analysis is at rest every rule runs once more over the solved sets. Whatever that adds is an update that the solve has lost, and an error.
-    bool checksFlowFixpoint { false };
     // A function that is reached and cannot get past its first block but by a throw of its own is dead code that nobody has called dead, or a value there has lost a source: an error.
     bool checksThatFunctionsGetPastEntry { false };
     bool validatesReferenceGuards { false };

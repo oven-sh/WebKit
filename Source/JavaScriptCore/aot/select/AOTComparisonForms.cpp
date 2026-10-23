@@ -13,16 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool isNullableNumber(const Type& type)
-{
-    return type.isNumberOrNullish() || type.isUndefinedOrNull();
-}
-
-static bool isBigInt(const Type& type)
-{
-    return !type.isNever() && type.hasOnlyPrimitives(Primitive::BigInt);
-}
-
 static bool isObjectOrNullish(const Type& type)
 {
     return !(type.primitives & ~Primitive::UndefinedOrNull) && type.isJavaScriptValue();

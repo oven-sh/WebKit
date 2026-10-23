@@ -84,11 +84,6 @@ static DescribedObject describeObject(const Program& program, const Function& fu
     case LayoutKind::Container:
         if (!writesOnlyWhatSlotTypesAdmit(program, function, value))
             return unsupported(VirtualObjectSupport::Unknown);
-        // What stands in the list for an object whose fields lie in this one is no value, so the list is not taken apart.
-        if (!layout.flattenedObjects.isEmpty()) {
-            description.kind = VirtualObjectKind::Opaque;
-            return supported(description);
-        }
         description.kind = VirtualObjectKind::Object;
         description.hasKeyOrder = true;
         return supported(description);
@@ -501,7 +496,7 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isPrivateName(const Program& program, PropertyKeyID key)
+static bool namesPrivateMember(const Program& program, PropertyKeyID key)
 {
     switch (program.at(key).kind) {
     case PropertyKeyKind::PrivateName:
@@ -527,7 +522,7 @@ bool isEnumerable(const Program& program, const VirtualObjectDescription& descri
     const Field& record = program.at(description.layout).fields[*layoutField];
     if (record.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden }))
         return false;
-    return !record.key || !isPrivateName(program, record.key);
+    return !record.key || !namesPrivateMember(program, record.key);
 }
 
 std::optional<VirtualConstant> virtualConstantOf(const Program& program, const Function& function, ValueID id)

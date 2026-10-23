@@ -31,9 +31,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr GPRReg fp = GPRInfo::callFrameRegister;
-
 static constexpr int64_t isNotCallableMask = static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit);
 static constexpr int32_t offsetOfStackWordsAtEntry = static_cast<int32_t>(offsetOfStackWordsFromFrame) - static_cast<int32_t>(prologueStackPointerDelta());
 

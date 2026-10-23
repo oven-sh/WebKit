@@ -30,7 +30,7 @@ namespace {
 
 using ArmsOfAgreements = HashMap<const SlotAgreement*, Vector<LayoutSetID, 4>>;
 
-struct Match {
+struct PlannedSlotMatch {
     SelectionGroup group;
     Vector<LayoutSetID, 4> arms;
     bool typeListsReceivers { false };
@@ -181,7 +181,7 @@ static void repeatInFrontOfBranches(GroupRewriter& rewriter, const RepeatedTest&
         rewriter.eraseRoot();
 }
 
-static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgreements& armsOfAgreements, Vector<Match>& matches)
+static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgreements& armsOfAgreements, Vector<PlannedSlotMatch>& matches)
 {
     const Program& program = context.program();
     const Function& function = context.function();
@@ -202,7 +202,7 @@ static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgree
         const Vector<LayoutSetID, 4>& arms = armsOfAgreements.ensure(&agreement, [&] {
             return createArms(context, agreement);
         }).iterator->value;
-        matches.append(Match { WTF::move(group), arms, typeListsReceivers(context, access) });
+        matches.append(PlannedSlotMatch { WTF::move(group), arms, typeListsReceivers(context, access) });
     }
 }
 
@@ -228,7 +228,7 @@ static void endArmInCopy(GroupRewriter& rewriter, const Arm& arm)
 }
 
 // A failed test takes the layouts of its arm out of the type of the object. What has failed every test has the layouts of the last arm, so no arm is left for other objects.
-static void dispatchOnType(GroupRewriter& rewriter, const Match& match)
+static void dispatchOnType(GroupRewriter& rewriter, const PlannedSlotMatch& match)
 {
     const Value& original = rewriter.original(match.group.root);
     ValueID object = original.objectOperand();
@@ -248,7 +248,7 @@ static void dispatchOnType(GroupRewriter& rewriter, const Match& match)
 }
 
 // A guard proves the layouts of the receiver, and only the case of a switch gives a guard for fewer of them: every arm is a case.
-static void dispatchOnShape(GroupRewriter& rewriter, const Match& match)
+static void dispatchOnShape(GroupRewriter& rewriter, const PlannedSlotMatch& match)
 {
     const Value& original = rewriter.original(match.group.root);
     ValueID object = original.objectOperand();
@@ -293,12 +293,12 @@ void selectPlannedSlots(SelectionContext& context)
         repeatInFrontOfBranches(rewriter, test);
     });
 
-    Vector<Match> matches;
+    Vector<PlannedSlotMatch> matches;
     ArmsOfAgreements armsOfAgreements;
     for (Opcode opcode : slotOperations)
         collectMatches(context, opcode, armsOfAgreements, matches);
 
-    context.rewriteGroups(SelectionRuleID::PlannedSlots, matches, [](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::PlannedSlots, matches, [](GroupRewriter& rewriter, const PlannedSlotMatch& match) {
         if (match.typeListsReceivers)
             dispatchOnType(rewriter, match);
         else

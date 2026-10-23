@@ -255,6 +255,7 @@ struct NativeTestRequest {
 struct NativeTestSummary {
     unsigned passed { 0 };
     unsigned failed { 0 };
+    unsigned leftOut { 0 };
 };
 
 NativeTestSummary runNativeTests(const NativeTestRequest&, PrintStream&);

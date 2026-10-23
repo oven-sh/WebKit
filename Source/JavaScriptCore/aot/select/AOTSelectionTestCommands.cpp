@@ -9,8 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTAnalysisTestCommands.h"
-#include "AOTRawWordCheck.h"
-#include "AOTRawWordWebs.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -73,65 +71,6 @@ static void forEachFunctionWithBody(const Program& program, NOESCAPE const Invoc
     }
 }
 
-static void printRawWord(PrintStream& out, const RawWordWebs& webs, ValueID word)
-{
-    Vector<RawWordProduction, 2> productions;
-    ProductionReach reach = webs.collectProductions(word, productions);
-
-    dumpID(out, word);
-    out.print(" ", nameOf(*webs.rawKindOf(word)), ": productions");
-    switch (reach) {
-    case ProductionReach::Unknown:
-        out.println(" unknown; bases");
-        return;
-    case ProductionReach::OnlyProductions:
-        break;
-    }
-
-    Vector<ValueID, 2> bases;
-    for (const RawWordProduction& production : productions) {
-        out.print(" ");
-        dumpID(out, production.producer);
-        out.print(".", production.resultIndex);
-
-        ValueID base = webs.baseOf(production);
-        if (!bases.contains(base))
-            bases.append(base);
-    }
-
-    out.print("; bases");
-    for (ValueID base : bases) {
-        out.print(" ");
-        dumpID(out, base);
-    }
-    out.println();
-}
-
-static void runRawWordsTestCommand(TestCommandContext& context)
-{
-    CommandWords words(context);
-    if (!words.finish())
-        return;
-
-    const Program& program = *context.program;
-    forEachFunctionWithBody(program, [&](FunctionID id) {
-        const Function& function = program.at(id);
-        FunctionAnalyses analyses(AnalysisContext { context.build, program, nullptr, nullptr, id }, function);
-        context.out.println("function f", id.index());
-
-        RawWordWebs webs(program, function, analyses);
-        for (size_t index : webs.rawWords())
-            printRawWord(context.out, webs, ValueID(index));
-
-        Vector<InternalError> errors;
-        checkRawWords(program, id, function, analyses, errors);
-        if (errors.isEmpty())
-            context.out.println("valid");
-        for (const InternalError& error : errors)
-            dumpLine(context.out, "error "_s, nameOf(error.kind), " "_s, error.block, " "_s, error.value);
-    });
-}
-
 std::span<const TestCommand> selectionTestCommands()
 {
     static constexpr TestCommand commands[] {
@@ -141,7 +80,6 @@ std::span<const TestCommand> selectionTestCommands()
         { "code-shapes"_s, IRForm::Prepared, runCodeShapesTestCommand },
         { "operator-forms"_s, IRForm::Prepared, runOperatorFormsTestCommand },
         { "inline-forms"_s, IRForm::Prepared, runInlineFormsTestCommand },
-        { "raw-words"_s, IRForm::Selected, runRawWordsTestCommand, RawWordCheck::Skip },
         { "representation-rules"_s, IRForm::Placed, runRepresentationRulesTestCommand },
         { "conversions"_s, IRForm::Placed, runConversionsTestCommand },
     };

@@ -23,8 +23,8 @@ struct InitialWord {
 
 } // anonymous namespace
 
-static constexpr unsigned wordSize = sizeof(uint64_t);
-static constexpr unsigned bitsPerByte = 8;
+static constexpr unsigned encodedStaticsWordSize = sizeof(uint64_t);
+static constexpr unsigned bitsInByte = 8;
 
 static void encodeStaticsLayout(TableEncoder& encoder)
 {
@@ -45,8 +45,8 @@ static Vector<InitialWord> collectInitialWords(const TableEncoder& encoder)
             continue;
         unsigned width = widthOf(placed.representation);
         RELEASE_ASSERT(!(placed.offset % width));
-        RELEASE_ASSERT(width == wordSize || !(placed.initialWord >> (bitsPerByte * width)));
-        parts.append({ placed.offset / wordSize, placed.initialWord << (bitsPerByte * (placed.offset % wordSize)) });
+        RELEASE_ASSERT(width == encodedStaticsWordSize || !(placed.initialWord >> (bitsInByte * width)));
+        parts.append({ placed.offset / encodedStaticsWordSize, placed.initialWord << (bitsInByte * (placed.offset % encodedStaticsWordSize)) });
     }
     AOT::sort(parts, { }, &InitialWord::index);
 
@@ -64,7 +64,7 @@ static void encodeStaticsRuns(TableEncoder& encoder)
 {
     Vector<InitialWord> initialWords = collectInitialWords(encoder);
     // As ProgramStatics divides them: a word that lies on both sides is filled with the later ones, when the instance is created.
-    uint32_t firstWordFilledAtInstanceCreation = encoder.placement.statics().sizeFilledAtProgramEntry / wordSize;
+    uint32_t firstWordFilledAtInstanceCreation = encoder.placement.statics().sizeFilledAtProgramEntry / encodedStaticsWordSize;
     Vector<StaticsRun> runs;
     for (unsigned first = 0; first < initialWords.size();) {
         unsigned end = first + 1;
@@ -117,7 +117,7 @@ static Vector<uint32_t> collectNarrowRoots(const StaticsPlan& statics)
 static void encodeStaticsRoots(TableEncoder& encoder)
 {
     const StaticsPlan& statics = encoder.placement.statics();
-    encoder.setTable(ProgramTableIndex::staticsRoots, joinAdjacentRoots(statics.roots.span(), wordSize));
+    encoder.setTable(ProgramTableIndex::staticsRoots, joinAdjacentRoots(statics.roots.span(), encodedStaticsWordSize));
     encoder.setTable(ProgramTableIndex::staticsNarrowRoots, joinAdjacentRoots(collectNarrowRoots(statics).span(), sizeof(uint32_t)));
 }
 

@@ -33,7 +33,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct Mention {
+struct DefinitionMention {
     enum class Kind : uint8_t { VariableStore, Closure, ClassDefinition, EnvironmentAllocation, EnvironmentStore };
 
     Kind kind { Kind::VariableStore };
@@ -65,7 +65,7 @@ struct NamedByRecords {
     Vector<FieldReference> environmentFields;
 };
 
-struct ScanContext {
+struct DefinitionScanContext {
     const Program& program;
     const FlowResults& flow;
     BuildContext& build;
@@ -100,9 +100,9 @@ struct Deferral {
 // What a read finds that comes before the only store.
 enum class BeforeStore : uint8_t { NothingIsRead, DeadZone, SomethingElse };
 
-class BodyScanner {
+class DeferredDefinitionScanner {
 public:
-    BodyScanner(const ScanContext& context, FunctionID id, Vector<Deferral>& found)
+    DeferredDefinitionScanner(const DefinitionScanContext& context, FunctionID id, Vector<Deferral>& found)
         : m_context(context)
         , m_program(context.program)
         , m_id(id)
@@ -129,7 +129,7 @@ private:
     void scanEnvironmentStore(ValueID);
     void scanClassDefinition(ValueID);
 
-    const ScanContext& m_context;
+    const DefinitionScanContext& m_context;
     const Program& m_program;
     FunctionID m_id;
     const Function& m_function;
@@ -152,7 +152,7 @@ struct DeferredRegExp {
     Value literal;
 };
 
-struct Plan {
+struct DefinitionPlan {
     std::span<const Deferral> deferralsIn(FunctionID body) const LIFETIME_BOUND
     {
         auto range = std::ranges::equal_range(deferrals, body, { }, &Deferral::body);
@@ -198,30 +198,30 @@ struct Plan {
 
 } // anonymous namespace
 
-static void collectMentions(const Program& program, FunctionID function, Vector<Mention>& found)
+static void collectMentions(const Program& program, FunctionID function, Vector<DefinitionMention>& found)
 {
     constexpr OpcodeSet mentioningOpcodes { Opcode::PutModuleVariable, Opcode::NewClosure, Opcode::NewClass, Opcode::NewObject, Opcode::PutEnvironmentField };
     forEachListedName(program, function, mentioningOpcodes, [&](BlockID, ValueID value, Opcode opcode, NameKind kind, uint32_t name) {
         switch (opcode) {
         case Opcode::PutModuleVariable:
             if (kind == NameKind::Variable)
-                found.append({ Mention::Kind::VariableStore, name });
+                found.append({ DefinitionMention::Kind::VariableStore, name });
             break;
         case Opcode::NewClosure:
             if (kind == NameKind::Function)
-                found.append({ Mention::Kind::Closure, name });
+                found.append({ DefinitionMention::Kind::Closure, name });
             break;
         case Opcode::NewClass:
             if (kind == NameKind::Layout)
-                found.append({ Mention::Kind::ClassDefinition, name });
+                found.append({ DefinitionMention::Kind::ClassDefinition, name });
             break;
         case Opcode::NewObject:
             if (kind == NameKind::Layout && program.at(LayoutID(name)).kind == LayoutKind::Environment)
-                found.append({ Mention::Kind::EnvironmentAllocation, name });
+                found.append({ DefinitionMention::Kind::EnvironmentAllocation, name });
             break;
         case Opcode::PutEnvironmentField:
             if (kind == NameKind::Layout)
-                found.append({ Mention::Kind::EnvironmentStore, name, program.functions[function.index()].at(value).field() });
+                found.append({ DefinitionMention::Kind::EnvironmentStore, name, program.functions[function.index()].at(value).field() });
             break;
         default:
             break;
@@ -231,7 +231,7 @@ static void collectMentions(const Program& program, FunctionID function, Vector<
 
 static Counts countMentions(const Program& program, const ParallelLoops& loops)
 {
-    Vector<Mention> mentions = collectInParallel<Mention>(loops, program.functions.size(), [&](unsigned index, Vector<Mention>& found) {
+    Vector<DefinitionMention> mentions = collectInParallel<DefinitionMention>(loops, program.functions.size(), [&](unsigned index, Vector<DefinitionMention>& found) {
         collectMentions(program, FunctionID(index), found);
     });
 
@@ -243,21 +243,21 @@ static Counts countMentions(const Program& program, const ParallelLoops& loops)
     auto count = [](uint8_t& counter) {
         counter = std::min<unsigned>(counter + 1, 2);
     };
-    for (const Mention& mention : mentions) {
+    for (const DefinitionMention& mention : mentions) {
         switch (mention.kind) {
-        case Mention::Kind::VariableStore:
+        case DefinitionMention::Kind::VariableStore:
             count(counts.storesOfVariable[mention.subject]);
             break;
-        case Mention::Kind::Closure:
+        case DefinitionMention::Kind::Closure:
             count(counts.closuresOfFunction[mention.subject]);
             break;
-        case Mention::Kind::ClassDefinition:
+        case DefinitionMention::Kind::ClassDefinition:
             count(counts.definitionsOfClass[mention.subject]);
             break;
-        case Mention::Kind::EnvironmentAllocation:
+        case DefinitionMention::Kind::EnvironmentAllocation:
             count(counts.allocationsOfEnvironment[mention.subject]);
             break;
-        case Mention::Kind::EnvironmentStore:
+        case DefinitionMention::Kind::EnvironmentStore:
             counts.storedEnvironmentFields.append({ LayoutID(mention.subject), mention.field });
             break;
         }
@@ -332,7 +332,7 @@ static BeforeStore whatIsReadBeforeStore(const Program& program, const Variable&
     return program.at(variable.declared.type).primitives & Primitive::Absent ? BeforeStore::DeadZone : BeforeStore::NothingIsRead;
 }
 
-FunctionAnalyses& BodyScanner::analyses()
+FunctionAnalyses& DeferredDefinitionScanner::analyses()
 {
     if (!m_analyses)
         m_analyses.emplace(AnalysisContext { m_context.build, m_program, &m_context.flow, nullptr, m_id }, m_function);
@@ -340,7 +340,7 @@ FunctionAnalyses& BodyScanner::analyses()
 }
 
 // SomethingElse where the variable needs the object itself.
-BeforeStore BodyScanner::whatIsReadBefore(const Value& store, Deferral::Kind kind) const
+BeforeStore DeferredDefinitionScanner::whatIsReadBefore(const Value& store, Deferral::Kind kind) const
 {
     VariableID id = store.variable();
     const Variable& variable = m_program.at(id);
@@ -368,7 +368,7 @@ BeforeStore BodyScanner::whatIsReadBefore(const Value& store, Deferral::Kind kin
     return found == BeforeStore::DeadZone && isNamedByRecord ? BeforeStore::SomethingElse : found;
 }
 
-bool BodyScanner::tryTakeStore(Deferral& deferral, ValueID id) const
+bool DeferredDefinitionScanner::tryTakeStore(Deferral& deferral, ValueID id) const
 {
     const Value& store = m_function.at(id);
     switch (whatIsReadBefore(store, deferral.kind)) {
@@ -387,7 +387,7 @@ bool BodyScanner::tryTakeStore(Deferral& deferral, ValueID id) const
 }
 
 // The allocation comes last. Nothing but the store gets hold of the object.
-bool BodyScanner::collectStoredAllocation(ValueID stored, Vector<ValueID, 4>& values)
+bool DeferredDefinitionScanner::collectStoredAllocation(ValueID stored, Vector<ValueID, 4>& values)
 {
     for (ValueID id = stored;; id = m_function.at(id).operand(0)) {
         if (useLists().useCount(id) != 1)
@@ -400,12 +400,12 @@ bool BodyScanner::collectStoredAllocation(ValueID stored, Vector<ValueID, 4>& va
     }
 }
 
-bool BodyScanner::isOnlyClosureOverNothing(const Value& allocation) const
+bool DeferredDefinitionScanner::isOnlyClosureOverNothing(const Value& allocation) const
 {
     return allocation.opcode == Opcode::NewClosure && allocation.capturesOperands().empty() && !allocation.isMadeOnDemand() && hasOnlyClosure(allocation.function());
 }
 
-void BodyScanner::scanVariableStore(ValueID id)
+void DeferredDefinitionScanner::scanVariableStore(ValueID id)
 {
     const Value& store = m_function.at(id);
     const Value& allocation = m_function.at(sameObjectThroughCasts(m_function, store.valueOperand()));
@@ -426,7 +426,7 @@ void BodyScanner::scanVariableStore(ValueID id)
 }
 
 // One environment of the layout exists at most, so a field of the layout is one place.
-bool BodyScanner::isOnlyEnvironment(ValueID environment, LayoutID layout)
+bool DeferredDefinitionScanner::isOnlyEnvironment(ValueID environment, LayoutID layout)
 {
     if (m_context.counts.allocationsOfEnvironment[layout.index()] != 1)
         return false;
@@ -436,7 +436,7 @@ bool BodyScanner::isOnlyEnvironment(ValueID environment, LayoutID layout)
     return analyses().executionCountOf(useLists().blockOf(allocation)) == ExecutionCount::AtMostOnce;
 }
 
-void BodyScanner::scanEnvironmentStore(ValueID id)
+void DeferredDefinitionScanner::scanEnvironmentStore(ValueID id)
 {
     const Value& store = m_function.at(id);
     FieldReference field { store.layout(), store.field() };
@@ -461,7 +461,7 @@ void BodyScanner::scanEnvironmentStore(ValueID id)
 }
 
 // A read gives what its variable is declared to hold, and every use of the class object was typed with the type of the class object.
-VariableID BodyScanner::findVariableOfType(const Deferral& deferral, TypeID type) const
+VariableID DeferredDefinitionScanner::findVariableOfType(const Deferral& deferral, TypeID type) const
 {
     for (VariableID variable : deferral.variables) {
         const DeclaredType& declared = m_program.at(variable).declared;
@@ -475,7 +475,7 @@ VariableID BodyScanner::findVariableOfType(const Deferral& deferral, TypeID type
     return { };
 }
 
-void BodyScanner::scanClassDefinition(ValueID id)
+void DeferredDefinitionScanner::scanClassDefinition(ValueID id)
 {
     LayoutID layoutID = m_function.at(id).layout();
     const Layout& layout = m_program.at(layoutID);
@@ -526,7 +526,7 @@ void BodyScanner::scanClassDefinition(ValueID id)
     m_found.append(WTF::move(deferral));
 }
 
-void BodyScanner::run()
+void DeferredDefinitionScanner::run()
 {
     for (const Block& block : m_function.blocks) {
         for (ValueID id : block.values) {
@@ -666,7 +666,7 @@ static Variable createVariableBeside(ProgramEditor& editor, VariableID deadZone)
     return variable;
 }
 
-static void splitVariablesWithDeadZone(ProgramEditor& editor, Plan& plan, Deferral& deferral)
+static void splitVariablesWithDeadZone(ProgramEditor& editor, DefinitionPlan& plan, Deferral& deferral)
 {
     for (VariableID deadZone : deferral.variablesWithDeadZone) {
         VariableID object = editor.addVariable(createVariableBeside(editor, deadZone));
@@ -678,7 +678,7 @@ static void splitVariablesWithDeadZone(ProgramEditor& editor, Plan& plan, Deferr
     }
 }
 
-static void changeVariables(ProgramEditor& editor, Plan& plan)
+static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
 {
     const Program& program = editor.program();
     plan.typeOfDeadZone = editor.types().intern(Type::fromPrimitives(Primitive::Absent | Primitive::Undefined));
@@ -714,7 +714,7 @@ static void changeVariables(ProgramEditor& editor, Plan& plan)
     AOT::sort(plan.regExps, { }, &DeferredRegExp::variable);
 }
 
-static Vector<FunctionID> findFunctionsToEdit(const Program& program, const ParallelLoops& loops, const Plan& plan)
+static Vector<FunctionID> findFunctionsToEdit(const Program& program, const ParallelLoops& loops, const DefinitionPlan& plan)
 {
     Vector<FunctionID> functions;
     if (plan.changesReads()) {
@@ -784,7 +784,7 @@ static void removeDefinitions(std::span<const Deferral> deferrals, IRBuilder& bu
 }
 
 // The test stays where it is, on the variable that says whether the declaration has run. What took the result of the test takes the object. So does what took the cast that stood for a test.
-static void readObjectsBehindDeadZoneTests(const Plan& plan, IRBuilder& builder)
+static void readObjectsBehindDeadZoneTests(const DefinitionPlan& plan, IRBuilder& builder)
 {
     if (plan.splitVariables.isEmpty())
         return;
@@ -838,7 +838,7 @@ static void readObjectsBehindDeadZoneTests(const Plan& plan, IRBuilder& builder)
     }
 }
 
-static void readMovedFieldsFromVariables(const Plan& plan, Function& function)
+static void readMovedFieldsFromVariables(const DefinitionPlan& plan, Function& function)
 {
     if (plan.movedFields.isEmpty())
         return;
@@ -889,7 +889,7 @@ static void fillAtRead(const DeferredRegExp& deferred, IRBuilder& builder, Progr
     builder.endExpansion(expansion, branch.provenOnNotTaken);
 }
 
-static void fillRegExpVariablesAtReads(const Plan& plan, IRBuilder& builder)
+static void fillRegExpVariablesAtReads(const DefinitionPlan& plan, IRBuilder& builder)
 {
     if (plan.regExps.isEmpty())
         return;
@@ -912,7 +912,7 @@ static void fillRegExpVariablesAtReads(const Plan& plan, IRBuilder& builder)
     }
 }
 
-static uint64_t numberOf(const Plan& plan, Deferral::Kind kind)
+static uint64_t numberOf(const DefinitionPlan& plan, Deferral::Kind kind)
 {
     return std::ranges::count(plan.deferrals, kind, &Deferral::kind);
 }
@@ -923,13 +923,13 @@ void deferDefinitions(ProgramEditor& editor, const FlowResults& flow, BuildConte
     const ParallelLoops& loops = build.parallelLoops();
     Counts counts = countMentions(program, loops);
     NamedByRecords named = findWhatRecordsName(program);
-    ScanContext context { program, flow, build, counts, named };
+    DefinitionScanContext context { program, flow, build, counts, named };
 
-    Plan plan;
+    DefinitionPlan plan;
     plan.deferrals = collectInParallel<Deferral>(loops, program.functions.size(), [&](unsigned index, Vector<Deferral>& found) {
         constexpr OpcodeSet definingOpcodes { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewClass };
         if (mayListValueWith(program, FunctionID(index), definingOpcodes) && program.functions[index].hasBody() && build.isEnabled(PassID::DeferDefinitions, FunctionID(index)))
-            BodyScanner(context, FunctionID(index), found).run();
+            DeferredDefinitionScanner(context, FunctionID(index), found).run();
     });
     dropDeferralsWithOtherReads(program, loops, plan.deferrals);
     dropClassesBelowClassesThatCodeDefines(program, plan.deferrals);

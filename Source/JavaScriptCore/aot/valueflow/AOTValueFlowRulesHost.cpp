@@ -23,13 +23,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ValueFlowName everyProperty { ValueFlowNameKind::EveryProperty, 0 };
-
-static ClimbingSet only(ValueFlowRuleContext& context, ValueFlowObjectID object)
-{
-    return ClimbingSet(context.maker().of(object));
-}
-
 // The host makes the module object of a CommonJS module for whoever asks for it.
 static void nameModuleObjects(const Program& program, ValueFlowBody& body)
 {
@@ -176,7 +169,7 @@ void passWhatAnnotationsSay(ValueFlowRuleContext& context, ClimbingSet callees)
     });
 }
 
-static bool isRaised(ValueFlowRuleContext& context, ValueFlowHostNode flag)
+static bool isHostFlagRaised(ValueFlowRuleContext& context, ValueFlowHostNode flag)
 {
     return context.contains(context.valueOf(context.nodes().ofHost(flag)), ValueFlowUniverse::unknownObject());
 }
@@ -202,7 +195,7 @@ void letUnknownCodeWrite(ValueFlowRuleContext& context)
 
 bool mayUnknownCodeWrite(ValueFlowRuleContext& context)
 {
-    return isRaised(context, ValueFlowHostNode::UnknownCodeWrites) || isRaised(context, ValueFlowHostNode::UnseenCodeRuns);
+    return isHostFlagRaised(context, ValueFlowHostNode::UnknownCodeWrites) || isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns);
 }
 
 void letWhateverHasEscapedBeCalled(ValueFlowRuleContext& context)
@@ -212,7 +205,7 @@ void letWhateverHasEscapedBeCalled(ValueFlowRuleContext& context)
 
 bool mayCallWhateverHasEscaped(ValueFlowRuleContext& context)
 {
-    return isRaised(context, ValueFlowHostNode::ValueNobodyKnowsIsCalled) || isRaised(context, ValueFlowHostNode::UnseenCodeRuns);
+    return isHostFlagRaised(context, ValueFlowHostNode::ValueNobodyKnowsIsCalled) || isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns);
 }
 
 // The run time refuses whoever tries to change a locked object of the table, native code too.
@@ -220,7 +213,7 @@ void letAnythingHappenTo(ValueFlowRuleContext& context, ClimbingSet escaped)
 {
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet objects = context.restrict(escaped, ValueSets::complement(universe.lockedObjects()));
-    if (!isRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
+    if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
         objects = context.restrict(objects, ValueSets::complement(universe.objectsOfRealm()));
     ValueSetID unknown = unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject);
     ValueSetID unknownObject = context.maker().intersect(unknown, universe.objects());
@@ -270,7 +263,7 @@ static ValueFlowSources memberOfRequiredValue(ValueFlowRuleContext& context, Mod
 {
     const Program& program = context.program();
     std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = name });
-    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(*key) : everyProperty) }, { } };
+    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(*key) : everyPropertyName) }, { } };
 }
 
 // What the host finds under the name of an export of an entry point. Nothing where the module cannot have the name.
@@ -396,7 +389,7 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
         return false;
     // What the built-in answers is the unknown object wherever it goes, or an object of the host whose stores are noted, so no store into it goes unnoticed.
     if (condition->objectNobodyKnowsIsWritten)
-        return isRaised(context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) || mayUnknownCodeWrite(context);
+        return isHostFlagRaised(context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten) || mayUnknownCodeWrite(context);
 
     const BuiltinTable& builtins = context.program().builtins();
     ValueFlowObjectID objectOfBuiltin = context.universe().objectOf(builtin);
@@ -452,7 +445,7 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
         // Native code calls what it reads here. The object on which the exports hang is only held wherever it arrives, so the exports are handed over by themselves.
         ValueFlowSources answer = requiredValueOf(context, id);
         connect(context, answer, escaped);
-        context.connect(context.read(withSourcesOfCopies(context, context.restrict(valueOf(context, answer), context.universe().knownObjects())), everyProperty), escaped);
+        context.connect(context.read(withSourcesOfCopies(context, context.restrict(valueOf(context, answer), context.universe().knownObjects())), everyPropertyName), escaped);
         return;
     }
     for (size_t index = 0; index < load.exports.size(); ++index) {
@@ -608,7 +601,7 @@ public:
                 m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(m_context, m_context.universe().closureOf(entry->function)));
         }
         // Evaluated text has of the host what the program names. It finds the function where native code has put it, and calls it with what it likes.
-        bool textFindsFunctions = isRaised(m_context, ValueFlowHostNode::UnseenCodeRuns);
+        bool textFindsFunctions = isHostFlagRaised(m_context, ValueFlowHostNode::UnseenCodeRuns);
         for (const BuiltinCalledFunction* row : m_rowsListingUses) {
             const RuntimeFunctionEntry* entry = findRuntimeFunction(m_context.program(), row->function);
             if (!entry || !entry->function)
@@ -785,9 +778,7 @@ void noteRequest(ValueFlowRuleContext& context, FunctionID requester, ModuleID m
 static bool isWrittenByProgram(const Program& program, const Module& module)
 {
     switch (module.kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
+    default:
         return !module.flags.contains(ModuleFlags::IsLibrary) && !isBundlerHelperModule(program, module);
     case ModuleKind::External:
         return true;
@@ -1071,7 +1062,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
     const BuiltinTable& builtins = program.builtins();
 
     ClimbingSet escaped = context.valueWithin(ClimbingSet(universe.builtinObjects()), ValueFlowProgramNodes::escaped());
-    bool membersFollowHolders = isRaised(context, ValueFlowHostNode::UnseenCodeRuns);
+    bool membersFollowHolders = isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns);
     // What has escaped is held, and a call whose callee nobody knows calls it: see mayCallWhateverHasEscaped().
     bool callsWhateverHasEscaped = mayCallWhateverHasEscaped(context);
     ClimbingSet run = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
@@ -1096,9 +1087,9 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
             attachments.addClassesAnsweredBy(builtin);
     });
     if (callsLoaderThatHasEscaped) {
-        if (isRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
+        if (isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
             handLoadedModulesToNativeCode(context);
-        else if (isRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName))
+        else if (isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName))
             handLibraryModulesToNativeCode(context);
     }
     ClimbingSet escapedOfLanguage(context.maker().of(escapedObjectsOfLanguage.span()));
@@ -1131,7 +1122,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
                 attachments.addCode(entry.id);
         }
     }
-    if (isRaised(context, ValueFlowHostNode::HostChoosesOperands))
+    if (isHostFlagRaised(context, ValueFlowHostNode::HostChoosesOperands))
         attachments.addStartupModules();
     attachments.enter();
 
@@ -1158,7 +1149,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
 // One more caller without types, not a second world.
 void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
-    if (!isRaised(context, ValueFlowHostNode::UnseenCodeRuns))
+    if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns))
         return;
 
     const Program& program = context.program();
@@ -1173,9 +1164,9 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
         if (entry.origin == BuiltinOrigin::Host && entry.scope == BuiltinScope::Realm && isObjectKind(entry.kind) && builtins.canonicalID(BuiltinID(index)) == BuiltinID(index))
             objectsOfHost.append(universe.objectOf(BuiltinID(index)));
     }
-    if (isRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
+    if (isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
         letAnythingHappenTo(context, ClimbingSet(context.maker().of(objectsOfHost.span())));
-    if (isRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
+    if (isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
         handLoadedModulesToNativeCode(context);
     else
         handLibraryModulesToNativeCode(context);
@@ -1190,15 +1181,15 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
     context.use(Builtins::UndeclaredNativeCode, BuiltinUse::Read);
 
     // Text in the global scope finds no module object unless the program names a way to one: runUsedBuiltins().
-    if (isRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
+    if (isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
         exposeModuleObjects(context);
 }
 
 void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
-    bool areRequired = isRaised(context, ValueFlowHostNode::ModulesAreRequiredByName);
-    bool areImported = isRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
-    bool libraryIsRequired = isRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName);
+    bool areRequired = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName);
+    bool areImported = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
+    bool libraryIsRequired = isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName);
     if (!areRequired && !areImported && !libraryIsRequired)
         return;
 

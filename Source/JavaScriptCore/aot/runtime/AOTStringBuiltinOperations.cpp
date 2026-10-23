@@ -318,7 +318,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringRepeat, JSCell*, (Instance* instance,
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     if (view->length() == 1) {
         char16_t unit = view[0];
-        if (isLatin1(unit))
+        if (WTF::isLatin1(unit))
             OPERATION_RETURN(scope, repeatCharacter(globalObject, static_cast<Latin1Character>(unit), count));
         OPERATION_RETURN(scope, repeatCharacter(globalObject, unit, count));
     }

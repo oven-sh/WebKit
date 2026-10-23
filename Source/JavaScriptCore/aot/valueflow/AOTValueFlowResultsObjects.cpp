@@ -34,10 +34,7 @@ static constexpr OptionSet<ObjectMutation> mutationsWithoutMark {
 static bool isAllocatedByOperations(LayoutKind kind)
 {
     switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-    case LayoutKind::Container:
-    case LayoutKind::Environment:
+    default:
     // The code of a built-in makes its records as ordinary objects. Only an operation of compiled code makes an object with a layout of the table.
     case LayoutKind::BuiltinResult:
         return true;
@@ -47,11 +44,6 @@ static bool isAllocatedByOperations(LayoutKind kind)
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool isClassLayout(const Layout& layout)
-{
-    return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
 }
 
 static bool isLost(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
@@ -283,7 +275,7 @@ static BitVector findLayoutsWithInstances(const ValueFlowResultInputs& inputs)
 {
     // A set that several threads meet is tested by each of them, and adds the same.
     struct FoundByWorker {
-        HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seenSets;
+        ValueSetsMet seenSets;
         Vector<ValueSetID> instancesInSets;
     };
     constexpr uint32_t nodesPerTask = 4096;
@@ -306,7 +298,7 @@ static BitVector findLayoutsWithInstances(const ValueFlowResultInputs& inputs)
         uint32_t end = std::min(numberOfNodes, (task + 1) * nodesPerTask);
         for (uint32_t index = task * nodesPerTask; index < end; ++index) {
             ValueSetID set = graph.valueOf(ValueFlowNodeID(index));
-            if (ofWorker.seenSets.add(set.index()).isNewEntry && inputs.sets().meet(set, instances))
+            if (ofWorker.seenSets.add(set) && inputs.sets().meet(set, instances))
                 ofWorker.instancesInSets.append(makers.of(worker).intersect(set, instances));
         }
     });
@@ -362,11 +354,7 @@ static ValueFlowObjectID expectedPrototype(const ValueFlowResultInputs& inputs, 
     case LayoutKind::Record:
     case LayoutKind::Container:
         return inputs.universe().objectOf(Builtins::ObjectPrototype);
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
+    default:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -113,7 +113,7 @@ private:
 
 } // anonymous namespace
 
-static AnalysisContext contextOf(const AnalysisContext& programContext, FunctionID id)
+static AnalysisContext analysisContextOf(const AnalysisContext& programContext, FunctionID id)
 {
     return { programContext.build, programContext.program, programContext.flow, programContext.effects, id };
 }
@@ -124,7 +124,7 @@ static bool isAlwaysCell(const Program& program, const Function& function, Value
 }
 
 // No operation reads the hidden field that holds the environment. The closures that the object makes on demand do: they are cells of the heap wherever the object lies.
-static bool isEnvironmentOfDeferredClosures(const Program& program, const Value& user, uint32_t operandIndex)
+static bool holdsDeferredClosures(const Program& program, const Value& user, uint32_t operandIndex)
 {
     if (user.opcode != Opcode::NewObject)
         return false;
@@ -345,7 +345,7 @@ HolderAction HolderClassifier::classifyOperand(ValueID userID, uint32_t operandI
     // One of several results goes to the caller under its declared type, and the caller's uses of it are classified like any other. What holds the results in between is followed like the environment itself.
     if (user.opcode == Opcode::Results)
         return operandIndex < m_function.results.size() && m_types.environmentOf(m_function.results[operandIndex].type) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
-    if (isEnvironmentOfDeferredClosures(m_context.program, user, operandIndex))
+    if (holdsDeferredClosures(m_context.program, user, operandIndex))
         return HolderAction::Mark;
 
     OperandSummary summary = summarizeOperand(m_effects, m_function, user, operandIndex);
@@ -834,7 +834,7 @@ static void rewriteFunctions(ProgramEditor& editor, const AnalysisContext& progr
     }
 
     editFunctionsInParallel(editor, programContext.build, changedFunctions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
-        rewriteFunction(contextOf(programContext, id), function, arenas.types, plans[id.index()], reusedLayouts);
+        rewriteFunction(analysisContextOf(programContext, id), function, arenas.types, plans[id.index()], reusedLayouts);
     });
 }
 
@@ -874,8 +874,8 @@ EnvironmentReuse reuseEnvironments(ProgramEditor& editor, const FlowResults& flo
     CandidateTypes types(program, candidateLayouts);
     Vector<uint32_t> largestFunctionsFirst = largeFunctions(program, build.parallelLoops());
     forEachIndexInParallel(build.parallelLoops(), plans.size(), largestFunctionsFirst.span(), [&](unsigned index) {
-        classifyHolders(contextOf(programContext, FunctionID(index)), effects, types, plans[index]);
-        findResultsMadeHere(contextOf(programContext, FunctionID(index)), types, plans[index]);
+        classifyHolders(analysisContextOf(programContext, FunctionID(index)), effects, types, plans[index]);
+        findResultsMadeHere(analysisContextOf(programContext, FunctionID(index)), types, plans[index]);
     });
     for (const FunctionPlan& plan : plans) {
         for (LayoutID layout : plan.disqualifiedLayouts)
@@ -901,7 +901,7 @@ EnvironmentReuse reuseEnvironments(ProgramEditor& editor, const FlowResults& flo
     forEachIndexInParallel(build.parallelLoops(), functionsWithSites.size(), largestWithSitesFirst.span(), [&](unsigned index) {
         FunctionID id = functionsWithSites[index];
         FunctionPlan& plan = plans[id.index()];
-        findReleasePoints(contextOf(programContext, id), types, candidateLayouts, plans.span(), plan);
+        findReleasePoints(analysisContextOf(programContext, id), types, candidateLayouts, plans.span(), plan);
         profitableLayouts[index] = findProfitableLayouts(program.at(id), plan);
     });
 

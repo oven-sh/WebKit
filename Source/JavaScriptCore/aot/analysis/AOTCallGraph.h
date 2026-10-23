@@ -262,9 +262,7 @@ ReferencesOfBody collectReferencesOf(const Program&, const FlowResults&, Functio
 constexpr bool keepsFunctionAlive(FunctionReferenceKind kind)
 {
     switch (kind) {
-    case FunctionReferenceKind::Call:
-    case FunctionReferenceKind::Closure:
-    case FunctionReferenceKind::Constructor:
+    default:
         return true;
     case FunctionReferenceKind::Dispatch:
         return false;

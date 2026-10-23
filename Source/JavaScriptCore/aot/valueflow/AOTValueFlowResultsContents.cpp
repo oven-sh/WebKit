@@ -439,11 +439,13 @@ ValueFlowNumbers ContainerAnalysis::numbersOf(FunctionID id, ValueID value)
 {
     const Function& function = program().at(id);
     std::atomic<BitVector*>& known = m_valuesBehindChecks[id.index()];
-    BitVector* behindChecks = known.load(std::memory_order_acquire);
+    const BitVector* behindChecks = m_inputs.bodies().valuesBehindChecks(id);
+    if (!behindChecks)
+        behindChecks = known.load(std::memory_order_acquire);
     if (!behindChecks) {
         std::unique_ptr<BitVector> found = makeUnique<BitVector>(findValuesBehindChecks(program(), function, CFG(function)));
-        if (known.compare_exchange_strong(behindChecks, found.get(), std::memory_order_acq_rel, std::memory_order_acquire))
-            behindChecks = found.release();
+        BitVector* madeByAnotherThread = nullptr;
+        behindChecks = known.compare_exchange_strong(madeByAnotherThread, found.get(), std::memory_order_acq_rel, std::memory_order_acquire) ? found.release() : madeByAnotherThread;
     }
     if (behindChecks->get(value.index()))
         return m_inputs.numbersOfValues ? m_inputs.numbersOfValues->numbersOf(id, value) : ValueFlowNumbers::any();

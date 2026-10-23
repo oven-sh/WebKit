@@ -108,7 +108,7 @@ private:
     CallerOfBuildThread() = default;
 
     Lock m_lock;
-    Condition m_condition;
+    WTF::Condition m_condition;
     bool m_isReleased WTF_GUARDED_BY_LOCK(m_lock) { false };
 };
 

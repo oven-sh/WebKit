@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAnalysisDump.h"
 #include "AOTBuildContext.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -759,30 +758,6 @@ BlockFrequency BlockFrequencies::classForBlockOrder(Edge edge) const
     if (classOf(Edge { edge.from, 1 - edge.targetIndex }) != BlockFrequency::Normal)
         return frequency;
     return BlockFrequency::Unlikely;
-}
-
-void BlockFrequencies::dump(PrintStream& out, const Function& function) const
-{
-    RELEASE_ASSERT(function.blocks.size() == m_blocks.size());
-    for (size_t index = 0; index < m_blocks.size(); ++index) {
-        if (m_cfg.isReachable(BlockID(index)))
-            out.println("b", index, " frequency: ", nameOf(classOf(BlockID(index))), " count: ", WTF::format("%.6f", frequencyOf(BlockID(index))));
-    }
-    for (size_t index = 0; index < m_blocks.size(); ++index) {
-        if (!m_cfg.isReachable(BlockID(index)))
-            continue;
-        forEachOutgoingEdge(function, BlockID(index), [&](Edge edge, const Target& target) {
-            BlockFrequency frequency = classOf(edge);
-            if (classForBlockOrder(edge) != frequency) {
-                dumpEdge(out, edge);
-                out.println(" off the usual path");
-            }
-            if (rarerOf(classOf(edge.from), classOf(target.block)) >= frequency)
-                return;
-            dumpEdge(out, edge);
-            out.println(" frequency: ", nameOf(frequency));
-        });
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

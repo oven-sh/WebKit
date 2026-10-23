@@ -108,32 +108,7 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
         return written == ValueFlowNameKind::InternalFields;
     case ValueFlowNameKind::InternalFields:
         return written == ValueFlowNameKind::Slot;
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
+    default:
         return false;
     }
     return false;
@@ -159,6 +134,15 @@ inline constexpr ValueFlowName valueOfEntriesPair { ValueFlowNameKind::HiddenSlo
 inline constexpr ValueFlowName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
 // Of a Map: the pairs out of which its constructor has taken its keys and values.
 inline constexpr ValueFlowName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
+
+inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
+inline constexpr ValueFlowName unknownKeyName = ValueFlowName::of(ValueFlowNameKind::UnknownKey);
+inline constexpr ValueFlowName everyPropertyName = ValueFlowName::of(ValueFlowNameKind::EveryProperty);
+inline constexpr ValueFlowName everyGetterName = ValueFlowName::of(ValueFlowNameKind::EveryGetter);
+inline constexpr ValueFlowName copiedFromName = ValueFlowName::of(ValueFlowNameKind::CopiedFrom);
+inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
+inline constexpr ValueFlowName allocatedAsName = ValueFlowName::of(ValueFlowNameKind::AllocatedAs);
+inline constexpr ValueFlowName awaitedValueName = ValueFlowName::of(ValueFlowNameKind::AwaitedValue);
 
 // What a mask does to the two placeholders, and to an object that it does not list.
 enum class ValueFlowMaskKind : uint8_t {

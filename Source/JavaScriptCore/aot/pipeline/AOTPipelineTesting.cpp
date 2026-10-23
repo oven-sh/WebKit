@@ -8,13 +8,28 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAnalysisDump.h"
 #include "AOTBuildContext.h"
 #include "AOTCallGraph.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTDerivedFunctions.h"
+#include "AOTEffectSummaries.h"
+#include "AOTElideStackChecks.h"
+#include "AOTEmbedConstantCollections.h"
+#include "AOTFlowResults.h"
+#include "AOTFrameAllocation.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeat.h"
 #include "AOTIRPrinter.h"
 #include "AOTInterningPhases.h"
+#include "AOTNumberLiteralStrings.h"
 #include "AOTPipelineInternal.h"
+#include "AOTPlacement.h"
+#include "AOTRegExpRequests.h"
+#include "AOTReuseEnvironments.h"
+#include "AOTSiteCachePlacement.h"
+#include "AOTSlotPlan.h"
+#include "AOTSummarizeForInlining.h"
 #include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <span>
@@ -22,7 +37,41 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+static ASCIILiteral originName(RegExpRequestOrigin origin)
+{
+    switch (origin) {
+    case RegExpRequestOrigin::Literal:
+        return "literal"_s;
+    case RegExpRequestOrigin::Candidate:
+        return "candidate"_s;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void RegExpRequests::dump(PrintStream& out, const Typed::Program& program) const
+{
+    out.print("regexp requests: ", m_requests.size(), "\n");
+    for (size_t index = 0; index < m_requests.size(); ++index) {
+        const RegExpRequest& request = m_requests[index];
+        out.print("  ", index, " ", originName(request.origin), " ");
+        Typed::printString(out, program, request.pattern);
+        Yarr::FlagsString characters = Yarr::flagsString(request.flags);
+        out.print(" flags=");
+        if (request.flags.isEmpty())
+            out.print("-");
+        else
+            out.print(StringView(characters.span()));
+        out.print(" sites=");
+        CommaPrinter comma;
+        for (const RegExpSite& site : request.sites)
+            out.print(comma, "f", site.function.index(), ":v", site.value.index());
+        out.print("\n");
+    }
+}
+
+namespace Typed {
 
 static bool acceptsForm(PassID id, IRForm form)
 {
@@ -289,6 +338,158 @@ std::unique_ptr<PipelineOutput> runPipelineUntil(PassID last, std::unique_ptr<Pr
     return output;
 }
 
+static void dumpNode(IRPrinter& printer, const DataNode& node)
+{
+    auto dumpLeaf = [&](auto... payload) {
+        printer.out().print(nameOf(node.kind()), "(");
+        (printer.print(payload), ...);
+        printer.out().print(")");
+    };
+
+    switch (node.kind()) {
+    case DataNode::Kind::Undefined:
+    case DataNode::Kind::Null:
+    case DataNode::Kind::Hole:
+        dumpLeaf();
+        return;
+    case DataNode::Kind::Boolean:
+        dumpLeaf(node.as<DataNode::Boolean>().value);
+        return;
+    case DataNode::Kind::Number:
+        dumpLeaf(node.as<DataNode::Number>().value);
+        return;
+    case DataNode::Kind::String:
+        dumpLeaf(node.as<DataNode::String>().value);
+        return;
+    case DataNode::Kind::BigInt:
+        dumpLeaf(node.as<DataNode::BigInt>().digits);
+        return;
+    case DataNode::Kind::Array:
+    case DataNode::Kind::Object:
+        printVariant(printer, node);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void ConstantCollections::dump(PrintStream& out, const Program& program) const
+{
+    IRPrinter printer(out, program);
+    for (size_t index = 0; index < m_collections.size(); ++index) {
+        const ConstantCollection& collection = m_collections[index];
+        std::span<const DataNode> entries = program.at(collection.data).root.as<DataNode::Array>().elements.span();
+        out.print("table ", index, " keys: ");
+        dumpList(out, entries, [&](PrintStream&, const DataNode& entry) {
+            dumpNode(printer, collection.kind == ConstantCollectionKind::Set ? entry : entry.as<DataNode::Array>().elements[0]);
+        });
+        out.print("\n");
+        if (collection.kind == ConstantCollectionKind::Set)
+            continue;
+
+        out.print("table ", index, " values: ");
+        dumpList(out, entries, [&](PrintStream&, const DataNode& entry) {
+            dumpNode(printer, entry.as<DataNode::Array>().elements[1]);
+        });
+        out.print("\n");
+    }
+}
+
+#define AOT_FUNCTION_PASS_CASE(id, function) case PassID::id:
+
+void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
+{
+    const PipelineOutput& output = *m_output;
+    switch (id) {
+    case PassID::AnalyzeFlow:
+        output.flow->dump(out, m_program);
+        return;
+    case PassID::BuildCallGraph: {
+        const CallGraph& callGraph = m_analyses.callGraph(flow());
+        callGraph.computeRanks(m_build);
+        callGraph.dump(out, m_program);
+        return;
+    }
+    // A run of all stages that was stopped after a pass has handed these two to the output, and a stopped runner computes nothing again.
+    case PassID::ComputeEffectSummaries:
+        if (m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID()))
+            Typed::computeEffectSummaries(m_program, flow(), m_build).dump(out, m_program);
+        else
+            (m_runner.isStopped() ? *output.effects : m_analyses.effects(flow())).dump(out, m_program);
+        return;
+    case PassID::EstimateHeat:
+        (m_runner.isStopped() ? *output.heat : m_analyses.heat(flow())).dump(out, m_program);
+        return;
+    case PassID::SummarizeForInlining:
+        m_analyses.inlining(flow()).dump(out, m_program);
+        return;
+    case PassID::ChooseCallingConventions:
+        output.callingConventions->dump(out, m_program);
+        return;
+    case PassID::AllocateInFrames:
+        output.frameAllocation->dump(out, m_program);
+        return;
+    case PassID::ReuseEnvironments:
+        output.environmentReuse->dump(out, m_program);
+        return;
+    case PassID::NumberLiteralStrings:
+        output.literalStrings->dump(out, m_program);
+        return;
+    case PassID::EmbedConstantCollections:
+        output.constantCollections->dump(out, m_program);
+        return;
+    case PassID::CollectRegExpLiterals:
+        output.regExpRequests->dump(out, m_program);
+        return;
+    case PassID::ElideStackChecks:
+        output.stackChecks->dump(out, m_program);
+        return;
+    case PassID::PlanSlots:
+        output.slots->dump(out, m_program);
+        return;
+    case PassID::NumberAndEncode:
+        output.placement->dump(out, m_program);
+        return;
+    case PassID::PlaceSiteCaches:
+        output.siteCaches->dump(out, m_program);
+        return;
+    case PassID::None:
+    case PassID::AllocateTaggedLayouts:
+    case PassID::CheckTypesAtEntry:
+    case PassID::SplitBehindEntryChecks:
+    case PassID::SkipAnsweredEntryChecks:
+    case PassID::NarrowFieldTypes:
+    case PassID::NameCreatedSymbols:
+    case PassID::VerifyProgram:
+    case PassID::GuardTaintedPositions:
+    case PassID::ApplyFlowResults:
+    case PassID::CheckLockedBuiltinWrites:
+    case PassID::RemoveUnreadExports:
+    case PassID::PromoteEnvironmentsToVariables:
+    case PassID::DeferDefinitions:
+    case PassID::NarrowConstantVariables:
+    case PassID::DeferInitializers:
+    case PassID::MarkResultsUsedAsKeys:
+    case PassID::DeferClosuresInFields:
+    case PassID::AllocateInnerObjects:
+    case PassID::ReadCapturesFromEnvironments:
+    case PassID::RemoveUnreadFields:
+    case PassID::RemoveUnreachableFunctions:
+    case PassID::PromoteAggregateParameters:
+    case PassID::SplitCoroutines:
+    case PassID::CallModules:
+    case PassID::CreateEntrypoints:
+    case PassID::OutlineColdOperations:
+    case PassID::InlineHeads:
+    case PassID::CheckPlacement:
+    case PassID::GenerateCode:
+    FOR_EACH_AOT_FUNCTION_PASS(AOT_FUNCTION_PASS_CASE)
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+#undef AOT_FUNCTION_PASS_CASE
+
 bool canRunPassForTesting(PassID id, IRForm form)
 {
     if (id == PassID::None || id == PassID::GenerateCode)
@@ -329,6 +530,8 @@ PassOutcome runPassForTesting(PassID id, Program& program, PrintStream& results,
     return runPassForTesting(pipeline, id, results);
 }
 
-} } } // namespace JSC::AOT::Typed
+} // namespace Typed
+
+} } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

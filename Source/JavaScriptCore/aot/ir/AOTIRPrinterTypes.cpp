@@ -4,9 +4,10 @@
  */
 
 #include "config.h"
-#include "AOTIRPrinter.h"
 
-#if ENABLE(AOT)
+#if ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))
+
+#include "AOTIRPrinter.h"
 
 #include "AOTBuiltinTable.h"
 #include "AOTSort.h"
@@ -43,11 +44,6 @@ static std::optional<CodePoint> decodeCodePoint(std::span<const uint8_t> bytes)
     if (character < minCodePointForLength[length] || character > 0x10ffff)
         return std::nullopt;
     return CodePoint { character, length };
-}
-
-static bool needsEscape(uint8_t byte)
-{
-    return byte < 0x20 || byte >= 0x7f || byte == '"' || byte == '\\';
 }
 
 static bool isInTable(const StringTable& strings, StringID id)
@@ -466,4 +462,4 @@ void IRPrinter::print(CalleeSetID id)
 
 } } } // namespace JSC::AOT::Typed
 
-#endif // ENABLE(AOT)
+#endif // ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))

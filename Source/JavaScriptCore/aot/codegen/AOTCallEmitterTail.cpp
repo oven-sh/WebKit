@@ -31,8 +31,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using namespace B3;
-
 static bool returnsNothing(const ArgumentLocations& locations)
 {
     return std::ranges::all_of(locations.results, [](const ArgumentLocation& result) {
@@ -53,7 +51,7 @@ static unsigned spilledBytesOf(const CodeGenerationInputs& inputs, FunctionID id
     return inputs.conventions.of(inputs.program, id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0;
 }
 
-static void emitStoreToStackWord(CCallHelpers& jit, const Air::Code& code, const ValueRep& source, GPRReg scratch, uint32_t stackIndex)
+static void emitStoreToStackWord(CCallHelpers& jit, const B3::Air::Code& code, const B3::ValueRep& source, GPRReg scratch, uint32_t stackIndex)
 {
     CCallHelpers::Address word = code.addressInFrame(offsetOfStackWordFromFrame(stackIndex));
     if (source.isGPR()) {
@@ -147,16 +145,16 @@ void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget
 
 void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedArguments& placed)
 {
-    PatchpointValue* patchpoint = m_out.patchpoint(Void);
-    for (const ConstrainedValue& argument : placed.inRegisters)
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
+    for (const B3::ConstrainedValue& argument : placed.inRegisters)
         patchpoint->append(argument);
     if (target.kind == TargetKind::Address)
-        patchpoint->append(ConstrainedValue(target.calledAddress, ValueRep::reg(valueEntryGPR)));
+        patchpoint->append(B3::ConstrainedValue(target.calledAddress, B3::ValueRep::reg(valueEntryGPR)));
     unsigned numberInRegisters = patchpoint->numChildren();
     Vector<uint32_t, 4> stackIndices;
     for (uint32_t stackIndex = 0; stackIndex < placed.onStack.size(); ++stackIndex) {
         if (LValue argument = placed.onStack[stackIndex]) {
-            patchpoint->append(ConstrainedValue(argument, ValueRep::WarmAny));
+            patchpoint->append(B3::ConstrainedValue(argument, B3::ValueRep::WarmAny));
             stackIndices.append(stackIndex);
         }
     }
@@ -173,12 +171,12 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
 
     CallTarget destination = target;
     destination.calledAddress = nullptr;
-    patchpoint->setGenerator([records = &m_records, destination, numberInRegisters, stackIndices, spilledBytes](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([records = &m_records, destination, numberInRegisters, stackIndices, spilledBytes](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         for (unsigned i = 0; i < stackIndices.size(); ++i)
             emitStoreToStackWord(jit, params.code(), params[numberInRegisters + i], params.gpScratch(0), stackIndices[i]);
         if (params.context().frameIsSetUp)
-            Air::emitFrameTeardown(jit, params.code(), jit.scratchRegister());
+            B3::Air::emitFrameTeardown(jit, params.code(), jit.scratchRegister());
         if (spilledBytes)
             emitDropSpilledArgumentRegisters(jit);
         emitJumpTo(jit, *records, destination);
@@ -188,7 +186,7 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
 void CallEmitter::returnMisfit(Boxed value)
 {
     PlacedArguments placed;
-    placed.inRegisters.append(ConstrainedValue(value.value(), ValueRep::reg(GPRInfo::returnValueGPR)));
+    placed.inRegisters.append(B3::ConstrainedValue(value.value(), B3::ValueRep::reg(GPRInfo::returnValueGPR)));
     jumpAfterFrameTeardown(CallTarget::stub(AOT::returnMisfit(), std::nullopt), placed);
 }
 
@@ -197,14 +195,14 @@ void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const Plac
     RELEASE_ASSERT(m_records.frame.readsCallerFrame);
     m_records.frame.dropsArgumentListFrames = true;
 
-    PatchpointValue* patchpoint = m_out.patchpoint(Void);
-    for (const ConstrainedValue& argument : placed.inRegisters)
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
+    for (const B3::ConstrainedValue& argument : placed.inRegisters)
         patchpoint->append(argument);
     if (target.kind == TargetKind::Address)
-        patchpoint->append(ConstrainedValue(target.calledAddress, ValueRep::reg(valueEntryGPR)));
+        patchpoint->append(B3::ConstrainedValue(target.calledAddress, B3::ValueRep::reg(valueEntryGPR)));
     for (size_t stackIndex = 0; stackIndex < placed.onStack.size(); ++stackIndex) {
         if (LValue argument = placed.onStack[stackIndex])
-            patchpoint->append(ConstrainedValue(argument, ValueRep::stackArgument(safeCast<ValueRep::OffsetType>(stackIndex * sizeOfStackWord))));
+            patchpoint->append(B3::ConstrainedValue(argument, B3::ValueRep::stackArgument(safeCast<B3::ValueRep::OffsetType>(stackIndex * sizeOfStackWord))));
     }
     m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(placed.stackWordsToReserve * sizeOfStackWord));
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
@@ -214,10 +212,10 @@ void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const Plac
 
     CallTarget destination = target;
     destination.calledAddress = nullptr;
-    patchpoint->setGenerator([records = &m_records, destination, numberOfWords = placed.stackWordsToReserve, spilledBytes = spilledBytesOf(inputs(), m_id)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([records = &m_records, destination, numberOfWords = placed.stackWordsToReserve, spilledBytes = spilledBytesOf(inputs(), m_id)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         RELEASE_ASSERT(params.context().frameIsSetUp);
-        Air::emitCalleeSaveRestore(jit, params.code());
+        B3::Air::emitCalleeSaveRestore(jit, params.code());
         emitMoveStackWordsToArgumentListFrame(jit, numberOfWords, spilledBytes);
         emitCallFromArgumentListFrame(jit, [&] {
             emitJumpTo(jit, *records, destination);

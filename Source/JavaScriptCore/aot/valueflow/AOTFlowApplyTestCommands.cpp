@@ -210,7 +210,6 @@ void runFlowApplyTestCommand(TestCommandContext& context)
 {
     FlowResults results = analyzeAndApply(context);
     const Program& program = *context.program;
-    validateFlowResults(program, results, context.build);
     verifyProgram(program, IRForm::Prepared, context.build, VerifierInputs { .flow = &results, .isOptimizing = true });
     printProgram(context.out, program);
 }

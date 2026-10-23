@@ -27,9 +27,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using namespace B3;
-
-static void emitStoreToStackWord(CCallHelpers& jit, const Air::Code& code, const ValueRep& source, GPRReg scratch, uint32_t stackIndex)
+static void emitStoreOfResultToStackWord(CCallHelpers& jit, const B3::Air::Code& code, const B3::ValueRep& source, GPRReg scratch, uint32_t stackIndex)
 {
     CCallHelpers::Address word = code.addressInFrame(offsetOfStackWordFromFrame(stackIndex));
     if (source.isGPR()) {
@@ -127,8 +125,8 @@ void CallEmitter::returnValues(const TerminatorContext&, std::span<const Operand
         return;
     }
 
-    Vector<ConstrainedValue, 8> inRegisters;
-    Vector<ConstrainedValue, 4> onStack;
+    Vector<B3::ConstrainedValue, 8> inRegisters;
+    Vector<B3::ConstrainedValue, 4> onStack;
     Vector<uint32_t, 4> stackIndices;
     for (size_t i = 0; i < results.size(); ++i) {
         LValue value = operands[i].value;
@@ -137,32 +135,32 @@ void CallEmitter::returnValues(const TerminatorContext&, std::span<const Operand
             break;
         case ArgumentLocation::Kind::GPR:
         case ArgumentLocation::Kind::FPR:
-            inRegisters.append(ConstrainedValue(value, ValueRep::reg(results[i].reg)));
+            inRegisters.append(B3::ConstrainedValue(value, B3::ValueRep::reg(results[i].reg)));
             break;
         case ArgumentLocation::Kind::Stack:
-            onStack.append(ConstrainedValue(value->type() == Int32 ? m_out.zeroExt(value, Int64) : value, ValueRep::WarmAny));
+            onStack.append(B3::ConstrainedValue(value->type() == B3::Int32 ? m_out.zeroExt(value, B3::Int64) : value, B3::ValueRep::WarmAny));
             stackIndices.append(results[i].stackIndex);
             break;
         }
     }
     RELEASE_ASSERT(stackIndices.isEmpty() || !spillsArgumentRegisters);
 
-    PatchpointValue* patchpoint = m_out.patchpoint(Void);
-    for (const ConstrainedValue& result : inRegisters)
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
+    for (const B3::ConstrainedValue& result : inRegisters)
         patchpoint->append(result);
-    for (const ConstrainedValue& result : onStack)
+    for (const B3::ConstrainedValue& result : onStack)
         patchpoint->append(result);
     if (!stackIndices.isEmpty())
         patchpoint->numGPScratchRegisters = 1;
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->effects.terminal = true;
     patchpoint->setRunsWithoutFrame(stackIndices.isEmpty());
-    patchpoint->setGenerator([numberInRegisters = static_cast<unsigned>(inRegisters.size()), stackIndices, spillsArgumentRegisters](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([numberInRegisters = static_cast<unsigned>(inRegisters.size()), stackIndices, spillsArgumentRegisters](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         for (unsigned i = 0; i < stackIndices.size(); ++i)
-            emitStoreToStackWord(jit, params.code(), params[numberInRegisters + i], params.gpScratch(0), stackIndices[i]);
+            emitStoreOfResultToStackWord(jit, params.code(), params[numberInRegisters + i], params.gpScratch(0), stackIndices[i]);
         if (params.context().frameIsSetUp)
-            Air::emitFrameTeardown(jit, params.code(), jit.scratchRegister());
+            B3::Air::emitFrameTeardown(jit, params.code(), jit.scratchRegister());
         if (spillsArgumentRegisters)
             emitReturnDroppingSpilledArgumentRegisters(jit);
         else

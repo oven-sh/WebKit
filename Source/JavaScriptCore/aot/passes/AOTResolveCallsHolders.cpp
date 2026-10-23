@@ -126,11 +126,6 @@ static MemberUse memberUseOf(Opcode opcode, const MemberAnswer& answer)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isMemberOfClass(const MemberAnswer& answer)
-{
-    return answer.kind == MemberKind::Method || answer.kind == MemberKind::Accessor;
-}
-
 // What the class definitions say of a member holds while the bits of its conditions are set, and one test at the site asks for all of them.
 static bool canTestConditions(FunctionPassContext& context, const CallSite& site, const MemberAnswer& answer)
 {

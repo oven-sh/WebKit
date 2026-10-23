@@ -114,19 +114,7 @@ PassOutcome expandIteration(FunctionPassContext& pass)
     if (steps.contains(ExpansionStep::Spreads))
         outcome |= expandSpreads(pass, builder, opensOfSpreads);
     if (steps.contains(ExpansionStep::Iterations) || !opensOfSpreads.isEmpty())
-        outcome |= expandIterations(pass, builder, opensOfSpreads.span(), ExpandedIterations::All);
-    return outcome;
-}
-
-// Until an iteration is expanded its steps are unknown code, to the function and, through its effect summary, to every caller.
-PassOutcome expandProvenIterations(FunctionPassContext& pass)
-{
-    if (!findStepsWithWork(pass).contains(ExpansionStep::Iterations))
-        return PassOutcome::Unchanged;
-
-    IRBuilder builder(pass.analyses.context(), pass.function, pass.types, &pass.analyses);
-    PassOutcome outcome = builder.emptyUnreachableBlocks() ? PassOutcome::Changed : PassOutcome::Unchanged;
-    outcome |= expandIterations(pass, builder, { }, ExpandedIterations::OnlyProven);
+        outcome |= expandIterations(pass, builder, opensOfSpreads.span());
     return outcome;
 }
 

@@ -82,11 +82,7 @@ static ValueSetID maskOf(const Program& program, const ValueFlowUniverse& univer
             case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
                 parts.append(universe.objects());
                 break;
-            case BuiltinTypePartKind::Operand:
-            case BuiltinTypePartKind::Slot:
-            case BuiltinTypePartKind::IteratedValues:
-            case BuiltinTypePartKind::CallbackResult:
-            case BuiltinTypePartKind::Prototype:
+            default:
                 return ValueSets::anything;
             }
         }
@@ -148,14 +144,7 @@ static ValueSetID membersSurelyOf(const Program& program, const ValueFlowUnivers
                 members.append(universe.objectOf(part.builtin));
                 break;
             // An object that is allocated with the layout loses it when a property is deleted or redefined.
-            case BuiltinTypePartKind::Layout:
-            case BuiltinTypePartKind::InstanceOfReceiverClass:
-            case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
-            case BuiltinTypePartKind::Operand:
-            case BuiltinTypePartKind::Slot:
-            case BuiltinTypePartKind::IteratedValues:
-            case BuiltinTypePartKind::CallbackResult:
-            case BuiltinTypePartKind::Prototype:
+            default:
                 break;
             }
         }
@@ -216,12 +205,12 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins)
     }
 }
 
-static bool putsValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
+static bool usesPutValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
 {
     return std::ranges::any_of(uses.list, [&](const BuiltinHostUse& use) {
         if (use.use == BuiltinHostReadUse::IsValueOf)
             return builtins.canonicalID(use.builtin) == entry;
-        return use.use == BuiltinHostReadUse::Called && use.call && putsValueInto(builtins, use.call->result, entry);
+        return use.use == BuiltinHostReadUse::Called && use.call && usesPutValueInto(builtins, use.call->result, entry);
     });
 }
 
@@ -339,7 +328,7 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         bool hasValue = false;
         bool hasEveryValue = true;
         for (const BuiltinCalledFunction& called : builtins.calledFunctionsOf(entry)) {
-            if (!putsValueInto(builtins, called.uses, entry))
+            if (!usesPutValueInto(builtins, called.uses, entry))
                 continue;
             const RuntimeFunctionEntry* function = findRuntimeFunction(program, called.function);
             hasValue = true;

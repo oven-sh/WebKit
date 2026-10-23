@@ -27,7 +27,7 @@ static bool hasResult(const Function& function, ValueID definition)
     return resultRuleOf(function.at(definition).opcode) != ResultRule::None;
 }
 
-static bool requiresDefinition(const Function& function, const Use& use)
+static bool useRequiresDefinition(const Function& function, const Use& use)
 {
     switch (use.kind) {
     case Use::Kind::Operand:
@@ -100,7 +100,7 @@ void FunctionVerifier::verifyUsesOf(ValueID definition)
             fail(InternalErrorKind::OperandTypeMismatch, use.block, reportedValue, definition.index());
             return;
         }
-        if (isParameter && requiresDefinition(m_function, use)) {
+        if (isParameter && useRequiresDefinition(m_function, use)) {
             fail(InternalErrorKind::OperandMustBeDefinition, use.block, reportedValue, definition.index());
             return;
         }

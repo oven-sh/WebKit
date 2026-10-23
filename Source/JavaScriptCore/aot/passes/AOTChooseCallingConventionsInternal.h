@@ -53,6 +53,18 @@ void demoteMismatchedTailCalls(const ConventionInputs&, Vector<TailCallSite>&, c
 void reserveStackWords(const ConventionInputs&, std::span<const TailCallSite>, CallingConventionTables&);
 void chooseSecondaryEntries(const ConventionInputs&, CallingConventionTables&);
 
+struct TailCallEdge {
+    friend auto operator<=>(const TailCallEdge&, const TailCallEdge&) = default;
+
+    FunctionID callee;
+    FunctionID caller;
+};
+
+inline ValueID tailCallOf(const Block& block)
+{
+    return block.terminator.kind == TerminatorKind::ReturnCall ? block.terminator.callOperand() : ValueID();
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

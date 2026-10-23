@@ -7,15 +7,16 @@
 
 #if ENABLE(AOT)
 
-#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <cstring>
 #include <functional>
 #include <ranges>
 #include <type_traits>
+#include <utility>
 #include <wtf/Compiler.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
 #include <wtf/VectorTraits.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -140,6 +141,7 @@ inline NEVER_INLINE void stableSortLongRange(const SortSteps& steps, char* first
 template<typename T>
 inline constexpr bool movesAsBytes = alignof(T) <= alignof(uint64_t) && ((std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>) || VectorTraits<T>::canMoveWithMemcpy);
 
+// FreeBSD's libc++ gives std::pair a copy constructor of its own.
 template<typename First, typename Second>
 inline constexpr bool movesAsBytes<std::pair<First, Second>> = alignof(std::pair<First, Second>) <= alignof(uint64_t) && movesAsBytes<First> && movesAsBytes<Second>;
 

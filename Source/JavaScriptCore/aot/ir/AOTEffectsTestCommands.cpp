@@ -568,16 +568,16 @@ static void runCheckEntrypoints(TestCommandContext& context)
 std::span<const TestCommand> effectsTestCommands()
 {
     static constexpr TestCommand commands[] = {
-        { "effects"_s, IRForm::Prepared, runEffects, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "locations"_s, IRForm::Prepared, runLocations, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "write-overlap"_s, IRForm::Prepared, runWriteOverlap, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "operands"_s, IRForm::Prepared, runOperands, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "result-freshness"_s, IRForm::Prepared, runResultFreshness, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "members-run-by"_s, IRForm::Prepared, runMembersRunBy, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "effects"_s, IRForm::Prepared, runEffects, ProgramAsRead::TypedAndVerified },
+        { "locations"_s, IRForm::Prepared, runLocations, ProgramAsRead::TypedAndVerified },
+        { "write-overlap"_s, IRForm::Prepared, runWriteOverlap, ProgramAsRead::TypedAndVerified },
+        { "operands"_s, IRForm::Prepared, runOperands, ProgramAsRead::TypedAndVerified },
+        { "result-freshness"_s, IRForm::Prepared, runResultFreshness, ProgramAsRead::TypedAndVerified },
+        { "members-run-by"_s, IRForm::Prepared, runMembersRunBy, ProgramAsRead::TypedAndVerified },
         { "check-effects"_s, std::nullopt, runCheckEffects },
-        { "check-replacement"_s, IRForm::Prepared, runCheckReplacement, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "check-summaries"_s, IRForm::Prepared, runCheckSummaries, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "check-entrypoints"_s, IRForm::Prepared, runCheckEntrypoints, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "check-replacement"_s, IRForm::Prepared, runCheckReplacement, ProgramAsRead::TypedAndVerified },
+        { "check-summaries"_s, IRForm::Prepared, runCheckSummaries, ProgramAsRead::TypedAndVerified },
+        { "check-entrypoints"_s, IRForm::Prepared, runCheckEntrypoints, ProgramAsRead::TypedAndVerified },
     };
     return commands;
 }

@@ -352,7 +352,7 @@ std::optional<InternalError> findLayoutFlowError(const Program& program, LayoutI
 }
 
 template<typename Step>
-std::optional<LayoutID> findCyclicChain(const Program& program, const Step& stepOf)
+std::optional<LayoutID> findCyclicLayoutChain(const Program& program, const Step& stepOf)
 {
     enum class WalkState : uint8_t { Unvisited, OnPath, Done };
 
@@ -567,7 +567,7 @@ void ProgramVerifier::verifyLayouts()
         return;
 
     // Two classes that extend each other throw when they are evaluated, so `base` may form a cycle. What flow proves does not.
-    std::optional<LayoutID> cyclicLayout = findCyclicChain(m_program, [](const Layout& layout) { return layout.flow.base; });
+    std::optional<LayoutID> cyclicLayout = findCyclicLayoutChain(m_program, [](const Layout& layout) { return layout.flow.base; });
     if (cyclicLayout)
         fail({ .kind = InternalErrorKind::InvalidLayout, .layout = *cyclicLayout });
 }

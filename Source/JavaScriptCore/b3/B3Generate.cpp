@@ -30,17 +30,14 @@
 
 #include "AirGenerate.h"
 #include "B3CanonicalizePrePostIncrements.h"
-#include "B3CheckKnownProperties.h"
 #include "B3CheckVariablesAreSet.h"
 #include "B3Common.h"
-#include "B3ConvertBranchesToSelects.h"
 #include "B3DuplicateTails.h"
 #include "B3EliminateCommonSubexpressions.h"
 #include "B3EliminateDeadCode.h"
 #include "B3EliminateRedundantPhiCycles.h"
 #include "B3EliminateWasmGCAllocations.h"
 #include "B3FixSSA.h"
-#include "B3FoldComparisonsWithBounds.h"
 #include "B3FoldPathConstants.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3InferSwitches.h"
@@ -50,7 +47,6 @@
 #include "B3LowerRelocatableValues.h"
 #include "B3LowerToAir.h"
 #include "B3MaterializePinnedConstants.h"
-#include "B3MergeAdjacentConstantStores.h"
 #include "B3MoveConstants.h"
 #include "B3NaturalLoops.h"
 #include "B3OptimizeAssociativeExpressionTrees.h"
@@ -66,7 +62,6 @@
 #include "B3SplitBranchConditions.h"
 #include "B3ThreadJumps.h"
 #include "B3Validate.h"
-#include "B3VersionLoops.h"
 #include "CompilerTimingScope.h"
 #include <wtf/OptionSet.h>
 
@@ -85,10 +80,8 @@ using Cleanups = OptionSet<Cleanup>;
 
 struct PipelineState {
     Cleanups pendingCleanups;
-    Vector<BasicBlock*> topTestedVersionHeaders;
     bool hasLoops { false };
     bool didRotateLoops { false };
-    bool didVersionLoops { false };
 };
 
 enum class NeededEstimate : uint8_t {
@@ -114,23 +107,10 @@ bool hoistsInvariantValues(const Procedure& procedure)
     return procedure.policy().upstream.hoistsLoopInvariantValues;
 }
 
-Cleanups cleanupsIfChanged(bool changed, Cleanups cleanups)
-{
-    return changed ? cleanups : Cleanups { };
-}
-
 template<auto pass, auto... arguments>
 Cleanups runPass(Procedure& procedure, PipelineState&)
 {
     pass(procedure, arguments...);
-    return { };
-}
-
-template<auto pass>
-Cleanups runLoopPass(Procedure& procedure, PipelineState&)
-{
-    if (procedure.hasCycle() && procedure.naturalLoops().numLoops())
-        pass(procedure);
     return { };
 }
 
@@ -186,9 +166,6 @@ static constexpr Step steps[] = {
     { "validate"_s,
         [](Procedure& procedure, const PipelineState&) { return shouldValidateIR(procedure); },
         runValidation },
-    { "checkKnownProperties"_s,
-        [](Procedure& procedure, const PipelineState&) { return procedure.policy().validation.checksKnownPropertiesAtRunTime; },
-        runPass<checkKnownProperties> },
     { "splitBranchConditions"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.policy().optimization.splitsBranchConditions; },
         runPass<splitBranchConditions> },
@@ -241,10 +218,7 @@ static constexpr Step steps[] = {
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2; },
         runPass<foldPathConstants> },
     { "findLoops"_s,
-        [](Procedure& procedure, const PipelineState&) {
-            const LoopPolicy& loops = procedure.policy().loops;
-            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions);
-        },
+        [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.policy().loops.rotates; },
         [](Procedure& procedure, PipelineState& state) -> Cleanups {
             state.hasLoops = procedure.hasCycle() && procedure.naturalLoops().numLoops();
             return { };
@@ -260,10 +234,10 @@ static constexpr Step steps[] = {
         [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && hoistsInvariantValues(procedure); },
         runPass<hoistLoopInvariantValues> },
     { "rotateLoops"_s,
-        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.rotates; },
-        [](Procedure& procedure, PipelineState& state) {
+        [](Procedure&, const PipelineState& state) { return state.hasLoops; },
+        [](Procedure& procedure, PipelineState& state) -> Cleanups {
             state.didRotateLoops = rotateLoops(procedure);
-            return cleanupsIfChanged(state.didRotateLoops, Cleanup::FixSSA);
+            return state.didRotateLoops ? Cleanups { Cleanup::FixSSA } : Cleanups { };
         } },
     { "hoistLoopInvariantValues"_s,
         [](Procedure& procedure, const PipelineState& state) { return state.didRotateLoops && hoistsInvariantValues(procedure); },
@@ -271,26 +245,6 @@ static constexpr Step steps[] = {
     { "cleanUpRotatedLoops"_s,
         [](Procedure&, const PipelineState& state) { return state.didRotateLoops; },
         [](Procedure&, PipelineState&) -> Cleanups { return { Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode }; } },
-    { "foldComparisonsWithBounds"_s,
-        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.foldsComparisonsWithBounds; },
-        [](Procedure& procedure, PipelineState&) { return cleanupsIfChanged(foldComparisonsWithBounds(procedure), { Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode }); } },
-    { "versionLoops"_s,
-        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.versions && hoistsInvariantValues(procedure); },
-        [](Procedure& procedure, PipelineState& state) {
-            state.didVersionLoops = versionLoops(procedure, state.topTestedVersionHeaders);
-            return cleanupsIfChanged(state.didVersionLoops, Cleanup::FixSSA);
-        } },
-    { "eliminateRedundantPhiCycles"_s,
-        [](Procedure&, const PipelineState& state) { return state.didVersionLoops; },
-        [](Procedure& procedure, PipelineState&) -> Cleanups {
-            eliminateRedundantPhiCycles(procedure);
-            return Cleanup::EliminateDeadCode;
-        } },
-    { "rotateLoops"_s,
-        [](Procedure& procedure, const PipelineState& state) { return state.didVersionLoops && procedure.policy().loops.rotates && !state.topTestedVersionHeaders.isEmpty(); },
-        [](Procedure& procedure, PipelineState& state) {
-            return cleanupsIfChanged(rotateLoops(procedure, &state.topTestedVersionHeaders), { Cleanup::FixSSA, Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
-        } },
     { "eliminateWasmGCAllocations"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.usesWasmGCStructAllocations() && procedure.policy().upstream.eliminatesWasmGCAllocations; },
         runPass<eliminateWasmGCAllocations> },
@@ -302,15 +256,6 @@ static constexpr Step steps[] = {
     { "reduceStrength"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2; },
         runPass<reduceStrength, ReduceStrengthPass::Final> },
-    { "eliminateRedundantPhiCycles"_s,
-        [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.policy().optimization.convertsBranchesToSelects; },
-        runLoopPass<eliminateRedundantPhiCycles> },
-    { "convertBranchesToSelects"_s,
-        [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.policy().optimization.convertsBranchesToSelects; },
-        runLoopPass<convertBranchesToSelects> },
-    { "mergeAdjacentConstantStores"_s,
-        [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.policy().optimization.mergesAdjacentConstantStores; },
-        runPass<mergeAdjacentConstantStores> },
     { "clientPhasesAfterOptimization"_s,
         [](Procedure& procedure, const PipelineState&) { return hasClientPhase(procedure, ClientPhase::Point::AfterOptimization); },
         runClientPhases<ClientPhase::Point::AfterOptimization> },

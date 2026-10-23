@@ -154,8 +154,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useNarrowReferenceScan, true, Normal, "With useAOT: the collector's scan of stacks and registers also takes each 32-bit half of a word for a reference to a cell. Tests turn it off to show that compiled code keeps a pointer next to each such reference."_s) \
     v(Bool, useAOTPerfMap, false, Normal, "Linux. When running: the code of the image is copied to anonymous memory and /tmp/perf-<pid>.map names each function in it, so that perf, which reads such a map for anonymous memory alone, shows compiled functions by name."_s) \
     v(OptionString, aotCountsPath, nullptr, Normal, "The counts of the AoT run time are written to this path at exit. %p stands for the process ID."_s) \
-    v(Bool, dumpAOTObjectCensusAtExit, false, Normal, "Print the live compiled objects by layout when the VM is destroyed."_s) \
-    v(OptionString, aotObjectCensusRequestPath, nullptr, Normal, "Whenever a file of this name exists, it is deleted and the live compiled objects by layout are written to <name>.1, <name>.2 and so on. The embedder looks for it about once a second."_s) \
     v(Bool, validateAOTRuntime, false, Normal, "Run the validators of the AoT run time on any image and crash on a mismatch. An image compiled with validation runs them without this option."_s) \
     v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the CPU time of the process during it."_s) \
     v(Bool, verifyAOTProgram, true, Normal, "When compiling: verify the program as read, its placement, its representations and the program handed to the back end. No byte of the output depends on it. Bun turns it off outside its own tests."_s) \

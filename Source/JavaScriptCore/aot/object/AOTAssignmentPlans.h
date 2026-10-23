@@ -231,8 +231,10 @@ struct CopyOfTwoPlan {
     std::array<Source, 2> sources;
     // Null where such a pair is copied one behind the other.
     Structure* structure { nullptr };
-    // Set by a pair that finds the plan, cleared by a pair of another kind that finds no free place.
-    bool wasAskedFor { false };
+    // Several pairs that find no free place may come between two pairs that find the plan.
+    static constexpr uint8_t maxVisitsInVain = 15;
+    // Filled up by a pair that finds the plan, counted down by a pair of another kind that finds no free place. At zero that pair takes the place.
+    uint8_t visitsInVainLeft { maxVisitsInVain };
 };
 
 // Where each field of one layout goes in an object of another, whichever of the fields a source holds and in whichever order: what the plans for all those orders have in common.

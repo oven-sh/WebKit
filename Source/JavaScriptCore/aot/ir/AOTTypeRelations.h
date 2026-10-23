@@ -67,6 +67,17 @@ void removeAllMatching(SortedSet<T>& set, NOESCAPE const Invocable<bool(T)> auto
     set = WTF::move(remaining);
 }
 
+template<typename T>
+struct LiteralPart {
+    uint16_t widenedBit;
+    uint16_t literalBit;
+    SortedSet<T> Type::* literals;
+};
+
+inline constexpr LiteralPart<StringID> stringPart { Primitive::String, Primitive::LiteralString, &Type::stringLiterals };
+inline constexpr LiteralPart<PropertyKeyID> symbolPart { Primitive::Symbol, Primitive::LiteralSymbol, &Type::symbolLiterals };
+inline constexpr uint16_t plainPrimitives = Primitive::Defined & ~(Primitive::Integer | Primitive::AnyString | Primitive::AnySymbol);
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

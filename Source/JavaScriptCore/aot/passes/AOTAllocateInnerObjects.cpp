@@ -36,7 +36,7 @@ namespace {
 
 bool mayShareCell(const Program& program, const Value& value)
 {
-    if (value.opcode != Opcode::NewObject || value.storage() != AllocationStorage::Heap || value.prototypeOperand() || value.isMadeOnDemand())
+    if (value.opcode != Opcode::NewObject || value.storage() != AllocationStorage::Heap || value.prototypeOperand())
         return false;
     LayoutKind kind = program.at(value.layout()).kind;
     return kind == LayoutKind::Record || kind == LayoutKind::Instance;
@@ -278,7 +278,7 @@ struct FreshField {
     double weightOfAllocation { 0 };
 };
 
-struct Birth {
+struct InnerObjectBirth {
     FunctionID function;
     ValueID value;
     BlockID block;
@@ -302,7 +302,7 @@ public:
     {
     }
 
-    void run(Vector<Birth>&, Vector<CallOfFreshResults>&);
+    void run(Vector<InnerObjectBirth>&, Vector<CallOfFreshResults>&);
 
 private:
     struct FreshObject {
@@ -332,11 +332,11 @@ private:
     BuildContext& m_build;
     FunctionID m_id;
     const Function& m_function;
-    Vector<Birth> m_births;
+    Vector<InnerObjectBirth> m_births;
     Vector<FreshObject> m_freshObjects;
 };
 
-void BirthFinder::run(Vector<Birth>& births, Vector<CallOfFreshResults>& calls)
+void BirthFinder::run(Vector<InnerObjectBirth>& births, Vector<CallOfFreshResults>& calls)
 {
     bool hasAllocation = hasAllocationThatMayShareCell(m_program, m_id);
     bool hasCall = callsFunctionWithFreshResults();
@@ -454,7 +454,7 @@ void BirthFinder::findBirths(FunctionAnalyses& analyses, const FunctionSiteWeigh
             const Value& value = m_function.at(id);
             if (!mayShareCell(m_program, value))
                 continue;
-            Birth birth { m_id, id, block, value.layout(), 0, { } };
+            InnerObjectBirth birth { m_id, id, block, value.layout(), 0, { } };
             auto fields = value.fields();
             auto values = value.valuesOperands();
             for (uint32_t index = 0; index < fields.size(); ++index) {
@@ -518,7 +518,7 @@ void BirthFinder::removeFieldsOfObjectsHeldTwice(const CFG& cfg)
         }
         begin = end;
     }
-    for (Birth& birth : m_births) {
+    for (InnerObjectBirth& birth : m_births) {
         birth.freshFields.removeAllMatching([](const FreshField& fresh) {
             return !fresh.object;
         });
@@ -528,7 +528,7 @@ void BirthFinder::removeFieldsOfObjectsHeldTwice(const CFG& cfg)
 // Which outer layout the allocation of an inner object makes room for.
 class Promises {
 public:
-    bool canPromise(const Birth& birth, const FreshField& fresh) const
+    bool canPromise(const InnerObjectBirth& birth, const FreshField& fresh) const
     {
         bool result = true;
         forEachAllocation(birth, fresh, [&](FunctionID function, ValueID object) {
@@ -538,7 +538,7 @@ public:
         return result;
     }
 
-    void promise(const Birth& birth, const FreshField& fresh)
+    void promise(const InnerObjectBirth& birth, const FreshField& fresh)
     {
         forEachAllocation(birth, fresh, [&](FunctionID function, ValueID object) {
             m_outerLayouts.add(keyOf(function, object), birth.layout.index());
@@ -546,12 +546,12 @@ public:
     }
 
     // One number for all the allocations that make the object of the field.
-    static uint64_t firstAllocation(const Birth& birth, const FreshField& fresh)
+    static uint64_t firstAllocation(const InnerObjectBirth& birth, const FreshField& fresh)
     {
         return fresh.result ? keyOf(fresh.result->function, fresh.result->objects.first()) : keyOf(birth.function, fresh.object);
     }
 
-    static void forEachAllocation(const Birth& birth, const FreshField& fresh, const Invocable<void(FunctionID, ValueID)> auto& functor)
+    static void forEachAllocation(const InnerObjectBirth& birth, const FreshField& fresh, const Invocable<void(FunctionID, ValueID)> auto& functor)
     {
         if (!fresh.result) {
             functor(birth.function, fresh.object);
@@ -567,7 +567,7 @@ private:
     UncheckedKeyHashMap<uint64_t, uint32_t> m_outerLayouts;
 };
 
-const FreshField* fieldFilledAtBirth(const Program& program, const Promises& promises, const Birth& birth, const InnerObject& inner)
+const FreshField* fieldFilledAtBirth(const Program& program, const Promises& promises, const InnerObjectBirth& birth, const InnerObject& inner)
 {
     const Value& value = program.at(birth.function).at(birth.value);
     if (value.allocationClass() != inner.outerAllocationClass || !std::ranges::equal(value.fields(), inner.outerFields))
@@ -582,7 +582,7 @@ const FreshField* fieldFilledAtBirth(const Program& program, const Promises& pro
 // The total weight of the births that fieldFilledAtBirth() accepts, for every inner object that a birth of the layout could propose.
 class InnerObjectWeights {
 public:
-    InnerObjectWeights(const Program&, const Promises&, std::span<const Birth>);
+    InnerObjectWeights(const Program&, const Promises&, std::span<const InnerObjectBirth>);
 
     double weightOf(size_t birthIndex, const FreshField& candidate) const
     {
@@ -604,7 +604,7 @@ private:
         double weight { 0 };
     };
 
-    void addBirth(const Promises&, const Birth&, size_t groupOffset);
+    void addBirth(const Promises&, const InnerObjectBirth&, size_t groupOffset);
 
     // Births with the same allocation class and the same field list are one group.
     Vector<uint32_t, 16> m_birthGroups;
@@ -612,7 +612,7 @@ private:
     Vector<WeightedField, 16> m_fields;
 };
 
-InnerObjectWeights::InnerObjectWeights(const Program& program, const Promises& promises, std::span<const Birth> births)
+InnerObjectWeights::InnerObjectWeights(const Program& program, const Promises& promises, std::span<const InnerObjectBirth> births)
     : m_birthGroups(births.size())
 {
     auto allocationAt = [&](uint32_t index) -> const Value& {
@@ -647,7 +647,7 @@ InnerObjectWeights::InnerObjectWeights(const Program& program, const Promises& p
     m_groupOffsets.append(m_fields.size());
 }
 
-void InnerObjectWeights::addBirth(const Promises& promises, const Birth& birth, size_t groupOffset)
+void InnerObjectWeights::addBirth(const Promises& promises, const InnerObjectBirth& birth, size_t groupOffset)
 {
     for (size_t index = 0; index < birth.freshFields.size(); ++index) {
         const FreshField& fresh = birth.freshFields[index];
@@ -736,7 +736,7 @@ void allocateInnerObjects(ProgramEditor& editor, const FlowResults& flow, const 
             FreshResultFinder(program, FunctionID(index)).run(found);
     }));
     struct Found {
-        Vector<Birth> births;
+        Vector<InnerObjectBirth> births;
         Vector<CallOfFreshResults> calls;
     };
     Vector<Found> foundInFunctions = collectInParallel<Found>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<Found>& found) {
@@ -752,19 +752,19 @@ void allocateInnerObjects(ProgramEditor& editor, const FlowResults& flow, const 
     // A stable counting sort by layout.
     Vector<uint32_t> positions(FillWith { }, program.layouts.size() + 1, 0);
     for (const Found& found : foundInFunctions) {
-        for (const Birth& birth : found.births)
+        for (const InnerObjectBirth& birth : found.births)
             ++positions[birth.layout.index() + 1];
     }
     for (size_t layout = 0; layout < program.layouts.size(); ++layout)
         positions[layout + 1] += positions[layout];
-    Vector<Birth> births(positions.last());
+    Vector<InnerObjectBirth> births(positions.last());
     struct CallsOfFunction {
         unsigned number { 0 };
         double weight { 0 };
     };
     UncheckedKeyHashMap<uint32_t, CallsOfFunction> callsOfFunctions;
     for (Found& found : foundInFunctions) {
-        for (Birth& birth : found.births)
+        for (InnerObjectBirth& birth : found.births)
             births[positions[birth.layout.index()]++] = WTF::move(birth);
         for (const CallOfFreshResults& call : found.calls) {
             CallsOfFunction& calls = callsOfFunctions.add(call.callee.index() + 1, CallsOfFunction { }).iterator->value;
@@ -786,11 +786,6 @@ void allocateInnerObjects(ProgramEditor& editor, const FlowResults& flow, const 
     bool logsDecisions = build.options().logging.dumpedPass == PassID::AllocateInnerObjects;
     BitVector isOuter(program.layouts.size());
     BitVector isInner(program.layouts.size());
-    // An object that may lie in the room of another has no cell to offer.
-    for (const Layout& layout : program.layouts) {
-        for (const FlattenedObject& flattened : layout.flattenedObjects)
-            isInner.set(flattened.layout.index());
-    }
     Promises promises;
     std::optional<BitVector> layoutsMadeOtherwise;
     uint64_t numberOfInnerObjects = 0;
@@ -800,13 +795,13 @@ void allocateInnerObjects(ProgramEditor& editor, const FlowResults& flow, const 
         size_t end = begin + 1;
         while (end < births.size() && births[end].layout == births[begin].layout)
             ++end;
-        std::span<const Birth> ofLayout = births.span().subspan(begin, end - begin);
+        std::span<const InnerObjectBirth> ofLayout = births.span().subspan(begin, end - begin);
         begin = end;
 
         LayoutID layout = ofLayout.front().layout;
-        if (isInner.get(layout.index()) || !program.at(layout).flattenedObjects.isEmpty())
+        if (isInner.get(layout.index()))
             continue;
-        bool hasFreshField = std::ranges::any_of(ofLayout, [](const Birth& birth) {
+        bool hasFreshField = std::ranges::any_of(ofLayout, [](const InnerObjectBirth& birth) {
             return !birth.freshFields.isEmpty();
         });
         if (!hasFreshField)
@@ -831,25 +826,25 @@ void allocateInnerObjects(ProgramEditor& editor, const FlowResults& flow, const 
             continue;
         if (logsDecisions) [[unlikely]] {
             double weightOfAll = 0;
-            for (const Birth& birth : ofLayout)
+            for (const InnerObjectBirth& birth : ofLayout)
                 weightOfAll += birth.weight;
             dataLogLn("inner objects: L", layout.index(), " field ", best->field, best->layout ? " L" : " array of capacity ", best->layout ? best->layout.index() : best->arrayCapacity, ": ", ofLayout.size(), " allocations of weight ", weightOfAll, ", with the inner object ", weightOfBest);
         }
 
         // The room in front of an inner object is lost where nothing takes it: on a path without an outer object, in a caller that makes none.
         UncheckedKeyHashMap<uint64_t, double> weightTaken;
-        for (const Birth& birth : ofLayout) {
+        for (const InnerObjectBirth& birth : ofLayout) {
             if (const FreshField* fresh = fieldFilledAtBirth(program, promises, birth, *best))
                 weightTaken.add(Promises::firstAllocation(birth, *fresh), 0).iterator->value += birth.weight;
         }
-        auto isTakenMostly = [&](const Birth& birth, const FreshField& fresh) {
+        auto isTakenMostly = [&](const InnerObjectBirth& birth, const FreshField& fresh) {
             constexpr double mostOf = 7.0 / 8;
             return weightTaken.get(Promises::firstAllocation(birth, fresh)) >= mostOf * weightOfObject(fresh);
         };
 
         bool hasInnerObject = false;
         best->isAlwaysInPlace = isStoredOnlyAtBirth(program, { layout, best->field });
-        for (const Birth& birth : ofLayout) {
+        for (const InnerObjectBirth& birth : ofLayout) {
             const FreshField* fresh = fieldFilledAtBirth(program, promises, birth, *best);
             if (!fresh || !isTakenMostly(birth, *fresh)) {
                 if (logsDecisions && fresh) [[unlikely]]

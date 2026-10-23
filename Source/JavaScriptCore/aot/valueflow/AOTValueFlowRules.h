@@ -106,6 +106,16 @@ void runAwaitedValue(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runPromiseOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runCoroutine(const ValueFlowStatement&, ValueFlowRuleContext&);
 
+inline bool passesList(Opcode opcode)
+{
+    return opcode == Opcode::CallList || opcode == Opcode::ConstructList || opcode == Opcode::SuperConstructList;
+}
+
+inline ClimbingSet only(ValueFlowRuleContext& context, ValueFlowObjectID object)
+{
+    return ClimbingSet(context.maker().of(object));
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

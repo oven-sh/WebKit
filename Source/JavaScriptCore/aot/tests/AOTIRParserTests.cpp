@@ -617,28 +617,6 @@ static void parserLetsStatedTypeWinOverRule()
     AOT_TEST_CHECK(error.kind == InternalErrorKind::TypeOutOfDate && error.function == FunctionID(0u) && error.value == ValueID(0u) && !error.textPosition);
 }
 
-static void parserSkipsRawWordCheckOnRequest()
-{
-    String text = makeString(moduleLine, R"IR(function f0 parameters=[{type=boolean}] results=[{type=string}] {
-  b0(v0: boolean):
-    v1 = StringBuilderBegin
-    v2 = StringBuilderBegin
-    v3 = StringBuilderReserve v1 size=8
-    v4 = JSONAppendBoolean v2, v3, v0
-    StringBuilderCommit v2, v4
-    v6 = StringBuilderFinish v2
-    StringBuilderDiscard v1
-    Return v6
-}
-)IR"_s);
-    InternalError error = parseInvalidText(text, IRForm::Selected).error;
-    AOT_TEST_CHECK(error.kind == InternalErrorKind::RawPointerWithoutBase && error.function == FunctionID(0u) && error.value == ValueID(4u) && !error.textPosition);
-
-    BuildContext build(makeDefaultCompileOptions());
-    auto program = parseProgram(text, IRForm::Selected, build, RawWordCheck::Skip);
-    AOT_TEST_CHECK(program && program->form() == IRForm::Selected && program->functions[0].at(ValueID(3u)).opcode == Opcode::StringBuilderReserve);
-}
-
 #define FOR_EACH_AOT_IR_PARSER_TEST(v) \
     v(lexerReportsPositions) v(lexerEndsTextOnce) v(lexerRestoresState) v(lexerClassifiesWordsAndIDs) v(lexerIntegers) v(lexerDecimals) \
     v(lexerRejectsNumberFollowedByWordByte) v(lexerPunctuators) v(lexerNumberSignBeforeQuoteIsAToken) v(lexerRejectsOtherBytes) \
@@ -649,7 +627,7 @@ static void parserSkipsRawWordCheckOnRequest()
     v(parserLeavesIDsOfListsToTheReader) v(parserGivesNoPositionToErrorsOfTheReader) v(parserLeavesCaptureLimitToTheReader) \
     v(parserSurvivesDeepData) v(parserOwnsFunctionText) v(parserRejectsCharacterEscapesInBytes) \
     v(parserFillsUntypedThis) v(parserChecksRuntimeFunctionNumbers) v(parserGoesThroughTheReader) \
-    v(parserAppliesEngineFieldsAfterTheRead) v(parserLetsStatedTypeWinOverRule) v(parserSkipsRawWordCheckOnRequest)
+    v(parserAppliesEngineFieldsAfterTheRead) v(parserLetsStatedTypeWinOverRule)
 
 std::span<const NativeTest> irParserTests()
 {

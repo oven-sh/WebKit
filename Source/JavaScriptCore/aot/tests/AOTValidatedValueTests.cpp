@@ -181,16 +181,6 @@ function f16 name="interpretedBelowTheRoot" parameters=[{type=anything}] results
 
 // The general validator of the library throws the error. f1 stands for it: the compiled validators call it with every value that they do not accept.
 // The front end of the host compiles these functions, so the table that the program is linked with has their numbers.
-static RuntimeFunctionID functionImplementing(BuiltinID builtin)
-{
-    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
-        if (std::ranges::contains(function.implements, builtin))
-            return function.id;
-    }
-    AOT_TEST_CHECK(false);
-    return { };
-}
-
 static String programText()
 {
     RuntimeFunctionID holdsRule = functionImplementing(Builtins::CompilerHelpersHoldsRule);

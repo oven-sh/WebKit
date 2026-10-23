@@ -70,7 +70,7 @@ public:
     }
 
 private:
-    bool shouldSaveAnswersAboutTypes() const { return m_program.form() == IRForm::Prepared; }
+    bool shouldSaveAnswersAboutTypes() const { return m_program.form() == IRForm::AsRead || m_program.form() == IRForm::Prepared; }
 
     std::unique_ptr<SharedTypeMemo> createSharedTypeMemo() const
     {

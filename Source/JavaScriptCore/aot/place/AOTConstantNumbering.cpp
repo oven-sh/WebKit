@@ -171,7 +171,7 @@ static_assert((Value::opcodesWithKey | opcodesNamingKeyCell) == Value::opcodesWi
 static_assert(Value::opcodesWithKeys.contains(Opcode::DefineAccessors));
 
 // A private name is no value, so it has no cell.
-static bool hasKeyCell(PropertyKeyKind kind)
+static bool keyHasCell(PropertyKeyKind kind)
 {
     return kind == PropertyKeyKind::Text || isSymbolKind(kind);
 }
@@ -182,7 +182,7 @@ void collectKeyCellUses(const Program& program, FunctionID id, Vector<KeyCellUse
     FunctionID source = firstSourceOf(program, id);
     ModuleID module = program.at(source).module;
     auto append = [&](PropertyKeyID key) {
-        if (key && hasKeyCell(program.at(key).kind))
+        if (key && keyHasCell(program.at(key).kind))
             uses.append(KeyCellUse { key, module ? module.index() : UINT32_MAX, source.index() });
     };
     for (const Block& block : function.blocks) {

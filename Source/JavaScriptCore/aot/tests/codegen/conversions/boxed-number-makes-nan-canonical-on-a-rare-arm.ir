@@ -12,4 +12,4 @@ function f0 name="boxed" parameters=[{type=number}, {type=number}] results=[{typ
     Return v2
 }
 # CHECK: f0: size={{*}}
-# X64: f0: size=60 frame=none
+# X64: f0: size=61 frame=none

@@ -84,6 +84,9 @@ public:
     void setPlaceholders(const ValueFlowPlaceholders& placeholders) { m_placeholders = placeholders; }
     // Before the first solve, once for a placeholder.
     void retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable);
+    // Before the first solve. A node of which the function says yes takes nothing of the set, early or late: that goes to the covered node. The function is asked from every thread of a solve.
+    using IsMadeForPlaceholder = bool (*)(const void* context, ValueFlowNodeID);
+    void keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder, const void* context);
     // On account of any placeholder.
     bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
     // A placeholder with a covered node does not pass a mask that comes with family objects, and nothing takes its place by itself: what it covers moves.
@@ -184,8 +187,10 @@ public:
     }
 
     // Brings the values up to date with what has been added since the last call, and lists the nodes whose value has moved, in ascending order.
-    enum class RetiredNodes : bool { AreConnectedInSolve, AreConnectedByCaller };
-    void solve(Vector<ValueFlowNodeID>& moved, RetiredNodes = RetiredNodes::AreConnectedInSolve);
+    enum class RetiredNodes : bool { AreFoundAndConnectedInSolve, AreFoundAndConnectedByCaller };
+    // Behind solve(moved, AreFoundAndConnectedByCaller), beside whatever does not ask who is retired.
+    void retireNodesAmong(std::span<const ValueFlowNodeID> moved);
+    void solve(Vector<ValueFlowNodeID>& moved, RetiredNodes = RetiredNodes::AreFoundAndConnectedInSolve);
     void prefetchToStartWithValueOf(ValueFlowNodeID node, ValueFlowNodeID other) const
     {
         __builtin_prefetch(&m_rows[other.index()]);
@@ -308,6 +313,7 @@ private:
         uint64_t lowMembersOfWhole { 0 };
         ValueSetID listedMembersOfWhole;
         ValueSetID allButCoverable;
+        uint64_t lowMembersNotCoverable { 0 };
         // What the covered node held when the wave began. Whoever would send it no more than that sends nothing.
         uint64_t lowMembersHeldByCoveredNode { 0 };
         uint32_t setHeldByCoveredNode { 0 };
@@ -400,6 +406,7 @@ private:
     void noteWhatCoveredNodesHold();
     bool didCoveredNodeHoldAllOf(uint32_t covered, uint64_t low, uint32_t set) const;
     ValueSetID whatRetiredNodeTakes(uint32_t node, ValueSetMaker&) const;
+    bool retiredNodeTakesAnyOf(uint32_t node, uint64_t low, uint32_t set) const;
     void connectPredecessorsOfRetiredNodes(Team&);
     void connectStraightToCoveredNode(Covering&, uint32_t node);
     void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
@@ -434,6 +441,11 @@ private:
     Vector<uint32_t> m_nodesWoken;
 
     Vector<Covering, 2> m_coverings;
+    IsMadeForPlaceholder m_isMadeForPlaceholder { nullptr };
+    const void* m_contextOfIsMadeForPlaceholder { nullptr };
+    ValueSetID m_allButKeptOutOfNodesMadeForPlaceholders { ValueSets::anything };
+    uint64_t m_lowMembersKeptOutOfNodesMadeForPlaceholders { 0 };
+    uint32_t m_coveredNodeThatTakesWhatIsKeptOut { 0 };
     BitVector m_hasMoved;
 
     Vector<uint8_t> m_isNewEdge;

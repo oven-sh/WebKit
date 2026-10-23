@@ -441,9 +441,7 @@ static CloneCheck checkRegionBorder(FunctionAnalyses& analyses, std::span<const 
 static bool canLeaveFrame(BoundTo boundTo)
 {
     switch (boundTo) {
-    case BoundTo::Nothing:
-    case BoundTo::Function:
-    case BoundTo::Site:
+    default:
         return true;
     case BoundTo::Frame:
         return false;

@@ -49,17 +49,17 @@ struct CaptureSupplier {
     Vector<SuppliedCapture, 2> captures;
 };
 
-struct CaptureSource {
+struct PromotedCaptureSource {
     explicit operator bool() const { return variable || value; }
 
-    friend bool operator==(const CaptureSource&, const CaptureSource&) = default;
+    friend bool operator==(const PromotedCaptureSource&, const PromotedCaptureSource&) = default;
 
     VariableID variable;
     FunctionID function;
     ValueID value;
 };
 
-struct FunctionScan {
+struct PromotionScan {
     bool isEmpty() const { return allocations.isEmpty() && suppliers.isEmpty() && layoutsWithOtherUses.isEmpty() && functionsWithOtherReferences.isEmpty(); }
 
     Vector<EnvironmentAllocation, 1> allocations;
@@ -91,23 +91,23 @@ private:
     Vector<LayoutID> m_layouts;
 };
 
-struct ScanContext {
+struct PromotionScanContext {
     const Program& program;
     const FlowResults& flow;
     BuildContext& build;
     const EnvironmentTypes& types;
 };
 
-class FunctionScanner {
+class PromotionScanner {
 public:
-    FunctionScanner(const ScanContext& context, FunctionID id)
+    PromotionScanner(const PromotionScanContext& context, FunctionID id)
         : m_context(context)
         , m_id(id)
         , m_function(context.program.at(id))
     {
     }
 
-    FunctionScan run();
+    PromotionScan run();
 
 private:
     LayoutID environmentOf(ValueID value) const { return m_context.types.layoutOf(m_function.at(value).type); }
@@ -120,12 +120,12 @@ private:
     void scanOutsideValues(const Block&);
     bool isRewrittenUse(const Value& user, uint32_t operandIndex) const;
 
-    const ScanContext& m_context;
+    const PromotionScanContext& m_context;
     FunctionID m_id;
     const Function& m_function;
     std::optional<FunctionAnalyses> m_analyses;
     Vector<BlockID> m_definingBlocks;
-    FunctionScan m_scan;
+    PromotionScan m_scan;
 };
 
 class PromotionPlanner {
@@ -154,11 +154,11 @@ private:
     void removeEnvironmentCaptures();
     void promoteCapturedValues();
     bool readCapturesFromVariables(FunctionID closureFunction, Suppliers);
-    CaptureSource findCommonSource(FunctionID closureFunction, uint32_t capture, Suppliers) const;
-    CaptureSource findSource(const CaptureSupplier&, uint32_t capture) const;
+    PromotedCaptureSource findCommonSource(FunctionID closureFunction, uint32_t capture, Suppliers) const;
+    PromotedCaptureSource findSource(const CaptureSupplier&, uint32_t capture) const;
     VariableID findStableVariable(const SuppliedCapture&) const;
-    TypeID typeOf(const CaptureSource&) const;
-    VariableID ensureVariable(const CaptureSource&, const DeclaredType& capture);
+    TypeID typeOf(const PromotedCaptureSource&) const;
+    VariableID ensureVariable(const PromotedCaptureSource&, const DeclaredType& capture);
     bool suppliesOwnCapture(FunctionID closureFunction, const CaptureSupplier&, uint32_t capture) const;
     void forEachSuppliedFunction(NOESCAPE const Invocable<void(FunctionID, Suppliers)> auto&) const;
     void collectEditedFunctions();
@@ -177,7 +177,7 @@ private:
 
 } // anonymous namespace
 
-ExecutionCount FunctionScanner::executionCountOf(BlockID block)
+ExecutionCount PromotionScanner::executionCountOf(BlockID block)
 {
     if (!m_context.flow.runsAtMostOnce(m_context.program, m_id))
         return ExecutionCount::Unknown;
@@ -186,7 +186,7 @@ ExecutionCount FunctionScanner::executionCountOf(BlockID block)
     return m_analyses->executionCountOf(block);
 }
 
-bool FunctionScanner::isComputedAtMostOnce(ValueID value)
+bool PromotionScanner::isComputedAtMostOnce(ValueID value)
 {
     if (!m_context.flow.runsAtMostOnce(m_context.program, m_id))
         return false;
@@ -204,7 +204,7 @@ bool FunctionScanner::isComputedAtMostOnce(ValueID value)
     return block && executionCountOf(block) == ExecutionCount::AtMostOnce;
 }
 
-bool FunctionScanner::isRewrittenUse(const Value& user, uint32_t operandIndex) const
+bool PromotionScanner::isRewrittenUse(const Value& user, uint32_t operandIndex) const
 {
     if (user.opcode == Opcode::GetEnvironmentField)
         return operandIndex == OperandIndex::GetEnvironmentField::environment;
@@ -217,7 +217,7 @@ bool FunctionScanner::isRewrittenUse(const Value& user, uint32_t operandIndex) c
     return false;
 }
 
-void FunctionScanner::scanSignature()
+void PromotionScanner::scanSignature()
 {
     auto scanPosition = [&](const DeclaredType& declared) {
         if (LayoutID layout = m_context.types.layoutOf(declared.type))
@@ -230,7 +230,7 @@ void FunctionScanner::scanSignature()
         scanPosition(result);
 }
 
-void FunctionScanner::scanFunctionReference(ValueID id, const Value& value)
+void PromotionScanner::scanFunctionReference(ValueID id, const Value& value)
 {
     FunctionID callee = value.function();
     // A closure that is made on demand lists no captures: the object that holds it keeps what it captures.
@@ -266,7 +266,7 @@ void FunctionScanner::scanFunctionReference(ValueID id, const Value& value)
     m_scan.suppliers.append(WTF::move(supplier));
 }
 
-void FunctionScanner::scan(BlockID block, ValueID id)
+void PromotionScanner::scan(BlockID block, ValueID id)
 {
     const Value& value = m_function.at(id);
     if (LayoutID layout = m_context.types.layoutOf(value.type)) {
@@ -284,7 +284,7 @@ void FunctionScanner::scan(BlockID block, ValueID id)
     });
 }
 
-void FunctionScanner::scanOutsideValues(const Block& block)
+void PromotionScanner::scanOutsideValues(const Block& block)
 {
     auto addUse = [&](ValueID operand) {
         if (LayoutID layout = environmentOf(operand))
@@ -297,7 +297,7 @@ void FunctionScanner::scanOutsideValues(const Block& block)
         addUse(block.subject);
 }
 
-FunctionScan FunctionScanner::run()
+PromotionScan PromotionScanner::run()
 {
     scanSignature();
     bool holdsEnvironment = m_function.values.containsIf([&](const Value& value) {
@@ -319,17 +319,17 @@ FunctionScan FunctionScanner::run()
     return WTF::move(m_scan);
 }
 
-static ProgramScan scanProgram(const ScanContext& context)
+static ProgramScan scanProgram(const PromotionScanContext& context)
 {
     const Program& program = context.program;
-    Vector<FunctionScan> scans = collectInParallel<FunctionScan>(context.build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FunctionScan>& found) {
-        FunctionScan scan = FunctionScanner(context, FunctionID(index)).run();
+    Vector<PromotionScan> scans = collectInParallel<PromotionScan>(context.build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<PromotionScan>& found) {
+        PromotionScan scan = PromotionScanner(context, FunctionID(index)).run();
         if (!scan.isEmpty())
             found.append(WTF::move(scan));
     });
 
     ProgramScan result;
-    for (FunctionScan& scan : scans) {
+    for (PromotionScan& scan : scans) {
         result.allocations.appendVector(scan.allocations);
         result.suppliers.appendVector(WTF::move(scan.suppliers));
         for (LayoutID layout : scan.layoutsWithOtherUses)
@@ -351,14 +351,11 @@ static bool canChangeCaptures(const Function& function)
     case CreatorRecord::Kind::TableLookup:
     case CreatorRecord::Kind::Coroutine:
     case CreatorRecord::Kind::BoundFunction:
-    case CreatorRecord::Kind::ResultWrapper:
-    case CreatorRecord::Kind::ResultWorker:
     case CreatorRecord::Kind::ParameterWrapper:
     case CreatorRecord::Kind::EntryChecks:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
     case CreatorRecord::Kind::Validator:
-    case CreatorRecord::Kind::ChainStep:
     case CreatorRecord::Kind::StubBody:
         return false;
     }
@@ -519,7 +516,7 @@ PromotionPlanner::PromotionPlanner(const Program& program, const FlowResults& fl
     , m_flow(flow)
     , m_build(build)
     , m_types(program, build.parallelLoops())
-    , m_scan(scanProgram(ScanContext { program, flow, build, m_types }))
+    , m_scan(scanProgram(PromotionScanContext { program, flow, build, m_types }))
 {
 }
 
@@ -727,7 +724,7 @@ VariableID PromotionPlanner::findStableVariable(const SuppliedCapture& supplied)
     return variable && hasStableValue(variableAt(variable).flow) ? variable : VariableID();
 }
 
-CaptureSource PromotionPlanner::findSource(const CaptureSupplier& supplier, uint32_t capture) const
+PromotedCaptureSource PromotionPlanner::findSource(const CaptureSupplier& supplier, uint32_t capture) const
 {
     const SuppliedCapture& supplied = supplier.captures[capture];
     if (supplied.entryParameter != SuppliedCapture::noPosition) {
@@ -742,13 +739,13 @@ CaptureSource PromotionPlanner::findSource(const CaptureSupplier& supplier, uint
     return { };
 }
 
-CaptureSource PromotionPlanner::findCommonSource(FunctionID closureFunction, uint32_t capture, Suppliers suppliers) const
+PromotedCaptureSource PromotionPlanner::findCommonSource(FunctionID closureFunction, uint32_t capture, Suppliers suppliers) const
 {
-    CaptureSource common;
+    PromotedCaptureSource common;
     for (const CaptureSupplier& supplier : suppliers) {
         if (suppliesOwnCapture(closureFunction, supplier, capture))
             continue;
-        CaptureSource source = findSource(supplier, capture);
+        PromotedCaptureSource source = findSource(supplier, capture);
         if (!source || (common && common != source))
             return { };
         common = source;
@@ -756,12 +753,12 @@ CaptureSource PromotionPlanner::findCommonSource(FunctionID closureFunction, uin
     return common;
 }
 
-TypeID PromotionPlanner::typeOf(const CaptureSource& source) const
+TypeID PromotionPlanner::typeOf(const PromotedCaptureSource& source) const
 {
     return source.variable ? provenTypeOf(variableAt(source.variable).declared) : m_program.at(source.function).at(source.value).type;
 }
 
-VariableID PromotionPlanner::ensureVariable(const CaptureSource& source, const DeclaredType& capture)
+VariableID PromotionPlanner::ensureVariable(const PromotedCaptureSource& source, const DeclaredType& capture)
 {
     if (source.variable)
         return source.variable;
@@ -780,7 +777,7 @@ bool PromotionPlanner::readCapturesFromVariables(FunctionID closureFunction, Sup
     for (uint32_t capture = 0; capture < numberOfCaptures; ++capture) {
         if (!isUnchangedValue(closureFunction, capture))
             continue;
-        CaptureSource source = findCommonSource(closureFunction, capture, suppliers);
+        PromotedCaptureSource source = findCommonSource(closureFunction, capture, suppliers);
         if (!source || !fitsCapture(typeOf(source), closureFunction, capture))
             continue;
         plannedCapture(closureFunction, capture) = { CaptureChange::ReadVariable, ensureVariable(source, m_program.at(closureFunction).captures[capture]) };

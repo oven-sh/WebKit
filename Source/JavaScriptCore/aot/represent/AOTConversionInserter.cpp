@@ -11,11 +11,14 @@
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
 #include "AOTFunctionAnalyses.h"
-#include "AOTIRPrinter.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/StringPrintStream.h>
+
+#if ASSERT_ENABLED
+#include "AOTIRPrinter.h"
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -97,8 +100,11 @@ ValueID ConversionInserter::convert(ValueID source, Representation wanted, Progr
 void ConversionInserter::reportUnsupportedConversion(ValueID source, Representation wanted, BlockID block)
 {
     StringPrintStream detail;
-    detail.print("a value of type "_s);
+    detail.print("a value"_s);
+#if ASSERT_ENABLED
+    detail.print(" of type "_s);
     printType(detail, m_pass.program, m_pass.function.at(source).type);
+#endif
     detail.print(" kept as "_s, nameOf(m_pass.function.at(source).representation), " is wanted as "_s, nameOf(wanted));
     m_pass.build.diagnostics().add(InternalError { .kind = InternalErrorKind::UnsupportedConversion, .function = m_pass.id, .block = block, .value = source, .detail = detail.toString() });
 }

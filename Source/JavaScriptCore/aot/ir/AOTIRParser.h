@@ -9,7 +9,6 @@
 
 #include "AOTIR.h"
 #include "AOTVerifier.h"
-#include "JSExportMacros.h"
 #include <memory>
 #include <wtf/Forward.h>
 
@@ -19,8 +18,7 @@ class BuildContext;
 
 namespace Typed {
 
-JS_EXPORT_PRIVATE std::unique_ptr<Program> parseProgram(StringView text, IRForm, BuildContext&, RawWordCheck = RawWordCheck::Run);
-JS_EXPORT_PRIVATE std::unique_ptr<Program> parseProgram(StringView text, IRForm, BuildContext&, const VerifierInputs&);
+std::unique_ptr<Program> parseProgram(StringView text, IRForm, BuildContext&, const VerifierInputs& = { });
 
 } // namespace Typed
 

@@ -546,10 +546,7 @@ static ProofState checkPrototypeChain(const Program& program, LayoutID layout)
         return ProofState::Proven;
     case LayoutKind::Instance:
         return checkClassChain(program, layout);
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::ModuleNamespace:
+    default:
         return ProofState::Unknown;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -589,11 +586,7 @@ static bool inheritsFromBuiltinsOnly(LayoutKind kind)
     case LayoutKind::Container:
     case LayoutKind::BuiltinResult:
         return true;
-    case LayoutKind::Instance:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::ModuleNamespace:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -625,15 +618,7 @@ static ProofState checkLookupByKeyOnPart(const Program& program, const UnionPart
         return ProofState::Proven;
     case UnionPartKind::Layouts:
         return checkLookupByKeyOnLayouts(program, part.type);
-    case UnionPartKind::Boolean:
-    case UnionPartKind::Number:
-    case UnionPartKind::String:
-    case UnionPartKind::Symbol:
-    case UnionPartKind::BigInt:
-    case UnionPartKind::BuiltinClass:
-    case UnionPartKind::Functions:
-    case UnionPartKind::Builtins:
-    case UnionPartKind::OtherObjects:
+    default:
         return ProofState::Unknown;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -645,9 +630,7 @@ static bool isLookup(Access access)
     case Access::Read:
     case Access::Has:
         return true;
-    case Access::None:
-    case Access::Store:
-    case Access::Define:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -678,13 +661,7 @@ ProvenAccess provenLookupUnderAnyKey(const Program& program, const Type& receive
 static ProofState addStepOnPart(const Program& program, const UnionPart& part, ObjectStep step, ProvenAccess& result)
 {
     switch (part.kind) {
-    case UnionPartKind::Nullish:
-    case UnionPartKind::Boolean:
-    case UnionPartKind::Number:
-    case UnionPartKind::String:
-    case UnionPartKind::Symbol:
-    case UnionPartKind::BigInt:
-    case UnionPartKind::Absent:
+    default:
         return ProofState::Proven;
     case UnionPartKind::Layouts:
         return addStepOnLayouts(program, part.type, step, result);
@@ -747,10 +724,7 @@ static ProofState addTypesOfOwnValues(const Program& program, LayoutID instanceL
             return ProofState::Proven;
         case LayoutKind::Instance:
             break;
-        case LayoutKind::Environment:
-        case LayoutKind::Closure:
-        case LayoutKind::CoroutineFrame:
-        case LayoutKind::ModuleNamespace:
+        default:
             return ProofState::Unknown;
         }
 

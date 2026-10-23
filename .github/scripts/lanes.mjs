@@ -238,14 +238,25 @@ const platforms = [
 
 // Every lane links jsc, testFFI and testaot, which checks that they link. Each is a full copy of JavaScriptCore, so a lane
 // only ships the ones something downloads it for:
-//   all three  in the lanes bun's CI tests, which packs them next to bun (packageAndUpload in bun's scripts/build/ci.ts),
-//              and in the lanes the `test` job here runs
-//   testaot    in linux-amd64-debug-asan, for bun's "AoT cargo test" job; it runs the jsc next to it
 //   jsc        everywhere
+//   testFFI    in the lanes bun's CI tests, which packs it next to bun (packageAndUpload in bun's scripts/build/ci.ts),
+//              and in the lanes the `test` job here runs
+//   testaot    in the lanes the `test` job here runs. It has the table of built-ins of the stand-in host (aot/tests/host).
+// and, in lib/, the objects of jsc and of testaot without a table (shell/CMakeLists.txt), which bun links with its own:
+//   jsc-objects, testaot-objects   in those same lanes, and in linux-amd64-debug-asan for bun's "AoT cargo test" job.
+//                                  bun's build looks for them in the tarball (scripts/build/deps/webkit.ts).
 function programs(platform, arch, variant, test) {
-  if (test || platform.bunTests?.(arch).includes(variant)) return ["jsc", "testFFI", "testaot"];
-  return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan" ? ["jsc", "testaot"] : ["jsc"];
+  const objects = ["jsc-objects", "testaot-objects"];
+  if (test) return ["jsc", "testFFI", "testaot", ...objects];
+  if (platform.bunTests?.(arch).includes(variant)) return ["jsc", "testFFI", ...objects];
+  return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan" ? ["jsc", ...objects] : ["jsc"];
 }
+
+// One more asset of every release, next to the lanes' tarballs: what a tarball has under Source/JavaScriptCore/aot but the
+// tests, at the same paths. That is the schema, the two generators and the generated files the engine was compiled with:
+// 2 MB. bun's jobs that link no engine (its lint and type-check jobs) read it in place of a lane's tarball.
+// `from` packs it, out of its own output.
+const SOURCES = { label: "bun-webkit-aot-sources", from: "bun-webkit-linux-amd64-lto" };
 
 // A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage (less
 // comments, and less the global ARGs that `base` does not take, which are lane settings), the files that stage copies
@@ -286,8 +297,10 @@ const lanes = platforms.flatMap(platform =>
         ...(platform.testPrograms ? { TEST_PROGRAMS: test ? platform.testPrograms.join(" ") : "" } : {}),
         ...platform.args(arch, v, variant),
       };
+      const label = platform.label(arch) + (variant === "release" ? "" : `-${variant}`);
       return {
-        label: platform.label(arch) + (variant === "release" ? "" : `-${variant}`),
+        label,
+        sources: label === SOURCES.from ? SOURCES.label : "",
         runner: BUILDER,
         dockerfile: platform.dockerfile,
         package_os: platform.packageOS,
@@ -306,6 +319,7 @@ const lanes = platforms.flatMap(platform =>
 const labels = lanes.map(lane => lane.label);
 const duplicate = labels.find((label, i) => labels.indexOf(label) !== i);
 if (duplicate) throw new Error(`two lanes are called ${duplicate}`);
+if (!labels.includes(SOURCES.from)) throw new Error(`no lane is called ${SOURCES.from}, which packs ${SOURCES.label}`);
 
 // The toolchain images the lanes start from. One is built by the first lane that uses it: the `base` stage does not
 // read the lane's build arguments, only the ones that say which toolchain it is (MACOS_ARCH, FREEBSD_ARCH, ...).
@@ -365,11 +379,11 @@ if (command === "build") {
   docker(image.lane, ["--target=base", "--tag", image.image, "--provenance=false", "--push"], args.includes("--dry-run"));
 } else if (command === "plan") {
   const matrix = include => JSON.stringify({ include });
-  const build = ({ label, runner, image, package_os, package_cpu, test, programs }) => ({ label, runner, image, package_os, package_cpu, test, programs });
+  const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
   console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);
-  console.log(`labels=${JSON.stringify(labels)}`);
+  console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {
     const { status, stderr } = spawnSync("docker", ["manifest", "inspect", image], { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });

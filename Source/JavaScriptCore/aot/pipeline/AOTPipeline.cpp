@@ -155,12 +155,9 @@ constexpr std::array rows {
     programPass(MarkResultsUsedAsKeys, Optional, { Prepared, Prepared }, { }, { }, { }),
     programPass(ReadCapturesFromEnvironments, Optional, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies),
     takingAway(programPass(RemoveUnreadFields, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
-    addingOnly({ }, programPass(RemoveUnusedResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
-    addingOnly({ }, programPass(RemoveUnusedParameters, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     programPass(RemoveUnreachableFunctions, Optional, { Prepared, Selected }, { CallGraph }, { }, { }),
     programPass(SplitBehindEntryChecks, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, resultsAboutBodies | Results { Heat }),
     addingOnly({ }, programPass(SkipAnsweredEntryChecks, Optional, { Prepared, Prepared }, { Heat }, { }, resultsAboutBodies)),
-    addingOnly({ }, programPass(SplitFreshResults, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph, Heat }, { }, resultsAboutBodies)),
     programPass(PromoteAggregateParameters, Optional, { Prepared, Prepared }, { Flow, EffectSummaries }, { }, resultsAboutBodies),
     programPass(SplitCoroutines, Required, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies),
     programPass(CallModules, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies | Results { Heat }),
@@ -168,7 +165,6 @@ constexpr std::array rows {
     addingOnly({ }, countingOwnChanges(programPass(ChooseCallingConventions, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph }, { CallingConventions }, resultsAboutBodies))),
     addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { }, { }, resultsAboutBodies)),
     addingOnly({ Opcode::MaterializeEnvironment, Opcode::EmptyArgumentList }, programPass(AllocateInFrames, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat, EffectSummaries }, { FrameAllocation }, { EffectSummaries })),
-    programPass(FlattenInnerObjects, Optional, { Prepared, Prepared }, { Flow, Heat }, { }, resultsAboutBodies),
     addingOnly({ }, programPass(AllocateInnerObjects, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, { })),
     addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
@@ -196,7 +192,6 @@ constexpr std::array rows {
     functionPass(SplitUnions, splitUnions, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(PlaceTypeTests, placeTypeTests, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     derivingFunctions(functionPass(ExpandIteration, expandIteration, Required, Prepared, { Flow, EffectSummaries }, everything)),
-    functionPass(ExpandProvenIterations, expandProvenIterations, Optional, Prepared, { Flow, EffectSummaries }, everything),
     derivingFunctions(functionPass(ExpandOwnKeys, expandOwnKeys, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
     derivingFunctions(readingOtherBodies(functionPass(SelectTypedResults, selectTypedResults, Required, Prepared, { Flow, Heat, EffectSummaries }, everything))),
     functionPass(RetypeValues, retypeValues, Required, Prepared, { }, nothing),
@@ -204,43 +199,30 @@ constexpr std::array rows {
     functionPass(SimplifyCasts, simplifyCasts, Optional, Prepared, { }, everything),
     functionPass(SinkAllocations, sinkAllocations, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(EliminateRedundantReads, eliminateRedundantReads, Optional, Prepared, { Flow, EffectSummaries }, everything),
-    functionPass(EliminateGuards, eliminateGuards, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(SeparateUnlikelyLoopPaths, separateUnlikelyLoopPaths, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
-    functionPass(ConvertCountersToIntegers, convertCountersToIntegers, Optional, Prepared, { }, everything),
     functionPass(RemoveDeadCountedLoops, removeDeadCountedLoops, Optional, Prepared, { EffectSummaries }, everything),
-    derivingFunctions(functionPass(FuseArrayChains, fuseArrayChains, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
     readingOtherBodies(functionPass(FuseGeneratorLoops, fuseGeneratorLoops, Optional, Prepared, { Flow, EffectSummaries }, everything)),
-    readingOtherBodies(functionPass(StartGeneratorsAtFirstStep, startGeneratorsAtFirstStep, Optional, Prepared, { Flow, EffectSummaries }, everything)),
     functionPass(CreateStringBuilders, createStringBuilders, Optional, Prepared, { Heat, EffectSummaries }, everything),
     functionPass(FuseConcatenations, fuseConcatenations, Optional, Prepared, { }, everything),
     functionPass(ExpandData, expandData, Required, Prepared, { Flow }, values),
     functionPass(FoldConstants, foldConstants, Optional, Prepared, { Flow, EffectSummaries }, values),
     functionPass(SimplifyControlFlow, simplifyControlFlow, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(RemoveTrivialParameters, removeTrivialParameters, Optional, Prepared, { }, values),
-    functionPass(PropagateBranchConditions, propagateBranchConditions, Optional, Prepared, { }, values),
     functionPass(HoistTestsIntoPredecessors, hoistTestsIntoPredecessors, Optional, Prepared, { }, values),
     functionPass(TestNarrowerTypesFirst, testNarrowerTypesFirst, Optional, Prepared, { }, everything),
     functionPass(ThreadJumps, threadJumps, Optional, Prepared, { EffectSummaries }, everything),
     functionPass(InferSwitches, inferSwitches, Optional, Prepared, { }, everything),
     functionPass(EliminateDeadCode, eliminateDeadCode, Optional, Prepared, { Flow, EffectSummaries }, values),
-    functionPass(MergeDuplicateBlocks, mergeDuplicateBlocks, Optional, Prepared, { }, everything),
     functionPass(CompactBlocks, compactBlocks, Required, Prepared, { }, everything),
     functionPass(RemoveRedundantHandlers, removeRedundantHandlers, Optional, Prepared, { EffectSummaries }, everything),
     functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, EffectSummaries }, values),
     functionPass(SimplifyBuiltinCalls, simplifyBuiltinCalls, Optional, Prepared, { EffectSummaries }, everything),
-    functionPass(ReduceIntegerDivisions, reduceIntegerDivisions, Optional, Prepared, { }, values),
     functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
-    functionPass(PlanCollectionCapacities, planCollectionCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
-    functionPass(FoldConstantRegExps, foldConstantRegExps, Optional, Prepared, { Flow }, everything),
-    functionPass(ShareRegExpLiterals, shareRegExpLiterals, Optional, Prepared, { Flow }, values),
     functionPass(InsertObjectCoercibleChecks, insertObjectCoercibleChecks, Optional, Prepared, { }, everything),
-    functionPass(EliminateTailRecursion, eliminateTailRecursion, Optional, Prepared, { }, everything),
     readingOtherBodies(functionPass(ResolveAwaitedCalls, resolveAwaitedCalls, Optional, Prepared, { EffectSummaries }, everything)),
-    functionPass(SinkConstants, sinkConstants, Optional, Prepared, { }, values),
     functionPass(ExpandLongArrayLiterals, expandLongArrayLiterals, Required, Prepared, { }, everything),
     functionPass(FinishBirths, finishBirths, Optional, Prepared, { }, values),
     readingOtherBodies(functionPass(RestartInGenericVersion, restartInGenericVersion, Optional, Prepared, { Flow, EffectSummaries }, everything)),
-    functionPass(PlaceAllocationsAtTheirUse, placeAllocationsAtTheirUse, Optional, Prepared, { }, values),
 
     producing(Selected, functionPass(Select, select, Required, Prepared, { Flow, Heat, EffectSummaries, CallingConventions, SlotPlan }, everything)),
     functionPass(ChooseRepresentations, chooseRepresentations, Required, Placed, { CallingConventions, Placement }, everything),
@@ -259,7 +241,6 @@ constexpr std::array simplifySteps {
             ScheduleStep::run(FoldConstants),
             ScheduleStep::run(SimplifyControlFlow),
             ScheduleStep::run(RemoveTrivialParameters),
-            ScheduleStep::run(PropagateBranchConditions),
             ScheduleStep::run(HoistTestsIntoPredecessors),
             ScheduleStep::run(ThreadJumps),
             ScheduleStep::run(EliminateDeadCode),
@@ -268,7 +249,6 @@ constexpr std::array simplifySteps {
         ScheduleStep::run(EliminateRedundantReads),
         ScheduleStep::run(RetypeValues),
     ScheduleStep::endFixpoint(),
-    ScheduleStep::run(MergeDuplicateBlocks),
     ScheduleStep::run(RetypeValues),
     ScheduleStep::run(CompactBlocks),
 };
@@ -276,15 +256,12 @@ constexpr std::array simplifySteps {
 constexpr std::array prepareSteps {
     ScheduleStep::run(SimplifyCasts),
     ScheduleStep::run(InsertObjectCoercibleChecks),
-    ScheduleStep::run(PlaceAllocationsAtTheirUse),
     ScheduleStep::run(AddGenericVersion),
-    ScheduleStep::run(ExpandProvenIterations),
     ScheduleStep::run(ResolveBuiltins),
     ScheduleStep::run(BindGlobalNames),
     ScheduleStep::run(SimplifyBuiltinCalls),
     ScheduleStep::run(ExpandData),
     ScheduleStep::run(InsertObjectCoercibleChecks),
-    ScheduleStep::run(EliminateTailRecursion),
     ScheduleStep::run(RemoveRedundantHandlers),
     ScheduleStep::include(FunctionSchedule::Simplify),
 };
@@ -307,9 +284,7 @@ constexpr std::array optimizeSteps {
         ScheduleStep::run(ExpandOwnKeys),
         ScheduleStep::run(SelectTypedResults),
         ScheduleStep::run(ResolveAwaitedCalls),
-        ScheduleStep::run(FuseArrayChains),
         ScheduleStep::run(InlineCalls),
-        ScheduleStep::run(PlaceAllocationsAtTheirUse),
         ScheduleStep::run(FuseGeneratorLoops),
         ScheduleStep::run(SimplifyCasts),
         ScheduleStep::run(RetypeValues),
@@ -324,13 +299,8 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(ResolveBuiltins),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RestartInGenericVersion),
-    ScheduleStep::run(StartGeneratorsAtFirstStep),
     ScheduleStep::run(SeparateUnlikelyLoopPaths),
-    ScheduleStep::run(ConvertCountersToIntegers),
     ScheduleStep::run(SimplifyBuiltinCalls),
-    ScheduleStep::run(ReduceIntegerDivisions),
-    ScheduleStep::run(FoldConstantRegExps),
-    ScheduleStep::run(ShareRegExpLiterals),
     ScheduleStep::run(FuseConcatenations),
     ScheduleStep::run(CreateStringBuilders),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
@@ -349,11 +319,8 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(RemoveDeadCountedLoops),
     ScheduleStep::run(HoistLoopInvariantReads),
     ScheduleStep::run(EliminateRedundantReads),
-    ScheduleStep::run(EliminateGuards),
     ScheduleStep::run(TestNarrowerTypesFirst),
-    ScheduleStep::run(SinkConstants),
     ScheduleStep::run(PlanArrayCapacities),
-    ScheduleStep::run(PlanCollectionCapacities),
     ScheduleStep::run(ExpandLongArrayLiterals),
     ScheduleStep::run(RetypeValues),
     ScheduleStep::run(CompactBlocks),
@@ -413,25 +380,20 @@ constexpr PassesLeftIdle passesLeftIdle[] {
 
 constexpr PassesLeftIdle passesThatCanWait[] {
     { CreateStringBuilders, { PlaceTypeTests } },
-    { EliminateDeadCode, { ResolveBuiltins, ResolveCalls, ResolveAccesses, PlaceTypeTests, InlineCalls, SimplifyCasts, FoldConstants, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateDeadCode, InferSwitches, EliminateRedundantReads } },
-    { EliminateGuards, { RetypeValues } },
-    { EliminateRedundantReads, { RemoveTrivialParameters, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateRedundantReads } },
+    { EliminateDeadCode, { ResolveBuiltins, ResolveCalls, ResolveAccesses, PlaceTypeTests, InlineCalls, SimplifyCasts, FoldConstants, HoistTestsIntoPredecessors, ThreadJumps, EliminateDeadCode, InferSwitches, EliminateRedundantReads } },
+    { EliminateRedundantReads, { RemoveTrivialParameters, HoistTestsIntoPredecessors, ThreadJumps, EliminateRedundantReads } },
     { FoldConstants, { RemoveTrivialParameters, EliminateRedundantReads } },
     { FuseConcatenations, { EliminateRedundantReads } },
-    { MergeDuplicateBlocks, { RemoveTrivialParameters, EliminateRedundantReads } },
     { PlanArrayCapacities, { RetypeValues } },
-    { PlanCollectionCapacities, { RetypeValues } },
     { RemoveRedundantHandlers, { ResolveBuiltins, EliminateRedundantReads } },
-    { RemoveTrivialParameters, { PlaceTypeTests, SimplifyCasts, SinkAllocations, RemoveTrivialParameters, PropagateBranchConditions, EliminateRedundantReads } },
+    { RemoveTrivialParameters, { PlaceTypeTests, SimplifyCasts, SinkAllocations, RemoveTrivialParameters, EliminateRedundantReads } },
     { ResolveBuiltins, { SimplifyControlFlow, RemoveTrivialParameters, EliminateRedundantReads } },
-    { RetypeValues, { SimplifyCasts, RemoveTrivialParameters, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateRedundantReads } },
-    { ShareRegExpLiterals, { EliminateRedundantReads } },
+    { RetypeValues, { SimplifyCasts, RemoveTrivialParameters, HoistTestsIntoPredecessors, ThreadJumps, EliminateRedundantReads } },
     { SimplifyBuiltinCalls, { SimplifyControlFlow, EliminateRedundantReads } },
     { SimplifyCasts, { ResolveBuiltins, SimplifyBuiltinCalls, ResolveCalls, ResolveAccesses, PlaceTypeTests, InlineCalls, SimplifyCasts, SinkAllocations, FoldConstants, SimplifyControlFlow, EliminateDeadCode, EliminateRedundantReads } },
-    { SimplifyControlFlow, { ResolveBuiltins, ResolveCalls, InlineCalls, SimplifyCasts, SinkAllocations, SimplifyControlFlow, RemoveTrivialParameters, PropagateBranchConditions, EliminateRedundantReads } },
+    { SimplifyControlFlow, { ResolveBuiltins, ResolveCalls, InlineCalls, SimplifyCasts, SinkAllocations, SimplifyControlFlow, RemoveTrivialParameters, EliminateRedundantReads } },
     { SinkAllocations, { EliminateRedundantReads } },
-    { SinkConstants, { RetypeValues } },
-    { ThreadJumps, { ResolveBuiltins, FoldConstants, PropagateBranchConditions, EliminateRedundantReads } },
+    { ThreadJumps, { ResolveBuiltins, FoldConstants, EliminateRedundantReads } },
 };
 
 constexpr std::array<PassSet, numberOfPasses> createPassesThatCanWait()
@@ -828,17 +790,10 @@ static_assert(runsUnconditionally(RetypeValues));
 static_assert(scheduleAt(FunctionSchedule::Simplify).inputs == simplifyInputs);
 static_assert(scheduleAt(FunctionSchedule::Optimize).inputs.contains(CallGraph));
 static_assert(canRunSimplify(RemoveUnreadFields));
-static_assert(canRunSimplify(RemoveUnusedResults));
-static_assert(canRunSimplify(RemoveUnusedParameters));
-static_assert(canRunSimplify(SplitFreshResults));
 static_assert(canRunSimplify(SplitCoroutines));
 static_assert(canRunSimplify(ChooseCallingConventions));
 static_assert(canRunFunctionPass(RemoveUnreadFields, RemoveDeadCountedLoops));
-static_assert(canRunFunctionPass(RemoveUnusedResults, RemoveDeadCountedLoops));
-static_assert(canRunFunctionPass(RemoveUnusedParameters, RemoveDeadCountedLoops));
-static_assert(canRunFunctionPass(SplitFreshResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ChooseCallingConventions, RemoveDeadCountedLoops));
-static_assert(canRunFunctionPass(SplitFreshResults, SinkAllocations));
 
 } // namespace PassTable
 

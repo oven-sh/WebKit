@@ -16,7 +16,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(maxTrackedInteger == AOT::maxSlotInteger);
 
-static constexpr uint16_t markerPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
+static constexpr uint16_t representedMarkerPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
 static constexpr uint16_t literalPrimitives = Primitive::LiteralString | Primitive::LiteralSymbol;
 
 namespace {
@@ -45,24 +45,24 @@ static constexpr RepresentableSet representableSetOf(Representation representati
     case Representation::Double:
         return { Primitive::Number, Range::full() };
     case Representation::OptionalInt64:
-        return { Primitive::Integer | markerPrimitives, Range::full() };
+        return { Primitive::Integer | representedMarkerPrimitives, Range::full() };
     case Representation::OptionalDouble:
-        return { Primitive::Number | markerPrimitives, Range::full() };
+        return { Primitive::Number | representedMarkerPrimitives, Range::full() };
     case Representation::Cell:
         return { cellPrimitives, Range::empty(), true };
     case Representation::Cell32:
-        return { cellPrimitives | markerPrimitives, Range::empty(), true };
+        return { cellPrimitives | representedMarkerPrimitives, Range::empty(), true };
     case Representation::JSValue:
         return { Primitive::Defined, Range::full(), true };
     case Representation::LiteralString:
-        return { Primitive::AnyString | markerPrimitives };
+        return { Primitive::AnyString | representedMarkerPrimitives };
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
 static bool isSingleMarker(const Type& type)
 {
-    return type.hasOnlyPrimitives(markerPrimitives) && hasOneBitSet(type.primitives);
+    return type.hasOnlyPrimitives(representedMarkerPrimitives) && hasOneBitSet(type.primitives);
 }
 
 static std::optional<Representation> internalRepresentationOf(const Type& type)
@@ -98,9 +98,9 @@ Representation defaultRepresentationOf(const Type& type)
         return type.integers.isSubsetOf(Range::int32()) ? Representation::Int32 : Representation::Int64;
     if (type.isNumber())
         return Representation::Double;
-    if (type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | markerPrimitives))
+    if (type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | representedMarkerPrimitives))
         return type.primitives & Primitive::Double ? Representation::OptionalDouble : Representation::OptionalInt64;
-    if (type.hasLiteralStrings() && type.hasOnlyPrimitives(Primitive::LiteralString | markerPrimitives))
+    if (type.hasLiteralStrings() && type.hasOnlyPrimitives(Primitive::LiteralString | representedMarkerPrimitives))
         return Representation::LiteralString;
     if (!(type.primitives & ~cellPrimitives))
         return Representation::Cell;

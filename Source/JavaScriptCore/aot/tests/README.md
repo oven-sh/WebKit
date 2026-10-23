@@ -74,11 +74,16 @@ Under a debugger, run the test in `testaot` itself: `run` with a single file sta
 then types and verifies it. Without a diagnostic it prints that text and exits with 0. Otherwise it prints nothing on stdout, one
 line `<Kind>: <message>` per diagnostic on stderr, and exits with 1. It takes no `--until` and no `--function`.
 
-Any other `--<name>=<value>` is set as a JSC option, as in `jsc`:
+Any other `--<name>=<value>` is set as a JSC option, as in `jsc`. Without `--function`, `print` prints the functions that
+`aotFunctionToDump` names, and what was derived from them:
 
 ```
-testaot print main.bin --until=<PassID> --dumpAOTIR=Prepared --aotFunctionToDump=f1
+testaot print main.bin --until=<PassID> --aotFunctionToDump=<name>
 ```
+
+Only `testaot` reads IR text, and without assertions only `testaot` prints it: the lexer and the parser are sources of `testaot`,
+and the sources that print are empty in the library (`AOTIRPrinter.h` says how). So `dumpAOTIR` prints IR in a build with
+assertions alone, in Bun, `jsc` and `testaot` alike.
 
 WebKit's own test script runs `testaot all` on this folder:
 

@@ -162,8 +162,6 @@ bool Object::store(VM& vm, const FieldData& field, JSValue value)
     SlotRepresentation representation = field.slot.representation();
     if (!tryWriteSlot(*state().strings, representation, slot, value))
         return false;
-    if (field.defersFlattenedObject && !state().instance.options().isSabotaged(Sabotage::StoreLeavesRoomAsItIs))
-        clearRoomOfFlattenedObject(field);
     if (value.isUndefinedOrNull())
         willStoreMarker(vm, field, value);
     if (traitsOf(representation).holdsCell)
@@ -224,8 +222,6 @@ void Object::clear(const FieldData& field)
 {
     if (void* slot = slotOf(field))
         clearSlot(field.slot.representation(), slot);
-    if (field.defersFlattenedObject)
-        clearRoomOfFlattenedObject(field);
 }
 
 template<typename Visitor>

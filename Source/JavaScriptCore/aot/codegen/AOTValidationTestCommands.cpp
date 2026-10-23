@@ -119,7 +119,7 @@ static void runValidationDifferences(TestCommandContext& context)
 std::span<const TestCommand> validationTestCommands()
 {
     static constexpr TestCommand commands[] = {
-        { "validation-differences"_s, IRForm::AsRead, runValidationDifferences, RawWordCheck::Run, ProgramAsRead::WithLibrary },
+        { "validation-differences"_s, IRForm::AsRead, runValidationDifferences, ProgramAsRead::WithLibrary },
     };
     return commands;
 }

@@ -42,7 +42,7 @@ static constexpr size_t symbolTableEntryWords = 3;
 
 namespace {
 
-struct SymbolTableEntry {
+struct ImageSymbolEntry {
     uint32_t offset;
     const String* name;
     uint32_t nameOffset { 0 };
@@ -344,7 +344,7 @@ Vector<ImageSymbol> collectSymbols(const ImageSymbolInputs& inputs)
     return symbols;
 }
 
-static Vector<SymbolTableEntry> collectTableEntries(std::span<const ImageSymbol> symbols)
+static Vector<ImageSymbolEntry> collectTableEntries(std::span<const ImageSymbol> symbols)
 {
     Vector<uint32_t, 4> sharedCodeCopies;
     bool hasSharedCode = false;
@@ -354,7 +354,7 @@ static Vector<SymbolTableEntry> collectTableEntries(std::span<const ImageSymbol>
         hasSharedCode |= symbol.kind == SymbolKind::SharedCode;
     }
 
-    Vector<SymbolTableEntry> entries;
+    Vector<ImageSymbolEntry> entries;
     entries.reserveInitialCapacity(symbols.size());
     for (const ImageSymbol& symbol : symbols) {
         switch (symbol.kind) {
@@ -363,15 +363,15 @@ static Vector<SymbolTableEntry> collectTableEntries(std::span<const ImageSymbol>
         case SymbolKind::WebAssemblyCode:
         case SymbolKind::Constants:
         case SymbolKind::FFICode:
-            entries.append(SymbolTableEntry { symbol.offset, &symbol.name });
+            entries.append(ImageSymbolEntry { symbol.offset, &symbol.name });
             break;
         case SymbolKind::SharedCode:
             for (uint32_t sharedCodeCopy : sharedCodeCopies)
-                entries.append(SymbolTableEntry { sharedCodeCopy + symbol.offset, &symbol.name });
+                entries.append(ImageSymbolEntry { sharedCodeCopy + symbol.offset, &symbol.name });
             break;
         case SymbolKind::SharedCodeCopy:
             if (!hasSharedCode)
-                entries.append(SymbolTableEntry { symbol.offset, &symbol.name });
+                entries.append(ImageSymbolEntry { symbol.offset, &symbol.name });
             break;
         case SymbolKind::FoldedFunction:
         case SymbolKind::OwnOutlinedBody:
@@ -387,13 +387,13 @@ Vector<uint8_t> encodeSymbols(std::span<const ImageSymbol> symbols, std::span<co
 {
     const ImageHeader& header = headerOf(image);
 
-    Vector<SymbolTableEntry> entries = collectTableEntries(symbols);
-    AOT::stableSort(entries, { }, &SymbolTableEntry::offset);
-    entries.shrink(std::ranges::unique(entries, { }, &SymbolTableEntry::offset).begin() - entries.begin());
+    Vector<ImageSymbolEntry> entries = collectTableEntries(symbols);
+    AOT::stableSort(entries, { }, &ImageSymbolEntry::offset);
+    entries.shrink(std::ranges::unique(entries, { }, &ImageSymbolEntry::offset).begin() - entries.begin());
 
     Vector<uint8_t> names;
     UncheckedKeyHashMap<String, uint32_t> nameOffsets;
-    for (SymbolTableEntry& entry : entries) {
+    for (ImageSymbolEntry& entry : entries) {
         entry.nameOffset = nameOffsets.ensure(*entry.name, [&] {
             uint32_t offset = safeCast<uint32_t>(names.size());
             names.append(byteCast<uint8_t>(entry.name->utf8().span()));

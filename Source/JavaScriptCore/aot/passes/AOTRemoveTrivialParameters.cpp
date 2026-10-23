@@ -313,7 +313,7 @@ static Vector<ParameterPosition> collectMergePointParameters(const Function& fun
     return parameters;
 }
 
-size_t removeTrivialParameters(FunctionPassContext& context, Vector<ParameterPosition>&& candidatesInReversePostOrder)
+size_t removeTrivialParametersAmong(FunctionPassContext& context, Vector<ParameterPosition>&& candidatesInReversePostOrder)
 {
     if (candidatesInReversePostOrder.isEmpty())
         return 0;
@@ -322,7 +322,7 @@ size_t removeTrivialParameters(FunctionPassContext& context, Vector<ParameterPos
 
 PassOutcome removeTrivialParameters(FunctionPassContext& context)
 {
-    size_t numberOfRemovedParameters = removeTrivialParameters(context, collectMergePointParameters(context.function, context.analyses.cfg()));
+    size_t numberOfRemovedParameters = removeTrivialParametersAmong(context, collectMergePointParameters(context.function, context.analyses.cfg()));
     if (!numberOfRemovedParameters)
         return PassOutcome::Unchanged;
     context.keptAnalyses = allAnalyses;

@@ -45,7 +45,7 @@ struct PairTable {
     HashMap<BlockID, bool> suspendingLoops;
 };
 
-struct Match {
+struct StringCharacterMatch {
     SelectionGroup group;
     ValueID string;
     std::optional<CharacterRead> read { };
@@ -71,7 +71,7 @@ struct PlacedPair {
 static constexpr OpcodeSet readersWithoutRow { Opcode::CallBuiltin, Opcode::ElemGet };
 static constexpr OpcodeSet readersThatOnlyCutPieces { Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::StringRangeSubstringOrUndefined };
 
-static constexpr EffectsOnEdges effectsOfFlattening = EffectsOnEdges::onBothEdges(declaredBoundOf(Opcode::FlattenString));
+static constexpr EffectsOnEdges effectsOfFlatteningString = EffectsOnEdges::onBothEdges(declaredBoundOf(Opcode::FlattenString));
 
 static std::optional<uint32_t> stringOperandIndexOf(Opcode opcode)
 {
@@ -85,7 +85,7 @@ static std::optional<uint32_t> stringOperandIndexOf(Opcode opcode)
     }
 }
 
-static std::optional<Match> findReader(SelectionContext& context, BlockID block, ValueID id)
+static std::optional<StringCharacterMatch> findReader(SelectionContext& context, BlockID block, ValueID id)
 {
     if (context.isOnSlowPath(id))
         return std::nullopt;
@@ -98,7 +98,7 @@ static std::optional<Match> findReader(SelectionContext& context, BlockID block,
     if (!string || !context.typeOf(string).isAnyString())
         return std::nullopt;
 
-    Match reader { groupOfOne(id), string };
+    StringCharacterMatch reader { groupOfOne(id), string };
     if (!readersWithoutRow.contains(value.opcode))
         return reader;
 
@@ -110,7 +110,7 @@ static std::optional<Match> findReader(SelectionContext& context, BlockID block,
 
 static bool resolvesRopes(SelectionContext& context, ValueID reader)
 {
-    return effectsOfFlattening.isSubsetOf(context.analyses().effectsOf(reader));
+    return effectsOfFlatteningString.isSubsetOf(context.analyses().effectsOf(reader));
 }
 
 static bool suspends(SelectionContext& context, BlockID header)
@@ -186,16 +186,16 @@ static std::optional<uint32_t> findOrAddPair(SelectionContext& context, PairTabl
     return entry.iterator->value;
 }
 
-static Vector<Match> collectReaders(SelectionContext& context, PairTable& table)
+static Vector<StringCharacterMatch> collectReaders(SelectionContext& context, PairTable& table)
 {
     const Function& function = context.function();
 
-    Vector<Match> readers;
+    Vector<StringCharacterMatch> readers;
     // The schema lists the readers: a rewrite may create FlattenString only in place of one of them.
     for (Opcode opcode : replacedOperationsOf(Opcode::FlattenString)) {
         for (ValueID id : context.candidates(opcode)) {
             BlockID block = context.analyses().useLists().blockOf(id);
-            std::optional<Match> reader = findReader(context, block, id);
+            std::optional<StringCharacterMatch> reader = findReader(context, block, id);
             if (!reader)
                 continue;
 
@@ -220,9 +220,9 @@ static bool shouldFlatten(const Pair& pair)
     return pair.hasLikelyReader && pair.hasResolvingReader && !pair.resolvesUnderOtherHandler;
 }
 
-static void clearUnflattenedPairs(const Vector<Pair>& pairs, Vector<Match>& readers)
+static void clearUnflattenedPairs(const Vector<Pair>& pairs, Vector<StringCharacterMatch>& readers)
 {
-    for (Match& reader : readers) {
+    for (StringCharacterMatch& reader : readers) {
         if (reader.pair && !shouldFlatten(pairs[*reader.pair]))
             reader.pair = std::nullopt;
     }
@@ -263,12 +263,12 @@ static bool runsRightBehind(SelectionContext& context, BlockID block, BlockID fo
 }
 
 // The first reader that resolves ropes leaves the string flat for every reader it dominates.
-static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>& pairs, Vector<Match>& readers)
+static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>& pairs, Vector<StringCharacterMatch>& readers)
 {
-    auto isUnpaired = [](const Match& reader) {
+    auto isUnpaired = [](const StringCharacterMatch& reader) {
         return !reader.pair;
     };
-    auto mayComeFirst = [](const Match& reader) {
+    auto mayComeFirst = [](const StringCharacterMatch& reader) {
         return !reader.pair && reader.resolvesRopes;
     };
     if (std::ranges::count_if(readers, isUnpaired) < 2 || std::ranges::none_of(readers, mayComeFirst))
@@ -279,7 +279,7 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
 
     HashMap<ValueID, Vector<PlacedReader, 4>> readersOfString;
     for (uint32_t index = 0; index < readers.size(); ++index) {
-        const Match& reader = readers[index];
+        const StringCharacterMatch& reader = readers[index];
         if (reader.pair)
             continue;
         ValueLocation location = analyses.useLists().locationOf(reader.group.root);
@@ -358,7 +358,7 @@ static bool reaches(SelectionContext& context, const Pair& pair, ProgramPoint po
 }
 
 // A string that was flattened stays flat: a place that the flattening of the same string dominates takes that flat string.
-static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs, Vector<Match>& readers)
+static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs, Vector<StringCharacterMatch>& readers)
 {
     // A flat string does not live across a suspension.
     if (pairs.isEmpty() || suspendsAnywhere(context))
@@ -400,7 +400,7 @@ static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs
         }).iterator->value.append(placed.pair);
     }
 
-    for (Match& reader : readers) {
+    for (StringCharacterMatch& reader : readers) {
         if (reader.pair) {
             if (std::optional<uint32_t> shared = sharedWith[*reader.pair])
                 reader.pair = shared;
@@ -454,7 +454,7 @@ static void emitFlatString(SelectionContext& context, GroupRewriter& rewriter, P
     });
 }
 
-static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, const Match& match, ValueID flat)
+static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, const StringCharacterMatch& match, ValueID flat)
 {
     ValueID root = match.group.root;
     if (!match.read) {
@@ -478,31 +478,31 @@ static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, co
 void selectHoistStringCharacters(SelectionContext& context)
 {
     PairTable table;
-    Vector<Match> readers = collectReaders(context, table);
+    Vector<StringCharacterMatch> readers = collectReaders(context, table);
     Vector<Pair>& pairs = table.pairs;
     clearUnflattenedPairs(pairs, readers);
     pairReadersBehindFirstReader(context, pairs, readers);
     sharePairsOfOneString(context, pairs, readers);
-    readers.removeAllMatching([&](const Match& reader) {
+    readers.removeAllMatching([&](const StringCharacterMatch& reader) {
         bool isUnchangedRow = !reader.read && !reader.pair;
         return isUnchangedRow || context.tryClaim(SelectionRuleID::HoistStringCharacters, reader.group) != ClaimResult::Claimed;
     });
 
     // Only a reader that resolves ropes may create FlattenString, and a session may reach another reader of the pair first.
-    Vector<Match> flatteningReaders;
-    Vector<Match> otherReaders;
-    for (Match& reader : readers) {
+    Vector<StringCharacterMatch> flatteningReaders;
+    Vector<StringCharacterMatch> otherReaders;
+    for (StringCharacterMatch& reader : readers) {
         bool mayFlatten = reader.pair && reader.resolvesRopes && (!pairs[*reader.pair].firstReader || pairs[*reader.pair].flatteningReader == reader.group.root);
         bool flattens = mayFlatten && !std::exchange(pairs[*reader.pair].hasFlatteningReader, true);
         (flattens ? flatteningReaders : otherReaders).append(WTF::move(reader));
     }
 
-    context.rewriteGroups(SelectionRuleID::HoistStringCharacters, flatteningReaders, [&](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::HoistStringCharacters, flatteningReaders, [&](GroupRewriter& rewriter, const StringCharacterMatch& match) {
         Pair& pair = pairs[*match.pair];
         emitFlatString(context, rewriter, pair);
         rewriteReader(context, rewriter, match, pair.flat);
     });
-    context.rewriteGroups(SelectionRuleID::HoistStringCharacters, otherReaders, [&](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::HoistStringCharacters, otherReaders, [&](GroupRewriter& rewriter, const StringCharacterMatch& match) {
         rewriteReader(context, rewriter, match, match.pair ? pairs[*match.pair].flat : ValueID());
     });
 }

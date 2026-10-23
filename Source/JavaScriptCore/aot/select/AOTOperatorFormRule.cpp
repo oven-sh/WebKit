@@ -28,11 +28,6 @@ struct ConvertedOperator {
 
 } // anonymous namespace
 
-static bool isNullableNumber(const Type& type)
-{
-    return type.isNumberOrNullish() || type.isUndefinedOrNull();
-}
-
 static ConvertedOperator findConversions(SelectionContext& context, ValueID id, OperatorForm form)
 {
     ConvertedOperator match { groupOfOne(id), form, { false, false } };

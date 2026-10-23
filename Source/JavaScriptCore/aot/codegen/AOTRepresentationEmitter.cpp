@@ -18,11 +18,11 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-class Conversion final : public OperationEmitter {
+class RepresentationConversion final : public OperationEmitter {
 public:
-    using Converter = std::optional<Operand> (Conversion::*)();
+    using Converter = std::optional<Operand> (RepresentationConversion::*)();
 
-    Conversion(CodeGenerator&, const OperationContext&, ValueID sourceID, Operand source, const Type&, Representation to);
+    RepresentationConversion(CodeGenerator&, const OperationContext&, ValueID sourceID, Operand source, const Type&, Representation to);
 
     Operand convert(Converter);
 
@@ -61,7 +61,7 @@ private:
 
 }
 
-Conversion::Conversion(CodeGenerator& generator, const OperationContext& context, ValueID sourceID, Operand source, const Type& type, Representation to)
+RepresentationConversion::RepresentationConversion(CodeGenerator& generator, const OperationContext& context, ValueID sourceID, Operand source, const Type& type, Representation to)
     : OperationEmitter(generator)
     , m_value(context)
     , m_sourceID(sourceID)
@@ -72,7 +72,7 @@ Conversion::Conversion(CodeGenerator& generator, const OperationContext& context
 {
 }
 
-Operand Conversion::convert(Converter converter)
+Operand RepresentationConversion::convert(Converter converter)
 {
     std::optional<Operand> converted = (this->*converter)();
     if (!converted) {
@@ -82,7 +82,7 @@ Operand Conversion::convert(Converter converter)
     return *converted;
 }
 
-std::optional<Operand> Conversion::box()
+std::optional<Operand> RepresentationConversion::box()
 {
     switch (m_to) {
     case Representation::JSValue:
@@ -106,7 +106,7 @@ std::optional<Operand> Conversion::box()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::boxToValue()
+std::optional<Operand> RepresentationConversion::boxToValue()
 {
     switch (m_source.representation) {
     case Representation::Void:
@@ -128,7 +128,7 @@ std::optional<Operand> Conversion::boxToValue()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::boxToOptionalInteger()
+std::optional<Operand> RepresentationConversion::boxToOptionalInteger()
 {
     switch (m_source.representation) {
     case Representation::Void:
@@ -150,7 +150,7 @@ std::optional<Operand> Conversion::boxToOptionalInteger()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::boxToOptionalNumber()
+std::optional<Operand> RepresentationConversion::boxToOptionalNumber()
 {
     switch (m_source.representation) {
     case Representation::Void:
@@ -172,7 +172,7 @@ std::optional<Operand> Conversion::boxToOptionalNumber()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::innerObject()
+std::optional<Operand> RepresentationConversion::innerObject()
 {
     if (m_to != Representation::Cell || !m_sourceID)
         return std::nullopt;
@@ -181,7 +181,7 @@ std::optional<Operand> Conversion::innerObject()
     return std::nullopt;
 }
 
-std::optional<Operand> Conversion::unbox()
+std::optional<Operand> RepresentationConversion::unbox()
 {
     if (std::optional<Operand> inner = innerObject())
         return inner;
@@ -207,7 +207,7 @@ std::optional<Operand> Conversion::unbox()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ConversionEmitter::NumberUnboxing Conversion::numberUnboxing()
+ConversionEmitter::NumberUnboxing RepresentationConversion::numberUnboxing()
 {
     if (m_to != Representation::Double && m_to != Representation::OptionalDouble)
         return ConversionEmitter::NumberUnboxing::Branches;
@@ -220,7 +220,7 @@ ConversionEmitter::NumberUnboxing Conversion::numberUnboxing()
     return isInvariantInLoop ? ConversionEmitter::NumberUnboxing::ComputesBothSides : ConversionEmitter::NumberUnboxing::Branches;
 }
 
-std::optional<Operand> Conversion::unboxValue()
+std::optional<Operand> RepresentationConversion::unboxValue()
 {
     switch (m_to) {
     case Representation::Boolean:
@@ -242,7 +242,7 @@ std::optional<Operand> Conversion::unboxValue()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::unboxOptionalInteger()
+std::optional<Operand> RepresentationConversion::unboxOptionalInteger()
 {
     switch (m_to) {
     case Representation::Int32:
@@ -265,7 +265,7 @@ std::optional<Operand> Conversion::unboxOptionalInteger()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::unboxOptionalNumber()
+std::optional<Operand> RepresentationConversion::unboxOptionalNumber()
 {
     switch (m_to) {
     case Representation::Double:
@@ -288,7 +288,7 @@ std::optional<Operand> Conversion::unboxOptionalNumber()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::integerToNumber()
+std::optional<Operand> RepresentationConversion::integerToNumber()
 {
     if (m_to != Representation::Double)
         return std::nullopt;
@@ -313,7 +313,7 @@ std::optional<Operand> Conversion::integerToNumber()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::numberToInteger()
+std::optional<Operand> RepresentationConversion::numberToInteger()
 {
     if (!m_source.is<Number>())
         return std::nullopt;
@@ -338,21 +338,21 @@ std::optional<Operand> Conversion::numberToInteger()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::widenInteger()
+std::optional<Operand> RepresentationConversion::widenInteger()
 {
     if (!m_source.is<Word32>() || m_to != Representation::Int64)
         return std::nullopt;
     return m_conversions.widen(m_source.as<Word32>(), m_type.integers);
 }
 
-std::optional<Operand> Conversion::narrowInteger()
+std::optional<Operand> RepresentationConversion::narrowInteger()
 {
     if (!m_source.is<Integer>() || m_to != Representation::Int32)
         return std::nullopt;
     return m_conversions.narrow(m_source.as<Integer>());
 }
 
-std::optional<Operand> Conversion::decode()
+std::optional<Operand> RepresentationConversion::decode()
 {
     if (std::optional<Operand> inner = innerObject())
         return inner;
@@ -377,7 +377,7 @@ std::optional<Operand> Conversion::decode()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::decodeNarrowReference()
+std::optional<Operand> RepresentationConversion::decodeNarrowReference()
 {
     switch (m_to) {
     case Representation::Cell:
@@ -399,7 +399,7 @@ std::optional<Operand> Conversion::decodeNarrowReference()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::decodeLiteralString()
+std::optional<Operand> RepresentationConversion::decodeLiteralString()
 {
     switch (m_to) {
     case Representation::Cell:
@@ -422,7 +422,7 @@ std::optional<Operand> Conversion::decodeLiteralString()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::compress()
+std::optional<Operand> RepresentationConversion::compress()
 {
     switch (m_to) {
     case Representation::Cell32:
@@ -445,7 +445,7 @@ std::optional<Operand> Conversion::compress()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::compressToNarrowReference()
+std::optional<Operand> RepresentationConversion::compressToNarrowReference()
 {
     switch (m_source.representation) {
     case Representation::Void:
@@ -467,7 +467,7 @@ std::optional<Operand> Conversion::compressToNarrowReference()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<Operand> Conversion::compressToLiteralString()
+std::optional<Operand> RepresentationConversion::compressToLiteralString()
 {
     switch (m_source.representation) {
     case Representation::Void:
@@ -494,25 +494,25 @@ RepresentationEmitter::RepresentationEmitter(CodeGenerator& generator)
 {
 }
 
-static Conversion::Converter converterOf(Opcode opcode)
+static RepresentationConversion::Converter converterOf(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::Box:
-        return &Conversion::box;
+        return &RepresentationConversion::box;
     case Opcode::Unbox:
-        return &Conversion::unbox;
+        return &RepresentationConversion::unbox;
     case Opcode::IntegerToNumber:
-        return &Conversion::integerToNumber;
+        return &RepresentationConversion::integerToNumber;
     case Opcode::NumberToInteger:
-        return &Conversion::numberToInteger;
+        return &RepresentationConversion::numberToInteger;
     case Opcode::WidenInteger:
-        return &Conversion::widenInteger;
+        return &RepresentationConversion::widenInteger;
     case Opcode::NarrowInteger:
-        return &Conversion::narrowInteger;
+        return &RepresentationConversion::narrowInteger;
     case Opcode::Decode:
-        return &Conversion::decode;
+        return &RepresentationConversion::decode;
     case Opcode::Compress:
-        return &Conversion::compress;
+        return &RepresentationConversion::compress;
     default:
         break;
     }
@@ -521,7 +521,7 @@ static Conversion::Converter converterOf(Opcode opcode)
 
 Operand RepresentationEmitter::convert(const OperationContext& context, Opcode conversion, ValueID sourceID, Operand source, const Type& type, Representation to)
 {
-    return Conversion(generator(), context, sourceID, source, type, to).convert(converterOf(conversion));
+    return RepresentationConversion(generator(), context, sourceID, source, type, to).convert(converterOf(conversion));
 }
 
 void RepresentationEmitter::generate(const ValueContext& value)

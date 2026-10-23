@@ -1,11 +1,9 @@
 # A pass that is switched off leaves the program alone and other passes still run
 # FORM: Prepared
-# OPTIONS: disable=pass:FoldConstants,pass:RemoveUnusedResults
+# OPTIONS: disable=pass:FoldConstants
 # RUN: pass FoldConstants
-# RUN(PROGRAM): pass RemoveUnusedResults
 # RUN(OTHER): pass EliminateDeadCode
 # CHECK: outcome: Unchanged
-# PROGRAM: outcome: Unchanged
 # OTHER: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -38,8 +36,6 @@ function f3 name="readsThird" parameters=[{type=number}] results=[{type=number}]
     v2 = ResultAt v1 index=2
     Return v2
 }
-# PROGRAM-LABEL: function f3 name="readsThird"
-# PROGRAM: = ResultAt v1 index=2
 
 function f4 name="triple" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f1} creator=ResultWorker{origin=f1} {
   b0(v0: number):
@@ -51,6 +47,3 @@ function f4 name="triple" role=ResultWorker parameters=[{type=number}] results=[
     v6 = Results v3, v4, v5
     Return v6
 }
-# PROGRAM-LABEL: function f4 name="triple" {{*}}results=[{type=number}, {type=number}, {type=number}]
-# PROGRAM: = Mul
-# PROGRAM: = Results v3, v4, v5

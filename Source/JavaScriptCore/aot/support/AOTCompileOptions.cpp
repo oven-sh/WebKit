@@ -27,20 +27,21 @@ namespace JSC { namespace AOT {
 using WireOptions = Wire::CompileOptions;
 using PassSet = decltype(RecordedSwitches::disabledPasses);
 
-static constexpr unsigned bitsPerSwitchWord = 64;
+static constexpr unsigned bitsPerWordOfSwitches = 64;
 static constexpr uint64_t fnvOffsetBasis = 0xcbf29ce484222325ull;
 static constexpr uint64_t fnvPrime = 0x100000001b3ull;
 
-static_assert(sizeof(WireOptions) == 192);
+static_assert(sizeof(WireOptions) == 256);
 static_assert(sizeof(LimitID) == 4);
 static_assert(std::is_same_v<decltype(WireOptions::sizeClassProgression), decltype(CompileOptions::sizeClassProgression)>);
 static_assert(std::is_same_v<decltype(Wire::BisectionSwitches::disabledPasses), PassSet>);
 static_assert(std::is_same_v<decltype(WireOptions::executableIdentity), decltype(CompileOptions::executableIdentity)>);
+static_assert(std::is_same_v<decltype(WireOptions::removedFeatures), decltype(CompileOptions::removedFeatures)>);
 
-static_assert(numberOfPasses <= bitsPerSwitchWord * std::tuple_size_v<PassSet>);
-static_assert(numberOfEnumerators<FlowResultKind> <= bitsPerSwitchWord);
-static_assert(numberOfEnumerators<SelectionRuleID> <= bitsPerSwitchWord);
-static_assert(B3::numberOfSwitches <= bitsPerSwitchWord);
+static_assert(numberOfPasses <= bitsPerWordOfSwitches * std::tuple_size_v<PassSet>);
+static_assert(numberOfEnumerators<FlowResultKind> <= bitsPerWordOfSwitches);
+static_assert(numberOfEnumerators<SelectionRuleID> <= bitsPerWordOfSwitches);
+static_assert(B3::numberOfSwitches <= bitsPerWordOfSwitches);
 
 static_assert(numberOfEnumerators<Typed::Opcode> <= UINT16_MAX);
 static_assert(numberOfEnumerators<TestingSwitch> <= 8 * sizeof(RecordedOptions::testing));
@@ -63,7 +64,7 @@ static constexpr bool isBitSet(uint64_t word, unsigned bit)
 
 static constexpr uint64_t lowBits(unsigned count)
 {
-    return count < bitsPerSwitchWord ? (1ull << count) - 1 : ~0ull;
+    return count < bitsPerWordOfSwitches ? (1ull << count) - 1 : ~0ull;
 }
 
 template<typename Flags>
@@ -122,7 +123,7 @@ bool RecordedOptions::isEnabled(PassID pass, Typed::FunctionID function) const
     RELEASE_ASSERT(pass != PassID::None);
     std::optional<uint32_t> id = switchIDOf(function);
     unsigned bit = static_cast<unsigned>(pass);
-    return !(isBitSet(switches.disabledPasses[bit / bitsPerSwitchWord], bit % bitsPerSwitchWord) && isInSwitchRange(id));
+    return !(isBitSet(switches.disabledPasses[bit / bitsPerWordOfSwitches], bit % bitsPerWordOfSwitches) && isInSwitchRange(id));
 }
 
 bool RecordedOptions::isEnabled(SelectionRuleID rule, Typed::FunctionID function) const
@@ -168,6 +169,10 @@ LoggingOptions LoggingOptions::fromJSCOptions()
     logging.functionToDump = UTF8CString { Options::aotFunctionToDump() };
     logging.mapFilePath = UTF8CString { Options::aotMapFilePath() };
 
+#if !ASSERT_ENABLED
+    if (Options::dumpAOTIR())
+        dataLogLn("dumpAOTIR: a build without assertions prints no IR. `bun build --compile --aot --aot-out=<file>` writes the program, and `testaot print <file> --until=<pass>` prints it");
+#endif
     for (StringView point : StringView::fromLatin1(byteCast<char>(Options::dumpAOTIR())).split(',')) {
         if (auto form = parseEnum<Typed::IRForm>(point))
             logging.dumpedForms |= 1u << static_cast<unsigned>(*form);
@@ -196,7 +201,7 @@ static PassSet findOptionalPasses()
         if (!isOptionalPass(pass))
             continue;
         unsigned bit = static_cast<unsigned>(pass);
-        passes[bit / bitsPerSwitchWord] |= 1ull << (bit % bitsPerSwitchWord);
+        passes[bit / bitsPerWordOfSwitches] |= 1ull << (bit % bitsPerWordOfSwitches);
     }
     return passes;
 }
@@ -360,7 +365,6 @@ void WireOptionsReader::readChecks(CompileOptions& options)
     options.recorded.validates = hasFlag(checks, CheckSet::Validate);
     options.verifiesProgram = options.verifiesAfterEveryStage || options.recorded.validates || Options::verifyAOTProgram();
     options.validatesBackEnd = hasFlag(checks, CheckSet::ValidateBackEnd);
-    options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
     options.checksThatFunctionsGetPastEntry = hasFlag(checks, CheckSet::FunctionsGetPastEntry);
     options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
     options.validatesReferences = options.validatesReferenceGuards || hasFlag(checks, CheckSet::ValidateReferences);
@@ -420,6 +424,7 @@ CompileOptions WireOptionsReader::read()
     recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
     options.output = checkedFlags(m_wire.output);
     options.executableIdentity = m_wire.executableIdentity;
+    options.removedFeatures = m_wire.removedFeatures;
     options.logging = LoggingOptions::fromJSCOptions();
     return options;
 }

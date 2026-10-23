@@ -10,14 +10,16 @@
 
 #include "AOTFlowApply.h"
 #include "AOTIRPrinter.h"
+#include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowResults.h"
 #include "AOTVector.h"
 #include "AOTVerifier.h"
+#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static FlowResults analyzeAndApply(TestCommandContext& context, Vector<String>* setsOutsideTypes = nullptr)
+static FlowResults analyzeAndApply(TestCommandContext& context, const ListenerForSetsOutsideTypes* setsOutsideTypes = nullptr)
 {
     FlowResults results = analyzeValueFlow(*context.program, context.program->types, context.build, setsOutsideTypes);
     applyFlowResults(*context.program, results, context.build);
@@ -34,7 +36,17 @@ void runValueFlowResultsTestCommand(TestCommandContext& context)
     }
     prepareForFlow(context);
     Vector<String> setsOutsideTypes;
-    analyzeAndApply(context, &setsOutsideTypes).dump(context.out, *context.program);
+    auto describe = [&](const String& place, const Type& held, const Type& declared) {
+        StringPrintStream line;
+        line.print(place, " holds "_s);
+        printType(line, *context.program, held);
+        line.print(", declared "_s);
+        printType(line, *context.program, declared);
+        setsOutsideTypes.append(line.toString());
+    };
+    ListenerForSetsOutsideTypes listener(describe);
+    analyzeAndApply(context, &listener).dump(context.out, *context.program);
+    AOT::sort(setsOutsideTypes, codePointCompareLessThan);
     for (const String& line : setsOutsideTypes)
         context.out.println("outside-type "_s, line);
 }
@@ -49,7 +61,6 @@ void runValueFlowApplyTestCommand(TestCommandContext& context)
     prepareForFlow(context);
     FlowResults results = analyzeAndApply(context);
     const Program& program = *context.program;
-    validateFlowResults(program, results, context.build);
     verifyProgram(program, IRForm::Prepared, context.build, VerifierInputs { .flow = &results, .isOptimizing = true });
     printProgram(context.out, program);
 }

@@ -46,8 +46,6 @@ public:
     void generateGetSlot(const ValueContext&);
     void generateGetSlotOrUndefined(const ValueContext&);
     void generateGetSlotGetter(const ValueContext&);
-    void generateGetFlattenedSlot(const ValueContext&);
-    void generateGetFlattenedSlotOrUndefined(const ValueContext&);
     void generateGetDeferredClosureSlot(const ValueContext&);
     void generateGetDeferredClosureSlotOrUndefined(const ValueContext&);
     void generatePutSlot(const ValueContext&);
@@ -55,15 +53,6 @@ public:
 
     // From where the offset of access.slot leads to the slot of this object: the cell, or an address behind it where the receivers keep the field at different offsets.
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
-
-    // The address that the offsets of the slots of an object count from: the cell, or for an object that is not made a place in the object that holds it.
-    CellPointer cellWithSlotsOf(ValueID object);
-    // The same for a value in any form, which may be no object at all: then nobody reads through the address.
-    LValue addressOfSlotsOf(ValueID);
-    // Gives the object itself for a name behind which nobody knows the outer object any more.
-    void makeBorrowedObject(const ValueContext&);
-    // Fills the room in the outer object with what the allocation lists, and marks the slot of the field.
-    void storeFlattenedObject(const ValueContext&, CellPointer outerObject, LayoutID outerLayout, uint32_t field, ValueID held, bool roomIsZero);
 
     // Lists the key.
     bool didCreateField(const ValueContext&, CellPointer, const FieldAccess&, bool needsStorage, std::optional<uint32_t> placePlusOne = std::nullopt);
@@ -105,8 +94,7 @@ private:
     bool mayHaveLeftDeferringSlot(const ValueContext&, const FieldAccess&) const;
     Operand loadDeferringSlotOrFieldOutsideIt(const ValueContext&, CellPointer, const FieldAccess&);
     Operand decodeWordOfDeferringSlot(const ValueContext&, NarrowReference);
-    void readBorrowingSlot(const ValueContext&, bool readsEmptySlotAsUndefined);
-    void writeSlot(const ValueContext&, CellPointer, CellPointer cellWithSlots, const FieldAccess&, ValueID stored);
+    void writeSlot(const ValueContext&, CellPointer, const FieldAccess&, ValueID stored);
 
     Operand loadSlot(CellPointer, const FieldAccess&);
     Operand loadFilledSlot(const ValueContext&, CellPointer, const FieldAccess&);
@@ -131,8 +119,6 @@ private:
     Vector<OffsetTable, 4> m_offsetTables;
 
     // By the read that borrows an object, plus one: where the slots of the object lie.
-    LValue addressHeldBy(Operand);
-    UncheckedKeyHashMap<uint32_t, LValue> m_cellsWithSlotsOfBorrowedObjects;
 
     // By value, for the stores that may add a field.
     Vector<uint32_t> m_storesThatMayAddInFront;

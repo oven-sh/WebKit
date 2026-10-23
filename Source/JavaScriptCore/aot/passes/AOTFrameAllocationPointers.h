@@ -169,7 +169,8 @@ bool mayLeakStoredValue(const FlowResults*, FieldReference environmentField);
 // True of an environment no field of which may hold a pointer into a frame, so what is read out of it may go anywhere. False of every other type.
 bool holdsOnlyHeapValues(const Program&, const FlowResults*, TypeID);
 
-void verifyFramePointers(FunctionAnalyses&, Vector<InternalError>&);
+
+inline constexpr OperandUses unfollowedLeakingUses = usesLeakingFramePointers - usesLeakingContents - OperandUses { OperandUse::Retains, OperandUse::Returns };
 
 } } } // namespace JSC::AOT::Typed
 

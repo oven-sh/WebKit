@@ -46,35 +46,7 @@ struct EncodedProgramTables {
 
 JS_EXPORT_PRIVATE EncodedProgramTables encodeProgramTables(const ProgramTableInputs&, BuildContext&);
 
-#define FOR_EACH_AOT_PROGRAM_TABLE_RULE(v) \
-    v(TableOutOfBounds) \
-    v(TableNotWritten) \
-    v(TableNotSorted) \
-    v(NameWithoutIdentifier) \
-    v(StringWithoutConstantNumber) \
-    v(TypeNotEncoded) \
-    v(DataNotEncoded) \
-    v(FunctionWithoutEntrypoint) \
-    v(FunctionNotListed) \
-    v(ClassCapturesMismatch) \
-    v(UnknownFieldFlag) \
-    v(ShapeWithoutLayout) \
-    v(NameLeftInObfuscatedBuild) \
-    v(KeyWithoutPromisedColumn) \
-    v(FieldMissingFromFieldTable) \
-    v(FieldTableEntryWithoutField) \
-    v(MemberMissingFromClassMemberTable) \
-    v(ClassMemberEntryWithoutMember) \
-    v(GuardMissingFromSet)
-
-enum class ProgramTableRule : uint32_t {
-    None,
-#define AOT_PROGRAM_TABLE_RULE(name) name,
-    FOR_EACH_AOT_PROGRAM_TABLE_RULE(AOT_PROGRAM_TABLE_RULE)
-#undef AOT_PROGRAM_TABLE_RULE
-};
-
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(ProgramTableRule);
+enum class ProgramTableRule : uint32_t { None, TableOutOfBounds, NameWithoutIdentifier, StringWithoutConstantNumber, TypeNotEncoded, DataNotEncoded, FunctionWithoutEntrypoint };
 
 constexpr size_t elementSizeOf(ProgramTableIndex index)
 {
@@ -201,7 +173,6 @@ bool retainsDeclarationLocation(TableEncoder&, LayoutID);
 DeclarationLocation declarationLocationOf(TableEncoder&, LayoutID);
 uint64_t encodeDataWord(TableEncoder&, const DataNode&);
 
-void checkProgramTables(const TableEncoder&, std::span<const uint8_t> tables);
 
 } } } // namespace JSC::AOT::Typed
 

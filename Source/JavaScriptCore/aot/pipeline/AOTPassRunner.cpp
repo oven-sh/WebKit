@@ -16,7 +16,6 @@
 #include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
-#include "AOTIRPrinter.h"
 #include "AOTPhaseTimes.h"
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
@@ -30,6 +29,10 @@
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+
+#if ASSERT_ENABLED
+#include "AOTIRPrinter.h"
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -168,7 +171,7 @@ void PassRunner::prepare(ScheduleRun& run) const
 
 static constexpr PassSet optionalPassesOfGenericVersions {
     PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
-    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::MergeDuplicateBlocks, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
+    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
 };
 
 static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
@@ -361,10 +364,6 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
         }
         m_build.diagnostics().add(failure);
         return;
-    }
-    if (descriptor.id == PassID::ApplyFlowResults) {
-        RELEASE_ASSERT(m_verifierInputs.flow);
-        validateFlowResults(program, *m_verifierInputs.flow, m_build);
     }
 }
 
@@ -688,15 +687,11 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         // In an arena of its own: what is interned here must not reach the program, or the output would depend on this option.
         ScratchTypeArena types(context.program.types);
         if (std::optional<BrokenResultRule> broken = findBrokenResultRule(context.program, context.function, types, run.shapesWithMonotoneResult)) {
-            StringPrintStream description;
-            broken->dump(description, context.program, context.function);
-            errors.append(InternalError { .kind = InternalErrorKind::BrokenResultRule, .function = context.id, .value = broken->value, .detail = description.toString() });
+            errors.append(InternalError { .kind = InternalErrorKind::BrokenResultRule, .function = context.id, .value = broken->value, .detail = makeString("operand "_s, broken->operandIndex, "; laws-of-result-rules of testaot prints the types"_s) });
         }
     }
-    if (errors.isEmpty()) {
-        context.analyses.verifyCached();
+    if (errors.isEmpty())
         return;
-    }
 
     // A listing of many errors is cut short, so the line that names the pass also says what the verifier found.
     InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = descriptor.id, .detail = describeError(errors.first(), context.function) };
@@ -729,12 +724,16 @@ static String describeFirstDifference(const Program& program, const Function& fu
         out.print("; ", function.blocks.size(), " blocks and ", function.values.size(), " values become ", changed.blocks.size(), " and ", changed.values.size());
         return out.toString();
     }
+#if ASSERT_ENABLED
     auto printTypeOrNone = [&](TypeID type) {
         if (type)
             printType(out, program, type);
         else
             out.print("none");
     };
+#else
+    UNUSED_PARAM(program);
+#endif
     for (size_t index = 0; index < function.values.size(); ++index) {
         const Value& before = function.values[index];
         const Value& after = changed.values[index];
@@ -743,6 +742,7 @@ static String describeFirstDifference(const Program& program, const Function& fu
         out.print("; v", index, " (", nameOf(before.opcode), ")");
         if (before.opcode != after.opcode)
             out.print(" becomes ", nameOf(after.opcode));
+#if ASSERT_ENABLED
         if (before.type != after.type) {
             out.print(" of type ");
             printTypeOrNone(before.type);
@@ -755,6 +755,12 @@ static String describeFirstDifference(const Program& program, const Function& fu
             out.print(" is expected to be ");
             printTypeOrNone(after.expected());
         }
+#else
+        if (before.type != after.type)
+            out.print(" gets another type");
+        if (before.expected() != after.expected())
+            out.print(" is expected to be of another type");
+#endif
         break;
     }
     return out.toString();
@@ -841,10 +847,12 @@ void PassRunner::dumpAfterFunctionPass(PassID id, const FunctionPassContext& con
         return;
     if (!m_build.shouldDump(context.subject().function))
         return;
+#if ASSERT_ENABLED
     Locker locker { m_dumpLock };
     PrintStream& out = WTF::dataFile();
     out.println("AOT IR after ", nameOf(id), ":");
     printFunction(out, context.program, context.id, context.function);
+#endif
 }
 
 void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassContext& context, ScheduleRun& run, WhatFollows whatFollows) const
@@ -1008,6 +1016,7 @@ void PassRunner::flushFunctionPassTotals()
 
 void PassRunner::dumpFunctions(const Program& program, ASCIILiteral point) const
 {
+#if ASSERT_ENABLED
     PrintStream& out = WTF::dataFile();
     out.println("AOT IR at ", point, ":");
     // Without a choice of functions the text is the whole program, which the parser of IR text reads back.
@@ -1022,6 +1031,10 @@ void PassRunner::dumpFunctions(const Program& program, ASCIILiteral point) const
         if (function.hasBody() && m_build.shouldDump(id))
             printFunction(out, program, id, function);
     }
+#else
+    UNUSED_PARAM(program);
+    UNUSED_PARAM(point);
+#endif
 }
 
 } } } // namespace JSC::AOT::Typed

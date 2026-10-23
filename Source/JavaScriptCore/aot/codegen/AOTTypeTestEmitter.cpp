@@ -25,8 +25,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint16_t markerPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
-static constexpr uint16_t markerKinds[] = { Primitive::Undefined, Primitive::Null, Primitive::Absent };
+static constexpr uint16_t testedMarkerPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
+static constexpr uint16_t testedMarkerKinds[] = { Primitive::Undefined, Primitive::Null, Primitive::Absent };
 
 static_assert(isNaNConstExpr(std::bit_cast<double>(undefinedDouble)) && isNaNConstExpr(std::bit_cast<double>(nullDouble)) && isNaNConstExpr(std::bit_cast<double>(absentDouble)));
 static_assert(boxedMarkers.absent < boxedMarkers.undefined && boxedMarkers.null < boxedMarkers.undefined && boxedMarkers.undefined < emptyLiteralStringWord);
@@ -203,7 +203,7 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(Operand operand,
         return decideByMarker(verdictOfNumbers(plan));
     case Representation::OptionalDouble:
         // A marker is a NaN, so the test for an integer rejects it.
-        if (verdictOfNumbers(plan) == TypeTestVerdict::NeedsTest && !(plan.passingPrimitives & (markerPrimitives | Primitive::Double)))
+        if (verdictOfNumbers(plan) == TypeTestVerdict::NeedsTest && !(plan.passingPrimitives & (testedMarkerPrimitives | Primitive::Double)))
             return isIntegerIn(emitter<ConversionEmitter>().withoutMarkers(operand).as<Number>(), plan.integers.value_or(Range::full()));
         return decideByMarker(verdictOfNumbers(plan));
     case Representation::Cell:
@@ -432,8 +432,8 @@ void TypeTestEmitter::testWithMarkers(Operand operand, const TypeTestPlan& plan,
         return;
     }
 
-    bool someMarkerPasses = plan.passingPrimitives & markerPrimitives;
-    bool someMarkerFails = plan.failingPrimitives & markerPrimitives;
+    bool someMarkerPasses = plan.passingPrimitives & testedMarkerPrimitives;
+    bool someMarkerFails = plan.failingPrimitives & testedMarkerPrimitives;
     if (!someMarkerPasses) {
         if (someMarkerFails)
             leaveUnless(logicalNot(isMarker(operand)), failure);
@@ -549,8 +549,8 @@ Condition TypeTestEmitter::isMarker(Operand operand, uint16_t primitive)
 
 Condition TypeTestEmitter::passesByMarker(Operand operand, const TypeTestPlan& plan, bool payloadPasses)
 {
-    uint16_t agreeing = (payloadPasses ? plan.passingPrimitives : plan.failingPrimitives) & markerPrimitives;
-    uint16_t disagreeing = (payloadPasses ? plan.failingPrimitives : plan.passingPrimitives) & markerPrimitives;
+    uint16_t agreeing = (payloadPasses ? plan.passingPrimitives : plan.failingPrimitives) & testedMarkerPrimitives;
+    uint16_t disagreeing = (payloadPasses ? plan.failingPrimitives : plan.passingPrimitives) & testedMarkerPrimitives;
     if (!disagreeing)
         return boolean(payloadPasses);
 
@@ -558,7 +558,7 @@ Condition TypeTestEmitter::passesByMarker(Operand operand, const TypeTestPlan& p
     if (!agreeing)
         disagrees = isMarker(operand);
     else {
-        for (uint16_t primitive : markerKinds) {
+        for (uint16_t primitive : testedMarkerKinds) {
             if (disagreeing & primitive)
                 disagrees = logicalOr(disagrees, isMarker(operand, primitive));
         }

@@ -29,7 +29,7 @@ enum class PromiseOperand : uint8_t {
     PromiseOrUndefined,
 };
 
-struct Match {
+struct PromiseMatch {
     SelectionGroup group;
     PromiseOperand promise;
     bool testsThenable;
@@ -147,7 +147,7 @@ static void replaceRootWithUpcast(GroupRewriter& rewriter, ValueID result)
     root.setCastType(TypeTable::anything);
 }
 
-static void emitArms(GroupRewriter& rewriter, const Match& match, ValueID promise, ValueID value)
+static void emitArms(GroupRewriter& rewriter, const PromiseMatch& match, ValueID promise, ValueID value)
 {
     rewriter.beginArms();
     IRBuilder& builder = rewriter.builder();
@@ -186,7 +186,7 @@ static void emitArms(GroupRewriter& rewriter, const Match& match, ValueID promis
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void rewriteResolution(GroupRewriter& rewriter, const Match& match, ValueID promise, ValueID value)
+static void rewriteResolution(GroupRewriter& rewriter, const PromiseMatch& match, ValueID promise, ValueID value)
 {
     if (!match.testsThenable) {
         Value& root = rewriter.replaceRoot(Opcode::FulfillFreshPromise);
@@ -208,7 +208,7 @@ static void rewriteResolution(GroupRewriter& rewriter, const Match& match, Value
     rewriter.endArm(std::nullopt);
 }
 
-static void rewrite(GroupRewriter& rewriter, const Match& match)
+static void rewrite(GroupRewriter& rewriter, const PromiseMatch& match)
 {
     const Value& original = rewriter.original(match.group.root);
     ValueID promise = original.promiseOperand();
@@ -237,7 +237,7 @@ static void rewrite(GroupRewriter& rewriter, const Match& match)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void matchResultsOfAsyncFunction(SelectionContext& context, Vector<Match>& matches)
+static void matchResultsOfAsyncFunction(SelectionContext& context, Vector<PromiseMatch>& matches)
 {
     const Function& function = context.function();
     if (function.role != FunctionRole::CoroutineBody || coroutineOfBody(function).kind != CoroutineKind::AsyncFunction)
@@ -269,14 +269,14 @@ static void matchResultsOfAsyncFunction(SelectionContext& context, Vector<Match>
         if (needsArms && !context.isOnlyReturned(id))
             continue;
 
-        Match match { groupOfOne(id), promise, testsThenable };
+        PromiseMatch match { groupOfOne(id), promise, testsThenable };
         match.group.hasSlowPath = needsArms;
         if (context.tryClaim(SelectionRuleID::FreshPromiseFulfillment, match.group) == ClaimResult::Claimed)
             matches.append(WTF::move(match));
     }
 }
 
-static void matchResolutionsOfNewPromises(SelectionContext& context, Vector<Match>& matches)
+static void matchResolutionsOfNewPromises(SelectionContext& context, Vector<PromiseMatch>& matches)
 {
     const Function& function = context.function();
     for (ValueID id : context.candidates(Opcode::ResolvePromise)) {
@@ -287,7 +287,7 @@ static void matchResolutionsOfNewPromises(SelectionContext& context, Vector<Matc
         if (!isFirstUseOfNewPromise(context, id, value.promiseOperand()))
             continue;
 
-        Match match { groupOfOne(id), PromiseOperand::Promise, testsThenable };
+        PromiseMatch match { groupOfOne(id), PromiseOperand::Promise, testsThenable };
         match.group.hasSlowPath = testsThenable;
         if (context.tryClaim(SelectionRuleID::FreshPromiseFulfillment, match.group) == ClaimResult::Claimed)
             matches.append(WTF::move(match));
@@ -296,10 +296,10 @@ static void matchResolutionsOfNewPromises(SelectionContext& context, Vector<Matc
 
 void selectFreshPromiseFulfillment(SelectionContext& context)
 {
-    Vector<Match> matches;
+    Vector<PromiseMatch> matches;
     matchResultsOfAsyncFunction(context, matches);
     matchResolutionsOfNewPromises(context, matches);
-    context.rewriteGroups(SelectionRuleID::FreshPromiseFulfillment, matches, [](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::FreshPromiseFulfillment, matches, [](GroupRewriter& rewriter, const PromiseMatch& match) {
         rewrite(rewriter, match);
     });
 }

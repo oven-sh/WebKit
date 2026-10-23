@@ -20,11 +20,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint16_t nullishPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
+static constexpr uint16_t nullishOrAbsentPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
 
 NumberBounds boundsOfType(const Type& type)
 {
-    if (!type.hasOnlyPrimitives(Primitive::Number | nullishPrimitives))
+    if (!type.hasOnlyPrimitives(Primitive::Number | nullishOrAbsentPrimitives))
         return NumberBounds::unknown(type.isAnything() ? Int32ProofFailure::Untyped : Int32ProofFailure::AnyNumber);
     if (type.primitives & Primitive::Double)
         return NumberBounds::unknown(Int32ProofFailure::AnyNumber);
@@ -32,7 +32,7 @@ NumberBounds boundsOfType(const Type& type)
     NumberBounds bounds;
     bounds.kind = type.primitives & Primitive::Integer ? BoundsKind::Integers : BoundsKind::None;
     bounds.range = type.integers;
-    bounds.mayBeNullish = type.primitives & nullishPrimitives;
+    bounds.mayBeNullish = type.primitives & nullishOrAbsentPrimitives;
     return bounds;
 }
 
@@ -384,7 +384,7 @@ NumberBounds Int32Prover::computeNarrowedOperand(ValueID parameter, const EdgeRe
     NumberBounds subject = find(result.subject);
     // Which kinds of value pass a test is the answer of the types.
     const Type& passed = typeOf(parameter);
-    subject.mayBeNullish = subject.mayBeNullish && passed.primitives & nullishPrimitives;
+    subject.mayBeNullish = subject.mayBeNullish && passed.primitives & nullishOrAbsentPrimitives;
     if (subject.isBounded() && !(passed.primitives & Primitive::Number))
         return { .kind = BoundsKind::None, .mayBeNullish = subject.mayBeNullish };
     if (subject.kind != BoundsKind::Integers || !result.test)
@@ -430,7 +430,7 @@ NumberBounds Int32Prover::computeCast(ValueID id, const Value& cast)
     // The type of the cast lies inside the type it names, and says what is expected of the value from here on.
     if (Value::opcodesWithCastType.contains(cast.opcode))
         return narrowToType(operand, typeOf(id));
-    operand.mayBeNullish = operand.mayBeNullish && typeOf(id).primitives & nullishPrimitives;
+    operand.mayBeNullish = operand.mayBeNullish && typeOf(id).primitives & nullishOrAbsentPrimitives;
     return operand;
 }
 

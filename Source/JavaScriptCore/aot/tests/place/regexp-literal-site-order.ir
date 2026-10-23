@@ -1,6 +1,6 @@
 # The cells of RegExp literal sites are in site order, by function and then by position, and equal literals in two functions do not share one
 # FORM: AsRead
-# OPTIONS: only-passes=ShareRegExpLiterals,ResolveCalls,ResolveAccesses
+# OPTIONS: only-passes=ResolveCalls,ResolveAccesses
 # RUN: place statics program
 
 module m0 path="main.js" displayPath="main.js" body=f0

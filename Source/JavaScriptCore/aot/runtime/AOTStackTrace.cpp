@@ -420,7 +420,7 @@ static bool mayHaveFramesBelow(VM& vm, const RunWalk& walk, EntryFrame* entryFra
     if (!Options::useAsyncStackTrace() || !entryFrameOfRun)
         return false;
     JSCell* context = vmEntryRecord(entryFrameOfRun)->m_context;
-    return context && Interpreter::asyncFunctionIn(context);
+    return context && JSC::Interpreter::asyncFunctionIn(context);
 }
 
 ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip)

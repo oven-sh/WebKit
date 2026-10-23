@@ -275,6 +275,26 @@ void countSiteCacheMiss(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& i
 void countMissOfEmptySite(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForFill);
 void refillSiteCache(StubAssembler&, GPRReg receiver, GPRReg identifierNumber, GPRReg site, SlotAccess);
 
+inline constexpr unsigned receiverOperand = 0;
+inline constexpr unsigned headerOperand = 1;
+inline constexpr unsigned payloadOperand = 2;
+inline constexpr unsigned locationShiftInCell = 8 * PackedSlot::offsetOfLocation();
+
+inline constexpr PutMode putModeOf(SlotOperation operation)
+{
+    switch (operation) {
+    case SlotOperation::StoreStrict:
+        return PutMode::Strict;
+    case SlotOperation::StoreSloppy:
+        return PutMode::Sloppy;
+    case SlotOperation::Define:
+        return PutMode::Define;
+    case SlotOperation::Read:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

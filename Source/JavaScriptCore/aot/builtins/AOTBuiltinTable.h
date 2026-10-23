@@ -679,7 +679,6 @@ struct BuiltinOverload {
     BuiltinEffects effects { };
     BuiltinFlow flow { };
     BuiltinCode code { };
-    uint64_t textHash { 0 };
 
     constexpr bool throws() const { return flags.contains(BuiltinOverloadFlag::Throws); }
     // With operands that it admits the entry has no step of its own that throws.
@@ -705,7 +704,6 @@ struct BuiltinOverload {
 
 // The form in which the executable holds an overload.
 struct BuiltinPackedOverload {
-    uint64_t textHash { 0 };
     BuiltinID builtin { };
     BuiltinCallMode mode { BuiltinCallMode::Call };
     OptionSet<BuiltinOverloadFlag> flags { };
@@ -716,7 +714,7 @@ struct BuiltinPackedOverload {
     uint16_t flow { 0 };
     uint16_t code { 0 };
 };
-static_assert(sizeof(BuiltinPackedOverload) == 32);
+static_assert(sizeof(BuiltinPackedOverload) == 18);
 
 extern const BuiltinResult builtinTableResultsOfOverloads[];
 extern const BuiltinEffects builtinTableEffectsOfOverloads[];
@@ -1408,6 +1406,7 @@ public:
     BuiltinOverloadID overloadFromToken(StringView) const;
 
     JS_EXPORT_PRIVATE Vector<String> mismatches(JSGlobalObject*) const;
+
     JS_EXPORT_PRIVATE JSValue describeForTesting(JSGlobalObject*) const;
     JS_EXPORT_PRIVATE JSValue describeFeatureUsesForTesting(JSGlobalObject*, BuiltinPlatform) const;
 

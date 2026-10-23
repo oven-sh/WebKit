@@ -12,14 +12,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet bitwiseOperators {
+static constexpr OpcodeSet representedBitwiseOperators {
     Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift, Opcode::BitNot
 };
 static constexpr OpcodeSet testOperators {
     Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::Eq, Opcode::StrictEq, Opcode::ToBoolean
 };
-static_assert((bitwiseOperators | testOperators | Value::opcodesWithForm) == Value::opcodesWithForm);
-static_assert(!bitwiseOperators.intersects(testOperators));
+static_assert((representedBitwiseOperators | testOperators | Value::opcodesWithForm) == Value::opcodesWithForm);
+static_assert(!representedBitwiseOperators.intersects(testOperators));
 static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 static constexpr OpcodeSet binaryOperatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift };
 
@@ -32,7 +32,7 @@ struct OperatorContext {
 
     const Type& operandType(uint32_t operandIndex) const { return program.typeOf(function, value.operand(operandIndex)); }
     const Type& resultType() const { return program.at(value.type); }
-    bool isBitwise() const { return bitwiseOperators.contains(value.opcode); }
+    bool isBitwise() const { return representedBitwiseOperators.contains(value.opcode); }
 };
 
 } // anonymous namespace

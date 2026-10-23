@@ -31,7 +31,6 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 constexpr uint32_t noWeb = UINT32_MAX;
-constexpr uint32_t stateOperandIndex = 0;
 static_assert(OperandIndex::Add::left == stateOperandIndex);
 static_assert(OperandIndex::Strcat::parts == stateOperandIndex);
 
@@ -42,7 +41,7 @@ std::optional<uint32_t> findWeb(const Vector<uint32_t>& webOfValue, ValueID id)
     return webOfValue[id.index()];
 }
 
-ASCIILiteral nameOf(StringStateUse use)
+ASCIILiteral stateUseNameOf(StringStateUse use)
 {
     switch (use) {
     case StringStateUse::Unknown:
@@ -942,7 +941,7 @@ void StringBuilderPlan::dump(PrintStream& out) const
         for (const StringStateRead& read : web.reads) {
             out.print(" ");
             dumpUser(out, read.use);
-            out.print(":", nameOf(read.kind), read.endsWeb ? "!" : "");
+            out.print(":", stateUseNameOf(read.kind), read.endsWeb ? "!" : "");
         }
         if (!web.discardedAfter.isEmpty() || !web.discardedEdges.isEmpty())
             out.print(" discards");

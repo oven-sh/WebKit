@@ -278,7 +278,7 @@ static Type narrowByLooseEquality(const TypingContext& context, const Type& sour
     return comparesWithoutConversion ? narrowByStrictEquality(context, source, other, side) : source;
 }
 
-static Opcode mirroredComparison(Opcode comparison)
+static Opcode mirroredRelation(Opcode comparison)
 {
     switch (comparison) {
     case Opcode::Less:
@@ -294,7 +294,7 @@ static Opcode mirroredComparison(Opcode comparison)
     }
 }
 
-static Opcode negatedComparison(Opcode comparison)
+static Opcode negatedRelation(Opcode comparison)
 {
     switch (comparison) {
     case Opcode::Less:
@@ -312,9 +312,9 @@ static Opcode negatedComparison(Opcode comparison)
 
 static Range boundsImpliedByComparison(Opcode comparison, bool valueIsLeft, bool isOnTakenEdge, Range other)
 {
-    Opcode relation = valueIsLeft ? comparison : mirroredComparison(comparison);
+    Opcode relation = valueIsLeft ? comparison : mirroredRelation(comparison);
     if (!isOnTakenEdge)
-        relation = negatedComparison(relation);
+        relation = negatedRelation(relation);
 
     switch (relation) {
     case Opcode::Less:

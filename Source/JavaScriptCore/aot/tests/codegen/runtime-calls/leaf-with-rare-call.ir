@@ -1,7 +1,7 @@
 # A leaf whose only call creates a constant in rare code sets no frame up at its entry, in fast code
 # FORM: AsRead
 # RUN: generate-code
-# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls,pass:RemoveUnusedParameters check=validate-back-end
+# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls check=validate-back-end
 # CHECK: f1: size={{*}} frame={{*}}@[[setup]]-
 # CHECK: f2: size=
 # CHECK-NOT: frame=none

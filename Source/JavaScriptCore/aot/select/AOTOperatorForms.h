@@ -55,6 +55,16 @@ Effects effectsBoundOf(Opcode, OperatorForm);
 bool isNumericOperand(const Type&);
 bool canCompareBits(const Type& left, const Type& right);
 
+inline bool isBigInt(const Type& type)
+{
+    return !type.isNever() && type.hasOnlyPrimitives(Primitive::BigInt);
+}
+
+inline bool isNullableNumber(const Type& type)
+{
+    return type.isNumberOrNullish() || type.isUndefinedOrNull();
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

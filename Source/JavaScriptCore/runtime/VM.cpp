@@ -175,7 +175,6 @@
 
 #if ENABLE(AOT)
 #include "AOTImage.h"
-#include "AOTObjectCensus.h"
 #include "AOTRuntimeHooks.h"
 #include "AOTUnwinding.h"
 #endif
@@ -684,10 +683,6 @@ VM::~VM()
 
     if (m_hasSideData)
         sideDataRepository().deleteAll(this);
-
-#if ENABLE(AOT)
-    AOT::dumpObjectCensusIfRequested(*this);
-#endif
 
     // Never GC, ever again.
     heap.incrementDeferralDepth();

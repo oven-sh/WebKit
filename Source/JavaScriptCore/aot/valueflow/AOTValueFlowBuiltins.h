@@ -118,6 +118,28 @@ void letNativeCodeTestAgainst(ValueFlowRuleContext&, const ValueFlowOperand& con
 // The rule of a statement of kind Behavior.
 void runBehavior(const ValueFlowStatement&, ValueFlowRuleContext&);
 
+inline BuiltinClassID classAbovePrototypeProperty(const Function& function)
+{
+    if (!function.has(FunctionFlags::IsGenerator))
+        return BuiltinClasses::Object;
+    return function.has(FunctionFlags::IsAsync) ? BuiltinClasses::AsyncGenerator : BuiltinClasses::Generator;
+}
+
+inline BuiltinClassID classOfFunctionObject(const Function& function)
+{
+    bool isAsync = function.has(FunctionFlags::IsAsync);
+    if (function.has(FunctionFlags::IsGenerator))
+        return isAsync ? BuiltinClasses::AsyncGeneratorFunction : BuiltinClasses::GeneratorFunction;
+    return isAsync ? BuiltinClasses::AsyncFunction : BuiltinClasses::Function;
+}
+
+inline bool mayReturnUnknownObject(const BuiltinType& type)
+{
+    if (type.isAnything() || type.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction }))
+        return true;
+    return type.freshness == BuiltinFreshness::No && std::ranges::contains(type.parts, BuiltinTypePartKind::Instance, &BuiltinTypePart::kind);
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

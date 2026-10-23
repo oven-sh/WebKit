@@ -30,7 +30,7 @@ struct NamedField {
 };
 
 // The row of a shape, or of the class with a rank where the shape is zero.
-struct Row {
+struct FieldTableRow {
     uint32_t size() const { return end - begin; }
 
     uint32_t shape;
@@ -41,10 +41,10 @@ struct Row {
 
 // The fields of every compiled object layout whose names have a column, layout by layout, each in ascending order of names. Behind them, class by class, the declared members.
 struct NamedFields {
-    std::span<const NamedField> fieldsOf(const Row& row) const { return fields.span().subspan(row.begin, row.size()); }
+    std::span<const NamedField> fieldsOf(const FieldTableRow& row) const { return fields.span().subspan(row.begin, row.size()); }
 
     Vector<NamedField> fields;
-    Vector<Row> rows;
+    Vector<FieldTableRow> rows;
 };
 
 class Bitmap {
@@ -217,7 +217,7 @@ static Vector<bool> collectClassMembers(TableEncoder& encoder, NamedFields& name
 // The largest rows first, while there is room for them. Rows that say the same are neighbors.
 static void sortLargestFirst(NamedFields& named)
 {
-    AOT::sort(named.rows, [&](const Row& a, const Row& b) {
+    AOT::sort(named.rows, [&](const FieldTableRow& a, const FieldTableRow& b) {
         if (a.size() != b.size())
             return a.size() > b.size();
         auto fieldsOfA = named.fieldsOf(a);
@@ -258,7 +258,7 @@ void encodeFieldTable(TableEncoder& encoder)
     Vector<uint32_t> firstEntryOfClass(classHasRow.size(), [&](size_t rank) -> uint32_t {
         return classHasRow[rank] ? rowWithoutFields : ClassRowEntry::noRow;
     });
-    auto firstEntryOf = [&](const Row& row) -> uint32_t& {
+    auto firstEntryOf = [&](const FieldTableRow& row) -> uint32_t& {
         return row.shape ? firstEntryOfShape[row.shape] : firstEntryOfClass[row.rankOfClass];
     };
     Bitmap occupiedEntries;
@@ -268,8 +268,8 @@ void encodeFieldTable(TableEncoder& encoder)
 
     // Among rows of one size the search goes on where the last one found room: a row of the same size rarely fits where that one did not.
     uint32_t entryOfFirstFieldOfLastRow = 0;
-    const Row* lastRow = nullptr;
-    for (const Row& row : named.rows) {
+    const FieldTableRow* lastRow = nullptr;
+    for (const FieldTableRow& row : named.rows) {
         auto fields = named.fieldsOf(row);
         if (lastRow && std::ranges::equal(fields, named.fieldsOf(*lastRow))) {
             firstEntryOf(row) = firstEntryOf(*lastRow);
@@ -294,7 +294,7 @@ void encodeFieldTable(TableEncoder& encoder)
     Vector<uint16_t> recordIndices(FillWith { }, numberOfEntries, 0);
     for (uint32_t shape = 1; shape <= highestObjectShape; ++shape)
         table[highestObjectShape - shape] = firstEntryOfShape[shape];
-    for (const Row& row : named.rows) {
+    for (const FieldTableRow& row : named.rows) {
         for (const NamedField& field : named.fieldsOf(row)) {
             uint32_t index = firstEntryOf(row) + field.name;
             table[highestObjectShape + index] = field.entry;

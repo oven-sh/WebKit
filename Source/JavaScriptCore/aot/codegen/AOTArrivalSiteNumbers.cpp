@@ -208,7 +208,7 @@ std::span<const ArrivalSite> ArrivalSiteNumbers::sitesOf(FunctionID function) co
     return m_functions[function.index()].inOrder.span();
 }
 
-static bool callsByValue(Opcode opcode)
+static bool opcodeCallsByValue(Opcode opcode)
 {
     return opcode == Opcode::Call || opcode == Opcode::CallList || opcode == Opcode::Construct || opcode == Opcode::ConstructList;
 }
@@ -262,7 +262,7 @@ static ValueID receiverOperandOf(const Value& value, uint32_t part)
 {
     if (value.opcode == Opcode::CallMethod)
         return value.receiverOperand();
-    if (callsByValue(value.opcode))
+    if (opcodeCallsByValue(value.opcode))
         return value.calleeOperand();
     if (!part)
         return value.objectOperand();
@@ -324,7 +324,7 @@ static ArrivalSiteDescription describe(const Program& program, const Function& f
     };
 
     // The stamp of a pair is that of its first read.
-    LayoutSetID stamp = site.part || callsByValue(value.opcode) ? LayoutSetID() : value.receivers();
+    LayoutSetID stamp = site.part || opcodeCallsByValue(value.opcode) ? LayoutSetID() : value.receivers();
     if (stamp)
         description.stamp = program.at(stamp).isComplete ? ArrivalStamp::Complete : ArrivalStamp::Open;
 

@@ -78,9 +78,9 @@ struct RewriteInputs {
     Vector<uint8_t>& wasRead;
 };
 
-class BodyBuilder {
+class OutlinedBodyBuilder {
 public:
-    BodyBuilder(const AnalysisContext&, const Function& source, const OutliningSite&, Function& body, TypeArena&);
+    OutlinedBodyBuilder(const AnalysisContext&, const Function& source, const OutliningSite&, Function& body, TypeArena&);
 
     void build();
 
@@ -276,7 +276,7 @@ static WorkLists createWorkLists(const ParallelLoops& loops, const ParallelArray
     return work;
 }
 
-BodyBuilder::BodyBuilder(const AnalysisContext& context, const Function& source, const OutliningSite& site, Function& body, TypeArena& types)
+OutlinedBodyBuilder::OutlinedBodyBuilder(const AnalysisContext& context, const Function& source, const OutliningSite& site, Function& body, TypeArena& types)
     : m_source(source)
     , m_site(site)
     , m_builder(context, body, types)
@@ -285,7 +285,7 @@ BodyBuilder::BodyBuilder(const AnalysisContext& context, const Function& source,
     m_builder.setOrigin({ source.position, 0 });
 }
 
-void BodyBuilder::build()
+void OutlinedBodyBuilder::build()
 {
     addEntryBlock();
     if (m_site.isRegion()) {
@@ -309,7 +309,7 @@ void BodyBuilder::build()
     }
 }
 
-BlockID BodyBuilder::addBlockLike(BlockID original)
+BlockID OutlinedBodyBuilder::addBlockLike(BlockID original)
 {
     const Block& block = m_source.at(original);
     BlockID added = m_builder.addBlock(block.frequency);
@@ -317,14 +317,14 @@ BlockID BodyBuilder::addBlockLike(BlockID original)
     return added;
 }
 
-void BodyBuilder::addEntryBlock()
+void OutlinedBodyBuilder::addEntryBlock()
 {
     m_entryBlock = addBlockLike(m_site.entryBlock);
     for (ValueID liveIn : m_site.liveIns)
         m_valueCopies.append({ liveIn, m_builder.addParameter(m_entryBlock, m_source.at(liveIn).type) });
 }
 
-void BodyBuilder::addInteriorBlocks()
+void OutlinedBodyBuilder::addInteriorBlocks()
 {
     for (BlockID block : m_site.interiorBlocks) {
         BlockID copy = addBlockLike(block);
@@ -334,7 +334,7 @@ void BodyBuilder::addInteriorBlocks()
     }
 }
 
-void BodyBuilder::addReturnBlock()
+void OutlinedBodyBuilder::addReturnBlock()
 {
     m_returnBlock = addBlockLike(m_site.entryBlock);
     std::optional<ValueID> result;
@@ -344,7 +344,7 @@ void BodyBuilder::addReturnBlock()
     m_builder.emitReturn(result);
 }
 
-void BodyBuilder::copyOutsideConstants()
+void OutlinedBodyBuilder::copyOutsideConstants()
 {
     auto visit = [&](ValueID id) {
         if (!hasCopy(id) && !isDefinedInSite(m_source, m_site, id) && isRematerializable(m_source.at(id)))
@@ -382,13 +382,13 @@ void BodyBuilder::copyOutsideConstants()
     }
 }
 
-void BodyBuilder::copyValues(std::span<const ValueID> values)
+void OutlinedBodyBuilder::copyValues(std::span<const ValueID> values)
 {
     for (ValueID id : values)
         copyValue(id);
 }
 
-void BodyBuilder::copyValue(ValueID id)
+void OutlinedBodyBuilder::copyValue(ValueID id)
 {
     const Value& original = m_source.at(id);
     Value copy(original);
@@ -400,7 +400,7 @@ void BodyBuilder::copyValue(ValueID id)
     m_valueCopies.append({ id, copyID });
 }
 
-void BodyBuilder::copyTerminator(const Terminator& terminator)
+void OutlinedBodyBuilder::copyTerminator(const Terminator& terminator)
 {
     Terminator copy(terminator);
     copy.forEachOperand([&](ValueID& operand, uint32_t) {
@@ -421,14 +421,14 @@ void BodyBuilder::copyTerminator(const Terminator& terminator)
     m_builder.emitTerminator(WTF::move(copy));
 }
 
-bool BodyBuilder::hasCopy(ValueID id) const
+bool OutlinedBodyBuilder::hasCopy(ValueID id) const
 {
     return m_valueCopies.containsIf([&](const auto& entry) {
         return entry.first == id;
     });
 }
 
-ValueID BodyBuilder::copyOf(ValueID id) const
+ValueID OutlinedBodyBuilder::copyOf(ValueID id) const
 {
     size_t index = m_valueCopies.findIf([&](const auto& entry) {
         return entry.first == id;
@@ -437,7 +437,7 @@ ValueID BodyBuilder::copyOf(ValueID id) const
     return m_valueCopies[index].second;
 }
 
-BlockID BodyBuilder::copyOf(BlockID block) const
+BlockID OutlinedBodyBuilder::copyOf(BlockID block) const
 {
     size_t index = m_blockCopies.findIf([&](const auto& entry) {
         return entry.first == block;
@@ -523,7 +523,7 @@ static void buildBodiesInParallel(const RewriteInputs& inputs, const Vector<Site
     });
     editFunctionsInParallel(inputs.editor, inputs.build, bodies.span(), [&](unsigned index, FunctionID id, Function& body, TaskArenas& arenas) {
         const OutliningSite& site = inputs.sites[groups[index].sites.first()];
-        BodyBuilder(inputs.contextOf(id), program.at(site.function), site, body, arenas.types).build();
+        OutlinedBodyBuilder(inputs.contextOf(id), program.at(site.function), site, body, arenas.types).build();
         inputs.wasRead[id.index()] = inputs.readIfFinal(id, arenas);
     });
 }

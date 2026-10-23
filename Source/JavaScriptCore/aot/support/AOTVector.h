@@ -36,6 +36,7 @@ using WTF::CopyOrMoveToVectorResult;
 using WTF::ValueCheck;
 using WTF::VectorBufferMalloc;
 using WTF::VectorCopier;
+using WTF::VectorMalloc;
 using WTF::VectorTypeOperations;
 using WTF::addressOfArgument;
 using WTF::containerSize;

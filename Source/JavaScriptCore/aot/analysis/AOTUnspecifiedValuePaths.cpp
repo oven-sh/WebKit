@@ -31,7 +31,7 @@ struct Fact {
 
 using Facts = Vector<Fact, 8>;
 
-struct State {
+struct PathState {
     BlockID block;
     Facts facts;
     std::optional<size_t> previous;
@@ -86,7 +86,7 @@ private:
     FunctionAnalyses& m_analyses;
     const Function& m_function;
     Vector<Vector<Facts>> m_visited;
-    Vector<State> m_states;
+    Vector<PathState> m_states;
     Vector<size_t> m_worklist;
     size_t m_current { 0 };
     size_t m_maxUses;
@@ -321,7 +321,7 @@ void PathWalker::enter(BlockID target, Facts&& facts)
     }
     visited.append(facts);
     m_worklist.append(m_states.size());
-    m_states.append(State { target, WTF::move(facts), m_current, 0 });
+    m_states.append(PathState { target, WTF::move(facts), m_current, 0 });
 }
 
 void PathWalker::follow(const Facts& facts, Edge edge, std::optional<Fact> learned)
@@ -359,7 +359,7 @@ void PathWalker::follow(const Facts& facts, Edge edge, std::optional<Fact> learn
 void PathWalker::walk(size_t stateIndex)
 {
     m_current = stateIndex;
-    State state { m_states[stateIndex].block, m_states[stateIndex].facts, { }, m_states[stateIndex].firstValue };
+    PathState state { m_states[stateIndex].block, m_states[stateIndex].facts, { }, m_states[stateIndex].firstValue };
     const Block& block = m_function.at(state.block);
     Facts facts = state.facts;
     if (block.handler && !state.firstValue)
@@ -376,7 +376,7 @@ void PathWalker::walk(size_t stateIndex)
             Facts whenFalse = facts;
             set(whenFalse, Fact { value.operand(0), false, 0 });
             m_worklist.append(m_states.size());
-            m_states.append(State { state.block, WTF::move(whenFalse), stateIndex, index });
+            m_states.append(PathState { state.block, WTF::move(whenFalse), stateIndex, index });
             set(facts, Fact { value.operand(0), false, 1 });
         }
         listUsesBy(facts, state.block, id, value);
@@ -445,7 +445,7 @@ void PathWalker::walk(size_t stateIndex)
 UsesOfUnspecifiedValues PathWalker::run()
 {
     m_worklist.append(0);
-    m_states.append(State { entryBlock, { }, std::nullopt, 0 });
+    m_states.append(PathState { entryBlock, { }, std::nullopt, 0 });
     while (!m_worklist.isEmpty() && !m_gaveUp && m_uses.size() < m_maxUses)
         walk(m_worklist.takeLast());
     return { WTF::move(m_uses), m_worklist.isEmpty() && !m_gaveUp };

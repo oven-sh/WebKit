@@ -228,7 +228,7 @@ std::span<const TestCommand> codeGeneratorTestCommands()
         { "arrival-sites"_s, IRForm::Selected, runArrivalSites },
         { "branch-counters"_s, IRForm::Selected, runBranchCounters },
         { "type-test-plan"_s, IRForm::Selected, runTypeTestPlan },
-        { "unsupported-conversions"_s, IRForm::AsRead, runUnsupportedConversions, RawWordCheck::Run, ProgramAsRead::WithLibrary },
+        { "unsupported-conversions"_s, IRForm::AsRead, runUnsupportedConversions, ProgramAsRead::WithLibrary },
     };
     return commands;
 }

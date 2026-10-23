@@ -502,12 +502,12 @@ static void testCopiesTwoObjectsAtOnce(LoadedProgram& program)
     AOT_TEST_CHECK(withoutHiddenName && hasKeys(program, withoutHiddenName, { "y"_s }));
 }
 
+template<unsigned numberOfKinds, unsigned maxKindsWithoutPlan>
 static void testKindsOfPairsThatComeInTurnsKeepTheirPlans(LoadedProgram& program)
 {
     VM& vm = program.vm();
     State& state = program.state();
     JSGlobalObject* realm = program.realm();
-    constexpr unsigned numberOfKinds = 24;
     Identifier shared = Identifier::fromString(vm, "shared"_s);
     MarkedArgumentBuffer firsts;
     for (unsigned kind = 0; kind < numberOfKinds; ++kind) {
@@ -538,7 +538,7 @@ static void testKindsOfPairsThatComeInTurnsKeepTheirPlans(LoadedProgram& program
         copyEachKind();
     uint64_t plansMade = valueOf(vm, RuntimeCounterID::AssignmentPlansMade);
     for (unsigned turn = 0; turn < 4; ++turn)
-        AOT_TEST_CHECK(copyEachKind() >= numberOfKinds - 4);
+        AOT_TEST_CHECK(copyEachKind() >= numberOfKinds - maxKindsWithoutPlan);
     AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::AssignmentPlansMade) == plansMade);
 }
 
@@ -614,7 +614,8 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/defines-fields-at-once-or-not-at-all"_s, withPoints<testDefinesFieldsAtOnceOrNotAtAll> },
         { "assignment-plans/copies-as-ordinary-object"_s, withPoints<testCopiesAsOrdinaryObject> },
         { "assignment-plans/copies-two-objects-at-once"_s, withPoints<testCopiesTwoObjectsAtOnce> },
-        { "assignment-plans/kinds-of-pairs-that-come-in-turns-keep-their-plans"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans> },
+        { "assignment-plans/kinds-of-pairs-that-come-in-turns-keep-their-plans"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<24, 4>> },
+        { "assignment-plans/kinds-of-pairs-that-find-no-place-leave-the-plans-of-others"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<60, 60>> },
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
         { "assignment-plans/makes-plan-at-second-copy-where-asked"_s, withPoints<testMakesPlanAtSecondCopyWhereAsked> },
         { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },

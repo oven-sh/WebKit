@@ -76,12 +76,10 @@ set(JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS
 
 set(JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaBodyDecoder.cpp"
-    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryParser.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryPrinter.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEnumNames.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaInlineBuiltins.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperations.cpp"
-    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordParser.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordPrinter.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordReader.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecords.cpp"
@@ -89,4 +87,10 @@ set(JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeOperations.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaVerifier.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWire.cpp"
+)
+
+# They read IR text, which only tests are written in. Linked into testaot only.
+set(JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryParser.cpp"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordParser.cpp"
 )

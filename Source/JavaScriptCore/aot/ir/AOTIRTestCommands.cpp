@@ -12,7 +12,6 @@
 #include "AOTIRParser.h"
 #include "AOTIRPrinter.h"
 #include "AOTInt32Proof.h"
-#include "AOTRelationsVerifier.h"
 #include "AOTResultRuleMonotonicity.h"
 #include "AOTResultRules.h"
 #include "AOTSupportTestCommands.h"
@@ -136,22 +135,6 @@ static void typeProgramAsRead(Program& program, BuildContext& build)
         Function& function = program.functions[index];
         if (function.hasBody())
             typeFunction(program, FunctionID(index), function, types, build);
-    }
-}
-
-static void runVerifyRelations(TestCommandContext& context)
-{
-    if (!context.arguments.empty())
-        return printBadArgument(context.out, context.arguments[0]);
-    for (uint32_t index = 0; index < context.program->functions.size(); ++index) {
-        for (const InternalError& error : findErrorsInRelations(FunctionID(index), context.program->functions[index])) {
-            context.out.print("f"_s, index);
-            if (error.block)
-                context.out.print(" b"_s, error.block.index());
-            if (error.value)
-                context.out.print(" v"_s, error.value.index());
-            context.out.println(" "_s, error.detail);
-        }
     }
 }
 
@@ -282,6 +265,25 @@ static void runInt32Bounds(TestCommandContext& context)
     }
 }
 
+void BrokenResultRule::dump(PrintStream& out, const Program& program, const Function& function) const
+{
+    out.print("v", value.index(), " ", nameOf(function.at(value).opcode), " operand ", operandIndex, ": ");
+    printType(out, program, narrowOperand);
+    out.print(" gives ");
+    printType(out, program, resultOfNarrowOperand);
+    switch (law) {
+    case Law::NarrowerOperandGivesNarrowerResult:
+        out.print(", ");
+        printType(out, program, wideOperand);
+        out.print(" gives ");
+        break;
+    case Law::BothPathsAgree:
+        out.print(" by type ids, by the rule ");
+        break;
+    }
+    printType(out, program, resultOfWideOperand);
+}
+
 static void runLawsOfResultRules(TestCommandContext& context)
 {
     std::optional<Vector<FunctionID>> functions = parseFunctionWords(context, context.arguments);
@@ -312,7 +314,6 @@ std::span<const TestCommand> irTestCommands()
         { "round-trip"_s, IRForm::AsRead, runRoundTrip },
         { "print"_s, IRForm::AsRead, runPrint },
         { "verify"_s, IRForm::AsRead, runVerify },
-        { "verify-relations"_s, IRForm::AsRead, runVerifyRelations },
         { "result-types"_s, IRForm::AsRead, runResultTypes },
         { "laws-of-result-rules"_s, IRForm::AsRead, runLawsOfResultRules },
         { "int32-bounds"_s, IRForm::AsRead, runInt32Bounds },

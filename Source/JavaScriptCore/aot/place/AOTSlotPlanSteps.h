@@ -102,8 +102,6 @@ struct SlotPlanContext {
     const InheritedRows& inheritedRows;
     // What saves memory at the price of instructions is for the layouts that are not among them. Known once the uses are collected.
     BitVector layoutsMadeSeldom { };
-    // Their slots also lie in objects of other layouts, which have no Extension to offer.
-    BitVector layoutsFlattenedInOthers { };
 };
 
 struct SlotAccessKey {
@@ -241,7 +239,6 @@ struct SlotClaim {
     bool needsWideReference { false };
     bool deferredClosureCapturesObject { false };
     bool deferredClosureCapturesEnvironment { false };
-    bool defersFlattenedObject { false };
     SlotRepresentation representation { SlotRepresentation::JSValue };
     SlotRepresentation outOfLineRepresentation { SlotRepresentation::JSValue };
     FunctionID deferredFunction;

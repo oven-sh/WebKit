@@ -30,14 +30,14 @@ namespace JSC { namespace AOT {
 
 static constexpr unsigned argumentsCalleeAttributes = PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor;
 
-struct ArgumentSource {
+struct ArgumentsObjectSource {
     uint32_t count;
     JSArray* rest;
     const EncodedJSValue* parameters;
     uint32_t numberInFrame;
 };
 
-static ArgumentSource createArgumentSource(uint32_t count, JSCell* rest, const EncodedJSValue* parameters, Entry entry)
+static ArgumentsObjectSource createArgumentSource(uint32_t count, JSCell* rest, const EncodedJSValue* parameters, Entry entry)
 {
     JSArray* array = cellArgument<JSArray>(rest, entry);
     unsigned restLength = array->length();
@@ -46,14 +46,14 @@ static ArgumentSource createArgumentSource(uint32_t count, JSCell* rest, const E
     return { count, array, parameters, count - restLength };
 }
 
-static JSValue argumentAt(JSGlobalObject* globalObject, const ArgumentSource& source, uint32_t index)
+static JSValue argumentAt(JSGlobalObject* globalObject, const ArgumentsObjectSource& source, uint32_t index)
 {
     if (index < source.numberInFrame)
         return JSValue::decode(source.parameters[index]);
     return source.rest->getIndex(globalObject, index - source.numberInFrame);
 }
 
-static bool canReadRestQuickly(const ArgumentSource& source)
+static bool canReadRestQuickly(const ArgumentsObjectSource& source)
 {
     unsigned restLength = source.count - source.numberInFrame;
     if (!restLength)
@@ -83,7 +83,7 @@ static const UnmappedArgumentsShape* findShapeOfUnmappedArguments(Instance* inst
     return &shape;
 }
 
-static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const ArgumentSource& source)
+static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const ArgumentsObjectSource& source)
 {
     VM& vm = *instance->vm;
     JSGlobalObject* globalObject = instance->globalObject;
@@ -114,7 +114,7 @@ static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const Argumen
     return result;
 }
 
-static ClonedArguments* createArguments(Instance* instance, const ArgumentSource& source)
+static ClonedArguments* createArguments(Instance* instance, const ArgumentsObjectSource& source)
 {
     VM& vm = *instance->vm;
     JSGlobalObject* globalObject = instance->globalObject;
@@ -158,7 +158,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromArguments, EncodedJSValue, (Instance
     JSValue key = JSValue::decode(property);
     if (auto index = key.tryGetAsUint32Index())
         OPERATION_RETURN(scope, JSValue::encode(*index < array->length() ? array->getIndex(globalObject, *index) : jsUndefined()));
-    ClonedArguments* arguments = createArguments(instance, ArgumentSource { array->length(), array, nullptr, 0 });
+    ClonedArguments* arguments = createArguments(instance, ArgumentsObjectSource { array->length(), array, nullptr, 0 });
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     auto propertyKey = key.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -169,7 +169,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateMappedArguments, JSCell*, (Instance* 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCreateMappedArguments);
     Closure* closure = cellArgument<Closure>(callee, Entry::operationAOTCreateMappedArguments);
-    ArgumentSource source = createArgumentSource(count, rest, parameters, Entry::operationAOTCreateMappedArguments);
+    ArgumentsObjectSource source = createArgumentSource(count, rest, parameters, Entry::operationAOTCreateMappedArguments);
     // A function with a mapped arguments object has a simple parameter list, so its length is its number of parameters.
     unsigned capacity = std::max<unsigned>(count, functionLengthOf(closure->function()));
     DirectArguments* result = DirectArguments::create(vm, globalObject->directArgumentsStructure(), count, capacity);

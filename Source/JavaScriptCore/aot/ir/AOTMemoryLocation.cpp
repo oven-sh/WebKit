@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
-#include "AOTIRPrinter.h"
 #include <bit>
 #include <wtf/CommaPrinter.h>
 #include <wtf/HashFunctions.h>
@@ -178,82 +177,6 @@ LocationOverlap overlapOf(const Program& program, const MemoryLocation& a, const
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpLayouts(IRPrinter& printer, const LayoutSet& layouts)
-{
-    CommaPrinter bar("|"_s);
-    for (LayoutID member : layouts.members) {
-        printer.out().print(bar);
-        printer.print(member);
-    }
-    if (layouts.hasMembersWithoutLayout)
-        printer.out().print(bar, "nolayout"_s);
-    if (!layouts.isComplete)
-        printer.out().print(bar, "?"_s);
-}
-
-void MemoryLocation::dump(PrintStream& out, const Program& program) const
-{
-    out.print(nameOf(m_heap));
-    if (m_isEntireHeap)
-        return;
-
-    IRPrinter printer(out, program);
-    out.print("["_s);
-    switch (m_heap) {
-    case AbstractHeap::ModuleVariables:
-        printer.print(variable());
-        break;
-    case AbstractHeap::EnvironmentFields:
-        printer.print(environmentLayout());
-        out.print(", "_s);
-        printer.print(environmentFieldIndex());
-        break;
-    case AbstractHeap::ObjectFields:
-        printer.print(key());
-        if (receivers()) {
-            out.print(", "_s);
-            dumpLayouts(printer, program.at(receivers()));
-        }
-        break;
-    case AbstractHeap::NamedProperties:
-        printer.print(key());
-        break;
-    case AbstractHeap::ShapeWords:
-        dumpLayouts(printer, program.at(layoutSet()));
-        break;
-    case AbstractHeap::MemberGuards:
-        printer.print(guardedLayout());
-        break;
-    case AbstractHeap::Elements:
-        printer.print(elementBase());
-        break;
-    case AbstractHeap::OrderWords:
-    case AbstractHeap::PrototypeLinks:
-    case AbstractHeap::ArrayStorage:
-    case AbstractHeap::TypedArrayStorage:
-    case AbstractHeap::TypedArrayElements:
-    case AbstractHeap::CollectionStorage:
-    case AbstractHeap::CollectionEntries:
-    case AbstractHeap::InternalFields:
-    case AbstractHeap::RegExpState:
-    case AbstractHeap::PromiseState:
-    case AbstractHeap::StringStorage:
-    case AbstractHeap::StringBuilderContents:
-    case AbstractHeap::ParserState:
-    case AbstractHeap::ExternalState:
-    case AbstractHeap::AllocatorState:
-    case AbstractHeap::RuntimeState:
-    case AbstractHeap::ValidationState:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    out.print("]"_s);
-}
-
-void MemoryLocationDump::dump(PrintStream& out) const
-{
-    location.dump(out, program);
 }
 
 void LocationMasks::dump(PrintStream& out) const

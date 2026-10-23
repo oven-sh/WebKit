@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTEffectsDeclared.h"
-#include "AOTIRPrinter.h"
 #include "AOTTypeTestSite.h"
 #include <algorithm>
 #include <wtf/Hasher.h>
@@ -87,14 +86,6 @@ std::optional<TestConditionID> TestConditions::find(const Value& test) const
 {
     Value canonical = canonicalize(test);
     return findCanonical(canonical, hashOf(canonical));
-}
-
-void TestConditions::dump(PrintStream& out, const Program& program, TestConditionID id) const
-{
-    const Value& test = at(id).test;
-    IRPrinter printer(out, program);
-    out.print(nameOf(test.opcode));
-    printFields(printer, test);
 }
 
 Value TestConditions::canonicalize(const Value& test) const

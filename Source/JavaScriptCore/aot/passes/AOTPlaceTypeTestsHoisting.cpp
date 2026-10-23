@@ -18,10 +18,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-class TestHoister {
-    WTF_MAKE_NONCOPYABLE(TestHoister);
+class TypeTestHoister {
+    WTF_MAKE_NONCOPYABLE(TypeTestHoister);
 public:
-    TestHoister(FunctionPassContext& context, const TestSites& sites, const TestConditions& conditions, std::span<const TestRequirement> requirements)
+    TypeTestHoister(FunctionPassContext& context, const TestSites& sites, const TestConditions& conditions, std::span<const TestRequirement> requirements)
         : m_program(context.program)
         , m_function(context.function)
         , m_types(context.types)
@@ -73,7 +73,7 @@ private:
     Vector<HoistedTest> m_hoistedTests;
 };
 
-Vector<HoistedTest> TestHoister::run()
+Vector<HoistedTest> TypeTestHoister::run()
 {
     for (uint32_t first = 0; first < m_requirements.size();) {
         uint32_t end = first + 1;
@@ -85,7 +85,7 @@ Vector<HoistedTest> TestHoister::run()
     return WTF::move(m_hoistedTests);
 }
 
-void TestHoister::offerTestsOfSite(uint32_t firstRequirement, uint32_t numberOfRequirements)
+void TypeTestHoister::offerTestsOfSite(uint32_t firstRequirement, uint32_t numberOfRequirements)
 {
     std::span<const TestRequirement> site = m_requirements.subspan(firstRequirement, numberOfRequirements);
     BlockID useBlock = site.front().point.block;
@@ -119,7 +119,7 @@ void TestHoister::offerTestsOfSite(uint32_t firstRequirement, uint32_t numberOfR
     }
 }
 
-auto TestHoister::entryOf(const NaturalLoop& loop) -> const LoopEntry&
+auto TypeTestHoister::entryOf(const NaturalLoop& loop) -> const LoopEntry&
 {
     std::optional<LoopEntry>& entry = m_entries[loop.index()];
     if (entry)
@@ -137,7 +137,7 @@ auto TestHoister::entryOf(const NaturalLoop& loop) -> const LoopEntry&
     return *entry;
 }
 
-auto TestHoister::findOperandsOutside(std::span<const TestRequirement> site, uint32_t index, const SiteOperands& earlierOperands, const NaturalLoop& loop) const -> std::optional<Operands>
+auto TypeTestHoister::findOperandsOutside(std::span<const TestRequirement> site, uint32_t index, const SiteOperands& earlierOperands, const NaturalLoop& loop) const -> std::optional<Operands>
 {
     const Value& test = m_sites.tests[site[index].test];
     const Value& canonicalTest = m_conditions.at(site[index].condition).test;
@@ -178,7 +178,7 @@ auto TestHoister::findOperandsOutside(std::span<const TestRequirement> site, uin
     return operands;
 }
 
-ValueID TestHoister::findDefinitionOutside(ValueID value, const NaturalLoop& loop) const
+ValueID TypeTestHoister::findDefinitionOutside(ValueID value, const NaturalLoop& loop) const
 {
     for (ValueID candidate : CastChain(m_function, value)) {
         ValueLocation location = m_useLists.locationOf(candidate);
@@ -194,7 +194,7 @@ Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const TestSit
 {
     if (!context.analyses.cfg().hasCycle() || !context.analyses.naturalLoops().numLoops())
         return { };
-    return TestHoister(context, sites, conditions, requirements).run();
+    return TypeTestHoister(context, sites, conditions, requirements).run();
 }
 
 } } } // namespace JSC::AOT::Typed

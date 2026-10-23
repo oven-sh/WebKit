@@ -135,9 +135,7 @@ constexpr bool slotsOverlap(ObjectSlot a, ObjectSlot b)
 constexpr bool isSummarizedCall(Opcode opcode)
 {
     switch (effectRuleOf(opcode)) {
-    case EffectRule::Call:
-    case EffectRule::Builtin:
-    case EffectRule::Inline:
+    default:
         return true;
     case EffectRule::Declared:
     case EffectRule::Operator:

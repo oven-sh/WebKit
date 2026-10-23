@@ -134,7 +134,7 @@ private:
     bool isControlIndependentLoad(Inst& inst) const
     {
         auto* load = inst.origin ? inst.origin->as<MemoryValue>() : nullptr;
-        return load && load->isLoad() && inst.args().size() == 2 && !m_code.proc().effectsOf(load).controlDependent;
+        return load && load->isLoad() && inst.args().size() == 2 && !load->effects().controlDependent;
     }
 
     bool canRunBeforeTrap(Inst& inst, const Reference& reference) const

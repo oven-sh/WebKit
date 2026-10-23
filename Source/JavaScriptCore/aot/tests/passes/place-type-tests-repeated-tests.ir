@@ -1,8 +1,8 @@
 # A value that a pass split by its type is tested at each use. Where the value does not change in a loop one test stands on the entry of the loop, and the old tests get the narrowed value and fold. Outside loops two tests of which both answers occur stay: behind one test in front, one of the answers would lead into the copy of the failed tests (place-type-tests-repeated-test-with-two-sides-that-both-occur.ir). A test that would only get an equal test in front of it stays as it is
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
-# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow EliminateDeadCode CompactBlocks
-# RUN(TWICE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow EliminateDeadCode CompactBlocks PlaceTypeTests
+# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyControlFlow EliminateDeadCode CompactBlocks
+# RUN(TWICE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters SimplifyControlFlow EliminateDeadCode CompactBlocks PlaceTypeTests
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="sink" declared={type=anything} initialization=Undefined

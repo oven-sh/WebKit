@@ -255,7 +255,7 @@ static std::optional<CompiledFrame> findTopCompiledFrame(VM& vm)
     return frames->frame();
 }
 
-static uint64_t callSiteKeyOf(const CompiledFrame& frame)
+static uint64_t reportedCallSiteKeyOf(const CompiledFrame& frame)
 {
     return static_cast<uint64_t>(frame.code.index()) << 32 | frame.callSite.bits();
 }
@@ -384,7 +384,7 @@ void RuntimeReporter::reportFailedCheck(Instance& instance, std::optional<uint32
 
     Site* site = nullptr;
     std::optional<CompiledFrame> frame = findTopCompiledFrame(vm);
-    auto known = frame ? m_sitesByCallSite.find(callSiteKeyOf(*frame)) : m_sitesByCallSite.end();
+    auto known = frame ? m_sitesByCallSite.find(reportedCallSiteKeyOf(*frame)) : m_sitesByCallSite.end();
     if (known != m_sitesByCallSite.end())
         site = known->value;
     else {
@@ -410,7 +410,7 @@ void RuntimeReporter::reportFailedCheck(Instance& instance, std::optional<uint32
             return newSite;
         });
         if (frame)
-            m_sitesByCallSite.add(callSiteKeyOf(*frame), site);
+            m_sitesByCallSite.add(reportedCallSiteKeyOf(*frame), site);
     }
     if (!site)
         return;

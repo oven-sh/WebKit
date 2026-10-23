@@ -295,7 +295,6 @@ export function dumpOverload(overload: ModelOverload): DumpedOverload {
     mode: overload.mode,
     isProvenByConstruction: flags.includes("IsProvenByConstruction"),
     isUndeclared: flags.includes("IsUndeclared"),
-    textHash: overload.textHash,
     receiver: receiver === null ? null : dumpParameter(receiver),
     parameters: overload.parameters.map(dumpParameter),
     result: dumpResult(overload.result),

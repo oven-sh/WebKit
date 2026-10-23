@@ -507,7 +507,6 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -r /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
     mkdir /output/Source/JavaScriptCore/aot/builtins/generated && \
     (cd $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/aot && cp AOTBuiltinEngineDeclarations.json AOTBuiltinFeatures.h AOTBuiltinIDs.h AOTBuiltinTableEngineBindings.cpp AOTBuiltinTableWords.h /output/Source/JavaScriptCore/aot/builtins/generated) && \
-    cp /webkit/Source/JavaScriptCore/aot/builtins/verified-overloads.txt /output/Source/JavaScriptCore/aot/builtins && \
     cp -r /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
     find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete
 

@@ -2,7 +2,7 @@
 # The copy of a record has the layout of the record and a cell of its own, and its field refers to what lies in the cell of the record: so the field of such a layout is read.
 # FORM: AsRead
 # RUN: pipeline AllocateInnerObjects
-# OPTIONS: check=VerifyEachPass disable=pass:InlineCalls,pass:SinkAllocations,pass:AllocateInFrames,pass:FlattenInnerObjects
+# OPTIONS: check=VerifyEachPass disable=pass:InlineCalls,pass:SinkAllocations,pass:AllocateInFrames
 # STATISTIC: InnerObjectsAllocated = 2
 # STATISTIC: InnerObjectsAlwaysInPlace = 1
 

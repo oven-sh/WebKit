@@ -27,7 +27,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct OwnAllocation {
+struct TaggedOwnAllocation {
     BlockID block;
     uint32_t index { 0 };
     ValueID value;
@@ -305,10 +305,10 @@ static bool returnConstructedObject(IRBuilder& builder, ValueID object)
     return mayReturnOtherObject;
 }
 
-static std::optional<OwnAllocation> findOwnAllocation(const Function& function, LayoutID maker)
+static std::optional<TaggedOwnAllocation> findOwnAllocation(const Function& function, LayoutID maker)
 {
     ValueID newTarget = function.at(entryBlock).parameters[*function.newTargetParameterIndex()];
-    std::optional<OwnAllocation> found;
+    std::optional<TaggedOwnAllocation> found;
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         const BlockValues& values = function.at(BlockID(blockIndex)).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
@@ -321,7 +321,7 @@ static std::optional<OwnAllocation> findOwnAllocation(const Function& function, 
             const Value& read = function.at(prototype);
             if (read.opcode != Opcode::GetConstructPrototype || read.layout() != maker || skipRequests(function, read.newTargetOperand()) != newTarget)
                 return std::nullopt;
-            found = OwnAllocation { BlockID(blockIndex), index, values[index] };
+            found = TaggedOwnAllocation { BlockID(blockIndex), index, values[index] };
         }
     }
     return found;
@@ -365,8 +365,6 @@ Function TaggedLayoutAllocator::createAllocatingCopy(const TaggedFamily& family,
     Function copy = original;
     copy.capabilities = initialCapabilitiesOf(copy) | OptionSet<FunctionCapabilities> { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost };
     copy.derivation.source = constructor;
-    // `this` is no entry parameter of the copy, so what the relations say of the parameters by their indices is not true of it.
-    copy.relations = { };
 
     IRBuilder builder(contextOf(constructor), copy, m_types);
     builder.setOrigin({ original.position, 0 });
@@ -474,8 +472,6 @@ bool TaggedLayoutAllocator::allocateInConstructorFunction(const TaggedFamily& fa
         IRBuilder builder(contextOf(constructor), function, m_types);
         builder.setOrigin({ function.position, 0 });
         ensureNewTargetParameter(builder);
-        // The relations name the entry parameters by their places, which have moved, and know nothing of the call that hands them to the copy.
-        function.relations = { };
     }
 
     FunctionID copy(m_program.functions.size());
@@ -492,7 +488,7 @@ bool TaggedLayoutAllocator::allocateInClassConstructor(const TaggedFamily& famil
     if (!isBaseClassConstructorWithBody(function) || callsInitializer(m_program, function) || !m_build.isEnabled(PassID::AllocateTaggedLayouts, constructor))
         return false;
 
-    std::optional<OwnAllocation> own = findOwnAllocation(function, family.maker);
+    std::optional<TaggedOwnAllocation> own = findOwnAllocation(function, family.maker);
     ValueID tag = own ? findParameterStoredAsTag(m_program, function, own->value, family.tagKey) : ValueID();
     if (!tag)
         return false;

@@ -52,7 +52,7 @@ struct Head {
     bool holdsEveryLikelyPath { false };
 };
 
-struct CallSite {
+struct HeadCallSite {
     BlockID block;
     uint32_t index;
     ValueID call;
@@ -60,12 +60,12 @@ struct CallSite {
 
 struct CallerSites {
     FunctionID caller;
-    Vector<CallSite> sites;
+    Vector<HeadCallSite> sites;
 };
 
 } // anonymous namespace
 
-static bool isCall(Opcode opcode)
+static bool hasEffectsOfCall(Opcode opcode)
 {
     switch (effectRuleOf(opcode)) {
     case EffectRule::Call:
@@ -177,7 +177,7 @@ private:
             return false;
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             const Value& value = m_function.at(block.values[index]);
-            if (boundToOf(value.opcode) != BoundTo::Nothing || isBoundToFrame(m_function, block, index) || isCall(value.opcode))
+            if (boundToOf(value.opcode) != BoundTo::Nothing || isBoundToFrame(m_function, block, index) || hasEffectsOfCall(value.opcode))
                 return false;
             if (hasOperatorForm(value.opcode) && mayCallRuntime(value.opcode, value.form()))
                 return false;
@@ -219,11 +219,11 @@ static bool hasNoBlockWorthCopy(const Heat& heat, FunctionAnalyses& analyses)
     return !isHot(heat.classOf(heat.activationsOf(context.program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(analyses.cfg());
 }
 
-static Vector<CallSite> findSites(const HeadInputs& inputs, std::span<const Head* const> headOf, FunctionID id)
+static Vector<HeadCallSite> findSites(const HeadInputs& inputs, std::span<const Head* const> headOf, FunctionID id)
 {
     const Program& program = inputs.program;
     const Function& caller = program.at(id);
-    Vector<CallSite> sites;
+    Vector<HeadCallSite> sites;
     if (!caller.hasBody() || inputs.flow.runsAtMostOnce(program, id) || !inputs.build.isEnabled(PassID::InlineHeads, id))
         return sites;
 
@@ -254,7 +254,7 @@ static Vector<CallSite> findSites(const HeadInputs& inputs, std::span<const Head
     return sites;
 }
 
-static void copyHeadIn(IRBuilder& builder, IRBuilder::DeferredResultReads& resultReads, const CallSite& site, const Function& callee, const Head& head)
+static void copyHeadIn(IRBuilder& builder, IRBuilder::DeferredResultReads& resultReads, const HeadCallSite& site, const Function& callee, const Head& head)
 {
     Function& caller = builder.function();
     RELEASE_ASSERT(caller.at(site.block).values[site.index] == site.call);
@@ -437,7 +437,7 @@ void inlineHeads(ProgramEditor& editor, const OptimizationInputs& inputs, BuildC
             const Vector<FunctionID>* directCallees = directCalleesOf ? (*directCalleesOf)(FunctionID(index)) : nullptr;
             if (directCallees && std::ranges::none_of(*directCallees, [&](FunctionID callee) { return !!headOf[callee.index()]; }))
                 return;
-            Vector<CallSite> sites = findSites(headInputs, headOf.span(), FunctionID(index));
+            Vector<HeadCallSite> sites = findSites(headInputs, headOf.span(), FunctionID(index));
             if (!sites.isEmpty())
                 found.append({ FunctionID(index), WTF::move(sites) });
         });
@@ -454,7 +454,7 @@ void inlineHeads(ProgramEditor& editor, const OptimizationInputs& inputs, BuildC
     Vector<FunctionID> callers;
     uint64_t numberOfSites = 0;
     for (const CallerSites& entry : callerSites) {
-        for (const CallSite& site : entry.sites) {
+        for (const HeadCallSite& site : entry.sites) {
             FunctionID callee = program.at(entry.caller).at(site.call).function();
             if (!isCopiedFrom.quickSet(callee.index()))
                 callees.append(callee);
@@ -469,7 +469,7 @@ void inlineHeads(ProgramEditor& editor, const OptimizationInputs& inputs, BuildC
     times.didFinish("copy callees"_s);
 
     lowerFunctionsInParallel(editor, build, callers.span(), { }, [&](unsigned index, FunctionID id, Function& caller, TaskArenas& arenas) {
-        const Vector<CallSite>& sites = callerSites[index].sites;
+        const Vector<HeadCallSite>& sites = callerSites[index].sites;
         uint32_t firstCopiedValue = static_cast<uint32_t>(caller.values.size());
         Vector<ValueID> changedValues;
         for (size_t site = sites.size(); site--;)

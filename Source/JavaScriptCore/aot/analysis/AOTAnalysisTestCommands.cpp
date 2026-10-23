@@ -134,7 +134,6 @@ static bool beginRewrite(CommandWords& words, Session& session)
 
 static void finishRewrite(TestCommandContext& context, Session& session)
 {
-    session.analyses.verifyCached();
     printFunction(context.out, *context.program, session.id, session.function);
     verifyFunction(*context.program, session.id, session.function, context.form, context.build);
 }
@@ -347,7 +346,6 @@ static void extractRegion(TestCommandContext& context, CommandWords& words, Sess
     Vector<ValueID> liveIns = RegionCloner::findLiveIns(session.function, region.span());
     dumpLine(context.out, "live-ins: "_s, liveIns);
     Function outlined = outlineRegion(session, region, liveIns);
-    session.analyses.verifyCached();
 
     FunctionID outlinedID = ProgramEditor(*context.program).addFunctionLike(session.id, WTF::move(outlined));
     const Function& addedFunction = context.program->at(outlinedID);
@@ -675,6 +673,23 @@ static void runHeatGraph(TestCommandContext& context)
     }
 }
 
+void Definitions::dump(PrintStream& out, const Program& program) const
+{
+    IRPrinter printer(out, program);
+    for (const Definition& definition : m_definitions) {
+        printer.print(definition.moduleBody);
+        out.print(" v"_s, definition.allocation.index(), " "_s, nameOf(definition.kind));
+        if (definition.binding) {
+            out.print(" binding="_s);
+            printer.print(definition.binding);
+        }
+        if (definition.holder != Definition::noHolder)
+            out.print(" in=v"_s, m_definitions[definition.holder].allocation.index());
+        out.print(" past="_s, definition.usesThatGoPast, " observedInModuleBodies="_s, definition.observingUsesInModuleBodies, " observedInFunctions="_s, definition.observingUsesInFunctions);
+        out.print(isMadeAtStart(definition) ? " made at start\n"_s : isEverMade(definition) ? " made on demand\n"_s : " never made\n"_s);
+    }
+}
+
 static void runDefinitions(TestCommandContext& context)
 {
     Definitions definitions(*context.program, context.build);
@@ -732,35 +747,35 @@ static void runFunctionsSeeing(TestCommandContext& context)
 std::span<const TestCommand> analysisTestCommands()
 {
     static constexpr TestCommand commands[] {
-        { "analyses"_s, IRForm::Prepared, runAnalyses, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "expand"_s, IRForm::Prepared, runOnFunction<expandValue>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "cover"_s, IRForm::Prepared, runOnFunction<coverBlocks>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "duplicate"_s, IRForm::Prepared, runOnFunction<duplicateRegion>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "extract"_s, IRForm::Prepared, runOnFunction<extractRegion>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "inline"_s, IRForm::Prepared, runOnFunction<inlineCall>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "repair"_s, IRForm::Prepared, runOnFunction<repairSSA>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "split-block"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::Split>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "remove-parameters"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::RemoveParameters>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "erase-values"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::EraseValues>>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "convert-branch"_s, IRForm::Prepared, runOnFunction<convertBranch>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "empty-unreachable-blocks"_s, IRForm::Prepared, runOnFunction<emptyUnreachableBlocks>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "insert"_s, IRForm::Prepared, runOnFunction<insertValues>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "substitute"_s, IRForm::Prepared, runOnFunction<substituteValues>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "invalidate"_s, IRForm::Prepared, runOnFunction<invalidateAnalyses>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "add-parameter"_s, IRForm::Prepared, runOnFunction<addParameters>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "branch-with-proof"_s, IRForm::Prepared, runOnFunction<branchWithProof>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "split-edge"_s, IRForm::Prepared, runOnFunction<splitEdge>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "demote-return-call"_s, IRForm::Prepared, runOnFunction<demoteReturnCall>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "remove-handler"_s, IRForm::Prepared, runOnFunction<removeHandler>, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "heat-graph"_s, IRForm::Prepared, runHeatGraph, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "definitions"_s, IRForm::AsRead, runDefinitions, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "function-references"_s, IRForm::Prepared, runFunctionReferences, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "functions-seeing"_s, IRForm::Prepared, runFunctionsSeeing, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "guards"_s, IRForm::Prepared, runGuardAvailability, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "failed-tests"_s, IRForm::Prepared, runFailedTests, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "induction"_s, IRForm::Prepared, runInductionVariables, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "frequencies"_s, IRForm::Prepared, runBlockFrequencies, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        { "forward-dataflow"_s, IRForm::Prepared, runForwardDataflow, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        { "analyses"_s, IRForm::Prepared, runAnalyses, ProgramAsRead::TypedAndVerified },
+        { "expand"_s, IRForm::Prepared, runOnFunction<expandValue>, ProgramAsRead::TypedAndVerified },
+        { "cover"_s, IRForm::Prepared, runOnFunction<coverBlocks>, ProgramAsRead::TypedAndVerified },
+        { "duplicate"_s, IRForm::Prepared, runOnFunction<duplicateRegion>, ProgramAsRead::TypedAndVerified },
+        { "extract"_s, IRForm::Prepared, runOnFunction<extractRegion>, ProgramAsRead::TypedAndVerified },
+        { "inline"_s, IRForm::Prepared, runOnFunction<inlineCall>, ProgramAsRead::TypedAndVerified },
+        { "repair"_s, IRForm::Prepared, runOnFunction<repairSSA>, ProgramAsRead::TypedAndVerified },
+        { "split-block"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::Split>>, ProgramAsRead::TypedAndVerified },
+        { "remove-parameters"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::RemoveParameters>>, ProgramAsRead::TypedAndVerified },
+        { "erase-values"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::EraseValues>>, ProgramAsRead::TypedAndVerified },
+        { "convert-branch"_s, IRForm::Prepared, runOnFunction<convertBranch>, ProgramAsRead::TypedAndVerified },
+        { "empty-unreachable-blocks"_s, IRForm::Prepared, runOnFunction<emptyUnreachableBlocks>, ProgramAsRead::TypedAndVerified },
+        { "insert"_s, IRForm::Prepared, runOnFunction<insertValues>, ProgramAsRead::TypedAndVerified },
+        { "substitute"_s, IRForm::Prepared, runOnFunction<substituteValues>, ProgramAsRead::TypedAndVerified },
+        { "invalidate"_s, IRForm::Prepared, runOnFunction<invalidateAnalyses>, ProgramAsRead::TypedAndVerified },
+        { "add-parameter"_s, IRForm::Prepared, runOnFunction<addParameters>, ProgramAsRead::TypedAndVerified },
+        { "branch-with-proof"_s, IRForm::Prepared, runOnFunction<branchWithProof>, ProgramAsRead::TypedAndVerified },
+        { "split-edge"_s, IRForm::Prepared, runOnFunction<splitEdge>, ProgramAsRead::TypedAndVerified },
+        { "demote-return-call"_s, IRForm::Prepared, runOnFunction<demoteReturnCall>, ProgramAsRead::TypedAndVerified },
+        { "remove-handler"_s, IRForm::Prepared, runOnFunction<removeHandler>, ProgramAsRead::TypedAndVerified },
+        { "heat-graph"_s, IRForm::Prepared, runHeatGraph, ProgramAsRead::TypedAndVerified },
+        { "definitions"_s, IRForm::AsRead, runDefinitions, ProgramAsRead::TypedAndVerified },
+        { "function-references"_s, IRForm::Prepared, runFunctionReferences, ProgramAsRead::TypedAndVerified },
+        { "functions-seeing"_s, IRForm::Prepared, runFunctionsSeeing, ProgramAsRead::TypedAndVerified },
+        { "guards"_s, IRForm::Prepared, runGuardAvailability, ProgramAsRead::TypedAndVerified },
+        { "failed-tests"_s, IRForm::Prepared, runFailedTests, ProgramAsRead::TypedAndVerified },
+        { "induction"_s, IRForm::Prepared, runInductionVariables, ProgramAsRead::TypedAndVerified },
+        { "frequencies"_s, IRForm::Prepared, runBlockFrequencies, ProgramAsRead::TypedAndVerified },
+        { "forward-dataflow"_s, IRForm::Prepared, runForwardDataflow, ProgramAsRead::TypedAndVerified },
     };
     return commands;
 }

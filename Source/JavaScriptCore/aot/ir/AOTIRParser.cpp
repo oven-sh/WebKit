@@ -26,11 +26,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr PlacedTableSizes unboundedTableSizes { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
 
-std::unique_ptr<Program> parseProgram(StringView text, IRForm form, BuildContext& build, RawWordCheck rawWordCheck)
-{
-    return parseProgram(text, form, build, VerifierInputs { .rawWordCheck = rawWordCheck });
-}
-
 std::unique_ptr<Program> parseProgram(StringView text, IRForm form, BuildContext& build, const VerifierInputs& inputs)
 {
     // ASCII is its own UTF-8. The text of a large program is over the length that the conversion takes.
@@ -107,7 +102,6 @@ static bool canBeRoleOfFunctionAsRead(FunctionRole role)
 {
     switch (role) {
     case FunctionRole::CoroutineRamp:
-    case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
     case FunctionRole::StubBody:
@@ -467,10 +461,6 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::RequiredNames:
     case ProgramList::ColumnAdjustments:
     case ProgramList::EvalBindings:
-    case ProgramList::RelationSubjects:
-    case ProgramList::StoredIntos:
-    case ProgramList::HandedTos:
-    case ProgramList::OperandsOf:
     case ProgramList::Code:
     case ProgramList::DataNodes:
     case ProgramList::DataMembers:

@@ -30,7 +30,7 @@ struct RowEntry {
     GuardBitID guard;
 };
 
-struct Row {
+struct MethodTableRow {
     MethodSelector selector;
     FunctionID lookup;
     // In ascending order of the shapes, each once.
@@ -113,7 +113,7 @@ MethodTableFunctions collectMethodTableFunctions(const PlacementContext& context
     return functions;
 }
 
-static void appendEntries(const ShapeTable& shapes, std::span<const LayoutID> layouts, FunctionID target, GuardBitID guard, Row& row)
+static void appendEntries(const ShapeTable& shapes, std::span<const LayoutID> layouts, FunctionID target, GuardBitID guard, MethodTableRow& row)
 {
     for (LayoutID layout : layouts) {
         ShapeRange range = shapes.shapesOf(layout);
@@ -123,7 +123,7 @@ static void appendEntries(const ShapeTable& shapes, std::span<const LayoutID> la
 }
 
 // What the class definitions say holds while the bit of the arm's conditions is set. Conditions without a bit never hold.
-static void appendEntriesOf(const PlacementContext& context, const TableCallUse& use, const TableFunctions& functions, const ShapeTable& shapes, const GuardBitTable& guardBits, Row& row)
+static void appendEntriesOf(const PlacementContext& context, const TableCallUse& use, const TableFunctions& functions, const ShapeTable& shapes, const GuardBitTable& guardBits, MethodTableRow& row)
 {
     PropertyAccessContext access { context.program, &context.inputs.flow };
     MemberPartition partition = partitionMembers(access, context.program.at(use.receivers).members.span(), use.selector.key, Access::Read);
@@ -148,23 +148,23 @@ static void appendEntriesOf(const PlacementContext& context, const TableCallUse&
     appendEntries(shapes, partition.rest.span(), row.lookup, { }, row);
 }
 
-static Vector<Row> createRows(const PlacementContext& context, const PlacedSites& sites, const ShapeTable& shapes, const GuardBitTable& guardBits, const TableFunctions& functions)
+static Vector<MethodTableRow> createRows(const PlacementContext& context, const PlacedSites& sites, const ShapeTable& shapes, const GuardBitTable& guardBits, const TableFunctions& functions)
 {
-    Vector<Row> rows;
+    Vector<MethodTableRow> rows;
     for (const TableCallUse& use : sites.tableCalls) {
         if (rows.isEmpty() || rows.last().selector != use.selector)
-            rows.append(Row { use.selector, functions.lookupOf(use.selector), { } });
+            rows.append(MethodTableRow { use.selector, functions.lookupOf(use.selector), { } });
         RELEASE_ASSERT(rows.last().lookup);
         appendEntriesOf(context, use, functions, shapes, guardBits, rows.last());
     }
-    for (Row& row : rows) {
+    for (MethodTableRow& row : rows) {
         AOT::stableSort(row.entries, { }, &RowEntry::shape);
         row.entries.shrink(row.entries.size() - std::ranges::unique(row.entries, { }, &RowEntry::shape).size());
     }
     return rows;
 }
 
-static bool fits(const BitVector& isOccupied, const Row& row, uint32_t offset)
+static bool fits(const BitVector& isOccupied, const MethodTableRow& row, uint32_t offset)
 {
     return std::ranges::none_of(row.entries, [&](const RowEntry& entry) {
         return isOccupied.get(offset - entry.shape);
@@ -174,7 +174,7 @@ static bool fits(const BitVector& isOccupied, const Row& row, uint32_t offset)
 MethodTable placeMethodTable(const PlacementContext& context, const PlacedSites& sites, const ShapeTable& shapes, const GuardBitTable& guardBits, const MethodTableFunctions& functions)
 {
     MethodTable table;
-    Vector<Row> rows = createRows(context, sites, shapes, guardBits, functions);
+    Vector<MethodTableRow> rows = createRows(context, sites, shapes, guardBits, functions);
 
     // The longest rows first: the short ones fill what those leave open.
     Vector<uint32_t> order(rows.size(), [](size_t index) {
@@ -187,7 +187,7 @@ MethodTable placeMethodTable(const PlacementContext& context, const PlacedSites&
     BitVector isOccupied;
     Vector<uint32_t> offsets(FillWith { }, rows.size(), 0u);
     for (uint32_t index : order) {
-        const Row& row = rows[index];
+        const MethodTableRow& row = rows[index];
         if (row.entries.isEmpty())
             continue;
         uint32_t offset = row.entries.last().shape;
@@ -199,7 +199,7 @@ MethodTable placeMethodTable(const PlacementContext& context, const PlacedSites&
     }
 
     for (uint32_t index = 0; index < rows.size(); ++index) {
-        const Row& row = rows[index];
+        const MethodTableRow& row = rows[index];
         table.selectors.append({ row.selector, offsets[index], row.lookup });
         for (const RowEntry& entry : row.entries) {
             uint32_t position = offsets[index] - entry.shape;

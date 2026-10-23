@@ -97,9 +97,9 @@ OperandSummary BorrowedParameters::summaryOf(FunctionID function, uint32_t entry
 
 namespace {
 
-class BodyScanner {
+class BorrowedParameterScanner {
 public:
-    BodyScanner(const Program&, const Function&, const BitVector* closuresPlannedInFrame = nullptr);
+    BorrowedParameterScanner(const Program&, const Function&, const BitVector* closuresPlannedInFrame = nullptr);
 
     BorrowingBody run();
     std::span<const HandedOnReferences> heldByWhatIsHandedOn() const LIFETIME_BOUND { return m_heldByWhatIsHandedOn.span(); }
@@ -186,7 +186,7 @@ static void forEachLostPart(uint64_t bits, const Invocable<void(uint32_t entryPa
 
 } // anonymous namespace
 
-void BodyScanner::explainLoss(uint64_t bits) const
+void BorrowedParameterScanner::explainLoss(uint64_t bits) const
 {
     forEachLostPart(bits, [&](uint32_t entryParameter, ASCIILiteral part) {
         m_explanation->print("not borrowed: f", m_id.index(), " parameter ", entryParameter, ", ", part, ": ");
@@ -306,7 +306,7 @@ static void mergeEntriesOfOneParameter(Vector<HandedOnReferences>& entries)
     entries.shrink(numberOfMergedEntries);
 }
 
-BodyScanner::BodyScanner(const Program& program, const Function& function, const BitVector* closuresPlannedInFrame)
+BorrowedParameterScanner::BorrowedParameterScanner(const Program& program, const Function& function, const BitVector* closuresPlannedInFrame)
     : m_program(program)
     , m_function(function)
     , m_closuresPlannedInFrame(closuresPlannedInFrame)
@@ -315,14 +315,14 @@ BodyScanner::BodyScanner(const Program& program, const Function& function, const
 {
 }
 
-const Function& BodyScanner::readRecordOf(FunctionID callee)
+const Function& BorrowedParameterScanner::readRecordOf(FunctionID callee)
 {
     if (m_calleesWhoseRecordsWereRead.isEmpty() || m_calleesWhoseRecordsWereRead.last() != callee)
         m_calleesWhoseRecordsWereRead.append(callee);
     return m_program.at(callee);
 }
 
-BorrowingBody BodyScanner::run()
+BorrowingBody BorrowedParameterScanner::run()
 {
     uint64_t tracked = trackEntryParameters();
     propagate();
@@ -352,7 +352,7 @@ BorrowingBody BodyScanner::run()
     return body;
 }
 
-uint64_t BodyScanner::trackEntryParameters()
+uint64_t BorrowedParameterScanner::trackEntryParameters()
 {
     const CompactList<ValueID>& parameters = m_function.at(entryBlock).parameters;
     uint32_t numberOfTrackedParameters = std::min<uint32_t>(parameters.size(), maxBorrowedParameters);
@@ -369,7 +369,7 @@ uint64_t BodyScanner::trackEntryParameters()
     return tracked;
 }
 
-void BodyScanner::propagate()
+void BorrowedParameterScanner::propagate()
 {
     const OpcodeSet& givingOpcodes = opcodesThatGiveReferences();
     for (bool changed = true; changed;) {
@@ -403,7 +403,7 @@ void BodyScanner::propagate()
     }
 }
 
-uint64_t BodyScanner::referencesGivenBy(const Value& value) const
+uint64_t BorrowedParameterScanner::referencesGivenBy(const Value& value) const
 {
     uint64_t references = 0;
     forEachReturnedOperand(m_function, value, [&](ValueID operand) {
@@ -420,12 +420,12 @@ uint64_t BodyScanner::referencesGivenBy(const Value& value) const
 }
 
 // A capture is a whole word, so it takes a pointer into a frame.
-bool BodyScanner::isClosureInOwnFrame(ValueID id) const
+bool BorrowedParameterScanner::isClosureInOwnFrame(ValueID id) const
 {
     return m_closuresPlannedInFrame && m_closuresPlannedInFrame->get(id.index());
 }
 
-uint64_t BodyScanner::heldReferencesGivenBy(ValueID id) const
+uint64_t BorrowedParameterScanner::heldReferencesGivenBy(ValueID id) const
 {
     const Value& value = m_function.at(id);
     uint64_t held = 0;
@@ -445,7 +445,7 @@ uint64_t BodyScanner::heldReferencesGivenBy(ValueID id) const
 }
 
 
-bool BodyScanner::add(ValueID id, uint64_t references)
+bool BorrowedParameterScanner::add(ValueID id, uint64_t references)
 {
     uint64_t& known = m_mayBe[id.index()];
     if (!(references & ~known) || !mayHoldReference(id))
@@ -454,7 +454,7 @@ bool BodyScanner::add(ValueID id, uint64_t references)
     return true;
 }
 
-bool BodyScanner::addHeld(ValueID id, uint64_t references)
+bool BorrowedParameterScanner::addHeld(ValueID id, uint64_t references)
 {
     if (!references)
         return false;
@@ -467,12 +467,12 @@ bool BodyScanner::addHeld(ValueID id, uint64_t references)
     return true;
 }
 
-bool BodyScanner::mayHoldReference(ValueID id) const
+bool BorrowedParameterScanner::mayHoldReference(ValueID id) const
 {
     return mayBeReference(m_program.typeOf(m_function, id)) || numberOfResultsOf(m_program, m_function, m_function.at(id)).has_value();
 }
 
-void BodyScanner::handOn(FunctionID callee, std::optional<uint32_t> entryParameter, Carried carried)
+void BorrowedParameterScanner::handOn(FunctionID callee, std::optional<uint32_t> entryParameter, Carried carried)
 {
     if (!entryParameter || *entryParameter >= maxBorrowedParameters) {
         lose(carried.all());
@@ -484,7 +484,7 @@ void BodyScanner::handOn(FunctionID callee, std::optional<uint32_t> entryParamet
         m_heldByWhatIsHandedOn.append(HandedOnReferences { callee, *entryParameter, carried.held });
 }
 
-void BodyScanner::checkOperandsOf(ValueID id)
+void BorrowedParameterScanner::checkOperandsOf(ValueID id)
 {
     m_currentUser = id;
     const Value& user = m_function.at(id);
@@ -518,7 +518,7 @@ void BodyScanner::checkOperandsOf(ValueID id)
     });
 }
 
-void BodyScanner::checkOperandsOf(const Terminator& terminator)
+void BorrowedParameterScanner::checkOperandsOf(const Terminator& terminator)
 {
     m_currentUser = { };
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -538,7 +538,7 @@ void BodyScanner::checkOperandsOf(const Terminator& terminator)
     });
 }
 
-void BodyScanner::checkOperandOfCall(const Value& call, uint32_t operandIndex, const CalleeList& callees, Carried carried)
+void BorrowedParameterScanner::checkOperandOfCall(const Value& call, uint32_t operandIndex, const CalleeList& callees, Carried carried)
 {
     ASSERT(!maySuspend(call.opcode));
     bool namesEveryCallee = callees.isComplete && callees.builtins.isEmpty();
@@ -572,7 +572,7 @@ void BodyScanner::checkOperandOfCall(const Value& call, uint32_t operandIndex, c
     }
 }
 
-void BodyScanner::checkDeclaredOperand(ValueID id, uint32_t operandIndex, Carried carried)
+void BorrowedParameterScanner::checkDeclaredOperand(ValueID id, uint32_t operandIndex, Carried carried)
 {
     const Value& user = m_function.at(id);
     // The cell goes with this frame. Whoever calls the closure runs its function, which does with a capture what it does with the entry parameter.
@@ -593,7 +593,7 @@ void BodyScanner::checkDeclaredOperand(ValueID id, uint32_t operandIndex, Carrie
 }
 
 // What ResolveAccesses makes a read of a slot.
-bool BodyScanner::readsProvenSlots(const Value& access, uint32_t operandIndex) const
+bool BorrowedParameterScanner::readsProvenSlots(const Value& access, uint32_t operandIndex) const
 {
     if (accessOf(access.opcode) != Access::Read || receiverOf(access.opcode) != operandIndex)
         return false;
@@ -610,7 +610,7 @@ bool BodyScanner::readsProvenSlots(const Value& access, uint32_t operandIndex) c
 }
 
 template<typename User>
-bool BodyScanner::isOnlyInspectedByInlineCode(const User& user, uint32_t operandIndex) const
+bool BorrowedParameterScanner::isOnlyInspectedByInlineCode(const User& user, uint32_t operandIndex) const
 {
     if (mayBeCellOtherThanFunction(m_program.typeOf(m_function, user.operand(operandIndex))))
         return false;
@@ -706,7 +706,7 @@ static void explainLosses(const Program& program, BuildContext& build, const Vec
             out.println("not borrowed: f", index, ": the function borrows nothing");
             continue;
         }
-        BodyScanner scanner(program, function);
+        BorrowedParameterScanner scanner(program, function);
         scanner.explainLossesTo(out, FunctionID(index));
         scanner.run();
         for (const HandedOnReferences& entry : bodies[index].handedOn) {
@@ -722,7 +722,7 @@ uint64_t BorrowedParameters::wordOfBody(const Program& program, BuildContext& bu
     const Function& function = program.at(id);
     if (!build.isEnabled(FlowResultKind::OperandSummaries, id.index()) || !mayBorrow(program, function, opcodesOfFunctionsThatBorrowNothing()))
         return 0;
-    BodyScanner scanner(program, function, &closuresPlannedInFrame);
+    BorrowedParameterScanner scanner(program, function, &closuresPlannedInFrame);
     BorrowingBody body = scanner.run();
     // A function that hands a parameter to itself keeps it, as in the table.
     uint64_t word = body.word;
@@ -777,7 +777,7 @@ BorrowedParameters computeBorrowedParameters(const Program& program, BuildContex
         const Function& function = program.functions[index];
         if (!build.isEnabled(FlowResultKind::OperandSummaries, index) || !mayBorrow(program, function, opcodesThatBorrowNothing))
             return BorrowingBody { };
-        return BodyScanner(program, function).run();
+        return BorrowedParameterScanner(program, function).run();
     };
     auto stillHolds = [&](unsigned index) {
         if (index >= numberOfKeptBodies || hasChanged[index] || recordLooksDifferent[index])

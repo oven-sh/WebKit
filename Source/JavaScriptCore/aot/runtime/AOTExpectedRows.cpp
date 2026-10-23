@@ -52,7 +52,7 @@ PropertyName expectedResultTypeName()
     return PropertyName(&static_cast<SymbolImpl&>(expectedResultTypePrivateName));
 }
 
-bool tryStore(ObjectBuilder& builder, unsigned index, const JSC__AOT__FieldValue& value)
+bool tryStoreInExpectedRow(ObjectBuilder& builder, unsigned index, const JSC__AOT__FieldValue& value)
 {
     switch (value.kind) {
     case JSC__AOT__FieldValue::Kind::Boxed:
@@ -133,7 +133,7 @@ extern "C" JS_EXPORT_PRIVATE EncodedJSValue JSC__AOT__ObjectBuilderPlan__createO
     std::span values { fieldValues, plan.numberOfFields() };
     ObjectBuilder builder(vm, plan);
     for (unsigned index = 0; index < values.size(); ++index) {
-        if (!tryStore(builder, index, values[index]))
+        if (!tryStoreInExpectedRow(builder, index, values[index]))
             return { };
     }
     JSObject* object = builder.finish();

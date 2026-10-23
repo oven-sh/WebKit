@@ -125,6 +125,9 @@ void emitCallCheckingPreservedRegisters(CCallHelpers&, const StubSummary&, const
 void emitStoresOfKeptRegisters(CCallHelpers&, const KeptRegisterCheck&);
 void emitChecksOfKeptRegisters(CCallHelpers&, const KeptRegisterCheck&, ValidationFailureKind, std::optional<FunctionID> callee, const ScopedLambda<void()>& emitReport);
 
+inline constexpr uint64_t hasImmediate = 1ull << 32;
+inline constexpr size_t numberOfHeaderWords = 2;
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

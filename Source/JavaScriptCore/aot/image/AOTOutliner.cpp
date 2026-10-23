@@ -40,7 +40,7 @@ constexpr uint32_t minBytesSavedAtSiteThatMayRun = 3;
 // and its piece has to stay in the caches because many sites call it, or save this many bytes a site.
 constexpr size_t minSitesOfSmallPieceThatMayRun = 512;
 constexpr uint32_t minBytesSavedByPieceWithFewSites = 16;
-constexpr unsigned numberOfShards = 256;
+constexpr unsigned numberOfOutlinerShards = 256;
 constexpr unsigned unitsInChunk = 1 << 16;
 constexpr unsigned unitsInBlock = 64;
 constexpr uint64_t hashBase = 0x9e3779b97f4a7c15ULL;
@@ -52,7 +52,7 @@ constexpr auto hashBasePowers = [] {
     return powers;
 }();
 
-using ShardStarts = std::array<uint32_t, numberOfShards + 1>;
+using ShardStarts = std::array<uint32_t, numberOfOutlinerShards + 1>;
 
 enum : uint8_t {
     MayBeInWindow = 1,
@@ -72,7 +72,7 @@ ALWAYS_INLINE uint64_t mix(uint64_t value)
     return value;
 }
 
-uint64_t computeHash(std::span<const uint8_t> bytes)
+uint64_t hashForOutlining(std::span<const uint8_t> bytes)
 {
     uint64_t result = bytes.size();
     for (uint8_t byte : bytes)
@@ -80,7 +80,7 @@ uint64_t computeHash(std::span<const uint8_t> bytes)
     return mix(result);
 }
 
-uint64_t computeHash(const CodeBody& body, const Relocation& call, uint32_t identity)
+uint64_t hashForOutlining(const CodeBody& body, const Relocation& call, uint32_t identity)
 {
     uint64_t result = mix(static_cast<uint64_t>(call.space) << 16 | call.entry);
     result = mix(result ^ identity);
@@ -462,7 +462,7 @@ private:
                 if (codeUnit.length > std::numeric_limits<uint8_t>::max() || !canCallFrom(codeUnit.offset))
                     break;
                 m_flags[unit] = MayBeInWindow | (codeUnit.mayRun ? MayRun : 0);
-                m_prefixHashes[unit + 1] = computeHash(body.bytes.span().subspan(codeUnit.offset, codeUnit.length));
+                m_prefixHashes[unit + 1] = hashForOutlining(body.bytes.span().subspan(codeUnit.offset, codeUnit.length));
                 break;
             case CodeUnit::Kind::Call: {
                 auto* call = advanceTo(relocations, &Relocation::offset, codeUnit.offset);
@@ -472,7 +472,7 @@ private:
                     break;
                 if (auto identity = identityOf(function, *call)) {
                     m_flags[unit] = MayBeInWindow | IsCall | (codeUnit.mayRun ? MayRun : 0);
-                    m_prefixHashes[unit + 1] = computeHash(body, *call, *identity);
+                    m_prefixHashes[unit + 1] = hashForOutlining(body, *call, *identity);
                 }
                 break;
             }
@@ -713,7 +713,7 @@ private:
         unsigned numberOfChunks = numberOfActiveChunks();
         m_found.resize(m_active.size());
         Vector<uint32_t> starts;
-        starts.fill(0, static_cast<size_t>(numberOfChunks) * numberOfShards);
+        starts.fill(0, static_cast<size_t>(numberOfChunks) * numberOfOutlinerShards);
         forEachIndexInParallel(m_context.parallelLoops(), numberOfChunks, [&](unsigned chunk) {
             forEachLocationIn(chunk, [&](size_t location) {
                 uint32_t unit = m_active[location];
@@ -723,27 +723,27 @@ private:
                 }
                 uint64_t hash = hashOf(unit, length);
                 m_found[location] = { hash, unit, 0 };
-                ++starts[static_cast<size_t>(chunk) * numberOfShards + (hash >> 56)];
+                ++starts[static_cast<size_t>(chunk) * numberOfOutlinerShards + (hash >> 56)];
             });
         });
         ShardStarts shardStart;
         uint32_t total = 0;
-        for (unsigned shard = 0; shard < numberOfShards; ++shard) {
+        for (unsigned shard = 0; shard < numberOfOutlinerShards; ++shard) {
             shardStart[shard] = total;
             for (unsigned chunk = 0; chunk < numberOfChunks; ++chunk) {
-                uint32_t& start = starts[static_cast<size_t>(chunk) * numberOfShards + shard];
+                uint32_t& start = starts[static_cast<size_t>(chunk) * numberOfOutlinerShards + shard];
                 uint32_t number = start;
                 start = total;
                 total += number;
             }
         }
-        shardStart[numberOfShards] = total;
+        shardStart[numberOfOutlinerShards] = total;
         m_windows.resize(total);
         forEachIndexInParallel(m_context.parallelLoops(), numberOfChunks, [&](unsigned chunk) {
             forEachLocationIn(chunk, [&](size_t location) {
                 auto& window = m_found[location];
                 if (window.unit != std::numeric_limits<uint32_t>::max())
-                    m_windows[starts[static_cast<size_t>(chunk) * numberOfShards + (window.hash >> 56)]++] = window;
+                    m_windows[starts[static_cast<size_t>(chunk) * numberOfOutlinerShards + (window.hash >> 56)]++] = window;
             });
         });
         return shardStart;
@@ -751,8 +751,8 @@ private:
 
     Vector<Family> findFamilies(unsigned length, const ShardStarts& shardStart)
     {
-        std::array<Vector<Family>, numberOfShards> shardFamilies;
-        forEachIndexInParallel(m_context.parallelLoops(), numberOfShards, [&](unsigned shard) {
+        std::array<Vector<Family>, numberOfOutlinerShards> shardFamilies;
+        forEachIndexInParallel(m_context.parallelLoops(), numberOfOutlinerShards, [&](unsigned shard) {
             auto windows = m_windows.mutableSpan().subspan(shardStart[shard], shardStart[shard + 1] - shardStart[shard]);
             sortByHashAndUnit(windows, m_found.mutableSpan().subspan(shardStart[shard], windows.size()));
             for (size_t begin = 0; begin < windows.size();) {
@@ -809,10 +809,10 @@ private:
         Vector<Family> families;
         ShardStarts firstFamily;
         uint32_t numberOfFamilies = 0;
-        for (unsigned shard = 0; shard < numberOfShards; ++shard)
+        for (unsigned shard = 0; shard < numberOfOutlinerShards; ++shard)
             firstFamily[shard] = std::exchange(numberOfFamilies, static_cast<uint32_t>(numberOfFamilies + shardFamilies[shard].size()));
         families.grow(numberOfFamilies);
-        forEachIndexInParallel(m_context.parallelLoops(), numberOfShards, [&](unsigned shard) {
+        forEachIndexInParallel(m_context.parallelLoops(), numberOfOutlinerShards, [&](unsigned shard) {
             memcpySpan(families.mutableSpan().subspan(firstFamily[shard], shardFamilies[shard].size()), shardFamilies[shard].span());
         });
         parallelSort(m_context.parallelLoops(), families.mutableSpan(), [](const Family& a, const Family& b) {

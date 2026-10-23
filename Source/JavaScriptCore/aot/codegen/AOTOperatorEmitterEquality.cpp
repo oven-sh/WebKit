@@ -18,8 +18,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint64_t quietNaNBits = 0x7ffull << 52 | 1ull << 51;
-static_assert((undefinedDouble & quietNaNBits) == quietNaNBits && (nullDouble & quietNaNBits) == quietNaNBits);
+static constexpr uint64_t bitsOfQuietNaN = 0x7ffull << 52 | 1ull << 51;
+static_assert((undefinedDouble & bitsOfQuietNaN) == bitsOfQuietNaN && (nullDouble & bitsOfQuietNaN) == bitsOfQuietNaN);
 
 static bool mayBeStringCell(LiteralStringWord word, const Type& type)
 {

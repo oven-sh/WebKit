@@ -11,7 +11,6 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
-#include "AOTPlacementCheck.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpRequests.h"
 #include "AOTSchemaOperations.h"
@@ -52,7 +51,6 @@ struct FunctionRequests {
 struct ResolutionInputs {
     const PlacementContext& context;
     const SiteResolutionInputs& steps;
-    PlacementFailureSink& failures;
     OpcodeSet resolvedOpcodes;
 };
 
@@ -65,6 +63,7 @@ public:
     Vector<PendingRequest> resolveOtherWordsOf(std::span<const ValueID>);
 
 private:
+    void fail(LayoutID layout, ValueID value) const { m_inputs.context.build.diagnostics().add(InternalError { .kind = InternalErrorKind::PlacementCheckFailed, .function = m_id, .value = value, .layout = layout }); }
     const Program& program() const { return m_inputs.context.program; }
     const Placement& placement() const { return m_inputs.steps.placement; }
     const PlacedSites& sites() const { return m_inputs.steps.sites; }
@@ -301,7 +300,7 @@ AllocationID FunctionResolver::cellAllocationOf(ValueID id, LayoutID layout, uin
 {
     AllocationID allocation = placement().allocations().find(layout, shape, initialFields, holdsInnerObjects);
     if (!allocation)
-        m_inputs.failures.fail(PlacementRule::AllocationOfUnplacedLayout, layout, m_id, id);
+        fail(layout, id);
     return allocation;
 }
 
@@ -309,7 +308,7 @@ RegExpRecordID FunctionResolver::regExpRecordOf(ValueID id, const Value& value) 
 {
     RegExpRecordID record = m_inputs.context.inputs.regExpRequests.recordOf(value.pattern(), toYarrFlags(value.regExpFlags()));
     if (!record)
-        m_inputs.failures.fail(PlacementRule::RegExpRecordWrong, { }, m_id, id);
+        fail({ }, id);
     return record;
 }
 
@@ -410,7 +409,7 @@ std::optional<RequestRecord> FunctionResolver::cloneAsRecordOf(ValueID id, const
         return placement().slot(layout, field).indexInLayoutRecord.has_value();
     });
     if (!shape || !everyFieldHasRecord) {
-        m_inputs.failures.fail(PlacementRule::RequestWrong, layout, m_id, id);
+        fail(layout, id);
         return std::nullopt;
     }
     return RequestRecord { CloneAsRecord { layout, shape, Vector<FieldIndex>(fields) } };
@@ -542,8 +541,7 @@ ResolvedSites resolveSites(ProgramEditor& editor, const PlacementContext& contex
 {
     checkTerminatorPayloads();
     const ParallelLoops& loops = context.build.parallelLoops();
-    PlacementFailureSink failures(context.build);
-    ResolutionInputs inputs { context, steps, failures, computeResolvedOpcodes() };
+    ResolutionInputs inputs { context, steps, computeResolvedOpcodes() };
     Vector<FunctionRequests> functions = collectFunctions(editor);
     forEachIndexInParallel(loops, functions.size(), [&](unsigned index) {
         auto& entry = functions[index];
@@ -555,8 +553,7 @@ ResolvedSites resolveSites(ProgramEditor& editor, const PlacementContext& contex
 void resolveFieldAccesses(const PlacementContext& context, const SiteResolutionInputs& steps, FunctionID id, Function& function, Vector<ValueID>& valuesWithOtherWords)
 {
     static const OpcodeSet resolvedOpcodes = computeResolvedOpcodes();
-    PlacementFailureSink failures(context.build);
-    ResolutionInputs inputs { context, steps, failures, resolvedOpcodes };
+    ResolutionInputs inputs { context, steps, resolvedOpcodes };
     FunctionResolver(inputs, id, function).resolveFieldAccesses(valuesWithOtherWords);
 }
 
@@ -565,8 +562,7 @@ ResolvedSites resolveOtherWords(ProgramEditor& editor, const PlacementContext& c
     checkTerminatorPayloads();
     const Program& program = context.program;
     RELEASE_ASSERT(valuesWithOtherWords.size() == program.functions.size());
-    PlacementFailureSink failures(context.build);
-    ResolutionInputs inputs { context, steps, failures, computeResolvedOpcodes() };
+    ResolutionInputs inputs { context, steps, computeResolvedOpcodes() };
     Vector<FunctionRequests> functions;
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         if (program.functions[index].hasBody() && !valuesWithOtherWords[index].isEmpty())

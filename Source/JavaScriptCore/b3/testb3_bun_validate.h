@@ -11,7 +11,6 @@
 
 #include "B3Common.h"
 #include "B3CompilationReport.h"
-#include "B3InductionRecords.h"
 #include "B3IntRange.h"
 #include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
@@ -176,139 +175,6 @@ static void testValidateRelocatable()
     }
 }
 
-template<typename Functor>
-static std::optional<ValidationRule> validateKnownRange(IntRange range, const Functor& appendValue)
-{
-    ValidationTestGraph graph;
-    Value* value = appendValue(graph);
-    graph.proc.setKnownRange(value, range);
-    CHECK(graph.proc.knownRange(value) == range);
-    return graph.appendReturnAndValidate();
-}
-
-static void testValidateKnownRange()
-{
-    IntRange range(0, 10);
-
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) { return graph.appendPhi(Int32); }) == std::nullopt);
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) { return graph.appendPhi(Int64); }) == std::nullopt);
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) { return graph.appendPointer(); }) == std::nullopt);
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) { return graph.appendPatchpoint(Int32); }) == std::nullopt);
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) {
-        return graph.root->appendNew<MemoryValue>(graph.proc, Load, Int32, Origin(), graph.appendPointer());
-    }) == std::nullopt);
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) {
-        return graph.root->appendNew<CCallValue>(graph.proc, Int32, Origin(), graph.appendPointer());
-    }) == std::nullopt);
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) {
-        return graph.root->appendNew<Value>(graph.proc, Trunc, Origin(), graph.appendPointer());
-    }) == std::nullopt);
-    for (B3::Opcode opcode : { Load8Z, Load8S, Load16Z, Load16S }) {
-        CHECK(validateKnownRange(range, [&](ValidationTestGraph& graph) {
-            return graph.root->appendNew<MemoryValue>(graph.proc, opcode, Origin(), graph.appendPointer());
-        }) == std::nullopt);
-    }
-
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) {
-        return graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendConstant(Int32), graph.appendConstant(Int32));
-    }) == ValidationRule::KnownRange);
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) { return graph.appendConstant(Int32); }) == ValidationRule::KnownRange);
-
-    auto appendUnsignedByteLoad = [](ValidationTestGraph& graph) {
-        return graph.root->appendNew<MemoryValue>(graph.proc, Load8Z, Origin(), graph.appendPointer());
-    };
-    CHECK(validateKnownRange(IntRange(255, 300), appendUnsignedByteLoad) == std::nullopt);
-    CHECK(validateKnownRange(IntRange(256, 300), appendUnsignedByteLoad) == ValidationRule::KnownRange);
-    CHECK(validateKnownRange(IntRange(-10, -1), appendUnsignedByteLoad) == ValidationRule::KnownRange);
-
-#if !ASSERT_ENABLED
-    CHECK(validateKnownRange(IntRange(0, 1LL << 40), [](ValidationTestGraph& graph) { return graph.appendPhi(Int32); }) == ValidationRule::KnownRange);
-    CHECK(validateKnownRange(IntRange(10, 0), [](ValidationTestGraph& graph) { return graph.appendPhi(Int32); }) == ValidationRule::KnownRange);
-    CHECK(validateKnownRange(range, [](ValidationTestGraph& graph) {
-        return graph.root->appendNew<MemoryValue>(graph.proc, Load, Double, Origin(), graph.appendPointer());
-    }) == ValidationRule::KnownRange);
-#endif
-}
-
-template<typename Functor>
-static std::optional<ValidationRule> validateKnownDereferenceableBytes(const Functor& appendValue)
-{
-    ValidationTestGraph graph;
-    Value* value = appendValue(graph);
-    graph.proc.setKnownDereferenceableBytes(value, 16);
-    CHECK(graph.proc.knownDereferenceableBytes(value) == 16);
-    return graph.appendReturnAndValidate();
-}
-
-static void testValidateKnownDereferenceableBytes()
-{
-    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) { return graph.appendPointer(); }) == std::nullopt);
-    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) { return graph.appendPhi(pointerType()); }) == std::nullopt);
-    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) {
-        return graph.root->appendNew<Value>(graph.proc, Add, Origin(), graph.appendPointer(), graph.appendConstant(pointerType()));
-    }) == std::nullopt);
-
-#if !ASSERT_ENABLED
-    CHECK(validateKnownDereferenceableBytes([](ValidationTestGraph& graph) { return graph.appendPhi(Int32); }) == ValidationRule::KnownDereferenceableBytes);
-#endif
-}
-
-struct InductionTestLoop {
-    template<typename Functor>
-    std::optional<ValidationRule> endBodyAndValidate(const Functor& changeRecord)
-    {
-        loop.endBody(loop.body);
-        std::optional<InductionRecord> record = proc.knownInduction(loop.counter());
-        CHECK(record);
-        changeRecord(*record);
-        proc.knownInductions().add(*record);
-        return findViolatedRule(proc);
-    }
-
-    Procedure proc { policyWith([](Policy&) { }) };
-    Graph graph { proc };
-    TopTestedLoop loop { graph };
-};
-
-template<typename Functor>
-static std::optional<ValidationRule> validateKnownInduction(const Functor& changeRecord)
-{
-    InductionTestLoop test;
-    return test.endBodyAndValidate(changeRecord);
-}
-
-static void testValidateKnownInduction()
-{
-    CHECK(validateKnownInduction([](InductionRecord&) { }) == std::nullopt);
-    CHECK(validateKnownInduction([](InductionRecord& record) { record.test = nullptr; }) == std::nullopt);
-
-    CHECK(validateKnownInduction([](InductionRecord& record) { record.step = 2; }) == ValidationRule::KnownInduction);
-    CHECK(validateKnownInduction([](InductionRecord& record) { record.step = -1; }) == ValidationRule::KnownInduction);
-    CHECK(validateKnownInduction([](InductionRecord& record) { record.step = 0; }) == ValidationRule::KnownInduction);
-
-    {
-        InductionTestLoop test;
-        CHECK(test.endBodyAndValidate([](InductionRecord& record) { record.next = record.test; }) == std::nullopt);
-        CHECK(!test.proc.knownInduction(test.loop.counter()));
-    }
-    {
-        InductionTestLoop test;
-        BasicBlock* body = test.loop.body;
-        Variable* index = test.loop.index;
-        test.graph.set(body, index, test.graph.make(body, Mul, test.graph.get(body, index), test.graph.int64(body, 3)));
-        CHECK(test.endBodyAndValidate([](InductionRecord& record) { record.step = 2; }) == std::nullopt);
-    }
-    {
-        ValidationTestGraph graph;
-        Value* phi = graph.appendPhi(Int64);
-        Value* next = graph.root->appendNew<Value>(graph.proc, Add, Origin(), phi, graph.appendConstant(Int64));
-        graph.root->appendNew<UpsilonValue>(graph.proc, Origin(), next, phi);
-        graph.proc.setKnownInduction(InductionRecord { phi, next, nullptr, 1, false, false });
-        CHECK(graph.proc.knownInduction(phi));
-        CHECK(graph.appendReturnAndValidate() == std::nullopt);
-    }
-}
-
 static std::optional<ValidationRule> validateSuccessorClobbers(Type type, std::initializer_list<unsigned> clobberedSuccessors)
 {
     ValidationTestGraph graph;
@@ -394,9 +260,6 @@ inline void addBunValidateTests(const TestConfig* config, Deque<RefPtr<SharedTas
     RUN(testValidateLoopPoll());
     RUN(testValidatePureFunction());
     RUN(testValidateRelocatable());
-    RUN(testValidateKnownRange());
-    RUN(testValidateKnownDereferenceableBytes());
-    RUN(testValidateKnownInduction());
     RUN(testValidateSuccessorClobbers());
     RUN(testFindViolatedRuleReportsUpstreamRules());
     RUN(testValidationLevels());

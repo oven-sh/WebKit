@@ -28,7 +28,6 @@ static FunctionID subjectOf(const Program& program, FunctionID id)
     case FunctionRole::Library:
     case FunctionRole::Model:
     case FunctionRole::Signature:
-    case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
@@ -36,7 +35,6 @@ static FunctionID subjectOf(const Program& program, FunctionID id)
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
-    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
     case FunctionRole::TableLookup:
         break;
@@ -58,9 +56,6 @@ static FunctionID subjectOf(const Program& program, FunctionID id)
         break;
     case FunctionRole::BoundFunction:
         subject = creator.as<CreatorRecord::BoundFunction>().target;
-        break;
-    case FunctionRole::ResultWorker:
-        subject = creator.as<CreatorRecord::ResultWorker>().origin;
         break;
     }
     FunctionID asRead = findFunctionAsRead(&program, subject);
@@ -96,10 +91,6 @@ static String roleWord(const Program& program, FunctionID id)
         return "ramp"_s;
     case FunctionRole::BoundFunction:
         return "bound"_s;
-    case FunctionRole::ResultWrapper:
-        return "result-wrapper"_s;
-    case FunctionRole::ResultWorker:
-        return "result-worker"_s;
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
         return "parameter-wrapper"_s;
@@ -121,7 +112,6 @@ static String roleWord(const Program& program, FunctionID id)
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
-    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return lowerCaseWordsOf(nameOf(function.role));
     }

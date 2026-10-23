@@ -69,8 +69,8 @@ static TypeID admitExpectedNullish(TestSiteReporter& reporter, ValueID operand, 
     return types.intern(types.at(tested).withPrimitives(Primitive::UndefinedOrNull));
 }
 
-static constexpr OpcodeSet bitwiseOperators { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift, Opcode::BitNot };
-static constexpr OpcodeSet numericOperators = bitwiseOperators | relationalOperators | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::Sub, Opcode::Mul, Opcode::Negate };
+static constexpr OpcodeSet testedBitwiseOperators { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift, Opcode::BitNot };
+static constexpr OpcodeSet numericOperators = testedBitwiseOperators | relationalOperators | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::Sub, Opcode::Mul, Opcode::Negate };
 
 // A counter, for one. It is held as an integer, and of that a bitwise operator takes the low half, whatever its range. What comes out of memory or out of a call is a value, which the test is the cheapest way to look at.
 static bool isIntegerCarriedBetweenBlocks(TestSiteReporter& reporter, ValueID operand)
@@ -83,7 +83,7 @@ static bool isIntegerCarriedBetweenBlocks(TestSiteReporter& reporter, ValueID op
 
 static TypeID testedTypeFor(TestSiteReporter& reporter, const Value& user, ValueID operand)
 {
-    if (bitwiseOperators.contains(user.opcode) && isIntegerCarriedBetweenBlocks(reporter, operand))
+    if (testedBitwiseOperators.contains(user.opcode) && isIntegerCarriedBetweenBlocks(reporter, operand))
         return { };
     std::optional<Type> expected = reporter.expectedPartOf(operand);
     if (!expected)

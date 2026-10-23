@@ -87,17 +87,17 @@ using RegionStep = void (*)(StaticsBuilder&);
 static constexpr unsigned numberOfFilledGroups = 9;
 static constexpr unsigned numberOfVariableGroups = 16;
 static constexpr unsigned numberOfBuckets = numberOfFilledGroups + numberOfVariableGroups;
-static constexpr unsigned wordSize = sizeof(uint64_t);
+static constexpr unsigned staticsWordSize = sizeof(uint64_t);
 
 static_assert(static_cast<unsigned>(VariableGroup::ZeroValue) == numberOfFilledGroups);
 static_assert(static_cast<unsigned>(VariableGroup::ZeroWord1) + 1 == numberOfVariableGroups);
 static_assert(!traitsOf(SlotRepresentation::JSValue).absentBits && !traitsOf(SlotRepresentation::LiteralString).absentBits);
 static_assert(!traitsOf(SlotRepresentation::OptionalCell32).absentBits && !traitsOf(SlotRepresentation::LiteralString32).absentBits && !traitsOf(SlotRepresentation::OptionalBoolean).absentBits);
-static_assert(widthOf(SlotRepresentation::JSValue) == wordSize && widthOf(SlotRepresentation::LiteralString) == wordSize && widthOf(SlotRepresentation::OptionalInt64) == wordSize && widthOf(SlotRepresentation::OptionalDouble) == wordSize);
+static_assert(widthOf(SlotRepresentation::JSValue) == staticsWordSize && widthOf(SlotRepresentation::LiteralString) == staticsWordSize && widthOf(SlotRepresentation::OptionalInt64) == staticsWordSize && widthOf(SlotRepresentation::OptionalDouble) == staticsWordSize);
 static_assert(defaultLimitValue(LimitID::MaxStaticsSize, Architecture::ARM64) <= UINT32_MAX && defaultLimitValue(LimitID::MaxStaticsSize, Architecture::X86_64) <= UINT32_MAX);
-static_assert(sizeof(EncodedJSValue) == wordSize && sizeof(JSCell*) == wordSize);
-static_assert(MemberGuardData::bitsPerWord == 8 * wordSize);
-static_assert(sizeof(ArrayAllocationProfile) == wordSize && ArrayAllocationProfile::sizeOfLastArrayWord == wordSize);
+static_assert(sizeof(EncodedJSValue) == staticsWordSize && sizeof(JSCell*) == staticsWordSize);
+static_assert(MemberGuardData::bitsPerWord == 8 * staticsWordSize);
+static_assert(sizeof(ArrayAllocationProfile) == staticsWordSize && ArrayAllocationProfile::sizeOfLastArrayWord == staticsWordSize);
 
 uint64_t initialWordOf(const Program& program, VariableID id, const PlannedVariable& planned)
 {
@@ -247,20 +247,20 @@ static void placeVariables(StaticsBuilder& builder)
             SlotTraits traits = traitsOf(variable.representation);
             if (!traits.holdsCell || traits.isNarrowReference)
                 continue;
-            RELEASE_ASSERT(width == wordSize && !(variable.offset % wordSize));
+            RELEASE_ASSERT(width == staticsWordSize && !(variable.offset % staticsWordSize));
             plan.roots.append(variable.offset);
         }
     };
     auto indices = order.indices.span();
     place(indices.first(order.numberFilledAtProgramEntry));
-    plan.sizeFilledAtProgramEntry = builder.allocator.alignTo(wordSize);
+    plan.sizeFilledAtProgramEntry = builder.allocator.alignTo(staticsWordSize);
     place(indices.subspan(order.numberFilledAtProgramEntry));
 }
 
 static Vector<uint32_t> allocateWords(StaticsBuilder& builder, size_t count)
 {
     return Vector<uint32_t>(count, [&](size_t) {
-        return builder.allocator.allocate(wordSize, wordSize);
+        return builder.allocator.allocate(staticsWordSize, staticsWordSize);
     });
 }
 
@@ -293,7 +293,7 @@ static void placeModuleValues(StaticsBuilder& builder)
     builder.plan.moduleValueOffsets = Vector<std::optional<uint32_t>>(builder.context.program.modules.size(), [&](size_t index) -> std::optional<uint32_t> {
         if (!hasValueWord(builder.context, ModuleID(index)))
             return std::nullopt;
-        uint32_t offset = builder.allocator.allocate(wordSize, wordSize);
+        uint32_t offset = builder.allocator.allocate(staticsWordSize, staticsWordSize);
         builder.plan.roots.append(offset);
         return offset;
     });
@@ -306,14 +306,14 @@ static void placeGuardWords(StaticsBuilder& builder)
         return;
     // ClassData::guardWordsOffset says "no guard words" with 0.
     if (!builder.allocator.end())
-        builder.allocator.allocate(wordSize, wordSize);
+        builder.allocator.allocate(staticsWordSize, staticsWordSize);
     for (size_t first = 0; first < bits.size();) {
-        uint32_t wordOffset = builder.allocator.allocate(wordSize, wordSize);
+        uint32_t wordOffset = builder.allocator.allocate(staticsWordSize, staticsWordSize);
         size_t end = first;
         // The bits of one side of a class fill words that follow each other, and so do the bits of sets of conditions, which belong to no class: the first bit of a word starts the next one.
         while (end < bits.size() && bits[end].classLayout == bits[first].classLayout && bits[end].side == bits[first].side && (end == first || bits[end].bit % MemberGuardData::bitsPerWord))
             bits[end++].wordOffset = wordOffset;
-        RELEASE_ASSERT(!bits[first].classLayout || !bits[first].bit || wordOffset == bits[first - 1].wordOffset + wordSize);
+        RELEASE_ASSERT(!bits[first].classLayout || !bits[first].bit || wordOffset == bits[first - 1].wordOffset + staticsWordSize);
         first = end;
     }
 }
@@ -322,7 +322,7 @@ static void placeGuardWords(StaticsBuilder& builder)
 static void placeModuleBuiltinCells(StaticsBuilder& builder)
 {
     for (const ModuleBuiltinUse& use : builder.sites.moduleBuiltins) {
-        uint32_t offset = builder.allocator.allocate(wordSize, wordSize);
+        uint32_t offset = builder.allocator.allocate(staticsWordSize, staticsWordSize);
         builder.plan.moduleBuiltinCells.append({ use.builtin, use.module, offset });
         builder.plan.roots.append(offset);
     }
@@ -361,9 +361,9 @@ static void placeArrayProfiles(StaticsBuilder& builder)
 
 static void placeLastArrays(StaticsBuilder& builder)
 {
-    uint64_t size = static_cast<uint64_t>(builder.sites.profiledArrayLiterals.size()) * wordSize;
+    uint64_t size = static_cast<uint64_t>(builder.sites.profiledArrayLiterals.size()) * staticsWordSize;
     builder.plan.distanceFromArrayProfileToLastArray = static_cast<uint32_t>(size);
-    builder.firstClearedOffset = builder.allocator.allocate(size, wordSize);
+    builder.firstClearedOffset = builder.allocator.allocate(size, staticsWordSize);
 }
 
 static void placeFreeEnvironmentCells(StaticsBuilder& builder)
@@ -373,7 +373,7 @@ static void placeFreeEnvironmentCells(StaticsBuilder& builder)
     for (unsigned i = 0; i < numberOfLayouts; ++i) {
         if (!builder.context.inputs.environmentReuse.isReused(LayoutID(i)))
             continue;
-        builder.plan.freeCellOffsets[i] = builder.allocator.allocate(wordSize, wordSize);
+        builder.plan.freeCellOffsets[i] = builder.allocator.allocate(staticsWordSize, staticsWordSize);
     }
     uint64_t clearedSize = builder.allocator.end() - builder.firstClearedOffset;
     if (clearedSize)
@@ -406,7 +406,7 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
         }
     }
     AOT::sort(builder.plan.roots);
-    builder.plan.size = static_cast<uint32_t>(WTF::roundUpToMultipleOf<wordSize>(builder.allocator.end()));
+    builder.plan.size = static_cast<uint32_t>(WTF::roundUpToMultipleOf<staticsWordSize>(builder.allocator.end()));
     return { WTF::move(builder.plan), WTF::move(builder.literals) };
 }
 

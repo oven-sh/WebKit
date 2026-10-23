@@ -15,10 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// How the order of execution names an object and an instance of a function. Whoever implements FlowOrderInputs decides what the numbers stand for.
-using FlowObjectID = ID<struct FlowObjectIDTag>;
-using FlowInstanceID = ID<struct FlowInstanceIDTag>;
-
 inline constexpr Witness noWitness { Wire::none, Wire::none, noSourceLocation };
 
 constexpr bool hasFunction(const Witness& witness) { return witness.function != Wire::none; }

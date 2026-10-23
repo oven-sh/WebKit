@@ -7,14 +7,10 @@
 
 #if ENABLE(AOT)
 
-#include "AOTDiagnostics.h"
 #include "AOTIR.h"
-#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-class FunctionAnalyses;
 
 constexpr bool isRawWord(OpaqueKind kind)
 {
@@ -46,8 +42,6 @@ static_assert(!isInteriorPointer(OpaqueKind::CodeAddress) && !isInteriorPointer(
 static_assert(std::ranges::all_of(allMembersOf<OpaqueKind>, [](OpaqueKind kind) {
     return endsAtSuspension(kind) || !isInteriorPointer(kind);
 }));
-
-void checkRawWords(const Program&, FunctionID, const Function&, FunctionAnalyses&, Vector<InternalError>&);
 
 } } } // namespace JSC::AOT::Typed
 

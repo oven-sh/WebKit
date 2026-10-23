@@ -14,7 +14,6 @@
 #include "AOTInductionVariables.h"
 #include "AOTJSONVerification.h"
 #include "AOTLimits.h"
-#include "AOTRawWordCheck.h"
 #include "AOTRegExpFlags.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
@@ -30,11 +29,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr OpcodeSet opcodesWithConstructionRules { Opcode::FinishObject, Opcode::FinishClass, Opcode::DefineMethod, Opcode::GetClassPrototype };
 static constexpr OpcodeSet opcodesWithClassRules { Opcode::NewClass, Opcode::SuperConstruct, Opcode::SuperConstructList };
 static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs };
-
-static bool isAsRead(const FunctionVerifier& verifier)
-{
-    return verifier.form() == IRForm::AsRead && !verifier.isOptimizing();
-}
 
 static bool isPrivateKind(PropertyKeyKind kind)
 {
@@ -179,7 +173,6 @@ void FunctionVerifier::verifyOperations()
         for (uint32_t indexInBlock = 0; indexInBlock < block.values.size(); ++indexInBlock) {
             ValueID id = block.values[indexInBlock];
             const Value& value = m_function.at(id);
-            m_hasFrameAllocation |= hasFrameStorage(value);
             m_hasTypedDataOperations |= hasTypedDataRules(value.opcode) || referencesFunctionWithCursor(m_program, value);
             verifyOperation(blockID, indexInBlock, id, value);
             if (hasFailed())
@@ -222,8 +215,6 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Allocation:
     case OperationFamily::Access:
     case OperationFamily::Class:
-        if (opcode == Opcode::NewObject && value.isMadeOnDemand())
-            verifyObjectMadeOnDemand(block, id, value);
         if (opcodesWithConstructionRules.contains(opcode))
             verifyObjectUnderConstruction(block, id, value);
         else if (opcodesWithClassRules.contains(opcode))
@@ -358,13 +349,6 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
     case Opcode::CheckInitialized:
     case Opcode::RequireObjectCoercible:
     case Opcode::RequireObject:
-        return;
-    case Opcode::ReadAgain:
-        if (!isBorrowedInnerObject(m_function, value.objectOperand()) || !isBorrowedInnerObject(m_function, value.againOperand()))
-            fail(InternalErrorKind::OperandTypeMismatch, block, id);
-        return;
-    case Opcode::BorrowedParameter:
-        verifyUsesOfBorrowedObject(id);
         return;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -557,10 +541,6 @@ void FunctionVerifier::runSubsystemCheckers()
 {
     if (hasFailed())
         return;
-    if ((m_form >= IRForm::Prepared || isOptimizing()) && m_hasFrameAllocation)
-        verifyFramePointers(analyses(), m_errors);
-    if (m_form >= IRForm::Selected && m_inputs.rawWordCheck == RawWordCheck::Run)
-        checkRawWords(m_program, m_id, m_function, analyses(), m_errors);
     if (m_hasTypedDataOperations || hasCursorInSignature(m_program, m_function))
         verifyTypedDataRules(m_program, m_id, m_function, analyses(), m_form, m_errors);
 }

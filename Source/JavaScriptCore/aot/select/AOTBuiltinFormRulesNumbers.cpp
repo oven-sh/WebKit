@@ -14,23 +14,11 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static InlineForm twoWayIf(const InlineBuiltinSite& site, bool hasInlineCode)
-{
-    RELEASE_ASSERT(site.hasSlowPath);
-    return hasInlineCode ? InlineForm::TwoWay : InlineForm::Call;
-}
-
 template<typename Parameter>
 static Parameter inlineParameterOf(const InlineBuiltinSite& site, unsigned index)
 {
     ASSERT(index < numberOfParametersOf(site.builtin));
     return static_cast<Parameter>(site.overload.code.implementation.inlineParameters[index]);
-}
-
-static bool isNumberArgument(const InlineBuiltinSite& site, unsigned index)
-{
-    const Type* type = argumentTypeOf(site, index);
-    return type && type->isNumber();
 }
 
 static bool canParseIntInline(const InlineBuiltinSite& site)
@@ -90,7 +78,7 @@ InlineForm chooseFormOfMathBuiltin(const InlineBuiltinSite& site)
     }
 }
 
-static unsigned numberOfAtomicsOperands(AtomicsOperation operation)
+static unsigned numberOfOperandsOfAtomics(AtomicsOperation operation)
 {
     switch (operation) {
     case AtomicsOperation::Load:
@@ -126,7 +114,7 @@ static bool canAccessDataViewInline(const InlineBuiltinSite& site)
 static bool canAccessAtomicallyInline(const InlineBuiltinSite& site)
 {
     std::span<const ValueID> arguments = site.arguments();
-    if (arguments.size() != 2 + numberOfAtomicsOperands(inlineParameterOf<AtomicsOperation>(site, 0)))
+    if (arguments.size() != 2 + numberOfOperandsOfAtomics(inlineParameterOf<AtomicsOperation>(site, 0)))
         return false;
     if (!hasIntegerElements(typedArrayTypeOf(site.context.program().builtins(), site.typeOf(arguments[0]))))
         return false;

@@ -23,7 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class WriteForm : uint8_t {
+enum class LockedWriteForm : uint8_t {
     None,
     BuiltinCall,
     Operation,
@@ -64,29 +64,27 @@ static BitVector findAlwaysEvaluatedModules(const Program& program)
     return evaluated;
 }
 
-static WriteForm writeFormOf(AccessKind kind)
+static LockedWriteForm writeFormOf(AccessKind kind)
 {
     switch (kind) {
-    case AccessKind::Store:
-    case AccessKind::Define:
-    case AccessKind::Delete:
-        return WriteForm::Operation;
+    default:
+        return LockedWriteForm::Operation;
     case AccessKind::Call:
     case AccessKind::Construct:
-        return WriteForm::BuiltinCall;
+        return LockedWriteForm::BuiltinCall;
     case AccessKind::Unknown:
     case AccessKind::Read:
     case AccessKind::Has:
-        return WriteForm::None;
+        return LockedWriteForm::None;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static WriteForm writeFormAt(const FlowResults& results, const Function& function, ValueID id, SourceLocation location)
+static LockedWriteForm writeFormAt(const FlowResults& results, const Function& function, ValueID id, SourceLocation location)
 {
     const Value& value = function.at(id);
     if (!hasAccessSite(value.opcode) || function.locationOf(id) != location)
-        return WriteForm::None;
+        return LockedWriteForm::None;
     return writeFormOf(results.at(value.accessSite()).kind);
 }
 
@@ -97,13 +95,13 @@ static std::optional<LockedWrite> findWrite(const FlowResults& results, const Fu
     for (BlockID block : cfg.reversePostOrder()) {
         for (ValueID value : function.at(block).values) {
             switch (writeFormAt(results, function, value, location)) {
-            case WriteForm::None:
+            case LockedWriteForm::None:
                 break;
-            case WriteForm::BuiltinCall:
+            case LockedWriteForm::BuiltinCall:
                 if (!builtinCall)
                     builtinCall = LockedWrite { block, value };
                 break;
-            case WriteForm::Operation:
+            case LockedWriteForm::Operation:
                 return LockedWrite { block, value };
             }
         }
@@ -129,9 +127,7 @@ static bool dominatesEveryReturn(FunctionAnalyses& analyses, BlockID block)
 static bool isProgramModule(ModuleKind kind)
 {
     switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
+    default:
         return true;
     case ModuleKind::RuntimeSource:
     case ModuleKind::Runtime:
@@ -174,7 +170,7 @@ static bool writesOnlyTo(const LockedWriteContext& context, const Function& func
         std::span<const ValueID> arguments = value.argumentsOperands();
         return arguments.size() >= 2 && isOnly(context, function, arguments[0], holder) && context.program.typeOf(function, arguments[1]).singleStringLiteral();
     }
-    if (writeFormOf(context.results.at(value.accessSite()).kind) != WriteForm::Operation)
+    if (writeFormOf(context.results.at(value.accessSite()).kind) != LockedWriteForm::Operation)
         return false;
     if (elementAccessOf(value.opcode) && !constantKeyOf(context.program, context.program.typeOf(function, value.propertyOperand())))
         return false;
@@ -207,11 +203,7 @@ static RefusalInSloppyCode refusalInSloppyCode(const BuiltinTable& table, Builti
     case BuiltinKind::Method:
         // What the language puts under a string is writable and configurable where it is one of these. Under a symbol some are not, and the host does as it likes.
         return entry.origin == BuiltinOrigin::Engine && !table.isSymbolName(entry.name) ? RefusalInSloppyCode::Throws : RefusalInSloppyCode::MayThrow;
-    case BuiltinKind::Prototype:
-    case BuiltinKind::Accessor:
-    case BuiltinKind::DataProperty:
-    case BuiltinKind::Constant:
-    case BuiltinKind::NativeBinding:
+    default:
         return RefusalInSloppyCode::IsLikelySilent;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -352,11 +344,7 @@ static bool mayLeaveMemberAsItIs(const LockedWriteContext& context, const Functi
         return !hasAccessorFunction && (!value || value->primitives || mayHoldObject(table, member));
     case BuiltinKind::NativeBinding:
         return true;
-    case BuiltinKind::Namespace:
-    case BuiltinKind::Constructor:
-    case BuiltinKind::Function:
-    case BuiltinKind::Prototype:
-    case BuiltinKind::Method:
+    default:
         return !hasAccessorFunction && (!value || mayStore(*value, member));
     }
     RELEASE_ASSERT_NOT_REACHED();

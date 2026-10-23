@@ -9,11 +9,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTPlacement.h"
-#include "AOTSort.h"
 #include "JSExportMacros.h"
-#include <algorithm>
 #include <atomic>
-#include <span>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -83,8 +80,6 @@ enum class PlacementRule : uint32_t {
 #undef AOT_PLACEMENT_RULE
 };
 
-JS_EXPORT_PRIVATE ASCIILiteral nameOf(PlacementRule);
-
 inline constexpr unsigned maxReportedPlacementFailures = 100;
 
 class PlacementFailureSink {
@@ -116,37 +111,8 @@ struct PlacementCheckContext {
     PlacementFailureSink& failures;
 };
 
-struct Extent {
-    uint64_t first { 0 };
-    uint64_t end { 0 };
-};
-
-inline Extent extentAt(uint32_t offset, uint32_t size) { return { offset, static_cast<uint64_t>(offset) + size }; }
-
-inline bool areDisjoint(std::span<Extent> extents, uint64_t start, uint64_t limit)
-{
-    AOT::sort(extents, { }, &Extent::first);
-    uint64_t end = start;
-    for (auto& extent : extents) {
-        if (extent.first < end)
-            return false;
-        end = extent.end;
-    }
-    return end <= limit;
-}
-
-JS_EXPORT_PRIVATE void checkSlotPlan(const PlacementCheckContext&);
-JS_EXPORT_PRIVATE void checkClassCreation(const PlacementCheckContext&);
-JS_EXPORT_PRIVATE void checkClosureForms(const PlacementCheckContext&);
-JS_EXPORT_PRIVATE void checkShapes(const PlacementCheckContext&);
-JS_EXPORT_PRIVATE void checkFieldAccesses(const PlacementCheckContext&);
-JS_EXPORT_PRIVATE void checkAllocations(const PlacementCheckContext&);
-JS_EXPORT_PRIVATE void checkStatics(const PlacementCheckContext&);
-JS_EXPORT_PRIVATE void checkGuardBits(const PlacementCheckContext&);
 JS_EXPORT_PRIVATE void checkSites(const PlacementCheckContext&);
 JS_EXPORT_PRIVATE void checkSiteCaches(const PlacementCheckContext&);
-
-JS_EXPORT_PRIVATE bool canHold(const Program&, SlotRepresentation, const Type&);
 
 } } } // namespace JSC::AOT::Typed
 

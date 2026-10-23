@@ -49,11 +49,9 @@ namespace JSC { namespace AOT {
 using EntrySet = WTF::BitSet<numberOfEntries>;
 
 static constexpr GPRReg R0 = gprOf(StubRegister::R0);
-static constexpr GPRReg A1 = gprOf(StubRegister::A1);
 static constexpr GPRReg A2 = gprOf(StubRegister::A2);
 static constexpr GPRReg A3 = gprOf(StubRegister::A3);
 static constexpr GPRReg T9 = gprOf(StubRegister::T9);
-static constexpr GPRReg T11 = gprOf(StubRegister::T11);
 static constexpr GPRReg T12 = gprOf(StubRegister::T12);
 static constexpr GPRReg T13 = gprOf(StubRegister::T13);
 

@@ -51,7 +51,7 @@ struct UnbuiltObject {
     Vector<ValueID, 2> walks;
 };
 
-struct Parts {
+struct URLParts {
     ValueID objectOrUndefined;
     ValueID text;
     ValueID packed;
@@ -316,7 +316,7 @@ static IRBuilder::Expansion beginExpansionOf(FunctionPassContext& context, IRBui
     return builder.beginExpansion(context.analyses.useLists().pointOf(value));
 }
 
-static Parts expandConstruction(FunctionPassContext& context, IRBuilder& builder, const UnbuiltObject& unbuilt)
+static URLParts expandConstruction(FunctionPassContext& context, IRBuilder& builder, const UnbuiltObject& unbuilt)
 {
     Function& function = context.function;
     ValueID id = unbuilt.construction;
@@ -364,12 +364,12 @@ static ValueID appendWithFirstOperand(IRBuilder& builder, const Value& original,
     return builder.append(WTF::move(copy));
 }
 
-static IRBuilder::ProvenBranch branchOnUnbuilt(IRBuilder& builder, const Parts& parts)
+static IRBuilder::ProvenBranch branchOnUnbuilt(IRBuilder& builder, const URLParts& parts)
 {
     return builder.emitBranchWithProof(builder.appendTypeTest(parts.objectOrUndefined, TypeTable::undefined), 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
 }
 
-static void expandRead(FunctionPassContext& context, IRBuilder& builder, const Parts& parts, const ReadOfMember& read)
+static void expandRead(FunctionPassContext& context, IRBuilder& builder, const URLParts& parts, const ReadOfMember& read)
 {
     Value original = context.function.at(read.read);
     IRBuilder::Expansion expansion = beginExpansionOf(context, builder, read.read);
@@ -408,7 +408,7 @@ static ValueID appendReplayed(IRBuilder& builder, const ReplayedCall& replayed, 
     return builder.append(WTF::move(call));
 }
 
-static ValueID appendPairs(FunctionPassContext& context, IRBuilder& builder, const Parts& parts, BuiltinID member)
+static ValueID appendPairs(FunctionPassContext& context, IRBuilder& builder, const URLParts& parts, BuiltinID member)
 {
     BuiltinID helper = member == Builtins::URLSearchParamsPrototypeKeys ? Builtins::CompilerHelpersPlainQueryKeys
         : member == Builtins::URLSearchParamsPrototypeValues ? Builtins::CompilerHelpersPlainQueryValues : Builtins::CompilerHelpersPlainQueryEntries;
@@ -423,7 +423,7 @@ static void endWithEither(FunctionPassContext& context, IRBuilder& builder, cons
     builder.endExpansion(expansion, result);
 }
 
-static void expandSearch(FunctionPassContext& context, IRBuilder& builder, const Parts& parts, const ReplayedCall& replayed, const CallOfMember& site, const IRBuilder::Expansion& expansion)
+static void expandSearch(FunctionPassContext& context, IRBuilder& builder, const URLParts& parts, const ReplayedCall& replayed, const CallOfMember& site, const IRBuilder::Expansion& expansion)
 {
     ValueID name = replayed.call.argumentsOperands()[0];
     bool answersValue = site.member == Builtins::URLSearchParamsPrototypeGet;
@@ -443,7 +443,7 @@ static void expandSearch(FunctionPassContext& context, IRBuilder& builder, const
     builder.endExpansion(expansion, appendReplayed(builder, replayed, builder.append(Value(parts.construction))));
 }
 
-static void expandCall(FunctionPassContext& context, IRBuilder& builder, const Parts& parts, const ReplayedCall& replayed, const CallOfMember& site)
+static void expandCall(FunctionPassContext& context, IRBuilder& builder, const URLParts& parts, const ReplayedCall& replayed, const CallOfMember& site)
 {
     IRBuilder::Expansion expansion = beginExpansionOf(context, builder, site.call);
     IRBuilder::ProvenBranch isUnbuilt = branchOnUnbuilt(builder, parts);
@@ -475,7 +475,7 @@ static void pointWalksAt(FunctionPassContext& context, ValueID iterable)
         context.analyses.didChangeValues();
 }
 
-static void expandWalk(FunctionPassContext& context, IRBuilder& builder, const Parts& parts, ValueID walk)
+static void expandWalk(FunctionPassContext& context, IRBuilder& builder, const URLParts& parts, ValueID walk)
 {
     Function& function = context.function;
     Value placeholder = IRBuilder::make(Opcode::Upcast, { parts.objectOrUndefined });
@@ -519,7 +519,7 @@ unsigned leaveURLsUnbuilt(FunctionPassContext& context)
                 pointWalksAt(context, call.call);
         }
 
-        Parts parts = expandConstruction(context, builder, object);
+        URLParts parts = expandConstruction(context, builder, object);
         for (const ReadOfMember& read : object.reads)
             expandRead(context, builder, parts, read);
         for (size_t index = 0; index < object.calls.size(); ++index)

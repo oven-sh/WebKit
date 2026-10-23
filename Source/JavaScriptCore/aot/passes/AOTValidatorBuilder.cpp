@@ -18,7 +18,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t outcomeResultIndex = 0;
-static constexpr uint32_t valueResultIndex = 1;
 
 static constexpr int64_t interpretedVerdictIndex = 0;
 static constexpr int64_t interpretedValueIndex = 1;

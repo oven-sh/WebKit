@@ -31,12 +31,9 @@ struct PlacedTableSizes {
     unsigned guardBits { 0 };
 };
 
-enum class RawWordCheck : uint8_t { Run, Skip };
-
 struct VerifierInputs {
     const FlowResults* flow { nullptr };
     const PlacedTableSizes* placed { nullptr };
-    RawWordCheck rawWordCheck { RawWordCheck::Run };
     bool isOptimizing { false };
     const EffectSummaries* effects { nullptr };
     // The summaries know less than those that the guards of the body were placed by, so they cannot say whether a guard still holds where it is used.

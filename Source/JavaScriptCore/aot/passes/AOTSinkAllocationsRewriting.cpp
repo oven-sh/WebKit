@@ -106,9 +106,8 @@ bool AllocationSinking::splitEdgesNeedingCode(IRBuilder& builder)
     return true;
 }
 
-void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shape)
+void AllocationSinking::rewrite(IRBuilder& builder)
 {
-    m_resultShape = shape;
     findWhetherObjectsAreBuiltBeforeBranches();
     RewriteTables& tables = m_tables.emplace();
     tables.headValues.grow(m_function.blocks.size());
@@ -310,10 +309,6 @@ void AllocationSinking::rewriteBlock(BlockID block)
     m_cursor->setOrigin(terminator.origin());
     ValueID condition = m_cursor->takeConditionOf(terminator);
     interpreter.executeTerminator(terminator);
-    if (m_policy.returnedObjects == ReturnedObjects::StayVirtual && terminator.kind == TerminatorKind::Return && terminator.valueOperand()) {
-        interpreter.returnParts(terminator);
-        return;
-    }
 
     if (m_inputs.throwingTerminators.get(block.index()))
         m_cursor->willKeepThrowingValue(interpreter);

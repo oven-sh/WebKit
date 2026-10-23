@@ -39,42 +39,6 @@ static void dumpReceiverProofs(PrintStream& out, ProofSet proofs)
     out.print("]");
 }
 
-static void dumpCondition(PrintStream& out, const MemberCondition& condition)
-{
-    switch (condition.kind) {
-    case MemberCondition::Kind::MemberUnchanged:
-        out.print("MemberUnchanged(L", condition.layout.index(), ", ", nameOf(condition.side), ", K", condition.key.index(), ")");
-        return;
-    case MemberCondition::Kind::PrototypeLinkUnchanged:
-        out.print("PrototypeLinkUnchanged(L", condition.layout.index(), ", ", nameOf(condition.side), ")");
-        return;
-    case MemberCondition::Kind::ClassEvaluatedOnce:
-        out.print("ClassEvaluatedOnce(L", condition.layout.index(), ")");
-        return;
-    case MemberCondition::Kind::InstancePrototypeUnchanged:
-        out.print("InstancePrototypeUnchanged(L", condition.layout.index(), ")");
-        return;
-    case MemberCondition::Kind::MemberNotHidden:
-        out.print("MemberNotHidden(L", condition.layout.index(), ", ", nameOf(condition.side), ", K", condition.key.index(), ")");
-        return;
-    case MemberCondition::Kind::MemberPassedByStores:
-        out.print("MemberPassedByStores(L", condition.layout.index(), ", K", condition.key.index(), ")");
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpConditions(PrintStream& out, const MemberConditions& conditions)
-{
-    CommaPrinter comma;
-    out.print("[");
-    for (const MemberCondition& condition : conditions) {
-        out.print(comma);
-        dumpCondition(out, condition);
-    }
-    out.print("]");
-}
-
 MemberAnswer MemberAnswer::unknown(UnprovenCause cause)
 {
     MemberAnswer answer;
@@ -89,9 +53,7 @@ FunctionID MemberAnswer::accessorFor(Access access) const
         return getter;
     case Access::Store:
         return setter;
-    case Access::None:
-    case Access::Has:
-    case Access::Define:
+    default:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -151,16 +113,7 @@ KeyLookup keyLookupOf(const Program& program, PropertyKeyID key)
     case NameClass::CanonicalNumericString:
     case NameClass::Proto:
         return KeyLookup::ByKey;
-    case NameClass::Ordinary:
-    case NameClass::Constructor:
-    case NameClass::ObjectPrototypeMember:
-    case NameClass::Length:
-    case NameClass::Prototype:
-    case NameClass::CallOrApply:
-    case NameClass::Bind:
-    case NameClass::LastIndex:
-    case NameClass::Then:
-    case NameClass::ToJSON:
+    default:
         return KeyLookup::Ordinary;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -197,14 +150,6 @@ void setDeclaredMember(MemberAnswer& answer, const DeclaredMember& member, Layou
     answer.method = member.method;
 }
 
-static MemberAnswer createProvenAnswer(MemberKind kind)
-{
-    MemberAnswer answer;
-    answer.kind = kind;
-    answer.level = KnowledgeLevel::Proven;
-    return answer;
-}
-
 static void addCause(MemberAnswer& answer, UnprovenCause cause)
 {
     if (answer.cause == UnprovenCause::Unknown)
@@ -223,11 +168,6 @@ static void addConditionWithCause(MemberAnswer& walked, const MemberCondition& c
     addCause(walked, cause);
 }
 
-static bool isMemberOfClass(const MemberAnswer& answer)
-{
-    return answer.kind == MemberKind::Method || answer.kind == MemberKind::Accessor;
-}
-
 // The object itself must not stand in the way of the lookup.
 static void requireLookupPastObject(const Program& program, MemberAnswer& walked, const MemberAnswer& found, const MemberQuery& query, Proof proof, UnprovenCause cause)
 {
@@ -243,10 +183,7 @@ static bool isPrivateName(const Program& program, PropertyKeyID key)
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::EnginePrivateName:
         return true;
-    case PropertyKeyKind::Text:
-    case PropertyKeyKind::WellKnownSymbol:
-    case PropertyKeyKind::CreatedSymbol:
-    case PropertyKeyKind::RegisteredSymbol:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -574,9 +511,7 @@ static MemberAnswer findInheritedMember(const PropertyAccessContext& context, co
         return findMemberFromPrototypeOf(context, BuiltinClasses::Object, query.key, query.access);
     case LayoutKind::BuiltinResult:
         return findMemberFromPrototypeOf(context, isTupleLayout(context.program, query.layout) ? BuiltinClasses::Array : BuiltinClasses::Object, query.key, query.access);
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
+    default:
         return MemberAnswer::unknown(UnprovenCause::NonLayoutObject);
     case LayoutKind::ModuleNamespace:
         break;

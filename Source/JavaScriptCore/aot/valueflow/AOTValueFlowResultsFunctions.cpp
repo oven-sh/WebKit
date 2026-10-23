@@ -169,14 +169,7 @@ static bool actsForNobodyKnown(const ValueFlowSolver& solver, ValueFlowStatement
     case ValueFlowStatementKind::Behavior:
     case ValueFlowStatementKind::Escape:
         return true;
-    case ValueFlowStatementKind::Operation:
-    case ValueFlowStatementKind::ModuleEvaluation:
-    case ValueFlowStatementKind::Coroutine:
-    case ValueFlowStatementKind::EntryChecks:
-    case ValueFlowStatementKind::HostRoots:
-    case ValueFlowStatementKind::UsedBuiltins:
-    case ValueFlowStatementKind::UnseenCode:
-    case ValueFlowStatementKind::ModulesLoadedByName:
+    default:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -310,7 +303,7 @@ static BuiltinCallbackTimes timesOfCallbacks(const BuiltinTable& builtins, const
     return times.value_or(BuiltinCallbackTimes::Once);
 }
 
-static auto orderOf(const FlowIndirectCall& call)
+static auto callOrderOf(const FlowIndirectCall& call)
 {
     return std::tuple(call.caller, call.site, call.callee, call.kind);
 }
@@ -318,11 +311,11 @@ static auto orderOf(const FlowIndirectCall& call)
 // Sorts the calls from `first` on and leaves one for each caller, site, callee and kind.
 static void mergeIndirectCalls(Vector<FlowIndirectCall>& calls, size_t first)
 {
-    AOT::sort(calls.mutableSpan().subspan(first), { }, orderOf);
+    AOT::sort(calls.mutableSpan().subspan(first), { }, callOrderOf);
     size_t count = first;
     for (size_t index = first; index < calls.size(); ++index) {
         FlowIndirectCall call = calls[index];
-        if (count == first || orderOf(calls[count - 1]) != orderOf(call)) {
+        if (count == first || callOrderOf(calls[count - 1]) != callOrderOf(call)) {
             calls[count++] = call;
             continue;
         }
@@ -393,11 +386,7 @@ FlowIndirectCallKind EntriesFromFunction::kindOf(const ValueFlowStatement& state
     case ValueFlowCallKind::Get:
     case ValueFlowCallKind::Set:
         return FlowIndirectCallKind::Accessor;
-    case ValueFlowCallKind::Call:
-    case ValueFlowCallKind::Construct:
-    case ValueFlowCallKind::CallByNativeCode:
-    case ValueFlowCallKind::ConstructByNativeCode:
-    case ValueFlowCallKind::CallByHost:
+    default:
         return hasCalleeStamp(statement) ? FlowIndirectCallKind::BuiltinCallback : FlowIndirectCallKind::Protocol;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -550,11 +539,10 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
         if (!flag.load(std::memory_order_relaxed) && holds())
             flag.store(true, std::memory_order_relaxed);
     };
-    uint32_t firstMadeNode = solver.input().numberOfNodes;
-    forEachIndexInParallel(inputs.loops(), solver.graph().numberOfNodes() - firstMadeNode, [&](unsigned index) {
-        const ValueFlowNodeKey& key = *solver.keyOfMadeNode(ValueFlowNodeID(firstMadeNode + index));
-        if (key.kind != ValueFlowMadeNodeKind::CallGroup)
-            return;
+    RELEASE_ASSERT(inputs.heapIndex);
+    std::span<const ValueFlowNodeID> firstNodesOfCallGroups = inputs.heapIndex->firstNodesOfCallGroups();
+    forEachIndexInParallel(inputs.loops(), firstNodesOfCallGroups.size(), [&](unsigned index) {
+        const ValueFlowNodeKey& key = *solver.keyOfMadeNode(firstNodesOfCallGroups[index]);
         raiseFlag(mayBeIntoAnyFunction, [&] { return ValueSets::isComplement(key.set); });
         raiseFlag(callsUnknownObject, [&] { return inputs.sets().contains(key.set, ValueFlowUniverse::unknownObject()); });
         raiseFlag(callsUntrackedObject, [&] { return inputs.sets().contains(key.set, ValueFlowUniverse::untrackedObject()); });
@@ -629,30 +617,7 @@ static BitVector findFunctionsNamedByUnsolvedCode(const ValueFlowResultInputs& i
 static constexpr bool looksIntoObject(ValueFlowNameKind kind)
 {
     switch (kind) {
-    case ValueFlowNameKind::Property:
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-    case ValueFlowNameKind::Elements:
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-    case ValueFlowNameKind::EveryProperty:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
+    default:
         return true;
     case ValueFlowNameKind::Slot:
     case ValueFlowNameKind::HiddenSlot:
@@ -678,7 +643,7 @@ static ValueSetID findCallablesLookedInto(const ValueFlowResultInputs& inputs, V
 {
     // A set that several threads meet is tested by each of them, and adds the same.
     struct FoundByWorker {
-        HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seenSets;
+        ValueSetsMet seenSets;
         Vector<ValueSetID> callablesInSets;
     };
     constexpr uint32_t nodesPerTask = 4096;
@@ -699,20 +664,13 @@ static ValueSetID findCallablesLookedInto(const ValueFlowResultInputs& inputs, V
             case ValueFlowMadeNodeKind::Lookup:
             case ValueFlowMadeNodeKind::ReadUnderKind:
                 break;
-            case ValueFlowMadeNodeKind::Constant:
-            case ValueFlowMadeNodeKind::Written:
-            case ValueFlowMadeNodeKind::CallGroup:
-            case ValueFlowMadeNodeKind::Hub:
-            case ValueFlowMadeNodeKind::Masked:
-            case ValueFlowMadeNodeKind::Marked:
-            case ValueFlowMadeNodeKind::WrittenUnderKind:
-            case ValueFlowMadeNodeKind::Instance:
+            default:
                 continue;
             }
             // A read through the untracked object is answered by name, out of all that anybody has written under the name. It looks into what is lost and into nothing else.
             if (key.set == inputs.universe().knownObjects())
                 continue;
-            if (looksIntoObject(key.name().kind) && ofWorker.seenSets.add(key.set.index()).isNewEntry && inputs.sets().meet(key.set, callables))
+            if (looksIntoObject(key.name().kind) && ofWorker.seenSets.add(key.set) && inputs.sets().meet(key.set, callables))
                 ofWorker.callablesInSets.append(makers.of(worker).intersect(key.set, callables));
         }
     });
@@ -795,16 +753,16 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
                 calls.append(BindCall { function, numberOfBoundArguments, !inputs.sets().contains(bound.withResultUsedOtherwise, target) });
         });
     }
-    auto orderOf = [](const BindCall& call) {
+    auto callOrderOf = [](const BindCall& call) {
         return std::tuple(call.target, call.numberOfBoundArguments);
     };
-    AOT::sort(calls, { }, orderOf);
+    AOT::sort(calls, { }, callOrderOf);
 
     Vector<FlowBoundFunctionUse> uses;
     for (size_t first = 0; first < calls.size();) {
         size_t end = first;
         bool everyResultIsOnlyCalled = true;
-        for (; end < calls.size() && orderOf(calls[end]) == orderOf(calls[first]); ++end)
+        for (; end < calls.size() && callOrderOf(calls[end]) == callOrderOf(calls[first]); ++end)
             everyResultIsOnlyCalled &= calls[end].resultIsOnlyCalled;
         FunctionID target = calls[first].target;
         ValueFlowObjectID closure = universe.closureOf(target);

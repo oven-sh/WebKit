@@ -84,11 +84,7 @@ static bool mayAnswerLikeOtherLayouts(const Layout& layout)
         return true;
     case LayoutKind::Instance:
         return layout.isDerived();
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -291,15 +287,6 @@ const MemberArm* MemberPartition::findArm(MemberKind kind) const
             return &arm;
     }
     return nullptr;
-}
-
-static void dumpLayouts(PrintStream& out, const LayoutList& layouts)
-{
-    CommaPrinter comma;
-    out.print("[");
-    for (LayoutID layout : layouts)
-        out.print(comma, "L", layout.index());
-    out.print("]");
 }
 
 void MemberPartition::dump(PrintStream& out) const

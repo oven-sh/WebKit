@@ -29,29 +29,25 @@ namespace JSC { namespace AOT { namespace Typed {
 // The rule of a built-in fills the array that stands for what the generic parser makes whenever it allocates a typed result, and nothing else stores into an array that no set holds.
 static BitVector findFilledArraysOfTypedResults(const ValueFlowResultInputs& inputs)
 {
-    const ValueFlowSolver& solver = inputs.solver();
     const ValueFlowUniverse& universe = inputs.universe();
-    constexpr uint32_t nodesPerShare = 1 << 14;
-    uint32_t numberOfNodes = solver.graph().numberOfNodes();
-    Vector<Vector<uint32_t>> filledOfShare((numberOfNodes + nodesPerShare - 1) / nodesPerShare);
-    forEachIndexInParallel(inputs.loops(), filledOfShare.size(), [&](unsigned share) {
-        for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
-            const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(index));
-            if (!key || key->kind != ValueFlowMadeNodeKind::Written || key->name().kind != ValueFlowNameKind::Elements || ValueSets::isComplement(key->set))
+    // The index lists the nodes that something is written to.
+    RELEASE_ASSERT(inputs.heapIndex);
+    Vector<ValueFlowHeapIndex::Stretch> stretches = inputs.heapIndex->stretchesOfNodesWrittenUnder([](ValueFlowName name) {
+        return name.kind == ValueFlowNameKind::Elements;
+    });
+    Vector<uint32_t> filled = collectInParallel<uint32_t>(inputs.loops(), stretches.size(), [&](unsigned stretch, Vector<uint32_t>& found) {
+        for (const ValueFlowHeapIndex::WrittenNode& node : stretches[stretch].nodes) {
+            if (ValueSets::isComplement(node.objects))
                 continue;
-            if (solver.valueOf(ValueFlowNodeID(index)) == ValueSets::nothing)
-                continue;
-            ValueFlowObjectID object = inputs.sets().onlyMember(key->set);
+            ValueFlowObjectID object = inputs.sets().onlyMember(node.objects);
             const ValueFlowSite* site = object ? universe.siteOf(object) : nullptr;
             if (site && site->origin == ValueFlowSiteOrigin::TypedResult)
-                filledOfShare[share].append(object.index());
+                found.append(object.index());
         }
     });
     BitVector isFilled;
-    for (const Vector<uint32_t>& filled : filledOfShare) {
-        for (uint32_t object : filled)
-            isFilled.set(object);
-    }
+    for (uint32_t object : filled)
+        isFilled.set(object);
     return isFilled;
 }
 
@@ -120,17 +116,6 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
     }
     AOT::sort(tables.sites.typedResultCalls, { }, &FlowTypedResultCall::call);
     inputs.build.statistics().count(StatisticID::FlowAllocationSites, tables.sites.allocationSites.size() - numberOfOtherSites);
-}
-
-static unsigned indexOfArrayElementsInType(const BuiltinTable& builtins)
-{
-    std::optional<unsigned> index;
-    for (BuiltinSlotID id : builtins.at(BuiltinClasses::Array).slots) {
-        const BuiltinSlot& slot = builtins.at(id);
-        if (slot.indexInType && slot.contentsSlot == ContentsSlot::Element)
-            index = *slot.indexInType;
-    }
-    return index.value();
 }
 
 // No mark says which prototype an array is created with, what becomes a prototype by a construction, or what is stored into a slot of native code.

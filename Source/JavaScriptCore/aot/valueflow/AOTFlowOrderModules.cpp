@@ -34,20 +34,18 @@ struct ModuleGraph {
 
 uint32_t anyModuleNode(const FlowOrderInputs& inputs)
 {
-    return inputs.program().modules.size();
+    return inputs.program.modules.size();
 }
 
 // What the host calls can run while any module is being evaluated.
-uint32_t nodeOf(const FlowOrderInputs& inputs, FlowInstanceID instance)
+uint32_t nodeOf(const FlowOrderInputs& inputs, FunctionID function)
 {
-    if (inputs.isHost(instance))
-        return anyModuleNode(inputs);
-    return anyModuleNode(inputs) + 1 + instance.index();
+    return function == inputs.host() ? anyModuleNode(inputs) : anyModuleNode(inputs) + 1 + function.index();
 }
 
 unsigned numberOfNodes(const FlowOrderInputs& inputs)
 {
-    return anyModuleNode(inputs) + 1 + inputs.numberOfInstances();
+    return anyModuleNode(inputs) + 2 + inputs.program.functions.size();
 }
 
 bool evaluatesTarget(ImportPhase phase)
@@ -61,100 +59,11 @@ bool evaluatesTarget(ImportPhase phase)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool evaluatesSynchronously(FlowModuleOperationKind kind)
-{
-    switch (kind) {
-    case FlowModuleOperationKind::Require:
-    case FlowModuleOperationKind::Evaluate:
-    case FlowModuleOperationKind::RequireDynamic:
-    case FlowModuleOperationKind::RequireBuiltinModule:
-        return true;
-    case FlowModuleOperationKind::Namespace:
-    case FlowModuleOperationKind::Import:
-    case FlowModuleOperationKind::ImportDynamic:
-    case FlowModuleOperationKind::ResolveDynamic:
-    case FlowModuleOperationKind::Use:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool evaluatesAsynchronously(FlowModuleOperationKind kind)
-{
-    switch (kind) {
-    case FlowModuleOperationKind::Import:
-    case FlowModuleOperationKind::ImportDynamic:
-        return true;
-    case FlowModuleOperationKind::Namespace:
-    case FlowModuleOperationKind::Require:
-    case FlowModuleOperationKind::Evaluate:
-    case FlowModuleOperationKind::RequireDynamic:
-    case FlowModuleOperationKind::RequireBuiltinModule:
-    case FlowModuleOperationKind::ResolveDynamic:
-    case FlowModuleOperationKind::Use:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void forEachLoadedModule(const FlowModuleOperation& operation, std::span<const ModuleID> moduleOfRuntimeModule, NOESCAPE const Invocable<void(ModuleID)> auto& functor)
-{
-    switch (operation.kind) {
-    case FlowModuleOperationKind::Namespace:
-    case FlowModuleOperationKind::Import:
-    case FlowModuleOperationKind::Require:
-    case FlowModuleOperationKind::Evaluate:
-        functor(operation.module);
-        return;
-    case FlowModuleOperationKind::ImportDynamic:
-    case FlowModuleOperationKind::RequireDynamic:
-    case FlowModuleOperationKind::ResolveDynamic:
-    case FlowModuleOperationKind::Use:
-        return;
-    case FlowModuleOperationKind::RequireBuiltinModule: {
-        uint32_t index = operation.runtimeModule.index();
-        if (index < moduleOfRuntimeModule.size() && moduleOfRuntimeModule[index])
-            functor(moduleOfRuntimeModule[index]);
-        return;
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void forEachInstanceEdge(const FlowOrderInputs& inputs, FlowInstanceID instance, std::span<const ModuleID> moduleOfRuntimeModule, std::span<const ModuleID> moduleWithBody, NOESCAPE const Invocable<void(uint32_t, uint32_t)> auto& functor)
-{
-    if (inputs.isHost(instance))
-        return;
-
-    const Program& program = inputs.program();
-    FunctionID id = inputs.functionOf(instance);
-    const Function& function = program.at(id);
-    uint32_t node = nodeOf(inputs, instance);
-    ModuleID evaluatedModule = moduleWithBody[id.index()];
-    if (evaluatedModule)
-        functor(evaluatedModule.index(), node);
-
-    bool canSuspendEvaluation = function.module && program.at(function.module).flags.contains(ModuleFlags::HasTopLevelAwait);
-    for (const FlowModuleOperation& operation : inputs.moduleOperationsOf(id)) {
-        bool isSynchronous = evaluatesSynchronously(operation.kind);
-        if (!isSynchronous && !(canSuspendEvaluation && evaluatesAsynchronously(operation.kind)))
-            continue;
-        forEachLoadedModule(operation, moduleOfRuntimeModule, [&](ModuleID target) {
-            if (function.module)
-                functor(function.module.index(), target.index());
-            if (evaluatedModule && evaluatedModule != function.module)
-                functor(evaluatedModule.index(), target.index());
-            if (isSynchronous)
-                functor(node, target.index());
-        });
-    }
-}
-
 // The loader goes through a module that is not evaluated to the modules that it imports. What such a module requires nobody visits: no code of it runs.
 BitVector modulesVisitedByLoader(const FlowOrderInputs& inputs)
 {
-    const Program& program = inputs.program();
-    BitVector visited = inputs.evaluatedModules();
+    const Program& program = inputs.program;
+    BitVector visited = inputs.evaluatedModules;
     Vector<uint32_t, 32> pending;
     for (size_t module : visited)
         pending.append(static_cast<uint32_t>(module));
@@ -167,44 +76,51 @@ BitVector modulesVisitedByLoader(const FlowOrderInputs& inputs)
     return visited;
 }
 
-void forEachModuleEdge(const FlowOrderInputs& inputs, const BitVector& visitedModules, std::span<const ModuleID> moduleOfRuntimeModule, std::span<const ModuleID> moduleWithBody, NOESCAPE const Invocable<void(uint32_t, uint32_t)> auto& functor)
+void forEachModuleEdge(const FlowOrderInputs& inputs, const BitVector& visitedModules, std::span<const ModuleID> moduleWithBody, NOESCAPE const Invocable<void(uint32_t, uint32_t)> auto& functor)
 {
-    const Program& program = inputs.program();
-    const BitVector& evaluatedModules = inputs.evaluatedModules();
+    const Program& program = inputs.program;
     uint32_t anyModule = anyModuleNode(inputs);
-
     for (size_t module : visitedModules) {
         for (const ModuleRequest& request : program.modules[module].requests)
             functor(static_cast<uint32_t>(module), request.target.index());
     }
-    for (unsigned instance = 0; instance < inputs.numberOfInstances(); ++instance)
-        forEachInstanceEdge(inputs, FlowInstanceID(instance), moduleOfRuntimeModule, moduleWithBody, functor);
-    for (const FlowModuleLoadRecord& load : inputs.moduleLoads()) {
-        functor(nodeOf(inputs, load.caller), load.module.index());
-        if (inputs.isHost(load.caller))
-            continue;
-        if (ModuleID loader = program.at(inputs.functionOf(load.caller)).module)
-            functor(loader.index(), load.module.index());
+    auto load = inputs.moduleLoads.begin();
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        ModuleID file = program.functions[index].module;
+        ModuleID evaluatedModule = moduleWithBody[index];
+        if (evaluatedModule)
+            functor(evaluatedModule.index(), nodeOf(inputs, FunctionID(index)));
+        bool canSuspendEvaluation = file && program.at(file).flags.contains(ModuleFlags::HasTopLevelAwait);
+        for (; load != inputs.moduleLoads.end() && load->function.index() == index; ++load) {
+            if (!load->isSynchronous && !canSuspendEvaluation)
+                continue;
+            if (file)
+                functor(file.index(), load->target.index());
+            if (evaluatedModule && evaluatedModule != file)
+                functor(evaluatedModule.index(), load->target.index());
+            if (load->isSynchronous)
+                functor(nodeOf(inputs, FunctionID(index)), load->target.index());
+        }
     }
-    for (const FlowCallLink& link : inputs.callLinks()) {
-        bool isEvaluationByLoader = link.kind == FlowCallLinkKind::Host && moduleWithBody[link.callee.index()];
+    for (ModuleID module : inputs.modulesLoadedByHost)
+        functor(anyModule, module.index());
+    for (const FlowCall& call : inputs.calls) {
+        bool isEvaluationByLoader = call.caller == inputs.host() && moduleWithBody[call.callee.index()];
         if (!isEvaluationByLoader)
-            functor(nodeOf(inputs, link.callerInstance), nodeOf(inputs, link.calleeInstance));
+            functor(nodeOf(inputs, call.caller), nodeOf(inputs, call.callee));
     }
-    for (uint32_t module = 0; module < anyModule; ++module) {
-        if (inputs.mayBeLoadedByName(ModuleID(module)))
-            functor(anyModule, module);
-    }
-    for (size_t module : evaluatedModules)
+    for (size_t module : inputs.modulesLoadedByName)
+        functor(anyModule, static_cast<uint32_t>(module));
+    for (size_t module : inputs.evaluatedModules)
         functor(static_cast<uint32_t>(module), anyModule);
 }
 
-ModuleGraph buildModuleGraph(const FlowOrderInputs& inputs, const BitVector& visitedModules, std::span<const ModuleID> moduleOfRuntimeModule, std::span<const ModuleID> moduleWithBody)
+ModuleGraph buildModuleGraph(const FlowOrderInputs& inputs, const BitVector& visitedModules, std::span<const ModuleID> moduleWithBody)
 {
     unsigned nodeCount = numberOfNodes(inputs);
     ModuleGraph graph;
     graph.offsets.fill(0, nodeCount + 1);
-    forEachModuleEdge(inputs, visitedModules, moduleOfRuntimeModule, moduleWithBody, [&](uint32_t source, uint32_t) {
+    forEachModuleEdge(inputs, visitedModules, moduleWithBody, [&](uint32_t source, uint32_t) {
         ++graph.offsets[source + 1];
     });
     for (unsigned node = 0; node < nodeCount; ++node)
@@ -212,7 +128,7 @@ ModuleGraph buildModuleGraph(const FlowOrderInputs& inputs, const BitVector& vis
 
     graph.targets.grow(graph.offsets.last());
     Vector<uint32_t> nextTarget = graph.offsets;
-    forEachModuleEdge(inputs, visitedModules, moduleOfRuntimeModule, moduleWithBody, [&](uint32_t source, uint32_t target) {
+    forEachModuleEdge(inputs, visitedModules, moduleWithBody, [&](uint32_t source, uint32_t target) {
         graph.targets[nextTarget[source]++] = target;
     });
     return graph;
@@ -267,7 +183,7 @@ Vector<BitVector> computeReachedComponents(const FlowOrderInputs& inputs, const 
             continue;
         uint32_t component = componentOf[module];
         BitVector& reached = reachedComponents[component];
-        for (const ModuleRequest& request : inputs.program().modules[module].requests) {
+        for (const ModuleRequest& request : inputs.program.modules[module].requests) {
             uint32_t target = componentOf[request.target.index()];
             if (!completesBeforeRequester(request, modulesInCycles) || target == component || reached.get(target))
                 continue;
@@ -306,25 +222,12 @@ bool FlowModuleOrder::runsAfterRequests(ModuleID module) const
     return module.index() < componentOf.size() && !modulesInCycles.get(module.index());
 }
 
-void FlowModuleOrder::dump(PrintStream& out) const
-{
-    for (unsigned module = 0; module < componentOf.size(); ++module) {
-        uint32_t component = componentOf[module];
-        out.print("m", module, ": component ", component, modulesInCycles.get(module) ? " cycle" : "", " after {");
-        CommaPrinter comma;
-        for (size_t completed : componentsCompletedBefore[component])
-            out.print(comma, completed);
-        out.println("}");
-    }
-}
-
 FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
 {
-    unsigned numberOfModules = inputs.program().modules.size();
-    Vector<ModuleID> moduleOfRuntimeModule = indexRuntimeModules(inputs.program());
-    Vector<ModuleID> moduleWithBody = indexModuleBodies(inputs.program());
+    unsigned numberOfModules = inputs.program.modules.size();
+    Vector<ModuleID> moduleWithBody = indexModuleBodies(inputs.program);
     BitVector visitedModules = modulesVisitedByLoader(inputs);
-    ModuleGraph graph = buildModuleGraph(inputs, visitedModules, moduleOfRuntimeModule.span(), moduleWithBody.span());
+    ModuleGraph graph = buildModuleGraph(inputs, visitedModules, moduleWithBody.span());
     StronglyConnectedComponents components = computeStronglyConnectedComponents(numberOfNodes(inputs), [&](unsigned node) {
         return graph.successorsOf(node);
     });

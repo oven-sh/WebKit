@@ -19,9 +19,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr size_t numberOfHeaderWords = 2;
-static constexpr uint64_t hasImmediate = 1ull << 32;
-
 #if ASSERT_ENABLED
 static bool isOperand(StubKey key, const StubSignature& signature, GPRReg reg)
 {

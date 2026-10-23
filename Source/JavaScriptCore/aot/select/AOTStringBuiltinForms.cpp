@@ -43,12 +43,6 @@ static bool isIntegerArgument(const InlineBuiltinSite& site, unsigned index)
     return type && type->isInteger();
 }
 
-static bool isNumberArgument(const InlineBuiltinSite& site, unsigned index)
-{
-    const Type* type = argumentTypeOf(site, index);
-    return type && type->isNumber();
-}
-
 static bool isNumberOrAbsent(const InlineBuiltinSite& site, unsigned index)
 {
     const Type* type = argumentTypeOf(site, index);
@@ -58,14 +52,6 @@ static bool isNumberOrAbsent(const InlineBuiltinSite& site, unsigned index)
         return false;
     // `to?: number`: the code in line asks whether the operand is undefined.
     return type->hasOnlyPrimitives(Primitive::Undefined) || type->withoutNullish().isNumber();
-}
-
-static InlineForm wholeIf(const InlineBuiltinSite& site, bool handlesOperandTypes)
-{
-    // Without a slow path the parameter types of the overload imply the condition.
-    if (handlesOperandTypes || !site.hasSlowPath)
-        return InlineForm::Whole;
-    return InlineForm::Call;
 }
 
 static InlineForm twoWayIf(bool hasInlineCode)

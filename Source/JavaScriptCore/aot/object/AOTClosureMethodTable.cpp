@@ -24,13 +24,13 @@
 
 namespace JSC { namespace AOT {
 
-static bool isBoundFunction(const Closure& closure)
+static bool isBoundClosure(const Closure& closure)
 {
     return closure.kind().callable() == CallableKind::Bound;
 }
 
 // Every function below may make a property of the closure, a read too: `prototype`, `name` and `length` are made when something asks for them.
-static ALWAYS_INLINE void validateIsNotInFrame(VM& vm, const Closure* closure)
+static ALWAYS_INLINE void validateClosureIsNotInFrame(VM& vm, const Closure* closure)
 {
     if (validatesRuntime(vm)) [[unlikely]]
         validateFunctionCellIsNotInFrame(vm, closure);
@@ -79,7 +79,7 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
-    validateIsNotInFrame(vm, closure);
+    validateClosureIsNotInFrame(vm, closure);
     const LayoutData* classLayout = closure->classData();
     if (const FieldData* field = classLayout ? StaticFields::findOwnField(*closure, propertyName.uid()) : nullptr) {
         if (JSValue value = closure->state().objects->classes.readStaticField(*field)) {
@@ -98,7 +98,7 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     }
     if (propertyName == vm.propertyNames->prototype)
         return closure->ensurePrototypeProperty(vm) && JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot);
-    if ((propertyName == vm.propertyNames->hasInstanceSymbol || propertyName == vm.propertyNames->length || propertyName == vm.propertyNames->name) && isBoundFunction(*closure)) [[unlikely]]
+    if ((propertyName == vm.propertyNames->hasInstanceSymbol || propertyName == vm.propertyNames->length || propertyName == vm.propertyNames->name) && isBoundClosure(*closure)) [[unlikely]]
         closure->adoptBoundFunctionStructure(vm);
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
@@ -124,7 +124,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
-    validateIsNotInFrame(vm, closure);
+    validateClosureIsNotInFrame(vm, closure);
     if (slot.thisValue() == JSValue(closure) && closure->refusesOwnProperty(vm, name)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         slot.disableCaching();
@@ -168,7 +168,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
 
 bool Closure::hasOrdinaryDefineOwnProperty(VM& vm, PropertyName name) const
 {
-    if (classData() || isBoundFunction(*this))
+    if (classData() || isBoundClosure(*this))
         return false;
     const CommonIdentifiers& names = *vm.propertyNames;
     return name != names.prototype && name != names.name && name != names.length && name != names.displayName;
@@ -179,7 +179,7 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Closure* closure = uncheckedDowncast<Closure>(object);
-    validateIsNotInFrame(vm, closure);
+    validateClosureIsNotInFrame(vm, closure);
     if (closure->refusesOwnProperty(vm, name)) [[unlikely]]
         return typeError(globalObject, scope, shouldThrow, assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid()));
     if (restatesInitialName(vm, *closure, name, descriptor))
@@ -221,7 +221,7 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
-    validateIsNotInFrame(vm, closure);
+    validateClosureIsNotInFrame(vm, closure);
     const LayoutData* classLayout = closure->classData();
     const FieldData* field = classLayout ? StaticFields::findOwnField(*closure, name.uid()) : nullptr;
     bool wasInVariable = field && StaticFields::isInVariable(*closure, *field);
@@ -248,7 +248,7 @@ bool Closure::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned in
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
-    validateIsNotInFrame(vm, closure);
+    validateClosureIsNotInFrame(vm, closure);
     closure->prepareForGenericAccess(vm);
     return Base::putByIndex(cell, globalObject, index, value, shouldThrow);
 }
@@ -257,7 +257,7 @@ bool Closure::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
-    validateIsNotInFrame(vm, closure);
+    validateClosureIsNotInFrame(vm, closure);
     closure->prepareForGenericAccess(vm);
     if (const LayoutData* classLayout = closure->classData()) {
         StaticFields::ensureProperties(vm, *closure);
@@ -270,7 +270,7 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
-    validateIsNotInFrame(vm, closure);
+    validateClosureIsNotInFrame(vm, closure);
     // A name that the function refuses as its own could be planted one step up.
     if (object->getPrototypeDirect() != prototype && closure->isBuiltinFunction()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);

@@ -373,23 +373,6 @@ static Vector<ValueID> renumberValues(Function& function, size_t numberOfListedV
     for (auto& block : blocks)
         block.forEachChildOutsideValues(remapChild);
 
-    // The relations name values by their numbers. Where one of those values is gone, they say nothing any more.
-    auto renumber = [&](uint32_t& index) {
-        if (index >= newID.size() || !newID[index])
-            return false;
-        index = newID[index].index();
-        return true;
-    };
-    bool namesRemovedValue = false;
-    for (RelationSubject& subject : function.relations.subjects) {
-        if (subject.kind != RelationSubjectKind::Parameter && subject.index != UINT32_MAX)
-            namesRemovedValue |= !renumber(subject.index);
-    }
-    for (HandedTo& handed : function.relations.handed)
-        namesRemovedValue |= !renumber(handed.call);
-    if (namesRemovedValue)
-        function.relations = { };
-
     formerValues = WTF::move(values);
     return newID;
 }
@@ -437,7 +420,7 @@ bool compactFunction(Function& function, Renumbering* renumbering)
 
 namespace {
 
-struct ProvisionalIDRewriter {
+struct FunctionProvisionalIDRewriter {
     void operator()(TypeID& id) const { types.apply(id); }
     void operator()(LayoutSetID& id) const { types.apply(id); }
     void operator()(CalleeSetID& id) const { types.apply(id); }
@@ -521,7 +504,7 @@ void remapIDs(Function& function, const TypeRemap& types, const StringRemap& str
         return;
 
     bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
-    ProvisionalIDRewriter rewriter { types, strings, functions };
+    FunctionProvisionalIDRewriter rewriter { types, strings, functions };
     forEachReference(static_cast<FunctionRecord&>(function), rewriter);
     for (Value& value : function.editAllValues()) {
         types.apply(value.type);

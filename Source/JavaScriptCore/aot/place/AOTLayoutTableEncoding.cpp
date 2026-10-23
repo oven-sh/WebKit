@@ -145,22 +145,6 @@ static std::optional<uint32_t> fieldOperandOf(TableEncoder& encoder, const Place
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void appendOperandsOfFlattenedObject(TableEncoder& encoder, FieldReference reference, Vector<uint32_t>& operands)
-{
-    const Vector<FlattenedObject>& flattenedObjects = encoder.program.at(reference.layout).flattenedObjects;
-    size_t position = flattenedObjects.findIf([&](const FlattenedObject& flattened) {
-        return flattened.field == reference.field;
-    });
-    RELEASE_ASSERT(position != notFound);
-    const FlattenedObject& flattened = flattenedObjects[position];
-    const PlacedFlattenedObject* placed = encoder.slots.layout(reference.layout).flattenedObjectIn(reference.field);
-    AllocationID allocation = encoder.placement.allocations().find(flattened.layout, encoder.placement.shapes().shapeOf(flattened.layout, flattened.allocationClass), flattened.fields.span());
-    RELEASE_ASSERT(placed);
-    // The allocations that lay an object into the room have the number. Where the code has none of them any more, no slot says that an object lies there.
-    uint32_t numberOfAllocation = allocation ? allocation.index() : LayoutData::FlattenedObjectData::noAllocation;
-    operands.appendList({ LayoutData::FlattenedObjectData::noFunction, numberOfAllocation, placed->begin(), placed->beginInOwnCell, placed->endInOwnCell - placed->beginInOwnCell });
-}
-
 static SlotData closureEnvironmentSlotOf(TableEncoder& encoder, LayoutID id)
 {
     std::optional<uint32_t> field = encoder.program.at(id).flow.closureEnvironmentField;
@@ -214,11 +198,7 @@ static void collectFields(TableEncoder& encoder, LayoutID id, ObjectLayoutParts&
         data.flags = fieldFlagsOf(encoder, reference);
         data.slot = slot.data();
         data.type = encoder.typeOffset(typeHeldBy(declaration));
-        data.defersFlattenedObject = slot.defersFlattenedObject;
-        if (slot.defersFlattenedObject) {
-            data.operandIndex = static_cast<uint16_t>(parts.fieldOperands.size());
-            appendOperandsOfFlattenedObject(encoder, reference, parts.fieldOperands);
-        } else if (std::optional<uint32_t> operand = fieldOperandOf(encoder, slot)) {
+        if (std::optional<uint32_t> operand = fieldOperandOf(encoder, slot)) {
             data.operandIndex = static_cast<uint16_t>(parts.fieldOperands.size());
             parts.fieldOperands.append(*operand);
         }
@@ -255,12 +235,6 @@ static uint32_t appendReferences(TableEncoder& encoder, LayoutID id)
         if (row == planned.extensionWordIndex() || !slot.hasStorage() || !traitsOf(slot.representation).holdsCell)
             continue;
         listFor(offsets, slot).append(slot.offset);
-    }
-    for (const PlacedFlattenedObject& flattened : planned.flattenedObjects) {
-        for (const PlacedSlot& slot : encoder.slots.layout(flattened.layout).slots) {
-            if (slot.hasStorage() && traitsOf(slot.representation).holdsCell && !encoder.build.recordedOptions().isSabotaged(Sabotage::RoomIsNotInReferenceList))
-                listFor(offsets, slot).append(flattened.distance + slot.offset);
-        }
     }
 
     // In front of the counts, read backwards from there: how many inner objects, their offsets, how many allocations make such objects, their numbers.

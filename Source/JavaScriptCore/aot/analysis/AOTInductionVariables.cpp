@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAnalysisDump.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIntegerRelations.h"
 #include "AOTSort.h"
@@ -148,7 +147,7 @@ struct PendingValue {
     int64_t accumulated { 0 };
 };
 
-struct Steps {
+struct InductionSteps {
     ValueID parameter;
     Range totals;
     std::optional<InductionStep> invariant;
@@ -177,14 +176,14 @@ private:
     ValueID findStart(std::span<const ValueID> enteringArguments);
     bool haveEqualValues(ValueID start, ValueID argument);
 
-    void collectSteps(ValueID stepped, Steps&);
-    void visit(PendingValue, Steps&);
-    void visitBlockParameter(ValueID, ValueLocation, int64_t accumulated, Steps&);
-    void visitOperation(const Value&, int64_t accumulated, Steps&);
-    void visitInvariantStep(const Value& sum, int64_t accumulated, Steps&);
-    static void enqueueOperand(ValueID operand, CheckedInt64 accumulated, Steps&);
-    static InductionStep stepOf(const Steps&);
-    InductionDirection directionOf(const Steps&) const;
+    void collectSteps(ValueID stepped, InductionSteps&);
+    void visit(PendingValue, InductionSteps&);
+    void visitBlockParameter(ValueID, ValueLocation, int64_t accumulated, InductionSteps&);
+    void visitOperation(const Value&, int64_t accumulated, InductionSteps&);
+    void visitInvariantStep(const Value& sum, int64_t accumulated, InductionSteps&);
+    static void enqueueOperand(ValueID operand, CheckedInt64 accumulated, InductionSteps&);
+    static InductionStep stepOf(const InductionSteps&);
+    InductionDirection directionOf(const InductionSteps&) const;
 
     void findTests(Variables&);
     Vector<BlockID, 4> findTestingBlocks() const;
@@ -254,7 +253,7 @@ std::optional<InductionVariable> InductionFinder::findVariable(uint32_t paramete
     variable.parameterIndex = parameterIndex;
     variable.start = findStart(enteringArguments->span());
 
-    Steps steps;
+    InductionSteps steps;
     steps.parameter = variable.parameter;
     for (ValueID argument : *carriedArguments) {
         if (!argument)
@@ -325,7 +324,7 @@ bool InductionFinder::haveEqualValues(ValueID start, ValueID argument)
     return constant && constant == integerConstantOf(start);
 }
 
-void InductionFinder::collectSteps(ValueID stepped, Steps& steps)
+void InductionFinder::collectSteps(ValueID stepped, InductionSteps& steps)
 {
     steps.accumulatedAtParameter.clear();
     steps.pending.append(PendingValue { stepped, 0 });
@@ -333,7 +332,7 @@ void InductionFinder::collectSteps(ValueID stepped, Steps& steps)
         visit(steps.pending.takeLast(), steps);
 }
 
-void InductionFinder::visit(PendingValue pending, Steps& steps)
+void InductionFinder::visit(PendingValue pending, InductionSteps& steps)
 {
     ValueID id = numericIdentityOf(pending.value);
     if (id == steps.parameter) {
@@ -361,7 +360,7 @@ void InductionFinder::visit(PendingValue pending, Steps& steps)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void InductionFinder::visitBlockParameter(ValueID parameter, ValueLocation location, int64_t accumulated, Steps& steps)
+void InductionFinder::visitBlockParameter(ValueID parameter, ValueLocation location, int64_t accumulated, InductionSteps& steps)
 {
     if (location.block == m_loop.header()) {
         steps.isUnknown = true;
@@ -384,7 +383,7 @@ void InductionFinder::visitBlockParameter(ValueID parameter, ValueLocation locat
     }
 }
 
-void InductionFinder::visitOperation(const Value& value, int64_t accumulated, Steps& steps)
+void InductionFinder::visitOperation(const Value& value, int64_t accumulated, InductionSteps& steps)
 {
     switch (value.opcode) {
     case Opcode::Increment:
@@ -417,7 +416,7 @@ void InductionFinder::visitOperation(const Value& value, int64_t accumulated, St
     }
 }
 
-void InductionFinder::visitInvariantStep(const Value& sum, int64_t accumulated, Steps& steps)
+void InductionFinder::visitInvariantStep(const Value& sum, int64_t accumulated, InductionSteps& steps)
 {
     auto isStep = [&](ValueID variable, ValueID amount) {
         return numericIdentityOf(variable) == steps.parameter && isInvariantIn(m_analyses, m_loop, amount);
@@ -440,7 +439,7 @@ void InductionFinder::visitInvariantStep(const Value& sum, int64_t accumulated, 
         steps.isUnknown = true;
 }
 
-void InductionFinder::enqueueOperand(ValueID operand, CheckedInt64 accumulated, Steps& steps)
+void InductionFinder::enqueueOperand(ValueID operand, CheckedInt64 accumulated, InductionSteps& steps)
 {
     if (accumulated.hasOverflowed()) {
         steps.isUnknown = true;
@@ -449,7 +448,7 @@ void InductionFinder::enqueueOperand(ValueID operand, CheckedInt64 accumulated, 
     steps.pending.append(PendingValue { operand, accumulated.value() });
 }
 
-InductionStep InductionFinder::stepOf(const Steps& steps)
+InductionStep InductionFinder::stepOf(const InductionSteps& steps)
 {
     if (steps.invariant && steps.totals.isEmpty())
         return *steps.invariant;
@@ -458,7 +457,7 @@ InductionStep InductionFinder::stepOf(const Steps& steps)
     return { };
 }
 
-InductionDirection InductionFinder::directionOf(const Steps& steps) const
+InductionDirection InductionFinder::directionOf(const InductionSteps& steps) const
 {
     if (!steps.invariant)
         return directionOfAmounts(steps.totals);
@@ -700,62 +699,6 @@ const InductionVariable* InductionVariables::find(ValueID headerParameter) const
             return variable;
     }
     return nullptr;
-}
-
-static void dumpStep(PrintStream& out, const InductionStep& step)
-{
-    switch (step.kind) {
-    case InductionStepKind::Unknown:
-        out.print(enumName(step.kind));
-        return;
-    case InductionStepKind::Constant:
-        out.print(step.constant < 0 ? "" : "+", step.constant);
-        return;
-    case InductionStepKind::Invariant:
-        out.print(step.isSubtracted ? "-" : "+");
-        dumpID(out, step.invariant);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpTest(PrintStream& out, ValueID parameter, const InductionTest& test)
-{
-    dumpID(out, test.block);
-    out.print(" ");
-    dumpID(out, parameter);
-    out.print(" ", nameOf(test.relation), " ");
-    dumpID(out, test.bound);
-    out.print(" ", enumName(test.boundKind), " ", enumName(test.tested));
-    out.print(" entry ", enumName(test.entryRelation), " exits ", enumName(test.exits));
-}
-
-void dumpInductionVariable(PrintStream& out, const InductionVariable& variable)
-{
-    dumpID(out, variable.parameter);
-    out.print(" start ");
-    dumpID(out, variable.start);
-    out.print(" step ");
-    dumpStep(out, variable.step);
-    out.print(" ", enumName(variable.direction), " stepped ");
-    dumpValues(out, variable.steppedValues.span());
-    out.print(" tests ");
-    dumpList(out, variable.tests.span(), [&variable](PrintStream& out, const InductionTest& test) {
-        dumpTest(out, variable.parameter, test);
-    });
-}
-
-void InductionVariables::dump(PrintStream& out) const
-{
-    for (const LoopInduction& loop : m_loops) {
-        out.print("loop ");
-        dumpID(out, loop.header);
-        out.print(":\n");
-        for (const InductionVariable& variable : loop.variables) {
-            dumpInductionVariable(out, variable);
-            out.print("\n");
-        }
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

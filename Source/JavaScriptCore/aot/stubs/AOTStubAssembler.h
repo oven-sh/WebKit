@@ -368,6 +368,12 @@ void StubAssembler::preservingRegistersClobberedBy(StubCallee callee, bool hasRe
     loadSavedRegisters(area);
 }
 
+inline constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+inline constexpr GPRReg fp = GPRInfo::callFrameRegister;
+inline constexpr GPRReg A0 = gprOf(StubRegister::A0);
+inline constexpr GPRReg A1 = gprOf(StubRegister::A1);
+inline constexpr GPRReg T11 = gprOf(StubRegister::T11);
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

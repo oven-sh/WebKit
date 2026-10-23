@@ -77,7 +77,7 @@ enum class Action : uint8_t {
     Erase,
 };
 
-struct Match {
+struct StringRangeMatch {
     SelectionGroup group;
     Action action;
     ProgramPoint point;
@@ -98,7 +98,7 @@ class RangeMatcher {
 public:
     RangeMatcher(SelectionContext&, Vector<RangeValue>&&);
 
-    Vector<Match> run();
+    Vector<StringRangeMatch> run();
 
 private:
     void sortRanges();
@@ -119,7 +119,7 @@ private:
     void claimUsers(RangeUses&);
     RangeForm chooseForm(const RangeValue&, RangeUses&);
 
-    Match createMatch(ValueID root, Action, const RangeValue&) const;
+    StringRangeMatch createMatch(ValueID root, Action, const RangeValue&) const;
     void addMatches(const RangeValue&, const RangeUses&);
 
     SelectionContext& m_context;
@@ -128,7 +128,7 @@ private:
     const UseLists& m_uses;
     Vector<RangeValue> m_ranges;
     UncheckedKeyHashMap<ValueID, uint32_t> m_indexes;
-    Vector<Match> m_matches;
+    Vector<StringRangeMatch> m_matches;
 };
 
 } // anonymous namespace
@@ -482,7 +482,7 @@ RangeForm RangeMatcher::chooseForm(const RangeValue& range, RangeUses& uses)
     return RangeForm::Unchanged;
 }
 
-Match RangeMatcher::createMatch(ValueID root, Action action, const RangeValue& range) const
+StringRangeMatch RangeMatcher::createMatch(ValueID root, Action action, const RangeValue& range) const
 {
     return { .group = groupOfOne(root), .action = action, .point = m_uses.pointOf(root), .chain = range.chain, .base = range.chain.first().string };
 }
@@ -493,7 +493,7 @@ void RangeMatcher::addMatches(const RangeValue& range, const RangeUses& uses)
         std::optional<Action> action = actionOf(use.kind, range.form);
         if (!action)
             continue;
-        Match match = createMatch(use.user, *action, range);
+        StringRangeMatch match = createMatch(use.user, *action, range);
         match.read = use.read;
         match.operandIndex = use.operandIndex;
         match.codeUnit = use.codeUnit;
@@ -508,7 +508,7 @@ void RangeMatcher::addMatches(const RangeValue& range, const RangeUses& uses)
     case RangeForm::Unchanged:
         return;
     case RangeForm::CodeUnit: {
-        Match match = createMatch(range.value, Action::BecomeCodeUnit, range);
+        StringRangeMatch match = createMatch(range.value, Action::BecomeCodeUnit, range);
         for (const RangeUse& use : uses.uses) {
             if (use.kind == UseKind::SwitchOnCodeUnit)
                 match.switchBlocks.append(use.block);
@@ -538,7 +538,7 @@ void RangeMatcher::matchRange(uint32_t index)
     addMatches(range, uses);
 }
 
-Vector<Match> RangeMatcher::run()
+Vector<StringRangeMatch> RangeMatcher::run()
 {
     sortRanges();
     findChains();
@@ -548,7 +548,7 @@ Vector<Match> RangeMatcher::run()
     return std::exchange(m_matches, { });
 }
 
-static std::optional<StringRangeBounds> insertBounds(GroupRewriter& rewriter, const Match& match, std::span<const StringRangeSource> chain)
+static std::optional<StringRangeBounds> insertBounds(GroupRewriter& rewriter, const StringRangeMatch& match, std::span<const StringRangeSource> chain)
 {
     std::optional<StringRangeBounds> bounds;
     for (const StringRangeSource& source : chain)
@@ -556,7 +556,7 @@ static std::optional<StringRangeBounds> insertBounds(GroupRewriter& rewriter, co
     return bounds;
 }
 
-static StringRangeBounds insertBounds(GroupRewriter& rewriter, const Match& match)
+static StringRangeBounds insertBounds(GroupRewriter& rewriter, const StringRangeMatch& match)
 {
     return *insertBounds(rewriter, match, match.chain.span());
 }
@@ -569,7 +569,7 @@ static void replaceRootWith(GroupRewriter& rewriter, Value&& replacement)
     root = WTF::move(replacement);
 }
 
-static Value makeCodeUnitRead(GroupRewriter& rewriter, const Match& match)
+static Value makeCodeUnitRead(GroupRewriter& rewriter, const StringRangeMatch& match)
 {
     const StringRangeSource& unit = match.chain.last();
     RELEASE_ASSERT(unit.isSingleUnit());
@@ -583,14 +583,14 @@ static Value makeCodeUnitRead(GroupRewriter& rewriter, const Match& match)
     return makeStringRangeRead(Opcode::StringRangeCodeUnitOrMinusOne, match.base, bounds, zero);
 }
 
-static void setComparedOperands(Value& comparison, const Match& match, ValueID unit, ValueID codeUnit)
+static void setComparedOperands(Value& comparison, const StringRangeMatch& match, ValueID unit, ValueID codeUnit)
 {
     bool unitIsOnLeft = OperandPosition::left(comparison.opcode) == match.operandIndex;
     comparison.setLeftOperand(unitIsOnLeft ? unit : codeUnit);
     comparison.setRightOperand(unitIsOnLeft ? codeUnit : unit);
 }
 
-static void readCharacters(GroupRewriter& rewriter, const Match& match)
+static void readCharacters(GroupRewriter& rewriter, const StringRangeMatch& match)
 {
     CharacterRead read = match.read;
     if (!read.position && OperandPosition::position(read.rangeRead))
@@ -599,7 +599,7 @@ static void readCharacters(GroupRewriter& rewriter, const Match& match)
     rewriter.leaveUnclaimed(match.group.root);
 }
 
-static void compareCodeUnit(GroupRewriter& rewriter, const Match& match, ValueID unit)
+static void compareCodeUnit(GroupRewriter& rewriter, const StringRangeMatch& match, ValueID unit)
 {
     ValueID root = match.group.root;
     Opcode opcode = rewriter.original(root).opcode;
@@ -610,20 +610,20 @@ static void compareCodeUnit(GroupRewriter& rewriter, const Match& match, ValueID
     rewriter.leaveUnclaimed(root);
 }
 
-static void compareOwnCodeUnit(GroupRewriter& rewriter, const Match& match)
+static void compareOwnCodeUnit(GroupRewriter& rewriter, const StringRangeMatch& match)
 {
     ValueID unit = rewriter.insert(makeCodeUnitRead(rewriter, match));
     rewriter.leaveUnclaimed(unit);
     compareCodeUnit(rewriter, match, unit);
 }
 
-static void compareSharedCodeUnit(GroupRewriter& rewriter, const Match& match)
+static void compareSharedCodeUnit(GroupRewriter& rewriter, const StringRangeMatch& match)
 {
     compareCodeUnit(rewriter, match, match.sharedUnit);
 }
 
 // An integer comparison narrows no string, so the parameters that the test narrowed are removed. The strings have no uses left, and the value on the other edge is undefined.
-static void testSharedCodeUnit(GroupRewriter& rewriter, const Match& match, ValueSubstitution& substitution)
+static void testSharedCodeUnit(GroupRewriter& rewriter, const StringRangeMatch& match, ValueSubstitution& substitution)
 {
     ValueID root = match.group.root;
     ValueID zero = rewriter.insert(makeInteger(0));
@@ -662,7 +662,7 @@ static void switchOnCodeUnit(const Program& program, Terminator& terminator, Val
     terminator = WTF::move(next);
 }
 
-static void becomeCodeUnit(const Program& program, GroupRewriter& rewriter, const Match& match)
+static void becomeCodeUnit(const Program& program, GroupRewriter& rewriter, const StringRangeMatch& match)
 {
     ValueID root = match.group.root;
     replaceRootWith(rewriter, makeCodeUnitRead(rewriter, match));
@@ -671,7 +671,7 @@ static void becomeCodeUnit(const Program& program, GroupRewriter& rewriter, cons
         switchOnCodeUnit(program, rewriter.function().edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, root);
 }
 
-static void becomeRangeOfBase(GroupRewriter& rewriter, const Match& match)
+static void becomeRangeOfBase(GroupRewriter& rewriter, const StringRangeMatch& match)
 {
     ValueID root = match.group.root;
     const StringRangeSource& source = match.chain.last();
@@ -688,7 +688,7 @@ static void becomeRangeOfBase(GroupRewriter& rewriter, const Match& match)
     rewriter.leaveUnclaimed(root);
 }
 
-static void rewriteMatch(const Program& program, GroupRewriter& rewriter, const Match& match, ValueSubstitution& substitution)
+static void rewriteMatch(const Program& program, GroupRewriter& rewriter, const StringRangeMatch& match, ValueSubstitution& substitution)
 {
     switch (match.action) {
     case Action::ReadCharacters:
@@ -741,15 +741,15 @@ void selectSubstringView(SelectionContext& context)
         return;
 
     // The effects of a comparison depend on its operand types, so a range becomes a code unit before the comparisons that share the unit are rewritten.
-    Vector<Match> sharedUnitComparisons;
-    Vector<Match> otherMatches;
-    for (Match& match : RangeMatcher(context, WTF::move(ranges)).run()) {
+    Vector<StringRangeMatch> sharedUnitComparisons;
+    Vector<StringRangeMatch> otherMatches;
+    for (StringRangeMatch& match : RangeMatcher(context, WTF::move(ranges)).run()) {
         bool sharesUnit = match.action == Action::CompareSharedCodeUnit || match.action == Action::TestSharedCodeUnit;
         (sharesUnit ? sharedUnitComparisons : otherMatches).append(WTF::move(match));
     }
 
     ValueSubstitution substitution(context.function());
-    auto rewrite = [&](GroupRewriter& rewriter, const Match& match) {
+    auto rewrite = [&](GroupRewriter& rewriter, const StringRangeMatch& match) {
         rewriteMatch(context.program(), rewriter, match, substitution);
     };
     context.rewriteGroups(SelectionRuleID::SubstringView, otherMatches, rewrite);

@@ -22,8 +22,6 @@
 
 namespace JSC { namespace AOT {
 
-using namespace Typed::PlainURL;
-
 static std::span<const Latin1Character> flatLatin1Span(JSValue value)
 {
     if (!value.isString())
@@ -153,23 +151,23 @@ static constexpr std::array<uint8_t, 256> urlCharacterClasses = [] {
 
 static int32_t scanPathAndQuery(std::span<const Latin1Character> text, std::optional<size_t> path)
 {
-    if (!path || *path > maxStartOfPath || text.size() > maxOffset)
-        return notPlain;
+    if (!path || *path > Typed::PlainURL::maxStartOfPath || text.size() > Typed::PlainURL::maxOffset)
+        return Typed::PlainURL::notPlain;
     size_t at = *path + 1;
     for (; at < text.size(); ++at) {
         uint8_t classes = urlCharacterClasses[text[at]];
         if (!(classes & AllowedInPath))
             break;
         if (classes & IsDotOrPercent && text[at - 1] == '/')
-            return notPlain;
+            return Typed::PlainURL::notPlain;
     }
     size_t query = at;
     if (at < text.size() && text[at] == '?') {
         for (++at; at < text.size() && urlCharacterClasses[text[at]] & AllowedInQuery; ++at) { }
     }
     if (at < text.size() && text[at] != '#')
-        return notPlain;
-    return packOffsets(*path, query, at);
+        return Typed::PlainURL::notPlain;
+    return Typed::PlainURL::packOffsets(*path, query, at);
 }
 
 static int32_t scanWithPlainBase(std::span<const Latin1Character> text)
@@ -177,7 +175,7 @@ static int32_t scanWithPlainBase(std::span<const Latin1Character> text)
     if (text.empty() || text[0] != '/')
         return scanPathAndQuery(text, findStartOfPath(text));
     if (text.size() > 1 && text[1] == '/')
-        return notPlain;
+        return Typed::PlainURL::notPlain;
     return scanPathAndQuery(text, 0);
 }
 
@@ -185,30 +183,30 @@ static int32_t findQueryValue(std::span<const Latin1Character> text, int32_t off
 {
     auto name = flatLatin1Span(nameValue);
     if (offsets < 0 || !nameValue.isString() || (name.empty() && asString(nameValue)->length()))
-        return needsObject;
-    size_t end = endOfQuery(offsets);
-    size_t at = endOfPath(offsets) + 1;
+        return Typed::PlainURL::needsObject;
+    size_t end = Typed::PlainURL::endOfQuery(offsets);
+    size_t at = Typed::PlainURL::endOfPath(offsets) + 1;
     if (end > text.size())
-        return needsObject;
+        return Typed::PlainURL::needsObject;
     while (at < end) {
         size_t stop = at;
         for (; stop < end && !(urlCharacterClasses[text[stop]] & IsQueryDelimiterOrEscape); ++stop) { }
         if (stop < end && text[stop] != '&' && text[stop] != '=')
-            return needsObject;
+            return Typed::PlainURL::needsObject;
         bool hasValue = stop < end && text[stop] == '=';
         bool matchesName = (hasValue || stop != at) && stop - at == name.size() && equalSpans(text.subspan(at, stop - at), name);
         size_t value = stop;
         if (hasValue) {
             for (value = ++stop; stop < end && text[stop] != '&'; ++stop) {
                 if (matchesName && (text[stop] == '%' || text[stop] == '+'))
-                    return needsObject;
+                    return Typed::PlainURL::needsObject;
             }
         }
         if (matchesName)
-            return packRange(value, stop);
+            return Typed::PlainURL::packRange(value, stop);
         at = stop + 1;
     }
-    return absent;
+    return Typed::PlainURL::absent;
 }
 
 static constexpr std::array<bool, 256> isUnchangedByFormEncoding = [] {
@@ -221,7 +219,7 @@ static constexpr std::array<bool, 256> isUnchangedByFormEncoding = [] {
 template<typename Functor>
 static std::optional<unsigned> forEachPlainQueryPair(std::span<const Latin1Character> text, const Functor& functor)
 {
-    if (text.size() > maxOffset)
+    if (text.size() > Typed::PlainURL::maxOffset)
         return std::nullopt;
     size_t at = !text.empty() && text[0] == '?';
     if (at == text.size())
@@ -254,11 +252,11 @@ static int32_t scanQuery(JSGlobalObject* globalObject, JSValue textValue)
 {
     auto text = latin1SpanWithoutResolving(globalObject, textValue);
     if (!text)
-        return notPlain;
+        return Typed::PlainURL::notPlain;
     auto count = forEachPlainQueryPair(*text, [](auto, size_t, size_t) {
         return IterationStatus::Continue;
     });
-    return count ? packQuery(*count, !text->empty() && text->front() == '?', text->size()) : notPlain;
+    return count ? Typed::PlainURL::packQuery(*count, !text->empty() && text->front() == '?', text->size()) : Typed::PlainURL::notPlain;
 }
 
 static int32_t findInQuery(JSGlobalObject* globalObject, JSValue textValue, JSValue nameValue)
@@ -266,12 +264,12 @@ static int32_t findInQuery(JSGlobalObject* globalObject, JSValue textValue, JSVa
     auto text = latin1SpanWithoutResolving(globalObject, textValue);
     auto name = latin1SpanWithoutResolving(globalObject, nameValue);
     if (!text || !name)
-        return needsObject;
-    int32_t found = absent;
+        return Typed::PlainURL::needsObject;
+    int32_t found = Typed::PlainURL::absent;
     forEachPlainQueryPair(*text, [&](auto candidate, size_t value, size_t end) {
         if (!equalSpans(candidate, *name))
             return IterationStatus::Continue;
-        found = packRange(value, end);
+        found = Typed::PlainURL::packRange(value, end);
         return IterationStatus::Done;
     });
     return found;
@@ -292,7 +290,7 @@ static EncodedJSValue listQueryPairs(JSGlobalObject* globalObject, JSValue textV
     VM& vm = globalObject->vm();
     auto text = *latin1SpanWithoutResolving(globalObject, textValue);
     Structure* structure = globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous);
-    JSArray* list = JSArray::create(vm, structure, numberOfPairs(query.asInt32()));
+    JSArray* list = JSArray::create(vm, structure, Typed::PlainURL::numberOfPairs(query.asInt32()));
     unsigned index = 0;
     forEachPlainQueryPair(text, [&](auto name, size_t value, size_t end) {
         JSString* key = kind == IterationKind::Values ? nullptr : keyString(vm, name);

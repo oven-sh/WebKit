@@ -220,7 +220,7 @@ protected:
 
 bool isStableCellTypeRange(JSTypeRange);
 void pinRegisters(B3::Procedure&);
-void definePinnedValues(Output&, B3::Procedure&, InstanceSizes, PinnedValues&);
+void definePinnedValues(Output&, InstanceSizes, PinnedValues&);
 
 inline void PrimitiveEmitter::branchUnless(Condition condition, LBasicBlock rareTarget)
 {

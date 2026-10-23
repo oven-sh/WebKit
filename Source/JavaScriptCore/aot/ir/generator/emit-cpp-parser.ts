@@ -718,7 +718,7 @@ export function emitCppParser(context: EmitContext): OutputFile[] {
   const { schema } = context;
   return [
     { name: "AOTSchemaParser.h", lines: parserHeader(schema) },
-    { name: "AOTSchemaRecordParser.cpp", lines: recordParserSource(schema) },
-    { name: "AOTSchemaEntryParser.cpp", lines: entryParserSource(schema) },
+    { name: "AOTSchemaRecordParser.cpp", lines: recordParserSource(schema), isTestSource: true },
+    { name: "AOTSchemaEntryParser.cpp", lines: entryParserSource(schema), isTestSource: true },
   ];
 }

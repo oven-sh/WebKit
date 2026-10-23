@@ -30,8 +30,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t wordSize = sizeof(uint64_t);
-static constexpr FieldIndex noField = std::numeric_limits<FieldIndex>::max();
+static constexpr uint32_t dataWordSize = sizeof(uint64_t);
+static constexpr FieldIndex noFieldIndex = std::numeric_limits<FieldIndex>::max();
 
 static bool isLeaf(const DataNode& node)
 {
@@ -102,7 +102,7 @@ static bool hasOnlyPairs(const DataNode::Array& entries)
 
 namespace {
 
-struct OpenNode {
+struct OpenEncodedNode {
     const DataNode* node { nullptr };
     IndexingType indexingType { ArrayWithContiguous };
     uint32_t numberOfChildren { 0 };
@@ -115,22 +115,22 @@ class DataNodeEncoder {
 public:
     explicit DataNodeEncoder(TableEncoder& encoder)
         : m_encoder(encoder)
-        , m_tableOffset(encoder.writer.allocate(wordSize))
+        , m_tableOffset(encoder.writer.allocate(dataWordSize))
     {
     }
 
     uint32_t tableOffset() const { return m_tableOffset; }
-    uint32_t numberOfWords() const { return static_cast<uint32_t>((m_encoder.writer.size() - m_tableOffset) / wordSize); }
+    uint32_t numberOfWords() const { return static_cast<uint32_t>((m_encoder.writer.size() - m_tableOffset) / dataWordSize); }
 
     uint32_t encode(const DataNode& root);
 
 private:
     void openNode(const DataNode&);
-    void visitChild(OpenNode parent, uint32_t index);
+    void visitChild(OpenEncodedNode parent, uint32_t index);
     void visitValue(const DataNode&);
-    void closeNode(const OpenNode&);
-    uint32_t appendArray(const OpenNode&, std::span<const uint64_t> contents);
-    uint32_t appendObject(const OpenNode&, std::span<const uint64_t> contents);
+    void closeNode(const OpenEncodedNode&);
+    uint32_t appendArray(const OpenEncodedNode&, std::span<const uint64_t> contents);
+    uint32_t appendObject(const OpenEncodedNode&, std::span<const uint64_t> contents);
     std::optional<uint32_t> tryAppendObjectBody(const DataNode::Object&, AllocationID, std::span<const FieldIndex> fieldOfEachMember, std::span<const uint64_t> contents);
     bool tryWriteSlot(const PlacedSlot&, void* slot, const DataNode&, uint64_t word);
     uint32_t appendMembersByName(DataNodeHeader::Kind, std::span<const uint64_t> values, std::span<const uint32_t> identifierNumbers);
@@ -138,7 +138,7 @@ private:
 
     TableEncoder& m_encoder;
     uint32_t m_tableOffset;
-    Vector<OpenNode, 16> m_openNodes;
+    Vector<OpenEncodedNode, 16> m_openNodes;
     Vector<uint64_t> m_words;
     Vector<FieldIndex> m_fields;
 };
@@ -148,7 +148,7 @@ uint32_t DataNodeEncoder::encode(const DataNode& root)
     ASSERT(m_openNodes.isEmpty() && m_words.isEmpty() && m_fields.isEmpty());
     openNode(root);
     while (!m_openNodes.isEmpty()) {
-        OpenNode& innermost = m_openNodes.last();
+        OpenEncodedNode& innermost = m_openNodes.last();
         if (innermost.nextChild == innermost.numberOfChildren) {
             closeNode(m_openNodes.takeLast());
             continue;
@@ -161,7 +161,7 @@ uint32_t DataNodeEncoder::encode(const DataNode& root)
 
 void DataNodeEncoder::openNode(const DataNode& node)
 {
-    OpenNode opened { .node = &node, .firstWord = static_cast<uint32_t>(m_words.size()), .firstField = static_cast<uint32_t>(m_fields.size()) };
+    OpenEncodedNode opened { .node = &node, .firstWord = static_cast<uint32_t>(m_words.size()), .firstField = static_cast<uint32_t>(m_fields.size()) };
     if (const auto* array = node.tryAs<DataNode::Array>()) {
         opened.indexingType = indexingTypeOf(m_encoder.program, *array);
         opened.numberOfChildren = array->elements.size();
@@ -169,13 +169,13 @@ void DataNodeEncoder::openNode(const DataNode& node)
         auto& object = node.as<DataNode::Object>();
         const Layout* layout = object.layout ? &m_encoder.program.at(object.layout) : nullptr;
         for (const DataMember& member : object.members)
-            m_fields.append(layout ? layout->findField(member.key).value_or(noField) : noField);
+            m_fields.append(layout ? layout->findField(member.key).value_or(noFieldIndex) : noFieldIndex);
         opened.numberOfChildren = object.members.size();
     }
     m_openNodes.append(opened);
 }
 
-void DataNodeEncoder::visitChild(OpenNode parent, uint32_t index)
+void DataNodeEncoder::visitChild(OpenEncodedNode parent, uint32_t index)
 {
     if (const auto* array = parent.node->tryAs<DataNode::Array>()) {
         const DataNode& element = array->elements[index];
@@ -187,7 +187,7 @@ void DataNodeEncoder::visitChild(OpenNode parent, uint32_t index)
     }
     auto& object = parent.node->as<DataNode::Object>();
     FieldIndex field = m_fields[parent.firstField + index];
-    if (field == noField || m_encoder.slots.slot(object.layout, field).hasStorage())
+    if (field == noFieldIndex || m_encoder.slots.slot(object.layout, field).hasStorage())
         visitValue(object.members[index].value);
 }
 
@@ -199,7 +199,7 @@ void DataNodeEncoder::visitValue(const DataNode& value)
         openNode(value);
 }
 
-void DataNodeEncoder::closeNode(const OpenNode& closed)
+void DataNodeEncoder::closeNode(const OpenEncodedNode& closed)
 {
     std::span<const uint64_t> contents = m_words.span().subspan(closed.firstWord);
     uint32_t node = closed.node->is<DataNode::Object>() ? appendObject(closed, contents) : appendArray(closed, contents);
@@ -208,13 +208,13 @@ void DataNodeEncoder::closeNode(const OpenNode& closed)
     m_words.append(DataWord::encodeNode(node));
 }
 
-uint32_t DataNodeEncoder::appendArray(const OpenNode& closed, std::span<const uint64_t> contents)
+uint32_t DataNodeEncoder::appendArray(const OpenEncodedNode& closed, std::span<const uint64_t> contents)
 {
     uint32_t operand = closed.indexingType | (isStorageOfArray(closed.node->as<DataNode::Array>()) ? DataNodeHeader::isStorage : 0);
     return appendNode(DataNodeHeader::Kind::Array, operand, contents, { });
 }
 
-uint32_t DataNodeEncoder::appendObject(const OpenNode& closed, std::span<const uint64_t> contents)
+uint32_t DataNodeEncoder::appendObject(const OpenEncodedNode& closed, std::span<const uint64_t> contents)
 {
     const Placement& placement = m_encoder.placement;
     auto& object = closed.node->as<DataNode::Object>();
@@ -229,7 +229,7 @@ uint32_t DataNodeEncoder::appendObject(const OpenNode& closed, std::span<const u
     size_t nextWord = 0;
     for (size_t index = 0; index < fieldOfEachMember.size(); ++index) {
         FieldIndex field = fieldOfEachMember[index];
-        if (field == noField) {
+        if (field == noFieldIndex) {
             otherKeys.append(m_encoder.identifierNumber(object.members[index].key));
             otherValues.append(contents[nextWord++]);
             continue;
@@ -311,10 +311,10 @@ std::optional<uint32_t> DataNodeEncoder::tryAppendObjectBody(const DataNode::Obj
 {
     const PlannedLayout& layout = m_encoder.slots.layout(object.layout);
     uint32_t size = m_encoder.placement.allocations().allocations[allocation.index()].size;
-    if (size != layout.size || size < offsetOfFirstField || size % wordSize)
+    if (size != layout.size || size < offsetOfFirstField || size % dataWordSize)
         return std::nullopt;
 
-    Vector<uint64_t, 16> body(FillWith { }, (size - offsetOfFirstField) / wordSize, 0);
+    Vector<uint64_t, 16> body(FillWith { }, (size - offsetOfFirstField) / dataWordSize, 0);
     auto bytesOf = [&](const PlacedSlot& slot) {
         RELEASE_ASSERT(slot.offset >= offsetOfFirstField && slot.end() <= size);
         return reinterpret_cast<uint8_t*>(body.mutableSpan().data()) + (slot.offset - offsetOfFirstField);
@@ -343,7 +343,7 @@ uint32_t DataNodeEncoder::appendMembersByName(DataNodeHeader::Kind kind, std::sp
 {
     ASSERT(values.size() == identifierNumbers.size());
     uint32_t node = appendNode(kind, 0, values, { });
-    uint32_t numbersOffset = m_tableOffset + (node + 1 + static_cast<uint32_t>(values.size())) * wordSize;
+    uint32_t numbersOffset = m_tableOffset + (node + 1 + static_cast<uint32_t>(values.size())) * dataWordSize;
     for (uint32_t index = 0; index < identifierNumbers.size(); ++index)
         m_encoder.writer.at<uint32_t>(numbersOffset + index * static_cast<uint32_t>(sizeof(uint32_t))) = identifierNumbers[index];
     return node;
@@ -353,7 +353,7 @@ uint32_t DataNodeEncoder::appendNode(DataNodeHeader::Kind kind, uint32_t operand
 {
     TableWriter& writer = m_encoder.writer;
     uint32_t count = static_cast<uint32_t>(contents.size());
-    uint32_t offset = writer.allocate(static_cast<size_t>(DataNodeHeader::numberOfWords(kind, count)) * wordSize);
+    uint32_t offset = writer.allocate(static_cast<size_t>(DataNodeHeader::numberOfWords(kind, count)) * dataWordSize);
 
     DataNodeHeader header { };
     header.count = count;
@@ -361,23 +361,23 @@ uint32_t DataNodeEncoder::appendNode(DataNodeHeader::Kind kind, uint32_t operand
     header.operand = operand;
     writer.at<uint64_t>(offset) = header.encoded();
 
-    uint32_t contentsOffset = offset + wordSize;
+    uint32_t contentsOffset = offset + dataWordSize;
     if (kind == DataNodeHeader::Kind::Array) {
-        static_assert(!IndexingHeader::offsetOfPublicLength() && IndexingHeader::offsetOfVectorLength() == sizeof(uint32_t) && sizeof(IndexingHeader) == wordSize);
+        static_assert(!IndexingHeader::offsetOfPublicLength() && IndexingHeader::offsetOfVectorLength() == sizeof(uint32_t) && sizeof(IndexingHeader) == dataWordSize);
         writer.at<uint64_t>(contentsOffset) = count | static_cast<uint64_t>(count) << 32;
-        contentsOffset += wordSize;
+        contentsOffset += dataWordSize;
     }
     for (uint32_t index = 0; index < count; ++index)
-        writer.at<uint64_t>(contentsOffset + index * wordSize) = contents[index];
+        writer.at<uint64_t>(contentsOffset + index * dataWordSize) = contents[index];
 
-    uint32_t fieldIndicesOffset = contentsOffset + count * wordSize;
+    uint32_t fieldIndicesOffset = contentsOffset + count * dataWordSize;
     for (uint32_t index = 0; index < fieldIndices.size(); ++index)
         writer.at<uint16_t>(fieldIndicesOffset + index * static_cast<uint32_t>(sizeof(uint16_t))) = fieldIndices[index];
 
     if (otherMembers)
-        writer.at<uint64_t>(offset + (DataNodeHeader::numberOfWords(kind, count) - 1) * wordSize) = DataWord::encodeNode(*otherMembers);
+        writer.at<uint64_t>(offset + (DataNodeHeader::numberOfWords(kind, count) - 1) * dataWordSize) = DataWord::encodeNode(*otherMembers);
 
-    return (offset - m_tableOffset) / wordSize;
+    return (offset - m_tableOffset) / dataWordSize;
 }
 
 } // anonymous namespace

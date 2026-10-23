@@ -59,24 +59,10 @@ static bool namesOperation(AccessForm form)
     case AccessForm::Variable:
     case AccessForm::GetterInSlot:
         return true;
-    case AccessForm::ByName:
-    case AccessForm::Namespace:
-    case AccessForm::Builtin:
-    case AccessForm::Method:
-    case AccessForm::Call:
-    case AccessForm::Split:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpLayouts(PrintStream& out, const LayoutList& layouts)
-{
-    CommaPrinter comma;
-    out.print("[");
-    for (LayoutID layout : layouts)
-        out.print(comma, "L", layout.index());
-    out.print("]");
 }
 
 static void dumpRequiredProofs(PrintStream& out, ProofSet proofs)
@@ -86,42 +72,6 @@ static void dumpRequiredProofs(PrintStream& out, ProofSet proofs)
     for (Proof proof : allMembersOf<Proof>) {
         if (proofs.contains(proof))
             out.print(comma, nameOf(proof));
-    }
-    out.print("]");
-}
-
-static void dumpCondition(PrintStream& out, const MemberCondition& condition)
-{
-    switch (condition.kind) {
-    case MemberCondition::Kind::MemberUnchanged:
-        out.print("MemberUnchanged(L", condition.layout.index(), ", ", nameOf(condition.side), ", K", condition.key.index(), ")");
-        return;
-    case MemberCondition::Kind::PrototypeLinkUnchanged:
-        out.print("PrototypeLinkUnchanged(L", condition.layout.index(), ", ", nameOf(condition.side), ")");
-        return;
-    case MemberCondition::Kind::ClassEvaluatedOnce:
-        out.print("ClassEvaluatedOnce(L", condition.layout.index(), ")");
-        return;
-    case MemberCondition::Kind::InstancePrototypeUnchanged:
-        out.print("InstancePrototypeUnchanged(L", condition.layout.index(), ")");
-        return;
-    case MemberCondition::Kind::MemberNotHidden:
-        out.print("MemberNotHidden(L", condition.layout.index(), ", ", nameOf(condition.side), ", K", condition.key.index(), ")");
-        return;
-    case MemberCondition::Kind::MemberPassedByStores:
-        out.print("MemberPassedByStores(L", condition.layout.index(), ", K", condition.key.index(), ")");
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpConditions(PrintStream& out, const MemberConditions& conditions)
-{
-    CommaPrinter comma;
-    out.print("[");
-    for (const MemberCondition& condition : conditions) {
-        out.print(comma);
-        dumpCondition(out, condition);
     }
     out.print("]");
 }
@@ -611,12 +561,7 @@ static bool isBoundToInstance(const PropertyAccessQuery& query, const PropertyAc
     if (query.isPrivate || !plan.conditions.isEmpty())
         return true;
     switch (plan.form) {
-    case AccessForm::Variable:
-    case AccessForm::Namespace:
-    case AccessForm::Builtin:
-    case AccessForm::Method:
-    case AccessForm::Call:
-    case AccessForm::GetterInSlot:
+    default:
         return true;
     case AccessForm::ByName:
     case AccessForm::Slot:
@@ -650,14 +595,7 @@ static KnowledgeLevel levelOf(const PropertyAccessPlan& plan, KnowledgeLevel mem
         return KnowledgeLevel::Unknown;
     case AccessForm::Split:
         return memberLevel;
-    case AccessForm::Slot:
-    case AccessForm::Constant:
-    case AccessForm::Variable:
-    case AccessForm::Namespace:
-    case AccessForm::Builtin:
-    case AccessForm::Method:
-    case AccessForm::Call:
-    case AccessForm::GetterInSlot:
+    default:
         return plan.needsNoTest() ? memberLevel : KnowledgeLevel::Expected;
     }
     RELEASE_ASSERT_NOT_REACHED();

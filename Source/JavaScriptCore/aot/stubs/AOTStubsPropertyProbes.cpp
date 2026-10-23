@@ -26,7 +26,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr unsigned locationShiftInCell = 8 * PackedSlot::offsetOfLocation();
 static constexpr unsigned locationBitsInCell = 8 * sizeof(PackedSlot::location);
 static constexpr unsigned kindShiftInCell = 8 * PackedSlot::offsetOfBiasedKindAndFlags();
 static constexpr unsigned nameShiftInCell = 8 * PackedSlot::offsetOfName();
@@ -467,21 +466,6 @@ void returnFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, JumpLi
     readFieldByTable(jit, probe, jit.result(), otherwise, [&] {
         jit.returnToCaller();
     });
-}
-
-static constexpr PutMode putModeOf(SlotOperation operation)
-{
-    switch (operation) {
-    case SlotOperation::StoreStrict:
-        return PutMode::Strict;
-    case SlotOperation::StoreSloppy:
-        return PutMode::Sloppy;
-    case SlotOperation::Define:
-        return PutMode::Define;
-    case SlotOperation::Read:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
 void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg value, GPRReg scratch, SlotOperation operation, JumpList& otherwise, JumpList* isSampled)

@@ -94,7 +94,7 @@ bool FlowScopeOwnerAnalysis::isDefinedAtEveryAccessThroughClassObject(FlowScopeL
 
     // Outside the frames nobody holds the class object, or an object that inherits from it, before somebody can reach the constructor.
     bool isDefinedWhenHeld = anyPrecedes(stores, entryByUseOf(m_index.program().at(owningClass).constructor));
-    if (m_index.staticFieldsOfEscapedClasses.get(location) && !isDefinedWhenHeld)
+    if (m_index.inputs.staticFieldsOfEscapedClasses.get(location) && !isDefinedWhenHeld)
         return false;
 
     auto definitions = definitionsOf(location);
@@ -158,22 +158,6 @@ bool FlowScopeOwnerAnalysis::canRunTwice(const FlowScopeLocationAccess& store)
             return true;
     }
     return false;
-}
-
-// One listed store that runs at most once, into a holder that is created at most once: both in one evaluation of a module. An evaluation that follows one that threw creates its own holder.
-StoreCount FlowScopeOwnerAnalysis::storeCountOfMember(FlowScopeLocation location)
-{
-    auto stores = accessesAt(m_index.stores.span(), location);
-    if (!m_index.program().at(m_owner.function).isModuleBody() || stores.size() != 1 || canRunTwice(stores.front()))
-        return StoreCount::Unknown;
-
-    std::optional<FlowObjectCreation> creation = m_index.inputs.creationOf(m_index.numbering.members[location - m_index.numbering.firstMember()].holder);
-    if (!creation)
-        return StoreCount::Unknown;
-    // The host creates the function object of a declaration once, with its module.
-    if (m_index.inputs.isHost(creation->function))
-        return StoreCount::AtMostOnce;
-    return canRunTwice({ location, creation->function, creation->operation }) ? StoreCount::Unknown : StoreCount::AtMostOnce;
 }
 
 bool FlowScopeOwnerAnalysis::canRunTwicePerInstance(const FlowScopeLocationAccess& store, BlockID allocation)
@@ -280,10 +264,6 @@ void FlowScopeOwnerAnalysis::computeOrders(std::span<FlowLocationOrder> orders)
     }
     for (LayoutID layout : m_owner.environments)
         computeEnvironmentOrders(layout, orders);
-    for (FlowScopeLocation location : m_owner.members) {
-        if (!m_index.opaqueLocations.get(location))
-            orders[location] = { initializationOf(location, false, false), storeCountOfMember(location) };
-    }
 }
 
 static bool runsAfterCompletion(const FlowScopeIndex& index, FunctionID function, ModuleID completed)
@@ -353,7 +333,7 @@ void computeSyntheticExportOrders(const FlowScopeIndex& index, std::span<FlowLoc
         if (index.opaqueLocations.get(variable))
             continue;
         ModuleID module = program.variables[variable].module;
-        if (index.modulesLoadedByName.get(module.index()))
+        if (index.inputs.modulesLoadedByName.get(module.index()))
             continue;
         bool isReadAfterCompletion = !variablesReadEarly.get(variable) && std::ranges::all_of(accessesAt(index.reads.span(), variable), [&](const FlowScopeLocationAccess& read) {
             return runsAfterCompletion(index, read.function, module);
@@ -365,15 +345,12 @@ void computeSyntheticExportOrders(const FlowScopeIndex& index, std::span<FlowLoc
     }
 }
 
-FlowScopeOrders computeScopeOrders(const FlowOrderInputs& inputs, const FlowModuleOrder& moduleOrder, FlowScopeAccessesByFunction& byFunction)
+FlowScopeOrders computeScopeOrders(const FlowOrderInputs& inputs, const FlowModuleOrder& moduleOrder)
 {
-    FlowScopeLocationNumbering numbering = createScopeLocationNumbering(inputs.program());
-    numberMemberLocations(inputs, numbering);
-    ensureScopeAccesses(inputs, numbering, byFunction);
-    FlowScopeIndex index = createScopeIndex(inputs, moduleOrder, byFunction, WTF::move(numbering));
+    FlowScopeIndex index = createScopeIndex(inputs, moduleOrder);
     Vector<FlowLocationOrder> orders(index.numbering.numberOfLocations());
     Vector<Vector<FlowReadOfLocation>> readsAfterInitializationOfOwners(index.owners.size());
-    forEachIndexInParallel(inputs.build().parallelLoops(), index.owners.size(), [&](unsigned owner) {
+    forEachIndexInParallel(inputs.build.parallelLoops(), index.owners.size(), [&](unsigned owner) {
         FlowScopeOwnerAnalysis analysis(index, index.owners[owner]);
         analysis.computeEntries();
         analysis.computeOrders(orders.mutableSpan());
@@ -384,10 +361,6 @@ FlowScopeOrders computeScopeOrders(const FlowOrderInputs& inputs, const FlowModu
         readsAfterInitialization.appendVector(reads);
     AOT::sort(readsAfterInitialization);
     computeSyntheticExportOrders(index, orders.mutableSpan());
-    for (auto [location, assumed] : index.assumedStores) {
-        if (orders[assumed].initialization != InitializationState::StoredBeforeEveryRead)
-            orders[location] = { };
-    }
 
     return {
         WTF::move(index.numbering),
@@ -413,15 +386,6 @@ std::optional<uint32_t> FlowScopeLocationNumbering::locationOf(LayoutID environm
     return first + fieldIndex;
 }
 
-std::optional<uint32_t> FlowScopeLocationNumbering::locationOf(FlowObjectID holder, PropertyKeyID key) const
-{
-    FlowMemberLocation member { holder, key };
-    auto found = std::ranges::lower_bound(members, member);
-    if (found == members.end() || *found != member)
-        return std::nullopt;
-    return firstMember() + static_cast<uint32_t>(found - members.begin());
-}
-
 FlowLocationOrder FlowScopeOrders::orderOf(VariableID variable) const
 {
     auto location = numbering.locationOf(variable);
@@ -432,43 +396,6 @@ FlowLocationOrder FlowScopeOrders::orderOf(LayoutID environment, uint32_t fieldI
 {
     auto location = numbering.locationOf(environment, fieldIndex);
     return location ? orders[*location] : FlowLocationOrder { };
-}
-
-FlowLocationOrder FlowScopeOrders::orderOf(FlowObjectID holder, PropertyKeyID key) const
-{
-    auto location = numbering.locationOf(holder, key);
-    return location ? orders[*location] : FlowLocationOrder { };
-}
-
-static void dumpOrder(PrintStream& out, const FlowLocationOrder& order)
-{
-    out.println(": ", nameOf(order.initialization), " ", nameOf(order.stores));
-}
-
-void FlowScopeOrders::dump(PrintStream& out) const
-{
-    for (uint32_t variable = 0; variable < numbering.numberOfVariables; ++variable) {
-        if (orders[variable] == FlowLocationOrder { })
-            continue;
-        out.print("g", variable);
-        dumpOrder(out, orders[variable]);
-    }
-    for (uint32_t layout = 0; layout + 1 < numbering.firstField.size(); ++layout) {
-        uint32_t first = numbering.firstField[layout];
-        for (uint32_t location = first; location < numbering.firstField[layout + 1]; ++location) {
-            if (orders[location] == FlowLocationOrder { })
-                continue;
-            out.print("L", layout, ".", location - first);
-            dumpOrder(out, orders[location]);
-        }
-    }
-    for (uint32_t member = 0; member < numbering.members.size(); ++member) {
-        const FlowLocationOrder& order = orders[numbering.firstMember() + member];
-        if (order == FlowLocationOrder { })
-            continue;
-        out.print("o", numbering.members[member].holder.index(), ".k", numbering.members[member].key.index());
-        dumpOrder(out, order);
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

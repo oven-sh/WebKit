@@ -9,9 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayCapacities.h"
-#include "AOTArrayChains.h"
 #include "AOTBindGlobalNames.h"
-#include "AOTEliminateGuards.h"
 #include "AOTEliminateRedundantReads.h"
 #include "AOTExpandIteration.h"
 #include "AOTExpandOwnKeysInternal.h"
@@ -20,7 +18,6 @@
 #include "AOTHoistTestsIntoPredecessors.h"
 #include "AOTInsertObjectCoercibleChecks.h"
 #include "AOTInt32Conversions.h"
-#include "AOTPlaceAllocationsAtTheirUse.h"
 #include "AOTPlaceTypeTestsPlan.h"
 #include "AOTRemoveRedundantBarriers.h"
 #include "AOTResolveAccesses.h"
@@ -61,8 +58,6 @@ static constexpr PassTriggers rowOf(PassID id)
         return PassTriggers::anyOf({ }).orOpcodes(opcodesPlaceTypeTestsLooksFor);
     case PassID::ExpandIteration:
         return PassTriggers::anyOf({ }).orOpcodes(expandedOpcodes);
-    case PassID::ExpandProvenIterations:
-        return PassTriggers::anyOf({ }).orOpcodes(iterationOpcodes);
     case PassID::ExpandOwnKeys:
         return PassTriggers::anyOf({ }).orOpcodes(ownKeyExpansionOpcodes);
     case PassID::SelectTypedResults:
@@ -75,20 +70,12 @@ static constexpr PassTriggers rowOf(PassID id)
         return PassTriggers::anyOf({ }).orOpcodes(opcodesInterpretedAs(Interpretation::Allocation));
     case PassID::EliminateRedundantReads:
         return PassTriggers::anyOf({ }).orOpcodes(opcodesReadingAccessedHeaps);
-    case PassID::EliminateGuards:
-        return PassTriggers::anyOf({ }).orOpcodes(opcodesOfGuardElimination);
     case PassID::SeparateUnlikelyLoopPaths:
         return PassTriggers::anyOf({ Opcode::LoopHint });
-    case PassID::ConvertCountersToIntegers:
-        return PassTriggers::anyOf({ }).orTraits(BodyTrait::BlockParameters);
     case PassID::RemoveDeadCountedLoops:
         return PassTriggers::anyOf({ Opcode::LoopHint });
-    case PassID::FuseArrayChains:
-        return PassTriggers::anyOf({ }).orOpcodes(arrayMethodCallOpcodes);
     case PassID::FuseGeneratorLoops:
         return PassTriggers::bothOf(PassTriggers::anyOf({ Opcode::NewGenerator }), PassTriggers::anyOf({ Opcode::StepGenerator }));
-    case PassID::StartGeneratorsAtFirstStep:
-        return PassTriggers::anyOf({ Opcode::NewGenerator });
     case PassID::CreateStringBuilders:
         return PassTriggers::anyOf({ }).orOpcodes(concatenationOpcodes);
     case PassID::FuseConcatenations:
@@ -101,8 +88,6 @@ static constexpr PassTriggers rowOf(PassID id)
         return PassTriggers::anyOf({ }).orTraits(BodyTrait::SeveralBlocks);
     case PassID::RemoveTrivialParameters:
         return PassTriggers::anyOf({ }).orTraits(BodyTrait::BlockParameters);
-    case PassID::PropagateBranchConditions:
-        return PassTriggers::anyOf({ }).orTerminators({ TerminatorKind::Branch });
     case PassID::HoistTestsIntoPredecessors:
         return PassTriggers::bothOf(PassTriggers::anyOf({ }).orOpcodes(operationsHoistedIntoPredecessors), PassTriggers::anyOf({ }).orTraits(BodyTrait::BlockParameters));
     case PassID::TestNarrowerTypesFirst:
@@ -111,8 +96,6 @@ static constexpr PassTriggers rowOf(PassID id)
         return PassTriggers::anyOf({ Opcode::TypeTest }).orTraits(BodyTrait::BlockParameters);
     case PassID::InferSwitches:
         return PassTriggers::anyOf({ Opcode::StrictEq, Opcode::ShapeTest }).orTerminators({ TerminatorKind::Switch });
-    case PassID::MergeDuplicateBlocks:
-        return PassTriggers::anyOf({ }).orTraits(BodyTrait::BlockParameters);
     case PassID::RemoveRedundantHandlers:
         return PassTriggers::anyOf({ }).orTraits(BodyTrait::Handlers);
     case PassID::HoistLoopInvariantReads:
@@ -121,30 +104,16 @@ static constexpr PassTriggers rowOf(PassID id)
         return PassTriggers::bothOf(
             PassTriggers::anyOf({ Opcode::CallBuiltin }).orOpcodes(simplifiedIntrinsics).orOpcodes(constantListSourceOpcodes),
             PassTriggers::anyOf({ Opcode::CallBuiltin }).orOpcodes(simplifiedIntrinsics).orOpcodes(constantListUserOpcodes));
-    case PassID::ReduceIntegerDivisions:
-        return PassTriggers::bothOf(PassTriggers::anyOf({ Opcode::Div }), PassTriggers::anyOf({ Opcode::CallBuiltin }).orOpcodes(int32ConvertingOperations));
     case PassID::PlanArrayCapacities:
         return PassTriggers::anyOf({ }).orOpcodes(arrayCapacityOpcodes);
-    case PassID::PlanCollectionCapacities:
-        return PassTriggers::bothOf(PassTriggers::anyOf({ Opcode::CallBuiltin }), PassTriggers::anyOf({ }).orTraits(BodyTrait::SeveralBlocks));
-    case PassID::FoldConstantRegExps:
-        return PassTriggers::anyOf({ Opcode::CallBuiltin });
-    case PassID::ShareRegExpLiterals:
-        return PassTriggers::anyOf({ Opcode::NewRegExp });
     case PassID::InsertObjectCoercibleChecks:
         return PassTriggers::anyOf({ }).orOpcodes(objectCoercibleCheckOpcodes);
-    case PassID::EliminateTailRecursion:
-        return PassTriggers::anyOf({ }).orTerminators({ TerminatorKind::ReturnCall });
     case PassID::ResolveAwaitedCalls:
         return PassTriggers::anyOf({ Opcode::AwaitBySavingFrame, Opcode::PromiseAllOfElements });
-    case PassID::SinkConstants:
-        return PassTriggers::anyOf({ }).orTraits(BodyTrait::SeveralBlocks);
     case PassID::ExpandLongArrayLiterals:
         return PassTriggers::anyOf({ Opcode::NewArray });
     case PassID::FinishBirths:
         return PassTriggers::anyOf({ Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::NewObject }).orTraits(BodyTrait::UnfinishedThis);
-    case PassID::PlaceAllocationsAtTheirUse:
-        return PassTriggers::anyOf({ }).orOpcodes(allocationsPlacedAtTheirUse);
     case PassID::RemoveRedundantBarriers:
         return PassTriggers::anyOf({ }).orOpcodes(operationsThatMayRunBarrier);
     default:
@@ -160,11 +129,11 @@ static constexpr std::array<PassTriggers, numberOfPasses> createRows()
     return result;
 }
 
-static constexpr std::array<PassTriggers, numberOfPasses> rows = createRows();
+static constexpr std::array<PassTriggers, numberOfPasses> triggerRows = createRows();
 
 const PassTriggers& triggersOf(PassID id)
 {
-    return rows[static_cast<unsigned>(id)];
+    return triggerRows[static_cast<unsigned>(id)];
 }
 
 namespace {
@@ -190,7 +159,7 @@ static constexpr PassesByContent createPassesByContent()
     PassesByContent result;
     for (unsigned index = 0; index < numberOfPasses; ++index) {
         PassID pass = static_cast<PassID>(index);
-        const PassTriggers& row = rows[index];
+        const PassTriggers& row = triggerRows[index];
         if (row.isAlways) {
             result.always.add(pass);
             continue;

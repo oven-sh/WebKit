@@ -20,18 +20,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ValueFlowName unknownKey { ValueFlowNameKind::UnknownKey, 0 };
-static constexpr ValueFlowName everyProperty { ValueFlowNameKind::EveryProperty, 0 };
-static constexpr ValueFlowName everyGetter { ValueFlowNameKind::EveryGetter, 0 };
-static constexpr ValueFlowName copiedFrom { ValueFlowNameKind::CopiedFrom, 0 };
-static constexpr ValueFlowName awaitedValue { ValueFlowNameKind::AwaitedValue, 0 };
-
-static ClimbingSet only(ValueFlowRuleContext& context, ValueFlowObjectID object)
-{
-    return ClimbingSet(context.maker().of(object));
-}
-
-static ClimbingSet unknownObject(ValueFlowRuleContext& context, ValueFlowUnknownSource source)
+static ClimbingSet unknownObjectOfModule(ValueFlowRuleContext& context, ValueFlowUnknownSource source)
 {
     return context.restrict(ClimbingSet(unknownValue(context, source)), context.universe().objects());
 }
@@ -50,7 +39,7 @@ static ValueFlowName slot(BuiltinSlotID slot)
 static ValueFlowName writtenNameOf(const Program& program, StringID text)
 {
     std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = text });
-    return key ? ValueFlowName::property(*key) : unknownKey;
+    return key ? ValueFlowName::property(*key) : unknownKeyName;
 }
 
 void connect(ValueFlowRuleContext& context, const ValueFlowSources& sources, ValueFlowNodeID target)
@@ -106,9 +95,7 @@ static ValueFlowUnknownSource sourceOfWhatLoaderMakes(const Module& module)
             return ValueFlowUnknownSource::UndescribedNativeResult;
         }
         RELEASE_ASSERT_NOT_REACHED();
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
+    default:
         return ValueFlowUnknownSource::DataFromOutside;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -129,14 +116,14 @@ static const ModuleExport* findExport(const Module& module, StringID name)
     return found == module.exports.end() ? nullptr : &*found;
 }
 
-static bool hasCode(const Program& program, const Module& module)
+static bool moduleHasCode(const Program& program, const Module& module)
 {
     return module.body && program.at(module.body).hasBody();
 }
 
 bool awaitsUse(const Program& program, ModuleID module)
 {
-    return program.at(module).flags.contains(ModuleFlags::HasNoSideEffects) && hasCode(program, program.at(module));
+    return program.at(module).flags.contains(ModuleFlags::HasNoSideEffects) && moduleHasCode(program, program.at(module));
 }
 
 void useModule(ValueFlowRuleContext& context, ModuleID module)
@@ -177,10 +164,7 @@ static bool hasExportTable(ModuleKind kind)
     case ModuleKind::SourceText:
     case ModuleKind::Data:
         return true;
-    case ModuleKind::CommonJs:
-    case ModuleKind::RuntimeSource:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -231,7 +215,7 @@ ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objec
     ClimbingSet all = objects;
     ClimbingSet last = objects;
     for (;;) {
-        last = context.restrict(context.valueOf(context.read(last, copiedFrom)), context.universe().knownObjects());
+        last = context.restrict(context.valueOf(context.read(last, copiedFromName)), context.universe().knownObjects());
         bool findsNewSource = false;
         context.forEachMember(last, [&](ValueFlowObjectID source) {
             findsNewSource |= !context.contains(all, source);
@@ -246,8 +230,8 @@ ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objec
 static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key)
 {
     const ValueFlowUniverse& universe = context.universe();
-    ValueFlowName valueName = key ? ValueFlowName::property(*key) : everyProperty;
-    ValueFlowName getterName = key ? ValueFlowName::getter(*key) : everyGetter;
+    ValueFlowName valueName = key ? ValueFlowName::property(*key) : everyPropertyName;
+    ValueFlowName getterName = key ? ValueFlowName::getter(*key) : everyGetterName;
     ClimbingSet receivers = context.restrict(values, universe.knownObjects());
     // A spread has values alone: the getters of a source have run when it was made, and what they have answered lies on the target. A definition by the descriptors of a source has its getters too.
     ClimbingSet holders = withSourcesOfCopies(context, receivers);
@@ -304,11 +288,11 @@ static ValueFlowSources moduleExportsValueOf(ValueFlowRuleContext& context, Modu
     case ModuleKind::CommonJs:
         // A file whose exports are variables, one for each name, has no object that anybody could be answered.
         if (!module.exportsVariable)
-            return hasCode(program, module) ? sourcesOf(ClimbingSet(context.universe().undefinedValue())) : unknownSources(context, sourceOfWhatLoaderMakes(module));
+            return moduleHasCode(program, module) ? sourcesOf(ClimbingSet(context.universe().undefinedValue())) : unknownSources(context, sourceOfWhatLoaderMakes(module));
         useModule(context, id);
         return sourcesOf(context.nodes().variable(module.exportsVariable));
     case ModuleKind::RuntimeSource:
-        if (hasCode(program, module) && !program.at(module.body).results.isEmpty())
+        if (moduleHasCode(program, module) && !program.at(module.body).results.isEmpty())
             return sourcesOf(context.nodes().result(module.body, 0));
         return unknownSources(context, sourceOfWhatLoaderMakes(module));
     case ModuleKind::SourceText:
@@ -316,9 +300,7 @@ static ValueFlowSources moduleExportsValueOf(ValueFlowRuleContext& context, Modu
         if (ModuleID captured = commonJsModuleCapturedBy(program, module))
             return moduleExportsValueOf(context, captured);
         return unknownSources(context, sourceOfWhatLoaderMakes(module));
-    case ModuleKind::Data:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
+    default:
         return unknownSources(context, sourceOfWhatLoaderMakes(module));
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -343,7 +325,7 @@ static ValueFlowSources runtimeNamespaceOf(ValueFlowRuleContext& context, Runtim
     const ValueFlowUniverse& universe = context.universe();
     if (BuiltinID namespaceObject = context.program().builtins().namespaceOf(runtimeModule))
         return sourcesOf(only(context, universe.objectOf(namespaceObject)));
-    return sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
+    return sourcesOf(unknownObjectOfModule(context, ValueFlowUnknownSource::UndescribedNativeResult));
 }
 
 ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
@@ -355,10 +337,7 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
         return runtimeNamespaceOf(context, module.runtimeModule);
     case ModuleKind::External:
         return unknownSources(context, sourceOfWhatLoaderMakes(module));
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
+    default:
         break;
     }
 
@@ -375,7 +354,7 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
             append(context, sources, exportedValueOf(context, *entry));
         // A require() that comes to an ES module while another require() evaluates it is answered an object without keys, which the loader makes: Modules::require().
         if (module.kind == ModuleKind::SourceText)
-            append(context, sources, sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult)));
+            append(context, sources, sourcesOf(unknownObjectOfModule(context, ValueFlowUnknownSource::UndescribedNativeResult)));
         return sources;
     }
     }
@@ -390,10 +369,7 @@ ValueFlowSources evaluationErrorsOf(ValueFlowRuleContext& context, ModuleID id)
         return { };
     case ModuleKind::External:
         return unknownSources(context, module.externalKind == ExternalKind::UncompiledCode ? ValueFlowUnknownSource::UnseenCode : ValueFlowUnknownSource::ThrownByRunTime);
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
+    default:
         break;
     }
 
@@ -412,8 +388,8 @@ static void tieNamespaceToCapturedNames(ValueFlowRuleContext& context, ModuleID 
     const ValueFlowUniverse& universe = context.universe();
     const Module& module = program.at(id);
     ClimbingSet namespaceObject = only(context, universe.namespaceOf(id));
-    ValueFlowNodeID underAnyName = context.written(namespaceObject, unknownKey);
-    ValueFlowNodeID holdersOfNames = context.written(namespaceObject, copiedFrom);
+    ValueFlowNodeID underAnyName = context.written(namespaceObject, unknownKeyName);
+    ValueFlowNodeID holdersOfNames = context.written(namespaceObject, copiedFromName);
 
     if (module.exportRule != SyntheticExportRule::None || module.exportsVariable) {
         ValueFlowSources value = moduleExportsValueOf(context, id);
@@ -463,7 +439,7 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
             break;
         case ModuleExportKind::Namespace: {
             if (program.at(entry.module).kind == ModuleKind::External) {
-                context.add(location, unknownObject(context, sourceOfWhatLoaderMakes(program.at(entry.module))));
+                context.add(location, unknownObjectOfModule(context, sourceOfWhatLoaderMakes(program.at(entry.module))));
                 break;
             }
             ClimbingSet exportedNamespace = only(context, universe.namespaceOf(entry.module));
@@ -473,7 +449,7 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
                 break;
             }
             context.add(ValueFlowProgramNodes::escaped(), exportedNamespace);
-            context.add(location, unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
+            context.add(location, unknownObjectOfModule(context, ValueFlowUnknownSource::UndescribedNativeResult));
             break;
         }
         }
@@ -503,7 +479,7 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     if (program.at(first).kind == ModuleKind::External)
-        return sourcesOf(unknownObject(context, sourceOfWhatLoaderMakes(program.at(first))));
+        return sourcesOf(unknownObjectOfModule(context, sourceOfWhatLoaderMakes(program.at(first))));
 
     // Whoever ties a module ties the modules inside and behind it in the same run.
     bool staysForGood = context.isStatementOfBody();
@@ -538,7 +514,7 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
     case ImportPhase::Defer:
         // The deferred namespace object is another object, which nobody follows: what it serves escapes.
         context.add(ValueFlowProgramNodes::escaped(), namespaceObject);
-        return sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        return sourcesOf(unknownObjectOfModule(context, ValueFlowUnknownSource::UndescribedNativeResult));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -600,7 +576,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
     // The run time asks the host for it, and the host's loader is code of the library.
     if (module.kind == ModuleKind::External)
         enterLoaderOfHost(context);
-    if (!hasCode(program, module))
+    if (!moduleHasCode(program, module))
         fillExportsOfLoader(context, module);
 }
 
@@ -613,7 +589,7 @@ void evaluateModule(ValueFlowRuleContext& context, ModuleID first)
         ModuleID id = pending.takeLast();
         const Module& module = program.at(id);
         // The statement in the body does the rest, in the same round.
-        if (hasCode(program, module)) {
+        if (moduleHasCode(program, module)) {
             context.reach(module.body);
             continue;
         }
@@ -808,7 +784,7 @@ static ValueSetID dataFromOutsideImage(const ValueFlowStatement& statement, Valu
     RELEASE_ASSERT(object && array);
     ValueFlowObjectID objects[] { object, array };
     ValueSetID data = context.maker().unite(universe.anyPrimitive(), context.maker().of(std::span<const ValueFlowObjectID>(objects)));
-    context.add(context.written(only(context, object), unknownKey), data);
+    context.add(context.written(only(context, object), unknownKeyName), data);
     context.add(context.written(only(context, array), { ValueFlowNameKind::Elements, 0 }), data);
     return data;
 }
@@ -847,7 +823,7 @@ static void importModule(const ValueFlowStatement& statement, ValueFlowRuleConte
     noteRequest(context, statement.function, module);
     evaluateModule(context, module);
     // The promise is resolved with the namespace object, so an export named `then` is called.
-    context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValue), settledValueOfPromiseAt(statement, context));
+    context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValueName), settledValueOfPromiseAt(statement, context));
     // It is rejected with what the evaluation throws. The host reports a rejection that no handler takes.
     connect(context, evaluationErrorsOf(context, module), reasonOfPromiseAt(statement, context));
     connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
@@ -967,7 +943,10 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         if (!statement.result)
             break;
         // The host makes a function for whoever asks: the entry is that function. Of any other binding the entry says under Get what the host answers.
-        if (isObjectKind(builtins.at(binding).kind))
+        // For a removed feature the host answers an object that throws when it is called.
+        if (context.isGuardedByRemovedFeature(binding))
+            context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        else if (isObjectKind(builtins.at(binding).kind))
             context.add(statement.result, only(context, context.universe().objectOf(binding)));
         else if (builtins.dispatchOf(binding, BuiltinCallMode::Get))
             applyBuiltin(binding, { .kind = ValueFlowCallKind::Get, .result = statement.result, .thrown = statement.thrown }, context);

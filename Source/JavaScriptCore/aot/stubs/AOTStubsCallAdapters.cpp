@@ -30,8 +30,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr GPRReg fp = GPRInfo::callFrameRegister;
 static constexpr ptrdiff_t offsetOfFirstArgument = static_cast<int>(CallFrameSlot::firstArgument) * static_cast<int>(sizeof(Register));
 static_assert(sizeof(Register) == sizeOfStackWord);
 
@@ -87,11 +85,6 @@ static_assert(offsetOfCellCageBaseRegisterInAdapter == AdapterFrame::offsetOfIns
 static TrustedImm64 bitMask(unsigned bit)
 {
     return TrustedImm64(static_cast<int64_t>(1ULL << bit));
-}
-
-static Address softStackLimit()
-{
-    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
 }
 
 static void loadCalleeAndVM(StubAssembler& jit, GPRReg callee, GPRReg vm)

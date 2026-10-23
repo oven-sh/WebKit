@@ -8,8 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIDPrefix.h"
 #include "AOTIR.h"
-#include "AOTIRLexer.h"
 #include <wtf/EnumSet.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>

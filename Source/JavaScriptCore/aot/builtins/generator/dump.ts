@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { BuiltinFlag, ImplementationKind, InstanceTest, PropertyActionKind, PrototypeLink } from "./model.ts";
 import type {
   BuiltinKind,
@@ -210,7 +209,6 @@ export interface DumpedOverload {
   mode: CallMode;
   isProvenByConstruction: boolean;
   isUndeclared: boolean;
-  textHash: string;
   receiver: DumpedParameter | null;
   parameters: DumpedParameter[];
   result: DumpedResult;
@@ -298,80 +296,5 @@ export function canonicalTextOf(value: unknown): string {
   return `{${members.map(([key, member]) => `${JSON.stringify(key)}:${canonicalTextOf(member)}`).join(",")}}`;
 }
 
-export function hashOfEntry(overload: DumpedOverload): string {
-  const { textHash: _, model: _model, implementation, ...declared } = overload;
-  const { function: _function, ...code } = implementation;
-  return createHash("sha256")
-    .update(canonicalTextOf({ ...declared, implementation: code }))
-    .digest("hex")
-    .slice(0, 16);
-}
-
 export const needsDifferentialTest = (overload: DumpedOverload): boolean =>
   !overload.isProvenByConstruction && !overload.isUndeclared;
-
-export function findStaleEntries(table: TableDump, listedHashes: ReadonlySet<string>): string[] {
-  return table.entries
-    .flatMap(entry => entry.overloads)
-    .filter(overload => needsDifferentialTest(overload) && !listedHashes.has(overload.textHash))
-    .map(overload => overload.token);
-}
-
-export function parseVerifiedList(text: string): Set<string> {
-  const hashes = new Set<string>();
-  for (const line of text.split("\n")) {
-    if (line === "" || line.startsWith("#")) continue;
-    hashes.add(line.split(" ", 1)[0]);
-  }
-  return hashes;
-}
-
-const unverifiedPrefix = "# unverified ";
-
-export interface UnverifiedOverload {
-  token: string;
-  reason: string;
-}
-
-export function parseUnverifiedList(text: string): Map<string, string> {
-  const reasons = new Map<string, string>();
-  for (const line of text.split("\n")) {
-    if (!line.startsWith(unverifiedPrefix)) continue;
-    const [token, ...reason] = line.slice(unverifiedPrefix.length).split(": ");
-    reasons.set(token, reason.join(": "));
-  }
-  return reasons;
-}
-
-export function formatVerifiedList(
-  origin: Origin,
-  overloads: readonly DumpedOverload[],
-  unverified: readonly UnverifiedOverload[],
-): string {
-  const lines = overloads
-    .map(overload => `${overload.textHash} ${overload.token}`)
-    .sort((left, right) => {
-      const leftToken = left.slice(left.indexOf(" "));
-      const rightToken = right.slice(right.indexOf(" "));
-      return leftToken < rightToken ? -1 : leftToken > rightToken ? 1 : 0;
-    });
-  return (
-    `# Hashes of the hand-written ${origin === "Engine" ? "engine" : "host"} overloads that test/aot/builtins/differential.test.ts has checked.\n` +
-    "# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts\n" +
-    unverified
-      .map(({ token, reason }) => `${unverifiedPrefix}${token}: ${reason}\n`)
-      .sort()
-      .join("") +
-    lines.map(line => `${line}\n`).join("")
-  );
-}
-
-export interface VerifiedListPaths {
-  engine: string;
-  host: string;
-}
-
-export const verifiedListPaths = (bunRoot: string, javaScriptCoreDirectory: string): VerifiedListPaths => ({
-  engine: `${javaScriptCoreDirectory}/aot/builtins/verified-overloads.txt`,
-  host: `${bunRoot}/src/codegen/builtins/data/verified-host-overloads.txt`,
-});

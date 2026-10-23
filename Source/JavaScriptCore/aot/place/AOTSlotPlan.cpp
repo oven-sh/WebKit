@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTClosureObservers.h"
 #include "AOTFlowResults.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSlotPlanSteps.h"
@@ -231,41 +230,6 @@ static void placeInnerObjects(const SlotPlanContext& context, Vector<PlannedLayo
     context.build.statistics().count(StatisticID::LayoutsWithInnerObjects, numberOfOuterLayouts);
 }
 
-static uint32_t endOfBytesInUse(const PlannedLayout& layout)
-{
-    uint32_t end = offsetOfFirstField;
-    for (const PlacedSlot& slot : layout.slots) {
-        if (slot.storage == SlotStorage::Inline)
-            end = std::max(end, slot.end());
-    }
-    for (const ReservedBytes& reserved : layout.bytesKeptZero)
-        end = std::max(end, reserved.offset + reserved.width);
-    if (layout.isEscapedOffset)
-        end = std::max(end, *layout.isEscapedOffset + 1);
-    return end;
-}
-
-// The code is written for the room already, so there is no refusing here. The packer is untouched: the room lies behind what it has placed, in the padding first.
-static void placeFlattenedObjects(const SlotPlanContext& context, Vector<PlannedLayout>& layouts)
-{
-    constexpr uint32_t alignmentOfSlots = sizeof(EncodedJSValue);
-    for (uint32_t index = 0; index < layouts.size(); ++index) {
-        PlannedLayout& outer = layouts[index];
-        if (context.program.layouts[index].flattenedObjects.isEmpty() || outer.storage != LayoutStorage::CompiledObject)
-            continue;
-        uint32_t end = endOfBytesInUse(outer);
-        for (const FlattenedObject& flattened : context.program.layouts[index].flattenedObjects) {
-            const PlannedLayout& inner = layouts[flattened.layout.index()];
-            RELEASE_ASSERT(inner.storage == LayoutStorage::CompiledObject && !inner.hasExtension() && inner.flattenedObjects.isEmpty() && context.program.at(flattened.layout).flattenedObjects.isEmpty());
-            uint32_t begin = roundUpToMultipleOf<alignmentOfSlots>(end);
-            uint32_t endInOwnCell = roundUpToMultipleOf<alignmentOfSlots>(endOfBytesInUse(inner));
-            outer.flattenedObjects.append({ flattened.field, flattened.layout, begin - offsetOfFirstField, offsetOfFirstField, endInOwnCell });
-            end = outer.flattenedObjects.last().end();
-        }
-        outer.size = roundUpToMultipleOf<MarkedBlock::atomSize>(end);
-    }
-}
-
 static void countStatistics(const ParallelLoops& loops, std::span<const PlannedLayout> layouts, Statistics& statistics)
 {
     std::atomic<uint64_t> slots { 0 };
@@ -329,7 +293,6 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
         return { };
 
     Vector<PlannedLayout> layouts = createPlannedLayouts(context, WTF::move(packed));
-    placeFlattenedObjects(context, layouts);
     placeInnerObjects(context, layouts);
     countStatistics(context.build.parallelLoops(), layouts.span(), context.build.statistics());
     times.didFinish("createPlannedLayouts"_s);
@@ -384,17 +347,12 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
     InheritedRows inheritedRows(program, rows, storage.span());
     SlotPlanContext context { program, inputs, build, sizeClasses, rows, storage.span(), build.recordedOptions().useWideReferences(), inheritedRows };
 
-    for (const Layout& layout : program.layouts) {
-        for (const FlattenedObject& flattened : layout.flattenedObjects)
-            context.layoutsFlattenedInOthers.set(flattened.layout.index());
-    }
-
     SlotUses uses = collectSlotUses(context);
+#if ASSERT_ENABLED
     bool dumpsPlan = build.options().logging.dumpedPass == PassID::PlanSlots;
-    if (dumpsPlan) {
+    if (dumpsPlan)
         dumpFillEstimates(WTF::dataFile(), program, uses);
-        dumpClosureObservers(WTF::dataFile(), program, inputs.flow, build);
-    }
+#endif
     shareUsesOfInheritedRows(inheritedRows, uses);
     context.layoutsMadeSeldom = findLayoutsMadeSeldom(context, uses);
     if (!finishStep("collectSlotUses"_s))
@@ -419,8 +377,10 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
     parts.formsExpectedOfNames = FormsExpectedOfNames(program, parts.layouts.span(), inputs.heat);
 
     SlotPlan plan(WTF::move(parts));
+#if ASSERT_ENABLED
     if (dumpsPlan)
         plan.dump(WTF::dataFile(), program);
+#endif
     return plan;
 }
 

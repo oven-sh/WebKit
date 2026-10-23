@@ -30,14 +30,12 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using namespace B3;
-
 static bool isPassed(const ArgumentLocation& location)
 {
     return location.kind != ArgumentLocation::Kind::None;
 }
 
-static LType b3TypeOfResults(Procedure& proc, std::span<const ArgumentLocation> results)
+static LType b3TypeOfResults(B3::Procedure& proc, std::span<const ArgumentLocation> results)
 {
     Vector<B3::Type, 4> types;
     for (const ArgumentLocation& result : results) {
@@ -45,15 +43,15 @@ static LType b3TypeOfResults(Procedure& proc, std::span<const ArgumentLocation> 
             types.append(b3TypeOf(result.representation));
     }
     if (types.isEmpty())
-        return Void;
+        return B3::Void;
     if (types.size() == 1)
         return types[0];
     return proc.addTuple(Vector<B3::Type>(types));
 }
 
-static ValueRep stackWordRep(size_t stackIndex)
+static B3::ValueRep stackWordRep(size_t stackIndex)
 {
-    return ValueRep::stackArgument(safeCast<ValueRep::OffsetType>(stackIndex * sizeOfStackWord));
+    return B3::ValueRep::stackArgument(safeCast<B3::ValueRep::OffsetType>(stackIndex * sizeOfStackWord));
 }
 
 CallEmitter::CallTarget CallEmitter::CallTarget::function(FunctionID calledFunction, uint16_t entry)
@@ -123,16 +121,16 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
 
     PlacedArguments placed;
     for (size_t i = 0; i < call.stubOperands.size(); ++i)
-        placed.inRegisters.append(ConstrainedValue(call.stubOperands[i], ValueRep::reg(signature.operands[i])));
+        placed.inRegisters.append(B3::ConstrainedValue(call.stubOperands[i], B3::ValueRep::reg(signature.operands[i])));
     if (call.callee)
-        placed.inRegisters.append(ConstrainedValue(call.callee, ValueRep::reg(calleeGPR)));
+        placed.inRegisters.append(B3::ConstrainedValue(call.callee, B3::ValueRep::reg(calleeGPR)));
     if (call.thisValue)
-        placed.inRegisters.append(ConstrainedValue(call.thisValue, ValueRep::reg(thisGPR)));
+        placed.inRegisters.append(B3::ConstrainedValue(call.thisValue, B3::ValueRep::reg(thisGPR)));
     if (call.count)
-        placed.inRegisters.append(ConstrainedValue(call.count, ValueRep::reg(countGPR)));
+        placed.inRegisters.append(B3::ConstrainedValue(call.count, B3::ValueRep::reg(countGPR)));
     for (size_t i = 0; i < call.arguments.size(); ++i) {
         if (i < numberOfArgumentGPRs)
-            placed.inRegisters.append(ConstrainedValue(call.arguments[i], ValueRep::reg(argumentGPR(static_cast<unsigned>(i)))));
+            placed.inRegisters.append(B3::ConstrainedValue(call.arguments[i], B3::ValueRep::reg(argumentGPR(static_cast<unsigned>(i)))));
         else
             placed.onStack.append(call.arguments[i]);
     }
@@ -140,7 +138,7 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     return placed;
 }
 
-PatchpointValue* CallEmitter::emitCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, std::span<const ArgumentLocation> results, const CallOptions& options)
+B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, const CallTarget& target, const PlacedArguments& placed, std::span<const ArgumentLocation> results, const CallOptions& options)
 {
     RuntimeCallEmitter& calls = emitter<RuntimeCallEmitter>();
     const StubCatalog& catalog = inputs().stubCatalog;
@@ -163,25 +161,25 @@ PatchpointValue* CallEmitter::emitCall(const OperationContext& context, const Ca
         break;
     }
 
-    PatchpointValue* patchpoint = calls.createCallPatchpoint(context, request);
-    for (const ConstrainedValue& argument : placed.inRegisters)
+    B3::PatchpointValue* patchpoint = calls.createCallPatchpoint(context, request);
+    for (const B3::ConstrainedValue& argument : placed.inRegisters)
         patchpoint->append(argument);
     for (size_t stackIndex = 0; stackIndex < placed.onStack.size(); ++stackIndex) {
         if (LValue argument = placed.onStack[stackIndex])
-            patchpoint->append(ConstrainedValue(argument, stackWordRep(stackIndex)));
+            patchpoint->append(B3::ConstrainedValue(argument, stackWordRep(stackIndex)));
     }
     if (target.kind == TargetKind::Address)
-        patchpoint->append(ConstrainedValue(target.calledAddress, ValueRep::reg(valueEntryGPR)));
+        patchpoint->append(B3::ConstrainedValue(target.calledAddress, B3::ValueRep::reg(valueEntryGPR)));
 
     uint32_t stackWordsToReserve = placed.stackWordsToReserve;
-    WTF::Vector<ValueRep, 1> resultConstraints;
+    WTF::Vector<B3::ValueRep, 1> resultConstraints;
     for (const ArgumentLocation& result : results) {
         switch (result.kind) {
         case ArgumentLocation::Kind::None:
             break;
         case ArgumentLocation::Kind::GPR:
         case ArgumentLocation::Kind::FPR:
-            resultConstraints.append(ValueRep::reg(result.reg));
+            resultConstraints.append(B3::ValueRep::reg(result.reg));
             break;
         case ArgumentLocation::Kind::Stack:
             resultConstraints.append(stackWordRep(result.stackIndex));
@@ -202,7 +200,7 @@ PatchpointValue* CallEmitter::emitCall(const OperationContext& context, const Ca
     Vector<uint32_t, 3> wordsOfThrowSite;
     if (options.throwSite)
         wordsOfThrowSite = throwSiteWords(*options.throwSite, Representation::Void, 0);
-    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite = WTF::move(wordsOfThrowSite), stubCalls = &m_records.stubCalls, kind = target.kind, calledFunction = target.calledFunction, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, expectation = target.expectation, passesCallee = target.passesCallee, site = OptionalIndex { site }, keptRegisterStorage, clobbered, caller = m_id, value = context.valueID().index()](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite = WTF::move(wordsOfThrowSite), stubCalls = &m_records.stubCalls, kind = target.kind, calledFunction = target.calledFunction, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, expectation = target.expectation, passesCallee = target.passesCallee, site = OptionalIndex { site }, keptRegisterStorage, clobbered, caller = m_id, value = context.valueID().index()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         std::optional<KeptRegisterCheck> check;
         if (keptRegisterStorage)
@@ -262,7 +260,7 @@ Operand CallEmitter::resultOfCall(const ArgumentLocation& location, LValue value
     return Operand(location.representation, value);
 }
 
-void CallEmitter::defineResultsOfCall(const ValueContext& value, std::span<const ArgumentLocation> results, PatchpointValue* call)
+void CallEmitter::defineResultsOfCall(const ValueContext& value, std::span<const ArgumentLocation> results, B3::PatchpointValue* call)
 {
     if (results.empty())
         return;

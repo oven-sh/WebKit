@@ -43,9 +43,9 @@ struct ParameterOperation {
     uint32_t operandIndex;
 };
 
-class TestHoister {
+class PredecessorTestHoister {
 public:
-    explicit TestHoister(FunctionPassContext& context)
+    explicit PredecessorTestHoister(FunctionPassContext& context)
         : m_context(context)
         , m_function(context.function)
         , m_analyses(context.analyses)
@@ -243,7 +243,7 @@ private:
 PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
-    while (TestHoister(context).run() == PassOutcome::Changed)
+    while (PredecessorTestHoister(context).run() == PassOutcome::Changed)
         outcome = PassOutcome::Changed;
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses;

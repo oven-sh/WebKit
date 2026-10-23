@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinTableArrays.h"
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTClosureTable.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTModuleHost.h"
@@ -24,8 +24,6 @@
 namespace JSC { namespace AOT {
 
 std::span<const NativeTest> nakedConstructorTests();
-
-static_assert(!RuntimeFunctions::PromiseConstructorPromise.index(), "the program text names the Promise constructor as runtime function 0");
 
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
@@ -78,7 +76,9 @@ static void checkCallThrowsTypeError(LoadedProgram& program, JSValue callee, ASC
 
 static void checkCompiledClosureNamesConstructor(LoadedProgram& program)
 {
-    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(RuntimeFunctions::PromiseConstructorPromise.index());
+    // The program text names the Promise constructor as runtime function 0.
+    AOT_TEST_CHECK(!functionImplementing(Builtins::Promise).index());
+    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(0);
     AOT_TEST_CHECK(entry);
     JSCell* closure = program.state().objects->closures.closure(program.vm(), FunctionID(entry->function));
 

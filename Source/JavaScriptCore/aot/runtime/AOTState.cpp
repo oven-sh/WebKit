@@ -43,9 +43,9 @@ namespace JSC { namespace AOT {
 
 #if OS(LINUX)
 #if defined(MADV_POPULATE_WRITE)
-static constexpr int populateForWriting = MADV_POPULATE_WRITE;
+static constexpr int populateStateForWriting = MADV_POPULATE_WRITE;
 #else
-static constexpr int populateForWriting = 23;
+static constexpr int populateStateForWriting = 23;
 #endif
 #endif
 
@@ -57,7 +57,7 @@ void* ZeroedPages::allocate(size_t bytes, FirstUse firstUse)
     while (madvise(pages, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
     // A kernel older than 5.14 refuses, and the pages fault in one by one.
     if (firstUse == FirstUse::AllAtOnce)
-        madvise(pages, size, populateForWriting);
+        madvise(pages, size, populateStateForWriting);
 #else
     UNUSED_PARAM(firstUse);
 #endif

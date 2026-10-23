@@ -18,11 +18,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool isAsRead(const FunctionVerifier& verifier)
-{
-    return verifier.form() == IRForm::AsRead && !verifier.isOptimizing();
-}
-
 static bool isFunctionAsRead(const Program& program, FunctionID function)
 {
     return function.index() < program.numberOfFunctionsAsRead();
@@ -161,7 +156,6 @@ static bool isValueOfDeferringField(const TypingContext& context, const UseLists
         return false;
     switch (location.deferral) {
     case ClosureDeferral::Unknown:
-    case ClosureDeferral::FlattenedObject:
         return false;
     case ClosureDeferral::CapturesNothing:
         return callee.captures.isEmpty();

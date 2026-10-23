@@ -25,16 +25,16 @@ static constexpr OpcodeSet iterationAccesses { Opcode::IteratorOpen };
 
 static_assert((readAccesses | writeAccesses | iterationAccesses | OpcodeSet { Opcode::RequireObjectCoercible }) == objectCoercibleCheckOpcodes);
 
-static constexpr OpcodeSet namedAccesses { Opcode::PropGet, Opcode::PropSet };
-static constexpr OpcodeSet keyedAccesses { Opcode::ElemGet, Opcode::ElemSet };
+static constexpr OpcodeSet checkedNamedAccesses { Opcode::PropGet, Opcode::PropSet };
+static constexpr OpcodeSet checkedKeyedAccesses { Opcode::ElemGet, Opcode::ElemSet };
 
-static constexpr uint32_t receiverOperand = OperandIndex::PropGet::object;
+static constexpr uint32_t checkedReceiverOperand = OperandIndex::PropGet::object;
 static constexpr uint32_t keyOperand = OperandIndex::ElemGet::property;
 
-static_assert(OperandIndex::PropSet::object == receiverOperand);
-static_assert(OperandIndex::ElemGet::object == receiverOperand);
-static_assert(OperandIndex::ElemSet::object == receiverOperand);
-static_assert(OperandIndex::IteratorOpen::iterable == receiverOperand);
+static_assert(OperandIndex::PropSet::object == checkedReceiverOperand);
+static_assert(OperandIndex::ElemGet::object == checkedReceiverOperand);
+static_assert(OperandIndex::ElemSet::object == checkedReceiverOperand);
+static_assert(OperandIndex::IteratorOpen::iterable == checkedReceiverOperand);
 static_assert(OperandIndex::ElemSet::property == keyOperand);
 
 static std::optional<NullishAccess> nullishAccessOf(Opcode opcode)
@@ -114,11 +114,11 @@ private:
     std::optional<NullishAccess> requiredCheckOf(const Value& access) const
     {
         std::optional<NullishAccess> kind = nullishAccessOf(access.opcode);
-        if (!kind || (!needsCheck(typeOf(access.operand(receiverOperand))) && !mayBeTakenApart(access.operand(receiverOperand))))
+        if (!kind || (!needsCheck(typeOf(access.operand(checkedReceiverOperand))) && !mayBeTakenApart(access.operand(checkedReceiverOperand))))
             return std::nullopt;
-        if (namedAccesses.contains(access.opcode) && access.isFreeName())
+        if (checkedNamedAccesses.contains(access.opcode) && access.isFreeName())
             return std::nullopt;
-        if (keyedAccesses.contains(access.opcode) && typeOf(access.operand(keyOperand)).hasObjects())
+        if (checkedKeyedAccesses.contains(access.opcode) && typeOf(access.operand(keyOperand)).hasObjects())
             return std::nullopt;
         return kind;
     }
@@ -136,9 +136,9 @@ private:
     {
         if (!readAccesses.contains(access.opcode) && !writeAccesses.contains(access.opcode))
             return false;
-        if (namedAccesses.contains(access.opcode) && access.isFreeName())
+        if (checkedNamedAccesses.contains(access.opcode) && access.isFreeName())
             return false;
-        return !keyedAccesses.contains(access.opcode) || !typeOf(access.operand(keyOperand)).hasObjects();
+        return !checkedKeyedAccesses.contains(access.opcode) || !typeOf(access.operand(keyOperand)).hasObjects();
     }
 
     static bool leavesNoTrace(const Value& value)
@@ -164,7 +164,7 @@ private:
             }
             for (ValueID id : block.values) {
                 const Value& value = m_function.at(id);
-                if (throwsForNullishReceiver(value) && namesOfSubject.contains(sameObjectThroughCasts(m_function, value.operand(receiverOperand))))
+                if (throwsForNullishReceiver(value) && namesOfSubject.contains(sameObjectThroughCasts(m_function, value.operand(checkedReceiverOperand))))
                     return id;
                 if (!leavesNoTrace(value))
                     return { };
@@ -299,7 +299,7 @@ private:
                 continue;
             }
             std::optional<NullishAccess> kind = requiredCheckOf(value);
-            if (kind && !activeCheckOf(value.operand(receiverOperand), blockID))
+            if (kind && !activeCheckOf(value.operand(checkedReceiverOperand), blockID))
                 addCheck({ blockID, index }, id, *kind);
         }
 
@@ -330,7 +330,7 @@ private:
 
     StringID accessedNameOf(const Value& access) const
     {
-        if (!namedAccesses.contains(access.opcode))
+        if (!checkedNamedAccesses.contains(access.opcode))
             return { };
         const PropertyKey& key = m_program.at(access.key());
         return key.kind == PropertyKeyKind::Text ? key.text : StringID();
@@ -349,8 +349,8 @@ private:
     void addCheck(ProgramPoint point, ValueID id, NullishAccess kind)
     {
         const Value& access = m_function.at(id);
-        CheckID check = activate(Check { point, id, access.operand(receiverOperand), kind, accessedNameOf(access), { } });
-        m_rewrites.append({ Use { Use::Kind::Operand, point.block, id, receiverOperand, 0 }, check });
+        CheckID check = activate(Check { point, id, access.operand(checkedReceiverOperand), kind, accessedNameOf(access), { } });
+        m_rewrites.append({ Use { Use::Kind::Operand, point.block, id, checkedReceiverOperand, 0 }, check });
     }
 
     static Value createCheck(const Check& check)

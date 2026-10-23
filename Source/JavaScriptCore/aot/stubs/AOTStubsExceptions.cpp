@@ -27,12 +27,9 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr GPRReg A0 = gprOf(StubRegister::A0);
-static constexpr GPRReg A1 = gprOf(StubRegister::A1);
 static constexpr GPRReg A2 = gprOf(StubRegister::A2);
 static constexpr GPRReg T9 = gprOf(StubRegister::T9);
 static constexpr GPRReg T10 = gprOf(StubRegister::T10);
-static constexpr GPRReg T11 = gprOf(StubRegister::T11);
 static constexpr GPRReg savedVM = GPRInfo::regCS0;
 
 static_assert(noOverlap(T10, T11, A0, GPRInfo::regT1) && noOverlap(T11, A1));

@@ -499,7 +499,7 @@ JSString* StringBuilderStorage::concatenate(JSGlobalObject* globalObject, Instan
     RELEASE_AND_RETURN(scope, storage->finish(globalObject, instance, use));
 }
 
-static ALWAYS_INLINE StringBuilderStorage::StringUse stringUse(uint32_t isLikelyKey)
+static ALWAYS_INLINE StringBuilderStorage::StringUse stringUseOfResult(uint32_t isLikelyKey)
 {
     return isLikelyKey ? StringBuilderStorage::StringUse::LikelyKey : StringBuilderStorage::StringUse::Unknown;
 }
@@ -534,7 +534,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilder
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderFinish);
     auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderFinish);
-    OPERATION_RETURN(scope, storage->finish(globalObject, *instance, stringUse(isLikelyKey)));
+    OPERATION_RETURN(scope, storage->finish(globalObject, *instance, stringUseOfResult(isLikelyKey)));
 }
 
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStackStringBuilder(Instance*, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey);
@@ -573,7 +573,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStackStringBu
 static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStackStringBuilder(Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderFinish);
-    OPERATION_RETURN(scope, reinterpret_cast<StackStringBuilder*>(builder)->finish(globalObject, *instance, byteCast<Latin1Character>(cursor), stringUse(isLikelyKey)));
+    OPERATION_RETURN(scope, reinterpret_cast<StackStringBuilder*>(builder)->finish(globalObject, *instance, byteCast<Latin1Character>(cursor), stringUseOfResult(isLikelyKey)));
 }
 
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByContents(Instance*, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey);
@@ -671,7 +671,7 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateShortKey
 static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByContents(Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenate);
-    OPERATION_RETURN(scope, StringBuilderStorage::concatenate(globalObject, *instance, unsafeMakeSpan(parts, count), stringUse(isLikelyKey)));
+    OPERATION_RETURN(scope, StringBuilderStorage::concatenate(globalObject, *instance, unsafeMakeSpan(parts, count), stringUseOfResult(isLikelyKey)));
 }
 
 } } // namespace JSC::AOT

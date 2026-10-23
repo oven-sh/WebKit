@@ -34,10 +34,10 @@ struct AwaitedYield {
     uint32_t yieldIndex { 0 };
 };
 
-class BodyBuilder {
-    WTF_MAKE_NONCOPYABLE(BodyBuilder);
+class CoroutineBodyBuilder {
+    WTF_MAKE_NONCOPYABLE(CoroutineBodyBuilder);
 public:
-    BodyBuilder(const AnalysisContext&, TypeArena&, const CreatorRecord::Coroutine&, Function&& unsplit);
+    CoroutineBodyBuilder(const AnalysisContext&, TypeArena&, const CreatorRecord::Coroutine&, Function&& unsplit);
 
     Function run(TypeID driverType);
 
@@ -150,7 +150,7 @@ static Vector<AwaitedYield> findYieldsToMerge(const Function& function, const Us
     return merges;
 }
 
-BodyBuilder::BodyBuilder(const AnalysisContext& context, TypeArena& types, const CreatorRecord::Coroutine& record, Function&& unsplit)
+CoroutineBodyBuilder::CoroutineBodyBuilder(const AnalysisContext& context, TypeArena& types, const CreatorRecord::Coroutine& record, Function&& unsplit)
     : m_context(context)
     , m_types(types)
     , m_record(record)
@@ -160,7 +160,7 @@ BodyBuilder::BodyBuilder(const AnalysisContext& context, TypeArena& types, const
 {
 }
 
-Function BodyBuilder::run(TypeID driverType)
+Function CoroutineBodyBuilder::run(TypeID driverType)
 {
     prepareHeader(driverType);
     m_builder.setOrigin(Origin { m_body.position, 0 });
@@ -191,7 +191,7 @@ Function BodyBuilder::run(TypeID driverType)
     return WTF::move(m_body);
 }
 
-void BodyBuilder::prepareHeader(TypeID driverType)
+void CoroutineBodyBuilder::prepareHeader(TypeID driverType)
 {
     unsigned sourceParameters = m_body.numberOfEntryParameters();
 
@@ -224,7 +224,7 @@ void BodyBuilder::prepareHeader(TypeID driverType)
     m_body.capabilities = initialCapabilitiesOf(m_body);
 }
 
-ReplacedEffects BodyBuilder::replacedEffectsOf(std::initializer_list<ValueID> replacedValues) const
+ReplacedEffects CoroutineBodyBuilder::replacedEffectsOf(std::initializer_list<ValueID> replacedValues) const
 {
     ReplacedEffects replaced;
     for (ValueID id : replacedValues)
@@ -232,30 +232,30 @@ ReplacedEffects BodyBuilder::replacedEffectsOf(std::initializer_list<ValueID> re
     return replaced;
 }
 
-void BodyBuilder::checkSuccessor(BlockID block, ValueID id, const ReplacedEffects& replaced)
+void CoroutineBodyBuilder::checkSuccessor(BlockID block, ValueID id, const ReplacedEffects& replaced)
 {
     checkReplacement(m_analyses.effectContext(), m_body, { m_record.body, block, id }, m_body.at(id), replaced, m_context.build.diagnostics());
 }
 
-bool BodyBuilder::canKeepType(const Value& successor, TypeID storedType)
+bool CoroutineBodyBuilder::canKeepType(const Value& successor, TypeID storedType)
 {
     const Type& successorType = m_types.at(resultTypeOf(m_context.program, m_body, successor, m_types));
     return successorType.isSubsetOf(m_types.at(storedType), m_context.program);
 }
 
 // An expected type is set only where it says more than the type.
-bool BodyBuilder::canExpect(const Value& successor, TypeID expected)
+bool CoroutineBodyBuilder::canExpect(const Value& successor, TypeID expected)
 {
     TypeID type = resultTypeOf(m_context.program, m_body, successor, m_types);
     return expected && expected != type && m_types.at(expected).isSubsetOf(m_types.at(type), m_context.program);
 }
 
-void BodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::initializer_list<ValueID> operands)
+void CoroutineBodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::initializer_list<ValueID> operands)
 {
     rewriteInPlace(block, id, opcode, operands, replacedEffectsOf({ id }));
 }
 
-void BodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::initializer_list<ValueID> operands, const ReplacedEffects& replaced)
+void CoroutineBodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::initializer_list<ValueID> operands, const ReplacedEffects& replaced)
 {
     Value& value = m_body.edit(id);
     value.become(opcode);
@@ -266,7 +266,7 @@ void BodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::
     checkSuccessor(block, id, replaced);
 }
 
-void BodyBuilder::markRareModeArms()
+void CoroutineBodyBuilder::markRareModeArms()
 {
     const UseLists& useLists = m_analyses.useLists();
     for (const Block& block : m_body.blocks) {
@@ -279,7 +279,7 @@ void BodyBuilder::markRareModeArms()
 }
 
 // What the merged await rejects with arrives at the yield as a value that is sent in to be thrown.
-void BodyBuilder::moveProofsOfSentValueBehindMode(BlockID block, ValueID yield)
+void CoroutineBodyBuilder::moveProofsOfSentValueBehindMode(BlockID block, ValueID yield)
 {
     const Terminator& terminator = m_body.at(block).terminator;
     if (terminator.kind != TerminatorKind::Switch)
@@ -380,7 +380,7 @@ void BodyBuilder::moveProofsOfSentValueBehindMode(BlockID block, ValueID yield)
     m_analyses.didChangeValues();
 }
 
-void BodyBuilder::mergeAwaitsIntoYields()
+void CoroutineBodyBuilder::mergeAwaitsIntoYields()
 {
     Vector<AwaitedYield> merges = findYieldsToMerge(m_body, m_analyses.useLists());
     Vector<std::pair<BlockID, ValueID>, 8> mergedYields;
@@ -403,7 +403,7 @@ void BodyBuilder::mergeAwaitsIntoYields()
         moveProofsOfSentValueBehindMode(block, yield);
 }
 
-void BodyBuilder::replaceYields()
+void CoroutineBodyBuilder::replaceYields()
 {
     for (uint32_t blockIndex = 0; blockIndex < m_body.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
@@ -416,7 +416,7 @@ void BodyBuilder::replaceYields()
 }
 
 // A step suspends this frame where the generator does not answer at once, and whoever finishes the step resumes the frame through its driver.
-void BodyBuilder::replaceSteps()
+void CoroutineBodyBuilder::replaceSteps()
 {
     for (const Block& block : m_body.blocks) {
         for (ValueID id : block.values) {
@@ -428,7 +428,7 @@ void BodyBuilder::replaceSteps()
     m_analyses.didChangeValues();
 }
 
-void BodyBuilder::replaceAwaits()
+void CoroutineBodyBuilder::replaceAwaits()
 {
     Vector<ProgramPoint> typedAwaits;
     for (uint32_t blockIndex = 0; blockIndex < m_body.blocks.size(); ++blockIndex) {
@@ -452,7 +452,7 @@ void BodyBuilder::replaceAwaits()
         expandTypedAwait(typedAwaits.takeLast());
 }
 
-void BodyBuilder::expandTypedAwait(ProgramPoint point)
+void CoroutineBodyBuilder::expandTypedAwait(ProgramPoint point)
 {
     ValueID id = m_body.at(point.block).values[point.index];
     ValueID awaited = m_body.at(id).valueOperand();
@@ -472,7 +472,7 @@ void BodyBuilder::expandTypedAwait(ProgramPoint point)
 }
 
 // The ramp allocates the generator, which reads the property `prototype` of the function, and only then does the head of the body evaluate the parameters.
-bool BodyBuilder::headMayChangePrototype(ProgramPoint initialYield)
+bool CoroutineBodyBuilder::headMayChangePrototype(ProgramPoint initialYield)
 {
     if (initialYield.block != entryBlock)
         return true;
@@ -483,7 +483,7 @@ bool BodyBuilder::headMayChangePrototype(ProgramPoint initialYield)
 }
 
 // Nothing tells when such a head has run, so the call that starts the generator may be left to its first step.
-bool BodyBuilder::headHasNoEffect(ProgramPoint initialYield)
+bool CoroutineBodyBuilder::headHasNoEffect(ProgramPoint initialYield)
 {
     if (initialYield.block != entryBlock)
         return false;
@@ -492,7 +492,7 @@ bool BodyBuilder::headHasNoEffect(ProgramPoint initialYield)
     });
 }
 
-void BodyBuilder::expandInitialYield()
+void CoroutineBodyBuilder::expandInitialYield()
 {
     std::optional<ProgramPoint> point = findInitialYield(m_body);
     if (!point)
@@ -533,7 +533,7 @@ void BodyBuilder::expandInitialYield()
     m_builder.emitReturn(sent);
 }
 
-void BodyBuilder::replaceReturns()
+void CoroutineBodyBuilder::replaceReturns()
 {
     bool isAsyncFunction = m_record.kind == CoroutineKind::AsyncFunction;
     for (uint32_t blockIndex = 0; blockIndex < m_body.blocks.size(); ++blockIndex) {
@@ -560,7 +560,7 @@ void BodyBuilder::replaceReturns()
 
 Function buildCoroutineBody(const AnalysisContext& context, TypeArena& types, const CoroutineTypes& coroutineTypes, Function&& unsplit, const CoroutinePlan& plan)
 {
-    BodyBuilder builder(context, types, plan.record, WTF::move(unsplit));
+    CoroutineBodyBuilder builder(context, types, plan.record, WTF::move(unsplit));
     return builder.run(coroutineTypes.driverParameterOf(plan.record.kind));
 }
 

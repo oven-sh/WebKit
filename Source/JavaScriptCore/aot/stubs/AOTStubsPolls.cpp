@@ -19,11 +19,7 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr GPRReg A0 = gprOf(StubRegister::A0);
-static constexpr GPRReg A1 = gprOf(StubRegister::A1);
-static constexpr GPRReg T11 = gprOf(StubRegister::T11);
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr Address softStackLimit { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit() };
+static constexpr Address softStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit() };
 
 // In a frame with a record, with the stack pointer aligned as at the entry of a stub.
 static void callPollSlow(StubAssembler& jit)
@@ -63,7 +59,7 @@ void generatePollAtPrologue(StubAssembler& jit)
     constexpr GPRReg stackPointerAtSite = X86Registers::eax;
     jit.push(stackPointerAtSite);
     jit.addPtr(TrustedImm32(2 * sizeof(void*)), sp, stackPointerAtSite);
-    jit.m_assembler.cmpq_mr(softStackLimit.offset, softStackLimit.base, stackPointerAtSite);
+    jit.m_assembler.cmpq_mr(softStackLimitWord.offset, softStackLimitWord.base, stackPointerAtSite);
     jit.pop(stackPointerAtSite);
     Jump doesNotFit(jit.m_assembler.jCC(X86Assembler::ConditionB));
     Jump hasThrown;
@@ -87,7 +83,7 @@ void generatePollAtPrologue(StubAssembler& jit)
     doesNotFit.link(&jit);
     leaveFunctionAtPrologue(jit, throwStackOverflow(true), throwStackOverflow(false));
 #else
-    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, sp, softStackLimit), throwStackOverflow(true));
+    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, sp, softStackLimitWord), throwStackOverflow(true));
     jit.preservingCallerSavedRegisters(false, [&](unsigned bytes) {
         jit.loadCallerReturnAddress(bytes, A1);
         jit.move(instanceGPR, A0);
@@ -128,7 +124,7 @@ void generatePollBeforeEntering(StubAssembler& jit)
 #if CPU(X86_64)
     constexpr GPRReg scratch = CCallHelpers::s_scratchRegister;
     jit.addPtr(TrustedImm32(sizeof(void*)), sp, scratch);
-    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, softStackLimit);
+    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, softStackLimitWord);
     jit.emitFunctionPrologue();
     callPollSlow(jit);
     jit.emitFunctionEpilogue();
@@ -147,7 +143,7 @@ void generatePollBeforeEntering(StubAssembler& jit)
 #else
     constexpr GPRReg siteReturnAddress = ARM64Registers::x16;
     constexpr GPRReg scratch = ARM64Registers::x17;
-    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, sp, softStackLimit);
+    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, sp, softStackLimitWord);
     jit.pushPair(siteReturnAddress, CCallHelpers::linkRegister);
     callPollSlow(jit);
     constexpr GPRReg exception = siteReturnAddress;

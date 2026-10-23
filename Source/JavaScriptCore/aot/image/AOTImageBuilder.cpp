@@ -114,8 +114,6 @@ static FunctionID bodyBehind(const Typed::Program& program, FunctionID id)
         return function.creator.as<CreatorRecord::EntryChecks>().body;
     case FunctionRole::ParameterWrapper:
         return function.creator.as<CreatorRecord::ParameterWrapper>().body;
-    case FunctionRole::ResultWrapper:
-        return function.creator.as<CreatorRecord::ResultWrapper>().worker;
     case FunctionRole::CoroutineRamp:
         return function.creator.as<CreatorRecord::Coroutine>().body;
     case FunctionRole::CallSiteVersion: {
@@ -135,13 +133,11 @@ static FunctionID bodyBehind(const Typed::Program& program, FunctionID id)
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWorker:
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
-    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return { };
     }

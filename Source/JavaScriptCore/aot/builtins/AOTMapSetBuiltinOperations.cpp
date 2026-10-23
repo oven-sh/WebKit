@@ -189,14 +189,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetNext, UGPRPair, (Instance* inst
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSSet>(collection, Entry::operationAOTSetNext), JSValue::decode(table), entry, results));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveCollectionCapacity, void, (Instance* instance, JSCell* collection, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveCollectionCapacity);
-    if (collection->type() != JSMapType && collection->type() != JSSetType) [[unlikely]]
-        crashOnWrongOperand(Entry::operationAOTReserveCollectionCapacity);
-    CompactTable::reserveForAdditions(globalObject, asObject(collection), remaining, finished, sizeAtEntry);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTMapDelete, EncodedJSValue, (Instance* instance, JSCell* collection, EncodedJSValue lookupKey))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapDelete);

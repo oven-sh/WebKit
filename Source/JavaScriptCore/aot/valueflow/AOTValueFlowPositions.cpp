@@ -10,7 +10,6 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
-#include "AOTIRPrinter.h"
 #include "AOTLayout.h"
 #include "AOTNameClass.h"
 #include "AOTResultRules.h"
@@ -24,7 +23,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool isDefinedByClass(const Layout& layout)
+static bool isLayoutOfClass(const Layout& layout)
 {
     return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
 }
@@ -140,7 +139,7 @@ LayoutID LayoutPicks::baseOf(LayoutID layout) const
     ValueFlowObjectID heritage = m_inputs.sets().onlyMember(m_heritageOfClass[layout.index()]);
     FunctionID constructor = heritage ? m_inputs.universe().closureFunction(heritage) : FunctionID();
     LayoutID base = constructor ? program.at(constructor).constructedClass : LayoutID();
-    return base && isDefinedByClass(program.at(base)) ? base : LayoutID();
+    return base && isLayoutOfClass(program.at(base)) ? base : LayoutID();
 }
 
 bool LayoutPicks::isBelow(LayoutID layout, LayoutID base) const
@@ -171,7 +170,7 @@ void LayoutPicks::notePicksOf(const Allocation& allocation)
         LayoutID requested = universe.classLayoutOf(prototype);
         if (requested == ownClass)
             return;
-        if (!requested || !isDefinedByClass(program.at(requested)))
+        if (!requested || !isLayoutOfClass(program.at(requested)))
             return;
         ValueFlowObjectID made = universe.objectAllocatedUnder(program, allocation.object, prototype);
         ValueFlowLayoutsOfSite& picksOfMade = made == allocation.object ? picked : m_layoutsOfSites.find(made.index())->value;
@@ -275,24 +274,19 @@ ValueFlowPositionCounts::LayoutsOfSites LayoutPicks::find()
     return WTF::move(m_layoutsOfSites);
 }
 
-ValueFlowPositionCounts::ValueFlowPositionCounts(Vector<String>* lines, ValueFlowTypesOfSets typesOfSets)
-    : listsThem(lines)
+ValueFlowPositionCounts::ValueFlowPositionCounts(const ListenerForSetsOutsideTypes* listener, ValueFlowTypesOfSets typesOfSets)
+    : listsThem(listener)
     , sharesTypesOfSets(typesOfSets == ValueFlowTypesOfSets::StayTheSame)
-    , lines(lines)
+    , listener(listener)
 {
 }
 
 ValueFlowPositionCounts::~ValueFlowPositionCounts() = default;
 
-void ValueFlowPositionCounts::note(const Program& program, const String& place, const Type& held, const Type& family)
+void ValueFlowPositionCounts::note(const String& place, const Type& held, const Type& family)
 {
-    StringPrintStream line;
-    line.print(place, " holds "_s);
-    printType(line, program, held);
-    line.print(", declared "_s);
-    printType(line, program, family);
     Locker locker { lock };
-    lines->append(line.toString());
+    (*listener)(place, held, family);
 }
 
 const ValueFlowSharedTypeOfSet* ValueFlowPositionCounts::findTypeOfSet(ValueSetID set)
@@ -375,11 +369,20 @@ const ValueFlowLayoutsOfSite* ValueFlowPositions::findLayoutsPickedBy(ValueFlowO
 
 bool ValueFlowPositions::isSurelyInside(ValueSetID set, const Type& type)
 {
+    return isSurelyInside(set, type, m_inputs.program.types.find(type));
+}
+
+bool ValueFlowPositions::isSurelyInside(ValueSetID set, TypeID type)
+{
+    return isSurelyInside(set, m_inputs.program.at(type), type);
+}
+
+bool ValueFlowPositions::isSurelyInside(ValueSetID set, const Type& type, std::optional<TypeID> number)
+{
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
     ValueSetID picking = universe.objectsThatPickTheirLayout();
     // The universe remembers the members by the number of the type. To unite them again takes longer than all else that is asked of a check.
-    std::optional<TypeID> number = program.types.find(type);
     ValueSetID surelyInside = number ? universe.membersSurelyInside(maker(), program, *number) : universe.membersSurelyInside(maker(), program, type);
     if (!m_inputs.sets().isSubset(maker().intersect(set, ValueSets::complement(picking)), surelyInside))
         return false;
@@ -442,9 +445,7 @@ void ValueFlowPositions::addObjectWithLayout(Type& type, Vector<LayoutID, 8>& la
 {
     if (const ValueFlowSite* site = m_inputs.universe().siteOf(member)) {
         switch (site->origin) {
-        case ValueFlowSiteOrigin::Operation:
-        case ValueFlowSiteOrigin::DataNode:
-        case ValueFlowSiteOrigin::TypedResult:
+        default:
             break;
         case ValueFlowSiteOrigin::BuiltinResult:
             // What the constructor of a built-in class makes for a class of the program is an object of the built-in class, without slots.
@@ -897,7 +898,7 @@ ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, Val
         if (!isUndecided) {
             m_counts.count.fetch_add(1, std::memory_order_relaxed);
             if (m_counts.listsThem)
-                m_counts.note(program, place(), held, family);
+                m_counts.note(place(), held, family);
             return { .proof = ValueFlowProof::OutsideFamily, .stranger = stranger };
         }
         // Of all that such an allocation makes only what lies inside gets into a position that is checked.
@@ -994,7 +995,7 @@ std::optional<LayoutSet> ValueFlowPositions::receiversAt(const Type& family, Val
     return receivers;
 }
 
-static bool throwsBeforeEntry(const Function& callee, bool isConstruction)
+static bool throwsInFrontOfBody(const Function& callee, bool isConstruction)
 {
     if (isConstruction)
         return callee.constructorForm() == ConstructorForm::NotConstructor;
@@ -1033,7 +1034,7 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
         if (!universe.isObject(member))
             return;
         if (FunctionID function = universe.closureFunction(member)) {
-            if (!throwsBeforeEntry(program.at(function), isConstruction))
+            if (!throwsInFrontOfBody(program.at(function), isConstruction))
                 callees.functions.append(function);
             return;
         }

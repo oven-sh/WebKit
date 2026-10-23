@@ -27,7 +27,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-class WordHasher {
+class AnalysisWordHasher {
 public:
     void add(uint64_t word)
     {
@@ -160,7 +160,7 @@ static EffectInputs effectInputsOf(TerminatorKind kind)
 static EffectInputs effectInputsOf(const Value& value) { return effectFactsOf(value.opcode).inputs; }
 static EffectInputs effectInputsOf(const Terminator& terminator) { return effectInputsOf(terminator.kind); }
 
-static void addPayload(WordHasher& hasher, const Instruction& instruction)
+static void addPayload(AnalysisWordHasher& hasher, const Instruction& instruction)
 {
     static_assert(numberOfInlinePayloadWords == 3);
     std::array<uint32_t, numberOfInlinePayloadWords> inlinePayload = instruction.inlinePayload();
@@ -173,7 +173,7 @@ static void addPayload(WordHasher& hasher, const Instruction& instruction)
 }
 
 // False where the casts go round in a circle, as they may in code that nothing reaches.
-static bool addDefinitionBehindCasts(WordHasher& hasher, const Function& function, ValueID id)
+static bool addDefinitionBehindCasts(AnalysisWordHasher& hasher, const Function& function, ValueID id)
 {
     for (size_t remainingSteps = function.values.size(); remainingSteps; --remainingSteps) {
         const Value& definition = function.at(id);
@@ -199,7 +199,7 @@ static uint32_t firstPositionOf(const Instruction& instruction, uint32_t index)
     return index;
 }
 
-static bool addOperands(WordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs)
+static bool addOperands(AnalysisWordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs)
 {
     constexpr uint32_t maxComparedOperands = 16;
 
@@ -219,15 +219,13 @@ static bool addOperands(WordHasher& hasher, const Function& function, const Inst
     return true;
 }
 
-static uint64_t finishStamp(WordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs)
+static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs)
 {
     switch (inputs) {
     case EffectInputs::Row:
     case EffectInputs::Function:
         return 0;
-    case EffectInputs::Payload:
-    case EffectInputs::Operands:
-    case EffectInputs::DefinitionsBehindCasts:
+    default:
         break;
     }
     addPayload(hasher, instruction);
@@ -239,7 +237,7 @@ static uint64_t finishStamp(WordHasher& hasher, const Function& function, const 
 
 static uint64_t stampOf(const Function& function, const Value& value, EffectInputs inputs)
 {
-    WordHasher hasher;
+    AnalysisWordHasher hasher;
     hasher.add(static_cast<uint32_t>(value.opcode));
     if (inputs != EffectInputs::Payload)
         hasher.add(value.type.index(), value.expected().index());
@@ -248,14 +246,14 @@ static uint64_t stampOf(const Function& function, const Value& value, EffectInpu
 
 static uint64_t stampOf(const Function& function, const Terminator& terminator, EffectInputs inputs)
 {
-    WordHasher hasher;
+    AnalysisWordHasher hasher;
     hasher.add(numberOfOpcodes + static_cast<uint32_t>(terminator.kind));
     return finishStamp(hasher, function, terminator, inputs);
 }
 
 static uint32_t hashOf(const EffectsOnEdges& effectsOnEdges)
 {
-    WordHasher hasher;
+    AnalysisWordHasher hasher;
     for (const Effects* effects : { &effectsOnEdges.normal, &effectsOnEdges.handler }) {
         hasher.add(effects->reads.mixedWords());
         hasher.add(effects->writes.mixedWords());
@@ -373,10 +371,7 @@ OperandSummary EffectsCache::summaryOfOperand(ValueID id, uint32_t operandIndex)
     case EffectRule::Declared:
     case EffectRule::Operator:
         return summarizeOperand(m_context, m_function, user, operandIndex);
-    case EffectRule::Access:
-    case EffectRule::Call:
-    case EffectRule::Builtin:
-    case EffectRule::Inline:
+    default:
         break;
     }
 
@@ -448,7 +443,6 @@ FunctionAnalyses::FunctionAnalyses(const AnalysisContext& context, const Functio
     , m_effectContext { context.program, context.effects ? *context.effects : m_unknownSummaries.emplace() }
     , m_effects(m_effectContext, function, context.build.options().verifiesAfterEveryPass)
     , m_countsBuilds(context.build.options().logging.logsPhaseTimes)
-    , m_verifiesUpdates(context.build.options().verifiesAfterEveryPass)
 {
 }
 
@@ -543,8 +537,6 @@ void FunctionAnalyses::didBringUseListsUpToDate(const UseLists::Update& update)
         didBuild(FunctionAnalysis::UseLists);
         return;
     }
-    if (m_verifiesUpdates) [[unlikely]]
-        verifyUseLists();
     if (!m_countsBuilds) [[likely]]
         return;
     useListUpdatesByChangingPass[static_cast<unsigned>(m_passesThatDropped[indexOf(FunctionAnalysis::UseLists)])].fetch_add(1, std::memory_order_relaxed);
@@ -558,6 +550,41 @@ void FunctionAnalyses::willDrop(AnalysisSet set)
         return;
     for (FunctionAnalysis analysis : set & (computed() | heldControlFlowAnalyses()))
         m_passesThatDropped[indexOf(analysis)] = m_runningPass;
+}
+
+ASCIILiteral sectionNameOf(FunctionAnalysis analysis)
+{
+    switch (analysis) {
+    case FunctionAnalysis::ControlFlow:
+        return "control-flow"_s;
+    case FunctionAnalysis::Dominators:
+        return "dominators"_s;
+    case FunctionAnalysis::NaturalLoops:
+        return "natural-loops"_s;
+    case FunctionAnalysis::Cycles:
+        return "cycles"_s;
+    case FunctionAnalysis::UseLists:
+        return "use-lists"_s;
+    case FunctionAnalysis::Identities:
+        return "identities"_s;
+    case FunctionAnalysis::Liveness:
+        return "liveness"_s;
+    case FunctionAnalysis::Effects:
+        return "effects"_s;
+    case FunctionAnalysis::Escape:
+        return "escape"_s;
+    case FunctionAnalysis::EscapeHistory:
+        return "escape-history"_s;
+    case FunctionAnalysis::Frequencies:
+        return "frequencies"_s;
+    case FunctionAnalysis::Guards:
+        return "guards"_s;
+    case FunctionAnalysis::FailedTests:
+        return "failed-tests"_s;
+    case FunctionAnalysis::Induction:
+        return "induction"_s;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static uint64_t printAndResetCounts(PrintStream& out, CountsByPass& counts)
@@ -639,8 +666,6 @@ void FunctionAnalyses::dropFrequenciesOfFormerFunction()
         (isSameEstimate ? numberOfKeptFrequencies : numberOfFormerFrequencies).fetch_add(1, std::memory_order_relaxed);
     if (!isSameEstimate)
         m_values.blockFrequencies.reset();
-    else if (m_verifiesUpdates) [[unlikely]]
-        verifyFrequencies();
 }
 
 CFG& FunctionAnalyses::cfg()
@@ -719,8 +744,6 @@ const UseLists& FunctionAnalyses::useLists()
     } else if (m_values.didDropBesideUseLists) [[unlikely]] {
         m_values.didDropBesideUseLists = false;
         m_values.useLists->didHandOut();
-        if (m_verifiesUpdates && !m_values.useLists->hasSilentChanges())
-            verifyUseLists();
     }
     checkBlockCount();
     checkValueCount();
@@ -749,8 +772,8 @@ static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass)
 
 // These passes see the same identities whether the table is completed before they start or when they first ask.
 static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatMayCompleteIdentitiesLate {
-    PassID::FoldConstants, PassID::PropagateBranchConditions, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
-    PassID::InferSwitches, PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::MergeDuplicateBlocks, PassID::CompactBlocks,
+    PassID::FoldConstants, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
+    PassID::InferSwitches, PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::CompactBlocks,
 };
 
 // Any other pass may edit the function without reporting it and ask afterwards. It has to get the identities from before its edits.
@@ -770,16 +793,13 @@ const ValueIdentities& FunctionAnalyses::identities()
         m_values.identities.emplace(m_function, cfg(), ValueIdentities::RepeatedWalks::StartAtFirstChangedBlock, &opcodesOfValues(), evaluation);
         m_values.didUpdateIdentities = false;
         didBuild(FunctionAnalysis::Identities);
-        if (m_verifiesUpdates && m_values.identities->isComplete()) [[unlikely]]
-            verifyIdentities(cfg());
     } else {
         if (!m_values.identities->isComplete()) {
             m_values.identities->setGraph(&cfg());
             if (evaluation == ValueIdentities::Evaluation::Complete)
                 m_values.identities->complete();
         }
-        if (std::exchange(m_values.didUpdateIdentities, false) && m_verifiesUpdates) [[unlikely]]
-            verifyIdentities(cfg());
+        m_values.didUpdateIdentities = false;
     }
     checkBlockCount();
     checkValueCount();
@@ -803,8 +823,6 @@ const Liveness& FunctionAnalyses::liveness()
         options.opcodesOfValues = &opcodesOfValues();
         m_values.liveness.emplace(m_function, cfg(), useLists(), options);
         didBuild(FunctionAnalysis::Liveness);
-        if (m_verifiesUpdates) [[unlikely]]
-            verifyLiveness();
     }
     checkBlockCount();
     checkValueCount();

@@ -17,9 +17,6 @@ namespace JSC { namespace AOT {
 
 static_assert(hostCallFrameSize(0) == 48 && hostCallFrameSize(1) == 64 && hostCallFrameSize(2) == 64 && hostCallFrameSize(8) == 112);
 
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr GPRReg fp = GPRInfo::callFrameRegister;
-
 Address hostCallFrameSlot(CallFrameSlot slot, ptrdiff_t offset)
 {
     return Address(sp, static_cast<int>(slot) * static_cast<int>(sizeof(Register)) + offset);

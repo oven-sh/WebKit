@@ -20,9 +20,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr GPRReg fp = GPRInfo::callFrameRegister;
-
 struct ArrayCallRegisters {
     CallRegisters call;
     GPRReg list;
@@ -41,11 +38,6 @@ struct ListCopyRegisters {
     GPRReg index;
     GPRReg temporary;
 };
-
-static Address softStackLimit()
-{
-    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
-}
 
 static void emitAlignedListSize(StubAssembler& jit, GPRReg count, unsigned extraRegisters, GPRReg size)
 {

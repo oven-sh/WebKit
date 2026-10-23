@@ -4,9 +4,10 @@
  */
 
 #include "config.h"
-#include "AOTAnalysisDump.h"
 
-#if ENABLE(AOT)
+#if ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))
+
+#include "AOTAnalysisDump.h"
 
 #include "AOTSort.h"
 #include "AOTVector.h"
@@ -17,41 +18,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr ASCIILiteral absentText = "none"_s;
 static constexpr ASCIILiteral emptyText = "-"_s;
-
-ASCIILiteral sectionNameOf(FunctionAnalysis analysis)
-{
-    switch (analysis) {
-    case FunctionAnalysis::ControlFlow:
-        return "control-flow"_s;
-    case FunctionAnalysis::Dominators:
-        return "dominators"_s;
-    case FunctionAnalysis::NaturalLoops:
-        return "natural-loops"_s;
-    case FunctionAnalysis::Cycles:
-        return "cycles"_s;
-    case FunctionAnalysis::UseLists:
-        return "use-lists"_s;
-    case FunctionAnalysis::Identities:
-        return "identities"_s;
-    case FunctionAnalysis::Liveness:
-        return "liveness"_s;
-    case FunctionAnalysis::Effects:
-        return "effects"_s;
-    case FunctionAnalysis::Escape:
-        return "escape"_s;
-    case FunctionAnalysis::EscapeHistory:
-        return "escape-history"_s;
-    case FunctionAnalysis::Frequencies:
-        return "frequencies"_s;
-    case FunctionAnalysis::Guards:
-        return "guards"_s;
-    case FunctionAnalysis::FailedTests:
-        return "failed-tests"_s;
-    case FunctionAnalysis::Induction:
-        return "induction"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
 
 std::optional<FunctionAnalysis> parseSectionName(StringView name)
 {
@@ -584,6 +550,115 @@ void dumpAnalyses(PrintStream& out, FunctionAnalyses& analyses, AnalysisSet set)
         dumpSection(out, analyses, analysis);
 }
 
+void GuardAvailability::dump(PrintStream& out) const
+{
+    solveNamedGuards();
+    solveUnnamedAllocations();
+
+    const Program& program = m_analyses.program();
+    for (ValueID guard : m_guards) {
+        dumpID(out, guard);
+        out.print(" facts: ");
+        dumpGuardFacts(out, program, factsOf(guard));
+        out.println();
+    }
+
+    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+        if (!m_solution.solvedBlocks.get(block.index()))
+            continue;
+        dumpID(out, block);
+        out.print(" available at head: [");
+        CommaPrinter separator(" "_s);
+        for (size_t bit : m_solution.availableAtHead[block.index()]) {
+            const Component& component = m_components[bit];
+            out.print(separator);
+            dumpID(out, component.guard);
+            out.print(".", component.factIndex);
+        }
+        out.println("]");
+    }
+}
+
+void BlockFrequencies::dump(PrintStream& out, const Function& function) const
+{
+    RELEASE_ASSERT(function.blocks.size() == m_blocks.size());
+    for (size_t index = 0; index < m_blocks.size(); ++index) {
+        if (m_cfg.isReachable(BlockID(index)))
+            out.println("b", index, " frequency: ", nameOf(classOf(BlockID(index))), " count: ", WTF::format("%.6f", frequencyOf(BlockID(index))));
+    }
+    for (size_t index = 0; index < m_blocks.size(); ++index) {
+        if (!m_cfg.isReachable(BlockID(index)))
+            continue;
+        forEachOutgoingEdge(function, BlockID(index), [&](Edge edge, const Target& target) {
+            BlockFrequency frequency = classOf(edge);
+            if (classForBlockOrder(edge) != frequency) {
+                dumpEdge(out, edge);
+                out.println(" off the usual path");
+            }
+            if (rarerOf(classOf(edge.from), classOf(target.block)) >= frequency)
+                return;
+            dumpEdge(out, edge);
+            out.println(" frequency: ", nameOf(frequency));
+        });
+    }
+}
+
+static void dumpStep(PrintStream& out, const InductionStep& step)
+{
+    switch (step.kind) {
+    case InductionStepKind::Unknown:
+        out.print(enumName(step.kind));
+        return;
+    case InductionStepKind::Constant:
+        out.print(step.constant < 0 ? "" : "+", step.constant);
+        return;
+    case InductionStepKind::Invariant:
+        out.print(step.isSubtracted ? "-" : "+");
+        dumpID(out, step.invariant);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static void dumpTest(PrintStream& out, ValueID parameter, const InductionTest& test)
+{
+    dumpID(out, test.block);
+    out.print(" ");
+    dumpID(out, parameter);
+    out.print(" ", nameOf(test.relation), " ");
+    dumpID(out, test.bound);
+    out.print(" ", enumName(test.boundKind), " ", enumName(test.tested));
+    out.print(" entry ", enumName(test.entryRelation), " exits ", enumName(test.exits));
+}
+
+void dumpInductionVariable(PrintStream& out, const InductionVariable& variable)
+{
+    dumpID(out, variable.parameter);
+    out.print(" start ");
+    dumpID(out, variable.start);
+    out.print(" step ");
+    dumpStep(out, variable.step);
+    out.print(" ", enumName(variable.direction), " stepped ");
+    dumpValues(out, variable.steppedValues.span());
+    out.print(" tests ");
+    dumpList(out, variable.tests.span(), [&variable](PrintStream& out, const InductionTest& test) {
+        dumpTest(out, variable.parameter, test);
+    });
+}
+
+void InductionVariables::dump(PrintStream& out) const
+{
+    for (const LoopInduction& loop : m_loops) {
+        out.print("loop ");
+        dumpID(out, loop.header);
+        out.print(":\n");
+        for (const InductionVariable& variable : loop.variables) {
+            dumpInductionVariable(out, variable);
+            out.print("\n");
+        }
+    }
+}
+
 } } } // namespace JSC::AOT::Typed
 
-#endif // ENABLE(AOT)
+#endif // ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))

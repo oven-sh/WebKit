@@ -40,7 +40,7 @@ static ValueID forwardedSourceOf(const Function& function, ValueID value)
 FlowScopeFrame::FlowScopeFrame(const FlowScopeIndex& index, FunctionID function, FlowScopeFrame* caller, ValueID call)
     : function(function)
     , body(index.program().at(function))
-    , analyses(AnalysisContext { index.inputs.build(), index.program(), nullptr, nullptr, function }, body)
+    , analyses(AnalysisContext { index.inputs.build, index.program(), nullptr, nullptr, function }, body)
     , caller(caller)
     , call(call)
     , depth(caller ? caller->depth + 1 : 0)
@@ -65,7 +65,7 @@ void FlowScopeOwnerAnalysis::createFrames()
     appendFrame(m_owner.function, nullptr, ValueID());
     for (size_t index = 0; index < m_frames.size(); ++index) {
         FlowScopeFrame* caller = m_frames[index].get();
-        for (const FlowFunctionMention& mention : m_index.bodies[caller->function.index()]->references) {
+        for (const FlowFunctionMention& mention : m_index.mentionsIn(caller->function)) {
             bool runsOnlyDuringCall = m_index.calls.soleCallSites[mention.function.index()] == FlowCallSite { caller->function, mention.value };
             if (runsOnlyDuringCall && pointOf(*caller, mention.value))
                 appendFrame(mention.function, caller, mention.value);
@@ -204,7 +204,7 @@ FlowScopeEntry FlowScopeOwnerAnalysis::entryByCallsOf(FunctionID function)
     if (m_index.calls.functionsEnteredByHost.get(function.index()))
         return unknownScopeEntry;
     FlowScopeEntry entry = neverScopeEntry;
-    for (const FlowScopeCall& call : recordsWith(m_index.calls.byCallee.span(), function, &FlowScopeCall::callee)) {
+    for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
         FlowScopeFrame* frame = findFrame(call.caller);
         entry = meet(entry, frame ? entryAt(*frame, call.site) : laterOf(entryOf(call.caller), call.subject ? entryByStoresTo(call.subject) : unknownScopeEntry));
         // Nothing lies below: a function of the library has thousands of callers, and the first that has nothing to do with this owner decides.
@@ -470,14 +470,12 @@ void FlowScopeOwnerAnalysis::followClosure(FlowScopeFrame& creator, ValueID clos
 void FlowScopeOwnerAnalysis::recordOwnReferences()
 {
     for (auto& frame : m_frames) {
-        for (const FlowFunctionMention& reference : m_index.bodies[frame->function.index()]->references) {
+        for (const FlowFunctionMention& reference : m_index.mentionsIn(frame->function)) {
             switch (reference.kind) {
             case FunctionReferenceKind::Closure:
                 followClosure(*frame, reference.value, reference.function);
                 break;
-            case FunctionReferenceKind::Call:
-            case FunctionReferenceKind::Constructor:
-            case FunctionReferenceKind::Dispatch:
+            default:
                 if (!findFrame(reference.function))
                     lower(reference.function, entryAt(*frame, reference.value));
                 break;
@@ -517,10 +515,6 @@ void FlowScopeOwnerAnalysis::recordOutsideReaders()
             recordOutsideReader(read.function);
         for (const FlowScopeLocationAccess& access : accessesAt(m_index.accessesThroughClassObjects.span(), variable.index()))
             recordOutsideReader(access.function);
-    }
-    for (FlowScopeLocation member : m_owner.members) {
-        for (const FlowScopeLocationAccess& read : accessesAt(m_index.reads.span(), member))
-            recordOutsideReader(read.function);
     }
     for (ModuleID exporter : m_owner.exporters) {
         for (const FlowModuleValueRead& read : valueReadsOf(m_index, exporter))
@@ -585,10 +579,7 @@ void FlowScopeOwnerAnalysis::runFixpoint()
     while (!m_queue.isEmpty()) {
         FunctionID function = m_queue.takeLast();
         FlowScopeEntry entry = ensureEntry(function);
-        const auto& body = m_index.bodies[function.index()];
-        if (!body)
-            continue;
-        for (const FlowFunctionMention& reference : body->references)
+        for (const FlowFunctionMention& reference : m_index.mentionsIn(function))
             lower(reference.function, entry);
         constexpr size_t mostEntriesToRemember = 8;
         for (const StoredFunctionReader& read : recordsWith(m_storedFunctionReaders.span(), function, &StoredFunctionReader::reader)) {
@@ -607,7 +598,7 @@ void FlowScopeOwnerAnalysis::runFixpoint()
 void FlowScopeOwnerAnalysis::refineEntriesByCalls()
 {
     m_entriesByUse = m_entries;
-    if (m_owner.variables.isEmpty() && m_owner.members.isEmpty())
+    if (m_owner.variables.isEmpty())
         return;
     for (auto& entry : m_entries) {
         entry.value = neverScopeEntry;
@@ -628,7 +619,7 @@ void FlowScopeOwnerAnalysis::refineEntriesByCalls()
         if (refined == current)
             continue;
         m_entries.set(function, refined);
-        for (const FlowScopeCall& call : recordsWith(m_index.calls.byCaller.span(), function, &FlowScopeCall::caller)) {
+        for (const FlowScopeCall& call : m_index.calls.callsBy(function)) {
             auto callee = m_entries.find(call.callee);
             if (callee != m_entries.end() && callee->value != unknownScopeEntry && waiting.add(call.callee).isNewEntry)
                 m_queue.append(call.callee);
@@ -641,8 +632,8 @@ void FlowScopeOwnerAnalysis::computeEntries()
 {
     if (m_owner.module) {
         m_exit = exitOf(ownerFrame());
-        bool isReadByHostAtAnyTime = m_index.modulesLoadedByName.get(m_owner.module.index()) || std::ranges::any_of(m_owner.exporters, [&](ModuleID exporter) {
-            return m_index.modulesReadByHost.get(exporter.index()) || m_index.modulesLoadedByName.get(exporter.index());
+        bool isReadByHostAtAnyTime = m_index.inputs.modulesLoadedByName.get(m_owner.module.index()) || std::ranges::any_of(m_owner.exporters, [&](ModuleID exporter) {
+            return m_index.modulesReadByHost.get(exporter.index()) || m_index.inputs.modulesLoadedByName.get(exporter.index());
         });
         if (m_index.moduleOrder.runsAfterRequests(m_owner.module) && !isReadByHostAtAnyTime)
             m_hostEntry = m_exit;

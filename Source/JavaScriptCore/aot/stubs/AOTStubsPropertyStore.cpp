@@ -17,7 +17,6 @@ namespace JSC { namespace AOT {
 static_assert(!PackedSlot::offsetOfPayload() && PackedSlot::offsetOfLocation() == sizeof(uint32_t) && sizeof(PackedSlot) == sizeof(uint64_t));
 
 #if CPU(ARM64)
-static constexpr unsigned locationShiftInCell = 8 * PackedSlot::offsetOfLocation();
 static constexpr unsigned kindAndFlagsShiftInCell = 8 * PackedSlot::offsetOfBiasedKindAndFlags();
 #endif
 

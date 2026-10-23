@@ -169,42 +169,6 @@ fn counted_records<W: Words + ?Sized>(
     Some(())
 }`.split("\n");
 
-const operandHelpers = `#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum OperandWord {
-    // The index of the operand in the operation's own list of operands.
-    Operand(u32),
-    Key,
-}
-
-type VisitOperand<'v> = &'v mut dyn FnMut(OperandWord, usize);
-
-fn operand<W: Words + ?Sized>(words: &W, at: &mut usize, index: u32, visit: VisitOperand<'_>) -> Option<()> {
-    if words.get(*at)? != ABSENT_WORD {
-        visit(OperandWord::Operand(index), *at);
-    }
-    *at += 1;
-    Some(())
-}
-
-fn operands<W: Words + ?Sized>(words: &W, at: &mut usize, first_index: u32, visit: VisitOperand<'_>) -> Option<()> {
-    let count = words.get(*at)?;
-    *at += 1;
-    for ordinal in 0..count {
-        words.get(*at)?;
-        visit(OperandWord::Operand(first_index + ordinal), *at);
-        *at += 1;
-    }
-    Some(())
-}
-
-fn key<W: Words + ?Sized>(words: &W, at: &mut usize, visit: VisitOperand<'_>) -> Option<()> {
-    if words.get(*at)? != ABSENT_WORD {
-        visit(OperandWord::Key, *at);
-    }
-    *at += 1;
-    Some(())
-}`.split("\n");
-
 function fieldWord(kind: Kind): string {
   return `FieldWord::Reference(${referenceKind(kind)})`;
 }
@@ -241,56 +205,6 @@ function entryStatements(entry: Entry): string[] {
   }
   flush();
   return statements;
-}
-
-function skippedListStatement(element: Kind): string {
-  if (isReference(element)) return "counted_words(words, &mut at, 1)?;";
-  if (holdsReferences(element))
-    return `counted_records(words, &mut at, &mut |_, _| {}, ${rustTypeOf(element)}::visit_words)?;`;
-  return `counted_words(words, &mut at, ${wireWordsOf(element)})?;`;
-}
-
-function operandStatements(entry: Entry): string[] {
-  const statements: string[] = [];
-  // Behind the last word that is visited there is nothing to step over.
-  let neededCount = 0;
-  let skipped = !entry.isTerminator && wireFlagsOf(entry).length > 0 ? 1 : 0;
-  const add = (statement: string): void => {
-    if (skipped > 0) statements.push(`skip(words, &mut at, ${skipped})?;`);
-    skipped = 0;
-    statements.push(statement);
-  };
-  const addVisit = (statement: string): void => {
-    add(statement);
-    neededCount = statements.length;
-  };
-  for (const parameter of wireParametersOf(entry)) {
-    if (parameter.tag === "Operand") {
-      addVisit(`${parameter.isVariadic ? "operands" : "operand"}(words, &mut at, ${parameter.index}, visit)?;`);
-      continue;
-    }
-    const kind = parameter.kind;
-    if (kind.tag === "List") add(skippedListStatement(kind.element));
-    else if (!holdsReferences(kind)) skipped += wireWordsOf(kind);
-    else if (kind.tag === "Record" || kind.tag === "Variant")
-      add(`at = ${rustTypeOf(kind)}::visit_words(words, at, &mut |_, _| {})?;`);
-    else if (referenceKind(kind) === "ReferenceKind::PropertyKey") addVisit("key(words, &mut at, visit)?;");
-    else skipped += 1;
-  }
-  return statements.slice(0, neededCount);
-}
-
-function visitOperandsFunction(name: string, enumName: string, parameter: string, entries: readonly Entry[]): string[] {
-  const bodies = entries.map(entry => ({ label: entry.name, body: operandStatements(entry) }));
-  return [
-    `pub fn ${name}<W: Words + ?Sized>(${parameter}: ${enumName}, words: &W, visit: &mut dyn FnMut(OperandWord, usize)) -> Option<()> {`,
-    `${indentation}let mut at = 0;`,
-    `${indentation}match ${parameter} {`,
-    ...groupedArms(enumName, bodies, indentation.repeat(2)),
-    `${indentation}}`,
-    `${indentation}Some(())`,
-    "}",
-  ];
 }
 
 export function groupedArms(enumName: string, bodies: readonly CaseBody[], indent: string): string[] {
@@ -338,12 +252,6 @@ function entryFieldsRs(schema: Schema): string[] {
     ...visitFunction("visit_value_fields", "Opcode", "opcode", schema.operations.filter(isWire)),
     "",
     ...visitFunction("visit_terminator_fields", "TerminatorKind", "kind", schema.terminators.filter(isWire)),
-    "",
-    ...operandHelpers,
-    "",
-    ...visitOperandsFunction("visit_value_operands", "Opcode", "opcode", schema.operations.filter(isWire)),
-    "",
-    ...visitOperandsFunction("visit_terminator_operands", "TerminatorKind", "kind", schema.terminators.filter(isWire)),
   ];
 }
 

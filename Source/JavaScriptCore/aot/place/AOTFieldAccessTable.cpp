@@ -9,13 +9,16 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTIRPrinter.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTSlotPlanSteps.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/StringPrintStream.h>
+
+#if ASSERT_ENABLED
+#include "AOTIRPrinter.h"
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -38,8 +41,11 @@ static LayoutID findMemberOutsideLocation(const SlotAccessKey& access, const Slo
 static String describeDisagreement(const Program& program, const SlotAccessKey& access, const SlotAgreement& agreement)
 {
     StringPrintStream out;
-    out.print(access.isStore ? "a store to "_s : "a read of "_s);
+    out.print(access.isStore ? "a store"_s : "a read"_s);
+#if ASSERT_ENABLED
+    out.print(access.isStore ? " to "_s : " of "_s);
     printPropertyKey(out, program, access.key);
+#endif
     out.print(" through "_s, program.types.at(access.receivers).members.size(), " layouts, which keep it in "_s, agreement.groups.size(), " places; "_s);
     out.print(agreement.membersWithoutSlot.size(), " of them have no slot for it"_s);
     return out.toString();
@@ -95,7 +101,6 @@ static PlacedSlot slotOfEveryMember(const PlacementContext& context, const SlotA
             slot.mayExistWithoutStorage |= slotOfMember.mayExistWithoutStorage;
         slot.deferredClosureCapturesObject |= slotOfMember.deferredClosureCapturesObject;
         slot.deferredClosureCapturesEnvironment |= slotOfMember.deferredClosureCapturesEnvironment;
-        slot.defersFlattenedObject &= slotOfMember.defersFlattenedObject;
     }
     return slot;
 }

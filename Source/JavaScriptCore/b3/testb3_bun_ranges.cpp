@@ -64,44 +64,6 @@ static Policy rangeReductionPolicy(bool reducesWithRanges)
     return policy;
 }
 
-static void testRangeForReadsKnownRange()
-{
-    RangeTestGraph graph;
-    Value* phi = graph.phi(Int64);
-    graph.proc.setKnownRange(phi, IntRange(0, 100));
-    CHECK_EQ(rangeFor(graph.proc, graph.make(Add, phi, graph.int64(1))), IntRange(1, 101));
-
-    Value* phiWithoutRange = graph.phi(Int64);
-    CHECK_EQ(rangeFor(graph.proc, phiWithoutRange), IntRange::top<int64_t>());
-    CHECK_EQ(rangeFor(graph.proc, graph.make(Add, phiWithoutRange, graph.int64(1))), IntRange::top<int64_t>());
-}
-
-static void testRangeForIntersectsOwnAndKnownRange()
-{
-    RangeTestGraph graph;
-    Value* overlapping = graph.loadByte();
-    graph.proc.setKnownRange(overlapping, IntRange(10, 1000));
-    CHECK_EQ(rangeFor(graph.proc, overlapping), IntRange(10, 255));
-}
-
-static void testImplausibleKnownRangeIsIgnored()
-{
-    RangeTestGraph graph;
-    Procedure& proc = graph.proc;
-    Value* byte = graph.loadByte();
-    graph.ret(byte);
-
-    proc.setKnownRange(byte, IntRange(255, 400));
-    CHECK_EQ(rangeFor(proc, byte), IntRange(255, 255));
-    CHECK(isKnownRangePlausible(proc, byte));
-    CHECK(!findViolatedRule(proc));
-
-    proc.setKnownRange(byte, IntRange(256, 400));
-    CHECK_EQ(rangeFor(proc, byte), IntRange(0, 255));
-    CHECK(!isKnownRangePlausible(proc, byte));
-    CHECK(findViolatedRule(proc) == ValidationRule::KnownRange);
-}
-
 static void testRangeForTrunc()
 {
     RangeTestGraph graph;
@@ -136,25 +98,6 @@ static void testRangeForDepthLimit()
         CHECK(limitHits(deep.proc, Limit::MaxRangeAnalysisDepth) > 0);
         CHECK(hasNumber(deep.proc.report().firstOriginOf(Limit::MaxRangeAnalysisDepth), 1));
     }
-}
-
-static void testKnownRangeDiesWithOpcode()
-{
-    RangeTestGraph graph;
-    Procedure& proc = graph.proc;
-    Value* byte = graph.loadByte();
-    proc.setKnownRange(byte, IntRange(0, 200));
-    Value* copy = proc.clone(byte);
-    CHECK(proc.knownRange(copy) == IntRange(0, 200));
-    copy->setOpcodeUnsafely(Load8S);
-    CHECK(!proc.knownRange(copy));
-    CHECK(proc.knownRange(byte) == IntRange(0, 200));
-
-    Value* phi = graph.phi(Int64);
-    proc.setKnownRange(phi, IntRange(0, 100));
-    CHECK(proc.knownRange(phi) == IntRange(0, 100));
-    phi->replaceWithIdentity(graph.x);
-    CHECK(!proc.knownRange(phi));
 }
 
 static void testUnsignedIntervalFor()
@@ -277,25 +220,6 @@ static void testEvaluateComparisonOnRanges()
     }
 }
 
-static void testEvaluateComparisonOfValues()
-{
-    RangeTestGraph graph;
-    Value* phi = graph.phi(Int64);
-    graph.proc.setKnownRange(phi, IntRange(0, 10));
-    auto evaluate = [&](B3::Opcode opcode, Value* left, Value* right) {
-        return evaluateComparison(graph.proc, graph.make(opcode, left, right));
-    };
-
-    CHECK(evaluate(Below, graph.loadByte(), graph.int32(256)) == TriState::True);
-    CHECK(evaluate(LessThan, graph.int64(11), phi) == TriState::False);
-    CHECK(evaluate(Equal, phi, graph.int64(11)) == TriState::False);
-    CHECK(evaluate(AboveEqual, graph.taggedWord(), graph.tagConstant()) == TriState::True);
-
-    CHECK(evaluate(LessThan, graph.phi(Int64), graph.int64(11)) == TriState::Indeterminate);
-    CHECK(evaluate(LessThan, graph.number(1), graph.number(2)) == TriState::Indeterminate);
-    CHECK(evaluate(Add, graph.x, graph.x) == TriState::Indeterminate);
-}
-
 template<typename Functor>
 static std::optional<bool> comparisonResult(B3::Opcode comparison, int64_t constant, bool constantIsFirst, const Functor& makeOperand)
 {
@@ -399,79 +323,6 @@ static void testBoxedInt32ComparisonsFoldByRange()
     }
 }
 
-static void checkExtensionOfTruncation(B3::Opcode extension, IntRange range, bool isRedundant, bool reducesWithRanges)
-{
-    Procedure proc(rangeReductionPolicy(reducesWithRanges));
-    Graph graph { proc };
-    BasicBlock* root = proc.addBlock();
-    Value* wide = cCallArgumentValues<int64_t>(proc, root)[0];
-    proc.setKnownRange(wide, range);
-    Value* extended = graph.make(root, extension, graph.make(root, Trunc, wide));
-    graph.ret(root, extended);
-    CHECK(findRangeReduction(proc, extended).value == (isRedundant ? wide : nullptr));
-
-    reduceStrengthOnce(proc);
-    unsigned remainingCount = isRedundant && reducesWithRanges ? 0 : 1;
-    CHECK_EQ(numberOfValues(proc, extension), remainingCount);
-    CHECK_EQ(numberOfValues(proc, Trunc), remainingCount);
-
-    auto code = compileProc(proc);
-    for (int64_t input : { range.min(), static_cast<int64_t>(1), range.max() }) {
-        int64_t expected = extension == SExt32 ? static_cast<int64_t>(static_cast<int32_t>(input)) : static_cast<int64_t>(static_cast<uint32_t>(input));
-        CHECK_EQ(invoke<int64_t>(*code, input), expected);
-    }
-}
-
-static void testExtensionOfTruncationFoldsByRange()
-{
-    constexpr int64_t minInt32 = std::numeric_limits<int32_t>::min();
-    constexpr int64_t maxInt32 = std::numeric_limits<int32_t>::max();
-    constexpr int64_t maxUInt32 = std::numeric_limits<uint32_t>::max();
-    for (bool reducesWithRanges : { true, false }) {
-        checkExtensionOfTruncation(SExt32, IntRange(minInt32, maxInt32), true, reducesWithRanges);
-        checkExtensionOfTruncation(SExt32, IntRange(minInt32, maxInt32 + 1), false, reducesWithRanges);
-        checkExtensionOfTruncation(SExt32, IntRange(minInt32 - 1, maxInt32), false, reducesWithRanges);
-        checkExtensionOfTruncation(ZExt32, IntRange(0, maxUInt32), true, reducesWithRanges);
-        checkExtensionOfTruncation(ZExt32, IntRange(0, maxUInt32 + 1), false, reducesWithRanges);
-        checkExtensionOfTruncation(ZExt32, IntRange(-1, maxUInt32), false, reducesWithRanges);
-    }
-}
-
-static void checkSignExtension(IntRange range, bool becomesZeroExtension, bool reducesWithRanges)
-{
-    Procedure proc(rangeReductionPolicy(reducesWithRanges));
-    Graph graph { proc };
-    BasicBlock* root = proc.addBlock();
-    Value* word = graph.load(root, Int32, cCallArgumentValues<int32_t*>(proc, root)[0], 0, firstHeap);
-    proc.setKnownRange(word, range);
-    Value* extended = graph.make(root, SExt32, word);
-    graph.ret(root, extended);
-    RangeReduction reduction = findRangeReduction(proc, extended);
-    CHECK(reduction.kind == (becomesZeroExtension ? RangeReduction::Kind::ZeroExtension : RangeReduction::Kind::None));
-    CHECK(reduction.value == (becomesZeroExtension ? word : nullptr));
-
-    reduceStrengthOnce(proc);
-    CHECK_EQ(numberOfValues(proc, ZExt32), becomesZeroExtension && reducesWithRanges ? 1u : 0u);
-    CHECK_EQ(numberOfValues(proc, SExt32), becomesZeroExtension && reducesWithRanges ? 0u : 1u);
-
-    auto code = compileProc(proc);
-    for (int64_t input : { range.min(), static_cast<int64_t>(1), range.max() }) {
-        int32_t memory = static_cast<int32_t>(input);
-        CHECK_EQ(invoke<int64_t>(*code, &memory), input);
-    }
-}
-
-static void testSignExtensionOfNonNegativeIsZeroExtension()
-{
-    constexpr int64_t maxInt32 = std::numeric_limits<int32_t>::max();
-    for (bool reducesWithRanges : { true, false }) {
-        checkSignExtension(IntRange(0, maxInt32), true, reducesWithRanges);
-        checkSignExtension(IntRange(5, 9), true, reducesWithRanges);
-        checkSignExtension(IntRange(-1, maxInt32), false, reducesWithRanges);
-        checkSignExtension(IntRange::top<int32_t>(), false, reducesWithRanges);
-    }
-}
-
 struct ExtendedOperand {
     B3::Opcode extension;
     bool isKnownNonNegative;
@@ -480,95 +331,6 @@ struct ExtendedOperand {
 static int64_t extendWord(const ExtendedOperand& operand, int32_t word)
 {
     return operand.extension == SExt32 ? static_cast<int64_t>(word) : static_cast<int64_t>(static_cast<uint32_t>(word));
-}
-
-static void checkComparisonOfExtensions(B3::Opcode opcode, ExtendedOperand left, ExtendedOperand right, bool reducesWithRanges)
-{
-    constexpr int32_t maxInt32 = std::numeric_limits<int32_t>::max();
-    constexpr int32_t minInt32 = std::numeric_limits<int32_t>::min();
-    Procedure proc(rangeReductionPolicy(reducesWithRanges));
-    Graph graph { proc };
-    BasicBlock* root = proc.addBlock();
-    Value* pointer = cCallArgumentValues<int32_t*>(proc, root)[0];
-    Value* leftWord = graph.load(root, Int32, pointer, 0, firstHeap);
-    Value* rightWord = graph.load(root, Int32, pointer, 4, firstHeap);
-    if (left.isKnownNonNegative)
-        proc.setKnownRange(leftWord, IntRange(0, maxInt32));
-    if (right.isKnownNonNegative)
-        proc.setKnownRange(rightWord, IntRange(0, maxInt32));
-    Value* comparison = graph.make(root, opcode, graph.make(root, left.extension, leftWord), graph.make(root, right.extension, rightWord));
-    graph.ret(root, graph.make(root, ZExt32, comparison));
-
-    bool isNarrowed = left.extension == right.extension || left.isKnownNonNegative || right.isKnownNonNegative;
-    RangeReduction reduction = findRangeReduction(proc, comparison);
-    CHECK(reduction.kind == (isNarrowed ? RangeReduction::Kind::Comparison : RangeReduction::Kind::None));
-    if (isNarrowed) {
-        CHECK(reduction.value == leftWord);
-        CHECK(reduction.right == rightWord);
-    }
-
-    reduceStrengthOnce(proc);
-    CHECK_EQ(numberOfValues(proc, [](Value* value) {
-        return isIntegerComparison(value->opcode()) && value->child(0)->type() == Int32;
-    }), isNarrowed && reducesWithRanges ? 1u : 0u);
-
-    auto code = compileProc(proc);
-    for (int32_t leftInput : { 0, 1, 7, maxInt32, -1, -7, minInt32 }) {
-        for (int32_t rightInput : { 0, 1, 7, maxInt32, -1, -7, minInt32 }) {
-            if ((left.isKnownNonNegative && leftInput < 0) || (right.isKnownNonNegative && rightInput < 0))
-                continue;
-            int32_t memory[2] = { leftInput, rightInput };
-            CHECK_EQ(invoke<int64_t>(*code, memory), static_cast<int64_t>(holds(opcode, extendWord(left, leftInput), extendWord(right, rightInput))));
-        }
-    }
-}
-
-static void testComparisonOfExtensionsIsNarrow()
-{
-    for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Below, BelowEqual, Above, AboveEqual }) {
-        for (B3::Opcode leftExtension : { SExt32, ZExt32 }) {
-            for (B3::Opcode rightExtension : { SExt32, ZExt32 }) {
-                for (bool isLeftNonNegative : { false, true }) {
-                    for (bool isRightNonNegative : { false, true }) {
-                        for (bool reducesWithRanges : { true, false })
-                            checkComparisonOfExtensions(opcode, { leftExtension, isLeftNonNegative }, { rightExtension, isRightNonNegative }, reducesWithRanges);
-                    }
-                }
-            }
-        }
-    }
-}
-
-static void checkMask(Type type, IntRange range, int64_t mask, bool isRedundant, bool reducesWithRanges)
-{
-    Procedure proc(rangeReductionPolicy(reducesWithRanges));
-    Graph graph { proc };
-    BasicBlock* root = proc.addBlock();
-    Value* wide = cCallArgumentValues<int64_t>(proc, root)[0];
-    proc.setKnownRange(wide, range);
-    Value* operand = type == Int32 ? graph.make(root, Trunc, wide) : wide;
-    Value* masked = graph.make(root, BitAnd, operand, type == Int32 ? graph.int32(root, static_cast<int32_t>(mask)) : graph.int64(root, mask));
-    graph.ret(root, type == Int32 ? graph.make(root, ZExt32, masked) : masked);
-    CHECK(findRangeReduction(proc, masked).value == (isRedundant ? operand : nullptr));
-
-    reduceStrengthOnce(proc);
-    CHECK_EQ(numberOfValues(proc, BitAnd), isRedundant && reducesWithRanges ? 0u : 1u);
-
-    auto code = compileProc(proc);
-    for (int64_t input : { range.min(), static_cast<int64_t>(1), range.max() })
-        CHECK_EQ(invoke<int64_t>(*code, input), input & mask);
-}
-
-static void testMaskFoldsByRange()
-{
-    for (Type type : { Int32, Int64 }) {
-        for (bool reducesWithRanges : { true, false }) {
-            checkMask(type, IntRange(0, 255), 255, true, reducesWithRanges);
-            checkMask(type, IntRange(0, 256), 255, false, reducesWithRanges);
-            checkMask(type, IntRange(-1, 255), 255, false, reducesWithRanges);
-            checkMask(type, IntRange(0, 254), 254, false, reducesWithRanges);
-        }
-    }
 }
 
 template<typename T>
@@ -660,21 +422,12 @@ static void testReduceStrengthKnowsNarrowLoadRange()
 
 void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
 {
-    RUN(testRangeForReadsKnownRange());
-    RUN(testRangeForIntersectsOwnAndKnownRange());
-    RUN(testImplausibleKnownRangeIsIgnored());
     RUN(testRangeForTrunc());
     RUN(testRangeForDepthLimit());
-    RUN(testKnownRangeDiesWithOpcode());
     RUN(testUnsignedIntervalFor());
     RUN(testEvaluateComparisonOnRanges());
-    RUN(testEvaluateComparisonOfValues());
     RUN(testComparisonsFoldedByIntegerRange());
     RUN(testBoxedInt32ComparisonsFoldByRange());
-    RUN(testExtensionOfTruncationFoldsByRange());
-    RUN(testSignExtensionOfNonNegativeIsZeroExtension());
-    RUN(testComparisonOfExtensionsIsNarrow());
-    RUN(testMaskFoldsByRange());
     RUN(testVariableShiftRanges());
     RUN(testTruncOfVariableShiftLeftAndBack());
     RUN(testReduceStrengthKnowsNarrowLoadRange());

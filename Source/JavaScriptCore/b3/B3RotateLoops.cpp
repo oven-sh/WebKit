@@ -58,7 +58,6 @@ private:
         Vector<BasicBlock*, 4> testBlocks;
         Vector<BasicBlock*, 2> latches;
         BasicBlock* body { nullptr };
-        std::optional<InductionRecord> induction;
         bool keepsBackEdgeToGuard { false };
     };
 
@@ -112,17 +111,6 @@ private:
                 return true;
         }
         return false;
-    }
-
-    std::optional<InductionRecord> findInduction(BasicBlock* header) const
-    {
-        for (Value* value : *header) {
-            if (value->opcode() != Phi)
-                continue;
-            if (std::optional<InductionRecord> record = m_proc.knownInduction(value))
-                return record;
-        }
-        return std::nullopt;
     }
 
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
@@ -183,7 +171,6 @@ private:
                     if (staying.block() == loop.header() || loops.headerOf(staying.block()) || rotation.latches.contains(block))
                         return;
                     rotation.body = staying.block();
-                    rotation.induction = findInduction(loop.header());
                     m_rotations.append(WTF::move(rotation));
                     return;
                 }
@@ -197,8 +184,6 @@ private:
     void rotate(RegionCloner& cloner, const Rotation& rotation)
     {
         RegionCloner::BlockMap copies = cloner.cloneBlocks(rotation.testBlocks.span());
-        if (rotation.induction)
-            transferInduction(rotation, copies);
         for (BasicBlock* latch : rotation.latches)
             latch->replaceSuccessor(rotation.testBlocks[0], copies.get(rotation.testBlocks[0]));
         if (!rotation.keepsBackEdgeToGuard)
@@ -209,7 +194,6 @@ private:
         preHeader->setSuccessors(FrequentedBlock(rotation.body));
         rotation.testBlocks.last()->replaceSuccessor(rotation.body, preHeader);
 
-        m_proc.addRemark({ RemarkKind::LoopRotated, GaveUpReason::None, rotation.testBlocks[0]->at(0)->origin(), std::nullopt });
     }
 
     static void removePolls(std::span<BasicBlock* const> blocks)
@@ -220,34 +204,6 @@ private:
                     value->replaceWithNop();
             }
         }
-    }
-
-    void transferInduction(const Rotation& rotation, const RegionCloner::BlockMap& copies)
-    {
-        const InductionRecord& record = *rotation.induction;
-        Variable* variable = nullptr;
-        for (Value* value : *record.phi->owner) {
-            if (value->opcode() == Set && value->child(0) == record.phi)
-                variable = value->as<VariableValue>()->variable();
-        }
-        if (!variable)
-            return;
-        auto copyOf = [&](Value* value) -> Value* {
-            BasicBlock* copy = copies.get(value->owner);
-            if (!copy)
-                return value;
-            size_t index = value->owner->values().find(value);
-            RELEASE_ASSERT(index != notFound);
-            return copy->at(index);
-        };
-        DemotedInduction demoted;
-        demoted.variable = variable;
-        demoted.header = rotation.body;
-        demoted.next = copyOf(record.next);
-        demoted.test = record.test ? copyOf(record.test) : nullptr;
-        demoted.step = record.step;
-        demoted.doesNotWrap = record.doesNotWrap;
-        m_proc.setKnownInduction(demoted);
     }
 
     Procedure& m_proc;

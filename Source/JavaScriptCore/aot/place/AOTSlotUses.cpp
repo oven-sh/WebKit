@@ -95,7 +95,7 @@ struct KeysStoredTogether {
     SiteWeight weight { 0 };
 };
 
-struct Creation {
+struct SlotUseCreation {
     LayoutID layout;
     double heat { 0 };
     bool isInLoop { false };
@@ -104,7 +104,7 @@ struct Creation {
 struct FunctionUses {
     FunctionID function;
     // In heat without an upper limit, which is added up in the order of the functions: sums of floating-point numbers depend on their order.
-    Vector<Creation> creations;
+    Vector<SlotUseCreation> creations;
     // One entry for each place outside the constructor of a layout that makes an object of it: an allocation, or a construction by name. With how often it runs.
     Vector<std::pair<LayoutID, double>> placesThatMake;
     Vector<FunctionID> functionsCalledByName;
@@ -124,13 +124,13 @@ struct FunctionUses {
     Vector<VariableID> variablesUsedBeforeProgramEntry;
 };
 
-struct Site {
+struct SlotUseSite {
     BlockID block;
     const Value& value;
 };
 
 // An object that a function is the first to fill.
-struct FreshObject {
+struct SlotUseFreshObject {
     // None for what a call returns whose callee does not say by itself what it makes.
     LayoutID layout;
     FunctionID maker;
@@ -343,7 +343,7 @@ static Vector<Vector<ObjectUnderConstruction, 1>> findObjectsUnderConstruction(c
 }
 
 // Equal accesses are added up in the order of their heat, so that the sum does not depend on who found which.
-static bool isOrderedBefore(const SlotAccessUse& a, const SlotAccessUse& b)
+static bool accessIsOrderedBefore(const SlotAccessUse& a, const SlotAccessUse& b)
 {
     return a.access != b.access ? a.access < b.access : a.fillHeat < b.fillHeat;
 }
@@ -369,33 +369,33 @@ static void foldEqualAccesses(Vector<SlotAccessUse>& sorted)
 
 namespace {
 
-class FunctionScanner {
+class SlotUseScanner {
 public:
-    FunctionScanner(const ScanInputs&, const SharedCounters&, FunctionID);
+    SlotUseScanner(const ScanInputs&, const SharedCounters&, FunctionID);
 
     FunctionUses run();
 
 private:
     bool isUndefinedConstant(ValueID) const;
     BlockID blockOf(ValueID);
-    bool collectFreshObjects(ValueID, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<FreshObject, 4>&);
+    bool collectFreshObjects(ValueID, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<SlotUseFreshObject, 4>&);
     void findSourcesOfResult();
     void countAllocation(LayoutID, BlockID);
-    void scanCallByName(const Site&);
+    void scanCallByName(const SlotUseSite&);
 
-    void scanValue(const Site&);
-    void scanSlotRow(const Site&);
+    void scanValue(const SlotUseSite&);
+    void scanSlotRow(const SlotUseSite&);
     void noteStoreBehindStore(ValueID object, const Value& store, SiteWeight);
-    void scanStoreByName(const Site&);
-    void scanStoreOfConstructor(const Site&);
-    void scanPrivateDefinition(const Site&);
+    void scanStoreByName(const SlotUseSite&);
+    void scanStoreOfConstructor(const SlotUseSite&);
+    void scanPrivateDefinition(const SlotUseSite&);
     void countAllocationsByRunTime();
     void scanEnvironmentField(const Value&);
-    void scanAllocation(const Site&);
+    void scanAllocation(const SlotUseSite&);
     void scanInitialFields(const Value&, BlockID);
-    void scanData(const Site&);
+    void scanData(const SlotUseSite&);
     void scanDataObject(const DataNode::Object&, BlockID);
-    void scanKeysLookedUpByName(const Site&);
+    void scanKeysLookedUpByName(const SlotUseSite&);
     void scanVariables(const Value&);
 
     const ScanInputs& m_inputs;
@@ -419,7 +419,7 @@ private:
     bool m_readsZeroEncodingCandidate { false };
 };
 
-FunctionScanner::FunctionScanner(const ScanInputs& inputs, const SharedCounters& counters, FunctionID id)
+SlotUseScanner::SlotUseScanner(const ScanInputs& inputs, const SharedCounters& counters, FunctionID id)
     : m_inputs(inputs)
     , m_counters(counters)
     , m_program(inputs.context.program)
@@ -432,13 +432,13 @@ FunctionScanner::FunctionScanner(const ScanInputs& inputs, const SharedCounters&
 {
 }
 
-bool FunctionScanner::isUndefinedConstant(ValueID id) const
+bool SlotUseScanner::isUndefinedConstant(ValueID id) const
 {
     auto constant = constantThroughCasts(m_program, m_function, id);
     return constant && m_function.at(*constant).opcode == Opcode::Undefined;
 }
 
-BlockID FunctionScanner::blockOf(ValueID id)
+BlockID SlotUseScanner::blockOf(ValueID id)
 {
     if (m_blockOfValue.isEmpty()) {
         m_blockOfValue.fill(BlockID(), m_function.values.size());
@@ -454,7 +454,7 @@ BlockID FunctionScanner::blockOf(ValueID id)
 }
 
 // A test that passes hands the object on as a parameter of the block behind it.
-bool FunctionScanner::collectFreshObjects(ValueID value, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<FreshObject, 4>& objects)
+bool SlotUseScanner::collectFreshObjects(ValueID value, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<SlotUseFreshObject, 4>& objects)
 {
     ValueID root = definitionThroughSameValues(m_function, value);
     const Value& definition = m_function.at(root);
@@ -521,11 +521,11 @@ bool FunctionScanner::collectFreshObjects(ValueID value, BlockID join, Vector<Va
     return areAllFresh;
 }
 
-void FunctionScanner::findSourcesOfResult()
+void SlotUseScanner::findSourcesOfResult()
 {
     if (m_function.results.size() != 1 || !m_program.at(m_function.results[0].type).layouts)
         return;
-    Vector<FreshObject, 4> objects;
+    Vector<SlotUseFreshObject, 4> objects;
     for (const Block& block : m_function.blocks) {
         if (block.terminator.kind == TerminatorKind::ReturnCall)
             return;
@@ -536,11 +536,11 @@ void FunctionScanner::findSourcesOfResult()
         if (!returned || !collectFreshObjects(returned, { }, visitedParameters, objects))
             return;
     }
-    for (const FreshObject& object : objects)
+    for (const SlotUseFreshObject& object : objects)
         m_uses.sourcesOfResult.append({ object.layout, object.maker });
 }
 
-void FunctionScanner::countAllocation(LayoutID layout, BlockID block)
+void SlotUseScanner::countAllocation(LayoutID layout, BlockID block)
 {
     LayoutUse& use = m_counters.layouts[layout.index()];
     add(use.allocationSites, 1);
@@ -548,7 +548,7 @@ void FunctionScanner::countAllocation(LayoutID layout, BlockID block)
 }
 
 // A function that is written to be called with and without `new` constructs itself once where `this` is not its own: that is no recursion.
-void FunctionScanner::scanCallByName(const Site& site)
+void SlotUseScanner::scanCallByName(const SlotUseSite& site)
 {
     FunctionID callee = site.value.function();
     if (LayoutID constructed = m_program.at(callee).constructedClass; constructed && site.value.isConstruction())
@@ -559,7 +559,7 @@ void FunctionScanner::scanCallByName(const Site& site)
     (m_weights.isInLoop(site.block) ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(callee);
 }
 
-void FunctionScanner::scanSlotRow(const Site& site)
+void SlotUseScanner::scanSlotRow(const SlotUseSite& site)
 {
     const Value& value = site.value;
     SlotAccessUse use { { value.key(), value.receivers(), isSlotStore(value.opcode) }, 1, m_weights.weightOf(site.block) };
@@ -583,7 +583,7 @@ void FunctionScanner::scanSlotRow(const Site& site)
 }
 
 // In the order of the blocks. The rarer of the two stores says how often both run.
-void FunctionScanner::noteStoreBehindStore(ValueID object, const Value& store, SiteWeight weight)
+void SlotUseScanner::noteStoreBehindStore(ValueID object, const Value& store, SiteWeight weight)
 {
     LastStore current { store.key(), store.receivers(), weight };
     auto result = m_lastStoreInto.add(object.index(), current);
@@ -594,7 +594,7 @@ void FunctionScanner::noteStoreBehindStore(ValueID object, const Value& store, S
         m_uses.keysStoredTogether.append({ std::min(last.key, current.key), std::max(last.key, current.key), current.receivers, std::min(last.weight, weight) });
 }
 
-void FunctionScanner::scanStoreByName(const Site& site)
+void SlotUseScanner::scanStoreByName(const SlotUseSite& site)
 {
     const Value& store = site.value;
     if (std::optional<uint8_t> receiver = receiverOf(store.opcode)) {
@@ -615,7 +615,7 @@ void FunctionScanner::scanStoreByName(const Site& site)
 }
 
 // What a function stores into nearly every object that it is called to construct, that it allocates itself, or that it gets from the function that has made it.
-void FunctionScanner::scanStoreOfConstructor(const Site& site)
+void SlotUseScanner::scanStoreOfConstructor(const SlotUseSite& site)
 {
     const Value& store = site.value;
     std::optional<uint8_t> receiver = receiverOf(store.opcode);
@@ -624,7 +624,7 @@ void FunctionScanner::scanStoreOfConstructor(const Site& site)
         return;
 
     Vector<ValueID, 4> visitedParameters;
-    Vector<FreshObject, 4> objects;
+    Vector<SlotUseFreshObject, 4> objects;
     collectFreshObjects(store.operand(*receiver), { }, visitedParameters, objects);
     if (objects.isEmpty())
         return;
@@ -632,7 +632,7 @@ void FunctionScanner::scanStoreOfConstructor(const Site& site)
     bool storesUndefined = isUndefinedConstant(store.operand(*stored));
     const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
     double frequencyOfStore = frequencies.frequencyOf(site.block);
-    for (FreshObject object : objects) {
+    for (SlotUseFreshObject object : objects) {
         if (!storesUndefined && frequencyOfStore * 2 <= frequencies.frequencyOf(object.block))
             continue;
         if (object.allocation) {
@@ -654,7 +654,7 @@ void FunctionScanner::scanStoreOfConstructor(const Site& site)
     }
 }
 
-void FunctionScanner::scanPrivateDefinition(const Site& site)
+void SlotUseScanner::scanPrivateDefinition(const SlotUseSite& site)
 {
     SlotRow row = m_rows.rowOf(site.value.layout(), site.value.field());
     add(m_counters.rows[row].privateDefinitionsByName, 1);
@@ -662,7 +662,7 @@ void FunctionScanner::scanPrivateDefinition(const Site& site)
 }
 
 // The run time allocates the object of a subclass and of a function called with new, once per activation of the constructor.
-void FunctionScanner::countAllocationsByRunTime()
+void SlotUseScanner::countAllocationsByRunTime()
 {
     LayoutID constructed = m_function.constructedClass;
     if (!constructed || m_program.at(constructed).constructor != m_id || m_function.kind == FunctionKind::BaseConstructor)
@@ -670,12 +670,12 @@ void FunctionScanner::countAllocationsByRunTime()
     m_uses.creations.append({ constructed, m_weights.heatOf(BlockID(0u)), false });
 }
 
-void FunctionScanner::scanEnvironmentField(const Value& value)
+void SlotUseScanner::scanEnvironmentField(const Value& value)
 {
     add(m_counters.rows[m_rows.rowOf(value.layout(), value.field())].environmentUses, 1);
 }
 
-void FunctionScanner::scanInitialFields(const Value& allocation, BlockID block)
+void SlotUseScanner::scanInitialFields(const Value& allocation, BlockID block)
 {
     LayoutID layout = allocation.layout();
     auto fields = allocation.fields();
@@ -691,7 +691,7 @@ void FunctionScanner::scanInitialFields(const Value& allocation, BlockID block)
     }
 }
 
-void FunctionScanner::scanAllocation(const Site& site)
+void SlotUseScanner::scanAllocation(const SlotUseSite& site)
 {
     const Value& value = site.value;
     countAllocation(value.layout(), site.block);
@@ -701,7 +701,7 @@ void FunctionScanner::scanAllocation(const Site& site)
         scanInitialFields(value, site.block);
 }
 
-void FunctionScanner::scanDataObject(const DataNode::Object& object, BlockID block)
+void SlotUseScanner::scanDataObject(const DataNode::Object& object, BlockID block)
 {
     if (!object.layout)
         return;
@@ -720,7 +720,7 @@ void FunctionScanner::scanDataObject(const DataNode::Object& object, BlockID blo
     }
 }
 
-void FunctionScanner::scanData(const Site& site)
+void SlotUseScanner::scanData(const SlotUseSite& site)
 {
     forEachDataNodeInPreorder(m_program.at(site.value.data()).root, [&](uint32_t, const DataNode& node) {
         if (const DataNode::Object* object = node.tryAs<DataNode::Object>())
@@ -728,7 +728,7 @@ void FunctionScanner::scanData(const Site& site)
     });
 }
 
-void FunctionScanner::scanKeysLookedUpByName(const Site& site)
+void SlotUseScanner::scanKeysLookedUpByName(const SlotUseSite& site)
 {
     SiteWeight weight = m_weights.weightOf(site.block);
     forEachPropertyKey(site.value, [&](PropertyKeyID key) {
@@ -736,7 +736,7 @@ void FunctionScanner::scanKeysLookedUpByName(const Site& site)
     });
 }
 
-void FunctionScanner::scanVariables(const Value& value)
+void SlotUseScanner::scanVariables(const Value& value)
 {
     forEachVariable(value, [&](VariableID variable) {
         m_uses.variablesNamed.append(variable);
@@ -745,7 +745,7 @@ void FunctionScanner::scanVariables(const Value& value)
         m_readsZeroEncodingCandidate = true;
 }
 
-void FunctionScanner::scanValue(const Site& site)
+void SlotUseScanner::scanValue(const SlotUseSite& site)
 {
     Opcode opcode = site.value.opcode;
     if (Value::opcodesWithFieldAccess.contains(opcode))
@@ -779,7 +779,7 @@ void FunctionScanner::scanValue(const Site& site)
     scanVariables(site.value);
 }
 
-FunctionUses FunctionScanner::run()
+FunctionUses SlotUseScanner::run()
 {
     m_uses.function = m_id;
     countAllocationsByRunTime();
@@ -790,7 +790,7 @@ FunctionUses FunctionScanner::run()
     }
     if (m_readsZeroEncodingCandidate)
         findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, m_uses.variablesWithUncheckedReads);
-    AOT::sort(m_uses.accesses, isOrderedBefore);
+    AOT::sort(m_uses.accesses, accessIsOrderedBefore);
     foldEqualAccesses(m_uses.accesses);
     AOT::sort(m_uses.variablesNamed);
     removeRepeatedElements(m_uses.variablesNamed);
@@ -809,7 +809,7 @@ static void mergeAccesses(const ParallelLoops& loops, std::span<const FunctionUs
     accesses.reserveInitialCapacity(count);
     for (const FunctionUses& function : functions)
         accesses.appendVector(function.accesses);
-    parallelSort(loops, accesses.mutableSpan(), isOrderedBefore);
+    parallelSort(loops, accesses.mutableSpan(), accessIsOrderedBefore);
     foldEqualAccesses(accesses);
     moveToExactBuffer(accesses);
 }
@@ -1054,7 +1054,7 @@ static void addUpCreations(const SlotPlanContext& context, std::span<const Funct
 {
     BitVector runsInLoop = findFunctionsThatRunInLoops(context, functions);
     for (const FunctionUses& function : functions) {
-        for (const Creation& creation : function.creations) {
+        for (const SlotUseCreation& creation : function.creations) {
             LayoutUse& use = uses.layouts[creation.layout.index()];
             use.creationHeat += creation.heat;
             use.isMadeInLoop |= creation.isInLoop || runsInLoop.quickGet(function.function.index());
@@ -1170,7 +1170,7 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
     SharedCounters counters { uses.rows.mutableSpan(), uses.layouts.mutableSpan(), uses.keyWeights.mutableSpan() };
     ParallelArray<FunctionUses> usesOfFunctions = collectIntoArrayInParallel<FunctionUses>(loops, program.functions.size(), largeFunctions(program, loops).span(), [&](unsigned index, Vector<FunctionUses>& collected) {
         if (program.functions[index].hasBody())
-            collected.append(FunctionScanner(inputs, counters, FunctionID(index)).run());
+            collected.append(SlotUseScanner(inputs, counters, FunctionID(index)).run());
     });
     std::span<const FunctionUses> functions = usesOfFunctions.span();
     Vector<StoreOfUndefined> storesOfUndefined;

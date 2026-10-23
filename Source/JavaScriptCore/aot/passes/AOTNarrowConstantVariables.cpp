@@ -24,7 +24,7 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 // The value is unknown where the store does not store a primitive constant.
-struct Store {
+struct ConstantVariableStore {
     VariableID variable;
     KnownValue value;
     std::optional<Vector<KnownValue, 8>> list;
@@ -62,7 +62,7 @@ static bool mayHoldOneConstant(const Variable& variable)
         && readsSeeOnlyStoredValue(variable);
 }
 
-static void collectStores(const Program& program, const FlowResults& flow, FunctionID id, Vector<Store>& stores)
+static void collectStores(const Program& program, const FlowResults& flow, FunctionID id, Vector<ConstantVariableStore>& stores)
 {
     const Function& function = program.functions[id.index()];
     forEachListedValue(program, id, { Opcode::PutModuleVariable, Opcode::ValidateFirstRun }, [&](BlockID, uint32_t, ValueID, const Value& value) {
@@ -75,7 +75,7 @@ static void collectStores(const Program& program, const FlowResults& flow, Funct
             stored = knownValueOfType(program, program.typeOf(function, value.valueOperand()));
             list = findConstantsOfWholeLiteral(program, flow, function, value.valueOperand());
         }
-        stores.append(Store { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list) });
+        stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list) });
     });
 }
 
@@ -99,15 +99,15 @@ static uint16_t primitivesBeforeStore(const Variable& variable, const Type& decl
 }
 
 // A second store in the text may be the one that runs.
-static ConstantLists collectListsStoredAlone(const Program& program, Vector<Store>& stores)
+static ConstantLists collectListsStoredAlone(const Program& program, Vector<ConstantVariableStore>& stores)
 {
     Vector<uint8_t> numberOfStores(program.variables.size());
     numberOfStores.fill(0);
-    for (const Store& store : stores)
+    for (const ConstantVariableStore& store : stores)
         numberOfStores[store.variable.index()] = std::min(numberOfStores[store.variable.index()] + 1, 2);
 
     ConstantLists lists;
-    for (Store& store : stores) {
+    for (ConstantVariableStore& store : stores) {
         if (store.list && numberOfStores[store.variable.index()] == 1)
             lists.entries.append({ store.variable, Vector<KnownValue>(store.list->span()) });
     }
@@ -117,7 +117,7 @@ static ConstantLists collectListsStoredAlone(const Program& program, Vector<Stor
 
 ConstantLists collectConstantLists(const Program& program, const FlowResults& flow, BuildContext& build)
 {
-    Vector<Store> stores = collectInParallel<Store>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<Store>& found) {
+    Vector<ConstantVariableStore> stores = collectInParallel<ConstantVariableStore>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<ConstantVariableStore>& found) {
         collectStores(program, flow, FunctionID(index), found);
     });
     return collectListsStoredAlone(program, stores);
@@ -126,12 +126,12 @@ ConstantLists collectConstantLists(const Program& program, const FlowResults& fl
 ConstantLists narrowConstantVariables(ProgramEditor& editor, const FlowResults& flow, BuildContext& build)
 {
     const Program& program = editor.program();
-    Vector<Store> stores = collectInParallel<Store>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<Store>& found) {
+    Vector<ConstantVariableStore> stores = collectInParallel<ConstantVariableStore>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<ConstantVariableStore>& found) {
         collectStores(program, flow, FunctionID(index), found);
     });
 
     Vector<Contents> contentsOfVariable(program.variables.size());
-    for (const Store& store : stores)
+    for (const ConstantVariableStore& store : stores)
         addStoredValue(contentsOfVariable[store.variable.index()], store.value);
 
     for (unsigned index = 0; index < contentsOfVariable.size(); ++index) {

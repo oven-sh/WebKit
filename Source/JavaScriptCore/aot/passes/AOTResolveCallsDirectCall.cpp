@@ -349,8 +349,6 @@ static bool canBeConstructTarget(FunctionRole role)
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
@@ -358,7 +356,6 @@ static bool canBeConstructTarget(FunctionRole role)
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
-    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return false;
     }

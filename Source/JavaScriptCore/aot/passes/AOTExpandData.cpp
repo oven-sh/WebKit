@@ -28,7 +28,7 @@ struct DataTreeSummary {
     bool hasNeverAllocatedLayout { false };
 };
 
-struct OpenNode {
+struct OpenDataNode {
     const DataNode* node { nullptr };
     uint32_t ordinal { 0 };
     size_t numberOfChildren { 0 };
@@ -143,7 +143,7 @@ static Value makeConstant(const DataNode& leaf)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Value makeArray(const DataNode::Array& array, const OpenNode& closed, const FlowDataNodeStamp& stamp)
+static Value makeArray(const DataNode::Array& array, const OpenDataNode& closed, const FlowDataNodeStamp& stamp)
 {
     Value allocation = IRBuilder::make(Opcode::NewArray);
     allocation.setContents(stamp.elements ? stamp.elements : array.contents);
@@ -174,7 +174,7 @@ static bool fitsSlotOf(const DataExpansion& expansion, const Field& field, Value
     return typing.typeOf(value).isSubsetOf(typing.typeOf(field.declared), expansion.program);
 }
 
-static Value makeObject(const DataExpansion& expansion, const DataNode::Object& object, const OpenNode& closed, const FlowDataNodeStamp& stamp)
+static Value makeObject(const DataExpansion& expansion, const DataNode::Object& object, const OpenDataNode& closed, const FlowDataNodeStamp& stamp)
 {
     const Program& program = expansion.program;
     const Layout& layout = program.at(object.layout);
@@ -211,7 +211,7 @@ static Value makeObject(const DataExpansion& expansion, const DataNode::Object& 
     return IRBuilder::make(Opcode::FinishObject, { head });
 }
 
-static Value makeAggregate(const DataExpansion& expansion, const OpenNode& closed, const FlowDataNodeStamp& stamp)
+static Value makeAggregate(const DataExpansion& expansion, const OpenDataNode& closed, const FlowDataNodeStamp& stamp)
 {
     if (const auto* array = closed.node->tryAs<DataNode::Array>())
         return makeArray(*array, closed, stamp);
@@ -229,7 +229,7 @@ static ValueID insertWithProof(const DataExpansion& expansion, Value&& aggregate
     return expansion.insertion.insert(WTF::move(cast));
 }
 
-static void addLeaf(const DataExpansion& expansion, OpenNode& parent, const DataNode& leaf)
+static void addLeaf(const DataExpansion& expansion, OpenDataNode& parent, const DataNode& leaf)
 {
     if (leaf.is<DataNode::Hole>()) {
         parent.holes.append(static_cast<uint32_t>(parent.numberOfFinishedChildren()));
@@ -244,15 +244,15 @@ static Value makeRootValue(const DataExpansion& expansion, const DataNode& root)
         return makeConstant(root);
 
     Value rootValue;
-    Vector<OpenNode, 4> openNodes;
+    Vector<OpenDataNode, 4> openNodes;
     forEachDataNodeInPreorder(root, [&](uint32_t ordinal, const DataNode& node) {
         if (std::optional<size_t> numberOfChildren = numberOfChildrenOf(node))
-            openNodes.append(OpenNode { &node, ordinal, *numberOfChildren, { }, { } });
+            openNodes.append(OpenDataNode { &node, ordinal, *numberOfChildren, { }, { } });
         else
             addLeaf(expansion, openNodes.last(), node);
 
         while (!openNodes.isEmpty() && openNodes.last().isComplete()) {
-            OpenNode closed = openNodes.takeLast();
+            OpenDataNode closed = openNodes.takeLast();
             FlowDataNodeStamp stamp = expansion.flow.dataNodeStamp(expansion.rootSite, closed.ordinal);
             Value aggregate = makeAggregate(expansion, closed, stamp);
             if (openNodes.isEmpty()) {

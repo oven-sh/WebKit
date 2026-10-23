@@ -144,6 +144,16 @@ private:
 
 void changeBranchKind(Terminator&, TerminatorKind);
 
+inline std::optional<size_t> findMember(const SelectionGroup& group, ValueID id)
+{
+    size_t index = group.members.findIf([&](const GroupMember& member) {
+        return member.value == id;
+    });
+    if (index == notFound)
+        return std::nullopt;
+    return index;
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

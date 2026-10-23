@@ -37,7 +37,7 @@ struct ModuleLists {
     Vector<RequiredNameData> requiredNames;
 };
 
-struct RequestTargets {
+struct EncodedRequestTargets {
     const Vector<ModuleRequest>& requests;
 
     size_t size() const { return requests.size(); }
@@ -85,7 +85,7 @@ static void setListStarts(ModuleData& entry, const ModuleLists& lists)
 }
 
 // The loader ignores what the body of a file of the program returns, unless it awaits at the top level.
-static bool onlyReturns(const Function& body)
+static bool onlyReturnsSynchronously(const Function& body)
 {
     if (body.blocks.size() != 1 || body.has(FunctionFlags::IsAsync))
         return false;
@@ -99,7 +99,7 @@ BitVector findModuleBodiesThatOnlyReturn(const Program& program)
 {
     BitVector result(program.functions.size());
     for (const Module& module : program.modules) {
-        if (module.body && onlyReturns(program.at(module.body)))
+        if (module.body && onlyReturnsSynchronously(program.at(module.body)))
             result.quickSet(module.body.index());
     }
     return result;
@@ -256,7 +256,7 @@ static BitVector findModulesNotWorthVisiting(const TableEncoder& encoder)
 {
     const Vector<Module>& modules = encoder.program.modules;
     StronglyConnectedComponents components = computeStronglyConnectedComponents(modules.size(), [&](unsigned index) {
-        return RequestTargets { modules[index].requests };
+        return EncodedRequestTargets { modules[index].requests };
     });
     const Vector<uint32_t>& componentOf = components.componentOf;
 

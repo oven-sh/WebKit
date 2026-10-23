@@ -45,15 +45,6 @@ static bool isKeyPart(const Type& type)
     return type.isAnyString() || type.isInt32();
 }
 
-static bool isOwnedByReturnCall(SelectionContext& context, ValueID id)
-{
-    BlockID block = context.analyses().useLists().blockOf(id);
-    if (!block)
-        return false;
-    const Terminator& terminator = context.function().at(block).terminator;
-    return terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id;
-}
-
 static std::optional<KeyPartsMatch> findKeyPartsLookup(SelectionContext& context, ValueID id)
 {
     const Function& function = context.function();

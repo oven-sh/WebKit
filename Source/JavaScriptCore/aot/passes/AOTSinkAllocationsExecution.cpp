@@ -21,8 +21,8 @@ static constexpr bool everyCastHasItsValueFirst()
     for (Opcode opcode : allMembersOf<Opcode>) {
         if (interpretedOf(opcode) != Interpretation::Cast)
             continue;
-        // What NarrowByField and ReadAgain take beside their value is only looked at.
-        uint32_t numberOfOperands = opcode == Opcode::NarrowByField || opcode == Opcode::ReadAgain ? 2 : 1;
+        // What NarrowByField takes beside its value is only looked at.
+        uint32_t numberOfOperands = opcode == Opcode::NarrowByField ? 2 : 1;
         if (numberOfNamedOperandsOf(opcode) != numberOfOperands || hasVariadicOperand(opcode))
             return false;
     }
@@ -30,7 +30,7 @@ static constexpr bool everyCastHasItsValueFirst()
 }
 
 static_assert(everyCastHasItsValueFirst());
-static_assert(OperandIndex::NarrowByField::value == castOperandIndex && OperandIndex::ReadAgain::object == castOperandIndex);
+static_assert(OperandIndex::NarrowByField::value == castOperandIndex);
 
 struct VariantCastOutcomes {
     bool hasUnknown { false };

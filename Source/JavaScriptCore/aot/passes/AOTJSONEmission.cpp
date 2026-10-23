@@ -57,12 +57,9 @@ static DerivedSignature signatureOfKey(Emission& emission, const DerivedFunction
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
-    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         break;
     }

@@ -170,8 +170,8 @@ static BitVector findSubjectsOfGuards(FunctionAnalyses& analyses)
     return subjects;
 }
 
-struct FunctionScan {
-    FunctionScan(const FinderInputs& finder, FunctionID id, FunctionAnalyses& analyses)
+struct OutliningScan {
+    OutliningScan(const FinderInputs& finder, FunctionID id, FunctionAnalyses& analyses)
         : finder(finder)
         , program(finder.program)
         , build(finder.build)
@@ -303,7 +303,7 @@ struct SplittableSite {
 };
 
 // The parts are what takes the place of a site that no other site in the program is equal to.
-struct FunctionSites {
+struct OutliningSites {
     Vector<OutliningSite> sites;
     Vector<OutliningSite> parts;
     Vector<SplittableSite> splittableSites;
@@ -414,7 +414,7 @@ static bool hasOperandKeyedByAccessSite(const Program& program, const Value& val
     });
 }
 
-static bool isCallOfReturnCall(const FunctionScan& scan, ValueID id)
+static bool isCallOfReturnCall(const OutliningScan& scan, ValueID id)
 {
     const Terminator& terminator = scan.function.at(scan.useLists.blockOf(id)).terminator;
     return terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id;
@@ -426,7 +426,7 @@ static bool isDemotedTailCall(const Value& value)
     return FlagMask::isDemotedTailCall(value.opcode) && value.isDemotedTailCall();
 }
 
-static bool computeIsMovable(FunctionScan& scan, ValueID id)
+static bool computeIsMovable(OutliningScan& scan, ValueID id)
 {
     const Value& value = scan.function.at(id);
     if (boundToOf(value.opcode) != BoundTo::Nothing || value.type == TypeTable::never)
@@ -443,7 +443,7 @@ static bool computeIsMovable(FunctionScan& scan, ValueID id)
     return !maySuspend(value.opcode) || !scan.analyses.maySuspend(id);
 }
 
-static bool isMovable(FunctionScan& scan, ValueID id)
+static bool isMovable(OutliningScan& scan, ValueID id)
 {
     std::optional<bool>& cached = scan.cachedIsMovable[id.index()];
     if (!cached)
@@ -457,10 +457,10 @@ static bool canCrossCallBoundary(const Program& program, TypeID type)
 }
 
 // No use of an Unspecified value is reached, and an operand or the result of the call of the shared function would be one.
-static bool canBeLiveIn(FunctionScan& scan, ValueID id)
+static bool canBeLiveIn(OutliningScan& scan, ValueID id)
 {
     const Value& value = scan.function.at(id);
-    return canCrossCallBoundary(scan.program, value.type) && !scan.isFramePointer(id) && branchesOf(value.opcode) != Branches::Only && !isDeferredClosure(scan.function, id) && !isBorrowedInnerObject(scan.function, id) && !scan.unspecifiedValues.mayContain(id);
+    return canCrossCallBoundary(scan.program, value.type) && !scan.isFramePointer(id) && branchesOf(value.opcode) != Branches::Only && !isDeferredClosure(scan.function, id) && !scan.unspecifiedValues.mayContain(id);
 }
 
 static bool usesExecutionCounts(HeatOverride heat)
@@ -497,7 +497,7 @@ static BitVector findColdBlocks(const FinderInputs& finder, FunctionAnalyses& an
     return coldBlocks;
 }
 
-static bool isUseInSite(const FunctionScan& scan, const OutliningSite& site, const Use& use)
+static bool isUseInSite(const OutliningScan& scan, const OutliningSite& site, const Use& use)
 {
     bool isInEntryBlock = use.block == site.entryBlock;
     switch (use.kind) {
@@ -517,14 +517,14 @@ static bool isUseInSite(const FunctionScan& scan, const OutliningSite& site, con
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasOnlyUsesInSite(const FunctionScan& scan, const OutliningSite& site, ValueID id)
+static bool hasOnlyUsesInSite(const OutliningScan& scan, const OutliningSite& site, ValueID id)
 {
     return std::ranges::all_of(scan.useLists.usesOf(id), [&](const Use& use) {
         return isUseInSite(scan, site, use);
     });
 }
 
-static bool isDefinedInSite(const FunctionScan& scan, const OutliningSite& site, ValueID id)
+static bool isDefinedInSite(const OutliningScan& scan, const OutliningSite& site, ValueID id)
 {
     ValueLocation location = scan.useLists.locationOf(id);
     if (location.block != site.entryBlock)
@@ -541,7 +541,7 @@ static bool anyValueInSite(const Function& function, const OutliningSite& site, 
     });
 }
 
-static NamedGuards findNamedGuards(const FunctionScan& scan, const OutliningSite& site)
+static NamedGuards findNamedGuards(const OutliningScan& scan, const OutliningSite& site)
 {
     NamedGuards result = NamedGuards::None;
     bool namesOneDefinedOutside = anyValueInSite(scan.function, site, [&](ValueID id) {
@@ -559,13 +559,13 @@ static NamedGuards findNamedGuards(const FunctionScan& scan, const OutliningSite
     return namesOneDefinedOutside ? NamedGuards::SomeDefinedOutside : result;
 }
 
-static bool runsUnknownCode(const FunctionScan& scan, ValueID id)
+static bool runsUnknownCode(const OutliningScan& scan, ValueID id)
 {
     const EffectsOnEdges& effects = scan.analyses.effectsOf(id);
     return effects.normal.mayCallUnknownCode && effects.handler.mayCallUnknownCode;
 }
 
-static bool alwaysRunsUnknownCode(const FunctionScan& scan, const OutliningSite& site)
+static bool alwaysRunsUnknownCode(const OutliningScan& scan, const OutliningSite& site)
 {
     const Function& function = scan.function;
     auto anyRunsUnknownCode = [&](std::span<const ValueID> values) {
@@ -602,7 +602,7 @@ static bool alwaysRunsUnknownCode(const FunctionScan& scan, const OutliningSite&
     return true;
 }
 
-static bool isAnyGuardLiveAfter(FunctionScan& scan, const OutliningSite& site)
+static bool isAnyGuardLiveAfter(OutliningScan& scan, const OutliningSite& site)
 {
     const Function& function = scan.function;
     if (!site.isRegion())
@@ -620,7 +620,7 @@ static bool isAnyGuardLiveAfter(FunctionScan& scan, const OutliningSite& site)
     return exitsWithLiveGuard(site.entryBlock) || std::ranges::any_of(site.interiorBlocks, exitsWithLiveGuard);
 }
 
-static bool mayBeLocalAllocation(const FunctionScan& scan, ValueID id)
+static bool mayBeLocalAllocation(const OutliningScan& scan, ValueID id)
 {
     const EscapeAnalysis& escape = scan.analyses.escape();
     for (ObjectID object : escape.pointsTo(id).objects) {
@@ -631,7 +631,7 @@ static bool mayBeLocalAllocation(const FunctionScan& scan, ValueID id)
 }
 
 // Analyses may treat the call as unknown code, and a local allocation passed to it is a parameter in the body, so it no longer counts as unescaped.
-static bool mayEndGuardInUse(FunctionScan& scan, const OutliningSite& site, std::span<const ValueID> liveIns, NamedGuards namedGuards)
+static bool mayEndGuardInUse(OutliningScan& scan, const OutliningSite& site, std::span<const ValueID> liveIns, NamedGuards namedGuards)
 {
     bool crossesLiveGuard = isAnyGuardLiveAfter(scan, site);
     if (crossesLiveGuard && !alwaysRunsUnknownCode(scan, site))
@@ -685,7 +685,7 @@ static bool canEndInteriorBlock(TerminatorKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool canBeInterior(const FunctionScan& scan, const BitVector& coldBlocks, const OutliningSite& region, BlockID blockID)
+static bool canBeInterior(const OutliningScan& scan, const BitVector& coldBlocks, const OutliningSite& region, BlockID blockID)
 {
     if (!coldBlocks.quickGet(blockID.index()) || scan.blocksInSites.quickGet(blockID.index()))
         return false;
@@ -699,7 +699,7 @@ static bool canBeInterior(const FunctionScan& scan, const BitVector& coldBlocks,
     return canEndInteriorBlock(block.terminator.kind);
 }
 
-static bool addPendingTargets(FunctionScan& scan, const OutliningSite& region, const Terminator& terminator, Vector<uint32_t, 8>& pending)
+static bool addPendingTargets(OutliningScan& scan, const OutliningSite& region, const Terminator& terminator, Vector<uint32_t, 8>& pending)
 {
     for (const Target& target : terminator.targets) {
         uint32_t order = scan.cfg.reversePostOrderIndex(target.block);
@@ -720,18 +720,18 @@ static Origin originOfBodyCall(const Function& function, const OutliningSite& si
     return site.root ? function.at(site.root).origin() : function.at(site.entryBlock).terminator.origin();
 }
 
-static bool isShownInStackTraces(const FunctionScan& scan, ValueID id)
+static bool isShownInStackTraces(const OutliningScan& scan, ValueID id)
 {
     return scan.analyses.mayThrow(id) || scan.analyses.mayCallUnknownCode(id);
 }
 
-static bool isShownAt(const FunctionScan& scan, ValueID id, Origin origin)
+static bool isShownAt(const OutliningScan& scan, ValueID id, Origin origin)
 {
     const Value& value = scan.function.at(id);
     return value.inlineFrame == origin.inlineFrame && (value.position == origin.position || !isShownInStackTraces(scan, id));
 }
 
-static bool findRegionBlocks(FunctionScan& scan, const BitVector& coldBlocks, OutliningSite& region, uint32_t& numberOfValues)
+static bool findRegionBlocks(OutliningScan& scan, const BitVector& coldBlocks, OutliningSite& region, uint32_t& numberOfValues)
 {
     Origin origin = originOfBodyCall(scan.function, region);
     Vector<uint32_t, 8> pending;
@@ -766,7 +766,7 @@ static bool findRegionBlocks(FunctionScan& scan, const BitVector& coldBlocks, Ou
     return true;
 }
 
-static uint32_t extendBackward(FunctionScan& scan, OutliningSite& site, uint32_t lowestIndex, BackwardExtension extension, uint32_t numberOfValues)
+static uint32_t extendBackward(OutliningScan& scan, OutliningSite& site, uint32_t lowestIndex, BackwardExtension extension, uint32_t numberOfValues)
 {
     const Block& block = scan.function.at(site.entryBlock);
     Origin origin = originOfBodyCall(scan.function, site);
@@ -792,7 +792,7 @@ static uint32_t extendBackward(FunctionScan& scan, OutliningSite& site, uint32_t
     return numberOfOperations;
 }
 
-static bool isComputedByRegion(const FunctionScan& scan, const OutliningSite& region, std::span<const Arguments* const> exitEdges, uint32_t position)
+static bool isComputedByRegion(const OutliningScan& scan, const OutliningSite& region, std::span<const Arguments* const> exitEdges, uint32_t position)
 {
     ValueID first = (*exitEdges.front())[position];
     bool allEdgesPassFirst = std::ranges::all_of(exitEdges, [&](const Arguments* arguments) {
@@ -810,7 +810,7 @@ static bool isComputedByRegion(const FunctionScan& scan, const OutliningSite& re
     });
 }
 
-static bool findExitArgument(const FunctionScan& scan, OutliningSite& region)
+static bool findExitArgument(const OutliningScan& scan, OutliningSite& region)
 {
     const Function& function = scan.function;
     Vector<const Arguments*, 4> exitEdges;
@@ -852,7 +852,7 @@ static bool findExitArgument(const FunctionScan& scan, OutliningSite& region)
     return true;
 }
 
-static uint32_t codeBytesOf(FunctionScan& scan, ValueID id)
+static uint32_t codeBytesOf(OutliningScan& scan, ValueID id)
 {
     std::optional<uint32_t>& cached = scan.cachedCodeBytes[id.index()];
     if (!cached)
@@ -860,7 +860,7 @@ static uint32_t codeBytesOf(FunctionScan& scan, ValueID id)
     return *cached;
 }
 
-static uint32_t computeCodeBytes(FunctionScan& scan, const OutliningSite& site)
+static uint32_t computeCodeBytes(OutliningScan& scan, const OutliningSite& site)
 {
     const Function& function = scan.function;
     uint32_t bytes = 0;
@@ -884,7 +884,7 @@ static uint32_t computeCodeBytes(FunctionScan& scan, const OutliningSite& site)
 }
 
 // In cold code an access by key and a call of a value are the moves of their operands and one call of a stub: what a call of a function is. As a function of its own it gets a frame and two more jumps each time it runs.
-static bool isOneCallOfStub(FunctionScan& scan, const OutliningSite& site)
+static bool isOneCallOfStub(OutliningScan& scan, const OutliningSite& site)
 {
     static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete };
     if (site.isRegion())
@@ -910,13 +910,13 @@ static bool isOneCallOfStub(FunctionScan& scan, const OutliningSite& site)
 }
 
 // However many equal sites there are, each of them gets no shorter.
-static bool canPayOff(FunctionScan& scan, const OutliningSite& site)
+static bool canPayOff(OutliningScan& scan, const OutliningSite& site)
 {
     return site.codeBytes > site.callBytes && !isOneCallOfStub(scan, site);
 }
 
 // What a call returns is a value of its own.
-static bool handsOnSubjectOfGuard(FunctionScan& scan, const OutliningSite& site, ValueID result)
+static bool handsOnSubjectOfGuard(OutliningScan& scan, const OutliningSite& site, ValueID result)
 {
     if (!scan.hasOperationThatProves)
         return false;
@@ -925,7 +925,7 @@ static bool handsOnSubjectOfGuard(FunctionScan& scan, const OutliningSite& site,
 }
 
 // A parameter is a value of its own too. Two names of one object that both go in are two objects inside, and a guard that a test there makes about the one does not speak of the other.
-static bool passesOneObjectUnderTwoNames(FunctionScan& scan, std::span<const ValueID> liveIns)
+static bool passesOneObjectUnderTwoNames(OutliningScan& scan, std::span<const ValueID> liveIns)
 {
     for (size_t index = 0; index < liveIns.size(); ++index) {
         ValueID identity = scan.analyses.identityOf(liveIns[index]);
@@ -940,7 +940,7 @@ static bool passesOneObjectUnderTwoNames(FunctionScan& scan, std::span<const Val
 
 static bool canBeSplit(const Program&, const OutliningSite&);
 
-static bool completeSite(FunctionScan& scan, OutliningSite& site, SitesThatCannotPayOff unprofitableSites)
+static bool completeSite(OutliningScan& scan, OutliningSite& site, SitesThatCannotPayOff unprofitableSites)
 {
     const Function& function = scan.function;
     site.resultType = TypeTable::undefined;
@@ -982,7 +982,7 @@ static bool completeSite(FunctionScan& scan, OutliningSite& site, SitesThatCanno
     return true;
 }
 
-static void markSite(FunctionScan& scan, const OutliningSite& site)
+static void markSite(OutliningScan& scan, const OutliningSite& site)
 {
     for (ValueID id : entryValuesOf(scan.function, site))
         scan.valuesInSites.quickSet(id.index());
@@ -996,7 +996,7 @@ static void markSite(FunctionScan& scan, const OutliningSite& site)
     }
 }
 
-static std::optional<OutliningSite> tryCreateRegion(FunctionScan& scan, const BitVector& coldBlocks, BlockID blockID)
+static std::optional<OutliningSite> tryCreateRegion(OutliningScan& scan, const BitVector& coldBlocks, BlockID blockID)
 {
     const Block& block = scan.function.at(blockID);
     if (scan.blocksInSites.quickGet(blockID.index()) || !canStartRegion(block.terminator.kind))
@@ -1037,7 +1037,7 @@ static bool canUseCallResult(const Function& function, const Use& use)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool canBeRoot(FunctionScan& scan, ValueID id)
+static bool canBeRoot(OutliningScan& scan, ValueID id)
 {
     const Function& function = scan.function;
     const Value& value = function.at(id);
@@ -1046,7 +1046,7 @@ static bool canBeRoot(FunctionScan& scan, ValueID id)
     if (isConditionOfBranchWithProofs(function, scan.useLists, id))
         return false;
     // A deferred closure has no code and no value: it moves only together with the store that names it.
-    if (isDeferredClosure(function, id) || isBorrowedInnerObject(function, id))
+    if (isDeferredClosure(function, id))
         return false;
 
     std::span<const Use> uses = scan.useLists.usesOf(id);
@@ -1057,7 +1057,7 @@ static bool canBeRoot(FunctionScan& scan, ValueID id)
     });
 }
 
-static OutliningSite createSingleValueRun(const FunctionScan& scan, BlockID block, uint32_t rootIndex)
+static OutliningSite createSingleValueRun(const OutliningScan& scan, BlockID block, uint32_t rootIndex)
 {
     OutliningSite run;
     run.function = scan.id;
@@ -1070,7 +1070,7 @@ static OutliningSite createSingleValueRun(const FunctionScan& scan, BlockID bloc
     return run;
 }
 
-static bool isOneOperationThatCannotPayOff(FunctionScan& scan, const OutliningSite& run)
+static bool isOneOperationThatCannotPayOff(OutliningScan& scan, const OutliningSite& run)
 {
     const Function& function = scan.function;
     Vector<ValueID, 6> liveIns;
@@ -1085,7 +1085,7 @@ static bool isOneOperationThatCannotPayOff(FunctionScan& scan, const OutliningSi
     return computeCodeBytes(scan, run) <= estimatedDirectCallBytes(liveIns.size()) || isOneCallOfStub(scan, run);
 }
 
-static std::optional<OutliningSite> tryCreateRun(FunctionScan& scan, const ValueRange& range, uint32_t rootIndex, BackwardExtension extension, SitesThatCannotPayOff unprofitableSites)
+static std::optional<OutliningSite> tryCreateRun(OutliningScan& scan, const ValueRange& range, uint32_t rootIndex, BackwardExtension extension, SitesThatCannotPayOff unprofitableSites)
 {
     OutliningSite run = createSingleValueRun(scan, range.block, rootIndex);
     uint32_t numberOfOperationsAdded = extendBackward(scan, run, range.begin, extension, 1);
@@ -1115,7 +1115,7 @@ static bool canBeSplit(const Program& program, const OutliningSite& site)
     }) > 1;
 }
 
-static void findRuns(FunctionScan& scan, const ValueRange& range, BackwardExtension extension, SitesThatCannotPayOff unprofitableSites, Vector<OutliningSite>& sites)
+static void findRuns(OutliningScan& scan, const ValueRange& range, BackwardExtension extension, SitesThatCannotPayOff unprofitableSites, Vector<OutliningSite>& sites)
 {
     const Block& block = scan.function.at(range.block);
     for (uint32_t index = range.end; index-- > range.begin;) {
@@ -1132,7 +1132,7 @@ static void findRuns(FunctionScan& scan, const ValueRange& range, BackwardExtens
     }
 }
 
-static void findParts(FunctionScan& scan, const OutliningSite& site, Vector<OutliningSite>& parts)
+static void findParts(OutliningScan& scan, const OutliningSite& site, Vector<OutliningSite>& parts)
 {
     findRuns(scan, { site.entryBlock, site.firstIndex, site.firstIndex + site.numberOfEntryValues }, BackwardExtension::ConstantsOnly, SitesThatCannotPayOff::AreDropped, parts);
     for (BlockID block : site.interiorBlocks)
@@ -1140,7 +1140,7 @@ static void findParts(FunctionScan& scan, const OutliningSite& site, Vector<Outl
 }
 
 // Whether a site is repeated is known when all functions have been looked at.
-static void findPartsOfSplittableSites(FunctionScan& scan, FunctionSites& found)
+static void findPartsOfSplittableSites(OutliningScan& scan, OutliningSites& found)
 {
     scan.valuesInSites.clearAll();
     for (uint32_t index = 0; index < found.sites.size(); ++index) {
@@ -1154,9 +1154,9 @@ static void findPartsOfSplittableSites(FunctionScan& scan, FunctionSites& found)
     }
 }
 
-static FunctionSites findSitesInFunction(const FinderInputs& finder, FunctionID id)
+static OutliningSites findSitesInFunction(const FinderInputs& finder, FunctionID id)
 {
-    FunctionSites found;
+    OutliningSites found;
     const Function& function = finder.program.at(id);
     if (!function.hasBody() || !finder.build.isEnabled(PassID::OutlineColdOperations, id))
         return found;
@@ -1166,7 +1166,7 @@ static FunctionSites findSitesInFunction(const FinderInputs& finder, FunctionID 
     if (coldBlocks.isEmpty())
         return found;
 
-    FunctionScan scan(finder, id, analyses);
+    OutliningScan scan(finder, id, analyses);
     Vector<OutliningSite>& sites = found.sites;
     for (BlockID block : scan.cfg.reversePostOrder()) {
         if (!coldBlocks.quickGet(block.index()))
@@ -1184,11 +1184,11 @@ static FunctionSites findSitesInFunction(const FinderInputs& finder, FunctionID 
     return found;
 }
 
-static void findRepeatedSites(const FinderInputs& finder, ParallelArray<FunctionSites>& functions)
+static void findRepeatedSites(const FinderInputs& finder, ParallelArray<OutliningSites>& functions)
 {
     const ParallelLoops& loops = finder.build.parallelLoops();
     ParallelArray<SplittableSiteReference> candidates = collectIntoArrayInParallel<SplittableSiteReference>(loops, functions.size(), { }, [&](unsigned index, Vector<SplittableSiteReference>& found) {
-        const FunctionSites& function = functions[index];
+        const OutliningSites& function = functions[index];
         for (uint32_t position = 0; position < function.splittableSites.size(); ++position)
             found.append(SplittableSiteReference { function.sites[function.splittableSites[position].site].hash, index, position });
     });
@@ -1203,7 +1203,7 @@ static void findRepeatedSites(const FinderInputs& finder, ParallelArray<Function
     });
 }
 
-static void appendChosenSites(FunctionSites& function, Vector<OutliningSite*>& result)
+static void appendChosenSites(OutliningSites& function, Vector<OutliningSite*>& result)
 {
     size_t firstSiteOfFunction = result.size();
     bool didSplit = false;
@@ -1272,14 +1272,14 @@ struct OutliningSiteFinder::State {
     State(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
         : hashesOfSplittableSites(build.parallelLoops(), program.functions.size())
         , finder { program, inputs, build, findOpcodesThatMayDefineObjects() | opcodesThatMayDefineObjects(), opcodesThatDefineObjectsThatNeedNotBeFresh(), findOpcodesThatProve(), hashesOfSplittableSites }
-        , functions(build.parallelLoops(), program.functions.size(), [](unsigned) { return FunctionSites(); })
+        , functions(build.parallelLoops(), program.functions.size(), [](unsigned) { return OutliningSites(); })
         , hasSites(FillWith { }, program.functions.size(), static_cast<uint8_t>(0))
     {
     }
 
     HashesOfSplittableSites hashesOfSplittableSites;
     FinderInputs finder;
-    ParallelArray<FunctionSites> functions;
+    ParallelArray<OutliningSites> functions;
     Vector<uint8_t> hasSites;
 };
 
@@ -1292,7 +1292,7 @@ OutliningSiteFinder::~OutliningSiteFinder() = default;
 
 bool OutliningSiteFinder::findIn(FunctionID id)
 {
-    FunctionSites& found = m_state->functions[id.index()];
+    OutliningSites& found = m_state->functions[id.index()];
     found = findSitesInFunction(m_state->finder, id);
     m_state->hasSites[id.index()] = !found.sites.isEmpty();
     return !found.sites.isEmpty();
@@ -1306,7 +1306,7 @@ std::span<const uint8_t> OutliningSiteFinder::hasSites() const
 ParallelArray<OutliningSite> OutliningSiteFinder::takeSites()
 {
     const FinderInputs& finder = m_state->finder;
-    ParallelArray<FunctionSites>& functions = m_state->functions;
+    ParallelArray<OutliningSites>& functions = m_state->functions;
     const ParallelLoops& loops = finder.build.parallelLoops();
     findRepeatedSites(finder, functions);
     ParallelArray<OutliningSite*> chosenSites = collectIntoArrayInParallel<OutliningSite*>(loops, functions.size(), { }, [&](unsigned index, Vector<OutliningSite*>& result) {

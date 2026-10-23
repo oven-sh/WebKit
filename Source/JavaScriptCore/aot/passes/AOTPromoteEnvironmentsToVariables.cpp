@@ -13,7 +13,6 @@
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTPromoteEnvironmentsToVariablesPlan.h"
-#include "AOTRemoveUnusedParameters.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <utility>
@@ -22,9 +21,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-class FunctionRewriter {
+class PromotionRewriter {
 public:
-    FunctionRewriter(const PromotionPlan& plan, IRBuilder& builder, FunctionID id)
+    PromotionRewriter(const PromotionPlan& plan, IRBuilder& builder, FunctionID id)
         : m_plan(plan)
         , m_builder(builder)
         , m_function(builder.function())
@@ -62,20 +61,20 @@ static bool isCaughtValue(Opcode opcode)
     return opcode == Opcode::CatchValue || opcode == Opcode::CatchException;
 }
 
-bool FunctionRewriter::isPromotedEnvironment(ValueID id) const
+bool PromotionRewriter::isPromotedEnvironment(ValueID id) const
 {
     LayoutID environment = m_builder.context().program.typeOf(m_function, id).environment;
     return environment && m_plan.isPromoted(environment);
 }
 
-void FunctionRewriter::appendStore(BlockValues& values, VariableID variable, ValueID stored)
+void PromotionRewriter::appendStore(BlockValues& values, VariableID variable, ValueID stored)
 {
     Value store = IRBuilder::make(Opcode::PutModuleVariable, { stored });
     store.setVariable(variable);
     values.append(m_builder.addDetached(WTF::move(store)));
 }
 
-void FunctionRewriter::appendCapturedValueStore(BlockValues& values, ValueID id)
+void PromotionRewriter::appendCapturedValueStore(BlockValues& values, ValueID id)
 {
     auto stored = std::ranges::lower_bound(m_storedValues, id, { }, &StoredValue::value);
     if (stored == m_storedValues.end() || stored->value != id)
@@ -84,7 +83,7 @@ void FunctionRewriter::appendCapturedValueStore(BlockValues& values, ValueID id)
     appendStore(values, stored->variable, id);
 }
 
-bool FunctionRewriter::replaceAllocation(ValueID id, BlockValues& values)
+bool PromotionRewriter::replaceAllocation(ValueID id, BlockValues& values)
 {
     const Value& allocation = m_function.at(id);
     LayoutID layout = allocation.layout();
@@ -103,7 +102,7 @@ bool FunctionRewriter::replaceAllocation(ValueID id, BlockValues& values)
     return true;
 }
 
-void FunctionRewriter::rewriteRead(Value& read)
+void PromotionRewriter::rewriteRead(Value& read)
 {
     if (!m_plan.isPromoted(read.layout()))
         return;
@@ -112,7 +111,7 @@ void FunctionRewriter::rewriteRead(Value& read)
     read.setVariable(variable);
 }
 
-void FunctionRewriter::rewriteStore(Value& store)
+void PromotionRewriter::rewriteStore(Value& store)
 {
     if (!m_plan.isPromoted(store.layout()))
         return;
@@ -123,7 +122,7 @@ void FunctionRewriter::rewriteStore(Value& store)
     store.setValueOperand(stored);
 }
 
-void FunctionRewriter::removeCapturedOperands(Value& supplier)
+void PromotionRewriter::removeCapturedOperands(Value& supplier)
 {
     std::span<const PlannedCapture> planned = m_plan.capturesOf(supplier.function());
     // A closure that is made on demand lists no captures: the object that holds it keeps what it captures, in itself or in a hidden field.
@@ -137,7 +136,7 @@ void FunctionRewriter::removeCapturedOperands(Value& supplier)
     }
 }
 
-void FunctionRewriter::rewriteValues(BlockID block)
+void PromotionRewriter::rewriteValues(BlockID block)
 {
     BlockValues values = std::exchange(m_function.edit(block, BlockEdit::Values).values, { });
     uint32_t numberOfCaughtValues = 0;
@@ -171,7 +170,7 @@ void FunctionRewriter::rewriteValues(BlockID block)
     m_function.edit(block, BlockEdit::Values).values = WTF::move(rewritten);
 }
 
-void FunctionRewriter::removeBlockParameters(BlockID block)
+void PromotionRewriter::removeBlockParameters(BlockID block)
 {
     const auto& parameters = m_function.at(block).parameters;
     BitVector removed(parameters.size());
@@ -182,7 +181,7 @@ void FunctionRewriter::removeBlockParameters(BlockID block)
     m_builder.removeParameters(block, removed);
 }
 
-void FunctionRewriter::replaceCaptures()
+void PromotionRewriter::replaceCaptures()
 {
     std::span<const PlannedCapture> planned = m_plan.capturesOf(m_id);
     if (planned.empty())
@@ -222,7 +221,7 @@ void FunctionRewriter::replaceCaptures()
     m_function.edit(entryBlock, BlockEdit::Values).values = WTF::move(values);
 }
 
-void FunctionRewriter::run()
+void PromotionRewriter::run()
 {
     for (uint32_t index = 0; index < m_function.blocks.size(); ++index)
         rewriteValues(BlockID(index));
@@ -247,7 +246,7 @@ static void rewriteFunction(const PromotionPlan& plan, const AnalysisContext& co
 {
     if (function.hasBody()) {
         IRBuilder builder(context, function, types);
-        FunctionRewriter(plan, builder, context.id).run();
+        PromotionRewriter(plan, builder, context.id).run();
     } else
         removeEntryParameters(function, plan.removedCapturesOf(context.id));
     renumberParameterOrigins(function, plan.removedCapturesOf(context.id));

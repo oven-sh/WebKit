@@ -116,9 +116,9 @@ static void removeRepeatedCases(Vector<ChainCase, 8>& cases)
 
 namespace {
 
-class ChainFinder {
+class ComparisonChainFinder {
 public:
-    ChainFinder(FunctionAnalyses& analyses, ChainKind kind, const ChainLimits& limits, const ChainLinkFilter& mayJoinChain)
+    ComparisonChainFinder(FunctionAnalyses& analyses, ChainKind kind, const ChainLimits& limits, const ChainLinkFilter& mayJoinChain)
         : m_analyses(analyses)
         , m_program(analyses.program())
         , m_function(analyses.function())
@@ -395,7 +395,7 @@ private:
 
 Vector<ComparisonChain> findComparisonChains(FunctionAnalyses& analyses, ChainKind kind, const ChainLimits& limits, NOESCAPE const ChainLinkFilter& mayJoinChain)
 {
-    return ChainFinder(analyses, kind, limits, mayJoinChain).run();
+    return ComparisonChainFinder(analyses, kind, limits, mayJoinChain).run();
 }
 
 static void replaceParameters(IRBuilder& builder, const ComparisonChain& chain, ValueSubstitution& substitution)

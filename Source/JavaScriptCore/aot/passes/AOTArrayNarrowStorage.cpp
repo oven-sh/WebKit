@@ -74,8 +74,8 @@ struct ElementAccess {
     bool keyIsIntegral { false };
 };
 
-struct Rewriter {
-    explicit Rewriter(FunctionPassContext& context)
+struct NarrowStorageRewriter {
+    explicit NarrowStorageRewriter(FunctionPassContext& context)
         : context(context)
         , function(context.function)
         , builder(context.analyses.context(), context.function, context.types, &context.analyses)
@@ -120,7 +120,7 @@ static ValueID lengthArgumentOf(const Function& function, const LocalArray& arra
     return function.at(array.construction).argumentsOperands()[0];
 }
 
-static ValueID keyOf(const Value& access)
+static ValueID keyOperandOfAccess(const Value& access)
 {
     switch (access.opcode) {
     case Opcode::ElemGet:
@@ -134,7 +134,7 @@ static ValueID keyOf(const Value& access)
     }
 }
 
-static BuiltinCallStamps stampsOf(const Value& call)
+static BuiltinCallStamps stampsOfAccess(const Value& call)
 {
     return { call.expectedResult(), call.accessSite(), call.allocationSite() };
 }
@@ -405,7 +405,7 @@ static bool hasOnlyInBoundsAccesses(FunctionPassContext& context, const LocalArr
         relations.assumeSameValue(lengthRead, length);
 
     auto isAccessInBounds = [&](ValueID access) {
-        return isKeyInBounds(relations, keyOf(context.function.at(access)), length, useLists.blockOf(access));
+        return isKeyInBounds(relations, keyOperandOfAccess(context.function.at(access)), length, useLists.blockOf(access));
     };
     return std::ranges::all_of(array.reads, isAccessInBounds) && std::ranges::all_of(array.stores, isAccessInBounds);
 }
@@ -474,7 +474,7 @@ static ArrayRewrite locateValues(const UseLists& useLists, LocalArray&& array, D
 
 static ElementAccess elementAccessOf(const FunctionPassContext& context, const Value& access)
 {
-    ValueID key = keyOf(access);
+    ValueID key = keyOperandOfAccess(access);
     return { key, access.accessSite(), typeOf(context, key).isNumberWithoutFraction() };
 }
 
@@ -489,7 +489,7 @@ static void becomeNarrowAccess(Value& value, Opcode opcode, const LocalArray& ar
     value.setAccessSite(access.site);
 }
 
-static void rewriteFlagRead(Rewriter& rewriter, const LocalArray& array, ValueID read, ProgramPoint point)
+static void rewriteFlagRead(NarrowStorageRewriter& rewriter, const LocalArray& array, ValueID read, ProgramPoint point)
 {
     Function& function = rewriter.function;
     rewriter.builder.setOrigin(function.at(read).origin());
@@ -506,7 +506,7 @@ static void rewriteFlagRead(Rewriter& rewriter, const LocalArray& array, ValueID
     value.setValueOperand(operand);
 }
 
-static void rewriteRead(Rewriter& rewriter, const LocalArray& array, ValueID read, ProgramPoint point)
+static void rewriteRead(NarrowStorageRewriter& rewriter, const LocalArray& array, ValueID read, ProgramPoint point)
 {
     rewriter.didChange(read);
     switch (array.choice.elements) {
@@ -522,7 +522,7 @@ static void rewriteRead(Rewriter& rewriter, const LocalArray& array, ValueID rea
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static ValueID insertStoredByte(Rewriter& rewriter, const LocalArray& array, ValueID stored, ProgramPoint point)
+static ValueID insertStoredByte(NarrowStorageRewriter& rewriter, const LocalArray& array, ValueID stored, ProgramPoint point)
 {
     bool initialValue = array.initialValue.asBoolean();
     KnownValue known = knownValueOf(rewriter.context.program, rewriter.function, stored);
@@ -535,7 +535,7 @@ static ValueID insertStoredByte(Rewriter& rewriter, const LocalArray& array, Val
     return rewriter.insertBefore(point, IRBuilder::make(Opcode::ToNumber, { flag }));
 }
 
-static ValueID insertStoredElement(Rewriter& rewriter, const LocalArray& array, ValueID stored, ProgramPoint point)
+static ValueID insertStoredElement(NarrowStorageRewriter& rewriter, const LocalArray& array, ValueID stored, ProgramPoint point)
 {
     switch (array.choice.elements) {
     case NarrowElementKind::Boolean:
@@ -546,7 +546,7 @@ static ValueID insertStoredElement(Rewriter& rewriter, const LocalArray& array, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void rewriteStore(Rewriter& rewriter, const LocalArray& array, ValueID store, ProgramPoint point)
+static void rewriteStore(NarrowStorageRewriter& rewriter, const LocalArray& array, ValueID store, ProgramPoint point)
 {
     Function& function = rewriter.function;
     rewriter.builder.setOrigin(function.at(store).origin());
@@ -558,11 +558,11 @@ static void rewriteStore(Rewriter& rewriter, const LocalArray& array, ValueID st
     rewriter.didChange(store);
 }
 
-static void rewriteFill(Rewriter& rewriter, const LocalArray& array)
+static void rewriteFill(NarrowStorageRewriter& rewriter, const LocalArray& array)
 {
     Value& fill = rewriter.function.edit(array.fill);
     ValueID initialValue = fill.argumentsOperands()[0];
-    becomeBuiltinCall(fill, array.calls.fill, BuiltinCallForm::Whole, { array.construction, { initialValue } }, stampsOf(fill));
+    becomeBuiltinCall(fill, array.calls.fill, BuiltinCallForm::Whole, { array.construction, { initialValue } }, stampsOfAccess(fill));
     rewriter.didChange(array.fill);
 }
 
@@ -590,7 +590,7 @@ static void eraseDroppedValues(const Function& function, IRBuilder& builder, con
     }
 }
 
-static void rewriteAccesses(Rewriter& rewriter, std::span<const ArrayRewrite> rewrites, const DroppedValues& dropped)
+static void rewriteAccesses(NarrowStorageRewriter& rewriter, std::span<const ArrayRewrite> rewrites, const DroppedValues& dropped)
 {
     Function& function = rewriter.function;
     ValueSubstitution substitution(function);
@@ -619,7 +619,7 @@ static void rewriteAccesses(Rewriter& rewriter, std::span<const ArrayRewrite> re
     eraseDroppedValues(function, rewriter.builder, dropped);
 }
 
-static ValueID expandLengthCheck(Rewriter& rewriter, const LocalArray& array, BlockID block)
+static ValueID expandLengthCheck(NarrowStorageRewriter& rewriter, const LocalArray& array, BlockID block)
 {
     Function& function = rewriter.function;
     IRBuilder& builder = rewriter.builder;
@@ -634,7 +634,7 @@ static ValueID expandLengthCheck(Rewriter& rewriter, const LocalArray& array, Bl
     ValueID isValid = rewriter.append(IRBuilder::make(Opcode::StrictEq, { validLength, length }));
     IRBuilder::BranchBlocks blocks = builder.emitBranch(isValid, BlockFrequency::Normal, BlockFrequency::Rare);
 
-    ValueID narrowArray = rewriter.append(makeBuiltinCall(array.calls.construct, BuiltinCallForm::Whole, { { }, { validLength } }, stampsOf(original)));
+    ValueID narrowArray = rewriter.append(makeBuiltinCall(array.calls.construct, BuiltinCallForm::Whole, { { }, { validLength } }, stampsOfAccess(original)));
     builder.endExpansion(expansion, narrowArray);
 
     builder.moveToEndOf(blocks.notTaken);
@@ -643,13 +643,13 @@ static ValueID expandLengthCheck(Rewriter& rewriter, const LocalArray& array, Bl
     return validLength;
 }
 
-static void convert(Rewriter& rewriter, const LocalArray& array, BlockID block)
+static void convert(NarrowStorageRewriter& rewriter, const LocalArray& array, BlockID block)
 {
     Function& function = rewriter.function;
     ValueID length = lengthArgumentOf(function, array);
     if (array.hasValidLength) {
         Value& construction = function.edit(array.construction);
-        becomeBuiltinCall(construction, array.calls.construct, BuiltinCallForm::Whole, { { }, { length } }, stampsOf(construction));
+        becomeBuiltinCall(construction, array.calls.construct, BuiltinCallForm::Whole, { { }, { length } }, stampsOfAccess(construction));
     } else
         length = expandLengthCheck(rewriter, array, block);
     rewriter.didChange(array.construction);
@@ -681,7 +681,7 @@ unsigned narrowStorageOfLocalArrays(FunctionPassContext& context)
     for (LocalArray& array : arrays)
         rewrites.append(locateValues(context.analyses.useLists(), WTF::move(array), dropped));
 
-    Rewriter rewriter(context);
+    NarrowStorageRewriter rewriter(context);
     rewriteAccesses(rewriter, rewrites.span(), dropped);
 
     AOT::sort(rewrites, std::ranges::greater { }, [](const ArrayRewrite& rewrite) {

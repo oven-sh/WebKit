@@ -59,24 +59,6 @@ static bool closingHasNoEffect(const IterationArm& arm)
     return closingHasNoEffect(arm.form) && !arm.awaitsEachValue;
 }
 
-static bool isExpandedWithoutTest(const IterationPlan& plan)
-{
-    return plan.arms.size() == 1 && plan.armSources.isEmpty() && plan.arms.first().needsNoTest() && closingHasNoEffect(plan.arms.first());
-}
-
-static bool awaitsCallOnString(FunctionPassContext& pass, const Iteration& iteration)
-{
-    static_assert(!OperandIndex::IteratorOpen::iterable, "findSingleUseCastChain starts at operand 0.");
-    const Function& function = pass.function;
-    Vector<ValueID, 2> chain = findSingleUseCastChain(function, pass.analyses.useLists(), iteration.open);
-    if (chain.isEmpty())
-        return false;
-    const Value& call = function.at(chain.first());
-    if (call.opcode != Opcode::Call || !call.calleeKey() || !call.thisValueOperand())
-        return false;
-    return pass.program.typeOf(function, call.thisValueOperand()).isAnyString();
-}
-
 static BitVector blockSetOf(const Function& function, std::span<const BlockID> blocks)
 {
     BitVector set(function.blocks.size());
@@ -923,7 +905,7 @@ ValueID ArmDispatcher::appendUnspecifiedLike(ValueID model)
 class IterationRound {
     WTF_MAKE_NONCOPYABLE(IterationRound);
 public:
-    IterationRound(FunctionPassContext&, IRBuilder&, std::span<const ValueID> opensOfSpreads, ExpandedIterations, BitVector& separatedOpens);
+    IterationRound(FunctionPassContext&, IRBuilder&, std::span<const ValueID> opensOfSpreads, BitVector& separatedOpens);
 
     bool run();
     PassOutcome outcome() const { return m_outcome; }
@@ -948,18 +930,16 @@ private:
     FunctionPassContext& m_pass;
     IRBuilder& m_builder;
     std::span<const ValueID> m_opensOfSpreads;
-    ExpandedIterations m_expandedIterations;
     BitVector& m_separatedOpens;
     SSARepair m_repair;
     Vector<std::unique_ptr<ArmDispatcher>> m_dispatchers;
     PassOutcome m_outcome { PassOutcome::Unchanged };
 };
 
-IterationRound::IterationRound(FunctionPassContext& pass, IRBuilder& builder, std::span<const ValueID> opensOfSpreads, ExpandedIterations expandedIterations, BitVector& separatedOpens)
+IterationRound::IterationRound(FunctionPassContext& pass, IRBuilder& builder, std::span<const ValueID> opensOfSpreads, BitVector& separatedOpens)
     : m_pass(pass)
     , m_builder(builder)
     , m_opensOfSpreads(opensOfSpreads)
-    , m_expandedIterations(expandedIterations)
     , m_separatedOpens(separatedOpens)
     , m_repair(builder, pass.analyses)
 {
@@ -1008,16 +988,6 @@ Vector<Iteration> IterationRound::collectWantedIterations()
     for (Iteration& iteration : iterations) {
         if (std::ranges::contains(m_opensOfSpreads, iteration.open))
             iteration.origin = IterationOrigin::Spread;
-    }
-
-    switch (m_expandedIterations) {
-    case ExpandedIterations::All:
-        break;
-    case ExpandedIterations::OnlyProven:
-        iterations.removeAllMatching([&](const Iteration& iteration) {
-            return awaitsCallOnString(m_pass, iteration) || !isExpandedWithoutTest(planIteration(m_pass, iteration));
-        });
-        break;
     }
     return iterations;
 }
@@ -1088,15 +1058,8 @@ void IterationRound::selectByPlans()
     }
 
     BitVector isPostponed(m_dispatchers.size());
-    bool isAnyLeftOut = false;
     for (unsigned index = 0; index < m_dispatchers.size(); ++index) {
         const IterationPlan& plan = m_dispatchers[index]->plan();
-        if (m_expandedIterations == ExpandedIterations::OnlyProven && !isExpandedWithoutTest(plan)) {
-            m_dispatchers[index] = nullptr;
-            isAnyLeftOut = true;
-            continue;
-        }
-
         bool sharesBlock = std::ranges::any_of(plan.armSources, [&](const ArmSource& source) {
             unsigned owner = ownerOfBlock[source.block.index()];
             return owner != nobody && owner != index + 1;
@@ -1110,7 +1073,7 @@ void IterationRound::selectByPlans()
     }
 
     // Alone, the last iteration shares no block with anybody.
-    if (!isAnyLeftOut && !m_dispatchers.isEmpty() && isPostponed.bitCount() == m_dispatchers.size())
+    if (!m_dispatchers.isEmpty() && isPostponed.bitCount() == m_dispatchers.size())
         isPostponed.quickClear(0);
     for (size_t index : isPostponed)
         m_dispatchers[index] = nullptr;
@@ -1163,12 +1126,12 @@ ArmDispatch chooseArmDispatch(FunctionPassContext& pass, const Iteration& iterat
     return ArmDispatch::Versioned;
 }
 
-PassOutcome expandIterations(FunctionPassContext& pass, IRBuilder& builder, std::span<const ValueID> opensOfSpreads, ExpandedIterations expandedIterations)
+PassOutcome expandIterations(FunctionPassContext& pass, IRBuilder& builder, std::span<const ValueID> opensOfSpreads)
 {
     BitVector separatedOpens;
     PassOutcome outcome = PassOutcome::Unchanged;
     for (;;) {
-        IterationRound round(pass, builder, opensOfSpreads, expandedIterations, separatedOpens);
+        IterationRound round(pass, builder, opensOfSpreads, separatedOpens);
         bool didExpand = round.run();
         outcome |= round.outcome();
         if (!didExpand)

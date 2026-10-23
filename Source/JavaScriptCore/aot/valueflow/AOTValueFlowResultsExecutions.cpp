@@ -40,6 +40,16 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
         const Function& function = program.functions[index];
         if (!inputs.isReached(FunctionID(index)) && !isUnsolvedCode(inputs, tables, FunctionID(index)))
             return;
+        // A stamp stands at an operation of a statement, which some block lists once.
+        if (!inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect }))) {
+            for (const FlowCallStamp& stamp : application.bodies[index].calls) {
+                if (!PayloadWord::callees(function.at(stamp.value).opcode))
+                    continue;
+                for (FunctionID callee : program.at(stamp.callees).functions)
+                    AtomicRef(counts[callee.index()]).fetch_add(1, std::memory_order_relaxed);
+            }
+            return;
+        }
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 forEachFunctionEnteredBy(program, application.bodies[index], function, id, [&](FunctionID callee) {
@@ -72,10 +82,7 @@ static BitVector findModulesWithBodiesThatOnlyLoaderEnters(const ValueFlowResult
 static bool isEvaluatedAtMostOnce(ModuleKind kind)
 {
     switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
+    default:
         return true;
     case ModuleKind::Runtime:
     case ModuleKind::External:

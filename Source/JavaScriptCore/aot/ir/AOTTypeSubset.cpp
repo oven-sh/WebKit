@@ -16,17 +16,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-template<typename T>
-struct LiteralPart {
-    uint16_t widenedBit;
-    uint16_t literalBit;
-    SortedSet<T> Type::* literals;
-};
-
-constexpr LiteralPart<StringID> stringPart { Primitive::String, Primitive::LiteralString, &Type::stringLiterals };
-constexpr LiteralPart<PropertyKeyID> symbolPart { Primitive::Symbol, Primitive::LiteralSymbol, &Type::symbolLiterals };
-constexpr uint16_t plainPrimitives = Primitive::Defined & ~(Primitive::Integer | Primitive::AnyString | Primitive::AnySymbol);
-
 } // anonymous namespace
 
 ClassRelation relate(const BuiltinTable& builtins, BuiltinClassID first, BuiltinClassID second)

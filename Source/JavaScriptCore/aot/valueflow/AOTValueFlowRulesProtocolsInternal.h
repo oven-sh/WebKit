@@ -15,12 +15,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // What the rules of iteration, of promises and of coroutines share.
 
-inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
-inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
 inline constexpr ValueFlowName steppedValuesName = ValueFlowName::of(ValueFlowNameKind::SteppedValues);
 inline constexpr ValueFlowName returnedValueName = ValueFlowName::of(ValueFlowNameKind::ReturnedValue);
 inline constexpr ValueFlowName sentValuesName = ValueFlowName::of(ValueFlowNameKind::SentValues);
-inline constexpr ValueFlowName awaitedValueName = ValueFlowName::of(ValueFlowNameKind::AwaitedValue);
 
 inline constexpr ValueFlowName iteratedValuesName(IteratorKind kind)
 {
@@ -35,11 +32,6 @@ inline ValueFlowName nameOf(ValueFlowRuleContext& context, BuiltinName name)
 inline constexpr ValueFlowName nameOf(BuiltinSlotID slot)
 {
     return { ValueFlowNameKind::Slot, slot.index() };
-}
-
-inline ClimbingSet only(ValueFlowRuleContext& context, ValueFlowObjectID object)
-{
-    return ClimbingSet(context.maker().of(object));
 }
 
 // Without either placeholder.

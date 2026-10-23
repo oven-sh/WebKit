@@ -29,7 +29,7 @@ static_assert(OBJECT_OFFSETOF(Slot, transition.newStructureID) == Slot::offsetOf
 
 namespace {
 
-struct PropertyRun {
+struct FusedPropertyRun {
     CellPointer object;
     Vector<Boxed, 8> values;
     Request request;
@@ -47,8 +47,8 @@ public:
 private:
     bool paysWithoutSiteCache(const ValueContext&);
     Condition countMiss(Pointer cache);
-    Condition storeByOperation(const ValueContext&, const PropertyRun&, Pointer cache, bool isOnRarePath);
-    void storeThroughSiteCache(const ValueContext&, const PropertyRun&, Pointer cache, Integer header, Word32 kind);
+    Condition storeByOperation(const ValueContext&, const FusedPropertyRun&, Pointer cache, bool isOnRarePath);
+    void storeThroughSiteCache(const ValueContext&, const FusedPropertyRun&, Pointer cache, Integer header, Word32 kind);
 };
 
 } // anonymous namespace
@@ -70,7 +70,7 @@ static std::optional<uint32_t> pairedColumnsOf(const IdentifierNumbering& number
     return pairedNames(*firstColumn, *secondColumn);
 }
 
-static bool fitsInRegister(const String& text)
+static bool literalFitsInRegister(const String& text)
 {
     const StubDescriptor& descriptor = descriptorOf(StubFamily::GetByIdEqualsLiteral);
     return text.is8Bit() && text.length() >= descriptor.minCount && text.length() <= descriptor.maxCount;
@@ -141,7 +141,7 @@ void FusedAccessEmitter::generatePropGetAndTest(const ValueContext& value)
     std::optional<uint32_t> column = columnOf(build().identifierNumbering(), value->key());
     StringID literal = value->comparedString();
     String text = literal ? emitter<StringEmitter>().textOf(literal) : String();
-    if (!value.isBranchCondition() || !column || (literal && !fitsInRegister(text))) {
+    if (!value.isBranchCondition() || !column || (literal && !literalFitsInRegister(text))) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         defineTest(value, boolean(false));
         return;
@@ -175,7 +175,7 @@ Condition PropertyRunEmitter::tryStore(const ValueContext& store)
     if (!probesSiteCache && !paysWithoutSiteCache(store))
         return boolean(false);
 
-    PropertyRun run { in<CellPointer>(store->objectOperand()), { }, *request };
+    FusedPropertyRun run { in<CellPointer>(store->objectOperand()), { }, *request };
     for (ValueID stored : store->valuesOperands())
         run.values.append(in<Boxed>(stored));
     RELEASE_ASSERT(run.values.size() == store->keys().size());
@@ -222,13 +222,13 @@ Condition PropertyRunEmitter::countMiss(Pointer cache)
     return equal(count, word32(0));
 }
 
-Condition PropertyRunEmitter::storeByOperation(const ValueContext& store, const PropertyRun& run, Pointer cache, bool isOnRarePath)
+Condition PropertyRunEmitter::storeByOperation(const ValueContext& store, const FusedPropertyRun& run, Pointer cache, bool isOnRarePath)
 {
     Pointer buffer = argumentBuffer(run.values.span());
     return callOperation<Condition>(store, RuntimeOperation::TryPutProperties, { cache, boxCell(run.object), word32(run.request.value()), buffer, word32(store->isDefinition()) }, { .isOnRarePath = isOnRarePath });
 }
 
-void PropertyRunEmitter::storeThroughSiteCache(const ValueContext& store, const PropertyRun& run, Pointer cache, Integer header, Word32 kind)
+void PropertyRunEmitter::storeThroughSiteCache(const ValueContext& store, const FusedPropertyRun& run, Pointer cache, Integer header, Word32 kind)
 {
     const B3::AbstractHeap& properties = m_heaps.entire(AbstractHeap::NamedProperties);
     LValue firstWordIndex = m_out.aShr(header.value(), m_out.constInt32(Slot::locationShiftInHeader));

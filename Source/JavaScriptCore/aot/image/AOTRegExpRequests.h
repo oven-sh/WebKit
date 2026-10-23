@@ -28,10 +28,9 @@ class StringArena;
 using Typed::RegExpRecordID;
 using Typed::ValueID;
 
-// Evaluated: a text that the build puts together from the constants that reach a call of RegExp. Candidate: a text that flow names for a call.
+// Candidate: a text that flow names for a call.
 enum class RegExpRequestOrigin : uint8_t {
     Literal,
-    Evaluated,
     Candidate,
 };
 

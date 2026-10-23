@@ -28,7 +28,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t notTakenTargetIndex = 1;
+static constexpr uint32_t indexOfNotTakenTarget = 1;
 
 static constexpr Effects effectsOfConversion = declaredBoundOf(Opcode::ConvertToDoubleStorage);
 
@@ -456,7 +456,7 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
         ValueID array = test.arrayOperand();
         if (convertsAtHead(function, terminator.notTaken().block, array) || asksForStorageOf(function, terminator.notTaken().block, array) || !summaryAllowsConversion(context, *summary, functionMaySuspend, array))
             continue;
-        failedTests.append(FailedStorageTest { Edge { block, notTakenTargetIndex }, array, test.origin() });
+        failedTests.append(FailedStorageTest { Edge { block, indexOfNotTakenTarget }, array, test.origin() });
     }
     return failedTests;
 }
@@ -532,81 +532,6 @@ PassOutcome convertIntegerArraysBehindFailedTests(FunctionPassContext& context)
     if (numberOfConversions)
         context.build.statistics().count(StatisticID::IntegerArrayConversionsPlaced, numberOfConversions);
     // An edge that got its target back has left an empty block behind.
-    return PassOutcome::Changed;
-}
-
-unsigned applyCollectionGrowthPlans(FunctionPassContext& context, std::span<const GrowthPlan> plans)
-{
-    if (plans.empty())
-        return 0;
-
-    struct LocatedGrowth {
-        ProgramPoint point;
-        const GrowthPlan* plan;
-        ValueID collection;
-        ValueID sizeAtEntry;
-    };
-    Function& function = context.function;
-    Vector<LocatedGrowth, 4> located;
-    for (const GrowthPlan& plan : plans)
-        located.append({ context.analyses.useLists().pointOf(plan.append), &plan, context.analyses.identityOf(plan.array), { } });
-    // An expansion moves only the values after its point.
-    AOT::sort(located, [](const LocatedGrowth& a, const LocatedGrowth& b) {
-        return std::tie(a.point.block, a.point.index) > std::tie(b.point.block, b.point.index);
-    });
-
-    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
-    // One read for each loop and collection, at the end of the block in front of the loop, where it moves no point.
-    for (size_t index = 0; index < located.size(); ++index) {
-        LocatedGrowth& growth = located[index];
-        for (size_t earlier = 0; earlier < index && !growth.sizeAtEntry; ++earlier) {
-            if (located[earlier].plan->loopHeader == growth.plan->loopHeader && located[earlier].collection == growth.collection)
-                growth.sizeAtEntry = located[earlier].sizeAtEntry;
-        }
-        if (growth.sizeAtEntry)
-            continue;
-        bool isMap = inlineImplementationOf(context.program, function.at(growth.plan->append)) == InlineBuiltin::MapSet;
-        std::optional<Value> sizeRead = makeSizeRead(context, growth.plan->array, isMap ? Builtins::MapPrototypeSize : Builtins::SetPrototypeSize);
-        BlockID preheader = growth.plan->preheader;
-        builder.setOrigin(function.at(preheader).terminator.origin());
-        growth.sizeAtEntry = builder.insertBefore({ preheader, static_cast<uint32_t>(function.at(preheader).values.size()) }, WTF::move(*sizeRead));
-    }
-    builder.applyInsertions();
-
-    for (const LocatedGrowth& growth : located) {
-        const GrowthPlan& plan = *growth.plan;
-        Value addition = function.at(plan.append);
-        BlockFrequency frequency = function.at(growth.point.block).frequency;
-        builder.setOrigin(addition.origin());
-        IRBuilder::Expansion expansion = builder.beginExpansion(growth.point);
-        BlockID adds = builder.addBlock(frequency);
-        BlockID grows = builder.addBlock(BlockFrequency::Unlikely);
-        builder.emitBranch(builder.append(Opcode::IsCollectionTableFull, { plan.array }), Target { grows, { }, { } }, Target { adds, { }, { } });
-
-        builder.moveToEndOf(grows);
-        ValueID remaining = appendElementCount(builder, plan, plan.remainingIterations);
-        ValueID finished = appendElementCount(builder, plan, plan.finishedIterations);
-        builder.append(Opcode::ReserveCollectionCapacity, { plan.array, remaining, finished, growth.sizeAtEntry });
-        builder.emitJump(adds);
-
-        builder.moveToEndOf(adds);
-        ValueID result = appendCopy(builder, addition);
-        if (expansion.results.isEmpty())
-            builder.endExpansion(expansion, std::span<const ValueID> { });
-        else
-            builder.endExpansion(expansion, result);
-    }
-    return plans.size();
-}
-
-PassOutcome planCollectionCapacities(FunctionPassContext& context)
-{
-    Vector<GrowthPlan, 4> plans = ArrayCapacityPlanner(context).collectCollectionGrowthPlans();
-    unsigned planned = applyCollectionGrowthPlans(context, plans.span());
-    if (!planned)
-        return PassOutcome::Unchanged;
-    context.build.statistics().count(StatisticID::CollectionGrowthsPlanned, planned);
-    context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;
 }
 

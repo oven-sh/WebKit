@@ -194,8 +194,17 @@ static std::optional<uint32_t> findMissingFunction(const Program& program, std::
     return std::nullopt;
 }
 
-static void printSelectedFunctions(PrintStream& out, const Program& program, std::span<const uint32_t> functionIndices)
+static void printSelectedFunctions(PrintStream& out, const Program& program, std::span<const uint32_t> functionIndices, BuildContext& build)
 {
+    if (functionIndices.empty() && !build.options().logging.functionToDump.span().empty()) {
+        build.resolveFunctionToDump(program);
+        for (uint32_t index = 0; index < program.functions.size(); ++index) {
+            FunctionID id(index);
+            if (program.at(id).hasBody() && build.shouldDump(id))
+                printFunction(out, program, id, program.at(id));
+        }
+        return;
+    }
     if (functionIndices.empty()) {
         printProgram(out, program);
         return;
@@ -284,7 +293,7 @@ static int printProgramFile(const ProgramFile& file, const ProgramArguments& arg
 
     if (std::optional<uint32_t> missingIndex = findMissingFunction(*program, flags.functionIndices.span()))
         return reportInvalidCommandLine("print"_s, makeString("there is no f"_s, *missingIndex), errors);
-    printSelectedFunctions(out, *program, flags.functionIndices.span());
+    printSelectedFunctions(out, *program, flags.functionIndices.span(), build);
     out.flush();
 
     build.diagnostics().finish(program.get());

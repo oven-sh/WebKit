@@ -24,7 +24,7 @@ namespace {
 
 enum class ResultReadExtent : uint8_t { LeavesBlock, StaysInBlock };
 
-struct ResultReads {
+struct TypeTestResultReads {
     ResultReadExtent extent { ResultReadExtent::LeavesBlock };
     uint32_t end { 0 };
 };
@@ -44,7 +44,7 @@ static bool isOnEdge(ProofSource source)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static ResultReads findResultReadsOf(const UseLists& useLists, ValueID producer, BlockID block, uint32_t numberOfValues)
+static TypeTestResultReads findResultReadsOf(const UseLists& useLists, ValueID producer, BlockID block, uint32_t numberOfValues)
 {
     uint32_t end = 0;
     for (const Use& use : useLists.usesOf(producer)) {
@@ -175,7 +175,7 @@ void TestEvents::collectPointItems()
     AOT::stableSort(m_valueProofsByPoint, { }, orderOf);
 }
 
-static bool isReadAsDefinition(const Program& program, const Function& function, const Value& value)
+static bool readsAsDefinition(const Program& program, const Function& function, const Value& value)
 {
     if (numberOfResultsOf(program, function, value))
         return true;
@@ -207,8 +207,8 @@ void TestEvents::findResultReads()
         uint32_t lastRead = 0;
         for (uint32_t index = 0; index < values.size(); ++index) {
             ValueID producer = values[index];
-            if (isReadAsDefinition(program, m_function, m_function.at(producer))) {
-                ResultReads reads = findResultReadsOf(useLists, producer, block, values.size());
+            if (readsAsDefinition(program, m_function, m_function.at(producer))) {
+                TypeTestResultReads reads = findResultReadsOf(useLists, producer, block, values.size());
                 switch (reads.extent) {
                 case ResultReadExtent::LeavesBlock:
                     m_isBarrier.set(producer.index());

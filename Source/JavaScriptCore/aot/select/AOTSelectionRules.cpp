@@ -15,9 +15,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-constexpr unsigned indexOf(SelectionRuleID id) { return static_cast<unsigned>(id) - 1; }
+constexpr unsigned ruleIndexOf(SelectionRuleID id) { return static_cast<unsigned>(id) - 1; }
 
-constexpr SelectionRule rows[] = {
+constexpr SelectionRule selectionRuleRows[] = {
 #define AOT_SELECTION_RULE_ROW(name, kind) { SelectionRuleID::name, SelectionRuleKind::kind, select##name },
     FOR_EACH_AOT_SELECTION_RULE(AOT_SELECTION_RULE_ROW)
 #undef AOT_SELECTION_RULE_ROW
@@ -26,8 +26,8 @@ constexpr SelectionRule rows[] = {
 constexpr std::array<SelectionRule, numberOfSelectionRules> createRulesByPriority()
 {
     std::array<SelectionRule, numberOfSelectionRules> result { };
-    for (const SelectionRule& row : rows)
-        result[indexOf(row.id)] = row;
+    for (const SelectionRule& row : selectionRuleRows)
+        result[ruleIndexOf(row.id)] = row;
     return result;
 }
 
@@ -35,10 +35,10 @@ constexpr std::array<SelectionRule, numberOfSelectionRules> rulesByPriority = cr
 
 constexpr bool everyRuleHasOneRow()
 {
-    if (std::size(rows) != numberOfSelectionRules)
+    if (std::size(selectionRuleRows) != numberOfSelectionRules)
         return false;
     for (unsigned index = 0; index < numberOfSelectionRules; ++index) {
-        if (!rulesByPriority[index].apply || indexOf(rulesByPriority[index].id) != index)
+        if (!rulesByPriority[index].apply || ruleIndexOf(rulesByPriority[index].id) != index)
             return false;
     }
     return true;
@@ -56,7 +56,7 @@ std::span<const SelectionRule> selectionRules()
 const SelectionRule& ruleOf(SelectionRuleID id)
 {
     RELEASE_ASSERT(id != SelectionRuleID::None);
-    return rulesByPriority[indexOf(id)];
+    return rulesByPriority[ruleIndexOf(id)];
 }
 
 } } } // namespace JSC::AOT::Typed

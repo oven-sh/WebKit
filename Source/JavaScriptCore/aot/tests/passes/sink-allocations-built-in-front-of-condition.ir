@@ -1,8 +1,7 @@
 # What is built at the end of a block goes in front of the condition of its branch, where the branch alone uses the condition and nothing stands behind it: the two stay together for selection, and a later cut behind the allocation does not part them
 # FORM: Prepared
-# RUN: pass SinkAllocations RemoveTrivialParameters EliminateGuards
+# RUN: pass SinkAllocations RemoveTrivialParameters
 # STATISTIC: AllocationsSunk = 4
-# STATISTIC: GuardsEliminated = 1
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]

@@ -57,16 +57,13 @@ constexpr OpcodeSet opcodesExpandedIn(OptionSet<ExpansionStep> steps)
     return opcodes;
 }
 
-// ExpandIteration has nothing to do in a function without any of the first, ExpandProvenIterations in one without any of the second.
+// ExpandIteration has nothing to do in a function without any of these.
 inline constexpr OpcodeSet expandedOpcodes = opcodesExpandedIn({ ExpansionStep::ForInPositions, ExpansionStep::ArrayIteratorSteps, ExpansionStep::Spreads, ExpansionStep::Iterations });
-inline constexpr OpcodeSet iterationOpcodes = opcodesExpandedIn(ExpansionStep::Iterations);
 
 enum class IterationForm : uint8_t { Protocol, Array, TypedArray, String, SplitString, OwnEntries, Map, Set, Generator, AsyncGenerator };
 enum class IterationOrigin : uint8_t { Source, Spread };
 enum class ArmDispatch : uint8_t { SingleArm, ByForm, Versioned };
 enum class PatternRead : uint8_t { BySteps, ByIndex, InOneRead };
-// Proven: the plan has one arm, the arm has no test, and closing does nothing.
-enum class ExpandedIterations : uint8_t { All, OnlyProven };
 enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow };
 
 constexpr bool closingHasNoEffect(IterationForm form)
@@ -230,7 +227,7 @@ Vector<BlockID> findLiveRegion(FunctionPassContext&, ValueID open);
 ValueID chooseArgumentOfProtocolEntry(FunctionPassContext&, BlockID protocolEntry, ValueID narrowed, ValueID tested);
 
 Vector<Iteration> collectIterations(FunctionPassContext&);
-PassOutcome expandIterations(FunctionPassContext&, IRBuilder&, std::span<const ValueID> opensOfSpreads, ExpandedIterations);
+PassOutcome expandIterations(FunctionPassContext&, IRBuilder&, std::span<const ValueID> opensOfSpreads);
 
 void emitArmOpen(IterationExpansion&, ArmState&);
 void emitArmStep(IterationExpansion&, ArmState&, const StepRequest&);

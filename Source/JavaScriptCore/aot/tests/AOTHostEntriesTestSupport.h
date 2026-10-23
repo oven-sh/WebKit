@@ -40,6 +40,24 @@ inline RuntimeModuleID hostModule(ASCIILiteral token)
     return id;
 }
 
+// The numbers of the library's functions are the table's: no constant of the engine has them.
+inline RuntimeFunctionID functionImplementing(BuiltinID builtin)
+{
+    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
+        if (std::ranges::contains(function.implements, builtin))
+            return function.id;
+    }
+    AOT_TEST_CHECK(false);
+    return { };
+}
+
+inline RuntimeFunctionID modelOf(BuiltinID builtin)
+{
+    RuntimeFunctionID model = BuiltinTable::singleton().overloadsOf(builtin)[0].code.model;
+    AOT_TEST_CHECK(model);
+    return model;
+}
+
 inline BuiltinName hostName(ASCIILiteral text)
 {
     BuiltinName name = BuiltinTable::singleton().nameOf(byteCast<uint8_t>(text.span()));

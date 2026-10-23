@@ -16,11 +16,7 @@ FlowOwnListing exportListingOf(const Program& program, ModuleID id)
     switch (module.kind) {
     case ModuleKind::SourceText:
         break;
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
+    default:
         return FlowOwnListing::MayHaveOthers;
     }
 

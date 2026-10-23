@@ -1568,6 +1568,12 @@ ValueSetID ValueSetMaker::of(std::span<const ValueFlowObjectID> members)
     constexpr size_t mostMembersSorted = 24;
     if (members.size() > mostMembersSorted)
         return ofManyMembers(members);
+    if (members.empty())
+        return ValueSets::nothing;
+    if (members.size() == 1) {
+        RELEASE_ASSERT(members[0].index() < m_sets.sizeOfUniverse());
+        return of(members[0]);
+    }
 
     m_members.shrink(0);
     for (ValueFlowObjectID member : members) {

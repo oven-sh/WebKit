@@ -27,7 +27,7 @@ struct StretchRegion {
 
 } // anonymous namespace
 
-static bool canCopyInsideFunction(CloneCheck check)
+static bool canCloneInsideFunction(CloneCheck check)
 {
     switch (check) {
     case CloneCheck::CanClone:
@@ -532,7 +532,7 @@ void TestPlacer::checkStretches()
         const StretchRegion& region = regions[stretch];
         if (region.blocks.isEmpty())
             continue;
-        if (!canCopyInsideFunction(RegionCloner::checkCanDuplicate(analyses, region.blocks.span(), region.entries.span(), liveness)))
+        if (!canCloneInsideFunction(RegionCloner::checkCanDuplicate(analyses, region.blocks.span(), region.entries.span(), liveness)))
             m_unclonableStretches.set(stretch);
     }
     extendCopiesBehindStretches(liveness);

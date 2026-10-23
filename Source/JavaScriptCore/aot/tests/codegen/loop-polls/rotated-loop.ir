@@ -6,7 +6,6 @@
 # REQUIRES(X64): x86_64
 # RUN(ARM64): generate-code calls
 # REQUIRES(ARM64): arm64
-# STATISTIC: LoopsRotated >= 1
 # X64: f1: size={{*}} polls=2
 # ARM64-LABEL: f1: size=
 # ARM64: operation operationAOTPollSlow x2

@@ -55,9 +55,6 @@ struct GrowthPlan {
     BlockID loopHeader;
     TripCount remainingIterations;
     unsigned elementsPerIteration { 1 };
-    // Only of a collection.
-    TripCount finishedIterations { };
-    BlockID preheader { };
 };
 
 enum class AppendKind : uint8_t { Elements, List, StoreAtIndex };
@@ -115,7 +112,6 @@ public:
 
     Vector<CapacityPlan, 4> collectPlans();
     Vector<GrowthPlan, 4> collectGrowthPlans();
-    Vector<GrowthPlan, 4> collectCollectionGrowthPlans();
 
 private:
     std::optional<CapacityPlan> plan(ValueID literal);
@@ -144,12 +140,7 @@ private:
     bool isLengthOf(ValueID length, ValueID array) const;
 
     std::optional<GrowthPlan> planGrowth(const NaturalLoop&, ProgramPoint);
-    std::optional<GrowthPlan> planCollectionGrowth(const NaturalLoop&, ProgramPoint);
-    using GrowthPlanner = std::optional<GrowthPlan> (ArrayCapacityPlanner::*)(const NaturalLoop&, ProgramPoint);
-    Vector<GrowthPlan, 4> collectGrowthPlans(Opcode reservation, GrowthPlanner);
     TripCount remainingIterations(const NaturalLoop&, ValueID array, ProgramPoint);
-    TripCount finishedIterations(const NaturalLoop&, ValueID collection, ProgramPoint);
-    BlockID findPreheader(const NaturalLoop&);
     bool hasUnconditionalCellType(ValueID array) const;
     bool isAllocatedWithPlannedCapacity(ValueID array) const;
 
@@ -162,7 +153,6 @@ private:
 
 unsigned applyCapacityPlans(FunctionPassContext&, std::span<const CapacityPlan>);
 unsigned applyGrowthPlans(FunctionPassContext&, std::span<const GrowthPlan>);
-unsigned applyCollectionGrowthPlans(FunctionPassContext&, std::span<const GrowthPlan>);
 
 unsigned narrowStorageOfLocalArrays(FunctionPassContext&);
 unsigned chooseStorageOfConstructedArrays(FunctionPassContext&);

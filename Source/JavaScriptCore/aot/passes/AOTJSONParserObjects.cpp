@@ -53,11 +53,6 @@ static ResultNodeRef nodeRefOf(const Function& parser, const ResultNode& node)
     return ResultNodeRef::forType(node.type);
 }
 
-static const Field& fieldOf(const Program& program, const ResultNode& node, const ResultMember& member)
-{
-    return program.at(node.layout).fields[*member.field];
-}
-
 static StringView plainTextOf(const EmissionInputs& inputs, StringID string)
 {
     return byteCast<Latin1Character>(inputs.strings.at(string));

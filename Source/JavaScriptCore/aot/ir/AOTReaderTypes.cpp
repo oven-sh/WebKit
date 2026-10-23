@@ -26,7 +26,7 @@ struct DeclaredFamilies {
     BitVector hasMembersWithoutLayout;
 };
 
-struct Conversion {
+struct WireTypeConversion {
     uint32_t source;
     uint32_t target;
 };
@@ -75,16 +75,6 @@ static Failure checkDeclaredSupertypes(const Reader& reader, uint32_t index)
 static bool isEnvironment(const Wire::Layout& checkedLayout)
 {
     return isEnvironmentKind(static_cast<LayoutKind>(checkedLayout.kind));
-}
-
-static bool has(const Wire::Layout& layout, LayoutFlags flag)
-{
-    return layout.flags & static_cast<uint32_t>(flag);
-}
-
-static bool has(const Wire::Field& field, FieldFlags flag)
-{
-    return field.flags & static_cast<uint32_t>(flag);
 }
 
 // The fields have not been read yet, so nothing about them has been checked.
@@ -280,7 +270,7 @@ static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, 
         });
     });
 
-    Vector<Conversion> met = collectInParallel<Conversion>(loops, numberOfLayouts, [&](unsigned type, Vector<Conversion>& found) {
+    Vector<WireTypeConversion> met = collectInParallel<WireTypeConversion>(loops, numberOfLayouts, [&](unsigned type, Vector<WireTypeConversion>& found) {
         if (!isStructuralType(layouts[type]))
             return;
         Vector<uint32_t, 16> required;
@@ -335,7 +325,7 @@ static bool requiresNoName(const Conversions& conversions, uint32_t type)
 }
 
 // A type that requires no name is a view of every object: `interface Handle { readonly brand?: never }`, `{}`, a bag of options.
-static bool passesOn(const Conversions& conversions, Conversion conversion, LayoutID member)
+static bool passesOn(const Conversions& conversions, WireTypeConversion conversion, LayoutID member)
 {
     if (!requiresNoName(conversions, conversion.source) || requiresNoName(conversions, conversion.target))
         return true;
@@ -434,7 +424,7 @@ static bool canPassFor(const Conversions& conversions, LayoutID member, uint32_t
     return true;
 }
 
-static bool isInsideFamily(const Conversions& conversions, const DeclaredFamilies& families, Conversion conversion)
+static bool isInsideFamily(const Conversions& conversions, const DeclaredFamilies& families, WireTypeConversion conversion)
 {
     bool passesOnEveryMember = !requiresNoName(conversions, conversion.source) || requiresNoName(conversions, conversion.target);
     if (passesOnEveryMember && families.hasMembersWithoutLayout.quickGet(conversion.source) && !families.hasMembersWithoutLayout.quickGet(conversion.target))
@@ -447,10 +437,10 @@ static bool isInsideFamily(const Conversions& conversions, const DeclaredFamilie
     });
 }
 
-static Vector<Conversion> findConversionsOutsideFamilies(const ParallelLoops& loops, const Conversions& conversions, const DeclaredFamilies& families)
+static Vector<WireTypeConversion> findConversionsOutsideFamilies(const ParallelLoops& loops, const Conversions& conversions, const DeclaredFamilies& families)
 {
     std::span<const Wire::Layout> layouts = conversions.checkedSections.layouts;
-    return collectInParallel<Conversion>(loops, static_cast<unsigned>(layouts.size()), [&](unsigned source, Vector<Conversion>& found) {
+    return collectInParallel<WireTypeConversion>(loops, static_cast<unsigned>(layouts.size()), [&](unsigned source, Vector<WireTypeConversion>& found) {
         if (isEnvironment(layouts[source]))
             return;
         ASSERT(std::ranges::is_sorted(families.members[source]));
@@ -461,7 +451,7 @@ static Vector<Conversion> findConversionsOutsideFamilies(const ParallelLoops& lo
     });
 }
 
-static LayoutID findMemberOutsideFamily(const Conversions& conversions, const DeclaredFamilies& families, Conversion conversion)
+static LayoutID findMemberOutsideFamily(const Conversions& conversions, const DeclaredFamilies& families, WireTypeConversion conversion)
 {
     const Vector<LayoutID>& listed = families.members[conversion.target];
     for (LayoutID member : families.members[conversion.source]) {
@@ -472,11 +462,11 @@ static LayoutID findMemberOutsideFamily(const Conversions& conversions, const De
 }
 
 // The smallest families that hold the given ones and are closed, so the order of the work does not show.
-static void widenFamilies(const Conversions& conversions, DeclaredFamilies& families, Vector<Conversion>&& worklist)
+static void widenFamilies(const Conversions& conversions, DeclaredFamilies& families, Vector<WireTypeConversion>&& worklist)
 {
     std::span<const Wire::Layout> layouts = conversions.checkedSections.layouts;
     while (!worklist.isEmpty()) {
-        Conversion conversion = worklist.takeLast();
+        WireTypeConversion conversion = worklist.takeLast();
         if (isInsideFamily(conversions, families, conversion))
             continue;
 
@@ -543,11 +533,11 @@ bool Reader::computeDeclaredMembers()
     addNamesOfTaggedLayouts(conversions.declaredNames, m_sections, conversions.taggedFamilies);
     removeMembersThatLackRequiredNames(m_build.parallelLoops(), conversions.declaredNames, families);
 
-    Vector<Conversion> outside = findConversionsOutsideFamilies(m_build.parallelLoops(), conversions, families);
+    Vector<WireTypeConversion> outside = findConversionsOutsideFamilies(m_build.parallelLoops(), conversions, families);
     if (!outside.isEmpty()) {
         m_build.statistics().count(StatisticID::ConversionsOutsideFamily, outside.size());
         if (m_build.options().verifiesAfterEveryStage) {
-            Conversion first = outside.first();
+            WireTypeConversion first = outside.first();
             return report({ .kind = InternalErrorKind::FamilyNotClosed, .layout = findMemberOutsideFamily(conversions, families, first), .count = first.target, .detail = makeString("the type is L"_s, first.target) });
         }
         widenFamilies(conversions, families, WTF::move(outside));

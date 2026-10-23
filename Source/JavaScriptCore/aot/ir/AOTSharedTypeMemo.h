@@ -56,9 +56,13 @@ public:
         return { firstHash ? firstHash : 1, static_cast<uint32_t>(secondHash >> 32) | hashedKeyBit };
     }
 
-    SharedTypeMemo(bool verifiesAnswers, bool countsLookups)
+    // 256 MB in all shards, and a third of that in the tables they have grown out of.
+    static constexpr size_t defaultMaxSlotsInShard = 1 << 18;
+
+    SharedTypeMemo(bool verifiesAnswers, bool countsLookups, size_t maxSlotsInShard = defaultMaxSlotsInShard)
         : m_verifiesAnswers(verifiesAnswers)
         , m_countsLookups(countsLookups)
+        , m_maxSlotsInShard(maxSlotsInShard)
     {
     }
 
@@ -80,7 +84,7 @@ public:
     {
         RELEASE_ASSERT(key.first && type && !(type.index() & provisionalBit));
         uint64_t position = positionOf(key);
-        m_shards[shardIndexOf(position)].add(key, position, type);
+        m_shards[shardIndexOf(position)].add(key, position, type, m_maxSlotsInShard);
     }
 
     // For a caller that knows that no other thread adds.
@@ -101,8 +105,6 @@ private:
     static constexpr unsigned shardBits = 6;
     static constexpr size_t initialSlotsInShard = 64;
     static constexpr size_t growthFactor = 4;
-    // 16 MB in all shards, and a third of that in the tables they have grown out of.
-    static constexpr size_t maxSlotsInShard = 1 << 14;
     static constexpr uint32_t hashedKeyBit = 1u << 31;
     static constexpr uint32_t provisionalBit = 1u << 31;
 
@@ -150,7 +152,7 @@ private:
     };
 
     struct Shard {
-        void add(Key key, uint64_t position, TypeID type)
+        void add(Key key, uint64_t position, TypeID type, size_t maxSlotsInShard)
         {
             if (isFull.load(std::memory_order_relaxed))
                 return;
@@ -208,6 +210,7 @@ private:
 
     const bool m_verifiesAnswers;
     const bool m_countsLookups;
+    const size_t m_maxSlotsInShard;
     std::array<Shard, 1u << shardBits> m_shards;
 };
 

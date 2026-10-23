@@ -75,7 +75,7 @@ function f7 name="stream" module=m0 position=9 text={end=6} length=2 thisType={t
     v16 = NewRegExp pattern="a" regExpFlags=[Global] @1016
     Return v0 @2003
 }
-function f8 name="handled" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] relations={subjects=[{fate=[IsReturned] results=1}] stores=[{isOnEveryPath=true}] handed=[{call=1}] operands=[{position=1}] resultsFullyListed=1} {
+function f8 name="handled" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = TypeTest v0 testedType=number @3001
     Branch v1 -> taken b1(| 0), notTaken b2() @4000

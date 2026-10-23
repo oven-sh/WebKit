@@ -15,16 +15,16 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using Form = FieldTableEntry::Form;
+using ExpectedForm = FieldTableEntry::Form;
 
-static constexpr unsigned numberOfExpectedForms = static_cast<unsigned>(Form::Field);
+static constexpr unsigned numberOfExpectedForms = static_cast<unsigned>(ExpectedForm::Field);
 
 // A layout that is estimated never to be allocated still says what a field of the name holds.
 static constexpr double weightOfLayoutItself = 1;
 
-std::optional<Form> formInFieldTable(const PlacedSlot& slot)
+std::optional<ExpectedForm> formInFieldTable(const PlacedSlot& slot)
 {
-    auto formOfWords = [&](Form form, uint32_t width) -> std::optional<Form> {
+    auto formOfWords = [&](ExpectedForm form, uint32_t width) -> std::optional<ExpectedForm> {
         if (slot.offset % width || slot.offset / width > FieldTableEntry::maxOperand)
             return std::nullopt;
         return form;
@@ -34,14 +34,14 @@ std::optional<Form> formInFieldTable(const PlacedSlot& slot)
     switch (slot.representation) {
     case SlotRepresentation::JSValue:
     case SlotRepresentation::Cell:
-        return formOfWords(slot.isOutOfLine() ? Form::OutOfLineValue : Form::InlineValue, sizeof(EncodedJSValue));
+        return formOfWords(slot.isOutOfLine() ? ExpectedForm::OutOfLineValue : ExpectedForm::InlineValue, sizeof(EncodedJSValue));
     case SlotRepresentation::Cell32:
     case SlotRepresentation::OptionalCell32:
     case SlotRepresentation::DeferredClosure:
-        return slot.isOutOfLine() ? std::nullopt : formOfWords(Form::InlineNarrowCell, sizeof(uint32_t));
+        return slot.isOutOfLine() ? std::nullopt : formOfWords(ExpectedForm::InlineNarrowCell, sizeof(uint32_t));
     case SlotRepresentation::Int32:
     case SlotRepresentation::OptionalInt32:
-        return slot.isOutOfLine() ? std::nullopt : formOfWords(Form::InlineInt32, sizeof(uint32_t));
+        return slot.isOutOfLine() ? std::nullopt : formOfWords(ExpectedForm::InlineInt32, sizeof(uint32_t));
     default:
         return std::nullopt;
     }
@@ -64,7 +64,7 @@ FormsExpectedOfNames::FormsExpectedOfNames(const Program& program, std::span<con
         double weight = weightOfLayoutItself + heat.allocationsOf(id);
         for (FieldIndex field = 0; field < layout.fields.size() && field < planned.slots.size(); ++field) {
             PropertyKeyID key = layout.fields[field].key;
-            std::optional<Form> form = formInFieldTable(planned.slots[field]);
+            std::optional<ExpectedForm> form = formInFieldTable(planned.slots[field]);
             if (!key || !form || !slotHoldsValueOfProperty(fieldAt(program, declarationOf(program, { id, field }))))
                 continue;
             if (key.index() >= weights.size())

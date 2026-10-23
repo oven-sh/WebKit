@@ -30,7 +30,6 @@ enum class ValidationLevel : uint8_t {
 
 struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
-    bool checksKnownPropertiesAtRunTime { false };
 };
 
 enum class RedundancyElimination : uint8_t {
@@ -87,8 +86,6 @@ struct OptimizationPolicy {
     bool narrowsIntegers { false };
     bool chainsAssociativeOperations { false };
     bool stopsSwitchInferenceAtRareEdges { false };
-    bool convertsBranchesToSelects { false };
-    bool mergesAdjacentConstantStores { false };
     bool sinksValues { false };
     bool placesConstantsByFrequency { false };
     bool mergesBlocksAfterForwardingJumps { false };
@@ -101,9 +98,6 @@ struct SelectionPolicy {
 
 struct LoopPolicy {
     bool rotates { false };
-    bool foldsComparisonsWithBounds { false };
-    bool versions { false };
-    bool clampsLoopBounds { false };
     bool hoistsOnlyFromLikelyPaths { false };
     bool hoistsImmutableLoadsPastWrites { false };
 };
@@ -111,12 +105,6 @@ struct LoopPolicy {
 struct SwitchLoweringPolicy {
     bool usesBitTests { false };
     unsigned minCasesForJumpTable { 7 };
-};
-
-struct KnownPropertyPolicy {
-    bool trustsKnownRanges { false };
-    bool trustsKnownDereferenceableBytes { false };
-    bool trustsKnownInductions { false };
 };
 
 struct ClientPhase {
@@ -142,21 +130,13 @@ enum class PolicySwitch : uint8_t {
     ReduceWithRanges,
     NarrowIntegers,
     ChainAssociativeOperations,
-    ConvertBranchesToSelects,
-    MergeAdjacentConstantStores,
     SinkValues,
     PlaceConstantsByFrequency,
     ExtendInstructionSelection,
     PinnedConstants,
     HoistLoopInvariantValues,
     RotateLoops,
-    FoldComparisonsWithBounds,
-    VersionLoops,
-    ClampLoopBounds,
     BitTests,
-    KnownRanges,
-    KnownDereferenceableBytes,
-    KnownInductions,
     ChargeForCalleeSaves,
     PreferredRegisters,
     SplitLiveRanges,
@@ -167,16 +147,13 @@ enum class PolicySwitch : uint8_t {
     MoveBlocksWithoutSuccessorsToEnd,
     RareBlockLayout,
     MergeIdenticalBlocks,
-    DuplicateReturns,
     ForwardRegisterCopies,
-    HoistCommonMoves,
     ReuseConditionFlags,
     PairMemoryAccesses,
-    ResequenceMovesBeforePatches,
     FoldTrapsIntoAccesses,
 };
 
-static constexpr unsigned numberOfSwitches = 40;
+static constexpr unsigned numberOfSwitches = 29;
 static_assert(static_cast<unsigned>(PolicySwitch::FoldTrapsIntoAccesses) + 1 == numberOfSwitches);
 static_assert(numberOfSwitches <= 64);
 
@@ -190,12 +167,10 @@ struct Policy {
     SelectionPolicy selection;
     LoopPolicy loops;
     SwitchLoweringPolicy switchLowering;
-    KnownPropertyPolicy knownProperties;
     ValidationPolicy validation;
     LimitValues limits;
     CPUFeatureSet targetFeatures { CPUFeatureSet::host() };
     Air::Policy air;
-    bool collectsRemarks { false };
     Vector<ClientPhase, 4> clientPhases;
 
     JS_EXPORT_PRIVATE static Policy fromProcessOptions();

@@ -26,7 +26,7 @@ struct KeyedOperation {
     ValueID key;
 };
 
-struct OwnPropertyTest {
+struct IterationOwnPropertyTest {
     BuiltinOperand object;
     BuiltinOperand key;
 };
@@ -38,12 +38,12 @@ static bool isResultRead(const Value& value, ForInStepResult result)
     return value.opcode == Opcode::ResultAt && value.index() == static_cast<uint32_t>(result);
 }
 
-static std::optional<OwnPropertyTest> ownPropertyTestOf(BuiltinID builtin)
+static std::optional<IterationOwnPropertyTest> ownPropertyTestOf(BuiltinID builtin)
 {
     if (builtin == Builtins::ObjectHasOwn)
-        return OwnPropertyTest { BuiltinOperand::argument(0), BuiltinOperand::argument(1) };
+        return IterationOwnPropertyTest { BuiltinOperand::argument(0), BuiltinOperand::argument(1) };
     if (builtin == Builtins::ObjectPrototypeHasOwnProperty)
-        return OwnPropertyTest { BuiltinOperand::receiver(), BuiltinOperand::argument(0) };
+        return IterationOwnPropertyTest { BuiltinOperand::receiver(), BuiltinOperand::argument(0) };
     return std::nullopt;
 }
 
@@ -59,7 +59,7 @@ static std::optional<KeyedOperation> keyedOperationOf(const Program& program, co
     BuiltinCall call = builtinCallOf(program, value);
     if (call.form != BuiltinCallForm::Whole)
         return std::nullopt;
-    std::optional<OwnPropertyTest> test = ownPropertyTestOf(program.builtins().at(call.overload).builtin);
+    std::optional<IterationOwnPropertyTest> test = ownPropertyTestOf(program.builtins().at(call.overload).builtin);
     if (!test)
         return std::nullopt;
     ValueID object = call.operandAt(test->object);

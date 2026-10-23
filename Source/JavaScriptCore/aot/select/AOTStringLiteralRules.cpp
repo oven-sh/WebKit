@@ -34,7 +34,7 @@ namespace {
 
 enum class RootForm : uint8_t { Test, Index, Presence, Relation };
 
-struct Match {
+struct StringLiteralMatch {
     SelectionGroup group;
     RootForm rootForm;
     Opcode row;
@@ -50,7 +50,7 @@ struct Match {
     bool isOnlyBranchedOn { false };
 };
 
-enum class SubjectKind : uint8_t { String, Value };
+enum class LiteralSubjectKind : uint8_t { String, Value };
 
 struct ComparedLiteral {
     ValueID subject;
@@ -71,11 +71,11 @@ struct LiteralCall {
 static constexpr unsigned maxLengthOfSeparatorFoundInline = 16;
 
 static constexpr std::array equalityOpcodes { Opcode::StrictEq, Opcode::Eq };
-static constexpr std::array relationalOpcodes { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
+static constexpr std::array relationalOpcodesOfLiterals { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 
 static_assert([] {
     OpcodeSet opcodes;
-    for (Opcode opcode : relationalOpcodes)
+    for (Opcode opcode : relationalOpcodesOfLiterals)
         opcodes.add(opcode);
     return opcodes == relationalOperators;
 }());
@@ -89,7 +89,7 @@ static bool isUndefined(const Type& type)
     return !type.isNever() && type.hasOnlyPrimitives(Primitive::Undefined);
 }
 
-static std::optional<ComparedLiteral> findComparedLiteral(SelectionContext& context, ValueID id, SubjectKind kind)
+static std::optional<ComparedLiteral> findComparedLiteral(SelectionContext& context, ValueID id, LiteralSubjectKind kind)
 {
     const Value& comparison = context.function().at(id);
     BlockID block = context.analyses().useLists().blockOf(id);
@@ -97,7 +97,7 @@ static std::optional<ComparedLiteral> findComparedLiteral(SelectionContext& cont
     uint32_t rightIndex = *OperandPosition::right(comparison.opcode);
     for (uint32_t subjectIndex : { leftIndex, rightIndex }) {
         ValueID subject = comparison.operand(subjectIndex);
-        if (context.typeOf(subject).isAnyString() != (kind == SubjectKind::String))
+        if (context.typeOf(subject).isAnyString() != (kind == LiteralSubjectKind::String))
             continue;
         Use useOfSubject { .kind = Use::Kind::Operand, .block = block, .user = id, .operandIndex = subjectIndex };
         if (std::optional<LiteralArgument> argument = comparedLiteralOf(context, useOfSubject))
@@ -112,9 +112,9 @@ static bool isLiteralStringWord(SelectionContext& context, ValueID id)
     return defaultRepresentationOf(context.typeOf(id)) == Representation::LiteralString;
 }
 
-static std::optional<Match> findEqualityOfValue(SelectionContext& context, ValueID id)
+static std::optional<StringLiteralMatch> findEqualityOfValue(SelectionContext& context, ValueID id)
 {
-    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, SubjectKind::Value);
+    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, LiteralSubjectKind::Value);
     if (!compared || isLiteralStringWord(context, compared->subject))
         return std::nullopt;
 
@@ -128,35 +128,35 @@ static std::optional<Match> findEqualityOfValue(SelectionContext& context, Value
     if (!isStrict && !std::isnan(jsToNumber(compared->argument.text)))
         return std::nullopt;
 
-    Match match { groupOfOne(id), RootForm::Test, isStrict ? Opcode::ValueEqualsLiteral : Opcode::ValueLooselyEqualsLiteral, compared->subject };
+    StringLiteralMatch match { groupOfOne(id), RootForm::Test, isStrict ? Opcode::ValueEqualsLiteral : Opcode::ValueLooselyEqualsLiteral, compared->subject };
     match.literal = compared->argument.literal;
     match.droppedOperand = compared->operand;
     match.isOnlyBranchedOn = context.isOnlyBranchedOn(id);
     return match;
 }
 
-static std::optional<Match> findEquality(SelectionContext& context, ValueID id)
+static std::optional<StringLiteralMatch> findEquality(SelectionContext& context, ValueID id)
 {
-    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, SubjectKind::String);
+    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, LiteralSubjectKind::String);
     if (!compared)
         return findEqualityOfValue(context, id);
     if (isLiteralStringWord(context, compared->subject))
         return std::nullopt;
 
-    Match match { groupOfOne(id), RootForm::Test, Opcode::StringEqualsLiteral, compared->subject };
+    StringLiteralMatch match { groupOfOne(id), RootForm::Test, Opcode::StringEqualsLiteral, compared->subject };
     match.literal = compared->argument.literal;
     match.droppedOperand = compared->operand;
     match.isOnlyBranchedOn = context.isOnlyBranchedOn(id);
     return match;
 }
 
-static std::optional<Match> findRelation(SelectionContext& context, ValueID id)
+static std::optional<StringLiteralMatch> findRelation(SelectionContext& context, ValueID id)
 {
-    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, SubjectKind::String);
+    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, LiteralSubjectKind::String);
     if (!compared || compared->argument.text.length() != 1)
         return std::nullopt;
 
-    Match match { groupOfOne(id), RootForm::Relation, Opcode::StringOrderToCharacter, compared->subject };
+    StringLiteralMatch match { groupOfOne(id), RootForm::Relation, Opcode::StringOrderToCharacter, compared->subject };
     match.codeUnit = compared->argument.text[0];
     match.droppedOperand = compared->operand;
     match.isMirrored = compared->isOnLeft;
@@ -177,7 +177,7 @@ static std::optional<LiteralCall> findLiteralCall(SelectionContext& context, con
     return LiteralCall { receiver, arguments[0], WTF::move(*argument), hasPosition ? arguments[1] : ValueID() };
 }
 
-static std::optional<Match> findEndTest(SelectionContext& context, ValueID id, Opcode row)
+static std::optional<StringLiteralMatch> findEndTest(SelectionContext& context, ValueID id, Opcode row)
 {
     std::optional<LiteralCall> call = findLiteralCall(context, context.function().at(id));
     if (!call || call->position)
@@ -185,16 +185,16 @@ static std::optional<Match> findEndTest(SelectionContext& context, ValueID id, O
     if (context.pass().exceeds(LimitID::MaxInlineStringCompareLength, call->argument.text.length(), id))
         return std::nullopt;
 
-    Match match { groupOfOne(id), RootForm::Test, row, call->string };
+    StringLiteralMatch match { groupOfOne(id), RootForm::Test, row, call->string };
     match.literal = call->argument.literal;
     match.droppedOperand = call->operand;
     match.isOnlyBranchedOn = context.isOnlyBranchedOn(id);
     return match;
 }
 
-static Match createForwardSearch(ValueID id, RootForm rootForm, ValueID string, StringView sought)
+static StringLiteralMatch createForwardSearch(ValueID id, RootForm rootForm, ValueID string, StringView sought)
 {
-    Match match { groupOfOne(id), rootForm, Opcode::StringIndexOfLiteral, string };
+    StringLiteralMatch match { groupOfOne(id), rootForm, Opcode::StringIndexOfLiteral, string };
     if (sought.length() == 1) {
         match.row = Opcode::StringIndexOfCharacter;
         match.codeUnit = sought[0];
@@ -202,7 +202,7 @@ static Match createForwardSearch(ValueID id, RootForm rootForm, ValueID string, 
     return match;
 }
 
-static std::optional<Match> findForwardSearch(SelectionContext& context, ValueID id, RootForm rootForm)
+static std::optional<StringLiteralMatch> findForwardSearch(SelectionContext& context, ValueID id, RootForm rootForm)
 {
     std::optional<LiteralCall> call = findLiteralCall(context, context.function().at(id));
     if (!call || call->argument.text.isEmpty())
@@ -210,14 +210,14 @@ static std::optional<Match> findForwardSearch(SelectionContext& context, ValueID
     if (call->position && !context.typeOf(call->position).isNumber())
         return std::nullopt;
 
-    Match match = createForwardSearch(id, rootForm, call->string, call->argument.text);
+    StringLiteralMatch match = createForwardSearch(id, rootForm, call->string, call->argument.text);
     match.literal = call->argument.literal;
     match.droppedOperand = call->operand;
     match.position = call->position;
     return match;
 }
 
-static std::optional<Match> findBackwardSearch(SelectionContext& context, ValueID id)
+static std::optional<StringLiteralMatch> findBackwardSearch(SelectionContext& context, ValueID id)
 {
     std::optional<LiteralCall> call = findLiteralCall(context, context.function().at(id));
     if (!call || call->argument.text.isEmpty())
@@ -225,7 +225,7 @@ static std::optional<Match> findBackwardSearch(SelectionContext& context, ValueI
     if (call->position && !context.typeOf(call->position).isInteger())
         return std::nullopt;
 
-    Match match { groupOfOne(id), RootForm::Index, Opcode::StringLastIndexOfLiteral, call->string };
+    StringLiteralMatch match { groupOfOne(id), RootForm::Index, Opcode::StringLastIndexOfLiteral, call->string };
     match.literal = call->argument.literal;
     match.droppedOperand = call->operand;
     match.position = call->position;
@@ -233,7 +233,7 @@ static std::optional<Match> findBackwardSearch(SelectionContext& context, ValueI
     return match;
 }
 
-static std::optional<Match> findAtomSearch(SelectionContext& context, ValueID id, InlineBuiltin builtin)
+static std::optional<StringLiteralMatch> findAtomSearch(SelectionContext& context, ValueID id, InlineBuiltin builtin)
 {
     const Value& call = context.function().at(id);
     ValueID receiver = call.receiverOperand();
@@ -257,13 +257,13 @@ static std::optional<Match> findAtomSearch(SelectionContext& context, ValueID id
     if (summary.metadata != RegExpMetadata::Known || !summary.isValid() || summary.atom.isEmpty())
         return std::nullopt;
 
-    Match match = createForwardSearch(id, stringIsReceiver ? RootForm::Index : RootForm::Presence, string, summary.atom);
+    StringLiteralMatch match = createForwardSearch(id, stringIsReceiver ? RootForm::Index : RootForm::Presence, string, summary.atom);
     match.atom = summary.atom;
     match.droppedOperand = regExp;
     return match;
 }
 
-static std::optional<Match> findBuiltinCall(SelectionContext& context, ValueID id)
+static std::optional<StringLiteralMatch> findBuiltinCall(SelectionContext& context, ValueID id)
 {
     const Value& call = context.function().at(id);
     if (call.builtinCallForm() != BuiltinCallForm::Whole)
@@ -291,7 +291,7 @@ static std::optional<Match> findBuiltinCall(SelectionContext& context, ValueID i
     }
 }
 
-static void rewriteTest(GroupRewriter& rewriter, const Match& match)
+static void rewriteTest(GroupRewriter& rewriter, const StringLiteralMatch& match)
 {
     Value& test = rewriter.replaceRoot(match.row);
     bool takesString = OperandPosition::string(match.row).has_value();
@@ -306,14 +306,14 @@ static void rewriteTest(GroupRewriter& rewriter, const Match& match)
         rewriter.leaveUnclaimed(match.group.root);
 }
 
-static StringID literalOf(SelectionContext& context, const Match& match)
+static StringID literalOf(SelectionContext& context, const StringLiteralMatch& match)
 {
     if (match.literal || !Value::opcodesWithLiteral.contains(match.row))
         return match.literal;
     return context.pass().strings.intern(match.atom);
 }
 
-static ValueID insertPosition(SelectionContext& context, GroupRewriter& rewriter, const Match& match)
+static ValueID insertPosition(SelectionContext& context, GroupRewriter& rewriter, const StringLiteralMatch& match)
 {
     if (!match.position)
         return rewriter.insert(makeInteger(match.defaultPosition));
@@ -329,7 +329,7 @@ static ValueID insertPosition(SelectionContext& context, GroupRewriter& rewriter
     return rewriter.insert(makeResultAt(bounds, 0));
 }
 
-static void fillSearch(Value& search, const Match& match, ValueID position, StringID literal)
+static void fillSearch(Value& search, const StringLiteralMatch& match, ValueID position, StringID literal)
 {
     search.setStringOperand(match.subject);
     search.setPositionOperand(position);
@@ -339,7 +339,7 @@ static void fillSearch(Value& search, const Match& match, ValueID position, Stri
         search.setCodeUnit(match.codeUnit);
 }
 
-static void rewriteSearch(SelectionContext& context, GroupRewriter& rewriter, const Match& match)
+static void rewriteSearch(SelectionContext& context, GroupRewriter& rewriter, const StringLiteralMatch& match)
 {
     StringID literal = literalOf(context, match);
     ValueID position = insertPosition(context, rewriter, match);
@@ -359,7 +359,7 @@ static void rewriteSearch(SelectionContext& context, GroupRewriter& rewriter, co
     rewriter.replaceRoot(Opcode::LogicalNot).setValueOperand(isAbsent);
 }
 
-static void rewriteRelation(GroupRewriter& rewriter, const Match& match)
+static void rewriteRelation(GroupRewriter& rewriter, const StringLiteralMatch& match)
 {
     Opcode relation = rewriter.original(match.group.root).opcode;
     Value row = IRBuilder::make(match.row, { match.subject });
@@ -373,7 +373,7 @@ static void rewriteRelation(GroupRewriter& rewriter, const Match& match)
     root.setRightOperand(zero);
 }
 
-static void rewriteMatch(SelectionContext& context, GroupRewriter& rewriter, const Match& match)
+static void rewriteMatch(SelectionContext& context, GroupRewriter& rewriter, const StringLiteralMatch& match)
 {
     switch (match.rootForm) {
     case RootForm::Test:
@@ -423,12 +423,12 @@ void selectStringLiteralForms(SelectionContext& context)
 {
     recordLiteralSeparators(context);
 
-    Vector<Match> matches;
-    auto addMatches = [&](Opcode opcode, std::optional<Match> (*find)(SelectionContext&, ValueID)) {
+    Vector<StringLiteralMatch> matches;
+    auto addMatches = [&](Opcode opcode, std::optional<StringLiteralMatch> (*find)(SelectionContext&, ValueID)) {
         for (ValueID id : context.candidates(opcode)) {
             if (context.isOnSlowPath(id))
                 continue;
-            std::optional<Match> match = find(context, id);
+            std::optional<StringLiteralMatch> match = find(context, id);
             if (match && tryClaimWithoutOperand(context, SelectionRuleID::StringLiteralForms, match->group, match->droppedOperand) == ClaimResult::Claimed)
                 matches.append(WTF::move(*match));
         }
@@ -436,11 +436,11 @@ void selectStringLiteralForms(SelectionContext& context)
 
     for (Opcode opcode : equalityOpcodes)
         addMatches(opcode, findEquality);
-    for (Opcode opcode : relationalOpcodes)
+    for (Opcode opcode : relationalOpcodesOfLiterals)
         addMatches(opcode, findRelation);
     addMatches(Opcode::CallBuiltin, findBuiltinCall);
 
-    context.rewriteGroups(SelectionRuleID::StringLiteralForms, matches, [&](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::StringLiteralForms, matches, [&](GroupRewriter& rewriter, const StringLiteralMatch& match) {
         rewriteMatch(context, rewriter, match);
     });
 }

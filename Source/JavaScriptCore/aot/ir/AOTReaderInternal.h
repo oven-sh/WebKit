@@ -581,6 +581,16 @@ std::span<const WireRecord> RecordChecker::slice(Wire::Span span)
     return sliceOf(m_reader.sections().template listOf<WireRecord>(), span);
 }
 
+inline bool has(const Wire::Layout& layout, LayoutFlags flag)
+{
+    return layout.flags & static_cast<uint32_t>(flag);
+}
+
+inline bool has(const Wire::Field& field, FieldFlags flag)
+{
+    return field.flags & static_cast<uint32_t>(flag);
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #include "AOTSchemaReader.h"

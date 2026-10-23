@@ -84,7 +84,7 @@ private:
     }
 
     Lock m_lock;
-    Condition m_condition;
+    WTF::Condition m_condition;
     Deque<std::unique_ptr<DeferredValue>> m_queue WTF_GUARDED_BY_LOCK(m_lock);
     bool m_isStopping WTF_GUARDED_BY_LOCK(m_lock) { false };
     RefPtr<Thread> m_thread WTF_GUARDED_BY_LOCK(m_lock);

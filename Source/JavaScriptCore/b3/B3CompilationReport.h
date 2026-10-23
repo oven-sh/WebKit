@@ -26,31 +26,11 @@ struct Failure {
     Origin origin;
 };
 
-enum class RemarkKind : uint8_t {
-    LoopVersioned,
-    LoopNotVersioned,
-    LoopRotated,
-    RangeChecksRemoved,
-    LoopBoundNotClamped,
-};
-
-struct Remark {
-    RemarkKind kind;
-    GaveUpReason reason;
-    Origin origin;
-    std::optional<Limit> limit;
-};
-
 enum class Counter : uint8_t {
-    LoopsVersioned,
-    LoopsRotated,
-    RangeChecksRemoved,
-    LoopBoundsClamped,
-    KnownInductionsUsed,
     TrapsFoldedIntoAccesses,
 };
 
-static constexpr unsigned numberOfCounters = 6;
+static constexpr unsigned numberOfCounters = 1;
 static_assert(static_cast<unsigned>(Counter::TrapsFoldedIntoAccesses) + 1 == numberOfCounters);
 
 struct LimitHit {
@@ -60,7 +40,6 @@ struct LimitHit {
 
 struct CompilationReport {
     std::optional<Failure> failure;
-    Vector<Remark> remarks;
     std::array<LimitHit, numberOfLimits> limitHits { };
     std::array<uint32_t, numberOfCounters> counters { };
 
@@ -68,22 +47,6 @@ struct CompilationReport {
     Origin firstOriginOf(Limit limit) const { return limitHits[static_cast<size_t>(limit)].firstOrigin; }
     uint32_t countOf(Counter counter) const { return counters[static_cast<size_t>(counter)]; }
 };
-
-constexpr std::optional<Counter> counterOf(RemarkKind kind)
-{
-    switch (kind) {
-    case RemarkKind::LoopVersioned:
-        return Counter::LoopsVersioned;
-    case RemarkKind::LoopRotated:
-        return Counter::LoopsRotated;
-    case RemarkKind::RangeChecksRemoved:
-        return Counter::RangeChecksRemoved;
-    case RemarkKind::LoopNotVersioned:
-    case RemarkKind::LoopBoundNotClamped:
-        return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
 
 } } // namespace JSC::B3
 

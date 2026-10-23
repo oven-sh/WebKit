@@ -87,12 +87,6 @@ std::optional<OwnKeyWalk> ownKeyWalkOf(const Program& program, const Value& valu
         return OwnKeyWalk::Entries;
     if (builtin == Builtins::ObjectAssign)
         return OwnKeyWalk::Assign;
-    if (builtin == Builtins::JSONStringify)
-        return OwnKeyWalk::Stringify;
-
-    const BuiltinForms* forms = builtins.formsOf(builtin);
-    if (forms && forms->jsonTextForm)
-        return OwnKeyWalk::StringifyIntoText;
     return std::nullopt;
 }
 
@@ -127,23 +121,6 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
         site.sourceArgument = 1;
         site.laterSources.append(arguments.subspan(2));
         break;
-    case OwnKeyWalk::Stringify: {
-        bool hasReplacerOrIndent = std::ranges::any_of(arguments.subspan(std::min<size_t>(arguments.size(), 1)), [&](ValueID argument) {
-            return !knownValueOf(program, function, argument).isNullish();
-        });
-        if (hasReplacerOrIndent)
-            return std::nullopt;
-        break;
-    }
-    case OwnKeyWalk::StringifyIntoText: {
-        const BuiltinForms* forms = program.builtins().formsOf(calledBuiltinOf(program.builtins(), value));
-        std::optional<BuiltinOperand> textArgument = forms->jsonTextArgument;
-        if (!textArgument || textArgument->kind() != BuiltinOperand::Kind::Argument)
-            return std::nullopt;
-        site.sourceArgument = textArgument->argumentIndex();
-        site.textForm = forms->jsonTextForm;
-        break;
-    }
     case OwnKeyWalk::Spread:
     case OwnKeyWalk::Copy:
         RELEASE_ASSERT_NOT_REACHED();

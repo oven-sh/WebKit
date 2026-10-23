@@ -546,7 +546,7 @@ uint16_t AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& targ
     const FieldData* to = layouts.field(vm, target, name);
     if (!to || to->flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
         return FieldMap::isNotServed;
-    if (to->holdsRawValueFromBirth || from.holdsRawValueFromBirth || to->defersFlattenedObject || from.defersFlattenedObject)
+    if (to->holdsRawValueFromBirth || from.holdsRawValueFromBirth)
         return FieldMap::isNotServed;
     SlotRepresentation representation = to->slot.representation();
     if (from.slot.representation() == SlotRepresentation::DeferredClosure || representation == SlotRepresentation::DeferredClosure)
@@ -663,7 +663,7 @@ CopyOfTwoPlan* AssignmentPlanCache::planForCopyOfTwo(VM& vm, JSGlobalObject* rea
     for (unsigned step = 0; step < numberOfPlacesForCopyOfTwo; ++step) {
         CopyOfTwoPlan* plan = placeAt(step).get();
         if (plan && plan->isFor(first, second)) [[likely]] {
-            plan->wasAskedFor = true;
+            plan->visitsInVainLeft = CopyOfTwoPlan::maxVisitsInVain;
             return plan;
         }
     }
@@ -676,10 +676,12 @@ CopyOfTwoPlan* AssignmentPlanCache::planForCopyOfTwo(VM& vm, JSGlobalObject* rea
             place = &placeAt(step);
     }
     for (unsigned step = 0; step < numberOfPlacesForCopyOfTwo && !place; ++step) {
-        if (!std::exchange(placeAt(step)->wasAskedFor, false))
+        if (!placeAt(step)->visitsInVainLeft)
             place = &placeAt(step);
+        else
+            --placeAt(step)->visitsInVainLeft;
     }
-    // Every plan here has been asked for since the last pair came in vain: this pair is copied one behind the other.
+    // Every plan here has been asked for of late: this pair is copied one behind the other.
     if (!place)
         return nullptr;
 

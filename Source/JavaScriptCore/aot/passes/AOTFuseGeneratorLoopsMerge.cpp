@@ -34,7 +34,7 @@ struct CarriedValues {
     BitVector callerValues;
 };
 
-struct Cut {
+struct GeneratorLoopCut {
     ProgramPoint point;
     unsigned index { 0 };
     Vector<ValueID, 2> resultReads;
@@ -245,7 +245,7 @@ static GeneratorFusionDeclineReason findObstacle(FunctionPassContext& pass, cons
     return GeneratorFusionDeclineReason::None;
 }
 
-static Value makeInteger(int64_t integer)
+static Value makeIntegerValue(int64_t integer)
 {
     Value value = IRBuilder::make(Opcode::Integer);
     value.setInteger(integer);
@@ -287,26 +287,26 @@ static void emitSwitchOnReturnSite(Merge& merge, Vector<Target, 4>&& targets)
     merge.builder.emitSwitch(merge.returnSite, WTF::move(cases), WTF::move(last));
 }
 
-static Vector<Cut, 4> findCuts(FunctionAnalyses& analyses, std::span<const ValueID> transfers)
+static Vector<GeneratorLoopCut, 4> findCuts(FunctionAnalyses& analyses, std::span<const ValueID> transfers)
 {
     const Function& function = analyses.function();
     const UseLists& useLists = analyses.useLists();
-    Vector<Cut, 4> cuts;
+    Vector<GeneratorLoopCut, 4> cuts;
     for (unsigned index = 0; index < transfers.size(); ++index) {
-        Cut cut { useLists.pointOf(transfers[index]), index, { } };
+        GeneratorLoopCut cut { useLists.pointOf(transfers[index]), index, { } };
         for (const Use& use : useLists.usesOf(transfers[index])) {
             if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ResultAt)
                 cut.resultReads.append(use.user);
         }
         cuts.append(WTF::move(cut));
     }
-    AOT::sort(cuts, std::ranges::greater { }, [](const Cut& cut) {
+    AOT::sort(cuts, std::ranges::greater { }, [](const GeneratorLoopCut& cut) {
         return std::tuple(cut.point.block, cut.point.index);
     });
     return cuts;
 }
 
-static IRBuilder::Expansion beginCut(Merge& merge, const Cut& cut)
+static IRBuilder::Expansion beginCut(Merge& merge, const GeneratorLoopCut& cut)
 {
     const Function& function = merge.pass.function;
     ValueID transfer = function.at(cut.point.block).values[cut.point.index];
@@ -325,8 +325,8 @@ static void insertStateSeeds(Merge& merge)
     merge.frequency = function.at(point.block).frequency;
 
     merge.builder.setOrigin(merge.origin);
-    merge.resumePoint = merge.builder.insertBefore(point, makeInteger(0));
-    merge.returnSite = merge.builder.insertBefore(point, makeInteger(0));
+    merge.resumePoint = merge.builder.insertBefore(point, makeIntegerValue(0));
+    merge.returnSite = merge.builder.insertBefore(point, makeIntegerValue(0));
     merge.builder.applyInsertions();
     merge.resumePointVariable = merge.repair.addVariable(merge.resumePoint);
     merge.returnSiteVariable = merge.repair.addVariable(merge.returnSite);
@@ -374,9 +374,9 @@ static void cutSites(Merge& merge)
         return sites[site].step;
     });
     merge.siteCuts.grow(steps.size());
-    Vector<Cut, 4> cuts = findCuts(merge.pass.analyses, steps.span());
+    Vector<GeneratorLoopCut, 4> cuts = findCuts(merge.pass.analyses, steps.span());
     for (size_t position = 0; position < cuts.size(); ++position) {
-        const Cut& cut = cuts[position];
+        const GeneratorLoopCut& cut = cuts[position];
         // The next cut, if it is in the same block, leaves only what follows it in front of this site.
         bool isAfterCutInBlock = position + 1 < cuts.size() && cuts[position + 1].point.block == cut.point.block;
         uint32_t firstIndexOfHead = isAfterCutInBlock ? cuts[position + 1].point.index + 1 : 0;
@@ -488,7 +488,7 @@ static void cutYields(Merge& merge, const RegionCloner& cloner, std::span<const 
         return cloner.cloneOf(yields[index]);
     });
     merge.yieldCuts.grow(copies.size());
-    for (const Cut& cut : findCuts(merge.pass.analyses, copies.span())) {
+    for (const GeneratorLoopCut& cut : findCuts(merge.pass.analyses, copies.span())) {
         ValueID yielded = function.at(copies[cut.index]).valueOperand();
         merge.yieldCuts[cut.index] = beginCut(merge, cut);
         defineResumePoint(merge, resumePointAfter(cut.index));

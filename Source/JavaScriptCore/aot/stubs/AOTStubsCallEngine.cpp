@@ -23,9 +23,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr GPRReg fp = GPRInfo::callFrameRegister;
-
 struct EngineCallRegisters {
     GPRReg count;
     GPRReg frame;
@@ -34,12 +31,7 @@ struct EngineCallRegisters {
 
 StubSignature signatureOfCallEngineCallee(StubKey) { return callConventionSignatureWithCount(); }
 
-static Address softStackLimit()
-{
-    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
-}
-
-static void emitAlignedListSize(StubAssembler& jit, GPRReg count, unsigned extraRegisters, GPRReg size)
+static void emitAlignedSizeOfList(StubAssembler& jit, GPRReg count, unsigned extraRegisters, GPRReg size)
 {
     static_assert(stackAlignmentRegisters() == 2);
     jit.add32(TrustedImm32(extraRegisters + 1), count, size);
@@ -50,7 +42,7 @@ static void emitAlignedListSize(StubAssembler& jit, GPRReg count, unsigned extra
 static void emitEngineCallFrame(StubAssembler& jit, const EngineCallRegisters& registers, JumpList& doesNotFitOnStack)
 {
     const auto [count, frame, word] = registers;
-    emitAlignedListSize(jit, count, CallFrame::headerSizeInRegisters - CallerFrameAndPC::sizeInRegisters + 1, frame);
+    emitAlignedSizeOfList(jit, count, CallFrame::headerSizeInRegisters - CallerFrameAndPC::sizeInRegisters + 1, frame);
     jit.subPtr(sp, frame, frame);
     doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Above, softStackLimit(), frame));
     doesNotFitOnStack.append(jit.branchPtr(CCallHelpers::Above, frame, fp));

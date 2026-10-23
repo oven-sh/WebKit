@@ -1,6 +1,7 @@
 list(TRANSFORM JavaScriptCore_AOT_PROGRAM_SOURCES PREPEND ../ OUTPUT_VARIABLE aotProgramSources)
 list(TRANSFORM JavaScriptCore_AOT_SHELL_SOURCES PREPEND ../ OUTPUT_VARIABLE aotShellSources)
 list(TRANSFORM JavaScriptCore_AOT_TEST_SOURCES PREPEND ../ OUTPUT_VARIABLE aotTestSources)
+list(APPEND aotTestSources ${JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES})
 
 # A static JavaScriptCore leaves the table of built-ins to the program that links it. Compiled once, for all of them.
 if (ENABLE_STATIC_JSC)
@@ -9,8 +10,8 @@ if (ENABLE_STATIC_JSC)
     target_compile_definitions(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,COMPILE_DEFINITIONS>)
     target_compile_options(aot-builtin-table-obj PRIVATE $<TARGET_PROPERTY:JavaScriptCore,COMPILE_OPTIONS>)
     add_dependencies(aot-builtin-table-obj JavaScriptCore)
-    list(APPEND aotProgramSources $<TARGET_OBJECTS:aot-builtin-table-obj>)
-    list(APPEND aotTestSources $<TARGET_OBJECTS:aot-builtin-table-obj>)
+    set(aotBuiltinTableObjects $<TARGET_OBJECTS:aot-builtin-table-obj>)
+    list(APPEND aotProgramSources ${aotBuiltinTableObjects})
 endif ()
 
 set(jsc_SOURCES ../jsc.cpp ../tools/JSDollarVMShell.cpp ${aotShellSources} ${aotProgramSources})
@@ -117,8 +118,27 @@ if (USE_BUN_JSC_ADDITIONS)
     # The tests of the AoT compiler (aot/tests/). Outside DEVELOPER_MODE for testFFI's reason: every lane builds and
     # ships it. Its sources call functions of the library that are not JS_EXPORT_PRIVATE, so it links only against a
     # static JavaScriptCore (ENABLE_STATIC_JSC=ON), which every lane and the development configuration build.
-    set(testaot_SOURCES ${aotTestSources})
-    set(testaot_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
+    #
+    # Its objects name no entry of the table of built-ins but through the engine's list, so they go with any table. Here
+    # they are linked with the table of the stand-in host (aot/tests/host), and that testaot leaves out the native tests of
+    # Bun's entries (AOTNativeTestsOfHostEntries.inc) and says how many. lib/libtestaot-objects.a has the same objects and no table:
+    # Bun's build links it with Bun's table, and that testaot leaves out nothing. lib/libjsc-objects.a is the same of the
+    # shell, which testaot starts: an image runs where the table is the one that its compiler had.
+    set(testaotObjects_LIBRARY_TYPE OBJECT)
+    set(testaotObjects_SOURCES ${aotTestSources})
+    set(testaotObjects_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
+    # For what they define and where their headers are, as an executable has them.
+    set(testaotObjects_PRIVATE_LIBRARIES WebKit::JavaScriptCore WebKit::WTF WebKit::bmalloc)
+    WEBKIT_LIBRARY_DECLARE(testaotObjects)
+
+    add_library(testaotLibrary STATIC $<TARGET_OBJECTS:testaotObjects>)
+    set_target_properties(testaotLibrary PROPERTIES OUTPUT_NAME testaot-objects LINKER_LANGUAGE CXX)
+    # Bun's mimalloc has what the shims are for.
+    add_library(jscLibrary STATIC $<FILTER:$<TARGET_OBJECTS:jsc>,EXCLUDE,ExternalMimallocShims>)
+    set_target_properties(jscLibrary PROPERTIES OUTPUT_NAME jsc-objects LINKER_LANGUAGE CXX)
+
+    set(testaot_SOURCES $<TARGET_OBJECTS:testaotObjects> ${aotBuiltinTableObjects})
+    set(testaot_DEPENDENCIES testaotLibrary jscLibrary)
     set(testaot_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testaot_FRAMEWORKS ${jsc_FRAMEWORKS})
     set(testaot_LIBRARIES ${CMAKE_DL_LIBS})
@@ -186,34 +206,18 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
         ../b3/testb3_bun.cpp
         ../b3/testb3_bun_analyses.cpp
         ../b3/testb3_bun_control_flow.cpp
-        ../b3/testb3_bun_counted_loops.cpp
-        ../b3/testb3_bun_fold_comparisons.cpp
         ../b3/testb3_bun_heap_sets.cpp
         ../b3/testb3_bun_hoisting.cpp
-        ../b3/testb3_bun_known_properties.cpp
-        ../b3/testb3_bun_loop_phases.cpp
-        ../b3/testb3_bun_loop_plans.cpp
-        ../b3/testb3_bun_loops.cpp
         ../b3/testb3_bun_numbering.cpp
-        ../b3/testb3_bun_options.cpp
         ../b3/testb3_bun_placement.cpp
         ../b3/testb3_bun_policy.cpp
-        ../b3/testb3_bun_random.cpp
-        ../b3/testb3_bun_random_expressions.cpp
-        ../b3/testb3_bun_random_loops.cpp
-        ../b3/testb3_bun_random_patchpoints.cpp
-        ../b3/testb3_bun_random_statements.cpp
         ../b3/testb3_bun_ranges.cpp
         ../b3/testb3_bun_read_only_data.cpp
         ../b3/testb3_bun_reductions.cpp
         ../b3/testb3_bun_region_cloner.cpp
         ../b3/testb3_bun_selection.cpp
-        ../b3/testb3_bun_selects.cpp
         ../b3/testb3_bun_shared_steps.cpp
-        ../b3/testb3_bun_store_merging.cpp
         ../b3/testb3_bun_thread_jumps.cpp
-        ../b3/testb3_bun_version_counted_loops.cpp
-        ../b3/testb3_bun_version_loops.cpp
         ${aotProgramSources}
     )
     set(testb3_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
@@ -314,6 +318,7 @@ set_target_properties(jsc PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if (USE_BUN_JSC_ADDITIONS)
     WEBKIT_EXECUTABLE(testFFI)
+    WEBKIT_LIBRARY(testaotObjects)
     WEBKIT_EXECUTABLE(testaot)
 endif ()
 

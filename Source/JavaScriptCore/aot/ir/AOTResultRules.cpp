@@ -241,10 +241,10 @@ static Type typeOfSlotRead(const Value& read, std::optional<Type>&& contents)
 {
     if (!contents)
         return Type::anything();
-    if (read.opcode == Opcode::GetSlotOrUndefined || read.opcode == Opcode::GetDeferredClosureSlotOrUndefined || read.opcode == Opcode::GetFlattenedSlotOrUndefined)
+    if (read.opcode == Opcode::GetSlotOrUndefined || read.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
         return contents->withPrimitives(Primitive::Undefined);
     // The guard of such a read found neither the marker for undefined nor the one for null in the slot.
-    if ((read.opcode == Opcode::GetSlot || read.opcode == Opcode::GetDeferredClosureSlot || read.opcode == Opcode::GetFlattenedSlot) && read.holdsDeclaredType())
+    if ((read.opcode == Opcode::GetSlot || read.opcode == Opcode::GetDeferredClosureSlot) && read.holdsDeclaredType())
         return contents->withoutNullish();
     return WTF::move(*contents);
 }

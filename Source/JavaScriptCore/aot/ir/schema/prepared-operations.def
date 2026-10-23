@@ -34,8 +34,6 @@ family SlotAccess Prepared..Placed ; receiver = object ; accessClass = Slot
 operation GetSlot (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; interpreted = Read ; replaces = PropGet, PrivateGet
 operation GetSlotOrUndefined (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape ; guarded = object ; interpreted = Read ; replaces = PropGet
 operation GetSlotGetter (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; replaces = PropGet
-operation GetFlattenedSlot (object: Object/inspects+returns, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object
-operation GetFlattenedSlotOrUndefined (object: Object/inspects+returns, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape ; guarded = object
 operation GetDeferredClosureSlot (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; Allocates reads(ObjectFields[key]) writes(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; replaces = PropGet ; runtime = MaterializeDeferredClosure
 operation GetDeferredClosureSlotOrUndefined (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) -> declared(key) ; Allocates reads(ObjectFields[key], NamedProperties, OrderWords) writes(ObjectFields[key]) ; access = Read ; relies = Shape ; guarded = object ; replaces = PropGet ; runtime = MaterializeDeferredClosure
 operation PutSlot (object: Object/inspects, guard?: Guard/inspects, value: Declared/retains(object), with SlotStamp) -> none ; writes(ObjectFields[key]) ; access = Store ; stored = value ; relies = Shape, NotFrozen ; guarded = object ; interpreted = Store ; replaces = PropSet, PropDefine, PrivateSet, PrivateDefine ; runsOwnerBarrier = true ; remembersOwner = true
@@ -44,7 +42,6 @@ operation PutSlotOrAdd (object: Object/inspects, guard?: Guard/inspects, value: 
 family Allocation Prepared..Placed
 operation FinishBirth (object: Object/inspects) -> none ; reads(ObjectFields) writes(RuntimeState)
 operation TryFinishBirth (object: Object/inspects) -> none ; reads(ObjectFields, OrderWords) writes(RuntimeState) ; runtime = TryFinishBirth
-operation MakeBorrowedObject (value: Any/inspects+returns) -> natural(same(value)) ; Allocates reads(ObjectFields) writes(ObjectFields) ; runtime = MakeFlattenedObjectAt
 
 family OwnAccess Prepared..Placed
 operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache
@@ -105,8 +102,6 @@ operation CreateAsyncFromSyncIterator (iterator: Object/retains(result), next: A
 operation ThrowNotIterable (iterable: Any/inspects) [isSpread] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowNotIterable
 
 family CollectionIntrinsic Prepared..Placed
-operation IsCollectionTableFull (collection: Object/inspects) -> natural(boolean) ; reads(CollectionStorage) ; branches = May
-operation ReserveCollectionCapacity (collection: Object/inspects+writesContents, remaining: Integer/inspects, finished: Integer/inspects, sizeAtEntry: Integer/inspects) -> none ; reads(CollectionStorage, CollectionEntries, AllocatorState) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects ; runtime = ReserveCollectionCapacity
 
 family SavedFrame Prepared..Placed
 operation NewGenerator (function: Function(Dispatch), callee: Callable/inspects, allocationSite?: AllocationSite) -> allocation(Generator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator ; interpreted = Allocation

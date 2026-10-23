@@ -34,7 +34,7 @@ struct SharedOrder {
     Vector<StringComparison, 2> others;
 };
 
-struct Match {
+struct StringOrderMatch {
     SelectionGroup group;
     uint32_t order;
     bool isMirrored;
@@ -42,11 +42,11 @@ struct Match {
 
 } // anonymous namespace
 
-static constexpr std::array relationalOpcodes { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
+static constexpr std::array relationalOpcodesOfStrings { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 
 static_assert([] {
     OpcodeSet opcodes;
-    for (Opcode opcode : relationalOpcodes)
+    for (Opcode opcode : relationalOpcodesOfStrings)
         opcodes.add(opcode);
     return opcodes == relationalOperators;
 }());
@@ -67,7 +67,7 @@ static Vector<StringComparison> collectStringComparisons(SelectionContext& conte
     FunctionAnalyses& analyses = context.analyses();
 
     Vector<StringComparison> comparisons;
-    for (Opcode opcode : relationalOpcodes) {
+    for (Opcode opcode : relationalOpcodesOfStrings) {
         for (ValueID id : context.candidates(opcode)) {
             const Value& value = function.at(id);
             if (!context.typeOf(value.leftOperand()).isAnyString() || !context.typeOf(value.rightOperand()).isAnyString())
@@ -124,7 +124,7 @@ static Vector<SelectionGroup, 4> groupsOf(const SharedOrder& order)
     return groups;
 }
 
-static void replaceWithOrderTest(GroupRewriter& rewriter, const Match& match, ValueID order)
+static void replaceWithOrderTest(GroupRewriter& rewriter, const StringOrderMatch& match, ValueID order)
 {
     Opcode opcode = rewriter.original(match.group.root).opcode;
     ValueID zero = rewriter.insert(makeInteger(0));
@@ -140,22 +140,22 @@ void selectSharedStringOrder(SelectionContext& context)
         return context.tryClaimAll(SelectionRuleID::SharedStringOrder, groupsOf(order).span()) != ClaimResult::Claimed;
     });
 
-    Vector<Match> firstComparisons;
-    Vector<Match> laterComparisons;
+    Vector<StringOrderMatch> firstComparisons;
+    Vector<StringOrderMatch> laterComparisons;
     for (uint32_t index = 0; index < sharedOrders.size(); ++index) {
         const SharedOrder& shared = sharedOrders[index];
-        firstComparisons.append(Match { groupOfOne(shared.first.value), index, false });
+        firstComparisons.append(StringOrderMatch { groupOfOne(shared.first.value), index, false });
         for (const StringComparison& other : shared.others)
-            laterComparisons.append(Match { groupOfOne(other.value), index, other.left != shared.first.left });
+            laterComparisons.append(StringOrderMatch { groupOfOne(other.value), index, other.left != shared.first.left });
     }
 
     Vector<ValueID> orders(sharedOrders.size());
-    context.rewriteGroups(SelectionRuleID::SharedStringOrder, firstComparisons, [&](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::SharedStringOrder, firstComparisons, [&](GroupRewriter& rewriter, const StringOrderMatch& match) {
         const Value& original = rewriter.original(match.group.root);
         orders[match.order] = rewriter.insert(IRBuilder::make(Opcode::StringOrder, { original.leftOperand(), original.rightOperand() }));
         replaceWithOrderTest(rewriter, match, orders[match.order]);
     });
-    context.rewriteGroups(SelectionRuleID::SharedStringOrder, laterComparisons, [&](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::SharedStringOrder, laterComparisons, [&](GroupRewriter& rewriter, const StringOrderMatch& match) {
         replaceWithOrderTest(rewriter, match, orders[match.order]);
     });
 }

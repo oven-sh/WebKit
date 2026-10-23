@@ -49,14 +49,14 @@ static constexpr OptionSet<FieldStability> stabilityOfFilledSlot { FieldStabilit
 
 namespace {
 
-using Row = uint32_t;
+using ClosureFieldRow = uint32_t;
 
 class FieldRows {
 public:
     explicit FieldRows(const Program& program)
     {
         m_firstRows.reserveInitialCapacity(program.layouts.size() + 1);
-        Row next = 0;
+        ClosureFieldRow next = 0;
         for (const Layout& layout : program.layouts) {
             m_firstRows.append(next);
             next += layout.fields.size();
@@ -64,12 +64,12 @@ public:
         m_firstRows.append(next);
     }
 
-    Row rowOf(LayoutID layout, uint32_t field) const { return m_firstRows[layout.index()] + field; }
+    ClosureFieldRow rowOf(LayoutID layout, uint32_t field) const { return m_firstRows[layout.index()] + field; }
     uint32_t numberOfFields(LayoutID layout) const { return m_firstRows[layout.index() + 1] - m_firstRows[layout.index()]; }
     size_t count() const { return m_firstRows.last(); }
 
 private:
-    Vector<Row> m_firstRows;
+    Vector<ClosureFieldRow> m_firstRows;
 };
 
 enum class Rejection : uint8_t {
@@ -82,7 +82,6 @@ enum class Rejection : uint8_t {
     CapturesSeveralEnvironments,
     HoldsOtherThanObjects,
     IsPartOfConstantData,
-    LiesInOtherObjects,
 };
 constexpr size_t numberOfRejections = 10;
 
@@ -133,7 +132,7 @@ struct EnteredCall {
     bool passesOwnReceiver { false };
 };
 
-struct FreshObject {
+struct ClosureFieldFreshObject {
     FunctionID function;
     BlockID block;
     ValueID allocation;
@@ -144,7 +143,7 @@ struct FreshObject {
 };
 
 struct ScannedFunction {
-    Vector<FreshObject> objects;
+    Vector<ClosureFieldFreshObject> objects;
     Vector<ClosureStore> closureStores;
 };
 
@@ -214,16 +213,16 @@ struct CalleeStoreState {
     bool canLeaveCallee { false };
 };
 
-enum class AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation };
+enum class ClosureFieldAccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation };
 
 struct FoundAccess {
     ValueReference reference;
-    AccessKind kind { AccessKind::SlotRead };
+    ClosureFieldAccessKind kind { ClosureFieldAccessKind::SlotRead };
 };
 
 struct FunctionEdits {
     FunctionID function;
-    std::span<const FreshObject> objects;
+    std::span<const ClosureFieldFreshObject> objects;
     std::span<const ValueReference> reads;
     std::span<const ValueReference> namedAccesses;
     std::span<const ValueReference> keyOrderTests;
@@ -259,8 +258,6 @@ static ASCIILiteral describe(Rejection rejection)
         return "rejected: the field may get a value that is neither an object nor undefined nor null"_s;
     case Rejection::IsPartOfConstantData:
         return "rejected: constant data gives the field a value other than undefined and null"_s;
-    case Rejection::LiesInOtherObjects:
-        return "rejected: the slots of an object of the layout may lie in another object, which the run time cannot make a closure for"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -419,7 +416,7 @@ bool canLeaveClosureUnmade(FunctionAnalyses& analyses, BlockID block, ValueID ob
     return sameObjectThroughCasts(function, captures[0]) == object || program.typeOf(function, captures[0]).environment;
 }
 
-static void forEachFinalInitializer(const FreshObject& object, const Invocable<void(size_t, const FieldInitializer&)> auto& functor)
+static void forEachFinalInitializer(const ClosureFieldFreshObject& object, const Invocable<void(size_t, const FieldInitializer&)> auto& functor)
 {
     Vector<uint32_t, 16> visitedFields;
     for (size_t index = object.initializers.size(); index--;) {
@@ -718,7 +715,7 @@ public:
             }
             if (!isEnabled || value.opcode != Opcode::NewObject)
                 return;
-            FreshObject object = describe(block, index);
+            ClosureFieldFreshObject object = describe(block, index);
             bool isInitializedWithClosure = object.initializers.containsIf([](const FieldInitializer& initializer) {
                 return !!initializer.closureFunction;
             });
@@ -789,7 +786,6 @@ private:
             return;
         switch (deferralFor(m_program, closure.function())) {
         case ClosureDeferral::Unknown:
-        case ClosureDeferral::FlattenedObject:
             RELEASE_ASSERT_NOT_REACHED();
         case ClosureDeferral::CapturesNothing:
             break;
@@ -831,7 +827,7 @@ private:
         return index < fields.size() ? allocation.valuesOperands()[index] : ValueID();
     }
 
-    void describeClosure(const FreshObject& object, ValueID listedEnvironment, FieldInitializer& initializer)
+    void describeClosure(const ClosureFieldFreshObject& object, ValueID listedEnvironment, FieldInitializer& initializer)
     {
         if (m_function.at(definitionThroughUpcasts(m_function, initializer.value)).opcode != Opcode::NewClosure || !canDeferClosure(m_program, { object.layout, initializer.field }))
             return;
@@ -851,7 +847,6 @@ private:
 
         switch (deferral) {
         case ClosureDeferral::Unknown:
-        case ClosureDeferral::FlattenedObject:
             RELEASE_ASSERT_NOT_REACHED();
         case ClosureDeferral::CapturesNothing:
             break;
@@ -869,7 +864,7 @@ private:
         initializer.closureFunction = closure.function();
     }
 
-    void addInitializer(FreshObject& object, ValueID listedEnvironment, uint32_t field, ValueID store, ValueID value)
+    void addInitializer(ClosureFieldFreshObject& object, ValueID listedEnvironment, uint32_t field, ValueID store, ValueID value)
     {
         FieldInitializer initializer { .field = field, .value = value, .isAvailableAtAllocation = !store || m_window.isAvailableAtAllocation(value) };
         if (store)
@@ -878,7 +873,7 @@ private:
         object.initializers.append(initializer);
     }
 
-    void addCalleeInitializer(FreshObject& object, const CalleePrologue& prologue, const PrologueStep& step, const ResolvedValue& stored)
+    void addCalleeInitializer(ClosureFieldFreshObject& object, const CalleePrologue& prologue, const PrologueStep& step, const ResolvedValue& stored)
     {
         FieldInitializer initializer { .field = step.field, .store = { prologue.function, step.operation }, .isInCallee = true };
         auto copyFromCallee = [&](ValueReference reference) {
@@ -908,7 +903,7 @@ private:
         object.initializers.append(initializer);
     }
 
-    bool walkPrologue(FreshObject& object, const EnteredCall& call, const CalleePrologue& prologue, std::span<const ResolvedValue> arguments, unsigned depth)
+    bool walkPrologue(ClosureFieldFreshObject& object, const EnteredCall& call, const CalleePrologue& prologue, std::span<const ResolvedValue> arguments, unsigned depth)
     {
         object.enteredCalls.append(call);
         auto resolve = [&](const PrologueValue& value) -> ResolvedValue {
@@ -943,7 +938,7 @@ private:
         return prologue.isWholeBody;
     }
 
-    bool enterCall(FreshObject& object, ValueID id, const Value& call)
+    bool enterCall(ClosureFieldFreshObject& object, ValueID id, const Value& call)
     {
         if (!passesObjectOnlyAsReceiver(m_program, m_window, call))
             return false;
@@ -957,13 +952,13 @@ private:
         return walkPrologue(object, { { m_id, id }, call.function(), false }, *prologue, arguments.span(), 0);
     }
 
-    FreshObject describe(BlockID blockID, size_t allocationIndex)
+    ClosureFieldFreshObject describe(BlockID blockID, size_t allocationIndex)
     {
         const BlockValues& values = m_function.at(blockID).values;
         ValueID allocationID = values[allocationIndex];
         const Value& allocation = m_function.at(allocationID);
         LayoutID layout = allocation.layout();
-        FreshObject object { m_id, blockID, allocationID, layout, { }, { }, { } };
+        ClosureFieldFreshObject object { m_id, blockID, allocationID, layout, { }, { }, { } };
         m_window.begin(allocationID);
 
         ValueID listedEnvironment = findListedEnvironment(m_program.at(layout), allocation);
@@ -1026,7 +1021,7 @@ public:
 
     bool defersAnything() const { return m_numberOfDeferringFields; }
     uint64_t numberOfDeferringFields() const { return m_numberOfDeferringFields; }
-    std::span<const FreshObject> objects() const LIFETIME_BOUND { return m_objects.span(); }
+    std::span<const ClosureFieldFreshObject> objects() const LIFETIME_BOUND { return m_objects.span(); }
     std::span<const ValueReference> reads() const LIFETIME_BOUND { return m_reads.span(); }
     std::span<const ValueReference> namedAccesses() const LIFETIME_BOUND { return m_namedAccesses.span(); }
     std::span<const ValueReference> keyOrderTests() const LIFETIME_BOUND { return m_keyOrderTests.span(); }
@@ -1036,15 +1031,15 @@ public:
     std::span<const ClosureEnvironmentField> environmentFields() const LIFETIME_BOUND { return m_environmentFields.span(); }
 
     const FieldState& stateOf(LayoutID layout, uint32_t field) const LIFETIME_BOUND { return m_states[rowOf(layout, field)]; }
-    bool defers(const FreshObject&, const FieldInitializer&) const;
+    bool defers(const ClosureFieldFreshObject&, const FieldInitializer&) const;
     bool defers(const ClosureStore&) const;
-    bool defersAnyClosure(const FreshObject&) const;
+    bool defersAnyClosure(const ClosureFieldFreshObject&) const;
     bool isFilledByEveryAllocation(FieldReference) const;
     bool mayFindSlotEmpty(const Value& read) const;
     bool findsClosureOverReceiver(const Value& read) const;
-    Vector<Fold, 16> selectFolds(const FreshObject&) const;
+    Vector<Fold, 16> selectFolds(const ClosureFieldFreshObject&) const;
     const ClosureEnvironmentField* findEnvironmentField(LayoutID) const LIFETIME_BOUND;
-    ValueID environmentOf(const FreshObject&) const;
+    ValueID environmentOf(const ClosureFieldFreshObject&) const;
 
     void dump(PrintStream&) const;
 
@@ -1058,12 +1053,12 @@ private:
     void finish();
 
     const Value& valueAt(const ValueReference& reference) const LIFETIME_BOUND { return m_program.at(reference.function).at(reference.value); }
-    Row rowOf(LayoutID layout, uint32_t field) const
+    ClosureFieldRow rowOf(LayoutID layout, uint32_t field) const
     {
         FieldReference declaration = declarationOf(m_program, { layout, field });
         return m_rows.rowOf(declaration.layout, declaration.field);
     }
-    std::optional<AccessKind> classifyAccess(const Function&, const Value&) const;
+    std::optional<ClosureFieldAccessKind> classifyAccess(const Function&, const Value&) const;
     bool entersCalleeOfWindow(const Value&) const;
     bool namesCandidate(const Value& access) const;
     bool namesDeferringField(const Value& access) const;
@@ -1071,17 +1066,17 @@ private:
 
     bool keepsEnvironment(const FieldState&) const;
     bool mayBeOtherThanObject(FunctionID, ValueID) const;
-    bool mayBeOtherThanObject(const FreshObject&, const FieldInitializer&) const;
+    bool mayBeOtherThanObject(const ClosureFieldFreshObject&, const FieldInitializer&) const;
 
-    void reject(Row, Rejection);
+    void reject(ClosureFieldRow, Rejection);
     void rejectFieldsNamedBy(const Value& access, Rejection);
     void rejectFieldsOfConstantData();
     void rejectFieldsStoredOutsideInitialization();
     void rejectFieldsGivenOtherThanObjects();
     void findFieldsGivenOtherClosures();
-    void noteOtherClosureIn(Row);
+    void noteOtherClosureIn(ClosureFieldRow);
     bool storesClosureOverReceiver(const Function&, const Value& store, FunctionID closureFunction) const;
-    bool rejectFieldsListedWithOtherThanObjects(const FreshObject&, const Vector<Fold, 16>&);
+    bool rejectFieldsListedWithOtherThanObjects(const ClosureFieldFreshObject&, const Vector<Fold, 16>&);
     bool rejectFieldsReadWhereTheyMayHaveLeftTheSlot();
     bool rejectFieldsOverEnvironments(LayoutID);
     bool countFolds();
@@ -1089,7 +1084,7 @@ private:
     bool rejectFieldsNotInitializedByEveryAllocation();
     bool rejectFieldsOverSeveralEnvironments();
 
-    void forEachCandidateNamedBy(const Value& access, const Invocable<void(Row)> auto& functor) const
+    void forEachCandidateNamedBy(const Value& access, const Invocable<void(ClosureFieldRow)> auto& functor) const
     {
         for (LayoutID member : m_program.at(access.receivers()).members) {
             std::optional<uint32_t> field = m_program.at(member).findField(access.key());
@@ -1116,7 +1111,7 @@ private:
     Vector<uint32_t> m_allocationsOfLayouts;
     Vector<uint32_t> m_allocationsUnderPrototypes;
     Vector<uint32_t> m_dataMembersOfFields;
-    Vector<FreshObject> m_objects;
+    Vector<ClosureFieldFreshObject> m_objects;
     Vector<ClosureStore> m_closureStores;
     Vector<FieldState> m_states;
     Vector<FieldReference> m_candidates;
@@ -1175,14 +1170,14 @@ void DeferralAnalysis::findObjects()
             found.append(WTF::move(function));
     });
     for (ScannedFunction& function : scanned) {
-        for (FreshObject& object : function.objects)
+        for (ClosureFieldFreshObject& object : function.objects)
             m_objects.append(WTF::move(object));
         m_closureStores.appendVector(function.closureStores);
     }
     m_layoutsAllocatedOnlyByOperations = WTF::move(deferrableLayouts.allocatedOnlyByOperations);
 }
 
-void DeferralAnalysis::reject(Row row, Rejection rejection)
+void DeferralAnalysis::reject(ClosureFieldRow row, Rejection rejection)
 {
     if (m_states[row].rejection == Rejection::None)
         m_states[row].rejection = rejection;
@@ -1200,7 +1195,7 @@ void DeferralAnalysis::findCandidates()
         auto operator<=>(const Place&) const = default;
     };
     Vector<Place> places;
-    for (const FreshObject& object : m_objects) {
+    for (const ClosureFieldFreshObject& object : m_objects) {
         forEachFinalInitializer(object, [&](size_t, const FieldInitializer& initializer) {
             if (initializer.closureFunction)
                 places.append({ { object.layout, initializer.field }, initializer.closureFunction, initializer.store ? initializer.store : ValueReference { object.function, object.allocation } });
@@ -1249,7 +1244,7 @@ void DeferralAnalysis::findCandidates()
         }
         first = next;
 
-        Row row = rowOf(field.layout, field.field);
+        ClosureFieldRow row = rowOf(field.layout, field.field);
         m_states[row].function = chosen;
         m_candidates.append(field);
         m_keysOfCandidates.quickSet(fieldAt(m_program, field).key.index());
@@ -1271,7 +1266,7 @@ void DeferralAnalysis::findCandidates()
 void DeferralAnalysis::findEnteredCalls()
 {
     Vector<EnteredCall> calls;
-    for (const FreshObject& object : m_objects)
+    for (const ClosureFieldFreshObject& object : m_objects)
         calls.appendVector(object.enteredCalls);
     if (calls.isEmpty())
         return;
@@ -1311,20 +1306,20 @@ bool DeferralAnalysis::entersCalleeOfWindow(const Value& value) const
 bool DeferralAnalysis::namesCandidate(const Value& access) const
 {
     bool result = false;
-    forEachCandidateNamedBy(access, [&](Row) {
+    forEachCandidateNamedBy(access, [&](ClosureFieldRow) {
         result = true;
     });
     return result;
 }
 
-std::optional<AccessKind> DeferralAnalysis::classifyAccess(const Function& function, const Value& value) const
+std::optional<ClosureFieldAccessKind> DeferralAnalysis::classifyAccess(const Function& function, const Value& value) const
 {
     if (Value::opcodesWithFunction.contains(value.opcode))
-        return entersCalleeOfWindow(value) ? std::optional(AccessKind::FunctionEntry) : std::nullopt;
+        return entersCalleeOfWindow(value) ? std::optional(ClosureFieldAccessKind::FunctionEntry) : std::nullopt;
     if (value.opcode == Opcode::HasKeyOrder)
-        return m_layoutsWithEnvironmentCandidates.quickGet(value.layout().index()) ? std::optional(AccessKind::KeyOrderTest) : std::nullopt;
+        return m_layoutsWithEnvironmentCandidates.quickGet(value.layout().index()) ? std::optional(ClosureFieldAccessKind::KeyOrderTest) : std::nullopt;
     if (value.opcode == Opcode::NewObject || value.opcode == Opcode::CloneAs)
-        return m_layoutsWithCandidates.quickGet(value.layout().index()) ? std::optional(AccessKind::Allocation) : std::nullopt;
+        return m_layoutsWithCandidates.quickGet(value.layout().index()) ? std::optional(ClosureFieldAccessKind::Allocation) : std::nullopt;
     bool isTestInFrontOfReads = value.opcode == Opcode::IsSlotFilled && !value.accessSite();
     if (!Value::opcodesWithKey.contains(value.opcode) || isTestInFrontOfReads || value.opcode == Opcode::GetDeferredClosureSlot || value.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
         return std::nullopt;
@@ -1333,23 +1328,23 @@ std::optional<AccessKind> DeferralAnalysis::classifyAccess(const Function& funct
     if (!key || TypeTable::isProvisional(key) || !m_keysOfCandidates.quickGet(key.index()))
         return std::nullopt;
     if (value.opcode == Opcode::IsSlotFilled)
-        return namesCandidate(value) ? std::optional(AccessKind::PresenceTest) : std::nullopt;
+        return namesCandidate(value) ? std::optional(ClosureFieldAccessKind::PresenceTest) : std::nullopt;
     if (Value::opcodesWithFieldAccess.contains(value.opcode)) {
         if (!namesCandidate(value))
             return std::nullopt;
-        return storedOf(value.opcode) ? AccessKind::SlotStore : AccessKind::SlotRead;
+        return storedOf(value.opcode) ? ClosureFieldAccessKind::SlotStore : ClosureFieldAccessKind::SlotRead;
     }
 
     bool readsCandidate = false;
     forEachCandidateReadByName(function, value, [&](FieldReference) {
         readsCandidate = true;
     });
-    return readsCandidate ? std::optional(AccessKind::NamedAccess) : std::nullopt;
+    return readsCandidate ? std::optional(ClosureFieldAccessKind::NamedAccess) : std::nullopt;
 }
 
 void DeferralAnalysis::findAccesses()
 {
-    for (const FreshObject& object : m_objects) {
+    for (const ClosureFieldFreshObject& object : m_objects) {
         for (const FieldInitializer& initializer : object.initializers) {
             if (initializer.store)
                 m_initializingStores.append(initializer.store);
@@ -1376,32 +1371,32 @@ void DeferralAnalysis::findAccesses()
             RELEASE_ASSERT_NOT_REACHED();
         };
         forEachListedValueNaming(m_program, FunctionID(index), classifiedOpcodes, mayBeClassified, [&](BlockID, ValueID id, const Value& value) {
-            if (std::optional<AccessKind> kind = classifyAccess(function, value))
+            if (std::optional<ClosureFieldAccessKind> kind = classifyAccess(function, value))
                 found.append({ { FunctionID(index), id }, *kind });
         });
     });
 
     for (const FoundAccess& access : accesses) {
         switch (access.kind) {
-        case AccessKind::SlotRead:
+        case ClosureFieldAccessKind::SlotRead:
             m_reads.append(access.reference);
             break;
-        case AccessKind::SlotStore:
+        case ClosureFieldAccessKind::SlotStore:
             m_stores.append(access.reference);
             break;
-        case AccessKind::PresenceTest:
+        case ClosureFieldAccessKind::PresenceTest:
             m_presenceTests.append(access.reference);
             break;
-        case AccessKind::Allocation:
+        case ClosureFieldAccessKind::Allocation:
             m_allocations.append(access.reference);
             break;
-        case AccessKind::NamedAccess:
+        case ClosureFieldAccessKind::NamedAccess:
             m_namedAccesses.append(access.reference);
             break;
-        case AccessKind::KeyOrderTest:
+        case ClosureFieldAccessKind::KeyOrderTest:
             m_keyOrderTests.append(access.reference);
             break;
-        case AccessKind::FunctionEntry:
+        case ClosureFieldAccessKind::FunctionEntry:
             m_functionEntries.append(access.reference);
             break;
         }
@@ -1434,7 +1429,7 @@ void DeferralAnalysis::findCalleesEnteredOnlyFromWindows()
 void DeferralAnalysis::findCalleeStores()
 {
     Vector<ValueReference> stores;
-    for (const FreshObject& object : m_objects) {
+    for (const ClosureFieldFreshObject& object : m_objects) {
         for (const FieldInitializer& initializer : object.initializers) {
             if (initializer.isInCallee)
                 stores.append(initializer.store);
@@ -1454,7 +1449,7 @@ void DeferralAnalysis::findCalleeStores()
 
 void DeferralAnalysis::rejectFieldsNamedBy(const Value& access, Rejection rejection)
 {
-    forEachCandidateNamedBy(access, [&](Row row) {
+    forEachCandidateNamedBy(access, [&](ClosureFieldRow row) {
         reject(row, rejection);
     });
 }
@@ -1476,7 +1471,7 @@ bool DeferralAnalysis::mayBeOtherThanObject(FunctionID function, ValueID value) 
     return !value || mayBeOtherThanObjectOrNullish(m_program.typeOf(m_program.at(function), value));
 }
 
-bool DeferralAnalysis::mayBeOtherThanObject(const FreshObject& object, const FieldInitializer& initializer) const
+bool DeferralAnalysis::mayBeOtherThanObject(const ClosureFieldFreshObject& object, const FieldInitializer& initializer) const
 {
     if (initializer.calleeValue != noCalleeValue)
         return mayBeOtherThanObjectOrNullish(m_program.at(object.calleeValues[initializer.calleeValue].type));
@@ -1486,19 +1481,9 @@ bool DeferralAnalysis::mayBeOtherThanObject(const FreshObject& object, const Fie
 void DeferralAnalysis::rejectFieldsOfConstantData()
 {
     for (FieldReference candidate : m_candidates) {
-        Row row = rowOf(candidate.layout, candidate.field);
+        ClosureFieldRow row = rowOf(candidate.layout, candidate.field);
         if (m_dataMembersOfFields[row])
             reject(row, Rejection::IsPartOfConstantData);
-    }
-
-    BitVector layoutsFlattenedInOthers;
-    for (const Layout& layout : m_program.layouts) {
-        for (const FlattenedObject& flattened : layout.flattenedObjects)
-            layoutsFlattenedInOthers.set(flattened.layout.index());
-    }
-    for (FieldReference candidate : m_candidates) {
-        if (layoutsFlattenedInOthers.get(candidate.layout.index()))
-            reject(rowOf(candidate.layout, candidate.field), Rejection::LiesInOtherObjects);
     }
 }
 
@@ -1507,7 +1492,7 @@ void DeferralAnalysis::rejectFieldsStoredOutsideInitialization()
     for (const ValueReference& store : m_stores) {
         if (std::ranges::binary_search(m_initializingStores, store))
             continue;
-        forEachCandidateNamedBy(valueAt(store), [&](Row row) {
+        forEachCandidateNamedBy(valueAt(store), [&](ClosureFieldRow row) {
             if (keepsEnvironment(m_states[row]))
                 reject(row, Rejection::StoredAfterInitialization);
         });
@@ -1539,7 +1524,7 @@ void DeferralAnalysis::rejectFieldsGivenOtherThanObjects()
         });
     }
 
-    Vector<ValueReference> describedAllocations = m_objects.map([](const FreshObject& object) {
+    Vector<ValueReference> describedAllocations = m_objects.map([](const ClosureFieldFreshObject& object) {
         return ValueReference { object.function, object.allocation };
     });
     AOT::sort(describedAllocations);
@@ -1550,7 +1535,7 @@ void DeferralAnalysis::rejectFieldsGivenOtherThanObjects()
         std::span<const uint32_t> fields = allocation.fields();
         std::span<const ValueID> values = allocation.variadicOperands();
         for (size_t index = 0; index < fields.size(); ++index) {
-            Row row = rowOf(allocation.layout(), fields[index]);
+            ClosureFieldRow row = rowOf(allocation.layout(), fields[index]);
             if (!m_states[row].function)
                 continue;
             noteOtherClosureIn(row);
@@ -1560,7 +1545,7 @@ void DeferralAnalysis::rejectFieldsGivenOtherThanObjects()
     }
 }
 
-void DeferralAnalysis::noteOtherClosureIn(Row row)
+void DeferralAnalysis::noteOtherClosureIn(ClosureFieldRow row)
 {
     m_mayHoldOtherClosure.quickSet(row);
 }
@@ -1584,7 +1569,7 @@ void DeferralAnalysis::findFieldsGivenOtherClosures()
     m_mayHoldOtherClosure.ensureSize(m_rows.count());
     for (const ValueReference& reference : m_stores) {
         const Value& store = valueAt(reference);
-        forEachCandidateNamedBy(store, [&](Row row) {
+        forEachCandidateNamedBy(store, [&](ClosureFieldRow row) {
             if (!storesClosureOverReceiver(m_program.at(reference.function), store, m_states[row].function))
                 noteOtherClosureIn(row);
         });
@@ -1594,7 +1579,7 @@ void DeferralAnalysis::findFieldsGivenOtherClosures()
         if (!storedOf(access.opcode))
             continue;
         forEachCandidateReadByName(m_program.at(reference.function), access, [&](FieldReference field) {
-            Row row = rowOf(field.layout, field.field);
+            ClosureFieldRow row = rowOf(field.layout, field.field);
             if (!storesClosureOverReceiver(m_program.at(reference.function), access, m_states[row].function))
                 noteOtherClosureIn(row);
         });
@@ -1625,7 +1610,7 @@ bool DeferralAnalysis::findsClosureOverReceiver(const Value& read) const
     });
 }
 
-bool DeferralAnalysis::rejectFieldsListedWithOtherThanObjects(const FreshObject& object, const Vector<Fold, 16>& folds)
+bool DeferralAnalysis::rejectFieldsListedWithOtherThanObjects(const ClosureFieldFreshObject& object, const Vector<Fold, 16>& folds)
 {
     bool isRewritten = defersAnyClosure(object);
     bool didReject = false;
@@ -1647,7 +1632,7 @@ bool DeferralAnalysis::rejectFieldsListedWithOtherThanObjects(const FreshObject&
     return didReject;
 }
 
-bool DeferralAnalysis::defers(const FreshObject& object, const FieldInitializer& initializer) const
+bool DeferralAnalysis::defers(const ClosureFieldFreshObject& object, const FieldInitializer& initializer) const
 {
     const FieldState& state = stateOf(object.layout, initializer.field);
     return initializer.closureFunction && state.canDefer() && state.function == initializer.closureFunction;
@@ -1665,14 +1650,14 @@ bool DeferralAnalysis::isFilledByEveryAllocation(FieldReference reference) const
     return numberOfAllocations && m_layoutsAllocatedOnlyByOperations.quickGet(reference.layout.index()) && stateOf(reference.layout, reference.field).numberOfInitializingAllocations == numberOfAllocations;
 }
 
-bool DeferralAnalysis::defersAnyClosure(const FreshObject& object) const
+bool DeferralAnalysis::defersAnyClosure(const ClosureFieldFreshObject& object) const
 {
     return std::ranges::any_of(object.initializers, [&](const FieldInitializer& initializer) {
         return defers(object, initializer);
     });
 }
 
-Vector<Fold, 16> DeferralAnalysis::selectFolds(const FreshObject& object) const
+Vector<Fold, 16> DeferralAnalysis::selectFolds(const ClosureFieldFreshObject& object) const
 {
     Vector<Fold, 16> folds(FillWith { }, object.initializers.size(), Fold::None);
     if (!defersAnyClosure(object))
@@ -1719,7 +1704,7 @@ bool DeferralAnalysis::countFolds()
         store.numberOfFolds = 0;
 
     bool didReject = false;
-    for (const FreshObject& object : m_objects) {
+    for (const ClosureFieldFreshObject& object : m_objects) {
         Vector<Fold, 16> folds = selectFolds(object);
         didReject |= rejectFieldsListedWithOtherThanObjects(object, folds);
         for (size_t index = 0; index < folds.size(); ++index) {
@@ -1825,7 +1810,7 @@ bool DeferralAnalysis::rejectFieldsOverEnvironments(LayoutID layout)
 bool DeferralAnalysis::rejectFieldsOverSeveralEnvironments()
 {
     bool didReject = false;
-    for (const FreshObject& object : m_objects) {
+    for (const ClosureFieldFreshObject& object : m_objects) {
         if (!m_layoutsWithEnvironmentCandidates.quickGet(object.layout.index()))
             continue;
         ValueID environment;
@@ -1864,7 +1849,7 @@ bool DeferralAnalysis::rejectFieldsOverSeveralEnvironments()
 bool DeferralAnalysis::namesDeferringField(const Value& access) const
 {
     bool result = false;
-    forEachCandidateNamedBy(access, [&](Row row) {
+    forEachCandidateNamedBy(access, [&](ClosureFieldRow row) {
         result |= m_states[row].canDefer();
     });
     return result;
@@ -1882,7 +1867,7 @@ const ClosureEnvironmentField* DeferralAnalysis::findEnvironmentField(LayoutID l
     return found != m_environmentFields.end() && found->layout == layout ? &*found : nullptr;
 }
 
-ValueID DeferralAnalysis::environmentOf(const FreshObject& object) const
+ValueID DeferralAnalysis::environmentOf(const ClosureFieldFreshObject& object) const
 {
     ValueID environment;
     forEachFinalInitializer(object, [&](size_t, const FieldInitializer& initializer) {
@@ -1914,12 +1899,12 @@ void DeferralAnalysis::finish()
         if (store.canLeaveCallee)
             m_removedStores.append(store.store);
     }
-    m_objects.removeAllMatching([&](const FreshObject& object) {
+    m_objects.removeAllMatching([&](const ClosureFieldFreshObject& object) {
         return !defersAnyClosure(object);
     });
 
     Vector<ValueReference> storesListedByAllocations = m_removedStores;
-    for (const FreshObject& object : m_objects) {
+    for (const ClosureFieldFreshObject& object : m_objects) {
         Vector<Fold, 16> folds = selectFolds(object);
         for (size_t index = 0; index < folds.size(); ++index) {
             if (folds[index] == Fold::Value && object.initializers[index].store)
@@ -1987,7 +1972,6 @@ void DeferralAnalysis::dump(PrintStream& out) const
         }
         switch (deferralFor(m_program, state.function)) {
         case ClosureDeferral::Unknown:
-        case ClosureDeferral::FlattenedObject:
             RELEASE_ASSERT_NOT_REACHED();
         case ClosureDeferral::CapturesNothing:
             ++capturingNothing;
@@ -2006,9 +1990,9 @@ void DeferralAnalysis::dump(PrintStream& out) const
     out.println("direct calls followed during object initialization: ", m_callSites.size(), ", stores moved from callees into allocations: ", m_removedStores.size(), ", stores that leave their closure unmade: ", m_closureStores.size());
 }
 
-class FunctionRewriter {
+class ClosureFieldRewriter {
 public:
-    FunctionRewriter(const AnalysisContext& context, const DeferralAnalysis& analysis, Function& function, TypeArena& types)
+    ClosureFieldRewriter(const AnalysisContext& context, const DeferralAnalysis& analysis, Function& function, TypeArena& types)
         : m_context(context)
         , m_analysis(analysis)
         , m_function(function)
@@ -2033,7 +2017,7 @@ public:
             narrowedValues.append(reference.value);
         for (const ValueReference& reference : edits.keyOrderTests)
             prependEnvironmentField(m_function.edit(reference.value));
-        for (const FreshObject& object : edits.objects)
+        for (const ClosureFieldFreshObject& object : edits.objects)
             rewrite(object);
         removeStores(edits.removedStores);
         for (const ClosureStore& store : edits.deferredStores)
@@ -2156,7 +2140,7 @@ private:
         return createdValues.last();
     }
 
-    void rewrite(const FreshObject& object)
+    void rewrite(const ClosureFieldFreshObject& object)
     {
         const Program& program = m_context.program;
         Vector<Fold, 16> folds = m_analysis.selectFolds(object);
@@ -2328,262 +2312,11 @@ private:
     Vector<ValueID> m_narrowedValues;
 };
 
-enum class FieldClosureCaptures : uint8_t {
-    Nothing,
-    Holder,
-    OneEnvironment,
-    Other,
-};
-constexpr size_t numberOfFieldClosureCaptures = 4;
-
-enum class FieldClosureHolder : uint8_t {
-    AllocatedByFunction,
-    Parameter,
-    Other,
-};
-constexpr size_t numberOfFieldClosureHolders = 3;
-
-class FieldClosureCensus {
-public:
-    FieldClosureCensus(const Program& program, BuildContext& build, const DeferralAnalysis& analysis, PrintStream& out)
-        : m_program(program)
-        , m_build(build)
-        , m_analysis(analysis)
-        , m_out(out)
-    {
-    }
-
-    void run()
-    {
-        // The census of a run counts closures by the number of the entrypoint.
-        m_entrypoints.fill(FunctionID(), m_program.functions.size());
-        for (size_t index = 0; index < m_program.functions.size(); ++index) {
-            const Function& function = m_program.functions[index];
-            if (function.role == FunctionRole::GenericEntrypoint)
-                m_entrypoints[function.creator.as<CreatorRecord::Entrypoint>().target.index()] = FunctionID(index);
-        }
-        for (size_t index = 0; index < m_program.functions.size(); ++index) {
-            if (m_program.functions[index].hasBody())
-                countFunction(FunctionID(index));
-        }
-    }
-
-    void dump(PrintStream&) const;
-
-private:
-    struct AllocatedHolder {
-        ValueID object;
-        ValueID environment;
-        uint32_t closuresOverEnvironment { 0 };
-        bool hasOtherCaptures { false };
-    };
-
-    static std::optional<Use> findOnlyUseThroughCasts(const Function& function, const UseLists& uses, ValueID id)
-    {
-        while (true) {
-            std::optional<Use> use = uses.singleUse(id);
-            if (!use || use->kind != Use::Kind::Operand || !isCastWithoutTest(function.at(use->user).opcode))
-                return use;
-            id = use->user;
-        }
-    }
-
-    ValueID findHolder(const Function& function, const Use& use) const
-    {
-        if (use.kind != Use::Kind::Operand)
-            return { };
-        const Value& user = function.at(use.user);
-        if (user.opcode == Opcode::NewObject) {
-            LayoutKind kind = m_program.at(user.layout()).kind;
-            bool isField = use.operandIndex >= OperandIndex::NewObject::values && (kind == LayoutKind::Record || kind == LayoutKind::Instance);
-            return isField ? use.user : ValueID();
-        }
-        if (!isFieldStore(user.opcode))
-            return { };
-        return use.operandIndex == OperandIndex::PutSlot::value ? sameObjectThroughCasts(function, user.objectOperand()) : ValueID();
-    }
-
-    FieldClosureCaptures classifyCaptures(const Function& function, const Value& closure, ValueID holder) const
-    {
-        std::span<const ValueID> captures = closure.capturesOperands();
-        if (captures.empty())
-            return FieldClosureCaptures::Nothing;
-        if (captures.size() > 1)
-            return FieldClosureCaptures::Other;
-        if (sameObjectThroughCasts(function, captures[0]) == holder)
-            return FieldClosureCaptures::Holder;
-        return m_program.typeOf(function, captures[0]).environment ? FieldClosureCaptures::OneEnvironment : FieldClosureCaptures::Other;
-    }
-
-    static FieldClosureHolder classifyHolder(const Function& function, ValueID holder)
-    {
-        switch (function.at(holder).opcode) {
-        case Opcode::NewObject:
-            return FieldClosureHolder::AllocatedByFunction;
-        case Opcode::Parameter:
-            return function.at(entryBlock).parameters.contains(holder) ? FieldClosureHolder::Parameter : FieldClosureHolder::Other;
-        default:
-            return FieldClosureHolder::Other;
-        }
-    }
-
-    static void recordMember(Vector<AllocatedHolder, 8>& holders, ValueID object, FieldClosureCaptures captures, const Value& closure)
-    {
-        size_t index = holders.findIf([&](const AllocatedHolder& holder) {
-            return holder.object == object;
-        });
-        if (index == notFound) {
-            index = holders.size();
-            holders.append({ object, { }, 0, false });
-        }
-        AllocatedHolder& holder = holders[index];
-        switch (captures) {
-        case FieldClosureCaptures::Nothing:
-        case FieldClosureCaptures::Holder:
-            return;
-        case FieldClosureCaptures::Other:
-            holder.hasOtherCaptures = true;
-            return;
-        case FieldClosureCaptures::OneEnvironment:
-            break;
-        }
-        ValueID environment = closure.capturesOperands()[0];
-        holder.hasOtherCaptures |= holder.environment && holder.environment != environment;
-        holder.environment = environment;
-        ++holder.closuresOverEnvironment;
-    }
-
-    void countFunction(FunctionID id)
-    {
-        const Function& function = m_program.at(id);
-        std::optional<FunctionAnalyses> analyses;
-        Vector<AllocatedHolder, 8> holders;
-        for (const Block& block : function.blocks) {
-            for (ValueID valueID : block.values) {
-                const Value& closure = function.at(valueID);
-                if (closure.opcode != Opcode::NewClosure || closure.isMadeOnDemand())
-                    continue;
-                ++m_closures;
-                if (!analyses)
-                    analyses.emplace(AnalysisContext { m_build, m_program, nullptr, nullptr, id }, function);
-                std::optional<Use> use = findOnlyUseThroughCasts(function, analyses->useLists(), valueID);
-                ValueID holder = use ? findHolder(function, *use) : ValueID();
-                m_out.print("eager closure f", closure.function().index(), " entered by f", m_entrypoints[closure.function().index()].index(), " made in f", id.index(), ": ");
-                if (!holder) {
-                    printOtherUse(function, *analyses, use);
-                    continue;
-                }
-                FieldClosureCaptures captures = classifyCaptures(function, closure, holder);
-                printFieldUse(function, closure, function.at(use->user), use->operandIndex, captures);
-                FieldClosureHolder holderKind = classifyHolder(function, holder);
-                ++m_counts[static_cast<size_t>(captures)][static_cast<size_t>(holderKind)];
-                if (holderKind == FieldClosureHolder::AllocatedByFunction)
-                    recordMember(holders, holder, captures, closure);
-            }
-        }
-        for (const AllocatedHolder& holder : holders) {
-            if (holder.hasOtherCaptures || !holder.closuresOverEnvironment)
-                continue;
-            ++m_objectsOverOneEnvironment;
-            m_closuresOfObjectsOverOneEnvironment += holder.closuresOverEnvironment;
-        }
-    }
-
-    void printOtherUse(const Function& function, FunctionAnalyses& analyses, std::optional<Use> use)
-    {
-        if (!use)
-            m_out.println("no use or several");
-        else if (use->kind == Use::Kind::Operand) {
-            const Value& user = function.at(use->user);
-            m_out.print("operand ", use->operandIndex, " of ", nameOf(user.opcode));
-            if (user.opcode == Opcode::CallDirect) {
-                m_out.print(" of f", user.function().index());
-                if (std::optional<uint32_t> parameter = entryParameterOf(m_program.at(user.function()), user, use->operandIndex))
-                    m_out.print(" parameter ", *parameter);
-            }
-            m_out.println();
-        } else if (use->kind == Use::Kind::TerminatorOperand)
-            m_out.println("operand ", use->operandIndex, " of ", nameOf(function.at(use->block).terminator.kind), function.role == FunctionRole::ResultWorker ? " of a function that returns the fields of its object" : "");
-        else
-            printEdgeUse(function, analyses, *use);
-    }
-
-    void printEdgeUse(const Function& function, FunctionAnalyses& analyses, const Use& use)
-    {
-        BlockID target = targetOf(function, use.edge()).block;
-        auto& parameters = function.at(target).parameters;
-        m_out.print("argument of an edge to a block with ", analyses.cfg().predecessors(target).size(), " predecessors");
-        if (use.operandIndex >= parameters.size()) {
-            m_out.println();
-            return;
-        }
-        std::optional<Use> next = findOnlyUseThroughCasts(function, analyses.useLists(), parameters[use.operandIndex]);
-        if (!next)
-            m_out.println(", whose parameter has no use or several");
-        else if (next->kind == Use::Kind::Operand)
-            m_out.println(", whose parameter is operand ", next->operandIndex, " of ", nameOf(function.at(next->user).opcode));
-        else if (next->kind == Use::Kind::TerminatorOperand)
-            m_out.println(", whose parameter is operand ", next->operandIndex, " of ", nameOf(function.at(next->block).terminator.kind));
-        else
-            m_out.println(", whose parameter is the argument of another edge");
-    }
-
-    void printFieldUse(const Function& function, const Value& closure, const Value& user, uint32_t operandIndex, FieldClosureCaptures captures)
-    {
-        static constexpr std::array<ASCIILiteral, numberOfFieldClosureCaptures> namesOfCaptures { "nothing"_s, "the holder"_s, "one environment"_s, "other values"_s };
-        m_out.print("over ", namesOfCaptures[static_cast<size_t>(captures)], ", ", nameOf(user.opcode));
-        auto printField = [&](LayoutID layout, uint32_t field) {
-            const FieldState& state = m_analysis.stateOf(layout, field);
-            m_out.print(" L", layout.index(), " field ", field, ": ");
-            if (!state.function)
-                m_out.print("no place in the program could leave a closure unmade in it");
-            else if (!state.canDefer())
-                m_out.print(describe(state.rejection));
-            else if (state.function != closure.function())
-                m_out.print("the slot leaves the closures of f", state.function.index(), " unmade");
-            else
-                m_out.print("the slot leaves them unmade, this place does not");
-        };
-        if (user.opcode == Opcode::NewObject)
-            printField(user.layout(), user.fields()[operandIndex - OperandIndex::NewObject::values]);
-        else {
-            for (LayoutID member : m_program.at(user.receivers()).members) {
-                if (std::optional<uint32_t> field = m_program.at(member).findField(user.key()))
-                    printField(member, *field);
-            }
-        }
-        UNUSED_PARAM(function);
-        m_out.println();
-    }
-
-    const Program& m_program;
-    BuildContext& m_build;
-    const DeferralAnalysis& m_analysis;
-    PrintStream& m_out;
-    Vector<FunctionID> m_entrypoints;
-    uint64_t m_closures { 0 };
-    std::array<std::array<uint64_t, numberOfFieldClosureHolders>, numberOfFieldClosureCaptures> m_counts { };
-    uint64_t m_objectsOverOneEnvironment { 0 };
-    uint64_t m_closuresOfObjectsOverOneEnvironment { 0 };
-};
-
-void FieldClosureCensus::dump(PrintStream& out) const
-{
-    static constexpr std::array<ASCIILiteral, numberOfFieldClosureCaptures> namesOfCaptures { "nothing"_s, "the holder"_s, "one environment"_s, "other values"_s };
-    static constexpr std::array<ASCIILiteral, numberOfFieldClosureHolders> namesOfHolders { "allocated in the same function"_s, "passed as a parameter"_s, "defined elsewhere"_s };
-    out.println("closures still allocated eagerly: ", m_closures);
-    for (size_t captures = 0; captures < numberOfFieldClosureCaptures; ++captures) {
-        for (size_t holder = 0; holder < numberOfFieldClosureHolders; ++holder)
-            out.println("eager closures stored in one field: ", m_counts[captures][holder], " capture ", namesOfCaptures[captures], ", holder ", namesOfHolders[holder]);
-    }
-    out.println("objects whose eager closures capture one environment and nothing else: ", m_objectsOverOneEnvironment, " with ", m_closuresOfObjectsOverOneEnvironment, " closures");
-}
-
 } // anonymous namespace
 
 static Vector<FunctionEdits> groupByFunction(const DeferralAnalysis& analysis)
 {
-    std::span<const FreshObject> objects = analysis.objects();
+    std::span<const ClosureFieldFreshObject> objects = analysis.objects();
     std::span<const ValueReference> reads = analysis.reads();
     std::span<const ValueReference> namedAccesses = analysis.namedAccesses();
     std::span<const ValueReference> keyOrderTests = analysis.keyOrderTests();
@@ -2670,7 +2403,7 @@ static void applyDeferrals(ProgramEditor& editor, BuildContext& build, const Def
     });
     Vector<EditCounts> counts(edits.size());
     editFunctionsInParallel(editor, build, functions.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
-        counts[index] = FunctionRewriter(AnalysisContext { build, program, nullptr, nullptr, id }, analysis, function, arenas.types).run(edits[index]);
+        counts[index] = ClosureFieldRewriter(AnalysisContext { build, program, nullptr, nullptr, id }, analysis, function, arenas.types).run(edits[index]);
     });
 
     EditCounts total;
@@ -2848,11 +2581,6 @@ void deferClosuresInFields(ProgramEditor& editor, BuildContext& build)
         analysis.dump(WTF::dataFile());
     if (analysis.defersAnything())
         applyDeferrals(editor, build, analysis);
-    if (isDumped) [[unlikely]] {
-        FieldClosureCensus census(program, build, analysis, WTF::dataFile());
-        census.run();
-        census.dump(WTF::dataFile());
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

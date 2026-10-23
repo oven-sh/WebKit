@@ -18,14 +18,14 @@
 
 namespace JSC { namespace AOT {
 
-static const Typed::Function* tryGetFunction(const Typed::Program* program, Typed::FunctionID id)
+static const Typed::Function* functionIfPresent(const Typed::Program* program, Typed::FunctionID id)
 {
     if (!program || id.index() >= program->functions.size())
         return nullptr;
     return &program->functions[id.index()];
 }
 
-static const Typed::Layout* tryGetLayout(const Typed::Program* program, Typed::LayoutID id)
+static const Typed::Layout* layoutIfPresent(const Typed::Program* program, Typed::LayoutID id)
 {
     if (!program || id.index() >= program->layouts.size())
         return nullptr;
@@ -36,7 +36,7 @@ Typed::FunctionID findFunctionAsRead(const Typed::Program* program, Typed::Funct
 {
     // The chain is cyclic only in a program that the verifier rejected, whose diagnostics come through here.
     Vector<Typed::FunctionID, 4> visited;
-    while (auto* function = tryGetFunction(program, id)) {
+    while (auto* function = functionIfPresent(program, id)) {
         if (id.index() < program->numberOfFunctionsAsRead())
             return id;
         if (visited.contains(id))
@@ -58,7 +58,7 @@ std::optional<SourceLocation> findLocation(const Typed::Program* program, const 
 {
     if (hasModule(subject.location))
         return subject.location;
-    if (auto* function = tryGetFunction(program, subject.function)) {
+    if (auto* function = functionIfPresent(program, subject.function)) {
         if (subject.value.index() < function->values.size()) {
             SourceLocation location = function->locationOf(subject.value);
             if (hasModule(location))
@@ -68,7 +68,7 @@ std::optional<SourceLocation> findLocation(const Typed::Program* program, const 
         if (hasModule(declaration))
             return declaration;
     }
-    auto* layout = tryGetLayout(program, subject.layout);
+    auto* layout = layoutIfPresent(program, subject.layout);
     if (!layout || !layout->module)
         return std::nullopt;
     return SourceLocation { layout->module.index(), layout->position };

@@ -482,7 +482,6 @@ static JSObject* describeOverload(const TableDescription& description, BuiltinOv
     put(description, object, "mode"_s, describeWord(description, builtinCallModeWords, overload.mode));
     put(description, object, "isProvenByConstruction"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::IsProvenByConstruction)));
     put(description, object, "isUndeclared"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::IsUndeclared)));
-    put(description, object, "textHash"_s, describeText(description, makeString(hex(overload.textHash, 16, Lowercase))));
     put(description, object, "receiver"_s, receiver);
     put(description, object, "parameters"_s, parameters);
     put(description, object, "result"_s, result);

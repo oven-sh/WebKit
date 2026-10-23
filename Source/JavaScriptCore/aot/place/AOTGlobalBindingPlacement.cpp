@@ -13,7 +13,6 @@
 #include "AOTFlowResults.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
-#include "AOTIRPrinter.h"
 #include "AOTPlacementSteps.h"
 #include "AOTProgramTableEncoder.h"
 #include "AOTSort.h"
@@ -217,24 +216,6 @@ void encodeGlobalBindingTable(TableEncoder& encoder)
             word |= GlobalBindingTable::isForTypeOfFlag;
         return word;
     }));
-}
-
-void GlobalBindingTable::dump(PrintStream& out, const Program& program) const
-{
-    IRPrinter printer(out, program);
-    for (unsigned index = 0; index < bindings.size(); ++index) {
-        const PlacedGlobalBinding& binding = bindings[index];
-        out.print("globalBinding "_s, index, " "_s);
-        printer.print(binding.key.key);
-        out.print(binding.key.isStore ? " store"_s : " read"_s);
-        if (binding.key.seesScriptBindings)
-            out.print(" seesScriptBindings"_s);
-        if (binding.key.isForTypeOf)
-            out.print(" isForTypeOf"_s);
-        if (binding.isStoredByName)
-            out.print(" isStoredByName"_s);
-        out.print("\n"_s);
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

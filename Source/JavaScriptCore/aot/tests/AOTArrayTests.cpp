@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayAllocationProfile.h"
-#include "AOTArrayChains.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinTable.h"
 #include "AOTConvention.h"
@@ -150,110 +149,6 @@ static void testFormsElementReadTypes()
     AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Double) == Type::fromPrimitives(Primitive::Number | Primitive::Undefined));
     AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Contiguous) == Type::anything());
     AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Other) == Type::anything());
-}
-
-static constexpr ChainEndKind chainEnds[] = {
-    ChainEndKind::Array, ChainEndKind::Length, ChainEndKind::ForEach, ChainEndKind::Reduce, ChainEndKind::Some,
-    ChainEndKind::Every, ChainEndKind::Find, ChainEndKind::FindIndex, ChainEndKind::Join, ChainEndKind::FlatMap,
-};
-
-static Vector<std::array<ChainLinkKind, ChainShape::maxNumberOfLinks>> everyListOfLinks()
-{
-    Vector<std::array<ChainLinkKind, ChainShape::maxNumberOfLinks>> lists;
-    for (unsigned count = 0; count <= ChainShape::maxNumberOfLinks; ++count) {
-        for (unsigned choice = 0; choice < 1u << count; ++choice) {
-            std::array<ChainLinkKind, ChainShape::maxNumberOfLinks> links { };
-            for (unsigned index = 0; index < count; ++index)
-                links[index] = choice >> index & 1 ? ChainLinkKind::Filter : ChainLinkKind::Map;
-            lists.append(links);
-        }
-    }
-    return lists;
-}
-
-static void testChainShapeRoundTrip()
-{
-    auto lists = everyListOfLinks();
-    AOT_TEST_CHECK(lists.size() == 15);
-
-    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> words;
-    for (const auto& links : lists) {
-        for (ChainEndKind end : chainEnds) {
-            for (bool hasInitialValue : { false, true }) {
-                ChainShape shape { links, end, hasInitialValue };
-                uint32_t word = shape.encode();
-                AOT_TEST_CHECK(ChainShape::decode(word) == shape);
-                AOT_TEST_CHECK(ChainShape::decode(word).numberOfLinks() == shape.numberOfLinks());
-                AOT_TEST_CHECK(word < 1u << 11);
-                AOT_TEST_CHECK((word & 0xf) == static_cast<uint32_t>(end));
-                AOT_TEST_CHECK((word >> 4 & 3) == static_cast<uint32_t>(links[0]) && (word >> 6 & 3) == static_cast<uint32_t>(links[1]) && (word >> 8 & 3) == static_cast<uint32_t>(links[2]));
-                AOT_TEST_CHECK((word >> 10 & 1) == hasInitialValue);
-                AOT_TEST_CHECK(words.add(word).isNewEntry);
-            }
-        }
-    }
-    AOT_TEST_CHECK(words.size() == 15 * std::size(chainEnds) * 2);
-    AOT_TEST_CHECK(!ChainShape { }.encode() && !ChainShape { }.numberOfLinks());
-}
-
-static void testChainEndOperands()
-{
-    for (ChainEndKind end : chainEnds) {
-        bool takesNoCallback = end == ChainEndKind::Array || end == ChainEndKind::Length || end == ChainEndKind::Join;
-        AOT_TEST_CHECK(endTakesCallback(end) == !takesNoCallback);
-        AOT_TEST_CHECK(endTakesOperand({ { }, end, false }) == (end == ChainEndKind::Join));
-        AOT_TEST_CHECK(endTakesOperand({ { }, end, true }) == (end == ChainEndKind::Join || end == ChainEndKind::Reduce));
-    }
-}
-
-static void testChainMethodRows()
-{
-    std::span<const ChainMethod> methods = chainMethods();
-    AOT_TEST_CHECK(methods.size() == 12);
-
-    unsigned numberOfRanges = 0;
-    unsigned numberOfLinks = 0;
-    for (const ChainMethod& method : methods) {
-        AOT_TEST_CHECK(findChainMethod(method.builtin) == &method);
-        switch (method.role) {
-        case ChainMethodRole::Range:
-            ++numberOfRanges;
-            AOT_TEST_CHECK(method.builtin == Builtins::ArrayPrototypeSlice && method.link == ChainLinkKind::None && !method.takesCallback && !method.stopsEarly);
-            break;
-        case ChainMethodRole::Link:
-            ++numberOfLinks;
-            AOT_TEST_CHECK(method.link != ChainLinkKind::None && method.end == ChainEndKind::Array && method.takesCallback && !method.stopsEarly);
-            break;
-        case ChainMethodRole::End:
-            AOT_TEST_CHECK(method.link == ChainLinkKind::None && method.end != ChainEndKind::Array && method.takesCallback == endTakesCallback(method.end));
-            break;
-        }
-        bool leavesEarly = method.end == ChainEndKind::Some || method.end == ChainEndKind::Every || method.end == ChainEndKind::Find || method.end == ChainEndKind::FindIndex;
-        AOT_TEST_CHECK(method.stopsEarly == leavesEarly);
-    }
-    AOT_TEST_CHECK(numberOfRanges == 1 && numberOfLinks == 2);
-
-    for (BuiltinID other : std::initializer_list<BuiltinID> { Builtins::ArrayPrototypePush, Builtins::ArrayPrototypeReduceRight, Builtins::ArrayPrototype, Builtins::GlobalThis, BuiltinID() })
-        AOT_TEST_CHECK(!findChainMethod(other));
-}
-
-static void testChainMethodsAgreeWithTable()
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    for (const ChainMethod& method : chainMethods()) {
-        AOT_TEST_CHECK(table.contains(method.builtin) && table.canonicalID(method.builtin) == method.builtin);
-        std::span<const BuiltinOverload> overloads = table.overloadsOf(method.builtin);
-        AOT_TEST_CHECK(!overloads.empty());
-        for (const BuiltinOverload& overload : overloads) {
-            if (!method.takesCallback) {
-                AOT_TEST_CHECK(overload.flow.callbacks.empty());
-                continue;
-            }
-            AOT_TEST_CHECK(overload.flow.callbacks.size() == 1);
-            AOT_TEST_CHECK(overload.flow.callbacks[0].times == BuiltinCallbackTimes::PerElement);
-            AOT_TEST_CHECK(overload.flow.callbacks[0].callee == BuiltinOperand::argument(0));
-        }
-    }
 }
 
 static JSArray* createArray(Realms& realms, IndexingType indexingType, unsigned length)
@@ -501,10 +396,6 @@ std::span<const NativeTest> arrayTests()
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
         { "arrays/forms/narrow"_s, testFormsNarrow },
         { "arrays/forms/element-read-types"_s, testFormsElementReadTypes },
-        { "arrays/chains/shape-round-trip"_s, testChainShapeRoundTrip },
-        { "arrays/chains/end-operands"_s, testChainEndOperands },
-        { "arrays/chains/method-rows"_s, testChainMethodRows },
-        { "arrays/chains/methods-agree-with-table"_s, testChainMethodsAgreeWithTable },
         { "arrays/profile/grows-with-the-third-longer-array"_s, testProfileGrowsWithTheThirdLongerArray },
         { "arrays/profile/shrinks-at-the-end-of-a-window"_s, testProfileShrinksAtTheEndOfAWindow },
         { "arrays/profile/shape-only-rises"_s, testProfileShapeOnlyRises },

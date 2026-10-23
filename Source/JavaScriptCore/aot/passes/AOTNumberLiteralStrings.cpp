@@ -26,7 +26,7 @@ static_assert(defaultLimitValue(LimitID::MaxLiteralStrings, Architecture::ARM64)
 static_assert(defaultLimitValue(LimitID::MaxLiteralStrings, Architecture::X86_64) == maxLiteralStrings);
 static_assert(literalStringWord(0) == emptyLiteralStringWord);
 
-static constexpr OpcodeSet equalityComparisons { Opcode::StrictEq, Opcode::Eq };
+static constexpr OpcodeSet equalityComparisonsOfLiterals { Opcode::StrictEq, Opcode::Eq };
 
 namespace {
 
@@ -115,7 +115,7 @@ static void collectStringsNeedingWords(const Program& program, FunctionID id, St
         forEachType(value, [&](TypeID type) {
             collectLiteralsOf(program, type, found);
         });
-        if (equalityComparisons.contains(value.opcode))
+        if (equalityComparisonsOfLiterals.contains(value.opcode))
             collectComparedConstants(program, function, value, found);
     };
     auto collectFromTerminator = [&](const Terminator& terminator) {

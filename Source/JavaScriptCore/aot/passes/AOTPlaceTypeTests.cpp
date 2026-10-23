@@ -309,10 +309,12 @@ static PassOutcome placePlannedTests(FunctionPassContext& context, const Expecte
     TestPlacementPlan plan = planTestPlacement(context);
     if (!plan.hasGuardedStretch())
         return PassOutcome::Unchanged;
+#if ASSERT_ENABLED
     if (context.build.options().logging.dumpedPass == PassID::PlaceTypeTests && context.build.shouldDump(context.subject().function)) [[unlikely]] {
         WTF::dataFile().println("AOT plan of PlaceTypeTests, in the numbers of the IR in front of the pass:");
         plan.dump(WTF::dataFile(), context.program);
     }
+#endif
 
     // The placer changes the uses.
     Vector<ArrivalsAtTestedValue> arrivals(plan.tests.size(), [&](size_t index) {

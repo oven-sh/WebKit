@@ -422,7 +422,6 @@ Placement PlacementInSteps::numberWhatRepresentationsAsk(ProgramEditor& editor, 
         [&] {
             steps.runBeside({
                 [&] { sites = steps.runStep("collectPlacedSites"_s, [&] { return scans ? scans->takeSites(context) : collectPlacedSites(context); }); },
-                [&] { steps.runStep("checkPlacementInputs"_s, [&] { checkPlacementInputs(context); }); },
                 [&] { state.methodTableFunctions = steps.runStep("collectMethodTableFunctions"_s, [&] { return collectMethodTableFunctions(context); }); },
             });
             // The statics wait for nothing that the rows of the field accesses are made from.

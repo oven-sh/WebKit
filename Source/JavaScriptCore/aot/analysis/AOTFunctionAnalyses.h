@@ -191,8 +191,6 @@ public:
     // compactFunction() has moved blocks and values, and has changed nothing else of what it kept.
     void didRenumber(const Renumbering&);
 
-    void verifyCached();
-
     void setRunningPass(PassID pass)
     {
         m_runningPass = pass;
@@ -280,11 +278,7 @@ private:
     AnalysisSet heldControlFlowAnalyses() const;
     void didBuild(FunctionAnalysis);
     void didBringUseListsUpToDate(const UseLists::Update&);
-    void verifyUseLists() const;
     void completeIdentitiesBeforePass();
-    void verifyIdentities(const CFG&) const;
-    void verifyLiveness() const;
-    void verifyFrequencies();
     void willDrop(AnalysisSet);
 
     const AnalysisContext m_context;
@@ -302,7 +296,6 @@ private:
     ControlFlowResults m_controlFlow;
     ValueResults m_values;
     const bool m_countsBuilds;
-    const bool m_verifiesUpdates;
     PassID m_runningPass { PassID::None };
     bool m_everyChangeIsReported { false };
     std::array<PassID, numberOfFunctionAnalyses> m_passesThatDropped { };

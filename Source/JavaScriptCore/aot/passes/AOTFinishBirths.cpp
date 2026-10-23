@@ -22,8 +22,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet storesBySlot { Opcode::PutSlot, Opcode::PutSlotOrAdd };
-static constexpr OpcodeSet storesByName { Opcode::PropSet, Opcode::PropDefine };
+static constexpr OpcodeSet birthStoresBySlot { Opcode::PutSlot, Opcode::PutSlotOrAdd };
+static constexpr OpcodeSet birthStoresByName { Opcode::PropSet, Opcode::PropDefine };
 static constexpr OpcodeSet finishingOperations { Opcode::FinishBirth, Opcode::TryFinishBirth };
 
 static constexpr OpcodeSet operationsThatKeepObjectPrivate {
@@ -236,7 +236,7 @@ private:
         for (BlockID block : m_cfg.reversePostOrder()) {
             for (ValueID id : m_function.at(block).values) {
                 const Value& value = m_function.at(id);
-                if (!storesBySlot.contains(value.opcode) || m_context.analyses.identityOf(value.operand(OperandIndex::PutSlot::object)) != thisValue)
+                if (!birthStoresBySlot.contains(value.opcode) || m_context.analyses.identityOf(value.operand(OperandIndex::PutSlot::object)) != thisValue)
                     continue;
                 for (LayoutID layout : m_program.at(value.receivers()).members) {
                     if (hasFieldsFilledAtBirth(m_program, layout) && !result.contains(layout))
@@ -296,7 +296,7 @@ private:
             return;
         for (BlockID block : m_cfg.reversePostOrder()) {
             for (ValueID id : m_function.at(block).values) {
-                if (!storesBySlot.contains(m_function.at(id).opcode))
+                if (!birthStoresBySlot.contains(m_function.at(id).opcode))
                     continue;
                 for (LayoutID layout : m_program.at(m_function.at(id).receivers()).members)
                     numberKeysOf(layout);
@@ -480,7 +480,7 @@ private:
                 }
                 if (value.opcode == Opcode::HasNoFieldOutsideSlot && !state.isFinished)
                     m_testsOfUnfinishedObjects.append(block.values[index]);
-                bool isStoredSomewhere = storesBySlot.contains(value.opcode) && operandIndex == OperandIndex::PutSlot::value;
+                bool isStoredSomewhere = birthStoresBySlot.contains(value.opcode) && operandIndex == OperandIndex::PutSlot::value;
                 if (isStoredSomewhere || !keepsObjectPrivate(value, effects))
                     state.isReachableByOthers = true;
             });
@@ -508,7 +508,7 @@ private:
                 }
             }
             // Code that runs seldom stores by name. Whether that has filled the slot the run time sees, behind the store that may have filled the last one.
-            if (storesByName.contains(value.opcode)) {
+            if (birthStoresByName.contains(value.opcode)) {
                 std::optional<uint32_t> object = objectNamedBy(value.objectOperand());
                 std::optional<uint32_t> number = numberOf(value.key());
                 if (!object || !number)
@@ -523,7 +523,7 @@ private:
                 state.isFinished = true;
                 continue;
             }
-            if (!storesBySlot.contains(value.opcode))
+            if (!birthStoresBySlot.contains(value.opcode))
                 continue;
             ValueID receiver = value.operand(OperandIndex::PutSlot::object);
             std::optional<uint32_t> object = objectNamedBy(receiver);

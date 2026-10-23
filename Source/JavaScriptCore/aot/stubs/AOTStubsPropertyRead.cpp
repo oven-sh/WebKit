@@ -760,7 +760,7 @@ static void emitPresenceBySlot(StubAssembler& jit, PresenceQuestion question, co
     returnPresenceBySlot(jit, question, probed, R0, isUnknown);
 }
 
-static Entry cachingOperationFor(PresenceQuestion question)
+static Entry cachingOperationByNameFor(PresenceQuestion question)
 {
     switch (question) {
     case PresenceQuestion::In:
@@ -832,7 +832,7 @@ void generateInById(StubAssembler& jit)
 #endif
 
     miss.link(&jit);
-    jit.exitOnMiss(cachingOperationFor(question), { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = R0, .thirdArgumentIn = name });
+    jit.exitOnMiss(cachingOperationByNameFor(question), { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = R0, .thirdArgumentIn = name });
 }
 
 } } // namespace JSC::AOT

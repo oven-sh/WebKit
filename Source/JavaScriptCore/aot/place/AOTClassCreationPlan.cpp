@@ -66,7 +66,7 @@ static Vector<BaseChainSummary> summarizeBaseChains(const Program& program)
     return summaries;
 }
 
-static bool isCreatedWithHolder(const Program& program, ClassSide side, PropertyKeyID key)
+static bool isCreatedWithItsHolder(const Program& program, ClassSide side, PropertyKeyID key)
 {
     NameClass nameClass = program.nameClassOf(key);
     switch (side) {
@@ -78,7 +78,7 @@ static bool isCreatedWithHolder(const Program& program, ClassSide side, Property
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool capturesAtMostClassEnvironment(const Program& program, const Function& constructor, const Function& function)
+static bool capturesNothingButClassEnvironment(const Program& program, const Function& constructor, const Function& function)
 {
     if (function.captures.isEmpty())
         return true;
@@ -90,11 +90,11 @@ static bool capturesAtMostClassEnvironment(const Program& program, const Functio
 
 static bool canBeCreatedByClassRecord(const Program& program, const Function& constructor, const ClassMember& member)
 {
-    if (!member.key || program.isIndexLike(member.key) || isCreatedWithHolder(program, member.side, member.key))
+    if (!member.key || program.isIndexLike(member.key) || isCreatedWithItsHolder(program, member.side, member.key))
         return false;
     // The record names a closure as its function is written. SetFunctionName names the closure of the definition.
     const Function& function = program.at(member.function);
-    return function.name && capturesAtMostClassEnvironment(program, constructor, function);
+    return function.name && capturesNothingButClassEnvironment(program, constructor, function);
 }
 
 static ClassCreationPlan planClass(const Program& program, const Layout& layout, const BaseChainSummary& bases)

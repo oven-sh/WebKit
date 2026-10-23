@@ -17,7 +17,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // A ramp takes over the id and the callers of its source, so what is known about those callers carries over.
-static constexpr OptionSet<FunctionCapabilities> inheritedCapabilities {
+static constexpr OptionSet<FunctionCapabilities> capabilitiesRampsInherit {
     FunctionCapabilities::MayChangeSignature,
     FunctionCapabilities::HasOnlyDirectCallers,
     FunctionCapabilities::IsNeverCalledByHost,
@@ -50,7 +50,7 @@ static Function createHeader(const Function& unsplit, const CoroutinePlan& plan)
     if (unsplit.runsOnlyBehindFailedTest())
         ramp.flags.add(FunctionFlags::IsSplitOffGenericVersion);
     ramp.creator = plan.record;
-    ramp.capabilities = (initialCapabilitiesOf(ramp) - inheritedCapabilities) | (unsplit.capabilities & inheritedCapabilities);
+    ramp.capabilities = (initialCapabilitiesOf(ramp) - capabilitiesRampsInherit) | (unsplit.capabilities & capabilitiesRampsInherit);
     return ramp;
 }
 

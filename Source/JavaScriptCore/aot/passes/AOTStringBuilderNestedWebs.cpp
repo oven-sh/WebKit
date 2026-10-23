@@ -23,7 +23,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-constexpr uint32_t stateOperandIndex = 0;
 static_assert(OperandIndex::Add::left == stateOperandIndex);
 static_assert(OperandIndex::Strcat::parts == stateOperandIndex);
 

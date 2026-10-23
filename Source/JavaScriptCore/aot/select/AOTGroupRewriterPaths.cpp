@@ -19,16 +19,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static std::optional<size_t> findMember(const SelectionGroup& group, ValueID id)
-{
-    size_t index = group.members.findIf([&](const GroupMember& member) {
-        return member.value == id;
-    });
-    if (index == notFound)
-        return std::nullopt;
-    return index;
-}
-
 static bool hasResult(const Value& value)
 {
     return resultRuleOf(value.opcode) != ResultRule::None;
@@ -50,7 +40,7 @@ void changeBranchKind(Terminator& terminator, TerminatorKind kind)
     terminator = WTF::move(changed);
 }
 
-static void unfuseBranch(Terminator& terminator, ValueID condition)
+static void unfuseBranchOnPath(Terminator& terminator, ValueID condition)
 {
     if (terminator.kind == TerminatorKind::TestAndBranch && terminator.conditionOperand() == condition)
         changeBranchKind(terminator, TerminatorKind::Branch);
@@ -125,7 +115,7 @@ void GroupRewriter::expandRoot()
     flushInsertions();
     m_expansion = builder().beginExpansion(ProgramPoint { state().block, state().index });
     builder().setHandler(m_expansion->handler);
-    unfuseBranch(function().edit(m_expansion->continuation, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, m_group.root);
+    unfuseBranchOnPath(function().edit(m_expansion->continuation, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, m_group.root);
     m_session.m_needsCompaction |= m_expansion->results.isEmpty();
     m_didReplaceRoot = false;
 }

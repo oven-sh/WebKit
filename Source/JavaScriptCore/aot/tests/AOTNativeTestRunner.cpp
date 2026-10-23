@@ -79,9 +79,14 @@ static bool needsHostEntries(const NativeTest& test)
     return std::ranges::contains(testsOfHostEntries, StringView(test.name), [](ASCIILiteral name) { return StringView(name); });
 }
 
-static Vector<const NativeTest*> selectNativeTests(const NativeTestRequest& request)
+struct SelectedNativeTests {
+    Vector<const NativeTest*> run;
+    Vector<const NativeTest*> leftOut;
+};
+
+static SelectedNativeTests selectNativeTests(const NativeTestRequest& request)
 {
-    Vector<const NativeTest*> tests;
+    SelectedNativeTests tests;
     bool leavesOutTestsOfHostEntries = hasStandInHost();
     bool isPastPreviousTest = request.previousTest.isEmpty();
     // Counted from the start of the list: the child that goes on behind a crash has to take the same tests.
@@ -92,8 +97,8 @@ static Vector<const NativeTest*> selectNativeTests(const NativeTestRequest& requ
             isPastPreviousTest = request.previousTest == test.name;
             return;
         }
-        if (isSelected && !(leavesOutTestsOfHostEntries && needsHostEntries(test)))
-            tests.append(&test);
+        if (isSelected)
+            (leavesOutTestsOfHostEntries && needsHostEntries(test) ? tests.leftOut : tests.run).append(&test);
     });
     return tests;
 }
@@ -105,7 +110,7 @@ static NativeTestSummary runInThisProcess(NativeTestList tests, PrintStream& out
         out.flush();
         test->run();
     }
-    return { static_cast<unsigned>(tests.size()), 0 };
+    return { static_cast<unsigned>(tests.size()), 0, 0 };
 }
 
 struct ChildProgress {
@@ -176,10 +181,12 @@ NativeTestSummary runNativeTests(const NativeTestRequest& request, PrintStream& 
 {
     checkNativeTests();
 
-    Vector<const NativeTest*> tests = selectNativeTests(request);
-    if (request.launcher)
-        return runInChildProcesses(request, tests.span(), out);
-    return runInThisProcess(tests.span(), out);
+    SelectedNativeTests tests = selectNativeTests(request);
+    for (const NativeTest* test : tests.leftOut)
+        out.println("LEFT OUT ", test->name);
+    NativeTestSummary summary = request.launcher ? runInChildProcesses(request, tests.run.span(), out) : runInThisProcess(tests.run.span(), out);
+    summary.leftOut = tests.leftOut.size();
+    return summary;
 }
 
 } } // namespace JSC::AOT

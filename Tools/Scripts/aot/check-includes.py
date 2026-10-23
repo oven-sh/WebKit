@@ -11,8 +11,8 @@ ten minutes a round. This finds the same errors natively, all at once.
 Every .cpp outside aot/ whose working copy differs from <base commit>, committed or not, is checked for syntax on its own, with
 the flags of the build in <build directory> (which needs a compile_commands.json) minus the precompiled header.
 
---aot       instead of what changed outside aot/, every file of aot/, changed or not, each source with its own flags. CMake
-            compiles them in bundles, on some platforms without a precompiled header: whether a missing include fails there
+--aot       instead of what changed outside aot/, every file of aot/, changed or not, each source with its own flags. They
+            are compiled in bundles, on some platforms without a precompiled header: whether a missing include fails there
             depends on what precedes the source in its bundle.
 --headers   instead of the sources, the headers: each is included on its own after config.h: is it self-contained?
 --gate-off  with ENABLE(AOT) forced off, as on the platforms without a back end. (Forcing it on the
@@ -104,7 +104,12 @@ def main():
     untracked = set()
     if arguments.aot:
         found = [os.path.relpath(os.path.join(folder, name), ROOT) for folder, _, names in os.walk(os.path.join(ROOT, "Source/JavaScriptCore/aot")) for name in names]
-        files = sorted(f for f in found if f.endswith(suffix) and (entries.get(os.path.realpath(os.path.join(ROOT, f))) or arguments.headers))
+        # A build has no command for a source that it compiles inside a bundle.
+        bundled = set()
+        for name in ("Sources.txt", "SourcesCompiledForSize.txt"):
+            with open(os.path.join(ROOT, "Source/JavaScriptCore/aot", name)) as file:
+                bundled.update("Source/JavaScriptCore/" + line for line in file.read().split())
+        files = sorted(f for f in found if f.endswith(suffix) and (entries.get(os.path.realpath(os.path.join(ROOT, f))) or f in bundled or arguments.headers))
         files = [f for f in files if not arguments.headers or ("/generated/" not in f and not f.endswith(INCLUDED_BELOW_DECLARATIONS))]
     else:
         untracked = set(git("ls-files", "--others", "--exclude-standard", "--", *folders).split())

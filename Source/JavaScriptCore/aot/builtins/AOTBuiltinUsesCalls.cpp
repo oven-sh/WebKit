@@ -19,7 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct CalleeAnswer {
+struct BuiltinCalleeAnswer {
     BuiltinID callee;
     TypeID testedCalleeType;
     TypeID testedReceiverType;
@@ -48,7 +48,7 @@ static bool canBecomeBuiltinCall(const BuiltinTable& table, BuiltinID callee)
     return isCallableBuiltin(table, callee) && (!isCalledOnlyDirectly(table, callee) || hasDirectFunction(table, callee));
 }
 
-static CalleeAnswer answerWithTestedCallee(const BuiltinUseInputs& inputs, const Value& call, BuiltinID callee, TypeID testedReceiverType)
+static BuiltinCalleeAnswer answerWithTestedCallee(const BuiltinUseInputs& inputs, const Value& call, BuiltinID callee, TypeID testedReceiverType)
 {
     Type testedCallee = Type::forBuiltin(callee);
     if (!inputs.program.typeOf(inputs.function, call.calleeOperand()).overlaps(testedCallee, inputs.program))
@@ -74,7 +74,7 @@ static BuiltinID builtinHeldBy(const BuiltinTable& table, BuiltinID member)
     return member;
 }
 
-static CalleeAnswer findExpectedCallee(const BuiltinUseInputs& inputs, const Value& call)
+static BuiltinCalleeAnswer findExpectedCallee(const BuiltinUseInputs& inputs, const Value& call)
 {
     TypeID expectedType = inputs.function.at(call.calleeOperand()).expected();
     if (!expectedType)
@@ -86,7 +86,7 @@ static CalleeAnswer findExpectedCallee(const BuiltinUseInputs& inputs, const Val
     return answerWithTestedCallee(inputs, call, builtinHeldBy(table, table.canonicalID(expected)), { });
 }
 
-static CalleeAnswer findMethodCallee(const BuiltinUseInputs& inputs, const Value& call)
+static BuiltinCalleeAnswer findMethodCallee(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (call.opcode != Opcode::Call || !call.calleeKey() || !call.thisValueOperand())
         return { };
@@ -141,7 +141,7 @@ static CalleeAnswer findMethodCallee(const BuiltinUseInputs& inputs, const Value
 }
 
 // Whatever else the callee may be is a primitive, as the `undefined` of a `var` that is read early: the call of it throws.
-static CalleeAnswer findOnlyObjectAmongCallees(const BuiltinUseInputs& inputs, const Value& call)
+static BuiltinCalleeAnswer findOnlyObjectAmongCallees(const BuiltinUseInputs& inputs, const Value& call)
 {
     BuiltinID callee = singleBuiltinOf(inputs.program.typeOf(inputs.function, call.calleeOperand()).withOnlyObjects());
     if (!callee)
@@ -165,18 +165,18 @@ static bool isOnlyBuiltinSeenAtCall(const Program& program, const Value& call, B
     return callees.builtins.size() == 1 && program.builtins().canonicalID(callees.builtins[0]) == callee;
 }
 
-static CalleeAnswer findCalleeByTypes(const BuiltinUseInputs&, const Value& call);
+static BuiltinCalleeAnswer findCalleeByTypes(const BuiltinUseInputs&, const Value& call);
 
-static CalleeAnswer findCallee(const BuiltinUseInputs& inputs, const Value& call)
+static BuiltinCalleeAnswer findCallee(const BuiltinUseInputs& inputs, const Value& call)
 {
-    CalleeAnswer answer = findCalleeByTypes(inputs, call);
+    BuiltinCalleeAnswer answer = findCalleeByTypes(inputs, call);
     if (answer.callee && !mayBeAmongCallees(inputs.program, call, answer.callee))
         return { };
     return answer;
 }
 
 // Among the callees that flow has seen at the call, the first whose native code compiled code calls by itself. The set lists what can be called: whatever else the value may be makes the call throw.
-static CalleeAnswer findCalleeSeenWithDirectFunction(const BuiltinUseInputs& inputs, const Value& call)
+static BuiltinCalleeAnswer findCalleeSeenWithDirectFunction(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
         return { };
@@ -207,22 +207,22 @@ static bool hasReceiverOfBuiltinClass(const BuiltinUseInputs& inputs, const Valu
     return expected && builtinReceiverOf(inputs.program, inputs.types.at(expected).intersectWith(present, inputs.types).withoutNullish());
 }
 
-static CalleeAnswer findCalleeByTypes(const BuiltinUseInputs& inputs, const Value& call)
+static BuiltinCalleeAnswer findCalleeByTypes(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (BuiltinID callee = singleBuiltinCalleeOf(inputs.program, inputs.function, call))
         return { callee, { }, { } };
     if (!hasReceiverOfBuiltinClass(inputs, call)) {
-        if (CalleeAnswer seen = findCalleeSeenWithDirectFunction(inputs, call); seen.callee)
+        if (BuiltinCalleeAnswer seen = findCalleeSeenWithDirectFunction(inputs, call); seen.callee)
             return seen;
     }
-    if (CalleeAnswer onlyObject = findOnlyObjectAmongCallees(inputs, call); onlyObject.callee)
+    if (BuiltinCalleeAnswer onlyObject = findOnlyObjectAmongCallees(inputs, call); onlyObject.callee)
         return onlyObject;
-    CalleeAnswer method = findMethodCallee(inputs, call);
+    BuiltinCalleeAnswer method = findMethodCallee(inputs, call);
     // The type of the receiver is a proof and the callee is only expected: the member that the class holds under the name is the better expectation.
     bool isMemberOfProvenReceiver = method.callee && !method.testedReceiverType;
     if (isMemberOfProvenReceiver)
         return method;
-    CalleeAnswer expected = findExpectedCallee(inputs, call);
+    BuiltinCalleeAnswer expected = findExpectedCallee(inputs, call);
     // Where both name one function, the test of the receiver is the one that makes the read of the method a constant.
     if (expected.callee && expected.callee != method.callee)
         return expected;
@@ -270,7 +270,7 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     if (arguments.size() > defaultLimitValue(LimitID::MaxBuiltinCallArguments, hostArchitecture()))
         return { };
 
-    CalleeAnswer answer = findCallee(inputs, call);
+    BuiltinCalleeAnswer answer = findCallee(inputs, call);
     if (!answer.callee || !canBecomeBuiltinCall(inputs.program.builtins(), answer.callee))
         return { };
 

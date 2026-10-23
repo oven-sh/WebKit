@@ -32,7 +32,7 @@ void ensureSizeReaches(PackedLayouts& packed, LayoutID layout, uint32_t end)
     RELEASE_ASSERT(size <= packed.inlineLimits[layout.index()]);
 }
 
-struct Unit {
+struct PaddingUnit {
     std::span<const SlotRow> rows;
     SiteWeight weight { 0 };
 };
@@ -53,20 +53,20 @@ private:
     bool hasSlots(LayoutID id) const { return m_context.isCompiledObject(id) || m_context.isEnvironment(id); }
     uint32_t firstSlotOffsetOf(LayoutID id) const { return m_context.isEnvironment(id) ? offsetOfFirstEnvironmentVariable : offsetOfFirstField; }
     LayoutID layoutOf(SlotRow row) const { return m_layoutOfRow[row]; }
-    uint32_t offsetOf(const Unit& unit) const { return m_packed.slots[unit.rows[0]].offset; }
+    uint32_t offsetOf(const PaddingUnit& unit) const { return m_packed.slots[unit.rows[0]].offset; }
 
     const Type& contentsOf(SlotRow) const;
     bool holdsEnvironmentOfDeferredClosures(SlotRow) const;
     bool isNarrow(SlotRepresentation) const;
-    bool holdsUndefinedOrNull(const Unit&) const;
-    std::optional<SlotRepresentation> widenedRepresentationOf(const Unit&) const;
+    bool holdsUndefinedOrNull(const PaddingUnit&) const;
+    std::optional<SlotRepresentation> widenedRepresentationOf(const PaddingUnit&) const;
     void createUnits();
-    bool isCandidate(const Unit&) const;
+    bool isCandidate(const PaddingUnit&) const;
     void findCandidates();
     void recordOccupiedBytes();
     void orderCandidates();
-    std::optional<uint32_t> roomFor(const Unit&);
-    void move(const Unit&, uint32_t offset);
+    std::optional<uint32_t> roomFor(const PaddingUnit&);
+    void move(const PaddingUnit&, uint32_t offset);
     bool widen(uint32_t unit);
 
     const SlotPlanContext& m_context;
@@ -77,7 +77,7 @@ private:
 
     Vector<LayoutID> m_layoutOfRow;
     Vector<SlotRow> m_unsharedRows;
-    Vector<Unit> m_units;
+    Vector<PaddingUnit> m_units;
     Vector<uint32_t> m_candidates;
     Vector<OccupiedBytes> m_occupied;
     Vector<uint32_t> m_firstPossiblyFreeOffset;
@@ -121,14 +121,14 @@ bool PaddingWidener::isNarrow(SlotRepresentation representation) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool PaddingWidener::holdsUndefinedOrNull(const Unit& unit) const
+bool PaddingWidener::holdsUndefinedOrNull(const PaddingUnit& unit) const
 {
     return std::ranges::any_of(unit.rows, [&](SlotRow row) {
         return contentsOf(row).mayBeUndefinedOrNull();
     });
 }
 
-std::optional<SlotRepresentation> PaddingWidener::widenedRepresentationOf(const Unit& unit) const
+std::optional<SlotRepresentation> PaddingWidener::widenedRepresentationOf(const PaddingUnit& unit) const
 {
     RepresentationChoice choice { .prefersInt32 = false, .holdsWideReferences = m_kind == WidenedRepresentations::References };
     uint16_t absent = 0;
@@ -172,14 +172,14 @@ void PaddingWidener::createUnits()
     }
     m_units.reserveInitialCapacity(sharedLocations.size() + m_unsharedRows.size());
     for (const SharedLocation& location : sharedLocations)
-        m_units.append(Unit { location.rows.span(), location.weight });
+        m_units.append(PaddingUnit { location.rows.span(), location.weight });
     for (size_t i = 0; i < m_unsharedRows.size(); ++i) {
         const SlotRowUse& use = m_uses.rows[m_unsharedRows[i]];
-        m_units.append(Unit { m_unsharedRows.subspan(i, 1), saturatedSum(use.accessWeight, use.environmentUses) });
+        m_units.append(PaddingUnit { m_unsharedRows.subspan(i, 1), saturatedSum(use.accessWeight, use.environmentUses) });
     }
 }
 
-bool PaddingWidener::isCandidate(const Unit& unit) const
+bool PaddingWidener::isCandidate(const PaddingUnit& unit) const
 {
     const PlacedSlot& first = m_packed.slots[unit.rows[0]];
     bool everyRowIsNarrow = std::ranges::all_of(unit.rows, [&](SlotRow row) {
@@ -226,7 +226,7 @@ void PaddingWidener::orderCandidates()
     });
 }
 
-void PaddingWidener::move(const Unit& unit, uint32_t offset)
+void PaddingWidener::move(const PaddingUnit& unit, uint32_t offset)
 {
     for (SlotRow row : unit.rows) {
         PlacedSlot& slot = m_packed.slots[row];
@@ -243,7 +243,7 @@ void PaddingWidener::move(const Unit& unit, uint32_t offset)
     }
 }
 
-std::optional<uint32_t> PaddingWidener::roomFor(const Unit& unit)
+std::optional<uint32_t> PaddingWidener::roomFor(const PaddingUnit& unit)
 {
     uint32_t current = offsetOf(unit);
     uint32_t start = 0;
@@ -276,7 +276,7 @@ std::optional<uint32_t> PaddingWidener::roomFor(const Unit& unit)
 
 bool PaddingWidener::widen(uint32_t index)
 {
-    const Unit& unit = m_units[index];
+    const PaddingUnit& unit = m_units[index];
     auto offset = roomFor(unit);
     if (!offset)
         return false;

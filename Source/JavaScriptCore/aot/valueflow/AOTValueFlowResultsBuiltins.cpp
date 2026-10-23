@@ -38,7 +38,7 @@ static bool isRaised(const ValueFlowResultInputs& inputs, ValueFlowHostNode node
 
 namespace {
 
-enum class WriteForm : uint8_t {
+enum class BuiltinWriteForm : uint8_t {
     UnderName,
     // Also under an index, and whatever is copied from another object.
     UnderKeyNobodyKnows,
@@ -152,7 +152,7 @@ private:
 
 } // anonymous namespace
 
-static WriteForm formOfWrite(ValueFlowNameKind kind)
+static BuiltinWriteForm formOfWrite(ValueFlowNameKind kind)
 {
     switch (kind) {
     case ValueFlowNameKind::Property:
@@ -160,7 +160,7 @@ static WriteForm formOfWrite(ValueFlowNameKind kind)
     case ValueFlowNameKind::Setter:
     case ValueFlowNameKind::DeletedMember:
     case ValueFlowNameKind::RedefinedMember:
-        return WriteForm::UnderName;
+        return BuiltinWriteForm::UnderName;
     case ValueFlowNameKind::Elements:
     case ValueFlowNameKind::UnknownKey:
     case ValueFlowNameKind::GetterUnderUnknownKey:
@@ -168,35 +168,13 @@ static WriteForm formOfWrite(ValueFlowNameKind kind)
     case ValueFlowNameKind::CopiedFrom:
     case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
     case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-        return WriteForm::UnderKeyNobodyKnows;
+        return BuiltinWriteForm::UnderKeyNobodyKnows;
     case ValueFlowNameKind::PrototypeLink:
-        return WriteForm::OfPrototypeLink;
+        return BuiltinWriteForm::OfPrototypeLink;
     case ValueFlowNameKind::Slot:
-        return WriteForm::OfSlot;
-    case ValueFlowNameKind::EveryProperty:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
-        return WriteForm::Other;
+        return BuiltinWriteForm::OfSlot;
+    default:
+        return BuiltinWriteForm::Other;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -227,7 +205,7 @@ BuiltinHolders::BuiltinHolders(const ValueFlowResultInputs& inputs, const ValueF
 void BuiltinHolders::noteWrites(const ValueFlowHeapIndex& index)
 {
     Vector<ValueFlowHeapIndex::Stretch> stretches = index.stretchesOfNodesWrittenUnder([](ValueFlowName name) {
-        return formOfWrite(name.kind) != WriteForm::Other;
+        return formOfWrite(name.kind) != BuiltinWriteForm::Other;
     });
 
     const ParallelLoops& loops = m_inputs.loops();
@@ -300,8 +278,8 @@ void BuiltinHolders::noteHoldersIn(ValueFlowNodeID node, BitVector& holders)
 
 void BuiltinHolders::noteWrite(Notes& notes, ValueSetMaker& maker, ValueSetID receivers, ValueFlowName name) const
 {
-    WriteForm form = formOfWrite(name.kind);
-    if (form == WriteForm::Other || (form == WriteForm::OfSlot && name.payload < m_builtins.slotCount()))
+    BuiltinWriteForm form = formOfWrite(name.kind);
+    if (form == BuiltinWriteForm::Other || (form == BuiltinWriteForm::OfSlot && name.payload < m_builtins.slotCount()))
         return;
     Notes::ThroughSet& written = notes.throughSet.ensure(receivers.index(), [&] {
         return Notes::ThroughSet { holdersIn(maker, receivers), { } };
@@ -310,7 +288,7 @@ void BuiltinHolders::noteWrite(Notes& notes, ValueSetMaker& maker, ValueSetID re
         for (BuiltinID holder : written.holders)
             functor(holder);
     };
-    if (form == WriteForm::OfSlot) {
+    if (form == BuiltinWriteForm::OfSlot) {
         // A cell of native code on the built-in's own object, under the name of a property that a row of the table asks for.
         forEachHolderAmongReceivers([&](BuiltinID builtin) {
             notes.propertiesOfOperands.append(static_cast<uint64_t>(builtin.index()) << 32 | (name.payload - m_builtins.slotCount()));
@@ -320,17 +298,17 @@ void BuiltinHolders::noteWrite(Notes& notes, ValueSetMaker& maker, ValueSetID re
 
     auto noteThrough = [&](WritesThroughPlaceholder& writes) {
         switch (form) {
-        case WriteForm::UnderName:
+        case BuiltinWriteForm::UnderName:
             writes.keys.set(name.payload);
             return;
-        case WriteForm::UnderKeyNobodyKnows:
+        case BuiltinWriteForm::UnderKeyNobodyKnows:
             writes.writesUnderKeysNobodyKnows = true;
             return;
-        case WriteForm::OfPrototypeLink:
+        case BuiltinWriteForm::OfPrototypeLink:
             writes.changesPrototypeLinks = true;
             return;
-        case WriteForm::OfSlot:
-        case WriteForm::Other:
+        case BuiltinWriteForm::OfSlot:
+        case BuiltinWriteForm::Other:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -340,23 +318,23 @@ void BuiltinHolders::noteWrite(Notes& notes, ValueSetMaker& maker, ValueSetID re
     if (m_inputs.sets().contains(receivers, ValueFlowUniverse::untrackedObject()))
         noteThrough(notes.throughUntrackedObject);
 
-    if (form == WriteForm::UnderName) {
+    if (form == BuiltinWriteForm::UnderName) {
         if (!written.holders.isEmpty())
             written.keysWritten.append(name.payload);
         return;
     }
     forEachHolderAmongReceivers([&](BuiltinID holder) {
         switch (form) {
-        case WriteForm::UnderName:
+        case BuiltinWriteForm::UnderName:
             break;
-        case WriteForm::UnderKeyNobodyKnows:
+        case BuiltinWriteForm::UnderKeyNobodyKnows:
             (name.kind == ValueFlowNameKind::Elements ? notes.isWrittenUnderIndexes : notes.isWrittenUnderKeysNobodyKnows).quickSet(holder.index());
             return;
-        case WriteForm::OfPrototypeLink:
+        case BuiltinWriteForm::OfPrototypeLink:
             notes.hasPrototypeLinkChangedByProgram.quickSet(holder.index());
             return;
-        case WriteForm::OfSlot:
-        case WriteForm::Other:
+        case BuiltinWriteForm::OfSlot:
+        case BuiltinWriteForm::Other:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -437,12 +415,7 @@ static OptionSet<BuiltinUse> usesEnteringCode(BuiltinKind kind)
     case BuiltinKind::DataProperty:
     case BuiltinKind::NativeBinding:
         return callingBuiltinUses | accessingBuiltinUses;
-    case BuiltinKind::Constructor:
-    case BuiltinKind::Function:
-    case BuiltinKind::Method:
-    case BuiltinKind::Namespace:
-    case BuiltinKind::Prototype:
-    case BuiltinKind::Constant:
+    default:
         return callingBuiltinUses;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -477,18 +450,7 @@ static void addPrototypesOfAllocatedClasses(const ValueFlowResultInputs& inputs,
             case ValueFlowObjectKind::RestArray:
             case ValueFlowObjectKind::Site:
                 break;
-            case ValueFlowObjectKind::Primitive:
-            case ValueFlowObjectKind::UnknownObject:
-            case ValueFlowObjectKind::Builtin:
-            case ValueFlowObjectKind::ModuleBuiltin:
-            case ValueFlowObjectKind::Namespace:
-            case ValueFlowObjectKind::Closure:
-            case ValueFlowObjectKind::Instance:
-            case ValueFlowObjectKind::Prototype:
-            case ValueFlowObjectKind::FunctionPrototype:
-            case ValueFlowObjectKind::ConstructedObject:
-            case ValueFlowObjectKind::ResultOfBuiltin:
-            case ValueFlowObjectKind::Key:
+            default:
                 continue;
             }
             BuiltinClassID builtinClass = universe.classOf(object);
@@ -820,18 +782,7 @@ static bool writesUnderKey(BuiltinPropertyActionKind kind)
     case BuiltinPropertyActionKind::DefinesGetter:
     case BuiltinPropertyActionKind::DefinesSetter:
         return true;
-    case BuiltinPropertyActionKind::ReadsByKey:
-    case BuiltinPropertyActionKind::AssignsFrom:
-    case BuiltinPropertyActionKind::DefinesFrom:
-    case BuiltinPropertyActionKind::TakesDescriptorMap:
-    case BuiltinPropertyActionKind::ChangesIntegrity:
-    case BuiltinPropertyActionKind::ChangesPrototype:
-    case BuiltinPropertyActionKind::BecomesPrototype:
-    case BuiltinPropertyActionKind::ReadsGetter:
-    case BuiltinPropertyActionKind::ReadsSetter:
-    case BuiltinPropertyActionKind::TestsByKey:
-    case BuiltinPropertyActionKind::DescribesOwnProperties:
-    case BuiltinPropertyActionKind::DescribesResult:
+    default:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -1049,7 +1000,7 @@ void WritesOfLockedLocations::noteOperation(const Notes& notes, const ValueFlowS
     Witness witness = witnessOfStatement(m_program, statement);
     ValueFlowStatementID id(static_cast<uint32_t>(&statement - bodies.statements().data()));
     m_inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Written }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID) {
-        if (formOfWrite(key.name().kind) == WriteForm::UnderName)
+        if (formOfWrite(key.name().kind) == BuiltinWriteForm::UnderName)
             note(notes, key.set, PropertyKeyID(key.payload), witness);
     });
 
@@ -1088,10 +1039,7 @@ void WritesOfLockedLocations::noteApplication(const Notes& notes, const ValueFlo
             case BuiltinKeyKind::Operand:
                 noteUnderNamesAmong(notes, application.valueAt(*action.key.operand, notes.maker), application.function, valuePassedAt(call, *action.key.operand), receivers, witness);
                 break;
-            case BuiltinKeyKind::None:
-            case BuiltinKeyKind::Any:
-            case BuiltinKeyKind::Indexes:
-            case BuiltinKeyKind::ElementsOf:
+            default:
                 break;
             }
         }
@@ -1256,12 +1204,7 @@ static void forEachPartAllocatedAsResult(const BuiltinTable& builtins, BuiltinID
             case BuiltinTypePartKind::Layout:
                 functor(part);
                 break;
-            case BuiltinTypePartKind::Builtin:
-            case BuiltinTypePartKind::Operand:
-            case BuiltinTypePartKind::Slot:
-            case BuiltinTypePartKind::IteratedValues:
-            case BuiltinTypePartKind::CallbackResult:
-            case BuiltinTypePartKind::Prototype:
+            default:
                 break;
             }
         }

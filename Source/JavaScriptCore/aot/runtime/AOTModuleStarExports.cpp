@@ -18,7 +18,7 @@
 namespace JSC { namespace AOT {
 
 using ModulePhase = AbstractModuleRecord::ModulePhase;
-using Resolution = AbstractModuleRecord::Resolution;
+using StarExportResolution = AbstractModuleRecord::Resolution;
 
 StarExportResolver::StarExportResolver(Modules& modules)
     : m_modules(modules)
@@ -99,14 +99,14 @@ StarBinding StarExportResolver::bindingOf(const ModuleExportData& moduleExport)
         const Identifier& importName = m_modules.identifier(indirectExport.importName);
         AbstractModuleRecord* record = m_modules.uncompiledRecord(indirectExport.targetModule());
         RETURN_IF_EXCEPTION(scope, { });
-        Resolution resolution = record->resolveExport(instance.globalObject, importName);
+        StarExportResolution resolution = record->resolveExport(instance.globalObject, importName);
         RETURN_IF_EXCEPTION(scope, { });
         switch (resolution.type) {
-        case Resolution::Type::Resolved:
+        case StarExportResolution::Type::Resolved:
             RELEASE_AND_RETURN(scope, bindingOf(resolution));
-        case Resolution::Type::NotFound:
-        case Resolution::Type::Ambiguous:
-        case Resolution::Type::Error:
+        case StarExportResolution::Type::NotFound:
+        case StarExportResolution::Type::Ambiguous:
+        case StarExportResolution::Type::Error:
             return UncompiledBinding { record, importName.impl() };
         }
         break;
@@ -115,11 +115,11 @@ StarBinding StarExportResolver::bindingOf(const ModuleExportData& moduleExport)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-StarBinding StarExportResolver::bindingOf(const Resolution& resolution)
+StarBinding StarExportResolver::bindingOf(const StarExportResolution& resolution)
 {
     VM& vm = *m_modules.instance().vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(resolution.type == Resolution::Type::Resolved);
+    ASSERT(resolution.type == StarExportResolution::Type::Resolved);
 
     UniquedStringImpl* localName = resolution.localName.impl();
     auto* compiled = dynamicDowncast<ModuleRecord>(resolution.moduleRecord);
@@ -250,9 +250,9 @@ void StarExportResolver::addUncompiledCandidates(ModuleID source, StarCandidates
         namespaceKeys.add(name.impl());
         if (exportedNames == ExportedNames::WithoutDefault && name == vm.propertyNames->defaultKeyword)
             continue;
-        Resolution resolution = record->resolveExport(realm, name);
+        StarExportResolution resolution = record->resolveExport(realm, name);
         RETURN_IF_EXCEPTION(scope, void());
-        if (resolution.type != Resolution::Type::Resolved)
+        if (resolution.type != StarExportResolution::Type::Resolved)
             continue;
         StarBinding binding = bindingOf(resolution);
         RETURN_IF_EXCEPTION(scope, void());
@@ -264,9 +264,9 @@ void StarExportResolver::addUncompiledCandidates(ModuleID source, StarCandidates
     for (const Identifier& name : exported) {
         if (namespaceKeys.contains(name.impl()))
             continue;
-        Resolution resolution = record->resolveExport(realm, name);
+        StarExportResolution resolution = record->resolveExport(realm, name);
         RETURN_IF_EXCEPTION(scope, void());
-        if (resolution.type == Resolution::Type::Ambiguous)
+        if (resolution.type == StarExportResolution::Type::Ambiguous)
             join(candidates, name.impl(), { StarBinding { }, JSValue(), nullptr, true });
     }
 }
@@ -441,15 +441,15 @@ NameResolution StarExportResolver::resolve(ModuleID exporter, uint32_t nameIdent
     if (m_modules.data(exporter).isUncompiledCode()) {
         AbstractModuleRecord* record = m_modules.uncompiledRecord(exporter);
         RETURN_IF_EXCEPTION(scope, NameResolution::NotFound);
-        Resolution resolution = record->resolveExport(instance.globalObject, name);
+        StarExportResolution resolution = record->resolveExport(instance.globalObject, name);
         RETURN_IF_EXCEPTION(scope, NameResolution::NotFound);
         switch (resolution.type) {
-        case Resolution::Type::Resolved:
+        case StarExportResolution::Type::Resolved:
             return NameResolution::Found;
-        case Resolution::Type::Ambiguous:
+        case StarExportResolution::Type::Ambiguous:
             return NameResolution::Ambiguous;
-        case Resolution::Type::NotFound:
-        case Resolution::Type::Error:
+        case StarExportResolution::Type::NotFound:
+        case StarExportResolution::Type::Error:
             return NameResolution::NotFound;
         }
         RELEASE_ASSERT_NOT_REACHED();

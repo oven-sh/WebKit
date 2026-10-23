@@ -25,14 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct ResultNode : WTF::UnionFind<ResultNode> { };
-
-struct TailCallEdge {
-    friend auto operator<=>(const TailCallEdge&, const TailCallEdge&) = default;
-
-    FunctionID callee;
-    FunctionID caller;
-};
+struct ConventionResultNode : WTF::UnionFind<ConventionResultNode> { };
 
 class ResultLocations {
 public:
@@ -78,11 +71,6 @@ private:
 
 } // anonymous namespace
 
-static ValueID tailCallOf(const Block& block)
-{
-    return block.terminator.kind == TerminatorKind::ReturnCall ? block.terminator.callOperand() : ValueID();
-}
-
 static bool hasCheckedCast(const Terminator& terminator)
 {
     return std::ranges::any_of(terminator.casts(), [](const TailCast& cast) {
@@ -125,7 +113,7 @@ static std::span<const TailCallSite> sitesOf(std::span<const TailCallSite> sites
     return sites.subspan(found.begin() - sites.begin(), found.size());
 }
 
-static BitVector createBitVector(const Vector<uint8_t>& flags)
+static BitVector createBitVectorFromFlags(const Vector<uint8_t>& flags)
 {
     BitVector bits(flags.size());
     for (size_t index = 0; index < flags.size(); ++index) {
@@ -167,7 +155,7 @@ DirectCallUse collectDirectCallUse(const ConventionInputs& context)
                 WTF::atomicStore(&isCalled[callee.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
         });
     });
-    return { createBitVector(isCalledAndReturnedTo), createBitVector(isTailCalled) };
+    return { createBitVectorFromFlags(isCalledAndReturnedTo), createBitVectorFromFlags(isTailCalled) };
 }
 
 ResultLocations::ResultLocations(const ConventionInputs& context, const CallingConventionTables& tables)
@@ -225,7 +213,7 @@ void ResultChooser::boxMixedClasses()
 {
     unsigned count = m_program.functions.size();
     unsigned callByValue = count;
-    Vector<ResultNode> nodes(count + 1);
+    Vector<ConventionResultNode> nodes(count + 1);
     for (const TailCallSite& site : m_sites) {
         if (site.requirement != TailCallRequirement::Required)
             continue;

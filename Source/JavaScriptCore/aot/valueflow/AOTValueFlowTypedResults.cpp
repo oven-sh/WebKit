@@ -26,10 +26,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-constexpr ValueFlowName elements = ValueFlowName::of(ValueFlowNameKind::Elements);
-constexpr ValueFlowName unknownKey = ValueFlowName::of(ValueFlowNameKind::UnknownKey);
-
-TypeID elementTypeOf(const Program& program, const ClassPart& array)
+TypeID typedElementTypeOf(const Program& program, const ClassPart& array)
 {
     return array.contentsAt(program.builtins(), ContentsSlot::Element);
 }
@@ -71,7 +68,7 @@ void followTypes(const Program& program, ValueFlowTypedResult& result, bool layo
         const Type& type = program.at(id);
         if (const ClassPart* array = type.findClassPart(BuiltinClasses::Array)) {
             result.typesWithArrays.append(id);
-            visit(elementTypeOf(program, *array));
+            visit(typedElementTypeOf(program, *array));
         }
         std::span<const LayoutID> members = membersOf(program, type);
         for (size_t index = 0; index < result.layouts.size() && !members.empty(); ++index) {
@@ -150,9 +147,9 @@ public:
             fillObject(only(m_result.ordinalOfLayout(index)), m_result.layouts[index]);
         for (size_t index = 0; index < m_result.typesWithArrays.size(); ++index) {
             const ClassPart* array = m_program.at(m_result.typesWithArrays[index]).findClassPart(BuiltinClasses::Array);
-            m_context.add(m_context.written(only(m_result.ordinalOfArray(index)), elements), valueOf(elementTypeOf(m_program, *array)));
+            m_context.add(m_context.written(only(m_result.ordinalOfArray(index)), elementsName), valueOf(typedElementTypeOf(m_program, *array)));
         }
-        m_context.add(m_context.written(only(m_result.ordinalOfPlainArray()), elements), plainData());
+        m_context.add(m_context.written(only(m_result.ordinalOfPlainArray()), elementsName), plainData());
 
         // What lies in plain data lies in the objects that stand for plain data. Where that is the unknown object, it is what the unknown object stands for.
         ClimbingSet plainObjects = m_plainDataOfCall ? m_context.unite(ClimbingSet(m_context.maker().intersect(m_plainDataOfCall, m_universe.objects())), only(m_result.ordinalOfPlainArray())) : ClimbingSet();
@@ -162,7 +159,7 @@ public:
                 m_context.add(ValueFlowProgramNodes::escaped(), only(m_result.ordinalOfLayout(index)));
                 continue;
             }
-            for (ValueFlowName name : { unknownKey, elements })
+            for (ValueFlowName name : { unknownKeyName, elementsName })
                 m_context.add(m_context.written(plainObjects, name), only(m_result.ordinalOfLayout(index)));
         }
     }
@@ -180,7 +177,7 @@ private:
 
     void fillField(ClimbingSet object, const Field& field)
     {
-        ValueFlowNodeID node = m_context.written(object, m_program.isIndexLike(field.key) ? elements : ValueFlowName::property(field.key));
+        ValueFlowNodeID node = m_context.written(object, m_program.isIndexLike(field.key) ? elementsName : ValueFlowName::property(field.key));
         m_context.add(node, valueOf(expectationOf(field.declared)));
         // The text may leave the member out.
         if (!field.declared.type || m_program.at(field.declared.type).primitives & Primitive::Undefined)
@@ -202,7 +199,7 @@ private:
             }
         }
         // A member that the layout does not declare becomes a property of the object.
-        m_context.add(m_context.written(object, unknownKey), plainData());
+        m_context.add(m_context.written(object, unknownKeyName), plainData());
         m_context.mark(object, ObjectMutation::AddProperty);
     }
 

@@ -38,7 +38,6 @@ struct TestCommand {
     ASCIILiteral name;
     std::optional<IRForm> defaultForm;
     void (*run)(TestCommandContext&);
-    RawWordCheck rawWordCheck { RawWordCheck::Run };
     ProgramAsRead programAsRead { ProgramAsRead::AsParsed };
 };
 

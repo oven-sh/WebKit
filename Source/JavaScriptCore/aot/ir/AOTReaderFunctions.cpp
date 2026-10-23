@@ -384,12 +384,6 @@ static void readRecordWithIDsOfUnit(RecordChecker& checker, const Wire::Function
             checker.requireAscending(functionTypes[index - 1], functionTypes[index]);
         record.functionTypes.append(checker.id<FunctionID>(functionTypes[index]));
     }
-
-    // They come in the order of the numbers that the file gave its keys, which hang on what else the file has looked at.
-    auto orderOf = [](const StoredInto& store) {
-        return std::tuple { store.source, store.target, store.key ? store.key.index() + 1 : 0, store.creationOperand ? static_cast<uint64_t>(*store.creationOperand) + 1 : 0 };
-    };
-    AOT::sort(record.relations.stores, std::less { }, orderOf);
 }
 
 Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& seen) const

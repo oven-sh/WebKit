@@ -25,13 +25,13 @@ static SiteCache siteToFill(SiteCache site)
     return site && site->get().kind != Slot::Kind::Uncacheable ? site : nullptr;
 }
 
-static bool canCachePropertiesOf(JSGlobalObject* globalObject)
+static bool canCacheFreeNamesOf(JSGlobalObject* globalObject)
 {
     TypeInfo typeInfo = globalObject->structure()->typeInfo();
     return !typeInfo.prohibitsPropertyCaching() && !typeInfo.getOwnPropertySlotIsImpure() && !typeInfo.getOwnPropertySlotIsImpureForPropertyAbsence();
 }
 
-static bool isFixed(const PropertySlot& slot, const Identifier& identifier)
+static bool isFixedFreeName(const PropertySlot& slot, const Identifier& identifier)
 {
     constexpr unsigned fixed = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     return (slot.attributes() & fixed) == fixed || identifier.isPrivateName();
@@ -48,12 +48,12 @@ static ChainWalk walkAboveGlobalObject(JSGlobalObject* globalObject, UniquedStri
     return walkChain({ globalObject, globalObject->structure(), globalObject, mode }, uid);
 }
 
-static PropertyAnswer uncacheableOnce(SlotAccess access)
+static PropertyAnswer uncacheableFreeNameOnce(SlotAccess access)
 {
     return PropertyAnswer::uncacheable(access, true);
 }
 
-static PropertyAnswer uncacheableAfter(ChainWalk&& walk)
+static PropertyAnswer uncacheableFreeNameAfter(ChainWalk&& walk)
 {
     PropertyAnswer answer = PropertyAnswer::uncacheable(SlotAccess::Read, walk.didFlatten);
     answer.changeableObjects = WTF::move(walk.changeableObjects);
@@ -89,11 +89,11 @@ static PropertyAnswer classifyLexicalRead(JSGlobalObject* globalObject, UniquedS
 
 static PropertyAnswer classifyAbsentRead(JSGlobalObject* globalObject, UniquedStringImpl* uid)
 {
-    if (!canCachePropertiesOf(globalObject))
+    if (!canCacheFreeNamesOf(globalObject))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     ChainWalk walk = walkAboveGlobalObject(globalObject, uid);
     if (walk.result != ChainWalkResult::Absent)
-        return uncacheableAfter(WTF::move(walk));
+        return uncacheableFreeNameAfter(WTF::move(walk));
     PropertyAnswer answer;
     answer.kind = PropertyAnswerKind::Absent;
     answer.changeableObjects = WTF::move(walk.changeableObjects);
@@ -104,11 +104,11 @@ static PropertyAnswer classifyInheritedRead(JSGlobalObject* globalObject, Unique
 {
     ChainWalk walk = walkAboveGlobalObject(globalObject, uid);
     if (walk.result != ChainWalkResult::Found || walk.holder != slot.slotBase())
-        return uncacheableAfter(WTF::move(walk));
+        return uncacheableFreeNameAfter(WTF::move(walk));
     bool isValue = slot.isCacheableValue() && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue);
     bool isGetter = slot.isCacheableGetter() && walk.attributes & PropertyAttribute::Accessor;
     if (!isValue && !isGetter)
-        return uncacheableAfter(WTF::move(walk));
+        return uncacheableFreeNameAfter(WTF::move(walk));
     PropertyAnswer answer = answerInStorage(isValue ? PropertyAnswerKind::Value : PropertyAnswerKind::Accessor, SlotAccess::Read, walk.holder, walk.offset);
     answer.changeableObjects = WTF::move(walk.changeableObjects);
     return answer;
@@ -117,7 +117,7 @@ static PropertyAnswer classifyInheritedRead(JSGlobalObject* globalObject, Unique
 static PropertyAnswer classifyOwnValueRead(Instance& instance, JSGlobalObject* globalObject, const Identifier& identifier, const PropertySlot& slot, JSValue value, SiteCache site)
 {
     UniquedStringImpl* uid = identifier.impl();
-    if (isFixed(slot, identifier) || globalObject->structure()->isImmutablePropertyForReader(uid))
+    if (isFixedFreeName(slot, identifier) || globalObject->structure()->isImmutablePropertyForReader(uid))
         return constantAnswer(value);
 
     if (instance.state->propertyCaches->watchedValues().tryWatchConstant(*instance.vm, globalObject, uid, value, site))
@@ -127,7 +127,7 @@ static PropertyAnswer classifyOwnValueRead(Instance& instance, JSGlobalObject* g
 
 static PropertyAnswer classifyFreeNameRead(Instance& instance, JSGlobalObject* globalObject, const Identifier& identifier, const PropertySlot& slot, JSValue value, SiteCache site)
 {
-    if (!canCachePropertiesOf(globalObject) || slot.isTaintedByOpaqueObject())
+    if (!canCacheFreeNamesOf(globalObject) || slot.isTaintedByOpaqueObject())
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     if (slot.slotBase() != globalObject)
         return classifyInheritedRead(globalObject, identifier.impl(), slot);
@@ -137,7 +137,7 @@ static PropertyAnswer classifyFreeNameRead(Instance& instance, JSGlobalObject* g
         return answerInStorage(PropertyAnswerKind::Accessor, SlotAccess::Read, globalObject, slot.cachedOffset());
     if (slot.isValue() && isConstantVariable(globalObject, identifier))
         return constantAnswer(value);
-    if (slot.isCustom() && isFixed(slot, identifier) && slot.attributes() & PropertyAttribute::CustomValue)
+    if (slot.isCustom() && isFixedFreeName(slot, identifier) && slot.attributes() & PropertyAttribute::CustomValue)
         return constantAnswer(value);
     return PropertyAnswer::uncacheable(SlotAccess::Read);
 }
@@ -145,7 +145,7 @@ static PropertyAnswer classifyFreeNameRead(Instance& instance, JSGlobalObject* g
 // The lookup may have created the property, and a getter it found has run by now, so the Structure is asked again and no accessor is filed.
 static PropertyAnswer classifyReadForwardedTo(JSGlobalObject* globalObject, UniquedStringImpl* uid, const PropertySlot& slot)
 {
-    if (!canCachePropertiesOf(globalObject) || slot.isTaintedByOpaqueObject())
+    if (!canCacheFreeNamesOf(globalObject) || slot.isTaintedByOpaqueObject())
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     unsigned attributes = 0;
     PropertyOffset offset = globalObject->structure()->get(globalObject->vm(), uid, attributes);
@@ -246,7 +246,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFreeNameForTypeOf, EncodedJSValue, (Inst
 static PropertyAnswer classifyFreeNameStore(VM& vm, JSGlobalObject* globalObject, UniquedStringImpl* uid, const PutPropertySlot& slot)
 {
     Structure* structure = globalObject->structure();
-    if (!canCachePropertiesOf(globalObject) || structure->isImmutableProperty(uid))
+    if (!canCacheFreeNamesOf(globalObject) || structure->isImmutableProperty(uid))
         return PropertyAnswer::uncacheable(SlotAccess::Store);
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, uid, attributes);
@@ -257,7 +257,7 @@ static PropertyAnswer classifyFreeNameStore(VM& vm, JSGlobalObject* globalObject
     if (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
         return PropertyAnswer::uncacheable(SlotAccess::Store);
     if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != globalObject || slot.cachedOffset() != offset)
-        return uncacheableOnce(SlotAccess::Store);
+        return uncacheableFreeNameOnce(SlotAccess::Store);
     return answerInStorage(PropertyAnswerKind::Value, SlotAccess::Store, globalObject, offset);
 }
 

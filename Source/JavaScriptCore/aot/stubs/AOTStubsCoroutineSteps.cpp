@@ -28,9 +28,6 @@ namespace JSC { namespace AOT {
 
 using Field = JSAsyncGenerator::Field;
 
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr GPRReg fp = GPRInfo::callFrameRegister;
-
 // What the stubs know about the coroutine that iterates.
 static constexpr int32_t consumerMayContinue = 1;
 static constexpr int32_t consumerIsAsyncGenerator = 2;

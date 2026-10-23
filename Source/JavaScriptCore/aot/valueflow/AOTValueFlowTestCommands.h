@@ -18,10 +18,6 @@ void runValueFlowFamiliesTestCommand(TestCommandContext&);
 void runValueFlowWhyTestCommand(TestCommandContext&);
 void runValueFlowResultsTestCommand(TestCommandContext&);
 void runValueFlowApplyTestCommand(TestCommandContext&);
-void runRunsNoCodeTestCommand(TestCommandContext&);
-void runRelationalSummaryTestCommand(TestCommandContext&);
-void runOriginsBeforeFlowTestCommand(TestCommandContext&);
-void runFatesAtCallsTestCommand(TestCommandContext&);
 
 // The word `split` of valueflow-solve and valueflow-why.
 void prepareAsInFrontOfFlow(TestCommandContext&);

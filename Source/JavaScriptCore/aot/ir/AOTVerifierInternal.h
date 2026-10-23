@@ -170,9 +170,6 @@ private:
     void verifyBuiltinOperation(BlockID, ValueID, const Value&);
     void verifyDirectEval(BlockID, ValueID, const Value&);
     void verifySlotOperation(BlockID, ValueID, const Value&);
-    void verifyUsesOfBorrowedObject(ValueID);
-    bool standsBehindBorrowedParameter(ValueID parameter);
-    void verifyObjectMadeOnDemand(BlockID, ValueID, const Value&);
     void verifyKeyedTail(BlockID, ValueID, const Value&, size_t numberOfKeys);
     void verifyElementOperation(BlockID, ValueID, const Value&);
     void verifyStringBuilderOperation(BlockID, ValueID, const Value&);
@@ -200,7 +197,6 @@ private:
     SlotsInReceivers* m_slotsInReceivers { nullptr };
     Vector<InternalError> m_errors;
     bool m_hasValidStructure { false };
-    bool m_hasFrameAllocation { false };
     bool m_hasTypedDataOperations { false };
     ValueID m_initialYield;
     Vector<ValueID, 4> m_yields;
@@ -261,6 +257,11 @@ private:
     VerifierInputs m_inputs;
     bool m_hasFailed { false };
 };
+
+inline bool isAsRead(const FunctionVerifier& verifier)
+{
+    return verifier.form() == IRForm::AsRead && !verifier.isOptimizing();
+}
 
 } } } // namespace JSC::AOT::Typed
 

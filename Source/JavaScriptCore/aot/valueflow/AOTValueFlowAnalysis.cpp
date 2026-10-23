@@ -39,8 +39,10 @@ static std::optional<unsigned> positionOfParameter(const Function& function, Val
 }
 
 // A parameter is a key where the body stores under it, where the body calls what it has read under it, or where the body hands it on to a function that takes a key there.
-Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops)
+Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>* textsPassed, Vector<ValueFlowNotedOperations>* notedOperations)
 {
+    if (notedOperations)
+        notedOperations->fill(0, program.functions.size());
     struct Argument {
         uint32_t index;
         uint32_t positionOfParameter;
@@ -57,6 +59,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         Vector<std::pair<uint32_t, uint32_t>> namesStoredAgain;
         Vector<CallPassingParameters> calls;
         Vector<Argument> arguments;
+        Vector<TextPassed> textsPassed;
     };
 
     auto functionBoundTo = [&](const Function& function, ValueID id) -> FunctionID {
@@ -73,6 +76,8 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
     positionOfKey.fill(noKey, program.functions.size());
     auto scan = [&](unsigned index, Found& body) {
         const Function& function = program.functions[index];
+        if (notedOperations)
+            (*notedOperations)[index] = notedOperationsOf(function);
         bool hasInstances = mayHaveInstances(function);
         auto note = [&](unsigned position) {
             positionOfKey[index] = std::min<uint32_t>(positionOfKey[index], position);
@@ -113,7 +118,16 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                 default:
                     break;
                 }
-                if (!hasInstances || (value.opcode != Opcode::Call && value.opcode != Opcode::Construct))
+                if (value.opcode != Opcode::Call && value.opcode != Opcode::Construct)
+                    continue;
+                for (uint32_t operand = 2; textsPassed && operand < value.numberOfOperands() && operand < 2 + mostArgumentsLookedAtForTexts; ++operand) {
+                    if (!value.operand(operand))
+                        continue;
+                    const Value& argument = function.at(definitionThroughSameValues(function, value.operand(operand)));
+                    if (argument.opcode == Opcode::String)
+                        body.textsPassed.append({ operand - 2, argument.string() });
+                }
+                if (!hasInstances)
                     continue;
                 FunctionID callee = functionBoundTo(function, value.calleeOperand());
                 PropertyKeyID nameOfCallee = !callee && value.opcode == Opcode::Call ? value.calleeKey() : PropertyKeyID();
@@ -138,6 +152,10 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             scan(index, found);
         return found;
     });
+    if (textsPassed) {
+        for (size_t chunk = 0; chunk < bodies.size(); ++chunk)
+            textsPassed->appendVector(std::exchange(bodies[chunk].textsPassed, { }));
+    }
 
     // By the name: the functions that are stored under it, and the names under which what lies under it is stored again, `prototype.on = prototype.addListener`.
     constexpr uint32_t noList = UINT32_MAX;
@@ -305,8 +323,9 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
 }
 
 // A text is a constant of flow where it is a property key of the program. So a text that a call passes where some function takes a key becomes one.
-static void makeKeysOfTextsThatCallsPass(Program& program, const ParallelLoops& loops, std::span<const uint32_t> positionOfKey)
+static void makeKeysOfTextsThatCallsPass(Program& program, std::span<const uint32_t> positionOfKey, std::span<const ValueFlowInstancedFunctions::TextPassed> textsPassed)
 {
+    static_assert(ValueFlowInstancedFunctions::mostArgumentsLookedAtForTexts == 64);
     program.types.didInternKeysThatOperationsSpell();
     uint64_t positionsOfKeys = 0;
     for (uint32_t position : positionOfKey) {
@@ -315,26 +334,10 @@ static void makeKeysOfTextsThatCallsPass(Program& program, const ParallelLoops& 
     }
     if (!positionsOfKeys)
         return;
-    using Text = std::remove_cvref_t<decltype(std::declval<const Value&>().string())>;
-    Vector<Text> texts = collectInParallel<Text>(loops, program.functions.size(), [&](unsigned index, Vector<Text>& found) {
-        const Function& function = program.functions[index];
-        for (const Block& block : function.blocks) {
-            for (ValueID id : block.values) {
-                const Value& call = function.at(id);
-                if (call.opcode != Opcode::Call && call.opcode != Opcode::Construct)
-                    continue;
-                for (uint32_t operand = 2; operand < call.numberOfOperands() && operand < 66; ++operand) {
-                    if (!(positionsOfKeys >> (operand - 2) & 1) || !call.operand(operand))
-                        continue;
-                    const Value& argument = function.at(definitionThroughSameValues(function, call.operand(operand)));
-                    if (argument.opcode == Opcode::String)
-                        found.append(argument.string());
-                }
-            }
-        }
-    });
-    for (const Text& text : texts)
-        program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = text });
+    for (const ValueFlowInstancedFunctions::TextPassed& passed : textsPassed) {
+        if (positionsOfKeys >> passed.positionOfArgument & 1)
+            program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = passed.text });
+    }
 }
 
 // So does a text that the type of a declared position lists: a String operation with that text is then a member of the type, and not any string.
@@ -380,11 +383,13 @@ static ValueFlowBodies reduceBodiesTimed(Program& program, BuildContext& build, 
 {
     MonotonicTime start = MonotonicTime::now();
     PhaseTimes times(build, PassID::AnalyzeFlow);
-    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops());
-    makeKeysOfTextsThatCallsPass(program, build.parallelLoops(), positionOfKey.span());
+    Vector<ValueFlowInstancedFunctions::TextPassed> textsPassed;
+    Vector<ValueFlowNotedOperations> notedOperations;
+    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), &textsPassed, &notedOperations);
+    makeKeysOfTextsThatCallsPass(program, positionOfKey.span(), textsPassed.span());
     internKeysOfDeclaredStringLiterals(program, build.parallelLoops());
     times.didFinish("solve: keys"_s);
-    ValueFlowBodies bodies = reduceBodies(program, build);
+    ValueFlowBodies bodies = reduceBodies(program, build, WTF::move(notedOperations));
     times.didFinish("solve: bodies"_s);
     time = MonotonicTime::now() - start;
     return bodies;
@@ -432,7 +437,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
     : m_program(program)
     , m_bodies(reduceBodiesTimed(program, build, m_positionOfKey, m_timeToReduceBodies))
     , m_maker(m_bodies.sets())
@@ -464,6 +469,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
         .refusesEvaluatedText = build.options().excludesEvaluatedText(),
+        .removedFeatures = build.options().removedFeatures,
     };
     PhaseTimes times(build, PassID::AnalyzeFlow);
     m_instancedFunctions = makeUnique<ValueFlowInstancedFunctions>(program, m_bodies, m_positionOfKey.span(), m_maker, build.parallelLoops());
@@ -471,7 +477,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         m_input.instancedFunctions = m_instancedFunctions.get();
     times.didFinish("solve: instanced functions"_s);
     MonotonicTime start = MonotonicTime::now();
-    m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
+    m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops());
     times.didFinish("solve: the solver made"_s);
     m_hasResult = m_solver->solve();
     times.didFinish("solve: rounds"_s);
@@ -508,100 +514,6 @@ ValueSetID ValueFlowSolution::valueOf(const ValueFlowOperand& operand)
     if (operand.node)
         value = m_maker.unite(value, m_solver->valueOf(operand.node));
     return ValueFlowRuleContext::throughMaskOf(operand, value, *m_solver, m_maker);
-}
-
-// What each await of a reached function is handed and what it gives, and for an await of promises of the program alone that gives something nobody knows: whose promise holds it.
-void printAwaits(PrintStream& out, ValueFlowSolution& solution)
-{
-    constexpr size_t numberOfFunctionsPrinted = 40;
-    enum Part : uint8_t { TypedBodies, RestOfProgram, GenericVersions, Library, NumberOfParts };
-    constexpr ASCIILiteral namesOfParts[NumberOfParts] { "typed bodies"_s, "the rest of the program"_s, "generic versions"_s, "the library"_s };
-    enum Held : uint8_t { UnknownObject, UntrackedObject, KnownAlone, NumberOfHeld };
-    enum Awaited : uint8_t { PromisesOfProgram, PromisesOfBuiltins, OtherObjects, PrimitivesAlone, NumberOfAwaited };
-    constexpr ASCIILiteral namesOfAwaited[NumberOfAwaited] { "promises of async functions alone"_s, "a promise that a built-in has made among them"_s, "another object among them"_s, "primitives alone"_s };
-
-    const Program& program = solution.program();
-    const ValueFlowSolver& solver = solution.solver();
-    const ValueFlowBodies& bodies = solution.bodies();
-    const ValueFlowUniverse& universe = bodies.universe();
-    const ValueSets& sets = solution.sets();
-    auto whatIsHeld = [&](ValueSetID value) {
-        return sets.contains(value, ValueFlowUniverse::unknownObject()) ? UnknownObject : sets.contains(value, ValueFlowUniverse::untrackedObject()) ? UntrackedObject : KnownAlone;
-    };
-
-    std::array<std::array<uint32_t, NumberOfHeld>, NumberOfParts> operands { };
-    std::array<std::array<std::array<uint32_t, NumberOfHeld>, NumberOfAwaited>, NumberOfParts> resultsOfKnownOperands { };
-    uint32_t promisesThatHaveEscaped = 0;
-    // By whether a promise among those awaited has escaped, and whether a function among those that made them returns a placeholder.
-    std::array<std::array<uint32_t, 2>, 2> awaitsThatGiveUnknownObject { };
-    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> awaitsOfFunction;
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        if (!solver.isReached(FunctionID(index)))
-            continue;
-        FunctionRole role = program.functions[index].role;
-        Part part = role == FunctionRole::GenericVersion ? GenericVersions : isWrittenInProgram(program.functions[index]) ? RestOfProgram : Library;
-        if (part == RestOfProgram && role == FunctionRole::Source && universe.genericVersionOf(FunctionID(index)))
-            part = TypedBodies;
-        for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
-            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Await || !statement.result)
-                continue;
-            ValueSetID awaited = solution.valueOf(bodies.operandsOf(statement)[0]);
-            Held held = whatIsHeld(awaited);
-            ++operands[part][held];
-            if (held != KnownAlone)
-                continue;
-            Awaited kind = PrimitivesAlone;
-            sets.forEachMember(awaited, [&](ValueFlowObjectID member) {
-                if (!universe.isObject(member))
-                    return;
-                ValueFlowObjectKind objectKind = universe.kindOf(member);
-                Awaited kindOfMember = objectKind == ValueFlowObjectKind::CoroutineResult ? PromisesOfProgram
-                    : objectKind == ValueFlowObjectKind::ResultOfBuiltin || (objectKind == ValueFlowObjectKind::Site && sets.contains(universe.instancesOf(BuiltinClasses::Promise), member)) ? PromisesOfBuiltins : OtherObjects;
-                kind = kind == PrimitivesAlone ? kindOfMember : std::max(kind, kindOfMember);
-            });
-            Held given = whatIsHeld(solver.valueOf(statement.result));
-            ++resultsOfKnownOperands[part][kind][given];
-            if (kind != PromisesOfProgram || given != UnknownObject || part == Library)
-                continue;
-            bool somePromiseHasEscaped = false;
-            bool someFunctionReturnsPlaceholder = false;
-            sets.forEachMember(awaited, [&](ValueFlowObjectID member) {
-                if (!universe.isObject(member))
-                    return;
-                FunctionID function = universe.functionOf(member);
-                bool hasEscaped = sets.contains(solver.valueOf(ValueFlowProgramNodes::escaped()), member);
-                bool returnsPlaceholder = whatIsHeld(solver.valueOf(bodies.nodes().result(function, 0))) != KnownAlone;
-                promisesThatHaveEscaped += hasEscaped;
-                somePromiseHasEscaped |= hasEscaped;
-                someFunctionReturnsPlaceholder |= returnsPlaceholder;
-                if (hasEscaped || returnsPlaceholder)
-                    ++awaitsOfFunction.add(function.index(), 0).iterator->value;
-            });
-            ++awaitsThatGiveUnknownObject[somePromiseHasEscaped][someFunctionReturnsPlaceholder];
-        }
-    }
-
-    for (size_t part = 0; part < NumberOfParts; ++part) {
-        out.println("awaits in ", namesOfParts[part], ": handed the unknown object ", operands[part][UnknownObject], ", the untracked object ", operands[part][UntrackedObject], ", known values alone ", operands[part][KnownAlone]);
-        for (size_t kind = 0; kind < NumberOfAwaited; ++kind) {
-            const auto& results = resultsOfKnownOperands[part][kind];
-            out.println("  ", namesOfAwaited[kind], ": gives the unknown object ", results[UnknownObject], ", the untracked object ", results[UntrackedObject], ", known values alone ", results[KnownAlone]);
-        }
-    }
-    out.println("promises of async functions at awaits that give the unknown object: escaped ", promisesThatHaveEscaped);
-    out.println("awaits of promises of async functions alone that give the unknown object: a promise has escaped and every function returns known values ", awaitsThatGiveUnknownObject[1][0], ", a promise has escaped and a function returns a placeholder ", awaitsThatGiveUnknownObject[1][1], ", no promise has escaped and a function returns a placeholder ", awaitsThatGiveUnknownObject[0][1], ", neither ", awaitsThatGiveUnknownObject[0][0]);
-    Vector<std::pair<uint32_t, uint32_t>> functions;
-    for (auto [function, count] : awaitsOfFunction)
-        functions.append({ count, function });
-    AOT::sort(functions, std::greater { });
-    out.println("async functions that return the unknown object or whose promise has escaped, by awaits: ", functions.size());
-    for (size_t index = 0; index < std::min(functions.size(), numberOfFunctionsPrinted); ++index) {
-        const Function& function = program.functions[functions[index].second];
-        auto textOf = [&](StringID text) {
-            return text ? String::fromUTF8(program.string(text)) : String();
-        };
-        out.println("  ", functions[index].first, " f", functions[index].second, " ", textOf(function.name), " ", function.module ? textOf(program.at(function.module).displayPath) : String(), ":", function.position);
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

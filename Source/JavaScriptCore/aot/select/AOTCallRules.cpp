@@ -26,7 +26,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct MethodCall {
+struct SelectedMethodCall {
     SelectionGroup group;
     ValueID read;
 };
@@ -46,15 +46,6 @@ static uint32_t numberOfArgumentsOf(const Value& call)
     return static_cast<uint32_t>(call.argumentsOperands().size());
 }
 
-static bool isOwnedByReturnCall(SelectionContext& context, ValueID id)
-{
-    BlockID block = context.analyses().useLists().blockOf(id);
-    if (!block)
-        return false;
-    const Terminator& terminator = context.function().at(block).terminator;
-    return terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id;
-}
-
 static bool isUntypedMethodRead(SelectionContext& context, ValueID id, PropertyKeyID key)
 {
     const Value& read = context.function().at(id);
@@ -63,7 +54,7 @@ static bool isUntypedMethodRead(SelectionContext& context, ValueID id, PropertyK
     return context.typeOf(id).isAnything() && hasEffectsOfUnknownCode(context, id);
 }
 
-static std::optional<MethodCall> matchMethodCall(SelectionContext& context, ValueID id)
+static std::optional<SelectedMethodCall> matchMethodCall(SelectionContext& context, ValueID id)
 {
     const Function& function = context.function();
     const Value& call = function.at(id);
@@ -84,10 +75,10 @@ static std::optional<MethodCall> matchMethodCall(SelectionContext& context, Valu
     ValueID object = function.at(read).objectOperand();
     if (thisValue != object && analyses.identityOf(thisValue) != analyses.identityOf(object))
         return std::nullopt;
-    return MethodCall { groupOf({ read, id }), read };
+    return SelectedMethodCall { groupOf({ read, id }), read };
 }
 
-static void rewriteMethodCall(GroupRewriter& rewriter, const MethodCall& match)
+static void rewriteMethodCall(GroupRewriter& rewriter, const SelectedMethodCall& match)
 {
     const Value& read = rewriter.original(match.read);
     const Value& call = rewriter.original(match.group.root);
@@ -116,9 +107,9 @@ static bool passesFramePointer(const FramePointers& pointers, const Value& call)
 void selectMethodCall(SelectionContext& context)
 {
     std::optional<FramePointers> framePointers;
-    Vector<MethodCall> matches;
+    Vector<SelectedMethodCall> matches;
     for (ValueID id : context.candidates(Opcode::Call)) {
-        std::optional<MethodCall> match = matchMethodCall(context, id);
+        std::optional<SelectedMethodCall> match = matchMethodCall(context, id);
         if (!match)
             continue;
         if (!framePointers)
@@ -129,7 +120,7 @@ void selectMethodCall(SelectionContext& context)
             matches.append(WTF::move(*match));
     }
 
-    context.rewriteGroups(SelectionRuleID::MethodCall, matches, [](GroupRewriter& rewriter, const MethodCall& match) {
+    context.rewriteGroups(SelectionRuleID::MethodCall, matches, [](GroupRewriter& rewriter, const SelectedMethodCall& match) {
         rewriteMethodCall(rewriter, match);
     });
 }

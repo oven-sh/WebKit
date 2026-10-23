@@ -86,7 +86,7 @@ struct VariableFacts {
     bool isStoredByName(LayoutID layout, uint32_t field) const { return std::ranges::binary_search(fieldsStoredByName, static_cast<uint64_t>(layout.index()) << 32 | field); }
 };
 
-struct ScanContext {
+struct InitializerScanContext {
     // Whether the body of the one module has run to its end when the body of the other begins: the other imports it, directly or not, and no circle of imports holds both.
     bool hasRunBefore(ModuleID finished, ModuleID beginning, BitVector& importedByBeginning) const;
 
@@ -120,7 +120,7 @@ struct ValueOfVariable {
 };
 
 // What is put off together: the operations that make, fill and store what some variables hold. The first read of any of the variables runs all of it.
-struct Unit {
+struct InitializerUnit {
     FunctionID body;
     Vector<Item> items;
     Vector<VariableID, 1> variables;
@@ -136,7 +136,7 @@ struct Unit {
     TypeID type;
 };
 
-struct CalleeAnswer {
+struct InitializerCalleeAnswer {
     bool mayMove { false };
     bool returnsWhatItMade { false };
     // The answer holds where the bodies of the modules of these variables have run.
@@ -165,7 +165,7 @@ struct CallContext {
 // Says of an operation whether anybody can tell when it ran. An operation may do as it likes with an object that the initializer has made.
 class MovableCode {
 public:
-    MovableCode(const ScanContext& context, TaskArenas& arenas)
+    MovableCode(const InitializerScanContext& context, TaskArenas& arenas)
         : m_context(context)
         , m_program(context.program)
         , m_arenas(arenas)
@@ -177,7 +177,7 @@ public:
     BitVector findBlocksThatMayRunForever(FunctionAnalyses&);
     bool terminatorMayMove(FunctionAnalyses&, BlockID);
     bool mayMove(FunctionAnalyses&, const Knowledge&, ValueID);
-    CalleeAnswer answerFor(FunctionID, const CallContext&);
+    InitializerCalleeAnswer answerFor(FunctionID, const CallContext&);
     // The variables that what was asked about since the last call of this has taken to be set.
     Vector<VariableID, 4> takeVariablesTakenToBeSet() { return std::exchange(m_variablesTakenToBeSet, { }); }
 
@@ -221,11 +221,11 @@ private:
     ValueID allocationOf(const Function&, ValueID) const;
     TypeID withConstantsWidened(TypeID) const;
     std::optional<CallContext> contextOf(const Function& caller, const Knowledge&, const Value& call, const Function& callee) const;
-    std::optional<CalleeAnswer> answerForCall(const Function&, const Knowledge&, const Value& call);
+    std::optional<InitializerCalleeAnswer> answerForCall(const Function&, const Knowledge&, const Value& call);
     std::optional<ValueID> operandReturnedBy(const Function&, const Value&) const;
     std::optional<Function> specialize(FunctionID, const CallContext&);
     const Function* versionFor(FunctionID, const CallContext&, std::unique_ptr<const Function>& versionNotKept);
-    CalleeAnswer answerForBody(FunctionID, const Function&, const CallContext&);
+    InitializerCalleeAnswer answerForBody(FunctionID, const Function&, const CallContext&);
 
     bool storeMayMove(FunctionAnalyses&, const Knowledge&, const Value&);
     bool readMayMove(FunctionAnalyses&, const Knowledge&, const Value&);
@@ -233,10 +233,10 @@ private:
     bool builtinCallMayMove(FunctionAnalyses&, const Knowledge&, ValueID);
     bool mayMoveByEffects(FunctionAnalyses&, const Knowledge&, ValueID);
 
-    const ScanContext& m_context;
+    const InitializerScanContext& m_context;
     const Program& m_program;
     TaskArenas& m_arenas;
-    HashMap<uint32_t, Vector<std::pair<CallContext, CalleeAnswer>, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_answers;
+    HashMap<uint32_t, Vector<std::pair<CallContext, InitializerCalleeAnswer>, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_answers;
     Vector<std::pair<uint32_t, CallContext>, 8> m_beingAnswered;
     unsigned m_numberOfAnswers { 0 };
     HashMap<uint32_t, Vector<KeptVersion, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_versions;
@@ -245,9 +245,9 @@ private:
 
 };
 
-class BodyScanner {
+class DeferredInitializerScanner {
 public:
-    BodyScanner(const ScanContext& context, FunctionID id, TaskArenas& arenas, Vector<Unit>& found)
+    DeferredInitializerScanner(const InitializerScanContext& context, FunctionID id, TaskArenas& arenas, Vector<InitializerUnit>& found)
         : m_context(context)
         , m_program(context.program)
         , m_id(id)
@@ -286,11 +286,11 @@ private:
     void unite(uint32_t, uint32_t);
     void keep(uint32_t item);
 
-    const ScanContext& m_context;
+    const InitializerScanContext& m_context;
     const Program& m_program;
     FunctionID m_id;
     const Function& m_function;
-    Vector<Unit>& m_found;
+    Vector<InitializerUnit>& m_found;
     FunctionAnalyses m_analyses;
     MovableCode m_code;
 
@@ -318,30 +318,30 @@ private:
     Vector<uint32_t> m_itemsUsedByCodeThatStays;
 };
 
-struct Plan {
-    const Unit* find(VariableID variable) const LIFETIME_BOUND
+struct InitializerPlan {
+    const InitializerUnit* find(VariableID variable) const LIFETIME_BOUND
     {
         auto found = std::ranges::lower_bound(byVariable, variable, { }, &std::pair<VariableID, uint32_t>::first);
         return found != byVariable.end() && found->first == variable ? &units[found->second] : nullptr;
     }
 
-    std::span<const Unit> unitsIn(FunctionID body) const LIFETIME_BOUND
+    std::span<const InitializerUnit> unitsIn(FunctionID body) const LIFETIME_BOUND
     {
-        auto range = std::ranges::equal_range(units, body, { }, &Unit::body);
+        auto range = std::ranges::equal_range(units, body, { }, &InitializerUnit::body);
         return units.subspan(range.begin() - units.begin(), range.size());
     }
 
     Emptiness emptinessOf(VariableID variable) const { return variable.index() < emptiness->size() ? (*emptiness)[variable.index()] : Emptiness::AbsentFromBirth; }
 
     // In the order of the bodies.
-    Vector<Unit> units;
+    Vector<InitializerUnit> units;
     Vector<std::pair<VariableID, uint32_t>> byVariable;
     const Vector<Emptiness>* emptiness { nullptr };
 };
 
 } // anonymous namespace
 
-bool ScanContext::hasRunBefore(ModuleID finished, ModuleID beginning, BitVector& importedByBeginning) const
+bool InitializerScanContext::hasRunBefore(ModuleID finished, ModuleID beginning, BitVector& importedByBeginning) const
 {
     if (circlesOfImports.componentOf[finished.index()] == circlesOfImports.componentOf[beginning.index()])
         return false;
@@ -536,7 +536,7 @@ bool MovableCode::becomesStringWithoutCode(const Function& function, ValueID id)
     return !type.hasObjects() && type.isJavaScriptValue() && !(type.primitives & (Primitive::AnySymbol | Primitive::Absent));
 }
 
-static bool isClassConstructor(const Function& function)
+static bool isClassConstructorFunction(const Function& function)
 {
     return function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor;
 }
@@ -560,7 +560,7 @@ bool MovableCode::hasOnlyFunctions(const Type& type) const
 bool MovableCode::hasOnlyFunctionsWithoutClass(const Type& type) const
 {
     return hasOnlyFunctions(type) && std::ranges::none_of(type.functions, [&](FunctionID id) {
-        return isClassConstructor(m_program.at(id));
+        return isClassConstructorFunction(m_program.at(id));
     });
 }
 
@@ -573,7 +573,7 @@ bool MovableCode::hasOnlyClassesAndBuiltins(const Type& type) const
         return m_program.builtins().at(id).kind == BuiltinKind::Constructor;
     });
     return hasOnlyConstructors && std::ranges::all_of(type.functions, [&](FunctionID id) {
-        return isClassConstructor(m_program.at(id));
+        return isClassConstructorFunction(m_program.at(id));
     });
 }
 
@@ -794,7 +794,7 @@ std::optional<CallContext> MovableCode::contextOf(const Function& caller, const 
     return context;
 }
 
-std::optional<CalleeAnswer> MovableCode::answerForCall(const Function& caller, const Knowledge& known, const Value& call)
+std::optional<InitializerCalleeAnswer> MovableCode::answerForCall(const Function& caller, const Knowledge& known, const Value& call)
 {
     switch (call.opcode) {
     case Opcode::Call:
@@ -816,21 +816,21 @@ std::optional<CalleeAnswer> MovableCode::answerForCall(const Function& caller, c
     }
     if (!callees.isComplete || !callees.builtins.isEmpty() || callees.functions.isEmpty())
         return std::nullopt;
-    CalleeAnswer result { true, true };
+    InitializerCalleeAnswer result { true, true };
     for (FunctionID id : callees.functions) {
         const Function& callee = m_program.at(id);
         // A rest parameter and `arguments` are made at the entrance, which this does not follow.
         if (callee.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest })
-            || (call.opcode == Opcode::Call && isClassConstructor(callee))) {
-            return CalleeAnswer { };
+            || (call.opcode == Opcode::Call && isClassConstructorFunction(callee))) {
+            return InitializerCalleeAnswer { };
         }
         std::optional<CallContext> context = contextOf(caller, known, call, callee);
         if (!context)
-            return CalleeAnswer { };
-        CalleeAnswer answer = answerFor(id, *context);
+            return InitializerCalleeAnswer { };
+        InitializerCalleeAnswer answer = answerFor(id, *context);
         // One callee that may not move settles it: a call of one of a thousand functions asks about one.
         if (!answer.mayMove)
-            return CalleeAnswer { };
+            return InitializerCalleeAnswer { };
         result.returnsWhatItMade &= answer.returnsWhatItMade;
     }
     return result;
@@ -938,7 +938,7 @@ Knowledge MovableCode::findKnowledge(FunctionAnalyses& analyses, const CallConte
             return known.made.get(returned->index());
         if (builtinCallOpcodes.contains(value.opcode))
             return freshnessOf(analyses.effectContext(), function, value) != ResultFreshness::Unknown;
-        if (std::optional<CalleeAnswer> answer = answerForCall(function, known, value))
+        if (std::optional<InitializerCalleeAnswer> answer = answerForCall(function, known, value))
             return answer->mayMove && answer->returnsWhatItMade;
         return false;
     };
@@ -1154,7 +1154,7 @@ const Function* MovableCode::versionFor(FunctionID id, const CallContext& contex
     return result;
 }
 
-CalleeAnswer MovableCode::answerForBody(FunctionID id, const Function& function, const CallContext& context)
+InitializerCalleeAnswer MovableCode::answerForBody(FunctionID id, const Function& function, const CallContext& context)
 {
     FunctionAnalyses analyses(AnalysisContext { m_context.build, m_program, &m_context.flow, &m_context.effects, id }, function);
     Knowledge known = findKnowledge(analyses, context);
@@ -1174,7 +1174,7 @@ CalleeAnswer MovableCode::answerForBody(FunctionID id, const Function& function,
         }
     }
 
-    CalleeAnswer answer { true, true };
+    InitializerCalleeAnswer answer { true, true };
     for (BlockID blockID : analyses.cfg().reversePostOrder()) {
         const Block& block = function.at(blockID);
         if (!isReached.quickGet(blockID.index()))
@@ -1200,7 +1200,7 @@ CalleeAnswer MovableCode::answerForBody(FunctionID id, const Function& function,
     return answer;
 }
 
-CalleeAnswer MovableCode::answerFor(FunctionID id, const CallContext& context)
+InitializerCalleeAnswer MovableCode::answerFor(FunctionID id, const CallContext& context)
 {
     if (auto found = m_answers.find(id.index()); found != m_answers.end()) {
         for (const auto& [knownContext, answer] : found->value) {
@@ -1214,7 +1214,7 @@ CalleeAnswer MovableCode::answerFor(FunctionID id, const CallContext& context)
     bool hasTypes = std::ranges::any_of(context.types, [](TypeID type) {
         return !!type;
     });
-    CalleeAnswer asItStands;
+    InitializerCalleeAnswer asItStands;
     if (hasTypes) {
         size_t numberTakenBefore = m_variablesTakenToBeSet.size();
         asItStands = answerFor(id, CallContext { context.made, context.unchanging, { } });
@@ -1230,7 +1230,7 @@ CalleeAnswer MovableCode::answerFor(FunctionID id, const CallContext& context)
     ++m_numberOfAnswers;
     m_beingAnswered.append(question);
     size_t numberTakenBefore = m_variablesTakenToBeSet.size();
-    CalleeAnswer answer;
+    InitializerCalleeAnswer answer;
     std::unique_ptr<const Function> versionNotKept;
     if (!hasTypes)
         answer = answerForBody(id, function, context);
@@ -1245,7 +1245,7 @@ CalleeAnswer MovableCode::answerFor(FunctionID id, const CallContext& context)
     AOT::sort(answer.variablesTakenToBeSet);
     removeRepeatedElements(answer.variablesTakenToBeSet);
     m_answers.ensure(id.index(), [] {
-        return Vector<std::pair<CallContext, CalleeAnswer>, 1> { };
+        return Vector<std::pair<CallContext, InitializerCalleeAnswer>, 1> { };
     }).iterator->value.append({ context, answer });
     return answer;
 }
@@ -1845,7 +1845,7 @@ bool MovableCode::mayMove(FunctionAnalyses& analyses, const Knowledge& known, Va
     case Opcode::Call:
     case Opcode::Construct:
     case Opcode::CallDirect:
-        if (std::optional<CalleeAnswer> answer = answerForCall(function, known, value); answer && answer->mayMove)
+        if (std::optional<InitializerCalleeAnswer> answer = answerForCall(function, known, value); answer && answer->mayMove)
             return true;
         return false;
     default:
@@ -1857,7 +1857,7 @@ bool MovableCode::mayMove(FunctionAnalyses& analyses, const Knowledge& known, Va
     return mayMoveByEffects(analyses, known, id);
 }
 
-uint32_t BodyScanner::find(uint32_t item)
+uint32_t DeferredInitializerScanner::find(uint32_t item)
 {
     while (m_parents[item] != item) {
         m_parents[item] = m_parents[m_parents[item]];
@@ -1866,7 +1866,7 @@ uint32_t BodyScanner::find(uint32_t item)
     return item;
 }
 
-void BodyScanner::unite(uint32_t a, uint32_t b)
+void DeferredInitializerScanner::unite(uint32_t a, uint32_t b)
 {
     a = find(a);
     b = find(b);
@@ -1879,7 +1879,7 @@ void BodyScanner::unite(uint32_t a, uint32_t b)
 }
 
 // The blocks that every run passes lie on the way down the dominator tree to the block that returns.
-bool BodyScanner::findItems()
+bool DeferredInitializerScanner::findItems()
 {
     CFG& cfg = m_analyses.cfg();
     BlockID last;
@@ -1950,7 +1950,7 @@ bool BodyScanner::findItems()
     return true;
 }
 
-void BodyScanner::noteWhatVariablesHold()
+void DeferredInitializerScanner::noteWhatVariablesHold()
 {
     m_variableHolding.fill(VariableID(), m_function.values.size());
     m_storeOfHeldValue.fill(noItem, m_function.values.size());
@@ -1976,7 +1976,7 @@ void BodyScanner::noteWhatVariablesHold()
 }
 
 // An object that several operations take ties them together, and one of them that stays keeps them all.
-void BodyScanner::noteWhatAddedVariablesMayHold()
+void DeferredInitializerScanner::noteWhatAddedVariablesMayHold()
 {
     for (uint32_t index = 0; index < m_items.size(); ++index) {
         const Item& item = m_items[index];
@@ -1997,7 +1997,7 @@ void BodyScanner::noteWhatAddedVariablesMayHold()
 }
 
 // A constant, a read of a variable that holds one value, and a cast of either.
-bool BodyScanner::givesTheSameWheneverDone(ValueID id) const
+bool DeferredInitializerScanner::givesTheSameWheneverDone(ValueID id) const
 {
     for (;; id = m_function.at(id).operand(0)) {
         const Value& value = m_function.at(id);
@@ -2022,7 +2022,7 @@ bool BodyScanner::givesTheSameWheneverDone(ValueID id) const
     }
 }
 
-void BodyScanner::forEachValueTakenBy(const Item& item, NOESCAPE const Invocable<void(ValueID)> auto& functor)
+void DeferredInitializerScanner::forEachValueTakenBy(const Item& item, NOESCAPE const Invocable<void(ValueID)> auto& functor)
 {
     if (!item.isRegion()) {
         m_function.at(item.value).forEachOperand([&](ValueID operand, uint32_t) {
@@ -2062,7 +2062,7 @@ void BodyScanner::forEachValueTakenBy(const Item& item, NOESCAPE const Invocable
     }
 }
 
-bool BodyScanner::mayMove(const Item& item, const Knowledge& known)
+bool DeferredInitializerScanner::mayMove(const Item& item, const Knowledge& known)
 {
     auto valueMayMove = [&](ValueID id) {
         const Value& value = m_function.at(id);
@@ -2092,7 +2092,7 @@ bool BodyScanner::mayMove(const Item& item, const Knowledge& known)
     return true;
 }
 
-bool BodyScanner::areSetInFrontOf(uint32_t item, std::span<const VariableID> variables)
+bool DeferredInitializerScanner::areSetInFrontOf(uint32_t item, std::span<const VariableID> variables)
 {
     ModuleID evaluated = m_context.moduleWithBody[m_id.index()];
     return std::ranges::all_of(variables, [&](VariableID id) {
@@ -2105,7 +2105,7 @@ bool BodyScanner::areSetInFrontOf(uint32_t item, std::span<const VariableID> var
     });
 }
 
-bool BodyScanner::runsCompiledCode(const Item& item)
+bool DeferredInitializerScanner::runsCompiledCode(const Item& item)
 {
     auto runs = [&](ValueID id) {
         const Value& value = m_function.at(id);
@@ -2119,7 +2119,7 @@ bool BodyScanner::runsCompiledCode(const Item& item)
 }
 
 // About how many instructions the start saves.
-unsigned BodyScanner::estimatedCostOf(const Item& item) const
+unsigned DeferredInitializerScanner::estimatedCostOf(const Item& item) const
 {
     constexpr unsigned costOfCode = 1000;
     if (item.isRegion())
@@ -2148,12 +2148,12 @@ unsigned BodyScanner::estimatedCostOf(const Item& item) const
     return 1;
 }
 
-void BodyScanner::keep(uint32_t item)
+void DeferredInitializerScanner::keep(uint32_t item)
 {
     m_isKept.quickSet(find(item));
 }
 
-void BodyScanner::classify(uint32_t index)
+void DeferredInitializerScanner::classify(uint32_t index)
 {
     const Item& item = m_items[index];
     const Block& block = m_function.at(item.block);
@@ -2246,7 +2246,7 @@ void BodyScanner::classify(uint32_t index)
 }
 
 // A unit that fills no variable is there for code that stays. One that makes nothing costs less than the tests at its reads.
-void BodyScanner::keepUnitsNotWorthPuttingOff()
+void DeferredInitializerScanner::keepUnitsNotWorthPuttingOff()
 {
     // A function of its own, and a test at each read, cost more than a small literal.
     constexpr unsigned leastCost = 100;
@@ -2276,7 +2276,7 @@ void BodyScanner::keepUnitsNotWorthPuttingOff()
 }
 
 // What code that stays takes is needed at the start, and so is all that was put off with it and all that those operations take.
-void BodyScanner::keepUnitsNeededAtStart()
+void DeferredInitializerScanner::keepUnitsNeededAtStart()
 {
     for (uint32_t item : m_itemsUsedByCodeThatStays)
         keep(item);
@@ -2294,7 +2294,7 @@ void BodyScanner::keepUnitsNeededAtStart()
 }
 
 // Between the first store of a unit and its last operation the program sees the objects half done. Put off, they are never seen so.
-void BodyScanner::keepUnitsThatOtherCodeMaySeeHalfDone()
+void DeferredInitializerScanner::keepUnitsThatOtherCodeMaySeeHalfDone()
 {
     Vector<uint32_t> firstStore(FillWith { }, m_items.size(), noItem);
     Vector<uint32_t> lastItem(FillWith { }, m_items.size(), 0u);
@@ -2325,7 +2325,7 @@ void BodyScanner::keepUnitsThatOtherCodeMaySeeHalfDone()
     }
 }
 
-void BodyScanner::collectUnits()
+void DeferredInitializerScanner::collectUnits()
 {
     Vector<uint32_t> unitAt(FillWith { }, m_items.size(), noItem);
     Vector<uint32_t, 16> representatives;
@@ -2336,10 +2336,10 @@ void BodyScanner::collectUnits()
         uint32_t& position = unitAt[find(index)];
         if (position == noItem) {
             position = m_found.size();
-            m_found.append(Unit { .body = m_id });
+            m_found.append(InitializerUnit { .body = m_id });
             representatives.append(find(index));
         }
-        Unit& unit = m_found[position];
+        InitializerUnit& unit = m_found[position];
         const Item& item = m_items[index];
         unit.items.append(item);
         if (!item.isRegion() && m_function.at(item.value).opcode == Opcode::PutModuleVariable)
@@ -2348,7 +2348,7 @@ void BodyScanner::collectUnits()
 
     BitVector isTaken(m_function.values.size());
     for (size_t position = first; position < m_found.size(); ++position) {
-        Unit& unit = m_found[position];
+        InitializerUnit& unit = m_found[position];
         isTaken.clearAll();
         uint32_t representative = representatives[position - first];
         for (const Item& item : unit.items) {
@@ -2367,7 +2367,7 @@ void BodyScanner::collectUnits()
     }
 
     isTaken.clearAll();
-    Unit whatStays { .body = m_id, .staysInBody = true };
+    InitializerUnit whatStays { .body = m_id, .staysInBody = true };
     size_t end = m_found.size();
     for (size_t position = first; position < end; ++position) {
         for (const ValueOfVariable& taken : m_found[position].valuesOfVariables) {
@@ -2375,7 +2375,7 @@ void BodyScanner::collectUnits()
                 continue;
             uint32_t definingItem = m_itemOf[taken.value.index()];
             bool moves = m_states[definingItem] == State::Moves && !m_isKept.quickGet(find(definingItem));
-            Unit& maker = moves ? m_found[unitAt[find(definingItem)]] : whatStays;
+            InitializerUnit& maker = moves ? m_found[unitAt[find(definingItem)]] : whatStays;
             maker.addedVariables.append(taken);
             if (moves)
                 maker.variables.append(taken.variable);
@@ -2385,7 +2385,7 @@ void BodyScanner::collectUnits()
         m_found.append(WTF::move(whatStays));
 }
 
-void BodyScanner::run()
+void DeferredInitializerScanner::run()
 {
     if (m_function.isUnsplitCoroutine() || !m_context.flow.runsAtMostOnce(m_program, m_id))
         return;
@@ -2428,7 +2428,7 @@ void BodyScanner::run()
     collectUnits();
 }
 
-static Function createHead(const Program& program, const Unit& unit)
+static Function createHead(const Program& program, const InitializerUnit& unit)
 {
     const Function& body = program.at(unit.body);
     const Item& first = unit.items.first();
@@ -2461,7 +2461,7 @@ namespace {
 
 class UnitBuilder {
 public:
-    UnitBuilder(const AnalysisContext& context, const Unit& unit, Function& created, TypeArena& types)
+    UnitBuilder(const AnalysisContext& context, const InitializerUnit& unit, Function& created, TypeArena& types)
         : m_body(context.program.at(unit.body))
         , m_unit(unit)
         , m_builder(context, created, types)
@@ -2495,7 +2495,7 @@ private:
     using BlockCopies = HashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
     const Function& m_body;
-    const Unit& m_unit;
+    const InitializerUnit& m_unit;
     IRBuilder m_builder;
     Copies m_values;
     BlockCopies m_blocks;
@@ -2619,7 +2619,7 @@ void UnitBuilder::build()
         m_builder.emitReturn(m_builder.appendUndefined());
 }
 
-static void removeUnits(const Plan& plan, std::span<const Unit> units, IRBuilder& builder)
+static void removeUnits(const InitializerPlan& plan, std::span<const InitializerUnit> units, IRBuilder& builder)
 {
     if (units.empty())
         return;
@@ -2627,7 +2627,7 @@ static void removeUnits(const Plan& plan, std::span<const Unit> units, IRBuilder
     BitVector isRemoved(function.values.size());
     BitVector marksDeclaration(function.values.size());
     HashMap<uint32_t, VariableID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> storedWhereMade;
-    for (const Unit& unit : units) {
+    for (const InitializerUnit& unit : units) {
         if (unit.staysInBody) {
             for (const ValueOfVariable& added : unit.addedVariables)
                 storedWhereMade.add(added.value.index(), added.variable);
@@ -2723,7 +2723,7 @@ static BitVector findReadsThatNeedNoValue(const Function& function)
     return result;
 }
 
-static void fillAtRead(const Plan& plan, const Unit& unit, VariableID variable, IRBuilder& builder, ProgramPoint point)
+static void fillAtRead(const InitializerPlan& plan, const InitializerUnit& unit, VariableID variable, IRBuilder& builder, ProgramPoint point)
 {
     bool isMarkedByUndefined = plan.emptinessOf(variable) == Emptiness::UndefinedFromDeclaration;
     auto appendRead = [&] {
@@ -2753,11 +2753,11 @@ static void fillAtRead(const Plan& plan, const Unit& unit, VariableID variable, 
     builder.endExpansion(expansion, assumeType(builder, held, filledType));
 }
 
-static void fillVariablesAtReads(const Plan& plan, FunctionID id, IRBuilder& builder)
+static void fillVariablesAtReads(const InitializerPlan& plan, FunctionID id, IRBuilder& builder)
 {
     Function& function = builder.function();
     uint32_t numberOfBlocks = function.blocks.size();
-    Vector<std::pair<uint32_t, const Unit*>, 8> reads;
+    Vector<std::pair<uint32_t, const InitializerUnit*>, 8> reads;
     BitVector needsNoValue = findReadsThatNeedNoValue(function);
     // Such a read is left as it is. It has the type of the variable, which may be empty from now on, and the test for the dead zone behind it what that type leaves.
     for (bool retypesTests : { false, true }) {
@@ -2780,7 +2780,7 @@ static void fillVariablesAtReads(const Plan& plan, FunctionID id, IRBuilder& bui
         const BlockValues& values = function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
             const Value& value = function.at(values[index]);
-            const Unit* unit = value.opcode == Opcode::GetModuleVariable ? plan.find(value.variable()) : nullptr;
+            const InitializerUnit* unit = value.opcode == Opcode::GetModuleVariable ? plan.find(value.variable()) : nullptr;
             // What fills a variable reads it behind its own store.
             if (unit && unit->function != id && !needsNoValue.quickGet(values[index].index()))
                 reads.append({ index, unit });
@@ -2828,9 +2828,9 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
     StronglyConnectedComponents circlesOfImports = computeStronglyConnectedComponents(program.modules.size(), [&](unsigned index) -> const Vector<ModuleID>& {
         return modulesReachedFrom[index];
     });
-    ScanContext context { program, inputs, flow, inputs.effects, runner, build, variables, circlesOfImports, moduleWithBody };
+    InitializerScanContext context { program, inputs, flow, inputs.effects, runner, build, variables, circlesOfImports, moduleWithBody };
 
-    Plan plan;
+    InitializerPlan plan;
     plan.emptiness = &variables.emptiness;
     Vector<uint32_t> bodies = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         if (!mayListValueWith(program, FunctionID(index), { Opcode::PutModuleVariable }))
@@ -2856,9 +2856,9 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
             AOT::sort(longestFirst, std::ranges::greater { }, [&](uint32_t index) {
                 return std::pair { program.functions[bodies[index]].values.size(), index };
             });
-            plan.units = collectInParallel<Unit>(loops, bodies.size(), longestFirst.span(), [&](unsigned index, Vector<Unit>& found) {
+            plan.units = collectInParallel<InitializerUnit>(loops, bodies.size(), longestFirst.span(), [&](unsigned index, Vector<InitializerUnit>& found) {
                 TaskArenas arenas(*phases, index);
-                BodyScanner(context, FunctionID(bodies[index]), arenas, found).run();
+                DeferredInitializerScanner(context, FunctionID(bodies[index]), arenas, found).run();
             });
         }
         phases->discard();
@@ -2875,11 +2875,11 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
         size_t end = first;
         while (end < plan.units.size() && plan.units[end].body == plan.units[first].body)
             ++end;
-        std::span<Unit> unitsOfBody = plan.units.mutableSpan().subspan(first, end - first);
+        std::span<InitializerUnit> unitsOfBody = plan.units.mutableSpan().subspan(first, end - first);
         first = end;
         addedInBody.clear();
         const Function& body = program.at(unitsOfBody.front().body);
-        for (Unit& unit : unitsOfBody) {
+        for (InitializerUnit& unit : unitsOfBody) {
             for (ValueOfVariable& added : unit.addedVariables) {
                 Variable variable;
                 variable.module = body.module;
@@ -2897,7 +2897,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
             if (id.index() >= numberOfVariablesBefore)
                 id = addedInBody.get(id.index());
         };
-        for (Unit& unit : unitsOfBody) {
+        for (InitializerUnit& unit : unitsOfBody) {
             for (VariableID& id : unit.variables)
                 rename(id);
             for (ValueOfVariable& added : unit.addedVariables)
@@ -2910,7 +2910,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
     Vector<FunctionID> created;
     Vector<uint32_t> unitOfCreated;
     for (uint32_t index = 0; index < plan.units.size(); ++index) {
-        Unit& unit = plan.units[index];
+        InitializerUnit& unit = plan.units[index];
         if (unit.staysInBody)
             continue;
         unit.type = TypeTable::undefined;
@@ -2952,7 +2952,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
         if (readsSuchVariable)
             found.append(FunctionID(index));
     });
-    for (const Unit& unit : plan.units)
+    for (const InitializerUnit& unit : plan.units)
         functions.append(unit.body);
     AOT::sort(functions);
     removeRepeatedElements(functions);

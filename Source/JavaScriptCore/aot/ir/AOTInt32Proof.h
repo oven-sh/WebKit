@@ -100,7 +100,7 @@ private:
 
     Int32ProofInputs m_inputs;
     TypingContext m_typing;
-    StackCheck m_stackCheck;
+    WTF::StackCheck m_stackCheck;
     Vector<std::optional<NumberBounds>> m_known;
     BitVector m_knownRelyingOnUnprovenFlow;
     Vector<uint32_t> m_openDepths;

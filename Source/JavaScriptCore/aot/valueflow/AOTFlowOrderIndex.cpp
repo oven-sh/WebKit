@@ -22,12 +22,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void FlowScopeAccessesDeleter::operator()(FlowScopeAccesses* accesses) const
-{
-    delete accesses;
-}
-
-FlowScopeLocationNumbering createScopeLocationNumbering(const Program& program)
+static FlowScopeLocationNumbering createScopeLocationNumbering(const Program& program)
 {
     FlowScopeLocationNumbering numbering;
     numbering.numberOfVariables = program.variables.size();
@@ -42,38 +37,6 @@ FlowScopeLocationNumbering createScopeLocationNumbering(const Program& program)
     return numbering;
 }
 
-void numberMemberLocations(const FlowOrderInputs& inputs, FlowScopeLocationNumbering& numbering)
-{
-    for (const FlowMemberAccess& access : inputs.memberAccesses()) {
-        if (followsMembersOf(inputs, access.holder))
-            numbering.members.append({ access.holder, access.key });
-    }
-    sortAndRemoveDuplicates(inputs.build().parallelLoops(), numbering.members);
-}
-
-static void collectVariableAccess(VariableID variable, FunctionID function, ValueID id, const Value& value, FlowScopeAccesses& accesses)
-{
-    FlowScopeLocation location = variable.index();
-    if (value.opcode == Opcode::GetModuleVariable)
-        accesses.reads.append({ location, function, id });
-    else if (value.opcode == Opcode::PutModuleVariable)
-        accesses.stores.append({ location, function, id });
-    else
-        accesses.opaqueVariables.append(location);
-}
-
-static void collectEnvironmentAccess(const FlowScopeLocationNumbering& numbering, LayoutID layout, FunctionID function, ValueID id, const Value& value, FlowScopeAccesses& accesses)
-{
-    if (value.opcode == Opcode::GetEnvironmentField)
-        accesses.reads.append({ *numbering.locationOf(layout, value.field()), function, id });
-    else if (value.opcode == Opcode::PutEnvironmentField)
-        accesses.stores.append({ *numbering.locationOf(layout, value.field()), function, id });
-    else if (value.opcode == Opcode::NewObject)
-        accesses.allocations.append({ layout, function, id });
-    else
-        accesses.opaqueLayouts.append(layout);
-}
-
 // An operation that only evaluates its target, or notes that it was required, hands nobody the value of the module: whoever wants something of it names a variable.
 static bool readsModuleValue(Opcode opcode, ModuleReferenceKind kind)
 {
@@ -86,61 +49,6 @@ static bool readsModuleValue(Opcode opcode, ModuleReferenceKind kind)
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-void collectScopeAccesses(const Program& program, const FlowScopeLocationNumbering& numbering, FunctionID functionID, FlowScopeAccesses& accesses)
-{
-    const Function& function = program.at(functionID);
-    for (const Block& block : function.blocks) {
-        for (ValueID id : block.values) {
-            const Value& value = function.at(id);
-            forEachVariable(value, [&](VariableID variable) {
-                if (variable)
-                    collectVariableAccess(variable, functionID, id, value, accesses);
-            });
-            forEachLayout(value, [&](LayoutID layout) {
-                if (layout && program.at(layout).kind == LayoutKind::Environment)
-                    collectEnvironmentAccess(numbering, layout, functionID, id, value, accesses);
-            });
-            forEachFunctionReference(value, [&](FunctionID referenced, FunctionReferenceKind kind) {
-                if (referenced)
-                    accesses.references.append({ referenced, kind, id });
-            });
-            forEachModuleReference(value, [&](ModuleID module, ModuleReferenceKind kind) {
-                if (module && readsModuleValue(value.opcode, kind))
-                    accesses.moduleValueReads.append({ module, functionID, id });
-            });
-            forEachEvalScope(value, [&](EvalScopeID scope) {
-                if (scope)
-                    accesses.evalScopes.append(scope);
-            });
-        }
-    }
-}
-
-static void shrinkToFit(FlowScopeAccesses& accesses)
-{
-    moveToExactBuffer(accesses.reads);
-    moveToExactBuffer(accesses.stores);
-    moveToExactBuffer(accesses.allocations);
-    moveToExactBuffer(accesses.moduleValueReads);
-    moveToExactBuffer(accesses.references);
-    moveToExactBuffer(accesses.opaqueVariables);
-    moveToExactBuffer(accesses.opaqueLayouts);
-    moveToExactBuffer(accesses.evalScopes);
-}
-
-void ensureScopeAccesses(const FlowOrderInputs& inputs, const FlowScopeLocationNumbering& numbering, FlowScopeAccessesByFunction& byFunction)
-{
-    const Program& program = inputs.program();
-    RELEASE_ASSERT(byFunction.size() == program.functions.size());
-    forEachIndexInParallel(inputs.build().parallelLoops(), program.functions.size(), [&](unsigned index) {
-        if (byFunction[index] || !program.functions[index].hasBody() || !inputs.isReached(FunctionID(index)))
-            return;
-        byFunction[index].reset(new FlowScopeAccesses);
-        collectScopeAccesses(program, numbering, FunctionID(index), *byFunction[index]);
-        shrinkToFit(*byFunction[index]);
-    });
 }
 
 static void markLayoutOpaque(FlowScopeIndex& index, LayoutID layout)
@@ -166,343 +74,94 @@ static void markEvalBindingsOpaque(FlowScopeIndex& index, const EvalScope& scope
     }
 }
 
-static void markEvalBindingsOpaque(FlowScopeIndex& index)
+// One walk over each reached body.
+static void collectAccesses(FlowScopeIndex& index)
 {
-    for (const auto& body : index.bodies) {
-        if (!body)
-            continue;
-        for (EvalScopeID scope : body->evalScopes)
-            markEvalBindingsOpaque(index, index.program().at(scope));
-    }
-}
-
-namespace {
-
-// Puts the accesses of members into the lists of the index.
-class MemberAccessMerger {
-public:
-    explicit MemberAccessMerger(FlowScopeIndex& index)
-        : m_index(index)
-        , m_inputs(index.inputs)
-    {
-    }
-
-    void run();
-
-private:
-    using Operation = std::tuple<FunctionID, FlowInstanceID, ValueID>;
-    using CallSite = std::pair<FunctionID, ValueID>;
-
-    static Operation keyOf(const FlowMemberOperation& operation) { return { operation.function, operation.callSiteInstance, operation.origin }; }
-
-    void collectStoredHolders();
-    void collectReplacedPrototypes();
-    void collectStoresOfPrototypeLinks();
-    void collectCallees();
-    void noteCallee(FlowInstanceID caller, ValueID site, FlowInstanceID callee);
-    FunctionAnalyses& analysesOf(FunctionID);
-    bool completesWhenRefused(const FlowMemberOperation&) const;
-    bool storesToHolderAlone(const FlowMemberAccess&, Vector<FlowScopeLocation, 1>* assumedStores = nullptr) const;
-    bool completesBeforeEveryReturn(FunctionID, ValueID);
-    bool isCoveredInOwnInstance(const FlowMemberAccess& read);
-    bool isHandedOnlyToStoreOfLink(const FlowMemberAccess& read, FlowObjectID prototypeObject);
-    void listReadOfPrototypeLink(const FlowMemberAccess& readOfPrototypeProperty);
-    std::optional<CallSite> findCompletedOperation(const FlowMemberOperation& store);
-    CallSite findStartedOperation(const FlowMemberOperation& read) const;
-    void listRead(FlowScopeLocation, const FlowMemberOperation&);
-    void listStore(FlowScopeLocation, const FlowMemberAccess&);
-    void listReadsThroughUnknownObject();
-
-    FlowScopeIndex& m_index;
-    const FlowOrderInputs& m_inputs;
-    HashMap<Operation, Vector<FlowObjectID, 2>> m_holdersStoredBy;
-    HashSet<Operation> m_uncertainStores;
-    HashMap<FlowObjectID, FlowScopeLocation> m_prototypePropertyOfReplacedObject;
-    HashMap<FlowObjectID, Vector<Operation, 1>> m_storesOfPrototypeLink;
-    HashMap<CallSite, FlowInstanceID> m_soleCalleeOf;
-    HashMap<FunctionID, std::unique_ptr<FunctionAnalyses>> m_analyses;
-    HashMap<FlowInstanceID, Vector<const FlowMemberAccess*, 2>> m_certainStoresOfCallSiteInstance;
-    HashMap<PropertyKeyID, Vector<FlowMemberOperation, 2>> m_readsThroughUnknownObject;
-    BitVector m_locationsWithListedStore;
-};
-
-void MemberAccessMerger::collectStoredHolders()
-{
-    for (const FlowMemberAccess& access : m_inputs.memberAccesses()) {
-        if (!access.isStore || !access.operation.function)
-            continue;
-        Vector<FlowObjectID, 2>& holders = m_holdersStoredBy.add(keyOf(access.operation), Vector<FlowObjectID, 2>()).iterator->value;
-        if (!holders.contains(access.holder))
-            holders.append(access.holder);
-    }
-    for (const FlowMemberOperation& operation : m_inputs.uncertainMemberStores())
-        m_uncertainStores.add(keyOf(operation));
-}
-
-// Nobody ever holds the prototype object a function was created with when another object is stored into the prototype property before the first read of it.
-void MemberAccessMerger::collectReplacedPrototypes()
-{
-    PropertyKeyID prototypeKey = m_index.program().keyOf(BuiltinNames::prototype);
-    for (const FlowMemberAccess& access : m_inputs.memberAccesses()) {
-        if (!access.isStore || access.key != prototypeKey || m_inputs.kindOf(access.holder) != FlowObjectKind::Closure)
-            continue;
-        if (FlowObjectID original = m_inputs.findPrototype(access.holder))
-            m_prototypePropertyOfReplacedObject.add(original, *m_index.numbering.locationOf(access.holder, access.key));
-    }
-}
-
-void MemberAccessMerger::collectStoresOfPrototypeLinks()
-{
-    PropertyKeyID link = m_index.program().keyOf(BuiltinNames::__proto__);
-    for (const FlowMemberAccess& access : m_inputs.memberAccesses()) {
-        if (access.isStore && access.key == link && m_inputs.kindOf(access.holder) == FlowObjectKind::Prototype)
-            m_storesOfPrototypeLink.add(access.holder, Vector<Operation, 1>()).iterator->value.append(keyOf(access.operation));
-    }
-}
-
-void MemberAccessMerger::noteCallee(FlowInstanceID caller, ValueID site, FlowInstanceID callee)
-{
-    if (!site || !caller || m_inputs.isHost(caller))
-        return;
-    auto result = m_soleCalleeOf.add({ m_inputs.functionOf(caller), site }, callee);
-    if (!result.isNewEntry && result.iterator->value != callee)
-        result.iterator->value = FlowInstanceID();
-}
-
-void MemberAccessMerger::collectCallees()
-{
-    for (const FlowCallLink& link : m_inputs.callLinks())
-        noteCallee(link.callerInstance, link.site, link.kind == FlowCallLinkKind::Call ? link.calleeInstance : FlowInstanceID());
-    for (const FlowBuiltinCallLink& link : m_inputs.builtinCallLinks())
-        noteCallee(link.callerInstance, link.site, { });
-    for (const FlowUnknownCallee& callee : m_inputs.unknownCallees())
-        noteCallee(callee.callerInstance, callee.site, { });
-}
-
-FunctionAnalyses& MemberAccessMerger::analysesOf(FunctionID function)
-{
-    return *m_analyses.ensure(function, [&] {
-        return makeUnique<FunctionAnalyses>(AnalysisContext { m_inputs.build(), m_index.program(), nullptr, nullptr, function }, m_index.program().at(function));
-    }).iterator->value;
-}
-
-// A holder that is frozen or not extensible refuses the store. Strict code throws then, and a built-in may answer false.
-bool MemberAccessMerger::completesWhenRefused(const FlowMemberOperation& operation) const
-{
-    const Value& value = m_index.program().at(operation.function).at(operation.origin);
-    switch (effectRuleOf(value.opcode)) {
-    case EffectRule::Call:
-    case EffectRule::Builtin:
-    case EffectRule::Inline:
-        return true;
-    case EffectRule::Access:
-    case EffectRule::Declared:
-    case EffectRule::Operator:
-        break;
-    }
-    return Value::opcodesWithMode.contains(value.opcode) && value.mode() == ECMAMode::Sloppy;
-}
-
-// The statement of the store lists each holder among its receivers, and says so when it has any other receiver. A function past the work limit says nothing more.
-bool MemberAccessMerger::storesToHolderAlone(const FlowMemberAccess& store, Vector<FlowScopeLocation, 1>* assumedStores) const
-{
-    const FlowMemberOperation& operation = store.operation;
-    if (m_inputs.isPastWorkLimit(operation.function) || m_uncertainStores.contains(keyOf(operation)) || m_prototypePropertyOfReplacedObject.contains(store.holder))
-        return false;
-    if (completesWhenRefused(operation) && m_inputs.mayChangeIntegrity(store.holder))
-        return false;
-
-    // An operation with several instances may store to another holder in each.
-    for (FlowObjectID receiver : m_holdersStoredBy.find(keyOf(operation))->value) {
-        if (receiver == store.holder)
-            continue;
-        auto replaced = m_prototypePropertyOfReplacedObject.find(receiver);
-        if (replaced == m_prototypePropertyOfReplacedObject.end())
-            return false;
-        if (assumedStores && !assumedStores->contains(replaced->value))
-            assumedStores->append(replaced->value);
-    }
-    return true;
-}
-
-bool MemberAccessMerger::completesBeforeEveryReturn(FunctionID functionID, ValueID value)
-{
-    const Function& function = m_index.program().at(functionID);
-    if (function.isUnsplitCoroutine())
-        return false;
-    FunctionAnalyses& analyses = analysesOf(functionID);
-    return std::ranges::all_of(analyses.cfg().reversePostOrder(), [&](BlockID block) {
-        return !returnsToCaller(function.at(block).terminator.kind) || analyses.dominates(value, pointBeforeTerminatorOf(function, block));
-    });
-}
-
-bool MemberAccessMerger::isCoveredInOwnInstance(const FlowMemberAccess& read)
-{
-    FlowInstanceID instance = read.operation.callSiteInstance;
-    auto stores = instance ? m_certainStoresOfCallSiteInstance.find(instance) : m_certainStoresOfCallSiteInstance.end();
-    if (stores == m_certainStoresOfCallSiteInstance.end())
-        return false;
-    return std::ranges::any_of(stores->value, [&](const FlowMemberAccess* store) {
-        if (store->holder != read.holder || store->key != read.key)
-            return false;
-        FunctionAnalyses& analyses = analysesOf(read.operation.function);
-        ValueLocation location = analyses.useLists().locationOf(read.operation.origin);
-        return location.placement == ValuePlacement::InBlock && analyses.dominates(store->operation.origin, ProgramPoint { location.block, location.index });
-    });
-}
-
-// The operation that changes the link takes the object from a read of the prototype property. Nothing else sees what that read gives.
-bool MemberAccessMerger::isHandedOnlyToStoreOfLink(const FlowMemberAccess& read, FlowObjectID prototypeObject)
-{
-    const FlowMemberOperation& operation = read.operation;
-    if (!operation.function)
-        return false;
-    std::optional<Use> use = analysesOf(operation.function).useLists().singleUse(operation.origin);
-    if (!use || use->kind != Use::Kind::Operand)
-        return false;
-    return m_storesOfPrototypeLink.find(prototypeObject)->value.contains(Operation { operation.function, operation.callSiteInstance, use->user });
-}
-
-// Whoever follows the link of the prototype object that a function is created with holds that object or one that inherits from it, and only a read of the prototype property leads there.
-void MemberAccessMerger::listReadOfPrototypeLink(const FlowMemberAccess& readOfPrototypeProperty)
-{
-    FlowObjectID prototypeObject = m_inputs.findPrototype(readOfPrototypeProperty.holder);
-    if (!prototypeObject || !m_storesOfPrototypeLink.contains(prototypeObject))
-        return;
-    std::optional<FlowScopeLocation> link = m_index.numbering.locationOf(prototypeObject, m_index.program().keyOf(BuiltinNames::__proto__));
-    if (link && !isHandedOnlyToStoreOfLink(readOfPrototypeProperty, prototypeObject))
-        listRead(*link, readOfPrototypeProperty.operation);
-}
-
-// The outermost operation that has written the member whenever it has completed.
-auto MemberAccessMerger::findCompletedOperation(const FlowMemberOperation& store) -> std::optional<CallSite>
-{
-    CallSite operation { store.function, store.origin };
-    for (FlowInstanceID instance = store.callSiteInstance; instance;) {
-        const FlowCallSiteKey& callSite = m_inputs.callSiteOf(instance);
-        if (m_inputs.isPastWorkLimit(callSite.caller) || m_soleCalleeOf.get({ callSite.caller, callSite.call }) != instance)
-            return std::nullopt;
-        if (!completesBeforeEveryReturn(operation.first, operation.second))
-            return std::nullopt;
-        operation = { callSite.caller, callSite.call };
-        instance = callSite.outer;
-    }
-    return operation;
-}
-
-auto MemberAccessMerger::findStartedOperation(const FlowMemberOperation& read) const -> CallSite
-{
-    CallSite operation { read.function, read.origin };
-    for (FlowInstanceID instance = read.callSiteInstance; instance;) {
-        const FlowCallSiteKey& callSite = m_inputs.callSiteOf(instance);
-        operation = { callSite.caller, callSite.call };
-        instance = callSite.outer;
-    }
-    return operation;
-}
-
-void MemberAccessMerger::listRead(FlowScopeLocation location, const FlowMemberOperation& read)
-{
-    // The host calls a function of the library at a site of its own too.
-    CallSite operation = read.function ? findStartedOperation(read) : CallSite { };
-    if (!operation.first || m_inputs.isHost(operation.first)) {
-        m_index.opaqueLocations.set(location);
-        return;
-    }
-    m_index.reads.append({ location, operation.first, operation.second });
-}
-
-void MemberAccessMerger::listStore(FlowScopeLocation location, const FlowMemberAccess& store)
-{
-    if (!store.operation.function) {
-        m_index.opaqueLocations.set(location);
-        return;
-    }
-    Vector<FlowScopeLocation, 1> assumedStores;
-    if (!storesToHolderAlone(store, &assumedStores))
-        return;
-    std::optional<CallSite> operation = findCompletedOperation(store.operation);
-    if (!operation)
-        return;
-    m_index.stores.append({ location, operation->first, operation->second });
-    m_locationsWithListedStore.set(location);
-    for (FlowScopeLocation assumed : assumedStores)
-        m_index.assumedStores.append({ location, assumed });
-}
-
-// An object that has escaped comes back as the unknown object, and so do the objects that inherit from it. A member without a listed store has no order to lose.
-void MemberAccessMerger::listReadsThroughUnknownObject()
-{
-    const FlowScopeLocationNumbering& numbering = m_index.numbering;
-    for (size_t location : m_locationsWithListedStore) {
-        const FlowMemberLocation& member = numbering.members[location - numbering.firstMember()];
-        if (!m_inputs.hasEscaped(member.holder))
-            continue;
-        auto reads = m_readsThroughUnknownObject.find(member.key);
-        if (reads == m_readsThroughUnknownObject.end())
-            continue;
-        for (const FlowMemberOperation& read : reads->value)
-            listRead(static_cast<FlowScopeLocation>(location), read);
-    }
-}
-
-void MemberAccessMerger::run()
-{
-    collectStoredHolders();
-    collectReplacedPrototypes();
-    collectStoresOfPrototypeLinks();
-    collectCallees();
-    for (const FlowMemberAccess& access : m_inputs.memberAccesses()) {
-        if (access.operation.function && access.isStore && access.operation.callSiteInstance && storesToHolderAlone(access))
-            m_certainStoresOfCallSiteInstance.add(access.operation.callSiteInstance, Vector<const FlowMemberAccess*, 2>()).iterator->value.append(&access);
-    }
-
-    PropertyKeyID prototypeKey = m_index.program().keyOf(BuiltinNames::prototype);
-    for (const FlowMemberAccess& access : m_inputs.memberAccesses()) {
-        FlowObjectKind kind = m_inputs.kindOf(access.holder);
-        if (kind == FlowObjectKind::Unknown && !access.isStore) {
-            m_readsThroughUnknownObject.add(access.key, Vector<FlowMemberOperation, 2>()).iterator->value.append(access.operation);
-            continue;
-        }
-        if (!access.isStore && access.key == prototypeKey && kind == FlowObjectKind::Closure)
-            listReadOfPrototypeLink(access);
-        std::optional<FlowScopeLocation> location = m_index.numbering.locationOf(access.holder, access.key);
-        if (!location)
-            continue;
-        if (access.isStore)
-            listStore(*location, access);
-        else if (!isCoveredInOwnInstance(access))
-            listRead(*location, access.operation);
-    }
-    listReadsThroughUnknownObject();
-}
-
-} // anonymous namespace
-
-static void mergeBodyAccesses(FlowScopeIndex& index)
-{
-    for (const auto& body : index.bodies) {
-        if (!body)
-            continue;
-        index.reads.appendVector(body->reads);
-        index.stores.appendVector(body->stores);
-        index.allocations.appendVector(body->allocations);
-        index.moduleValueReads.appendVector(body->moduleValueReads);
-        for (FlowScopeLocation location : body->opaqueVariables)
-            index.opaqueLocations.set(location);
-        for (LayoutID layout : body->opaqueLayouts)
-            markLayoutOpaque(index, layout);
-    }
-
+    enum class Kind : uint8_t { Read, Store, Allocation, ModuleValueRead, Mention, OpaqueVariable, OpaqueLayout, EvalScope };
+    struct Row {
+        Kind kind;
+        FunctionReferenceKind reference;
+        uint32_t subject;
+        FunctionID function;
+        ValueID value;
+    };
+    const Program& program = index.program();
     const FlowOrderInputs& inputs = index.inputs;
-    for (const FlowModuleLoadRecord& load : inputs.moduleLoads()) {
-        if (inputs.isHost(load.caller) || !load.origin)
-            index.modulesReadByHost.set(load.module.index());
-        else
-            index.moduleValueReads.append({ load.module, inputs.functionOf(load.caller), load.origin });
-    }
+    const ParallelLoops& loops = inputs.build.parallelLoops();
+    Vector<Row> rows = collectInParallel<Row>(loops, program.functions.size(), [&](unsigned functionIndex, Vector<Row>& rows) {
+        if (!index.bodies.quickGet(functionIndex))
+            return;
+        const Function& function = program.functions[functionIndex];
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& value = function.at(id);
+                auto add = [&](Kind kind, uint32_t subject, FunctionReferenceKind reference = FunctionReferenceKind::Call) {
+                    rows.append({ kind, reference, subject, FunctionID(functionIndex), id });
+                };
+                forEachVariable(value, [&](VariableID variable) {
+                    if (variable)
+                        add(value.opcode == Opcode::GetModuleVariable ? Kind::Read : value.opcode == Opcode::PutModuleVariable ? Kind::Store : Kind::OpaqueVariable, variable.index());
+                });
+                forEachLayout(value, [&](LayoutID layout) {
+                    if (!layout || program.at(layout).kind != LayoutKind::Environment)
+                        return;
+                    if (value.opcode == Opcode::GetEnvironmentField || value.opcode == Opcode::PutEnvironmentField)
+                        add(value.opcode == Opcode::GetEnvironmentField ? Kind::Read : Kind::Store, *index.numbering.locationOf(layout, value.field()));
+                    else
+                        add(value.opcode == Opcode::NewObject ? Kind::Allocation : Kind::OpaqueLayout, layout.index());
+                });
+                forEachFunctionReference(value, [&](FunctionID referenced, FunctionReferenceKind kind) {
+                    if (referenced)
+                        add(Kind::Mention, referenced.index(), kind);
+                });
+                forEachModuleReference(value, [&](ModuleID module, ModuleReferenceKind kind) {
+                    if (module && readsModuleValue(value.opcode, kind))
+                        add(Kind::ModuleValueRead, module.index());
+                });
+                forEachEvalScope(value, [&](EvalScopeID scope) {
+                    if (scope)
+                        add(Kind::EvalScope, scope.index());
+                });
+            }
+        }
+    });
 
-    for (const FlowStaticFieldAccess& access : inputs.staticFieldAccesses()) {
+    index.firstMention.fill(0, program.functions.size() + 1);
+    for (const Row& row : rows) {
+        switch (row.kind) {
+        case Kind::Read:
+            index.reads.append({ row.subject, row.function, row.value });
+            break;
+        case Kind::Store:
+            index.stores.append({ row.subject, row.function, row.value });
+            break;
+        case Kind::Allocation:
+            index.allocations.append({ LayoutID(row.subject), row.function, row.value });
+            break;
+        case Kind::ModuleValueRead:
+            index.moduleValueReads.append({ ModuleID(row.subject), row.function, row.value });
+            break;
+        case Kind::Mention:
+            index.mentions.append({ FunctionID(row.subject), row.reference, row.value });
+            ++index.firstMention[row.function.index() + 1];
+            break;
+        case Kind::OpaqueVariable:
+            index.opaqueLocations.set(row.subject);
+            break;
+        case Kind::OpaqueLayout:
+            markLayoutOpaque(index, LayoutID(row.subject));
+            break;
+        case Kind::EvalScope:
+            markEvalBindingsOpaque(index, program.at(EvalScopeID(row.subject)));
+            break;
+        }
+    }
+    for (size_t function = 0; function < program.functions.size(); ++function)
+        index.firstMention[function + 1] += index.firstMention[function];
+
+    for (ModuleID module : inputs.modulesLoadedByHost)
+        index.modulesReadByHost.set(module.index());
+    for (const FlowStaticFieldAccess& access : inputs.staticFieldAccesses) {
         FlowScopeLocation location = access.variable.index();
         if (!access.function) {
             index.opaqueLocations.set(location);
@@ -512,14 +171,8 @@ static void mergeBodyAccesses(FlowScopeIndex& index)
         if (access.isStore)
             index.storesThroughClassObjects.append({ location, access.function, access.origin });
     }
-
-    MemberAccessMerger(index).run();
-
-    const ParallelLoops& loops = inputs.build().parallelLoops();
-    parallelSort(loops, index.reads.mutableSpan(), std::less<FlowScopeLocationAccess>());
-    parallelSort(loops, index.stores.mutableSpan(), std::less<FlowScopeLocationAccess>());
-    parallelSort(loops, index.accessesThroughClassObjects.mutableSpan(), std::less<FlowScopeLocationAccess>());
-    parallelSort(loops, index.storesThroughClassObjects.mutableSpan(), std::less<FlowScopeLocationAccess>());
+    for (Vector<FlowScopeLocationAccess>* list : { &index.reads, &index.stores, &index.accessesThroughClassObjects, &index.storesThroughClassObjects })
+        parallelSort(loops, list->mutableSpan(), std::less<FlowScopeLocationAccess>());
     parallelSort(loops, index.allocations.mutableSpan(), std::less<FlowEnvironmentAllocation>());
     parallelSort(loops, index.moduleValueReads.mutableSpan(), std::less<FlowModuleValueRead>());
 }
@@ -528,10 +181,7 @@ static void mergeBodyAccesses(FlowScopeIndex& index)
 static bool canOwnVariables(ModuleKind kind)
 {
     switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
+    default:
         return true;
     case ModuleKind::Runtime:
     case ModuleKind::External:
@@ -543,10 +193,10 @@ static bool canOwnVariables(ModuleKind kind)
 static FunctionID moduleBodyOwnerOf(const FlowScopeIndex& index, ModuleID moduleID)
 {
     const Program& program = index.program();
-    if (!moduleID || moduleID.index() >= program.modules.size() || !index.inputs.evaluatedModules().get(moduleID.index()))
+    if (!moduleID || moduleID.index() >= program.modules.size() || !index.inputs.evaluatedModules.get(moduleID.index()))
         return { };
     const Module& module = program.at(moduleID);
-    if (!canOwnVariables(module.kind) || !module.body || !index.bodies[module.body.index()])
+    if (!canOwnVariables(module.kind) || !module.body || !index.bodies.quickGet(module.body.index()))
         return { };
     // A function of the module may run before the body does. Every function names the module of the file that it is written in, also where the file holds the bodies of several modules.
     ModuleID file = program.at(module.body).module;
@@ -573,20 +223,6 @@ static void findVariableOwners(FlowScopeIndex& index)
     }
 }
 
-// Code that the build cannot see hands a class object back as an unknown object, and an access to that one is in no list.
-static void findStaticFieldsOfEscapedClasses(FlowScopeIndex& index)
-{
-    const FlowOrderInputs& inputs = index.inputs;
-    for (const Layout& layout : index.program().layouts) {
-        if (layout.staticFields.isEmpty() || !layout.constructor)
-            continue;
-        if (!inputs.hasClassObjectEscaped(layout.constructor))
-            continue;
-        for (const StaticField& field : layout.staticFields)
-            index.staticFieldsOfEscapedClasses.set(field.variable.index());
-    }
-}
-
 static bool isFoundThroughRegistration(FunctionRole role)
 {
     return role == FunctionRole::Library || role == FunctionRole::Model;
@@ -598,11 +234,11 @@ static BitVector findFunctionsEnteredFromOutside(const FlowScopeIndex& index)
     const Program& program = index.program();
     BitVector functions(program.functions.size());
     for (unsigned function = 0; function < program.functions.size(); ++function) {
-        if (index.bodies[function] && program.functions[function].mayBeCalledByHost() && !isFoundThroughRegistration(program.functions[function].role))
+        if (index.bodies.quickGet(function) && program.functions[function].mayBeCalledByHost() && !isFoundThroughRegistration(program.functions[function].role))
             functions.quickSet(function);
     }
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
-        if (entry.function && index.bodies[entry.function.index()])
+        if (entry.function && index.bodies.quickGet(entry.function.index()))
             functions.quickSet(entry.function.index());
     }
     return functions;
@@ -617,8 +253,8 @@ static void findFunctionsEnteredWithoutMention(FlowScopeIndex& index, const BitV
     for (size_t function : functions)
         worklist.append(static_cast<uint32_t>(function));
     while (!worklist.isEmpty()) {
-        for (const FlowFunctionMention& mention : index.bodies[worklist.takeLast()]->references) {
-            if (index.bodies[mention.function.index()] && !functions.quickSet(mention.function.index()))
+        for (const FlowFunctionMention& mention : index.mentionsIn(FunctionID(worklist.takeLast()))) {
+            if (index.bodies.quickGet(mention.function.index()) && !functions.quickSet(mention.function.index()))
                 worklist.append(mention.function.index());
         }
     }
@@ -636,13 +272,11 @@ static bool canRunOnlyDuringCall(const Function& function)
 static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsEnteredFromOutside)
 {
     const Program& program = index.program();
-    for (unsigned caller = 0; caller < index.bodies.size(); ++caller) {
-        if (!index.bodies[caller])
-            continue;
-        for (const FlowFunctionMention& mention : index.bodies[caller]->references) {
+    for (size_t caller : index.bodies) {
+        for (const FlowFunctionMention& mention : index.mentionsIn(FunctionID(static_cast<uint32_t>(caller)))) {
             ++index.calls.numberOfMentions[mention.function.index()];
             if (program.functions[caller].at(mention.value).opcode == Opcode::CallDirect)
-                index.calls.soleCallSites[mention.function.index()] = { FunctionID(caller), mention.value };
+                index.calls.soleCallSites[mention.function.index()] = { FunctionID(static_cast<uint32_t>(caller)), mention.value };
         }
     }
     for (const Variable& variable : program.variables) {
@@ -650,10 +284,10 @@ static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsE
             ++index.calls.numberOfMentions[variable.function.index()];
     }
     for (unsigned function = 0; function < program.functions.size(); ++function) {
-        if (index.calls.numberOfMentions[function] != 1 || !index.bodies[function] || functionsEnteredFromOutside.quickGet(function) || !canRunOnlyDuringCall(program.functions[function]))
+        if (index.calls.numberOfMentions[function] != 1 || !index.bodies.quickGet(function) || functionsEnteredFromOutside.quickGet(function) || !canRunOnlyDuringCall(program.functions[function]))
             index.calls.soleCallSites[function] = { };
     }
-    for (const FlowCallLink& link : index.inputs.callLinks()) {
+    for (const FlowCall& link : index.inputs.calls) {
         FlowCallSite& site = index.calls.soleCallSites[link.callee.index()];
         if (site != FlowCallSite { link.caller, link.site })
             site = { };
@@ -665,9 +299,9 @@ static void collectCalls(FlowScopeIndex& index)
     const FlowOrderInputs& inputs = index.inputs;
     FlowScopeCalls& calls = index.calls;
     BitVector isCalled(index.program().functions.size());
-    for (const FlowCallLink& link : inputs.callLinks()) {
+    for (const FlowCall& link : inputs.calls) {
         isCalled.set(link.callee.index());
-        if (inputs.isHost(link.caller) || !link.site)
+        if (link.caller == inputs.host() || !link.site)
             calls.functionsEnteredByHost.set(link.callee.index());
         else
             calls.byCaller.append({ link.caller, link.callee, link.site, { } });
@@ -678,7 +312,7 @@ static void collectCalls(FlowScopeIndex& index)
     }
     calls.functionsEnteredByHost.merge(index.functionsEnteredWithoutMention);
 
-    const ParallelLoops& loops = inputs.build().parallelLoops();
+    const ParallelLoops& loops = inputs.build.parallelLoops();
     sortAndRemoveDuplicates(loops, calls.byCaller);
     // Every owner asks for every call of the functions it looks at, and the answer lies in the caller's body alone.
     forEachIndexInParallel(loops, calls.byCaller.size(), [&](unsigned call) {
@@ -689,6 +323,16 @@ static void collectCalls(FlowScopeIndex& index)
     parallelSort(loops, calls.byCallee.mutableSpan(), [](const FlowScopeCall& a, const FlowScopeCall& b) {
         return std::tuple { a.callee, a.caller, a.site } < std::tuple { b.callee, b.caller, b.site };
     });
+    auto findFirstCalls = [&](const Vector<FlowScopeCall>& sorted, FunctionID FlowScopeCall::* function) {
+        Vector<uint32_t> first(FillWith { }, index.program().functions.size() + 1, 0u);
+        for (const FlowScopeCall& call : sorted)
+            ++first[(call.*function).index() + 1];
+        for (size_t position = 1; position < first.size(); ++position)
+            first[position] += first[position - 1];
+        return first;
+    };
+    calls.firstByCaller = findFirstCalls(calls.byCaller, &FlowScopeCall::caller);
+    calls.firstByCallee = findFirstCalls(calls.byCallee, &FlowScopeCall::callee);
 }
 
 static void findEnvironmentOwners(FlowScopeIndex& index)
@@ -702,29 +346,6 @@ static void findEnvironmentOwners(FlowScopeIndex& index)
         uint32_t end = index.numbering.firstField[layoutIndex + 1];
         for (uint32_t location = index.numbering.firstField[layoutIndex]; location < end; ++location)
             index.locationOwners[location] = sites.front().function;
-    }
-}
-
-static FunctionID outermostCallerOf(const FlowScopeIndex& index, FunctionID function)
-{
-    for (size_t remaining = index.program().functions.size(); remaining; --remaining) {
-        FunctionID caller = index.calls.soleCallSites[function.index()].caller;
-        if (!caller)
-            return function;
-        function = caller;
-    }
-    return { };
-}
-
-// The owner is the function in whose activation the first listed store runs.
-static void findMemberOwners(FlowScopeIndex& index)
-{
-    for (FlowScopeLocation location = index.numbering.firstMember(); location < index.numbering.numberOfLocations(); ++location) {
-        auto stores = accessesAt(index.stores.span(), location);
-        if (!stores.empty())
-            index.locationOwners[location] = outermostCallerOf(index, stores.front().function);
-        if (!index.locationOwners[location])
-            index.opaqueLocations.set(location);
     }
 }
 
@@ -746,10 +367,10 @@ static void createOwners(FlowScopeIndex& index)
         if (owner)
             functions.append(owner);
     }
-    sortAndRemoveDuplicates(index.inputs.build().parallelLoops(), functions);
+    sortAndRemoveDuplicates(index.inputs.build.parallelLoops(), functions);
     index.owners.reserveInitialCapacity(functions.size());
     for (FunctionID function : functions)
-        index.owners.append(FlowScopeOwner { function, { }, { }, { }, { }, { }, { } });
+        index.owners.append(FlowScopeOwner { function, { }, { }, { }, { }, { } });
 }
 
 static void assignExport(FlowScopeIndex& index, VariableID variable, ModuleID exporter)
@@ -803,15 +424,6 @@ static void assignOwnedLocations(FlowScopeIndex& index)
         if (FunctionID function = index.environmentOwners[layout])
             ownerFor(index, function).environments.append(LayoutID(layout));
     }
-    for (FlowScopeLocation location = index.numbering.firstMember(); location < index.numbering.numberOfLocations(); ++location) {
-        FunctionID function = index.locationOwners[location];
-        if (!function)
-            continue;
-        FlowScopeOwner& owner = ownerFor(index, function);
-        owner.members.append(location);
-        if (moduleBodyOwnerOf(index, program.at(function).module) == function)
-            owner.module = program.at(function).module;
-    }
     for (unsigned moduleIndex = 0; moduleIndex < program.modules.size(); ++moduleIndex) {
         // Whoever is answered the value of a CommonJS module reads the variable that holds it, and so does the loader where it takes the names of a module from that value.
         assignExport(index, program.modules[moduleIndex].exportsVariable, ModuleID(moduleIndex));
@@ -834,14 +446,19 @@ static void assignOwnedLocations(FlowScopeIndex& index)
         AOT::sort(owner.exports);
 }
 
-FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleOrder& moduleOrder, const FlowScopeAccessesByFunction& bodies, FlowScopeLocationNumbering&& numbering)
+FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleOrder& moduleOrder)
 {
-    const Program& program = inputs.program();
-    FlowScopeIndex index { inputs, moduleOrder, bodies, WTF::move(numbering), { }, { }, { }, { }, { }, { }, { }, { }, { }, { }, { }, { }, { }, { }, { }, { }, { }, { } };
+    const Program& program = inputs.program;
+    FlowScopeIndex index { inputs, moduleOrder };
+    index.numbering = createScopeLocationNumbering(program);
+    index.bodies = inputs.reachedFunctions;
+    for (size_t function : inputs.reachedFunctions) {
+        if (!program.functions[function].hasBody())
+            index.bodies.quickClear(function);
+    }
     uint32_t numberOfLocations = index.numbering.numberOfLocations();
     index.opaqueLocations = BitVector(numberOfLocations);
     index.syntheticVariables = BitVector(program.variables.size());
-    index.staticFieldsOfEscapedClasses = BitVector(program.variables.size());
     index.modulesOfFunctionsEnteredWithoutMention = BitVector(program.modules.size());
     index.modulesReadByHost = BitVector(program.modules.size());
     index.locationOwners.grow(numberOfLocations);
@@ -849,22 +466,14 @@ FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleO
     index.calls.numberOfMentions.fill(0, program.functions.size());
     index.calls.soleCallSites.grow(program.functions.size());
     index.calls.functionsEnteredByHost = BitVector(program.functions.size());
-    index.modulesLoadedByName = BitVector(program.modules.size());
-    for (uint32_t module = 0; module < program.modules.size(); ++module) {
-        if (inputs.mayBeLoadedByName(ModuleID(module)))
-            index.modulesLoadedByName.quickSet(module);
-    }
 
     BitVector functionsEnteredFromOutside = findFunctionsEnteredFromOutside(index);
-    mergeBodyAccesses(index);
-    markEvalBindingsOpaque(index);
+    collectAccesses(index);
     findFunctionsEnteredWithoutMention(index, functionsEnteredFromOutside);
     findVariableOwners(index);
-    findStaticFieldsOfEscapedClasses(index);
     findSoleCallSites(index, functionsEnteredFromOutside);
     collectCalls(index);
     findEnvironmentOwners(index);
-    findMemberOwners(index);
     createOwners(index);
     assignOwnedLocations(index);
     return index;

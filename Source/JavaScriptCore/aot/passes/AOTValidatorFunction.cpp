@@ -10,9 +10,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t valueResultIndex = 1;
-
-static DerivedSignature signatureOfNode(const EmissionInputs& inputs, const ResultNode& node)
+static DerivedSignature validatorSignatureOfNode(const EmissionInputs& inputs, const ResultNode& node)
 {
     Function scratch;
     IRBuilder builder(inputs.analysisContext(), scratch, inputs.types);
@@ -28,7 +26,7 @@ Function buildValidator(const DerivedFunctionKey& key, DerivedFunctionInputs& de
 
     DerivedFunctionHead head = createDerivedFunction(inputs, FunctionRole::Validator,
         CreatorRecord::Validator { .type = node.type, .layout = node.layout, .expectedResult = ref.expectedResult(), .node = ref.part },
-        signatureOfNode(inputs, node));
+        validatorSignatureOfNode(inputs, node));
 
     IRBuilder builder(inputs.analysisContext(), head.function, inputs.types);
     builder.moveToEndOf(head.entry);

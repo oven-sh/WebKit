@@ -9,7 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
-#include "AOTIRPrinter.h"
+#include "AOTIR.h"
 #include "AOTResultRulesInternal.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -17,25 +17,6 @@
 #include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-void BrokenResultRule::dump(PrintStream& out, const Program& program, const Function& function) const
-{
-    out.print("v", value.index(), " ", nameOf(function.at(value).opcode), " operand ", operandIndex, ": ");
-    printType(out, program, narrowOperand);
-    out.print(" gives ");
-    printType(out, program, resultOfNarrowOperand);
-    switch (law) {
-    case Law::NarrowerOperandGivesNarrowerResult:
-        out.print(", ");
-        printType(out, program, wideOperand);
-        out.print(" gives ");
-        break;
-    case Law::BothPathsAgree:
-        out.print(" by type ids, by the rule ");
-        break;
-    }
-    printType(out, program, resultOfWideOperand);
-}
 
 static uint64_t shapeOf(const Function& function, const Value& value)
 {

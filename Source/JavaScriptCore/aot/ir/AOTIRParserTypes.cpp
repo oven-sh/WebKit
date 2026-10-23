@@ -118,7 +118,7 @@ static uint32_t parseIDWordOrMinus(TextParser& parser, IDPrefix prefix)
     return parser.accept(TokenKind::Minus) ? Wire::none : parser.parseIDWord(prefix);
 }
 
-static uint32_t parseIDWordBelow(TextParser& parser, IDPrefix prefix, uint32_t limit)
+static uint32_t parseIDWordUnderLimit(TextParser& parser, IDPrefix prefix, uint32_t limit)
 {
     if (parser.atID(prefix) && parser.token().number >= limit) {
         parser.fail(InternalErrorKind::IdOutOfRange);
@@ -439,7 +439,7 @@ void TextParser::parseTypePart(Wire::Type& wire, TypeParts& parts)
         return;
     }
     if (atID(IDPrefix::Function)) {
-        parts.functions.append(parseIDWordBelow(*this, IDPrefix::Function, countOf(ProgramList::Functions)));
+        parts.functions.append(parseIDWordUnderLimit(*this, IDPrefix::Function, countOf(ProgramList::Functions)));
         return;
     }
     if (TypeParts::isAtSymbolKey(*this)) {
@@ -554,7 +554,7 @@ LayoutSetID TextParser::parseLayoutSet()
             set.hasMembersWithoutLayout = true;
             return;
         }
-        set.members.append(LayoutID(parseIDWordBelow(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));
+        set.members.append(LayoutID(parseIDWordUnderLimit(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));
     });
     if (hasFailed())
         return { };
@@ -578,7 +578,7 @@ CalleeSetID TextParser::parseCalleeSet()
             set.builtins.append(parseBuiltinPart(*this));
             return;
         }
-        set.functions.append(FunctionID(parseIDWordBelow(*this, IDPrefix::Function, countOf(ProgramList::Functions))));
+        set.functions.append(FunctionID(parseIDWordUnderLimit(*this, IDPrefix::Function, countOf(ProgramList::Functions))));
     });
     if (hasFailed())
         return { };

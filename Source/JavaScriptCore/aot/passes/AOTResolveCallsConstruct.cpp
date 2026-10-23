@@ -118,7 +118,7 @@ ValueID appendThisOfConstructorFunction(IRBuilder& builder, FunctionID construct
     return appendThis(builder, constructed, hasOnePrototypeObject(program, declaredLayoutOf(program, constructed)) ? ValueID() : closure);
 }
 
-static bool isClassConstructor(const Function& function)
+static bool isBaseOrDerivedConstructor(const Function& function)
 {
     return function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor;
 }
@@ -129,7 +129,7 @@ static bool isAlwaysClass(const Program& program, const Type& newTarget)
     if (!newTarget.isObject() || !newTarget.hasOnlyKnownCallees() || newTarget.layouts || !newTarget.builtins.isEmpty())
         return false;
     return std::ranges::all_of(newTarget.functions, [&](FunctionID function) {
-        return isClassConstructor(program.at(function));
+        return isBaseOrDerivedConstructor(program.at(function));
     });
 }
 

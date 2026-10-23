@@ -40,7 +40,7 @@ struct ClosureCellSortKey {
 
 } // anonymous namespace
 
-static CoroutineKind coroutineKindOf(const Function& function)
+static CoroutineKind kindOfCoroutine(const Function& function)
 {
     return function.creator.as<CreatorRecord::Coroutine>().kind;
 }
@@ -85,12 +85,11 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
     case FunctionRole::Source:
     case FunctionRole::Library:
     case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
         break;
     case FunctionRole::CoroutineRamp:
-        if (coroutineKindOf(function) != CoroutineKind::AsyncFunction)
+        if (kindOfCoroutine(function) != CoroutineKind::AsyncFunction)
             return ClosureForm::Full;
         break;
     case FunctionRole::Model:
@@ -105,13 +104,11 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
     case FunctionRole::CalleeVersion:
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
-    case FunctionRole::ResultWorker:
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
-    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return ClosureForm::Full;
     }
@@ -313,8 +310,6 @@ static bool hasClosureWord(FunctionRole role)
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
@@ -322,7 +317,6 @@ static bool hasClosureWord(FunctionRole role)
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
-    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return false;
     }
@@ -409,7 +403,6 @@ static TraceVisibility visibilityOf(const Function& function)
     case FunctionRole::Parser:
     case FunctionRole::ValidatingParser:
     case FunctionRole::Validator:
-    case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return TraceVisibility::Hidden;
     case FunctionRole::Source:
@@ -428,8 +421,6 @@ static TraceVisibility visibilityOf(const Function& function)
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
@@ -440,11 +431,11 @@ static TraceVisibility visibilityOf(const Function& function)
 bool rejectsOnThrow(const Program& program, const Function& function)
 {
     if (function.role == FunctionRole::CoroutineBody)
-        return coroutineKindOf(function) == CoroutineKind::AsyncFunction;
+        return kindOfCoroutine(function) == CoroutineKind::AsyncFunction;
     if (function.role != FunctionRole::GenericEntrypoint)
         return false;
     const Function& target = program.at(function.creator.as<CreatorRecord::Entrypoint>().target);
-    return target.role == FunctionRole::CoroutineRamp && coroutineKindOf(target) == CoroutineKind::AsyncFunction;
+    return target.role == FunctionRole::CoroutineRamp && kindOfCoroutine(target) == CoroutineKind::AsyncFunction;
 }
 
 // StackFrame gives an async frame of such a function no name. The frame of an async function keeps the name the function itself has, not one it takes from a variable or a property.
@@ -453,7 +444,7 @@ static bool isNamedByOwner(const Function& function)
     if (function.role != FunctionRole::CoroutineBody && function.role != FunctionRole::AsyncWorker)
         return false;
     bool hasExplicitName = function.has(FunctionFlags::HasExplicitName);
-    switch (coroutineKindOf(function)) {
+    switch (kindOfCoroutine(function)) {
     case CoroutineKind::AsyncFunction:
         return !hasExplicitName;
     case CoroutineKind::Generator:

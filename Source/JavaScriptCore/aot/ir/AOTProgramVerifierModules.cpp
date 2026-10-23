@@ -43,7 +43,7 @@ struct ModuleKindRules {
     bool hasUniquePath { false };
 };
 
-struct RequestTargets {
+struct VerifiedRequestTargets {
     const Vector<ModuleRequest>& requests;
 
     size_t size() const { return requests.size(); }
@@ -399,7 +399,7 @@ static Vector<uint32_t> findUnreachedNames(const Vector<Module>& modules)
 
     unsigned numberOfModules = modules.size();
     auto components = computeStronglyConnectedComponents(numberOfModules, [&](unsigned module) {
-        return RequestTargets { modules[module].requests };
+        return VerifiedRequestTargets { modules[module].requests };
     });
     auto& componentOf = components.componentOf;
 

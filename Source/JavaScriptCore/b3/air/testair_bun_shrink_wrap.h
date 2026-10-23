@@ -851,7 +851,6 @@ void testDuplicateReturnsWithFrames()
 {
     for (bool hasSaves : { false, true }) {
         B3::Policy policy = shrinkWrappingPolicy();
-        policy.air.layout.duplicatesReturns = true;
         FrameGraph graph(policy);
         Tmp saved(GPRInfo::regCS0);
         BasicBlock* left = graph.code.addBlock();

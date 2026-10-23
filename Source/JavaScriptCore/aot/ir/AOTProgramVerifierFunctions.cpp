@@ -85,55 +85,10 @@ bool hasValidConstructedClass(const Program& program, FunctionID id, const Funct
     return source && program.at(source).constructedClass == function.constructedClass;
 }
 
-// The relations name subjects by their places in the list, entry parameters by their indices and values by their numbers.
-std::optional<uint32_t> findBrokenRuleOfRelations(const Function& function)
-{
-    constexpr uint32_t unlisted = UINT32_MAX;
-    constexpr size_t maxSubjects = 4096;
-
-    const FunctionRelations& relations = function.relations;
-    size_t numberOfSubjects = relations.subjects.size();
-    size_t numberOfValues = function.values.size();
-    if (numberOfSubjects > maxSubjects)
-        return 1;
-
-    auto isSubject = [&](uint32_t index) { return index < numberOfSubjects; };
-    auto isSubjectOrUnlisted = [&](uint32_t index) { return index == unlisted || isSubject(index); };
-    for (size_t place = 0; place < numberOfSubjects; ++place) {
-        const RelationSubject& subject = relations.subjects[place];
-        bool isRead = subject.kind == RelationSubjectKind::ReadFrom;
-        // The `undefined` of a `return` without a value is a constant that no value stands for.
-        bool hasNoValue = subject.kind == RelationSubjectKind::Constant && subject.index == unlisted;
-        size_t bound = subject.kind == RelationSubjectKind::Parameter ? function.numberOfEntryParameters() : numberOfValues;
-        if (!hasNoValue && subject.index >= bound)
-            return 2;
-        if (!isRead && subject.source)
-            return 3;
-        // Every subject stands behind what it is read out of.
-        if (isRead && subject.source >= place)
-            return 4;
-    }
-    for (const StoredInto& store : relations.stores) {
-        if (!isSubjectOrUnlisted(store.source) || !isSubject(store.target))
-            return 5;
-    }
-    for (const HandedTo& handed : relations.handed) {
-        if (!isSubjectOrUnlisted(handed.source) || handed.call >= numberOfValues)
-            return 6;
-    }
-    for (const OperandOf& operand : relations.operands) {
-        if (!isSubjectOrUnlisted(operand.source) || !isSubject(operand.user))
-            return 7;
-    }
-    return std::nullopt;
-}
-
 std::optional<InternalError> findHeaderError(const Program& program, IRForm form, uint64_t maxCaptures, FunctionID id, const Function& function)
 {
     if (function.captures.size() > maxCaptures)
         return InternalError { .kind = InternalErrorKind::ListOutOfBounds, .function = id, .limit = LimitID::MaxCaptures, .count = id.index() };
-    if (std::optional<uint32_t> rule = findBrokenRuleOfRelations(function))
-        return InternalError { .kind = InternalErrorKind::InvalidRelations, .function = id, .count = *rule };
 
     bool isAsRead = form == IRForm::AsRead && id.index() < program.numberOfFunctionsAsRead();
     if (hasValidSignature(function)
@@ -204,7 +159,7 @@ bool isValidCoroutineRecord(const Program& program, FunctionID id, const Creator
 }
 
 template<typename Step>
-std::optional<FunctionID> findCyclicChain(const Program& program, const Step& stepOf)
+std::optional<FunctionID> findCyclicFunctionChain(const Program& program, const Step& stepOf)
 {
     enum class WalkState : uint8_t { Unvisited, OnPath, Done };
 
@@ -253,17 +208,11 @@ bool ProgramVerifier::isValidCreatorRecord(FunctionID id, const Function& functi
         [&](const CreatorRecord::Version& record) { return record.provenVersion && record.provenVersion != id; },
         [&](const CreatorRecord::Coroutine& record) { return isValidCoroutineRecord(m_program, id, record); },
         [](const CreatorRecord::BoundFunction& record) { return record.target && record.numberOfCapturedArguments <= record.numberOfBoundArguments; },
-        [&](const CreatorRecord::ResultWrapper& record) {
-            auto* worker = findCreatorRecord<CreatorRecord::ResultWorker>(m_program, record.worker, FunctionRole::ResultWorker);
-            return worker && worker->origin == id;
-        },
-        [&](const CreatorRecord::ResultWorker& record) { return record.origin && m_program.at(record.origin).numberOfEntryParameters() == function.numberOfEntryParameters(); },
         [&](const CreatorRecord::ParameterWrapper& record) { return record.body && record.parameter < function.parameters.size(); },
         [&](const CreatorRecord::EntryChecks& record) { return record.body && record.fallback; },
         [&](const CreatorRecord::Serializer& record) { return isNullOrObjectLayout(m_program, record.layout); },
         [&](const CreatorRecord::Parser& record) { return record.type && isNullOrObjectLayout(m_program, record.layout); },
         [&](const CreatorRecord::Validator& record) { return record.type && isNullOrObjectLayout(m_program, record.layout); },
-        [](const CreatorRecord::ChainStep&) { return true; },
         [&](const CreatorRecord::StubBody& record) {
             const BuiltinTable& builtins = m_program.builtins();
             return builtins.contains(record.builtin) && isCallableBuiltin(builtins, record.builtin);
@@ -289,7 +238,7 @@ bool ProgramVerifier::isValidDerivation(FunctionID id, const Function& function)
 
 void ProgramVerifier::verifyDerivationChains()
 {
-    if (std::optional<FunctionID> cyclicFunction = findCyclicChain(m_program, [](const Function& function) { return function.derivation.source; }))
+    if (std::optional<FunctionID> cyclicFunction = findCyclicFunctionChain(m_program, [](const Function& function) { return function.derivation.source; }))
         fail({ .kind = InternalErrorKind::InvalidCreatorRecord, .function = *cyclicFunction });
 }
 

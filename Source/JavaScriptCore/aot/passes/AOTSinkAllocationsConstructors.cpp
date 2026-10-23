@@ -22,7 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct OwnAllocation {
+struct ConstructorOwnAllocation {
     Vector<ValueID, 2> prototypeWithCasts;
     ValueID allocation;
 };
@@ -84,7 +84,7 @@ static ValueID findOwnPrototypeRead(const Function& function, const CFG& cfg)
     return prototype;
 }
 
-static std::optional<OwnAllocation> findOwnAllocation(const Program& program, const Function& function)
+static std::optional<ConstructorOwnAllocation> findOwnAllocation(const Program& program, const Function& function)
 {
     CFG cfg(function);
     ValueID prototype = findOwnPrototypeRead(function, cfg);
@@ -118,7 +118,7 @@ static std::optional<OwnAllocation> findOwnAllocation(const Program& program, co
     });
     if (!canDefineInitialFields || isGuard)
         return std::nullopt;
-    return OwnAllocation { WTF::move(prototypeWithCasts), id };
+    return ConstructorOwnAllocation { WTF::move(prototypeWithCasts), id };
 }
 
 static Vector<ValueSite, 2> collectOwnSuperCalls(const Function& function)
@@ -223,7 +223,7 @@ LayoutID layoutAllocatedBy(const Program& program, FunctionID constructor)
 {
     const Function& function = program.at(constructor);
     if (function.constructorForm() == ConstructorForm::Base) {
-        if (std::optional<OwnAllocation> own = findOwnAllocation(program, function))
+        if (std::optional<ConstructorOwnAllocation> own = findOwnAllocation(program, function))
             return function.at(own->allocation).layout();
     }
     return function.constructedClass;
@@ -237,7 +237,7 @@ static DeclaredType computeThisType(const Program& program, const Function& orig
     case ConstructorForm::NotConstructor:
         RELEASE_ASSERT_NOT_REACHED();
     case ConstructorForm::Base: {
-        std::optional<OwnAllocation> own = findOwnAllocation(program, original);
+        std::optional<ConstructorOwnAllocation> own = findOwnAllocation(program, original);
         RELEASE_ASSERT(own);
         replacedType = original.at(own->allocation).type;
         break;
@@ -271,7 +271,7 @@ static void replaceAllocation(IRBuilder& builder, ValueID thisParameter)
 {
     const Program& program = builder.context().program;
     Function& version = builder.function();
-    std::optional<OwnAllocation> own = findOwnAllocation(program, version);
+    std::optional<ConstructorOwnAllocation> own = findOwnAllocation(program, version);
     RELEASE_ASSERT(own);
 
     const Value allocation = version.at(own->allocation);

@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAnalysisDump.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
@@ -18,7 +17,6 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
-#include "AOTIRPrinter.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
@@ -70,7 +68,7 @@ struct DictionaryLiteral {
     DataID data;
 };
 
-struct FunctionSites {
+struct ConstantCollectionSites {
     FunctionID function;
     Vector<ConstructionSite> sites;
     Vector<UnwrittenLiteral> unwrittenLiterals;
@@ -553,7 +551,7 @@ static std::optional<ConstantCollectionKind> collectionKindOf(const Program& pro
     return std::nullopt;
 }
 
-static void collectSites(const AnalysisContext& context, Vector<FunctionSites>& found)
+static void collectSites(const AnalysisContext& context, Vector<ConstantCollectionSites>& found)
 {
     constexpr OpcodeSet opcodesOfSites { Opcode::NewDictionary, Opcode::NewArray, Opcode::CallBuiltin };
     if (!mayListValueWith(context.program, context.id, opcodesOfSites))
@@ -605,7 +603,7 @@ static void collectSites(const AnalysisContext& context, Vector<FunctionSites>& 
         });
     });
     if (!sites.isEmpty() || !unwrittenLiterals.isEmpty() || !dictionaries.isEmpty())
-        found.append(FunctionSites { context.id, WTF::move(sites), WTF::move(unwrittenLiterals), WTF::move(dictionaries) });
+        found.append(ConstantCollectionSites { context.id, WTF::move(sites), WTF::move(unwrittenLiterals), WTF::move(dictionaries) });
 }
 
 static void add(Hasher& hasher, const DataNode& node)
@@ -747,10 +745,10 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
 }
 
 // Objects with the same names in the same order share their Structures: the first pays for them, and a place that reads a name from all of them finds one Structure there.
-static void keepDictionariesThatShareNothing(Vector<FunctionSites>& found)
+static void keepDictionariesThatShareNothing(Vector<ConstantCollectionSites>& found)
 {
     UncheckedKeyHashMap<uint64_t, Vector<const DictionaryLiteral*, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> literalsByNames;
-    for (const FunctionSites& entry : found) {
+    for (const ConstantCollectionSites& entry : found) {
         for (const DictionaryLiteral& literal : entry.dictionaries) {
             Hasher hasher;
             for (PropertyKeyID name : literal.names)
@@ -768,7 +766,7 @@ static void keepDictionariesThatShareNothing(Vector<FunctionSites>& found)
                 kept.add(literal);
         }
     }
-    for (FunctionSites& entry : found) {
+    for (ConstantCollectionSites& entry : found) {
         Vector<DictionaryLiteral> dictionaries;
         for (DictionaryLiteral& literal : entry.dictionaries) {
             if (kept.contains(&literal))
@@ -776,7 +774,7 @@ static void keepDictionariesThatShareNothing(Vector<FunctionSites>& found)
         }
         entry.dictionaries = WTF::move(dictionaries);
     }
-    found.removeAllMatching([](const FunctionSites& entry) {
+    found.removeAllMatching([](const ConstantCollectionSites& entry) {
         return entry.sites.isEmpty() && entry.unwrittenLiterals.isEmpty() && entry.dictionaries.isEmpty();
     });
 }
@@ -788,7 +786,7 @@ ConstantCollections embedConstantCollections(ProgramEditor& editor, const FlowRe
     if (!summariesFromFlow)
         summariesFromFlow = &ownSummaries.emplace(createSummariesFromFlow(program, flow, build));
     AnalysisContext programContext { build, program, &flow, summariesFromFlow };
-    Vector<FunctionSites> found = collectInParallel<FunctionSites>(build.parallelLoops(), program.functions.size(), largeFunctions(program, build.parallelLoops()).span(), [&](unsigned index, Vector<FunctionSites>& foundInChunk) {
+    Vector<ConstantCollectionSites> found = collectInParallel<ConstantCollectionSites>(build.parallelLoops(), program.functions.size(), largeFunctions(program, build.parallelLoops()).span(), [&](unsigned index, Vector<ConstantCollectionSites>& foundInChunk) {
         collectSites(contextOf(programContext, FunctionID(index)), foundInChunk);
     });
     keepDictionariesThatShareNothing(found);
@@ -796,7 +794,7 @@ ConstantCollections embedConstantCollections(ProgramEditor& editor, const FlowRe
     ConstantCollections collections;
     RecordsByHash recordsByHash;
     uint64_t numberOfSites = 0;
-    for (FunctionSites& entry : found) {
+    for (ConstantCollectionSites& entry : found) {
         ModuleID module = program.at(entry.function).module;
         for (ConstructionSite& site : entry.sites) {
             if (site.isUnused)
@@ -823,62 +821,6 @@ ConstantCollections embedConstantCollections(ProgramEditor& editor, const FlowRe
     if (ownSummaries)
         build.destroyLater(WTF::move(*ownSummaries));
     return collections;
-}
-
-static void dumpNode(IRPrinter& printer, const DataNode& node)
-{
-    auto dumpLeaf = [&](auto... payload) {
-        printer.out().print(nameOf(node.kind()), "(");
-        (printer.print(payload), ...);
-        printer.out().print(")");
-    };
-
-    switch (node.kind()) {
-    case DataNode::Kind::Undefined:
-    case DataNode::Kind::Null:
-    case DataNode::Kind::Hole:
-        dumpLeaf();
-        return;
-    case DataNode::Kind::Boolean:
-        dumpLeaf(node.as<DataNode::Boolean>().value);
-        return;
-    case DataNode::Kind::Number:
-        dumpLeaf(node.as<DataNode::Number>().value);
-        return;
-    case DataNode::Kind::String:
-        dumpLeaf(node.as<DataNode::String>().value);
-        return;
-    case DataNode::Kind::BigInt:
-        dumpLeaf(node.as<DataNode::BigInt>().digits);
-        return;
-    case DataNode::Kind::Array:
-    case DataNode::Kind::Object:
-        printVariant(printer, node);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void ConstantCollections::dump(PrintStream& out, const Program& program) const
-{
-    IRPrinter printer(out, program);
-    for (size_t index = 0; index < m_collections.size(); ++index) {
-        const ConstantCollection& collection = m_collections[index];
-        std::span<const DataNode> entries = program.at(collection.data).root.as<DataNode::Array>().elements.span();
-        out.print("table ", index, " keys: ");
-        dumpList(out, entries, [&](PrintStream&, const DataNode& entry) {
-            dumpNode(printer, keyOf(entry, collection.kind));
-        });
-        out.print("\n");
-        if (collection.kind == ConstantCollectionKind::Set)
-            continue;
-
-        out.print("table ", index, " values: ");
-        dumpList(out, entries, [&](PrintStream&, const DataNode& entry) {
-            dumpNode(printer, entry.as<DataNode::Array>().elements[1]);
-        });
-        out.print("\n");
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

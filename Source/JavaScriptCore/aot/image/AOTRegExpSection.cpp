@@ -29,7 +29,7 @@ namespace JSC::AOT {
 
 static constexpr uint8_t numberOfCharSizes = 2;
 static constexpr size_t bodyAlignment = isX86_64() ? 1 : 4;
-static constexpr size_t dataAlignment = 8;
+static constexpr size_t sectionDataAlignment = 8;
 static constexpr size_t routineAlignment = 16;
 static constexpr size_t sharedTableAlignment = 16;
 
@@ -331,7 +331,7 @@ void SectionBuilder::addUngroupedUnits()
     for (uint32_t symbol = 0; symbol < m_symbols.size(); ++symbol) {
         SymbolState& state = m_symbolStates[symbol];
         auto addTable = [&](std::span<const uint8_t> bytes) {
-            state.target = UnitTarget { addUnit(Kind::Table, UnitSharing::Copyable, dataAlignment, bytes, state.firstUser) };
+            state.target = UnitTarget { addUnit(Kind::Table, UnitSharing::Copyable, sectionDataAlignment, bytes, state.firstUser) };
         };
         WTF::switchOn(m_symbols.at(symbol),
             [&](Yarr::SharedTableID) { },
@@ -471,7 +471,7 @@ void SectionBuilder::addClassTables(std::span<const uint32_t> symbols, uint32_t 
     });
     packer.pack();
 
-    uint32_t unit = addUnit(Kind::Table, UnitSharing::Copyable, dataAlignment, ownBytes(Vector<uint8_t>(packer.bytes())), regExp);
+    uint32_t unit = addUnit(Kind::Table, UnitSharing::Copyable, sectionDataAlignment, ownBytes(Vector<uint8_t>(packer.bytes())), regExp);
     for (size_t index = 0; index < symbols.size(); ++index)
         m_symbolStates[symbols[index]].target = UnitTarget { unit, packer.offsetOf(tables[index]) };
 }
@@ -489,7 +489,7 @@ void SectionBuilder::addBitPlanes(std::span<const uint32_t> symbols, uint32_t re
         RELEASE_ASSERT(plane.bit < Latin1BitPlane::planesPerByteTable);
         if (tablesWithFreeBit[plane.bit].isEmpty()) {
             std::span<uint8_t> bytes = ownBytes(Vector<uint8_t>(FillWith { }, Yarr::CharacterClass::latin1TableSize, static_cast<uint8_t>(0)));
-            ByteTable table { addUnit(Kind::Table, UnitSharing::Copyable, dataAlignment, bytes, regExp), bytes };
+            ByteTable table { addUnit(Kind::Table, UnitSharing::Copyable, sectionDataAlignment, bytes, regExp), bytes };
             for (Vector<ByteTable>& tables : tablesWithFreeBit)
                 tables.append(table);
         }

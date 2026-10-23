@@ -137,7 +137,10 @@ static std::optional<CommandLine> takeJSCOptions(std::span<char*> arguments, std
 static int reportTestResults(PrintStream& out, const NativeTestSummary& nativeTests, const TestRunSummary& files)
 {
     unsigned failed = nativeTests.failed + files.failed;
-    out.println(nativeTests.passed + files.passed, " passed, ", failed, " failed, ", files.todo, " todo");
+    out.print(nativeTests.passed + files.passed, " passed, ", failed, " failed, ", files.todo, " todo");
+    if (nativeTests.leftOut)
+        out.print(", ", nativeTests.leftOut, " left out: they need entries of Bun, and this program has the table of the stand-in host");
+    out.println();
     return failed ? exitCodeForFailure : exitCodeForSuccess;
 }
 
@@ -251,7 +254,7 @@ static int runNativeSubcommand(std::span<const String> arguments, const ChildPro
     FilePrintStream out(stdout, FilePrintStream::Borrow);
     NativeTestSummary summary = runNativeTests(request, out);
     int exitCode = reportTestResults(out, summary, { });
-    if (!summary.passed && !summary.failed && hasFilter && request.part.count == 1)
+    if (!summary.passed && !summary.failed && !summary.leftOut && hasFilter && request.part.count == 1)
         return reportError(exitCodeForFailure, "testaot: no native test matches ", request.filter);
     return exitCode;
 }

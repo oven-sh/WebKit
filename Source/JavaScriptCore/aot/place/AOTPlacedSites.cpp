@@ -14,7 +14,6 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionKinds.h"
-#include "AOTPlacementCheck.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
@@ -43,7 +42,7 @@ struct RequireEdgeUse {
     friend auto operator<=>(const RequireEdgeUse&, const RequireEdgeUse&) = default;
 };
 
-struct FunctionSites {
+struct PlacedFunctionSites {
     Vector<FieldAccessUse> fieldAccesses;
     Vector<ShapeTestUse> shapeTests;
     Vector<AllocationUse> allocations;
@@ -72,7 +71,7 @@ struct FunctionSites {
 };
 
 // Of the functions with a body, in their order.
-using FunctionSitesArray = std::span<FunctionSites* const>;
+using FunctionSitesArray = std::span<PlacedFunctionSites* const>;
 
 } // anonymous namespace
 
@@ -88,39 +87,6 @@ SourceSite sourceSiteOf(const Program& program, FunctionID id, const Value& valu
         isRegExpLiteral ? value.pattern() : StringID(),
         isRegExpLiteral ? value.regExpFlags().toRaw() : 0u,
     };
-}
-
-static void checkMemberList(PlacementFailureSink& sink, std::span<const LayoutID> members)
-{
-    for (size_t i = 1; i < members.size(); ++i) {
-        if (members[i - 1] >= members[i])
-            sink.fail(PlacementRule::MembersNotSorted, members[i]);
-    }
-}
-
-static void checkLayoutInputs(PlacementFailureSink& sink, const Program& program, LayoutID id)
-{
-    const Layout& layout = program.at(id);
-    if (!layout.isEnvironment())
-        return;
-    if (std::ranges::any_of(layout.flow.members, [&](LayoutID member) { return member != id; }))
-        sink.fail(PlacementRule::EnvironmentHasMembers, id);
-}
-
-void checkPlacementInputs(const PlacementContext& context)
-{
-    const Program& program = context.program;
-    PlacementFailureSink sink(context.build);
-    for (unsigned i = 0; i < program.types.numberOfLayoutSets(); ++i)
-        checkMemberList(sink, program.at(LayoutSetID(i)).members.span());
-    for (unsigned i = 0; i < program.layouts.size(); ++i)
-        checkLayoutInputs(sink, program, LayoutID(i));
-    for (const Variable& variable : program.variables) {
-        bool startsUndefined = variable.initialization == VariableInitialization::Undefined && variable.flow.initialization == InitializationState::Unknown;
-        bool holdsOnlyDeclaredType = !variable.declared.flags.contains(PositionFlags::IsExpected);
-        if (startsUndefined && holdsOnlyDeclaredType && !(program.at(variable.declared.type).primitives & Primitive::Undefined))
-            sink.fail(PlacementRule::VariableLacksInitialValue);
-    }
 }
 
 static SlotAccessKey keyOf(const FieldAccessUse& use) { return use.access; }
@@ -199,7 +165,7 @@ class SiteScanner {
 public:
     SiteScanner(const PlacementContext&, FunctionID);
 
-    FunctionSites run();
+    PlacedFunctionSites run();
 
 private:
     LayoutSetID knownSetOf(ValueID) const;
@@ -236,7 +202,7 @@ private:
     FunctionAnalyses m_analyses;
     FunctionSiteWeights m_weights;
     bool m_hasWeighedBlock { false };
-    FunctionSites m_sites;
+    PlacedFunctionSites m_sites;
 };
 
 SiteScanner::SiteScanner(const PlacementContext& context, FunctionID id)
@@ -599,7 +565,7 @@ void SiteScanner::scanTerminator(const Terminator& terminator, SiteWeight weight
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-FunctionSites SiteScanner::run()
+PlacedFunctionSites SiteScanner::run()
 {
     m_sites.function = m_id;
     for (unsigned i = 0; i < m_function.blocks.size(); ++i) {
@@ -637,20 +603,20 @@ FunctionSites SiteScanner::run()
 } // anonymous namespace
 
 template<typename T>
-static Vector<T> concatenate(FunctionSitesArray functions, Vector<T> FunctionSites::* list)
+static Vector<T> concatenate(FunctionSitesArray functions, Vector<T> PlacedFunctionSites::* list)
 {
     size_t size = 0;
-    for (FunctionSites* function : functions)
+    for (PlacedFunctionSites* function : functions)
         size += (function->*list).size();
     Vector<T> all;
     all.reserveInitialCapacity(size);
-    for (FunctionSites* function : functions)
+    for (PlacedFunctionSites* function : functions)
         all.appendVector(WTF::move(function->*list));
     return all;
 }
 
 template<typename Use>
-static Vector<Use> mergeWeightedUses(const ParallelLoops& loops, FunctionSitesArray functions, Vector<Use> FunctionSites::* list)
+static Vector<Use> mergeWeightedUses(const ParallelLoops& loops, FunctionSitesArray functions, Vector<Use> PlacedFunctionSites::* list)
 {
     Vector<Use> uses = concatenate(functions, list);
     parallelSort(loops, uses.mutableSpan(), isOrderedBefore<Use>);
@@ -660,7 +626,7 @@ static Vector<Use> mergeWeightedUses(const ParallelLoops& loops, FunctionSitesAr
 }
 
 template<typename T>
-static Vector<T> mergeDistinct(const ParallelLoops& loops, FunctionSitesArray functions, Vector<T> FunctionSites::* list)
+static Vector<T> mergeDistinct(const ParallelLoops& loops, FunctionSitesArray functions, Vector<T> PlacedFunctionSites::* list)
 {
     Vector<T> all = concatenate(functions, list);
     // The merge rounds of a parallel sort copy every element into a default-constructed buffer.
@@ -753,33 +719,33 @@ static bool isLookedForAboveRecords(const PlacementContext& context, const Guard
 static void mergeLayoutSites(const PlacementContext& context, FunctionSitesArray functions, PlacedSites& sites)
 {
     const ParallelLoops& loops = context.build.parallelLoops();
-    sites.allocations = mergeDistinct(loops, functions, &FunctionSites::allocations);
-    sites.keyOrderTests = mergeDistinct(loops, functions, &FunctionSites::keyOrderTests);
-    sites.fieldCreations = mergeDistinct(loops, functions, &FunctionSites::fieldCreations);
-    sites.guards = mergeWeightedUses(loops, functions, &FunctionSites::guards);
+    sites.allocations = mergeDistinct(loops, functions, &PlacedFunctionSites::allocations);
+    sites.keyOrderTests = mergeDistinct(loops, functions, &PlacedFunctionSites::keyOrderTests);
+    sites.fieldCreations = mergeDistinct(loops, functions, &PlacedFunctionSites::fieldCreations);
+    sites.guards = mergeWeightedUses(loops, functions, &PlacedFunctionSites::guards);
     sites.guards.removeAllMatching([&](const GuardUse& guard) {
         return speaksOfNameOrLengthMadeOnDemand(context.program, guard) || isLookedForAboveRecords(context, guard);
     });
     addEvaluationGuards(context, sites.guards);
-    sites.guardSets = mergeWeightedUses(loops, functions, &FunctionSites::guardSets);
-    sites.tableCalls = mergeDistinct(loops, functions, &FunctionSites::tableCalls);
+    sites.guardSets = mergeWeightedUses(loops, functions, &PlacedFunctionSites::guardSets);
+    sites.tableCalls = mergeDistinct(loops, functions, &PlacedFunctionSites::tableCalls);
 }
 
 static void mergeLiteralSites(const ParallelLoops& loops, FunctionSitesArray functions, PlacedSites& sites)
 {
-    sites.profiledArrayLiterals = mergeDistinct(loops, functions, &FunctionSites::profiledArrayLiterals);
-    sites.regExpLiterals = mergeDistinct(loops, functions, &FunctionSites::regExpLiterals);
-    sites.templateObjects = mergeDistinct(loops, functions, &FunctionSites::templateObjects);
-    sites.copyOnWriteArrays = mergeDistinct(loops, functions, &FunctionSites::copyOnWriteArrays);
-    sites.arraysWithStorageInImage = mergeDistinct(loops, functions, &FunctionSites::arraysWithStorageInImage);
+    sites.profiledArrayLiterals = mergeDistinct(loops, functions, &PlacedFunctionSites::profiledArrayLiterals);
+    sites.regExpLiterals = mergeDistinct(loops, functions, &PlacedFunctionSites::regExpLiterals);
+    sites.templateObjects = mergeDistinct(loops, functions, &PlacedFunctionSites::templateObjects);
+    sites.copyOnWriteArrays = mergeDistinct(loops, functions, &PlacedFunctionSites::copyOnWriteArrays);
+    sites.arraysWithStorageInImage = mergeDistinct(loops, functions, &PlacedFunctionSites::arraysWithStorageInImage);
 }
 
 static void mergeConstants(const ParallelLoops& loops, FunctionSitesArray functions, PlacedSites& sites)
 {
-    sites.builtinCells = mergeDistinct(loops, functions, &FunctionSites::builtinCells);
-    sites.bigIntConstants = mergeDistinct(loops, functions, &FunctionSites::bigIntConstants);
-    sites.moduleBuiltins = mergeDistinct(loops, functions, &FunctionSites::moduleBuiltins);
-    for (const RequireEdgeUse& use : mergeDistinct(loops, functions, &FunctionSites::requireEdges)) {
+    sites.builtinCells = mergeDistinct(loops, functions, &PlacedFunctionSites::builtinCells);
+    sites.bigIntConstants = mergeDistinct(loops, functions, &PlacedFunctionSites::bigIntConstants);
+    sites.moduleBuiltins = mergeDistinct(loops, functions, &PlacedFunctionSites::moduleBuiltins);
+    for (const RequireEdgeUse& use : mergeDistinct(loops, functions, &PlacedFunctionSites::requireEdges)) {
         if (!sites.requireEdges.isEmpty() && sites.requireEdges.last() == use.edge)
             continue;
         sites.requireEdges.append(use.edge);
@@ -801,12 +767,12 @@ static void mergeBits(const Program& program, FunctionSitesArray functions, Plac
     sites.typesTestedByCode.ensureSize(program.types.size());
     sites.functionsWithAllocatedClosures.ensureSize(program.functions.size());
     sites.firstStoreThatMayAdd.fill(0, program.functions.size() + 1);
-    for (const FunctionSites* function : functions)
+    for (const PlacedFunctionSites* function : functions)
         sites.firstStoreThatMayAdd[function->function.index() + 1] = function->numberOfStoresThatMayAdd;
     for (size_t index = 1; index < sites.firstStoreThatMayAdd.size(); ++index)
         sites.firstStoreThatMayAdd[index] += sites.firstStoreThatMayAdd[index - 1];
-    for (const FunctionSites* sitesOfFunction : functions) {
-        const FunctionSites& function = *sitesOfFunction;
+    for (const PlacedFunctionSites* sitesOfFunction : functions) {
+        const PlacedFunctionSites& function = *sitesOfFunction;
         setBits(sites.variablesNamedByCode, function.variables);
         setBits(sites.typesInRunTimePayloads, function.types);
         setBits(sites.typesTestedByCode, function.typesTestedByCode);
@@ -821,8 +787,8 @@ static PlacedSites mergeSites(const PlacementContext& context, FunctionSitesArra
     const ParallelLoops& loops = context.build.parallelLoops();
     PlacedSites sites;
     runTasksInParallel(loops, {
-        [&] { sites.fieldAccesses = mergeWeightedUses(loops, functions, &FunctionSites::fieldAccesses); },
-        [&] { sites.shapeTests = mergeWeightedUses(loops, functions, &FunctionSites::shapeTests); },
+        [&] { sites.fieldAccesses = mergeWeightedUses(loops, functions, &PlacedFunctionSites::fieldAccesses); },
+        [&] { sites.shapeTests = mergeWeightedUses(loops, functions, &PlacedFunctionSites::shapeTests); },
         [&] { mergeLayoutSites(context, functions, sites); },
         [&] { mergeLiteralSites(loops, functions, sites); },
         [&] { mergeConstants(loops, functions, sites); },
@@ -844,10 +810,10 @@ PlacedSites collectPlacedSites(const PlacementContext& context)
         if (found != functionsWithBodies.end() && *found == large)
             largestFirst.append(static_cast<uint32_t>(found - functionsWithBodies.begin()));
     }
-    ParallelArray<FunctionSites> sitesOfFunctions(loops, functionsWithBodies.size(), largestFirst.span(), [&](unsigned index) {
+    ParallelArray<PlacedFunctionSites> sitesOfFunctions(loops, functionsWithBodies.size(), largestFirst.span(), [&](unsigned index) {
         return SiteScanner(context, FunctionID(functionsWithBodies[index])).run();
     });
-    Vector<FunctionSites*> functions(sitesOfFunctions.size(), [&](size_t index) {
+    Vector<PlacedFunctionSites*> functions(sitesOfFunctions.size(), [&](size_t index) {
         return &sitesOfFunctions[index];
     });
     PlacedSites sites = mergeSites(context, functions.span());
@@ -870,7 +836,7 @@ struct BodyScansForPlacement::State {
     struct ScanOfBody {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ScanOfBody);
 
-        FunctionSites sites;
+        PlacedFunctionSites sites;
         Vector<KeyCellUse> keyCellUses;
         Vector<GlobalBindingSite> globalBindingSites;
         uint32_t numberOfOperationsWithWordForSiteCache { 0 };
@@ -943,7 +909,7 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
 {
     const Program& program = context.program;
     RELEASE_ASSERT(m_state->scans.size() == program.functions.size());
-    Vector<FunctionSites*> functions;
+    Vector<PlacedFunctionSites*> functions;
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         if (!program.functions[index].hasBody())
             continue;

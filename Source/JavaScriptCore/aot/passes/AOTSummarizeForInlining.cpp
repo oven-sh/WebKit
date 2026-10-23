@@ -61,7 +61,6 @@ bool isBoundToFrame(const Function& function, const Block& block, uint32_t index
 bool isWrapperCreatedByEngine(const Function& function)
 {
     switch (function.creator.kind()) {
-    case CreatorRecord::Kind::ResultWrapper:
     case CreatorRecord::Kind::ParameterWrapper:
     case CreatorRecord::Kind::EntryChecks:
     case CreatorRecord::Kind::BoundFunction:
@@ -71,11 +70,9 @@ bool isWrapperCreatedByEngine(const Function& function)
     case CreatorRecord::Kind::None:
     case CreatorRecord::Kind::Entrypoint:
     case CreatorRecord::Kind::Version:
-    case CreatorRecord::Kind::ResultWorker:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
     case CreatorRecord::Kind::Validator:
-    case CreatorRecord::Kind::ChainStep:
     case CreatorRecord::Kind::StubBody:
     case CreatorRecord::Kind::TableLookup:
         return false;
@@ -129,22 +126,22 @@ static bool isRepeated(BuiltinCallbackTimes times)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isKeyedStore(Opcode opcode)
+static bool isStoreByKey(Opcode opcode)
 {
     return storedOf(opcode) && receiverOf(opcode) && Value::opcodesWithKey.contains(opcode);
 }
 
-static bool isCoroutine(const Function& function)
+static bool isCoroutineOrCreatedByOne(const Function& function)
 {
     return function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }) || function.creator.is<CreatorRecord::Coroutine>();
 }
 
 static bool entersCoroutine(const Program& program, const Function& function)
 {
-    if (isCoroutine(function))
+    if (isCoroutineOrCreatedByOne(function))
         return true;
     auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
-    return entrypoint && entrypoint->target && isCoroutine(program.at(entrypoint->target));
+    return entrypoint && entrypoint->target && isCoroutineOrCreatedByOne(program.at(entrypoint->target));
 }
 
 static bool isDeadEnd(const Value& value, NOESCAPE const Invocable<bool(FunctionID)> auto& neverReturns)
@@ -653,7 +650,7 @@ private:
                 continue;
             for (ValueID id : m_function.at(block).values) {
                 const Value& access = m_function.at(id);
-                bool isStore = isKeyedStore(access.opcode);
+                bool isStore = isStoreByKey(access.opcode);
                 if (!isNamedAccess(access.opcode) && !isStore)
                     continue;
                 ValueID receiver = access.operand(*receiverOf(access.opcode));

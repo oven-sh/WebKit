@@ -250,7 +250,7 @@ struct PlannedRead {
 
 } // anonymous namespace
 
-static bool isBefore(const ProgramPoint& a, const ProgramPoint& b)
+static bool pointIsBefore(const ProgramPoint& a, const ProgramPoint& b)
 {
     return std::tie(a.block, a.index) < std::tie(b.block, b.index);
 }
@@ -296,8 +296,8 @@ static void eraseOperations(IRBuilder& builder, std::span<const ProgramPoint> so
 
 static ProgramPoint pointAfterErasing(std::span<const ProgramPoint> sortedPoints, ProgramPoint point)
 {
-    auto firstInBlock = std::ranges::lower_bound(sortedPoints, ProgramPoint::atHeadOf(point.block), isBefore);
-    auto firstNotBefore = std::ranges::lower_bound(sortedPoints, point, isBefore);
+    auto firstInBlock = std::ranges::lower_bound(sortedPoints, ProgramPoint::atHeadOf(point.block), pointIsBefore);
+    auto firstNotBefore = std::ranges::lower_bound(sortedPoints, point, pointIsBefore);
     return { point.block, point.index - static_cast<uint32_t>(firstNotBefore - firstInBlock) };
 }
 
@@ -334,7 +334,7 @@ void expandPatternsInOneRead(FunctionPassContext& pass, IRBuilder& builder, std:
         for (const PatternInOneRead& pattern : patterns)
             plans.append(planOneRead(pass, useLists, pattern.operations, pointsOfOperations));
     }
-    AOT::sort(pointsOfOperations, isBefore);
+    AOT::sort(pointsOfOperations, pointIsBefore);
     eraseOperations(builder, pointsOfOperations.span());
 
     for (size_t index = 0; index < patterns.size(); ++index) {

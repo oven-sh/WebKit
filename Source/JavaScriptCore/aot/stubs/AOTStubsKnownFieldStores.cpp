@@ -35,7 +35,6 @@ StubSignature signatureOfCreateKnownField(StubKey key)
     return signatureOfPutKnownField(key);
 }
 
-static constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
 // The record's second word: the flags are its low half.
 static constexpr ptrdiff_t offsetOfFlagsWord = OBJECT_OFFSETOF(FieldData, flags);
 static_assert(offsetOfFlagsWord == sizeof(uint32_t) && OBJECT_OFFSETOF(FieldData, operandIndex) == offsetOfFlagsWord + sizeof(uint16_t) && FieldData::nameBits < 32);

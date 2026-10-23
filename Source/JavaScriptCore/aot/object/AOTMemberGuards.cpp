@@ -67,7 +67,7 @@ private:
     UniquedStringImpl* m_uid { nullptr };
 };
 
-struct Resolution {
+struct GuardResolution {
     const LayoutData* declarer { nullptr };
     JSObject* declarerHolder { nullptr };
     // What the lookup passes that holds no class of the chain.
@@ -693,9 +693,9 @@ private:
 
 } // anonymous namespace
 
-static std::optional<Resolution> resolveAsDeclared(VM& vm, State& state, ClassesAbove& classes, MemberName& name)
+static std::optional<GuardResolution> resolveAsDeclared(VM& vm, State& state, ClassesAbove& classes, MemberName& name)
 {
-    Resolution resolution;
+    GuardResolution resolution;
     ClassSide side = classes.side();
     for (size_t index = 0;; ++index) {
         // A reference into the levels does not outlive the next one that is asked for.
@@ -722,7 +722,7 @@ static std::optional<Resolution> resolveAsDeclared(VM& vm, State& state, Classes
     }
 }
 
-static bool tryWatchDeclarer(VM& vm, State& state, const LayoutData& layout, ClassSide side, const Resolution& resolution, MemberName& name)
+static bool tryWatchDeclarer(VM& vm, State& state, const LayoutData& layout, ClassSide side, const GuardResolution& resolution, MemberName& name)
 {
     const LayoutData* declarer = resolution.declarer;
     if (!declarer)
@@ -748,7 +748,7 @@ static bool tryWatchMember(VM& vm, State& state, const LayoutData& layout, const
     ClassSide side = guard.side();
     ASSERT(classes.side() == side && classes.at(0).classLayout == &layout);
     MemberName name(vm, guard.name);
-    std::optional<Resolution> resolution = resolveAsDeclared(vm, state, classes, name);
+    std::optional<GuardResolution> resolution = resolveAsDeclared(vm, state, classes, name);
     if (!resolution || !tryWatchDeclarer(vm, state, layout, side, *resolution, name))
         return false;
     if (!resolution->otherObjects.isEmpty())
@@ -826,7 +826,7 @@ static bool tryWatchAbsentMember(VM& vm, State& state, const LayoutData& layout,
 {
     ASSERT(classes.side() == guard.side() && classes.at(0).classLayout == &layout);
     MemberName name(vm, guard.name);
-    std::optional<Resolution> resolution = resolveAsDeclared(vm, state, classes, name);
+    std::optional<GuardResolution> resolution = resolveAsDeclared(vm, state, classes, name);
     if (!resolution || resolution->declarer)
         return false;
     if (!resolution->otherObjects.isEmpty())
@@ -963,7 +963,7 @@ static bool isAsDeclaredOn(VM& vm, State& state, const ChainLevel& level, uint32
     if (!declares(state, *level.classLayout, side, key))
         return false;
     MemberName name(vm, key);
-    Resolution resolution;
+    GuardResolution resolution;
     resolution.declarer = level.classLayout;
     resolution.declarerHolder = level.holder;
     return holdsAsDeclared(vm, state, *level.classLayout, side, level.holder, name) && tryWatchDeclarer(vm, state, *level.classLayout, side, resolution, name);
@@ -1090,7 +1090,7 @@ static void watchOwnMember(VM& vm, State& state, const LayoutData& layout, Class
     if (!layout.classData().subclassesOffset && !findGuard(layout, side, MemberGuardKind::Member, key))
         return;
     MemberName name(vm, key);
-    Resolution resolution;
+    GuardResolution resolution;
     resolution.declarer = &layout;
     resolution.declarerHolder = holder;
     // The record takes the closures of a class with one class object out of the closure table. Of any other closure the table learns when somebody looks at the member.

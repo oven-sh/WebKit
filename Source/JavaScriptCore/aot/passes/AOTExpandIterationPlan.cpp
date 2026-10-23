@@ -545,7 +545,7 @@ static bool hasNothingBetween(FunctionPassContext& pass, ValueID call, ValueID o
 }
 
 // Also a call that nobody has resolved yet: its callee is the function itself.
-static BuiltinID findCalledBuiltin(const BuiltinTable& builtins, const Function& function, const Value& call)
+static BuiltinID findBuiltinCalledBy(const BuiltinTable& builtins, const Function& function, const Value& call)
 {
     if (call.opcode == Opcode::Call) {
         const Value& callee = function.at(call.calleeOperand());
@@ -579,7 +579,7 @@ static std::optional<IterationPlan> planOwnEntries(FunctionPassContext& pass, co
     if (chain.isEmpty() || hasCastWithTest(function, chain.span()))
         return std::nullopt;
     const Value& call = function.at(chain.first());
-    if (findCalledBuiltin(builtins, function, call) != Builtins::ObjectEntries || call.argumentsOperands().size() != 1)
+    if (findBuiltinCalledBy(builtins, function, call) != Builtins::ObjectEntries || call.argumentsOperands().size() != 1)
         return std::nullopt;
     if (!hasNothingBetween(pass, chain.first(), iteration.open))
         return std::nullopt;

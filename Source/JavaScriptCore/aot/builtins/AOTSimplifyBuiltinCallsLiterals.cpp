@@ -35,7 +35,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct MethodCall {
+struct LiteralMethodCall {
     BuiltinID method;
     ValueID receiver;
     Vector<ValueID, 4> arguments;
@@ -75,7 +75,7 @@ static BuiltinID findMethodImplementedBy(const Program& program, FunctionID libr
 }
 
 // A parameter that the call leaves out is passed as undefined.
-static std::optional<MethodCall> findCallOfLibraryFunction(const Program& program, const Function& function, const Value& call, std::span<const NamedBuiltin> methods)
+static std::optional<LiteralMethodCall> findCallOfLibraryFunction(const Program& program, const Function& function, const Value& call, std::span<const NamedBuiltin> methods)
 {
     BuiltinID method = findMethodImplementedBy(program, call.function(), methods);
     const Function& target = program.at(call.function());
@@ -87,24 +87,24 @@ static std::optional<MethodCall> findCallOfLibraryFunction(const Program& progra
     Vector<ValueID, 4> arguments(operands.subspan(target.firstParameterIndex(), target.numberOfPositionalParameters()));
     while (!arguments.isEmpty() && program.typeOf(function, arguments.last()).hasOnlyPrimitives(Primitive::Undefined) && function.at(arguments.last()).opcode == Opcode::Undefined)
         arguments.removeLast();
-    return MethodCall { method, operands[*thisParameter], WTF::move(arguments) };
+    return LiteralMethodCall { method, operands[*thisParameter], WTF::move(arguments) };
 }
 
 // A call that ResolveBuiltins has matched with an overload or with the function of the library behind one, or has left as it is because the operands fit several overloads.
-static std::optional<MethodCall> findMethodCall(const Program& program, const Function& function, const Value& value, std::span<const NamedBuiltin> methods)
+static std::optional<LiteralMethodCall> findMethodCall(const Program& program, const Function& function, const Value& value, std::span<const NamedBuiltin> methods)
 {
     const BuiltinTable& builtins = program.builtins();
-    std::optional<MethodCall> call;
+    std::optional<LiteralMethodCall> call;
     switch (value.opcode) {
     case Opcode::CallBuiltin: {
         const BuiltinOverload& overload = builtins.at(value.overload());
         if (value.builtinCallForm() == BuiltinCallForm::Whole && overload.mode == BuiltinCallMode::Call && value.receiverOperand())
-            call = MethodCall { builtins.canonicalID(overload.builtin), value.receiverOperand(), Vector<ValueID, 4>(value.argumentsOperands()) };
+            call = LiteralMethodCall { builtins.canonicalID(overload.builtin), value.receiverOperand(), Vector<ValueID, 4>(value.argumentsOperands()) };
         break;
     }
     case Opcode::Call:
         if (BuiltinID callee = singleBuiltinOf(program.typeOf(function, value.calleeOperand())); callee && value.thisValueOperand() && !value.expectedResult())
-            call = MethodCall { builtins.canonicalID(callee), value.thisValueOperand(), Vector<ValueID, 4>(value.argumentsOperands()) };
+            call = LiteralMethodCall { builtins.canonicalID(callee), value.thisValueOperand(), Vector<ValueID, 4>(value.argumentsOperands()) };
         break;
     case Opcode::CallDirect:
         return findCallOfLibraryFunction(program, function, value, methods);
@@ -220,7 +220,7 @@ static std::optional<SearchOfLiteral> matchSearchOfLiteral(FunctionPassContext& 
 {
     const Program& program = context.program;
     const Function& function = context.function;
-    std::optional<MethodCall> call = findMethodCall(program, function, function.at(id), searchMethods);
+    std::optional<LiteralMethodCall> call = findMethodCall(program, function, function.at(id), searchMethods);
     if (!call || call->arguments.size() != 1)
         return std::nullopt;
 
@@ -358,7 +358,7 @@ static std::optional<ConcatenationOfLiterals> matchConcatenationOfLiterals(Funct
     const Program& program = context.program;
     const Function& function = context.function;
     ValueID id = site.value;
-    std::optional<MethodCall> call = findMethodCall(program, function, function.at(id), concatenationMethods);
+    std::optional<LiteralMethodCall> call = findMethodCall(program, function, function.at(id), concatenationMethods);
     if (!call)
         return std::nullopt;
 

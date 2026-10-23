@@ -233,7 +233,7 @@ public:
     bool hasCandidates() const;
     bool splitEdgesNeedingCode(IRBuilder&);
     bool duplicateLiveRange(IRBuilder&);
-    void rewrite(IRBuilder&, const FreshResultShape* = nullptr);
+    void rewrite(IRBuilder&);
     void recordLosses();
     void countStatistics();
     Vector<SunkAllocation> outcomes() const;
@@ -303,7 +303,6 @@ public:
         return head && head->objects.isEmpty() && head->aliases.isEmpty() && head->tests.isEmpty();
     }
     std::span<const VirtualReturn> virtualReturns() const LIFETIME_BOUND { return m_returns.span(); }
-    const FreshResultShape* resultShape() const { return m_resultShape; }
     void addTracesOfFruitlessAllocations(Vector<uint64_t>&) const;
 
     // While the function is analyzed. Few of its values name an object or a test of one.
@@ -449,7 +448,6 @@ private:
     Vector<VirtualReturn, 2> m_returns;
     Vector<Edge, 2> m_ignoredEdges;
     Vector<Edge, 2> m_edgesNeedingCode;
-    const FreshResultShape* m_resultShape { nullptr };
     bool m_mustSolveAgain { false };
     uint64_t m_work { 0 };
     // Since the analysis last started over: how often it went through the function, and through how many blocks it carried each candidate.

@@ -23,7 +23,7 @@ namespace {
 
 constexpr uint32_t noSet = UINT32_MAX;
 
-struct RowSet : WTF::UnionFind<RowSet> { };
+struct JoinedRowSet : WTF::UnionFind<JoinedRowSet> { };
 
 } // anonymous namespace
 
@@ -62,7 +62,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
     collectAccesses(context, uses);
 
     uint32_t numberOfRows = context.rows.count();
-    Vector<RowSet> forest(numberOfRows);
+    Vector<JoinedRowSet> forest(numberOfRows);
     auto rootOf = [&](SlotRow row) {
         return static_cast<SlotRow>(forest[row].find() - forest.begin());
     };

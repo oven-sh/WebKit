@@ -22,7 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct Creation {
+struct LayoutCreation {
     FunctionID function;
     ValueID call;
     LayoutID layout;
@@ -38,7 +38,7 @@ static bool createsObjectBelowItsArgument(const BuiltinTable& builtins, const Fu
     return callee.opcode == Opcode::Builtin && builtins.canonicalID(callee.builtin()) == Builtins::ObjectCreate;
 }
 
-static void becomeLiterals(const Program& program, BuildContext& build, FunctionID id, Function& function, TypeArena& types, std::span<const Creation> creations)
+static void becomeLiterals(const Program& program, BuildContext& build, FunctionID id, Function& function, TypeArena& types, std::span<const LayoutCreation> creations)
 {
     AnalysisContext context { build, program, nullptr, nullptr, id };
     FunctionAnalyses analyses(context, function);
@@ -48,7 +48,7 @@ static void becomeLiterals(const Program& program, BuildContext& build, Function
         uint32_t numberOfValues = static_cast<uint32_t>(function.at(block).values.size());
         for (uint32_t index = 0; index < numberOfValues; ++index) {
             ValueID call = function.at(block).values[index];
-            auto creation = std::ranges::find(creations, call, &Creation::call);
+            auto creation = std::ranges::find(creations, call, &LayoutCreation::call);
             if (creation == creations.end())
                 continue;
             ValueID prototype = function.at(call).variadicOperands()[0];
@@ -89,7 +89,7 @@ void giveLayoutsToCreatedObjects(Program& program, BuildContext& build)
             return static_cast<uint32_t>(index);
         });
     }
-    Vector<Creation> creations = collectInParallel<Creation>(build.parallelLoops(), candidates.size(), [&](unsigned position, Vector<Creation>& found) {
+    Vector<LayoutCreation> creations = collectInParallel<LayoutCreation>(build.parallelLoops(), candidates.size(), [&](unsigned position, Vector<LayoutCreation>& found) {
         uint32_t index = candidates[position];
         const Function& function = program.functions[index];
         // The model of a built-in says what the built-in does and is never run: what it answers is made by other code, with no layout of the model.
@@ -111,7 +111,7 @@ void giveLayoutsToCreatedObjects(Program& program, BuildContext& build)
 
     ProgramEditor editor(program);
     Vector<FunctionID> functions;
-    for (Creation& creation : creations) {
+    for (LayoutCreation& creation : creations) {
         const Function& function = program.at(creation.function);
         Layout layout;
         layout.kind = LayoutKind::Record;
@@ -123,7 +123,7 @@ void giveLayoutsToCreatedObjects(Program& program, BuildContext& build)
             functions.append(creation.function);
     }
     editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
-        auto ofFunction = std::ranges::equal_range(creations, id, { }, &Creation::function);
+        auto ofFunction = std::ranges::equal_range(creations, id, { }, &LayoutCreation::function);
         becomeLiterals(program, build, id, function, arenas.types, creations.subspan(ofFunction.begin() - creations.begin(), ofFunction.size()));
     });
 }

@@ -187,7 +187,7 @@ static void emitArrayIsArray(StubAssembler& jit, GPRReg scratch, JumpList& calls
     jit.returnToCaller();
 }
 
-static void returnBoolean(StubAssembler& jit, bool value)
+static void returnBoxedBoolean(StubAssembler& jit, bool value)
 {
     jit.move(TrustedImm32(value ? JSValue::ValueTrue : JSValue::ValueFalse), jit.result());
     jit.returnToCaller();
@@ -207,9 +207,9 @@ static void emitObjectIs(StubAssembler& jit, GPRReg scratch, JumpList& callsHost
     callsHostFunction.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(StringType)));
     callsHostFunction.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(HeapBigIntType)));
     differs.link(&jit);
-    returnBoolean(jit, false);
+    returnBoxedBoolean(jit, false);
     hasSameBits.link(&jit);
-    returnBoolean(jit, true);
+    returnBoxedBoolean(jit, true);
 }
 
 static void emitIsNaN(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
@@ -223,9 +223,9 @@ static void emitIsNaN(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFun
     jit.lshift64(TrustedImm32(1), scratch);
     Jump isNaN = jit.branch64(CCallHelpers::Above, scratch, TrustedImm64(static_cast<int64_t>(infinityWithoutSign)));
     isInt32.link(&jit);
-    returnBoolean(jit, false);
+    returnBoxedBoolean(jit, false);
     isNaN.link(&jit);
-    returnBoolean(jit, true);
+    returnBoxedBoolean(jit, true);
 }
 
 // A table that was filled before the program was registered has the engine's storage, which the host function reads.
@@ -460,9 +460,9 @@ static void emitArraySearch(StubAssembler& jit, BoxedCallForm form, GPRReg scrat
 
     if (form == BoxedCallForm::ArrayIncludes) {
         isAtEnd.link(&jit);
-        returnBoolean(jit, false);
+        returnBoxedBoolean(jit, false);
         isFound.link(&jit);
-        returnBoolean(jit, true);
+        returnBoxedBoolean(jit, true);
         return;
     }
     isAtEnd.link(&jit);

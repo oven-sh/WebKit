@@ -64,7 +64,7 @@ public:
     // Whether anybody asks the solver how a value has come to a node: see ValueFlowSolverInput::isAskedHowValuesCame.
     enum class WaysOfValues : uint8_t { AreAskedFor, AreNotAskedFor };
     // It makes property keys of the texts that calls pass where a function takes a key: see ValueFlowInstancedFunctions.
-    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor);
+    ValueFlowSolution(Program&, BuildContext&, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor);
     ~ValueFlowSolution();
 
     const Program& program() const { return m_program; }
@@ -93,9 +93,6 @@ private:
     Seconds m_timeToReduceBodies;
     Seconds m_timeToSolve;
 };
-
-// For the log of a build and for tests.
-void printAwaits(PrintStream&, ValueFlowSolution&);
 
 } } } // namespace JSC::AOT::Typed
 

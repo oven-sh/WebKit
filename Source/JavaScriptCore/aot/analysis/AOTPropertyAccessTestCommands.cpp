@@ -311,14 +311,14 @@ static void runProvenAccess(TestCommandContext& context)
 std::span<const TestCommand> propertyAccessTestCommands()
 {
     static constexpr std::array commands {
-        TestCommand { "property-access"_s, IRForm::Prepared, runPropertyAccess, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        TestCommand { "member-lookup"_s, IRForm::Prepared, runMemberLookup, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        TestCommand { "partition-members"_s, IRForm::Prepared, runPartitionMembers, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        TestCommand { "layouts-with-names"_s, IRForm::Prepared, runLayoutsWithNames, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        TestCommand { "receiver-candidates"_s, IRForm::Prepared, runReceiverCandidates, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        TestCommand { "union-parts"_s, IRForm::Prepared, runUnionParts, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        TestCommand { "element-access"_s, IRForm::Prepared, runElementAccess, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
-        TestCommand { "proven-access"_s, IRForm::Prepared, runProvenAccess, RawWordCheck::Run, ProgramAsRead::TypedAndVerified },
+        TestCommand { "property-access"_s, IRForm::Prepared, runPropertyAccess, ProgramAsRead::TypedAndVerified },
+        TestCommand { "member-lookup"_s, IRForm::Prepared, runMemberLookup, ProgramAsRead::TypedAndVerified },
+        TestCommand { "partition-members"_s, IRForm::Prepared, runPartitionMembers, ProgramAsRead::TypedAndVerified },
+        TestCommand { "layouts-with-names"_s, IRForm::Prepared, runLayoutsWithNames, ProgramAsRead::TypedAndVerified },
+        TestCommand { "receiver-candidates"_s, IRForm::Prepared, runReceiverCandidates, ProgramAsRead::TypedAndVerified },
+        TestCommand { "union-parts"_s, IRForm::Prepared, runUnionParts, ProgramAsRead::TypedAndVerified },
+        TestCommand { "element-access"_s, IRForm::Prepared, runElementAccess, ProgramAsRead::TypedAndVerified },
+        TestCommand { "proven-access"_s, IRForm::Prepared, runProvenAccess, ProgramAsRead::TypedAndVerified },
     };
     return commands;
 }

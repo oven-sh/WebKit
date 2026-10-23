@@ -24,7 +24,6 @@ import { emitRustEnums } from "./emit-rust-enums.ts";
 import { emitRustRecords } from "./emit-rust-records.ts";
 import { emitRustReferences } from "./emit-rust-references.ts";
 import { emitRustText } from "./emit-rust-text.ts";
-import { emitRustUses } from "./emit-rust-uses.ts";
 import { emitRustWriter } from "./emit-rust-writer.ts";
 import { cppMarker, rustMarker, toText, type Lines } from "./lines.ts";
 import type { LoadedSchema } from "./load.ts";
@@ -34,6 +33,8 @@ import { screamingCase } from "./names.ts";
 export interface OutputFile {
   readonly name: string;
   readonly lines: Lines;
+  /** A source that only testaot links. */
+  readonly isTestSource?: true;
 }
 
 export interface EmitContext {
@@ -69,7 +70,6 @@ const engineEmitters: readonly Emitter[] = [
 const rustEmitters: readonly Emitter[] = [
   emitRustEnums,
   emitRustEntries,
-  emitRustUses,
   emitRustAbi,
   emitRustRecords,
   emitRustReferences,
@@ -128,14 +128,15 @@ export function findFileListProblems(loaded: LoadedSchema, files: readonly Outpu
   const text = readIfPresent(listFile);
   if (text === null) return [`${listFile}: there is no such file`];
   const lists = listsOfCMakeFile(text);
-  const written = (suffixes: readonly string[]) =>
+  const written = (suffixes: readonly string[], isTestSource = false) =>
     files
-      .filter(file => suffixes.some(suffix => file.name.endsWith(suffix)))
+      .filter(file => suffixes.some(suffix => file.name.endsWith(suffix)) && (file.isTestSource ?? false) === isTestSource)
       .map(file => `"\${JavaScriptCore_AOT_GENERATED_DIR}/${file.name}"`);
   const expected: readonly (readonly [string, readonly string[]])[] = [
     ["JavaScriptCore_AOT_SCHEMA_INPUTS", loaded.inputs.map(input => `aot/ir/${input}`)],
     ["JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS", written([".h", ".inc"])],
     ["JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES", written([".cpp"])],
+    ["JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES", written([".cpp"], true)],
   ];
   return expected.flatMap(([name, entries]) => {
     const listed = lists.get(name);
@@ -173,10 +174,15 @@ function moduleNameOf(file: OutputFile): string {
   return file.name.slice(0, -".rs".length);
 }
 
+/** Bun writes the program as bytes. Only tests read text. */
+function attributesOf(module: string): string[] {
+  if (module === "checks") return ["#[cfg(test)]"];
+  return module.endsWith("_text") ? ['#[cfg(any(test, feature = "ir_text"))]'] : [];
+}
+
 function rustModule(file: OutputFile, visibility: "pub " | ""): string[] {
   if (file.lines[0] !== rustMarker) throw new Error(`${file.name} does not start with the marker`);
-  const attributes = moduleNameOf(file) === "checks" ? ["#[cfg(test)]"] : [];
-  return [...attributes, `${visibility}mod ${moduleNameOf(file)} {`, ...file.lines.slice(1), "}"];
+  return [...attributesOf(moduleNameOf(file)), `${visibility}mod ${moduleNameOf(file)} {`, ...file.lines.slice(1), "}"];
 }
 
 function fileOfOtherCrate(crate: RustCrateFile, files: readonly OutputFile[]): OutputFile {
@@ -217,7 +223,7 @@ function rustModuleFile(context: EmitContext, files: readonly OutputFile[]): Out
       "",
       ...filesOfOtherCrates.flatMap(useOfOtherCrate),
       "",
-      ...modules.filter(isReexported).map(module => `pub use ${module}::*;`),
+      ...modules.filter(isReexported).flatMap(module => [...attributesOf(module), `pub use ${module}::*;`]),
       "#[cfg(test)]",
       "pub use checks::*;",
       "",

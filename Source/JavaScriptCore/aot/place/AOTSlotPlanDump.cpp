@@ -4,9 +4,10 @@
  */
 
 #include "config.h"
-#include "AOTSlotPlan.h"
 
-#if ENABLE(AOT)
+#if ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))
+
+#include "AOTSlotPlan.h"
 
 #include "AOTIRPrinter.h"
 #include "AOTPlacementTestCommands.h"
@@ -97,7 +98,6 @@ void printSlot(PrintStream& out, const PlacedSlot& slot)
         out.print(" "_s, letterOf(IDPrefix::Function), slot.deferredFunction.index());
     printFlag(out, slot.deferredClosureCapturesObject, "capturesObject"_s);
     printFlag(out, slot.deferredClosureCapturesEnvironment, "capturesEnvironment"_s);
-    printFlag(out, slot.defersFlattenedObject, "flattenedObject"_s);
     printOptional(out, " record="_s, slot.indexInLayoutRecord);
 }
 
@@ -247,4 +247,4 @@ void SlotPlan::dump(PrintStream& out, const Program& program) const
 
 } } } // namespace JSC::AOT::Typed
 
-#endif // ENABLE(AOT)
+#endif // ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))

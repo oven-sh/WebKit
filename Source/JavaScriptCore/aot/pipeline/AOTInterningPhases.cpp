@@ -85,7 +85,7 @@ struct ProvisionalIDFinder {
     bool found { false };
 };
 
-struct ProvisionalIDRewriter {
+struct InterningProvisionalIDRewriter {
     void operator()(TypeID& id) const { remaps.types.apply(id); }
     void operator()(LayoutSetID& id) const { remaps.types.apply(id); }
     void operator()(CalleeSetID& id) const { remaps.types.apply(id); }
@@ -131,7 +131,7 @@ void applyRemaps(const BodyRemaps& remaps, Function& function, const RemapSites&
         return;
     // Other names for the same types.
     bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
-    ProvisionalIDRewriter rewriter { remaps };
+    InterningProvisionalIDRewriter rewriter { remaps };
     if (sites.record)
         forEachReference(static_cast<FunctionRecord&>(function), rewriter);
     if (!sites.values.isEmpty()) {

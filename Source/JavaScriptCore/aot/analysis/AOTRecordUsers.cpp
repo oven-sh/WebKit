@@ -38,7 +38,7 @@ constexpr Mark seenInEnvironment = static_cast<Mark>(1) << 62;
 // A field under a name that a protocol or a built-in looks for in what it is handed.
 constexpr Mark seenByCodeOfOperands = static_cast<Mark>(1) << 61;
 
-constexpr Mark bitOf(PropertyKeyID key) { return static_cast<Mark>(1) << (key.index() % numberOfKeyBits); }
+constexpr Mark bitOfKey(PropertyKeyID key) { return static_cast<Mark>(1) << (key.index() % numberOfKeyBits); }
 
 class Marks {
 public:
@@ -112,7 +112,7 @@ private:
         {
             hasKey = true;
             if (users.m_isKeyOfMarkedField[key.index()])
-                found |= bitOf(key);
+                found |= bitOfKey(key);
         }
         template<typename Tag> void operator()(const ID<Tag>&) { }
 
@@ -179,7 +179,7 @@ void RecordUsers::add(std::span<const FieldReference> fields)
             continue;
         }
         m_isKeyOfMarkedField[key.index()] = 1;
-        m_layouts.add(reference.layout.index(), isReadFromOperands[key.index()] ? bitOf(key) | seenByCodeOfOperands : bitOf(key));
+        m_layouts.add(reference.layout.index(), isReadFromOperands[key.index()] ? bitOfKey(key) | seenByCodeOfOperands : bitOfKey(key));
     }
     AOT::sort(m_fieldsOfEnvironments);
 }
@@ -339,9 +339,7 @@ Mark RecordUsers::markOfOperandsWhoseCodeRuns(const Function& function, const au
 Mark RecordUsers::markOfOperandsWhoseCodeRuns(const Function& function, const Value& value) const
 {
     switch (effectRuleOf(value.opcode)) {
-    case EffectRule::Declared:
-    case EffectRule::Operator:
-    case EffectRule::Access:
+    default:
         return markOfOperandsWhoseCodeRuns(function, value, [&](uint32_t index) {
             return !protocolsOf(value.opcode, index).isEmpty();
         });

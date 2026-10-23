@@ -462,7 +462,6 @@ function buildOverload(context: OverloadContext, constantImplementation: ModelIm
       })),
       listForm: signature.listForm ?? null,
     },
-    textHash: "",
   };
 }
 

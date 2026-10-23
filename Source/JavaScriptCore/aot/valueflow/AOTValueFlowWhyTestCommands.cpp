@@ -1960,7 +1960,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             }
         }
     }
-    ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::ForEveryEdge, mostRounds, unknownSourcesLeftOut);
+    ValueFlowSolution solution(*context.program, context.build, ValueFlowSolution::Witnesses::ForEveryEdge, mostRounds, unknownSourcesLeftOut);
     if (!solution.hasResult()) {
         context.out.println("stopped at a limit");
         return;
@@ -2046,10 +2046,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             printBirthsOfUnknownObject(context.out, solution, context.build, [](Opcode opcode) {
                 return opcode == Opcode::Await;
             });
-            continue;
-        }
-        if (word == "awaits"_s) {
-            printAwaits(context.out, solution);
             continue;
         }
         if (word == "receiver-births"_s) {

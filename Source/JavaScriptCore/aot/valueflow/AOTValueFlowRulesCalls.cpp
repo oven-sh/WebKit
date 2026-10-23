@@ -20,14 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ValueFlowName elements { ValueFlowNameKind::Elements, 0 };
-static constexpr ValueFlowName prototypeLink { ValueFlowNameKind::PrototypeLink, 0 };
-
-static ClimbingSet only(ValueFlowRuleContext& context, ValueFlowObjectID object)
-{
-    return ClimbingSet(context.maker().of(object));
-}
-
 static ValueFlowName prototypeProperty(ValueFlowRuleContext& context)
 {
     return ValueFlowName::property(context.program().keyOf(BuiltinNames::prototype));
@@ -36,11 +28,6 @@ static ValueFlowName prototypeProperty(ValueFlowRuleContext& context)
 static bool constructs(Opcode opcode)
 {
     return opcode != Opcode::Call && opcode != Opcode::CallList;
-}
-
-static bool passesList(Opcode opcode)
-{
-    return opcode == Opcode::CallList || opcode == Opcode::ConstructList || opcode == Opcode::SuperConstructList;
 }
 
 static ClimbingSet unknownObject(ValueFlowRuleContext& context, ValueFlowUnknownSource source)
@@ -186,7 +173,7 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
     return result;
 }
 
-static bool isClassConstructor(const Function& function)
+static bool constructsClass(const Function& function)
 {
     return function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor;
 }
@@ -196,7 +183,7 @@ static ValueSetID objectsAnsweredTo(ValueFlowRuleContext& context, ClimbingSet c
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
-    ClimbingSet chain = context.valueOf(context.lookup(callees, prototypeLink));
+    ClimbingSet chain = context.valueOf(context.lookup(callees, prototypeLinkName));
     if (context.meet(chain, universe.placeholdersAlone()) || context.meet(chain, universe.otherCallables()))
         return ValueSets::anything;
     if (context.meet(context.restrict(chain, universe.closures()), ValueSets::complement(universe.constructorsAnsweringOnlyWhatTheyConstruct())))
@@ -206,7 +193,7 @@ static ValueSetID objectsAnsweredTo(ValueFlowRuleContext& context, ClimbingSet c
     bool mayBeOtherThanClass = false;
     context.forEachMember(newTargets, [&](ValueFlowObjectID newTarget) {
         FunctionID constructor = universe.closureFunction(newTarget);
-        if (constructor && isClassConstructor(program.at(constructor)))
+        if (constructor && constructsClass(program.at(constructor)))
             instances.append(universe.instanceOf(program.at(constructor).constructedClass));
         else
             mayBeOtherThanClass = true;
@@ -499,7 +486,7 @@ static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement
         if (passesRestArray)
             lists = context.restrict(lists, ValueSets::complement(context.maker().of(context.universe().restArrayOf(statement.function))));
         if (!passesRestArray || context.meet(lists, ValueSets::anything)) {
-            context.connect(context.lookup(lists, elements), group.otherArguments);
+            context.connect(context.lookup(lists, elementsName), group.otherArguments);
             passNoFurtherArguments(context, group, 0, numberOfPositionsTaken);
         }
     } else {
@@ -551,6 +538,9 @@ ValueID definitionThroughTests(const Function& function, ValueID id)
     for (unsigned steps = 0; steps < mostTests; ++steps) {
         id = definitionThroughSameValues(function, id);
         if (function.at(id).opcode != Opcode::Parameter)
+            return id;
+        // No edge leads to the entry block.
+        if (function.at(entryBlock).parameters.contains(id))
             return id;
         BlockID owner;
         size_t parameterIndex = notFound;
@@ -678,7 +668,7 @@ static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& cont
     ClimbingSet start = context.restrict(receivers, objectsOfProgram);
     if (!context.meet(start, ValueSets::anything))
         return false;
-    ClimbingSet chain = context.unite(start, context.restrict(context.valueOf(context.lookup(start, prototypeLink)), objectsOfProgram));
+    ClimbingSet chain = context.unite(start, context.restrict(context.valueOf(context.lookup(start, prototypeLinkName)), objectsOfProgram));
     ClimbingSet inHandsOfProgram = context.membersMissingFrom(ValueFlowProgramNodes::escaped(), chain);
     return context.contains(context.valueOf(context.read(inHandsOfProgram, ValueFlowName::property(key))), ValueFlowUniverse::unknownObject());
 }
@@ -846,7 +836,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
     bool isSuperConstruct = statement.opcode == Opcode::SuperConstruct || statement.opcode == Opcode::SuperConstructList;
     if (isSuperConstruct && context.contains(callees, ValueFlowUniverse::unknownObject())) {
         ClimbingSet made = only(context, universe.siteObject(statement));
-        context.connect(context.lookup(context.valueOf(context.operandsOf(statement)[1]), prototypeProperty(context)), context.written(made, prototypeLink));
+        context.connect(context.lookup(context.valueOf(context.operandsOf(statement)[1]), prototypeProperty(context)), context.written(made, prototypeLinkName));
         context.add(ValueFlowProgramNodes::escaped(), made);
         if (statement.result)
             context.add(statement.result, made);
@@ -875,7 +865,7 @@ static void passArguments(ValueFlowRuleContext& context, const ValueFlowCallGrou
         return;
     ClimbingSet rest = only(context, universe.restArrayOf(function));
     context.add(nodes.entryParameter(function, hasRest ? first + positional : *hiddenRest), rest);
-    ValueFlowNodeID contents = context.written(rest, elements);
+    ValueFlowNodeID contents = context.written(rest, elementsName);
     for (unsigned index = positional; index < numberOfGroupedArguments; ++index)
         context.connect(group.argument(index), contents);
     context.connect(group.laterArguments, contents);
@@ -964,9 +954,9 @@ private:
             if (layout && isAllocatedByBaseClassOfProgram(program, layout))
                 m_context.add(m_context.written(only(m_context, instance), ValueFlowName::of(ValueFlowNameKind::DeletedMemberUnderUnknownKey)), universe.undefinedValue());
             ValueFlowNodeID held = m_context.lookup(only(m_context, newTarget), prototypeProperty(m_context));
-            m_context.connect(held, m_context.written(only(m_context, instance), prototypeLink));
+            m_context.connect(held, m_context.written(only(m_context, instance), prototypeLinkName));
             if (!layout && m_context.meet(m_context.valueOf(held), ValueSets::complement(universe.objects())))
-                m_context.add(m_context.written(only(m_context, instance), prototypeLink), only(m_context, universe.objectOf(Builtins::ObjectPrototype)));
+                m_context.add(m_context.written(only(m_context, instance), prototypeLinkName), only(m_context, universe.objectOf(Builtins::ObjectPrototype)));
         });
         m_instances = ClimbingSet(m_context.maker().of(instances.span()));
         if (m_holdsObjectWithoutLayout)
@@ -1137,11 +1127,11 @@ void runNewClass(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
     context.connect(operands[0], context.written(prototype, ValueFlowName::property(program.keyOf(BuiltinNames::constructor))));
     // Without a heritage both inherit from what every function and every object is born with.
     if (operation.heritageOperand()) {
-        context.connect(operands[1], context.written(constructors, prototypeLink));
-        context.connect(operands[2], context.written(prototype, prototypeLink));
+        context.connect(operands[1], context.written(constructors, prototypeLinkName));
+        context.connect(operands[2], context.written(prototype, prototypeLinkName));
         // `extends null`: nothing lies above the prototype object, and above the class object lies what every function is born with. That is what `super()` finds, and it is no constructor.
         if (context.contains(context.valueOf(operands[1]), ValueFlowUniverse::primitive(PrimitiveSet::Null)))
-            context.add(context.written(constructors, prototypeLink), only(context, universe.objectOf(Builtins::FunctionPrototype)));
+            context.add(context.written(constructors, prototypeLinkName), only(context, universe.objectOf(Builtins::FunctionPrototype)));
     }
 
     // A static field is a variable and a property of the class object at once. The variable holds what is stored into the class object itself: nothing that the object inherits, and nothing where a lookup finds nothing.
@@ -1235,7 +1225,7 @@ void runReadOfPrototypeProperty(const ValueFlowStatement& statement, ValueFlowRu
         bool mayHoldNoObject = false;
         context.forEachMember(holders, [&](ValueFlowObjectID holder) {
             FunctionID function = universe.closureFunction(holder);
-            mayHoldNoObject |= !function || !isClassConstructor(context.program().at(function));
+            mayHoldNoObject |= !function || !constructsClass(context.program().at(function));
         });
         if (mayHoldNoObject)
             context.add(statement.result, only(context, universe.objectOf(Builtins::ObjectPrototype)));

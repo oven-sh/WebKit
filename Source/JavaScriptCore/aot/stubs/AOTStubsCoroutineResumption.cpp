@@ -24,9 +24,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-static constexpr GPRReg fp = GPRInfo::callFrameRegister;
-
 static constexpr int32_t generatorSlotOffset = Generator::generatorSlotInStubFrame * static_cast<int32_t>(sizeof(void*));
 static_assert(generatorSlotOffset < 0 && -generatorSlotOffset <= static_cast<int32_t>(stackAlignmentBytes()));
 
@@ -438,11 +435,6 @@ struct RestoredFrame {
     GPRReg count;
     GPRReg scratch;
 };
-
-static Address softStackLimit()
-{
-    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
-}
 
 // The frame has the words kept, the words skipped above them and the words skipped below them. The three numbers lie in one word of the cell.
 static void emitLoadNumbersOfWords(StubAssembler& jit, GPRReg saved, GPRReg kept, GPRReg skippedAtBottom, GPRReg inFrame)

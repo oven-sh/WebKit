@@ -3,7 +3,7 @@
 # FORM: AsRead
 # RUN: compile BarriersEmitted
 # RUN(PLACED): pipeline CheckPlacement
-# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations
 # CHECK: image not empty
 # CHECK: statistic BarriersEmitted 1
 # PLACED-LABEL: name="storeIntoOlderAllocation"

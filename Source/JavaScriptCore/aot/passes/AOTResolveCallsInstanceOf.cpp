@@ -305,7 +305,7 @@ static void finishArmWithWalk(SiteExpansion& expansion, ValueID subject)
     expansion.finishArm(expansion.append(IRBuilder::make(Opcode::HasInPrototypeChain, { subject, prototype })));
 }
 
-static bool namesGuard(const Function& function, const Use& use)
+static bool useNamesGuard(const Function& function, const Use& use)
 {
     switch (use.kind) {
     case Use::Kind::Operand:
@@ -472,7 +472,7 @@ void CallResolver::passProofOnBranches(ValueID test, ValueID subject)
 
     FunctionAnalyses& analyses = m_context.analyses;
     for (const Use& use : analyses.useLists().usesOf(subject)) {
-        if (namesGuard(m_function, use))
+        if (useNamesGuard(m_function, use))
             continue;
         size_t proofIndex = proofs.findIf([&](ValueID proof) {
             return analyses.dominates(proof, use);

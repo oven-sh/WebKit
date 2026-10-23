@@ -17,7 +17,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct Match {
+struct VariableMatch {
     SelectionGroup group;
     TypeID testedType;
 };
@@ -48,7 +48,7 @@ void selectEncodedVariableTest(SelectionContext& context)
 {
     const Program& program = context.program();
     const Function& function = context.function();
-    Vector<Match> matches;
+    Vector<VariableMatch> matches;
     for (ValueID test : context.candidates(Opcode::TypeTest)) {
         const Value& value = function.at(test);
         const Type& tested = program.at(value.testedType());
@@ -58,12 +58,12 @@ void selectEncodedVariableTest(SelectionContext& context)
         if (!isEncodedReadUsedOnlyBy(context, read, test) || passesValueOnTakenEdge(context, test))
             continue;
         Type encoded = tested.withoutPrimitives(Primitive::Undefined).withPrimitives(Primitive::Absent);
-        Match match { groupOf({ read, test }), context.pass().types.intern(encoded) };
+        VariableMatch match { groupOf({ read, test }), context.pass().types.intern(encoded) };
         if (context.tryClaim(SelectionRuleID::EncodedVariableTest, match.group) == ClaimResult::Claimed)
             matches.append(WTF::move(match));
     }
 
-    context.rewriteGroups(SelectionRuleID::EncodedVariableTest, matches, [](GroupRewriter& rewriter, const Match& match) {
+    context.rewriteGroups(SelectionRuleID::EncodedVariableTest, matches, [](GroupRewriter& rewriter, const VariableMatch& match) {
         const Value& read = rewriter.original(match.group.members.first().value);
         Value encodedRead = IRBuilder::make(Opcode::GetEncodedModuleVariable);
         encodedRead.setVariable(read.variable());

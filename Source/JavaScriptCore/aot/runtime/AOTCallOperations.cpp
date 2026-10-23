@@ -245,7 +245,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instan
     EXCEPTION_ASSERT(didAppend == !scope.exception());
     if (!didAppend) [[unlikely]]
         OPERATION_RETURN(scope, nullptr);
-    OPERATION_RETURN(scope, constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arguments));
+    OPERATION_RETURN(scope, constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), arguments));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConstructWithArray, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue newTarget, EncodedJSValue list))

@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
-#include "AOTBuiltinTableArrays.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTHostEntriesTestSupport.h"
 #include "AOTIRTestSupport.h"
@@ -81,9 +80,8 @@ static void testIDTypes()
 
 static void testCountsAgreeWithGeneratedIDs()
 {
-    AOT_TEST_CHECK(table().builtinCount() == numberOfBuiltins && table().nameCount() == numberOfBuiltinNames && table().classCount() == numberOfBuiltinClasses);
-    AOT_TEST_CHECK(table().slotCount() == numberOfBuiltinSlots && table().layoutCount() == numberOfBuiltinLayouts && table().moduleCount() == numberOfRuntimeModules);
-    AOT_TEST_CHECK(table().runtimeFunctions().size() == numberOfRuntimeFunctions);
+    AOT_TEST_CHECK(table().builtinCount() == builtinTableData.builtins.size() && table().classCount() == builtinTableData.classes.size());
+    AOT_TEST_CHECK(table().slotCount() == numberOfBuiltinSlots && table().layoutCount() == builtinTableData.layouts.size());
     AOT_TEST_CHECK(&BuiltinTable::singleton() == &BuiltinTable::singleton());
 }
 
@@ -93,7 +91,6 @@ static void testTableDescribesItself()
         return std::span(reinterpret_cast<const uint8_t*>(&description), sizeof(description));
     };
     AOT_TEST_CHECK(describedBuiltinTable.numberOfBuiltins == table().builtinCount() && describedBuiltinTable.numberOfClasses == table().classCount());
-    AOT_TEST_CHECK(describedBuiltinTable.hashOfBuiltinTokens == builtinTableHashOfBuiltinTokens);
     AOT_TEST_CHECK(!findDifferenceFromThisRuntime(bytesOf(describedBuiltinTable)));
 
     BuiltinTableDescription other = describedBuiltinTable;
@@ -282,7 +279,7 @@ static void testTokensRoundTrip()
             AOT_TEST_CHECK(table().overloadFromToken(table().tokenOf(overload)) == overload);
         }
     });
-    AOT_TEST_CHECK(hash == builtinTableHashOfBuiltinTokens);
+    AOT_TEST_CHECK(hash == describedBuiltinTable.hashOfBuiltinTokens);
     forEachID<BuiltinClassID>(table().classCount(), [&](BuiltinClassID id) {
         AOT_TEST_CHECK(table().classFromToken(table().tokenOf(id)) == id);
     });
