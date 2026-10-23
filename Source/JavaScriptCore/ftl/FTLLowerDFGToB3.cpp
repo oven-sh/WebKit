@@ -21986,8 +21986,8 @@ IGNORE_CLANG_WARNINGS_END
                 LValue hash = rapidHashMix64(m_out.zeroExt(int32Value, Int64));
                 LValue slotIndex = m_out.zeroExtPtr(m_out.bitAnd(hash, m_out.constInt32(NumericStrings::cacheSize - 1)));
                 LValue intCacheBase = m_out.constIntPtr(vm().numericStrings.intCache());
-                LValue entryKey = m_out.load32(m_out.baseIndex(m_heaps.IntCache, intCacheBase, slotIndex, JSValue(), NumericStrings::CacheEntryWithJSString<int>::offsetOfKey()));
-                LValue entryJSString = m_out.loadPtr(m_out.baseIndex(m_heaps.IntCache, intCacheBase, slotIndex, JSValue(), NumericStrings::CacheEntryWithJSString<int>::offsetOfJSString()));
+                LValue entryKey = m_out.load32(m_out.baseIndex(m_heaps.IntCache, intCacheBase, slotIndex, JSValue(), NumericStrings::IntCacheEntry::offsetOfKey()));
+                LValue entryJSString = m_out.loadPtr(m_out.baseIndex(m_heaps.IntCache, intCacheBase, slotIndex, JSValue(), NumericStrings::IntCacheEntry::offsetOfJSString()));
                 m_out.branch(m_out.equal(entryKey, int32Value), unsure(intCacheKeyMatchCase), unsure(slowCase));
 
                 m_out.appendTo(intCacheKeyMatchCase, slowCase);

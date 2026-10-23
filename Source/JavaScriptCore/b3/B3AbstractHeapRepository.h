@@ -224,7 +224,7 @@ namespace JSC::B3 {
     macro(variables, 0, sizeof(Register)) \
     macro(HasOwnPropertyCache, 0, sizeof(HasOwnPropertyCache::Entry)) \
     macro(SmallIntCache, 0, sizeof(NumericStrings::StringWithJSString)) \
-    macro(IntCache, 0, sizeof(NumericStrings::CacheEntryWithJSString<int>)) \
+    macro(IntCache, 0, sizeof(NumericStrings::IntCacheEntry)) \
     macro(WasmRTT_data, Wasm::RTT::offsetOfData(), sizeof(RefPtr<const Wasm::RTT>)) \
     macro(WasmExternOrAnyRefTable_jsValuesBuffer, 0, sizeof(WriteBarrier<Unknown>)) \
     macro(WasmFuncRefTable_wrappersBuffer, 0, sizeof(WriteBarrier<Unknown>)) \

@@ -57,6 +57,22 @@ public:
         static constexpr ptrdiff_t offsetOfJSString() { return OBJECT_OFFSETOF(CacheEntryWithJSString, jsString); }
     };
 
+    // One slot holds two independent results: the JSString that addJSString(VM&, int)
+    // returns, keyed by key, and the String that add(int) returns, keyed by stringKey.
+    // Replacing the JSString is then two plain stores. The evicted string is freed when
+    // its JSString is swept, not on the miss path, and the cache pins no StringImpl for
+    // it. The JIT probes read key and jsString only.
+    struct IntCacheEntry {
+        int key;
+        int stringKey;
+        JSString* jsString { nullptr };
+        String value;
+
+        static constexpr ptrdiff_t offsetOfKey() { return OBJECT_OFFSETOF(IntCacheEntry, key); }
+        static constexpr ptrdiff_t offsetOfJSString() { return OBJECT_OFFSETOF(IntCacheEntry, jsString); }
+    };
+    static_assert(sizeof(IntCacheEntry) == sizeof(CacheEntryWithJSString<int>));
+
     struct StringWithJSString {
         String value;
         JSString* jsString { nullptr };
@@ -88,11 +104,10 @@ public:
         if (static_cast<unsigned>(i) < cacheSize)
             return lookupSmallString(static_cast<unsigned>(i)).value;
         auto& entry = lookup(i);
-        if (i == entry.key && !entry.value.isNull())
+        if (i == entry.stringKey && !entry.value.isNull())
             return entry.value;
-        entry.key = i;
+        entry.stringKey = i;
         entry.value = String::number(i);
-        entry.jsString = nullptr;
         return entry.value;
     }
 
@@ -139,7 +154,7 @@ public:
     }
 
     const StringWithJSString* smallIntCache() LIFETIME_BOUND { return m_smallIntCache.data(); }
-    const CacheEntryWithJSString<int>* intCache() LIFETIME_BOUND { return m_intCache.data(); }
+    const IntCacheEntry* intCache() LIFETIME_BOUND { return m_intCache.data(); }
 
     void initializeSmallIntCache(VM&);
 
@@ -151,7 +166,7 @@ private:
         uint32_t hash = static_cast<uint32_t>(bits) ^ static_cast<uint32_t>(bits >> 32);
         return m_doubleCache->m_doubleCache[hash & (doubleCacheSize - 1)];
     }
-    CacheEntryWithJSString<int>& lookup(int i) { return m_intCache[WTF::IntHash<int>::hash(i) & (cacheSize - 1)]; }
+    IntCacheEntry& lookup(int i) { return m_intCache[WTF::IntHash<int>::hash(i) & (cacheSize - 1)]; }
     CacheEntry<unsigned>& lookup(unsigned i) { return m_unsignedCache[WTF::IntHash<unsigned>::hash(i) & (cacheSize - 1)]; }
     ALWAYS_INLINE StringWithJSString& lookupSmallString(unsigned i)
     {
@@ -164,7 +179,7 @@ private:
     JS_EXPORT_PRIVATE void initializeDoubleCache();
 
     std::array<StringWithJSString, cacheSize> m_smallIntCache { };
-    std::array<CacheEntryWithJSString<int>, cacheSize> m_intCache { };
+    std::array<IntCacheEntry, cacheSize> m_intCache { };
     std::array<CacheEntry<unsigned>, cacheSize> m_unsignedCache { };
     std::unique_ptr<DoubleCache> m_doubleCache;
 };

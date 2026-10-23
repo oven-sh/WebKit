@@ -501,14 +501,16 @@ JSString* NumericStrings::addJSString(VM& vm, int i)
         return entry.jsString;
     }
     auto& entry = lookup(i);
-    if (i != entry.key || entry.value.isNull()) {
-        entry.key = i;
-        entry.value = String::number(i);
-    } else {
-        if (entry.jsString)
-            return entry.jsString;
-    }
-    entry.jsString = jsNontrivialString(vm, entry.value);
+    if (i == entry.key && entry.jsString)
+        return entry.jsString;
+
+    unsigned length = lengthOfIntegerAsString(i);
+    std::span<Latin1Character> digits;
+    String string = String::createUninitialized(length, digits);
+    writeIntegerToBuffer(i, digits);
+
+    entry.key = i;
+    entry.jsString = jsNontrivialString(vm, std::move(string));
     return entry.jsString;
 }
 
