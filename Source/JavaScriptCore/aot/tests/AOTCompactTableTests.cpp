@@ -538,15 +538,15 @@ static void testClearingATableThatNobodyHasWalkedEmptiesIt(LoadedProgram& progra
         Collection grown(program, kind);
         for (unsigned number = 0; number < CompactTable::initialCapacity; ++number)
             grown.add(numberedString(program, "key"_s, number), value);
-        CompactTable* small = grown.table();
+        CompactTable* smaller = grown.table();
         takeFirstEntry(program, grown);
         grown.add(numberedString(program, "key"_s, CompactTable::initialCapacity), value);
         CompactTable* larger = grown.table();
-        AOT_TEST_CHECK(larger != small && small->status() == Status::Replaced);
+        AOT_TEST_CHECK(larger != smaller && smaller->status() == Status::Replaced);
         CompactTable::clear(program.realm(), grown.owner());
         AOT_TEST_CHECK(larger->status() == Status::Cleared && grown.table() != larger);
         grown.add(numberedString(program, "later"_s, 0), value);
-        CompactStorage::Position position = CompactTable::next(vm, small, 1);
+        CompactStorage::Position position = CompactTable::next(vm, smaller, 1);
         AOT_TEST_CHECK(position.storage == grown.table() && !position.entry && textOf(position.key) == "later0"_s);
 
         // A large table is let go.

@@ -4938,12 +4938,16 @@ void DirectCodeGenerator::emitPatchpoint(B3::PatchpointValue* patchpoint, ValueS
     Vector<FPRReg, 4> doubleScratches;
     for (unsigned index = 0; index < patchpoint->numGPScratchRegisters; ++index) {
         Reg scratch = allocate(m_generalRegisters & ~overwritten);
+        if (m_hasFailed)
+            return;
         lock(scratch);
         temporaries |= bitOf(scratch);
         generalScratches.append(scratch.gpr());
     }
     for (unsigned index = 0; index < patchpoint->numFPScratchRegisters; ++index) {
         Reg scratch = allocate(m_doubleRegisters & ~overwritten);
+        if (m_hasFailed)
+            return;
         lock(scratch);
         temporaries |= bitOf(scratch);
         doubleScratches.append(scratch.fpr());

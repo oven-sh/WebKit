@@ -237,6 +237,9 @@ private:
     ValueFlowNodeID nodeFor(const ValueFlowNodeKey&);
     void addObjectsOfProgram(ValueFlowNodeID, ClimbingSet objects);
     ValueFlowNodeKey keyOfConstant(ValueSetID) const;
+    ValueFlowNodeID holdingNothing();
+    // What holdingNothing() has answered in this run.
+    ValueFlowNodeID m_holdingNothing;
     std::optional<ValueSetID> setOfConstantOfThisTurn(ValueFlowNodeID) const;
 public:
     // The members block by block, as forEachMember() gives them one by one. False, and nothing is called, for everything but a set.

@@ -708,10 +708,210 @@ set(JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE
     aot/valueflow/AOTValueFlowResultsSymbols.cpp
 )
 
+# Sources whose file-local names collide with another source in their directory. Tools/Scripts/aot/check-unified-sources.py --write maintains both lists.
+# Bundled with each other instead of with the rest of their directory:
+set(JavaScriptCore_AOT_SEPARATELY_UNIFIED_SOURCES
+    aot/analysis/AOTPropertyAccessMembers.cpp
+    aot/analysis/AOTPropertyAccessPartition.cpp
+    aot/builtins/AOTResolveBuiltins.cpp
+    aot/builtins/AOTSimplifyBuiltinCallsByteRanges.cpp
+    aot/codegen/AOTIntegerUpdatesInMemory.cpp
+    aot/codegen/AOTOperatorEmitterEquality.cpp
+    aot/codegen/AOTStringEmitterComparisons.cpp
+    aot/codegen/AOTTypeTestEmitter.cpp
+    aot/image/AOTOutliner.cpp
+    aot/image/AOTSectionWriter.cpp
+    aot/ir/AOTEdgeResults.cpp
+    aot/ir/AOTEffectsOfOperands.cpp
+    aot/ir/AOTIRParserTypes.cpp
+    aot/ir/AOTIRPrinterTypes.cpp
+    aot/ir/AOTProgramVerifierFunctions.cpp
+    aot/ir/AOTReaderTypes.cpp
+    aot/ir/AOTTypeSubset.cpp
+    aot/ir/AOTVerifierOperations.cpp
+    aot/object/AOTClosureMethodTable.cpp
+    aot/passes/AOTChooseCallingConventionsResults.cpp
+    aot/passes/AOTCreateStringBuilders.cpp
+    aot/passes/AOTDecidedBranches.cpp
+    aot/passes/AOTDeferInitializers.cpp
+    aot/passes/AOTFreshResultsWorkers.cpp
+    aot/passes/AOTFuseGeneratorLoopsMerge.cpp
+    aot/passes/AOTInlineHeads.cpp
+    aot/passes/AOTInsertObjectCoercibleChecks.cpp
+    aot/passes/AOTOutlineColdOperations.cpp
+    aot/passes/AOTOutliningCandidates.cpp
+    aot/passes/AOTPlaceTypeTestsHoisting.cpp
+    aot/passes/AOTPromoteEnvironmentsToVariables.cpp
+    aot/passes/AOTRemoveUnusedResults.cpp
+    aot/passes/AOTReuseEnvironments.cpp
+    aot/passes/AOTSplitUnions.cpp
+    aot/passes/AOTStringBuilderNestedWebs.cpp
+    aot/passes/AOTSummarizeForInlining.cpp
+    aot/passes/AOTValidatorFunction.cpp
+    aot/passes/AOTValidatorObjects.cpp
+    aot/place/AOTMethodTable.cpp
+    aot/place/AOTObjectPacking.cpp
+    aot/place/AOTPlacedSites.cpp
+    aot/place/AOTStaticsTableEncoding.cpp
+    aot/runtime/AOTCallOperations.cpp
+    aot/runtime/AOTModuleLinking.cpp
+    aot/runtime/AOTPropertyCachesFieldAnswers.cpp
+    aot/runtime/AOTRuntimeReporter.cpp
+    aot/runtime/AOTStackTrace.cpp
+    aot/runtime/AOTState.cpp
+    aot/runtime/AOTStringBuilderStorageResults.cpp
+    aot/runtime/AOTStringBuiltinLiteralOperations.cpp
+    aot/runtime/AOTStringBuiltinOperations.cpp
+    aot/select/AOTBuiltinFormRulesNumbers.cpp
+    aot/select/AOTComparisonForms.cpp
+    aot/select/AOTGroupRewriterPaths.cpp
+    aot/select/AOTKeyPartsRules.cpp
+    aot/select/AOTPromiseRules.cpp
+    aot/stubs/AOTStubCalls.cpp
+    aot/stubs/AOTStubsArrayLiterals.cpp
+    aot/stubs/AOTStubsCallAdapters.cpp
+    aot/stubs/AOTStubsPropertyInstanceOf.cpp
+    aot/stubs/AOTStubsPropertyRead.cpp
+    aot/stubs/AOTStubsPropertyReadHandlers.cpp
+    aot/stubs/AOTStubsPropertyStore.cpp
+    aot/support/AOTCompileOptions.cpp
+    aot/support/AOTDiagnostics.cpp
+    aot/valueflow/AOTRelationalSummariesLink.cpp
+    aot/valueflow/AOTValueFlowBodies.cpp
+    aot/valueflow/AOTValueFlowBuiltinTables.cpp
+    aot/valueflow/AOTValueFlowResultsTypedResults.cpp
+    aot/valueflow/AOTValueFlowResultsUnseenCode.cpp
+    aot/valueflow/AOTValueFlowRulesProtocols.cpp
+    aot/valueflow/AOTValueFlowTypedResults.cpp
+)
+
+# Not bundled:
+set(JavaScriptCore_AOT_NON_UNIFIED_SOURCES
+    aot/analysis/AOTPropertyAccessStaticMembers.cpp
+    aot/builtins/AOTURLBuiltinOperations.cpp
+    aot/codegen/AOTCallEmitter.cpp
+    aot/codegen/AOTCallEmitterTail.cpp
+    aot/codegen/AOTCallReturns.cpp
+    aot/codegen/AOTLinearScanAllocation.cpp
+    aot/codegen/AOTLinearScanCodeGenerator.cpp
+    aot/codegen/AOTLinearScanImport.cpp
+    aot/codegen/AOTLinearScanLowering.cpp
+    aot/image/AOTRegExpRequests.cpp
+    aot/image/AOTRegExpSection.cpp
+    aot/image/AOTStringUses.cpp
+    aot/passes/AOTAddGenericVersion.cpp
+    aot/passes/AOTChooseCallingConventionsStack.cpp
+    aot/passes/AOTExpandIterationPatterns.cpp
+    aot/passes/AOTFlattenInnerObjects.cpp
+    aot/passes/AOTMergeDuplicateBlocks.cpp
+    aot/passes/AOTNarrowFieldTypes.cpp
+    aot/passes/AOTNumberLiteralStrings.cpp
+    aot/passes/AOTPromoteEnvironmentsToVariablesPlan.cpp
+    aot/passes/AOTReadCapturesFromEnvironments.cpp
+    aot/passes/AOTRemoveUnreadFields.cpp
+    aot/passes/AOTResolveCallsConstruct.cpp
+    aot/passes/AOTSinkAllocationsBuilding.cpp
+    aot/passes/AOTSinkAllocationsCandidates.cpp
+    aot/passes/AOTSinkAllocationsDataflow.cpp
+    aot/passes/AOTSinkAllocationsEdges.cpp
+    aot/passes/AOTSinkAllocationsExecution.cpp
+    aot/passes/AOTSinkAllocationsListUses.cpp
+    aot/passes/AOTSinkAllocationsTests.cpp
+    aot/passes/AOTSplitBehindEntryChecks.cpp
+    aot/passes/AOTVirtualObjectParameters.cpp
+    aot/place/AOTShapeTests.cpp
+    aot/place/AOTSlotUses.cpp
+    aot/runtime/AOTPropertyCachesFreeNameOperations.cpp
+    aot/runtime/AOTPropertyCachesReadAnswers.cpp
+    aot/select/AOTOperatorFormRule.cpp
+    aot/select/AOTStringBuilderPartRules.cpp
+    aot/select/AOTStringBuiltinForms.cpp
+    aot/select/AOTStringCharacterRules.cpp
+    aot/select/AOTStringLiteralRules.cpp
+    aot/select/AOTStringOrderRules.cpp
+    aot/select/AOTStringRangeRules.cpp
+    aot/select/AOTVariableRules.cpp
+    aot/stubs/AOTStubsCallEngine.cpp
+    aot/stubs/AOTStubsCallFrames.cpp
+    aot/stubs/AOTStubsCallLists.cpp
+    aot/stubs/AOTStubsCalls.cpp
+    aot/stubs/AOTStubsCoroutineSteps.cpp
+    aot/stubs/AOTStubsPolls.cpp
+    aot/stubs/AOTStubsPropertyStoreHandlers.cpp
+    aot/valueflow/AOTRelationalSummariesOrigins.cpp
+    aot/valueflow/AOTValueFlowPositions.cpp
+    aot/valueflow/AOTValueFlowResultsFields.cpp
+    aot/valueflow/AOTValueFlowResultsObjects.cpp
+    aot/valueflow/AOTValueFlowResultsVariablesOnObjects.cpp
+    aot/valueflow/AOTValueFlowRules.cpp
+    aot/valueflow/AOTValueFlowRulesCalls.cpp
+    aot/valueflow/AOTValueFlowRulesCoroutines.cpp
+    aot/valueflow/AOTValueFlowRulesHeap.cpp
+    aot/valueflow/AOTValueFlowRulesHeapLookups.cpp
+    aot/valueflow/AOTValueFlowRulesHost.cpp
+    aot/valueflow/AOTValueFlowRulesIteration.cpp
+    aot/valueflow/AOTValueFlowRulesModules.cpp
+    aot/valueflow/AOTValueFlowRulesPromises.cpp
+    aot/valueflow/AOTValueFlowSolver.cpp
+)
+
 function(AOT_COMPILE_SOURCES_FOR_SIZE)
     if (COMPILER_IS_CLANG AND NOT MSVC)
         set_source_files_properties(${JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-force-attribute=optsize>")
     endif ()
+endfunction()
+
+# Only CMake builds aot/ as unified sources. Bun's own build reads aot/Sources.txt and compiles each source separately.
+function(AOT_GENERATE_UNIFIED_SOURCES)
+    if (NOT ENABLE_UNIFIED_BUILDS)
+        return ()
+    endif ()
+    set(bundleSize 16)
+    AOT_READ_LIBRARY_SOURCES(librarySources problems)
+    set(sources)
+    set(bundlesCompiledForSize)
+    set(groups)
+    foreach (path IN LISTS librarySources)
+        if (path IN_LIST JavaScriptCore_AOT_NON_UNIFIED_SOURCES)
+            list(APPEND sources ${path})
+            continue ()
+        endif ()
+        string(REGEX REPLACE "^aot/([^/]+)/.*$" "\\1" group ${path})
+        if (path IN_LIST JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE)
+            string(APPEND group "-for-size")
+        endif ()
+        if (path IN_LIST JavaScriptCore_AOT_SEPARATELY_UNIFIED_SOURCES)
+            string(APPEND group "-separate")
+        endif ()
+        list(APPEND groups ${group})
+        list(APPEND sources_${group} ${path})
+    endforeach ()
+    list(REMOVE_DUPLICATES groups)
+    foreach (group IN LISTS groups)
+        list(LENGTH sources_${group} count)
+        set(start 0)
+        set(index 0)
+        while (start LESS count)
+            list(SUBLIST sources_${group} ${start} ${bundleSize} bundledSources)
+            math(EXPR start "${start} + ${bundleSize}")
+            math(EXPR index "${index} + 1")
+            set(text "")
+            foreach (path IN LISTS bundledSources)
+                string(APPEND text "#include \"${path}\"\n")
+            endforeach ()
+            set(bundle "${JavaScriptCore_DERIVED_SOURCES_DIR}/unified-sources/UnifiedSource-aot-${group}-${index}.cpp")
+            file(CONFIGURE OUTPUT "${bundle}" CONTENT "${text}" @ONLY)
+            list(APPEND sources "${bundle}")
+            if (group MATCHES "-for-size")
+                list(APPEND bundlesCompiledForSize "${bundle}")
+            endif ()
+        endwhile ()
+    endforeach ()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/Sources.txt")
+    list(REMOVE_ITEM JavaScriptCore_UNIFIED_SOURCE_LIST_FILES "aot/Sources.txt")
+    set(JavaScriptCore_UNIFIED_SOURCE_LIST_FILES ${JavaScriptCore_UNIFIED_SOURCE_LIST_FILES} PARENT_SCOPE)
+    set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} ${sources} PARENT_SCOPE)
+    set(JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE ${JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE} ${bundlesCompiledForSize} PARENT_SCOPE)
 endfunction()
 
 function(AOT_CHECK_SCHEMA_IS_FRESH)
@@ -829,6 +1029,7 @@ function(AOT_REPORT_LIST_PROBLEMS)
     message(FATAL_ERROR "The lists of aot/ do not match the tree.\n  ${report}\nTo write them again, in Bun's tree: `bun scripts/build/aot-source-lists.ts --webkit=${checkout}`")
 endfunction()
 
+AOT_GENERATE_UNIFIED_SOURCES()
 AOT_COMPILE_SOURCES_FOR_SIZE()
 AOT_CHECK_SCHEMA_IS_FRESH()
 AOT_CHECK_SOURCE_LISTS()

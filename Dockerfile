@@ -413,8 +413,7 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 #
 # -k 0: the log of a lane that does not compile names every source that fails, not the first few.
 #
-# testaot and testFFI are run from the package, not debugged from it: in a debug lane each holds the library's debug
-# information once more, and GitHub takes no release asset of 2 GiB.
+# The programs ship without debug info: each of them would carry another copy of the library's.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     unset C_INCLUDE_PATH && \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
@@ -484,7 +483,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
-    llvm-strip --strip-debug /output/bin/testaot /output/bin/testFFI && \
+    llvm-strip --strip-debug /output/bin/jsc /output/bin/testaot /output/bin/testFFI && \
     if [ -n "$TEST_PROGRAMS" ]; then \
         mkdir /output/test-bin && \
         for program in $TEST_PROGRAMS; do mv "$(find /output/bin -type f -name "$program")" /output/test-bin/ || exit 1; done && \

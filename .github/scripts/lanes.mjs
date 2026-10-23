@@ -110,6 +110,7 @@ const HARDENED = ["hardened", "lto-hardened"];
 //                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
 //                   on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
+//   linked          per architecture, the variants bun's CI links (ltoDefault in bun's scripts/build/config.ts). See `programs`.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -123,6 +124,7 @@ const platforms = [
       arm64: { on: "linux-arm64-gh", variants: ["lto"] },
     },
     testPrograms: ["testb3", "testair", "TestWTF"],
+    linked: () => ["lto", "asan"],
     image: () => "linux-glibc",
     args: (arch, v) => ({
       ...ICU,
@@ -147,6 +149,7 @@ const platforms = [
     packageOS: "linux",
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
     buildType: v => (v.buildType === "Release" ? "MinSizeRel" : v.buildType),
+    linked: () => ["lto"],
     image: () => "linux-musl",
     args: arch => ({
       ...ICU,
@@ -162,6 +165,7 @@ const platforms = [
     // ASAN is arm64 only: the darwin sanitizer runtime (mirrored at the compiler-rt-darwin-* release tag, a Linux LLVM
     // install doesn't ship it) is extracted from the official LLVM macOS release, which is published for arm64 only.
     lanes: { arm64: ALL, amd64: NO_ASAN },
+    linked: () => ["lto"],
     image: arch => `macos-${arch}`,
     imageInputs: ["macos-cross"],
     args: (arch, v, variant) => ({
@@ -189,6 +193,7 @@ const platforms = [
       arm64: ["release", "debug"],
     },
     lto: LTO_WINDOWS,
+    linked: arch => [arch === "arm64" ? "release" : "lto"],
     image: () => "windows",
     args: (arch, v) => ({
       ...ICU,
@@ -206,6 +211,7 @@ const platforms = [
     dockerfile: "Dockerfile.freebsd",
     packageOS: "freebsd",
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
+    linked: () => ["release"],
     image: arch => `freebsd-${arch}`,
     args: arch => ({
       ...ICU,
@@ -220,6 +226,7 @@ const platforms = [
     dockerfile: "Dockerfile.android",
     packageOS: "android",
     lanes: { arm64: NO_ASAN, amd64: NO_ASAN },
+    linked: () => ["release"],
     image: () => "android",
     args: arch => ({
       ...ICU,
@@ -229,6 +236,17 @@ const platforms = [
     }),
   },
 ];
+
+// Every lane links jsc, testFFI and testaot, which checks that they link. Each is a full copy of JavaScriptCore, so a lane
+// only ships the ones something downloads it for:
+//   all three  in the lanes bun's CI links, which packs them next to bun for bun's tests (packageAndUpload in bun's
+//              scripts/build/ci.ts), and in the lanes the `test` job here runs
+//   testaot    in "debug-asan", for bun's "AoT cargo test" job; it runs the jsc next to it
+//   jsc        everywhere
+function programs(platform, arch, variant, test) {
+  if (test || platform.linked(arch).includes(variant)) return ["jsc", "testFFI", "testaot"];
+  return variant === "debug-asan" ? ["jsc", "testaot"] : ["jsc"];
+}
 
 // A toolchain image is tagged with a hash of what goes into it: the Dockerfile up to the end of its `base` stage (less
 // comments, and less the global ARGs that `base` does not take, which are lane settings), the files that stage copies
@@ -278,6 +296,7 @@ const lanes = platforms.flatMap(platform =>
         test,
         test_runner: platform.tested?.[arch]?.on,
         test_quick: platform.tested?.[arch]?.quick ?? false,
+        programs: programs(platform, arch, variant, test).join(" "),
         image: imageRef(platform, arch, buildArgs),
         build_args: buildArgs,
       };
@@ -347,7 +366,7 @@ if (command === "build") {
   docker(image.lane, ["--target=base", "--tag", image.image, "--provenance=false", "--push"], args.includes("--dry-run"));
 } else if (command === "plan") {
   const matrix = include => JSON.stringify({ include });
-  const build = ({ label, runner, image, package_os, package_cpu, test }) => ({ label, runner, image, package_os, package_cpu, test });
+  const build = ({ label, runner, image, package_os, package_cpu, test, programs }) => ({ label, runner, image, package_os, package_cpu, test, programs });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
   console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);
@@ -369,7 +388,7 @@ if (command === "build") {
   console.log(JSON.stringify(lanes, null, 2));
 } else if (command === undefined) {
   for (const lane of lanes) {
-    console.log(`${lane.label.padEnd(42)} ${lane.runner.padEnd(15)} ${lane.dockerfile.padEnd(19)} ${lane.build_args.WEBKIT_RELEASE_TYPE}${lane.test ? "  (tested)" : ""}`);
+    console.log(`${lane.label.padEnd(42)} ${lane.runner.padEnd(15)} ${lane.dockerfile.padEnd(19)} ${lane.build_args.WEBKIT_RELEASE_TYPE.padEnd(10)} ${lane.programs}${lane.test ? "  (tested)" : ""}`);
   }
   console.log(`${lanes.length} lanes`);
   for (const { image, runner } of images) console.log(`${image}  ${runner}`);

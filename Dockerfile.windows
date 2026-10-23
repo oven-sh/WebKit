@@ -467,6 +467,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     mkdir -p /output/lib /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc && \
     cp -rL $WEBKIT_OUT_DIR/lib/* /output/lib/ && \
     cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
+    # The programs ship without debug info: each .pdb is another copy of the libraries'.
+    rm -f /output/bin/*.pdb && \
     # Sanitizer builds ship the ASAN runtime with the artifact: anything that
     # links these instrumented static libs needs the version-matched import
     # lib and /MT runtime thunk, and anything that runs (bin/jsc.exe, a

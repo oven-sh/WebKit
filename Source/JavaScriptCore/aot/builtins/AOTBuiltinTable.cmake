@@ -5,6 +5,7 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS
     aot/builtins/date.builtins.ts
     aot/builtins/engine-syntax.builtins.ts
     aot/builtins/error.builtins.ts
+    aot/builtins/features.builtins.ts
     aot/builtins/function.builtins.ts
     aot/builtins/global.builtins.ts
     aot/builtins/holders.builtins.ts
@@ -25,6 +26,12 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS
     aot/builtins/symbol.builtins.ts
     aot/builtins/typedarray.builtins.ts
 )
+
+# The host of the programs that WebKit's own build links.
+set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_DECLARATIONS
+    aot/tests/host/stand-in.builtins.ts
+)
+set(JavaScriptCore_AOT_BUILTIN_TABLE_STAND_IN_HOST_OWN_PROPERTIES aot/tests/host/own-properties.txt)
 
 set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
     aot/builtins/handwritten/ArrayIteratorPrototype.ts

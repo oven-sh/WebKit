@@ -205,8 +205,8 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
         return Backing { BackEnd::Granules, nullptr, size };
 
 #if USE(LIBPAS)
-    auto* type = new bmalloc_type(BMALLOC_TYPE_INITIALIZER(1, 1, request.name.characters()));
-    auto* heapRef = new pas_primitive_heap_ref(BMALLOC_AUXILIARY_HEAP_REF_INITIALIZER(type));
+    auto* type = new (NotNull, fastMalloc(sizeof(bmalloc_type))) bmalloc_type(BMALLOC_TYPE_INITIALIZER(1, 1, request.name.characters()));
+    auto* heapRef = new (NotNull, fastMalloc(sizeof(pas_primitive_heap_ref))) pas_primitive_heap_ref(BMALLOC_AUXILIARY_HEAP_REF_INITIALIZER(type));
 #if PLATFORM(PLAYSTATION)
     // libpas isn't calling pas_page_malloc commit, so we've got to commit the region ourselves
     // https://bugs.webkit.org/show_bug.cgi?id=292771

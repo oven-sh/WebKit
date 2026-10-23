@@ -11148,19 +11148,13 @@ constinit const BuiltinClassID builtinTableNamedClasses[] = {
 };
 
 constinit const BuiltinLayoutID builtinTableNamedLayouts[] = {
-    BuiltinLayoutID(0),
     BuiltinLayoutID(1),
     BuiltinLayoutID(2),
-    BuiltinLayoutID(3),
-    BuiltinLayoutID(4),
     BuiltinLayoutID(5),
     BuiltinLayoutID(6),
     BuiltinLayoutID(7),
     BuiltinLayoutID(8),
     BuiltinLayoutID(9),
-    BuiltinLayoutID(10),
-    BuiltinLayoutID(11),
-    BuiltinLayoutID(12),
 };
 
 }

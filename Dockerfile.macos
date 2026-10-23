@@ -34,7 +34,8 @@ ARG LLVM_DEBS_SHA256="993eba8b8ca23ea4d6074643d52ff9397b411e6ac5af6b7b2ca09dca2b
 ARG BOOTSTRAP_CMDS_TAG="bootstrap_cmds-138"
 ARG BOOTSTRAP_CMDS_COMMIT="c71d2d72f48995baaea76148f61002e5299841de"
 # What every variant is compiled with. Cross-only additions live in the build stage.
-ARG DEFAULT_CFLAGS="-fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
+# -fno-standalone-debug is clang's default on Linux: a type is fully described only in the translation units that need its definition.
+ARG DEFAULT_CFLAGS="-fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -O3 -g -fno-standalone-debug -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
 # Per-variant extras (CPP_FLAGS in .github/scripts/lanes.mjs), e.g.
 # -D_LIBCXX_ENABLE_ASSERTIONS=1 for Debug.
 ARG CPP_FLAGS=""
@@ -138,6 +139,15 @@ RUN echo 'int main(void){return 0;}' | \
           -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET} \
           --ld-path=$(which ld64.lld) -mlinker-version=705 -xc - -o /tmp/t && \
     file /tmp/t | grep -q Mach-O && rm /tmp/t
+
+# Node runs the generators of Source/JavaScriptCore/aot (>=23.6 strips types by default). The one of Dockerfile.
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN wget -q "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -O /tmp/node.tar.xz && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /tmp/node.tar.xz && \
+    node --version
 
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc
 

@@ -252,6 +252,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           IMAGE: ${{ matrix.image }}
           TEST: ${{ matrix.test }}
+          PROGRAMS: ${{ matrix.programs }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.plan.outputs.tag }}
@@ -268,6 +269,10 @@ jobs:
           echo "#define BUN_WEBKIT_VERSION \"$BUILD_REF\"" >> bun-webkit/include/cmakeconfig.h
           echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
+          # Which programs this lane ships: `programs` in lanes.mjs.
+          for program in jsc testFFI testaot; do
+            case " $PROGRAMS " in *" $program "*) ;; *) rm -f "bun-webkit/bin/$program" "bun-webkit/bin/$program.exe" ;; esac
+          done
           # For `test` alone: not part of what ships.
           rm -rf test-bin && if [ -d bun-webkit/test-bin ]; then mv bun-webkit/test-bin test-bin; fi
           tar -czf bun-webkit.tar.gz bun-webkit
@@ -419,7 +424,17 @@ jobs:
         run: |
           # Line by line: what a program that crashes still holds in its buffer is lost, and with it the name of the test.
           # Not StackTraceTest: the lanes are compiled without unwind tables, so backtrace() sees one frame.
-          if [ -x "$RUNNER_TEMP/bun-webkit/bin/TestWTF" ]; then stdbuf -oL "$RUNNER_TEMP/bun-webkit/bin/TestWTF" --gtest_filter=-StackTraceTest.*; else echo "this lane has no TestWTF"; fi
+          program="$RUNNER_TEMP/bun-webkit/bin/TestWTF"
+          if [ ! -x "$program" ]; then echo "this lane has no TestWTF"; exit 0; fi
+          status=0; stdbuf -oL "$program" --gtest_filter=-StackTraceTest.* || status=$?
+          if [ $status -ge 128 ]; then
+            # It died of a signal. How far does it get without stdbuf's preloaded library: to main, through a test, through a fork?
+            for arguments in --gtest_list_tests --gtest_filter=WTF.ASCIILIteralComparison --gtest_filter=WTF_CheckedPtrDeathTest.CheckedPtrCheckFailure; do
+              probe=0; "$program" $arguments > probe.txt 2>&1 || probe=$?
+              echo "TestWTF $arguments: exit $probe, $(wc -l < probe.txt) lines, the last: $(tail -n 1 probe.txt)"
+            done
+          fi
+          exit $status
       - name: run-javascriptcore-tests
         if: *have_jsc
         env: *test_env

@@ -52,7 +52,8 @@ static OpcodeObjectFacts computeObjectFactsOf(Opcode opcode)
         RELEASE_ASSERT(*retainingOperand < 64);
         facts.retainingOperands |= 1ull << *retainingOperand;
     }
-    facts.allocatesOrReturnsOperand = returnsOperand && resultRuleOf(opcode) == ResultRule::Allocation;
+    // The copy of an environment has the type of the environment, so its row has no result rule of an allocation.
+    facts.allocatesOrReturnsOperand = returnsOperand && (resultRuleOf(opcode) == ResultRule::Allocation || opcode == Opcode::MaterializeEnvironment);
     facts.isSuperConstruct = OperandPosition::parent(opcode).has_value();
     return facts;
 }
@@ -258,6 +259,7 @@ PointsToSolver::PointsToSolver(const EscapeAnalysisInputs& inputs, Sweep sweep)
     , m_cfg(inputs.cfg)
     , m_useLists(inputs.useLists)
     , m_maxWork(inputs.context.build.limit(LimitID::MaxEscapeAnalysisWork))
+    , m_maxWordsOfSets(std::max<uint64_t>(m_maxWork, inputs.function.values.size()))
     , m_sweep(sweep)
 {
     m_results.setOfValue.fill(ValueSetID(), m_function.values.size());
@@ -309,7 +311,9 @@ PointsToResults PointsToSolver::solve()
         addOperandsRetainedInResult(value, arrived);
         applyQueuedUses();
     }
-    if (!m_results.gaveUp) {
+    if (m_results.gaveUp)
+        forgetAllButObjects();
+    else {
         computeMayBeUntracked();
         collectContents();
     }
@@ -334,6 +338,12 @@ void PointsToSolver::giveUp()
         return;
     if (m_sweep == Sweep::Forward)
         m_inputs.context.build.gaveUp(LimitID::MaxEscapeAnalysisWork, m_inputs.subject);
+    forgetAllButObjects();
+}
+
+// Once more when the loop has ended: the uses of the value at which it gave up are looked at to the last one.
+void PointsToSolver::forgetAllButObjects()
+{
     m_valuesWithArrivals.clearAll();
     m_applicationWorklist.clear();
     m_results.uses.clear();
@@ -341,6 +351,10 @@ void PointsToSolver::giveUp()
     for (size_t index = 0; index < m_results.setOfValue.size(); ++index) {
         if (m_results.setOfValue[index] && !definesObject(ValueID(index)))
             m_results.setOfValue[index] = ValueSetID();
+    }
+    for (SolvedObject& object : m_results.objects) {
+        object.reasons = { };
+        object.appliedUses = { };
     }
 }
 
@@ -401,15 +415,19 @@ static void appendZeros(Vector<ObjectWord>& words, unsigned count)
 ValueSetID PointsToSolver::ensureSet(ValueID value)
 {
     ValueSetID& id = m_results.setOfValue[value.index()];
-    if (!id) {
-        id = ValueSetID(m_setsThatMayBeUntracked.size());
-        m_setsThatMayBeUntracked.append(true);
-        m_valueOfSet.append(value);
-        appendZeros(m_wordsOfSets, m_wordsPerSet);
-        appendZeros(m_arrivalsOfSets, m_wordsPerSet);
-        if (m_wordsPerSet > 1)
-            m_arrivedWordsOfSets.append(WordRange { });
+    if (id)
+        return id;
+    if (m_wordsOfSets.size() + m_wordsPerSet > m_maxWordsOfSets) {
+        giveUp();
+        return { };
     }
+    id = ValueSetID(m_setsThatMayBeUntracked.size());
+    m_setsThatMayBeUntracked.append(true);
+    m_valueOfSet.append(value);
+    appendZeros(m_wordsOfSets, m_wordsPerSet);
+    appendZeros(m_arrivalsOfSets, m_wordsPerSet);
+    if (m_wordsPerSet > 1)
+        m_arrivedWordsOfSets.append(WordRange { });
     return id;
 }
 
@@ -472,7 +490,10 @@ void PointsToSolver::findNarrowedCopies()
                     if (operandIndex >= test.numberOfOperands() || !test.operand(operandIndex) || test.operandKind(operandIndex) == OperandKind::Guard)
                         continue;
                     ValueID subject = test.operand(operandIndex);
-                    m_narrowedCopies.append(NarrowedCopy { subject, parameters[firstParameter + resultIndex] });
+                    ValueID copy = parameters[firstParameter + resultIndex];
+                    if (!ask(AnswerFromTypes::Question::IsReference, copy.index()).isTrue)
+                        continue;
+                    m_narrowedCopies.append(NarrowedCopy { subject, copy });
                     m_valueFlags[subject.index()].add(ValueFlag::HasNarrowedCopies);
                 }
             }
@@ -528,6 +549,12 @@ void PointsToSolver::findObjects()
     }
 
     m_wordsPerSet = std::max<size_t>(1, (found.size() + objectsPerWord - 1) / objectsPerWord);
+    // Each object has a set of its own, also when the rest is given up. So none is tracked.
+    if (uint64_t { found.size() } * m_wordsPerSet > m_maxWordsOfSets) {
+        found.clear();
+        m_wordsPerSet = 1;
+        giveUp();
+    }
     m_newContents.fill(0, m_wordsPerSet);
     m_results.objects.reserveInitialCapacity(found.size());
     for (const FoundObject& object : found) {
@@ -574,6 +601,8 @@ void PointsToSolver::add(ValueID value, ObjectID object)
         return;
 
     ValueSetID set = ensureSet(value);
+    if (!set)
+        return;
     uint32_t wordInSet = object.index() / objectsPerWord;
     size_t word = size_t { set.index() } * m_wordsPerSet + wordInSet;
     ObjectWord bit = ObjectWord { 1 } << (object.index() % objectsPerWord);
@@ -599,6 +628,8 @@ void PointsToSolver::addAll(ValueID value, std::span<const ObjectWord> objects)
         return;
 
     ValueSetID set = ensureSet(value);
+    if (!set)
+        return;
     std::span<ObjectWord> words = wordsOf(set);
     std::span<ObjectWord> arrivals = arrivalsOf(set);
     if (m_wordsPerSet == 1) {

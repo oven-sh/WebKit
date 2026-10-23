@@ -370,10 +370,10 @@ inline constexpr RuntimeFunctionID WrittenListsMappedFilledArray { 131122 };
 }
 
 extern const Builtin builtinTableBuiltins[6330];
-extern const BuiltinPackedOverload builtinTableOverloads[6750];
+extern const BuiltinPackedOverload builtinTableOverloads[6751];
 extern const BuiltinDispatch builtinTableDispatches[6168];
-extern const BuiltinDispatchNode builtinTableDispatchNodes[867];
-extern const BuiltinType builtinTableTypes[1080];
+extern const BuiltinDispatchNode builtinTableDispatchNodes[868];
+extern const BuiltinType builtinTableTypes[1082];
 extern const BuiltinClass builtinTableClasses[271];
 extern const BuiltinSlot builtinTableSlots[39];
 extern const BuiltinLayout builtinTableLayouts[13];
@@ -402,7 +402,7 @@ extern const BuiltinForms builtinTableForms[9];
 extern const BuiltinBoxedCall builtinTableBoxedCalls[30];
 extern const BuiltinNumberConstant builtinTableNumberConstants[42];
 extern const BuiltinStringConstant builtinTableStringConstants[7];
-extern const BuiltinOverloadSummary builtinTableOverloadSummaries[6750];
+extern const BuiltinOverloadSummary builtinTableOverloadSummaries[6751];
 extern const RuntimeModuleData builtinTableRuntimeModules[219];
 extern const RuntimeFunctionData builtinTableRuntimeFunctions[186];
 extern const RuntimeModuleID builtinTableStartupModules[1];
@@ -418,7 +418,7 @@ extern const BuiltinNamesReadByNativeCode builtinTableNamesReadByNativeCode[1];
 
 constexpr uint32_t builtinTableHashOfBuiltinTokens = 0x23972a1f;
 
-static_assert(engineListStamp == 0x76e103132ca26951ULL, "this table was written for another list of the names that the engine's code uses");
+static_assert(engineListStamp == 0xba784b94684a5631ULL, "this table was written for another list of the names that the engine's code uses");
 static_assert(numberOfBuiltins <= maxNumberOfBuiltins);
 static_assert(numberOfBuiltins <= BuiltinID::hashTableDeletedIndex);
 static_assert(numberOfBuiltinNames <= BuiltinName::hashTableDeletedIndex);
@@ -426,9 +426,9 @@ static_assert(numberOfBuiltinClasses <= BuiltinClassID::hashTableDeletedIndex);
 static_assert(numberOfBuiltinSlots <= BuiltinSlotID::hashTableDeletedIndex);
 static_assert(numberOfBuiltinLayouts <= BuiltinLayoutID::hashTableDeletedIndex);
 static_assert(numberOfRuntimeModules <= RuntimeModuleID::hashTableDeletedIndex);
-static_assert(6750 <= BuiltinOverloadID::hashTableDeletedIndex);
-static_assert(1080 <= BuiltinTypeID::hashTableDeletedIndex);
-static_assert(867 <= BuiltinDispatchNodeID::hashTableDeletedIndex);
+static_assert(6751 <= BuiltinOverloadID::hashTableDeletedIndex);
+static_assert(1082 <= BuiltinTypeID::hashTableDeletedIndex);
+static_assert(868 <= BuiltinDispatchNodeID::hashTableDeletedIndex);
 
 } }
 

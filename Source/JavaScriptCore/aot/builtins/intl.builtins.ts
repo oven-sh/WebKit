@@ -249,7 +249,7 @@ export default b.declarations(
         throws: true,
         // For "collation" ICU opens the collation data of every locale and lists the keys it finds there.
         uses: { key: [b.readAsLocale] },
-        usesFeature: ["IntlOther", "IntlLocale", { feature: "IntlCollation", when: b.whenOperand("key", "collation") }],
+        usesFeature: ["IntlOther", { feature: "IntlCollation", when: b.whenOperand("key", "collation") }],
         implementation: b.hostCall,
       },
     },

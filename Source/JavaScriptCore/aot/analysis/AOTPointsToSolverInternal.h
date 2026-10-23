@@ -218,6 +218,7 @@ private:
     std::span<const NarrowedCopy> narrowedCopiesOf(ValueID subject) const;
     bool takeWork(uint64_t amount = 1);
     void giveUp();
+    void forgetAllButObjects();
 
     void findObjects();
     void findNarrowedCopies();
@@ -277,6 +278,8 @@ private:
     const CFG& m_cfg;
     const UseLists& m_useLists;
     const uint64_t m_maxWork;
+    // A word for each value is no more than the function itself takes. Past 64 objects the table grows with sets times objects.
+    const uint64_t m_maxWordsOfSets;
     const Sweep m_sweep;
     uint64_t m_work { 0 };
     PointsToResults m_results;

@@ -249,6 +249,7 @@ private:
     OperandOutcome giveUp();
 
     TypeID expectedWithin(const PlannedOperand&) const;
+    bool followsOperandRefusedByValue(BuiltinOperand) const;
     OperandRequirement& ensureRequirement(BuiltinOperand);
     bool hasStepFor(BuiltinOperand) const;
     void addStep(BuiltinOperand, OperandStepKind, BuiltinConversion = BuiltinConversion::None);
@@ -418,6 +419,8 @@ OperandOutcome CallPlanner::planConversion(PlannedOperand& operand)
 
     if (mayRunUserCode && !m_mayHoistUserCode) {
         TypeID expected = expectedWithin(operand);
+        if (!expected && followsOperandRefusedByValue(operand.position))
+            expected = types().intern(convertible);
         if (!expected || !types().at(expected).isSubsetOf(convertible, m_context.program))
             return giveUp();
         if (require(operand, types().intern(convertible)) == OperandOutcome::GaveUp)
@@ -490,6 +493,38 @@ TypeID CallPlanner::expectedWithin(const PlannedOperand& operand) const
         return { };
     Type met = withoutClassProofs(types().at(expected)).intersectWith(types().at(operand.type), types());
     return met.isNever() ? TypeID() : types().intern(met);
+}
+
+static bool failsByValue(BuiltinConversion conversion)
+{
+    switch (conversion) {
+    case BuiltinConversion::ToIndex:
+    case BuiltinConversion::ToBigInt:
+    case BuiltinConversion::Dictionary:
+        return true;
+    case BuiltinConversion::None:
+    case BuiltinConversion::ToBoolean:
+    case BuiltinConversion::ToNumber:
+    case BuiltinConversion::ToNumeric:
+    case BuiltinConversion::ToString:
+    case BuiltinConversion::ToPropertyKey:
+    case BuiltinConversion::ToPrimitive:
+    case BuiltinConversion::ToObject:
+    case BuiltinConversion::ToIntegerOrInfinity:
+    case BuiltinConversion::ToLength:
+    case BuiltinConversion::ToInt32:
+    case BuiltinConversion::ToUint32:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The built-in refuses a negative index before it converts what follows the index, so code of what follows stays in the built-in. A value that is stored behind an index is a number nearly always, and the conversion of one runs no code.
+bool CallPlanner::followsOperandRefusedByValue(BuiltinOperand position) const
+{
+    return std::ranges::any_of(m_overload->parameters, [&](const BuiltinParameter& parameter) {
+        return precedes(parameter.operand, position) && (failsByValue(parameter.conversion) || parameter.admitted);
+    });
 }
 
 OperandRequirement& CallPlanner::ensureRequirement(BuiltinOperand position)

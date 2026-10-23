@@ -106,10 +106,34 @@ static void passThis(ValueFlowRuleContext& context, const ValueFlowStatement& st
     context.add(thisValue, passedReceivers.objects);
 }
 
-void passNoFurtherArguments(ValueFlowRuleContext& context, const ValueFlowCallGroup& group, unsigned numberOfArguments)
+void passNoFurtherArguments(ValueFlowRuleContext& context, const ValueFlowCallGroup& group, unsigned numberOfArguments, unsigned numberOfPositionsTaken)
 {
-    for (unsigned index = numberOfArguments; index < numberOfGroupedArguments; ++index)
+    for (unsigned index = numberOfArguments; index < numberOfPositionsTaken; ++index)
         context.add(group.argument(index), context.universe().undefinedValue());
+}
+
+// No callee looks at a position from this one on. The callees are functions of the program that a group enters.
+static unsigned numberOfPositionsTakenBy(ValueFlowRuleContext& context, ClimbingSet closures)
+{
+    constexpr unsigned mostCalleesLookedAt = 4;
+    const ValueFlowUniverse& universe = context.universe();
+    unsigned numberOfCallees = 0;
+    unsigned positions = 0;
+    context.forEachMember(closures, [&](ValueFlowObjectID closure) {
+        if (positions == numberOfGroupedArguments)
+            return;
+        FunctionID function = universe.closureFunction(closure);
+        if (!function || ++numberOfCallees > mostCalleesLookedAt || context.sets().contains(universe.builtinTables().closuresThatEntriesDescribe(), closure)) {
+            positions = numberOfGroupedArguments;
+            return;
+        }
+        const Function& callee = context.program().at(function);
+        if (callee.has(FunctionFlags::HasRestParameter) || callee.hiddenRestParameterIndex())
+            positions = numberOfGroupedArguments;
+        else
+            positions = std::min(numberOfGroupedArguments, std::max(positions, callee.numberOfPositionalParameters()));
+    });
+    return positions;
 }
 
 ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, ClimbingSet knownObjects)
@@ -454,6 +478,7 @@ static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
     std::span<const ValueFlowOperand> arguments = operands.subspan(2);
     ValueFlowCallGroup group = context.group(callees, kind, origin);
+    unsigned numberOfPositionsTaken = numberOfPositionsTakenBy(context, callees);
     ValueSetID answeredObjects = ValueSets::anything;
     if (kind == ValueFlowCallKind::Call)
         passThis(context, statement, operands[1], passedReceivers, group.thisValue);
@@ -473,12 +498,12 @@ static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement
             lists = context.restrict(lists, ValueSets::complement(context.maker().of(context.universe().restArrayOf(statement.function))));
         if (!passesRestArray || context.meet(lists, ValueSets::anything)) {
             context.connect(context.lookup(lists, elements), group.otherArguments);
-            passNoFurtherArguments(context, group, 0);
+            passNoFurtherArguments(context, group, 0, numberOfPositionsTaken);
         }
     } else {
         for (unsigned index = 0; index < arguments.size(); ++index)
             context.connect(arguments[index], group.argumentAt(index));
-        passNoFurtherArguments(context, group, arguments.size());
+        passNoFurtherArguments(context, group, arguments.size(), numberOfPositionsTaken);
     }
     if (statement.result && (kind != ValueFlowCallKind::Call || !takesResultOfEachCallee(context, statement, callees)))
         context.connect(context.masked(group.result, answeredObjects), statement.result);

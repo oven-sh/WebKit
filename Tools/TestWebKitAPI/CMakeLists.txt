@@ -224,6 +224,18 @@ if (USE_EXTERNAL_MIMALLOC)
     list(APPEND TestWTF_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
 endif ()
 
+# Same as jsc: the ICU data of the release lanes has a zstd frame per item (Source/JavaScriptCore/shell/CMakeLists.txt).
+if (BUN_ICU_ZSTD_SOURCE_DIR)
+    file(GLOB TestWTF_ZSTD_DECODER_SOURCES
+        ${BUN_ICU_ZSTD_SOURCE_DIR}/common/*.c
+        ${BUN_ICU_ZSTD_SOURCE_DIR}/decompress/*.c
+    )
+    set_source_files_properties(${TestWTF_ZSTD_DECODER_SOURCES} PROPERTIES COMPILE_DEFINITIONS "ZSTD_DISABLE_ASM=1;ZSTD_LEGACY_SUPPORT=0;DEBUGLEVEL=0")
+    list(APPEND TestWTF_SOURCES Helpers/CompressedICUData.cpp)
+    list(APPEND TestWTF_C_SOURCES ${TestWTF_ZSTD_DECODER_SOURCES})
+    list(APPEND TestWTF_PRIVATE_INCLUDE_DIRECTORIES ${BUN_ICU_ZSTD_SOURCE_DIR})
+endif ()
+
 WEBKIT_EXECUTABLE_DECLARE(TestWTF)
 
 # TestJavaScriptCore definitions

@@ -12,7 +12,8 @@ Every .cpp outside aot/ whose working copy differs from <base commit>, committed
 the flags of the build in <build directory> (which needs a compile_commands.json) minus the precompiled header.
 
 --aot       instead of what changed outside aot/, every file of aot/, changed or not, each source with its own flags. CMake
-            compiles each of them on its own and has no precompiled header: what this finds is red on every platform there.
+            compiles them in bundles, on some platforms without a precompiled header: whether a missing include fails there
+            depends on what precedes the source in its bundle.
 --headers   instead of the sources, the headers: each is included on its own after config.h: is it self-contained?
 --gate-off  with ENABLE(AOT) forced off, as on the platforms without a back end. (Forcing it on the
             command line means something here because no precompiled header was built with the other value.)

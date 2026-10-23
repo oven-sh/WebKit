@@ -649,7 +649,7 @@ export default b.declarations(
   intlService(
     "PluralRules",
     "pluralRules",
-    ["IntlOther", "IntlPluralRules", "IntlNumberFormat"],
+    ["IntlOther", "IntlNumberFormat"],
     ["localeMatcher", "type", "notation", "compactDisplay", ...digitOptions],
     {
       select: intlMethod({ number: convertedToPrimitive }, b.string),
@@ -659,7 +659,7 @@ export default b.declarations(
   intlService(
     "RelativeTimeFormat",
     "relativeTimeFormat",
-    ["IntlOther", "IntlPluralRules", "IntlNumberFormat"],
+    ["IntlOther", "IntlNumberFormat"],
     ["localeMatcher", "numberingSystem", "style", "numeric"],
     formatAndParts({ value: convertedToPrimitive, unit: convertedToPrimitive }),
   ),
@@ -668,7 +668,7 @@ export default b.declarations(
     segment: intlMethod({ input: convertedToPrimitive }, b.instance("IntlSegments").fresh),
   }),
   b.class("Intl.Locale", {
-    usesFeature: ["IntlOther", "IntlLocale"],
+    usesFeature: ["IntlOther"],
     prototypeUsesFeature: true,
     nativeSymbols: ["callIntlLocale", "constructIntlLocale"],
     prototypeTable: b.staticTable("runtime/IntlLocalePrototype.cpp", "localePrototypeTable"),
@@ -1031,5 +1031,10 @@ export default b.declarations(
   webAssemblyError("RuntimeError"),
   webAssemblyError("SuspendError"),
 
-  b.extend("console.takeHeapSnapshot", { nativeSymbols: ["consoleProtoFuncTakeHeapSnapshot"] }),
+  // The host declares the object: what the other members do is up to its ConsoleClient.
+  b.fn("console.takeHeapSnapshot", b.otherwise),
+  b.extend("console.takeHeapSnapshot", {
+    nativeSymbols: ["consoleProtoFuncTakeHeapSnapshot"],
+    usesFeature: ["Profilers"],
+  }),
 );

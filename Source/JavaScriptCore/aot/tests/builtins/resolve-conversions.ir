@@ -3,7 +3,7 @@
 # RUN: pass ResolveBuiltins
 # RUN(PLACED): pass ResolveBuiltins PlaceTypeTests
 # CHECK: outcome: Changed
-# STATISTIC: BuiltinConversionsInserted = 18
+# STATISTIC: BuiltinConversionsInserted = 19
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="toNumber" parameters=[{type=string}] results=[{type=anything}] {
@@ -301,3 +301,27 @@ function f25 name="expectedInsideAcceptedType" parameters=[{type=Array<anything,
 # PLACED-NOT: ToString
 # PLACED: frequency=Unlikely:
 # PLACED-NEXT: string = CallBuiltin v0, {{*}} overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+
+function f26 name="codeBehindAnIndexStaysInTheBuiltin" parameters=[{type=DataView}, {type=number}, {type=object}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: DataView, v1: number, v2: object, v3: anything, v4: string):
+    v5 = Builtin builtin=DataViewPrototypeSetInt8
+    v6 = Call v5, v0, v1, v2
+    v7 = Call v5, v0, v1, v3
+    v8 = Call v5, v0, v1, v4
+    Return v8
+}
+# The built-in refuses a negative index before it converts the value, so a conversion that may run code or throw is left to it.
+# CHECK-LABEL: function f26 name="codeBehindAnIndexStaysInTheBuiltin"
+# CHECK: v6: undefined = CallBuiltin v0, v1, v2 overload=DataViewPrototypeSetInt8/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: v7: undefined = CallBuiltin v0, v1, v3 overload=DataViewPrototypeSetInt8/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: [[number26]]: number = ToNumber v4
+# CHECK-NEXT: v8: undefined = CallBuiltin v0, v1, [[number26]] overload=DataViewPrototypeSetInt8/0
+# A value of which nothing is known is tested for one whose conversion does neither, which nearly every stored value is.
+# PLACED-LABEL: function f26 name="codeBehindAnIndexStaysInTheBuiltin"
+# PLACED: v6: undefined = CallBuiltin v0, v1, v2 overload=DataViewPrototypeSetInt8/0 builtinCallForm=AnyReceiver
+# PLACED: ([[tested26]]: undefined|null|boolean|number|string):
+# PLACED-NEXT: [[converted26]]: number = ToNumber [[tested26]]
+# PLACED-NEXT: v7: undefined = CallBuiltin v0, v1, [[converted26]] overload=DataViewPrototypeSetInt8/0
+# PLACED: = TypeTest v3 testedType=undefined|null|boolean|number|string
+# PLACED: frequency=Unlikely:
+# PLACED-NEXT: undefined = CallBuiltin v0, v1, {{*}} overload=DataViewPrototypeSetInt8/0 builtinCallForm=AnyReceiver

@@ -160,7 +160,7 @@ EscapeAnalysis::EscapeAnalysis(FunctionAnalyses& analyses)
     if (!solveOfEntryParameters)
         return;
     RELEASE_ASSERT(work <= solveOfEntryParameters->maxWork);
-    RELEASE_ASSERT(m_objects.size() == solveOfEntryParameters->numberOfObjects);
+    RELEASE_ASSERT(m_gaveUp || m_objects.size() == solveOfEntryParameters->numberOfObjects);
     for (const TrackedObject& object : m_objects)
         RELEASE_ASSERT(object.kind == ObjectKind::EntryParameter);
     RELEASE_ASSERT(!m_tracksOnlyEntryParameters || !m_gaveUp);

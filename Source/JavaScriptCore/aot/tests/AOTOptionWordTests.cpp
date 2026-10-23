@@ -575,6 +575,7 @@ static void testCompileOptionsDefault()
     expected.threadCount = defaultThreadCount();
     expected.target.architecture = hostArchitecture();
     expected.target.features = CPUFeatureSet::buildTarget().bits();
+    expected.target.imageForm = imageFormOfThisRuntime();
     expected.sizeClassProgression = Options::sizeClassProgressionWithAOT();
     AOT_TEST_CHECK(isSame(makeDefaultCompileOptions(), expected));
 
@@ -586,7 +587,7 @@ static void testCompileOptionsDefault()
 
 static constexpr InvalidMemberCase invalidMemberCases[] = {
     { offsetof(WireOptions, target.referenceWidth), [](WireOptions& wire) { wire.target.referenceWidth = firstInvalidEnumerator<Wire::ReferenceWidth>; } },
-    { offsetof(WireOptions, target.imageForm), [](WireOptions& wire) { wire.target.imageForm = firstInvalidEnumerator<Wire::ImageForm>; } },
+    { offsetof(WireOptions, target.imageForm), [](WireOptions& wire) { wire.target.imageForm = firstInvalidEnumerator<Wire::ImageForm>; }, [](CompileOptions& options) { options.recorded.imageForm = static_cast<uint8_t>(Wire::ImageForm { }); } },
     { offsetof(WireOptions, target.reserved), [](WireOptions& wire) { wire.target.reserved = 1; } },
     { offsetof(WireOptions, action), [](WireOptions& wire) { wire.action = firstInvalidEnumerator<Wire::CompileAction>; } },
     { offsetof(WireOptions, mismatchPolicy), [](WireOptions& wire) { wire.mismatchPolicy = firstInvalidEnumerator<Wire::MismatchPolicy>; } },

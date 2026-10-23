@@ -61,6 +61,7 @@ void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
     m_firstNodeReadOfRun = m_log.nodesRead.size();
     m_firstNodeAskedWhetherEmptyOfRun = m_log.nodesAskedWhetherEmpty.size();
     m_unknownSource = std::nullopt;
+    m_holdingNothing = { };
     if (!m_constantsOfThisTurn.isEmpty())
         m_constantsOfThisTurn.clear();
     if (m_turnOfInstancesMade != m_solver.m_numberOfTurn) [[unlikely]] {
@@ -538,10 +539,16 @@ bool ValueFlowRuleContext::refusesEvaluatedText() const
     return m_solver.m_input.refusesEvaluatedText;
 }
 
+ValueFlowNodeID ValueFlowRuleContext::holdingNothing()
+{
+    m_holdingNothing = nodeFor(ValueFlowNodeKey::constant(ValueSets::nothing));
+    return m_holdingNothing;
+}
+
 ValueFlowNodeID ValueFlowRuleContext::read(ClimbingSet objects, ValueFlowName name)
 {
     if (objects.m_set == ValueSets::nothing)
-        return nodeFor(ValueFlowNodeKey::constant(ValueSets::nothing));
+        return holdingNothing();
     return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
 }
 
@@ -635,7 +642,7 @@ ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowNam
         return answer;
     }
     if (receivers.m_set == ValueSets::nothing)
-        return nodeFor(ValueFlowNodeKey::constant(ValueSets::nothing));
+        return holdingNothing();
     return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, receivers.m_set, name));
 }
 
@@ -670,6 +677,11 @@ ValueFlowNodeID ValueFlowRuleContext::holding(ClimbingSet set)
 
 void ValueFlowRuleContext::connect(ValueFlowNodeID from, ValueFlowNodeID to)
 {
+    // Nothing ever comes along an edge out of the node that holds nothing. Whoever hands something to an instance makes it, and so does whoever hands it nothing.
+    if (from && from == m_holdingNothing) {
+        nodeHandedTo(to);
+        return;
+    }
     connectAsNamed(nodeRead(from), nodeHandedTo(to));
 }
 

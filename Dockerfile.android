@@ -76,6 +76,15 @@ RUN set -eux; \
     done; \
     echo 'int main(){return 0;}' | $CC --target=aarch64-unknown-linux-android${ANDROID_API} --sysroot=$NDK_SYSROOT --rtlib=compiler-rt -fuse-ld=lld -xc - -o /tmp/t && file /tmp/t
 
+# Node runs the generators of Source/JavaScriptCore/aot (>=23.6 strips types by default). The one of Dockerfile.
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN wget -q "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -O /tmp/node.tar.xz && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /tmp/node.tar.xz && \
+    node --version
+
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc /output/include/unicode
 
 # ICU's sources and, for this container, its tools. ICU runs them while it builds (pkgdata, genrb, ...), so a cross
@@ -168,8 +177,7 @@ ENV WEBKIT_OUT_DIR=/webkitbuild
 #
 # -k 0: the log of a lane that does not compile names every source that fails, not the first few.
 #
-# testaot and testFFI are run from the package, not debugged from it: in a debug lane each holds the library's debug
-# information once more, and GitHub takes no release asset of 2 GiB.
+# The programs ship without debug info: each of them would carry another copy of the library's.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export TARGET_TRIPLE="${ANDROID_ARCH}-unknown-linux-android${ANDROID_API}" && \
     export CROSS="--target=${TARGET_TRIPLE} --sysroot=${NDK_SYSROOT}" && \
@@ -215,7 +223,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
-    "$(echo "$AR" | sed s/llvm-ar/llvm-strip/)" --strip-debug /output/bin/testaot /output/bin/testFFI && \
+    "$(echo "$AR" | sed s/llvm-ar/llvm-strip/)" --strip-debug /output/bin/jsc /output/bin/testaot /output/bin/testFFI && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
     cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \

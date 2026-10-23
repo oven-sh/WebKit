@@ -20,7 +20,8 @@ ValueSetID unknownValue(ValueFlowRuleContext&, ValueFlowUnknownSource);
 // What an entry of the engine answers without a description, for the engine makes no object of the host, and an instance of a class that a row names and Buffer does not extend.
 ValueSetID undescribedValueThatIsNoBuffer(ValueFlowRuleContext&);
 // Whoever fills a group of kind Call or Construct says from which position on it passes nothing: a parameter that every caller of the group fills is not undefined.
-void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments);
+// A caller that knows that no callee looks at a position from `numberOfPositionsTaken` on says nothing about those.
+void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments, unsigned numberOfPositionsTaken = numberOfGroupedArguments);
 
 // The known objects of a value, for a rule that asks each of them something.
 struct ValueFlowObjectsToldApart {

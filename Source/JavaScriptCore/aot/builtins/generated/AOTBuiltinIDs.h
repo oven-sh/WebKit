@@ -3,15 +3,15 @@
 
 namespace JSC { namespace AOT {
 
-inline constexpr uint64_t engineListStamp = 0x76e103132ca26951ULL;
+inline constexpr uint64_t engineListStamp = 0xba784b94684a5631ULL;
 
-#define AOT_NAMESPACE_OF_ENGINE_LIST EngineList_76e103132ca26951
+#define AOT_NAMESPACE_OF_ENGINE_LIST EngineList_ba784b94684a5631
 
 inline constexpr unsigned numberOfBuiltinSlots = 39;
 inline constexpr unsigned numberOfNamedBuiltins = 1211;
 inline constexpr unsigned numberOfNamedBuiltinNames = 604;
 inline constexpr unsigned numberOfNamedBuiltinClasses = 99;
-inline constexpr unsigned numberOfNamedBuiltinLayouts = 13;
+inline constexpr unsigned numberOfNamedBuiltinLayouts = 7;
 
 namespace Builtins {
 inline constexpr NamedTableID<BuiltinID> AggregateError { 0 };
@@ -1979,19 +1979,13 @@ inline constexpr BuiltinSlotID WrapForValidIteratorIterated { 38 };
 }
 
 namespace BuiltinLayouts {
-inline constexpr NamedTableID<BuiltinLayoutID> ClusterBoundSocket { 0 };
-inline constexpr NamedTableID<BuiltinLayoutID> EntriesPair { 1 };
-inline constexpr NamedTableID<BuiltinLayoutID> IteratorResult { 2 };
-inline constexpr NamedTableID<BuiltinLayoutID> NodeURLBinding { 3 };
-inline constexpr NamedTableID<BuiltinLayoutID> ParsedPath { 4 };
-inline constexpr NamedTableID<BuiltinLayoutID> PromiseCapability { 5 };
-inline constexpr NamedTableID<BuiltinLayoutID> PromiseFulfilledResult { 6 };
-inline constexpr NamedTableID<BuiltinLayoutID> PromiseRejectedResult { 7 };
-inline constexpr NamedTableID<BuiltinLayoutID> PropertyDescriptor { 8 };
-inline constexpr NamedTableID<BuiltinLayoutID> ReadAndWrittenCounts { 9 };
-inline constexpr NamedTableID<BuiltinLayoutID> SpawnSyncResult { 10 };
-inline constexpr NamedTableID<BuiltinLayoutID> StringPair { 11 };
-inline constexpr NamedTableID<BuiltinLayoutID> StringPairIteratorResult { 12 };
+inline constexpr NamedTableID<BuiltinLayoutID> EntriesPair { 0 };
+inline constexpr NamedTableID<BuiltinLayoutID> IteratorResult { 1 };
+inline constexpr NamedTableID<BuiltinLayoutID> PromiseCapability { 2 };
+inline constexpr NamedTableID<BuiltinLayoutID> PromiseFulfilledResult { 3 };
+inline constexpr NamedTableID<BuiltinLayoutID> PromiseRejectedResult { 4 };
+inline constexpr NamedTableID<BuiltinLayoutID> PropertyDescriptor { 5 };
+inline constexpr NamedTableID<BuiltinLayoutID> ReadAndWrittenCounts { 6 };
 }
 
 enum class CheckedJSType : uint8_t {
