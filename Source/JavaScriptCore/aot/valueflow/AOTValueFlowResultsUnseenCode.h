@@ -15,8 +15,8 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // The events of the solved program, in the order of the program: each operation of a reached function that lets in code the build has not seen, or that names a module at run time.
 struct LoaderOfMachineCode {
-    BuiltinID callee;
-    BuiltinID named;
+    NamedBuiltin callee;
+    NamedBuiltin named;
 };
 inline constexpr LoaderOfMachineCode loadersOfMachineCode[] = {
     { Builtins::ProcessDlopen, Builtins::ProcessDlopen },

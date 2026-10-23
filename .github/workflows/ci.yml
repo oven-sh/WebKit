@@ -267,6 +267,7 @@ jobs:
           # For `test` alone: not part of what ships.
           rm -rf test-bin && if [ -d bun-webkit/test-bin ]; then mv bun-webkit/test-bin test-bin; fi
           tar -czf bun-webkit.tar.gz bun-webkit
+          du -sh bun-webkit/lib bun-webkit/bin/* && ls -l bun-webkit.tar.gz
           # What `test` runs.
           if [ "$TEST" = true ]; then
             if [ -d test-bin ]; then mv test-bin/* bun-webkit/bin/; fi

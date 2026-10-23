@@ -78,7 +78,7 @@ function f3 name="twoWayFormThatReadsCache" parameters=[{type=Date}] results=[{t
 # CHECK-NEXT: Jump -> next [[done3]]([[called3]])
 # REPS-LABEL: name="twoWayFormThatReadsCache" module=m0 role=GenericEntrypoint
 # REPS: TryCallInline {{*}} inlineBuiltin=DateGetField {{*}} -> done [[doneNumber]](), miss
-# REPS: [[doneNumber]]({{*}}: number @Double):
+# REPS: [[doneNumber]]({{*}}: number @JSValue):
 
 function f4 name="twoWayFormUnderHandler" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object) handler=b2():

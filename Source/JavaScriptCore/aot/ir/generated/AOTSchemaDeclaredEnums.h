@@ -91,7 +91,7 @@ enum class PrimitiveSet : uint16_t {
     String = 1 << 7, Symbol = 1 << 8, BigInt = 1 << 9, Absent = 1 << 10, LiteralString = 1 << 11, LiteralSymbol = 1 << 12
 };
 enum class TypeFlags : uint8_t { HasIntegers = 1 << 0, AnyObject = 1 << 1, AnyFunction = 1 << 2, HasMembersWithoutLayout = 1 << 3 };
-enum class PristineAspects : uint8_t { Storage = 1 << 0, Names = 1 << 1, AsCreated = 1 << 2, Dense = 1 << 3 };
+enum class PristineAspects : uint8_t { Storage = 1 << 0, Names = 1 << 1, AsCreated = 1 << 2, Dense = 1 << 3, NamesKeptBelow = 1 << 4 };
 enum class PositionFlags : uint8_t {
     IsInt32Promise = 1 << 0, IsFromCompiler = 1 << 1, IsExpected = 1 << 2, OmitsNull = 1 << 3, OmitsUndefined = 1 << 4,
     IsDeclaredByDependency = 1 << 5
@@ -571,7 +571,7 @@ template<> inline constexpr unsigned numberOfEnumerators<Typed::TextFormat> = 7;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::UndeclaredMembers> = 3;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::PrimitiveSet> = 13;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::TypeFlags> = 4;
-template<> inline constexpr unsigned numberOfEnumerators<Typed::PristineAspects> = 4;
+template<> inline constexpr unsigned numberOfEnumerators<Typed::PristineAspects> = 5;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::PositionFlags> = 6;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::LayoutKind> = 8;
 template<> inline constexpr unsigned numberOfEnumerators<Typed::MethodKind> = 3;

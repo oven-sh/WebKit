@@ -54,9 +54,9 @@ struct ProgramSymbols;
 struct RecordedOptions;
 struct State;
 
-enum class Receiver : uint8_t { Map, Set, RegExp };
-static constexpr unsigned numberOfReceivers = 3;
-static_assert(static_cast<unsigned>(Receiver::RegExp) + 1 == numberOfReceivers);
+enum class Receiver : uint8_t { Map, Set, RegExp, Buffer };
+static constexpr unsigned numberOfReceivers = 4;
+static_assert(static_cast<unsigned>(Receiver::Buffer) + 1 == numberOfReceivers);
 
 template<typename T>
 class ZeroedStorage {
@@ -75,7 +75,6 @@ struct InstancePrefix {
     uint64_t stringHeader;
     void* ropeStringAllocator;
     uint32_t collectionStructureIDs[numberOfReceivers];
-    uint32_t unused;
     EncodedJSValue boxedNaN;
     uint64_t newArrayWithInt32Header;
     uint64_t newArrayWithDoubleHeader;

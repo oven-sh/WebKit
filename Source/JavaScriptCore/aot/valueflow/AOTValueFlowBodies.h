@@ -392,13 +392,9 @@ enum class ValueFlowHostNode : uint8_t {
     ParentsOfModuleObjects,
     // The pairs that the steps of built-in iterators over entries have made.
     PairsOfSteps,
-    // The keys under which a statement that counts has stored a value through the unknown object, and the unknown object once one has done so under a key nobody knows.
-    NamesStoredThroughUnknownObject,
-    // The same for getters and setters.
-    NamesOfAccessorsStoredThroughUnknownObject,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 40;
+inline constexpr unsigned numberOfValueFlowHostNodes = 38;
 
 // The nodes that more than one body names. Those of a function lie in front of the other nodes of its body.
 class ValueFlowProgramNodes {

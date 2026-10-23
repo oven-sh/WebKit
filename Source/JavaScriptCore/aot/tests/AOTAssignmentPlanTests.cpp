@@ -13,6 +13,7 @@
 #include "AOTObject.h"
 #include "AOTObjectCopy.h"
 #include "AOTObjectModel.h"
+#include "AOTOperationCallScope.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
@@ -586,7 +587,7 @@ static void testClonedStructuresAreForgottenAtEachCollection(LoadedProgram& prog
         put(program, source, "a"_s, 1);
         put(program, source, "b"_s, 2);
         ClonedStructure& cloned = program.instance().allocation.clonedStructures[AllocationWords::placeOfClonedStructure(source->structureID().bits())];
-        JSObject* copy = uncheckedDowncast<JSObject>(operationAOTCopyObject(&program.instance(), JSValue::encode(source), 0, 0, nullptr).value);
+        JSObject* copy = uncheckedDowncast<JSObject>(callOperationFromTest(vm, operationAOTCopyObject, &program.instance(), JSValue::encode(source), 0, 0, nullptr).value);
         AOT_TEST_CHECK(copy != source && copy->structureID() == source->structureID() && holdsPropertiesOf(program, copy, source));
         AOT_TEST_CHECK(static_cast<uint32_t>(cloned.header) == source->structureID().bits() && cloned.cellSize == JSFinalObject::allocationSize(source->structure()->inlineCapacity()));
         vm.heap.collectSync(scope);

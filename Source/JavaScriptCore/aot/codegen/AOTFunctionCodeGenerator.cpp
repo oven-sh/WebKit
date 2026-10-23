@@ -261,7 +261,7 @@ bool FunctionCodeGenerator::generateB3(DirectCodeAttempt attempt)
     bool isWorthOptimizing = !isGeneratedWithoutOptimizing(build, m_inputs.heat, m_inputs.program, m_id);
     bool checksAir = options.validatesBackEnd || options.validatesReferences || AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE;
     if (!isWorthOptimizing && !checksAir && attempt != DirectCodeAttempt::None && traits.convention == BackEndConvention::Function) {
-        if (!isX86_64() || build.recordedOptions().has(TestingSwitch::GenerateDirectCodeByLinearScan))
+        if (build.recordedOptions().has(TestingSwitch::GenerateDirectCodeByLinearScan))
             m_linearScanCode = planLinearScanCode(proc, attempt, LoopsInDirectCode::AreGenerated);
         else
             m_directCode = planDirectCode(proc, attempt);

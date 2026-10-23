@@ -1016,14 +1016,13 @@ ASCIILiteral nameOf(ReportSet value)
 
 ASCIILiteral nameOf(TestingSwitch value)
 {
-    static constexpr EnumeratorNames<16, 341> names {
+    static constexpr EnumeratorNames<15, 318> names {
         {
-            0, 18, 35, 70, 80, 100, 120, 136, 156, 177, 207, 222, 242, 266, 287, 310
+            0, 18, 35, 70, 80, 100, 120, 136, 156, 177, 207, 222, 242, 266, 287
         },
         "IgnoreBranchHints\0" "ForceGCSlowPaths\0" "MayEncounterMasqueradesAsUndefined\0" "DropGuard\0" "IgnoreExpectedTypes\0"
         "DropReferenceGuards\0" "ProveEverything\0" "NoCallConvertsCells\0" "NoLayoutIsMadeSeldom\0" "FlattenUntilHeldWhereverLegal\0"
-        "DelayFlowRules\0" "DelayOtherFlowRules\0" "GenerateAllCodeDirectly\0" "CheckProofsAtRunTime\0" "ConvertOperandsAtFetch\0"
-        "GenerateDirectCodeByLinearScan"
+        "DelayFlowRules\0" "DelayOtherFlowRules\0" "GenerateAllCodeDirectly\0" "CheckProofsAtRunTime\0" "GenerateDirectCodeByLinearScan"
     };
     return nameAt(names, value);
 }
@@ -1469,11 +1468,11 @@ ASCIILiteral nameOf(TypeFlags value)
 
 ASCIILiteral nameOf(PristineAspects value)
 {
-    static constexpr EnumeratorNames<4, 30> names {
+    static constexpr EnumeratorNames<5, 45> names {
         {
-            0, 8, 14, 24
+            0, 8, 14, 24, 30
         },
-        "Storage\0" "Names\0" "AsCreated\0" "Dense"
+        "Storage\0" "Names\0" "AsCreated\0" "Dense\0" "NamesKeptBelow"
     };
     return nameAt(names, value);
 }

@@ -11,6 +11,7 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTOperationCallScope.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "BrandedStructure.h"
@@ -444,6 +445,7 @@ static void testVariantNobodyHoldsLivesAsLongAsItsPrototype(LoadedProgram& progr
     vm.heap.collectSync(CollectionScope::Full);
     checkVariantsAreThoseMadeBefore(program, prototypes, variants);
 
+    AOT_TEST_CHECK(!prototypes.hasOverflowed());
     prototypes.clear();
     sanitizeStackForVM(vm);
     vm.heap.collectSync(CollectionScope::Full);
@@ -578,14 +580,14 @@ static void testHeaderOfAnAllocationComesWithoutACell(LoadedProgram& program)
         return count;
     };
 
-    uint64_t header = operationAOTGetHeaderOfAllocation(&program.instance(), number);
+    uint64_t header = callOperationFromTest(vm, operationAOTGetHeaderOfAllocation, &program.instance(), number);
     const AllocationSiteRecord* record = program.instance().objects.allocationSite(number);
     AOT_TEST_CHECK(record && record->header == header && header == cellHeaderFor(usualStructure(program, "Tagged"_s)));
     AOT_TEST_CHECK(!numberOfCellsWithHeader(header));
-    AOT_TEST_CHECK(operationAOTGetHeaderOfAllocation(&program.instance(), number) == header && !numberOfCellsWithHeader(header));
+    AOT_TEST_CHECK(callOperationFromTest(vm, operationAOTGetHeaderOfAllocation, &program.instance(), number) == header && !numberOfCellsWithHeader(header));
 
     // The count sees a cell that is there.
-    JSCell* cell = operationAOTAllocateSlow(&program.instance(), number);
+    JSCell* cell = callOperationFromTest(vm, operationAOTAllocateSlow, &program.instance(), number);
     AOT_TEST_CHECK(*reinterpret_cast<uint64_t*>(cell) == header && numberOfCellsWithHeader(header) == 1);
 }
 

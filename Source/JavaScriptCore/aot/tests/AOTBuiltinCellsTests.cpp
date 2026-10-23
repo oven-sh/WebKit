@@ -135,8 +135,8 @@ static void checkNativeGetter(LoadedProgram& program)
     checkCellIs(program, BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeByteLength), "Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get"_s);
 }
 
-static constexpr BuiltinCellKey customGetterKey = BuiltinCellKey::getter(Builtins::IntlCollatorPrototypeCompare);
-static constexpr BuiltinID otherCustomAccessors[] = {
+static BuiltinCellKey customGetterKeyOf() { return BuiltinCellKey::getter(Builtins::IntlCollatorPrototypeCompare); }
+static constexpr NamedBuiltin otherCustomAccessors[] = {
     Builtins::IntlLocalePrototypeBaseName, Builtins::IntlLocalePrototypeCalendar, Builtins::IntlLocalePrototypeCaseFirst, Builtins::IntlLocalePrototypeCollation,
     Builtins::IntlLocalePrototypeHourCycle, Builtins::IntlLocalePrototypeLanguage, Builtins::IntlLocalePrototypeNumberingSystem, Builtins::IntlLocalePrototypeNumeric,
     Builtins::IntlLocalePrototypeRegion, Builtins::IntlLocalePrototypeScript, Builtins::IntlNumberFormatPrototypeFormat, Builtins::IntlDateTimeFormatPrototypeFormat,
@@ -163,8 +163,8 @@ static NEVER_INLINE Vector<JSCell*> createUnreferencedCustomGetters(LoadedProgra
 static void checkGetterOfCustomAccessorSurvivesACollection(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    AOT_TEST_CHECK(customGetterKey.hasCell(BuiltinTable::singleton()));
-    uint32_t number = putKeyInPlaceOf(program, BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeByteLength), customGetterKey);
+    AOT_TEST_CHECK(customGetterKeyOf().hasCell(BuiltinTable::singleton()));
+    uint32_t number = putKeyInPlaceOf(program, BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeByteLength), customGetterKeyOf());
     uintptr_t hiddenGetter = fillCellOfCustomGetter(program, number);
     Vector<JSCell*> otherGetters = createUnreferencedCustomGetters(program);
 

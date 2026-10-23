@@ -469,6 +469,21 @@ struct Island {
     uint32_t offset;
 };
 
+struct RareRegion {
+    uint32_t firstBlock { 0 };
+    uint32_t endBlock { 0 };
+    uint32_t numberOfSlots { 0 };
+    uint32_t numberOfJumps { 0 };
+    size_t offsetOfFirstJump { 0 };
+    bool isWritten { false };
+};
+
+enum class Layout : uint8_t {
+    RareCodeAtEnd,
+    RareCodeInGaps,
+    AsControlFlows,
+};
+
 enum class Pass : uint8_t {
     Select,
     Emit,
@@ -527,6 +542,8 @@ private:
     using Loop = LinearScan::Loop;
     using KnownLoad = LinearScan::KnownLoad;
     using EdgeStub = LinearScan::EdgeStub;
+    using RareRegion = LinearScan::RareRegion;
+    using Layout = LinearScan::Layout;
     using CaseOfSwitch = LinearScan::CaseOfSwitch;
     using InferredSwitch = LinearScan::InferredSwitch;
     using CaseTest = LinearScan::CaseTest;
@@ -784,6 +801,8 @@ private:
     void finishUnit(CodeUnit::Kind = CodeUnit::Kind::Plain);
     void finishBranchUnit() { finishUnit(std::exchange(m_kindOfBranchUnit, CodeUnit::Kind::Plain)); }
     void orderEmission();
+    void emitRareRegion(uint32_t region, uint32_t blockThatFollows);
+    void emitRareCodeInFrontOf(uint32_t next);
     void emitBlock(Block&);
     void emitMovesAt(Position);
     void emitEdgeMoves(uint32_t edge);
@@ -837,8 +856,12 @@ private:
     bool m_setsUpFrameAtEntry { true };
     bool m_codeIsReachable { true };
     bool m_prefersSmallCode { false };
+    Layout m_layout { Layout::RareCodeAtEnd };
     int32_t m_slotBias { 0 };
     unsigned m_numberOfTeardowns { 0 };
+    Label m_sharedTeardown;
+    size_t m_offsetOfSharedTeardown { 0 };
+    size_t m_bytesOfSharedTeardown { 0 };
     unsigned m_bytesOfStackArguments { 0 };
     unsigned m_numberOfLatePathsNoted { 0 };
 
@@ -912,6 +935,11 @@ private:
     Vector<int32_t, 8> m_variableOffsets;
 
     Vector<uint32_t> m_emissionOrder;
+    uint32_t m_blockThatFollows { UINT32_MAX };
+    Vector<LinearScan::RareRegion, 8> m_rareRegions;
+    Vector<uint32_t, 8> m_waitingRegions;
+    unsigned m_numberOfEdgeStubsWritten { 0 };
+    size_t m_offsetOfFirstWaitingEdgeStub { 0 };
     uint32_t m_currentBlock { 0 };
     uint32_t m_operandCursor { 0 };
     uint32_t m_moveCursor { 0 };

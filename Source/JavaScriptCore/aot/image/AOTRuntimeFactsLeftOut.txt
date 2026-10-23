@@ -1,10 +1,6 @@
 # An expression of the compiler's half that aot/image/AOTRuntimeFacts.def cannot evaluate, and why. scripts/build/aot-runtime-facts.ts in Bun's tree reads the part in front of the bar.
 AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator) | use of undeclared identifier 'kind'; did you mean 'find'?
 AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header) | use of undeclared identifier 'kind'; did you mean 'find'?
-AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets) | no member named 'lazyStringHeaderOffsets' in 'ImageWords'
-AOT_INSTANCE_OFFSET(image.lazyStringHeaders) | no member named 'lazyStringHeaders' in 'ImageWords'
-AOT_INSTANCE_OFFSET(image.lazyStringHeadersCapacity) | no member named 'lazyStringHeadersCapacity' in 'ImageWords'
-AOT_INSTANCE_OFFSET(image.stringRecords) | no member named 'stringRecords' in 'ImageWords'
 ExactAllocationCounts::offsetOfCellsOfAllocations() | use of undeclared identifier 'ExactAllocationCounts'
 Extension::offsetOfGranuleBits() | use of undeclared identifier 'Extension'; did you mean 'Exception'?
 Image::frameAtReturnOffset() | call to non-static member function without an object argument
@@ -27,11 +23,6 @@ OBJECT_OFFSETOF(CompiledStructure, m_flags) | 'm_flags' is a private member of '
 OBJECT_OFFSETOF(CompiledStructure, m_layout) | 'm_layout' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID) | 'm_namedStructureAndRareData' is a private member of 'JSC::AOT::CompiledStructure'
 OBJECT_OFFSETOF(Extension, m_granuleBits) | unknown type name 'Extension'; did you mean 'Exception'?
-OBJECT_OFFSETOF(ImageStringRecord, hashAndFlags) | offsetof of incomplete type 'ImageStringRecord'
-OBJECT_OFFSETOF(ImageStringRecord, rangeOrIndex) | offsetof of incomplete type 'ImageStringRecord'
-OBJECT_OFFSETOF(LazyStringHeader, number) | unknown type name 'LazyStringHeader'; did you mean 'ImageStringHeader'?
-OBJECT_OFFSETOF(LazyStringHeaderArena, end) | unknown type name 'LazyStringHeaderArena'
-OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked) | unknown type name 'LazyStringHeaderArena'
 OBJECT_OFFSETOF(Plan::FastField, acceptedValues) | use of undeclared identifier 'Plan'
 OBJECT_OFFSETOF(Plan::FastField, offset) | use of undeclared identifier 'Plan'
 OBJECT_OFFSETOF(Plan::FastField, representation) | use of undeclared identifier 'Plan'

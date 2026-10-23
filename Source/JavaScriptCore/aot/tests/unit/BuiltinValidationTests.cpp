@@ -28,7 +28,7 @@ namespace {
 
 struct ReportedChange {
     ASCIILiteral change;
-    BuiltinID builtin;
+    NamedBuiltin builtin;
     ASCIILiteral mismatch;
 };
 

@@ -9,6 +9,7 @@
 
 #include "AOTPropertyWalk.h"
 #include "CollectionScope.h"
+#include "JSObject.h"
 #include "PropertyOffset.h"
 #include "RememberedSlot.h"
 #include <memory>
@@ -65,6 +66,14 @@ struct ChainWalk {
 };
 
 ChainWalk walkChain(const ChainWalkStart&, UniquedStringImpl*);
+
+// holder->getDirect(offset). A field of a compiled object has the offset of an inline property, and the Structure of such an object speaks of no inline storage.
+ALWAYS_INLINE JSValue valueAtOffset(const JSObject* holder, PropertyOffset offset)
+{
+    if (isInlineOffset(offset))
+        return holder->inlineStorageUnsafe()[offsetInInlineStorage(offset)].get();
+    return holder->getDirect(offset);
+}
 
 enum class StoreThroughChain : uint8_t { Unknown, CreatesOwnProperty, CallsSetter, CallsCustomSetter, IsRefused };
 

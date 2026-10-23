@@ -165,7 +165,7 @@ static void addReceiverRequirements(const BuiltinUseInputs& inputs, const Member
 
     bool isInherited = site.start.kind == BuiltinReceiverKind::Instance && !table.at(site.answer.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isInherited && !isClosureAsCreated(inputs, site)) {
-        PristineRequirement names { site.start.builtinClass, PristineAspects::Names };
+        PristineRequirement names { site.start.builtinClass, aspectThatFindsMember(table, site.start.builtinClass, site.answer.member) };
         if (pristineProofOf(inputs.pristine(), site.receiver, names, point) != PristineProof::Proven) {
             if (pristineTestOf(table, names.builtinClass) == PristineTest::NeverPasses) {
                 isPossible = false;

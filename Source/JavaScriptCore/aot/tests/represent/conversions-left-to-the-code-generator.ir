@@ -1,7 +1,5 @@
-# Of a function whose code is made without the optimizing back end ChooseRepresentations writes the forms and adds no operation: an operand names the value as it was defined, and the code generator converts it
-# where it fetches it, an argument on its edge. The forms themselves are those that the function gets on the other road
+# ChooseRepresentations writes the forms and adds no operation: an operand names the value as it was defined, and the code generator converts it where it fetches it, an argument on its edge
 # FORM: Placed
-# OPTIONS: testing=ConvertOperandsAtFetch testing=GenerateAllCodeDirectly
 # RUN: pass ChooseRepresentations
 # RUN(CODE): generate-code calls
 

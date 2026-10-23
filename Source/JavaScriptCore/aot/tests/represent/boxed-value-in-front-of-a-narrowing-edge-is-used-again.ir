@@ -23,8 +23,9 @@ function f0 name="testedNumberReturned" parameters=[{type=anything}, {type=numbe
 # CHECK-LABEL: function f0 name="testedNumberReturned"
 # CHECK: b1(v3: number @Double):
 # CHECK: b2():
-# CHECK-NEXT: [[same]]: number @JSValue = AssumeType v0 castType=number
-# CHECK-NEXT: Return [[same]]
+# CHECK-NEXT: Return v3
+# CODE-LABEL: f0:
+# CODE-NOT: stub BoxNumber
 
 function f1 name="joinedNumberIsBoxed" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: number, v2: boolean):
@@ -45,8 +46,9 @@ function f1 name="joinedNumberIsBoxed" parameters=[{type=anything}, {type=number
 # CHECK-LABEL: function f1 name="joinedNumberIsBoxed"
 # CHECK: b2(v4: number @Double):
 # CHECK: b3():
-# CHECK-NEXT: [[boxed]]: number @JSValue = Box v4
-# CHECK-NEXT: Return [[boxed]]
+# CHECK-NEXT: Return v4
+# CODE-LABEL: f1:
+# CODE: stub BoxNumber.Double x1
 
 function f2 name="parameterWiderThanWhatArrives" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
@@ -66,6 +68,7 @@ function f2 name="parameterWiderThanWhatArrives" parameters=[{type=anything}, {t
 # CHECK-LABEL: function f2 name="parameterWiderThanWhatArrives"
 # CHECK: b1(v4: number @Double):
 # CHECK: b2():
-# CHECK-NOT: AssumeType
-# CHECK: number @JSValue = Box
+# CHECK-NEXT: Return v4
+# CODE-LABEL: f2:
+# CODE: stub BoxNumber.Double x1
 # CODE-NOT: no code

@@ -1,4 +1,4 @@
-# A value whose type is one integer or one boolean is not converted to the form a use wants: the constant is made in that form
+# A value whose type is one integer or one boolean is not converted to the form a use wants: the code generator makes the constant in that form
 # FORM: Placed
 # OPTIONS: check=validate-back-end
 # RUN: pass ChooseRepresentations
@@ -16,9 +16,8 @@ function f0 name="narrowedToOneInteger" parameters=[{type=anything}, {type=i32}]
     Return v1
 }
 # CHECK-LABEL: function f0 name="narrowedToOneInteger"
-# CHECK-NOT: = Unbox
-# CHECK: [[made]]: 99 @Int32 = Integer integer=99
-# CHECK-NOT: = Unbox
+# CHECK: b1(v3: 99 @Int32):
+# CHECK-NEXT: i32 @Int32 = BitOr v3, v1 form=Integers
 
 function f1 name="narrowedToTrue" parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: anything):
@@ -32,5 +31,5 @@ function f1 name="narrowedToTrue" parameters=[{type=anything}] results=[{type=bo
     Return v4
 }
 # CHECK-LABEL: function f1 name="narrowedToTrue"
-# CHECK-NOT: = Unbox
+# CHECK: b1(v2: true @Boolean):
 # CODE-NOT: diagnostic

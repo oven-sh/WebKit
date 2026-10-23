@@ -46,7 +46,8 @@ public:
     BuildContext& build() const { return m_build; }
 
     PassOutcome runFunctionPass(PassID, FunctionPassContext&) const;
-    PassOutcome runSchedule(FunctionSchedule, const Program&, const OptimizationInputs&, FunctionID, Function&, TaskArenas&) const;
+    // The contents are those of the function as it is handed in, for a caller that has them without a walk.
+    PassOutcome runSchedule(FunctionSchedule, const Program&, const OptimizationInputs&, FunctionID, Function&, TaskArenas&, const std::optional<BodyContents>& = std::nullopt) const;
 
     template<typename Functor> auto runProgramPass(PassID, Program&, ProgramAnalyses&, const Functor&) -> std::invoke_result_t<Functor, ProgramEditor&>;
     template<typename Functor> auto runProgramPassWithoutEditor(PassID, Program&, ProgramAnalyses&, const Functor&, BodiesAreChanged = BodiesAreChanged::Anyhow) -> std::invoke_result_t<Functor>;
@@ -145,13 +146,17 @@ private:
                 notes->changersSinceLastRun[static_cast<unsigned>(pass)] |= passesEnabling(pass);
         }
 
+        void setContents(const BodyContents& newContents, const Function& function)
+        {
+            contents = newContents;
+            passesThatMayFire = passesThatMayFireIn(newContents);
+            numberOfValuesInContents = function.values.size();
+        }
+
         const BodyContents& contentsOf(const Function& function)
         {
-            if (!contents || numberOfValuesInContents != function.values.size()) {
-                contents = Typed::contentsOf(function);
-                passesThatMayFire = passesThatMayFireIn(*contents);
-                numberOfValuesInContents = function.values.size();
-            }
+            if (!contents || numberOfValuesInContents != function.values.size())
+                setContents(Typed::contentsOf(function), function);
             return *contents;
         }
 

@@ -201,6 +201,8 @@ void LinearScanCodeGenerator::setUpRegisters()
     });
     const B3::Air::LayoutPolicy& layout = m_code.policy().layout;
     m_prefersSmallCode = layout.makesGapsForRareBlocks || layout.placesRareBlocksAfterGuards;
+    if (isX86_64() && m_prefersSmallCode)
+        m_layout = layout.placesRareBlocksAfterGuards ? Layout::AsControlFlows : Layout::RareCodeInGaps;
 }
 
 static bool truthAtMerge(const B3::BasicBlock* merge, int64_t arriving)
@@ -567,7 +569,8 @@ bool LinearScanCodeGenerator::orderBlocks()
         std::span<const Exit> leaving = exitsOf(indexOfBlock);
         if (uint32_t takenOver = m_branchesTakenOver.isEmpty() ? 0 : m_branchesTakenOver[indexOfBlock])
             block.branchTakenFrom = m_procedure.at((takenOver >> 1) - 1);
-        if (duplicatesReturns && !block.branchTakenFrom && block.block->last()->opcode() == B3::Jump && isReturnBlock(m_procedure.at(leaving[0].target))) {
+        // Compact code has one copy of a return that gives the same value whoever reaches it.
+        if (duplicatesReturns && !block.branchTakenFrom && block.block->last()->opcode() == B3::Jump && isReturnBlock(m_procedure.at(leaving[0].target)) && !(m_prefersSmallCode && m_procedure.at(leaving[0].target)->size() == 1)) {
             block.returnBlock = m_procedure.at(leaving[0].target);
             continue;
         }

@@ -47,6 +47,9 @@ struct TypePropagationOutcome {
     uint32_t changedExpectedTypes { 0 };
     uint32_t cutBlocks { 0 };
     uint32_t replacedUpcasts { 0 };
+    // Code stands behind a value that never completes, and stays there until the function has its generic version.
+    bool waitsToCutCode { false };
+    bool didLookForCodeToCut { false };
 
     bool didChange() const { return retypedValues || changedExpectedTypes || cutBlocks; }
     bool didChangeControlFlow() const { return cutBlocks; }
@@ -57,6 +60,10 @@ struct TypePropagationOutcome {
         changedExpectedTypes += other.changedExpectedTypes;
         cutBlocks += other.cutBlocks;
         replacedUpcasts += other.replacedUpcasts;
+        if (other.didLookForCodeToCut) {
+            didLookForCodeToCut = true;
+            waitsToCutCode = other.waitsToCutCode;
+        }
         return *this;
     }
 };
@@ -291,6 +298,9 @@ class PendingTyping {
 public:
     // Nothing is known of the function, or the log has forgotten: every value has to be typed.
     bool isEverythingPending(const ChangeLog& log) const { return m_isEverythingPending || log.hasForgottenSince(m_seen); }
+    // Whoever types every value of such a function looks again whether the code can go. So it does not count as typed when it leaves the schedule.
+    bool waitsToCutCode() const { return m_waitsToCutCode; }
+    void setWaitsToCutCode(bool waits) { m_waitsToCutCode = waits; }
     bool isEmpty(const ChangeLog& log) const { return !isEverythingPending(log) && !log.hasChangesSince(m_seen) && m_values.isEmpty() && m_blocks.isEmpty() && !m_valuesTypedFromRecordsArePending; }
 
     void didTypeEverything(const ChangeLog&);
@@ -317,6 +327,7 @@ private:
     Vector<BlockChange, 8> m_blocks;
     bool m_isEverythingPending { true };
     bool m_valuesTypedFromRecordsArePending { false };
+    bool m_waitsToCutCode { false };
 };
 
 // Types what is pending.

@@ -1,7 +1,7 @@
-# Once representations are chosen every value has one that its type allows, and every operand has the one its operation wants
+# Once representations are chosen every value has one that its type allows. An operand may have another than its operation wants: the code generator converts it
 # FORM: Placed
 # RUN: verify
-# DIAGNOSTIC: WrongRepresentation 5
+# DIAGNOSTIC: WrongRepresentation 3
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="badParameterOfOtherType" parameters=[{type=number}] results=[{type=undefined}] {
@@ -21,13 +21,13 @@ function f2 name="badValueWithoutRepresentation" parameters=[{type=anything}] re
     v2 @JSValue = Undefined
     Return v2
 }
-function f3 name="badOperand" parameters=[{type=object}] results=[{type=undefined}] {
+function f3 name="operandInAnotherForm" parameters=[{type=object}] results=[{type=undefined}] {
   b0(v0: object @Cell):
     v1 @JSValue = Call v0
     v2 @JSValue = Undefined
     Return v2
 }
-function f4 name="badTerminatorOperand" parameters=[{type=boolean}] results=[{type=undefined}] {
+function f4 name="terminatorOperandInAnotherForm" parameters=[{type=boolean}] results=[{type=undefined}] {
   b0(v0: boolean @JSValue):
     Branch v0 -> taken b1(), notTaken b1()
   b1():

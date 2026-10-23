@@ -1,7 +1,8 @@
-# For tests: every function takes the direct road through the generator that allocates registers by linear scan: ARM64's only one, x86-64's on request
+# For tests: every function takes the direct road through the generator that allocates registers by linear scan, which stands behind a switch
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot testing=GenerateAllCodeDirectly testing=GenerateDirectCodeByLinearScan disable=pass:InlineCalls
 # RUN: generate-code FunctionsGeneratedDirectly
+# REQUIRES: unsanitized-code
 # CHECK: statistic FunctionsGeneratedDirectly 4
 
 module m0 path="main.js" displayPath="main.js" body=f0

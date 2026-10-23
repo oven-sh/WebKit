@@ -15,6 +15,7 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
+#include "AOTOperationCallScope.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramFile.h"
@@ -546,7 +547,7 @@ static void checkAStoreOfUndefinedNeedsNoStorage(LoadedProgram& program)
 
     // What compiled code does where it stores undefined and finds no granule: it has the run time list the field, and that is all.
     Object* listed = fixture.create();
-    operationAOTDidCreateFieldAt(&program.instance(), listed, slotKeyFor(field.slot.offset, true));
+    callOperationFromTest(vm, operationAOTDidCreateFieldAt, &program.instance(), listed, slotKeyFor(field.slot.offset, true));
     AOT_TEST_CHECK(!listed->extension() && listed->isInKeyOrder(state, field) && listed->read(field).isUndefined());
     AOT_TEST_CHECK(hasPropertyNamed(program, listed, name) && isAmongKeys(program, listed, name));
 }
@@ -608,7 +609,7 @@ static void checkWhetherTheOrderListsAFieldIsRememberedBesideExtraProperties(Loa
     const FieldData& field = fieldThatMayExistWithoutStorage(fixture);
     PropertyName name = state.objects->layouts.nameOf(vm, field);
     auto readsAsValue = [&](Object* object) {
-        return !!operationAOTHasExtraProperty(&program.instance(), object, field.name);
+        return !!callOperationFromTest(vm, operationAOTHasExtraProperty, &program.instance(), object, field.name);
     };
     auto remembered = [&](Object* object) {
         return state.objects->keyOrders.rememberedWhetherOrderLists(object->shape(), object->orderWord() & orderAndCountMask, field.name);
@@ -676,7 +677,7 @@ static void checkTheFirstGrowthReservesWhatTheConstructorFills(LoadedProgram& pr
     for (const FieldData* field : fixture.fieldsOutOfLine()) {
         uint64_t granuleBit = granuleBitOf(field->slot.offset);
         Object* object = fixture.create();
-        operationAOTEnsureExtensionGranules(&program.instance(), object, granuleBit);
+        callOperationFromTest(program.vm(), operationAOTEnsureExtensionGranules, &program.instance(), object, granuleBit);
         AOT_TEST_CHECK(object->extension() && object->extension()->granuleBits() == (granuleBit | reserved));
     }
 }

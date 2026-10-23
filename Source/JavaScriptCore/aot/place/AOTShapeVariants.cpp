@@ -38,8 +38,8 @@ ShapeVariants chooseShapeVariants(const PlacementContext& context, const PlacedS
             continue;
         auto classes = program.at(id).flow.allocationClasses.span();
         bool someOrdered = !context.slots().layout(id).keysAreNeverEnumerated;
-        bool someUnordered = std::ranges::any_of(classes, isNeverEnumerated) && hasUnorderedAllocation(sites, id);
-        variants.ordered.quickSet(index, someOrdered || !someUnordered);
+        bool someUnordered = !someOrdered || (std::ranges::any_of(classes, isNeverEnumerated) && hasUnorderedAllocation(sites, id));
+        variants.ordered.quickSet(index, someOrdered);
         variants.unordered.quickSet(index, someUnordered);
     }
     return variants;

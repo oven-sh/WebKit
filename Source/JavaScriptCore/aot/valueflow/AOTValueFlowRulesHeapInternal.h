@@ -192,7 +192,6 @@ private:
     ValueSetID holdersWithMemberUnder(const HeapKey&) const;
     // None unless something was stored through the placeholder under the name and an object that the store may have reached is among those asked about.
     ValueFlowNodeID storedThroughUnknownObjectInto(ClimbingSet objects, ValueFlowName);
-    bool mayStoreThroughUnknownObjectReachRealm(ValueFlowName);
     ValueFlowNodeID storedThroughUntrackedObjectInto(ClimbingSet objects, ValueFlowName);
     void forEachNodeStoredThroughPlaceholdersInto(ClimbingSet objects, ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     // What lies under the key in the objects themselves, and what was stored there through a placeholder.
@@ -215,6 +214,8 @@ private:
     ClimbingSet foundThroughUntrackedObject(ValueSetID objects);
     bool isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey&);
     bool mayHoldUndeclaredProperty(ClimbingSet objects, const HeapKey&);
+    // While callAccessors() runs for a read: native code that nothing describes stands only for what the engine has put on an instance of one of its own classes, as `cause` on an error.
+    bool m_undescribedNativeCodeIsOfEngine { false };
     bool isNameThatTableDoesNotListOnGlobalObject(const HeapKey&) const;
     bool namesObjectOfAccess() const;
     ClimbingSet settersFoundFrom(ClimbingSet start, const HeapKey&);
@@ -321,7 +322,7 @@ void HeapRule::forEachKey(const ValueFlowOperand& property, NOESCAPE const Invoc
     connect(property, m_context.hub(m_universe.builtinTables().conversionToPrimitive()));
 
     // undefined, null and the booleans are converted to one text each. `const { kState } = require(..)` may find nothing as far as anybody knows, and then `stream[kState]` reads under "undefined".
-    constexpr std::pair<PrimitiveSet, BuiltinName> textsOfPrimitives[] {
+    constexpr std::pair<PrimitiveSet, NamedBuiltinName> textsOfPrimitives[] {
         { PrimitiveSet::Undefined, BuiltinNames::undefined },
         { PrimitiveSet::Absent, BuiltinNames::undefined },
         { PrimitiveSet::Null, BuiltinNames::null },

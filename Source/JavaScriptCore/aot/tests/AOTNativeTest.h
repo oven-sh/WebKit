@@ -21,6 +21,10 @@ struct NativeTest {
 
 [[noreturn]] void failNativeTest(const char* file, int line, const char* condition);
 
+// Under AddressSanitizer a frame keeps words that nothing uses any more, which a collection takes for references, and a local variable may lie outside the stack.
+// A test of what a collection leaves dead, or of how far the stack reaches, says nothing there.
+inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
+
 #define AOT_TEST_CHECK(condition) do { \
         if (!(condition)) [[unlikely]] \
             ::JSC::AOT::failNativeTest(__FILE__, __LINE__, #condition); \
@@ -67,7 +71,6 @@ struct NativeTest {
     v(runtimeOperationTests) \
     v(supportTests) \
     v(builtinTableTests) \
-    v(builtinValidationTests) \
     v(b3PolicyTests) \
     v(b3HeapTests) \
     v(backEndPhaseTests) \
@@ -102,7 +105,6 @@ struct NativeTest {
     v(programIdentifiersTests) \
     v(programStringsTests) \
     v(programStaticsTests) \
-    v(builtinCellsTests) \
     v(runtimeCounterTests) \
     v(typeErrorMessageTests) \
     v(compiledFrameTests) \

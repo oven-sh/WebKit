@@ -1,6 +1,8 @@
-# Where two tests pass what they narrowed into one block, each value is converted on its own edge, in a block whose parameter has the type and the representation of that edge alone
+# Where two tests pass what they narrowed into one block, the code generator converts each value on its own edge, as a value of the type of that edge alone
 # FORM: Placed
+# OPTIONS: check=validate-back-end
 # RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="numberMeetsAnything" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -18,12 +20,11 @@ function f0 name="numberMeetsAnything" parameters=[{type=number}, {type=anything
     Return
 }
 # CHECK-LABEL: function f0 name="numberMeetsAnything"
-# CHECK: TestAndBranch v3 -> taken b4(), notTaken [[added]](| 0)
+# CHECK: b0(v0: number @Double,
+# CHECK: TestAndBranch v3 -> taken b4(), notTaken b3(| 0)
 # CHECK: TestAndBranch v4 -> taken b4(), notTaken b3(| 0)
 # CHECK: b3(v5: undefined|null|false|0|whole|string|bigint @JSValue):
-# CHECK: [[added]]([[number]]: 0|whole @Double):
-# CHECK-NEXT: [[boxed]]: 0|whole @JSValue = Box [[number]]
-# CHECK-NEXT: Jump -> next b3([[boxed]])
+# CODE-NOT: diagnostic
 
 function f1 name="anythingMeetsAnything" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):

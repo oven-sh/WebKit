@@ -35,8 +35,6 @@ struct RepresentationInputs {
 
 // Nothing says that the function runs often, so its code is made without the optimizing back end.
 bool isGeneratedWithoutOptimizing(const BuildContext&, const Heat&, const Program&, FunctionID);
-// For such a function ChooseRepresentations writes the forms of values and leaves the conversions to the code generator, which makes them where an operand is fetched.
-bool leavesConversionsToCodeGenerator(const BuildContext&, const Heat&, const Program&, FunctionID);
 
 inline constexpr RepresentationSet integerRepresentations { Representation::Int32, Representation::Int64 };
 inline constexpr RepresentationSet numberRepresentations { Representation::Int32, Representation::Int64, Representation::Double };

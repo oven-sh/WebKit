@@ -244,7 +244,7 @@ constexpr std::array rows {
 
     producing(Selected, functionPass(Select, select, Required, Prepared, { Flow, Heat, EffectSummaries, CallingConventions, SlotPlan }, everything)),
     functionPass(ChooseRepresentations, chooseRepresentations, Required, Placed, { CallingConventions, Placement }, everything),
-    functionPass(RemoveRedundantBarriers, removeRedundantBarriers, Optional, Placed, { EffectSummaries, Placement }, nothing),
+    functionPass(RemoveRedundantBarriers, removeRedundantBarriers, Optional, Placed, { EffectSummaries, CallingConventions, Placement }, nothing),
 };
 
 constexpr std::array typeSteps {

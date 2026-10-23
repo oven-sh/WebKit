@@ -1,12 +1,12 @@
 # globalThis[Symbol.for(text)] = { run }; globalThis[key].run(); globalThis[Symbol.for("known")].run()
-# What lies under a symbol nobody knows is in unknown hands, which is what a read under a key nobody knows finds; a read under a symbol that the program names finds the object itself, and nothing else
+# What lies under a symbol nobody knows is in unknown hands, which is what a read under a key nobody knows finds; a read under a symbol that the program names finds the object itself, and what a store that nobody can place may have put on the global object under that symbol
 # RUN: valueflow-solve unreached
 # CHECK-NOT: f1
 # RUN(VALUES): valueflow-why values=f0:v10 values=f0:v15
 # VALUES: values=f0:v10
 # VALUES: operand 0 {{*}} unknown GlobalThis
 # VALUES: values=f0:v15
-# VALUES: operand 0 {{*}} members: primitive0 object{{*}}@f0
+# VALUES: operand 0 {{*}} members: primitive0 {{*}}unknown object{{*}}@f0
 # VALUES: result {{*}} f1
 
 layout L0 fields=[{key="run" declared={type=anything}}] ownFieldCount=1

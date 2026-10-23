@@ -2,6 +2,7 @@
 # FORM: Selected
 # OPTIONS: heat=everything-is-hot check=validate-back-end
 # RUN: generate-code NullChecksFoldedIntoAccesses
+# REQUIRES: unsanitized-code
 # CHECK: f1: size={{*}} faults=1
 # CHECK: f2: size={{*}} faults=2
 # CHECK: f3: size={{*}} faults=1

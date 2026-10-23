@@ -218,8 +218,6 @@ private:
     Representation formTakenBy(const Value& user, uint32_t operandIndex) const
     {
         Representation defined = m_function.at(user.operand(operandIndex)).representation;
-        if (!m_function.operandsAreConvertedAtFetch)
-            return defined;
         RELEASE_ASSERT(m_pass.inputs.callingConventions);
         RepresentationInputs inputs { m_program, m_pass.id, m_function, placement(), *m_pass.inputs.callingConventions };
         Representation wanted = wantedRepresentationOf(inputs, user, operandIndex);

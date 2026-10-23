@@ -10,8 +10,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr BuiltinName namedMembers0[] = { BuiltinNames::prototype };
-
 static constexpr OperandInfo operandInfos0[] = {
     { "captures"_s, OperandKind::Declared, false, true, false, { OperandUse::Retains }, { }, RetainedIn::Result, std::nullopt, std::nullopt, { } },
 };
@@ -166,7 +164,7 @@ static constexpr OperandInfo operandInfos36[] = {
 };
 static constexpr OperandInfo operandInfos37[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::PrototypeChain }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
-    { "constructor"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::HasInstance, Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, namedMembers0 },
+    { "constructor"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::HasInstance, Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, std::span<const BuiltinName>(&builtinTableNamedNames[BuiltinNames::prototype.position()], 1) },
 };
 static constexpr OperandInfo operandInfos38[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
@@ -214,7 +212,7 @@ static constexpr OperandInfo operandInfos49[] = {
     { "results"_s, OperandKind::Results, false, false, false, { OperandUse::Inspects }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos50[] = {
-    { "heritage"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, namedMembers0 },
+    { "heritage"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, std::span<const BuiltinName>(&builtinTableNamedNames[BuiltinNames::prototype.position()], 1) },
 };
 static constexpr OperandInfo operandInfos51[] = {
     { "constructor"_s, OperandKind::Callable, false, false, false, { OperandUse::Returns, OperandUse::DefinesName }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
@@ -233,7 +231,7 @@ static constexpr OperandInfo operandInfos54[] = {
     { "classObject"_s, OperandKind::Callable, false, false, false, { OperandUse::Returns }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos55[] = {
-    { "newTarget"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, namedMembers0 },
+    { "newTarget"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, std::span<const BuiltinName>(&builtinTableNamedNames[BuiltinNames::prototype.position()], 1) },
 };
 static constexpr OperandInfo operandInfos56[] = {
     { "parent"_s, OperandKind::Any, false, false, false, { OperandUse::Calls }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },
@@ -330,7 +328,7 @@ static constexpr OperandInfo operandInfos79[] = {
     { "value"_s, OperandKind::Any, false, false, false, { OperandUse::Retains, OperandUse::Returns }, { }, RetainedIn::Operand, 0, std::nullopt, { } },
 };
 static constexpr OperandInfo operandInfos80[] = {
-    { "constructor"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, namedMembers0 },
+    { "constructor"_s, OperandKind::Any, false, false, false, { OperandUse::Inspects }, { Protocol::Named }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, std::span<const BuiltinName>(&builtinTableNamedNames[BuiltinNames::prototype.position()], 1) },
 };
 static constexpr OperandInfo operandInfos81[] = {
     { "promise"_s, OperandKind::Object, false, false, false, { OperandUse::Inspects, OperandUse::WritesContents }, { }, RetainedIn::UnknownMemory, std::nullopt, std::nullopt, { } },

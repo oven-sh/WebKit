@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTProgramFile.h"
+#include "AOTRuntimeTable.h"
 #include <algorithm>
 #include <expected>
 #include <wtf/ASCIICType.h>
@@ -56,6 +57,8 @@ private:
         bool requiresLines;
         bool hasMalformedLine { false };
         std::optional<Architecture> requiredArchitecture { };
+        bool hasRequiredArchitecture { false };
+        bool requiresUnsanitizedCode { false };
     };
 
     void collectDirectiveLines();
@@ -384,6 +387,9 @@ void TestFileParser::parseRun(const DirectiveLine& directive)
     m_file.runs.append(RunDirective { prefix.toString(), words[0].toString(), WTF::move(arguments), directive.line });
 }
 
+// Under AddressSanitizer compiled code asks the shadow memory in front of an access: a run that expects sizes, faults or the direct generator finds other code there.
+static constexpr ASCIILiteral unsanitizedCode = "unsanitized-code"_s;
+
 void TestFileParser::parseRequires(const DirectiveLine& directive)
 {
     StringView prefix = directive.parenthesized.value_or(defaultPrefix);
@@ -393,16 +399,25 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
 
-    auto architecture = findNamedValue(targetArchitectures, directive.value);
-    if (!architecture) {
-        addError(directive.line, "unknown architecture "_s, directive.value);
+    auto words = splitWords(directive.value);
+    if (words.isEmpty()) {
+        addError(directive.line, "REQUIRES needs an architecture or "_s, unsanitizedCode);
         return;
     }
-    if (group->requiredArchitecture) {
-        addError(directive.line, "REQUIRES is given twice for "_s, prefix);
-        return;
+    for (StringView word : words) {
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : group->hasRequiredArchitecture;
+        if (std::exchange(isGiven, true)) {
+            addError(directive.line, "REQUIRES is given twice for "_s, prefix);
+            return;
+        }
+        if (word == unsanitizedCode)
+            continue;
+        group->requiredArchitecture = findNamedValue(targetArchitectures, word);
+        if (!group->requiredArchitecture) {
+            addError(directive.line, "unknown architecture "_s, word);
+            return;
+        }
     }
-    group->requiredArchitecture = architecture;
 }
 
 void TestFileParser::parseCheckLine(const DirectiveLine& directive)
@@ -612,7 +627,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

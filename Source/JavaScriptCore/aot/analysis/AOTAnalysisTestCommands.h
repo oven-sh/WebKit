@@ -177,7 +177,7 @@ class CommandWords {
 public:
     explicit CommandWords(TestCommandContext& context)
         : m_out(context.out)
-        , m_unreadWords(Vector<StringView>::map(context.arguments, [](const String& word) { return StringView(word); }))
+        , m_unreadWords(context.arguments)
     {
     }
 
@@ -255,7 +255,7 @@ public:
 
 private:
     PrintStream& m_out;
-    Vector<StringView> m_unreadWords;
+    Vector<String> m_unreadWords;
     bool m_hasFailed { false };
 };
 

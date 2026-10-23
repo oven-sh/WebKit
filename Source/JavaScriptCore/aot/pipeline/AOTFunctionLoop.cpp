@@ -42,7 +42,7 @@ static Effects effectsOfConversionsIn(const Function& function)
     for (const Value& value : function.values) {
         if (familyOf(value.opcode) == OperationFamily::Representation)
             effects.merge(declaredBoundOf(value.opcode));
-        else if (function.operandsAreConvertedAtFetch && (value.representation == Representation::Cell32 || value.representation == Representation::LiteralString))
+        else if (value.representation == Representation::Cell32 || value.representation == Representation::LiteralString)
             effects.merge(declaredBoundOf(Opcode::Decode));
     }
     return effects;
@@ -135,7 +135,9 @@ static void runInPlace(FunctionSchedule schedule, Program& program, const Optimi
                 if (steps.inFront)
                     (*steps.inFront)(FunctionID(i), program.functions[i]);
                 TaskArenas arenas(*phases, i);
-                didChange[i] = runner.runSchedule(schedule, program, inputs, FunctionID(i), program.functions[i], arenas) == PassOutcome::Changed;
+                // The step in front may have written to the function behind its row.
+                std::optional<BodyContents> contents = steps.inFront ? std::nullopt : bodyIndex.contentsOf(FunctionID(i));
+                didChange[i] = runner.runSchedule(schedule, program, inputs, FunctionID(i), program.functions[i], arenas, contents) == PassOutcome::Changed;
                 if (didChange[i]) {
                     if (schedule == FunctionSchedule::Represent)
                         hasImpureConversions[i] = !effectsOfConversionsIn(program.functions[i]).isPure();
@@ -348,7 +350,8 @@ static void optimizeCopy(CopyLoop& loop, FunctionID id, FoundFunctions& found)
     if (isProvisional)
         adoptIDs(*copy, arenas.types);
     DerivedFunctionRequester requester(loop.derived, id, loop.queue.wasConfirmed(id));
-    PassOutcome outcome = loop.runner.runSchedule(loop.schedule.id, program, loop.inputs, id, *copy, arenas);
+    BodyIndex* index = program.bodyIndex();
+    PassOutcome outcome = loop.runner.runSchedule(loop.schedule.id, program, loop.inputs, id, *copy, arenas, index && !isProvisional ? index->contentsOf(id) : std::nullopt);
     if (loop.runner.build().options().verifiesAfterEveryPass) [[unlikely]]
         RELEASE_ASSERT(!numberOfForeignIDs(*copy, arenas.types));
     shrinkToFit(*copy);

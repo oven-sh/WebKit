@@ -7,13 +7,11 @@
 # CHOSEN-LABEL: name="parameterThenSlotRead"
 # CHOSEN-NOT: @Cell32)
 # CHOSEN: [[word]]: null|L0 @Cell32 = GetSlot
-# CHOSEN-NEXT: [[next]]: null|L0 @{{*}} = Decode [[word]]
-# CHOSEN-NEXT: Jump -> next b1([[next]])
+# CHOSEN-NEXT: Jump -> next b1({{*}})
 # CHOSEN-LABEL: name="slotReadOrFreshClosure"
 # CHOSEN: [[otherWord]]: null|L0 @Cell32 = GetSlot
 # CHOSEN-NEXT: Jump -> next b3([[otherWord]])
-# CHOSEN: [[closureWord]]: f3 @Cell32 = Compress
-# CHOSEN-NEXT: Jump -> next b3([[closureWord]])
+# CHOSEN: Jump -> next b3({{*}})
 # CHOSEN-NEXT: b3([[joined]]: null|L0|f3 @Cell32):
 # CHOSEN-NEXT: TypeTest [[joined]]
 

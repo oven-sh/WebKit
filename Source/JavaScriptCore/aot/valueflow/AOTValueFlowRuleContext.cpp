@@ -12,7 +12,6 @@
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowLog.h"
-#include "AOTValueFlowRulesModules.h"
 #include "AOTValueFlowSolver.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -644,10 +643,8 @@ ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCal
 {
     // Whoever asks for the group of the unknown object calls a value nobody knows, and whatever has escaped may be the callee.
     bool mayBeWhateverHasEscaped = origin == ValueFlowCalleeOrigin::Value && kind != ValueFlowCallKind::Get && kind != ValueFlowCallKind::Set;
-    if (mayBeWhateverHasEscaped && m_solver.m_input.nodes && m_solver.m_input.universe && sets().contains(callees.m_set, ValueFlowUniverse::unknownObject())) {
+    if (mayBeWhateverHasEscaped && m_solver.m_input.nodes && m_solver.m_input.universe && sets().contains(callees.m_set, ValueFlowUniverse::unknownObject()))
         add(nodes().ofHost(ValueFlowHostNode::ValueNobodyKnowsIsCalled), ClimbingSet(leavesOutSomeUnknownSource() ? universe().undefinedValue() : universe().unknownObjectAlone()));
-        noteUnknownCallee(*this);
-    }
     return callGroupAt(nodeFor(ValueFlowNodeKey::callGroup(callees.m_set, kind, m_markerEntered)));
 }
 

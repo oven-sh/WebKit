@@ -1004,8 +1004,8 @@ bool TypePropagation::mayHaveCodeToCut() const
 void TypePropagation::cutAfterNeverValues()
 {
     const Function& function = m_inputs.function;
-    if (waitsForGenericVersion(m_inputs.program, function))
-        return;
+    bool waits = waitsForGenericVersion(m_inputs.program, function);
+    m_outcome.didLookForCodeToCut = true;
     auto isNever = [&](ValueID id) {
         return function.at(id).type == TypeTable::never;
     };
@@ -1020,8 +1020,13 @@ void TypePropagation::cutAfterNeverValues()
         const Block& block = function.at(id);
         bool endsInUnreachable = block.terminator.kind == TerminatorKind::Unreachable;
         if (id != entryBlock && std::ranges::any_of(block.parameters, isNever)) {
-            if (!endsInUnreachable || !block.values.isEmpty())
-                cutBlock(id, 0, block.terminator.origin());
+            if (endsInUnreachable && block.values.isEmpty())
+                continue;
+            if (waits) {
+                m_outcome.waitsToCutCode = true;
+                return;
+            }
+            cutBlock(id, 0, block.terminator.origin());
             continue;
         }
 
@@ -1030,12 +1035,14 @@ void TypePropagation::cutAfterNeverValues()
         });
         if (index == notFound)
             continue;
-        if (isNeverReached(block.values[index])) {
-            cutBlock(id, static_cast<uint32_t>(index), function.at(block.values[index]).origin());
+        bool isReached = !isNeverReached(block.values[index]);
+        if (isReached && endsInUnreachable && index + 1 == block.values.size())
             continue;
+        if (waits) {
+            m_outcome.waitsToCutCode = true;
+            return;
         }
-        if (!endsInUnreachable || index + 1 != block.values.size())
-            cutBlock(id, static_cast<uint32_t>(index + 1), function.at(block.values[index]).origin());
+        cutBlock(id, static_cast<uint32_t>(isReached ? index + 1 : index), function.at(block.values[index]).origin());
     }
 }
 
@@ -1561,6 +1568,8 @@ static TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs&
             compactFunction(inputs.function);
         inputs.analyses.didChangeControlFlow();
     }
+    if (pending && total.didLookForCodeToCut)
+        pending->setWaitsToCutCode(total.waitsToCutCode);
     return total;
 }
 
@@ -1716,7 +1725,8 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
     Statistics& statistics = inputs.build.statistics();
     if (pending->isEmpty(log)) {
         statistics.count(StatisticID::FunctionsTypedAsBefore);
-        inputs.function.setValuesAreTypedAsDefined();
+        if (!pending->waitsToCutCode())
+            inputs.function.setValuesAreTypedAsDefined();
         return { };
     }
 
@@ -1742,7 +1752,7 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         }
     }
     // An upcast that was replaced has still to be typed.
-    if (pending->isEmpty(log))
+    if (pending->isEmpty(log) && !pending->waitsToCutCode())
         inputs.function.setValuesAreTypedAsDefined();
     return outcome;
 }

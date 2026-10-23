@@ -853,7 +853,7 @@ Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFir
     const InheritedRows& inheritedRows = m_context.inheritedRows;
     Vector<PlacementStep> steps;
     BitVector isInStep(slotRows.count());
-    m_sharedRows.reserveInitialCapacity(slotRows.count());
+    m_sharedRows.reserveCapacity(slotRows.count());
     auto appendRow = [&](SlotRow row) {
         m_sharedRows.append(MemberRow { layoutOf(row), row });
     };

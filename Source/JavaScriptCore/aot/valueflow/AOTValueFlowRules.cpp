@@ -16,19 +16,29 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-ValueSetID unknownValue(ValueFlowRuleContext& context, ValueFlowUnknownSource source)
+static ValueSetID unknownValueFrom(ValueFlowRuleContext& context, ValueFlowUnknownSource source)
 {
     const ValueFlowUniverse& universe = context.universe();
     context.noteUnknownSource(source);
+    if (context.leavesOut(source))
+        return universe.anyPrimitive();
+    return context.maker().unite(universe.anyPrimitive(), universe.unknownObjectAlone());
+}
+
+ValueSetID unknownValueOutOfEngine(ValueFlowRuleContext& context)
+{
+    return unknownValueFrom(context, ValueFlowUnknownSource::UndescribedNativeResult);
+}
+
+ValueSetID unknownValue(ValueFlowRuleContext& context, ValueFlowUnknownSource source)
+{
     // What native code answers without a description may be a Buffer, on which native code calls a method that is written in JavaScript: callLibraryMethodsOfUnknownReceiver().
     if (source == ValueFlowUnknownSource::UndescribedNativeResult) {
         const BuiltinTable& builtins = context.program().builtins();
         if (BuiltinID prototype = builtins.at(BuiltinClasses::Buffer).prototype)
-            context.add(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins), context.maker().of(universe.objectOf(prototype)));
+            context.add(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins), context.maker().of(context.universe().objectOf(prototype)));
     }
-    if (context.leavesOut(source))
-        return universe.anyPrimitive();
-    return context.maker().unite(universe.anyPrimitive(), universe.unknownObjectAlone());
+    return unknownValueFrom(context, source);
 }
 
 void runConvert(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

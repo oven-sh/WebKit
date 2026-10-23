@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTNativeTest.h"
+#include "AOTRuntimeTable.h"
 #include "AOTTestFile.h"
 #include "AOTTestRunner.h"
 #include <algorithm>
@@ -61,6 +62,17 @@ static void testRequiresSelectsRuns()
         "# RUN: print\n"_s;
     expectRunLines(defaultPrefix, Architecture::X86_64, { });
     expectRunLines(defaultPrefix, Architecture::ARM64, { 2 });
+
+    static constexpr ASCIILiteral exactCode =
+        "# RUN: print\n"
+        "# RUN(X64): print\n"
+        "# REQUIRES(X64): x86_64 unsanitized-code\n"
+        "# REQUIRES: unsanitized-code\n"
+        "# X64: a\n"_s;
+    if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE)
+        expectRunLines(exactCode, Architecture::X86_64, { });
+    else
+        expectRunLines(exactCode, Architecture::X86_64, { 1, 2 });
 }
 
 static void testRequiresMalformed()
@@ -68,6 +80,7 @@ static void testRequiresMalformed()
     expectErrorLines("# RUN: print\n# REQUIRES: mips\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES:\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: x86_64 arm64\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REQUIRES: unsanitized-code unsanitized-code\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES(OTHER): arm64\n"_s, { 2 });
     expectErrorLines("# RUN(ONLY): print\n# ONLY: x\n# REQUIRES: arm64\n"_s, { 3 });
     expectErrorLines("# RUN: print\n# REQUIRES: arm64\n# REQUIRES: x86_64\n"_s, { 3 });

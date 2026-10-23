@@ -1386,7 +1386,7 @@ bool MovableCode::definitionByDescriptorMayMove(FunctionAnalyses& analyses, cons
 // What the records say of the memory that a built-in touches does not tell the clock, the random numbers or the stack of calls from bookkeeping.
 bool MovableCode::dependsOnOperandsAlone(const BuiltinOverload& overload) const
 {
-    static constexpr BuiltinID builtins[] = {
+    static constexpr NamedBuiltin builtins[] = {
         Builtins::ObjectKeys, Builtins::ObjectValues, Builtins::ObjectEntries, Builtins::ObjectAssign, Builtins::ObjectHasOwn, Builtins::ObjectIs, Builtins::ObjectGetOwnPropertyNames,
         Builtins::ObjectPrototypeHasOwnProperty,
         Builtins::ArrayIsArray, Builtins::ArrayOf, Builtins::ArrayPrototypeLength, Builtins::ArrayPrototypeJoin, Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeConcat,
@@ -1511,8 +1511,8 @@ bool MovableCode::keepsOperandsInResultOrWhatWasMade(const Function&, const Know
 // A match reads the pattern and the flags, reads and writes lastIndex, and notes the match for RegExp.$1 and its kin. RegExp.prototype cannot be changed.
 bool MovableCode::matchMayMove(const Function& function, const Knowledge& known, const BuiltinOverload& overload, const BuiltinCall& call) const
 {
-    static constexpr BuiltinID ofStrings[] = { Builtins::StringPrototypeReplace, Builtins::StringPrototypeReplaceAll, Builtins::StringPrototypeSplit, Builtins::StringPrototypeMatch, Builtins::StringPrototypeSearch };
-    static constexpr BuiltinID ofRegExps[] = { Builtins::RegExpPrototypeTest, Builtins::RegExpPrototypeExec };
+    static constexpr NamedBuiltin ofStrings[] = { Builtins::StringPrototypeReplace, Builtins::StringPrototypeReplaceAll, Builtins::StringPrototypeSplit, Builtins::StringPrototypeMatch, Builtins::StringPrototypeSearch };
+    static constexpr NamedBuiltin ofRegExps[] = { Builtins::RegExpPrototypeTest, Builtins::RegExpPrototypeExec };
     if (call.form != BuiltinCallForm::Whole || overload.mode != BuiltinCallMode::Call || !call.receiver || call.arguments.empty() || !call.arguments[0] || m_context.flow.mayReadLegacyRegExpStatics())
         return false;
     bool isOfString = std::ranges::contains(ofStrings, overload.builtin);

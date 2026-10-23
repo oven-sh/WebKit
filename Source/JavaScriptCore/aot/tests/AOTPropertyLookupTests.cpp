@@ -10,6 +10,7 @@
 #include "AOTChainDependents.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
+#include "AOTOperationCallScope.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
@@ -31,8 +32,10 @@
 #include "ProxyObject.h"
 #include "PutPropertySlot.h"
 #include "Symbol.h"
+#include <bit>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC::AOT {
@@ -427,7 +430,7 @@ static void testIndexesAreNotNames(LoadedProgram& program)
                 AOT_TEST_CHECK_FOR_SOURCE(nameOfKeyWithoutAllocating(realm, keyWithoutAtom, atomization).kind == KeyNameKind::Index, keyText.text);
                 AOT_TEST_CHECK_FOR_SOURCE(!keyWithoutAtom->tryGetValueImpl()->isAtom(), keyText.text);
             }
-            Identifier atom = Identifier::fromString(vm, keyText.text);
+            Identifier atom = Identifier::fromString(vm, String(keyText.text));
             for (JSString* key : { keyWithoutAtom, jsString(vm, atom.string().string()) }) {
                 KeyName name = nameOfKeyWithoutAllocating(realm, key, atomization);
                 AOT_TEST_CHECK_FOR_SOURCE(name.kind == keyText.kind && name.index == keyText.index, keyText.text);
@@ -1095,7 +1098,7 @@ static void testReadsThroughEmptySlotOfCompiledPrototype(LoadedProgram& program)
     AOT_TEST_CHECK(find() && find()->kind == Slot::Kind::Absent);
 
     // What compiled code does with such an object: it has the run time list the field, then fills the slot.
-    operationAOTDidCreateFieldAt(&program.instance(), prototype, slotKeyFor(labelField->slot.offset, labelField->isOutOfLine()));
+    callOperationFromTest(program.vm(), operationAOTDidCreateFieldAt, &program.instance(), prototype, slotKeyFor(labelField->slot.offset, labelField->isOutOfLine()));
     AOT_TEST_CHECK(!find());
     AOT_TEST_CHECK(storeInSlot(program, prototype, *labelField, jsNumber(3)));
     PropertyAnswer inherited = readAndClassify(program, object, label);
@@ -1214,6 +1217,23 @@ static void testStoreIsFiledOneMissEarlierThanRead(LoadedProgram& program)
     AOT_TEST_CHECK(missesUntilFiled(SlotAccess::Read) == 3);
     AOT_TEST_CHECK(missesUntilFiled(SlotAccess::Store) == 2);
     AOT_TEST_CHECK(missesUntilFiled(SlotAccess::Define) == 2);
+}
+
+static void testPairsThatMissInTurnAreAllFiled(LoadedProgram& program)
+{
+    PropertyCaches& caches = *program.state().propertyCaches;
+    StructureID structure = program.realm()->nullPrototypeObjectStructure()->id();
+    constexpr unsigned numberOfPairs = 1024;
+    constexpr unsigned maxTurns = 32;
+    BitVector isFiled(numberOfPairs);
+    for (unsigned turn = 0; turn < maxTurns; ++turn) {
+        for (unsigned pair = 0; pair < numberOfPairs; ++pair) {
+            auto* uid = std::bit_cast<UniquedStringImpl*>(static_cast<uintptr_t>(0x10000 + 32 * pair));
+            if (!isFiled.get(pair) && caches.shouldFile(structure, uid, SlotAccess::Read))
+                isFiled.set(pair);
+        }
+    }
+    AOT_TEST_CHECK(isFiled.bitCount() == numberOfPairs);
 }
 
 static void testAbsenceFilterListsNamesOfObjectAndWhatIsAboveIt(LoadedProgram& program)
@@ -1372,6 +1392,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/indexes-are-not-names"_s, withProgram<testIndexesAreNotNames> },
         { "property-lookup/presence-is-cached-under-name"_s, withProgram<testPresenceIsCachedUnderName> },
         { "property-lookup/store-is-filed-one-miss-earlier-than-read"_s, withProgram<testStoreIsFiledOneMissEarlierThanRead> },
+        { "property-lookup/pairs-that-miss-in-turn-are-all-filed"_s, withProgram<testPairsThatMissInTurnAreAllFiled> },
         { "property-lookup/absence-filter-lists-names-of-object-and-what-is-above-it"_s, withProgram<testAbsenceFilterListsNamesOfObjectAndWhatIsAboveIt> },
         { "property-lookup/absence-filter-names-what-stops-stores"_s, withProgram<testAbsenceFilterNamesWhatStopsStores> },
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },

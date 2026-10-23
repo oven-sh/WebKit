@@ -307,12 +307,19 @@ static void testStringsEscapeQuotesAndControls()
     AOT_TEST_CHECK(hasStringText("\\x08\\x09\\x0c\\x0d\\x7f"_s, "\"\\b\\t\\f\\r\x7f\""_span));
 }
 
+// ""_span takes ASCII only.
+template<size_t size>
+static std::span<const char> utf8(const char (&text)[size])
+{
+    return std::span<const char>(text).first(size - 1);
+}
+
 static void testStringsKeepScalarValues()
 {
-    AOT_TEST_CHECK(hasStringText("\\u{e9}"_s, "\"\xc3\xa9\""_span));
-    AOT_TEST_CHECK(hasStringText("\\u{d7ff}"_s, "\"\xed\x9f\xbf\""_span));
-    AOT_TEST_CHECK(hasStringText("\\u{e000}"_s, "\"\xee\x80\x80\""_span));
-    AOT_TEST_CHECK(hasStringText("\\u{1f600}"_s, "\"\xf0\x9f\x98\x80\""_span));
+    AOT_TEST_CHECK(hasStringText("\\u{e9}"_s, utf8("\"\xc3\xa9\"")));
+    AOT_TEST_CHECK(hasStringText("\\u{d7ff}"_s, utf8("\"\xed\x9f\xbf\"")));
+    AOT_TEST_CHECK(hasStringText("\\u{e000}"_s, utf8("\"\xee\x80\x80\"")));
+    AOT_TEST_CHECK(hasStringText("\\u{1f600}"_s, utf8("\"\xf0\x9f\x98\x80\"")));
 }
 
 static void testStringsEscapeLoneSurrogates()

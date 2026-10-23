@@ -673,14 +673,32 @@ bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid,
         m_missCounters.fill(0);
     }
     constexpr uint8_t maskOfCount = (1u << bitsOfMissCount) - 1;
-    static_assert(hasOneBitSet(numberOfMissCounters) && numberOfMissCounters <= 1u << 24 && missesBeforeFiling <= maskOfCount && storeMissesBeforeFiling <= maskOfCount);
+    constexpr uint8_t wasFiled = maskOfCount;
+    constexpr uint32_t countersOfPair = 4;
+    static_assert(hasOneBitSet(numberOfMissCounters) && numberOfMissCounters <= 1u << 24 && missesBeforeFiling < wasFiled && storeMissesBeforeFiling < wasFiled);
+    static_assert(hasOneBitSet(countersOfPair) && countersOfPair <= numberOfMissCounters);
     uint32_t hash = WTF::pairIntHash(structureID.bits(), WTF::PtrHash<UniquedStringImpl*>::hash(uid) + static_cast<uint32_t>(access));
-    uint8_t& counter = m_missCounters[hash % numberOfMissCounters];
+    uint32_t first = hash % numberOfMissCounters;
     uint8_t bitsOfPair = static_cast<uint8_t>(hash >> 24) & ~maskOfCount;
-    if ((counter & ~maskOfCount) != bitsOfPair)
-        counter = bitsOfPair;
-    if ((counter & maskOfCount) >= (access == SlotAccess::Read ? missesBeforeFiling : storeMissesBeforeFiling))
+    uint8_t* ofPair = nullptr;
+    uint8_t* unused = nullptr;
+    for (uint32_t step = 0; step < countersOfPair && !ofPair; ++step) {
+        uint8_t& candidate = m_missCounters[first ^ step];
+        uint8_t misses = candidate & maskOfCount;
+        if (misses && (candidate & ~maskOfCount) == bitsOfPair)
+            ofPair = &candidate;
+        else if (!unused && (!misses || misses == wasFiled))
+            unused = &candidate;
+    }
+    if (!ofPair) {
+        ofPair = unused ? unused : &m_missCounters[first];
+        *ofPair = bitsOfPair;
+    }
+    uint8_t& counter = *ofPair;
+    if ((counter & maskOfCount) >= (access == SlotAccess::Read ? missesBeforeFiling : storeMissesBeforeFiling)) {
+        counter |= wasFiled;
         return true;
+    }
     ++counter;
     count(m_state.instance, RuntimeCounterID::FirstMissesNotFiled);
     return false;

@@ -9,11 +9,19 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
+#include "AOTInstance.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 // The aspects that a test answers and a guard keeps. Only a type says that an object stays as created.
 static constexpr PristineAspectSet guardedAspects { PristineAspects::Storage, PristineAspects::Names };
+
+std::optional<Receiver> receiverWithTestedStructure(BuiltinClassID builtinClass)
+{
+    if (builtinClass == BuiltinClasses::Buffer)
+        return Receiver::Buffer;
+    return std::nullopt;
+}
 
 PristineTest pristineTestOf(const BuiltinTable& table, BuiltinClassID builtinClass)
 {
@@ -22,8 +30,31 @@ PristineTest pristineTestOf(const BuiltinTable& table, BuiltinClassID builtinCla
         return table.mayHavePristineInstances(builtinClass) ? PristineTest::MayPass : PristineTest::NeverPasses;
     case BuiltinPristineTest::ClosureAsCreated:
         return PristineTest::ClosureAsCreated;
+    case BuiltinPristineTest::InstanceStructure:
+        return table.hasLockedPrototypeChain(builtinClass) && receiverWithTestedStructure(builtinClass) ? PristineTest::InstanceStructure : PristineTest::NeverPasses;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+BuiltinClassID classBelowWithTestedStructure(const BuiltinTable& table, BuiltinClassID builtinClass)
+{
+    BuiltinClassID below = BuiltinClasses::Buffer;
+    if (below == builtinClass || !table.isSameOrSubclassOf(below, builtinClass) || pristineTestOf(table, below) != PristineTest::InstanceStructure)
+        return { };
+    return below;
+}
+
+PristineAspects aspectThatFindsMember(const BuiltinTable& table, BuiltinClassID receiverClass, BuiltinID member)
+{
+    if (table.at(member).kind != BuiltinKind::Accessor || pristineTestOf(table, receiverClass) != PristineTest::MayPass)
+        return PristineAspects::Names;
+    BuiltinClassID below = classBelowWithTestedStructure(table, receiverClass);
+    if (!below)
+        return PristineAspects::Names;
+    BuiltinMemberLookup foundBelow = table.findForInstance(below, table.at(member).name);
+    if (foundBelow.outcome != BuiltinMemberLookup::Outcome::Found || table.canonicalID(foundBelow.member) != table.canonicalID(member))
+        return PristineAspects::Names;
+    return PristineAspects::NamesKeptBelow;
 }
 
 static bool sharesInstanceTestWithParent(const BuiltinTable& table, const BuiltinClass& instanceClass)
@@ -37,7 +68,8 @@ static bool sharesInstanceTestWithParent(const BuiltinTable& table, const Builti
 bool canOnlyBeProvenPristine(const BuiltinTable& table, BuiltinClassID builtinClass)
 {
     const BuiltinClass& instanceClass = table.at(builtinClass);
-    return pristineTestOf(table, builtinClass) == PristineTest::NeverPasses
+    return instanceClass.isNeverPristine
+        && instanceClass.pristineTest != BuiltinPristineTest::ClosureAsCreated
         && sharesInstanceTestWithParent(table, instanceClass)
         && !instanceClass.isPrimitiveWrapper
         && table.hasLockedPrototypeChain(builtinClass)
@@ -82,7 +114,7 @@ static PristineAspectSet aspectsProvenByGuards(const PristineQuery& query, Value
     return proven;
 }
 
-static PristineAspectSet collectProvenAspects(const PristineQuery& query, ValueID value, const PristineRequirement& wanted, ProgramPoint point)
+static PristineAspectSet collectAspectsProvenAsTheyAre(const PristineQuery& query, ValueID value, const PristineRequirement& wanted, ProgramPoint point)
 {
     PristineAspectSet proven = pristineAspectsProvenBy(query.program.typeOf(query.function, value).withoutNullish(), wanted.builtinClass);
     for (const Value& test : query.passedTests) {
@@ -98,6 +130,17 @@ static PristineAspectSet collectProvenAspects(const PristineQuery& query, ValueI
         return proven;
     }
     proven.add(aspectsProvenByGuards(query, value, wanted.builtinClass, point));
+    return proven;
+}
+
+static PristineAspectSet collectProvenAspects(const PristineQuery& query, ValueID value, const PristineRequirement& wanted, ProgramPoint point)
+{
+    PristineRequirement asTested = wanted;
+    if (asTested.aspects.contains(PristineAspects::NamesKeptBelow))
+        asTested.aspects.add(PristineAspects::Names);
+    PristineAspectSet proven = collectAspectsProvenAsTheyAre(query, value, asTested, point);
+    if (proven.contains(PristineAspects::Names))
+        proven.add(PristineAspects::NamesKeptBelow);
     return proven;
 }
 

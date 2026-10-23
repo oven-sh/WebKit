@@ -52,5 +52,5 @@ function f3 name="sumWithIntegerOrUndefined" parameters=[{type=i32}, {type=undef
     Return v2
 }
 # CHECK-LABEL: function f3 name="sumWithIntegerOrUndefined"
-# CHECK: [[addend]]: undefined|i32 @OptionalDouble = Box v1
-# CHECK-NEXT: number @Double = Add {{*}}, [[addend]] form=Numbers
+# CHECK: b0(v0: i32 @Int32, v1: undefined|i32 @OptionalInt64):
+# CHECK-NEXT: number @Double = Add v0, v1 form=Numbers

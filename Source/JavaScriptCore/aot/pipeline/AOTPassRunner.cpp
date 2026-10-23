@@ -87,6 +87,9 @@ static bool hasCodeBehindNeverValue(const Function& function, const Block& block
     return index + 1 != block.values.size() || block.terminator.kind != TerminatorKind::Unreachable;
 }
 
+// They type no value, put none behind another and make no block reachable. Nobody walks the body behind them to find that out.
+static constexpr PassSet passesThatLeaveNoCodeBehindNeverValues { PassID::CompactBlocks, PassID::RemoveTrivialParameters, PassID::ThreadJumps };
+
 // A pass, or whoever built the function, may leave a conversion that always fails, or a value of whose type nothing is left, in the middle of a block.
 static bool cutCodeBehindNeverValues(FunctionPassContext& context, const BodyContents& contents)
 {
@@ -181,7 +184,7 @@ static const PassSet* optionalPassesOfShortScheduleFor(const Function& function,
 
 static constexpr uint64_t maxRoundsOfShortSchedule = 1;
 
-PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& program, const OptimizationInputs& inputs, FunctionID id, Function& function, TaskArenas& arenas) const
+PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& program, const OptimizationInputs& inputs, FunctionID id, Function& function, TaskArenas& arenas, const std::optional<BodyContents>& contents) const
 {
     FunctionAnalyses analyses(AnalysisContext { m_build, program, &inputs.flow, &inputs.effects, id }, function);
     FunctionPassContext context { program, inputs, id, function, analyses, arenas.types, arenas.strings, m_build };
@@ -197,6 +200,10 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id));
     if (run.optionalPassesOfShortSchedule)
         run.maxRounds = maxRoundsOfShortSchedule;
+    if (contents) {
+        RELEASE_ASSERT(!m_build.options().verifiesAfterEveryPass || *contents == contentsOf(function));
+        run.setContents(*contents, function);
+    }
     if (program.form() == IRForm::Prepared && cutCodeBehindNeverValues(context, run.contentsOf(function))) {
         run.contents = std::nullopt;
         ++run.numberOfChanges;
@@ -614,7 +621,9 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         run.didChange(id, context.passesLeftIdle, context.passesThatCanWait);
         if (run.reachedFixpoint[index])
             run.didLookAtFunction(id);
-        if (descriptor.produces.value_or(context.program.form()) == IRForm::Prepared && !descriptor.isVerifiedAfterNextPass && cutCodeBehindNeverValues(context, run.contentsOf(context.function))) {
+        const bool mayLeaveCodeBehindNeverValues = !passesThatLeaveNoCodeBehindNeverValues.contains(id);
+        if (descriptor.produces.value_or(context.program.form()) == IRForm::Prepared && !descriptor.isVerifiedAfterNextPass && (mayLeaveCodeBehindNeverValues || m_build.options().verifiesAfterEveryPass) && cutCodeBehindNeverValues(context, run.contentsOf(context.function))) {
+            RELEASE_ASSERT(mayLeaveCodeBehindNeverValues);
             run.contents = std::nullopt;
             run.didChange(PassID::None);
         }

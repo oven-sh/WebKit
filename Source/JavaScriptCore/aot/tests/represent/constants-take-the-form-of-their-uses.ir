@@ -1,4 +1,4 @@
-# A constant is made in the form its uses want: no conversion follows it. One with uses that want different forms takes the form of the use that runs most often and is made again for the others, and a constant does not vote
+# A constant is made in the form its uses want: no conversion follows it. One with uses that want different forms takes the form of the use that runs most often, the code generator makes it again for the others, and a constant does not vote
 # on the form of the block parameter it is passed to. A constant that a cast without a register hands on stays without a register
 # FORM: Placed
 # OPTIONS: check=validate-back-end
@@ -86,7 +86,7 @@ function f4 name="usedMoreOftenUnboxed" parameters=[{type=i32}, {type=boolean}] 
 # CHECK-LABEL: function f4 name="usedMoreOftenUnboxed"
 # CHECK: 3 @Int32 = Integer integer=3
 # CHECK: b2() frequency=Rare:
-# CHECK-NEXT: 3 @JSValue = Integer integer=3
+# CHECK-NEXT: Return v2
 
 function f5 name="handedOnByCastWithoutRegister" parameters=[{type=boolean}] results=[{type=anything}] {
   b0(v0: boolean):
@@ -101,5 +101,5 @@ function f5 name="handedOnByCastWithoutRegister" parameters=[{type=boolean}] res
 # CHECK-LABEL: function f5 name="handedOnByCastWithoutRegister"
 # CHECK: v1: undefined @Void = Undefined
 # CHECK: never @Void = RequireObjectCoercible v1
-# CHECK: undefined @JSValue = Box v1
+# CHECK: b2(v3: anything @JSValue):
 # CODE-NOT: diagnostic

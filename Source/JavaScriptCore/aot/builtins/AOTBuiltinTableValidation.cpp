@@ -105,7 +105,7 @@ static bool hasHookThatCreates(JSGlobalObject* realm, BuiltinID id)
 // A flag of the command line or an option of the engine puts these on the global object or on process.
 static bool isAddedByOption(BuiltinID id)
 {
-    static constexpr BuiltinID members[] {
+    static constexpr NamedBuiltin members[] {
         Builtins::Dollarvm,
         Builtins::Gc,
         Builtins::Loader,

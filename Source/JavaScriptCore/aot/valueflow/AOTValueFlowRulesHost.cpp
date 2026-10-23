@@ -762,74 +762,6 @@ static bool someCallPassesPropertyThatRunsUnseenCode(ValueFlowRuleContext& conte
     return context.meet(context.valueOf(context.read(only(context, context.universe().objectOf(builtin)), cell)), ValueSets::anything);
 }
 
-// Once something has escaped and a value nobody knows is called, what the library keeps in its own objects is a value nobody knows, and nearly every store in the library goes through the unknown object.
-static bool storesIntoOperandOfItsFunction(ValueFlowRuleContext& context, FunctionID writer)
-{
-    ValueID site = context.siteOfStatement();
-    if (!site)
-        return true;
-    const Function& function = context.program().at(writer);
-    auto isParameter = [&](ValueID operand) {
-        return operand && function.at(definitionThroughSameValues(function, operand)).opcode == Opcode::Parameter;
-    };
-    const Value& operation = function.at(site);
-    if (isHeapOperation(operation.opcode))
-        return operation.numberOfOperands() && isParameter(operation.operand(0));
-    std::span<const ValueID> operands = operation.operands();
-    return std::ranges::any_of(operands.subspan(std::min<size_t>(1, operands.size()), std::min<size_t>(2, operands.size() - std::min<size_t>(1, operands.size()))), isParameter);
-}
-
-// A statement that a rule has made stands for callers that nobody tells apart, so it counts.
-void noteStoreThroughUnknownObject(ValueFlowRuleContext& context, ValueFlowName name)
-{
-    switch (name.kind) {
-    case ValueFlowNameKind::Property:
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-        break;
-    default:
-        return;
-    }
-    FunctionID writer = context.functionOfStatement();
-    if (writer && isLibraryRole(context.program().at(writer).role)) {
-        if (isCodeThatRecordsDescribe(context.universe(), writer))
-            return;
-        if (name.kind != ValueFlowNameKind::Property && (!storesIntoOperandOfItsFunction(context, writer) || !isInSeenCode(context, writer)))
-            return;
-    }
-    const ValueFlowUniverse& universe = context.universe();
-    switch (name.kind) {
-    case ValueFlowNameKind::Property:
-        context.add(context.nodes().ofHost(ValueFlowHostNode::NamesStoredThroughUnknownObject), only(context, universe.keyConstant(PropertyKeyID(name.payload))));
-        return;
-    case ValueFlowNameKind::UnknownKey:
-        context.add(context.nodes().ofHost(ValueFlowHostNode::NamesStoredThroughUnknownObject), universe.unknownObjectAlone());
-        return;
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-        context.add(context.nodes().ofHost(ValueFlowHostNode::NamesOfAccessorsStoredThroughUnknownObject), only(context, universe.keyConstant(PropertyKeyID(name.payload))));
-        return;
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-        context.add(context.nodes().ofHost(ValueFlowHostNode::NamesOfAccessorsStoredThroughUnknownObject), universe.unknownObjectAlone());
-        return;
-    default:
-        return;
-    }
-}
-
-void noteUnknownCallee(ValueFlowRuleContext& context)
-{
-    FunctionID caller = context.functionOfStatement();
-    if (!caller || isLibraryRole(context.program().at(caller).role))
-        return;
-    for (ValueFlowNameKind kind : { ValueFlowNameKind::UnknownKey, ValueFlowNameKind::GetterUnderUnknownKey })
-        noteStoreThroughUnknownObject(context, { kind, 0 });
-}
-
 bool isInSeenCode(ValueFlowRuleContext& context, FunctionID id)
 {
     const Function& function = context.program().at(id);
@@ -929,7 +861,7 @@ static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
 }
 
 // node:vm and ShadowRealm compile text too: a script or a function in the global scope of this realm, or code in a realm of its own, which has of this one what it is handed.
-static constexpr BuiltinID textEvaluatorsOfHost[] {
+static constexpr NamedBuiltin textEvaluatorsOfHost[] {
     Builtins::NodeVMBindingScript, Builtins::NodeVMBindingModule, Builtins::NodeVMBindingCompileFunction, Builtins::ShadowRealmPrototypeEvaluate, Builtins::BunTranspiler,
 };
 
@@ -1069,7 +1001,7 @@ static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID hol
     }
 }
 
-static constexpr BuiltinID entriesThatInstantiateModules[] { Builtins::WebAssemblyInstantiate, Builtins::WebAssemblyInstantiateStreaming, Builtins::WebAssemblyInstance };
+static constexpr NamedBuiltin entriesThatInstantiateModules[] { Builtins::WebAssemblyInstantiate, Builtins::WebAssemblyInstantiateStreaming, Builtins::WebAssemblyInstance };
 
 // A WebAssembly module finds what it imports under names that its bytes hold, `imports[module][field]`, and its code calls that. What it is handed has escaped: `{ Math }`. It looks up nothing on what it has found, so that does not escape.
 static void letModulesImportMembersOf(ValueFlowRuleContext& context, BuiltinID holder)
@@ -1084,7 +1016,7 @@ static void letModulesImportMembersOf(ValueFlowRuleContext& context, BuiltinID h
     }
 }
 
-static constexpr BuiltinID locationsOfLoaders[] {
+static constexpr NamedBuiltin locationsOfLoaders[] {
     Builtins::ModuleRequireCache,
     Builtins::NodeModule_cache,
     Builtins::ModuleObjectRequire,

@@ -636,9 +636,14 @@ private:
         if (value->child(2)->opcode() != B3::ZExt32 || value->child(2)->child(0) != isCell->child(0))
             return std::nullopt;
         Typed::ValueID id = Typed::valueOfOrigin(value->origin());
-        if (!id || id.index() >= m_function.values.size() || m_function.at(id).opcode != Typed::Opcode::Decode)
+        if (!id || id.index() >= m_function.values.size())
             return std::nullopt;
-        return m_program.at(m_function.at(m_function.at(id).valueOperand()).type).primitives & markers;
+        const Typed::Value& origin = m_function.at(id);
+        if (origin.opcode == Typed::Opcode::Decode)
+            return m_program.at(m_function.at(origin.valueOperand()).type).primitives & markers;
+        if (origin.representation != Typed::Representation::Cell32)
+            return std::nullopt;
+        return m_program.at(origin.type).primitives & markers;
     }
 
     std::optional<Test> findTest(B3::Value* condition) const

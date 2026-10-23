@@ -101,7 +101,8 @@ AlignedBytes::AlignedBytes(std::span<const uint8_t> bytes)
 {
     if (bytes.empty())
         return;
-    m_bytes = { static_cast<uint8_t*>(fastAlignedMalloc(imagePageSize, bytes.size())), bytes.size() };
+    // aligned_alloc(), which serves this under AddressSanitizer, takes multiples of the alignment.
+    m_bytes = { static_cast<uint8_t*>(fastAlignedMalloc(imagePageSize, roundUpToMultipleOf(imagePageSize, bytes.size()))), bytes.size() };
     memcpySpan(m_bytes, bytes);
 }
 

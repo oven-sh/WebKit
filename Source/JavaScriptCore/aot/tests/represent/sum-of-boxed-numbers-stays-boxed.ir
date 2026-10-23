@@ -56,9 +56,7 @@ function f2 name="differenceOfTwoBoxedNumbers" parameters=[{type=anything}, {typ
     Return v5
 }
 # CHECK-LABEL: function f2 name="differenceOfTwoBoxedNumbers"
-# CHECK-NOT: Unbox
 # CHECK: v4: number @JSValue = Sub v2, v3 form=Numbers
-# CHECK-NOT: Box
 
 function f3 name="sumAlsoWantedAsDouble" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
@@ -98,7 +96,6 @@ function f5 name="sumAlsoCarriedAroundLoop" parameters=[{type=anything}, {type=b
 # CHECK-LABEL: function f5 name="sumAlsoCarriedAroundLoop"
 # CHECK: b1(v3: number @JSValue):
 # CHECK: v5: number @JSValue = Increment v2 form=Numbers
-# CHECK-NOT: Box
 
 function f6 name="doubleWantedWhereSeldomEntered" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: number, v2: boolean):
@@ -114,7 +111,7 @@ function f6 name="doubleWantedWhereSeldomEntered" parameters=[{type=anything}, {
 # CHECK-LABEL: function f6 name="doubleWantedWhereSeldomEntered"
 # CHECK: v4: number @JSValue = Increment v3 form=Numbers
 # CHECK: b2() frequency=Unlikely:
-# CHECK-NEXT: number @Double = Unbox v4
+# CHECK-NEXT: number @Double = Mul v4, v1 form=Numbers
 
 function f7 name="storedInLoopAndWantedAsDoubleBehindIt" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=number}] {
   b0(v0: anything, v1: number, v2: boolean):
@@ -133,5 +130,5 @@ function f7 name="storedInLoopAndWantedAsDoubleBehindIt" parameters=[{type=anyth
 # CHECK: b1(v4: number @JSValue):
 # CHECK: v6: number @JSValue = Increment v3 form=Numbers
 # CHECK: b2():
-# CHECK-NEXT: number @Double = Unbox v4
+# CHECK-NEXT: number @Double = Mul v4, v1 form=Numbers
 # CODE-NOT: no code

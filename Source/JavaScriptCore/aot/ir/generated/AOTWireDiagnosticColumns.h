@@ -180,7 +180,7 @@ inline constexpr ASCIILiteral messageByInternalErrorKind[] = {
     "the blocks are not in reverse postorder, or a block is unreachable"_s,
     "the type is not what the result rule gives"_s,
     "a result rule answers with more for an operand of a narrower type, or its two paths disagree"_s,
-    "an operand does not have the representation its operation wants"_s,
+    "a value has a representation that its type does not allow, or one operation takes it in two"_s,
     "the operand has the wrong type"_s,
     "the stored value is outside the declared type"_s,
     "an edge argument is outside the type of its parameter"_s,

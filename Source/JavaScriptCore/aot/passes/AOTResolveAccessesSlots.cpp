@@ -42,12 +42,22 @@ static_assert(Value::opcodesWithFieldAccess == OpcodeSet { FOR_EACH_AOT_STAMPED_
 #if ASSERT_ENABLED
 static bool isInsideStoredType(const Program& program, const Type& stored, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
-    ScratchTypeArena scratch(program.types);
     bool slotsHoldUndefinedAndNull = std::ranges::all_of(receivers, [&](LayoutID receiver) {
         std::optional<FieldReference> field = findField(program, receiver, key, BaseChain::Proven);
         return field && slotHoldsUndefinedAndNull(program, *field);
     });
-    return (slotsHoldUndefinedAndNull ? stored.withoutNullish() : stored).isSubsetOf(storedTypeOf(program, receivers, key, scratch), program);
+    // Field by field: the type of a brand lies outside `anything`, which storedTypeOf() starts from.
+    Type checked = slotsHoldUndefinedAndNull ? stored.withoutNullish() : stored;
+    bool hasField = false;
+    for (LayoutID receiver : receivers) {
+        std::optional<FieldReference> field = findField(program, receiver, key, BaseChain::Proven);
+        if (!field)
+            continue;
+        hasField = true;
+        if (!checked.isSubsetOf(program.at(slotTypeOf(program, fieldAt(program, *field))), program))
+            return false;
+    }
+    return hasField;
 }
 #endif
 

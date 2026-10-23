@@ -441,6 +441,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersWithMembersUnderNumericNames = maker.of(holdersWithMembersUnderNumericNames.span());
         m_holdersOfMembersThatHostMakes = maker.of(holdersOfMembersThatHostMakes.span());
         ValueSetID holdersThatListNotAllMembers = maker.unite(without(builtinObjects, maker.of(holdersThatListAllMembers.span())), maker.of(m_undescribedNativeCode));
+        m_holdersOfUndeclaredPropertiesUnderIndexes = holdersThatListNotAllMembers;
         m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(holdersThatListNotAllMembers, maker.of(prototypesOfInstancesWithNames.span()));
 
         m_lockedObjects = maker.of(lockedObjects.span());

@@ -9,16 +9,24 @@
 
 #include "AOTBuiltinTypes.h"
 #include "AOTCFG.h"
+#include <optional>
 #include <span>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+enum class Receiver : uint8_t;
+
+namespace Typed {
 
 class FunctionAnalyses;
 
 // MayPass: start-up marks the Structure of new instances, whose prototypes are locked, and a change of an instance clears the mark.
-enum class PristineTest : uint8_t { NeverPasses, MayPass, ClosureAsCreated };
+enum class PristineTest : uint8_t { NeverPasses, MayPass, ClosureAsCreated, InstanceStructure };
 
 PristineTest pristineTestOf(const BuiltinTable&, BuiltinClassID);
+std::optional<Receiver> receiverWithTestedStructure(BuiltinClassID);
+BuiltinClassID classBelowWithTestedStructure(const BuiltinTable&, BuiltinClassID);
+PristineAspects aspectThatFindsMember(const BuiltinTable&, BuiltinClassID receiverClass, BuiltinID member);
 bool canOnlyBeProvenPristine(const BuiltinTable&, BuiltinClassID);
 
 // Nothing in an object says that it stays as created, or that it has no holes. Only flow proves these.

@@ -11,7 +11,7 @@
 # CHOSEN: [[word]]: null|L0 @Cell32 = GetSlot
 # CHOSEN: TypeTest [[word]]
 # CHOSEN: Call
-# CHOSEN: Decode [[word]]
+# CHOSEN: Return [[word]]
 
 layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired]}, {key="first" declared={type=null|L0} flags=[IsRequired]}, {key="second" declared={type=null|L0} flags=[IsRequired]}, {key="third" declared={type=null|L0} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0

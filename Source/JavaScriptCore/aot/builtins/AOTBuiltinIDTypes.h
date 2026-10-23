@@ -119,6 +119,33 @@ using RuntimeFunctionID = BuiltinTableID<struct RuntimeFunctionIDTag, uint32_t>;
 
 static_assert(std::forward_iterator<BuiltinTableIDRange<BuiltinID>::Iterator>);
 
+template<typename ID> struct NamedIDsOf;
+
+// What code of the engine names, as in Builtins::ArrayPrototypePush: a position in the engine's own list of names. The table says which of its entries that is.
+// So the numbers of the table may change without the code that names an entry being compiled again.
+// A list at namespace scope holds these, which are constant expressions, and converts each where it is read: the ids are data of another object file.
+template<typename ID>
+class NamedTableID {
+public:
+    constexpr explicit NamedTableID(uint16_t position)
+        : m_position(position)
+    {
+    }
+
+    operator ID() const { return NamedIDsOf<ID>::list()[m_position]; }
+    uint32_t index() const { return static_cast<ID>(*this).index(); }
+    constexpr uint16_t position() const { return m_position; }
+    friend constexpr bool operator==(NamedTableID, NamedTableID) = default;
+
+private:
+    uint16_t m_position;
+};
+
+using NamedBuiltin = NamedTableID<BuiltinID>;
+using NamedBuiltinName = NamedTableID<BuiltinName>;
+using NamedBuiltinClass = NamedTableID<BuiltinClassID>;
+using NamedBuiltinLayout = NamedTableID<BuiltinLayoutID>;
+
 class BuiltinOperand {
 public:
     enum class Kind : uint8_t {
@@ -186,6 +213,20 @@ struct HashTraits<JSC::AOT::BuiltinTableID<Tag, Storage>> : GenericHashTraits<JS
 
 namespace JSC {
 namespace AOT {
+
+#define FOR_EACH_AOT_LIST_OF_NAMED_IDS(macro) \
+    macro(BuiltinID, builtinTableNamedBuiltins, numberOfNamedBuiltins) \
+    macro(BuiltinName, builtinTableNamedNames, numberOfNamedBuiltinNames) \
+    macro(BuiltinClassID, builtinTableNamedClasses, numberOfNamedBuiltinClasses) \
+    macro(BuiltinLayoutID, builtinTableNamedLayouts, numberOfNamedBuiltinLayouts)
+
+#define AOT_DECLARE_LIST_OF_NAMED_IDS(ID, array, count) \
+    extern const ID array[count]; \
+    template<> struct NamedIDsOf<ID> { \
+        static const ID* list() { return array; } \
+    };
+FOR_EACH_AOT_LIST_OF_NAMED_IDS(AOT_DECLARE_LIST_OF_NAMED_IDS)
+#undef AOT_DECLARE_LIST_OF_NAMED_IDS
 
 static_assert(numberOfBuiltins <= BuiltinID::hashTableDeletedIndex);
 static_assert(numberOfBuiltinNames <= BuiltinName::hashTableDeletedIndex);

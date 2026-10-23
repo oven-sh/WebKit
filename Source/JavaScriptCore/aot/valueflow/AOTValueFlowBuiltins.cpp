@@ -82,7 +82,7 @@ static ClimbingSet withHostObjectsAmongMembers(ValueFlowRuleContext& context, Cl
 }
 
 // The host defines these as not enumerable, so whoever goes over the enumerable properties of their holder passes them by: Object.keys, values, entries and assign, a spread, JSON.stringify.
-static constexpr BuiltinID membersThatWalksPassBy[] { Builtins::Console_stdout, Builtins::Console_stderr };
+static constexpr NamedBuiltin membersThatWalksPassBy[] { Builtins::Console_stdout, Builtins::Console_stderr };
 
 // What native code reads that goes over the own properties of objects of the table.
 static void forEachNodeReadByWalkOver(ValueFlowRuleContext& context, ClimbingSet holders, Protocols protocols, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
@@ -312,7 +312,7 @@ public:
         // A field is named by its number, and one node holds what is stored under any number.
         if (record.internalFields.empty())
             return;
-        m_context.add(m_context.written(self, cellOfValueFromLibrary(m_builtins)), unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+        m_context.add(m_context.written(self, cellOfValueFromLibrary(m_builtins)), undescribedValue());
         ValueFlowName internalFields = ValueFlowName::of(ValueFlowNameKind::InternalFields);
         for (const BuiltinHostObjectInternalField& field : record.internalFields)
             useByHost(operandAt(m_context.written(self, internalFields)), field.uses);
@@ -532,7 +532,6 @@ private:
             functor(m_context.written(untrackedObjectAlone(), name));
         if (!mayBeUnknownObject(objects))
             return;
-        noteStoreThroughUnknownObject(m_context, name);
         functor(m_context.written(unknownObjectAlone(), name));
         functor(escaped());
     }
@@ -728,7 +727,7 @@ private:
     void apply(const BuiltinOverload& overload)
     {
         if (isGetterOfEngineWithoutRow(overload)) {
-            answer(unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+            answer(undescribedValue());
             throwValue(unknownObject(m_context, ValueFlowUnknownSource::ThrownByRunTime));
             return;
         }
@@ -881,7 +880,7 @@ private:
         }
         // A store through the proxy and a change of its integrity reach the target as definitions of its properties.
         m_context.mark(objectsAt(BuiltinOperand::argument(0)), ObjectMutation::RedefineProperty);
-        answer(unknownObject(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+        answer(undescribedObject());
         if (m_builtins.canonicalID(m_builtin) == Builtins::Proxy)
             m_context.add(m_call.result, m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_tables.heap().objectsThatLetInUnseenCode()));
     }
@@ -1133,10 +1132,8 @@ private:
             letUnknownCodeWrite(m_context);
             letWhateverHasEscapedBeCalled(m_context);
         }
-        if (mayBeUnknownObject(valueAt(operand)))
-            noteUnknownCallee(m_context);
-        answer(unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
-        throwValue(unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+        answer(undescribedValue());
+        throwValue(undescribedValue());
     }
 
     void applyParameter(const BuiltinParameter& parameter)
@@ -1206,7 +1203,7 @@ private:
         forEachPartOfCallees(m_context, m_context.restrict(species, followed), [&](ClimbingSet callees) {
             ValueFlowCallGroup group = m_context.group(callees, ValueFlowCallKind::ConstructByNativeCode);
             m_context.add(group.newTarget, callees);
-            m_context.add(group.otherArguments, unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+            m_context.add(group.otherArguments, undescribedValue());
             if (m_call.thrown)
                 m_context.connect(group.thrown, m_call.thrown);
             if (isReturned) {
@@ -1487,7 +1484,7 @@ private:
             forEachCallbackResultIn(place.newValueType, functor);
             return;
         case BuiltinPlaceKind::NativeMemory:
-            constant = m_context.maker().unite(constant, unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+            constant = m_context.maker().unite(constant, undescribedValue());
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -1699,21 +1696,41 @@ private:
         });
     }
 
+    ValueSetID undescribedValue()
+    {
+        return m_builtins.at(m_builtin).origin == BuiltinOrigin::Host ? unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult) : unknownValueOutOfEngine(m_context);
+    }
+
+    ValueSetID undescribedObject()
+    {
+        return m_context.maker().intersect(undescribedValue(), m_universe.objects());
+    }
+
+    // What native code rejects a promise with is what it throws.
+    ValueSetID valueInSlot(BuiltinSlotID slot, BuiltinTypeID type)
+    {
+        if (slot == BuiltinSlots::PromiseReason && (!type || m_builtins.at(type).isAnything()))
+            return unknownValue(m_context, ValueFlowUnknownSource::ThrownByRunTime);
+        return valueOfType(type, m_contentsObject);
+    }
+
     ValueSetID valueOfType(BuiltinTypeID id, ValueFlowObjectID fresh)
     {
         if (!id)
-            return unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult);
+            return undescribedValue();
         const BuiltinType& type = m_builtins.at(id);
         if (type.isAnything())
-            return unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult);
+            return undescribedValue();
 
         ValueSetMaker& maker = m_context.maker();
         ValueSetID value = m_tables.primitivesOf(id);
         bool isPlainDataOfResult = type.flags.contains(BuiltinTypeFlag::HasPlainData) && !type.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction }) && fresh && fresh == m_resultObject && m_contentsObject;
         if (isPlainDataOfResult)
             value = maker.unite(value, plainDataHolding(primitivesInsidePlainData(value)));
-        else if (type.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction, BuiltinTypeFlag::HasPlainData }) && !listsWhatIsMadeWithoutSpecies(type))
-            value = maker.unite(value, unknownObject(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+        else if (type.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction }) && !listsWhatIsMadeWithoutSpecies(type))
+            value = maker.unite(value, undescribedObject());
+        else if (type.flags.contains(BuiltinTypeFlag::HasPlainData) && !listsWhatIsMadeWithoutSpecies(type))
+            value = maker.unite(value, unknownObject(m_context, ValueFlowUnknownSource::DataFromOutside));
 
         Vector<ValueFlowObjectID, 32> objects;
         for (const BuiltinTypePart& part : type.parts) {
@@ -1735,7 +1752,7 @@ private:
             case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
             case BuiltinTypePartKind::Layout:
                 if (type.freshness == BuiltinFreshness::No || !fresh || isCalledInWaysNobodyFollows(part)) {
-                    value = maker.unite(value, unknownObject(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+                    value = maker.unite(value, undescribedObject());
                     // The unknown object stands only for what has escaped. So the module objects in the list that `module.children` answers are in unknown hands.
                     if (holdsModuleObjects(part)) {
                         objects.shrink(0);
@@ -1871,11 +1888,11 @@ private:
                         addPrototypesOfClassesBelow(part.builtinClass, prototype);
                 }
             } else if (!m_overload->result.prototypeSource || fresh != m_resultObject)
-                m_context.add(prototype, unknownObject(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+                m_context.add(prototype, undescribedObject());
             // An unaliased result may have own properties that the table does not declare.
             if (freshness == BuiltinFreshness::Unaliased && !listsOwnNamesOf(part.builtinClass, fresh)) {
-                m_context.add(prototype, unknownObject(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
-                m_context.add(m_context.written(object, unknownKey), unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+                m_context.add(prototype, undescribedObject());
+                m_context.add(m_context.written(object, unknownKey), undescribedValue());
             }
             if (isConstruction(m_call.kind) && fresh == m_resultObject) {
                 // A class of the program that extends the built-in class hands down its own prototype object.
@@ -1912,7 +1929,7 @@ private:
         for (const BuiltinSlotContents& contents : part.contents) {
             ValueFlowNodeID held = m_context.written(object, nameOf(contents.slot));
             if (fresh != m_resultObject || !listOwnKeysIn(held))
-                m_context.add(held, valueOfType(contents.type, m_contentsObject));
+                m_context.add(held, valueInSlot(contents.slot, contents.type));
             // A transfer brings what the call hands on to a slot of the result. No place names a slot of what lies below the result.
             if (fresh == m_resultObject)
                 continue;
@@ -2029,7 +2046,7 @@ private:
                 if (std::ranges::contains(part.contents, slot, &BuiltinSlotContents::slot) || (fresh == m_resultObject && isFilledByRecord(slot)))
                     continue;
                 BuiltinTypeID holds = m_builtins.at(slot).holds;
-                m_context.add(m_context.written(only(m_context, fresh), nameOf(slot)), holds ? valueOfType(holds, m_contentsObject) : unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult));
+                m_context.add(m_context.written(only(m_context, fresh), nameOf(slot)), valueInSlot(slot, holds));
             }
         }
     }
@@ -3052,7 +3069,10 @@ bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName na
     const ValueFlowUniverse& universe = context.universe();
     if (context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads)), universe.callables()))
         return true;
-    ClimbingSet prototypes(universe.builtinTables().heap().under(context.program().keyOf(name)).prototypeObjects);
+    // The table has the method of some classes. Of the others it does not list all that lies on the prototype object.
+    const ValueFlowHeapTables& heap = universe.builtinTables().heap();
+    const ValueFlowMembersUnderKey& members = heap.under(context.program().keyOf(name));
+    ClimbingSet prototypes(context.maker().unite(members.prototypeObjects, context.maker().intersect(members.holdersOfUndeclaredProperties, heap.prototypeObjectsOfHost())));
     return context.holdsAnyOf(prototypes, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins))
         || context.holdsAnyOf(prototypes, ValueFlowProgramNodes::escaped());
 }

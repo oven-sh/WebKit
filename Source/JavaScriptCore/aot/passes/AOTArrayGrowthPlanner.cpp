@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinIDTypes.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTResultRules.h"
@@ -145,7 +146,7 @@ std::optional<GrowthPlan> ArrayCapacityPlanner::planCollectionGrowth(const Natur
 
     ValueID collection = addition.receiverOperand();
     BlockID preheader = findPreheader(loop);
-    if (!preheader || !isInvariantIn(m_analyses, loop, collection))
+    if (!preheader || !isInvariantIn(m_analyses, loop, collection) || mayBeUnspecified(m_analyses, collection))
         return std::nullopt;
     // A value that is invariant may still be computed in the loop.
     if (!m_analyses.dominates(collection, ProgramPoint { preheader, static_cast<uint32_t>(m_function.at(preheader).values.size()) }))

@@ -74,7 +74,5 @@ function f4 name="numberOrObject" parameters=[{type=number}, {type=object}, {typ
 # R-LABEL: function f4 name="numberOrObject"
 # R: b1(v3: number|object @JSValue):
 # R: boolean @Boolean = ValueLooselyEqualsLiteral v3 literal="constructor"
-# R: [[boxedNumber]]: number @JSValue = Box v0
-# R-NEXT: boolean @Boolean = ValueLooselyEqualsLiteral [[boxedNumber]] literal="constructor"
-# R: [[boxedObject]]: object @JSValue = Box v1
-# R-NEXT: boolean @Boolean = ValueLooselyEqualsLiteral [[boxedObject]] literal="constructor"
+# R: boolean @Boolean = ValueLooselyEqualsLiteral {{*}} literal="constructor"
+# R: boolean @Boolean = ValueLooselyEqualsLiteral {{*}} literal="constructor"

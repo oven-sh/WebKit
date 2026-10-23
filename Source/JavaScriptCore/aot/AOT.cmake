@@ -152,6 +152,8 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTRuntimeTable.h
     aot/runtime/AOTRuntimeValidation.h
     aot/runtime/AOTRuntimeWords.h
+    aot/runtime/AOTSavedFrame.h
+    aot/runtime/AOTSavedFrameMap.h
     aot/runtime/AOTShownFrameFilter.h
     aot/runtime/AOTStackTrace.h
     aot/runtime/AOTStringBuilderStorage.h

@@ -1,0 +1,70 @@
+# The same program and the same answers where the forms of copies come from the tally of code that is made without the optimizing back end
+# A cell may hold a pointer into a frame in a field, which is wide for it: a narrow reference counts from the base of the cage, and a frame lies outside of it.
+# So what is read out of a wide slot is not compressed, and a block parameter that takes it stays wide, however many narrow references it takes beside it
+# OPTIONS: references=narrow testing=GenerateAllCodeDirectly
+# RUN: pipeline ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Holder" fields=[{key="member" declared={type=L0} flags=[IsRequired]}]
+variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="third" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    v5 = NewObject -, v1 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    PutModuleVariable v6 variable=g1
+    v8 = NewObject -, v1 layout=L0 fields=[0]
+    v9 = FinishObject v8
+    PutModuleVariable v9 variable=g2
+    v11 = NewObject -, v1 layout=L0 fields=[0]
+    v12 = FinishObject v11
+    v13 = NewObject -, v12 layout=L1 fields=[0]
+    v14 = FinishObject v13
+    v15 = CallDirect v14, v1 function=f1 [isNeverInlined]
+    v16 = PropGet v0 key="keep" [isFreeName]
+    v17 = Call v16, -, v15
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v13: {{*}} = NewObject {{*}} layout=L1 {{*}} storage=Frame
+
+function f1 name="memberOrVariable" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    v2 = Null
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v0 key="member"
+    Jump -> next b7(v4)
+  b2():
+    v5 = ToBoolean v1
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    v6 = GetModuleVariable variable=g0
+    Jump -> next b7(v6)
+  b4():
+    v7 = Undefined
+    v8 = StrictEq v1, v7
+    Branch v8 -> taken b5(), notTaken b6()
+  b5():
+    v9 = GetModuleVariable variable=g1
+    Jump -> next b7(v9)
+  b6():
+    v10 = GetModuleVariable variable=g2
+    Jump -> next b7(v10)
+  b7(v11: L0):
+    v12 = PropGet v11 key="x"
+    Return v12
+}
+# CHECK-LABEL: function f1 name="memberOrVariable"
+# CHECK: @Cell = GetSlot v0 key="member"
+# CHECK-NOT: = Compress
+# CHECK-NOT: (v11: {{*}} @Cell32)

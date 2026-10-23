@@ -82,6 +82,8 @@ static Object* allocate(LoadedProgram& program, ASCIILiteral layoutName)
 {
     const ProgramTables& tables = program.state().tables;
     for (uint32_t number = 0; number < tables.allocations().size(); ++number) {
+        if (!tables.hasLayoutForShape(tables.allocations()[number].shape))
+            continue;
         const LayoutData& layout = tables.layoutForShape(tables.allocations()[number].shape);
         if (Image::current()->text().equals(StringID(layout.name), layoutName))
             return uncheckedDowncast<Object>(program.state().objects->structures.allocate(program.vm(), number));

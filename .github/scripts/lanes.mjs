@@ -52,7 +52,9 @@ const SANITIZERS = "address,undefined";
 // All of it is decided when a function is compiled to IR (a function attribute, a store, a call to a checked libc
 // function), so it means the same with and without LTO. _FORTIFY_SOURCE is 2 because glibc 2.31 has nothing above it.
 const HARDENING =
-  "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096";
+  "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096" +
+  " -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -fsanitize=array-bounds -fsanitize-trap=array-bounds" +
+  " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
@@ -84,7 +86,7 @@ const variants = {
   "assertions": { buildType: "Release", mimalloc: true, assertions: true },
   "coverage": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
-  // "release" and "lto" with ICU and WebKit compiled with HARDENING, and nothing else changed. Same ABI as those two.
+  // "release" and "lto" with ICU and WebKit compiled with HARDENING, and nothing else changed.
   "hardened": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
 };

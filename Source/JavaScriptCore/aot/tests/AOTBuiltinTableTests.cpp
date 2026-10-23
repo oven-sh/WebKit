@@ -86,7 +86,7 @@ static void testCountsAgreeWithGeneratedIDs()
 
 static void testGlobalThisIsFirst()
 {
-    static_assert(!Builtins::GlobalThis.index());
+    AOT_TEST_CHECK(!Builtins::GlobalThis.index());
     const Builtin& global = table().at(Builtins::GlobalThis);
     AOT_TEST_CHECK(!global.holder && global.flags.contains(BuiltinFlag::IsGlobalObject) && global.name == BuiltinNames::globalThis);
     AOT_TEST_CHECK(table().findGlobal(BuiltinNames::globalThis) == Builtins::GlobalThis);
@@ -200,7 +200,7 @@ static void testNamesOfKeys()
     });
 
     for (ASCIILiteral text : { "no name of any built-in"_s, ""_s, "Push"_s, "pus"_s, "pushh"_s })
-        AOT_TEST_CHECK(!table().nameOf(*vm, Identifier::fromString(*vm, text).impl()));
+        AOT_TEST_CHECK(!table().nameOf(*vm, Identifier::fromString(*vm, String(text)).impl()));
     const char16_t wideText[] = { 'p', 'u', 's', 'h' };
     AOT_TEST_CHECK(table().nameOf(*vm, Identifier::fromString(*vm, String(std::span<const char16_t> { wideText })).impl()) == BuiltinNames::push);
     const char16_t otherWideText[] = { 'p', 'u', 's', 0x125 };
@@ -437,7 +437,7 @@ static void testMemberLookup()
         if (!isObjectKind(builtin.kind))
             return;
         AOT_TEST_CHECK((builtin.prototypeLink == BuiltinPrototypeLink::Builtin) == !!builtin.inheritsFrom);
-        for (BuiltinName name : { BuiltinNames::push, BuiltinNames::hasOwnProperty, BuiltinNames::then, BuiltinNames::constructor, BuiltinNames::toString, table().nameOf(WellKnownSymbol::Iterator) }) {
+        for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::push, BuiltinNames::hasOwnProperty, BuiltinNames::then, BuiltinNames::constructor, BuiltinNames::toString, table().nameOf(WellKnownSymbol::Iterator) }) {
             BuiltinMemberLookup expected = findMemberByTheRule(id, name);
             BuiltinMemberLookup found = table().findMember(id, name);
             AOT_TEST_CHECK(found.outcome == expected.outcome && found.member == expected.member && found.holder == expected.holder);
@@ -614,7 +614,7 @@ static void testLockedMembers()
     AOT_TEST_CHECK(table().openNamesOf(Builtins::FunctionPrototype).size() == 2 && std::ranges::is_sorted(table().openNamesOf(Builtins::FunctionPrototype)));
     for (BuiltinName name : table().openNamesOf(Builtins::FunctionPrototype))
         AOT_TEST_CHECK(!table().isClosedKey(Builtins::FunctionPrototype, name));
-    for (BuiltinName name : { BuiltinNames::then, BuiltinNames::push, BuiltinNames::Bun, table().nameOf(WellKnownSymbol::ToPrimitive) })
+    for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::then, BuiltinNames::push, BuiltinNames::Bun, table().nameOf(WellKnownSymbol::ToPrimitive) })
         AOT_TEST_CHECK(table().isClosedKey(Builtins::FunctionPrototype, name));
     AOT_TEST_CHECK(!table().isClosedKey(Builtins::FunctionPrototype, BuiltinNames::toString) && !table().isClosedKey(Builtins::FunctionPrototype, BuiltinNames::call));
     AOT_TEST_CHECK(table().at(Builtins::FunctionPrototypeCall).mutability == BuiltinMutability::AlwaysLocked);
@@ -622,7 +622,7 @@ static void testLockedMembers()
     // A native function of the engine passes on whoever looks for these, and keeps its prototype. A function that the library writes in JavaScript passes them on too. A constructor has the lock of its own.
     for (BuiltinID id : { Builtins::ObjectPrototypeHasOwnProperty, Builtins::ObjectPrototypeToString, Builtins::ArrayPrototypeSlice, Builtins::MathMax, Builtins::FunctionPrototypeBind }) {
         AOT_TEST_CHECK(table().isHostFunctionOfEngine(id) && table().hasLockedPrototypeLink(id));
-        for (BuiltinName name : { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
+        for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
             AOT_TEST_CHECK(table().isClosedKey(id, name));
         AOT_TEST_CHECK(!table().isClosedKey(id, BuiltinNames::toString) && !table().isClosedKey(id, BuiltinNames::then) && !table().isClosedKey(id, table().nameOf(WellKnownSymbol::ToPrimitive)));
     }
@@ -630,7 +630,7 @@ static void testLockedMembers()
         AOT_TEST_CHECK(!table().isHostFunctionOfEngine(id));
     for (BuiltinID id : { Builtins::ArrayPrototypeMap, Builtins::FunctionPrototypeCall, Builtins::FunctionPrototypeApply, Builtins::ReflectGet }) {
         AOT_TEST_CHECK(table().isFunctionOfEngine(id) && !table().isHostFunctionOfEngine(id) && table().hasLockedPrototypeLink(id));
-        for (BuiltinName name : { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
+        for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
             AOT_TEST_CHECK(table().isClosedKey(id, name));
         AOT_TEST_CHECK(!table().isClosedKey(id, BuiltinNames::toString) && !table().isClosedKey(id, BuiltinNames::then));
     }
@@ -651,7 +651,7 @@ static void testLockedMembers()
         AOT_TEST_CHECK(!table().listsOwnPropertiesOfNewInstances(errorClass));
         for (BuiltinName name : { BuiltinNames::message, BuiltinNames::cause, BuiltinNames::stack })
             AOT_TEST_CHECK(table().mayDefineOnNewInstances(errorClass, name));
-        for (BuiltinName name : { BuiltinNames::name, BuiltinNames::then, BuiltinNames::length, table().nameOf(WellKnownSymbol::ToPrimitive), BuiltinName() })
+        for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::name, BuiltinNames::then, BuiltinNames::length, table().nameOf(WellKnownSymbol::ToPrimitive), BuiltinName() })
             AOT_TEST_CHECK(!table().mayDefineOnNewInstances(errorClass, name));
     }
     AOT_TEST_CHECK(table().mayDefineOnNewInstances(BuiltinClasses::AggregateError, BuiltinNames::errors) && !table().mayDefineOnNewInstances(BuiltinClasses::TypeError, BuiltinNames::errors));
@@ -661,7 +661,7 @@ static void testLockedMembers()
     for (BuiltinID id : { Builtins::ArraySymbolSpecies, Builtins::MapSymbolSpecies })
         AOT_TEST_CHECK(table().at(id).mutability == BuiltinMutability::AlwaysLocked);
 
-    for (BuiltinName name : { BuiltinNames::then, BuiltinNames::hasOwnProperty, BuiltinNames::valueOf, table().nameOf(WellKnownSymbol::ToPrimitive), table().nameOf(WellKnownSymbol::IsConcatSpreadable) })
+    for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::then, BuiltinNames::hasOwnProperty, BuiltinNames::valueOf, table().nameOf(WellKnownSymbol::ToPrimitive), table().nameOf(WellKnownSymbol::IsConcatSpreadable) })
         AOT_TEST_CHECK(table().isClosedKey(Builtins::MapPrototype, name));
     AOT_TEST_CHECK(!table().isClosedKey(Builtins::MapPrototype, BuiltinNames::push) && !table().isClosedKey(Builtins::MapPrototype, BuiltinNames::Bun));
     AOT_TEST_CHECK(!table().isClosedKey(Builtins::MapPrototype, BuiltinNames::toJSON) && !table().isClosedKey(Builtins::SetPrototype, BuiltinNames::toJSON));
@@ -685,7 +685,7 @@ static void testLockedMembers()
     // A constructor without a lock of its own keeps what a call of it looks for, and takes every other name.
     for (BuiltinID id : { Builtins::Error, Builtins::TypeError, Builtins::Function, Builtins::WeakRef, Builtins::Blob, Builtins::FormData, Builtins::URL }) {
         AOT_TEST_CHECK(table().closesOnlyNamesOfCalls(id) && table().hasLockedPrototypeLink(id) && !table().closesIndexKeys(id));
-        for (BuiltinName name : { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
+        for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::call, BuiltinNames::apply, BuiltinNames::bind, table().nameOf(WellKnownSymbol::HasInstance) })
             AOT_TEST_CHECK(table().isClosedKey(id, name));
         AOT_TEST_CHECK(!table().isClosedKey(id, BuiltinNames::toString) && !table().isClosedKey(id, BuiltinNames::then) && !table().isClosedKey(id, table().nameOf(WellKnownSymbol::Species)));
     }

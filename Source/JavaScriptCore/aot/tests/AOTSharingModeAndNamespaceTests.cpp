@@ -328,6 +328,8 @@ static NEVER_INLINE void addTwoPropertiesInARow(LoadedProgram& program, HiddenCe
 
 static void testAdditionThatWaitsForItsFirstStructure(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     auto hiddenOffTheStack = makeUniqueWithoutFastMallocCheck<HiddenCells>();
     vm.heap.collectNow(Sync, CollectionScope::Full);

@@ -285,14 +285,16 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     builder.applyInsertions();
 
     TypePropagationInputs inputs { body.program, body.id, body.function, analyses, body.types, body.build };
-    typeValuesFromNever(inputs);
+    TypePropagationOutcome typing = typeValuesFromNever(inputs);
 
     Vector<ValueID> casts = insertCastsForRequiredTypes(insertion);
     if (!casts.isEmpty()) {
         builder.applyInsertions();
-        narrowValueTypes(inputs, casts.span());
+        typing += narrowValueTypes(inputs, casts.span());
     }
-    body.function.setValuesAreTypedAsDefined();
+    // Whoever types every value of a function that waits to have code cut looks again whether it can go.
+    if (!typing.waitsToCutCode)
+        body.function.setValuesAreTypedAsDefined();
     if (body.build.validates())
         insertRuntimeValidation(insertion);
 

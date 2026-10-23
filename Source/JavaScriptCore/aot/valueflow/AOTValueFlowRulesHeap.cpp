@@ -280,7 +280,6 @@ void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOpe
         connect(value, ValueFlowProgramNodes::escaped());
     if (!mayBeUnknownObject(objects))
         return;
-    noteStoreThroughUnknownObject(m_context, name);
     connect(value, m_context.written(unknownObjectAlone(), name));
     connect(value, ValueFlowProgramNodes::escaped());
     add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectNobodyKnowsIsWritten), m_universe.unknownObjectAlone());

@@ -209,9 +209,9 @@ JSValue readThroughAnswer(JSGlobalObject* globalObject, JSValue base, const Prop
 {
     switch (answer.kind) {
     case PropertyAnswerKind::Value:
-        return answer.holder->getDirect(answer.offset);
+        return valueAtOffset(answer.holder, answer.offset);
     case PropertyAnswerKind::Accessor:
-        return uncheckedDowncast<GetterSetter>(answer.holder->getDirect(answer.offset).asCell())->callGetter(globalObject, base);
+        return uncheckedDowncast<GetterSetter>(valueAtOffset(answer.holder, answer.offset).asCell())->callGetter(globalObject, base);
     case PropertyAnswerKind::Absent:
         return jsUndefined();
     case PropertyAnswerKind::Uncacheable:

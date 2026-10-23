@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTIR.h"
 #include "AOTOpcode.h"
 #include "AOTPassID.h"
@@ -14,28 +15,6 @@
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-enum class BodyTrait : uint8_t {
-    SeveralBlocks = 1 << 0,
-    Handlers = 1 << 1,
-    // Of a block other than the entry block.
-    BlockParameters = 1 << 2,
-    // A terminator with more than one target.
-    SeveralTargets = 1 << 3,
-    // A value with a result whose type is never.
-    NeverValues = 1 << 4,
-    ParametersOfRuntimeFunction = 1 << 5,
-    UnfinishedThis = 1 << 6,
-};
-
-// What a pass can tell from that it has nothing to do in a body. All values count, listed in a block or not, and all blocks, reachable or not: it says too much rather than too little.
-struct BodyContents {
-    OpcodeSet opcodes;
-    TerminatorKindSet terminators;
-    OptionSet<BodyTrait> traits;
-};
-
-BodyContents contentsOf(const Function&);
 
 // In a body that holds none of these the pass leaves the function as it is and reports nothing, whatever its other inputs say, on its first run as on a later one.
 struct PassTriggers {

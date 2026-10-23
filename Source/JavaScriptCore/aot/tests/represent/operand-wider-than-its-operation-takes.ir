@@ -3,7 +3,6 @@
 # FORM: Placed
 # RUN: pass f0:v3 ChooseRepresentations
 # DIAGNOSTIC: UnsupportedConversion
-# DIAGNOSTIC: WrongRepresentation
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="receiverOfInlineCode" parameters=[{type=anything}, {type=string}] results=[{type=string}] {

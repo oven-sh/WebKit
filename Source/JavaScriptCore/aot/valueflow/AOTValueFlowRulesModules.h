@@ -59,8 +59,6 @@ ValueFlowSources evaluationErrorsOf(ValueFlowRuleContext&, ModuleID);
 // Only what seen code does is an event.
 bool isInSeenCode(ValueFlowRuleContext&, FunctionID);
 // The statement that runs stores under the name into a receiver that may be the unknown object.
-void noteStoreThroughUnknownObject(ValueFlowRuleContext&, ValueFlowName);
-void noteUnknownCallee(ValueFlowRuleContext&);
 // The function asks for the module: by an import of its module, or by an operation.
 void noteRequest(ValueFlowRuleContext&, FunctionID requester, ModuleID);
 // For an operation that calls what its first operand holds.

@@ -2,6 +2,7 @@
 # FORM: Placed
 # OPTIONS: check=ValidateBackEnd
 # RUN: generate-code calls
+# REQUIRES: unsanitized-code
 
 module m0 path="main.js" displayPath="main.js"
 

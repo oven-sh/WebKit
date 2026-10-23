@@ -9,6 +9,7 @@
 
 #include "AOTChildProcess.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTOperationCallScope.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeCounters.h"
@@ -1140,12 +1141,12 @@ static void testCollector()
 
 static JSString* toLowerCase(LoadedProgram& program, JSString* string)
 {
-    return uncheckedDowncast<JSString>(operationAOTStringToLowerCase(&program.instance(), string).value);
+    return uncheckedDowncast<JSString>(callOperationFromTest(program.vm(), operationAOTStringToLowerCase, &program.instance(), string).value);
 }
 
 static JSString* toUpperCase(LoadedProgram& program, JSString* string)
 {
-    return uncheckedDowncast<JSString>(operationAOTStringToUpperCase(&program.instance(), string).value);
+    return uncheckedDowncast<JSString>(callOperationFromTest(program.vm(), operationAOTStringToUpperCase, &program.instance(), string).value);
 }
 
 static NEVER_INLINE void convertAStringThatDies(LoadedProgram& program, uintptr_t& addressOfSource)

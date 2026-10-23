@@ -232,7 +232,7 @@ static void testChainMethodRows()
     }
     AOT_TEST_CHECK(numberOfRanges == 1 && numberOfLinks == 2);
 
-    for (BuiltinID other : { Builtins::ArrayPrototypePush, Builtins::ArrayPrototypeReduceRight, Builtins::ArrayPrototype, Builtins::GlobalThis, BuiltinID() })
+    for (BuiltinID other : std::initializer_list<BuiltinID> { Builtins::ArrayPrototypePush, Builtins::ArrayPrototypeReduceRight, Builtins::ArrayPrototype, Builtins::GlobalThis, BuiltinID() })
         AOT_TEST_CHECK(!findChainMethod(other));
 }
 

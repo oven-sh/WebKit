@@ -19,11 +19,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-bool isCastOfOperand(Opcode opcode)
-{
-    return isCast(opcode) || opcode == Opcode::FinishClass;
-}
-
 bool isConversion(Opcode opcode)
 {
     return familyOf(opcode) == OperationFamily::Representation;
@@ -62,7 +57,9 @@ private:
             if (std::optional<InternalErrorKind> error = findError(value))
                 report(*error, id, value);
         }
-        if (ValueID operand = findOperandInWrongRepresentation(block.terminator))
+        if (ValueID operand = findOperandWithoutConversion(block.terminator))
+            report(InternalErrorKind::UnsupportedConversion, id, operand);
+        if (ValueID operand = findOperandTakenInTwoForms(block.terminator))
             report(InternalErrorKind::WrongRepresentation, id, operand);
         forEachOutgoingEdge(m_function, id, [&](Edge edge, const Target& target) {
             checkEdge(edge, target);
@@ -74,9 +71,9 @@ private:
         const Value& value = m_function.at(id);
         if (!hasRepresentationOfResult(id))
             return InternalErrorKind::WrongRepresentation;
-        if (isCastOfOperand(value.opcode) && storedRepresentationOf(value.operand(0)) != value.representation)
-            return InternalErrorKind::WrongRepresentation;
-        if (findOperandInWrongRepresentation(value))
+        if (findOperandWithoutConversion(value))
+            return InternalErrorKind::UnsupportedConversion;
+        if (findOperandTakenInTwoForms(value))
             return InternalErrorKind::WrongRepresentation;
         if (isConversion(value.opcode) && !isSingleConversionStep(id))
             return InternalErrorKind::UnsupportedConversion;
@@ -92,13 +89,36 @@ private:
         return expected == Representation::Unchosen || expected == value.representation;
     }
 
+    bool canConvert(const Type& type, Representation stored, Representation wanted) const
+    {
+        return stored != Representation::Unchosen && !!findConversion(type, stored, wanted);
+    }
+
     template<typename User>
-    ValueID findOperandInWrongRepresentation(const User& user) const
+    ValueID findOperandWithoutConversion(const User& user) const
     {
         ValueID found;
         user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            if (!found && needsConversion(storedRepresentationOf(operand), wantedRepresentationOf(m_inputs, user, operandIndex)))
+            Representation wanted = wantedRepresentationOf(m_inputs, user, operandIndex);
+            if (!found && needsConversion(storedRepresentationOf(operand), wanted) && !canConvert(m_inputs.typeOf(operand), storedRepresentationOf(operand), wanted))
                 found = operand;
+        });
+        return found;
+    }
+
+    template<typename User>
+    ValueID findOperandTakenInTwoForms(const User& user) const
+    {
+        auto formTakenAt = [&](ValueID operand, uint32_t operandIndex) {
+            Representation wanted = wantedRepresentationOf(m_inputs, user, operandIndex);
+            return needsConversion(storedRepresentationOf(operand), wanted) ? wanted : storedRepresentationOf(operand);
+        };
+        ValueID found;
+        user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            user.forEachOperand([&](ValueID other, uint32_t otherIndex) {
+                if (!found && other == operand && otherIndex < operandIndex && formTakenAt(other, otherIndex) != formTakenAt(operand, operandIndex))
+                    found = operand;
+            });
         });
         return found;
     }
@@ -122,12 +142,10 @@ private:
             IncomingValue incoming = incomingValueOf(m_function, edge, index);
             switch (incoming.kind) {
             case IncomingValue::Kind::Argument:
-                if (hasRegister(wanted) && !isSameWord(storedRepresentationOf(incoming.argument), wanted))
-                    report(InternalErrorKind::WrongRepresentation, edge.from, incoming.argument);
+                if (incoming.argument && hasRegister(wanted) && !canConvert(m_inputs.typeOf(incoming.argument), storedRepresentationOf(incoming.argument), wanted))
+                    report(InternalErrorKind::UnsupportedConversion, edge.from, incoming.argument);
                 break;
             case IncomingValue::Kind::EdgeResult:
-                if (hasRegister(wanted) && !isSameWord(edgeResultRepresentationOf(m_inputs, incoming.result), wanted))
-                    report(InternalErrorKind::WrongRepresentation, edge.from, parameters[index]);
                 break;
             }
         }

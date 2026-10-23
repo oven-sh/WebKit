@@ -599,6 +599,9 @@ bool LinearScanCodeGenerator::storesImmediate(const Node& store) const
     int64_t constant;
     if (!constantOf(store.a, constant) || store.operandType == NodeType::Double)
         return false;
+    // An immediate is four bytes of the store. Zero in a register is two, and another constant pays from its second user on.
+    if (isX86_64() && m_prefersSmallCode && store.opcode == B3::Store && (!constant || node(store.a).rawUses >= 2))
+        return false;
     return store.opcode != B3::Store || store.operandType == NodeType::Int32 || fitsInt32(constant);
 }
 
@@ -2540,9 +2543,26 @@ void LinearScanCodeGenerator::lowerReturn(NodeID id)
     if constexpr (pass == Pass::Emit) {
         CCallHelpers& jit = *m_jit;
         if (m_context.frameIsSetUp) {
+            // Compact code leaves the frame in one place where a jump there is shorter than to leave it here.
+            constexpr size_t reachOfShortJump = 120;
+            constexpr size_t bytesOfShortJump = isX86_64() ? 2 : 4;
+            constexpr size_t bytesOfLongJump = isX86_64() ? 5 : 4;
+            if (m_bytesOfSharedTeardown > (bytesSoFar() - m_offsetOfSharedTeardown <= reachOfShortJump ? bytesOfShortJump : bytesOfLongJump)) {
+                jit.jump().linkTo(m_sharedTeardown, &jit);
+                m_codeIsReachable = false;
+                finishUnit(CodeUnit::Kind::Pinned);
+                return;
+            }
+            size_t offset = bytesSoFar();
+            Label teardown = jit.label();
             m_context.setFrameIsSetUp(jit, false);
             B3::Air::emitFrameTeardown(jit, m_code, B3::Air::registerDeadAtReturns);
             finishUnit(CodeUnit::Kind::Pinned);
+            if (m_prefersSmallCode) {
+                m_sharedTeardown = teardown;
+                m_offsetOfSharedTeardown = offset;
+                m_bytesOfSharedTeardown = bytesSoFar() - offset + 1;
+            }
         }
         jit.ret();
         m_codeIsReachable = false;

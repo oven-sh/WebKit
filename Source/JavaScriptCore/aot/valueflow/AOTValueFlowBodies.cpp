@@ -1053,7 +1053,7 @@ private:
         addSource(id, operand, maskInside(TypeTable::object, ValueFlowMaskKind::Checked));
 
         // One wrapper for each class of wrappers that the operand may need. The ordinal tells them apart.
-        static constexpr std::pair<uint16_t, BuiltinClassID> wrappers[] {
+        static constexpr std::pair<uint16_t, NamedBuiltinClass> wrappers[] {
             { Primitive::AnyString, BuiltinClasses::String },
             { Primitive::Number, BuiltinClasses::Number },
             { Primitive::Boolean, BuiltinClasses::Boolean },

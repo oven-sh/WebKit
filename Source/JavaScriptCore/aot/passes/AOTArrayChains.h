@@ -23,7 +23,7 @@ enum class ChainEndKind : uint8_t { Array, Length, ForEach, Reduce, Some, Every,
 enum class ChainMethodRole : uint8_t { Range, Link, End };
 
 struct ChainMethod {
-    BuiltinID builtin;
+    NamedBuiltin builtin;
     ChainMethodRole role { ChainMethodRole::End };
     ChainLinkKind link { ChainLinkKind::None };
     ChainEndKind end { ChainEndKind::Array };

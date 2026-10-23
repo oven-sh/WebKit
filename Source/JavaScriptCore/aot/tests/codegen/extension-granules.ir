@@ -4,7 +4,9 @@
 # OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
 # RUN(SLOTS): pass PlanSlots
 # RUN: generate-code
+# REQUIRES: unsanitized-code
 # RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): unsanitized-code
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Wide" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=anything}}, {key="late1" declared={type=anything}}, {key="late2" declared={type=anything}}, {key="late3" declared={type=anything}}, {key="late4" declared={type=anything}}, {key="late5" declared={type=anything}}, {key="late6" declared={type=anything}}, {key="late7" declared={type=anything}}, {key="late8" declared={type=anything}}, {key="late9" declared={type=anything}}, {key="late10" declared={type=anything}}, {key="late11" declared={type=anything}}, {key="late12" declared={type=anything}}, {key="late13" declared={type=anything}}, {key="late14" declared={type=anything}}, {key="late15" declared={type=anything}}]

@@ -126,20 +126,6 @@ static std::optional<uint32_t> expectedNumberOfVariadicOperands(const Program& p
     }
 }
 
-template<typename User>
-static ValueID findOperandInWrongRepresentation(const Program& program, const Function& function, const User& user)
-{
-    ValueID found;
-    user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (found)
-            return;
-        Representation wanted = wantedRepresentationOf(program, function, user, operandIndex);
-        if (hasRegister(wanted) && function.at(operand).representation != wanted)
-            found = operand;
-    });
-    return found;
-}
-
 void FunctionVerifier::verifyTypes()
 {
     std::span<const BlockID> reversePostOrder = analyses().cfg().reversePostOrder();
@@ -185,10 +171,6 @@ void FunctionVerifier::verifyTypes()
         // A join takes in what the code behind a never value hands on, so until that code is cut the returned value may be typed wider than the result.
         if (!hasFailed() && block.terminator.kind == TerminatorKind::Return && !mayHaveCodeAfterNever)
             verifyReturn(blockID, block.terminator);
-        if (!hasFailed() && m_function.representationsAreChosen && !m_function.operandsAreConvertedAtFetch) {
-            if (ValueID operand = findOperandInWrongRepresentation(m_program, m_function, block.terminator))
-                fail(InternalErrorKind::WrongRepresentation, blockID, { }, operand.index());
-        }
         if (!hasFailed() && !mayHaveCodeAfterNever)
             verifyCodeAfterNever(blockID, block);
         if (hasFailed())
@@ -462,10 +444,6 @@ void FunctionVerifier::verifyRepresentations(BlockID block, ValueID id, const Va
         fail(InternalErrorKind::WrongRepresentation, block, id);
         return;
     }
-    if (m_function.operandsAreConvertedAtFetch)
-        return;
-    if (ValueID operand = findOperandInWrongRepresentation(m_program, m_function, value))
-        fail(InternalErrorKind::WrongRepresentation, block, id, operand.index());
 }
 
 void FunctionVerifier::verifyCodeAfterNever(BlockID block, const Block& contents)

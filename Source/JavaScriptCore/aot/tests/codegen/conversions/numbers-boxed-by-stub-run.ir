@@ -4,8 +4,10 @@
 # RUN(IR): pipeline ChooseRepresentations
 # RUN: run-in-shell globalThis.register = (half) => { const show = (v) => Object.is(v, -0) ? "-0" : String(v); let text = ""; for (const x of [2, 1, 0, -0, -2, 4294967296, -4294967298, 4294967294, 1e300, Infinity, -Infinity, NaN, 3]) text += " " + show(half(x, true)); print(text); print(show(half(2, false))); };
 # IR-LABEL: name="half"
+# IR: [[product]]: number @Double = Mul
 # IR: frequency=Unlikely:
-# IR-NEXT: number @JSValue = Box
+# IR-NEXT: Jump -> next [[join]]([[product]])
+# IR: [[join]]({{*}}: undefined|number @JSValue):
 # CHECK: {{*}}1 0.5 0 -0 -1 2147483648 -2147483649 2147483647 5e+299 Infinity -Infinity NaN 1.5
 # CHECK-NEXT: undefined
 # CHECK-NEXT: exited with 0

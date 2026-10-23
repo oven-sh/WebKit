@@ -380,6 +380,7 @@ enum class BuiltinInstanceTest : uint8_t {
 enum class BuiltinPristineTest : uint8_t {
     Mark,
     ClosureAsCreated,
+    InstanceStructure,
 };
 
 enum class RuntimeFunctionRole : uint8_t {

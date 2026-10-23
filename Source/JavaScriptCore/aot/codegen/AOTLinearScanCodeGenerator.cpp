@@ -914,17 +914,25 @@ bool LinearScanCodeGenerator::edgeHasMovesOnIt(uint32_t source, unsigned success
 
 bool LinearScanCodeGenerator::isNext(uint32_t target, uint32_t from) const
 {
-    uint32_t index = m_blocks[from].emissionIndex + 1;
-    return index < m_emissionOrder.size() && m_emissionOrder[index] == target;
+    ASSERT_UNUSED(from, from == m_currentBlock);
+    return target == m_blockThatFollows;
 }
 
 void LinearScanCodeGenerator::link(Jump jump, uint32_t target)
 {
     Block& block = m_blocks[target];
-    if (block.label.isSet())
+    if (block.label.isSet()) {
         jump.linkTo(block.label, m_jit);
-    else
-        block.jumps.append(jump);
+        return;
+    }
+    block.jumps.append(jump);
+    if (m_layout != Layout::RareCodeInGaps || !block.region)
+        return;
+    RareRegion& region = m_rareRegions[block.region];
+    if (!region.isWritten && !region.numberOfJumps++) {
+        region.offsetOfFirstJump = bytesSoFar();
+        m_waitingRegions.append(block.region);
+    }
 }
 
 void LinearScanCodeGenerator::findEdgesWithSameMoves()
@@ -992,6 +1000,8 @@ uint32_t LinearScanCodeGenerator::stubFor(uint32_t source, unsigned successorInd
     if (m_edges[edge].edgeWithSameMoves)
         edge = m_edges[edge].edgeWithSameMoves - 1;
     if (!m_edges[edge].stub) {
+        if (m_numberOfEdgeStubsWritten == m_edgeStubs.size())
+            m_offsetOfFirstWaitingEdgeStub = bytesSoFar();
         m_edgeStubs.append(EdgeStub { edge, source, targetOf(m_blocks[source], successorIndex), { }, nullptr });
         m_edges[edge].stub = m_edgeStubs.size();
     }
@@ -1114,7 +1124,7 @@ void LinearScanCodeGenerator::linkInsideFrame(Jump jump, uint32_t target)
 
 void LinearScanCodeGenerator::emitEdgeStubs()
 {
-    for (unsigned index = 0; index < m_edgeStubs.size() && !m_hasFailed; ++index) {
+    for (unsigned& index = m_numberOfEdgeStubsWritten; index < m_edgeStubs.size() && !m_hasFailed; ++index) {
         EdgeStub& stub = m_edgeStubs[index];
         if (stub.label.isSet())
             continue;
@@ -1125,8 +1135,9 @@ void LinearScanCodeGenerator::emitEdgeStubs()
         m_unitBegin = m_jit->labelIgnoringWatchpoints();
         m_context.setFrameIsSetUp(*m_jit, m_hasFrame && source.runsInFrame);
         stub.jumps.link(m_jit);
+        stub.label = m_jit->label();
         if (stub.sharedLabel)
-            *stub.sharedLabel = m_jit->label();
+            *stub.sharedLabel = stub.label;
         if (edgeEntersFrame(stub.edge, source)) {
             emitFrameSetup();
             emitEdgeMoves(stub.edge);
@@ -1214,9 +1225,40 @@ void LinearScanCodeGenerator::orderEmission()
     m_emissionOrder.reserveInitialCapacity(m_blocks.size());
     Vector<uint32_t, 4> late;
     auto append = [&](uint32_t order) {
-        m_blocks[order].emissionIndex = m_emissionOrder.size();
         m_emissionOrder.append(order);
     };
+    auto isWritten = [&](const Block& block) {
+        return block.isReachable && block.forwardsTo == UINT32_MAX;
+    };
+    switch (m_layout) {
+    case Layout::RareCodeAtEnd:
+        break;
+    case Layout::AsControlFlows:
+        for (uint32_t order : m_reversePostOrder) {
+            if (isWritten(m_blocks[order]))
+                append(order);
+        }
+        return;
+    case Layout::RareCodeInGaps:
+        // Only the usual way has its order now. emitRareCodeInFrontOf() places the rest while the code is written, when distances are known.
+        for (uint32_t order = 0; order < m_blocks.size(); ++order) {
+            const Block& block = m_blocks[order];
+            if (block.region >= m_rareRegions.size())
+                m_rareRegions.grow(block.region + 1);
+            if (!isWritten(block))
+                continue;
+            if (!block.region) {
+                append(order);
+                continue;
+            }
+            RareRegion& region = m_rareRegions[block.region];
+            if (!region.numberOfSlots)
+                region.firstBlock = order;
+            region.endBlock = order + 1;
+            region.numberOfSlots += std::max<uint32_t>(block.endSlot - block.firstSlot, 1);
+        }
+        return;
+    }
     for (uint32_t order = 0; order < m_blocks.size(); ++order) {
         Block& block = m_blocks[order];
         if (!block.isReachable || block.forwardsTo != UINT32_MAX)
@@ -1233,6 +1275,86 @@ void LinearScanCodeGenerator::orderEmission()
     }
     for (uint32_t waiting : late)
         append(waiting);
+}
+
+void LinearScanCodeGenerator::emitRareRegion(uint32_t index, uint32_t blockThatFollows)
+{
+    RareRegion& region = m_rareRegions[index];
+    if (region.isWritten)
+        return;
+    region.isWritten = true;
+    uint32_t pending = UINT32_MAX;
+    auto emitPending = [&](uint32_t next) {
+        if (pending == UINT32_MAX || m_hasFailed)
+            return;
+        m_blockThatFollows = next;
+        emitBlock(m_blocks[pending]);
+    };
+    for (uint32_t order = region.firstBlock; order < region.endBlock; ++order) {
+        const Block& block = m_blocks[order];
+        if (!block.isReachable || block.forwardsTo != UINT32_MAX)
+            continue;
+        emitPending(order);
+        pending = order;
+    }
+    emitPending(blockThatFollows);
+}
+
+// A short jump reaches 127 bytes. Rare code that waits is written where nothing falls into the next block, and, where the policy asks for it,
+// behind a jump over it at the last boundary from which the jumps to it are still short.
+void LinearScanCodeGenerator::emitRareCodeInFrontOf(uint32_t next)
+{
+    constexpr size_t reach = 127;
+    constexpr size_t bytesOfJumpOver = 5;
+    constexpr size_t bytesExpectedOfSlot = 6;
+    constexpr uint32_t maxSlotsInGap = 48;
+    while (m_numberOfEdgeStubsWritten < m_edgeStubs.size() && m_edgeStubs[m_numberOfEdgeStubsWritten].label.isSet())
+        ++m_numberOfEdgeStubsWritten;
+    bool hasWaitingStubs = m_numberOfEdgeStubsWritten < m_edgeStubs.size();
+    if (m_waitingRegions.isEmpty() && !hasWaitingStubs)
+        return;
+    size_t now = bytesSoFar();
+    bool makesGap = m_codeIsReachable;
+    if (makesGap) {
+        const Block& block = m_blocks[next];
+        if (!m_code.policy().layout.makesGapsForRareBlocks || block.loop)
+            return;
+        size_t start = now + bytesOfJumpOver;
+        size_t oldest = SIZE_MAX;
+        if (hasWaitingStubs && start - m_offsetOfFirstWaitingEdgeStub <= reach)
+            oldest = m_offsetOfFirstWaitingEdgeStub;
+        for (uint32_t index : m_waitingRegions) {
+            const RareRegion& region = m_rareRegions[index];
+            if (region.numberOfSlots <= maxSlotsInGap && start - region.offsetOfFirstJump <= reach)
+                oldest = std::min(oldest, region.offsetOfFirstJump);
+        }
+        if (oldest == SIZE_MAX || start - oldest + (block.endSlot - block.firstSlot) * bytesExpectedOfSlot <= reach)
+            return;
+        m_blocks[next].jumps.append(m_jit->jump());
+        finishUnit();
+        m_codeIsReachable = false;
+    }
+    emitEdgeStubs();
+    Vector<uint32_t, 8> regions;
+    m_waitingRegions.removeAllMatching([&](uint32_t index) {
+        if (m_rareRegions[index].numberOfSlots > maxSlotsInGap)
+            return false;
+        regions.append(index);
+        return true;
+    });
+    // The last of them may fall into the block that follows.
+    for (unsigned index = 0; index + 1 < regions.size(); ++index) {
+        const Block& last = m_blocks[m_rareRegions[regions[index]].endBlock - 1];
+        bool leadsToNext = false;
+        for (unsigned successor = 0; successor < last.numberOfSuccessors; ++successor)
+            leadsToNext |= targetOf(last, successor) == next;
+        if (leadsToNext) {
+            std::swap(regions[index], regions.last());
+            break;
+        }
+    }
+    for (unsigned index = 0; index < regions.size() && !m_hasFailed; ++index)
+        emitRareRegion(regions[index], index + 1 == regions.size() ? next : UINT32_MAX);
 }
 
 bool LinearScanCodeGenerator::generate(CCallHelpers& jit, CodeRecords& records, const BlockColdnessRule& coldness)
@@ -1256,11 +1378,20 @@ bool LinearScanCodeGenerator::generate(CCallHelpers& jit, CodeRecords& records, 
     if (m_hasFrame && m_setsUpFrameAtEntry)
         emitFrameSetup();
 
-    for (uint32_t order : m_emissionOrder) {
-        emitBlock(m_blocks[order]);
+    for (size_t index = 0; index < m_emissionOrder.size(); ++index) {
+        if (m_layout == Layout::RareCodeInGaps && index)
+            emitRareCodeInFrontOf(m_emissionOrder[index]);
+        if (m_hasFailed)
+            return false;
+        m_blockThatFollows = index + 1 < m_emissionOrder.size() ? m_emissionOrder[index + 1] : UINT32_MAX;
+        emitBlock(m_blocks[m_emissionOrder[index]]);
         if (m_hasFailed)
             return false;
     }
+    for (uint32_t region = 1; region < m_rareRegions.size() && !m_hasFailed; ++region)
+        emitRareRegion(region, UINT32_MAX);
+    if (m_hasFailed)
+        return false;
     emitDispatchesOfLeavingTests();
     emitEdgeStubs();
     if (m_hasFailed)

@@ -2,8 +2,9 @@
 # FORM: Selected
 # OPTIONS: heat=everything-is-hot check=validate-back-end
 # RUN: generate-code
+# REQUIRES: unsanitized-code
 # RUN(X64): generate-code
-# REQUIRES(X64): x86_64
+# REQUIRES(X64): x86_64 unsanitized-code
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Holder" fields=[{key="a" declared={type=anything}}]

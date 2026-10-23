@@ -166,6 +166,9 @@ ENV WEBKIT_OUT_DIR=/webkitbuild
 
 ARG DEBUG_CFLAGS
 # -k 0: the log of a lane that does not compile names every source that fails, not the first few.
+#
+# testaot and testFFI are run from the package, not debugged from it: in a debug lane each holds the library's debug
+# information once more, and GitHub takes no release asset of 2 GiB.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export G=$([ "${WEBKIT_RELEASE_TYPE}" = "Debug" ] && echo "${DEBUG_CFLAGS}" || echo "") && \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \
@@ -210,6 +213,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
+    "$(echo "$AR" | sed s/llvm-ar/llvm-strip/)" --strip-debug /output/bin/testaot /output/bin/testFFI && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
     cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \

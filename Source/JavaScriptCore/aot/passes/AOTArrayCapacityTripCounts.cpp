@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCallPlan.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTKnownValue.h"
@@ -50,7 +51,7 @@ std::optional<MeasuredStorage> storageMeasuredBy(const Program& program, const V
 
 static bool canMeasureAt(FunctionAnalyses& analyses, const MeasuredStorage& measured, ProgramPoint point)
 {
-    if (!analyses.dominates(measured.owner, point))
+    if (!analyses.dominates(measured.owner, point) || mayBeUnspecified(analyses, measured.owner))
         return false;
     return !measured.guard || (analyses.dominates(measured.guard, point) && analyses.isGuardAvailable(measured.guard, point));
 }
@@ -90,7 +91,7 @@ bool ArrayCapacityPlanner::followsWithoutVisibleEffect(ProgramPoint point, Value
 bool ArrayCapacityPlanner::canMeasureBehindCheck(const MeasuredStorage& measured, ProgramPoint point)
 {
     ValueID check = checkInFrontOf(m_function, measured);
-    if (!check || m_function.at(point.block).handler)
+    if (!check || m_function.at(point.block).handler || mayBeUnspecified(m_analyses, measured.owner))
         return false;
     return m_analyses.dominates(m_function.at(check).valueOperand(), point) && followsWithoutVisibleEffect(point, check);
 }

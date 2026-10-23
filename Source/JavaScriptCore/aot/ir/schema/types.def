@@ -23,7 +23,7 @@ flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber Frac
 flags TypeFlags { HasIntegers AnyObject AnyFunction HasMembersWithoutLayout }
 enum ContentsSlot { Element Key Value }
 enum ArrayStorage { Other Int32 Double Contiguous }
-flags PristineAspects { | engine Storage Names AsCreated Dense }
+flags PristineAspects { | engine Storage Names AsCreated Dense NamesKeptBelow }
 
 record Type wire customEngine customText {
     primitives: Primitives flags: TypeFlags opaque: OpaqueKind? environment: Layout? minimum: Int64 maximum: Int64

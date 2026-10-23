@@ -36,36 +36,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-BodyContents contentsOf(const Function& function)
-{
-    BodyContents contents;
-    bool hasNeverValue = false;
-    auto add = [&](ValueID id) {
-        const Value& value = function.at(id);
-        contents.opcodes.add(value.opcode);
-        hasNeverValue |= value.type == TypeTable::never && resultRuleOf(value.opcode) != ResultRule::None;
-    };
-    contents.traits.set(BodyTrait::SeveralBlocks, function.blocks.size() > 1);
-    for (size_t index = 0; index < function.blocks.size(); ++index) {
-        const Block& block = function.blocks[index];
-        for (ValueID parameter : block.parameters)
-            add(parameter);
-        for (ValueID value : block.values)
-            add(value);
-        contents.terminators.add(block.terminator.kind);
-        if (block.handler)
-            contents.traits.add(BodyTrait::Handlers);
-        if (index != entryBlock.index() && !block.parameters.isEmpty())
-            contents.traits.add(BodyTrait::BlockParameters);
-        if (block.terminator.targets.size() > 1)
-            contents.traits.add(BodyTrait::SeveralTargets);
-    }
-    contents.traits.set(BodyTrait::NeverValues, hasNeverValue);
-    contents.traits.set(BodyTrait::ParametersOfRuntimeFunction, function.enclosingRuntimeFunction && contents.opcodes.contains(Opcode::Parameter));
-    contents.traits.set(BodyTrait::UnfinishedThis, function.role == FunctionRole::AllocatedThisVersion || function.kind == FunctionKind::Initializer);
-    return contents;
-}
-
 static constexpr PassTriggers rowOf(PassID id)
 {
     switch (id) {

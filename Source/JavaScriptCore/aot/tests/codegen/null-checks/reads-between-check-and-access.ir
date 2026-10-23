@@ -2,6 +2,7 @@
 # FORM: Selected
 # OPTIONS: heat=everything-is-hot check=validate-back-end
 # RUN: generate-code NullChecksFoldedIntoAccesses
+# REQUIRES: unsanitized-code
 # CHECK: statistic NullChecksFoldedIntoAccesses 2
 
 module m0 path="main.js" displayPath="main.js"

@@ -49,19 +49,6 @@ bool isGeneratedWithoutOptimizing(const BuildContext& build, const Heat& heat, c
     return heat.isOfVeryLargeProgram() && !isHot(heat.of(program, id)) && !heat.hasWarmCode(program, id);
 }
 
-static bool conversionsMayBeLeftToCodeGenerator(const BuildContext& build)
-{
-    return build.recordedOptions().has(TestingSwitch::ConvertOperandsAtFetch);
-}
-
-bool leavesConversionsToCodeGenerator(const BuildContext& build, const Heat& heat, const Program& program, FunctionID id)
-{
-    const AOT::CompileOptions& options = build.options();
-    if (!conversionsMayBeLeftToCodeGenerator(build) || build.validates() || options.validatesBackEnd || options.validatesReferences)
-        return false;
-    return program.at(id).role != FunctionRole::StubBody && isGeneratedWithoutOptimizing(build, heat, program, id);
-}
-
 Representation integerRepresentationOf(const Type& type)
 {
     RELEASE_ASSERT(type.hasOnlyPrimitives(Primitive::Integer));

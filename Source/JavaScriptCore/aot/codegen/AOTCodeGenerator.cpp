@@ -110,12 +110,9 @@ GenerationResult CodeGenerator::run()
 
     m_values.fill(nullptr, function().values.size());
     m_resultRanges.grow(function().values.size());
-    m_convertsOperandsAtFetch = function().operandsAreConvertedAtFetch;
-    if (m_convertsOperandsAtFetch) {
-        m_newestSharedFormOf.fill(0, function().values.size());
-        m_blockOfParameter.grow(function().values.size());
-        m_valuesOutliveNoSuspension = m_inputs.frameMaps.numberOfSuspensions() || function().role == FunctionRole::CoroutineBody;
-    }
+    m_newestSharedFormOf.fill(0, function().values.size());
+    m_blockOfParameter.grow(function().values.size());
+    m_valuesOutliveNoSuspension = m_inputs.frameMaps.numberOfSuspensions() || function().role == FunctionRole::CoroutineBody;
     createBlocks();
 
     m_out.initializeConstants(m_proc, m_out.m_block);
@@ -186,8 +183,7 @@ void CodeGenerator::createPhis()
             continue;
         LBasicBlock block = blockFor(id);
         for (ValueID parameter : function().at(id).parameters) {
-            if (m_convertsOperandsAtFetch)
-                m_blockOfParameter[parameter.index()] = id;
+            m_blockOfParameter[parameter.index()] = id;
             Representation representation = representationOf(parameter);
             if (!hasRegister(representation))
                 continue;
@@ -303,8 +299,7 @@ void CodeGenerator::generate(const ValueContext& context)
 {
     setOrigin(m_out, context.id());
     OperationScope scope(*this, context);
-    if (m_convertsOperandsAtFetch)
-        convertOperandsOf(context, context.value());
+    convertOperandsOf(context, context.value());
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateOperands(context);
     else if (m_checksProofs)
@@ -335,8 +330,7 @@ void CodeGenerator::generateTerminator(BlockID blockID, const Block& block)
     setOrigin(m_out, { });
     TerminatorContext context(blockID, block, analyses());
     OperationScope scope(*this, context);
-    if (m_convertsOperandsAtFetch)
-        convertOperandsOf(context, context.terminator());
+    convertOperandsOf(context, context.terminator());
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateExit(context);
     else if (m_checksProofs && context.kind() == TerminatorKind::Unreachable)
@@ -466,7 +460,7 @@ void CodeGenerator::passArguments(Edge edge, const Target& target, std::span<con
     // What is converted for an edge lies on the edge.
     size_t numberOfSharedForms = m_sharedForms.size();
     const Block& from = function().at(edge.from);
-    bool liesBetweenBlocks = m_convertsOperandsAtFetch && from.terminator.kind != TerminatorKind::Jump;
+    bool liesBetweenBlocks = from.terminator.kind != TerminatorKind::Jump;
     std::optional<ConversionEmitter::PlaceOnEdge> outerPlace;
     if (liesBetweenBlocks) {
         const Block& to = function().at(target.block);
@@ -492,9 +486,7 @@ void CodeGenerator::passHandlerArguments(const Target& handler)
     // A landing pad is entered from every block that hands the handler these arguments: of what was made in the block that is being generated nothing is known to be there.
     size_t numberOfSharedForms = m_sharedForms.size();
     size_t firstSharedFormInReach = std::exchange(m_firstSharedFormInReach, numberOfSharedForms);
-    std::optional<ConversionEmitter::PlaceOnEdge> outerPlace;
-    if (m_convertsOperandsAtFetch)
-        outerPlace = emitter<ConversionEmitter>().setPlaceOnEdge(ConversionEmitter::PlaceOnEdge { BlockFrequency::Rare, CodeShape::Compact });
+    std::optional<ConversionEmitter::PlaceOnEdge> outerPlace = emitter<ConversionEmitter>().setPlaceOnEdge(ConversionEmitter::PlaceOnEdge { BlockFrequency::Rare, CodeShape::Compact });
     auto& parameters = function().at(handler.block).parameters;
     RELEASE_ASSERT(handler.arguments.size() == parameters.size());
     for (size_t index = 0; index < parameters.size(); ++index) {
@@ -503,8 +495,7 @@ void CodeGenerator::passHandlerArguments(const Target& handler)
     }
     dropSharedFormsSince(numberOfSharedForms);
     m_firstSharedFormInReach = firstSharedFormInReach;
-    if (m_convertsOperandsAtFetch)
-        emitter<ConversionEmitter>().setPlaceOnEdge(outerPlace);
+    emitter<ConversionEmitter>().setPlaceOnEdge(outerPlace);
 }
 
 void CodeGenerator::passArgument(ValueID parameter, const IncomingOperand& incoming)
@@ -512,13 +503,13 @@ void CodeGenerator::passArgument(ValueID parameter, const IncomingOperand& incom
     Operand argument = incoming.operand;
     Representation wanted = function().at(parameter).representation;
     if (!isSameWord(argument.representation, wanted)) {
-        RELEASE_ASSERT(m_convertsOperandsAtFetch && m_operation);
+        RELEASE_ASSERT(m_operation);
         if (!incoming.result)
             argument = convert(*m_operation, incoming.source, argument, typeOf(incoming.source), wanted);
         else {
-            // An edge that would pass a value of type never is not taken.
+            // An edge that would pass a value of type never is not taken. An earlier value in the wanted form would have to stay alive for this edge alone.
             Type type = computeTypeOnEdge({ program(), function(), m_inputs.types, TypeLevel::Proven }, *incoming.result);
-            argument = type.isNever() ? emitter<ConstantEmitter>().zeroOf(wanted) : convert(*m_operation, incoming.source, argument, type, wanted);
+            argument = type.isNever() ? emitter<ConstantEmitter>().zeroOf(wanted) : convert(*m_operation, incoming.source, argument, type, wanted, EarlierValue::IsNotLookedFor);
         }
     }
     LValue phi = m_values[parameter.index()];
@@ -568,7 +559,7 @@ Operand CodeGenerator::getAsDefined(ValueID id) const
 Operand CodeGenerator::getIn(ValueID id, Representation wanted)
 {
     Operand operand = get(id);
-    if (operand.representation == wanted || !m_convertsOperandsAtFetch) [[likely]]
+    if (operand.representation == wanted) [[likely]]
         return operand;
     // The code may lie in an arm of the operation, so nobody else finds the result.
     RELEASE_ASSERT(m_operation);
@@ -605,8 +596,7 @@ void CodeGenerator::convertOperandsOf(const OperationContext& context, const Ope
 
 void CodeGenerator::takeOperandsOf(ValueID operationLeftToUser)
 {
-    if (m_convertsOperandsAtFetch)
-        convertOperandsOf(*m_operation, function().at(operationLeftToUser));
+    convertOperandsOf(*m_operation, function().at(operationLeftToUser));
 }
 
 std::optional<Operand> CodeGenerator::onlyValueOf(const Type& type, Representation representation)
@@ -657,7 +647,6 @@ ValueID CodeGenerator::onlyValueArrivingAt(ValueID parameter)
     return result.kind == EdgeResultKind::NarrowedOperand ? result.subject : ValueID();
 }
 
-// The same rule as ConversionInserter's. Nothing says that the value found is alive behind a suspension.
 ValueID CodeGenerator::findSameValueMadeBefore(ValueID source, Representation wanted)
 {
     if (m_valuesOutliveNoSuspension)
@@ -705,14 +694,16 @@ void CodeGenerator::dropSharedFormsSince(size_t mark)
     m_firstSharedFormInReach = std::min(m_firstSharedFormInReach, m_sharedForms.size());
 }
 
-// What ConversionInserter::convert() does with operations of the function, done with code alone.
-Operand CodeGenerator::convert(const OperationContext& context, ValueID source, Operand operand, const Type& type, Representation wanted)
+Operand CodeGenerator::convert(const OperationContext& context, ValueID source, Operand operand, const Type& type, Representation wanted, EarlierValue earlierValue)
 {
     if (operand.representation == wanted)
         return operand;
+    bool hasTypeOfSource = source && &type == &typeOf(source);
     auto share = [&](Operand form) {
         if (source)
             shareForm(source, form);
+        if (hasTypeOfSource && form.value)
+            publishKnownPropertiesOfConvertedValue(source, form);
         return form;
     };
     if (source) {
@@ -721,7 +712,7 @@ Operand CodeGenerator::convert(const OperationContext& context, ValueID source, 
         bool isConstant = constantsInFormOfUses.contains(function().at(source).opcode) && isLegalRepresentation(type, wanted) && !(wanted == Representation::Cell32 && type.hasCells());
         if (isConstant)
             return share(makeConstantIn(context, source, wanted));
-        if (ValueID sameValue = findSameValueMadeBefore(source, wanted))
+        if (ValueID sameValue = earlierValue == EarlierValue::MayStandIn ? findSameValueMadeBefore(source, wanted) : ValueID())
             return share(getAsDefined(sameValue));
     }
     if (std::optional<Operand> constant = onlyValueOf(type, wanted))
@@ -735,7 +726,14 @@ Operand CodeGenerator::convert(const OperationContext& context, ValueID source, 
     ValueID sourceOfStep = source;
     for (ConversionStep step : *path) {
         std::optional<Operand> shared = source ? findSharedForm(source, step.to) : std::nullopt;
+        // The back end asks the origin of a decoded reference which markers it may hold.
+        bool decodesNarrowReference = !shared && sourceOfStep && operand.representation == Representation::Cell32;
+        auto* originOfUser = m_out.origin().dfgOrigin();
+        if (decodesNarrowReference)
+            setOrigin(m_out, sourceOfStep);
         operand = shared ? *shared : share(emitter<RepresentationEmitter>().convert(context, step.opcode, sourceOfStep, operand, type, step.to));
+        if (decodesNarrowReference)
+            m_out.setOrigin(originOfUser);
         if (step.to == Representation::Cell32 && context.valueID())
             m_records.operationsWithCompressedOperand.set(context.valueID().index());
         sourceOfStep = { };

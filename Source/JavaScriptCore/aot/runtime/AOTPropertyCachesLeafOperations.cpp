@@ -116,7 +116,7 @@ static JSValue readFieldGeneric(Instance* instance, Object* object, UniquedStrin
     case ChainWalkResult::Found:
         if (walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || !isValidOffset(walk.offset))
             return { };
-        return walk.holder->getDirect(walk.offset);
+        return valueAtOffset(walk.holder, walk.offset);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -181,7 +181,7 @@ static JSValue getDataProperty(JSObject* holder, PropertyOffset offset, unsigned
 {
     if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue || !isValidOffset(offset))
         return { };
-    JSValue value = holder->getDirect(offset);
+    JSValue value = valueAtOffset(holder, offset);
     if (value)
         slot.setValue(holder, attributes, value, offset);
     return value;

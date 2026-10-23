@@ -5,8 +5,7 @@
 # STATISTIC: BarriersCoveredLater = 0
 # CHECK: PutSlot v2, v2, v0 key="x" {{*}} [ownerCannotBeMarked]
 # CHECK-NOT: ownerCannotBeMarked
-# CHECK: [[boxed]]{{*}}= Box v2
-# CHECK-NEXT: PutSlot v1, v1, [[boxed]] key="x"
+# CHECK: PutSlot v1, v1, v2 key="x"
 # CHECK-NEXT: PutSlot v2, v2, v0 key="y"
 # CHECK-NOT: ownerCannotBeMarked
 

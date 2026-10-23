@@ -59,7 +59,7 @@ struct ConcatenationOfLiterals {
 static constexpr std::array searchMethods { Builtins::ArrayPrototypeIncludes, Builtins::ArrayPrototypeIndexOf };
 static constexpr std::array concatenationMethods { Builtins::ArrayPrototypeConcat };
 
-static BuiltinID findMethodImplementedBy(const Program& program, FunctionID libraryFunction, std::span<const BuiltinID> methods)
+static BuiltinID findMethodImplementedBy(const Program& program, FunctionID libraryFunction, std::span<const NamedBuiltin> methods)
 {
     RuntimeFunctionID runtimeFunction = program.at(libraryFunction).enclosingRuntimeFunction;
     const RuntimeFunctionEntry* entry = findRuntimeFunction(program, runtimeFunction);
@@ -74,7 +74,7 @@ static BuiltinID findMethodImplementedBy(const Program& program, FunctionID libr
 }
 
 // A parameter that the call leaves out is passed as undefined.
-static std::optional<MethodCall> findCallOfLibraryFunction(const Program& program, const Function& function, const Value& call, std::span<const BuiltinID> methods)
+static std::optional<MethodCall> findCallOfLibraryFunction(const Program& program, const Function& function, const Value& call, std::span<const NamedBuiltin> methods)
 {
     BuiltinID method = findMethodImplementedBy(program, call.function(), methods);
     const Function& target = program.at(call.function());
@@ -90,7 +90,7 @@ static std::optional<MethodCall> findCallOfLibraryFunction(const Program& progra
 }
 
 // A call that ResolveBuiltins has matched with an overload or with the function of the library behind one, or has left as it is because the operands fit several overloads.
-static std::optional<MethodCall> findMethodCall(const Program& program, const Function& function, const Value& value, std::span<const BuiltinID> methods)
+static std::optional<MethodCall> findMethodCall(const Program& program, const Function& function, const Value& value, std::span<const NamedBuiltin> methods)
 {
     const BuiltinTable& builtins = program.builtins();
     std::optional<MethodCall> call;

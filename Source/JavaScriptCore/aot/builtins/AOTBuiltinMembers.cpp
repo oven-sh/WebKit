@@ -21,7 +21,7 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 struct PrimitiveClass {
-    BuiltinClassID builtinClass;
+    NamedBuiltinClass builtinClass;
     uint16_t primitives;
 };
 

@@ -326,9 +326,11 @@ static_assert(static_cast<unsigned>(BuiltinInstanceTest::SharingModeEquals) == 3
 inline constexpr ASCIILiteral builtinPristineTestWords[] = {
     "Mark"_s,
     "ClosureAsCreated"_s,
+    "InstanceStructure"_s,
 };
 static_assert(static_cast<unsigned>(BuiltinPristineTest::Mark) == 0);
 static_assert(static_cast<unsigned>(BuiltinPristineTest::ClosureAsCreated) == 1);
+static_assert(static_cast<unsigned>(BuiltinPristineTest::InstanceStructure) == 2);
 
 inline constexpr ASCIILiteral builtinPrototypeLinkWords[] = {
     "Unknown"_s,
@@ -942,11 +944,13 @@ inline constexpr ASCIILiteral pristineAspectsWords[] = {
     "Names"_s,
     "AsCreated"_s,
     "Dense"_s,
+    "NamesKeptBelow"_s,
 };
 static_assert(static_cast<unsigned>(PristineAspects::Storage) == 1u << 0);
 static_assert(static_cast<unsigned>(PristineAspects::Names) == 1u << 1);
 static_assert(static_cast<unsigned>(PristineAspects::AsCreated) == 1u << 2);
 static_assert(static_cast<unsigned>(PristineAspects::Dense) == 1u << 3);
+static_assert(static_cast<unsigned>(PristineAspects::NamesKeptBelow) == 1u << 4);
 
 } } // namespace JSC::AOT
 

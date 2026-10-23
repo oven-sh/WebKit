@@ -75,7 +75,8 @@ ALWAYS_INLINE const uint8_t* extensionStorageOrNull(const JSCell* cell, SlotData
         return *reinterpret_cast<const uint8_t* const*>(slot);
     ASSERT(extensionSlot.representation() == SlotRepresentation::Cell32);
     uint32_t word = *reinterpret_cast<const uint32_t*>(slot);
-    return word ? reinterpret_cast<const uint8_t*>(decodeCell32(cell, word)) + offsetOfEmptyExtensionInCage : nullptr;
+    // The word names the address that lies offsetOfEmptyExtensionInCage in front of the extension, so it may be less than that of any cell.
+    return word ? reinterpret_cast<const uint8_t*>(MarkedBlockCage::decode(cageBaseOf(cell), word)) + offsetOfEmptyExtensionInCage : nullptr;
 }
 
 template<typename Functor>

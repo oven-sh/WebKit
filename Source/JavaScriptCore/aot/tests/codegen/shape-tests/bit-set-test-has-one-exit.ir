@@ -2,6 +2,7 @@
 # FORM: Selected
 # OPTIONS: check=validate-back-end
 # RUN: generate-code
+# REQUIRES: unsanitized-code
 # CHECK: f2: size=
 # CHECK: f3: size=
 # CHECK: f4: size=
@@ -11,7 +12,7 @@
 # SHAPES: set {L0 L69} bitset 1..70
 # SHAPES: set {L0 L35 L69} bitset 1..70
 # RUN(X64): generate-code
-# REQUIRES(X64): x86_64
+# REQUIRES(X64): x86_64 unsanitized-code
 # X64: f2: size=38 frame=none
 # X64: f3: size=48 frame=none
 # X64: f4: size=37 frame=none

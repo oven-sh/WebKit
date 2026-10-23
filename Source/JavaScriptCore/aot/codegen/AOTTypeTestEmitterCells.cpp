@@ -304,9 +304,23 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
     case PristineTest::MayPass:
         if (classID == BuiltinClasses::Array)
             return emitter<ElementAccessEmitter>().isPristineArray(cell, aspects);
+        if (aspects.contains(PristineAspects::NamesKeptBelow)) {
+            BuiltinClassID below = classBelowWithTestedStructure(m_builtins, classID);
+            RELEASE_ASSERT(below);
+            OptionSet<PristineAspects> aspectsOfEither = aspects - PristineAspects::NamesKeptBelow;
+            aspectsOfEither.add(PristineAspects::Names);
+            return logicalOr(emitter<ElementAccessEmitter>().isPristineInstance(cell, aspectsOfEither), isPristine(cell, below, aspectsOfEither));
+        }
         return emitter<ElementAccessEmitter>().isPristineInstance(cell, aspects);
     case PristineTest::ClosureAsCreated:
         return emitter<GuardEmitter>().isClosureAsCreated(cell);
+    case PristineTest::InstanceStructure: {
+        if (aspects.contains(PristineAspects::Storage))
+            return boolean(false);
+        std::optional<Receiver> receiver = receiverWithTestedStructure(classID);
+        RELEASE_ASSERT(receiver);
+        return equal(loadStructureID(cell), loadImmutable32(Instance::offsetOfReceiverStructureID(*receiver)));
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

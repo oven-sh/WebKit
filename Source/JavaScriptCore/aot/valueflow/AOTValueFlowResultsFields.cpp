@@ -6033,42 +6033,43 @@ static void keepFieldsOnlyCalledWhoseReadsHaveStamps(const ValueFlowResultInputs
     std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
     std::span<const ValueFlowBodyRange> ranges = inputs.bodies().ranges();
     // The reads that no pass will find by a stamp are listed on all threads.
-    Vector<Read> readsWithoutStamp = collectInParallel<Read>(loops, program.functions.size(), [&](unsigned body, Vector<Read>& found) {
-        if (!inputs.isReached(FunctionID(body)))
-            return;
-        std::optional<BorrowedValueSetMaker> maker;
-        std::span<const FlowAccessStamp> stamps = application.bodies[body].accesses.span();
-        // The generic version of the function repeats a read behind a check by name, and that read has no stamp: see GenericVersionBuilder::eraseProofsInCopy().
-        std::optional<BitVector> valuesBehindChecks;
-        auto isRepeatedWithoutStamp = [&](ValueID read) {
-            if (!valuesBehindChecks) {
-                const Function& function = program.functions[body];
-                BitVector checksThatTestNothing(function.values.size());
-                for (const FlowClaimUpdate& claim : application.bodies[body].claims) {
-                    if (claim.isRedundant || claim.arriving)
-                        checksThatTestNothing.quickSet(claim.claim.index());
+    Vector<Read> readsWithoutStamp;
+    {
+        ValueSetMakers makers(inputs);
+        readsWithoutStamp = collectWithMakers<Read>(inputs, makers, program.functions.size(), [&](unsigned body, ValueSetMaker& maker, Vector<Read>& found) {
+            if (!inputs.isReached(FunctionID(body)))
+                return;
+            std::span<const FlowAccessStamp> stamps = application.bodies[body].accesses.span();
+            // The generic version of the function repeats a read behind a check by name, and that read has no stamp: see GenericVersionBuilder::eraseProofsInCopy().
+            std::optional<BitVector> valuesBehindChecks;
+            auto isRepeatedWithoutStamp = [&](ValueID read) {
+                if (!valuesBehindChecks) {
+                    const Function& function = program.functions[body];
+                    BitVector checksThatTestNothing(function.values.size());
+                    for (const FlowClaimUpdate& claim : application.bodies[body].claims) {
+                        if (claim.isRedundant || claim.arriving)
+                            checksThatTestNothing.quickSet(claim.claim.index());
+                    }
+                    bool hasCheckThatStays = false;
+                    for (uint32_t index = 0; index < function.values.size() && !hasCheckThatStays; ++index)
+                        hasCheckThatStays = function.values[index].opcode == Opcode::Check && !checksThatTestNothing.quickGet(index);
+                    valuesBehindChecks = hasCheckThatStays ? findValuesBehindChecks(program, function, CFG(function), &checksThatTestNothing) : BitVector();
                 }
-                bool hasCheckThatStays = false;
-                for (uint32_t index = 0; index < function.values.size() && !hasCheckThatStays; ++index)
-                    hasCheckThatStays = function.values[index].opcode == Opcode::Check && !checksThatTestNothing.quickGet(index);
-                valuesBehindChecks = hasCheckThatStays ? findValuesBehindChecks(program, function, CFG(function), &checksThatTestNothing) : BitVector();
+                return valuesBehindChecks->get(read.index());
+            };
+            for (uint32_t index = ranges[body].statement; index < ranges[body + 1].statement; ++index) {
+                const ValueFlowStatement& statement = statements[index];
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropGet)
+                    continue;
+                PropertyKeyID key = program.at(statement.function).at(statement.site).key();
+                if (!namesFieldOnlyCalled.quickGet(key.index()))
+                    continue;
+                if (findByValue(stamps, statement.site, &FlowAccessStamp::value) && !isRepeatedWithoutStamp(statement.site))
+                    continue;
+                found.append(Read { key.index(), heapForAllThreads.valueOf(maker, inputs.bodies().operandsOf(statement)[OperandIndex::PropGet::object]).index(), index });
             }
-            return valuesBehindChecks->get(read.index());
-        };
-        for (uint32_t index = ranges[body].statement; index < ranges[body + 1].statement; ++index) {
-            const ValueFlowStatement& statement = statements[index];
-            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropGet)
-                continue;
-            PropertyKeyID key = program.at(statement.function).at(statement.site).key();
-            if (!namesFieldOnlyCalled.quickGet(key.index()))
-                continue;
-            if (findByValue(stamps, statement.site, &FlowAccessStamp::value) && !isRepeatedWithoutStamp(statement.site))
-                continue;
-            if (!maker)
-                maker.emplace(inputs.makerPool());
-            found.append(Read { key.index(), heapForAllThreads.valueOf(maker->get(), inputs.bodies().operandsOf(statement)[OperandIndex::PropGet::object]).index(), index });
-        }
-    });
+        });
+    }
     // One set of receivers is looked at once for a name, on behalf of the first read that has it.
     parallelSort(loops, readsWithoutStamp.mutableSpan(), [](const Read& first, const Read& second) {
         return std::tuple { first.key, first.receivers, first.statement } < std::tuple { second.key, second.receivers, second.statement };

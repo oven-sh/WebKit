@@ -6,7 +6,7 @@
 #include "config.h"
 #include "AOTDirectCodeGenerator.h"
 
-#if ENABLE(AOT) && CPU(X86_64) && !OS(WINDOWS)
+#if ENABLE(AOT) && (CPU(X86_64) || CPU(ARM64)) && !OS(WINDOWS)
 
 #include "AOTCodeGenerator.h"
 #include "AOTCodeRecords.h"
@@ -4016,7 +4016,16 @@ void DirectCodeGenerator::emitIntegerBinary(B3::Value* value)
                 isWide ? jit.lshift64(left, amount, result) : jit.lshift32(left, amount, result);
                 break;
             }
-            isWide ? jit.mul64(immediate, left, result) : jit.mul32(immediate, left, result);
+            if (!isWide) {
+                jit.mul32(immediate, left, result);
+                break;
+            }
+#if CPU(X86_64)
+            jit.mul64(immediate, left, result);
+#else
+            jit.move(TrustedImm64(static_cast<int64_t>(plan.immediate)), jit.scratchRegister());
+            jit.mul64(left, jit.scratchRegister(), result);
+#endif
             break;
         case B3::BitAnd:
             isWide ? jit.and64(immediate, left, result) : jit.and32(immediate, left, result);
@@ -6229,4 +6238,4 @@ bool generateDirectCode(DirectCodeGenerator&, CCallHelpers&, CodeRecords&, const
 
 } } } // namespace JSC::AOT::Typed
 
-#endif // ENABLE(AOT) && CPU(X86_64) && !OS(WINDOWS)
+#endif // ENABLE(AOT) && (CPU(X86_64) || CPU(ARM64)) && !OS(WINDOWS)

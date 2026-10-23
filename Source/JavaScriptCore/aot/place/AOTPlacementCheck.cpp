@@ -126,6 +126,8 @@ static void checkShapeVariants(const PlacementCheckContext& context, LayoutID id
         return;
     if (range.count == 2 && (shapes.shape(range.first).keysAreNeverEnumerated || !shapes.shape(range.first + 1).keysAreNeverEnumerated))
         context.failures.fail(PlacementRule::ShapeVariantWrong, id);
+    if (context.placement.layout(id).keysAreNeverEnumerated && !shapes.shape(range.first).keysAreNeverEnumerated)
+        context.failures.fail(PlacementRule::ShapeVariantWrong, id);
     for (AllocationClassID allocationClassID : context.program.at(id).flow.allocationClasses) {
         uint32_t number = shapes.shapeOf(id, allocationClassID);
         if (number < range.first || number >= range.end()) {

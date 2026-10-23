@@ -208,11 +208,15 @@ static void checkBothLast(LoadedProgram& program, Kept kept)
 
 static void testOuterObjectKeepsInnerObject(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     checkBothLast(program, Kept::Outer);
 }
 
 static void testInnerObjectKeepsOuterObject(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     checkBothLast(program, Kept::Inner);
 }
 
@@ -231,6 +235,8 @@ static NEVER_INLINE void pointFieldElsewhere(LoadedProgram& program, Hidden& hid
 // Nothing but a reference keeps an inner object in use. Its bytes last as long as the cell, what it refers to does not: so it loses its header at the end of the marking that finds no mark for it.
 static void testInnerObjectNobodyHoldsIsNotVisitedAndLosesItsHeader(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
@@ -255,6 +261,8 @@ static NEVER_INLINE void collectWithWordOnStack(VM& vm, uintptr_t hiddenCell, pt
 // The fault: the field points elsewhere, collections pass and free what the old inner object referred to, and only then a word of the stack names it.
 static void testStaleWordOfStackNamesInnerObjectNobodyHeld(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     for (ptrdiff_t distance : { 0, 8, 24 }) {
@@ -361,6 +369,8 @@ static NEVER_INLINE size_t markCountOfBlockOf(uintptr_t hidden)
 // A block is as full as its cells say, however many objects lie in them.
 static void testInnerCellsAreNotCounted(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     vm.heap.collectNow(Sync, CollectionScope::Full);
@@ -379,6 +389,8 @@ static void testInnerCellsAreNotCounted(LoadedProgram& program)
 // A cell that was given back is handed out whole.
 static void testCellIsUsedAgain(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
@@ -403,6 +415,8 @@ static void testCellIsUsedAgain(LoadedProgram& program)
 // THE TESTS ABOVE HAVE TEETH: each part of the collector's side is left out by --aot-sabotage, and what the test above it demands is seen to fail. What is asserted here is the damage.
 static void testSabotagedStackScanNamesNoInnerObject(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
@@ -415,6 +429,8 @@ static void testSabotagedStackScanNamesNoInnerObject(LoadedProgram& program)
 
 static void testSabotagedScanOfHalvesNamesNoInnerObject(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     AOT_TEST_CHECK(MarkedBlockCage::require().has_value() && MarkedBlockCage::isRequired());
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
@@ -428,6 +444,8 @@ static void testSabotagedScanOfHalvesNamesNoInnerObject(LoadedProgram& program)
 
 static void testSabotagedVisitInPlaceLeavesOutFields(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;
@@ -465,6 +483,8 @@ static void testSabotagedMarkerLeavesOuterCellUnmarked(LoadedProgram& program)
 
 static void testSabotagedInnerObjectLetGoKeepsItsHeader(LoadedProgram& program)
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     VM& vm = program.vm();
     auto hidden = makeUniqueWithoutFastMallocCheck<Hidden>();
     Strong<JSCell> root;

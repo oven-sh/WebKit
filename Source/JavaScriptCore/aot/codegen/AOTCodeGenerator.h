@@ -263,7 +263,8 @@ private:
     IncomingOperand takeIncomingOperand(Edge, uint32_t parameterIndex, std::span<const Operand>& declaredResults) const;
 
     template<typename Operation> void convertOperandsOf(const OperationContext&, const Operation&);
-    Operand convert(const OperationContext&, ValueID source, Operand, const Type&, Representation wanted);
+    enum class EarlierValue : bool { IsNotLookedFor, MayStandIn };
+    Operand convert(const OperationContext&, ValueID source, Operand, const Type&, Representation wanted, EarlierValue = EarlierValue::MayStandIn);
     std::optional<Operand> onlyValueOf(const Type&, Representation);
     Operand makeConstantIn(const OperationContext&, ValueID constant, Representation);
     ValueID findSameValueMadeBefore(ValueID source, Representation wanted);
@@ -273,6 +274,8 @@ private:
     void dropSharedFormsSince(size_t mark);
     void forgetSharedForms() { m_firstSharedFormInReach = m_sharedForms.size(); }
     void publishKnownProperties(ValueID, LValue);
+    void publishKnownPropertiesOfConvertedValue(ValueID, Operand);
+    void publishKnownProperties(ValueID, Operand, bool isConverted);
     void publishInductionVariables();
     void checkInlineStores(const OperationContext&, const B3::AbstractHeapRepository::DecorationMark&);
     bool currentBlockIsOpen() const;
@@ -287,8 +290,6 @@ private:
     Output m_out;
     PinnedValues m_pinned;
     Vector<LValue> m_values;
-    // The function holds no conversions but those that cannot wait: an operand is converted in front of the operation that takes it, an argument on its edge.
-    bool m_convertsOperandsAtFetch { false };
     bool m_valuesOutliveNoSuspension { false };
     const OperationContext* m_operation { nullptr };
     Vector<ConvertedOperand, 4> m_convertedOperands;

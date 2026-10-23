@@ -16,6 +16,52 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static bool hasNeverResult(const Value& value)
+{
+    return value.type == TypeTable::never && resultRuleOf(value.opcode) != ResultRule::None;
+}
+
+static OptionSet<BodyTrait> traitsOf(const Block& block, BlockID id)
+{
+    OptionSet<BodyTrait> traits;
+    traits.set(BodyTrait::Handlers, !!block.handler);
+    traits.set(BodyTrait::BlockParameters, id != entryBlock && !block.parameters.isEmpty());
+    traits.set(BodyTrait::SeveralTargets, block.terminator.targets.size() > 1);
+    return traits;
+}
+
+static OptionSet<BodyTrait> traitsBesideBlocks(const Function& function, bool listsParameters, bool hasNeverValue)
+{
+    OptionSet<BodyTrait> traits;
+    traits.set(BodyTrait::SeveralBlocks, function.blocks.size() > 1);
+    traits.set(BodyTrait::NeverValues, hasNeverValue);
+    traits.set(BodyTrait::ParametersOfRuntimeFunction, function.enclosingRuntimeFunction && listsParameters);
+    traits.set(BodyTrait::UnfinishedThis, function.role == FunctionRole::AllocatedThisVersion || function.kind == FunctionKind::Initializer);
+    return traits;
+}
+
+BodyContents contentsOf(const Function& function)
+{
+    BodyContents contents;
+    bool hasNeverValue = false;
+    auto add = [&](ValueID id) {
+        const Value& value = function.at(id);
+        contents.opcodes.add(value.opcode);
+        hasNeverValue |= hasNeverResult(value);
+    };
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        const Block& block = function.blocks[index];
+        for (ValueID parameter : block.parameters)
+            add(parameter);
+        for (ValueID value : block.values)
+            add(value);
+        contents.terminators.add(block.terminator.kind);
+        contents.traits.add(traitsOf(block, BlockID(index)));
+    }
+    contents.traits.add(traitsBesideBlocks(function, contents.opcodes.contains(Opcode::Parameter), hasNeverValue));
+    return contents;
+}
+
 BodyIndex::Row::Row(const Function& function, BodyIDs ids)
     : dense { static_cast<uint32_t>(function.values.size()), RecordFacts(function) }
 {
@@ -38,18 +84,27 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
     std::span<TerminatorKind> terminatorKinds = cold.terminatorKinds.mutableSpan();
     std::span<IndexedValue> words = cold.listedValues.mutableSpan();
     TerminatorKindSet terminators;
+    bool hasNeverValue = false;
     size_t next = 0;
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
         const Block& block = function.blocks[index];
-        for (ValueID value : block.values) {
-            Opcode opcode = function.at(value).opcode;
-            hot.opcodes.add(opcode);
-            words[next++] = IndexedValue(value, opcode, BlockID(index));
+        for (ValueID parameter : block.parameters) {
+            RELEASE_ASSERT(function.at(parameter).opcode == Opcode::Parameter);
+            hasNeverValue |= hasNeverResult(function.at(parameter));
+        }
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            hot.opcodes.add(value.opcode);
+            hasNeverValue |= hasNeverResult(value);
+            words[next++] = IndexedValue(id, value.opcode, BlockID(index));
         }
         terminators.add(block.terminator.kind);
         terminatorKinds[index] = block.terminator.kind;
+        hot.traits.add(traitsOf(block, BlockID(index)));
     }
     hot.terminatorBits = static_cast<uint16_t>(std::bit_cast<uint64_t>(terminators));
+    hot.listsParameters = numberOfParameters;
+    hot.traits.add(traitsBesideBlocks(function, hot.listsParameters, hasNeverValue));
     hot.holdsExpectedTypes = function.values.containsIf([](const Value& value) {
         return !!value.expected();
     });
@@ -76,36 +131,47 @@ void BodyIndex::store(FunctionID id, Row&& row)
 namespace {
 
 struct CollectorOfNames {
-    static void add(Vector<uint32_t, 64>& list, uint32_t index)
+    CollectorOfNames()
     {
-        if (list.isEmpty() || list.last() != index)
-            list.append(index);
+        for (auto& names : lastNames)
+            names.fill(UINT32_MAX);
+    }
+
+    // A body names the same few records again and again. A name goes to its list a second time only where another name has taken its place in between: the sort has little left to take out.
+    void add(unsigned list, uint32_t index)
+    {
+        uint32_t& last = lastNames[list][index % lastNames[list].size()];
+        if (last == index)
+            return;
+        last = index;
+        lists[list].append(index);
     }
 
     void operator()(const TypeID& id)
     {
         if (id)
-            add(lists[0], id.index());
+            add(0, id.index());
     }
     void operator()(const LayoutID& id)
     {
         if (id)
-            add(lists[1], id.index());
+            add(1, id.index());
     }
     void operator()(const LayoutSetID& id)
     {
         if (id)
-            add(lists[2], id.index());
+            add(2, id.index());
     }
     void operator()(const VariableID& id)
     {
         if (id)
-            add(lists[3], id.index());
+            add(3, id.index());
     }
     template<typename Tag> void operator()(const ID<Tag>&) { }
 
     // Types, layouts, sets of layouts, variables.
     std::array<Vector<uint32_t, 64>, 4> lists;
+    std::array<std::array<uint32_t, 64>, 4> lastNames;
 };
 
 } // anonymous namespace
@@ -264,6 +330,7 @@ void BodyIndex::check(const Program& program, const ParallelLoops& loops) const
         const ColdRow& cold = m_coldRows[index];
         Row made(program.functions[index]);
         RELEASE_ASSERT(hot.isComplete == made.hot.isComplete && hot.listsAllValues == made.hot.listsAllValues && (hot.holdsExpectedTypes || !made.hot.holdsExpectedTypes) && hot.opcodes == made.hot.opcodes && hot.terminatorBits == made.hot.terminatorBits);
+        RELEASE_ASSERT(hot.listsParameters == made.hot.listsParameters && hot.traits == made.hot.traits);
         RELEASE_ASSERT(m_denseRows[index] == made.dense);
         RELEASE_ASSERT(!m_hasRecordStamps[index] || m_recordStamps[index] == computeRecordStamps(program.functions[index]));
         RELEASE_ASSERT(std::ranges::equal(cold.listedValues.span(), made.cold.listedValues.span()));

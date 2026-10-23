@@ -1,4 +1,4 @@
-# What an edge passes is converted on the edge. Four edges that take the sum of a loop boxed do not outvote the addition and the back edge if they lead to a block that is seldom entered,
+# What an edge passes is converted on the edge, by the code generator. Four edges that take the sum of a loop boxed do not outvote the addition and the back edge if they lead to a block that is seldom entered,
 # or out of the loop: the loop carries a double, and the sum is boxed on the four edges. Four edges to a block that runs as often as the rest of the loop do
 # FORM: Placed
 # RUN: pass ChooseRepresentations
@@ -28,7 +28,7 @@ function f0 name="rareEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boo
 # CHECK: b1(v5: number @Double):
 # CHECK: number @Double = Add v5, v0 form=Numbers
 # CHECK-NEXT: Jump -> next b1(v7)
-# CHECK-COUNT-4: number @JSValue = Box v5
+# CHECK-NEXT: b6(v8: anything @JSValue) frequency=Rare:
 
 function f1 name="unlikelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
   b0(v0: number, v1: boolean, v2: boolean, v3: boolean, v4: boolean):
@@ -54,7 +54,7 @@ function f1 name="unlikelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type
 # CHECK: b1(v5: number @Double):
 # CHECK: number @Double = Add v5, v0 form=Numbers
 # CHECK-NEXT: Jump -> next b1(v7)
-# CHECK-COUNT-4: number @JSValue = Box v5
+# CHECK-NEXT: b6(v8: anything @JSValue) frequency=Unlikely:
 
 function f2 name="likelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
   b0(v0: number, v1: boolean, v2: boolean, v3: boolean, v4: boolean):
@@ -78,7 +78,6 @@ function f2 name="likelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=b
 }
 # CHECK-LABEL: function f2 name="likelyEdgesTakeTheSumBoxed"
 # CHECK: b1(v5: number @JSValue):
-# CHECK-NOT: Box v5
 
 function f3 name="edgesOutOfTheLoopTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
   b0(v0: number, v1: boolean, v2: boolean, v3: boolean, v4: boolean):
@@ -102,4 +101,4 @@ function f3 name="edgesOutOfTheLoopTakeTheSumBoxed" parameters=[{type=number}, {
 # CHECK: b1(v5: number @Double):
 # CHECK: number @Double = Add v5, v0 form=Numbers
 # CHECK-NEXT: Jump -> next b1(v7)
-# CHECK-COUNT-4: number @JSValue = Box v5
+# CHECK-NEXT: b6(v8: anything @JSValue):

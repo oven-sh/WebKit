@@ -14,8 +14,8 @@ function f0 name="twoTestedNumbers" parameters=[{type=anything}, {type=anything}
     Return v4
 }
 # CHECK-LABEL: function f0 name="twoTestedNumbers"
-# CHECK-NOT: Unbox
-# CHECK: v4: boolean @Boolean = StrictEq v2, v3 form=Numbers
+# CHECK: v3: number @JSValue = AssumeType v1 castType=number
+# CHECK-NEXT: v4: boolean @Boolean = StrictEq v2, v3 form=Numbers
 
 function f1 name="branchOnBoxedNumberAndZero" parameters=[{type=anything}] results=[{type=i32}] {
   b0(v0: anything):
@@ -45,8 +45,8 @@ function f2 name="doubleStaysDouble" parameters=[{type=number}, {type=anything}]
     Return v4
 }
 # CHECK-LABEL: function f2 name="doubleStaysDouble"
-# CHECK-NOT: Unbox
-# CHECK: v4: boolean @Boolean = Eq v3, v2 form=Numbers
+# CHECK: v3: number @Double = Mul v0, v0 form=Numbers
+# CHECK-NEXT: v4: boolean @Boolean = Eq v3, v2 form=Numbers
 
 function f3 name="oneMayBeUndefined" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
   b0(v0: anything, v1: anything):
@@ -56,6 +56,5 @@ function f3 name="oneMayBeUndefined" parameters=[{type=anything}, {type=anything
     Return v4
 }
 # CHECK-LABEL: function f3 name="oneMayBeUndefined"
-# CHECK: = Unbox
-# CHECK: = StrictEq {{*}} form=Numbers
+# CHECK: = StrictEq v2, v3 form=Numbers
 # CODE-NOT: no code

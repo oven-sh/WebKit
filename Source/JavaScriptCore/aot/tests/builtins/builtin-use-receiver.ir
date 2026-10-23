@@ -174,17 +174,19 @@ function f9 name="accessorOfClassWithLockedMembers" parameters=[{type=Map flags=
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = PropGet v0 key="size"
 
-function f10 name="accessorOfClassNeverPristine" parameters=[{type=Buffer flags=[IsExpected]}] results=[{type=anything}] {
+function f10 name="accessorOfClassTestedByItsStructure" parameters=[{type=Buffer flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Buffer):
     v1 = PropGet v0 key="length"
     Return v1
 }
 # PLAN: function f10
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Buffer before v1; test IsPristine v0 builtinClass=Buffer aspects=[Names] before v1; uses v1;
 # PLAN-NEXT: function f11
-# CHECK-LABEL: function f10 name="accessorOfClassNeverPristine"
-# CHECK-NEXT: b0(v0: anything ~ Buffer):
-# CHECK-NEXT: v1: anything = PropGet v0 key="length"
-# CHECK-NEXT: Return v1
+# CHECK-LABEL: function f10 name="accessorOfClassTestedByItsStructure"
+# CHECK: v1: int[0, 4294967296] = CallBuiltin {{*}} overload=TypedArrayPrototypeLength/0
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = PropGet v0 key="length"
+# CHECK: boolean = IsPristine {{*}} builtinClass=Buffer aspects=[Names]
 
 function f11 name="strictStore" parameters=[{type=RegExp flags=[IsExpected]}, {type=number}] results=[{type=undefined}] {
   b0(v0: anything ~ RegExp, v1: number):
@@ -299,3 +301,34 @@ function f18 name="expectedTypeOutsideType" parameters=[{type=Array flags=[IsExp
 # CHECK: b1(v2: number):
 # CHECK-NEXT: v3: anything = PropGet v2 key="push"
 # CHECK-NEXT: Return v3
+
+function f19 name="accessorThatTheClassBelowKeeps" parameters=[{type=Uint8Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# PLAN: function f19
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Uint8Array before v1; test IsPristine v0 builtinClass=Uint8Array aspects=[NamesKeptBelow] before v1; uses v1;
+# CHECK-LABEL: function f19 name="accessorThatTheClassBelowKeeps"
+# CHECK: v1: int[0, 4294967296] = CallBuiltin {{*}} overload=TypedArrayPrototypeLength/0
+# CHECK: boolean = IsPristine {{*}} builtinClass=Uint8Array aspects=[NamesKeptBelow]
+
+function f20 name="methodThatTheClassBelowRedefines" parameters=[{type=Uint8Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ Uint8Array):
+    v1 = PropGet v0 key="slice"
+    Return v1
+}
+# PLAN: function f20
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Uint8Array before v1; test IsPristine v0 builtinClass=Uint8Array aspects=[Names] before v1; uses v1;
+# CHECK-LABEL: function f20 name="methodThatTheClassBelowRedefines"
+# CHECK: boolean = IsPristine {{*}} builtinClass=Uint8Array aspects=[Names]
+
+function f21 name="accessorOfClassWithNoClassBelow" parameters=[{type=Int8Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ Int8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# PLAN: function f21
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Int8Array before v1; test IsPristine v0 builtinClass=Int8Array aspects=[Names] before v1; uses v1;
+# CHECK-LABEL: function f21 name="accessorOfClassWithNoClassBelow"
+# CHECK: boolean = IsPristine {{*}} builtinClass=Int8Array aspects=[Names]

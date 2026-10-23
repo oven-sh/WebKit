@@ -457,9 +457,11 @@ static void validateClassWithInstanceStructure(JSGlobalObject* realm, Structure*
 // Without the mark every test for a pristine instance of the class fails, and nothing but the speed of the program shows it.
 static void markPristine(VM& vm, BuiltinClassID builtinClass, Structure* structure)
 {
+    const BuiltinTable& table = BuiltinTable::singleton();
+    if (table.at(builtinClass).pristineTest == BuiltinPristineTest::InstanceStructure)
+        return;
     if (structure->tryMarkPristine(vm) || !validatesRuntime(vm)) [[likely]]
         return;
-    const BuiltinTable& table = BuiltinTable::singleton();
     if (!table.mayHavePristineInstances(builtinClass))
         return;
     dataLogLn("AOT: the Structure of the instances that inherit from ", table.textOf(table.at(builtinClass).prototype), " cannot be marked as pristine");
@@ -535,10 +537,15 @@ void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue v
 
 void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)
 {
+    Instance* instanceOfRealm = Instance::of(realm);
+    if (!instanceOfRealm)
+        return;
+    BuiltinClassID builtinClass = findClassWithInstanceStructure(realm, structure);
+    if (builtinClass)
+        instanceOfRealm->didCreateInstanceStructure(builtinClass, structure);
     Instance* instance = findInstanceThatLocks(realm);
     if (!instance)
         return;
-    BuiltinClassID builtinClass = findClassWithInstanceStructure(realm, structure);
     if (validatesRuntime(realm->vm())) [[unlikely]]
         validateClassWithInstanceStructure(realm, structure, builtinClass);
     if (!builtinClass)

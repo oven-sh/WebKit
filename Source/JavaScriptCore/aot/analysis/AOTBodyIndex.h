@@ -20,6 +20,7 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -97,6 +98,30 @@ void forEachNameOf(const Value& value, const Functor& functor)
             functor(NameKind::Variable, variable.index());
     }
 }
+
+enum class BodyTrait : uint8_t {
+    SeveralBlocks = 1 << 0,
+    Handlers = 1 << 1,
+    // Of a block other than the entry block.
+    BlockParameters = 1 << 2,
+    // A terminator with more than one target.
+    SeveralTargets = 1 << 3,
+    // A value with a result whose type is never.
+    NeverValues = 1 << 4,
+    ParametersOfRuntimeFunction = 1 << 5,
+    UnfinishedThis = 1 << 6,
+};
+
+// What a pass can tell from that it has nothing to do in a body. The values count that a block lists, among its parameters or its values, and all blocks, reachable or not.
+struct BodyContents {
+    friend bool operator==(const BodyContents&, const BodyContents&) = default;
+
+    OpcodeSet opcodes;
+    TerminatorKindSet terminators;
+    OptionSet<BodyTrait> traits;
+};
+
+BodyContents contentsOf(const Function&);
 
 // What a step that looks through the whole program asks of a body before it opens it.
 struct RowOfBody {
@@ -185,6 +210,9 @@ public:
         bool isComplete { false };
         bool listsAllValues { false };
         bool holdsExpectedTypes { false };
+        // Some block has a parameter. The opcodes above are those of the other listed values.
+        bool listsParameters { false };
+        OptionSet<BodyTrait> traits;
     };
     static_assert(sizeof(TerminatorKindSet) == sizeof(uint64_t) && numberOfEnumerators<TerminatorKind> <= 16);
     static_assert(sizeof(HotRow) <= 64);
@@ -251,6 +279,18 @@ public:
             return nullptr;
         const HotRow& row = m_hotRows[id.index()];
         return row.isComplete ? &row : nullptr;
+    }
+
+    // contentsOf() of the function without a look at it. Nothing unless its row is there: none is made for this.
+    std::optional<BodyContents> contentsOf(FunctionID id)
+    {
+        if (!isKnown(id) || !m_hotRows[id.index()].isComplete)
+            return std::nullopt;
+        const HotRow& row = m_hotRows[id.index()];
+        BodyContents contents { row.opcodes, row.terminators(), row.traits };
+        if (row.listsParameters)
+            contents.opcodes.add(Opcode::Parameter);
+        return contents;
     }
 
     // Of a function for which hotRowOf() has answered.

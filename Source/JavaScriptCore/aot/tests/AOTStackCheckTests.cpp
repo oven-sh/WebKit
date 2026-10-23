@@ -266,6 +266,8 @@ static void testLargeFrameKeepsArguments()
 
 static void testLargeFrameIsCheckedBeforeItIsAllocated()
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     CompiledProcedure compiled = compileWithLargeFrame();
     uintptr_t limitBetweenStackPointerAndFrameEnd = std::bit_cast<uintptr_t>(currentStackPointer()) - largeSlotSize / 2;
     PassedWords received;
@@ -282,6 +284,8 @@ static void testSmallFrameKeepsArguments()
 
 static void testSmallFrameDoesNotFit()
 {
+    if (framesAreThoseOfAddressSanitizer)
+        return;
     PassedWords received;
     AOT_TEST_CHECK(run(compileWithSmallFrame(ReadsMacroScratchRegister::No), { everyFrameFits, noFrameFits }, received) == didNotFit);
     checkReceivedNothing(received);

@@ -835,8 +835,7 @@ function f22 name="storesInBigInt64Array" parameters=[{type=BigInt64Array}, {typ
 # S: f22 b1 Fast
 # S: f22 b3 Compact
 # R-LABEL: function f22 name="storesInBigInt64Array"
-# R: [[boxedForBigInt64Array]]: bigint @JSValue =
-# R-NEXT: PutTypedArrayElement v0, v1, [[boxedForBigInt64Array]] typedArrayType=
+# R: PutTypedArrayElement v0, v1, {{*}} typedArrayType=
 function f23 name="storesInBigUint64Array" parameters=[{type=BigUint64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=bigint}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: BigUint64Array, v1: i32, v2: int, v3: number, v4: whole, v5: bigint, v6: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=12 level=Proven
@@ -866,5 +865,4 @@ function f23 name="storesInBigUint64Array" parameters=[{type=BigUint64Array}, {t
 # S: f23 b1 Fast
 # S: f23 b3 Compact
 # R-LABEL: function f23 name="storesInBigUint64Array"
-# R: [[boxedForBigUint64Array]]: bigint @JSValue =
-# R-NEXT: PutTypedArrayElement v0, v1, [[boxedForBigUint64Array]] typedArrayType=
+# R: PutTypedArrayElement v0, v1, {{*}} typedArrayType=

@@ -231,11 +231,11 @@ static bool hasUnconditionalType(CodeGenerator& generator, std::span<const LValu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool typeHoldsWhereverComputed(CodeGenerator& generator, std::span<const LValue> loweredValues, ValueID id)
+static bool typeHoldsWhereverComputed(CodeGenerator& generator, std::span<const LValue> loweredValues, ValueID id, PublishedValue published)
 {
     const Function& function = generator.function();
     ValueID converted = std::exchange(id, valueBeforeConversions(function, id));
-    if (hasUnconditionalType(generator, loweredValues, id, converted == id ? PublishedValue::Itself : PublishedValue::DerivedFromIt))
+    if (hasUnconditionalType(generator, loweredValues, id, converted == id ? published : PublishedValue::DerivedFromIt))
         return true;
 
     const Value& value = function.at(id);
@@ -310,16 +310,27 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
 
 void CodeGenerator::publishKnownProperties(ValueID id, LValue lowered)
 {
+    publishKnownProperties(id, Operand(function().at(id).representation, lowered), false);
+}
+
+void CodeGenerator::publishKnownPropertiesOfConvertedValue(ValueID id, Operand converted)
+{
+    publishKnownProperties(id, converted, true);
+}
+
+void CodeGenerator::publishKnownProperties(ValueID id, Operand operand, bool isConverted)
+{
+    LValue lowered = operand.value;
     if (lowered->isConstant())
         return;
 
     const Type& type = typeOf(id);
-    Representation representation = representationOf(id);
+    Representation representation = operand.representation;
     std::optional<B3::IntRange> range = B3::mayHaveKnownRange(lowered->opcode()) ? knownRangeOf(type, representation) : std::nullopt;
     unsigned bytes = representation == Representation::Cell ? leastCellSizeOf(program(), m_inputs.program.placement, type) : 0;
     if (!range && !bytes)
         return;
-    if (!typeHoldsWhereverComputed(*this, m_values.span(), id))
+    if (!typeHoldsWhereverComputed(*this, m_values.span(), id, isConverted ? PublishedValue::DerivedFromIt : PublishedValue::Itself))
         return;
 
     if (range)

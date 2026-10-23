@@ -11,6 +11,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -198,6 +199,8 @@ ValueSetID HeapRule::holdersWithLockedLocationUnder(const HeapKey& key) const
 // Native code puts no property under a symbol that the program makes, nor under one that the program registers and no entry of the table names. Unseen code registers the same text, and lists the symbols of what it holds.
 ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnder(const HeapKey& key)
 {
+    if (key.keyClass == HeapKeyClass::Index)
+        return m_tables.holdersOfUndeclaredPropertiesUnderIndexes();
     if (key.keyClass != HeapKeyClass::Name)
         return m_tables.holdersOfUndeclaredPropertiesUnderAnyKey();
     PropertyKeyKind kind = m_program.at(key.name).kind;
@@ -330,32 +333,6 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
 }
 
 // Most names are never stored through the unknown object, and then nobody has to look at what has escaped.
-bool HeapRule::mayStoreThroughUnknownObjectReachRealm(ValueFlowName name)
-{
-    ValueFlowNodeID values = m_context.nodes().ofHost(ValueFlowHostNode::NamesStoredThroughUnknownObject);
-    ValueFlowNodeID accessors = m_context.nodes().ofHost(ValueFlowHostNode::NamesOfAccessorsStoredThroughUnknownObject);
-    auto holdsNameOrAnyKey = [&](ValueFlowNodeID names) {
-        return m_context.holdsAnyOf(ClimbingSet(m_context.maker().unite(only(m_universe.keyConstant(PropertyKeyID(name.payload))), m_universe.unknownObjectAlone())), names);
-    };
-    switch (name.kind) {
-    case ValueFlowNameKind::Property:
-        return holdsNameOrAnyKey(values);
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-        return holdsNameOrAnyKey(accessors);
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::EveryProperty:
-        return holdsAnything(values);
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
-        return holdsAnything(accessors);
-    default:
-        return true;
-    }
-}
-
 ValueFlowNodeID HeapRule::storedThroughUnknownObjectInto(ClimbingSet objects, ValueFlowName name)
 {
     ValueFlowNodeID stored = m_context.read(unknownObjectAlone(), name);
@@ -371,14 +348,19 @@ ValueFlowNodeID HeapRule::storedThroughUnknownObjectInto(ClimbingSet objects, Va
         return stored;
     // Nothing below says anything of a set that holds no object of the realm, and most receivers are objects of the program alone.
     if (m_context.meet(objects, m_tables.objectsOfRealm()) && !doesUnseenCodeChangeRealm()) {
-        bool mayHaveReachedRealm = mayStoreThroughUnknownObjectReachRealm(name);
-        if (mayHaveReachedRealm && m_context.holdsAnyOf(m_context.restrict(objects, m_tables.objectsOfRealm()), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed)))
+        if (m_context.holdsAnyOf(m_context.restrict(objects, m_tables.objectsOfRealm()), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed)))
             return stored;
-        if (mayHaveReachedRealm && namesProperty) {
+        if (namesProperty) {
             HeapKey key { HeapKeyClass::Name, PropertyKeyID(name.payload) };
             ValueSetID takingNoNewNames = m_context.maker().unite(holdersWithLockedLocationUnder(key), holdersWithMemberUnder(key));
             ClimbingSet takingTheName = m_context.restrict(objects, m_context.maker().intersect(m_tables.objectsOfRealm(), ValueSets::complement(takingNoNewNames)));
             if (holdsAnything(takingTheName) && hasEscaped(takingTheName))
+                return stored;
+        }
+        bool findsEveryName = name.kind == ValueFlowNameKind::EveryProperty || name.kind == ValueFlowNameKind::EveryGetter || name.kind == ValueFlowNameKind::EverySetter;
+        if (findsEveryName) {
+            ClimbingSet takingNewNames = m_context.restrict(objects, m_context.maker().intersect(m_tables.objectsOfRealm(), ValueSets::complement(m_tables.lockedObjects())));
+            if (holdsAnything(takingNewNames) && hasEscaped(takingNewNames))
                 return stored;
         }
         objects = m_context.restrict(objects, ValueSets::complement(m_tables.objectsOfRealm()));
@@ -918,7 +900,7 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
         passToAccessorNobodyKnows(receiver, m_tables.whatIsNewToNativeCode());
         if (value)
             connect(*value, ValueFlowProgramNodes::escaped());
-        add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
+        add(result, m_undescribedNativeCodeIsOfEngine ? unknownValueOutOfEngine(m_context) : unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
     }
 
     // An accessor nobody knows, on an object nobody knows, may be a function that has escaped, which is entered with the unknown object as every operand.
@@ -1330,11 +1312,17 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     if (key.keyClass != HeapKeyClass::Name && m_context.meet(chain.objects, m_tables.prototypesAboveNativeElements()))
         add(result, m_universe.anyPrimitive());
 
+    bool undescribedNativeCodeIsOfEngine = !chain.holdsUntrackedObject && !m_context.contains(getters, m_tables.undescribedNativeCode());
+    m_context.forEachMember(m_context.restrict(chain.objects, holdersOfUndeclaredPropertiesUnder(key)), [&](ValueFlowObjectID holder) {
+        BuiltinID builtin = m_universe.builtinOf(holder);
+        undescribedNativeCodeIsOfEngine &= builtin && m_builtins.at(builtin).origin == BuiltinOrigin::Engine;
+    });
     getters = m_context.unite(getters, ClimbingSet(m_context.maker().of(builtinGetters.span())));
 
     HeapReceiver thisValue = receiver;
     if (!receiver.operand && mayBeAccessorNobodyKnows(getters))
         thisValue.belowAccessorNobodyKnows = receiversBelowAccessorNobodyKnows(chain.start, key, HeapPropertyPart::Getter);
+    SetForScope ofEngine(m_undescribedNativeCodeIsOfEngine, undescribedNativeCodeIsOfEngine);
     callAccessors(getters, ValueFlowCallKind::Get, thisValue, nullptr, result);
 }
 

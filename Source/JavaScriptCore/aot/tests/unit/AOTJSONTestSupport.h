@@ -11,6 +11,7 @@
 #include "AOTInstance.h"
 #include "AOTJSONRuntime.h"
 #include "AOTNativeTest.h"
+#include "AOTOperationCallScope.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTStringBuilderStorage.h"
 #include "DeferGCInlines.h"
@@ -112,23 +113,6 @@ public:
 private:
     Vector<uint8_t> m_bytes;
     size_t m_size;
-};
-
-class OperationCallScope {
-    WTF_FORBID_HEAP_ALLOCATION;
-    WTF_MAKE_NONCOPYABLE(OperationCallScope);
-public:
-    explicit OperationCallScope(VM& vm)
-        : m_deferGC(vm)
-        , m_topCallFrame(vm.topCallFrame, vm.topCallFrame)
-        , m_topEntryFrame(vm.topEntryFrame, static_cast<EntryFrame*>(Thread::currentSingleton().stack().origin()))
-    {
-    }
-
-private:
-    DeferGC m_deferGC;
-    SetForScope<CallFrame*> m_topCallFrame;
-    SetForScope<EntryFrame*> m_topEntryFrame;
 };
 
 class DetachedInstance {

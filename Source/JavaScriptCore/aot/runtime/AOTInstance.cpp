@@ -252,6 +252,10 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     if (Structure* structure = realm->setStructureConcurrently())
         instance.receiverStructureID(Receiver::Set) = idOf(structure);
     instance.receiverStructureID(Receiver::RegExp) = idOf(realm->regExpStructure());
+    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
+        if (Structure* structure = binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr)
+            instance.didCreateInstanceStructure(binding.builtinClass, structure);
+    }
 
     RealmWords& words = instance.realm;
     words.boundFunctionStructureID = idOf(realm->boundFunctionStructure());
@@ -359,6 +363,8 @@ void Instance::didCreateInstanceStructure(BuiltinClassID builtinClass, Structure
         receiverStructureID(Receiver::Map) = idOf(structure);
     else if (builtinClass == BuiltinClasses::Set)
         receiverStructureID(Receiver::Set) = idOf(structure);
+    else if (builtinClass == BuiltinClasses::Buffer)
+        receiverStructureID(Receiver::Buffer) = idOf(structure);
 }
 
 void Instance::captureCellHeaders()

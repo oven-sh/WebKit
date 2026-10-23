@@ -412,6 +412,9 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
 #
 # -k 0: the log of a lane that does not compile names every source that fails, not the first few.
+#
+# testaot and testFFI are run from the package, not debugged from it: in a debug lane each holds the library's debug
+# information once more, and GitHub takes no release asset of 2 GiB.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     unset C_INCLUDE_PATH && \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
@@ -439,7 +442,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
     -DENABLE_REMOTE_INSPECTOR=ON \
-    -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
+    -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld $(if [ -n "$HARDENING_FLAGS" ]; then echo -pie; fi)" \
     -DCMAKE_AR=$(which llvm-ar) \
     -DCMAKE_RANLIB=$(which llvm-ranlib) \
     -DCMAKE_C_FLAGS="$CFLAGS" \
@@ -475,11 +478,13 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     if [ -n "$HARDENING_FLAGS" ]; then \
         llvm-readelf --dyn-syms $WEBKIT_OUT_DIR/bin/jsc | grep -o '__[a-z_]*_chk[a-z_]*' | sort -u > /tmp/chk && cat /tmp/chk && \
         grep -qx __stack_chk_fail /tmp/chk || { echo "error: jsc has no stack protector" >&2; exit 1; }; \
+        llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q 'Type:.*DYN' || { echo "error: jsc is not position-independent" >&2; exit 1; }; \
         grep -qv __stack_chk /tmp/chk || { echo "error: jsc calls no checked libc function, _FORTIFY_SOURCE did nothing" >&2; exit 1; }; \
     fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
+    llvm-strip --strip-debug /output/bin/testaot /output/bin/testFFI && \
     if [ -n "$TEST_PROGRAMS" ]; then \
         mkdir /output/test-bin && \
         for program in $TEST_PROGRAMS; do mv "$(find /output/bin -type f -name "$program")" /output/test-bin/ || exit 1; done && \

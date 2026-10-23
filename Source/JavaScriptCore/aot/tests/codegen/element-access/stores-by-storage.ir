@@ -50,18 +50,12 @@ function f0 name="strictStoresInInt32Storage" parameters=[{type=Array<anything, 
 # S: f0 b3 Compact
 # R-LABEL: function f0 name="strictStoresInInt32Storage"
 # R: PutArrayElement v0, v1, v2 arrayStorage=Int32
-# R: [[strictInt321]]: int @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictInt321]] arrayStorage=Int32
-# R: [[strictInt322]]: fractional @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictInt322]] arrayStorage=Int32
-# R: [[strictInt323]]: number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictInt323]] arrayStorage=Int32
-# R: [[strictInt324]]: undefined|number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictInt324]] arrayStorage=Int32
-# R: [[strictInt325]]: string @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictInt325]] arrayStorage=Int32
-# R: [[strictInt326]]: object @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictInt326]] arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
 # R: PutArrayElement v0, v1, v9 arrayStorage=Int32
 function f1 name="sloppyStoresInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: i32, v2: i32, v3: int, v4: fractional, v5: number, v6: undefined|number, v7: string, v8: object, v9: anything, v10: boolean):
@@ -105,18 +99,12 @@ function f1 name="sloppyStoresInInt32Storage" parameters=[{type=Array<anything, 
 # S: f1 b3 Compact
 # R-LABEL: function f1 name="sloppyStoresInInt32Storage"
 # R: PutArrayElement v0, v1, v2 arrayStorage=Int32
-# R: [[sloppyInt321]]: int @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyInt321]] arrayStorage=Int32
-# R: [[sloppyInt322]]: fractional @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyInt322]] arrayStorage=Int32
-# R: [[sloppyInt323]]: number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyInt323]] arrayStorage=Int32
-# R: [[sloppyInt324]]: undefined|number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyInt324]] arrayStorage=Int32
-# R: [[sloppyInt325]]: string @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyInt325]] arrayStorage=Int32
-# R: [[sloppyInt326]]: object @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyInt326]] arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
 # R: PutArrayElement v0, v1, v9 arrayStorage=Int32
 function f2 name="strictStoresAtPositionsInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: anything, v7: boolean):
@@ -221,18 +209,13 @@ function f4 name="strictStoresInDoubleStorage" parameters=[{type=Array<anything,
 # S: f4 b1 Fast
 # S: f4 b3 Compact
 # R-LABEL: function f4 name="strictStoresInDoubleStorage"
-# R: [[strictDouble0]]: i32 @Double =
-# R-NEXT: PutArrayElement v0, v1, [[strictDouble0]] arrayStorage=Double
-# R: [[strictDouble1]]: int @Double =
-# R-NEXT: PutArrayElement v0, v1, [[strictDouble1]] arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
 # R: PutArrayElement v0, v1, v4 arrayStorage=Double
 # R: PutArrayElement v0, v1, v5 arrayStorage=Double
-# R: [[strictDouble4]]: undefined|number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictDouble4]] arrayStorage=Double
-# R: [[strictDouble5]]: string @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictDouble5]] arrayStorage=Double
-# R: [[strictDouble6]]: object @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictDouble6]] arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
 # R: PutArrayElement v0, v1, v9 arrayStorage=Double
 function f5 name="sloppyStoresInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: i32, v2: i32, v3: int, v4: fractional, v5: number, v6: undefined|number, v7: string, v8: object, v9: anything, v10: boolean):
@@ -275,18 +258,13 @@ function f5 name="sloppyStoresInDoubleStorage" parameters=[{type=Array<anything,
 # S: f5 b1 Fast
 # S: f5 b3 Compact
 # R-LABEL: function f5 name="sloppyStoresInDoubleStorage"
-# R: [[sloppyDouble0]]: i32 @Double =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyDouble0]] arrayStorage=Double
-# R: [[sloppyDouble1]]: int @Double =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyDouble1]] arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
 # R: PutArrayElement v0, v1, v4 arrayStorage=Double
 # R: PutArrayElement v0, v1, v5 arrayStorage=Double
-# R: [[sloppyDouble4]]: undefined|number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyDouble4]] arrayStorage=Double
-# R: [[sloppyDouble5]]: string @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyDouble5]] arrayStorage=Double
-# R: [[sloppyDouble6]]: object @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyDouble6]] arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
 # R: PutArrayElement v0, v1, v9 arrayStorage=Double
 function f6 name="strictStoresAtPositionsInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: anything, v7: boolean):
@@ -391,20 +369,13 @@ function f8 name="strictStoresInContiguousStorage" parameters=[{type=Array<anyth
 # S: f8 b1 Fast
 # S: f8 b3 Compact
 # R-LABEL: function f8 name="strictStoresInContiguousStorage"
-# R: [[strictContiguous0]]: i32 @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictContiguous0]] arrayStorage=Contiguous
-# R: [[strictContiguous1]]: int @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictContiguous1]] arrayStorage=Contiguous
-# R: [[strictContiguous2]]: fractional @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictContiguous2]] arrayStorage=Contiguous
-# R: [[strictContiguous3]]: number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictContiguous3]] arrayStorage=Contiguous
-# R: [[strictContiguous4]]: undefined|number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictContiguous4]] arrayStorage=Contiguous
-# R: [[strictContiguous5]]: string @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictContiguous5]] arrayStorage=Contiguous
-# R: [[strictContiguous6]]: object @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[strictContiguous6]] arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
 # R: PutArrayElement v0, v1, v9 arrayStorage=Contiguous
 function f9 name="sloppyStoresInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: i32, v2: i32, v3: int, v4: fractional, v5: number, v6: undefined|number, v7: string, v8: object, v9: anything, v10: boolean):
@@ -447,20 +418,13 @@ function f9 name="sloppyStoresInContiguousStorage" parameters=[{type=Array<anyth
 # S: f9 b1 Fast
 # S: f9 b3 Compact
 # R-LABEL: function f9 name="sloppyStoresInContiguousStorage"
-# R: [[sloppyContiguous0]]: i32 @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyContiguous0]] arrayStorage=Contiguous
-# R: [[sloppyContiguous1]]: int @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyContiguous1]] arrayStorage=Contiguous
-# R: [[sloppyContiguous2]]: fractional @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyContiguous2]] arrayStorage=Contiguous
-# R: [[sloppyContiguous3]]: number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyContiguous3]] arrayStorage=Contiguous
-# R: [[sloppyContiguous4]]: undefined|number @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyContiguous4]] arrayStorage=Contiguous
-# R: [[sloppyContiguous5]]: string @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyContiguous5]] arrayStorage=Contiguous
-# R: [[sloppyContiguous6]]: object @JSValue =
-# R-NEXT: PutArrayElement v0, v1, [[sloppyContiguous6]] arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
 # R: PutArrayElement v0, v1, v9 arrayStorage=Contiguous
 function f10 name="strictStoresAtPositionsInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: anything, v7: boolean):

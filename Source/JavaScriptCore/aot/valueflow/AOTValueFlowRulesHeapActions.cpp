@@ -49,9 +49,6 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         storeThrough(untrackedObject);
     // What is stored through the unknown object is in unknown hands. The source is handed to nobody but its own getters. What was copied onto it before is found through the objects that it was copied from.
     if (mayBeUnknownObject(targets)) {
-        noteStoreThroughUnknownObject(m_context, valueUnderUnknownKey);
-        if (keepsAccessors)
-            noteStoreThroughUnknownObject(m_context, writtenName(unknownHeapKey, HeapPropertyPart::Getter));
         connect(storeThrough(unknownObjectAlone()), ValueFlowProgramNodes::escaped());
         connect(m_context.read(known(sources), copiedFromName), ValueFlowProgramNodes::escaped());
         if (keepsAccessors) {

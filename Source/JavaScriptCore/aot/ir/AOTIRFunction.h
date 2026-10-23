@@ -105,8 +105,6 @@ struct Function : FunctionRecord {
     Blocks blocks;
     Values values;
     bool representationsAreChosen { false };
-    // The values have their forms, and the function holds no conversions but those that cannot wait: the code generator converts an operand where it fetches it.
-    bool operandsAreConvertedAtFetch { false };
     bool bodyIsReleased { false };
 
     bool has(FunctionFlags flag) const { return flags.contains(flag); }

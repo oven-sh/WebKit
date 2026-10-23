@@ -395,7 +395,7 @@ BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* 
     });
     const ClassInfo* info = structure->classInfoForCells();
     for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        if (binding.instanceClassInfo && info->isSubClassOf(binding.instanceClassInfo) && binding.findInstanceStructure && binding.findInstanceStructure(realm) == structure)
+        if ((!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo)) && binding.findInstanceStructure && binding.findInstanceStructure(realm) == structure)
             found = binding.builtinClass;
     }
     return found;
@@ -652,8 +652,12 @@ std::expected<JSCell*, BuiltinLookupFailure> findInRealm(JSGlobalObject* realm, 
     if (table.at(id).scope == BuiltinScope::Module)
         return makeUnexpected(BuiltinLookupFailure::IsPerModule);
     PropertyKind kind = propertyKindOf(key.kind());
-    if (kind == PropertyKind::Data && id == Builtins::GlobalThis)
-        return static_cast<JSCell*>(realm->globalThis());
+    if (kind == PropertyKind::Data && id == Builtins::GlobalThis) {
+        // A realm gets its globalThis behind its built-ins.
+        if (JSObject* globalThis = realm->globalThis())
+            return static_cast<JSCell*>(globalThis);
+        return makeUnexpected(BuiltinLookupFailure::IsMissing);
+    }
     Lookup found = kind == PropertyKind::Data ? findMemberValue(realm, id) : findDeclaredProperty(realm, id, kind);
     if (!found)
         return makeUnexpected(found.error());

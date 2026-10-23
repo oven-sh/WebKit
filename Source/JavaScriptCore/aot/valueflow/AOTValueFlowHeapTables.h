@@ -118,8 +118,9 @@ public:
     // NaN and Infinity read as numbers, so a lookup under an index finds a member of that name.
     ValueSetID holdersWithMembersUnderNumericNames() const { return m_holdersWithMembersUnderNumericNames; }
     bool hasNumericName(BuiltinID member) const { return m_hasNumericName.quickGet(member.index()); }
-    // Under an index, and under a key nobody knows.
+    // Under a key nobody knows. A name that native code defines on the new instances of a class is no index.
     ValueSetID holdersOfUndeclaredPropertiesUnderAnyKey() const { return m_holdersOfUndeclaredPropertiesUnderAnyKey; }
+    ValueSetID holdersOfUndeclaredPropertiesUnderIndexes() const { return m_holdersOfUndeclaredPropertiesUnderIndexes; }
     // The built-in objects that are locked as a whole; those that take no index; those whose prototype link is fixed.
     ValueSetID lockedObjects() const { return m_lockedObjects; }
     ValueSetID holdersWithLockedIndexes() const { return m_holdersWithLockedIndexes; }
@@ -212,6 +213,7 @@ private:
     ValueSetID m_holdersWithMembersUnderNumericNames;
     ValueSetID m_holdersOfMembersThatHostMakes;
     ValueSetID m_holdersOfUndeclaredPropertiesUnderAnyKey;
+    ValueSetID m_holdersOfUndeclaredPropertiesUnderIndexes;
     ValueSetID m_lockedObjects;
     ValueSetID m_holdersWithLockedIndexes;
     ValueSetID m_holdersWithLockedPrototypeLink;
