@@ -1989,7 +1989,7 @@ std::pair<const B3::Value*, uint8_t> DirectCodeGenerator::scaledOperandOf(const 
     if ((state.form != ValueForm::Plain && state.form != ValueForm::Dead) || state.stretch != m_user.stretch)
         return { nullptr, 0 };
     int64_t constant;
-    if (candidate->opcode() == B3::Shl && constantOf(candidate->child(1), constant) && constant >= 1 && constant <= 3 && !isConstant(candidate->child(0)))
+    if (candidate->opcode() == B3::Shl && candidate->type() == B3::Int64 && constantOf(candidate->child(1), constant) && constant >= 1 && constant <= 3 && !isConstant(candidate->child(0)))
         return { resolve(candidate->child(0)), static_cast<uint8_t>(constant) };
     if (candidate->opcode() == B3::Mul && candidate->type() == B3::Int64) {
         for (unsigned index = 0; index < 2; ++index) {
@@ -2024,7 +2024,7 @@ AddressPlan DirectCodeGenerator::planAddress(const B3::Value* pointer, int64_t o
             plan.base = pointer;
             break;
         }
-        if ((state.form == ValueForm::Plain || state.form == ValueForm::Dead) && pointer->opcode() == B3::Add) {
+        if ((state.form == ValueForm::Plain || state.form == ValueForm::Dead) && pointer->opcode() == B3::Add && pointer->type() == B3::Int64) {
             const B3::Value* left = resolve(pointer->child(0));
             const B3::Value* right = resolve(pointer->child(1));
             int64_t constant;

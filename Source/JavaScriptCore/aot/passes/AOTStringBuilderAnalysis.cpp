@@ -12,6 +12,7 @@
 #include "AOTDecidedBranches.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLiveness.h"
 #include "AOTPass.h"
@@ -129,6 +130,7 @@ private:
     void addRead(uint32_t web, const StringStateRead&);
     void collectEntries();
     void collectEntriesOnEdge(Edge);
+    bool wouldReadUnspecifiedFirstState(const StringWeb&) const;
     void sortRecords(StringWeb&) const;
     void reportLimitHits();
     void appendCutValues();
@@ -852,6 +854,10 @@ void StringBuilderAnalyzer::collectEntries()
         if (isDecided(web))
             continue;
         sortRecords(m_webs[web]);
+        if (wouldReadUnspecifiedFirstState(m_webs[web])) {
+            m_webs[web].decidedAt = m_webs[web].members.first();
+            continue;
+        }
         if (!m_states[web].hasTooFewAppends) {
             m_webs[web].decision = StringBuilderDeclineReason::Created;
             continue;
@@ -859,6 +865,14 @@ void StringBuilderAnalyzer::collectEntries()
         m_webs[web].decision = StringBuilderDeclineReason::TooFewAppends;
         m_webs[web].decidedAt = m_webs[web].members.first();
     }
+}
+
+// The builder is begun on the edge with an append of the first state: a read in front of whatever says whether that state is there.
+bool StringBuilderAnalyzer::wouldReadUnspecifiedFirstState(const StringWeb& web) const
+{
+    return std::ranges::any_of(web.entries, [&](const StringWebEntry& entry) {
+        return entry.edge && m_function.at(entry.value).opcode != Opcode::Unspecified && mayBeUnspecified(m_context.analyses, entry.value);
+    });
 }
 
 void StringBuilderAnalyzer::collectEntriesOnEdge(Edge edge)

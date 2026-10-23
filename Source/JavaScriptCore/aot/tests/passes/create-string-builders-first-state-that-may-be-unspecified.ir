@@ -1,0 +1,90 @@
+# A handler is given a string that is Unspecified where the block that threw had not made it yet, beside an integer that says so. A builder begun on the edge out of the handler would append the string in front of every test of that integer
+# FORM: Prepared
+# RUN: pass CreateStringBuilders VerifyProgram
+# STATISTIC: StringBuildersCreated = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="firstStateMayBeUnspecified" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    v4 = Integer integer=2
+    v5 = Unspecified valueType=string
+    Jump -> next b1()
+  b1() handler=b3(v4, v5):
+    v6 = CallDirect function=f2
+    Jump -> next b2()
+  b2() handler=b3(v3, v6):
+    v7 = CallDirect function=f2
+    Return v6
+  b3(v8: int[1, 2], v9: string) role=CatchHandler:
+    v10 = CatchValue
+    v11 = AssumeType v9 castType=string
+    Jump -> next b4(v11, v2)
+  b4(v12, v13):
+    LoopHint
+    v15 = Less v13, v1
+    Branch v15 -> taken b5(), notTaken b8()
+  b5():
+    Switch v8 cases=[1] -> case b6(), otherwise b7(v12)
+  b6():
+    v16 = Add v12, v0
+    Jump -> next b7(v16)
+  b7(v17):
+    v18 = Add v13, v3
+    Jump -> next b4(v17, v18)
+  b8():
+    Switch v8 cases=[1] -> case b9(), otherwise b10()
+  b9():
+    v19 = Add v12, v0
+    Return v19
+  b10():
+    Return v0
+}
+# CHECK-LABEL: name="firstStateMayBeUnspecified"
+# CHECK-NOT: StringBuilderBegin
+
+function f1 name="firstStateIsAlwaysThere" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    v4 = Integer integer=2
+    Jump -> next b1()
+  b1() handler=b3(v4, v0):
+    v5 = CallDirect function=f2
+    Jump -> next b2()
+  b2() handler=b3(v3, v5):
+    v6 = CallDirect function=f2
+    Return v5
+  b3(v7: int[1, 2], v8: string) role=CatchHandler:
+    v9 = CatchValue
+    v10 = AssumeType v8 castType=string
+    Jump -> next b4(v10, v2)
+  b4(v11, v12):
+    LoopHint
+    v14 = Less v12, v1
+    Branch v14 -> taken b5(), notTaken b8()
+  b5():
+    Switch v7 cases=[1] -> case b6(), otherwise b7(v11)
+  b6():
+    v15 = Add v11, v0
+    Jump -> next b7(v15)
+  b7(v16):
+    v17 = Add v12, v3
+    Jump -> next b4(v16, v17)
+  b8():
+    Switch v7 cases=[1] -> case b9(), otherwise b10()
+  b9():
+    v18 = Add v11, v0
+    Return v18
+  b10():
+    Return v0
+}
+# CHECK-LABEL: name="firstStateIsAlwaysThere"
+# CHECK: StringBuilderBegin
+
+function f2 name="makesAStringOrThrows" results=[{type=string}] {
+  b0():
+    v0 = String string="made"
+    Return v0
+}
