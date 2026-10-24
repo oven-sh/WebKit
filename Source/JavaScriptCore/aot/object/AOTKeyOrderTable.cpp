@@ -16,6 +16,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "JSArray.h"
@@ -94,7 +95,7 @@ public:
 
 private:
     static constexpr size_t firstChunkSize = 512;
-    static constexpr size_t maxChunkSize = 16 * KB;
+    AOT_CLASS_THRESHOLD(size_t, maxChunkSize, 16 * KB);
 
     Vector<void*, 4> m_chunks;
     uintptr_t m_top { 0 };
@@ -603,7 +604,7 @@ const FieldData* KeyOrderTable::fieldAt(const LayoutData& layout, uint32_t slotK
     auto hasKey = [&](const FieldData& field) {
         return slotKeyFor(field.slot.offset, field.isOutOfLine()) == slotKey;
     };
-    constexpr size_t longestWalk = 16;
+    AOT_THRESHOLD(size_t, longestWalk, 16);
     auto fieldsBehind = fields.subspan(first, std::min(longestWalk, fields.size() - first));
     auto foundBehind = std::ranges::find_if(fieldsBehind, hasKey);
     size_t index = first + (foundBehind - fieldsBehind.begin());

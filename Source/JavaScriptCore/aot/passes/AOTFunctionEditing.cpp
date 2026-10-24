@@ -15,6 +15,7 @@
 #include "AOTProgramCaches.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -24,7 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 // An edit of a large function, and what is run on the function behind it, lasts long: it begins first, so that the loop does not end with it alone.
 static Vector<uint32_t> findLargestFirst(const Program& program, const ParallelLoops& loops, std::span<const FunctionID> functions)
 {
-    constexpr size_t fewestValues = 4096;
+    AOT_THRESHOLD(size_t, fewestValues, 4096);
     Vector<uint64_t> keys = collectInParallel<uint64_t>(loops, static_cast<unsigned>(functions.size()), [&](unsigned index, Vector<uint64_t>& found) {
         size_t numberOfValues = program.at(functions[index]).values.size();
         if (numberOfValues >= fewestValues)

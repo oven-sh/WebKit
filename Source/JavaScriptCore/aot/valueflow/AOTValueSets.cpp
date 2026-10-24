@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Locker.h>
@@ -1511,7 +1512,7 @@ void ValueSetMaker::makeRoomToScatter()
 
 void ValueSetMaker::sortMembersAndRemoveRepeats()
 {
-    constexpr size_t mostMembersSorted = 48;
+    AOT_THRESHOLD(size_t, mostMembersSorted, 48);
     if (m_members.size() <= mostMembersSorted) {
         AOT::sort(m_members);
         removeRepeatedElements(m_members);
@@ -1565,7 +1566,7 @@ ValueSetID ValueSetMaker::ofManyMembers(std::span<const ValueFlowObjectID> membe
 
 ValueSetID ValueSetMaker::of(std::span<const ValueFlowObjectID> members)
 {
-    constexpr size_t mostMembersSorted = 24;
+    AOT_THRESHOLD(size_t, mostMembersSorted, 24);
     if (members.size() > mostMembersSorted)
         return ofManyMembers(members);
     if (members.empty())

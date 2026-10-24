@@ -62,7 +62,7 @@ struct NamedLayoutFinder {
 static bool isLayoutOfLiteralWithoutFields(const Layout& layout, const FlowLayoutUpdate& update)
 {
     bool isOfCreatedObject = layout.flags == OptionSet<LayoutFlags> { LayoutFlags::IsOfCreatedObject };
-    return layout.kind == LayoutKind::Record && layout.fields.isEmpty() && layout.staticFields.isEmpty() && layout.supertypes.isEmpty()
+    return layout.kind == (isOfCreatedObject ? LayoutKind::Instance : LayoutKind::Record) && layout.fields.isEmpty() && layout.staticFields.isEmpty() && layout.supertypes.isEmpty()
         && !layout.base && !layout.constructor && !layout.name && !layout.computedKeyCount && (layout.flags.isEmpty() || isOfCreatedObject)
         && update.appendedFields.isEmpty() && (isOfCreatedObject || !update.flow.impossibleMutations.contains(ObjectMutation::AddProperty));
 }
@@ -73,6 +73,13 @@ static bool isLayoutOfLiteralUsedAsDictionary(const Layout& layout, const FlowLa
     return layout.kind == LayoutKind::Record && layout.flags == OptionSet<LayoutFlags> { LayoutFlags::IsWrittenUnderDictionaryType } && layout.staticFields.isEmpty() && layout.supertypes.isEmpty()
         && !layout.base && !layout.constructor && !layout.name && !layout.computedKeyCount
         && !update.flow.impossibleMutations.containsAll({ ObjectMutation::AddProperty, ObjectMutation::DeleteField });
+}
+
+// `const members = { get size() { .. } }   Object.create(members)`
+static bool isLayoutOfLiteralAboveCreatedObjects(const Layout& layout, const FlowLayoutUpdate& update)
+{
+    return update.objectsArePrototypesOfCreatedObjects && layout.kind == LayoutKind::Record && layout.flags.isEmpty() && layout.staticFields.isEmpty() && layout.supertypes.isEmpty()
+        && !layout.base && !layout.constructor && !layout.name && !layout.computedKeyCount;
 }
 
 static void listLayoutsNamedIn(const Program& program, const Function& function, const NamedLayoutFinder& finder)
@@ -205,7 +212,7 @@ BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs& inputs, Type
     if (!inputs.build.isEnabledEverywhere(FlowResultKind::NarrowedTypes) || !inputs.build.isEnabledEverywhere(FlowResultKind::ProvenLayoutSets))
         return candidates;
     for (unsigned index = 0; index < program.layouts.size(); ++index) {
-        if (isLayoutOfLiteralWithoutFields(program.layouts[index], application.layouts[index]) || isLayoutOfLiteralUsedAsDictionary(program.layouts[index], application.layouts[index]))
+        if (isLayoutOfLiteralWithoutFields(program.layouts[index], application.layouts[index]) || isLayoutOfLiteralUsedAsDictionary(program.layouts[index], application.layouts[index]) || isLayoutOfLiteralAboveCreatedObjects(program.layouts[index], application.layouts[index]))
             candidates.quickSet(index);
     }
     if (candidates.isEmpty())

@@ -11,6 +11,7 @@
 #include "AOTCFG.h"
 #include "AOTFlowStamps.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -49,7 +50,7 @@ public:
     }
 
 private:
-    static constexpr unsigned maxValuesFollowed = 4096;
+    AOT_CLASS_THRESHOLD(unsigned, maxValuesFollowed, 4096);
 
     struct DirectCall {
         FunctionID callee;

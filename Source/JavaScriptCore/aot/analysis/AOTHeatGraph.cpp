@@ -22,6 +22,7 @@
 #include "AOTLargeVectors.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
@@ -571,7 +572,7 @@ static HeatNodeID chooseCycleHeader(const HeatGraph& graph, std::span<const Heat
 
 Vector<double> estimateActivations(HeatGraph& graph)
 {
-    constexpr unsigned maxDepthOfCallCycles = 16;
+    AOT_THRESHOLD(unsigned, maxDepthOfCallCycles, 16);
     WTF::CycleForest<HeatGraph> cycles(graph, [&](std::span<const HeatNodeID> members, const Vector<HeatNodeID, 2>&, const auto& isInCycle) {
         return chooseCycleHeader(graph, members, isInCycle);
     }, maxDepthOfCallCycles);

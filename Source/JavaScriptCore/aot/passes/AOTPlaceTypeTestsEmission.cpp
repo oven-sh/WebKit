@@ -212,8 +212,8 @@ std::optional<TypeID> TestPlacer::findTypeOfOperand(const Value& test, uint32_t 
         return std::nullopt;
     if (hasToBeInteger ? passedType.hasOnlyPrimitives(Primitive::Integer) : passedType.isSubsetOf(operandType, m_context.program))
         return std::nullopt;
-    Type both = passedType.intersectWith(operandType, types);
-    if (both.isNever() || (hasToBeInteger && !both.hasOnlyPrimitives(Primitive::Integer)))
+    Type both = operandType.intersectWith(passedType, types);
+    if (both.isNever() || both == passedType || (hasToBeInteger && !both.hasOnlyPrimitives(Primitive::Integer)))
         return std::nullopt;
     return types.intern(both);
 }

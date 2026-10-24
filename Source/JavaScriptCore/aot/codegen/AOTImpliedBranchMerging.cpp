@@ -10,6 +10,7 @@
 
 #include "AOTCodeGenerator.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "B3BasicBlockInlines.h"
 #include "AOTFaultTable.h"
@@ -288,7 +289,7 @@ static bool tryMergeTestForNaN(B3::Procedure& proc, B3::BasicBlock* first)
     if (!number)
         return false;
 
-    constexpr unsigned maxTestsToLookAt = 3;
+    AOT_THRESHOLD(unsigned, maxTestsToLookAt, 3);
     B3::BasicBlock* second = first->successorBlock(1 - leavingSuccessor);
     for (unsigned count = 0; count < maxTestsToLookAt; ++count) {
         if (second == first || second->numPredecessors() != 1)
@@ -390,7 +391,7 @@ static bool tryMergeBitTests(B3::Procedure& proc, B3::BasicBlock* first)
 
 static B3::Value* findSideChosenOnEveryPathTo(B3::BasicBlock* block, B3::Value* select)
 {
-    constexpr unsigned maxNumberOfBlocksAbove = 8;
+    AOT_THRESHOLD(unsigned, maxNumberOfBlocksAbove, 8);
     for (unsigned count = 0; count < maxNumberOfBlocksAbove && block->numPredecessors() == 1; ++count) {
         B3::BasicBlock* predecessor = block->predecessor(0);
         B3::Value* terminal = predecessor->last();
@@ -621,7 +622,7 @@ private:
 
     static bool faultsForMarkers(const B3::MemoryValue* access)
     {
-        constexpr int64_t largestAccess = 16;
+        AOT_THRESHOLD(int64_t, largestAccess, 16);
         return access->traps() && access->offset() >= 0 && (static_cast<int64_t>(undefinedCell32) << cell32Shift) + access->offset() + largestAccess <= static_cast<int64_t>(FaultSite::reach);
     }
 

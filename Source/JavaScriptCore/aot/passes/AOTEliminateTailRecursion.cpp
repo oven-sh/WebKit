@@ -36,7 +36,6 @@ static bool isTailRecursion(const FunctionPassContext& context, const Block& blo
     const Value& call = context.function.at(block.terminator.callOperand());
     return call.opcode == Opcode::CallDirect
         && call.function() == context.id
-        && !call.inlineFrame
         && call.numberOfOperands() == context.function.numberOfEntryParameters();
 }
 

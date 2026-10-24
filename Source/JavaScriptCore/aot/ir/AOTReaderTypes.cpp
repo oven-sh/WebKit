@@ -10,6 +10,7 @@
 
 #include "AOTOrderedInterning.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
@@ -242,7 +243,7 @@ static void forEachGroupInParallel(const ParallelLoops& loops, std::span<const u
 
 static constexpr uint64_t pairOf(uint32_t first, uint32_t second) { return static_cast<uint64_t>(first) << 32 | second; }
 
-constexpr size_t maxLayoutsMetByNames = 128;
+AOT_THRESHOLD(size_t, maxLayoutsMetByNames, 128);
 
 // An object that has every name a type requires passes for the type, whatever brought it there: a cast, `any`, another file.
 static Vector<Vector<uint32_t>> findTypesMetByNames(const ParallelLoops& loops, const Wire::Sections& checkedSections, const TellingFields& tellingFields)

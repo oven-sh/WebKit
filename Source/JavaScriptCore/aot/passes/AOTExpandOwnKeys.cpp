@@ -11,6 +11,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -95,7 +96,7 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
     return walks;
 }
 
-static constexpr unsigned maxFieldsOfMergedLiterals = 8;
+AOT_THRESHOLD(unsigned, maxFieldsOfMergedLiterals, 8);
 
 static std::optional<Use> findOnlyUseThroughCasts(FunctionPassContext& context, ValueID value, Vector<ValueID, 2>& valuesOnTheWay)
 {

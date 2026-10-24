@@ -22,6 +22,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include "AOTVisibleStores.h"
@@ -115,7 +116,7 @@ static Vector<Vector<StoredKinds>> collectConstantDataKinds(const Program& progr
         uint32_t field;
         StoredKind kind;
     };
-    constexpr size_t maxRepeatedEntries = 16384;
+    AOT_THRESHOLD(size_t, maxRepeatedEntries, 16384);
     auto removeRepeatedEntries = [](Vector<KindInField>& found) {
         AOT::sort(found);
         removeRepeatedElements(found);
@@ -510,7 +511,7 @@ static uint32_t likelyWidthOfSlot(const Program& program, const Field& field)
 static Vector<FieldReference> findCountedFieldsThatMakeCellsSmaller(const Program& program, const FieldEvidence& evidence, const CellSizeClasses& sizeClasses, const ParallelLoops& loops)
 {
     constexpr uint32_t saved = widthOf(SlotRepresentation::OptionalDouble) - widthOf(SlotRepresentation::OptionalInt32);
-    constexpr uint32_t largestCellWithEveryField = 128;
+    AOT_THRESHOLD(uint32_t, largestCellWithEveryField, 128);
 
     Vector<BitVector> candidates(program.layouts.size());
     std::atomic<bool> hasCandidates { false };

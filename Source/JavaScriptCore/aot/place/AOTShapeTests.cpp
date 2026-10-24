@@ -13,6 +13,7 @@
 #include "AOTImageFormat.h"
 #include "AOTPlacementSteps.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -76,7 +77,7 @@ bool canEncodeShapeSet(std::span<const uint32_t> ascendingShapes)
 // The same members give the same words in every build: the multipliers are tried in one order.
 static std::optional<EncodedShapeSet> tryHashShapeSet(std::span<const uint32_t> ascendingShapes, size_t maxNumberOfWords)
 {
-    constexpr unsigned maxNumberOfTrials = 256;
+    AOT_THRESHOLD(unsigned, maxNumberOfTrials, 256);
     constexpr unsigned maxLogNumberOfSlots = 10;
     size_t numberOfMembers = ascendingShapes.size();
     uint32_t last = ascendingShapes.back();

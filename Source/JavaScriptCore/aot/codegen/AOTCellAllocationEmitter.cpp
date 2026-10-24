@@ -20,6 +20,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTStubsAllocation.h"
 #include "AOTStubsArrays.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "ArrayConventions.h"
@@ -248,8 +249,8 @@ void CellAllocationEmitter::ensureRecordIsFilled(const OperationContext& context
     m_out.appendTo(continuation);
 }
 
-static constexpr size_t maxBytesZeroedInLine = 256;
-static constexpr unsigned maxInstructionsForEachStoreOfZeroSaved = 4;
+AOT_THRESHOLD(size_t, maxBytesZeroedInLine, 256);
+AOT_THRESHOLD(unsigned, maxInstructionsForEachStoreOfZeroSaved, 4);
 
 ZeroedBy CellAllocationEmitter::whoZeroesBody(const OperationContext& context, AllocationID id, unsigned storesOfZero) const
 {

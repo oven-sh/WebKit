@@ -1,4 +1,4 @@
-# Rules on numbers and lengths are compares, patterns and formats are shared regexp literals, and a rule the builder cannot write is one call of a helper with the text of the rule
+# Rules on numbers and lengths are compares (the characters of a string are counted, on a rare path, where the number of its units does not decide), patterns and formats are shared regexp literals, and a rule the builder cannot write is one call of a helper with the text of the rule
 # FORM: Prepared optimizing
 # RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
 # RUN(POSITION): derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
@@ -42,9 +42,14 @@ expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[
 # CHECK-NEXT: = GreaterEq [[length1]], [[minimumLength1]]
 # CHECK: [[lengthAgain1]]:{{*}}= GetStringLength [[string1]]
 # CHECK-NEXT: [[maximumLength1]]: 8 = Integer integer=8
-# CHECK-NEXT: = LessEq [[lengthAgain1]], [[maximumLength1]]
+# CHECK-NEXT: [[unitsFit1]]: boolean = LessEq [[lengthAgain1]], [[maximumLength1]]
+# CHECK-NEXT: Branch [[unitsFit1]] -> taken {{*}}(), notTaken [[counted1]]()
 # CHECK: [[pattern1]]:{{*}}= SharedRegExpLiteral pattern="^a" @
 # CHECK-NEXT: = CallBuiltin [[pattern1]], [[string1]] overload=RegExpPrototypeTest/0
+# CHECK: [[counted1]]() frequency=Rare:
+# CHECK-NEXT: [[characters1]]:{{*}}= CallBuiltin -, [[string1]] overload=CompilerHelpersCountCodePoints/0
+# CHECK-NEXT: [[maximumAgain1]]: 8 = Integer integer=8
+# CHECK-NEXT: = LessEq [[characters1]], [[maximumAgain1]]
 # CHECK: [[format1]]:{{*}}= SharedRegExpLiteral pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$" @
 # CHECK-NEXT: = CallBuiltin [[format1]], [[string1]] overload=RegExpPrototypeTest/0
 # CHECK-NOT: CompilerHelpersHoldsRule

@@ -12,6 +12,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentation.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
 #include "JSString.h"
@@ -21,7 +22,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr int64_t maxFlatStringLength = 1024;
+AOT_THRESHOLD(int64_t, maxFlatStringLength, 1024);
 
 static constexpr bool trimsStart(TrimmedEnds ends)
 {

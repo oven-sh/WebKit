@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTHeaps.h"
 #include "AOTStubCatalog.h"
+#include "AOTThreshold.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -61,7 +62,7 @@ static bool mayBeAddressInFrame(const B3::Value* value, unsigned depth)
 // What a cell is never changes, so no effect speaks of the words that say it, and a function that only asks what it was given has no effects at all.
 void RuntimeCallEmitter::keepBehindBirthOfFrameCells(B3::PatchpointValue* patchpoint)
 {
-    constexpr unsigned maxDepth = 3;
+    AOT_THRESHOLD(unsigned, maxDepth, 3);
     if (patchpoint->effects.exitsSideways)
         return;
     for (const B3::Value* child : patchpoint->children()) {

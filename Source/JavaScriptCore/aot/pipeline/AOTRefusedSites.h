@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -24,7 +25,7 @@ public:
     static uint32_t stateOf(const Function& function, ValueID id)
     {
         constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
-        constexpr unsigned maxCasts = 8;
+        AOT_THRESHOLD(unsigned, maxCasts, 8);
         const Value& site = function.at(id);
         auto mix = [&](uint64_t hash, const Value& value) {
             hash = (hash ^ value.hashOfWords() ^ static_cast<uint64_t>(value.opcode) << 48) * multiplier;

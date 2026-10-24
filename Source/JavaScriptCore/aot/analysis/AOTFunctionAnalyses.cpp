@@ -14,6 +14,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTAnalysisDump.h"
 #include "AOTFlowResults.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
@@ -201,7 +202,7 @@ static uint32_t firstPositionOf(const Instruction& instruction, uint32_t index)
 
 static bool addOperands(AnalysisWordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs)
 {
-    constexpr uint32_t maxComparedOperands = 16;
+    AOT_THRESHOLD(uint32_t, maxComparedOperands, 16);
 
     uint32_t numberOfOperands = instruction.numberOfOperands();
     bool outlivesRenumbering = numberOfOperands <= maxComparedOperands;
@@ -459,7 +460,7 @@ FunctionAnalyses::FunctionAnalyses(const AnalysisContext& context, Function& fun
     if (m_changes)
         return;
     constexpr size_t entriesForEachValue = 64;
-    constexpr size_t fewestEntries = 256;
+    AOT_THRESHOLD(size_t, fewestEntries, 256);
     m_ownChanges.setMaxNumberOfEntries(fewestEntries + entriesForEachValue * function.values.size());
     m_changes = &m_ownChanges;
     m_functionWithOwnChanges = &function;
@@ -785,7 +786,7 @@ static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass)
 // These passes see the same identities whether the table is completed before they start or when they first ask.
 static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatMayCompleteIdentitiesLate {
     PassID::FoldConstants, PassID::PropagateBranchConditions, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
-    PassID::InferSwitches, PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::MergeDuplicateBlocks, PassID::CompactBlocks,
+    PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::MergeDuplicateBlocks, PassID::CompactBlocks,
 };
 
 // Any other pass may edit the function without reporting it and ask afterwards. It has to get the identities from before its edits.

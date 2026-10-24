@@ -666,7 +666,7 @@ public:
             times.didFinish(phase);
         };
 
-        m_result.m_universe.m_builtinTables = makeUnique<ValueFlowBuiltinTables>(m_program.builtins());
+        m_result.m_universe.m_builtinTables = makeUnique<ValueFlowBuiltinTables>(m_program.builtins(), m_build.limit(LimitID::MaxObjectsOfTypedResult));
         const ValueFlowBuiltinTables& tables = *m_result.m_universe.m_builtinTables;
         if (m_result.m_notedOperations.isEmpty()) {
             m_result.m_notedOperations.fill(0, m_numberOfFunctions);

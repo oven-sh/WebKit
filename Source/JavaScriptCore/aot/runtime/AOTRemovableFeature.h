@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AOTBuiltinFeatures.h"
+#include "AOTThreshold.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -63,7 +64,7 @@ struct RemovedRange {
 };
 static_assert(sizeof(RemovedRange) == 16 && alignof(RemovedRange) == 8);
 
-inline constexpr uint32_t maxRemovedRanges = 32768;
+AOT_THRESHOLD(uint32_t, maxRemovedRanges, 32768);
 
 struct RemovableEntryPointRecord {
     uint64_t guardSite;

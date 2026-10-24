@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTPointsToSolver.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -71,7 +72,7 @@ struct SlotState {
 };
 
 struct ContainerState {
-    static constexpr size_t maxSearchedSlots = 8;
+    AOT_CLASS_THRESHOLD(size_t, maxSearchedSlots, 8);
 
     SlotState* find(uint32_t slot)
     {

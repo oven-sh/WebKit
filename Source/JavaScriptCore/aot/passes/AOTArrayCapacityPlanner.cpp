@@ -14,6 +14,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -335,7 +336,7 @@ BlockChain ArrayCapacityPlanner::chainFrom(BlockID first, const NaturalLoop* loo
 BlockID ArrayCapacityPlanner::blockWhereLikelyArmsMeet(BlockID block, unsigned numberOfBranchesAround)
 {
     constexpr unsigned maxBlocksOfArm = 16;
-    constexpr unsigned maxBranchesAround = 8;
+    AOT_THRESHOLD(unsigned, maxBranchesAround, 8);
     if (m_branchesAsked.get(block.index()))
         return m_blocksWhereLikelyArmsMeet[block.index()];
     if (m_blocksWhereLikelyArmsMeet.isEmpty())

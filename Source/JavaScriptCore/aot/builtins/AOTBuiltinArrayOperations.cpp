@@ -14,6 +14,7 @@
 #include "AOTOperationScope.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTThreshold.h"
 #include "ArrayPrototypeInlines.h"
 #include "ButterflyInlines.h"
 #include "DeferTermination.h"
@@ -92,7 +93,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayGrow, size_t, (Instance* inst
 template<typename CharacterType, typename SourceCharacterType>
 static ALWAYS_INLINE CharacterType* appendCharacters(CharacterType* destination, std::span<const SourceCharacterType> characters)
 {
-    constexpr size_t maxLengthCopiedInPlace = 8;
+    AOT_THRESHOLD(size_t, maxLengthCopiedInPlace, 8);
     const SourceCharacterType* source = characters.data();
     size_t length = characters.size();
     if (length <= maxLengthCopiedInPlace) {

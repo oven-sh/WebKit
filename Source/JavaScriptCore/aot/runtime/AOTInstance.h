@@ -154,9 +154,11 @@ struct LazyStringWords {
     uint64_t capacity;
 };
 
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, DefaultFinalObject, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set };
-static constexpr unsigned numberOfInlineAllocations = 9;
-static_assert(static_cast<unsigned>(InlineAllocation::Set) + 1 == numberOfInlineAllocations);
+// Behind DefaultFinalObject: the same object with room in its cell for two more properties, for four more and so on.
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, DefaultFinalObject };
+static constexpr unsigned numberOfRoomierFinalObjects = 13;
+static constexpr unsigned numberOfInlineAllocations = 9 + numberOfRoomierFinalObjects;
+static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 + numberOfRoomierFinalObjects == numberOfInlineAllocations);
 
 struct InlineAllocationData {
     void* allocator;

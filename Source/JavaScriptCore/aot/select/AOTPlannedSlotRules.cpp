@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTGroupRewriter.h"
+#include "AOTGuardFactDetails.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
 #include "AOTSelectionContext.h"
@@ -138,22 +139,67 @@ static bool passesProofsOfCondition(SelectionContext& context, const Use& use)
     return use.kind == Use::Kind::TerminatorOperand && context.function().at(use.block).terminator.isConditionalBranch() && context.passesProofs(use.block);
 }
 
-// A proof is available behind the branch only where nothing between the test and the branch may end it. There the test finds in front of the branch what it found where it stands.
+static std::optional<Vector<GuardDependencies, 2>> dependenciesOfTest(FunctionAnalyses& analyses, const Value& test)
+{
+    Vector<GuardDependencies, 2> dependencies;
+    if (std::optional<GuardDependencies> read = dependenciesOfGuardOf(analyses, test)) {
+        // A store that fills the slot leaves the proof as it is and changes the answer.
+        read->slotState = TestedSlotState::None;
+        dependencies.append(WTF::move(*read));
+    }
+    if (!test.guardOperand())
+        return dependencies;
+
+    const GuardFacts& facts = analyses.guards().factsOf(test.guardOperand());
+    if (!facts.isKnown())
+        return std::nullopt;
+    ProofSet needed = proofsNeededFromGuard(analyses.program(), analyses.function(), test);
+    ValueID subject = analyses.identityOf(guardedOperandOf(test));
+    for (const GuardFact& fact : facts.facts) {
+        bool isNeeded = fact.subject == subject && std::ranges::any_of(allMembersOf<Proof>, [&](Proof proof) {
+            return needed.contains(proof) && provesForUser(analyses, fact, proof, test);
+        });
+        if (!isNeeded)
+            continue;
+        GuardDependencies relied(analyses.program(), Vector<MemoryLocation, 2>(fact.dependsOn));
+        relied.slotState = slotStateProvenBy(analyses.function(), fact);
+        relied.subject = exclusiveSubjectOf(analyses, fact);
+        dependencies.append(WTF::move(relied));
+    }
+    return dependencies;
+}
+
+// Each writer between the test and the branch is asked by itself: GuardAvailability leaves guards out of large functions, and placement refuses a test that stays over several places.
 static bool canRepeatInFrontOf(SelectionContext& context, ValueID test, BlockID branch)
 {
     FunctionAnalyses& analyses = context.analyses();
     const Function& function = context.function();
-    const Value& value = function.at(test);
-    ValueID guard = value.guardOperand();
-    if (guard && analyses.guards().stateAt(guard, value, pointBeforeTerminatorOf(function, branch)) != GuardState::Available)
+    std::optional<Vector<GuardDependencies, 2>> dependencies = dependenciesOfTest(analyses, function.at(test));
+    if (!dependencies)
         return false;
 
-    bool everyProofIsAvailable = true;
-    forEachEdgeResult(function, branch, [&](const EdgeResult& result, ValueID parameter) {
-        BlockID target = analyses.useLists().locationOf(parameter).block;
-        everyProofIsAvailable &= result.kind == EdgeResultKind::Guard && analyses.isGuardAvailable(parameter, ProgramPoint::atHeadOf(target));
-    });
-    return everyProofIsAvailable;
+    auto mayWrite = [&](BlockID block, uint32_t firstIndex) {
+        return std::ranges::any_of(function.at(block).values.span().subspan(firstIndex), [&](ValueID value) {
+            GuardWriter writer(analyses, value);
+            return std::ranges::any_of(*dependencies, [&](const GuardDependencies& relied) {
+                return writer.mayEnd(relied);
+            });
+        });
+    };
+    ValueLocation location = analyses.useLists().locationOf(test);
+    for (BlockID block = branch; block != location.block;) {
+        std::optional<Edge> onlyWayIn = analyses.cfg().singleIncomingEdge(block);
+        if (!onlyWayIn || onlyWayIn->isHandlerEdge() || mayWrite(block, 0))
+            return false;
+        block = onlyWayIn->from;
+        const Effects& effects = analyses.effectsOfTerminator(block).normal;
+        bool terminatorMayWrite = effects.maySuspend || std::ranges::any_of(*dependencies, [&](const GuardDependencies& relied) {
+            return effects.writes.overlaps(relied.masks);
+        });
+        if (terminatorMayWrite)
+            return false;
+    }
+    return !mayWrite(location.block, location.index + 1);
 }
 
 static void collectRepeatedTests(SelectionContext& context, Opcode opcode, Vector<RepeatedTest>& tests)

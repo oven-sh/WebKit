@@ -1,7 +1,6 @@
 # A switch over the storage kind of an array that holds no numbers loses its case for doubles, like the comparison it was inferred from
 # FORM: Prepared
 # RUN: pass SimplifyControlFlow
-# RUN(INFERRED): pass InferSwitches SimplifyControlFlow
 
 module m0 path="main.js" displayPath="main.js"
 runtimefunction id=0 function=f0
@@ -102,6 +101,3 @@ function f4 name="comparisons" role=Library enclosingRuntimeFunction=4 parameter
     v10 = Integer integer=30
     Return v10
 }
-# INFERRED-LABEL: function f4 name="comparisons"
-# INFERRED: Switch v1 cases=[3, 1] -> case b3(), case b3(), otherwise b5()
-# INFERRED-NOT: integer=10

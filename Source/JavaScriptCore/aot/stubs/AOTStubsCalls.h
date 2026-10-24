@@ -9,6 +9,7 @@
 
 #include "AOTStubHelpers.h"
 #include "AOTStubsConstruct.h"
+#include "AOTThreshold.h"
 #include <initializer_list>
 #include <optional>
 
@@ -35,7 +36,7 @@ constexpr StubKey callEngineCallee() { return StubKey(StubFamily::CallEngineCall
 constexpr StubKey returnMisfit() { return StubKey(StubFamily::ReturnMisfit); }
 
 // Bound and passed arguments together. A longer list is not copied: the call is the engine's.
-constexpr unsigned maxArgumentsOfBoundCall = 4096;
+AOT_THRESHOLD(unsigned, maxArgumentsOfBoundCall, 4096);
 
 inline constexpr StubRegister closureWordRegister = StubRegister::T11;
 #if CPU(X86_64)

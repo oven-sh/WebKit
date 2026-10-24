@@ -10,6 +10,7 @@
 
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
@@ -378,7 +379,7 @@ LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std
         uint32_t component { 0 };
     };
     // Below this a walk costs about what the steps of a plan cost.
-    static constexpr uint32_t minModulesInCycle = 64;
+    AOT_THRESHOLD(uint32_t, minModulesInCycle, 64);
 
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
     ModuleGraph graph { modulesAndEndRecord, requests };

@@ -17,6 +17,7 @@
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTStringArena.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <wtf/text/MakeString.h>
@@ -40,7 +41,7 @@ struct EntryArguments {
 bool hasAllocatingConstructEntrypoint(const Program& program, const Function& target)
 {
     // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line. The length of the source never changes.
-    constexpr uint32_t mostCharactersOfShortConstructor = 1000;
+    AOT_THRESHOLD(uint32_t, mostCharactersOfShortConstructor, 1000);
     if (target.text.end - target.text.start > mostCharactersOfShortConstructor)
         return false;
     // The constructor functions of the runtime's own modules are constructed by name.
@@ -229,7 +230,7 @@ static void appendTargetCall(IRBuilder& builder, FunctionID target, const EntryA
 // new.target is the closure here: whoever enters has seen to that.
 static void appendConstruction(IRBuilder& builder, FunctionID target, const EntryArguments& arguments, StringArena& strings)
 {
-    constexpr size_t mostValuesOfCopiedConstructor = 64;
+    AOT_THRESHOLD(size_t, mostValuesOfCopiedConstructor, 64);
     ValueID object = appendThisOfConstructorFunction(builder, target, arguments.closure);
     // Flow narrows `this` from every call that reaches the function. `function Base() {}` that is only called with the objects of others, by Base.call(this) and by super(), never sees an object of its own layout.
     TypingContext typing { builder.context().program, builder.function(), builder.types() };

@@ -27,6 +27,7 @@
 #include "AOTSiteWeight.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -126,7 +127,7 @@ bool isPlainObjectLayout(const Layout& layout)
 {
     if (layout.kind != LayoutKind::Record && layout.kind != LayoutKind::Instance)
         return false;
-    return !layout.base && !layout.isDerived() && layout.flow.baseState == BaseState::None && layout.flow.members.size() <= 1 && !layout.computedKeyCount;
+    return !layout.base && !layout.isDerived() && !layout.has(LayoutFlags::IsOfCreatedObject) && layout.flow.baseState == BaseState::None && layout.flow.members.size() <= 1 && !layout.computedKeyCount;
 }
 
 bool isPlainDataField(const Field& field)
@@ -152,7 +153,7 @@ bool canBecomeFieldOfOuterLayout(const Field& field)
 }
 
 // An outer object that gets another object after all has the room for nothing.
-constexpr size_t maxFieldsOfObjectFlattenedUntilHeld = 8;
+AOT_THRESHOLD(size_t, maxFieldsOfObjectFlattenedUntilHeld, 8);
 
 bool canBeOuterLayout(const Layout& layout)
 {

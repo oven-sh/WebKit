@@ -13,6 +13,7 @@
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringArena.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <bit>
@@ -743,7 +744,7 @@ void TypeInterningPhase::discard()
 
 TypeRemap TypeInterningPhase::merge(std::span<const unsigned> taskOrder, const FunctionRemap* functions, const StringRemap& strings, const ParallelLoops* loops)
 {
-    constexpr size_t minRecordsForThreads = 4096;
+    AOT_THRESHOLD(size_t, minRecordsForThreads, 4096);
     RELEASE_ASSERT(m_committedTable);
     close();
     unsigned initialTableSize = m_committedTable->size();

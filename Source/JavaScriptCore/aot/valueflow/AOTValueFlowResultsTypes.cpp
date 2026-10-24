@@ -24,6 +24,7 @@
 #include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTTypePropagation.h"
 #include "AOTUseLists.h"
@@ -171,10 +172,10 @@ private:
         Vector<uint32_t> positionsAsked { };
     };
 
-    static constexpr unsigned maxRounds = 6;
-    static constexpr unsigned maxDepth = 8;
-    static constexpr unsigned maxSteps = 256;
-    static constexpr unsigned maxTypingsOfLoops = 3;
+    AOT_CLASS_THRESHOLD(unsigned, maxRounds, 6);
+    AOT_CLASS_THRESHOLD(unsigned, maxDepth, 8);
+    AOT_CLASS_THRESHOLD(unsigned, maxSteps, 256);
+    AOT_CLASS_THRESHOLD(unsigned, maxTypingsOfLoops, 3);
     static constexpr unsigned positionsPerTask = 64;
 
     const ValueFlowNumbers* find(uint32_t position) const { return m_isFollowed.quickGet(position) ? &m_numbers[position] : nullptr; }
@@ -1654,7 +1655,7 @@ public:
     }
 
 private:
-    static constexpr size_t mostSteps = 16;
+    AOT_CLASS_THRESHOLD(size_t, mostSteps, 16);
 
     size_t placeOf(uint64_t question) const
     {

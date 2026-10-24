@@ -14,6 +14,7 @@
 #include "AOTFamilyTables.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -536,7 +537,7 @@ BitVector functionsCalledByHost(const Program& program, const ParallelLoops& loo
 
 Vector<uint32_t> largeFunctions(const Program& program, const ParallelLoops& loops)
 {
-    constexpr size_t fewestValues = 4096;
+    AOT_THRESHOLD(size_t, fewestValues, 4096);
     Vector<uint64_t> keys = collectInParallel<uint64_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint64_t>& found) {
         size_t numberOfValues = numberOfValuesIn(program, FunctionID(index));
         if (numberOfValues >= fewestValues)

@@ -19,7 +19,7 @@ const promiseOfIteratorResult = b
 const rejectedPromise = b.instance("Promise").holding({ value: b.never, reason: b.instance("TypeError").unaliased }).fresh;
 
 const itemCallback = (times: b.CallbackTimes, result: b.CallbackResultUse) => [
-  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, args: [item, b.length], result }),
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [item, b.length], result }),
 ];
 
 const overridableAccessor = (name: string, holds: b.TableType, capability: b.Capability) =>
@@ -119,7 +119,7 @@ const asyncResumeMethod = (parameter: string, ...sent: readonly b.UseSpec[]) =>
 
 const disposalCallback = (...args: readonly b.PlaceLike[]) => [
   b.retained,
-  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", args, result: "Ignored" }),
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args, result: "Ignored" }),
 ];
 
 export default b.declarations(
@@ -192,8 +192,8 @@ export default b.declarations(
         { reducer: b.any, initialValue: b.any.optional },
         {
           reducer: [
-            b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [b.operand("initialValue"), item, b.length], result: "Returned" }),
-            b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", args: [b.result, item, b.length], result: "Returned" }),
+            b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", this: b.undefined, args: [b.operand("initialValue"), item, b.length], result: "Returned" }),
+            b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", this: b.undefined, args: [b.result, item, b.length], result: "Returned" }),
           ],
           initialValue: b.inspected,
         },

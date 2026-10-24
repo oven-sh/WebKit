@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
 #include <array>
@@ -48,7 +49,7 @@ public:
 
     void classify(std::span<const uint32_t> positions)
     {
-        constexpr size_t minCountForThreads = 2048;
+        AOT_THRESHOLD(size_t, minCountForThreads, 2048);
         size_t count = positions.size();
         if (count < minCountForThreads) {
             for (uint32_t position : positions)

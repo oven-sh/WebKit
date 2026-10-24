@@ -20,6 +20,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -154,7 +155,7 @@ bool TestsMadeForAccesses::standsInFrontOf(const PlaceOfAccess& place, const Pas
     if (m_function.locationOf(test.origin) != place.location)
         return false;
 
-    constexpr unsigned maxBlocksInRow = 16;
+    AOT_THRESHOLD(unsigned, maxBlocksInRow, 16);
     BlockID block = test.enteredBlock;
     for (unsigned count = 0; block != place.block; ++count) {
         const Terminator& terminator = m_function.at(block).terminator;

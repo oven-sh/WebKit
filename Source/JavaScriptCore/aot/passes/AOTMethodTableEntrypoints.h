@@ -9,6 +9,7 @@
 
 #include "AOTFamilyTables.h"
 #include "AOTIR.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -25,7 +26,7 @@ struct MethodSelector {
     ArgumentForm form { ArgumentForm::Boxed };
 };
 
-inline constexpr uint32_t maxTableCallArguments = 4;
+AOT_THRESHOLD(uint32_t, maxTableCallArguments, 4);
 
 // Enters the method where `this` needs no test: the row of the table is the layout of the receiver.
 DerivedFunctionKey tableEntrypointKey(FunctionID method, MethodSelector);

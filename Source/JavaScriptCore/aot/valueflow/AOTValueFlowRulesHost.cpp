@@ -954,6 +954,18 @@ void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entr
     }
 }
 
+void handListOfChildrenToHost(ValueFlowRuleContext& context, BuiltinID entry, ValueFlowObjectID list, ValueSetID children)
+{
+    for (const BuiltinCalledFunction& called : context.program().builtins().calledFunctionsOf(entry)) {
+        const RuntimeFunctionEntry* row = findRuntimeFunction(context.program(), called.function);
+        if (!row || !row->function || context.program().at(row->function).numberOfPositionalParameters() < 2)
+            continue;
+        unsigned first = context.program().at(row->function).firstParameterIndex();
+        context.add(context.nodes().entryParameter(row->function, first), only(context, list));
+        context.add(context.nodes().entryParameter(row->function, first + 1), children);
+    }
+}
+
 // Native code looks up no member of a built-in object of the realm that no entry declares, and a lookup by name through the unknown object finds the member in the table.
 static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID holderObject, BuiltinID holder, Vector<BuiltinID, 4>& waysBetweenModuleObjectsAnswered)
 {
@@ -1051,11 +1063,20 @@ static void exposeModuleObjects(ValueFlowRuleContext& context)
     }
 }
 
+// Machine code that the program loads is no event. It starts at the global object and reads by names that the build does not see.
+static bool mayMachineCodeRun(ValueFlowRuleContext& context)
+{
+    Vector<ValueFlowObjectID, 32> loaders;
+    for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode())
+        context.universe().appendObjectsOf(loader.callee, loaders);
+    return context.holdsAnyOf(ClimbingSet(context.maker().of(loaders.span())), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
+}
+
 // Whoever holds `process` without the analysis following it finds under `mainModule` what the program finds there, the module object of an entry point.
 static void exposeModuleObjectsOfEntryPoints(ValueFlowRuleContext& context)
 {
     ClimbingSet process = only(context, context.universe().objectOf(context.program().builtins().at(Builtins::ProcessMainModule).holder));
-    if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns) && !context.holdsAnyOf(process, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(process, ValueFlowProgramNodes::lost()))
+    if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns) && !mayMachineCodeRun(context) && !context.holdsAnyOf(process, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(process, ValueFlowProgramNodes::lost()))
         return;
     for (const Entry& entryPoint : context.program().entries) {
         if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, entryPoint.module)) {

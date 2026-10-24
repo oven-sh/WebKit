@@ -154,6 +154,7 @@ bool ValidatorBuilder::validationEndsStretch(ResultNodeRef ref)
     return std::ranges::any_of(node.rules, [&](const ValidationRule& rule) {
         switch (m_rules.codeFor(rule, node.shape)) {
         case RuleCode::ByHelper:
+        case RuleCode::CountedCharacters:
         case RuleCode::RegularExpression:
             return true;
         case RuleCode::Inline:

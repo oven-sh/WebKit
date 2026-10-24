@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "JSObject.h"
 #include <optional>
 #include <wtf/OptionSet.h>
@@ -57,7 +58,7 @@ private:
         HasCheckedThen = 1,
         DeclaresThen = 2,
     };
-    static constexpr unsigned minEarlyAnswers = 4;
+    AOT_CLASS_THRESHOLD(unsigned, minEarlyAnswers, 4);
     static constexpr unsigned numberOfNameBits = 32;
 
     ClassPrototype(VM& vm, Structure* structure, uint32_t classIndex, uint32_t memberRow)

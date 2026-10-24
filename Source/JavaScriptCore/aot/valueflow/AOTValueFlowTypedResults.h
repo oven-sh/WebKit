@@ -38,10 +38,11 @@ struct ValueFlowTypedResult {
     uint32_t numberOfObjects() const { return ordinalOfPlainArray() + 1 - firstOrdinal; }
 };
 
-// A type that reaches more has no typed result: every call that may be one pays for its objects in every set.
-inline constexpr uint32_t maxObjectsOfTypedResult = 256;
+// What the record of a call lists. Where the layouts alone are more than `mostObjects`, the types with arrays are not looked for.
+ValueFlowTypedResult typedResultOf(const Program&, ExpectedResultID, uint64_t mostObjects);
 
-// Depends on the program alone, so the bodies, the rules and the results get the same answer.
+// A type that reaches more than LimitID::MaxObjectsOfTypedResult has no typed result: every call that may be one pays for its objects in every set.
+// Depends on the program and the limit alone, so the bodies, the rules and the results get the same answer.
 ValueFlowTypedResult findTypedResult(const Program&, const ValueFlowBuiltinTables&, const Function&, const UseLists&, ValueID call);
 ValueFlowTypedResult findTypedResult(const Program&, const ValueFlowBuiltinTables&, FunctionID, ValueID call);
 

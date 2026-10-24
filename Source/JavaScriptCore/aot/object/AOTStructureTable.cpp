@@ -474,7 +474,8 @@ CompiledStructure* StructureTable::createUsual(VM& vm, const LayoutData& layout,
     uint32_t& known = m_structures[layout.shape];
     known = created->id().bits();
     m_writtenStructures.record(&known);
-    if (usual.hasOtherPrototype)
+    // The first object that Object.create makes at some place is allocated before its class has a prototype object.
+    if (usual.hasOtherPrototype && !(layout.isClass() && m_state.objects->classes.awaitsPrototypeOfCreatedObjects(layout)))
         m_state.objects->classes.didChangeInstancePrototype(vm, layout, usual.prototype);
     return created;
 }

@@ -14,6 +14,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -32,14 +33,14 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-constexpr unsigned shortestWindow = 2;
+AOT_THRESHOLD(unsigned, shortestWindow, 2);
 constexpr unsigned longestWindow = 24;
-constexpr int64_t minSavings = 64;
+AOT_THRESHOLD(int64_t, minSavings, 64);
 // A site pays a call and a return each time it runs. Where it may run, that has to buy at least this many bytes,
-constexpr uint32_t minBytesSavedAtSiteThatMayRun = 3;
+AOT_THRESHOLD(uint32_t, minBytesSavedAtSiteThatMayRun, 3);
 // and its piece has to stay in the caches because many sites call it, or save this many bytes a site.
-constexpr size_t minSitesOfSmallPieceThatMayRun = 512;
-constexpr uint32_t minBytesSavedByPieceWithFewSites = 16;
+AOT_THRESHOLD(size_t, minSitesOfSmallPieceThatMayRun, 512);
+AOT_THRESHOLD(uint32_t, minBytesSavedByPieceWithFewSites, 16);
 constexpr unsigned numberOfOutlinerShards = 256;
 constexpr unsigned unitsInChunk = 1 << 16;
 constexpr unsigned unitsInBlock = 64;

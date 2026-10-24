@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCompactTable.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include "Identifier.h"
@@ -222,8 +223,8 @@ public:
 
 private:
     static constexpr size_t minTableSize = 1 << 8;
-    static constexpr size_t maxCachedKeyTableSize = 1 << 16;
-    static constexpr size_t maxKeysByPartsTableSize = 1 << 14;
+    AOT_CLASS_THRESHOLD(size_t, maxCachedKeyTableSize, 1 << 16);
+    AOT_CLASS_THRESHOLD(size_t, maxKeysByPartsTableSize, 1 << 14);
 
     static size_t firstIndex(unsigned hash, size_t tableSize) { return hash & (tableSize - 1) & ~static_cast<size_t>(1); }
     bool canEncode(const JSCell* cell) const { return std::bit_cast<uintptr_t>(cell) - m_cageBase < m_cageSize; }
@@ -280,8 +281,8 @@ private:
     size_t m_maxCachedKeyLength;
     Vector<uint64_t> m_cachedKeys;
     size_t m_cachedKeyEvictionCount { 0 };
-    static constexpr size_t minIntegerKeyTableSize = 1 << 8;
-    static constexpr size_t maxIntegerKeyTableSize = 1 << 16;
+    AOT_CLASS_THRESHOLD(size_t, minIntegerKeyTableSize, 1 << 8);
+    AOT_CLASS_THRESHOLD(size_t, maxIntegerKeyTableSize, 1 << 16);
     Vector<uint64_t> m_integerKeys;
     size_t m_integerKeyEvictionCount { 0 };
     size_t m_integerKeysEnteredSinceSweep { 0 };

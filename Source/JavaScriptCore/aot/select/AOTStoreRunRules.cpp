@@ -12,6 +12,7 @@
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -63,7 +64,7 @@ static constexpr uint64_t minSlotsPerRun = 2;
 static_assert(minSlotsPerRun >= minRunMembers, "a run has a last member, which is the root of its group");
 
 // A PutSlot has no test and no key order update: it joins a run that pays and never makes one pay.
-static constexpr size_t minAddingSlotStores = 2;
+AOT_THRESHOLD(size_t, minAddingSlotStores, 2);
 
 static constexpr OpcodeSet slotStores { Opcode::PutSlot, Opcode::PutSlotOrAdd };
 static constexpr OpcodeSet storeRunOpcodes { Opcode::PropSet, Opcode::PropDefine };

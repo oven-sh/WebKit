@@ -22,6 +22,7 @@
 #include "AOTStubBodyConvention.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsCalls.h"
+#include "AOTThreshold.h"
 #include "AOTThrowEmitter.h"
 #include "AOTVector.h"
 #include "AllowMacroScratchRegisterUsage.h"
@@ -319,7 +320,7 @@ static bool mayEnterCompiledCode(const Program&, const EffectDescription&, unsig
 // A model says what a native function does and is never entered itself.
 static bool modelMayEnterCompiledCode(const Program& program, const Function& model, unsigned depth)
 {
-    constexpr unsigned maxDepth = 4;
+    AOT_THRESHOLD(unsigned, maxDepth, 4);
     if (depth > maxDepth || model.blocks.isEmpty())
         return true;
     for (const Block& block : model.blocks) {

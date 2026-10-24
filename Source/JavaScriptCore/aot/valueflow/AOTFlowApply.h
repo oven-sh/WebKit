@@ -47,7 +47,6 @@ Vector<Vector<std::optional<Type>>> findTypesDeclaredInFamilies(const Program&, 
 Vector<BitVector> findAppendedFieldsDeclaredInFamilies(const Program&, const Vector<FlowLayoutUpdate>&, const ParallelLoops&);
 void applyVariableUpdates(const FlowApplyContext&);
 
-void createBoundFunctions(const FlowApplyContext&, ProgramEditor&);
 void applySignatureUpdates(const FlowApplyContext&);
 void removeUnreachedBodies(const FlowApplyContext&, ProgramEditor&);
 void cutCallsOfUnreachedVersions(const FlowApplyContext&);
@@ -96,7 +95,6 @@ struct FlowCastInsertion {
 uint64_t applyCheckUpdates(const FlowBodyApplication&, const FlowBodyUpdate&);
 void insertProofCasts(const FlowCastInsertion&, const FlowBodyUpdate&);
 void insertSymbolConstants(const FlowCastInsertion&, const FlowBodyUpdate&);
-void createBoundClosures(const FlowCastInsertion&, const FlowBodyUpdate&);
 void replaceDefinedValues(const FlowCastInsertion&, const FlowBodyUpdate&);
 Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion&);
 void insertRuntimeValidation(const FlowCastInsertion&);

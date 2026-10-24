@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <wtf/MathExtras.h>
 
@@ -147,7 +148,7 @@ void ImageCodeAddressing::canonicalizeLatin1(GPRReg character)
 
 bool ImageCodeAddressing::tryLoadConstant(uint64_t constant, GPRReg dest)
 {
-    constexpr unsigned minInstructionsReplacedByLoad = 3;
+    AOT_THRESHOLD(unsigned, minInstructionsReplacedByLoad, 3);
     if (!isARM64() || m_reach != PCRelativeReach::Near || ARM64LogicalImmediate::create64(constant).isValid())
         return false;
     unsigned zeroHalfwords = 0;

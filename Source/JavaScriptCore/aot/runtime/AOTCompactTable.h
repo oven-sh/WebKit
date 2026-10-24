@@ -9,6 +9,7 @@
 
 #include "AOTCompactStorage.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTThreshold.h"
 #include "HeapCellInlines.h"
 #include "JSString.h"
 #include "MarkedBlockCage.h"
@@ -63,7 +64,7 @@ public:
 
     static constexpr uint32_t initialCapacity = 4;
     static constexpr uint32_t maxCapacityWithTags = 8;
-    static constexpr uint32_t maxCapacityEmptiedByClear = 32;
+    AOT_CLASS_THRESHOLD(uint32_t, maxCapacityEmptiedByClear, 32);
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
     static constexpr uint32_t maxCapacityWithLongSlots = (1 << 20) - 2;
     static constexpr uint32_t maxCapacity = (1 << 28) - 2;
@@ -111,7 +112,7 @@ public:
     static CompactTable* tryCreate(JSGlobalObject*, Width key, Width value, uint32_t minCapacity);
     static CompactTable* tryCreateForFirstEntry(JSGlobalObject*, bool hasValues, JSValue key, JSValue value);
     // In front of an addition in a loop that the collection entered with `sizeAtEntry` entries, that has come by `finished` additions and has `remaining` ones left, this one among them.
-    static constexpr uint32_t largestStepInLoop = 8;
+    AOT_CLASS_THRESHOLD(uint32_t, largestStepInLoop, 8);
     static void reserveForAdditions(JSGlobalObject*, JSObject* owner, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry);
     static void ensureInitialTableAllocators(VM&);
     // [static_cast<unsigned>(value width) / 4 * growthPlansPerValueWidth + count / 2]: the word at offsetOfCapacity() of the larger table, and above sizeStepShiftOfGrowthPlan the size step of its allocator.

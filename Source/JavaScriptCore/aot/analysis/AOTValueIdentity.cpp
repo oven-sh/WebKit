@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTThreshold.h"
 #include "AOTUseLists.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -624,7 +625,7 @@ ValueID ValueIdentities::tryResolvePassedValue(ValueID passed, ValueID parameter
 
 ValueID ValueIdentities::tryResolveMergeParameter(ValueID id, const ListedParameter& listed)
 {
-    static constexpr size_t maxDepth = 32;
+    AOT_THRESHOLD(size_t, maxDepth, 32);
 
     BlockID block = listed.block;
     std::span<const ValueID> parameters = m_function.at(block).parameters.span();

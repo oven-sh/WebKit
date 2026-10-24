@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 static bool looksAtObjects(const BuiltinOverload& overload)
@@ -316,7 +318,7 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
     };
 
     constexpr uint32_t madeStatementsPerIndex = 512;
-    constexpr uint32_t mostNodesNotToldApart = 64;
+    AOT_THRESHOLD(uint32_t, mostNodesNotToldApart, 64);
     const Program& program = m_inputs.program;
     const ParallelLoops& loops = m_inputs.loops();
     const ValueFlowSolver& solver = m_inputs.solver();

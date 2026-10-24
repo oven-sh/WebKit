@@ -13,12 +13,14 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
+#include "AOTThreshold.h"
+#include "AOTValueFlowTypedResults.h"
 #include <algorithm>
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint64_t smallestPlanSize = 1;
+AOT_THRESHOLD(uint64_t, smallestPlanSize, 1);
 
 static bool isValidated(const Program& program, ExpectedResultID expected)
 {
@@ -263,6 +265,7 @@ static TypedResultChoice chooseValidatedResult(FunctionPassContext& context, Typ
     const FlowResults& flow = context.inputs.flow;
     if (flow.hasResults() && !flow.typedResultType(context.function.at(site.call).accessSite())) {
         site.isValidatedByPlanAlone = true;
+        context.exceeds(LimitID::MaxObjectsOfTypedResult, typedResultOf(program, expected, context.limit(LimitID::MaxObjectsOfTypedResult)).numberOfObjects(), site.call);
         if (site.form == TypedResultForm::ParsedText)
             site.form = TypedResultForm::None;
     }

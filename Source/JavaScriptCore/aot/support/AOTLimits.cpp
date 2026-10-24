@@ -16,11 +16,12 @@ LimitValues::LimitValues(Architecture architecture)
         m_values[static_cast<size_t>(limit)] = defaultLimitValue(limit, architecture);
 }
 
-void LimitValues::lower(LimitID limit, uint64_t value)
+void LimitValues::lower(LimitID lowered, uint64_t value)
 {
-    RELEASE_ASSERT(canBeLowered(limit));
-    RELEASE_ASSERT(value <= (*this)[limit]);
-    m_values[static_cast<size_t>(limit)] = value;
+    RELEASE_ASSERT(canBeLowered(lowered));
+    RELEASE_ASSERT(value <= (*this)[lowered]);
+    for (LimitID limit : allMembersOf<LimitID>)
+        m_values[static_cast<size_t>(limit)] = valueWhenLowered(limit, (*this)[limit], lowered, value);
 }
 
 } } // namespace JSC::AOT

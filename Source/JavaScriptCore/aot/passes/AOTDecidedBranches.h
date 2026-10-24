@@ -9,6 +9,7 @@
 
 #include "AOTCFG.h"
 #include "AOTKnownValue.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <optional>
 #include <span>
@@ -45,7 +46,7 @@ public:
     std::span<const BlockID> blocksThatBranchOnTypeTest() const LIFETIME_BOUND { return m_blocksThatBranchOnTypeTest.span(); }
 
 private:
-    static constexpr size_t maxComparedBranches = 8;
+    AOT_CLASS_THRESHOLD(size_t, maxComparedBranches, 8);
 
     struct TestedBranch {
         ValueID subject;

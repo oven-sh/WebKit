@@ -1,5 +1,5 @@
 # `sum + list[index]`: what an array hands out may be undefined whatever its elements are declared to be. Where one operator takes the number and nothing else does, the operator tests it:
-# no copy of the code behind the read. The exit stays where the value is used twice, where it is returned, where it may be an object, and for the read of a field.
+# no copy of the code behind the read. The exit stays where the value is used twice, where it is compared, where it is returned, where it may be an object, and for the read of a field.
 # FORM: Prepared
 # OPTIONS: heat=NothingIsHottest
 # RUN: pass AddGenericVersion
@@ -60,3 +60,14 @@ function f4 name="readOfAField" parameters=[{type=anything}, {type=number}] resu
 }
 # CHECK-LABEL: function f4 name="readOfAField"
 # CHECK: = TypeTest v3 testedType=number
+
+function f5 name="compared" parameters=[{type=Array<number>}, {type=i32}, {type=number}] results=[{type=boolean}] {
+  b0(v0: Array<number>, v1: i32, v2: number):
+    v3 = ElemGet v0, v1
+    v4 = AssumeType v3 castType=undefined|number
+    v5 = Check v4 castType=number
+    v6 = Less v2, v5
+    Return v6
+}
+# CHECK-LABEL: function f5 name="compared"
+# CHECK: = TypeTest v4 testedType=number

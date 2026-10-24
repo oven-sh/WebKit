@@ -10,6 +10,7 @@
 
 #include "AOTBlockCycles.h"
 #include "AOTHeat.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTestConditions.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -186,7 +187,7 @@ bool TestSiteReporter::refusesObjectsThatAreExpected(std::span<const Value> test
 }
 
 // `compilerOptions.strict`: a record type of dozens of fields, every one of them optional, describes a bag of options.
-static constexpr size_t minFieldsOfBagOfOptions = 24;
+AOT_THRESHOLD(size_t, minFieldsOfBagOfOptions, 24);
 
 bool TestSiteReporter::asksForBagOfOptions(std::span<const Value> tests) const
 {

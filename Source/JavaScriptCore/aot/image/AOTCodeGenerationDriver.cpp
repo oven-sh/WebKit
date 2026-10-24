@@ -25,6 +25,7 @@
 #include "AOTSlotPlan.h"
 #include "AOTStubCatalog.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -32,8 +33,8 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr uint32_t maxFunctionsInBatch = 16;
-static constexpr uint64_t maxEstimatedBytesInBatch = 12 * KB;
+AOT_THRESHOLD(uint32_t, maxFunctionsInBatch, 16);
+AOT_THRESHOLD(uint64_t, maxEstimatedBytesInBatch, 12 * KB);
 
 namespace {
 

@@ -16,6 +16,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -358,7 +359,7 @@ private:
 
     bool isFirstToRunAt(uint32_t place, const EffectDescription& description)
     {
-        constexpr size_t fewestFunctionsToRemember = 3;
+        AOT_THRESHOLD(size_t, fewestFunctionsToRemember, 3);
         if (description.functions.size() < fewestFunctionsToRemember)
             return true;
         uint64_t mixed = place * 2 + description.callsUnknownCode;
@@ -559,7 +560,7 @@ private:
         if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.castType()), program))
             description.callsUnknownCode = true;
         // Each function that a value may run is some dependencies of this body.
-        constexpr size_t mostFunctionsFollowed = 64;
+        AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
         if (description.functions.size() > mostFunctionsFollowed) {
             description.functions.clear();
             description.callsUnknownCode = true;

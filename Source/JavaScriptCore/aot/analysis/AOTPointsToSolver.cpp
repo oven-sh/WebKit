@@ -16,6 +16,7 @@
 #include "AOTEffectsCache.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -676,7 +677,7 @@ void PointsToSolver::addAll(ValueID value, std::span<const ObjectWord> objects)
 
 void PointsToSolver::addAll(ValueID value, const ArrivedObjects& arrived)
 {
-    constexpr size_t fewObjects = 4;
+    AOT_THRESHOLD(size_t, fewObjects, 4);
     if (m_wordsPerSet == 1 || arrived.objects.size() > fewObjects) {
         addAll(value, arrived.words);
         return;
@@ -995,7 +996,7 @@ bool PointsToSolver::isContentsStore(const UserOperand& operand) const
 std::optional<Vector<ValueID, 8>> findMakersOfObjectsBehind(FunctionAnalyses& analyses, ValueID value)
 {
     constexpr size_t maxDefinitions = 64;
-    constexpr size_t maxMakers = 8;
+    AOT_THRESHOLD(size_t, maxMakers, 8);
 
     const Function& function = analyses.function();
     const OpcodeSet& definingOpcodes = opcodesThatMayDefineObjects();

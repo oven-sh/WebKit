@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "AOTValueFlow.h"
 #include "AOTVector.h"
 #include <array>
@@ -721,8 +722,8 @@ private:
     static constexpr unsigned bitsOfRememberedSets = 13;
     static constexpr unsigned bitsOfRememberedEntries = 11;
     static constexpr unsigned bitsOfRememberedBlocks = 12;
-    static constexpr uint32_t mostMembersOfSetWithoutParts = 16;
-    static constexpr uint32_t mostMembersOfListGatheredFrom = 256;
+    AOT_CLASS_THRESHOLD(uint32_t, mostMembersOfSetWithoutParts, 16);
+    AOT_CLASS_THRESHOLD(uint32_t, mostMembersOfListGatheredFrom, 256);
 
     struct BitsOfWord {
         uint32_t word { 0 };

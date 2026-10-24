@@ -20,6 +20,7 @@
 #include "AOTSlimClosure.h"
 #include "AOTSort.h"
 #include "AOTStubsClosures.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "JSCell.h"
 
@@ -150,7 +151,7 @@ Condition ClosureTestEmitter::isClosureOfAny(CellPointer cell, std::span<const F
 
 void ClosureTestEmitter::branchOnIndexInRuns(Word32 index, std::span<const EntrypointRun> runs, BranchTargets targets)
 {
-    static constexpr size_t maxRunsTestedInOrder = 3;
+    AOT_THRESHOLD(size_t, maxRunsTestedInOrder, 3);
     if (runs.size() > maxRunsTestedInOrder) {
         size_t middle = runs.size() / 2;
         LBasicBlock lower = newBlock();

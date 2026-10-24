@@ -13,6 +13,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTLiveness.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -240,7 +241,7 @@ public:
     static bool canFold(Opcode);
 
 private:
-    static constexpr unsigned maxDepth = 8;
+    AOT_CLASS_THRESHOLD(unsigned, maxDepth, 8);
 
     std::optional<Integers> numbersOf(const Facts& facts, ValueID id, unsigned depth) const { return isNumber(id) ? integersOf(facts, id, depth) : std::nullopt; }
     std::optional<Integers> foldCallOfOutlinedBody(const Facts&, const Value&, unsigned depth) const;
@@ -449,7 +450,7 @@ public:
     UsesOfUnspecifiedValues run();
 
 private:
-    static constexpr unsigned maxNarrowingDepth = 6;
+    AOT_CLASS_THRESHOLD(unsigned, maxNarrowingDepth, 6);
 
     void findValuesThatAreAlwaysUnspecified();
     bool isAlwaysUnspecified(ValueID id) const { return m_isAlwaysUnspecified.get(id.index()); }
@@ -567,7 +568,7 @@ bool MergingWalker::narrow(Facts& facts, ValueID id, Integers allowed, unsigned 
 
 bool MergingWalker::refoldNarrowedValues(Facts& facts) const
 {
-    static constexpr unsigned maxRounds = 4;
+    AOT_THRESHOLD(unsigned, maxRounds, 4);
     for (unsigned round = 0; round < maxRounds; ++round) {
         bool changed = false;
         for (size_t index = 0; index < facts.size(); ++index) {

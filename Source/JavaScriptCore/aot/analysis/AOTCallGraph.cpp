@@ -22,6 +22,7 @@
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <atomic>
 #include <functional>
@@ -467,7 +468,7 @@ static BitVector createBitVector(const Vector<uint8_t>& flags)
 // Kahn-style peeling from the leaves, one parallel round per rank. Each round scans everything that remains, so it stops once a round peels too little to pay for the next scan.
 static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const ParallelLoops& loops, Vector<uint8_t>& isRanked, FunctionRanks& result)
 {
-    constexpr size_t maxRemainingPerPeeledFunction = 16;
+    AOT_THRESHOLD(size_t, maxRemainingPerPeeledFunction, 16);
 
     Vector<uint32_t> remaining(graph.numberOfFunctions(), [](size_t index) {
         return static_cast<uint32_t>(index);
@@ -671,8 +672,8 @@ static void verifyRanks(const CallGraph& graph)
 // Two-pass parallel counting sort of the edges by target: first into buckets of consecutive targets, then within each bucket.
 CallGraph::Adjacency CallGraph::Adjacency::inverse(const ParallelLoops& loops) const
 {
-    constexpr unsigned maxBuckets = 256;
-    constexpr size_t maxChunks = 128;
+    AOT_THRESHOLD(unsigned, maxBuckets, 256);
+    AOT_THRESHOLD(size_t, maxChunks, 128);
     constexpr size_t edgesPerChunk = 1 << 15;
 
     Adjacency result;

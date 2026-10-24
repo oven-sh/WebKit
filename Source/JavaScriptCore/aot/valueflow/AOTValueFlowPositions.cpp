@@ -15,6 +15,7 @@
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -642,7 +643,7 @@ Type ValueFlowPositions::typeOf(ValueSetID set)
 // What a switch turns off for one subject is left out of the types of that subject alone.
 bool ValueFlowPositions::sharesTypeOf(ValueSetID set) const
 {
-    constexpr uint32_t fewestMembersOfSharedSet = 32;
+    AOT_THRESHOLD(uint32_t, fewestMembersOfSharedSet, 32);
     return m_counts.sharesTypesOfSets && m_inputs.sets().size(set) >= fewestMembersOfSharedSet
         && isEnabled(FlowResultKind::ProvenContents) && isEnabled(FlowResultKind::ArrayStorageKinds) && isEnabled(FlowResultKind::PristineInstances);
 }

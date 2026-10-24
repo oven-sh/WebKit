@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -121,7 +122,7 @@ public:
 private:
     static constexpr uint64_t isOver = UINT64_MAX;
     static constexpr unsigned mostIndices = (1u << 20) - 1;
-    static constexpr unsigned mostWorkers = 64;
+    AOT_CLASS_THRESHOLD(unsigned, mostWorkers, 64);
     static constexpr Seconds timeToLookAgain = Seconds::fromMicroseconds(40);
 
     explicit Team(const ParallelLoops& loops)
@@ -485,7 +486,7 @@ void ValueFlowGraph::startWithValueOf(ValueFlowNodeID node, ValueFlowNodeID othe
 
 void ValueFlowGraph::startWithValuesOf(std::span<const ValueFlowEdge> edges)
 {
-    constexpr size_t fewestForThreads = 256;
+    AOT_THRESHOLD(size_t, fewestForThreads, 256);
     constexpr size_t distance = 8;
     auto start = [&](ValueFlowEdge edge, Worker& worker) {
         uint64_t low = m_rows[edge.from.index()].low;
@@ -660,7 +661,7 @@ ALWAYS_INLINE bool ValueFlowGraph::addEdgeIfAbsent(ValueFlowEdge edge)
 size_t ValueFlowGraph::addEdges(std::span<const ValueFlowEdge> edges)
 {
     constexpr size_t distance = 12;
-    constexpr size_t fewestEdgesForThreads = 8192;
+    AOT_THRESHOLD(size_t, fewestEdgesForThreads, 8192);
     size_t before = m_edgesNotInLists.size();
     if (edges.size() < fewestEdgesForThreads || m_loops.width() == 1) {
         for (size_t index = 0; index < edges.size(); ++index) {
@@ -746,7 +747,7 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
     m_numberOfRecentEdges += edges.size();
 
     constexpr size_t distance = 12;
-    constexpr size_t fewestEdgesForThreads = 4096;
+    AOT_THRESHOLD(size_t, fewestEdgesForThreads, 4096);
     auto takeEdge = [&](Shard& shard, ValueFlowEdge edge, Vector<Message>& messages) {
         willUse(edge.to.index());
         // An edge out of a constant has its link since it was added.
@@ -1142,7 +1143,7 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     const Links& successors = m_successors[node];
     if (!successors.count)
         return;
-    constexpr uint32_t fewestMembersToHandOnWhatIsNew = 16;
+    AOT_THRESHOLD(uint32_t, fewestMembersToHandOnWhatIsNew, 16);
     bool handsOnAll = valueBefore == ValueSets::nothing || ValueSets::isComplement(value) || ValueSets::isComplement(valueBefore) || (after == ValueSets::nothing ? static_cast<uint32_t>(std::popcount(lowAfter)) : m_sets.size(after)) <= fewestMembersToHandOnWhatIsNew;
     Message message;
     message.low = handsOnAll ? lowAfter : lowAfter & ~lowBefore;
@@ -1187,7 +1188,7 @@ ALWAYS_INLINE void ValueFlowGraph::evaluateAll(Arrivals& arrivals, Worker& worke
 
 void ValueFlowGraph::runWave(Team& team)
 {
-    constexpr size_t fewestMessagesForThreads = 1024;
+    AOT_THRESHOLD(size_t, fewestMessagesForThreads, 1024);
     unsigned parity = m_parity;
     m_parity ^= 1;
     size_t numberWithShards = m_numberOfMessagesWithShards.exchange(0, std::memory_order_relaxed);
@@ -1242,7 +1243,7 @@ void ValueFlowGraph::giveBackLargeBuffers()
         if (vector.capacity() > mostElementsKept)
             vector.clear();
     };
-    constexpr size_t mostKeptInOneList = 1 << 16;
+    AOT_THRESHOLD(size_t, mostKeptInOneList, 1 << 16);
     giveBack(m_edgesOfSolve, mostKeptInOneList);
     if (m_edgesNotInLists.isEmpty())
         giveBack(m_edgesNotInLists, mostKeptInOneList);
@@ -1307,7 +1308,7 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
             runWave(team.get());
         }
     };
-    constexpr size_t fewestEdgesToMarkBesideWaves = 4096;
+    AOT_THRESHOLD(size_t, fewestEdgesToMarkBesideWaves, 4096);
     if (m_loops.width() > 1 && m_edgesOfSolve.size() >= fewestEdgesToMarkBesideWaves) {
         runTasksInParallel(m_loops, {
             runWaves,

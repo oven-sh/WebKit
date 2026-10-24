@@ -17,6 +17,7 @@
 #include "AOTStubsField.h"
 #include "AOTStubsPropertyAccessors.h"
 #include "AOTStubsPropertyExtraProperties.h"
+#include "AOTThreshold.h"
 #include "JSObject.h"
 #include "PropertyTable.h"
 #include <wtf/Box.h>
@@ -116,7 +117,7 @@ static void returnAnswer(StubAssembler& jit, ObjectLookupQuestion question, bool
 // object has no lookup of its own, and structure is its Structure: what the Structure's property table lists is all that the object has under a name.
 void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown)
 {
-    constexpr unsigned maxProbes = 4;
+    AOT_THRESHOLD(unsigned, maxProbes, 4);
     constexpr unsigned typeShift = 48;
     static_assert(sizeof(Structure::SeenProperties) == sizeof(uint64_t) && sizeof(CompactPropertyTableEntry) == sizeof(uint64_t) && PropertyTable::EmptyEntryIndex == 0);
     const GPRReg entry = r.structure;

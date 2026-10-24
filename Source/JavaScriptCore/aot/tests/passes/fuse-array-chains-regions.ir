@@ -2,7 +2,7 @@
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass FuseArrayChains
-# STATISTIC: ArrayChainsFused = 8
+# STATISTIC: ArrayChainsFused = 7
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -218,7 +218,7 @@ function f10 name="castUsedTwice" parameters=[{type=Array<number, proven, pristi
     Return v9
 }
 # CHECK-LABEL: function f10 name="castUsedTwice"
-# CHECK: {{*}}: anything = CallDirect v0, {{*}}, {{*}}, v1, {{*}} function={{*}}
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f1
 # CHECK: v8: anything = CallDirect v5, v6, {{*}} function=f2
 
 # CHECK: function [[filterMapToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=96}

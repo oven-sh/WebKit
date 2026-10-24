@@ -135,6 +135,10 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     Boxed prototype = in<Boxed>(value->prototypeOperand());
     LBasicBlock isUnknown = newBlock();
     LBasicBlock continuation = newBlock();
+    // What Object.create makes is born below the object that the first call was handed.
+    LBasicBlock isOther = newBlock();
+    branch(equal(prototype, loadField<Boxed>(loadStructure(object), m_heaps.Structure_prototype)), { normalEdge(continuation), normalEdge(isOther) });
+    m_out.appendTo(isOther);
     storeStructureAfterPrototypeTransition(object, findPrototypeTransition(object, prototype, isUnknown));
     emitter<BarrierEmitter>().barrier(value, object);
     m_out.jump(continuation);

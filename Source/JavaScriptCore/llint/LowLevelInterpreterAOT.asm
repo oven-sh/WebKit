@@ -43,6 +43,17 @@ const InstanceClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.closureEn
 const InstanceSlimClosureEntrypoint = constexpr (AOT_INSTANCE_OFFSET(stubs.slimClosureEntrypoint))
 
 const ObjectLiteralPlanTag = constexpr AOT::Interpreter::ObjectLiteralPlan::allocatorTag
+const ObjectLiteralPlanSlowPathTag = constexpr AOT::Interpreter::ObjectLiteralPlan::slowPathTag
+const ObjectLiteralPlanAcceptsInt32 = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsInt32
+const ObjectLiteralPlanAcceptsDouble = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsDouble
+const ObjectLiteralPlanAcceptsString = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsString
+const ObjectLiteralPlanAcceptsObject = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsObject
+const ObjectLiteralPlanAcceptsBoolean = constexpr AOT::Interpreter::ObjectLiteralPlan::acceptsBoolean
+const ObjectLiteralNotPlannedYet = constexpr AOT::Interpreter::ObjectLiteralPlan::notPlannedYet
+const ObjectLiteralPlanAcceptedValues = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfAcceptedValues() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
+const ObjectLiteralPlanAcceptedStructureIDs = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfAcceptedStructureIDs() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
+const ObjectLiteralPlanInitialWords = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfInitialWords() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
+const ObjectLiteralPlanNumberOfInitialWords = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfNumberOfInitialWords() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
 const ObjectLiteralPlanAllocator = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfAllocator() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
 const ObjectLiteralPlanCellHeader = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfCellHeader() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
 const ObjectLiteralPlanSecondWord = constexpr (AOT::Interpreter::ObjectLiteralPlan::offsetOfSecondWord() - AOT::Interpreter::ObjectLiteralPlan::allocatorTag)
@@ -1170,7 +1181,7 @@ aotOp(op_new_object, OpNewObject, macro (size, get, dispatch, metadata, return)
     return(t0)
 
 .hasPlan:
-    bpeq t1, ObjectLiteralPlanTag, .slow
+    btpnz t1, ObjectLiteralPlanSlowPathTag, .testsValues
     loadp ObjectLiteralPlanAllocator[t1], t2
     allocateCell(t2, t0, t3, .slow)
     loadq ObjectLiteralPlanCellHeader[t1], t3
@@ -1224,6 +1235,87 @@ aotOp(op_new_object, OpNewObject, macro (size, get, dispatch, metadata, return)
     loadConstantOrVariable(wide16, t6, t7)
     addp (constexpr op_put_by_id_length) * 2 + OpcodeIDWide16SizeJS, PC
     jmp .hasValue
+
+# ObjectBuilder::tryBuild(), where every slot holds its value as it is.
+.testsValues:
+    bpeq t1, ObjectLiteralNotPlannedYet, .slow
+    subp ObjectLiteralPlanSlowPathTag, t1
+    loadp ObjectLiteralPlanAllocator[t1], t2
+    allocateCell(t2, t0, t5, .slow)
+    loadq ObjectLiteralPlanCellHeader[t1], t2
+    storeq t2, [t0]
+    loadp ObjectLiteralPlanInitialWords[t1], t3
+    loadi ObjectLiteralPlanNumberOfInitialWords[t1], t2
+.copyInitialWord:
+    subi 1, t2
+    loadq [t3, t2, 8], t6
+    storeq t6, JSObjectWithButterfly::m_butterfly[t0, t2, 8]
+    btinz t2, .copyInitialWord
+    loadp ObjectLiteralPlanAcceptedStructureIDs[t1], t3
+    storei PC, CallSiteIndex[cfr]
+    get(m_dst, t5)
+    size(macro ()
+        addp (constexpr op_new_object_length) + OpcodeIDNarrowSize, PC
+    end, macro ()
+        addp (constexpr op_new_object_length) * 2 + OpcodeIDWide16SizeJS, PC
+    end, macro ()
+        addp (constexpr op_new_object_length) * 4 + OpcodeIDWide32SizeJS, PC
+    end, macro (advance) advance() end)
+.testValue:
+    loadb [PB, PC, 1], t6
+    bieq t6, constexpr op_wide16, .testedStoreIsWide16
+    getOperandNarrow(OpPutById, m_value, t6)
+    addp (constexpr op_put_by_id_length) + OpcodeIDNarrowSize, PC
+    loadOperandInRegister(narrow, t6, t7, .testedValueIsConstant)
+.hasTestedValue:
+    bqaeq t7, numberTag, .valueIsInt32
+    btqz t7, notCellMask, .valueIsCell
+    btqnz t7, numberTag, .valueIsDouble
+    move t7, t6
+    andq ~1, t6
+    bqneq t6, ValueFalse, .givesUp
+    move ObjectLiteralPlanAcceptsBoolean, t6
+.testKind:
+    btbz ObjectLiteralPlanAcceptedValues[t1, t2, 1], t6, .givesUp
+.isAccepted:
+    loadh ObjectLiteralPlanValueOffsets[t1, t2, 2], t6
+    storeq t7, [t0, t6, 1]
+    addi 1, t2
+    bib t2, ObjectLiteralPlanNumberOfValues[t1], .testValue
+    fenceAfterAllocation(t3)
+    storeq t0, [cfr, t5, 8]
+    nextInstruction()
+
+.valueIsInt32:
+    move ObjectLiteralPlanAcceptsInt32, t6
+    jmp .testKind
+
+.valueIsDouble:
+    move ObjectLiteralPlanAcceptsDouble, t6
+    jmp .testKind
+
+.valueIsCell:
+    move ObjectLiteralPlanAcceptsString, t6
+    bbeq JSCell::m_type[t7], StringType, .testKindOfCell
+    bbb JSCell::m_type[t7], ObjectType, .givesUp
+    move ObjectLiteralPlanAcceptsObject, t6
+.testKindOfCell:
+    btbnz ObjectLiteralPlanAcceptedValues[t1, t2, 1], t6, .isAccepted
+    loadi JSCell::m_structureID[t7], t6
+    bieq t6, [t3, t2, 4], .isAccepted
+
+.givesUp:
+    loadi CallSiteIndex[cfr], PC
+    jmp .slow
+
+.testedValueIsConstant:
+    loadConstantOperand(narrow, t6, t7, .hasTestedValue)
+
+.testedStoreIsWide16:
+    getOperandWide16JS(OpPutById, m_value, t6)
+    loadConstantOrVariable(wide16, t6, t7)
+    addp (constexpr op_put_by_id_length) * 2 + OpcodeIDWide16SizeJS, PC
+    jmp .hasTestedValue
 end)
 
 # constructArrayNegativeIndexed(), where storing the elements leaves the indexing type of the profile as it is.

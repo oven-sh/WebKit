@@ -112,6 +112,11 @@ RuleSubject subjectOf(const ValidationRule& rule)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool isText(ResultShape shape)
+{
+    return shape == ResultShape::String || shape == ResultShape::StringLiteral;
+}
+
 bool appliesTo(const ValidationRule& rule, ResultShape shape)
 {
     RuleSubject subject = subjectOf(rule);
@@ -184,9 +189,12 @@ RuleCode ValidationRuleEmitter::codeFor(const ValidationRule& rule, ResultShape 
     case ValidationRule::Kind::ExclusiveMinimum:
     case ValidationRule::Kind::ExclusiveMaximum:
     case ValidationRule::Kind::MultipleOf:
-    case ValidationRule::Kind::MinimumLength:
-    case ValidationRule::Kind::MaximumLength:
         return RuleCode::Inline;
+    case ValidationRule::Kind::MinimumLength:
+        // One unit is one character, whatever it is.
+        return isText(shape) && rule.as<ValidationRule::MinimumLength>().length > 1 ? RuleCode::CountedCharacters : RuleCode::Inline;
+    case ValidationRule::Kind::MaximumLength:
+        return isText(shape) ? RuleCode::CountedCharacters : RuleCode::Inline;
     case ValidationRule::Kind::Pattern: {
         Vector<char16_t> bufferForNonASCII;
         return isValidExpression(expressionOf(m_emission.program(), rule, bufferForNonASCII)) ? RuleCode::RegularExpression : RuleCode::ByHelper;
@@ -290,6 +298,9 @@ void ValidationRuleEmitter::emitRule(const ValidationRule& rule, const ResultNod
             emitRequireFinite(value, rejected);
         test = appendNumberTest(rule, value);
         break;
+    case RuleCode::CountedCharacters:
+        emitCharacterCountRule(rule, value, rejected);
+        return;
     case RuleCode::RegularExpression:
         test = appendExpressionTest(expressionOf(m_emission.program(), rule, bufferForNonASCII), value);
         break;
@@ -341,6 +352,32 @@ ValueID ValidationRuleEmitter::appendLengthTest(const ValidationRule& rule, Valu
     if (const auto* minimum = rule.tryAs<ValidationRule::MinimumLength>())
         return builder.append(Opcode::GreaterEq, { length, builder.appendInteger(minimum->length) });
     return builder.append(Opcode::LessEq, { length, builder.appendInteger(rule.as<ValidationRule::MaximumLength>().length) });
+}
+
+// The length of a string is counted in code points. It has at most as many of them as UTF-16 units, and at least half as many: only between the two are they counted.
+void ValidationRuleEmitter::emitCharacterCountRule(const ValidationRule& rule, ValueID string, BlockID rejected)
+{
+    IRBuilder& builder = m_emission.builder();
+    ValueID units = builder.append(Opcode::GetStringLength, { string });
+    ValueID unitsDecide = appendLengthTest(rule, units);
+    BlockFrequency whenCounted = BlockFrequency::Rare;
+    if (const auto* minimum = rule.tryAs<ValidationRule::MinimumLength>()) {
+        m_emission.emitJumpUnless(unitsDecide, rejected);
+        unitsDecide = builder.append(Opcode::GreaterEq, { units, builder.appendInteger(2 * static_cast<int64_t>(minimum->length) - 1) });
+        whenCounted = BlockFrequency::Normal;
+    }
+
+    BlockID after = builder.addBlock();
+    IRBuilder::BranchBlocks blocks = builder.emitBranch(unitsDecide, BlockFrequency::Normal, whenCounted);
+    builder.moveToEndOf(blocks.taken);
+    builder.emitJump(after);
+
+    builder.moveToEndOf(blocks.notTaken);
+    ValueID characters = m_emission.appendHelperCall(Builtins::CompilerHelpersCountCodePoints, { string });
+    m_emission.emitJumpUnless(appendLengthTest(rule, characters), rejected);
+    builder.emitJump(after);
+
+    builder.moveToEndOf(after);
 }
 
 ValueID ValidationRuleEmitter::appendExpressionTest(StringView source, ValueID string)

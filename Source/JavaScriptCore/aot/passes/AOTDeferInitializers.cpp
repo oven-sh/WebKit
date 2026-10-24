@@ -32,6 +32,7 @@
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -176,9 +177,9 @@ public:
     Vector<VariableID, 4> takeVariablesTakenToBeSet() { return std::exchange(m_variablesTakenToBeSet, { }); }
 
 private:
-    static constexpr unsigned maxDepth = 12;
-    static constexpr unsigned maxValuesOfCallee = 4000;
-    static constexpr unsigned maxAnswers = 4000;
+    AOT_CLASS_THRESHOLD(unsigned, maxDepth, 12);
+    AOT_CLASS_THRESHOLD(unsigned, maxValuesOfCallee, 4000);
+    AOT_CLASS_THRESHOLD(unsigned, maxAnswers, 4000);
     static constexpr size_t maxValuesInKeptVersions = 1 << 16;
 
     // What a call has made and what never changes decide the answer. The version comes from the types alone.
@@ -1768,7 +1769,7 @@ void DeferredInitializerScanner::classify(uint32_t index)
 void DeferredInitializerScanner::keepUnitsNotWorthPuttingOff()
 {
     // A function of its own, and a test at each read, cost more than a small literal.
-    constexpr unsigned leastCost = 100;
+    AOT_THRESHOLD(unsigned, leastCost, 100);
     BitVector fillsVariable(m_items.size());
     Vector<unsigned> costs(FillWith { }, m_items.size(), 0u);
     for (uint32_t index = 0; index < m_items.size(); ++index) {

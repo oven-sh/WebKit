@@ -1,4 +1,4 @@
-# A call whose expected result has validation nodes is expanded in every block, and every path that does not end in Parsed asks the general validator with the plan
+# A call whose expected result has validation nodes is expanded in every block, and every path that does not end in Parsed parses the text again and asks the general validator with the plan, telling it whether the parser has refused the value
 # FORM: Prepared optimizing
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 5
@@ -23,12 +23,20 @@ function f0 name="validated" parameters=[{type=string}] results=[{type=anything}
 # CHECK: = JSONSourceOpen v0
 # CHECK: [[done0]](v2:{{*}}):
 # CHECK: [[generic0]]() frequency=Rare:
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next [[again0]]([[no0]])
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next [[again0]]([[yes0]])
+# CHECK: [[again0]]([[isRefused0]]: boolean) frequency=Rare:
 # CHECK-NEXT: [[original0]]:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
 # CHECK-NEXT: [[plan0]]:{{*}}= String string="[{\"shape\":\"Object\",\"members\":[{\"key\":\"id\",\"node\":1,\"isOptional\":false,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Primitive\",\"primitive\":\"number\"}]"
-# CHECK-NEXT: [[general0]]: anything = CallBuiltin -, [[original0]], [[plan0]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: [[general0]]: anything = CallBuiltin -, [[original0]], [[plan0]], [[isRefused0]] overload=CompilerHelpersValidateByPlan/0
 # CHECK: = CallDirect {{*}} function=[[parserOfFirstList]]
 # CHECK: JSONSourceAbandon
 # CHECK-NEXT: Jump -> next [[generic0]]()
+# CHECK: JSONSourceAbandon
+# CHECK-NEXT: Jump -> next [[rejected0]]()
 # CHECK-NOT: expectedResult
 
 function f1 name="equalListOfAnotherRecord" parameters=[{type=string}] results=[{type=anything}] {
@@ -78,7 +86,8 @@ function f4 name="reviver" parameters=[{type=string}, {type=function}] results=[
 # CHECK: b0(v0: string, v1: function):
 # CHECK-NEXT: [[revived]]: anything = CallBuiltin -, v0, v1 overload=JSONParse/1
 # CHECK-NEXT: [[plan4]]:{{*}}= String string="[{\"shape\":\"Object\",
-# CHECK-NEXT: = CallBuiltin -, [[revived]], [[plan4]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: [[isRefused4]]: false = Boolean
+# CHECK-NEXT: = CallBuiltin -, [[revived]], [[plan4]], [[isRefused4]] overload=CompilerHelpersValidateByPlan/0
 # CHECK-NEXT: Jump -> next [[merge4]]([[revived]])
 # CHECK-NOT: JSONSourceOpen
 # CHECK: function [[parserOfFirstList]] {{*}}role=ValidatingParser {{*}}creator=Parser{type=L0 layout=L0 form=ParsedText expectedResult=x0}

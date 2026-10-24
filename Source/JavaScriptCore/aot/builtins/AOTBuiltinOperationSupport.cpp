@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTable.h"
+#include "AOTImmortalCells.h"
 #include "AOTObjectWords.h"
 #include "AOTState.h"
 #include "ExceptionHelpers.h"
@@ -64,9 +65,10 @@ void prepareFinalObjectAllocation(Instance* instance, InlineAllocation kind, Str
     auto& data = instance->allocation.inlineAllocations[static_cast<unsigned>(kind)];
     if (data.allocator) [[likely]]
         return;
-    RELEASE_ASSERT(structure->inlineCapacity() == JSFinalObject::defaultInlineCapacity);
-    auto* allocator = subspaceFor<JSFinalObject>(*instance->vm)->allocatorFor(JSFinalObject::defaultSizeInBytes, AllocatorForMode::EnsureAllocator).localAllocator();
-    RELEASE_ASSERT(allocator->cellSize() == JSFinalObject::defaultSizeInBytes);
+    size_t size = JSFinalObject::allocationSize(structure->inlineCapacity());
+    auto* allocator = subspaceFor<JSFinalObject>(*instance->vm)->allocatorFor(size, AllocatorForMode::EnsureAllocator).localAllocator();
+    RELEASE_ASSERT(allocator->cellSize() >= size);
+    instance->state->immortalCells->add(structure);
     data.header = cellHeaderFor(structure);
     data.allocator = allocator;
 }

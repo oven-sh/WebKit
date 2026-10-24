@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -25,7 +26,7 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr size_t maxRunSize = 1 * MB;
+AOT_THRESHOLD(size_t, maxRunSize, 1 * MB);
 
 namespace {
 
@@ -96,7 +97,7 @@ private:
 // Image::locate() runs where the cache of call sites has no entry. It walks the starts of functions from the first one in the granule, and sixteen of them lie in a cache line.
 unsigned chooseCodeGranuleShift(const LinkedFunctions& functions, BuildContext& context)
 {
-    constexpr size_t maxStartsPassedOnAverage = 8;
+    AOT_THRESHOLD(size_t, maxStartsPassedOnAverage, 8);
     Vector<size_t> functionEnds(functions.size());
     Vector<uint8_t> isReturnedInto(functions.size());
     forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned index) {

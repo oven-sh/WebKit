@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include <cstdint>
 #include <type_traits>
 
@@ -14,10 +15,10 @@ namespace JSC { namespace AOT {
 
 struct ArrayWords {
     // An array with storage for any value that is asked for the storage of numbers is looked through, in vain where it holds anything else. A realm that has looked in vain at so many elements looks no more.
-    static constexpr uint32_t maxElementsLookedAtInVain = 4096;
+    AOT_CLASS_THRESHOLD(uint32_t, maxElementsLookedAtInVain, 4096);
     // New storage pays for itself in an array that is read again and again, or once from end to end if it is long.
-    static constexpr uint32_t minLengthThatPaysAtOnce = 32;
-    static constexpr uint32_t maxShortYoungArraysConverted = 16;
+    AOT_CLASS_THRESHOLD(uint32_t, minLengthThatPaysAtOnce, 32);
+    AOT_CLASS_THRESHOLD(uint32_t, maxShortYoungArraysConverted, 16);
     static constexpr uint32_t numberOfCounts = 64;
 
     uint64_t distanceFromProfileToLastArray;

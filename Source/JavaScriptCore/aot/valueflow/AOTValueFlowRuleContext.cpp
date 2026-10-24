@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowBuiltins.h"
@@ -809,7 +810,7 @@ void ValueFlowRuleContext::connectAsNamed(ValueFlowNodeID from, ValueFlowNodeID 
     if (m_filtersKnownEdges)
         m_solver.graph().prefetchLinksThatHold(ValueFlowEdge { from, to });
     m_log.edges.append(ValueFlowEdge { from, to });
-    constexpr size_t mostEdgesThatWait = 1 << 16;
+    AOT_THRESHOLD(size_t, mostEdgesThatWait, 1 << 16);
     if (m_log.edges.size() - m_firstEdgeOfRun >= mostEdgesThatWait) [[unlikely]] {
         size_t firstNodeRead = std::exchange(m_firstNodeReadOfRun, m_log.nodesRead.size());
         size_t firstNodeAskedWhetherEmpty = std::exchange(m_firstNodeAskedWhetherEmptyOfRun, m_log.nodesAskedWhetherEmpty.size());

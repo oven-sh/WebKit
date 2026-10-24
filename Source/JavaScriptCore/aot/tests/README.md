@@ -358,8 +358,9 @@ If you write a command:
 testaot list options
 ```
 
-Every test file runs with `check=VerifyEachStage`: the program is verified after each stage. A build of the product verifies the program it reads and
-the program it hands to the back end; `check=VerifyEachPass` verifies after each stage and each pass.
+Every test file runs with `check=VerifyEachStage`: the program is verified after each stage. With the option `verifyAOTProgram`, which is on in `testaot` and `jsc`, a build verifies the program it reads and
+the program it hands to the back end. Bun turns the option off outside its own tests: there the code generator stops the build at an operation that it has no code for, a call that a
+required pass removes among them. `check=VerifyEachPass` verifies after each stage and each pass.
 
 The negative test for a limit lowers the limit, checks the answer one level down, and names the loss:
 

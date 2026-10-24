@@ -12,6 +12,7 @@
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <concepts>
@@ -178,8 +179,8 @@ public:
     ReferencesOfBody finish(const FlowResults&, FunctionID);
 
 private:
-    static constexpr size_t deduplicationThreshold = 4096;
-    static constexpr size_t mostFunctionsKeptOfSite = 16;
+    AOT_CLASS_THRESHOLD(size_t, deduplicationThreshold, 4096);
+    AOT_CLASS_THRESHOLD(size_t, mostFunctionsKeptOfSite, 16);
 
     void readInstruction(const auto&, const EffectDescription&);
     void noteSite(const EffectDescription&);

@@ -988,9 +988,62 @@ static LayoutID findClassOfConstructorFunction(const ValueFlowResultInputs& inpu
     return constructed && inputs.program.at(constructed).has(LayoutFlags::IsConstructorFunction) ? constructed : LayoutID();
 }
 
-static ClassesOfStoredPrototypeObjects collectStoredPrototypeObjects(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)
+// By layout of what Object.create makes: what the call is handed. The link of an object that has escaped holds whatever unknown code may put above it, and says nothing about its birth.
+using HandedToObjectCreate = Vector<std::pair<LayoutID, ValueSetID>>;
+
+static HandedToObjectCreate collectWhatObjectCreateIsHanded(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    HandedToObjectCreate handedToObjectCreate;
+    for (uint32_t index = program.numberOfLayoutsAsRead(); index < program.layouts.size(); ++index) {
+        if (!program.layouts[index].has(LayoutFlags::IsOfCreatedObject))
+            continue;
+        ValueSetID handed = ValueSets::nothing;
+        bool isKnown = false;
+        inputs.sets().forEachMember(universe.objectsWith(LayoutID(index)), [&](ValueFlowObjectID created) {
+            const ValueFlowSite* site = universe.kindOf(created) == ValueFlowObjectKind::Site ? universe.siteOf(created) : nullptr;
+            FunctionID id = site ? universe.functionOf(created) : FunctionID();
+            if (!id || !inputs.isReached(id))
+                return;
+            const Function& function = program.at(id);
+            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::SetLiteralPrototype || function.at(statement.site).objectOperand() != site->value)
+                    continue;
+                handed = maker.unite(handed, valueOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::SetLiteralPrototype::prototype], maker));
+                isKnown = true;
+            }
+        });
+        if (isKnown && !ValueSets::isComplement(handed))
+            handedToObjectCreate.append({ LayoutID(index), handed });
+    }
+    return handedToObjectCreate;
+}
+
+static ClassesOfStoredPrototypeObjects collectStoredPrototypeObjects(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex, const HandedToObjectCreate& handedToObjectCreate)
 {
     ClassesOfStoredPrototypeObjects classes;
+    // `Object.create(members)`: the object stands to what the call makes as the prototype object of a constructor function stands to what the function makes.
+    // Whoever may be handed the fewest objects says most about each of them: a helper that is handed the objects of many callers takes none of them away from a caller.
+    UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fewestHandedWith;
+    auto noteObjectsHanded = [&](LayoutID classLayout, ValueSetID handed) {
+        unsigned numberHanded = 0;
+        inputs.sets().forEachMember(handed, [&](ValueFlowObjectID stored) {
+            numberHanded += inputs.universe().kindOf(stored) == ValueFlowObjectKind::Site;
+        });
+        inputs.sets().forEachMember(handed, [&](ValueFlowObjectID stored) {
+            if (inputs.universe().kindOf(stored) != ValueFlowObjectKind::Site)
+                return;
+            auto fewest = fewestHandedWith.add(stored.index(), numberHanded);
+            if (fewest.isNewEntry || numberHanded < fewest.iterator->value) {
+                fewest.iterator->value = numberHanded;
+                classes.set(stored.index(), classLayout);
+            } else if (numberHanded == fewest.iterator->value && classes.get(stored.index()) != classLayout)
+                classes.set(stored.index(), LayoutID());
+        });
+    };
+    for (const auto& [layout, handed] : handedToObjectCreate)
+        noteObjectsHanded(layout, handed);
     const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(ValueFlowName::property(inputs.program.keyOf(BuiltinNames::prototype)));
     if (!written)
         return classes;
@@ -998,23 +1051,16 @@ static ClassesOfStoredPrototypeObjects collectStoredPrototypeObjects(const Value
         if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.value))
             continue;
         inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID holder) {
-            LayoutID constructed = findClassOfConstructorFunction(inputs, holder);
-            inputs.sets().forEachMember(node.value, [&](ValueFlowObjectID stored) {
-                if (inputs.universe().kindOf(stored) != ValueFlowObjectKind::Site)
-                    return;
-                auto added = classes.add(stored.index(), constructed);
-                if (!added.isNewEntry && added.iterator->value != constructed)
-                    added.iterator->value = LayoutID();
-            });
+            noteObjectsHanded(findClassOfConstructorFunction(inputs, holder), node.value);
         });
     }
     return classes;
 }
 
-static WritesToPrototypeObjects collectWritesToPrototypeObjects(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)
+static WritesToPrototypeObjects collectWritesToPrototypeObjects(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex, const HandedToObjectCreate& handedToObjectCreate)
 {
     PropertyKeyID prototypeKey = inputs.program.keyOf(BuiltinNames::prototype);
-    ClassesOfStoredPrototypeObjects storedPrototypeObjects = collectStoredPrototypeObjects(inputs, heapIndex);
+    ClassesOfStoredPrototypeObjects storedPrototypeObjects = collectStoredPrototypeObjects(inputs, heapIndex, handedToObjectCreate);
     auto classHeldBy = [&](ValueFlowObjectID holder) {
         if (LayoutID classLayout = inputs.universe().classLayoutOf(holder))
             return classLayout;
@@ -1218,6 +1264,61 @@ static void noteWhatConstructorFunctionKeeps(const ValueFlowResultInputs& inputs
     flow.prototypeNamesAreComplete = followsNames && listsEveryName && !writes.isWrittenUnderOtherNames(id) && !mayBeWrittenByNativeCode;
 }
 
+// What Object.create makes has a class where every object that the call is handed is the object of an allocation site that no other class has. The class above is that of the handed objects, where Object.create makes them too.
+static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const ValueFlowHeapIndex& heapIndex, const HandedToObjectCreate& handedToObjectCreate, const WritesToPrototypeObjects& writes, FlowApplication& application)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    if (handedToObjectCreate.isEmpty())
+        return;
+    enum class State : uint8_t { Unseen, Known, Unknown };
+    Vector<State> states(FillWith { }, program.layouts.size(), State::Unseen);
+    Vector<LayoutID> bases(program.layouts.size());
+    ClassesOfStoredPrototypeObjects holders = collectStoredPrototypeObjects(inputs, heapIndex, handedToObjectCreate);
+    for (const auto& [layout, handed] : handedToObjectCreate) {
+        State& state = states[layout.index()];
+        // The run time takes the first object that the call is handed for the prototype object of the class, and sets the guards by what it finds there. So an object nobody knows among them takes nothing away.
+        inputs.sets().forEachMember(handed, [&, layout = layout](ValueFlowObjectID stored) {
+            if (universe.kindOf(stored) != ValueFlowObjectKind::Site)
+                return;
+            // An object that several calls may be handed is the one that a module exports before its text has run, more often than not.
+            LayoutID layoutOfStored = universe.layoutOf(stored);
+            if (!layoutOfStored || holders.get(stored.index()) != layout || inputs.isLost(stored))
+                return;
+            LayoutID base = program.at(layoutOfStored).has(LayoutFlags::IsOfCreatedObject) ? layoutOfStored : LayoutID();
+            if (state == State::Known && bases[layout.index()] != base)
+                state = State::Unknown;
+            if (state == State::Unseen) {
+                state = State::Known;
+                bases[layout.index()] = base;
+            }
+        });
+    }
+    // A class below one that has none has none.
+    for (bool changed = true; std::exchange(changed, false);) {
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            if (states[index] == State::Known && bases[index] && (states[bases[index].index()] != State::Known || bases[index].index() == index)) {
+                states[index] = State::Unknown;
+                changed = true;
+            }
+        }
+    }
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (states[index] != State::Known || !inputs.build.isEnabled(FlowResultKind::ClassEvaluations, index))
+            continue;
+        ClassFlow& flow = application.layouts[index].classFlow;
+        flow.evaluations = ExecutionCount::AtMostOnce;
+        flow.prototypeBase = bases[index];
+        listAssignedMembers(inputs, maker, writes.of(LayoutID(index)), flow);
+    }
+    for (const auto& [holder, classLayout] : holders) {
+        if (!classLayout || states[classLayout.index()] != State::Known)
+            continue;
+        if (LayoutID layout = universe.layoutOf(ValueFlowObjectID(holder)))
+            application.layouts[layout.index()].objectsArePrototypesOfCreatedObjects = true;
+    }
+}
+
 void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -1233,8 +1334,10 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
     ClosuresTakenOutOfMembers taken(inputs, maker, closuresOfDefinedMembers(inputs, classes.span(), maker));
     times.didFinish("classes: closures taken out of members"_s);
     std::unique_ptr<ValueFlowHeapIndex> ownHeapIndex = inputs.heapIndex ? nullptr : makeUnique<ValueFlowHeapIndex>(inputs);
-    WritesToPrototypeObjects writes = collectWritesToPrototypeObjects(inputs, inputs.heapIndex ? *inputs.heapIndex : *ownHeapIndex);
+    HandedToObjectCreate handedToObjectCreate = collectWhatObjectCreateIsHanded(inputs, maker);
+    WritesToPrototypeObjects writes = collectWritesToPrototypeObjects(inputs, inputs.heapIndex ? *inputs.heapIndex : *ownHeapIndex, handedToObjectCreate);
     times.didFinish("classes: writes to prototype objects"_s);
+    noteClassesOfCreatedObjects(inputs, maker, inputs.heapIndex ? *inputs.heapIndex : *ownHeapIndex, handedToObjectCreate, writes, application);
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         if (!layout.constructor)

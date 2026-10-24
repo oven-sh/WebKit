@@ -39,7 +39,7 @@ class ValueFlowBuiltinTables {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowBuiltinTables);
 public:
     // The behaviors and the lists by name come from the table alone: the bodies are reduced with them. The sets wait for the universe, which is numbered after the bodies.
-    explicit ValueFlowBuiltinTables(const BuiltinTable&);
+    ValueFlowBuiltinTables(const BuiltinTable&, uint64_t mostObjectsOfTypedResult);
     void makeSets(const Program&, const ValueFlowUniverse&, ValueSets&, const ParallelLoops&, NOESCAPE const ScopedLambda<void()>& runBesideSets);
 
     // What a value of the type may be. A part that stands for an operand, or for what an operand holds, admits everything.
@@ -70,6 +70,8 @@ public:
     bool hasTypedResult(BuiltinID function) const { return m_functionsWithTypedResults.get(function.index()); }
     std::span<const BuiltinName> namesOfFunctionsWithTypedResults() const LIFETIME_BOUND { return m_namesOfFunctionsWithTypedResults.span(); }
     const HeadLayoutsOfFamilies& headLayoutsOfFamilies() const LIFETIME_BOUND { return m_headLayoutsOfFamilies; }
+    // LimitID::MaxObjectsOfTypedResult.
+    uint64_t mostObjectsOfTypedResult() const { return m_mostObjectsOfTypedResult; }
 
     // What the entry holds comes from code of the library that is in the program: a row of the entry itself names the function, without a condition, and says that the function or what a call of it answers is the value.
     bool holdsValueFromLibrary(BuiltinID entry) const { return m_entriesHoldingValueFromLibrary.get(entry.index()); }
@@ -108,6 +110,7 @@ private:
     Vector<DescribedClosure> m_describedClosures;
     ValueSetID m_closuresThatEntriesDescribe;
     HeadLayoutsOfFamilies m_headLayoutsOfFamilies;
+    uint64_t m_mostObjectsOfTypedResult;
     std::unique_ptr<ValueFlowHeapTables> m_heap;
 };
 

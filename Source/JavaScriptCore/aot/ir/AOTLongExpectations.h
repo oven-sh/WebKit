@@ -9,6 +9,7 @@
 
 #include "AOTIRProgram.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <atomic>
 
@@ -21,7 +22,7 @@ public:
         : m_types(program.types)
         , m_isLong(program.types.size())
     {
-        constexpr size_t mostLayouts = 16;
+        AOT_THRESHOLD(size_t, mostLayouts, 16);
         constexpr size_t typesPerTask = 1024;
         std::atomic<bool> hasAny { false };
         forEachIndexInParallel(loops, static_cast<unsigned>((m_isLong.size() + typesPerTask - 1) / typesPerTask), [&](unsigned task) {

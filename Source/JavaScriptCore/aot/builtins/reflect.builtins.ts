@@ -27,6 +27,7 @@ export default b.declarations(
             b.called({
               afterwards: "TouchesOnlyWhatRowNames",
               times: "Once",
+              args: [],
               this: b.operand("thisArgument"),
               spreadArgs: listedArguments,
               result: "Returned",
@@ -44,7 +45,7 @@ export default b.declarations(
           returns: b.callbackResult("target"),
           throws: true,
           uses: {
-            target: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", constructs: true, spreadArgs: listedArguments, result: "Returned" })],
+            target: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [], constructs: true, spreadArgs: listedArguments, result: "Returned" })],
             argumentsList: argumentListProtocols,
           },
           implementation: b.hostCall,
@@ -55,7 +56,7 @@ export default b.declarations(
           returns: b.callbackResult("target"),
           throws: true,
           uses: {
-            target: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", constructs: true, newTarget: b.operand("newTarget"), spreadArgs: listedArguments, result: "Returned" })],
+            target: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [], constructs: true, newTarget: b.operand("newTarget"), spreadArgs: listedArguments, result: "Returned" })],
             argumentsList: argumentListProtocols,
             newTarget: [b.runs(b.named("prototype"))],
           },

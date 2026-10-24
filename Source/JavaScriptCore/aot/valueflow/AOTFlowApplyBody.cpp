@@ -280,7 +280,6 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     FlowCastInsertion insertion { body, analyses, builder };
     insertProofCasts(insertion, update);
     insertSymbolConstants(insertion, update);
-    createBoundClosures(insertion, update);
     replaceDefinedValues(insertion, update);
     builder.applyInsertions();
 

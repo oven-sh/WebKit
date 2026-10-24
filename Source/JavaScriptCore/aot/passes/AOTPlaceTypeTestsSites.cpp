@@ -342,6 +342,14 @@ static bool isColdEverywhere(FunctionPassContext& context)
     return isCold(heat.classOf(heat.activationsOf(context.program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(context.analyses.cfg());
 }
 
+// A test for a string, a number or an object of a built-in class says nothing of layouts.
+static bool asksOnlyForLayouts(FunctionPassContext& context, const TestSites& sites, const TestSite& site)
+{
+    return std::ranges::none_of(sites.tests.span().subspan(site.firstTest, site.numberOfTests), [&](const Value& test) {
+        return test.opcode == Opcode::TypeTest && !context.types.at(test.testedType()).layouts;
+    });
+}
+
 TestSites collectTestSites(FunctionPassContext& context)
 {
     if (!context.build.recordedOptions().usesExpectedTypes())
@@ -365,7 +373,7 @@ TestSites collectTestSites(FunctionPassContext& context)
     sites.sites.removeAllMatching([&](const TestSite& site) {
         // What a plain function without a layout constructs arrives as the receiver. A test for a layout would turn it away, and what stands behind the test would run in the copy.
         const Value& use = context.function.at(site.use);
-        if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject)
+        if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site))
             return true;
         HeatClass heatClass = heatClassOf(context, site.point.block);
         return heatClass == HeatClass::RunsOnce || (isColdFunction && heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode(site.rule)));

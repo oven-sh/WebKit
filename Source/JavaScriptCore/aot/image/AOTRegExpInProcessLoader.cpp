@@ -12,6 +12,7 @@
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRegExpSummary.h"
+#include "AOTThreshold.h"
 #include "CPUFeatureSet.h"
 #include "ExecutableAllocator.h"
 #include "MacroAssembler.h"
@@ -35,7 +36,7 @@ const uint8_t* loadRegExpSection(const RegExpSection&)
 
 #else
 
-static constexpr size_t maxLoadedRegExpBytes = 64 * MB;
+AOT_THRESHOLD(size_t, maxLoadedRegExpBytes, 64 * MB);
 static std::atomic<size_t> loadedRegExpBytes { 0 };
 
 const uint8_t* loadRegExpSection(const RegExpSection& section)

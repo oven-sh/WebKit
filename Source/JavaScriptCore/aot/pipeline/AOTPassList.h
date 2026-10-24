@@ -95,7 +95,6 @@
     v(HoistTestsIntoPredecessors, hoistTestsIntoPredecessors) \
     v(TestNarrowerTypesFirst, testNarrowerTypesFirst) \
     v(ThreadJumps, threadJumps) \
-    v(InferSwitches, inferSwitches) \
     v(EliminateDeadCode, eliminateDeadCode) \
     v(MergeDuplicateBlocks, mergeDuplicateBlocks) \
     v(CompactBlocks, compactBlocks) \

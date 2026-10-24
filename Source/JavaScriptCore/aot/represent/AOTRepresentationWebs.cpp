@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
 #include "AOTFrameAllocationPointers.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -112,7 +113,7 @@ void RepresentationWebs::build()
 // A web votes in the choices of its neighbors with the form it has at the time: at first the default of its type.
 void RepresentationWebs::choose()
 {
-    constexpr unsigned maxRounds = 8;
+    AOT_THRESHOLD(unsigned, maxRounds, 8);
     Vector<uint32_t> firstLinkOf(FillWith { }, m_webs.size() + 1, 0u);
     for (const Link& link : m_links)
         ++firstLinkOf[link.voter + 1];
@@ -476,7 +477,7 @@ void RepresentationWebs::findWhereCollectorMayHaveRun(const BitVector& webs)
         for (BlockID block : cfg.reversePostOrder()) {
             BitVector atHead = m_mayHaveCollectedSinceEntryOf[block.index()];
             for (Edge edge : cfg.incomingEdges(block)) {
-                if (m_firstCollectingValue[edge.from.index()] < function.at(edge.from).values.size()) {
+                if (edge.isHandlerEdge() || m_firstCollectingValue[edge.from.index()] < function.at(edge.from).values.size()) {
                     atHead = everyBlock;
                     break;
                 }

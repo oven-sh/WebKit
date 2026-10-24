@@ -21,6 +21,7 @@
 #include "AOTKnownValue.h"
 #include "AOTRepresentation.h"
 #include "AOTSinkAllocations.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -45,7 +46,7 @@ constexpr uint32_t libraryLoopFactor = 2;
 constexpr uint32_t knownReceiverAccessBytes = 64;
 // What goes with an access by name to a receiver that is known: an access by slot takes its place.
 constexpr uint32_t slotInPlaceOfNameBytes = 12;
-constexpr unsigned depthWithoutBets = 3;
+AOT_THRESHOLD(unsigned, depthWithoutBets, 3);
 constexpr uint32_t constructorBytes = 256;
 constexpr uint8_t percentileOfMostEnteredFunctions = 98;
 constexpr uint32_t storeIntoOwnAllocationBytes = 32;

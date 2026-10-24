@@ -15,6 +15,7 @@
 #include "AOTCodeUnits.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CPU.h"
 #include "MacroAssembler.h"
@@ -30,7 +31,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-static constexpr size_t maxComparedBytes = 16;
+AOT_THRESHOLD(size_t, maxComparedBytes, 16);
 static_assert(sizeOfNearCall == sizeOfJump);
 
 namespace {

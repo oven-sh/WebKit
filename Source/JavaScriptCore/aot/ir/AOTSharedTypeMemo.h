@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <array>
 #include <atomic>
@@ -57,7 +58,7 @@ public:
     }
 
     // 256 MB in all shards, and a third of that in the tables they have grown out of.
-    static constexpr size_t defaultMaxSlotsInShard = 1 << 18;
+    AOT_CLASS_THRESHOLD(size_t, defaultMaxSlotsInShard, 1 << 18);
 
     SharedTypeMemo(bool verifiesAnswers, bool countsLookups, size_t maxSlotsInShard = defaultMaxSlotsInShard)
         : m_verifiesAnswers(verifiesAnswers)

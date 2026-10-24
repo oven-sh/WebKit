@@ -9,10 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTChainDependents.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTImmortalCells.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectBuilder.h"
+#include "AOTObjectBuilderInlines.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
@@ -452,7 +454,7 @@ static uintptr_t& allocatorWord(ObjectAllocationProfile& profile)
 const ObjectLiteralPlan* ObjectLiteralPlan::of(ObjectAllocationProfile& profile)
 {
     uintptr_t word = allocatorWord(profile);
-    return word & allocatorTag && word != allocatorTag ? std::bit_cast<const ObjectLiteralPlan*>(word - allocatorTag) : nullptr;
+    return word & allocatorTag && word != notPlannedYet ? std::bit_cast<const ObjectLiteralPlan*>(word & ~notPlannedYet) : nullptr;
 }
 
 uint8_t* ObjectLiteralPlan::allocateCell(VM& vm) const
@@ -508,7 +510,85 @@ static bool typeAcceptsEveryValue(const RuntimeType& type)
     return type.primitiveSet().containsAll(everyPrimitive) && !type.integerRange() && type.acceptsEveryObject();
 }
 
-std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanForRecord(Instance& instance, std::span<UniquedStringImpl* const> names)
+ObjectLiteralPlans::ObjectLiteralPlans(State& state)
+{
+    state.caches->add(CacheKind::ClearedEachCollection, "object literal plans"_s, *this);
+}
+
+void ObjectLiteralPlans::clear()
+{
+    for (const Entry& entry : m_entries) {
+        if (entry.recordBuilder)
+            entry.recordBuilder->clearAcceptedStructures();
+    }
+}
+
+// The builder was written for what a parser makes: it takes every cell but a string for an object, and undefined for null.
+JSObject* ObjectLiteralPlans::tryBuildRecord(VM& vm, const ObjectLiteralPlan& plan, const EncodedJSValue* values)
+{
+    const ObjectBuilderPlan& builder = *plan.recordBuilder;
+    for (unsigned index = 0; index < plan.numberOfValues; ++index) {
+        JSValue value = JSValue::decode(values[index]);
+        if (value.isCell() ? !value.isString() && !value.isObject() : value.isUndefined() && !builder.m_state.objects->layouts.slotAdmits(*builder.m_fields[index].field, value))
+            return nullptr;
+    }
+    return ObjectBuilder::tryBuild(vm, builder, plan.structureOfRecord, values);
+}
+
+bool ObjectLiteralPlans::storesValuesUnchanged(const ObjectBuilderPlan& builder, bool testsValues)
+{
+    bool slotsHoldValues = std::ranges::all_of(builder.m_fields, [&](const ObjectBuilderPlan::PlannedField& planned) {
+        const FieldData& field = *planned.field;
+        SlotRepresentation representation = field.slot.representation();
+        return (representation == SlotRepresentation::JSValue || (testsValues && representation == SlotRepresentation::Cell)) && !field.holdsRawValueFromBirth && !field.keepsStateOfBirth;
+    });
+    bool otherWordsAreZero = testsValues || std::ranges::all_of(builder.m_initialWords, [](const ObjectBuilderPlan::InitialWord& initial) {
+        return initial.offset == offsetOfOrderWord || !initial.word;
+    });
+    return builder.m_namesEveryFieldOfBirth && slotsHoldValues && otherWordsAreZero;
+}
+
+void ObjectLiteralPlans::fillPlanFromBuilder(Instance& instance, const ObjectBuilderPlan& builder, ObjectLiteralPlan& plan)
+{
+    static_assert(offsetOfOrderWord == sizeof(JSCell) && offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && offsetOfFirstField == 2 * sizeof(uint64_t));
+    plan.allocator = builder.m_allocator.localAllocator();
+    plan.structureOfRecord = instance.state->objects->structures.objectStructure(*instance.vm, builder.layout().shape);
+    plan.cellHeader = cellHeaderFor(plan.structureOfRecord);
+    for (const ObjectBuilderPlan::InitialWord& initial : builder.m_initialWords) {
+        if (initial.offset == offsetOfOrderWord)
+            plan.secondWord = initial.word;
+    }
+    plan.numberOfValues = builder.m_fastFields.size();
+    for (size_t index = 0; index < builder.m_fastFields.size(); ++index)
+        plan.valueOffsets[index] = builder.m_fastFields[index].offset;
+    plan.numberOfClearedWords = (builder.m_initialBody.size() + sizeof(JSCell) - offsetOfFirstField + sizeof(uint64_t) - 1) / sizeof(uint64_t);
+}
+
+std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanThatTestsValues(Instance& instance, const ObjectBuilderPlan& builder, const ObjectLiteralPlan& planForOrdinaryObject, Vector<uint64_t>& initialWords)
+{
+    if (!storesValuesUnchanged(builder, true))
+        return nullptr;
+    using Builder = ObjectBuilderPlan;
+    static_assert(ObjectLiteralPlan::acceptsInt32 == Builder::AcceptsInt32 && ObjectLiteralPlan::acceptsDouble == Builder::AcceptsDouble && ObjectLiteralPlan::acceptsString == Builder::AcceptsString);
+    static_assert(ObjectLiteralPlan::acceptsObject == Builder::AcceptsObject && ObjectLiteralPlan::acceptsBoolean == Builder::AcceptsBoolean);
+    auto plan = makeUniqueWithoutFastMallocCheck<ObjectLiteralPlan>();
+    fillPlanFromBuilder(instance, builder, *plan);
+    plan->planForOrdinaryObject = &planForOrdinaryObject;
+    plan->recordBuilder = &builder;
+    initialWords.fill(0, WTF::roundUpToMultipleOf<sizeof(uint64_t)>(builder.m_initialBody.size()) / sizeof(uint64_t));
+    memcpySpan(asMutableByteSpan(initialWords.mutableSpan()), builder.m_initialBody.span());
+    plan->initialWords = initialWords.span().data();
+    plan->numberOfInitialWords = initialWords.size();
+    plan->acceptedStructureIDs = builder.m_acceptedStructureIDs.span().data();
+    for (size_t index = 0; index < builder.m_fastFields.size(); ++index) {
+        constexpr uint8_t cells = ObjectBuilderPlan::AcceptsString | ObjectBuilderPlan::AcceptsObject;
+        constexpr uint8_t testedInline = cells | ObjectBuilderPlan::AcceptsInt32 | ObjectBuilderPlan::AcceptsDouble | ObjectBuilderPlan::AcceptsBoolean;
+        plan->acceptedValues[index] = builder.m_fastFields[index].acceptedValues & (builder.m_fastFields[index].representation == SlotRepresentation::Cell ? cells : testedInline);
+    }
+    return plan;
+}
+
+std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanForRecord(Instance& instance, std::span<UniquedStringImpl* const> names, std::unique_ptr<ObjectBuilderPlan>& builderThatTestsValues)
 {
     VM& vm = *instance.vm;
     State& state = *instance.state;
@@ -527,39 +607,26 @@ std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanForRecord(Insta
         bool hasEveryName = std::ranges::all_of(names, [&](UniquedStringImpl* name) {
             return !!layouts.field(vm, layout, name);
         });
+        if (!hasEveryName)
+            continue;
+        std::unique_ptr<ObjectBuilderPlan> builderPlan = ObjectBuilder::tryCreatePlan(state, layout, names);
+        if (!builderPlan || !builderPlan->hasFastPath())
+            continue;
         bool everyFieldAcceptsEveryValue = std::ranges::all_of(layout.fields(), [&](const FieldData& field) {
             return typeAcceptsEveryValue(layouts.typeOf(field));
         });
-        if (!hasEveryName || !everyFieldAcceptsEveryValue)
-            continue;
-        std::unique_ptr<ObjectBuilderPlan> builderPlan = ObjectBuilder::tryCreatePlan(state, layout, names);
-        if (!builderPlan || !builderPlan->hasFastPath() || !builderPlan->m_namesEveryFieldOfBirth)
-            continue;
-        bool storesValuesUnchanged = std::ranges::all_of(builderPlan->m_fields, [&](const ObjectBuilderPlan::PlannedField& planned) {
-            const FieldData& field = *planned.field;
-            return field.slot.representation() == SlotRepresentation::JSValue && !field.holdsRawValueFromBirth && !field.keepsStateOfBirth;
-        });
-        bool otherWordsAreZero = std::ranges::all_of(builderPlan->m_initialWords, [](const ObjectBuilderPlan::InitialWord& initial) {
-            return initial.offset == offsetOfOrderWord || !initial.word;
-        });
-        if (storesValuesUnchanged && otherWordsAreZero)
+        if (everyFieldAcceptsEveryValue && storesValuesUnchanged(*builderPlan, false))
             best = WTF::move(builderPlan);
+        else if (!builderThatTestsValues || layout.numberOfFields < builderThatTestsValues->layout().numberOfFields)
+            builderThatTestsValues = WTF::move(builderPlan);
     }
     if (!best)
         return nullptr;
+    builderThatTestsValues = nullptr;
 
-    static_assert(offsetOfOrderWord == sizeof(JSCell) && offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && offsetOfFirstField == 2 * sizeof(uint64_t));
     auto plan = makeUniqueWithoutFastMallocCheck<ObjectLiteralPlan>();
-    plan->allocator = best->m_allocator.localAllocator();
-    plan->cellHeader = cellHeaderFor(state.objects->structures.objectStructure(vm, best->layout().shape));
-    for (const ObjectBuilderPlan::InitialWord& initial : best->m_initialWords) {
-        if (initial.offset == offsetOfOrderWord)
-            plan->secondWord = initial.word;
-    }
-    plan->numberOfValues = names.size();
-    for (size_t index = 0; index < names.size(); ++index)
-        plan->valueOffsets[index] = best->m_fastFields[index].offset;
-    plan->setClearedWords((best->m_initialBody.size() + sizeof(JSCell) - offsetOfFirstField + sizeof(uint64_t) - 1) / sizeof(uint64_t));
+    fillPlanFromBuilder(instance, *best, *plan);
+    plan->setClearedWords(plan->numberOfClearedWords);
     return plan;
 }
 
@@ -567,12 +634,13 @@ const ObjectLiteralPlan* ObjectLiteralPlans::findOrCreate(Instance& instance, St
 {
     for (const Entry& entry : m_entries) {
         if (entry.emptyStructure == emptyStructure && entry.mayBeRecord == mayBeRecord && std::ranges::equal(entry.names, names, { }, &RefPtr<UniquedStringImpl>::get))
-            return entry.plan.get();
+            return entry.planForSites();
     }
     if (m_entries.size() == maxNumberOfPlans)
         return nullptr;
     instance.state->immortalCells->add(emptyStructure);
-    std::unique_ptr<ObjectLiteralPlan> plan = mayBeRecord ? createPlanForRecord(instance, names) : nullptr;
+    std::unique_ptr<ObjectBuilderPlan> recordBuilder;
+    std::unique_ptr<ObjectLiteralPlan> plan = mayBeRecord ? createPlanForRecord(instance, names, recordBuilder) : nullptr;
     Structure* structureOfFinalObject = nullptr;
     if (!plan) {
         plan = makeUniqueWithoutFastMallocCheck<ObjectLiteralPlan>();
@@ -580,11 +648,13 @@ const ObjectLiteralPlan* ObjectLiteralPlans::findOrCreate(Instance& instance, St
         if (!structureOfFinalObject)
             plan = nullptr;
     }
-    m_entries.append({ emptyStructure, structureOfFinalObject, mayBeRecord, { }, WTF::move(plan) });
+    Vector<uint64_t> initialWordsOfRecord;
+    std::unique_ptr<ObjectLiteralPlan> planThatTestsValues = plan && recordBuilder ? createPlanThatTestsValues(instance, *recordBuilder, *plan, initialWordsOfRecord) : nullptr;
+    m_entries.append({ emptyStructure, structureOfFinalObject, mayBeRecord, { }, WTF::move(plan), WTF::move(recordBuilder), WTF::move(planThatTestsValues), WTF::move(initialWordsOfRecord) });
     m_entries.last().names.appendContainerWithMapping(names, [](UniquedStringImpl* name) {
         return RefPtr { name };
     });
-    return m_entries.last().plan.get();
+    return m_entries.last().planForSites();
 }
 
 void ObjectLiteralPlans::didOutgrowCell(Instance& instance, Structure* beforeAddition)
@@ -653,12 +723,12 @@ void fuseReadsOfClosureVariables(CodeBlock& codeBlock)
 
 void didLinkNewObject(ObjectAllocationProfile& profile)
 {
-    allocatorWord(profile) = ObjectLiteralPlan::allocatorTag;
+    allocatorWord(profile) = ObjectLiteralPlan::notPlannedYet;
 }
 
 bool planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const JSInstruction* instruction, ObjectAllocationProfile& profile)
 {
-    if (allocatorWord(profile) != ObjectLiteralPlan::allocatorTag)
+    if (allocatorWord(profile) != ObjectLiteralPlan::notPlannedYet)
         return false;
 
     VM& vm = globalObject->vm();
@@ -683,9 +753,9 @@ bool planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const
 
     std::unique_ptr<ObjectLiteralPlans>& plans = instance->state->objects->caches->objectLiteralPlans;
     if (!plans)
-        plans = makeUnique<ObjectLiteralPlans>();
+        plans = makeUnique<ObjectLiteralPlans>(*instance->state);
     if (const ObjectLiteralPlan* plan = plans->findOrCreate(*instance, emptyStructure, names.span(), !codeBlock->unlinkedCodeBlock()->isBuiltinFunction()))
-        allocatorWord(profile) = std::bit_cast<uintptr_t>(plan) | ObjectLiteralPlan::allocatorTag;
+        allocatorWord(profile) = std::bit_cast<uintptr_t>(plan) | ObjectLiteralPlan::allocatorTag | (plan->recordBuilder ? ObjectLiteralPlan::slowPathTag : 0);
     return true;
 }
 

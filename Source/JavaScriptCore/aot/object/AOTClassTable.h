@@ -62,6 +62,10 @@ public:
     bool keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData&) const;
     static bool hasComputedMemberNames(const LayoutData&);
     static bool isDefinedByClass(const LayoutData&);
+    // What Object.create makes at one place in the program. The first object that the call is handed is the prototype object of the class.
+    static bool isClassOfCreatedObjects(const LayoutData&);
+    bool awaitsPrototypeOfCreatedObjects(const LayoutData&) const;
+    bool defineClassOfCreatedObjects(VM&, const LayoutData&, JSObject* prototype);
     bool hasStaticMethodNamed(const LayoutData&, UniquedStringImpl*) const;
     const FieldData* staticField(const LayoutData&, UniquedStringImpl*) const;
     JSValue readStaticField(const FieldData&) const;
@@ -247,6 +251,11 @@ inline bool ClassTable::hasOneClassObject(const LayoutData& classLayout)
 }
 
 // The other classes are those of constructor functions.
+inline bool ClassTable::isClassOfCreatedObjects(const LayoutData& layout)
+{
+    return layout.isClass() && !FunctionID(layout.classData().classConstructor);
+}
+
 inline bool ClassTable::isDefinedByClass(const LayoutData& layout)
 {
     if (!layout.isClass())

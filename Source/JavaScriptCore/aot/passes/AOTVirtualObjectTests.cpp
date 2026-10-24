@@ -288,9 +288,14 @@ ListOfNumbers classifyListOfNumbers(const Program& program, const VirtualObjectD
 // The answer says nothing of the array once it is built: a NaN among the numbers is found when the literal runs. ObjectInterpreter::reliesOnAnswerThatCellDoesNotKeep() sees to that.
 static KnownBoolean evaluateStorageTestOfNumbers(const Program& program, const VirtualObjectDescription& description, ArrayLiteralParts parts, const Value& test)
 {
-    if (!parts.hasElements || parts.hasHoles || parts.hasCapacity || classifyListOfNumbers(program, description) != ListOfNumbers::FitsByType)
+    if (!parts.hasElements || parts.hasHoles || parts.hasCapacity)
         return KnownBoolean::Unknown;
-    return knownBoolean(test.arrayStorage() == arrayStorageAtAllocation(program, program.at(description.type)));
+    // Its readers may expect storage for every value, where an element may be no number.
+    if (test.arrayStorage() == ArrayStorage::Contiguous)
+        return KnownBoolean::True;
+    if (test.arrayStorage() != arrayStorageAtAllocation(program, program.at(description.type)))
+        return KnownBoolean::False;
+    return classifyListOfNumbers(program, description) == ListOfNumbers::FitsByType ? KnownBoolean::True : KnownBoolean::Unknown;
 }
 
 static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)

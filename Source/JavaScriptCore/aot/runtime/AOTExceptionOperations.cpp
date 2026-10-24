@@ -95,6 +95,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJS
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
+    DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();
     RELEASE_ASSERT(exception && !vm.isTerminationException(exception));
@@ -106,6 +107,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
+    DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();
     RELEASE_ASSERT(exception && !vm.isTerminationException(exception));

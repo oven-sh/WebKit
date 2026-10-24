@@ -15,6 +15,7 @@
 #include "AOTKnownValue.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTestCoverage.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -386,7 +387,7 @@ static bool assignsPrototype(const Program& program, const OwnKeyWalkPlan& plan)
 }
 
 // A copy is an ordinary object with ordinary properties under the same names in the same order.
-static constexpr size_t maxFieldsCopiedByAllocation = 8;
+AOT_THRESHOLD(size_t, maxFieldsCopiedByAllocation, 8);
 
 static bool isCopiedByAllocation(const Program& program, const OwnKeyWalkArm& arm)
 {

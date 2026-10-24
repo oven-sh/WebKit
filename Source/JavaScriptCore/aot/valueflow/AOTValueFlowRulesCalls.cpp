@@ -14,6 +14,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTKnownClosures.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
 #include "AOTVector.h"
@@ -104,7 +105,7 @@ void passNoFurtherArguments(ValueFlowRuleContext& context, const ValueFlowCallGr
 // No callee looks at a position from this one on. The callees are functions of the program that a group enters.
 static unsigned numberOfPositionsTakenBy(ValueFlowRuleContext& context, ClimbingSet closures)
 {
-    constexpr unsigned mostCalleesLookedAt = 4;
+    AOT_THRESHOLD(unsigned, mostCalleesLookedAt, 4);
     const ValueFlowUniverse& universe = context.universe();
     unsigned numberOfCallees = 0;
     unsigned positions = 0;
@@ -534,7 +535,7 @@ static PropertyKeyID keyReadFromReceiver(const Program& program, const ValueFlow
 
 ValueID definitionThroughTests(const Function& function, ValueID id)
 {
-    constexpr unsigned mostTests = 4;
+    AOT_THRESHOLD(unsigned, mostTests, 4);
     for (unsigned steps = 0; steps < mostTests; ++steps) {
         id = definitionThroughSameValues(function, id);
         if (function.at(id).opcode != Opcode::Parameter)

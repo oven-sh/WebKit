@@ -54,7 +54,8 @@ constexpr StubKey allocateExtension(unsigned size)
 }
 
 constexpr StubKey newTypedArray() { return StubKey(StubFamily::NewTypedArray); }
-constexpr StubKey newDictionary() { return StubKey(StubFamily::NewDictionary); }
+// The cell has room for twice so many properties beyond the default.
+constexpr StubKey newDictionary(unsigned addedPairsOfSlots) { return StubKey(StubFamily::NewDictionary).withCount(addedPairsOfSlots); }
 
 // The upper 32 bits of allocation are zero. scratch may be allocation, which is then lost.
 void loadAllocationSiteRecord(StubAssembler&, GPRReg allocation, GPRReg record, GPRReg scratch);

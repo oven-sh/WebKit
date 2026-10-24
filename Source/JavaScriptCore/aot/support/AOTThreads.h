@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <algorithm>
@@ -232,7 +233,7 @@ Vector<T> collectInParallel(const ParallelLoops& loops, unsigned count, std::spa
     Vector<T> result = createVectorWithCapacityInParallel<T>(loops, size);
     for (auto& chunk : chunks)
         result.appendVector(WTF::move(chunk));
-    constexpr size_t fewestChunksFreedOnPool = 64;
+    AOT_THRESHOLD(size_t, fewestChunksFreedOnPool, 64);
     if (chunks.size() >= fewestChunksFreedOnPool) {
         forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
             chunks[chunk] = { };
@@ -266,7 +267,7 @@ JS_EXPORT_PRIVATE void sortRunsAndMerge(const ParallelLoops&, const SortSteps&, 
 template<typename T, typename Less>
 void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isLess)
 {
-    constexpr size_t fewestForPool = 1 << 13;
+    AOT_THRESHOLD(size_t, fewestForPool, 1 << 13);
     size_t count = list.size();
     if (count < fewestForPool) {
         AOT::sort(list, isLess);
@@ -301,7 +302,7 @@ void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isL
                     if (part == partsPerMerge)
                         return std::pair { first.size(), second.size() };
                     size_t inFirst = first.size() * part / partsPerMerge;
-                    size_t inSecond = part ? static_cast<size_t>(std::ranges::lower_bound(second, first[inFirst], isLess) - second.begin()) : 0;
+                    size_t inSecond = part && !first.empty() ? static_cast<size_t>(std::ranges::lower_bound(second, first[inFirst], isLess) - second.begin()) : 0;
                     return std::pair { inFirst, inSecond };
                 };
                 auto [firstBegin, secondBegin] = beginOf(index % partsPerMerge);

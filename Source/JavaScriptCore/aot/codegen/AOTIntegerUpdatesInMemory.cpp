@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"
@@ -164,7 +165,7 @@ static bool tryUseOverflowFlag(B3::Procedure& proc, Update& update, const Stored
 
 static std::optional<Update> matchUpdate(B3::Procedure& proc, B3::Value* value)
 {
-    constexpr unsigned maxPathLength = 4;
+    AOT_THRESHOLD(unsigned, maxPathLength, 4);
     auto* store = value->as<B3::MemoryValue>();
     if (!store || store->opcode() != B3::Store || store->child(0)->opcode() != B3::Trunc)
         return std::nullopt;

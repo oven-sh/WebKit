@@ -18,6 +18,7 @@
 #include "AOTSelectionContext.h"
 #include "AOTStringArena.h"
 #include "AOTStringRuleSupport.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "JSGlobalObjectFunctions.h"
 #include "YarrFlags.h"
@@ -68,7 +69,7 @@ struct LiteralCall {
 
 } // anonymous namespace
 
-static constexpr unsigned maxLengthOfSeparatorFoundInline = 16;
+AOT_THRESHOLD(unsigned, maxLengthOfSeparatorFoundInline, 16);
 
 static constexpr std::array equalityOpcodes { Opcode::StrictEq, Opcode::Eq };
 static constexpr std::array relationalOpcodesOfLiterals { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };

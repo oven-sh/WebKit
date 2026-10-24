@@ -22,6 +22,7 @@
 #include "AOTProgramCaches.h"
 #include "AOTLargeVectors.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
@@ -79,8 +80,8 @@ enum class StateBehindSchedule : uint8_t { IsFinal, AwaitsEndOfLoop };
 
 static Vector<Batch> createBatches(std::span<const uint64_t> largestFirst, bool hasSeveralSteps)
 {
-    constexpr uint32_t maxFunctionsInBatch = 64;
-    constexpr uint64_t maxValuesInBatch = 4096;
+    AOT_THRESHOLD(uint32_t, maxFunctionsInBatch, 64);
+    AOT_THRESHOLD(uint64_t, maxValuesInBatch, 4096);
     Vector<Batch> batches;
     if (!hasSeveralSteps) {
         batches = Vector<Batch>(largestFirst.size(), [](size_t position) {

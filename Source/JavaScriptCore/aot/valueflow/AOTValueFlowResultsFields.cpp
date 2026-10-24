@@ -921,8 +921,8 @@ static Vector<Vector<PropertyKeyID>> chooseAppendedKeys(const FieldResults& resu
             return;
         // What only a store through a placeholder, the code of a built-in or a store under a key that may be one of several puts there goes to the extra properties.
         Vector<PropertyKeyID> accessors = keysOfAccessorsIn(results, makers.of(worker), LayoutID(index));
-        // What Object.create makes stays an ordinary object unless it is made to hold accessors.
-        if (accessors.isEmpty() && program.layouts[index].has(LayoutFlags::IsOfCreatedObject))
+        // What Object.create makes below an object nobody knows stays an ordinary object unless it is made to hold accessors.
+        if (accessors.isEmpty() && program.layouts[index].has(LayoutFlags::IsOfCreatedObject) && results.application.layouts[index].classFlow.evaluations != ExecutionCount::AtMostOnce)
             return;
         keysByLayout[index] = results.stores.keysNamedByStoresIntoKnownObjects(LayoutID(index));
         uniteSortedKeys(keysByLayout[index], accessors);

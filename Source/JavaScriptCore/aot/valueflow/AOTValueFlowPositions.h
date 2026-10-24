@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "AOTValueFlowResultsInternal.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
@@ -123,7 +124,7 @@ private:
         HashMap<uint32_t, std::unique_ptr<ValueFlowSharedTypeOfSet>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bySet WTF_GUARDED_BY_LOCK(lock);
     };
 
-    static constexpr size_t mostBytesOfTypesOfSets = 256 * MB;
+    AOT_CLASS_THRESHOLD(size_t, mostBytesOfTypesOfSets, 256 * MB);
 
     TypesOfSets& typesOfSetsFor(ValueSetID set) { return m_typesOfSets[((set.index() >> 1) * 0x9e3779b1u) >> 26]; }
 

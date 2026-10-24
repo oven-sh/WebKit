@@ -22,7 +22,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v8
 }
 # CALLS-LABEL: f0: size=
-# CALLS: stub NewDictionary x1
+# CALLS: stub NewDictionary.n0 x1
 
 function f1 name="empty" results=[{type=anything}] {
   b0():
@@ -39,7 +39,7 @@ function f2 name="oneInsideTheOther" parameters=[{type=anything}] results=[{type
     Return v1
 }
 # CALLS-LABEL: f2: size=
-# CALLS: stub NewDictionary x2
+# CALLS: stub NewDictionary.n0 x2
 
 function f3 name="unused" results=[{type=anything}] {
   b0():
@@ -79,11 +79,11 @@ function f5 name="literalThenKeys" parameters=[{type=anything}, {type=anything},
 # which is split off only when its entrypoint names it: until then no code does
 # CALLS-LABEL: f9: size=
 # CALLS-NOT: operation
-# CALLS: stub NewDictionary x1
+# CALLS: stub NewDictionary.n0 x1
 # CALLS-NOT: operation
 # CALLS-LABEL: f11: size=
 # CALLS-NOT: NewDictionary
 # CALLS-LABEL: f12: size=
-# CALLS: stub NewDictionary x
+# CALLS: stub NewDictionary.n0 x
 # CALLS-LABEL: f14: size=
-# CALLS: stub NewDictionary x1
+# CALLS: stub NewDictionary.n0 x1

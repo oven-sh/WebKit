@@ -4,6 +4,7 @@ export default b.declarations(
   b.hostRoles(
     "%CompilerHelpers%",
     "%CompilerHelpers%.copyOwnProperties",
+    "%CompilerHelpers%.countCodePoints",
     "%CompilerHelpers%.definePropertiesFrom",
     "%CompilerHelpers%.describeUnlessOrdinary",
     "%CompilerHelpers%.encodeIntoRangeOfBytes",

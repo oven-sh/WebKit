@@ -24,6 +24,7 @@
 #include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -193,10 +194,10 @@ public:
     }
 
 private:
-    static constexpr unsigned maxValuesFollowed = 1 << 14;
-    static constexpr unsigned maxValuesFollowedForTest = 64;
+    AOT_CLASS_THRESHOLD(unsigned, maxValuesFollowed, 1 << 14);
+    AOT_CLASS_THRESHOLD(unsigned, maxValuesFollowedForTest, 64);
     unsigned m_budget { maxValuesFollowed };
-    static constexpr unsigned maxTestsBeingAnswered = 1;
+    AOT_CLASS_THRESHOLD(unsigned, maxTestsBeingAnswered, 1);
     unsigned m_testsBeingAnswered { 0 };
 
     struct Store {

@@ -10,6 +10,7 @@
 
 #include "AOTEdgeResults.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <bit>
@@ -183,7 +184,7 @@ Liveness::CrossBlockValues Liveness::collectCrossBlockValues(std::span<const Int
 
 void Liveness::computeLiveAtHeads(std::span<const InteriorPointer> interiorPointers, LivenessOptions::Solver solver)
 {
-    static constexpr size_t maxWordsForPerBlockSolver = 1 << 18;
+    AOT_THRESHOLD(size_t, maxWordsForPerBlockSolver, 1 << 18);
 
     unsigned numberOfBlocks = m_cfg.numNodes();
     m_firstLiveValue.fill(0, numberOfBlocks + 1);

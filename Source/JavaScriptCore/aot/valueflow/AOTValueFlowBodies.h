@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "AOTValueFlow.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowUnobservedDefinitions.h"
@@ -827,9 +828,9 @@ public:
     // It is no key, so it stands for nothing else among the markers of a function.
     static constexpr ValueFlowObjectID markerOfOtherCalls() { return ValueFlowUniverse::primitive(PrimitiveSet::Undefined); }
     // A call that may pass more constants than this is one of the other calls, and so is a call with a new constant once the function has this many instances. A larger body has no instances.
-    static constexpr unsigned mostMarkersOfCall = 8;
-    static constexpr unsigned mostInstances = 64;
-    static constexpr uint32_t mostNodesOfBody = 1024;
+    AOT_CLASS_THRESHOLD(unsigned, mostMarkersOfCall, 8);
+    AOT_CLASS_THRESHOLD(unsigned, mostInstances, 64);
+    AOT_CLASS_THRESHOLD(uint32_t, mostNodesOfBody, 1024);
 
 private:
     Vector<ValueFlowInstancedFunction> m_functions;

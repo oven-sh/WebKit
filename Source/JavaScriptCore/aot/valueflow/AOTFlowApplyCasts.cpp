@@ -231,32 +231,6 @@ void insertSymbolConstants(const FlowCastInsertion& insertion, const FlowBodyUpd
     }
 }
 
-void createBoundClosures(const FlowCastInsertion& insertion, const FlowBodyUpdate& update)
-{
-    Function& function = insertion.body.function;
-    const Program& program = insertion.body.program;
-    for (const FlowBoundClosureCreation& entry : update.boundClosures) {
-        ValueLocation location = insertion.analyses.useLists().locationOf(entry.call);
-        RELEASE_ASSERT(location.placement == ValuePlacement::InBlock && function.at(entry.call).opcode == Opcode::Call);
-
-        ValueID target = function.at(entry.call).thisValueOperand();
-        ValueID boundThis = function.at(entry.call).argumentsOperands().empty() ? ValueID() : function.at(entry.call).argumentsOperands()[0];
-        Vector<ValueID, 2> captures;
-        const auto& bound = program.at(entry.function).creator.as<CreatorRecord::BoundFunction>();
-        if (program.at(bound.target).has(FunctionFlags::HasThis)) {
-            insertion.builder.setOrigin(function.at(entry.call).origin());
-            captures.append(boundThis ? boundThis : insertion.builder.insertBefore({ location.block, location.index }, IRBuilder::make(Opcode::Undefined)));
-        }
-        if (bound.capturesTargetClosure)
-            captures.append(target);
-
-        Value& creation = function.edit(entry.call);
-        creation.become(Opcode::NewClosure);
-        creation.setFunction(entry.function);
-        creation.setCapturesOperands(captures.span());
-    }
-}
-
 void replaceDefinedValues(const FlowCastInsertion& insertion, const FlowBodyUpdate& update)
 {
     Function& function = insertion.body.function;

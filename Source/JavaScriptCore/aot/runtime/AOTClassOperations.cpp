@@ -116,7 +116,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
 {
     constexpr Entry entry = Entry::operationAOTSetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    DeferGC deferGC(vm);
     ObjectModel& objects = *instance->state->objects;
     Object* allocated = cellArgument<Object>(object, entry);
     JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);

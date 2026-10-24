@@ -538,17 +538,31 @@ export const printedByFormatter = (...otherMembers: readonly string[]): UseSpec 
     ),
   );
 
-export interface CallbackOptions {
+/** What a function is called with is always said: b.undefined for a `this` that native code does not pass, [] for no arguments. */
+interface PassedOptions {
+  this: PlaceLike;
+  args: readonly PlaceLike[];
+}
+
+export type CallbackOptions = {
   times: CallbackTimes;
   afterwards: CallbackAftermath;
-  constructs?: boolean;
-  /** What the constructed function sees as new.target. Without it that is the function itself. */
-  newTarget?: PlaceLike;
-  this?: PlaceLike;
-  args?: readonly PlaceLike[];
   spreadArgs?: PlaceLike;
   result?: CallbackResultUse;
   resultTo?: PlaceLike;
+} & (
+  | (PassedOptions & { constructs?: false; newTarget?: undefined })
+  /** What the constructed function sees as new.target. Without it that is the function itself. */
+  | (Pick<PassedOptions, "args"> & { constructs: true; newTarget?: PlaceLike; this?: undefined })
+);
+
+function passedSpecOf(options: Partial<PassedOptions>, isConstructed = false) {
+  assert((options.this === undefined) === isConstructed, "a called function is told its `this`, a constructed one is not");
+  assert(options.args !== undefined, "a called function is told its arguments");
+  return {
+    thisValue: isConstructed || options.this === undefined_ ? undefined : placeOf(options.this!),
+    arguments: options.args.map(placeOf),
+  };
 }
 
 export function called(options: CallbackOptions): UseSpec {
@@ -561,25 +575,21 @@ export function called(options: CallbackOptions): UseSpec {
     afterwards: options.afterwards,
     constructs: options.constructs,
     newTarget: options.newTarget === undefined ? undefined : placeOf(options.newTarget),
-    thisValue: options.this === undefined ? undefined : placeOf(options.this),
-    arguments: options.args?.map(placeOf),
+    ...passedSpecOf(options, options.constructs),
     spreadArguments: options.spreadArgs === undefined ? undefined : placeOf(options.spreadArgs),
     result: options.result,
     resultTo: options.resultTo === undefined ? undefined : placeOf(options.resultTo),
   };
 }
 
-export interface HandlerOptions {
+export interface HandlerOptions extends PassedOptions {
   times: CallbackTimes;
-  this?: PlaceLike;
-  args?: readonly PlaceLike[];
   result?: "Escapes" | "Ignored";
 }
 
 const handlerSpecOf = (options: HandlerOptions): HandlerSpec => ({
   times: options.times,
-  thisValue: options.this === undefined ? undefined : placeOf(options.this),
-  arguments: options.args?.map(placeOf),
+  ...passedSpecOf(options),
   result: options.result,
 });
 

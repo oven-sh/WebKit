@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "ArrayConventions.h"
 #include "IndexingType.h"
 #include <cstdint>
@@ -30,7 +31,7 @@ struct ArrayAllocationProfile {
     static constexpr uint32_t interval = 64;
     static constexpr uint32_t intervalMask = (interval - 1) << allocationCountShift;
     static constexpr uint32_t countAtReview = 1 << allocationCountShift;
-    static constexpr uint8_t reviewsInWindow = 10;
+    AOT_CLASS_THRESHOLD(uint8_t, reviewsInWindow, 10);
     static constexpr unsigned lengthsKept = 3;
     static constexpr unsigned sizeOfLastArrayWord = 8;
 
@@ -74,7 +75,7 @@ inline constexpr unsigned arrayLiteralWithDoubleIsNumberMaskShift = 8;
 inline constexpr uint32_t valuesAreRawNumbers = 1u << 8;
 
 inline constexpr unsigned maxLengthForElementwiseCopy = 64;
-inline constexpr unsigned maxLengthForElementwiseMove = 32;
+AOT_THRESHOLD(unsigned, maxLengthForElementwiseMove, 32);
 
 namespace NewArrayWithHolesFlag {
 inline constexpr uint32_t lengthIsCapacity = 1;

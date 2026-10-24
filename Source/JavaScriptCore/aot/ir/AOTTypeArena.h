@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTStoragePool.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
 #include <array>
@@ -284,7 +285,7 @@ public:
 private:
     enum class LayoutSetOperation : uint8_t { Union, Intersection, Difference };
     static constexpr size_t numberOfLayoutSetOperations = 3;
-    static constexpr size_t minCachedSetSize = 8;
+    AOT_CLASS_THRESHOLD(size_t, minCachedSetSize, 8);
 
     template<typename Result> using LayoutSetPairMap = UncheckedKeyHashMap<uint64_t, Result, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 

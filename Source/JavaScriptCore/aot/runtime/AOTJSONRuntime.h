@@ -10,6 +10,7 @@
 #include "AOTJSONKeyOrder.h"
 #include "AOTJSONSource.h"
 #include "AOTJSONValueParser.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "JSCJSValue.h"
 #include "Structure.h"
@@ -77,7 +78,7 @@ private:
         std::unique_ptr<ObjectBuilderPlan> plan;
     };
     static constexpr size_t recordPlanCacheSize = 128;
-    static constexpr size_t maxRecordPlans = 256;
+    AOT_CLASS_THRESHOLD(size_t, maxRecordPlans, 256);
     using RecordPlanCache = std::array<CachedRecordPlan, recordPlanCacheSize>;
     static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
 

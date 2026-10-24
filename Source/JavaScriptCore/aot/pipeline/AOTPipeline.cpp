@@ -221,7 +221,6 @@ constexpr std::array rows {
     functionPass(HoistTestsIntoPredecessors, hoistTestsIntoPredecessors, Optional, Prepared, { }, values),
     functionPass(TestNarrowerTypesFirst, testNarrowerTypesFirst, Optional, Prepared, { }, everything),
     functionPass(ThreadJumps, threadJumps, Optional, Prepared, { EffectSummaries }, everything),
-    functionPass(InferSwitches, inferSwitches, Optional, Prepared, { }, everything),
     functionPass(EliminateDeadCode, eliminateDeadCode, Optional, Prepared, { Flow, EffectSummaries }, values),
     functionPass(MergeDuplicateBlocks, mergeDuplicateBlocks, Optional, Prepared, { }, everything),
     functionPass(CompactBlocks, compactBlocks, Required, Prepared, { }, everything),
@@ -264,7 +263,6 @@ constexpr std::array simplifySteps {
             ScheduleStep::run(ThreadJumps),
             ScheduleStep::run(EliminateDeadCode),
         ScheduleStep::endFixpoint(),
-        ScheduleStep::run(InferSwitches),
         ScheduleStep::run(EliminateRedundantReads),
         ScheduleStep::run(RetypeValues),
     ScheduleStep::endFixpoint(),
@@ -284,7 +282,6 @@ constexpr std::array prepareSteps {
     ScheduleStep::run(SimplifyBuiltinCalls),
     ScheduleStep::run(ExpandData),
     ScheduleStep::run(InsertObjectCoercibleChecks),
-    ScheduleStep::run(EliminateTailRecursion),
     ScheduleStep::run(RemoveRedundantHandlers),
     ScheduleStep::include(FunctionSchedule::Simplify),
 };
@@ -309,6 +306,7 @@ constexpr std::array optimizeSteps {
         ScheduleStep::run(ResolveAwaitedCalls),
         ScheduleStep::run(FuseArrayChains),
         ScheduleStep::run(InlineCalls),
+        ScheduleStep::run(EliminateTailRecursion),
         ScheduleStep::run(PlaceAllocationsAtTheirUse),
         ScheduleStep::run(FuseGeneratorLoops),
         ScheduleStep::run(SimplifyCasts),
@@ -416,7 +414,7 @@ constexpr PassesLeftIdle passesLeftIdle[] {
 
 constexpr PassesLeftIdle passesThatCanWait[] {
     { CreateStringBuilders, { PlaceTypeTests } },
-    { EliminateDeadCode, { ResolveBuiltins, ResolveCalls, ResolveAccesses, PlaceTypeTests, InlineCalls, SimplifyCasts, FoldConstants, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateDeadCode, InferSwitches, EliminateRedundantReads } },
+    { EliminateDeadCode, { ResolveBuiltins, ResolveCalls, ResolveAccesses, PlaceTypeTests, InlineCalls, SimplifyCasts, FoldConstants, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateDeadCode, EliminateRedundantReads } },
     { EliminateGuards, { RetypeValues } },
     { EliminateRedundantReads, { RemoveTrivialParameters, PropagateBranchConditions, HoistTestsIntoPredecessors, ThreadJumps, EliminateRedundantReads } },
     { FoldConstants, { RemoveTrivialParameters, EliminateRedundantReads } },

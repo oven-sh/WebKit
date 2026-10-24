@@ -1,8 +1,8 @@
-# A tail call of the function itself that came in with an inlined callee belongs to the frame of that callee and stays a call
+# A tail call that is left in the frame of an inlined callee stood in tail position there and at the call that was inlined, so a call of the function itself becomes a loop
 # FORM: Prepared
 # RUN: pass EliminateTailRecursion
-# STATISTIC: TailRecursionsEliminated = 0
-# CHECK: outcome: Unchanged
+# STATISTIC: TailRecursionsEliminated = 1
+# CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
 
@@ -17,10 +17,12 @@ function f0 name="outer" parameters=[{type=number}] results=[{type=number}] inli
     Return v0
 }
 # CHECK-LABEL: function f0 name="outer"
-# CHECK-NOT: LoopHint
-# CHECK: v2: number = CallDirect v0 function=f0 @20:1
-# CHECK-NEXT: ReturnCall v2 @20:1
-# CHECK-NOT: LoopHint
+# CHECK-NOT: CallDirect
+# CHECK: Jump -> next [[header]](v0)
+# CHECK: Jump -> next [[header]]([[carried]]) @20:1
+# CHECK: [[header]]([[carried]]: number):
+# CHECK-NEXT: LoopHint
+# CHECK-NOT: CallDirect
 
 function f1 name="inlined" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):

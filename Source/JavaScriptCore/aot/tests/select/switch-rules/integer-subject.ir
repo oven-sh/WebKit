@@ -1,4 +1,4 @@
-# A chain that compares an integer belongs to InferSwitches, and selection leaves it as it is
+# Selection leaves a chain that compares an integer as it is
 # FORM: Prepared
 # RUN: pass Select
 # STATISTIC: SwitchNumberGroups = 1

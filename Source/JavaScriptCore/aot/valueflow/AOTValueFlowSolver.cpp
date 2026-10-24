@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -23,9 +24,9 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t noSolverIndex = UINT32_MAX;
-static constexpr uint32_t mostObjectsOfFew = 8;
-static constexpr uint32_t mostObjectsListedByMember = 1024;
-static constexpr uint32_t mostObjectsLookedUpOneByOne = 64;
+AOT_THRESHOLD(uint32_t, mostObjectsOfFew, 8);
+AOT_THRESHOLD(uint32_t, mostObjectsListedByMember, 1024);
+AOT_THRESHOLD(uint32_t, mostObjectsLookedUpOneByOne, 64);
 static constexpr uint32_t mostNodesReportedOutsideFamily = 16;
 
 bool ValueFlowPairSet::add(uint32_t first, uint32_t second)
@@ -525,7 +526,7 @@ void ValueFlowSolver::StepTimes::dump() const
 
 void ValueFlowSolver::runDueStatements(bool isFirstLapOfTurn)
 {
-    constexpr size_t mostStatementsPerShare = 32;
+    AOT_THRESHOLD(size_t, mostStatementsPerShare, 32);
     constexpr size_t sharesPerThread = 4;
     Vector<ValueFlowStatementID> due = std::exchange(m_due, Vector<ValueFlowStatementID>());
     growByDoubling(m_hasRunInTurn, numberOfStatements());
@@ -1208,7 +1209,7 @@ void ValueFlowSolver::makeNodesOf(std::span<KeyToMake> keys)
 {
     if (keys.empty())
         return;
-    constexpr size_t fewestKeysForAllThreads = 256;
+    AOT_THRESHOLD(size_t, fewestKeysForAllThreads, 256);
     Vector<NodeMaker::Wish> wishes;
     if (keys.size() < fewestKeysForAllThreads) {
         Vector<std::unique_ptr<NodeMaker>> makers(1, [&](size_t) {
@@ -2166,7 +2167,7 @@ void ValueFlowSolver::noteWatchers(unsigned numberOfShard)
 
 void ValueFlowSolver::chainSetsWatchedForCover()
 {
-    constexpr size_t fewestMembersForThreads = 4096;
+    AOT_THRESHOLD(size_t, fewestMembersForThreads, 4096);
     size_t numberOfMembers = 0;
     size_t endOfMembers = 0;
     std::span<WatchShard> shards = std::span(m_watchShards).subspan(numberOfWatchShardsByNode);
@@ -2244,7 +2245,7 @@ void ValueFlowSolver::watch(WatchShard& shard, ValueFlowNodeID node, ValueSetID 
         }).iterator->value;
         shard.watches[number].watchedNode = watchedNode;
         shard.watchedNodes[watchedNode].watches.append(number);
-        constexpr size_t mostWatchesWithoutChains = 8;
+        AOT_THRESHOLD(size_t, mostWatchesWithoutChains, 8);
         WatchedNode& watched = shard.watchedNodes[watchedNode];
         if (!isListedByMember(m_sets, within) || (!watched.holdsWhatPlaceholderCovers && !watched.hasChainsByMember && watched.watches.size() <= mostWatchesWithoutChains))
             watched.watchesOfManyObjects.append(number);
@@ -2523,7 +2524,7 @@ void ValueFlowSolver::noteNodesAskedFor()
     forEachIndexInParallel(m_loops, sharesOfRuns.size(), [&](unsigned index, unsigned worker) {
         ShareOfRuns& share = sharesOfRuns[index];
         const Thread& thread = *m_threads[share.thread];
-        constexpr size_t mostComparedOneByOne = 32;
+        AOT_THRESHOLD(size_t, mostComparedOneByOne, 32);
         HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
         bool isFirstOfTurn = share.firstRun == thread.numberOfRunsTaken;
         uint32_t valuesShown = isFirstOfTurn ? thread.numberOfValuesShownTaken : thread.log.runs[share.firstRun - 1].endOfValuesShown;
@@ -2623,7 +2624,7 @@ void ValueFlowSolver::noteNodesAskedFor()
 
 void ValueFlowSolver::countRunsAndEdges()
 {
-    constexpr uint32_t fewestConnectionsOfDearStatement = 4096;
+    AOT_THRESHOLD(uint32_t, fewestConnectionsOfDearStatement, 4096);
     m_runsAndEdges.grow(numberOfOpcodes + 256);
     struct CountsOfLog {
         Vector<RunsAndEdges> runsAndEdges;
@@ -2694,7 +2695,7 @@ void ValueFlowSolver::countRunsAndEdges()
         }
     }
 
-    constexpr size_t mostStatementsKept = 16;
+    AOT_THRESHOLD(size_t, mostStatementsKept, 16);
     Vector<ValueFlowStatementID> statementsOfRound;
     for (const CountsOfLog& counts : countsOfLog)
         statementsOfRound.appendVector(counts.statementsThatWereNotDueAndAdded);
@@ -2919,7 +2920,7 @@ bool ValueFlowSolver::merge()
         m_isWatched.quickSet(m_firstOfObjectsWithRareWrite.index() + write);
     prepareNodesToLink();
     m_stepTimes.didFinish("merge: tables grown, names numbered"_s);
-    constexpr size_t fewestNodesToLinkInChunks = 1024;
+    AOT_THRESHOLD(size_t, fewestNodesToLinkInChunks, 1024);
     size_t numberOfEdgesAdded = 0;
     auto note = [&](unsigned task, unsigned worker) {
         if (task < numberOfWatchShards)
@@ -3495,7 +3496,7 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
     constexpr size_t stepsAheadForRow = 16;
     constexpr size_t stepsAheadForSuccessors = 8;
     constexpr size_t stepsAheadForSources = 4;
-    constexpr uint32_t mostSourcesAskedFor = 8;
+    AOT_THRESHOLD(uint32_t, mostSourcesAskedFor, 8);
     // Of the sources that are nearest to a node it takes the lowest: the numbers of the nodes follow the order of the solve, and the answer must not.
     // That native code may answer too is said of every read out of an object nobody knows, so that source is named where no other is as near.
     auto rankOf = [](uint8_t source) {
@@ -3610,7 +3611,7 @@ void ValueFlowSolver::report()
 // In the words that valueflow-why takes (holds=nN:#M), and the values on the way from where the member comes into being.
 String ValueFlowSolver::describeWayOf(const ObjectOutsideFamily& entry) const
 {
-    constexpr size_t mostValuesNamed = 12;
+    AOT_THRESHOLD(size_t, mostValuesNamed, 12);
     StringPrintStream out;
     out.print("n", entry.node.index(), ":#", entry.object.index());
     size_t numberOfValuesNamed = 0;
@@ -3755,7 +3756,7 @@ bool ValueFlowSolver::solve()
             makeEveryStatementDue();
     }
     if (m_usesGeneralRulesOnly) {
-        constexpr size_t mostNodesNamed = 8;
+        AOT_THRESHOLD(size_t, mostNodesNamed, 8);
         for (uint32_t index = 0; index < heldAtRest.size(); ++index) {
             if (!heldAtRest[index] || m_graph.valueOf(ValueFlowNodeID(index)) == heldAtRest[index])
                 continue;

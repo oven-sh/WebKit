@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesModules.h"
 #include "AOTVector.h"
@@ -213,7 +214,7 @@ public:
 
     uint32_t intern(Record&& record, unsigned hash)
     {
-        constexpr size_t mostSearchedInOrder = 24;
+        AOT_THRESHOLD(size_t, mostSearchedInOrder, 24);
         if (m_records.size() <= mostSearchedInOrder) {
             for (uint32_t candidate = 1; candidate < m_hashes.size(); ++candidate) {
                 if (m_hashes[candidate] == hash && m_records[candidate] == record)

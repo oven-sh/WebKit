@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 LayoutID LayoutsOfObjects::namedLayoutOf(ValueFlowObjectID object) const
@@ -376,7 +378,7 @@ LayoutSetID StoresByLayout::familyOfReceiverOf(const ValueFlowStatement& stateme
 void StoresByLayout::listWrites()
 {
     constexpr uint32_t madeStatementsPerIndex = 512;
-    constexpr size_t mostWritesNotToldApart = 64;
+    AOT_THRESHOLD(size_t, mostWritesNotToldApart, 64);
     const ValueFlowSolver& solver = m_inputs.solver();
     std::span<const ValueFlowStatement> statements = m_inputs.bodies().statements();
     std::span<const ValueFlowBodyRange> ranges = m_inputs.bodies().ranges();

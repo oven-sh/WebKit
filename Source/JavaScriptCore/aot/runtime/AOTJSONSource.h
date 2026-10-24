@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTJSONWords.h"
+#include "AOTThreshold.h"
 #include "JSCJSValue.h"
 #include <bit>
 #include <span>
@@ -23,8 +24,8 @@ namespace JSC { namespace AOT {
 
 struct Instance;
 
-inline constexpr size_t minJSONSourceCapacity = 1 * KB;
-inline constexpr size_t maxRetainedJSONSourceCapacity = 64 * KB;
+AOT_THRESHOLD(size_t, minJSONSourceCapacity, 1 * KB);
+AOT_THRESHOLD(size_t, maxRetainedJSONSourceCapacity, 64 * KB);
 inline constexpr uint8_t saturatedJSONCharacter = 0xff;
 
 struct JSONSource {

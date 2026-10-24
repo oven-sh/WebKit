@@ -19,6 +19,7 @@
 #include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyAccessors.h"
 #include "AOTStubsPropertyExtraProperties.h"
+#include "AOTThreshold.h"
 #include "Butterfly.h"
 #include "IndexingType.h"
 #include "JSFunction.h"
@@ -633,7 +634,7 @@ static void emitTransition(StoreSlotBody& body)
 
 static void emitArrayLengthStore(StoreSlotBody& body)
 {
-    constexpr unsigned maxElementsClearedInStub = 64;
+    AOT_THRESHOLD(unsigned, maxElementsClearedInStub, 64);
     StubAssembler& jit = body.jit;
     JumpList& cannot = body.uncached;
     const GPRReg array = body.receiver;

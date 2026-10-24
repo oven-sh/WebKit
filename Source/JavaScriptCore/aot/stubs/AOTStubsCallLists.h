@@ -9,6 +9,7 @@
 
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsCalls.h"
+#include "AOTThreshold.h"
 
 namespace JSC { namespace AOT {
 
@@ -19,7 +20,7 @@ constexpr StubKey superConstructWithList() { return StubKey(StubFamily::SuperCon
 constexpr StubKey callFromArgumentListFrame() { return StubKey(StubFamily::CallFromArgumentListFrame); }
 constexpr StubKey returnFromArgumentListFrame() { return StubKey(StubFamily::ReturnFromArgumentListFrame); }
 
-constexpr unsigned maxArrayLengthCopiedToStack = 4096;
+AOT_THRESHOLD(unsigned, maxArrayLengthCopiedToStack, 4096);
 
 struct ArgumentList {
     GPRReg count;

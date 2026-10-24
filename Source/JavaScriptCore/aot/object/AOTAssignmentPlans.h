@@ -12,6 +12,7 @@
 #include "AOTObject.h"
 #include "AOTObjectCopy.h"
 #include "AOTSlotAccess.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include "PropertyOffset.h"
@@ -50,7 +51,7 @@ public:
     bool contains(UniquedStringImpl* name) const { return m_names.size() <= maxNumberOfNamesCompared ? m_names.contains(name) : m_longList.contains(name); }
 
 private:
-    static constexpr size_t maxNumberOfNamesCompared = 8;
+    AOT_CLASS_THRESHOLD(size_t, maxNumberOfNamesCompared, 8);
 
     Vector<UniquedStringImpl*> m_names;
     UncheckedKeyHashSet<UniquedStringImpl*> m_longList;
@@ -232,7 +233,7 @@ struct CopyOfTwoPlan {
     // Null where such a pair is copied one behind the other.
     Structure* structure { nullptr };
     // Several pairs that find no free place may come between two pairs that find the plan.
-    static constexpr uint8_t maxVisitsInVain = 15;
+    AOT_CLASS_THRESHOLD(uint8_t, maxVisitsInVain, 15);
     // Filled up by a pair that finds the plan, counted down by a pair of another kind that finds no free place. At zero that pair takes the place.
     uint8_t visitsInVainLeft { maxVisitsInVain };
 };
@@ -410,9 +411,9 @@ private:
         return (target.bits() * 0x9e3779b1u ^ source.bits() * 0x85ebca6bu ^ sourceOrderWord * 0xc2b2ae35u ^ excludedRunNumberPlusOne * 0x27d4eb2fu) >> 23;
     }
     static_assert(numberOfRecentPlans == 1u << (32 - 23));
-    static constexpr unsigned minNumberOfPlacesForMappedCopies = 16;
-    static constexpr unsigned maxNumberOfPlacesForMappedCopies = 4096;
-    static constexpr unsigned maxProbesForMappedCopy = 8;
+    AOT_CLASS_THRESHOLD(unsigned, minNumberOfPlacesForMappedCopies, 16);
+    AOT_CLASS_THRESHOLD(unsigned, maxNumberOfPlacesForMappedCopies, 4096);
+    AOT_CLASS_THRESHOLD(unsigned, maxProbesForMappedCopy, 8);
     static uint64_t hashOfMappedCopy(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
     {
         return (targetWords * 0x9e3779b97f4a7c15ull ^ std::rotl(sourceWords, 29) * 0xc2b2ae3d27d4eb4full) + excludedRunNumberPlusOne * 0x27d4eb2fu;

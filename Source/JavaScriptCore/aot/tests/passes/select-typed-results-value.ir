@@ -1,4 +1,4 @@
-# validate<T>(v) calls the validator of node 0 in place of the host function, and asks the general validator with the plan on the rare path
+# validate<T>(v) calls the validator of node 0 in place of the host function, and asks the general validator with the plan on the rare path, telling it whether the validator has refused the value
 # FORM: Prepared optimizing
 # RUN: pass SelectTypedResults SelectTypedResults
 # STATISTIC: TypedResultsSelected = 2
@@ -22,14 +22,20 @@ function f0 name="validated" parameters=[{type=anything}] results=[{type=anythin
 # CHECK-NEXT: [[results0]]:{{*}}= CallDirect v0 function=[[validator]]
 # CHECK-NEXT: [[outcome0]]: int[0, 2] = ResultAt [[results0]]
 # CHECK-NEXT: [[copy0]]:{{*}}= ResultAt [[results0]] index=1
-# CHECK-NEXT: Switch [[outcome0]] cases=[1] -> case [[accepted0]](), otherwise [[general0]]()
+# CHECK-NEXT: Switch [[outcome0]] cases=[1, 2] -> case [[accepted0]](), case [[rejected0]](), otherwise [[unknown0]]()
 # CHECK: [[done0]](v1:{{*}}):
 # CHECK-NEXT: Return v1
 # CHECK: [[accepted0]]():
 # CHECK-NEXT: Jump -> next [[merge0]]([[copy0]])
-# CHECK: [[general0]]() frequency=Rare:
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next [[general0]]([[yes0]])
+# CHECK: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next [[general0]]([[no0]])
+# CHECK: [[general0]]([[isRefused0]]: boolean) frequency=Rare:
 # CHECK-NEXT: [[plan0]]:{{*}}= String string="[{\"shape\":\"Object\",\"members\":[{\"key\":\"id\",\"node\":1,\"isOptional\":false,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Primitive\",\"primitive\":\"number\"}]"
-# CHECK-NEXT: [[byPlan0]]: anything = CallBuiltin -, v0, [[plan0]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NEXT: [[byPlan0]]: anything = CallBuiltin -, v0, [[plan0]], [[isRefused0]] overload=CompilerHelpersValidateByPlan/0
 # CHECK: Jump -> next [[merge0]](
 # CHECK: [[merge0]]([[validated0]]:{{*}}):
 # CHECK: Jump -> next [[done0]](

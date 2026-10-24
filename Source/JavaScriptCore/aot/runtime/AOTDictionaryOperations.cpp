@@ -19,13 +19,15 @@
 
 namespace JSC { namespace AOT {
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance* instance))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance* instance, uint32_t inlineCapacity))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewDictionary);
     DeferTerminationForAWhile deferTermination(vm);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     Structure* structure = globalObject->objectStructureForObjectConstructor();
-    prepareFinalObjectAllocation(instance, InlineAllocation::DefaultFinalObject, structure);
+    if (inlineCapacity != JSFinalObject::defaultInlineCapacity)
+        structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
+    prepareFinalObjectAllocation(instance, static_cast<InlineAllocation>(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + (inlineCapacity - JSFinalObject::defaultInlineCapacity) / 2), structure);
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
 }
 

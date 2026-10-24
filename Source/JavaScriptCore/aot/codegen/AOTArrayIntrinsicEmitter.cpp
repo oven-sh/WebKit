@@ -11,6 +11,7 @@
 #include "AOTElementAccessEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTThreshold.h"
 #include "JSType.h"
 #include <optional>
 
@@ -261,7 +262,7 @@ void ArrayIntrinsicEmitter::generateGrowNewArray(const ValueContext& value)
 
 void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)
 {
-    constexpr int64_t smallUnusedCapacity = 8;
+    AOT_THRESHOLD(int64_t, smallUnusedCapacity, 8);
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     CellPointer array = in<CellPointer>(value->arrayOperand());
     Integer length = integerOperand(value->lengthOperand());

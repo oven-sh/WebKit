@@ -20,6 +20,7 @@
 #include "AOTProgramCaches.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -443,7 +444,7 @@ static bool mayGainFrom(const Program& program, const Function& function, const 
     });
 }
 
-static constexpr unsigned maxRoundsOfPlans = 3;
+AOT_THRESHOLD(unsigned, maxRoundsOfPlans, 3);
 
 // A parameter that a closure of the function's own frame captures stays borrowed (AOTBorrowedParameters.h), and which closures lie in the frame is known by the plans.
 static void planAgainWithWhatFramesHold(const Program& program, const OptimizationInputs& inputs, FlowResults& flow, BuildContext& build, Vector<PlannedFunction>& plannedFunctions)

@@ -456,8 +456,11 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
     LayoutID current = query.layout;
     for (size_t unvisitedClasses = program.layouts.size(); unvisitedClasses; --unvisitedClasses) {
         const Layout& layout = program.at(current);
-        if (layout.kind != LayoutKind::Instance || !layout.constructor)
+        bool isOfCreatedObject = layout.has(LayoutFlags::IsOfCreatedObject);
+        if (layout.kind != LayoutKind::Instance || (!layout.constructor && (!isOfCreatedObject || layout.classFlow.evaluations != ExecutionCount::AtMostOnce)))
             return MemberAnswer::unknown(UnprovenCause::NonLayoutObject);
+        if (isConstructorKey && isOfCreatedObject)
+            return MemberAnswer::unknown(UnprovenCause::Unknown);
         if (isConstructorKey) {
             // The one class object is what the prototype object of a class that is evaluated once holds under the name.
             bool holdsOneClassObject = layout.classFlow.constructorProperty == MemberMutability::Fixed && layout.classFlow.evaluations == ExecutionCount::AtMostOnce && program.at(layout.constructor).captures.isEmpty();

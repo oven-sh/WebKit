@@ -130,6 +130,7 @@ const foldOverload = (name: string, fold: Fold) =>
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",
           times: "PerElement",
+          this: b.undefined,
           args: [fold.accumulator, fold.receiver.element, b.length, self],
           result: fold.result,
         }),
@@ -142,7 +143,7 @@ const foldOverload = (name: string, fold: Fold) =>
 const foldMethod = (name: string) => b.method(`Array.prototype.${name}`, folds.map(fold => foldOverload(name, fold)));
 
 const comparatorCall = (compared: b.PlaceLike) =>
-  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", args: [compared, compared], result: "Escapes" });
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [compared, compared], result: "Escapes" });
 const stringComparison = b.runsOnContents("ToPrimitive");
 
 interface SortOutcome {
@@ -202,7 +203,7 @@ export default b.declarations(
     uses: {
       // The groups hold the items, and nothing describes the object that holds the groups.
       items: [b.runs("Iterate"), b.iteratedValuesStoredIn(b.nativeMemory)],
-      callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", args: [b.iterated("items"), b.length], result: "Escapes" })],
+      callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerElement", this: b.undefined, args: [b.iterated("items"), b.length], result: "Escapes" })],
     },
     model: b.functionIn("models/Objects", "groupBy"),
     implementation: b.compiled("ObjectConstructor", "groupBy"),

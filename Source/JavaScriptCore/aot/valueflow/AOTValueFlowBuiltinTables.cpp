@@ -165,7 +165,8 @@ static ValueSetID membersSurelyOf(const Program& program, const ValueFlowUnivers
     return maker.uniteAll(parts.span());
 }
 
-ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins)
+ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uint64_t mostObjectsOfTypedResult)
+    : m_mostObjectsOfTypedResult(mostObjectsOfTypedResult)
 {
     m_classesAtOrBelow.grow(builtins.classCount());
     for (uint32_t index = 0; index < builtins.classCount(); ++index) {

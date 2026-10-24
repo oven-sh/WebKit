@@ -33,7 +33,7 @@ v(CopyObject, CalledByCode, (), CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never
 v(AllocateExtension, CalledByCode, (), CountAxis, 1, 16, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, AllocatorState) | writes(ObjectFields, AllocatorState), AllocateExtension)
 v(AllocateExtensionSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, AllocateExtensionSlow)
 v(NewTypedArray, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewTypedArray)
-v(NewDictionary, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewDictionary)
+v(NewDictionary, CalledByCode, (), CountAxis, 0, 13, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewDictionary)
 
 // AOTStubsClosures.cpp
 v(NewClosure, CalledByCode, (), CountAxis, 0, ClosureRequest::maxNumberOfCaptures, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewClosure)

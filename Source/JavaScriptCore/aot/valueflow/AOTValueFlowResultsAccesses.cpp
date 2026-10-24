@@ -13,6 +13,7 @@
 #include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTValueFlowPositions.h"
 #include "AOTVector.h"
@@ -90,6 +91,14 @@ public:
             }
             for (const FlowAppendedField& field : application.layouts[index].appendedFields)
                 add(field.key);
+            // What Object.create makes is read for what lies above it as much as for what it holds.
+            current = program.layouts[index].has(LayoutFlags::IsOfCreatedObject) ? LayoutID(index) : LayoutID();
+            for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+                const ClassFlow& classFlow = application.layouts[current.index()].classFlow;
+                for (const ClassMember& member : classFlow.namedMembers)
+                    add(member.key);
+                current = classFlow.prototypeBase;
+            }
         });
         sortAndRemoveDuplicates(inputs.loops(), m_holders);
     }
@@ -387,7 +396,7 @@ static const ListedReceivers& listedReceiversOf(AccessesOfFunction& accesses, Va
         return *known;
     }
 
-    constexpr uint32_t fewestMembersToListByBlock = 128;
+    AOT_THRESHOLD(uint32_t, fewestMembersToListByBlock, 128);
     const ValueSets& sets = accesses.inputs.sets();
     auto listed = makeUnique<ListedReceivers>();
     if (ValueSets::isComplement(held) || sets.size(held) < fewestMembersToListByBlock) {
@@ -419,10 +428,10 @@ static const ListedReceivers& listedReceiversOf(AccessesOfFunction& accesses, Va
     return kept;
 }
 
-// Where something unknown may arrive at a receiver without a type, the layouts that are seen to arrive and have a field of the name are what the access expects.
-static std::optional<LayoutSet> receiversSeenToArrive(AccessesOfFunction& accesses, const ValueFlowStatement& access, const Type& family, ValueSetID held)
+// Where something unknown may arrive, the layouts that are seen to arrive and have a field of the name are what the access expects. They are seen in front of the checks: whoever takes a check away finds here what is left to expect.
+static std::optional<LayoutSet> receiversSeenToArrive(AccessesOfFunction& accesses, const ValueFlowStatement& access, ValueSetID held)
 {
-    if (family.layouts || !PayloadWord::key(access.opcode) || ValueSets::isComplement(held))
+    if (!PayloadWord::key(access.opcode) || ValueSets::isComplement(held))
         return std::nullopt;
 
     const Program& program = accesses.inputs.program;
@@ -482,7 +491,7 @@ static void stampAccess(AccessesOfFunction& accesses, const ValueFlowStatement& 
         accesses.update.accesses.append(FlowAccessStamp { access.site, accesses.types.intern(WTF::move(*receivers)) });
         return;
     }
-    if (std::optional<LayoutSet> receivers = receiversSeenToArrive(accesses, access, family, held))
+    if (std::optional<LayoutSet> receivers = receiversSeenToArrive(accesses, access, held))
         accesses.update.accesses.append(FlowAccessStamp { access.site, accesses.types.intern(WTF::move(*receivers)) });
     FlowSiteLoss loss = lossOfAccess(accesses, access, family, receiver, held);
     loss.seesConstructedObject = !ValueSets::isComplement(held) && accesses.inputs.sets().meet(held, accesses.inputs.universe().constructedObjects());

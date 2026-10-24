@@ -89,7 +89,7 @@ export default b.declarations(
       throws: true,
       runsUnseenCode: b.whenOperandHasProperty("options", "app"),
       uses: {
-        options: [b.retained, b.memberCalled(["fetch"], { times: "PerEvent", args: [b.any, b.result], result: "Escapes" })],
+        options: [b.retained, b.memberCalled(["fetch"], { times: "PerEvent", this: b.undefined, args: [b.any, b.result], result: "Escapes" })],
       },
       implementation: b.hostCall,
     },

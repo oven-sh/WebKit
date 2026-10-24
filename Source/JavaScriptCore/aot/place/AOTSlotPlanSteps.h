@@ -11,6 +11,7 @@
 #include "AOTCellSizeClasses.h"
 #include "AOTSiteWeight.h"
 #include "AOTSlotPlan.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "JSExportMacros.h"
 #include <compare>
@@ -29,7 +30,7 @@ using SlotRow = uint32_t;
 inline constexpr uint32_t noSharedLocation = UINT32_MAX;
 inline constexpr uint32_t referencesBeyondCreation = 4;
 inline constexpr uint32_t maxInlineSize = 128;
-inline constexpr uint32_t maxInlineSizeAtCreation = 512;
+AOT_THRESHOLD(uint32_t, maxInlineSizeAtCreation, 512);
 static_assert(offsetOfFirstField + maxFieldsAlwaysInline * widthOf(SlotRepresentation::JSValue) == maxInlineSize);
 
 class SlotRows {

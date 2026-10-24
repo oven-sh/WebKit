@@ -22,6 +22,7 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStubsValues.h"
+#include "AOTThreshold.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include "JSTypeInfo.h"
@@ -334,7 +335,7 @@ Condition TypeTestEmitter::isOneOfStringLiterals(CellPointer string, const TypeT
 Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, const TypeTestPlan& plan)
 {
     // Two literals or more are the cases of a switch, which compares and branches, or tests a bit where four or more numbers lie within 64.
-    static constexpr size_t minLiteralsForSwitch = 2;
+    AOT_THRESHOLD(size_t, minLiteralsForSwitch, 2);
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Vector<uint32_t, 8> numbers;
     for (StringID literal : plan.stringLiterals) {

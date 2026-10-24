@@ -15,6 +15,7 @@
 #include "AOTKnownValue.h"
 #include "AOTParameterReplacement.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -90,8 +91,8 @@ private:
 
     bool isLedToByTestBehind(BlockID block, BlockID place) const
     {
-        constexpr unsigned mostBlocks = 32;
-        constexpr unsigned mostStepsBehindFailure = 3;
+        AOT_THRESHOLD(unsigned, mostBlocks, 32);
+        AOT_THRESHOLD(unsigned, mostStepsBehindFailure, 3);
         for (unsigned blocks = 0; blocks < mostBlocks; ++blocks) {
             const Terminator& terminator = m_function.at(block).terminator;
             if (terminator.kind == TerminatorKind::Jump) {

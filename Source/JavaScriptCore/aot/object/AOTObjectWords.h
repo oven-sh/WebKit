@@ -116,11 +116,12 @@ struct KeyOrderStepCache {
 };
 
 // Places share the entries by their numbers, and an entry names the place that wrote it: few places of a program run, and one entry for each would dirty a page for a handful of them.
-// The shapes that come to one place have an entry each. The entry's shape word and its index together say the place's number within its turn.
+// The shapes that come to one place have an entry each, and the places of one function do not meet each other there. The entry's two words and its index together say the place's number within its turn.
 static constexpr unsigned logNumberOfKeyOrderStepCaches = 11;
 static constexpr uint32_t numberOfKeyOrderStepCaches = 1u << logNumberOfKeyOrderStepCaches;
 static constexpr uint32_t maxPlacesWithKeyOrderStepCache = numberOfKeyOrderStepCaches * UINT8_MAX;
-static constexpr uint32_t indexOfKeyOrderStepCache(uint32_t place, uint32_t shapeWord) { return (place + shapeWord) % numberOfKeyOrderStepCaches; }
+static constexpr unsigned keyOrderStepCacheShift = 27;
+static constexpr uint32_t indexOfKeyOrderStepCache(uint32_t place, uint64_t orderAndShapeWords) { return (place + (orderAndShapeWords >> keyOrderStepCacheShift)) % numberOfKeyOrderStepCaches; }
 
 struct ObjectWords {
     // One word per allocation: the distance in bytes, zero or negative, from the empty record to the record of the allocation.

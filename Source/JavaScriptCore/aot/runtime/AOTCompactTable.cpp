@@ -14,6 +14,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "AOTTableInImage.h"
+#include "AOTThreshold.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
@@ -478,7 +479,7 @@ CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSString* key, JSValue val
     larger->m_indexBits = indexBits;
     larger->m_keysShiftAndFlags = keysShift;
     larger->m_valueWidth = valueWidth;
-    constexpr size_t maxInlineWords = 8;
+    AOT_THRESHOLD(size_t, maxInlineWords, 8);
     auto copyWords = [](uint64_t*& to, const uint64_t* from, size_t words) ALWAYS_INLINE_LAMBDA {
         if (words > maxInlineWords) {
             memcpy(to, from, words * sizeof(uint64_t));

@@ -238,6 +238,8 @@ static Closure* registeredClassObjectOf(State& state, const LayoutData& layout)
 
 static JSObject* registeredHolderOf(VM& vm, State& state, const LayoutData& layout, ClassSide side)
 {
+    if (ClassTable::isClassOfCreatedObjects(layout))
+        return side == ClassSide::Prototype ? state.objects->classes.classPrototypeIfExists(layout) : nullptr;
     Closure* classObject = registeredClassObjectOf(state, layout);
     if (!classObject)
         return nullptr;

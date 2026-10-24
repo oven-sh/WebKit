@@ -16,6 +16,7 @@
 #include "AOTResultRules.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStubsAllocation.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <limits>
@@ -115,7 +116,7 @@ std::optional<AllocationEmitter::AllocationsByCase> AllocationEmitter::findAlloc
     }
 
     // The own words are of the kind that the first of them is of, and one of the shared words has to be of that kind too.
-    constexpr unsigned maxOwnWordsInRow = 2;
+    AOT_THRESHOLD(unsigned, maxOwnWordsInRow, 2);
     uint32_t placeStoredTwice = 0;
     auto withOwnWords = std::ranges::find_if(candidates, [](const Candidate& candidate) {
         return !candidate.words.isEmpty();

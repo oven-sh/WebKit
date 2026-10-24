@@ -13,6 +13,7 @@
 #include "AOTKnownClosures.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTResolveAccesses.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -120,7 +121,7 @@ static std::optional<TestedAccess> planAccessUnderTests(TestSiteReporter& report
 }
 
 // One test of a slot is cheaper than the three under which an empty slot reads as undefined.
-static constexpr unsigned minOptionalFieldsReadToExpectEmptySlots = 4;
+AOT_THRESHOLD(unsigned, minOptionalFieldsReadToExpectEmptySlots, 4);
 
 static LayoutSetID layoutsOfReceiver(TestSiteReporter& reporter, const Value& access)
 {

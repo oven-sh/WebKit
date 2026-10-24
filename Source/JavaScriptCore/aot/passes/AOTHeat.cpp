@@ -21,6 +21,7 @@
 #include "AOTPass.h"
 #include "AOTPhaseTimes.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
@@ -496,7 +497,7 @@ static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowRe
 }
 
 // A value that may be one of more layouts than this tells nothing about what lies under the name.
-static constexpr size_t maxLayoutsOfStoredValue = 4;
+AOT_THRESHOLD(size_t, maxLayoutsOfStoredValue, 4);
 
 static Vector<uint64_t> collectLayoutsStoredUnderNames(const Program& program, const ParallelLoops& loops, std::span<const uint32_t> functionsWithBody)
 {

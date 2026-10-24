@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <limits>
 #include <wtf/BitVector.h>
@@ -20,7 +21,7 @@ namespace Typed {
 
 class Program;
 
-inline constexpr unsigned maxFrameArrayParameters = 32;
+AOT_THRESHOLD(unsigned, maxFrameArrayParameters, 32);
 
 // An array that lies in a frame has the original Structure of arrays of values, no hole and at most MaxFrameArrayLength elements, and nothing ever writes to it.
 class FrameArrayParameters {

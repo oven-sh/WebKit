@@ -13,6 +13,7 @@
 #include "AOTProgramCaches.h"
 #include "AOTRemoveUnusedResults.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -45,7 +46,7 @@ struct CommittedVersions {
 
 } // anonymous namespace
 
-static constexpr size_t maxGrowthDenominator = 8;
+AOT_THRESHOLD(size_t, maxGrowthDenominator, 8);
 
 static Vector<ResultSets> collectResultSets(size_t functionCount, const Vector<ResultCallSiteList>& callers, BuildContext& build, const Invocable<bool(FunctionID)> auto& getsCode)
 {

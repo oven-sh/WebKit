@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTStringArena.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <unicode/utf16.h>
@@ -297,7 +298,7 @@ void StringTable::insert(Shard& shard, uint64_t hash, StringID id)
 
 void StringTable::reserve(Shard& shard, size_t count) const
 {
-    constexpr size_t minNumberOfSlots = 8;
+    AOT_THRESHOLD(size_t, minNumberOfSlots, 8);
     if (shard.slots.size() >= 2 * count)
         return;
     size_t numberOfSlots = std::max(minNumberOfSlots, roundUpToPowerOfTwo(2 * count));

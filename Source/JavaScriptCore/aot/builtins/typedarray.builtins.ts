@@ -140,7 +140,7 @@ const copyingTraversal = (result: b.CallbackResultUse, speciesLookup: SpeciesLoo
 };
 
 const foldCall = (times: b.CallbackTimes, accumulator: b.PlaceLike) =>
-  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, args: [accumulator, elementOrUndefined, bufferLength, self], result: "Returned" });
+  b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [accumulator, elementOrUndefined, bufferLength, self], result: "Returned" });
 
 const fold = [
   {
@@ -183,7 +183,7 @@ const sorting = (nativeSymbol: string, returns: b.TableType, receiverUses: reado
       runsOnlyOperandCode: true,
       uses: {
         this: receiverUses,
-        comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", args: [element, element], result: convertedByNativeCode })],
+        comparator: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [element, element], result: convertedByNativeCode })],
       },
       implementation: b.hostCall,
     },

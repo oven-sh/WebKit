@@ -22,6 +22,7 @@
 #include "AOTRuleSupport.h"
 #include "AOTScratchRealm.h"
 #include "AOTStringArena.h"
+#include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -37,8 +38,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint64_t maxPrimitiveTextBytes = 24;
-static constexpr unsigned maxOperationsBetweenTextAndPattern = 8;
+AOT_THRESHOLD(uint64_t, maxPrimitiveTextBytes, 24);
+AOT_THRESHOLD(unsigned, maxOperationsBetweenTextAndPattern, 8);
 
 static std::optional<TypeofType> typeofTypeNamed(std::span<const uint8_t> text)
 {

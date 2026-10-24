@@ -9,6 +9,7 @@
 
 #include "AOTChainDependents.h"
 #include "AOTLayoutData.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 #include <array>
@@ -228,7 +229,7 @@ private:
         recent = { setBit + 1, index };
     }
 
-    static constexpr size_t fewestMembersPassedToRemember = 16;
+    AOT_CLASS_THRESHOLD(size_t, fewestMembersPassedToRemember, 16);
     std::array<MemberInTheWay, 256> m_membersInTheWay { };
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_otherMembersInTheWay;
     // From the first bit that an entry of the method table hangs on to the last.

@@ -100,8 +100,6 @@ private:
         std::array<PassSet, numberOfPasses> changersSinceLastRun { };
         std::array<uint64_t, numberOfPasses> nanoseconds { };
         std::array<uint64_t, numberOfPasses> instructions { };
-        std::array<uint64_t, numberOfPasses> codeBytesAdded { };
-        std::array<uint64_t, numberOfPasses> codeBytesRemoved { };
     };
 
     struct ScheduleRun {
@@ -202,7 +200,6 @@ private:
         std::array<uint32_t, numberOfPasses> changes { };
         // None unless the last pass of the run was timed. The end of one pass is the start of the next, which so counts the little that lies between the two as its own.
         std::optional<PassClock> clockAtEndOfLastPass;
-        std::optional<uint64_t> codeBytes;
         Vector<PassID> changingRuns;
         ShapesWithMonotoneResult shapesWithMonotoneResult;
     };
@@ -223,8 +220,6 @@ private:
         std::atomic<uint64_t> nanoseconds { 0 };
         std::atomic<uint64_t> instructions { 0 };
         std::atomic<int64_t> valuesAdded { 0 };
-        std::atomic<uint64_t> codeBytesAdded { 0 };
-        std::atomic<uint64_t> codeBytesRemoved { 0 };
         std::atomic<uint64_t> needlessDrops { 0 };
         std::atomic<uint64_t> nanosecondsWithoutChange { 0 };
         std::atomic<uint64_t> runsWithoutTrigger { 0 };

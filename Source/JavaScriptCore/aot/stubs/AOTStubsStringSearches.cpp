@@ -12,10 +12,11 @@
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTThreshold.h"
 
 namespace JSC { namespace AOT {
 
-static constexpr int32_t maxLengthSearchedByBytes = 32;
+AOT_THRESHOLD(int32_t, maxLengthSearchedByBytes, 32);
 
 StubSignature signatureOfFindCharacter8(StubKey)
 {

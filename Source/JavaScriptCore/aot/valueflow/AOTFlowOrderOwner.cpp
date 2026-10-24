@@ -10,6 +10,7 @@
 
 #include "AOTFlowNamespaces.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -583,7 +584,7 @@ void FlowScopeOwnerAnalysis::runFixpoint()
         FlowScopeEntry entry = ensureEntry(function);
         for (const FlowFunctionMention& reference : m_index.mentionsIn(function))
             lower(reference.function, entry);
-        constexpr size_t mostEntriesToRemember = 8;
+        AOT_THRESHOLD(size_t, mostEntriesToRemember, 8);
         for (const StoredFunctionReader& read : recordsWith(m_storedFunctionReaders.span(), function, &StoredFunctionReader::reader)) {
             Vector<FlowScopeEntry, 2>& entriesOfReaders = m_entriesOfReadersOfRuns.add(read.first, Vector<FlowScopeEntry, 2>()).iterator->value;
             if (entriesOfReaders.contains(entry))

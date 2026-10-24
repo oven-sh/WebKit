@@ -24,6 +24,7 @@
 #include "AOTStubsHashTables.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
+#include "AOTThreshold.h"
 #include "IndexingType.h"
 #include "JSArrayBufferView.h"
 #include "JSBoundFunction.h"
@@ -424,7 +425,7 @@ static void emitArraySearch(StubAssembler& jit, BoxedCallForm form, GPRReg scrat
     callsHostFunction.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(Int32Shape)));
     isReady.link(&jit);
 
-    constexpr int32_t maxElementsSearchedOneByOne = 32;
+    AOT_THRESHOLD(int32_t, maxElementsSearchedOneByOne, 32);
     jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), cursor);
     callsHostFunction.append(jit.branch32(CCallHelpers::Above, Address(cursor, Butterfly::offsetOfPublicLength()), TrustedImm32(maxElementsSearchedOneByOne)));
 

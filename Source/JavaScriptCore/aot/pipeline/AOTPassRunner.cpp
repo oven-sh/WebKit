@@ -10,7 +10,6 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
-#include "AOTCodeSizeEstimate.h"
 #include "AOTEffectSummaries.h"
 #include "AOTExactBuffer.h"
 #include "AOTFlowApply.h"
@@ -18,6 +17,7 @@
 #include "AOTHeat.h"
 #include "AOTPhaseTimes.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include <bit>
@@ -165,7 +165,7 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context)
 void PassRunner::prepare(ScheduleRun& run) const
 {
     run.recordsChangers = m_build.options().verifiesAfterEveryPass;
-    if (run.recordsChangers || m_build.options().logging.logsPhaseTimes || hasFlag(m_build.options().reports, ReportSet::PassCodeBytes)) [[unlikely]]
+    if (run.recordsChangers || m_build.options().logging.logsPhaseTimes) [[unlikely]]
         run.notes.emplace();
 }
 
@@ -186,7 +186,7 @@ static const PassSet* optionalPassesOfShortScheduleFor(const Function& function,
     return nullptr;
 }
 
-static constexpr uint64_t maxRoundsOfShortSchedule = 1;
+AOT_THRESHOLD(uint64_t, maxRoundsOfShortSchedule, 1);
 
 PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& program, const OptimizationInputs& inputs, FunctionID id, Function& function, TaskArenas& arenas, const std::optional<BodyContents>& contents) const
 {
@@ -386,27 +386,6 @@ void PassRunner::updateIsStopped(PassID id)
         m_isStopped = true;
 }
 
-static uint64_t estimateBytesOfReachableCode(const Program& program, const Function& function)
-{
-    BitVector isReached(function.blocks.size());
-    Vector<BlockID, 32> worklist { entryBlock };
-    isReached.quickSet(entryBlock.index());
-    uint64_t bytes = 0;
-    auto visit = [&](BlockID target) {
-        if (!isReached.quickSet(target.index()))
-            worklist.append(target);
-    };
-    while (!worklist.isEmpty()) {
-        const Block& block = function.at(worklist.takeLast());
-        bytes += estimatedCodeBytes(program, function, block);
-        for (const Target& target : block.terminator.targets)
-            visit(target.block);
-        if (block.handler)
-            visit(block.handler->block);
-    }
-    return bytes;
-}
-
 static bool hasSameWords(const Instruction& a, const Instruction& b)
 {
     return a.position == b.position && a.inlineFrame == b.inlineFrame && a.hasSamePayloadAs(b) && a.numberOfNamedOperands() == b.numberOfNamedOperands() && std::ranges::equal(a.operands(), b.operands());
@@ -490,8 +469,8 @@ auto PassRunner::PassClock::now() -> PassClock
 // A pass on a function of many values is timed. Of the small functions one in sixteen is, and stands for all sixteen: which ones does not depend on the run.
 static uint32_t numberOfRunsThatTimedRunStandsFor(FunctionID function, size_t numberOfValues)
 {
-    constexpr size_t fewestValuesOfFunctionThatIsAlwaysTimed = 64;
-    constexpr uint32_t smallFunctionsForEachTimedOne = 16;
+    AOT_THRESHOLD(size_t, fewestValuesOfFunctionThatIsAlwaysTimed, 64);
+    AOT_THRESHOLD(uint32_t, smallFunctionsForEachTimedOne, 16);
     if (numberOfValues >= fewestValuesOfFunctionThatIsAlwaysTimed)
         return 1;
     return function.index() % smallFunctionsForEachTimedOne ? 0 : smallFunctionsForEachTimedOne;
@@ -559,9 +538,6 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     if (weight)
         start = run.clockAtEndOfLastPass ? *run.clockAtEndOfLastPass : PassClock::now();
     run.clockAtEndOfLastPass = std::nullopt;
-    const bool countsCodeBytes = hasFlag(m_build.options().reports, ReportSet::PassCodeBytes) && context.program.form() == IRForm::Prepared && !descriptor.produces;
-    if (countsCodeBytes && !run.codeBytes)
-        run.codeBytes = estimateBytesOfReachableCode(context.program, context.function);
     AnalysisSet analysesBefore = isTimed ? context.analyses.computed() : AnalysisSet { };
     ++run.runs[index];
     run.numberOfValuesWalked += numberOfValuesBefore;
@@ -636,11 +612,6 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         }
         ++run.numberOfChanges;
         ++run.changes[index];
-        if (countsCodeBytes) {
-            uint64_t codeBytes = estimateBytesOfReachableCode(context.program, context.function);
-            (codeBytes > *run.codeBytes ? run.notes->codeBytesAdded[index] : run.notes->codeBytesRemoved[index]) += codeBytes > *run.codeBytes ? codeBytes - *run.codeBytes : *run.codeBytes - codeBytes;
-            run.codeBytes = codeBytes;
-        }
         if (isTimed)
             run.changingRuns.append(id);
     }
@@ -980,10 +951,6 @@ void PassRunner::addTotals(const ScheduleRun& run, size_t numberOfValuesAtStart)
             totals.nanoseconds.fetch_add(nanoseconds, std::memory_order_relaxed);
         if (uint64_t instructions = run.notes->instructions[index])
             totals.instructions.fetch_add(instructions, std::memory_order_relaxed);
-        if (uint64_t bytes = run.notes->codeBytesAdded[index])
-            totals.codeBytesAdded.fetch_add(bytes, std::memory_order_relaxed);
-        if (uint64_t bytes = run.notes->codeBytesRemoved[index])
-            totals.codeBytesRemoved.fetch_add(bytes, std::memory_order_relaxed);
     });
 }
 
@@ -1009,8 +976,6 @@ void PassRunner::flushFunctionPassTotals()
             dataLogLn("AOT function loop: ", nameOf(id), " | ", runs, " runs | ", changes, " changed the function | ", totals.needlessDrops.exchange(0, std::memory_order_relaxed), " changed nothing and dropped analyses | cpu ", nanoseconds / 1'000'000, " ms, ", totals.nanosecondsWithoutChange.exchange(0, std::memory_order_relaxed) / 1'000'000, " ms of it in runs that changed nothing | instructions ", totals.instructions.exchange(0, std::memory_order_relaxed) / 1'000'000, " M | log entries ", totals.logEntries.exchange(0, std::memory_order_relaxed), " | runs that made the log forget ", totals.runsThatMadeLogForget.exchange(0, std::memory_order_relaxed), " | idle runs with entries ", totals.idleRunsWithLogEntries.exchange(0, std::memory_order_relaxed));
         m_build.statistics().addPassTime(id, { .wall = Seconds(0), .cpu = Seconds::fromNanoseconds(static_cast<double>(nanoseconds)), .runs = runs });
         m_build.statistics().countChanges(id, changes);
-        m_build.statistics().countCodeBytesAdded(id, totals.codeBytesAdded.exchange(0, std::memory_order_relaxed));
-        m_build.statistics().countCodeBytesRemoved(id, totals.codeBytesRemoved.exchange(0, std::memory_order_relaxed));
     }
     for (unsigned sizeClass = 0; sizeClass < numberOfSizeClasses; ++sizeClass) {
         FunctionPassTotals& totals = m_totalsBySize[sizeClass];

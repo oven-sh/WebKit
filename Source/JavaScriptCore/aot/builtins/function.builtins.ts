@@ -70,6 +70,7 @@ export default b.declarations(
             b.called({
               afterwards: "TouchesOnlyWhatRowNames",
               times: "Once",
+              args: [],
               this: b.operand("thisArg"),
               spreadArgs: b.ownValues("argumentList"),
               result: "Returned",

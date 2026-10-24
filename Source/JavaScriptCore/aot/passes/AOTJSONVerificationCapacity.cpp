@@ -10,6 +10,7 @@
 
 #include "AOTCFG.h"
 #include "AOTStringBuilderCursor.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -17,7 +18,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr unsigned maxCapacityRounds = 4;
+AOT_THRESHOLD(unsigned, maxCapacityRounds, 4);
 
 static ValueID forwardedCursorOf(const Value& value)
 {

@@ -295,8 +295,8 @@ static void rememberKeyOrderStepAndReturn(StubAssembler& jit, GPRReg object, GPR
         done.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(static_cast<int32_t>(orderStoredOutOfLine))));
     }
     jit.sub32(TrustedImm32(1), placePlusOne);
-    static_assert(indexOfKeyOrderStepCache(5, 9) == 14);
-    jit.urshift64(wordsBefore, TrustedImm32(32), scratch);
+    static_assert(indexOfKeyOrderStepCache(5, 9ull << 32) == 5 + (9 << 5));
+    jit.urshift64(wordsBefore, TrustedImm32(keyOrderStepCacheShift), scratch);
     jit.add32(placePlusOne, scratch);
     jit.and32(TrustedImm32(static_cast<int32_t>(numberOfKeyOrderStepCaches - 1)), scratch);
     jit.lshift32(TrustedImm32(4), scratch);

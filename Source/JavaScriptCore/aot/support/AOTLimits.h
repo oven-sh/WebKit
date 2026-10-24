@@ -11,6 +11,7 @@
 #include "AOTWire.h"
 #include "CPU.h"
 #include "JSExportMacros.h"
+#include <algorithm>
 #include <array>
 #include <expected>
 #include <span>
@@ -27,6 +28,7 @@ using Wire::degradesToOf;
 using Wire::hitsOf;
 using Wire::protectsOf;
 using Wire::purposeOf;
+using Wire::smallestOf;
 using Wire::stageOf;
 
 inline constexpr unsigned numberOfLimits = numberOfEnumerators<LimitID>;
@@ -50,6 +52,16 @@ constexpr uint64_t defaultLimitValue(LimitID limit, Architecture architecture)
 
 constexpr bool failsBuild(LimitID limit) { return degradesToOf(limit) == Wire::DegradesTo::BuildError; }
 constexpr bool canBeLowered(LimitID limit) { return limit != LimitID::None && !failsBuild(limit); }
+
+// What `limit` is worth in a build that lowers `lowered` to `value`. The compiler and the run time both ask here.
+constexpr uint64_t valueWhenLowered(LimitID limit, uint64_t usual, LimitID lowered, uint64_t value)
+{
+    if (lowered == limit)
+        return std::min(usual, value);
+    if (lowered == LimitID::All && canBeLowered(limit))
+        return std::min(usual, std::max(value, smallestOf(limit)));
+    return usual;
+}
 
 class LimitValues {
 public:

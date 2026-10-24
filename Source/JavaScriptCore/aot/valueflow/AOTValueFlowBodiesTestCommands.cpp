@@ -372,7 +372,7 @@ private:
 void runValueFlowBodyTestCommand(TestCommandContext& context)
 {
     const Program& program = *context.program;
-    ValueFlowBuiltinTables tables(program.builtins());
+    ValueFlowBuiltinTables tables(program.builtins(), context.build.limit(LimitID::MaxObjectsOfTypedResult));
     auto print = [&](const Body& body) {
         BodyPrinter(context.out, program, body).print();
     };

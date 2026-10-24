@@ -1,0 +1,40 @@
+# The receiver is a function, a list about which something is proven, or an instance of a class that no test tells from others. The value behind the test of the class has the class that was tested, and the access gets the form of that class
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="read" parameters=[{type=function|Array<string, proven, pristine[Storage, Names]>|Object}] results=[{type=anything}] {
+  b0(v0: function|Array<string, proven, pristine[Storage, Names]>|Object):
+    v1 ~ Array<string, proven, pristine[Storage, Names]>|Object = Upcast v0 castType=anything
+    v2 = Integer integer=1
+    v3 = ElemGet v1, v2 [keyIsIntegral]
+    Return v3
+}
+# CHECK-LABEL: function f0 name="read"
+# CHECK: = TypeTest v1 testedType=Array<string>
+# CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous
+# CHECK: ({{*}}: Array<string>):
+# CHECK-NEXT: = HasArrayStorage
+function f1 name="storeThenRead" parameters=[{type=function|Array<string, proven, pristine[Storage, Names]>|Object}, {type=string}] results=[{type=anything}] {
+  b0(v0: function|Array<string, proven, pristine[Storage, Names]>|Object, v1: string):
+    v2 ~ Array<string, proven, pristine[Storage, Names]>|Object = Upcast v0 castType=anything
+    v3 = Integer integer=1
+    ElemSet v2, v3, v1
+    v5 = Integer integer=0
+    v6 = ElemGet v2, v5 [keyIsIntegral]
+    Return v6
+}
+# CHECK-LABEL: function f1 name="storeThenRead"
+# CHECK-COUNT-1: = TypeTest
+# CHECK: PutArrayElement {{*}} arrayStorage=Contiguous
+# CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous
+function f2 name="has" parameters=[{type=function|Array<string, proven, pristine[Storage, Names]>|Object}] results=[{type=anything}] {
+  b0(v0: function|Array<string, proven, pristine[Storage, Names]>|Object):
+    v1 ~ Array<string, proven, pristine[Storage, Names]>|Object = Upcast v0 castType=anything
+    v2 = Integer integer=1
+    v3 = ElemHas v1, v2 [keyIsIntegral]
+    Return v3
+}
+# CHECK-LABEL: function f2 name="has"
+# CHECK: = HasArrayElement {{*}} arrayStorage=Contiguous

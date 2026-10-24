@@ -388,7 +388,6 @@ aot/passes/AOTFunctionEditing.cpp
 aot/passes/AOTFuseConcatenations.cpp
 aot/passes/AOTHeat.cpp
 aot/passes/AOTHoistLoopInvariantReads.cpp
-aot/passes/AOTInferSwitches.cpp
 aot/passes/AOTInlineCalls.cpp
 aot/passes/AOTInlineCopy.cpp
 aot/passes/AOTInlineCostModel.cpp

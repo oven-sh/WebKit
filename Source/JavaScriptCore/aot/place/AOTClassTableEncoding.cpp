@@ -193,7 +193,7 @@ ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID id)
     FunctionID classConstructor = encoder.findEntrypoint(layout.constructor);
 
     ClassRecordParts parts;
-    if (classConstructor) {
+    if (classConstructor || layout.has(LayoutFlags::IsOfCreatedObject)) {
         parts.methods.reserveInitialCapacity(layout.classFlow.members.size());
         appendMethods(encoder, id, ClassSide::Prototype, parts.methods);
         size_t numberOfPrototypeMethods = parts.methods.size();

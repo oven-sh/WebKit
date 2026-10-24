@@ -1,9 +1,10 @@
 # const run = new Function(input); run({ value: input, issues: input }); run({ id: 3 }); const kept = { key: input }; kept.key
-# The interpreter gives an object literal of evaluated text the layout of a record with the same names. Only a record whose fields accept every value, and only once one of its objects has escaped.
-# L0 has escaped and accepts every value: evaluated text may create one. L1 has escaped, and its field is a number. No object of L2 has escaped.
+# The interpreter gives an object literal of evaluated text the layout of a record with the same names, where every value fits its field. Only once one of the record's objects has escaped.
+# L0 and L1 have escaped: evaluated text may create one. No object of L2 has escaped.
 # FORM: AsRead
 # RUN: valueflow-apply
 # CHECK: layout L0 {{*}}observedUses=[ReachesTypedParse]
+# CHECK: layout L1 {{*}}observedUses=[ReachesTypedParse]
 # CHECK-NOT: ReachesTypedParse
 # CHECK: function f0
 

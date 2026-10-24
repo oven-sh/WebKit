@@ -21,6 +21,7 @@
 #include "AOTSiteWeight.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -38,12 +39,15 @@ bool mayShareCell(const Program& program, const Value& value)
 {
     if (value.opcode != Opcode::NewObject || value.storage() != AllocationStorage::Heap || value.prototypeOperand() || value.isMadeOnDemand())
         return false;
+    // What Object.create makes is handed to the run time before it is whole, for what lies above it.
+    if (program.at(value.layout()).has(LayoutFlags::IsOfCreatedObject))
+        return false;
     LayoutKind kind = program.at(value.layout()).kind;
     return kind == LayoutKind::Record || kind == LayoutKind::Instance;
 }
 
 // A short literal without holes. Its cell and its first storage get room in the cell of the object that lists it.
-constexpr unsigned maxLengthOfInnerArray = 7;
+AOT_THRESHOLD(unsigned, maxLengthOfInnerArray, 7);
 
 bool isArrayThatMayBeInnerCell(const Value& value)
 {

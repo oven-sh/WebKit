@@ -211,7 +211,7 @@ JSObject* ClassTable::classPrototypeOfInstances(VM& vm, const LayoutData& classL
 
 JSObject* ClassTable::classPrototypeOfBase(VM& vm, const LayoutData& classLayout)
 {
-    if (isDefinedByClass(classLayout) || classPrototypeIfExists(classLayout))
+    if (isDefinedByClass(classLayout) || classPrototypeIfExists(classLayout) || isClassOfCreatedObjects(classLayout))
         return classPrototype(vm, classLayout);
     if (classLayout.evaluation() == EvaluationState::SeenTwice)
         return nullptr;
@@ -224,6 +224,8 @@ JSObject* ClassTable::classPrototype(VM& vm, const LayoutData& classLayout)
 {
     if (JSObject* prototype = classPrototypeIfExists(classLayout))
         return prototype;
+    if (isClassOfCreatedObjects(classLayout))
+        return nullptr;
     if (classLayout.evaluation() == EvaluationState::PredictedOnce) {
         if (!isDefinedByClass(classLayout))
             return defineClassOfConstructorFunction(vm, classLayout, UseOfFunction::MakesObjects);
@@ -305,6 +307,36 @@ JSObject* ClassTable::defineClassOfConstructorFunction(VM& vm, const LayoutData&
     enterHolderWithoutGuards(vm, classLayout, ClassSide::Static, classObject);
     checkParentsOfConstructorFunction(classLayout, prototype, classObject);
     return prototype;
+}
+
+bool ClassTable::awaitsPrototypeOfCreatedObjects(const LayoutData& layout) const
+{
+    const LayoutData& classLayout = classOfInstances(layout);
+    return isClassOfCreatedObjects(classLayout) && !classPrototypeIfExists(classLayout) && !m_constructorFunctionsWithoutClass.contains(classLayout.index);
+}
+
+bool ClassTable::defineClassOfCreatedObjects(VM& vm, const LayoutData& classLayout, JSObject* prototype)
+{
+    if (!awaitsPrototypeOfCreatedObjects(classLayout))
+        return false;
+    ClassSide sideOfOtherClass;
+    if (classLayout.evaluation() != EvaluationState::ProvenOnce || (prototype->type() != FinalObjectType && !isCompiledObject(prototype)) || classHeldBy(prototype, sideOfOtherClass)) {
+        m_constructorFunctionsWithoutClass.add(classLayout.index);
+        disarmMemberGuards(classLayout);
+        return false;
+    }
+
+    MemberGuardWatchpoints::MethodTableUpdate update(m_state);
+    registerClassPrototype(classLayout, prototype);
+    const LayoutData* base = assumedBaseOf(classLayout);
+    JSValue parent = prototype->getPrototypeDirect();
+    if (base && parent.isObject())
+        defineClassOfCreatedObjects(vm, *base, asObject(parent));
+    armMemberGuards(vm, classLayout, ClassSide::Prototype, prototype);
+    JSObject* assumedParent = base ? classPrototypeIfExists(*base) : m_state.instance.globalObject->objectPrototype();
+    if (!assumedParent || parent != JSValue(assumedParent))
+        didDefineWithOtherParent(classLayout, ClassSide::Prototype);
+    return true;
 }
 
 void ClassTable::checkParentsOfConstructorFunction(const LayoutData& classLayout, JSObject* prototype, Closure* classObject)

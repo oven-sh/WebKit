@@ -383,6 +383,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance* insta
         OPERATION_RETURN(scope);
     }
     if (Object* compiled = instance->state->objects->layouts.compiledObject(object)) {
+        ObjectModel& objects = *instance->state->objects;
+        const LayoutData& layout = compiled->compiledStructure().layout();
+        if (layout.isClass() && prototype.isObject() && objects.classes.defineClassOfCreatedObjects(vm, objects.classes.classOfInstances(layout), asObject(prototype))) {
+            objects.structures.forgetStructuresOf(objects.classes.classOfInstances(layout));
+            compiled->setStructure(vm, objects.structures.objectStructure(vm, layout.shape));
+            OPERATION_RETURN(scope);
+        }
         if (compiled->getPrototypeDirect() != prototype)
             compiled->setPrototypeAtCreation(vm, prototype);
         OPERATION_RETURN(scope);

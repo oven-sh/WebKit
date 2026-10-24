@@ -15,6 +15,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTSinkAllocations.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -108,7 +109,7 @@ static bool isGenericSpread(const Program& program, const Value& value, uint32_t
 // Whoever leaves the first point arrives at the second, and nobody else does. With a list of the operations that go away: what else stands between the points could as well run in front of code of the program.
 bool CallResolver::leadsInLineTo(ProgramPoint from, ProgramPoint to, std::optional<std::span<const ValueID>> retired)
 {
-    constexpr unsigned maxBlocksInLine = 8;
+    AOT_THRESHOLD(unsigned, maxBlocksInLine, 8);
     const CFG& cfg = m_context.analyses.cfg();
     for (unsigned step = 0; step < maxBlocksInLine; ++step) {
         const Block& block = m_function.at(from.block);

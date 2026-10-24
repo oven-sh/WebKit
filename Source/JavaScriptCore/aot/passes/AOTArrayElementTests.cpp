@@ -509,10 +509,10 @@ void rewriteTestedElementAccess(TestSiteRewriter& rewriter)
     ProgramPoint point = rewriter.point();
     std::optional<ElementAccessSite> site = planElementAccessSite(rewriter.context(), ValueSite { point.block, point.index, rewriter.use() });
     RELEASE_ASSERT(site);
-    // The tests have given the operands the types of a character read, which has no operation of its own before selection.
-    if (site->plan.form == ElementAccessForm::String)
+    // A character read has no operation of its own before selection. Where the access behind its tests asks for more than they found, it stays the access by key, which is right whatever they have found.
+    ASSERT(site->plan.isResolved() || site->plan.form == ElementAccessForm::String);
+    if (!site->plan.isResolved())
         return;
-    RELEASE_ASSERT(site->plan.isResolved());
 
     for (const Value& test : rewriter.tests()) {
         RELEASE_ASSERT(rewriter.guard() || provesForever(provesOf(test.opcode)));
@@ -529,7 +529,9 @@ void rewriteTestedElementAccess(TestSiteRewriter& rewriter)
     if (site->plan.isPresent)
         site->plan.requiredAspects = { };
     site->plan.readsHoleAsNaN = readsHoleAsNaNBehindTests(rewriter, site->plan);
-    RELEASE_ASSERT(site->plan.needsNoTest());
+    ASSERT(site->plan.needsNoTest());
+    if (!site->plan.needsNoTest())
+        return;
     site->plan.level = std::ranges::any_of(rewriter.tests(), testsTypeOfOperand) ? KnowledgeLevel::Expected : KnowledgeLevel::Proven;
 
     const Value& use = rewriter.useValue();

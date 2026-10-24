@@ -19,6 +19,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -94,8 +95,8 @@ struct DirectCallElement {
 } // anonymous namespace
 
 // directCalls has a bit for each of the first elements.
-static constexpr uint32_t maxDirectCallElements = 32;
-static constexpr size_t maxJumpsBetweenCallAndAwait = 4;
+AOT_THRESHOLD(uint32_t, maxDirectCallElements, 32);
+AOT_THRESHOLD(size_t, maxJumpsBetweenCallAndAwait, 4);
 
 static AwaitableCallee findAwaitableCallee(const Program& program, const Value& call, TestsAtHeadOfCallee tests = TestsAtHeadOfCallee::AreNoCallee)
 {
@@ -326,7 +327,7 @@ struct AwaitBehindJoins {
 
 } // anonymous namespace
 
-static constexpr unsigned maxJoinsBetweenCallAndAwait = 3;
+AOT_THRESHOLD(unsigned, maxJoinsBetweenCallAndAwait, 3);
 
 // The block has one parameter, and the values in front of `end` are casts of it, each with one use. Answers the last of them. Nothing of the block is missed by whoever goes round it with the value.
 static ValueID valueHandedThrough(FunctionPassContext& context, BlockID block, uint32_t end)

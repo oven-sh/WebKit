@@ -27,6 +27,7 @@
 #include "AOTShapeTestEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTThreshold.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -98,7 +99,7 @@ Operand SlotAccessEmitter::inResultRepresentation(const ValueContext& value, Ope
 // The table has an entry for every shape from the first to the last that a member with the field has, the last shape first: the shape word is 0 - shape.
 Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const FieldAccess& access)
 {
-    static constexpr uint32_t maxEntries = 1024;
+    AOT_THRESHOLD(uint32_t, maxEntries, 1024);
     const ShapeTable& shapes = m_placement.shapes();
     const SlotPlan& slots = m_placement.slots();
     struct Member {
@@ -680,7 +681,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     // The key is listed first, while the slot still says whether the field is missing.
     std::optional<KeyOrderStep> stepTestedFirst;
     if (isExpectedToCreate(value->accessSite())) {
-        if (takeRememberedKeyOrderStepFirst(value, cell, access.membersWithField, createdKeys, listFieldIfMissing)) {
+        if (takeRememberedKeyOrderStepFirst(value, cell, access.membersWithField, listFieldIfMissing)) {
             store();
             return;
         }
@@ -906,7 +907,7 @@ bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& s
 // The way back from the user to the allocation has no fork that leads in from elsewhere, and on it stand only tests, values without effects and stores by slot into the object itself.
 std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const ValueContext& user, ValueID operand)
 {
-    static constexpr unsigned maxBlocksOnTheWay = 32;
+    AOT_THRESHOLD(unsigned, maxBlocksOnTheWay, 32);
     ValueID object = analyses().identityOf(operand);
     const CFG& cfg = analyses().cfg();
 
@@ -1056,11 +1057,11 @@ std::optional<RememberedKeyOrderStep> SlotAccessEmitter::testRememberedKeyOrderS
     LValue entry = m_instance;
     ptrdiff_t offsetOfEntry = InstanceLayout::offsetOfKeyOrderSteps;
     if (members.size() == 1 && shapes.shapesOf(members[0]).count == 1)
-        offsetOfEntry += indexOfKeyOrderStepCache(*number, AOT::shapeWordOf(shapes.generalShapeOf(members[0]))) * sizeof(KeyOrderStepCache);
+        offsetOfEntry += indexOfKeyOrderStepCache(*number, static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(members[0]))) << 32) * sizeof(KeyOrderStepCache);
     else {
-        LValue index = m_out.bitAnd(m_out.add(m_out.lShr(remembered.orderAndShapeWordsBefore.value(), m_out.constInt32(32)), m_out.constInt64(*number)), m_out.constInt64(numberOfKeyOrderStepCaches - 1));
         static_assert(sizeof(KeyOrderStepCache) == 1 << 4);
-        entry = m_out.add(entry, m_out.shl(index, m_out.constInt32(4)));
+        LValue scaledIndex = m_out.add(m_out.lShr(remembered.orderAndShapeWordsBefore.value(), m_out.constInt32(keyOrderStepCacheShift - 4)), m_out.constInt64(static_cast<int64_t>(*number) << 4));
+        entry = m_out.add(entry, m_out.bitAnd(scaledIndex, m_out.constInt64((numberOfKeyOrderStepCaches - 1) << 4)));
     }
     auto entryField = [&](ptrdiff_t offset) { return m_out.address(heap, entry, offsetOfEntry + offset); };
     Integer rememberedWords(m_out.load64(entryField(OBJECT_OFFSETOF(KeyOrderStepCache, orderWordBefore))));

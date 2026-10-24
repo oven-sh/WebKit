@@ -22,6 +22,7 @@
 #include "AOTResultRules.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -42,8 +43,8 @@ static_assert(OperandIndex::GetSlot::object == OperandIndex::GetDeferredClosureS
 static_assert(OperandIndex::GetSlotOrUndefined::object == OperandIndex::GetDeferredClosureSlot::object && OperandIndex::GetSlotOrUndefined::guard == OperandIndex::GetDeferredClosureSlot::guard);
 static_assert(OperandIndex::GetSlotOrUndefined::object == OperandIndex::GetDeferredClosureSlotOrUndefined::object && OperandIndex::GetSlotOrUndefined::guard == OperandIndex::GetDeferredClosureSlotOrUndefined::guard);
 
-static constexpr size_t maxWindowSize = 512;
-static constexpr unsigned maxCallDepth = 4;
+AOT_THRESHOLD(size_t, maxWindowSize, 512);
+AOT_THRESHOLD(unsigned, maxCallDepth, 4);
 static constexpr uint32_t noCalleeValue = UINT32_MAX;
 static constexpr OptionSet<FieldStability> stabilityOfFilledSlot { FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined, FieldStability::IsNeverStoredWithOtherType };
 

@@ -14,6 +14,7 @@
 #include "AOTHeat.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTResultRules.h"
+#include "AOTThreshold.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -214,7 +215,7 @@ Vector<CallSite> CallResolver::collectSites()
 // All that plan() takes from a call, a read or a store by name and its function, until it asks about the place of the site. None for the other operations.
 std::optional<SiteContent> CallResolver::contentOf(const CallSite& site) const
 {
-    constexpr unsigned maxLinks = 8;
+    AOT_THRESHOLD(unsigned, maxLinks, 8);
     const Value& value = m_function.at(site.position.value);
     SiteContent content(static_cast<uint32_t>(RefusalKind::Call) << 24 | static_cast<uint32_t>(value.opcode) << 8 | value.flags);
     content.add(&m_flow);

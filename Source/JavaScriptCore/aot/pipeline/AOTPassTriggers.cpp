@@ -109,8 +109,6 @@ static constexpr PassTriggers rowOf(PassID id)
         return PassTriggers::anyOf({ Opcode::TypeTest });
     case PassID::ThreadJumps:
         return PassTriggers::anyOf({ Opcode::TypeTest }).orTraits(BodyTrait::BlockParameters);
-    case PassID::InferSwitches:
-        return PassTriggers::anyOf({ Opcode::StrictEq, Opcode::ShapeTest }).orTerminators({ TerminatorKind::Switch });
     case PassID::MergeDuplicateBlocks:
         return PassTriggers::anyOf({ }).orTraits(BodyTrait::BlockParameters);
     case PassID::RemoveRedundantHandlers:

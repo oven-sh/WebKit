@@ -19,6 +19,7 @@
 #include "AOTRegionCloner.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -33,8 +34,8 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 constexpr AbstractHeapSet carriedHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
-constexpr unsigned maxCarriedVariablesPerLoop = 8;
-constexpr unsigned maxRoundsPerStep = 4;
+AOT_THRESHOLD(unsigned, maxCarriedVariablesPerLoop, 8);
+AOT_THRESHOLD(unsigned, maxRoundsPerStep, 4);
 
 struct VariableAccess {
     MemoryLocation location;

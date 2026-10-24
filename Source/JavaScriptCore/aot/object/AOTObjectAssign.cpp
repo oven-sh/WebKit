@@ -16,6 +16,7 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramStrings.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "DeferGC.h"
 #include "GCMemoryOperations.h"
@@ -1269,7 +1270,7 @@ PlannedAssignment tryAssignPropertiesByExistingPlan(VM& vm, Object& target, JSOb
     return assignByPlan(vm, target, state, *plan, extra, *assignmentSource) ? PlannedAssignment::IsDone : PlannedAssignment::GaveUp;
 }
 
-static constexpr size_t minNumberOfNamesPutTogether = 3;
+AOT_THRESHOLD(size_t, minNumberOfNamesPutTogether, 3);
 
 // An extra property that is there in another form than a plain one is redefined, which only a definition by name does.
 static bool isPutAmongExtraProperties(VM& vm, State& state, Object& target, UniquedStringImpl* name)
@@ -1577,7 +1578,7 @@ static bool assignByPlan(VM& vm, Object& target, State& state, AssignmentPlan& p
         }
         didStoreEveryProperty = false;
     }
-    constexpr uint8_t maxNumberOfRunsGivenUp = 2;
+    AOT_THRESHOLD(uint8_t, maxNumberOfRunsGivenUp, 2);
     if (!didStoreEveryProperty) [[unlikely]]
         state.objects->caches->assignmentPlans.notePlanWithoutUse(didFailAtExtraProperties ? "a run gave up: the stores to the extra properties failed"_s : !plan.storesAreDefinitions ? "a run gave up: a prototype intercepts a store that would create a field"_s : "a run gave up: a kept field is left to store"_s);
     if (!didStoreEveryProperty || plan.numberOfRunsGivenUp) [[unlikely]] {

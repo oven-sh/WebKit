@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
-#include "AOTCreateBoundFunctions.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionEditing.h"
 #include "AOTThreads.h"
@@ -17,24 +16,6 @@
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-void createBoundFunctions(const FlowApplyContext& context, ProgramEditor& editor)
-{
-    const FlowBoundFunctionPlan& plan = context.application.boundFunctions;
-    unsigned count = plan.targets.size();
-    if (!count)
-        return;
-
-    FunctionID first = editor.reserveFunctions(count);
-    RELEASE_ASSERT(first.index() == plan.firstFunction);
-    Vector<FunctionID> functions(count, [&](size_t index) {
-        return plan.functionAt(index);
-    });
-    editFunctionsInParallel(editor, context.build, BehindEdit::Nothing, functions.span(), [&](unsigned index, FunctionID, Function& function, TaskArenas& arenas) {
-        function = createBoundFunction(context.program, context.results, arenas.types, context.build, plan.targets[index], 0);
-    });
-    context.build.statistics().count(StatisticID::BoundFunctions, count);
-}
 
 static void applyEntryParameterUpdates(Function& function, std::span<const FlowPositionUpdate> updates)
 {

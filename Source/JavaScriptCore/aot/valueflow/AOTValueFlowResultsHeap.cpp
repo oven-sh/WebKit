@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 ValueFlowNodesAskedFor::ValueFlowNodesAskedFor(const ValueFlowResultInputs& inputs)
@@ -255,7 +257,7 @@ ValueSetID ValueFlowHeapView::writtenUnder(ValueSetMaker& maker, ValueSetID obje
     const NodesWrittenUnderName* nodes = m_index.findNodesWrittenUnder(name);
     if (!nodes)
         return ValueSets::nothing;
-    constexpr size_t fewestNodesToRemember = 4;
+    AOT_THRESHOLD(size_t, fewestNodesToRemember, 4);
     if (nodes->nodes.size() < fewestNodesToRemember)
         return findWrittenUnder(maker, objects, *nodes);
     return m_index.writtenUnderNames().ensure(static_cast<uint64_t>(nodes->number) << 32 | objects.index(), [&] {

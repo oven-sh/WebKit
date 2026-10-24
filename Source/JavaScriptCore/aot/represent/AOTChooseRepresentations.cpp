@@ -12,6 +12,7 @@
 #include "AOTConversions.h"
 #include "AOTRepresentationWebs.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -50,7 +51,7 @@ static void uncoverEntryBlock(FunctionPassContext& pass, IRBuilder& builder)
     pass.analyses.didChangeControlFlow();
 }
 
-static constexpr unsigned maxCopiesFollowed = 4;
+AOT_THRESHOLD(unsigned, maxCopiesFollowed, 4);
 
 static bool isMadeBoxed(FunctionPassContext& pass, const RepresentationInputs& inputs, ValueID id, unsigned copiesFollowed = 0)
 {
@@ -105,7 +106,7 @@ struct UsesOfCopies {
 
 static void countUsesOfCopies(FunctionPassContext& pass, const RepresentationInputs& inputs, ValueID id, UsesOfCopies& uses)
 {
-    constexpr size_t maxCopies = 16;
+    AOT_THRESHOLD(size_t, maxCopies, 16);
     const Function& function = inputs.function;
     if (uses.copies.size() == maxCopies || uses.copies.contains(id))
         return;
@@ -582,7 +583,7 @@ private:
 
     void chooseForCopies()
     {
-        constexpr unsigned maxRounds = 8;
+        AOT_THRESHOLD(unsigned, maxRounds, 8);
         for (unsigned round = 0; round < maxRounds; ++round) {
             bool changed = false;
             for (uint32_t index = 0; index < m_copies.size(); ++index) {
@@ -688,7 +689,7 @@ static void convertTerminatorOperands(const ConversionWalk& walk, BlockID block)
 template<typename Operation>
 static bool takesOneValueInTwoForms(const ConversionWalk& walk, const Operation& user)
 {
-    constexpr uint32_t maxOperandsComparedInPairs = 6;
+    AOT_THRESHOLD(uint32_t, maxOperandsComparedInPairs, 6);
     uint32_t numberOfOperands = user.numberOfOperands();
     if (numberOfOperands < 2)
         return false;

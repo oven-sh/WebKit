@@ -13,14 +13,15 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTStringEmitter.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr unsigned maxLiteralsComparedByCalls = 2;
-static constexpr unsigned minStringsForWordDispatch = 3;
+AOT_THRESHOLD(unsigned, maxLiteralsComparedByCalls, 2);
+AOT_THRESHOLD(unsigned, minStringsForWordDispatch, 3);
 static constexpr uint16_t otherCellPrimitives = cellPrimitives & ~Primitive::AnyString;
 
 using TextBytes = Vector<uint8_t, 16>;

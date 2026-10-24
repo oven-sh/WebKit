@@ -15,6 +15,7 @@
 #include "AOTRelocation.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubBodyConvention.h"
+#include "AOTThreshold.h"
 #include "CPU.h"
 #include "GPRInfo.h"
 #include "JSCJSValue.h"
@@ -28,11 +29,11 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr unsigned minCasesForJumpTableInConstantData = 7;
+AOT_THRESHOLD(unsigned, minCasesForJumpTableInConstantData, 7);
 static constexpr unsigned maxBytesAllocatedBeforeStackCheck = 4 * KB;
 // With this much the code of a large program is no larger than with a record in every frame: the functions that shrink make up for those that grow.
-static constexpr unsigned maxBytesAddedToHotFunctionWithoutFrameRecord = 96;
-static constexpr unsigned maxBytesAddedToWarmFunctionWithoutFrameRecord = 16;
+AOT_THRESHOLD(unsigned, maxBytesAddedToHotFunctionWithoutFrameRecord, 96);
+AOT_THRESHOLD(unsigned, maxBytesAddedToWarmFunctionWithoutFrameRecord, 16);
 
 static_assert(maxBytesAllocatedBeforeStackCheck + maxStackUsedWithoutCheck < minimumReservedZoneSize);
 

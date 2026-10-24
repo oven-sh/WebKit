@@ -18,6 +18,7 @@
 #include "AOTProgramCaches.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -199,7 +200,7 @@ static void appendIfFresh(const AnalysisContext& context, Function&& body, TypeA
 // A loop lasts as long as its longest task from the moment that one begins.
 static Vector<uint32_t> findLargestFirst(unsigned count, const Invocable<const Function&(unsigned)> auto& functionAt)
 {
-    constexpr size_t fewestValues = 4096;
+    AOT_THRESHOLD(size_t, fewestValues, 4096);
     Vector<uint64_t> keys;
     for (unsigned position = 0; position < count; ++position) {
         size_t numberOfValues = functionAt(position).values.size();

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionKinds.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
 #include "AOTVector.h"
@@ -253,7 +254,7 @@ std::optional<ClimbingSet> HeapRule::chainUpToPrototypeObjectsOfEntries(Climbing
     if (mayGoOn)
         return std::nullopt;
 
-    constexpr unsigned longestChain = 8;
+    AOT_THRESHOLD(unsigned, longestChain, 8);
     ClimbingSet walked = start;
     ClimbingSet current = m_context.restrict(known(start), ValueSets::complement(answering));
     for (unsigned step = 0; step < longestChain; ++step) {
@@ -470,7 +471,8 @@ void HeapRule::appendPrototypeAtCreation(ValueFlowObjectID object, Members& prot
                 appendPrototypeOf(BuiltinClasses::Object, prototypes);
             return;
         case LayoutKind::Instance:
-            prototypes.append(m_universe.prototypeOf(site.layout));
+            if (!site.namesPrototype)
+                prototypes.append(m_universe.prototypeOf(site.layout));
             return;
         case LayoutKind::Environment:
         case LayoutKind::Closure:
@@ -1152,7 +1154,7 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     ClimbingSet found = m_context.restrict(chain.objects, holders);
     // Beside the unknown object nobody is shown a holder that has escaped, and the unknown object answers with no evaluator. So the links are walked by what they list.
     if (chain.holdsUnknownObject) {
-        constexpr unsigned longestChain = 8;
+        AOT_THRESHOLD(unsigned, longestChain, 8);
         ClimbingSet above = known(chain.start);
         for (unsigned step = 0; step < longestChain && holdsAnything(above); ++step) {
             found = m_context.unite(found, m_context.restrict(above, holders));
@@ -1190,7 +1192,7 @@ bool HeapRule::answers(BuiltinID member) const
 // Whichever of the objects a lookup under the name starts at, and whatever the program has done, it comes to a built-in holder whose location under the name is locked.
 bool HeapRule::surelyComesToMember(ClimbingSet start, PropertyKeyID name)
 {
-    constexpr unsigned longestChain = 8;
+    AOT_THRESHOLD(unsigned, longestChain, 8);
     const ValueFlowMembersUnderKey& members = m_tables.under(name);
     if (m_context.maker().intersect(members.holders, members.holdersWithLockedLocation) == ValueSets::nothing)
         return false;

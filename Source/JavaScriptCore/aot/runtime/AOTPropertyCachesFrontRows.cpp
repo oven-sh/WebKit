@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeCounters.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include <wtf/FastMalloc.h>
@@ -44,7 +45,7 @@ uint32_t RowDisplacementTable::firstFittingBase(uint32_t from, std::span<const u
 uint32_t RowDisplacementTable::findBase(std::span<const uint16_t> columns, uint32_t preferredBase)
 {
     constexpr unsigned basesPerBatch = 64;
-    constexpr unsigned maxProbesBetweenRows = 4;
+    AOT_THRESHOLD(unsigned, maxProbesBetweenRows, 4);
     if (uint32_t base = preferredBase ? firstFittingBase(preferredBase, columns) : 0) {
         m_bases.end = std::max(m_bases.end, base + 1);
         return base;

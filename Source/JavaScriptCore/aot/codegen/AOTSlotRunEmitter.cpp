@@ -236,7 +236,7 @@ void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer ce
     // The order word alone says that every field of the run is missing, so the slots are tested only where the step does not apply.
     std::optional<KeyOrderStep> stepTestedFirst;
     if (run.isExpectedToCreate()) {
-        if (slotAccess.takeRememberedKeyOrderStepFirst(value, cell, value->receivers(), createdKeys.span(), listFieldsIfAnyIsMissing))
+        if (slotAccess.takeRememberedKeyOrderStepFirst(value, cell, value->receivers(), listFieldsIfAnyIsMissing))
             return;
         stepTestedFirst = slotAccess.testLikeliestKeyOrderStep(cell, value->receivers(), createdKeys.span());
     }

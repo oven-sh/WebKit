@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTIdentifierTable.h"
 #include "AOTImage.h"
+#include "AOTThreshold.h"
 #include "BuiltinNames.h"
 #include "JSCInlines.h"
 #include <algorithm>
@@ -30,7 +31,7 @@ namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramIdentifiers);
 
-static constexpr uint32_t minNumberOfSymbolPlaces = 64;
+AOT_THRESHOLD(uint32_t, minNumberOfSymbolPlaces, 64);
 
 static ProgramSymbols createSymbols(uint32_t numberOfPlaces)
 {

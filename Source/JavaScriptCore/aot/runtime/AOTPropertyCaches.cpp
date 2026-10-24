@@ -24,6 +24,7 @@
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTThreshold.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"
@@ -241,7 +242,7 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
 
 void VMPropertyCaches::fileAbsenceFilterOf(JSGlobalObject* globalObject, JSObject* object, FilterUse use)
 {
-    constexpr unsigned maxObjectsAbove = 8;
+    AOT_THRESHOLD(unsigned, maxObjectsAbove, 8);
     Structure* structure = object->structure();
     AbsenceFilter& filter = m_absenceFilters[AbsenceFilter::indexFor(structure->id().bits())];
     if (filter.structureID == structure->id().bits() && (filter.generation == m_absenceFilterGeneration || (use == FilterUse::Stores && filter.generationForStores == m_absenceFilterGenerationForStores)))

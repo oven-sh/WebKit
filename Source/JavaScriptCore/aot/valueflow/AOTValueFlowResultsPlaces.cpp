@@ -17,6 +17,7 @@
 #include "AOTRemovableFeature.h"
 #include "AOTSchemaOperandPositions.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowRuleContext.h"
 #include "AOTValueIdentity.h"
@@ -579,7 +580,7 @@ public:
     Vector<FlowLocaleUse> uses;
 
 private:
-    static constexpr unsigned maxValuesFollowed = 256;
+    AOT_CLASS_THRESHOLD(unsigned, maxValuesFollowed, 256);
 
     void note(LocaleUseKind kind, StringID tag = { })
     {

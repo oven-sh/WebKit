@@ -24,6 +24,7 @@
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "AOTUnwinding.h"
 #include "AOTVector.h"
 #include "ButterflyInlines.h"
@@ -185,7 +186,7 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
 // What has been read out of a source of any kind is put into an ordinary object, which gets the same Structure each time the names are the same.
 static bool tryAssignCollectedProperties(JSGlobalObject* globalObject, VM& vm, Object& target, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
-    constexpr size_t minNumberOfNames = 4;
+    AOT_THRESHOLD(size_t, minNumberOfNames, 4);
     // With more names than a chain of Structures holds the object would be a dictionary, which has no plan.
     if (names.size() < minNumberOfNames || names.size() > static_cast<size_t>(Structure::s_maxTransitionLength))
         return false;

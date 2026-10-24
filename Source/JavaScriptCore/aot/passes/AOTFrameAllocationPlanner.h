@@ -10,6 +10,7 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLosses.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <optional>
 #include <span>
@@ -60,7 +61,7 @@ bool hasStorageChoice(const Value&);
 bool isEmptyArrayLiteral(const Value&);
 
 // Locked stack slots are never shared, so the arrays of a function take up to 32 * (24 + 8 * MaxFrameArrayLength) bytes of its frame.
-inline constexpr unsigned maxFollowedArrays = 32;
+AOT_THRESHOLD(unsigned, maxFollowedArrays, 32);
 // What the planner finds out about the uses of arrays, without the analyses that it needs for everything else: most functions that make an array store it or return it.
 bool mayPutSomeArrayInFrame(const Program&, const FlowResults&, const BuildContext&, const Function&);
 

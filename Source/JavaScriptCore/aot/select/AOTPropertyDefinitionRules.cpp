@@ -16,6 +16,7 @@
 #include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -66,7 +67,7 @@ static constexpr unsigned numberOfDescriptorCallArguments = 3;
 static constexpr OptionSet<PropertyDescriptorFlags> dataDescriptorFlags { PropertyDescriptorFlags::HasValue, PropertyDescriptorFlags::HasWritable };
 static constexpr OptionSet<PropertyDescriptorFlags> accessorDescriptorFlags { PropertyDescriptorFlags::HasGet, PropertyDescriptorFlags::HasSet };
 
-static constexpr size_t minMembersInAccessorGroup = 2;
+AOT_THRESHOLD(size_t, minMembersInAccessorGroup, 2);
 static constexpr uint64_t maxKeysInAccessorMasks = std::numeric_limits<uint32_t>::digits;
 
 static std::optional<unsigned> descriptorCallArgumentOf(const std::optional<BuiltinOperand>& operand)

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTPhaseTimes.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <array>
 #include <atomic>
@@ -609,7 +610,7 @@ void forEachIndexInParallelWithOrderedCommit(const ParallelLoops& loops, unsigne
         return;
     }
 
-    constexpr unsigned maxBlockSize = 64;
+    AOT_THRESHOLD(unsigned, maxBlockSize, 64);
     constexpr uint32_t noBlock = std::numeric_limits<uint32_t>::max();
     const unsigned blockSize = std::clamp(count / (64 * loops.width()), 1u, maxBlockSize);
     const unsigned numberOfBlocks = (count + blockSize - 1) / blockSize;

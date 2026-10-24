@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -247,7 +248,7 @@ void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID merge
 
 PassOutcome sinkAllocations(FunctionPassContext& context)
 {
-    constexpr unsigned maxEdgeSplittingRounds = 3;
+    AOT_THRESHOLD(unsigned, maxEdgeSplittingRounds, 3);
     constexpr OpcodeSet allocations = opcodesInterpretedAs(Interpretation::Allocation);
 
     if (!context.analyses.opcodesOfValues().intersects(allocations))

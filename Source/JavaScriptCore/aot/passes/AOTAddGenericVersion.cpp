@@ -141,6 +141,7 @@ private:
     Value createMismatchReport(ValueID, TypeID expectedType, TypeSiteID) const;
     void replaceChecksWithGuards(std::span<const ValueID> checks, ExpectedTypes = ExpectedTypes::Kept);
     CalleeSetID withCalleesNobodyHasSeen(CalleeSetID);
+    LayoutSetID withReceiversNobodyHasSeen(LayoutSetID);
     void fallBackToGuards();
     bool assumeOperandKinds();
     bool assumeTypesOfProvenPositions();
@@ -582,7 +583,8 @@ bool GenericVersionBuilder::guardElementsThatOneOperatorTakes()
         if ((source != Opcode::ElemGet && source != Opcode::ResultAt) || uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
             continue;
         const Value& user = m_function.at(uses[0].user);
-        bool isOnlyLookedAt = user.operandKind(uses[0].operandIndex) == OperandKind::Any && !user.operandUses(uses[0].operandIndex).contains(OperandUse::Retains);
+        // What is compared with another value is mostly read again behind the comparison, and that read is checked.
+        bool isOnlyLookedAt = user.operandKind(uses[0].operandIndex) == OperandKind::Any && !user.operandUses(uses[0].operandIndex).contains(OperandUse::Retains) && (user.numberOfOperands() == 1 || !typeOf(uses[0].user).isBoolean());
         if (isOnlyLookedAt && !m_context.types.at(check.castType()).hasObjects() && !typeOf(check.valueOperand()).hasObjects())
             guarded.append(site.check);
     }
@@ -879,6 +881,16 @@ CalleeSetID GenericVersionBuilder::withCalleesNobodyHasSeen(CalleeSetID stamp)
     return m_context.types.intern(CalleeSet { .functions = callees.functions, .builtins = callees.builtins, .isComplete = false });
 }
 
+LayoutSetID GenericVersionBuilder::withReceiversNobodyHasSeen(LayoutSetID stamp)
+{
+    const LayoutSet& receivers = m_context.types.at(stamp);
+    if (!receivers.isComplete)
+        return stamp;
+    if (receivers.members.isEmpty() || receivers.hasMembersWithoutLayout)
+        return { };
+    return m_context.types.intern(LayoutSet { .members = receivers.members, .isComplete = false });
+}
+
 void GenericVersionBuilder::replaceChecksWithGuards(std::span<const ValueID> checks, ExpectedTypes expectedTypes)
 {
     if (checks.empty())
@@ -914,7 +926,7 @@ void GenericVersionBuilder::replaceChecksWithGuards(std::span<const ValueID> che
         const Terminator& terminator = block.terminator;
         if (terminator.kind == TerminatorKind::ReturnCall && isTainted.get(terminator.callOperand().index()) && terminator.casts().size())
             m_function.edit(BlockID(index), BlockEdit::Terminator).terminator.setCasts({ });
-        // What flow has stamped on an operation was read off a run in which every check had passed.
+        // What flow has proven of an operation was read off a run in which every check had passed. Where the type of the check is expected no longer, it is what is left to expect.
         for (ValueID id : block.values) {
             const Value& value = m_function.at(id);
             bool hasReceivers = Value::opcodesWithReceivers.contains(value.opcode) && value.receivers();
@@ -928,7 +940,7 @@ void GenericVersionBuilder::replaceChecksWithGuards(std::span<const ValueID> che
             if (!takesTaintedOperand)
                 continue;
             if (hasReceivers)
-                m_function.edit(id, ValueEdit::Definition).setReceivers({ });
+                m_function.edit(id, ValueEdit::Definition).setReceivers(expectedTypes == ExpectedTypes::Dropped ? withReceiversNobodyHasSeen(value.receivers()) : LayoutSetID());
             if (!hasCallees)
                 continue;
             CalleeSetID callees = withCalleesNobodyHasSeen(value.callees());

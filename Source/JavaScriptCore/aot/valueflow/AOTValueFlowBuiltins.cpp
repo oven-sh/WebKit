@@ -13,6 +13,7 @@
 #include "AOTNameCreatedSymbols.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTTypeRelations.h"
 #include "AOTUseLists.h"
 #include "AOTValueFlowBodies.h"
@@ -1208,7 +1209,7 @@ private:
         }
         // A built-in constructor other than that of the class which the entry makes: `array.constructor = Map`.
         auto findsSpeciesGetter = [&](BuiltinID constructor) {
-            constexpr unsigned longestChain = 4;
+            AOT_THRESHOLD(unsigned, longestChain, 4);
             for (unsigned step = 0; constructor && step < longestChain; ++step) {
                 if (m_builtins.findOwnMember(constructor, BuiltinNames::speciesSymbol))
                     return true;
@@ -1781,6 +1782,8 @@ private:
                     ValueFlowObjectID list = m_universe.resultOf(m_builtin, 0);
                     allocate(part, list, type.freshness);
                     value = maker.unite(value, maker.of(list));
+                    for (const BuiltinSlotContents& contents : part.contents)
+                        handListOfChildrenToHost(m_context, m_builtins.canonicalID(m_builtin), list, valueInSlot(contents.slot, contents.type));
                     break;
                 }
                 if (type.freshness == BuiltinFreshness::No || !fresh || isCalledInWaysNobodyFollows(part)) {

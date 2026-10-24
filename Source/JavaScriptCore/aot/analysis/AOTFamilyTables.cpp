@@ -13,6 +13,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -215,7 +216,7 @@ auto FamilyTables::replaceCache(uint64_t phase) const -> Cache&
     return *m_currentPhaseCaches.last();
 }
 
-static constexpr size_t minCachedSetSize = 8;
+AOT_THRESHOLD(size_t, minCachedSetSize, 8);
 
 static uint32_t hashLayouts(std::span<const LayoutID> layouts)
 {

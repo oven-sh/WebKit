@@ -734,6 +734,15 @@ static void testWireOptionsFollowCanBeLowered()
         AOT_TEST_CHECK(isSame(options, createDefaultOptions(0)));
     }
 
+    WireOptions all = makeDefaultCompileOptions();
+    all.loweredLimit = LimitID::All;
+    all.loweredLimitValue = 2;
+    CompileOptions together = readValidOptions(all);
+    for (LimitID limit : allMembersOf<LimitID>) {
+        uint64_t usual = defaultLimitValue(limit, hostArchitecture());
+        AOT_TEST_CHECK(together.limits[limit] == (canBeLowered(limit) ? std::min(usual, std::max<uint64_t>(2, smallestOf(limit))) : usual));
+    }
+
     WireOptions wire = makeDefaultCompileOptions();
     wire.loweredLimit = LimitID::MaxDataNodes;
     wire.loweredLimitValue = 1;

@@ -168,10 +168,7 @@ void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, const A
     ValueInsertion insertion { context.analyses.context(), function, context.types, origin, insert };
 
     StepArguments arguments = createStepArguments(context, chain, insert);
-    Value call = makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() });
-    const Value& lastCall = function.at(chain.lastCall);
-    call.setIsDemotedTailCall(FlagMask::isDemotedTailCall(lastCall.opcode) && lastCall.isDemotedTailCall());
-    ValueID fused = insert(WTF::move(call));
+    ValueID fused = insert(makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() }));
     ValueID converted = convertTo(insertion, fused, DeclaredType { .type = resultType });
     builder.applyInsertions();
 
@@ -261,14 +258,8 @@ PassOutcome fuseArrayChains(FunctionPassContext& context)
         FunctionAnalyses analyses(context.analyses.context(), fused);
         FunctionPassContext fusedContext { context.program, context.inputs, context.id, fused, analyses, context.types, context.strings, context.build };
         IRBuilder builder(analyses.context(), fused, context.types, &analyses);
-        for (const ArrayChain& chain : accepted) {
-            const Terminator& terminator = fused.at(chain.block).terminator;
-            if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == chain.lastCall) {
-                builder.demoteReturnCall(chain.block);
-                context.build.statistics().count(StatisticID::ReturnCallsDemoted);
-            }
+        for (const ArrayChain& chain : accepted)
             rewriteArrayChain(fusedContext, builder, chain);
-        }
     }
     FunctionAnalyses analysesOfFused(context.analyses.context(), fused);
     if (endsGuardInUse(analysesOfFused)) {

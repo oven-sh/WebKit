@@ -34,35 +34,22 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 struct DefinitionMention {
-    enum class Kind : uint8_t { VariableStore, Closure, ClassDefinition, EnvironmentAllocation, EnvironmentStore };
+    enum class Kind : uint8_t { VariableStore, Closure, ClassDefinition };
 
     Kind kind { Kind::VariableStore };
     uint32_t subject { 0 };
-    uint32_t field { 0 };
 };
 
 // How many operations of the program name each thing, counted up to two.
 struct Counts {
-    bool isStoredByOneOperation(FieldReference field) const
-    {
-        auto stores = std::ranges::equal_range(storedEnvironmentFields, field);
-        return stores.size() == 1;
-    }
-
     Vector<uint8_t> storesOfVariable;
     Vector<uint8_t> closuresOfFunction;
     Vector<uint8_t> definitionsOfClass;
-    Vector<uint8_t> allocationsOfEnvironment;
-    // Ascending, once for each store.
-    Vector<FieldReference> storedEnvironmentFields;
 };
 
 // What the run time finds through a record of the program. A pass may later turn an access by name into a read of such a variable.
 struct NamedByRecords {
-    bool contains(FieldReference field) const { return std::ranges::binary_search(environmentFields, field); }
-
     BitVector variables;
-    Vector<FieldReference> environmentFields;
 };
 
 struct DefinitionScanContext {
@@ -74,18 +61,17 @@ struct DefinitionScanContext {
 };
 
 struct Deferral {
-    enum class Kind : uint8_t { Closure, ClosureInEnvironment, Class, RegExp };
+    enum class Kind : uint8_t { Closure, Class, RegExp };
 
     Kind kind { Kind::Closure };
     FunctionID body;
     // What goes from the body.
     Vector<ValueID, 4> removed;
-    // The variables that no read finds empty. They stand for the object from now on. None yet for a field of an environment.
+    // The variables that no read finds empty. They stand for the object from now on.
     Vector<VariableID, 1> variables;
     // The variables that a read may find in their dead zone, and their stores. They go on saying whether the declaration has run, and a new variable beside each stands for the object.
     Vector<VariableID, 1> variablesWithDeadZone;
     Vector<ValueID, 1> storesThatEndDeadZone;
-    FieldReference field;
     // What the variables are born as.
     FunctionID function;
     // The class.
@@ -122,11 +108,9 @@ private:
     bool tryTakeStore(Deferral&, ValueID store) const;
     bool collectStoredAllocation(ValueID stored, Vector<ValueID, 4>& values);
     bool isOnlyClosureOverNothing(const Value& allocation) const;
-    bool isOnlyEnvironment(ValueID environment, LayoutID);
     VariableID findVariableOfType(const Deferral&, TypeID) const;
 
     void scanVariableStore(ValueID);
-    void scanEnvironmentStore(ValueID);
     void scanClassDefinition(ValueID);
 
     const DefinitionScanContext& m_context;
@@ -135,11 +119,6 @@ private:
     const Function& m_function;
     Vector<Deferral>& m_found;
     std::optional<FunctionAnalyses> m_analyses;
-};
-
-struct MovedField {
-    FieldReference field;
-    VariableID variable;
 };
 
 struct SplitVariable {
@@ -159,12 +138,6 @@ struct DefinitionPlan {
         return deferrals.subspan(range.begin() - deferrals.begin(), range.size());
     }
 
-    VariableID variableOf(FieldReference field) const
-    {
-        auto found = std::ranges::lower_bound(movedFields, field, { }, &MovedField::field);
-        return found != movedFields.end() && found->field == field ? found->variable : VariableID();
-    }
-
     VariableID objectBeside(VariableID deadZone) const
     {
         auto found = std::ranges::lower_bound(splitVariables, deadZone, { }, &SplitVariable::deadZone);
@@ -179,17 +152,14 @@ struct DefinitionPlan {
 
     bool isChangedRead(const Value& value) const
     {
-        if (value.opcode == Opcode::GetEnvironmentField)
-            return !!variableOf({ value.layout(), value.field() });
         return value.opcode == Opcode::GetModuleVariable && (objectBeside(value.variable()) || findRegExp(value.variable()));
     }
 
-    bool changesReads() const { return !movedFields.isEmpty() || !splitVariables.isEmpty() || !regExps.isEmpty(); }
+    bool changesReads() const { return !splitVariables.isEmpty() || !regExps.isEmpty(); }
 
     // In the order of the bodies.
     Vector<Deferral> deferrals;
     // Each ascending.
-    Vector<MovedField> movedFields;
     Vector<SplitVariable> splitVariables;
     Vector<DeferredRegExp> regExps;
     // What a variable holds that only says whether its declaration has run.
@@ -200,8 +170,8 @@ struct DefinitionPlan {
 
 static void collectMentions(const Program& program, FunctionID function, Vector<DefinitionMention>& found)
 {
-    constexpr OpcodeSet mentioningOpcodes { Opcode::PutModuleVariable, Opcode::NewClosure, Opcode::NewClass, Opcode::NewObject, Opcode::PutEnvironmentField };
-    forEachListedName(program, function, mentioningOpcodes, [&](BlockID, ValueID value, Opcode opcode, NameKind kind, uint32_t name) {
+    constexpr OpcodeSet mentioningOpcodes { Opcode::PutModuleVariable, Opcode::NewClosure, Opcode::NewClass };
+    forEachListedName(program, function, mentioningOpcodes, [&](BlockID, ValueID, Opcode opcode, NameKind kind, uint32_t name) {
         switch (opcode) {
         case Opcode::PutModuleVariable:
             if (kind == NameKind::Variable)
@@ -214,14 +184,6 @@ static void collectMentions(const Program& program, FunctionID function, Vector<
         case Opcode::NewClass:
             if (kind == NameKind::Layout)
                 found.append({ DefinitionMention::Kind::ClassDefinition, name });
-            break;
-        case Opcode::NewObject:
-            if (kind == NameKind::Layout && program.at(LayoutID(name)).kind == LayoutKind::Environment)
-                found.append({ DefinitionMention::Kind::EnvironmentAllocation, name });
-            break;
-        case Opcode::PutEnvironmentField:
-            if (kind == NameKind::Layout)
-                found.append({ DefinitionMention::Kind::EnvironmentStore, name, program.functions[function.index()].at(value).field() });
             break;
         default:
             break;
@@ -239,7 +201,6 @@ static Counts countMentions(const Program& program, const ParallelLoops& loops)
     counts.storesOfVariable.fill(0, program.variables.size());
     counts.closuresOfFunction.fill(0, program.functions.size());
     counts.definitionsOfClass.fill(0, program.layouts.size());
-    counts.allocationsOfEnvironment.fill(0, program.layouts.size());
     auto count = [](uint8_t& counter) {
         counter = std::min<unsigned>(counter + 1, 2);
     };
@@ -254,15 +215,8 @@ static Counts countMentions(const Program& program, const ParallelLoops& loops)
         case DefinitionMention::Kind::ClassDefinition:
             count(counts.definitionsOfClass[mention.subject]);
             break;
-        case DefinitionMention::Kind::EnvironmentAllocation:
-            count(counts.allocationsOfEnvironment[mention.subject]);
-            break;
-        case DefinitionMention::Kind::EnvironmentStore:
-            counts.storedEnvironmentFields.append({ LayoutID(mention.subject), mention.field });
-            break;
         }
     }
-    parallelSort(loops, counts.storedEnvironmentFields.mutableSpan(), std::less<FieldReference> { });
 
     // The closure table has one cell per function, and the closure of a declaration is in it.
     for (const Variable& variable : program.variables) {
@@ -291,13 +245,9 @@ static NamedByRecords findWhatRecordsName(const Program& program)
             add(field.variable);
     }
     for (const EvalScope& scope : program.evalScopes) {
-        for (const EvalBinding& binding : scope.bindings) {
+        for (const EvalBinding& binding : scope.bindings)
             add(binding.variable);
-            if (binding.layout && binding.field)
-                named.environmentFields.append({ binding.layout, *binding.field });
-        }
     }
-    AOT::sort(named.environmentFields);
     return named;
 }
 
@@ -359,8 +309,6 @@ BeforeStore DeferredDefinitionScanner::whatIsReadBefore(const Value& store, Defe
         if (isNamedByRecord || variable.declared.flags.contains(PositionFlags::IsExpected))
             return BeforeStore::SomethingElse;
         break;
-    case Deferral::Kind::ClosureInEnvironment:
-        RELEASE_ASSERT_NOT_REACHED();
     }
 
     BeforeStore found = whatIsReadBeforeStore(m_program, variable);
@@ -422,41 +370,6 @@ void DeferredDefinitionScanner::scanVariableStore(ValueID id)
         return;
     deferral.literal = deferral.removed.last();
     tryTakeStore(deferral, id);
-    m_found.append(WTF::move(deferral));
-}
-
-// One environment of the layout exists at most, so a field of the layout is one place.
-bool DeferredDefinitionScanner::isOnlyEnvironment(ValueID environment, LayoutID layout)
-{
-    if (m_context.counts.allocationsOfEnvironment[layout.index()] != 1)
-        return false;
-    ValueID allocation = sameObjectThroughCasts(m_function, environment);
-    if (m_function.at(allocation).opcode != Opcode::NewObject || m_function.at(allocation).layout() != layout)
-        return false;
-    return analyses().executionCountOf(useLists().blockOf(allocation)) == ExecutionCount::AtMostOnce;
-}
-
-void DeferredDefinitionScanner::scanEnvironmentStore(ValueID id)
-{
-    const Value& store = m_function.at(id);
-    FieldReference field { store.layout(), store.field() };
-    const Layout& layout = m_program.at(field.layout);
-    if (layout.kind != LayoutKind::Environment || !m_function.module || !mayHoldVariablesBornAsFunctions(m_program.at(m_function.module).kind))
-        return;
-    if (!isOnlyClosureOverNothing(m_function.at(sameObjectThroughCasts(m_function, store.valueOperand()))))
-        return;
-
-    const LocationFlow& location = layout.fields[field.field].flow.location;
-    if (!hasOneStoreAtMost(location) || location.initialization != InitializationState::StoredBeforeEveryRead || location.deferral != ClosureDeferral::Unknown)
-        return;
-    if (!m_context.counts.isStoredByOneOperation(field) || m_context.named.contains(field) || !isOnlyEnvironment(store.environmentOperand(), field.layout))
-        return;
-
-    Deferral deferral { .kind = Deferral::Kind::ClosureInEnvironment, .body = m_id, .field = field };
-    if (!collectStoredAllocation(store.valueOperand(), deferral.removed))
-        return;
-    deferral.function = m_function.at(deferral.removed.last()).function();
-    deferral.removed.append(id);
     m_found.append(WTF::move(deferral));
 }
 
@@ -533,10 +446,6 @@ void DeferredDefinitionScanner::run()
             switch (m_function.at(id).opcode) {
             case Opcode::PutModuleVariable:
                 scanVariableStore(id);
-                break;
-            case Opcode::PutEnvironmentField:
-                if (m_context.flow.hasResults())
-                    scanEnvironmentStore(id);
                 break;
             case Opcode::NewClass:
                 scanClassDefinition(id);
@@ -636,26 +545,6 @@ static void dropClassesBelowClassesThatCodeDefines(const Program& program, Vecto
     });
 }
 
-static Variable createVariableFor(const Program& program, const Deferral& deferral)
-{
-    const Field& field = fieldAt(program, deferral.field);
-    const LocationFlow& location = field.flow.location;
-    Variable variable;
-    if (field.key)
-        variable.name = program.at(field.key).text;
-    variable.module = program.at(deferral.body).module;
-    variable.declared = field.declared;
-    if (field.flags.contains(FieldFlags::IsImmutable))
-        variable.flags.add(VariableFlags::IsImmutable);
-    variable.flow.writers = WriterState::AllKnown;
-    variable.flow.stores = StoreCount::AtMostOnce;
-    variable.flow.initialization = InitializationState::StoredBeforeEveryRead;
-    variable.flow.reads = location.reads;
-    variable.flow.cause = location.cause;
-    variable.flow.witness = location.witness;
-    return variable;
-}
-
 // Every read of this one stands behind the test of the other, which passes only after the declaration has run.
 static Variable createVariableBeside(ProgramEditor& editor, VariableID deadZone)
 {
@@ -683,17 +572,12 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
     const Program& program = editor.program();
     plan.typeOfDeadZone = editor.types().intern(Type::fromPrimitives(Primitive::Absent | Primitive::Undefined));
     for (Deferral& deferral : plan.deferrals) {
-        if (deferral.kind == Deferral::Kind::ClosureInEnvironment) {
-            deferral.variables.append(editor.addVariable(createVariableFor(program, deferral)));
-            plan.movedFields.append({ deferral.field, deferral.variables.first() });
-        }
         splitVariablesWithDeadZone(editor, plan, deferral);
 
         for (VariableID id : deferral.variables) {
             Variable& variable = editor.at(id);
             switch (deferral.kind) {
             case Deferral::Kind::Closure:
-            case Deferral::Kind::ClosureInEnvironment:
             case Deferral::Kind::Class:
                 variable.initialization = VariableInitialization::Function;
                 variable.function = deferral.function;
@@ -709,7 +593,6 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
             }
         }
     }
-    AOT::sort(plan.movedFields, { }, &MovedField::field);
     AOT::sort(plan.splitVariables, { }, &SplitVariable::deadZone);
     AOT::sort(plan.regExps, { }, &DeferredRegExp::variable);
 }
@@ -718,18 +601,13 @@ static Vector<FunctionID> findFunctionsToEdit(const Program& program, const Para
 {
     Vector<FunctionID> functions;
     if (plan.changesReads()) {
-        BitVector layoutsWithMovedFields(program.layouts.size());
-        for (const MovedField& moved : plan.movedFields)
-            layoutsWithMovedFields.quickSet(moved.field.layout.index());
         // Plan::isChangedRead() holds for no read whose names are refused here.
         auto mayBeChangedRead = [&](NameKind kind, uint32_t name) {
-            if (kind == NameKind::Layout)
-                return layoutsWithMovedFields.quickGet(name);
             return kind == NameKind::Variable && (plan.objectBeside(VariableID(name)) || plan.findRegExp(VariableID(name)));
         };
         functions = collectInParallel<FunctionID>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionID>& found) {
             bool readsChangedPlace = false;
-            forEachListedValueNaming(program, FunctionID(index), { Opcode::GetEnvironmentField, Opcode::GetModuleVariable }, mayBeChangedRead, [&](BlockID, ValueID, const Value& value) {
+            forEachListedValueNaming(program, FunctionID(index), { Opcode::GetModuleVariable }, mayBeChangedRead, [&](BlockID, ValueID, const Value& value) {
                 readsChangedPlace |= plan.isChangedRead(value);
             });
             if (readsChangedPlace)
@@ -838,24 +716,6 @@ static void readObjectsBehindDeadZoneTests(const DefinitionPlan& plan, IRBuilder
     }
 }
 
-static void readMovedFieldsFromVariables(const DefinitionPlan& plan, Function& function)
-{
-    if (plan.movedFields.isEmpty())
-        return;
-    for (const Block& block : function.blocks) {
-        for (ValueID id : block.values) {
-            Value& read = function.edit(id);
-            if (read.opcode != Opcode::GetEnvironmentField)
-                continue;
-            VariableID variable = plan.variableOf({ read.layout(), read.field() });
-            if (!variable)
-                continue;
-            read.become(Opcode::GetModuleVariable);
-            read.setVariable(variable);
-        }
-    }
-}
-
 // The casts between the literal and its store went with the definition. What flow proved of the variable's object it proved of this one.
 static ValueID assumeTypeOfVariable(IRBuilder& builder, ValueID made, VariableID variable)
 {
@@ -927,7 +787,7 @@ void deferDefinitions(ProgramEditor& editor, const FlowResults& flow, BuildConte
 
     DefinitionPlan plan;
     plan.deferrals = collectInParallel<Deferral>(loops, program.functions.size(), [&](unsigned index, Vector<Deferral>& found) {
-        constexpr OpcodeSet definingOpcodes { Opcode::PutModuleVariable, Opcode::PutEnvironmentField, Opcode::NewClass };
+        constexpr OpcodeSet definingOpcodes { Opcode::PutModuleVariable, Opcode::NewClass };
         if (mayListValueWith(program, FunctionID(index), definingOpcodes) && program.functions[index].hasBody() && build.isEnabled(PassID::DeferDefinitions, FunctionID(index)))
             DeferredDefinitionScanner(context, FunctionID(index), found).run();
     });
@@ -942,13 +802,11 @@ void deferDefinitions(ProgramEditor& editor, const FlowResults& flow, BuildConte
         IRBuilder builder(AnalysisContext { build, program, &flow, nullptr, id }, function, arenas.types);
         removeDefinitions(plan.deferralsIn(id), builder);
         readObjectsBehindDeadZoneTests(plan, builder);
-        readMovedFieldsFromVariables(plan, function);
         fillRegExpVariablesAtReads(plan, builder);
     });
 
     Statistics& statistics = build.statistics();
     statistics.count(StatisticID::ClosuresDeferredInVariables, numberOf(plan, Deferral::Kind::Closure));
-    statistics.count(StatisticID::ClosuresDeferredInEnvironmentFields, numberOf(plan, Deferral::Kind::ClosureInEnvironment));
     statistics.count(StatisticID::ClassesDeferredInVariables, numberOf(plan, Deferral::Kind::Class));
     statistics.count(StatisticID::RegExpsDeferredInVariables, numberOf(plan, Deferral::Kind::RegExp));
     statistics.count(StatisticID::DeadZonesKeptBesideDefinitions, plan.splitVariables.size());

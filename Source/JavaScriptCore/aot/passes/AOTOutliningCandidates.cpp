@@ -28,6 +28,7 @@
 #include "AOTResultRules.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -78,7 +79,7 @@ public:
 
 private:
     static constexpr size_t slotsForFunction = 8;
-    static constexpr unsigned longestProbe = 16;
+    AOT_CLASS_THRESHOLD(unsigned, longestProbe, 16);
 
     ParallelArray<unsigned> m_slots;
 };

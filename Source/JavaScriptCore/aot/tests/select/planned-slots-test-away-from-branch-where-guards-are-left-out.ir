@@ -1,0 +1,70 @@
+# Over the work limit of guard availability the state of a guard is unknown. A test over two places that stands away from its branch is repeated in front of the branch all the same
+# FORM: Prepared
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom limit=MaxGuardAvailabilityWork:0
+# RUN: pass Select
+# RUN(PLACE): pass Select NumberAndEncode PlaceSiteCaches CheckPlacement
+# LOSS: MaxGuardAvailabilityWork
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Text" fields=[{key="value" declared={type=undefined|string}}, {key="pad" declared={type=number}}] flow={members=[L0]}
+layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] flow={members=[L1]}
+variable g0 name="saved" declared={type=anything} initialization=Undefined
+
+function f0 name="comparison-between-test-and-branch" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: anything):
+    v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
+    ValidateSameValue v1, v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetSlot v0, v4 key="value" receivers=[L0, L1] level=Proven
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0 name="comparison-between-test-and-branch"
+# CHECK-NEXT: b0(v0: L0|L1, v1: anything):
+# CHECK-NEXT: ValidateSameValue v1, v0
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
+# CHECK: = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
+# CHECK-NOT: receivers=[L0, L1]
+
+function f1 name="branch-in-later-block" parameters=[{type=L0|L1}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: boolean):
+    v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    PutModuleVariable v1 variable=g0
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = GetSlot v0, v4 key="value" receivers=[L0, L1] level=Proven
+    Return v5
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1 name="branch-in-later-block"
+# CHECK: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK-NOT: receivers=[L0, L1]
+
+function f2 name="test-under-guard" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = ShapeTest v0 layouts=[L0, L1]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsSlotFilled v0, v3 key="value" receivers=[L0, L1] level=Expected
+    PutModuleVariable v1 variable=g0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v3, v6
+    v8 = GetSlot v0, v7 key="value" receivers=[L0, L1] level=Expected
+    Return v8
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2 name="test-under-guard"
+# CHECK: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: SwitchOnShape v0 layoutSets=[{{*}}[L0], [L1]]
+# CHECK-NOT: receivers=[L0, L1]
+
+# PLACE-NOT: "value" {L0 L1}

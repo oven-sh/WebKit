@@ -11,6 +11,7 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSONObject.h"
@@ -325,7 +326,7 @@ static NEVER_INLINE JSString* quoteStringInEngine(JSGlobalObject* globalObject, 
 }
 
 // A longer text pays for the engine's set-up many times over, and the room for its longest escaped form is no small thing.
-static constexpr size_t maxLengthOfStringEscapedHere = 16 * KB;
+AOT_THRESHOLD(size_t, maxLengthOfStringEscapedHere, 16 * KB);
 
 static NEVER_INLINE JSString* quoteStringWithEscapes(VM& vm, std::span<const Latin1Character> characters)
 {

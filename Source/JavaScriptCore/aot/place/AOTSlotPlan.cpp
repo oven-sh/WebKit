@@ -14,6 +14,7 @@
 #include "AOTSlotPlanSteps.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "IndexingHeader.h"
 #include "JSArray.h"
@@ -336,7 +337,7 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
 }
 
 // By the estimate.
-static constexpr double maxCreationsOfLayoutMadeSeldom = 1e9;
+AOT_THRESHOLD(double, maxCreationsOfLayoutMadeSeldom, 1e9);
 
 // The holders of a row are the objects of the layout and of every layout that inherits the row or hands it down.
 static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const SlotUses& uses)

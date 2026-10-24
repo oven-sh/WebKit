@@ -104,10 +104,9 @@ uint64_t limitHitsOf(VM& vm, LimitID limit)
 
 uint64_t runtimeLimitValue(VM& vm, LimitID limit)
 {
+    uint64_t usual = defaultLimitValue(limit, hostArchitecture());
     const Image* image = vm.aotState().image;
-    if (image && image->header().options.loweredLimit == limit)
-        return image->header().options.loweredLimitValue;
-    return defaultLimitValue(limit, hostArchitecture());
+    return image ? valueWhenLowered(limit, usual, image->header().options.loweredLimit, image->header().options.loweredLimitValue) : usual;
 }
 
 static void dumpCounters(VM& vm, PrintStream& out, CounterKind kind, ASCIILiteral prefix)

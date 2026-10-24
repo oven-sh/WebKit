@@ -21,6 +21,7 @@
 #include "AOTPropertyAccessElements.h"
 #include "AOTSplitUnions.h"
 #include "AOTStringRanges.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -669,7 +670,7 @@ static bool isDeadEnd(const Block& block)
 // From behind the call to the edge, control has one way to go, nothing joins it, and nothing on the way sees or changes anything.
 static bool reachesEdgeUnseen(FunctionPassContext& context, const EffectContext& effectContext, ValueID call, Edge edge)
 {
-    constexpr unsigned maxBlocksOnTheWay = 8;
+    AOT_THRESHOLD(unsigned, maxBlocksOnTheWay, 8);
     const Function& function = context.function;
     const CFG& cfg = context.analyses.cfg();
     ValueLocation location = context.analyses.useLists().locationOf(call);

@@ -189,7 +189,22 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
 
 void AllocationEmitter::generateNewDictionary(const ValueContext& value)
 {
-    define(value, CellPointer(callStub(value, newDictionary(), { }).first));
+    // A run of definitions is stored by its site's cache only where the cell has room for all of it.
+    unsigned names = 0;
+    Vector<ValueID, 4> aliases { value.id() };
+    for (size_t index = 0; index < aliases.size(); ++index) {
+        for (const Use& use : analyses().useLists().usesOf(aliases[index])) {
+            if (use.kind != Use::Kind::Operand)
+                continue;
+            const Value& user = m_function.at(use.user);
+            if (user.opcode == Opcode::TryPutByIds && user.isDefinition() && user.objectOperand() == aliases[index])
+                names += user.keys().size();
+            else if (use.user != value.id() && analyses().identityOf(use.user) == value.id())
+                aliases.appendIfNotContains(use.user);
+        }
+    }
+    unsigned addedPairsOfSlots = names > JSFinalObject::defaultInlineCapacity ? (names - JSFinalObject::defaultInlineCapacity + 1) / 2 : 0;
+    define(value, CellPointer(callStub(value, newDictionary(std::min(addedPairsOfSlots, numberOfRoomierFinalObjects)), { }).first));
 }
 
 void AllocationEmitter::generateFinishObject(const ValueContext& value)

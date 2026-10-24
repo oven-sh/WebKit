@@ -23,6 +23,7 @@ enum class RuleSubject : uint8_t {
 enum class RuleCode : uint8_t {
     ByHelper,
     Inline,
+    CountedCharacters,
     RegularExpression,
     Nothing,
 };
@@ -52,6 +53,7 @@ private:
     ValueID appendNumberTest(const ValidationRule&, ValueID number);
     ValueID appendIsMultipleOf(ValueID number, double divisor);
     ValueID appendLengthTest(const ValidationRule&, ValueID length);
+    void emitCharacterCountRule(const ValidationRule&, ValueID string, BlockID rejected);
     ValueID appendExpressionTest(StringView source, ValueID string);
     ValueID appendTestByHelper(const ValidationRule&, ValueID value);
     bool isValidExpression(StringView source);

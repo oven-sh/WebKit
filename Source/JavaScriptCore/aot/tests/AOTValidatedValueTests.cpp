@@ -81,12 +81,12 @@ static constexpr ASCIILiteral functionsOfProgram = R"IR(function f0 name="main" 
     v27 = Call v1, -, v26
     Return
 }
-function f1 name="validateByPlan" role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
-    v2 = Builtin builtin=TypeError
-    v3 = String string="the value does not match the type"
-    v4 = Construct v2, -, v3
-    Throw v4
+function f1 name="validateByPlan" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=TypeError
+    v4 = String string="the value does not match the type"
+    v5 = Construct v3, -, v4
+    Throw v5
 }
 function f2 name="resultIsUsed" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

@@ -9,6 +9,7 @@
 
 #include "AOTID.h"
 #include "AOTPerFunction.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <limits>
 #include <optional>
@@ -53,15 +54,15 @@ inline constexpr unsigned callersOfFunctionThatRunsOften = 4;
 inline constexpr double activationsOfFunctionThatRunsOften = 100;
 inline constexpr uint8_t percentileOfFunctionThatRunsOften = 90;
 inline constexpr uint8_t percentileOfOtherFunctions = 10;
-inline constexpr unsigned warmCodeLimitsInVeryLargeProgram = 4;
-inline constexpr double minWeightOfCallToFollow = 0.01;
-inline constexpr double minWeightOfCallNearBusyCode = 0.25;
+AOT_THRESHOLD(unsigned, warmCodeLimitsInVeryLargeProgram, 4);
+AOT_THRESHOLD(double, minWeightOfCallToFollow, 0.01);
+AOT_THRESHOLD(double, minWeightOfCallNearBusyCode, 0.25);
 // Behind two branches in a loop a call weighs 2.25 or more. Two calls in a row weigh 2.
-inline constexpr double minWeightOfCallInLoop = 2.2;
-inline constexpr double minWeightOfNearlyCertainCall = 0.5;
-inline constexpr unsigned maxCallersOfCompactFunction = 1;
-inline constexpr unsigned minMassPerValueWithHeavyLoop = 3;
-inline constexpr uint32_t maxSizeOfSmallFunction = 32;
+AOT_THRESHOLD(double, minWeightOfCallInLoop, 2.2);
+AOT_THRESHOLD(double, minWeightOfNearlyCertainCall, 0.5);
+AOT_THRESHOLD(unsigned, maxCallersOfCompactFunction, 1);
+AOT_THRESHOLD(unsigned, minMassPerValueWithHeavyLoop, 3);
+AOT_THRESHOLD(uint32_t, maxSizeOfSmallFunction, 32);
 
 } // namespace HeatModel
 

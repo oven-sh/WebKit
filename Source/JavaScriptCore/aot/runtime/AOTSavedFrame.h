@@ -9,6 +9,7 @@
 
 #include "AOTRecordTypes.h"
 #include "AOTSavedFrameMap.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CallData.h"
 #include "GPRInfo.h"
@@ -167,7 +168,7 @@ public:
     static constexpr uint8_t isSuspendedAtYieldFlag = 2;
     static constexpr unsigned stepStatusShift = 2;
     static constexpr uint8_t stepStatusMask = 3 << stepStatusShift;
-    static constexpr uint32_t minWordsForStringMove = 32;
+    AOT_CLASS_THRESHOLD(uint32_t, minWordsForStringMove, 32);
     static constexpr size_t maxWordsAllocatedInStub = (MarkedSpace::largeCutoff - 64) / sizeof(uint64_t);
     static constexpr ptrdiff_t offsetOfNumberOfWords() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWords); }
     static constexpr ptrdiff_t offsetOfNumberOfWordsSkippedAtTop() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWordsSkippedAtTop); }

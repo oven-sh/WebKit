@@ -2,7 +2,7 @@
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass FuseArrayChains
-# STATISTIC: ArrayChainsFused = 24
+# STATISTIC: ArrayChainsFused = 21
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -491,7 +491,7 @@ function f32 name="sliceWithNumberArgument" parameters=[{type=Array<number, prov
 }
 # CHECK-LABEL: function f32 name="sliceWithNumberArgument"
 # CHECK: v2: {{*}} = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
-# CHECK: {{*}}: anything = CallDirect v2, {{*}}, {{*}}, v3, {{*}} function=[[mapToArray]]
+# CHECK: v5: anything = CallDirect v2, v3, {{*}} function=f7
 
 function f33 name="thisArguments" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: anything, v2: anything):
@@ -623,7 +623,7 @@ function f38 name="oneCall" parameters=[{type=Array<number, proven, pristine[Sto
     Return v4
 }
 # CHECK-LABEL: function f38 name="oneCall"
-# CHECK: {{*}}: anything = CallDirect v0, {{*}}, {{*}}, v1, {{*}} function=[[mapToArray]]
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f7
 
 function f39 name="intermediateUsedTwice" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
   b0(v0: Array<number, proven, pristine[Storage, Names]>):
@@ -639,7 +639,7 @@ function f39 name="intermediateUsedTwice" parameters=[{type=Array<number, proven
     Return v8
 }
 # CHECK-LABEL: function f39 name="intermediateUsedTwice"
-# CHECK: {{*}}: anything = CallDirect v0, {{*}}, {{*}}, v1, {{*}} function={{*}}
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f2
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f7
 
 function f40 name="otherBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {

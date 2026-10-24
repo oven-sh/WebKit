@@ -19,6 +19,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTHeat.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -498,7 +499,7 @@ bool FramePlanner::isOnlyCalled(ObjectID closure) const
     });
 }
 
-static constexpr unsigned maxUsesOfClosureKeptUntilItLeaves = 8;
+AOT_THRESHOLD(unsigned, maxUsesOfClosureKeptUntilItLeaves, 8);
 
 // Where a closure of the heap is one call of a stub, a closure of the frame is more code than it, and so is every closure that is made again.
 bool FramePlanner::willHaveLongFormsInLine(BlockID block)
@@ -650,7 +651,7 @@ AllocationHeapCause FramePlanner::checkObjectForm(const Program& program, const 
         break;
     }
 
-    if (object.prototypeOperand())
+    if (object.prototypeOperand() || layout.has(LayoutFlags::IsOfCreatedObject))
         return AllocationHeapCause::ChangedByUse;
     for (uint32_t field = 0; field < layout.fields.size(); ++field) {
         if (defersClosureWithCapture(flowOf(program, FieldReference { id, field }).location.deferral))

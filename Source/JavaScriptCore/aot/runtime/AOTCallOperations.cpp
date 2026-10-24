@@ -18,6 +18,7 @@
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "ClonedArguments.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
@@ -212,7 +213,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
 // An unmapped arguments object with the Structure it was made with has its length and its elements as plain data: they are read without a question to anybody.
 static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
 {
-    constexpr uint32_t maxLengthCopied = 64;
+    AOT_THRESHOLD(uint32_t, maxLengthCopied, 64);
     VM& vm = *instance->vm;
     if (!arrayLike.isCell() || arrayLike.asCell()->structure() != instance->state->builtinFamilies->unmappedArguments.structure)
         return nullptr;

@@ -16,6 +16,7 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTStubRegisters.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "AirCode.h"
 #include "AirFrameEmission.h"
@@ -305,7 +306,7 @@ struct Transfer {
 constexpr unsigned maxPhisInRegisters = 5;
 constexpr uint8_t bytesOfHomeLoad = 4;
 constexpr unsigned numberOfSpareSlots = 4;
-constexpr unsigned maxBlocks = 60000;
+AOT_THRESHOLD(unsigned, maxBlocks, 60000);
 
 bool fitsInt32(int64_t value) { return value == static_cast<int32_t>(value); }
 
@@ -1165,7 +1166,7 @@ void DirectCodeGenerator::orderEmission()
 
 void DirectCodeGenerator::chooseWhereToSetUpFrame()
 {
-    constexpr unsigned maxBlocksAheadOfFrame = 8;
+    AOT_THRESHOLD(unsigned, maxBlocksAheadOfFrame, 8);
     if (!m_hasFrame || m_reservesSpareSlots || !m_code.policy().frame.shrinkWraps || m_code.policy().frame.setsUpFrameAtEntry)
         return;
     for (const HomeState& home : m_homes) {
@@ -1976,7 +1977,7 @@ std::pair<const B3::Value*, bool> DirectCodeGenerator::truthSourceOf(const B3::V
 
 std::optional<bool> DirectCodeGenerator::knownTruthOf(uint32_t order, const B3::Value* condition)
 {
-    constexpr unsigned maxBlocksLookedAt = 12;
+    AOT_THRESHOLD(unsigned, maxBlocksLookedAt, 12);
     auto [wanted, wantedIsNegated] = truthSourceOf(condition);
     for (unsigned steps = 0; order && !m_blocks[order].startsEmpty && steps < maxBlocksLookedAt; ++steps) {
         DirectBlock& parent = m_blocks[m_blocks[order].predecessor];
@@ -2971,7 +2972,7 @@ bool DirectCodeGenerator::everyLoopIsEnteredAtItsTop()
 
 void DirectCodeGenerator::computeLiveness()
 {
-    constexpr size_t maxWords = 1 << 20;
+    AOT_THRESHOLD(size_t, maxWords, 1 << 20);
     m_liveWords = (m_homes.size() + 63) / 64;
     size_t total = m_liveWords * m_blocks.size();
     if (total > maxWords && !everyLoopIsEnteredAtItsTop())
@@ -3060,7 +3061,7 @@ bool DirectCodeGenerator::isLiveOut(uint32_t home, const DirectBlock& block)
 
 uint32_t DirectCodeGenerator::lastUseIn(uint32_t home, uint32_t block)
 {
-    constexpr uint32_t maxUsesWalked = 12;
+    AOT_THRESHOLD(uint32_t, maxUsesWalked, 12);
     const ValueState& state = m_states[m_homes[home].value];
     if (state.block == block)
         return state.lastUseInOwnBlock;
@@ -3148,7 +3149,7 @@ uint32_t DirectCodeGenerator::findWeb(uint32_t home)
 
 bool DirectCodeGenerator::tryCoalesce(uint32_t first, uint32_t second)
 {
-    constexpr uint32_t maxWebSize = 24;
+    AOT_THRESHOLD(uint32_t, maxWebSize, 24);
     first = findWeb(first);
     second = findWeb(second);
     if (first == second)
@@ -3232,7 +3233,7 @@ void DirectCodeGenerator::coalescePhis()
 
 void DirectCodeGenerator::findBlocksWithoutCode()
 {
-    constexpr unsigned maxValuesLookedAt = 24;
+    AOT_THRESHOLD(unsigned, maxValuesLookedAt, 24);
     for (uint32_t order = 1; order < m_blocks.size(); ++order) {
         DirectBlock& block = m_blocks[order];
         if (block.block->size() > maxValuesLookedAt || block.block->last()->opcode() != B3::Jump)
@@ -3334,7 +3335,7 @@ void DirectCodeGenerator::layOutFrame()
     uint64_t clobberedAtSuspensions = bitsOf(m_code.calleeSavesClobberedAtSuspensions());
     uint64_t registersForHomes = m_calleeSaves & ~m_clobberedRegisters & ~clobberedAtSuspensions & bitsOf(RegisterSet::allGPRs());
     if (registersForHomes) {
-        constexpr unsigned maxCandidates = 32;
+        AOT_THRESHOLD(unsigned, maxCandidates, 32);
         Vector<uint32_t, 32> candidates;
         for (uint32_t web : webs) {
             if (!m_homes[web].holdsDouble && m_homes[web].gainOfWeb > 0)
@@ -3396,7 +3397,7 @@ void DirectCodeGenerator::layOutFrame()
         m_code.calleeSaveStackSlot()->setOffsetFromFP(-static_cast<intptr_t>(bytesOfSaves));
     }
 
-    constexpr unsigned maxSlotsSearched = 48;
+    AOT_THRESHOLD(unsigned, maxSlotsSearched, 48);
     struct Slot {
         uint32_t freeAt;
         uint32_t accesses;
@@ -3499,7 +3500,7 @@ void DirectCodeGenerator::layOutFrame()
     bool hasOtherSlots = m_code.stackSlots().size() > (m_code.calleeSaveStackSlot() ? 1u : 0u);
     bool mayOmitRecord = isX86_64() && m_hasFrame && m_code.policy().frame.mayOmitFrameRecord && !m_needsFrameRecord && !hasOtherSlots && !bytesOfArguments;
     bool omitsRecord = mayOmitRecord && !savedRegisters && extent <= sizeof(CPURegister);
-    constexpr unsigned maxBytesWithoutRecord = 120;
+    AOT_THRESHOLD(unsigned, maxBytesWithoutRecord, 120);
     if (mayOmitRecord && !omitsRecord && !savesLieOnTop && savesAreGeneral && m_code.policy().frame.mayPushCalleeSaves && m_code.policy().frame.mayPushSpillsAtFrameSetup && !stackAdjustmentForAlignment() && extent + bytesOfSaves <= maxBytesWithoutRecord) {
         auto bytesToMoveStackPointer = [](unsigned words) {
             return !words ? 0 : words == 1 ? 1 : 4;
@@ -5391,7 +5392,7 @@ void DirectCodeGenerator::linkPendingJumps()
 
 bool DirectCodeGenerator::mayBeWrittenInGap(DirectBlock& block)
 {
-    constexpr unsigned maxValues = 10;
+    AOT_THRESHOLD(unsigned, maxValues, 10);
     if (!block.isRare || block.label.isSet() || block.block->size() > maxValues)
         return false;
     if (block.startsEmpty ? !block.entry : !block.snapshot)
@@ -5764,7 +5765,7 @@ void DirectCodeGenerator::emitSwitch(B3::SwitchValue* value, DirectBlock& block)
         return index;
     };
 
-    constexpr uint64_t densityLimit = 4;
+    AOT_THRESHOLD(uint64_t, densityLimit, 4);
     if (firstIsSmall && cases.size() >= m_procedure.policy().switchLowering.minCasesForJumpTable && span < (1u << 16) && (span + 1) / cases.size() < densityLimit && m_procedure.policy().addressing.isPositionIndependent) {
         bool everyEdgeIsFree = true;
         for (unsigned index = 0; index < numberOfSuccessors; ++index) {

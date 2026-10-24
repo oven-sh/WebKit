@@ -20,6 +20,7 @@
 #include "AOTProgramCaches.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <memory>
@@ -271,7 +272,7 @@ void BodyRuleCollector::collect()
     for (ValueID parameter : m_function.at(entryBlock).parameters)
         ask(nodeOf(parameter));
     walk(true);
-    constexpr unsigned mostWalksByDemand = 6;
+    AOT_THRESHOLD(unsigned, mostWalksByDemand, 6);
     for (unsigned numberOfWalks = 1; !m_nodesOfNextWalk.isEmpty(); ++numberOfWalks) {
         m_isOfThisWalk.clearAll();
         m_hasUserThatWasPassed.clearAll();

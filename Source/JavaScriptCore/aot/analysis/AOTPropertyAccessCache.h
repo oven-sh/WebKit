@@ -12,6 +12,7 @@
 #include "AOTPropertyAccessInternal.h"
 #include "AOTRefusedContents.h"
 #include "AOTSharedMemo.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <optional>
 #include <wtf/FastMalloc.h>
@@ -27,7 +28,7 @@ public:
     using ListID = SharedLayoutLists::ListID;
 
     // A shorter list is looked through faster than it is looked up.
-    static constexpr size_t fewestLayouts = 8;
+    AOT_CLASS_THRESHOLD(size_t, fewestLayouts, 8);
     static constexpr ListID noList = ~0ull;
 
     struct PartitionKey {

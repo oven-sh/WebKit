@@ -111,16 +111,26 @@ void giveLayoutsToCreatedObjects(Program& program, BuildContext& build)
 
     ProgramEditor editor(program);
     Vector<FunctionID> functions;
+    // The copies of a function make the same objects.
+    UncheckedKeyHashMap<uint64_t, LayoutID> layoutsByPlace;
     for (LayoutCreation& creation : creations) {
         const Function& function = program.at(creation.function);
+        if (functions.isEmpty() || functions.last() != creation.function)
+            functions.append(creation.function);
+        uint64_t place = (static_cast<uint64_t>(function.module.index()) + 1) << 32 | function.at(creation.call).position;
+        bool hasPlace = function.at(creation.call).hasPosition();
+        if (LayoutID known = hasPlace ? layoutsByPlace.get(place) : LayoutID()) {
+            creation.layout = known;
+            continue;
+        }
         Layout layout;
-        layout.kind = LayoutKind::Record;
+        layout.kind = LayoutKind::Instance;
         layout.module = function.module;
         layout.position = function.at(creation.call).position;
         layout.flags = { LayoutFlags::IsOfCreatedObject };
         creation.layout = editor.addLayout(WTF::move(layout));
-        if (functions.isEmpty() || functions.last() != creation.function)
-            functions.append(creation.function);
+        if (hasPlace)
+            layoutsByPlace.add(place, creation.layout);
     }
     editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
         auto ofFunction = std::ranges::equal_range(creations, id, { }, &LayoutCreation::function);

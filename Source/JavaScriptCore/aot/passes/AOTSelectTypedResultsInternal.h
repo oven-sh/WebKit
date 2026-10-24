@@ -62,9 +62,9 @@ private:
     void expandValidatedCall(const TypedResultSite&);
 
     ValueID addParameterForOriginOfPromise(const TypedResultSite&);
-    ValueID emitParseOf(const TypedResultSite&, ValueID textOrBytes, BlockID generic);
+    ValueID emitParseOf(const TypedResultSite&, ValueID textOrBytes, BlockID generic, BlockID rejected);
     ValueID emitValidationOf(const TypedResultSite&, ValueID value);
-    ValueID emitGeneralValidation(const TypedResultSite&, ValueID value);
+    ValueID emitGeneralValidation(const TypedResultSite&, ValueID value, ValueID isRefused = { });
     ValueID appendOriginalCall(const TypedResultSite&);
 
     FunctionPassContext& m_pass;

@@ -92,7 +92,7 @@ ValueID TypedResultExpander::appendOriginalCall(const TypedResultSite&)
     return builder().append(WTF::move(call));
 }
 
-ValueID TypedResultExpander::emitParseOf(const TypedResultSite& site, ValueID textOrBytes, BlockID generic)
+ValueID TypedResultExpander::emitParseOf(const TypedResultSite& site, ValueID textOrBytes, BlockID generic, BlockID rejected)
 {
     builder().emitFailureOfPredictions(Target { generic, { }, { } });
     ValueID open = builder().append(Opcode::JSONSourceOpen, { textOrBytes });
@@ -111,11 +111,18 @@ ValueID TypedResultExpander::emitParseOf(const TypedResultSite& site, ValueID te
 
     BlockID parsed = builder().addBlock();
     BlockID abandon = builder().addBlock(BlockFrequency::Rare);
-    emitBranchOnOutcome(outcome, parsed, abandon, abandon);
+    BlockID abandonRejected = rejected == generic ? abandon : builder().addBlock(BlockFrequency::Rare);
+    emitBranchOnOutcome(outcome, parsed, abandonRejected, abandon);
 
     builder().moveToEndOf(abandon);
     builder().append(Opcode::JSONSourceAbandon, { source });
     builder().emitJump(generic);
+
+    if (abandonRejected != abandon) {
+        builder().moveToEndOf(abandonRejected);
+        builder().append(Opcode::JSONSourceAbandon, { source });
+        builder().emitJump(rejected);
+    }
 
     builder().moveToEndOf(parsed);
     emitJumpUnless(builder().append(Opcode::JSONSourceClose, { source, next }), generic);
@@ -126,13 +133,26 @@ void TypedResultExpander::expandParsedText(const TypedResultSite& site)
 {
     IRBuilder::Expansion expansion = builder().beginExpansion({ site.block, site.index });
     BlockID generic = builder().addBlock(BlockFrequency::Rare);
-    endExpansionWithResult(builder(), expansion, emitParseOf(site, site.source, generic));
+    if (!site.root.isValidated()) {
+        endExpansionWithResult(builder(), expansion, emitParseOf(site, site.source, generic, generic));
+        builder().moveToEndOf(generic);
+        endExpansionWithResult(builder(), expansion, appendOriginalCall(site));
+        return;
+    }
+
+    // The text is parsed again in both cases: what follows the value that was refused may be no JSON.
+    BlockID rejected = builder().addBlock(BlockFrequency::Rare);
+    BlockID again = builder().addBlock(BlockFrequency::Rare);
+    endExpansionWithResult(builder(), expansion, emitParseOf(site, site.source, generic, rejected));
 
     builder().moveToEndOf(generic);
-    ValueID value = appendOriginalCall(site);
-    if (site.root.isValidated())
-        value = emitGeneralValidation(site, value);
-    endExpansionWithResult(builder(), expansion, value);
+    builder().emitJump(again, { builder().appendBoolean(false) });
+    builder().moveToEndOf(rejected);
+    builder().emitJump(again, { builder().appendBoolean(true) });
+
+    ValueID isRefused = builder().addParameter(again, TypeTable::boolean);
+    builder().moveToEndOf(again);
+    endExpansionWithResult(builder(), expansion, emitGeneralValidation(site, appendOriginalCall(site), isRefused));
 }
 
 static uint32_t awaitedOperandIndexOf(const Value& await)
@@ -217,7 +237,7 @@ void TypedResultExpander::expandParsedBody(const TypedResultSite& site)
         endExpansionWithResult(builder(), expansion, bytes);
         builder().moveToEndOf(blocks.taken);
     }
-    endExpansionWithResult(builder(), expansion, emitParseOf(site, bytes, generic));
+    endExpansionWithResult(builder(), expansion, emitParseOf(site, bytes, generic, generic));
 
     builder().moveToEndOf(generic);
     ValueID text = builder().append(Opcode::JSONDecodeBytes, { bytes });
@@ -284,16 +304,24 @@ ValueID TypedResultExpander::emitValidationOf(const TypedResultSite& site, Value
     ValueID copy = appendResultAt(results, 1);
 
     BlockID accepted = builder().addBlock();
+    BlockID rejected = builder().addBlock(BlockFrequency::Rare);
+    BlockID unknown = builder().addBlock(BlockFrequency::Rare);
     BlockID general = builder().addBlock(BlockFrequency::Rare);
     BlockID merge = builder().addBlock();
-    emitBranchOnOutcome(outcome, accepted, general, general);
+    emitBranchOnOutcome(outcome, accepted, rejected, unknown);
 
     builder().moveToEndOf(accepted);
     builder().emitJump(merge, { copy });
 
+    builder().moveToEndOf(rejected);
+    builder().emitJump(general, { builder().appendBoolean(true) });
+    builder().moveToEndOf(unknown);
+    builder().emitJump(general, { builder().appendBoolean(false) });
+
     // The helper builds ordinary objects, which are in no family: the Check behind the call tells them from the copies that have a layout.
+    ValueID isRefused = builder().addParameter(general, TypeTable::boolean);
     builder().moveToEndOf(general);
-    ValueID generalCopy = emitGeneralValidation(site, value);
+    ValueID generalCopy = emitGeneralValidation(site, value, isRefused);
     builder().emitJump(merge, { generalCopy });
 
     const Function& function = builder().function();
@@ -302,10 +330,10 @@ ValueID TypedResultExpander::emitValidationOf(const TypedResultSite& site, Value
     return validated;
 }
 
-ValueID TypedResultExpander::emitGeneralValidation(const TypedResultSite& site, ValueID value)
+ValueID TypedResultExpander::emitGeneralValidation(const TypedResultSite& site, ValueID value, ValueID isRefused)
 {
     StringID plan = validationPlanText(program(), inputs().strings, site.root.expectedResult(), site.root.part);
-    return appendHelperCall(Builtins::CompilerHelpersValidateByPlan, { value, appendString(plan) });
+    return appendHelperCall(Builtins::CompilerHelpersValidateByPlan, { value, appendString(plan), isRefused ? isRefused : builder().appendBoolean(false) });
 }
 
 } } } // namespace JSC::AOT::Typed

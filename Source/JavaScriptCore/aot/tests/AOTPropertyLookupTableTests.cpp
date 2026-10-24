@@ -740,12 +740,14 @@ void secondInstanceClearsOnce()
     StructureID id = structure->id();
     Slot slot = ownValueSlot(structure, 0);
     std::array<ZeroedInstance, 3> storage { createZeroedInstance(), createZeroedInstance(), createZeroedInstance() };
+    std::span places = storage[0]->keyedValuePlaces();
     auto fill = [&] {
         caches.set(structure, fixture.name(1), SlotAccess::Read, slot);
         caches.set(structure, fixture.nameWithoutNumber(2), SlotAccess::Read, slot);
+        places.front().structureID = places.back().structureID = id.bits();
     };
     auto isFilled = [&] {
-        return !!caches.find(id, fixture.name(1), SlotAccess::Read) && !!caches.find(id, fixture.nameWithoutNumber(2), SlotAccess::Read);
+        return !!caches.find(id, fixture.name(1), SlotAccess::Read) && !!caches.find(id, fixture.nameWithoutNumber(2), SlotAccess::Read) && places.front().structureID && places.back().structureID;
     };
     auto createInstance = [&](unsigned index) {
         instances.append(storage[index].get());
@@ -759,7 +761,7 @@ void secondInstanceClearsOnce()
 
     createInstance(1);
     AOT_TEST_CHECK(caches.isSharedByInstances());
-    AOT_TEST_CHECK(!fixture.numberOfSlots() && !fixture.front().hasRow(id) && !rowOf(structure));
+    AOT_TEST_CHECK(!fixture.numberOfSlots() && !fixture.front().hasRow(id) && !rowOf(structure) && !places.front().structureID && !places.back().structureID);
 
     fill();
     createInstance(2);

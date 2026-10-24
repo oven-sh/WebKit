@@ -14,6 +14,7 @@
 #include "AOTForwardDataflow.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -1563,7 +1564,7 @@ std::optional<BitVector> GuardAvailability::componentsHeldSinceDefinition(ValueI
 // A guard holds what it is given where it is defined, whatever held in front of that, and nothing else gives it anything.
 std::optional<BitVector> GuardAvailability::componentsHeldAt(ValueID guard, ProgramPoint point, BehindTerminator behindTerminator, unsigned depth) const
 {
-    constexpr unsigned maxDepth = 3;
+    AOT_THRESHOLD(unsigned, maxDepth, 3);
     std::span<const Component> components = componentsOf(guard);
     if (components.empty() || depth > maxDepth)
         return std::nullopt;

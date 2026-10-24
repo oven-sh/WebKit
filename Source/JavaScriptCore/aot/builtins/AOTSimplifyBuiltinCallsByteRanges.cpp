@@ -12,6 +12,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTSplitUnions.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <limits>
@@ -42,8 +43,8 @@ struct RangeOfBytes {
 
 } // anonymous namespace
 
-static constexpr size_t maxValuesHoldingRange = 8;
-static constexpr size_t maxUsesOfRange = 8;
+AOT_THRESHOLD(size_t, maxValuesHoldingRange, 8);
+AOT_THRESHOLD(size_t, maxUsesOfRange, 8);
 
 static const BuiltinOverload* findCallOf(const Program& program, const Value& value, BuiltinID function, size_t numberOfArguments)
 {

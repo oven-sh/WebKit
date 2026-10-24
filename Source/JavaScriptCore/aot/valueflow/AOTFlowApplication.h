@@ -65,6 +65,8 @@ struct FlowLayoutUpdate {
     Vector<Vector<PropertyKeyID>> literalKeyOrders;
     // The literals with this layout make ordinary objects, and no type names the layout.
     bool objectsAreDictionaries { false };
+    // The guards of a class watch the members of an ordinary object.
+    bool objectsArePrototypesOfCreatedObjects { false };
 };
 
 struct FlowVariableUpdate {
@@ -121,11 +123,6 @@ struct FlowSymbolConstant {
     PropertyKeyID key;
 };
 
-struct FlowBoundClosureCreation {
-    ValueID call;
-    FunctionID function;
-};
-
 struct FlowDefinedValue {
     ValueID definition;
     Value value;
@@ -141,8 +138,6 @@ struct FlowBodyUpdate {
     Vector<FlowTailCallUpdate> tailCalls;
     Vector<FlowAllocationStamp> allocations;
     Vector<FlowSymbolConstant> symbolConstants;
-    // Whatever holds the result of one of these calls of bind is typed as a closure of the function.
-    Vector<FlowBoundClosureCreation> boundClosures;
     // Nobody sees what these field definitions store, so each stores a value that its field holds anyway.
     Vector<FlowDefinedValue> definedValues;
 };
@@ -185,39 +180,10 @@ void forEachAccessSiteValue(const Function& function, NOESCAPE const Invocable<v
     }
 }
 
-struct FlowBoundClosureSite {
-    FunctionID functionAsRead;
-    ValueID call;
-    FunctionID boundFunction;
-};
-
-// The bound functions that types name, so they exist from the application on. Each binds this and no argument.
-struct FlowBoundFunctionPlan {
-    Vector<FunctionID> targets;
-    uint32_t firstFunction { 0 };
-    Vector<FlowBoundClosureSite> sites;
-
-    FunctionID functionAt(size_t index) const { return FunctionID(firstFunction + static_cast<uint32_t>(index)); }
-
-    FunctionID functionBoundTo(FunctionID target) const
-    {
-        auto found = std::ranges::lower_bound(targets, target);
-        RELEASE_ASSERT(found != targets.end() && *found == target);
-        return functionAt(found - targets.begin());
-    }
-
-    std::span<const FlowBoundClosureSite> sitesIn(FunctionID functionAsRead) const LIFETIME_BOUND
-    {
-        auto found = std::ranges::equal_range(sites, functionAsRead, { }, &FlowBoundClosureSite::functionAsRead);
-        return sites.subspan(found.begin() - sites.begin(), found.size());
-    }
-};
-
 struct FlowApplication {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FlowApplication);
 
     uint32_t functionCountAsRead { 0 };
-    FlowBoundFunctionPlan boundFunctions;
     FlowAccessSiteNumbering accessSites;
     Vector<FlowLayoutUpdate> layouts;
     Vector<FlowVariableUpdate> variables;

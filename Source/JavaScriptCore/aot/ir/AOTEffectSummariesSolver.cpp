@@ -16,6 +16,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <array>
 #include <atomic>
@@ -488,7 +489,7 @@ static Vector<FunctionID> functionsOfClosuresMadeBy(const Function& function)
 
 void EffectSummarizer::summarizeBodies()
 {
-    constexpr size_t fewestValuesOfLongFunction = 4096;
+    AOT_THRESHOLD(size_t, fewestValuesOfLongFunction, 4096);
     const ParallelLoops& loops = m_build.parallelLoops();
     unsigned numberOfFunctions = m_program.functions.size();
 
@@ -840,8 +841,8 @@ void EffectSummarizer::assemble(EffectSummaries& summaries, FunctionID id)
 
 size_t EffectSummarizer::maxIncrementalSolveSize() const
 {
-    constexpr size_t fewestFunctionsSolvedAgain = 64;
-    constexpr size_t smallestShareOfProgramSolvedWhole = 8;
+    AOT_THRESHOLD(size_t, fewestFunctionsSolvedAgain, 64);
+    AOT_THRESHOLD(size_t, smallestShareOfProgramSolvedWhole, 8);
     return std::max<size_t>(fewestFunctionsSolvedAgain, m_program.functions.size() / smallestShareOfProgramSolvedWhole);
 }
 
@@ -974,7 +975,7 @@ void EffectSummarizer::numberNodesOfChangedFunctions()
 
 static void forEachPosition(const ParallelLoops& loops, size_t count, const Invocable<void(unsigned)> auto& functor)
 {
-    constexpr size_t fewestForThreads = 512;
+    AOT_THRESHOLD(size_t, fewestForThreads, 512);
     if (count >= fewestForThreads) {
         forEachIndexInParallel(loops, static_cast<unsigned>(count), functor);
         return;
@@ -1111,9 +1112,9 @@ Vector<uint32_t> EffectSummarizer::solveFunctions(std::span<const uint32_t> func
 // Change propagation with a cutoff: a function is solved again if its body summary changed or the solution of one of its sources changed.
 bool EffectSummarizer::solveAgain(EffectSummaries& summaries)
 {
-    constexpr unsigned maxSearches = 3;
-    constexpr size_t minExtraBudget = 64;
-    constexpr size_t extraBudgetDivisor = 64;
+    AOT_THRESHOLD(unsigned, maxSearches, 3);
+    AOT_THRESHOLD(size_t, minExtraBudget, 64);
+    AOT_THRESHOLD(size_t, extraBudgetDivisor, 64);
     if (!m_kept.m_isSolved || m_witnessesWanted == Witnesses::Found)
         return false;
 
@@ -1429,7 +1430,7 @@ void EffectSummarizer::takeInSources(uint32_t node)
 // In each round the nodes whose sources were all resolved in earlier rounds.
 Vector<uint32_t> EffectSummarizer::resolveNodesBelowCycles()
 {
-    constexpr size_t fewestNodesWorthARound = 2048;
+    AOT_THRESHOLD(size_t, fewestNodesWorthARound, 2048);
     constexpr uint32_t nodesInShare = 4096;
     const ParallelLoops& loops = m_build.parallelLoops();
 

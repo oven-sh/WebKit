@@ -1,5 +1,5 @@
 # A try block that cannot throw loses its landing block, and then the finalizer's selector, the switch on it and the path that throws again go
-# RUN: pass RemoveRedundantHandlers FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode InferSwitches EliminateRedundantReads MergeDuplicateBlocks CompactBlocks
+# RUN: pass RemoveRedundantHandlers FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode EliminateRedundantReads MergeDuplicateBlocks CompactBlocks
 # RUN(SCHEDULE): pipeline CompactBlocks
 
 module m0 path="main.js" displayPath="main.js" body=f0

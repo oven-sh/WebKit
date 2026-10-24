@@ -230,32 +230,38 @@ bool answersPromise(const BuiltinTable& builtins, const BuiltinOverload& overloa
 
 } // anonymous namespace
 
+ValueFlowTypedResult typedResultOf(const Program& program, ExpectedResultID id, uint64_t mostObjects)
+{
+    const ExpectedResult& expected = program.at(id);
+    ValueFlowTypedResult result;
+    result.type = expected.type;
+    result.isValidated = !expected.validation.isEmpty();
+    result.layouts.appendRange(expected.layouts.begin(), expected.layouts.end());
+    AOT::sort(result.layouts);
+    result.layouts.shrink(std::ranges::unique(result.layouts).begin() - result.layouts.begin());
+    if (result.type && result.numberOfObjects() <= mostObjects)
+        followTypes(program, result, placesLayoutsWhereTypesNameThem(expected));
+    return result;
+}
+
 ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const UseLists& uses, ValueID call)
 {
     const Value& operation = function.at(call);
     if (operation.opcode != Opcode::Call)
         return { };
 
+    uint64_t mostObjects = tables.mostObjectsOfTypedResult();
     ValueFlowTypedResult result;
-    bool layoutsStandOnlyWhereTypesNameThem = true;
-    if (ExpectedResultID id = operation.expectedResult()) {
-        const ExpectedResult& expected = program.at(id);
-        result.type = expected.type;
-        result.isValidated = !expected.validation.isEmpty();
-        result.layouts.appendRange(expected.layouts.begin(), expected.layouts.end());
-        AOT::sort(result.layouts);
-        result.layouts.shrink(std::ranges::unique(result.layouts).begin() - result.layouts.begin());
-        layoutsStandOnlyWhereTypesNameThem = placesLayoutsWhereTypesNameThem(expected);
-    } else {
-        TypedResultTarget target = findTypedResultTarget(program, function, uses, call, maxObjectsOfTypedResult, &tables.headLayoutsOfFamilies());
+    if (ExpectedResultID id = operation.expectedResult())
+        result = typedResultOf(program, id, mostObjects);
+    else {
+        TypedResultTarget target = findTypedResultTarget(program, function, uses, call, mostObjects, &tables.headLayoutsOfFamilies());
         result.type = target.type;
         result.layouts = WTF::move(target.layouts);
+        if (result.type && result.numberOfObjects() <= mostObjects)
+            followTypes(program, result, true);
     }
-    if (!result.type || result.numberOfObjects() > maxObjectsOfTypedResult)
-        return { };
-
-    followTypes(program, result, layoutsStandOnlyWhereTypesNameThem);
-    if (result.numberOfObjects() > maxObjectsOfTypedResult)
+    if (!result.type || result.numberOfObjects() > mostObjects)
         return { };
     return result;
 }
@@ -327,7 +333,7 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         return;
 
     // What SelectTypedResults puts in the place of the call hands whatever the compiled code gives up on to helpers in the library.
-    for (BuiltinID helper : { Builtins::CompilerHelpersValidateByPlan, Builtins::CompilerHelpersInterpretNode, Builtins::CompilerHelpersHoldsRule, Builtins::CompilerHelpersCopyOwnProperties })
+    for (BuiltinID helper : { Builtins::CompilerHelpersValidateByPlan, Builtins::CompilerHelpersInterpretNode, Builtins::CompilerHelpersHoldsRule, Builtins::CompilerHelpersCountCodePoints, Builtins::CompilerHelpersCopyOwnProperties })
         context.use(helper, BuiltinUse::Called);
 
     auto letArgumentsEscape = [&] {

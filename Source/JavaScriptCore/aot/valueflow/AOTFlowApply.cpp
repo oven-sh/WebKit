@@ -226,7 +226,6 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     if (provesEverything(build))
         proveEveryPosition(program, build);
     times.didFinish("applySignatureUpdates"_s);
-    createBoundFunctions(context, editor);
     removeUnreachedBodies(context, editor);
     dropDataOfUnreachedCode(context);
     narrowContentsOfData(context);

@@ -80,7 +80,7 @@ public:
     void takeKeyOrderStepOr(CellPointer, const std::optional<KeyOrderStep>&, NOESCAPE const Invocable<void()> auto& otherwise);
     // For fields that are missing where no place in an order of the image applies.
     void takeRememberedKeyOrderStepOr(const ValueContext&, CellPointer, NOESCAPE const Invocable<bool(std::optional<uint32_t>)> auto& askRuntime);
-    bool takeRememberedKeyOrderStepFirst(const ValueContext&, CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys, NOESCAPE const Invocable<void()> auto& otherwise);
+    bool takeRememberedKeyOrderStepFirst(const ValueContext&, CellPointer, LayoutSetID receivers, NOESCAPE const Invocable<void()> auto& otherwise);
     // The granule of the slot and those of the stores to the same object that the store leads to: an object that gets one late field tends to get them all.
     uint64_t granuleBitsOfStoresBehind(const ValueContext& store, const FieldAccess&);
 
@@ -156,32 +156,14 @@ void SlotAccessEmitter::takeKeyOrderStepOr(CellPointer cell, const std::optional
     m_out.appendTo(done);
 }
 
-bool SlotAccessEmitter::takeRememberedKeyOrderStepFirst(const ValueContext& value, CellPointer cell, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys, NOESCAPE const Invocable<void()> auto& otherwise)
+bool SlotAccessEmitter::takeRememberedKeyOrderStepFirst(const ValueContext& value, CellPointer cell, LayoutSetID receivers, NOESCAPE const Invocable<void()> auto& otherwise)
 {
     if (flowNamesConstructorOrdersOf(receivers))
         return false;
     std::optional<RememberedKeyOrderStep> remembered = testRememberedKeyOrderStep(value, cell);
     if (!remembered)
         return false;
-    takeKeyOrderStepOr(cell, std::optional<KeyOrderStep>(remembered->step), [&] {
-        std::optional<KeyOrderStep> likeliest = testLikeliestKeyOrderStep(cell, receivers, createdKeys);
-        if (!likeliest) {
-            otherwise();
-            return;
-        }
-        LBasicBlock takesStep = newBlock();
-        LBasicBlock doesNotTakeStep = newBlock();
-        LBasicBlock done = newBlock();
-        branch(likeliest->applies, { normalEdge(takesStep), normalEdge(doesNotTakeStep) });
-        m_out.appendTo(takesStep);
-        storeField(cell, m_heaps.AOTObject_orderWord, likeliest->orderWordAfter);
-        rememberKeyOrderStep(value, cell, *remembered);
-        m_out.jump(done);
-        m_out.appendTo(doesNotTakeStep);
-        otherwise();
-        m_out.jump(done);
-        m_out.appendTo(done);
-    });
+    takeKeyOrderStepOr(cell, std::optional<KeyOrderStep>(remembered->step), otherwise);
     return true;
 }
 

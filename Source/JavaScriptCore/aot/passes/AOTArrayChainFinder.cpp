@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTArrayStorageForms.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTResolveCallsCallees.h"
@@ -32,8 +31,6 @@ private:
 
     void tryChain(BlockID, const ArrayMethodCall& last);
     bool isWorthFusingIn(BlockID);
-    bool paysAlone(const ArrayMethodCall&);
-    bool mayGetNextMember(ValueID array);
     bool takeEnd(ArrayChain&, const ArrayMethodCall& last);
     bool takeRange(ArrayChain&, const ArrayMethodCall& slice);
     ValueID collectLinks(ArrayChain&, const ArrayMethodCall& last, Links&);
@@ -80,6 +77,10 @@ bool ArrayChainFinder::isWorthFusingIn(BlockID block)
 
 void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
 {
+    const Terminator& terminator = m_function.at(block).terminator;
+    if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == last.call)
+        return;
+
     ArrayChain chain;
     chain.block = block;
     chain.lastCall = last.call;
@@ -102,7 +103,7 @@ void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
     chain.source = collectLinks(chain, last, linksFromLast);
 
     size_t numberOfLinks = linksFromLast.size();
-    if (numberOfLinks + (chain.rangeCall ? 1 : 0) + (chain.shape.end != ChainEndKind::Array ? 1 : 0) < 2 && !paysAlone(last))
+    if (numberOfLinks + (chain.rangeCall ? 1 : 0) + (chain.shape.end != ChainEndKind::Array ? 1 : 0) < 2)
         return;
     if (!isWorthFusingIn(block))
         return;
@@ -120,41 +121,6 @@ void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
     for (const ArrayMethodCall& link : linksFromLast)
         m_isInChain.set(link.call.index());
     m_chains.append(WTF::move(chain));
-}
-
-// A read by name may turn out to be a method of arrays, and a method call in another block may come to stand in this one.
-bool ArrayChainFinder::mayGetNextMember(ValueID array)
-{
-    for (const Use& use : m_analyses.useLists().usesOf(array)) {
-        if (use.kind != Use::Kind::Operand)
-            continue;
-        if (m_function.at(use.user).opcode == Opcode::PropGet)
-            return true;
-        if (std::optional<ArrayMethodCall> consumer = arrayMethodCallOf(m_context.program, m_function, use.user); consumer && isUsedOnlyBy(consumer->receiver, *consumer))
-            return true;
-        if (m_analyses.sameObjectThroughCasts(use.user) == m_analyses.sameObjectThroughCasts(array) && mayGetNextMember(use.user))
-            return true;
-    }
-    return false;
-}
-
-// The traversal knows how long the array of a filter can get, and gives the array of a map storage for the numbers that the callback returns.
-bool ArrayChainFinder::paysAlone(const ArrayMethodCall& call)
-{
-    if (mayGetNextMember(call.call))
-        return false;
-    switch (call.method->link) {
-    case ChainLinkKind::None:
-        return false;
-    case ChainLinkKind::Filter:
-        return true;
-    case ChainLinkKind::Map:
-        break;
-    }
-    FunctionID callee = call.arguments.isEmpty() ? FunctionID() : calleeOf(call.arguments[0]);
-    if (!callee || m_context.program.at(callee).results.size() != 1)
-        return false;
-    return arrayStorageAtAllocation(m_context.program.at(m_context.program.at(callee).results[0].type)) != ArrayStorage::Contiguous;
 }
 
 bool ArrayChainFinder::takeEnd(ArrayChain& chain, const ArrayMethodCall& last)

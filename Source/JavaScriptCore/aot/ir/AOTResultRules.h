@@ -11,6 +11,7 @@
 #include "AOTIRFunction.h"
 #include "AOTLayout.h"
 #include "AOTSharedMemo.h"
+#include "AOTThreshold.h"
 #include "AOTType.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
@@ -29,7 +30,7 @@ enum class FieldTypeRule : uint8_t { NamedRead, SlotRead, DeferringSlotRead, Slo
 // What the fields under a name give for receivers with many layouts. That depends on the tables of the program only, and costs a lookup and a union per layout.
 class FieldReadTypes {
 public:
-    static constexpr size_t fewestReceivers = 8;
+    AOT_CLASS_THRESHOLD(size_t, fewestReceivers, 8);
 
     struct Entry {
         LayoutSetID receivers;

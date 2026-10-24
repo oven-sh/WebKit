@@ -233,8 +233,9 @@ ValueID TestPlacer::narrowToOperand(ValueID passed, ValueID operand, uint32_t us
     Type operandType = types.at(m_function.at(operand).type);
     if (passedType.isSubsetOf(operandType, m_context.program))
         return passed;
-    Type both = passedType.intersectWith(operandType, types);
-    if (both.isNever())
+    // An intersection names an object as its second type does: as the test did.
+    Type both = operandType.intersectWith(passedType, types);
+    if (both.isNever() || both == passedType)
         return passed;
 
     TypeID castType = types.intern(both);
