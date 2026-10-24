@@ -3994,15 +3994,26 @@ DFG::CapabilityLevel CodeBlock::capabilityLevel()
 
 void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
 {
+    vm().controlFlowProfiler()->didLinkCodeBlock(vm(), unlinkedCodeBlock(), ownerExecutable()->source());
+
     if (!unlinkedCodeBlock()->hasOpProfileControlFlowBytecodeOffsets())
         return;
-    const FixedVector<JSInstructionStream::Offset>& bytecodeOffsets = unlinkedCodeBlock()->opProfileControlFlowBytecodeOffsets();
+    // A branch has no text of its own: its offsets are those of its decision.
+    Vector<JSInstructionStream::Offset> bytecodeOffsets;
+    for (JSInstructionStream::Offset offset : unlinkedCodeBlock()->opProfileControlFlowBytecodeOffsets()) {
+        auto instruction = instructions().at(offset);
+        RELEASE_ASSERT(instruction->opcodeID() == op_profile_control_flow);
+        auto bytecode = instruction->as<OpProfileControlFlow>();
+        if (!bytecode.m_isBranch) {
+            bytecodeOffsets.append(offset);
+            continue;
+        }
+        bytecode.metadata(this).m_basicBlockLocation = vm().controlFlowProfiler()->getBranchLocation(ownerExecutable()->sourceID(), bytecode);
+    }
 
     size_t offsetsLength = bytecodeOffsets.size();
     auto bytecodeAt = [&](size_t i) {
-        auto instruction = instructions().at(bytecodeOffsets[i]);
-        RELEASE_ASSERT(instruction->opcodeID() == op_profile_control_flow);
-        return instruction->as<OpProfileControlFlow>();
+        return instructions().at(bytecodeOffsets[i])->as<OpProfileControlFlow>();
     };
 
     // Basic blocks nest as the source does: the one of the code block has all of it, and each of the others is a gap in those it is in.

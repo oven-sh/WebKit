@@ -330,6 +330,12 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         }
     }
 
+    for (auto& branch : m_branchesToEmit) {
+        emitLabel(branch.label.get());
+        emitProfileBranch(branch.decision, branch.index);
+        emitJump(branch.target.get());
+    }
+
     m_staticPropertyAnalyzer.kill();
 
     for (auto& range : m_tryRanges) {
@@ -1315,9 +1321,11 @@ void BytecodeGenerator::initializeDefaultParameterValuesAndSetupFunctionScopeSta
             else
                 emitGetArgument(temp.get(), i);
             if (parameter.second) {
+                Decision decision { startOffsetOfBasicBlock(parameter.second), parameter.second->endOffset() };
                 Ref<Label> skipDefaultParameterBecauseNotUndefined = newLabel();
-                emitJumpIfFalse(emitIsUndefined(newTemporary(), temp.get()), skipDefaultParameterBecauseNotUndefined.get());
+                emitJumpIfFalse(emitIsUndefined(newTemporary(), temp.get()), newBranchLabel(decision, 1, skipDefaultParameterBecauseNotUndefined.get()));
                 emitProfileControlFlow(startOffsetOfBasicBlock(parameter.second), parameter.second->endOffset());
+                emitProfileBranch(decision, 0);
                 emitNode(temp.get(), parameter.second);
                 emitLabel(skipDefaultParameterBecauseNotUndefined.get());
             }
@@ -2112,7 +2120,7 @@ void BytecodeGenerator::emitProfileControlFlow(int textOffset)
     if (shouldEmitControlFlowProfilerHooks()) {
         RELEASE_ASSERT(textOffset >= 0);
 
-        OpProfileControlFlow::emit(this, textOffset, 0, false);
+        OpProfileControlFlow::emit(this, textOffset, 0, false, false, 0, false);
         m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
     }
 }
@@ -2120,8 +2128,21 @@ void BytecodeGenerator::emitProfileControlFlow(int textOffset)
 void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isInLoopHeader)
 {
     RELEASE_ASSERT(textOffset >= 0 && textOffset < textEndOffset);
-    OpProfileControlFlow::emit(this, textOffset, textEndOffset, isInLoopHeader);
+    OpProfileControlFlow::emit(this, textOffset, textEndOffset, isInLoopHeader, false, 0, false);
     m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
+}
+
+void BytecodeGenerator::emitProfileBranchSlow(const Decision& decision, unsigned index, bool countsOtherBranches)
+{
+    RELEASE_ASSERT(decision.textOffset >= 0 && decision.textOffset < decision.textEndOffset);
+    OpProfileControlFlow::emit(this, decision.textOffset, decision.textEndOffset, false, true, index, countsOtherBranches);
+    m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
+}
+
+Label& BytecodeGenerator::newBranchLabelSlow(const Decision& decision, unsigned index, Label& target)
+{
+    m_branchesToEmit.append({ newLabel(), target, decision, index });
+    return m_branchesToEmit.last().label.get();
 }
 
 bool BytecodeGenerator::emitProfileControlFlowAfterSlow(StatementNode* statement)
@@ -6134,8 +6155,10 @@ void BytecodeGenerator::emitOptionalCheck(RegisterID* src, int textOffset)
 {
     ASSERT(m_optionalChainTargetStack.size());
     auto& target = m_optionalChainTargetStack.last();
-    emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), src), target.label.get());
+    Decision decision { textOffset, target.textEndOffset };
+    emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), src), newBranchLabel(decision, 1, target.label.get()));
     emitProfileControlFlowOutsideOfCaseTest(textOffset, target.textEndOffset);
+    emitProfileBranch(decision, 0);
 }
 
 template <typename OldOpType, typename NewOpType, typename TupleType>

@@ -29,10 +29,14 @@
 #include "BasicBlockLocation.h"
 #include "SourceID.h"
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 
+struct OpProfileControlFlow;
+class SourceCode;
+class UnlinkedCodeBlock;
 class VM;
 
 struct BasicBlockKey {
@@ -82,25 +86,50 @@ struct BasicBlockRange {
     size_t m_executionCount;
 };
 
+// A decision is where control flow goes one of several ways, as at an `if` or an `&&`. Each way is a branch.
+struct BranchRange {
+    int m_decisionStartOffset;
+    int m_decisionEndOffset;
+    unsigned m_index;
+    size_t m_executionCount;
+};
+
 class ControlFlowProfiler {
     WTF_MAKE_TZONE_ALLOCATED(ControlFlowProfiler);
 public:
     ControlFlowProfiler();
     ~ControlFlowProfiler();
     BasicBlockLocation* getBasicBlockLocation(SourceID, int startOffset, int endOffset);
+    BasicBlockLocation* getBranchLocation(SourceID, const OpProfileControlFlow&);
     JS_EXPORT_PRIVATE void dumpData() const;
     JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
     // With its gaps, a basic block has the text of the basic blocks and of the functions that are in it.
     enum class Gaps : bool { Without, With };
     JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&, Gaps = Gaps::Without) const;
+    // A branch is known once its bytecode is generated, which for a function is when it is first called. For this source,
+    // the bytecode of every function is generated when its program, module or eval code is linked. A call then uses that bytecode.
+    void generateBytecodeEagerly(SourceID sourceID) { m_sourcesWithEagerBytecode.add(sourceID); }
+    // For a provider that wraps another one and is linked in its place.
+    void didReplaceSource(SourceID replaced, SourceID replacement)
+    {
+        if (m_sourcesWithEagerBytecode.remove(replaced))
+            m_sourcesWithEagerBytecode.add(replacement);
+    }
+    void didLinkCodeBlock(VM&, UnlinkedCodeBlock*, const SourceCode&);
+    void generateBytecodeForFunctions(VM&, UnlinkedCodeBlock*, const SourceCode&);
+    // Sorted by decision, then by index.
+    JS_EXPORT_PRIVATE Vector<BranchRange> getBranchesForSourceID(SourceID) const;
     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.
 
 private:
     typedef UncheckedKeyHashMap<BasicBlockKey, BasicBlockLocation*> BlockLocationCache;
     typedef UncheckedKeyHashMap<SourceID, BlockLocationCache> SourceIDBuckets;
+    typedef UncheckedKeyHashMap<BasicBlockKey, Vector<std::unique_ptr<BasicBlockLocation>, 2>> DecisionCache;
 
     SourceIDBuckets m_sourceIDBuckets;
+    UncheckedKeyHashMap<SourceID, DecisionCache> m_decisions;
+    UncheckedKeyHashSet<SourceID> m_sourcesWithEagerBytecode;
 };
 
 } // namespace JSC

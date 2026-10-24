@@ -40,6 +40,7 @@
 #include "UnlinkedProgramCodeBlock.h"
 #include <wtf/ApproximateTime.h>
 #include <wtf/MainThread.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
@@ -293,6 +294,8 @@ UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExe
 // `depth` bounds how many levels of nested functions get code blocks (0 = only the program's own).
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);
 UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);
+// For the functions of a code block that is already generated. `functor` is called with the code block of each.
+void generateUnlinkedCodeBlockForFunctions(VM&, UnlinkedCodeBlock*, const SourceCode& parentSource, OptionSet<CodeGenerationMode>, ParserError&, unsigned depth, OptimizeBytecode, NOESCAPE const ScopedLambda<void(UnlinkedFunctionCodeBlock*, const SourceCode&)>& functor = [](UnlinkedFunctionCodeBlock*, const SourceCode&) { });
 // For a function executable that was created directly (e.g. a builtin): its body and every nested function, as an ahead-of-time cache wants.
 // `depth` bounds how many levels of nested functions get code blocks (0 = only the function's own; functions past the
 // bound stay in the cache as executables whose bodies are generated from source when first called).
