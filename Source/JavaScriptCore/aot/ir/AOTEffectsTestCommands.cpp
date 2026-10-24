@@ -545,11 +545,13 @@ static void runCheckSummaries(TestCommandContext& context)
     if (!inputs.hasSummaries)
         inputs.summaries = computeEffectSummaries(program, inputs.flow, context.build);
     EffectContext effectContext { program, inputs.summaries };
+    EffectSummaries seed = createSummariesFromFlow(program, inputs.flow, context.build);
+    EffectContext contextOfSeed { program, seed };
     for (FunctionID id : *functions) {
         const Function& function = program.at(id);
         if (!function.hasBody())
             continue;
-        std::unique_ptr<FunctionAnalyses> analyses = createAnalysesForSummary(context.build, effectContext, inputs.flow, id, function);
+        std::unique_ptr<FunctionAnalyses> analyses = createAnalysesForSummary(context.build, contextOfSeed, inputs.flow, id, function);
         checkSummaryCoversBody(effectContext, id, *analyses, context.build.diagnostics());
     }
     printValidIfNoErrors(context);

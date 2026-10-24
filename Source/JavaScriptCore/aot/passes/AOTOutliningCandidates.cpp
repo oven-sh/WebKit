@@ -121,6 +121,31 @@ private:
     Vector<std::optional<uint32_t>> m_endOfUses;
 };
 
+// An allocation that is made again on several ways arrives as the parameter of the block where they meet.
+static void bindObjectAndWhatArrivesAsIt(FunctionAnalyses& analyses, ValueID object, BitVector& bound)
+{
+    const Function& function = analyses.function();
+    BitVector isVisited(function.values.size());
+    Vector<ValueID, 4> worklist { object };
+    while (!worklist.isEmpty()) {
+        ValueID origin;
+        for (ValueID link : CastChain(function, worklist.takeLast())) {
+            bound.quickSet(link.index());
+            origin = link;
+        }
+        if (isVisited.quickSet(origin.index()))
+            continue;
+        ValueLocation location = analyses.useLists().locationOf(origin);
+        if (location.placement != ValuePlacement::Parameter || location.block == entryBlock)
+            continue;
+        for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
+            IncomingValue incoming = incomingValueOf(function, edge, location.index);
+            if (incoming.kind == IncomingValue::Kind::Argument)
+                worklist.append(incoming.argument);
+        }
+    }
+}
+
 // What another rule wants in the function where it stands.
 static BitVector findValuesBoundToFunction(FunctionAnalyses& analyses)
 {
@@ -138,8 +163,7 @@ static BitVector findValuesBoundToFunction(FunctionAnalyses& analyses)
             }
             if (value.opcode == Opcode::JSONObjectFinish) {
                 bound.quickSet(id.index());
-                for (ValueID link : CastChain(function, value.objectOperand()))
-                    bound.quickSet(link.index());
+                bindObjectAndWhatArrivesAsIt(analyses, value.objectOperand(), bound);
                 continue;
             }
             if (!provesForStretch(provesOf(value.opcode)) || !value.numberOfOperands() || !value.operand(subjectOperandIndex))

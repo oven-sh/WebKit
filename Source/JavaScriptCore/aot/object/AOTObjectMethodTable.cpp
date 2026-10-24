@@ -163,8 +163,17 @@ static bool ordinarySet(JSGlobalObject* globalObject, Object* object, PropertyNa
     RETURN_IF_EXCEPTION(scope, false);
     if (!isFound) {
         JSValue prototype = object->getPrototypeDirect();
-        if (prototype.isObject())
+        std::optional<uint32_t> index = slot.thisValue() == JSValue(object) ? parseIndex(name) : std::nullopt;
+        if (prototype.isObject() && !index)
             RELEASE_AND_RETURN(scope, asObject(prototype)->methodTable()->put(asObject(prototype), globalObject, name, value, slot));
+        // A new element asks the objects above as JSObject::putByIndex() does.
+        if (prototype.isObject() && object->needsSlowPutIndexing()) {
+            bool isStored = false;
+            bool isIntercepted = asObject(prototype)->attemptToInterceptPutByIndexOnHoleForPrototype(globalObject, object, *index, value, slot.isStrictMode(), isStored);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isIntercepted)
+                return isStored;
+        }
         ownDescriptor = PropertyDescriptor(jsUndefined(), static_cast<unsigned>(PropertyAttribute::None));
     }
     bool isWritableAboveReceiver = slot.thisValue() != JSValue(object) && ownDescriptor.isDataDescriptor() && ownDescriptor.writable();

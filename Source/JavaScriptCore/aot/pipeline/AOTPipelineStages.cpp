@@ -145,12 +145,14 @@ static std::unique_ptr<PipelineOutput> createOutput(BuildContext& build)
 static void checkEffectSummaries(const Program& program, const FlowResults& flow, const EffectSummaries& effects, BuildContext& build)
 {
     EffectContext context { program, effects };
+    EffectSummaries seed = createSummariesFromFlow(program, flow, build);
+    EffectContext contextOfSeed { program, seed };
     forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
         const Function& function = program.functions[index];
         if (!function.hasBody())
             return;
         FunctionID id(index);
-        auto analyses = createAnalysesForSummary(build, context, flow, id, function);
+        auto analyses = createAnalysesForSummary(build, contextOfSeed, flow, id, function);
         checkSummaryCoversBody(context, id, *analyses, build.diagnostics());
     });
 }
