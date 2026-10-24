@@ -31,6 +31,10 @@
 #include "MachineStackMarker.h"
 #include <wtf/NeverDestroyed.h>
 
+#if OS(FREEBSD)
+#include <sys/membarrier.h>
+#endif
+
 namespace JSC { namespace Wasm {
 
 
@@ -50,12 +54,26 @@ void startTrackingCurrentThread()
     wasmThreads().addCurrentThread();
 }
 
-// FIXME: Use Linux's membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE) here.
 void barrierInstructionCacheOnAllThreads()
 {
 #if CPU(X86_64)
     return;
 #else
+#if OS(FREEBSD)
+    // Ask the kernel to force a context-synchronizing event (an ISB on ARM64) on every running
+    // thread in this process, over IPIs. This is the mechanism the old FIXME here wanted: it
+    // publishes the modified code without any signal handler, without ThreadSuspendLocker, and
+    // without touching the GC's thread-suspension machinery -- so it cannot participate in the
+    // two-GC / JITWorklist stop-the-world inversion, and it has no handshake that could be lost.
+    static std::once_flag registerOnce;
+    static bool membarrierSyncCoreAvailable = false;
+    std::call_once(registerOnce, [] {
+        membarrierSyncCoreAvailable = membarrier(MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE, 0, 0) == 0;
+    });
+    if (membarrierSyncCoreAvailable && membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE, 0, 0) == 0)
+        return;
+#endif
+    // Fallback for kernels without membarrier (or non-FreeBSD).
     Locker locker { wasmThreads().getLock() };
     for (auto& thread : wasmThreads().threads(locker))
         thread->barrierInstructionCache();
