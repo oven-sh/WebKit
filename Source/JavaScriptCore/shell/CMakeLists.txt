@@ -67,6 +67,24 @@ endif ()
 
 WEBKIT_EXECUTABLE_DECLARE(jsc)
 
+if (USE_MIMALLOC AND UNIX)
+    find_package(Threads REQUIRED)
+    add_executable(testMimallocExit ../../bmalloc/mimalloc/test-exit.c)
+    target_link_libraries(testMimallocExit PRIVATE mimalloc-obj Threads::Threads ${CMAKE_DL_LIBS})
+    add_library(mimallocExitTestHooks OBJECT ../../bmalloc/mimalloc/mimalloc/src/static.c)
+    target_include_directories(mimallocExitTestHooks PUBLIC $<TARGET_PROPERTY:mimalloc-obj,INCLUDE_DIRECTORIES>)
+    target_compile_options(mimallocExitTestHooks PRIVATE $<TARGET_PROPERTY:mimalloc-obj,COMPILE_OPTIONS>)
+    target_compile_definitions(mimallocExitTestHooks PRIVATE
+        $<TARGET_PROPERTY:mimalloc-obj,COMPILE_DEFINITIONS>
+        MI_TEST_THREAD_KEY_WAIT=1
+        pthread_setspecific=mimalloc_test_setspecific
+        pthread_key_delete=mimalloc_test_key_delete
+    )
+    add_executable(testMimallocExitInFlight ../../bmalloc/mimalloc/test-exit-in-flight.c)
+    target_link_libraries(testMimallocExitInFlight PRIVATE mimallocExitTestHooks Threads::Threads ${CMAKE_DL_LIBS})
+    add_dependencies(jsc testMimallocExit testMimallocExitInFlight)
+endif ()
+
 if (USE_BUN_JSC_ADDITIONS)
     # bun:ffi (JSC FFI) C++ unit / ABI test executable, modeled on the
     # testmasm_* variables below. Build and run it with:
