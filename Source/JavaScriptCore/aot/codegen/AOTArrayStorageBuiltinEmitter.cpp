@@ -289,7 +289,7 @@ void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
 
 void ArrayStorageBuiltinEmitter::generateArrayOf(const InlineCall& call)
 {
-    finishInlineCall(call, ArrayAllocationEmitter(generator()).newArrayOf(call.context(), call.arguments(), resultTypeOf(call)));
+    finishInlineCall(call, ArrayAllocationEmitter(generator()).newArrayOf(call.context(), call.arguments(), typeOfArraysCreatedBy(call)));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayIsArray(const InlineCall& call)

@@ -41,6 +41,8 @@ void applyPosition(DeclaredType& declared, const FlowPositionUpdate& update)
         declared.type = update.type;
     if (update.isProven)
         declared.flags.remove(PositionFlags::IsExpected);
+    if (update.replacesExpectation)
+        declared.flags.add(PositionFlags::IsExpected);
 }
 
 static void proveEveryPosition(Program& program, BuildContext& build)

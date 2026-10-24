@@ -1219,8 +1219,11 @@ static std::optional<FunctionID> findFunctionOfAccessorIn(const ValueFlowResultI
     return isKnown ? std::optional(function) : std::nullopt;
 }
 
+// A store under the name of an accessor runs the setter. Where the run time looks at the object before it believes the list, a store that nobody follows takes no accessor out of it.
+enum class StoresUnderAccessors : uint8_t { MayDefineValues, RunSetters };
+
 // Whether every name but `constructor` is listed.
-static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, std::span<const AssignedValue> assignedToPrototypeObject, ClassFlow& flow)
+static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, std::span<const AssignedValue> assignedToPrototypeObject, ClassFlow& flow, StoresUnderAccessors stores = StoresUnderAccessors::MayDefineValues)
 {
     PropertyKeyID constructorKey = inputs.program.keyOf(BuiltinNames::constructor);
     bool listsEveryName = true;
@@ -1254,14 +1257,16 @@ static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMak
         bool mayBeAccessor = getters != ValueSets::nothing || setters != ValueSets::nothing;
         if (!mayBeAccessor) {
             // Beside what a descriptor defines as its `value` lies undefined: the rule cannot tell that the descriptor has the member.
-            list(MethodKind::Method, findOnlyClosureIn(inputs, maker.intersect(value, ValueSets::complement(inputs.universe().undefinedValue()))));
+            FunctionID function = findOnlyClosureIn(inputs, maker.intersect(value, ValueSets::complement(inputs.universe().undefinedValue())));
+            if (function || stores == StoresUnderAccessors::MayDefineValues)
+                list(MethodKind::Method, function);
             continue;
         }
         // An accessor that a descriptor defines, with one function for each part that it has, stands for a definition like a method that is stored.
         std::optional<FunctionID> getter = findFunctionOfAccessorIn(inputs, getters);
         std::optional<FunctionID> setter = findFunctionOfAccessorIn(inputs, setters);
         // The rule defines what it finds as the `value` of a descriptor too: undefined, where the descriptor has none.
-        bool mayBeData = inputs.sets().meet(value, ValueSets::complement(inputs.universe().undefinedValue()));
+        bool mayBeData = stores == StoresUnderAccessors::MayDefineValues && inputs.sets().meet(value, ValueSets::complement(inputs.universe().undefinedValue()));
         if (mayBeData || !getter || !setter || (!*getter && !*setter)) {
             list(MethodKind::Method, { });
             continue;
@@ -1357,7 +1362,7 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
         ClassFlow& flow = application.layouts[index].classFlow;
         flow.evaluations = ExecutionCount::AtMostOnce;
         flow.prototypeBase = bases[index];
-        listAssignedMembers(inputs, maker, writes.of(LayoutID(index)), flow);
+        listAssignedMembers(inputs, maker, writes.of(LayoutID(index)), flow, StoresUnderAccessors::RunSetters);
     }
     for (const auto& [holder, classLayout] : holders) {
         if (!classLayout || states[classLayout.index()] != State::Known)
@@ -1370,8 +1375,8 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
             if (created != classLayout)
                 continue;
             unsigned numberHanded = 0;
-            inputs.sets().forEachMember(handed, [&](ValueFlowObjectID) {
-                ++numberHanded;
+            inputs.sets().forEachMember(handed, [&](ValueFlowObjectID other) {
+                numberHanded += universe.kindOf(other) != ValueFlowObjectKind::Primitive;
             });
             application.layouts[layout.index()].isHandedToObjectCreateAlone |= numberHanded == 1;
         }

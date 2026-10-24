@@ -1,0 +1,37 @@
+# this[kState] in a method, where kState is stored behind the allocation: a slot that may be empty. An empty slot reads as undefined while nothing of that name lies above the object, which the guards of the class say.
+# The guards of a constructor function that may be created again are never set: a test of them would fail every time and send what follows into cold code. What a filled slot holds is the answer
+# whatever lies above the object, so the read of such an object tests the slot
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" constructor=f0 fields=[{key="late" declared={type=anything} flags=[IsAddedLate, IsEnforced]}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce staticLink=Fixed}
+layout L1 kind=Instance name="Many" constructor=f1 fields=[{key="late" declared={type=anything} flags=[IsAddedLate, IsEnforced]}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={staticLink=Fixed}
+function f0 name="Once" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+  b0(v0: L0):
+    Return
+}
+function f1 name="Many" flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
+  b0(v0: L1):
+    Return
+}
+function f2 name="created-once" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="created-once"
+# CHECK: = GetSlotOrUndefined {{*}} key="late" receivers=[L0]
+# CHECK: AreMembersUnchanged conditions=[{layout=L0 key="late"}
+function f3 name="created-again" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="created-again"
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: = GetSlot {{*}} key="late" receivers=[L1]
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: = IsSlotFilled {{*}} key="late" receivers=[L1]
+# CHECK-NOT: AreMembersUnchanged

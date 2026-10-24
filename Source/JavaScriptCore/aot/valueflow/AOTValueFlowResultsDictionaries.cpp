@@ -130,8 +130,10 @@ static void listLayoutsNamedIn(const Program& program, const FlowApplication& ap
         forEachReference(block.terminator, finder);
         if (block.terminator.kind != TerminatorKind::ReturnCall)
             continue;
-        for (const TailCast& cast : block.terminator.casts())
-            finder(program.at(cast.declared.type).layouts);
+        for (const TailCast& cast : block.terminator.casts()) {
+            if (cast.resolution == CastResolution::Check)
+                finder(program.at(cast.declared.type).layouts);
+        }
     }
 }
 

@@ -80,7 +80,7 @@ struct RecordHolder {
 
 CurrentWork& takeRecord()
 {
-    static thread_local RecordHolder holder;
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local RecordHolder holder;
 #if OS(UNIX)
     holder.ensureSignalStack();
 #else

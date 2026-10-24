@@ -175,6 +175,7 @@ struct FlowBuiltinTables {
     Vector<FeatureUseRecord> featureUses;
     Vector<FlowLocaleUse> localeUses;
     LegacyRegExpStatics legacyRegExpStatics { LegacyRegExpStatics::Unknown };
+    bool areFilled { false };
 };
 
 // The holder is intact, nobody has it in hand whom the analysis does not follow, and no record says that the program puts something under the key.

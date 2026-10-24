@@ -758,6 +758,20 @@ static void testCurrentWorkOfPoolThreads()
     AOT_TEST_CHECK(saidOfAllThreads.contains("Still compiling second (a.ts:1) in AnalyzeFlow for 0 s.\n"_s));
 }
 
+// One behind the other, and more of them than there are records.
+static void testCurrentWorkOfThreadsBehindManyThatEnded()
+{
+    BuildContext build(makeDefaultCompileOptions());
+    for (unsigned count = 0; count < 2000; ++count) {
+        String said;
+        runOnBuildThread([&] {
+            PhaseTimes times(build, Stage::Optimize);
+            said = textOf(describeWhereThisThreadStopped);
+        });
+        AOT_TEST_CHECK(said == "Stopped while compiling in Optimize.\n"_s);
+    }
+}
+
 static void testCurrentWorkFitsItsBuffer()
 {
     BuildContext build(makeDefaultCompileOptions());
@@ -794,6 +808,7 @@ std::span<const NativeTest> supportTests()
         { "current-work/names-function-and-step"_s, testCurrentWorkNamesFunctionAndStep },
         { "current-work/names-phase-of-back-end"_s, testCurrentWorkNamesPhaseOfBackEnd },
         { "current-work/of-pool-threads"_s, testCurrentWorkOfPoolThreads },
+        { "current-work/of-threads-behind-many-that-ended"_s, testCurrentWorkOfThreadsBehindManyThatEnded },
         { "current-work/fits-its-buffer"_s, testCurrentWorkFitsItsBuffer },
         { "losses/lowest-subject"_s, testLossesKeepLowestSubject },
         { "losses/subject-with-location"_s, testLossesPreferSubjectWithLocation },

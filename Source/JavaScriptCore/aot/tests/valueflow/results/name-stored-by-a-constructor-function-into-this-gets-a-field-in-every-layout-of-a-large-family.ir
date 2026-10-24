@@ -2,7 +2,8 @@
 # 70 literals of 70 layouts are EmitterLike, and unknown code has them all, with both functions.
 # A name that is stored through a declared receiver gets a field in the layouts that the type lists. Where they are too many to give each of them room (MaxValueFlowMembersToldApart = 64), it gets one
 # only where the program names it through a type of few layouts: nothing names `marked` in that way, so it has no field.
-# What a constructor function stores into its own `this` it stores into every object that passes it: `EventEmitter.call(this)` runs for the objects of a hundred classes. So `capture` gets its field in each
+# What a constructor function stores into its own `this` it stores into every object that passes it: `EventEmitter.call(this)` runs for the objects of a hundred classes. So `capture` gets its field in each,
+# and in the layout of the objects that `new Emitter()` makes: only unknown code constructs with the function here, so its `this` is an object that nobody has followed and no value is listed under the name
 # LOSS: MaxValueFlowMembersToldApart x1 L0
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Made0" fields=[{key="flags"
@@ -15,6 +16,8 @@
 # CHECK-NOT: key="marked"
 # CHECK: layout L70 name="EmitterLike"
 # CHECK-NOT: IsAddedLate
+# CHECK: layout L71 kind=Instance name="Emitter" constructor=f1 fields=[{key="capture" {{*}} flags=[IsAddedLate
+# CHECK-NOT: key="marked"
 # CHECK: function f0
 
 module m0 path="main.ts" displayPath="main.ts" body=f0

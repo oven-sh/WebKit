@@ -787,6 +787,8 @@ void HeapRule::runCopyObject()
             records.append(object);
     });
     add(m_statement.result, m_context.maker().of(records.span()));
+    // What a parser answers may be a record of any layout.
+    add(m_statement.result, m_context.restrict(known(sources), m_universe.objectsThatMayBeAnything()));
     if (mayBeUnknownObject(sources))
         add(m_statement.result, unknownObjectAlone());
     if (mayBeUntrackedObject(sources))

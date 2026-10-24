@@ -83,6 +83,19 @@ public:
         blocks.append(block);
     }
 
+    template<size_t inlineCapacity>
+    bool endsWith(BasicBlock* first, const Vector<BasicBlock*, inlineCapacity>& rest) const
+    {
+        if (blocks.size() <= rest.size())
+            return false;
+        auto added = blocks.rbegin();
+        for (size_t index = rest.size(); index--; ++added) {
+            if (*added != rest[index])
+                return false;
+        }
+        return *added == first;
+    }
+
     BasicBlock* LEGACY_NODELETE popChain(IndexSet<BasicBlock*>& done)
     {
         // Take the last added successor to continue the chain.
@@ -534,7 +547,7 @@ static bool detectDiamondStructure(BasicBlock* blockB, ChainWorklist& worklist, 
     return true;
 }
 
-static bool detectOtherArmsOfJoin(BasicBlock* blockB, ChainWorklist& worklist, IndexSet<BasicBlock*>& done)
+static bool detectOtherArmsOfJoin(BasicBlock* blockB, ChainWorklist& worklist, IndexSet<BasicBlock*>& done, const IndexSet<BasicBlock*>& blocksWithRareEdgesIn, bool& successorsAlreadyWait)
 {
     //  A
     //  |'---.
@@ -556,21 +569,22 @@ static bool detectOtherArmsOfJoin(BasicBlock* blockB, ChainWorklist& worklist, I
         return false;
     Vector<BasicBlock*, 4> arms;
     for (BasicBlock* blockC : blockD->predecessors()) {
-        if (blockC == blockB || done.contains(blockC) || arms.contains(blockC))
+        if (blockC == blockB || done.contains(blockC))
             continue;
         if (blockC->numSuccessors() != 1 || blockC->successor(0).isRare() || blockC->frequency() < blockB->frequency())
             continue;
-        bool isEnteredFromPlacedBlocks = blockC->numPredecessors();
-        for (BasicBlock* predecessor : blockC->predecessors()) {
+        bool isEnteredFromPlacedBlocks = blockC->numPredecessors() && !blocksWithRareEdgesIn.contains(blockC);
+        for (BasicBlock* predecessor : blockC->predecessors())
             isEnteredFromPlacedBlocks &= done.contains(predecessor);
-            for (FrequentedBlock& successor : predecessor->successors())
-                isEnteredFromPlacedBlocks &= successor.block() != blockC || !successor.isRare();
-        }
         if (isEnteredFromPlacedBlocks)
             arms.append(blockC);
     }
     if (arms.isEmpty())
         return false;
+    if (worklist.endsWith(blockD, arms)) {
+        successorsAlreadyWait = true;
+        return true;
+    }
     worklist.append(blockD);
     for (BasicBlock* blockC : arms)
         worklist.append(blockC);
@@ -682,6 +696,17 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     // Always push the primary successor last so that it gets highest priority.
     chainWorklist.append(code.entrypoint(0).block());
 
+    bool hasFrequencies = code.policy().layout.ordersBlocksByEdgeFrequency;
+    IndexSet<BasicBlock*> blocksWithRareEdgesIn;
+    if (hasFrequencies) {
+        for (BasicBlock* block : code) {
+            for (FrequentedBlock& successor : block->successors()) {
+                if (successor.isRare())
+                    blocksWithRareEdgesIn.add(successor.block());
+            }
+        }
+    }
+
     while (BasicBlock* block = chainWorklist.pop(done)) {
         ASSERT(!done.contains(block));
 
@@ -691,10 +716,10 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
         placer.didPlace(block);
         size_t size = chainWorklist.size();
 
-        bool hasFrequencies = code.policy().layout.ordersBlocksByEdgeFrequency;
+        bool successorsAlreadyWait = false;
         if (!detectTriangleStructure(block, chainWorklist, done, hasFrequencies)
             && !detectDiamondStructure(block, chainWorklist, done, hasFrequencies)
-            && !(hasFrequencies && detectOtherArmsOfJoin(block, chainWorklist, done))
+            && !(hasFrequencies && detectOtherArmsOfJoin(block, chainWorklist, done, blocksWithRareEdgesIn, successorsAlreadyWait))
             && !detectExclusiveSuccessor(block, chainWorklist, done)) {
 
             if (!(hasFrequencies && appendSuccessorsByEdgeFrequency(block, chainWorklist, done)))
@@ -706,7 +731,7 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
         sortedSuccessors.process(chainWorklist);
 
         // Detect if we added a successor. If not decide for a good candidate.
-        if (size == chainWorklist.size()) {
+        if (size == chainWorklist.size() && !successorsAlreadyWait) {
             placer.didEndChain(block);
             chainWorklist.markStartNewChain();
         }

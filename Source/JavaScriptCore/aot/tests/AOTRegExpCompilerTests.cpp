@@ -287,10 +287,11 @@ static void testOnePatternServesBothWidthsAndRetries()
     checkPatternServesBothWidthsAndRetries("a*b"_s);
 }
 
+// In the code for 16-bit subjects, where every CPU calls the routine. For 8-bit subjects ARM64 has the search in line.
 static bool searchesForOneOfAClass(ASCIILiteral patternString)
 {
     CompiledRegExp regExp = compileToCode({ patternString, { } });
-    return std::ranges::any_of(regExp.code[0]->symbols, [](const RegExpSymbol& symbol) {
+    return std::ranges::any_of(regExp.code[1]->symbols, [](const RegExpSymbol& symbol) {
         auto* routine = std::get_if<Yarr::SharedRoutine>(&symbol);
         return routine && routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfClass;
     });

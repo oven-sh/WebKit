@@ -1506,6 +1506,7 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
         recordPlaces(inputs, tables);
         times.didFinish("built-ins: places for the report"_s);
     }
+    tables.builtins.areFilled = true;
     return writesUnderNewNames;
 }
 

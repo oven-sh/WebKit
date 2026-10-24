@@ -452,10 +452,19 @@ static void appendFunctionWithAccesses(StringBuilder& text, unsigned function)
     text.append("    v4 = Integer integer="_s, function, "\n    v5 = Call v3, v2, v4, v1, v1, v1, v1, v1, v1, v1, v1\n    Return v5\n}\n"_s);
 }
 
+// A function that calls itself is never wholly in line, so a call that names a function stays.
+static void appendFunctionThatCallsItself(StringBuilder& text, unsigned function)
+{
+    text.append("function f"_s, function, " name=\"callsItself\" parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
+    text.append("    v1 = ToBoolean v0\n    Branch v1 -> taken b1(), notTaken b2()\n  b1():\n    v2 = PropGet v0 key=\"next\"\n"_s);
+    text.append("    v3 = CallDirect v2 function=f"_s, function, "\n    v4 = CallDirect v3 function=f"_s, function, "\n    Return v4\n  b2():\n    Return v0\n}\n"_s);
+}
+
 static String programUsingSymbolSpaces()
 {
     constexpr unsigned functionWithSwitch = 3;
-    constexpr unsigned lastFunction = functionWithSwitch + 40;
+    constexpr unsigned functionThatCallsItself = 4;
+    constexpr unsigned lastFunction = functionThatCallsItself + 40;
     StringBuilder text;
     text.append("module m0 path=\"main.js\" displayPath=\"main.js\" body=f0\nentry\n"_s);
     text.append("function f0 name=\"main\" kind=Module results=[{type=anything}] {\n  b0():\n"_s);
@@ -466,7 +475,8 @@ static String programUsingSymbolSpaces()
     }
     text.append("    Return\n}\n"_s, functionsWithOwnSpaces);
     appendFunctionWithSwitch(text, functionWithSwitch);
-    for (unsigned function = functionWithSwitch + 1; function <= lastFunction; ++function)
+    appendFunctionThatCallsItself(text, functionThatCallsItself);
+    for (unsigned function = functionThatCallsItself + 1; function <= lastFunction; ++function)
         appendFunctionWithAccesses(text, function);
     text.append(runtimeFunctionsText(lastFunction + 1));
     return text.toString();

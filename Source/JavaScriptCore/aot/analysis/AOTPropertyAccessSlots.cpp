@@ -222,6 +222,12 @@ static std::optional<CreationTests> computeTestsThatNothingIsInherited(const Pro
         MemberAnswer inherited = findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, access, false });
         if (inherited.kind != MemberKind::Absent)
             return std::nullopt;
+        // A test that fails for ever is no plan: what a filled slot holds is the answer without it.
+        bool failsForEver = std::ranges::any_of(inherited.conditions, [&](const MemberCondition& condition) {
+            return guardsAreNeverSet(context.program, context.program.at(condition.layout));
+        });
+        if (failsForEver)
+            return std::nullopt;
         tests.proofs |= inherited.receiverProofs;
         addConditions(tests.conditions, inherited.conditions.span());
     }

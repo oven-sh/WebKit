@@ -15,6 +15,7 @@
 #include "AOTInstance.h"
 #include "AOTPrimitiveEmitter.h"
 #include "AOTRuntimeTable.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
 #include "B3CheckValue.h"
 #include "B3InsertionSetInlines.h"
@@ -33,8 +34,11 @@ namespace JSC { namespace AOT {
 
 void emitReportOfBrokenClaim(CCallHelpers& jit, BrokenClaim claim, Typed::FunctionID function, Typed::ValueID value, int32_t offset, GPRReg found, GPRReg given)
 {
+    AllowMacroScratchRegisterUsage allowScratch(jit);
     constexpr int32_t bytesForCallee = 32;
-    jit.andPtr(CCallHelpers::TrustedImm32(-16), CCallHelpers::stackPointerRegister);
+    // ARM64 keeps the stack pointer aligned, and its AND cannot read it.
+    if constexpr (!isARM64())
+        jit.andPtr(CCallHelpers::TrustedImm32(-16), CCallHelpers::stackPointerRegister);
     jit.subPtr(CCallHelpers::TrustedImm32(bytesForCallee + 2 * static_cast<int32_t>(sizeof(uint64_t))), CCallHelpers::stackPointerRegister);
     for (unsigned i = 0; i < 2; ++i) {
         CCallHelpers::Address word(CCallHelpers::stackPointerRegister, bytesForCallee + static_cast<int32_t>(i * sizeof(uint64_t)));

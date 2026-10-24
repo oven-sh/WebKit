@@ -1569,16 +1569,58 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
     update.position = positions.updateFor(inputs.program.at(id).declared, inputs.bodies().nodes().variable(id), deadZone, numbers.ofVariable(id));
 }
 
+using LayoutsCreatedBelowMembers = Vector<Vector<LayoutID, 2>>;
+
+static LayoutsCreatedBelowMembers collectLayoutsCreatedBelowMembers(const Program& program, const FlowApplication& application)
+{
+    LayoutsCreatedBelowMembers createdBelow(program.functions.size());
+    for (uint32_t index = program.numberOfLayoutsAsRead(); index < program.layouts.size(); ++index) {
+        if (!program.layouts[index].has(LayoutFlags::IsOfCreatedObject) || application.layouts[index].flow.allocation == AllocationState::NeverAllocated)
+            continue;
+        LayoutID current(index);
+        for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+            const ClassFlow& classFlow = application.layouts[current.index()].classFlow;
+            for (const ClassMember& member : classFlow.members) {
+                if (!createdBelow[member.function.index()].contains(LayoutID(index)))
+                    createdBelow[member.function.index()].append(LayoutID(index));
+            }
+            current = classFlow.prototypeBase;
+        }
+    }
+    return createdBelow;
+}
+
+// `get status() { return this.res.statusCode; }` in a literal that Object.create is handed: whoever reads `status` reads it from what is made below the literal.
+static void expectThisToBeCreatedBelow(const Program& program, const FlowApplication& application, const DeclaredType& declared, std::span<const LayoutID> createdBelow, TypeArena& types, FlowPositionUpdate& update)
+{
+    bool isUnchecked = !declared.site && (declared.flags.contains(PositionFlags::IsExpected) || declared.type == TypeTable::anything);
+    if (createdBelow.empty() || !isUnchecked)
+        return;
+    Vector<LayoutID, 4> expected(createdBelow);
+    if (LayoutSetID layouts = program.at(declared.type).layouts) {
+        for (LayoutID layout : program.at(layouts).members) {
+            if (!application.layouts[layout.index()].objectsAreDictionaries && !expected.contains(layout))
+                expected.append(layout);
+        }
+    }
+    update.type = types.intern(Type::forLayouts(expected.span(), types));
+    update.replacesExpectation = true;
+}
+
 // The node of a capture holds what every reached operation that makes a closure of the function stores there, and what a call that names the function hands on.
-static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionID id, CallerState callers, const NumbersOfPositions& numbers, ValueFlowPositions& positions, FlowSignatureUpdate& update)
+static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionID id, CallerState callers, const NumbersOfPositions& numbers, const FlowApplication& application, std::span<const LayoutID> createdBelow, ValueFlowPositions& positions, TypeArena& types, FlowSignatureUpdate& update)
 {
     const Function& function = inputs.program.at(id);
     if (!function.mayChangeSignature())
         return;
     Vector<FlowPositionUpdate> parameters(function.numberOfEntryParameters());
     for (uint32_t index = 0; index < parameters.size(); ++index) {
-        if (callers != CallerState::AllKnown && function.entryParameterKind(index) != EntryParameter::Capture)
+        if (callers != CallerState::AllKnown && function.entryParameterKind(index) != EntryParameter::Capture) {
+            const DeclaredType* declared = function.thisParameterIndex() == index ? function.declaredEntryParameter(index) : nullptr;
+            if (declared)
+                expectThisToBeCreatedBelow(inputs.program, application, *declared, createdBelow, types, parameters[index]);
             continue;
+        }
         const DeclaredType* declared = function.declaredEntryParameter(index);
         if (!declared)
             continue;
@@ -1900,6 +1942,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     std::unique_ptr<ValuesWithoutProof> valuesWithoutProof;
     if (answersAreTheSameForEverySubject && !inputs.build.validates() && !listenerForSetsOutsideTypes)
         valuesWithoutProof = makeUnique<ValuesWithoutProof>(inputs.loops(), inputs.solver().input().numberOfNodes / 4);
+    LayoutsCreatedBelowMembers createdBelowMembers = collectLayoutsCreatedBelowMembers(program, application);
     forEachIndexInParallel(inputs.loops(), numberOfTasks, [&](unsigned task, unsigned worker) {
         if (task >= firstFunctionTask && (!inputs.isReached(FunctionID(task - firstFunctionTask)) || !program.functions[task - firstFunctionTask].hasBody()))
             return;
@@ -1921,7 +1964,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         FunctionID id(task - firstFunctionTask);
         ValueFlowPositions positions(inputs, arena, counts, id.index(), maker);
         CallerState callers = tables.functions.functions[id.index()].callers;
-        narrowEntryParameters(inputs, id, callers, numbers, positions, application.signatures[id.index()]);
+        narrowEntryParameters(inputs, id, callers, numbers, application, createdBelowMembers[id.index()].span(), positions, arena, application.signatures[id.index()]);
         narrowResults(inputs, id, numbers, positions, arena, counts, application.signatures[id.index()]);
         proveValuesOfOperations(inputs, id, callers, numbers, positions, arena, application, valuesWithoutProof.get(), counts, application.bodies[id.index()]);
     });

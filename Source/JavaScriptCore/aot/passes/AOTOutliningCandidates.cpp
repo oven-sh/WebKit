@@ -884,10 +884,10 @@ static uint32_t computeCodeBytes(OutliningScan& scan, const OutliningSite& site)
     return bytes;
 }
 
-// In cold code an access by key and a call of a value are the moves of their operands and one call of a stub: what a call of a function is. As a function of its own it gets a frame and two more jumps each time it runs.
+// In cold code an access by key or by name, a comparison, a test for truth and a call of a value are the moves of their operands and one call of a stub: what a call of a function is. As a function of its own it gets a frame and two more jumps each time it runs.
 static bool isOneCallOfStub(OutliningScan& scan, const OutliningSite& site)
 {
-    static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete };
+    static constexpr OpcodeSet callsOfOneStub { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemDelete, Opcode::PropGet, Opcode::PropSet, Opcode::StrictEq, Opcode::ToBoolean };
     if (site.isRegion())
         return false;
     const Function& function = scan.function;
@@ -904,7 +904,7 @@ static bool isOneCallOfStub(OutliningScan& scan, const OutliningSite& site)
         if (isRematerializable(value) || !codeBytesOf(scan, id))
             continue;
         bool isCallOfValue = accessClassOf(value.opcode) == AccessClass::IndirectCall && !passesConstantThatTakesCode(value);
-        if (!(isCallOfValue || accessesByKey.contains(value.opcode)) || ++numberOfOperations > 1)
+        if (!(isCallOfValue || callsOfOneStub.contains(value.opcode)) || ++numberOfOperations > 1)
             return false;
     }
     return numberOfOperations;

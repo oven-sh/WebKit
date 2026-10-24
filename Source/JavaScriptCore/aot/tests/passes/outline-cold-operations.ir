@@ -1,8 +1,8 @@
 # Equal cold sites share one function
 # FORM: Selected
 # RUN: pass OutlineColdOperations
-# STATISTIC: OutlinedBodiesCreated = 9
-# STATISTIC: ColdSitesOutlined = 67
+# STATISTIC: OutlinedBodiesCreated = 7
+# STATISTIC: ColdSitesOutlined = 48
 # LOSS: MaxOutlinedOperands f23
 # CHECK: outcome: Changed
 
@@ -563,11 +563,11 @@ function f27 name="unrepeatedRegion" parameters=[{type=boolean}, {type=boolean},
     Return v2
 }
 # CHECK-LABEL: function f27
-# CHECK-NOT: = PropGet
+# CHECK-NOT: CallDirect
 # CHECK: Branch v1 -> taken
-# CHECK: anything = CallDirect v2 function=[[detail]]
-# CHECK: anything = CallDirect v3 function=[[detail]]
-# CHECK-NOT: = PropGet
+# CHECK: = PropGet v2 key="detail"
+# CHECK: = PropGet v3 key="detail"
+# CHECK-NOT: CallDirect
 
 function f28 name="detailReads" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything, v2: anything):
@@ -606,9 +606,9 @@ function f28 name="detailReads" parameters=[{type=number}, {type=anything}, {typ
     Return v2
 }
 # CHECK-LABEL: function f28
-# CHECK-NOT: = PropGet
-# CHECK-COUNT-10: anything = CallDirect v1 function=[[detail]]
-# CHECK-NOT: = PropGet
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-10: = PropGet v1 key="detail"
+# CHECK-NOT: CallDirect
 
 function f29 name="scopeLookups" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
@@ -641,9 +641,9 @@ function f29 name="scopeLookups" parameters=[{type=number}, {type=anything}] res
     Return v1
 }
 # CHECK-LABEL: function f29
-# CHECK-NOT: = PropGet
-# CHECK-COUNT-6: anything = CallDirect function=[[settings]]
-# CHECK-NOT: = PropGet
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = PropGet {{*}}key="settings" [isFreeName]
+# CHECK-NOT: CallDirect
 
 function f30 name="inlinedLookup" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f26 module=m0}] {
   b0(v0: boolean, v1: anything):
@@ -656,8 +656,8 @@ function f30 name="inlinedLookup" parameters=[{type=boolean}, {type=anything}] r
     Return v1
 }
 # CHECK-LABEL: function f30
-# CHECK-NOT: = PropGet
-# CHECK: anything = CallDirect function=[[settings]]
+# CHECK-NOT: CallDirect
+# CHECK: = PropGet {{*}}key="settings" [isFreeName]
 
 function f31 name="differentFlags" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
@@ -924,10 +924,6 @@ function f39 name="inlinedHiddenLibraryFunction" parameters=[{type=boolean}, {ty
 # CHECK: = TypeTest
 # CHECK: = Call v0, -, v1
 # CHECK: function [[provenReceiver]] {{*}}role=OutlinedBody{{*}}parameters=[{type=L0}, {type=anything}] results=[{type=anything}]
-# CHECK: function [[detail]] {{*}}role=OutlinedBody{{*}}parameters=[{type=anything}] results=[{type=anything}]
-# CHECK: = PropGet v0 key="detail"
-# CHECK: function [[settings]] {{*}}role=OutlinedBody thisType={type=anything} results=[{type=anything}]
-# CHECK: = PropGet {{*}}key="settings" [isFreeName]
 # CHECK: function [[setLength]] {{*}}role=OutlinedBody{{*}}results=[{type=undefined}]
 # CHECK: overload=ArrayPrototypeLength/1
 # CHECK: function [[newError]] {{*}}role=OutlinedBody thisType={type=anything} results=[{type=TypeError}]

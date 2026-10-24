@@ -105,6 +105,8 @@ struct EntriesWithoutStamp {
     // Ascending by caller, site, callee and kind.
     Vector<FlowIndirectCall> calls;
     BitVector functions;
+    // Those among them that a call of a placeholder may enter, which `calls` does not list.
+    BitVector functionsEnteredWithoutRecord;
     // Those among them that something enters for which nobody can name an operation.
     BitVector functionsEnteredByHost;
     // The group of almost everything was asked for, so nothing lists what it enters.
@@ -558,14 +560,16 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
         raiseFlag(callsUntrackedObject, [&] { return inputs.sets().contains(key.set, ValueFlowUniverse::untrackedObject()); });
     });
     entries.mayBeIntoAnyFunction = mayBeIntoAnyFunction.load(std::memory_order_relaxed);
+    entries.functionsEnteredWithoutRecord = BitVector(numberOfFunctions);
     if (callsUnknownObject.load(std::memory_order_relaxed))
-        setFunctionsOfClosuresIn(inputs, ValueFlowProgramNodes::escaped(), entries.functions);
+        setFunctionsOfClosuresIn(inputs, ValueFlowProgramNodes::escaped(), entries.functionsEnteredWithoutRecord);
     if (callsUntrackedObject.load(std::memory_order_relaxed))
-        setFunctionsOfClosuresIn(inputs, ValueFlowProgramNodes::lost(), entries.functions);
+        setFunctionsOfClosuresIn(inputs, ValueFlowProgramNodes::lost(), entries.functionsEnteredWithoutRecord);
     if (entries.mayBeIntoAnyFunction) {
         for (size_t index = 0; index < numberOfFunctions; ++index)
-            entries.functions.quickSet(index);
+            entries.functionsEnteredWithoutRecord.quickSet(index);
     }
+    entries.functions.merge(entries.functionsEnteredWithoutRecord);
     return entries;
 }
 
@@ -898,6 +902,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     EntriesWithoutStamp entries = findEntriesWithoutStamp(inputs, application);
     times.didFinish("functions: entries without stamp"_s);
     calls.functionsEnteredWithoutStamp = WTF::move(entries.functions);
+    calls.functionsEnteredWithoutRecord = WTF::move(entries.functionsEnteredWithoutRecord);
     tables.functions.indirectCalls = WTF::move(entries.calls);
 
     Vector<uint32_t> unreachedFunctions = findIndicesInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {

@@ -390,6 +390,7 @@ bool ObjectsOfLayoutInHeap::inheritsNothingUnder(PropertyKeyID key)
     const Program& program = inputs.program;
     if (program.isIndexLike(key) || m_results.stores.hasObjectOfCodeWithoutSolve(m_id) || m_results.stores.getsCopiedProperties(m_id) || mayFindNameAbove(key))
         return false;
+    RELEASE_ASSERT(m_results.tables.builtins.areFilled);
     bool mayGainName = false;
     inputs.sets().forEachMember(m_maker.intersect(objectsAbove(), inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
         BuiltinID holder = program.builtins().canonicalID(inputs.universe().builtinOf(object));
@@ -827,7 +828,7 @@ static bool findsAccessorAbove(const FieldResults& results, ValueSetMaker& maker
     });
 }
 
-static void removeKeysWithoutRoom(const FieldResults& results, ValueSetMaker& maker, const BitVector& symbolsCreatedOnce, std::span<const PropertyKeyID> keysDeclaredBelow, const LayoutsByKey& layoutsWithField, std::span<const LayoutID> declaredViews, LayoutID id, Vector<PropertyKeyID>& keys)
+static void removeKeysWithoutRoom(const FieldResults& results, ValueSetMaker& maker, const BitVector& symbolsCreatedOnce, std::span<const PropertyKeyID> keysDeclaredBelow, const LayoutsByKey& layoutsWithField, std::span<const LayoutID> declaredViews, std::span<const PropertyKeyID> keysStoredByMembersAbove, LayoutID id, Vector<PropertyKeyID>& keys)
 {
     const Program& program = results.program();
     // Where the program declares types for the objects, a name that none of them has gets no room: neither a layout of their families nor a view through which the program may see the objects.
@@ -846,8 +847,47 @@ static void removeKeysWithoutRoom(const FieldResults& results, ValueSetMaker& ma
             return true;
         if (results.stores.accessorDefinedUnder(maker, id, key).isAccessor())
             return false;
-        return results.stores.mayGetAccessorUnder(id, key) || results.inputs.sets().isEmpty(std::as_const(results.stores).storedUnder(maker, id, key)) || findsAccessorAbove(results, maker, id, key);
+        // Where only code that nobody has followed constructs with the function, its `this` is a placeholder, and what it stores there is listed under no object of the layout.
+        bool isStored = results.stores.isStoredByConstructor(id, key) || std::ranges::binary_search(keysStoredByMembersAbove, key) || !results.inputs.sets().isEmpty(std::as_const(results.stores).storedUnder(maker, id, key));
+        return results.stores.mayGetAccessorUnder(id, key) || !isStored || findsAccessorAbove(results, maker, id, key);
     });
+}
+
+// `this._body = value` in a member of the object that Object.create is handed: whoever calls the member calls it on what is made below that object.
+static Vector<PropertyKeyID> keysStoredIntoThisByMembersAbove(const FieldResults& results, const BitVector& layoutsHandedToObjectCreate, LayoutID created)
+{
+    const Program& program = results.program();
+    Vector<PropertyKeyID> keys;
+    if (!program.at(created).has(LayoutFlags::IsOfCreatedObject) || layoutsHandedToObjectCreate.quickGet(created.index()) || !results.possibleMutationsOf(created).contains(ObjectMutation::ReachUnknownJavaScript))
+        return keys;
+    LayoutID current = created;
+    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+        const ClassFlow& classFlow = results.application.layouts[current.index()].classFlow;
+        for (const ClassMember& member : classFlow.members) {
+            const Function& function = program.at(member.function);
+            std::optional<unsigned> thisParameter = function.hasBody() ? function.thisParameterIndex() : std::nullopt;
+            if (!thisParameter)
+                continue;
+            ValueID thisValue = function.at(entryBlock).parameters[*thisParameter];
+            for (const Value& value : function.values) {
+                if (value.opcode == Opcode::PropSet && value.key() && definitionThroughSameValues(function, value.objectOperand()) == thisValue)
+                    keys.append(value.key());
+            }
+        }
+        current = classFlow.prototypeBase;
+    }
+    AOT::sort(keys);
+    removeRepeatedElements(keys);
+    keys.removeAllMatching([&](PropertyKeyID key) {
+        bool isNameOfAccessor = false;
+        for (ValueFlowName name : { ValueFlowName::getter(key), ValueFlowName::setter(key) }) {
+            results.heap.forEachNodeWrittenUnder(name, [&](ValueSetID, ValueSetID value) {
+                isNameOfAccessor |= !results.inputs.sets().isEmpty(value);
+            });
+        }
+        return isNameOfAccessor;
+    });
+    return keys;
 }
 
 // The names that the program mentions least go to the extra properties.
@@ -912,7 +952,13 @@ static Vector<Vector<PropertyKeyID>> chooseAppendedKeys(const FieldResults& resu
     const ParallelLoops& loops = results.inputs.loops();
     ValueSetMakers makers(results.inputs);
     Vector<Vector<PropertyKeyID>> keysByLayout(numberOfLayouts);
+    Vector<Vector<PropertyKeyID>> keysStoredByMembersAbove(numberOfLayouts);
     Vector<uint64_t> fieldCountsAsAnalyzed(FillWith { }, numberOfLayouts, static_cast<uint64_t>(0));
+    BitVector layoutsHandedToObjectCreate(numberOfLayouts);
+    for (uint32_t index = program.numberOfLayoutsAsRead(); index < numberOfLayouts; ++index) {
+        if (LayoutID base = program.layouts[index].has(LayoutFlags::IsOfCreatedObject) ? results.application.layouts[index].classFlow.prototypeBase : LayoutID())
+            layoutsHandedToObjectCreate.quickSet(base.index());
+    }
     forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
         LayoutID current(index);
         for (size_t steps = 0; current && steps < numberOfLayouts; ++steps) {
@@ -928,6 +974,8 @@ static Vector<Vector<PropertyKeyID>> chooseAppendedKeys(const FieldResults& resu
             return;
         keysByLayout[index] = results.stores.keysNamedByStoresIntoKnownObjects(LayoutID(index));
         uniteSortedKeys(keysByLayout[index], accessors);
+        keysStoredByMembersAbove[index] = keysStoredIntoThisByMembersAbove(results, layoutsHandedToObjectCreate, LayoutID(index));
+        uniteSortedKeys(keysByLayout[index], keysStoredByMembersAbove[index]);
     });
     BitVector isCandidate(program.types.numberOfPropertyKeys());
     for (const Vector<PropertyKeyID>& keys : keysByLayout) {
@@ -963,7 +1011,7 @@ static Vector<Vector<PropertyKeyID>> chooseAppendedKeys(const FieldResults& resu
     });
     forEachIndexInParallel(loops, layoutsWithKeys.size(), [&](unsigned position, unsigned worker) {
         uint32_t index = layoutsWithKeys[position];
-        removeKeysWithoutRoom(results, makers.of(worker), symbolsCreatedOnce, keysDeclaredBelow[index].span(), layoutsWithField, declaredViews[declaredLayoutOf(program, LayoutID(index)).index()].span(), LayoutID(index), keysByLayout[index]);
+        removeKeysWithoutRoom(results, makers.of(worker), symbolsCreatedOnce, keysDeclaredBelow[index].span(), layoutsWithField, declaredViews[declaredLayoutOf(program, LayoutID(index)).index()].span(), keysStoredByMembersAbove[index].span(), LayoutID(index), keysByLayout[index]);
     });
 
     AccessCounts counts(results.inputs);
@@ -1034,7 +1082,7 @@ static void appendFields(const FieldResults& results, const ProvenHierarchy& hie
                 if (results.hasObjects(below))
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
             });
-            if (!possible.contains(ObjectMutation::ReachUnknownJavaScript) && build.isEnabled(FlowResultKind::StoreCounts, index))
+            if (!possible.contains(ObjectMutation::ReachUnknownJavaScript) && !results.inputs.sets().isEmpty(stored) && build.isEnabled(FlowResultKind::StoreCounts, index))
                 field.flow.location.writers = WriterState::AllKnown;
             if (isStoredBeforeObjectsLeak && field.flow.location.writers == WriterState::AllKnown && build.isEnabled(FlowResultKind::Initialization, index))
                 field.flow.location.initialization = InitializationState::SetAtCreation;

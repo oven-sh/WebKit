@@ -130,7 +130,7 @@ private:
 
 const CounterOfThread& counterOfCurrentThread()
 {
-    static thread_local CounterOfThread counter;
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local CounterOfThread counter;
     return counter;
 }
 
