@@ -28,14 +28,12 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// No mark says which prototype an instance of a built-in class is created with, what becomes a prototype by a construction, or what is stored into a slot of native code.
 static constexpr OptionSet<ObjectMutation> mutationsOfBuiltinInstancesWithoutMark {
     ObjectMutation::ChangePrototype,
     ObjectMutation::BecomePrototype,
     ObjectMutation::StoreOfOtherType,
 };
 
-// The object that the operation itself allocates as an instance of a built-in class. An allocation with a layout has its stamp from the results about objects, and what a callee allocates belongs to the callee.
 static ValueFlowObjectID builtinInstanceAllocatedBy(const ValueFlowUniverse& universe, FunctionID function, ValueID operation, Opcode opcode)
 {
     if (!PayloadWord::allocationSite(opcode))
@@ -47,7 +45,6 @@ static ValueFlowObjectID builtinInstanceAllocatedBy(const ValueFlowUniverse& uni
     return object;
 }
 
-// One class for each built-in class: what holds for it holds for every instance that an operation of the program allocates.
 static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -71,7 +68,6 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
         if (!inputs.isReached(FunctionID(index)) || !inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::AllocationSite })))
             return instances;
         const Function& function = program.functions[index];
-        // An allocation that stores nothing has no statement: the empty array that a spread fills, for one. It allocates the storage that its stamp tells it like any other.
         for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
             if (ValueFlowObjectID object = builtinInstanceAllocatedBy(universe, FunctionID(index), ValueID(valueIndex), function.values[valueIndex].opcode))
                 instances.append({ ValueID(valueIndex), object, universe.siteOf(object)->builtinClass, markedMutationsOf(inputs, object), neverChangesOnceMade(inputs, object) });
@@ -136,7 +132,6 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
     inputs.build.statistics().count(StatisticID::FlowAllocationClasses, tables.sites.allocationClasses.size() - numberOfOtherClasses);
 }
 
-// The sites in the order of the program: by function, and in a function by operation. What no operation allocates by itself comes behind them, in the order in which it was listed.
 static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& tables)
 {
     Vector<AllocationSite>& sites = tables.sites.allocationSites;
@@ -185,7 +180,6 @@ static void orderAllocationSites(const ParallelLoops& loops, FlowResultTables& t
     });
 }
 
-// A build of the product ends the solve where no rule is due. A rule that adds something all the same has read what nobody has told it of: the sets of that build are too small, and a set that is too small is a false proof.
 static void reportRulesThatWereNotDue(const ValueFlowSolver& solver, BuildContext& build)
 {
     if (const ValueFlowSolver::AddedByGeneralRules& added = solver.addedByGeneralRules(); added.isAnything()) {
@@ -354,19 +348,16 @@ private:
 
 } // anonymous namespace
 
-// Much of a step runs on one thread.
 FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, const ListenerForSetsOutsideTypes* setsOutsideTypes)
 {
     RELEASE_ASSERT(&types == &program.types);
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
 
     PhaseTimes times(build, PassID::AnalyzeFlow);
-    // Code that comes in anywhere at run time does anything to anything.
     if (build.options().admitsUnseenCode())
         return FlowResults(createUnknownResultTables(program, build));
 
     bool runsEveryRuleOnceMore = build.options().verifiesAfterEveryStage || build.options().checksFlowFixpoint;
-    // How the unknown object at a site has come into being is a word of the reports. To every pass one source is like another.
     ReportSet reports = build.options().reports;
     bool showsCauses = setsOutsideTypes || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || hasFlag(reports, ReportSet::Arrivals);
     auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
@@ -378,10 +369,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
 
     FlowResultTables tables;
     ValueFlowResultInputs inputs { program, *solution, build };
-    // Six steps ask for it, and in each all the threads waited for the one that made it.
     ValueFlowLayoutsOfSites layoutsOfSites;
     ValueFlowClassesOfBuiltinResults classesOfBuiltinResults;
-    // Five steps make a view of the heap, some of them beside each other.
     std::unique_ptr<ValueFlowHeapIndex> heapIndex;
     std::unique_ptr<ValueFlowNodesAskedFor> nodesAskedFor;
 
@@ -548,7 +537,6 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     times.didFinish("the results behind the rounds"_s);
     recordLockedWritesUnderNewNames(program, types, writesUnderNewNames.span(), tables);
 
-    // Nobody waits for their memory, and one thread takes a while to free it. They die in this order: what gives a maker of sets back as it dies gives it to the pool of the solution.
     inputs.numbersOfValues = nullptr;
     build.destroyLater(WTF::move(numbersOfValues));
     build.destroyLater(WTF::move(containers));

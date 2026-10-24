@@ -68,51 +68,24 @@ function f1 name="arrayLengthUnderGuard" parameters=[{type=Array}, {type=boolean
 # R-COUNT-3: int[0, 4294967295] @Int64 = GetArrayLength v0, v3
 function f2 name="typedArrayLengths" parameters=[{type=Int8Array}, {type=Uint8Array}, {type=Uint8ClampedArray}, {type=Int16Array}, {type=Uint16Array}, {type=Int32Array}, {type=Uint32Array}, {type=Float16Array}, {type=Float32Array}, {type=Float64Array}, {type=BigInt64Array}, {type=BigUint64Array}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: Int8Array, v1: Uint8Array, v2: Uint8ClampedArray, v3: Int16Array, v4: Uint16Array, v5: Int32Array, v6: Uint32Array, v7: Float16Array, v8: Float32Array, v9: Float64Array, v10: BigInt64Array, v11: BigUint64Array, v12: boolean):
-    v13 = GetTypedArrayLength v0 typedArrayType=1
-    v14 = GetTypedArrayLength v1 typedArrayType=2
-    v15 = GetTypedArrayLength v2 typedArrayType=3
-    v16 = GetTypedArrayLength v3 typedArrayType=4
-    v17 = GetTypedArrayLength v4 typedArrayType=5
-    v18 = GetTypedArrayLength v5 typedArrayType=6
-    v19 = GetTypedArrayLength v6 typedArrayType=7
-    v20 = GetTypedArrayLength v7 typedArrayType=8
-    v21 = GetTypedArrayLength v8 typedArrayType=9
-    v22 = GetTypedArrayLength v9 typedArrayType=10
-    v23 = GetTypedArrayLength v10 typedArrayType=11
-    v24 = GetTypedArrayLength v11 typedArrayType=12
+# REPEAT: i = 0..11
+    v%(i+13) = GetTypedArrayLength v%(i) typedArrayType=%(i+1)
+# END REPEAT
     v25 = NewArray v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24 contents=anything
     Jump -> next b1()
   b1():
     LoopHint
-    v27 = GetTypedArrayLength v0 typedArrayType=1
-    v28 = GetTypedArrayLength v1 typedArrayType=2
-    v29 = GetTypedArrayLength v2 typedArrayType=3
-    v30 = GetTypedArrayLength v3 typedArrayType=4
-    v31 = GetTypedArrayLength v4 typedArrayType=5
-    v32 = GetTypedArrayLength v5 typedArrayType=6
-    v33 = GetTypedArrayLength v6 typedArrayType=7
-    v34 = GetTypedArrayLength v7 typedArrayType=8
-    v35 = GetTypedArrayLength v8 typedArrayType=9
-    v36 = GetTypedArrayLength v9 typedArrayType=10
-    v37 = GetTypedArrayLength v10 typedArrayType=11
-    v38 = GetTypedArrayLength v11 typedArrayType=12
+# REPEAT: i = 0..11
+    v%(i+27) = GetTypedArrayLength v%(i) typedArrayType=%(i+1)
+# END REPEAT
     v39 = NewArray v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38 contents=anything
     Branch v12 -> taken b1(), notTaken b2()
   b2():
     Branch v12 -> taken b3(), notTaken b4()
   b3() frequency=Rare:
-    v40 = GetTypedArrayLength v0 typedArrayType=1
-    v41 = GetTypedArrayLength v1 typedArrayType=2
-    v42 = GetTypedArrayLength v2 typedArrayType=3
-    v43 = GetTypedArrayLength v3 typedArrayType=4
-    v44 = GetTypedArrayLength v4 typedArrayType=5
-    v45 = GetTypedArrayLength v5 typedArrayType=6
-    v46 = GetTypedArrayLength v6 typedArrayType=7
-    v47 = GetTypedArrayLength v7 typedArrayType=8
-    v48 = GetTypedArrayLength v8 typedArrayType=9
-    v49 = GetTypedArrayLength v9 typedArrayType=10
-    v50 = GetTypedArrayLength v10 typedArrayType=11
-    v51 = GetTypedArrayLength v11 typedArrayType=12
+# REPEAT: i = 0..11
+    v%(i+40) = GetTypedArrayLength v%(i) typedArrayType=%(i+1)
+# END REPEAT
     v52 = NewArray v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51 contents=anything
     Jump -> next b4()
   b4():

@@ -57,30 +57,12 @@ function f3 name="givesOneBack" results=[{type=anything}] {
 # CHECK-LABEL: function f3 name="givesOneBack"
 # CHECK: = NewClosure function=f12 {{*}}[isHeldByClosureTable]
 
-function f4 name="unused4" results=[{type=anything}] {
+# REPEAT: i = 4..9
+function f%(i) name="unused%(i)" results=[{type=anything}] {
   b0():
     Return
 }
-function f5 name="unused5" results=[{type=anything}] {
-  b0():
-    Return
-}
-function f6 name="unused6" results=[{type=anything}] {
-  b0():
-    Return
-}
-function f7 name="unused7" results=[{type=anything}] {
-  b0():
-    Return
-}
-function f8 name="unused8" results=[{type=anything}] {
-  b0():
-    Return
-}
-function f9 name="unused9" results=[{type=anything}] {
-  b0():
-    Return
-}
+# END REPEAT
 function f10 name="kept" kind=Arrow results=[{type=anything}] {
   b0():
     Return

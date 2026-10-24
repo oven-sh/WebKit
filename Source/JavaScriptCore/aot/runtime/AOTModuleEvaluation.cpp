@@ -608,7 +608,7 @@ void Modules::failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> f
     }
     for (unsigned index = 0; index < m_table.size(); ++index) {
         ModuleID module(index);
-        if (unfinishedComponents.quickGet(components.componentOf[index]) && data(module).evaluatesItself() && storedStatus(module) == StoredModuleStatus::Evaluated)
+        if (unfinishedComponents.quickGet(components.componentOf[index]) && storedStatus(module) == StoredModuleStatus::Evaluated)
             setFailed(module, error);
     }
 }

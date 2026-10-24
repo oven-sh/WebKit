@@ -24,7 +24,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The nodes, the edges between them and the least solution of value(n) = what mask(n) lets through of the union of value(p) over the edges p -> n where a constant node holds its set for ever.
 class ValueFlowGraph {
     WTF_MAKE_NONCOPYABLE(ValueFlowGraph);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowGraph);
@@ -35,7 +34,6 @@ public:
         uint64_t evaluations { 0 };
         uint64_t edgesLookedAt { 0 };
         uint64_t waves { 0 };
-        // A node counts once for each placeholder.
         uint32_t nodesFlowingIntoCoveredNodes { 0 };
         uint32_t nodesRetired { 0 };
         uint32_t edgesStraightIntoCoveredNodes { 0 };
@@ -43,7 +41,6 @@ public:
         Seconds waving;
     };
 
-    // One maker for each thread of the loops.
     ValueFlowGraph(const ParallelLoops&, Makers);
     ~ValueFlowGraph();
 
@@ -53,7 +50,6 @@ public:
     ValueSetID valueOf(ValueFlowNodeID node) const { return m_value[node.index()]; }
     ValueSetID maskOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].admitted; }
     ValueFlowMaskKind maskKindOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].kind; }
-    // None where a placeholder passes the mask of the node as a member like any other.
     ValueSetID familyObjectsOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].familyObjects; }
     void forEachSuccessor(ValueFlowNodeID node, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor) const
     {
@@ -76,29 +72,21 @@ public:
     }
 
     ValueFlowNodeID addNodes(uint32_t count);
-    // Before the node has a value. What the kinds and the family objects mean: ValueSetMaker::pass().
     void setMask(ValueFlowNodeID, ValueSetID, ValueFlowMaskKind = ValueFlowMaskKind::Plain, ValueSetID familyObjects = { });
-    // Before any node has a value. Without them no member stands for another at a mask.
     void setPlaceholders(const ValueFlowPlaceholders& placeholders) { m_placeholders = placeholders; }
-    // Before the first solve, once for a placeholder.
     void retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable);
-    // Before the first solve. A node of which the function says yes takes nothing of the set, early or late: that goes to the covered node. The function is asked from every thread of a solve.
     using IsMadeForPlaceholder = bool (*)(const void* context, ValueFlowNodeID);
     void keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder, const void* context);
-    // On account of any placeholder.
     bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
-    // A placeholder with a covered node does not pass a mask that comes with family objects, and nothing takes its place by itself: what it covers moves.
     struct StoppedPlaceholder {
         ValueFlowNodeID node;
         ValueFlowObjectID placeholder;
     };
     void takeNodesAtWhichPlaceholdersStopped(Vector<StoppedPlaceholder>&);
     bool flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID) const;
-    // Beside other threads: each with a worker's number of its own, and a node of its own.
     enum class EdgesOutOfConstant : bool { AreKeptAtTargetsAlone, AreListed };
     void makeConstant(ValueFlowNodeID, ValueSetID, unsigned worker = 0, EdgesOutOfConstant = EdgesOutOfConstant::AreKeptAtTargetsAlone);
     bool isConstant(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && isConstant(node.index()); }
-    // In no order.
     void forEachListedEdgeOutOfConstants(NOESCAPE const Invocable<void(ValueFlowEdge)> auto& functor) const
     {
         RELEASE_ASSERT(!m_hasReleasedSolvingState);
@@ -107,21 +95,14 @@ public:
                 functor(edge);
         }
     }
-    // A node that has just been added holds from the start what its mask lets through of what the other node holds; that does not count as a move.
     void startWithValueOf(ValueFlowNodeID, ValueFlowNodeID other);
-    // The same for many: `to` begins with what `from` holds. No `from` is the `to` of another.
     void startWithValuesOf(std::span<const ValueFlowEdge>);
-    // A node at rest keeps what it holds and takes no more. One that is woken takes what it has missed in the next solve.
     void putToRest(ValueFlowNodeID first, uint32_t count);
     void wake(ValueFlowNodeID first, uint32_t count);
-    // A retired node is not at rest: whoever connects something to it still has to, or what is written there never reaches the covered node.
     bool isAtRest(ValueFlowNodeID node) const { return m_gates[node.index()].flags & IsAtRest; }
 
-    // The edges that are there from the start. They are not looked for when an edge is added later: an edge that is there twice does no harm.
     void addInitialEdges(std::span<const ValueFlowEdge>);
-    // Leaves out the edges that have been added before. Answers how many had not. The edges may come in any order and with repeats.
     size_t addEdges(std::span<const ValueFlowEdge>);
-    // Whether addEdges() has taken the edge, or the graph has made it itself. From any thread while no edge is added.
     bool hasAdded(ValueFlowEdge edge) const
     {
         RELEASE_ASSERT(!m_hasReleasedSolvingState);
@@ -159,7 +140,6 @@ public:
             return;
         __builtin_prefetch(isConstant(edge.from.index()) ? &m_predecessors[edge.to.index()] : &m_successors[edge.from.index()]);
     }
-    // NeedsHasAdded: what hasAdded() will read has been prefetched.
     enum class EdgeLookup : uint8_t { Absent, Present, NeedsHasAdded };
     ALWAYS_INLINE EdgeLookup lookUpInInlineLinks(ValueFlowEdge edge) const
     {
@@ -184,9 +164,7 @@ public:
         return EdgeLookup::NeedsHasAdded;
     }
 
-    // Brings the values up to date with what has been added since the last call, and lists the nodes whose value has moved, in ascending order.
     enum class RetiredNodes : bool { AreFoundAndConnectedInSolve, AreFoundAndConnectedByCaller };
-    // Behind solve(moved, AreFoundAndConnectedByCaller), beside whatever does not ask who is retired.
     void retireNodesAmong(std::span<const ValueFlowNodeID> moved);
     void solve(Vector<ValueFlowNodeID>& moved, RetiredNodes = RetiredNodes::AreFoundAndConnectedInSolve);
     void prefetchToStartWithValueOf(ValueFlowNodeID node, ValueFlowNodeID other) const
@@ -200,13 +178,11 @@ public:
     bool hasNodesJustRetired() const;
     void connectPredecessorsOfNodesJustRetired();
 
-    // Behind the last solve. Whoever is to ask for the predecessors of a node after that says so here.
     enum class Predecessors : bool { AreReleased, AreKept };
     void releaseSolvingState(Predecessors);
     void releaseRows();
 
     const Counters& counters() const { return m_counters; }
-    // Behind releaseSolvingState(): what it was before.
     size_t memoryInBytes() const;
 
 private:
@@ -221,7 +197,6 @@ private:
 
         void grow(size_t numberInUse, size_t capacity);
         void release();
-        // The kernel takes as long to take pages back as to hand them out, and it takes them back from several threads at once.
         void release(Team&);
         T* data() const { return m_elements; }
         T& operator[](size_t index) LIFETIME_BOUND { return m_elements[index]; }
@@ -312,7 +287,6 @@ private:
         ValueSetID listedMembersOfWhole;
         ValueSetID allButCoverable;
         uint64_t lowMembersNotCoverable { 0 };
-        // What the covered node held when the wave began. Whoever would send it no more than that sends nothing.
         uint64_t lowMembersHeldByCoveredNode { 0 };
         uint32_t setHeldByCoveredNode { 0 };
         BitVector flowsIntoCovered;
@@ -379,7 +353,6 @@ private:
     void runWave(Team&);
     void giveBackLargeBuffers();
 
-    // In front of the first look at the rows or the links of a node. See makePagesWritable().
     ALWAYS_INLINE void willUse(uint32_t node) const
     {
         uint32_t page = node >> m_shiftFromNodeToPage;
@@ -394,7 +367,6 @@ private:
     bool addEdgeIfAbsent(ValueFlowEdge);
     void willHaveManyPredecessors(Shard&, uint32_t node);
     bool isConstant(uint32_t node) const { return m_isConstant[node / 64].load(std::memory_order_relaxed) >> node % 64 & 1; }
-    // The shard whose thread adds the edge.
     unsigned shardThatKeeps(ValueFlowEdge edge) const { return shardOf(isConstant(edge.from.index()) ? edge.to.index() : edge.from.index()); }
     void countRecentEdgesAsOlder();
     void layPredecessorsInRows();
@@ -426,9 +398,7 @@ private:
     ArrayByNode<uint32_t> m_firstPredecessorInRows;
     ArrayByNode<uint32_t> m_predecessorsInRows;
     ArrayByNode<ValueSetID> m_value;
-    // A bit for the nodes whose rows fill one page, and whose links fill one.
     mutable Vector<std::atomic<uint64_t>> m_arePagesWritable;
-    // A bit a node.
     Vector<std::atomic<uint64_t>> m_isConstant;
     Vector<std::atomic<uint64_t>> m_areEdgesOutOfConstantListed;
     unsigned m_shiftFromNodeToPage { 0 };
@@ -456,7 +426,6 @@ private:
     Vector<ValueFlowEdge> m_edgesOfSolve;
     Vector<Vector<uint32_t>> m_indicesBySource;
     Vector<Vector<ValueFlowEdge>> m_edgesByTarget;
-    // By part: the edges into covered nodes that send nothing.
     Vector<Vector<ValueFlowEdge>> m_edgesOnlyToLink;
 
     Vector<std::unique_ptr<Shard>> m_shards;

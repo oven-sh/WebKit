@@ -87,7 +87,6 @@ FlowScopeFrame& FlowScopeOwnerAnalysis::frameOf(const FlowScopeEntry& entry)
     return *frame;
 }
 
-// A handler edge can leave the common dominator before any of its values, so only a block whose terminator dominates both points has run to its end.
 ProgramPoint FlowScopeOwnerAnalysis::meet(FlowScopeFrame& frame, ProgramPoint first, ProgramPoint second)
 {
     if (first.block == second.block)
@@ -112,7 +111,6 @@ FlowScopeEntry FlowScopeOwnerAnalysis::entryInCaller(const FlowScopeEntry& entry
     return entryAt(*frame.caller, frame.call);
 }
 
-// Every run that passes the later point has passed the earlier one. A point in a frame that has returned was passed when it lies on every way to a return.
 bool FlowScopeOwnerAnalysis::isPassedBefore(const FlowScopeEntry& earlier, const FlowScopeEntry& later)
 {
     FlowScopeFrame& frame = frameOf(earlier);
@@ -147,7 +145,6 @@ FlowScopeEntry FlowScopeOwnerAnalysis::meet(const FlowScopeEntry& first, const F
     return meet(firstDepth >= secondDepth ? entryInCaller(first) : first, secondDepth >= firstDepth ? entryInCaller(second) : second);
 }
 
-// Both entries are bounds of one event. Either answer is right, the later one says more.
 FlowScopeEntry FlowScopeOwnerAnalysis::laterOf(const FlowScopeEntry& first, const FlowScopeEntry& second)
 {
     if (first.state == FlowScopeEntryState::Never || second.state == FlowScopeEntryState::Never)
@@ -208,7 +205,6 @@ FlowScopeEntry FlowScopeOwnerAnalysis::entryByCallsOf(FunctionID function)
     for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
         FlowScopeFrame* frame = findFrame(call.caller);
         entry = meet(entry, frame ? entryAt(*frame, call.site) : laterOf(entryOf(call.caller), call.subject ? entryByStoresTo(call.subject) : unknownScopeEntry));
-        // Nothing lies below: a function of the library has thousands of callers, and the first that has nothing to do with this owner decides.
         if (entry.state == FlowScopeEntryState::Unknown)
             break;
     }
@@ -271,7 +267,6 @@ FlowScopeEntry FlowScopeOwnerAnalysis::entryBySubjectOf(FunctionID function, Val
     return variable ? entryByStoresTo(variable) : unknownScopeEntry;
 }
 
-// A call in the body may enter a closure over an environment of an earlier activation or iteration, whose own store has not run. A variable is one location.
 FlowScopeEntry FlowScopeOwnerAnalysis::entryOf(const FlowScopeLocationAccess& access)
 {
     if (FlowScopeFrame* frame = findFrame(access.function))
@@ -334,7 +329,6 @@ auto FlowScopeOwnerAnalysis::parameterReceiving(FlowScopeFrame& frame, const Use
     return FollowedValue { callee, parameters[*argumentIndex] };
 }
 
-// The definition of an own property of a function object runs no code and hands the object to nobody.
 bool FlowScopeOwnerAnalysis::isReceiverOfDefinition(const FlowScopeFrame& frame, const Use& use) const
 {
     return use.kind == Use::Kind::Operand && use.operandIndex == OperandIndex::PropDefine::object && frame.body.at(use.user).opcode == Opcode::PropDefine;
@@ -405,7 +399,6 @@ void FlowScopeOwnerAnalysis::collectPerIterationAllocations()
     }
 }
 
-// A location can hold a closure over an earlier environment of a cycle, and a store that dominates the read of the location has run only for the latest one.
 auto FlowScopeOwnerAnalysis::storedClosureEntryOf(FlowScopeFrame& frame, ValueID closure) -> StoredClosureEntry
 {
     FlowScopeEntry creation = entryAt(frame, closure);
@@ -422,7 +415,6 @@ static bool isOperandOfMethodDefinition(const Function& function, const Use& use
     return use.kind == Use::Kind::Operand && use.operandIndex == operandIndex && function.at(use.user).opcode == Opcode::DefineMethod;
 }
 
-// The closure that the value is, when each operation between them hands its operand on. Every other name of the object then comes from a use of that closure.
 static std::optional<ValueID> findForwardedClosure(const Function& function, ValueID value)
 {
     ValueID source = forwardedSourceOf(function, value);
@@ -454,7 +446,6 @@ void FlowScopeOwnerAnalysis::followClosure(FlowScopeFrame& creator, ValueID clos
                 recordDefinition(frame, use.user, function);
                 continue;
             }
-            // The definition of a method runs no code, and the method can be entered only through the class object that holds it.
             if (isOperandOfMethodDefinition(frame.body, use, OperandIndex::DefineMethod::classObject))
                 continue;
             if (isOperandOfMethodDefinition(frame.body, use, OperandIndex::DefineMethod::function)) {
@@ -540,7 +531,6 @@ void FlowScopeOwnerAnalysis::recordReadsOfStoredFunctions()
             lower(m_functionsTakenOut[index].function, laterOf(m_functionsTakenOut[index].store, entry));
     };
 
-    // A library's module exports hundreds of functions and is required in thousands of places. So the readers of its value are listed once for the module, not once for each variable.
     struct Run {
         ModuleID exporter;
         uint32_t first;
@@ -597,7 +587,6 @@ void FlowScopeOwnerAnalysis::runFixpoint()
     }
 }
 
-// A function is entered only by a call that flow has linked, after the caller was entered. The entries so far say when somebody can first reach the function.
 void FlowScopeOwnerAnalysis::refineEntriesByCalls()
 {
     m_entriesByUse = m_entries;
@@ -607,7 +596,6 @@ void FlowScopeOwnerAnalysis::refineEntriesByCalls()
         entry.value = neverScopeEntry;
         m_queue.append(entry.key);
     }
-    // First come, first served, and nobody waits twice.
     AOT::sort(m_queue, std::greater { });
     HashSet<FunctionID> waiting;
     for (FunctionID function : m_queue)

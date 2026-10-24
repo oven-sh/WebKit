@@ -33,22 +33,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v17 = Call v11, -
     Return
 }
-function f1 name="inner1" kind=Arrow results=[{type=anything}] {
+# REPEAT: i = 1..4
+function f%(i) name="inner%(i)" kind=Arrow results=[{type=anything}] {
   b0():
     Return
 }
-function f2 name="inner2" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-function f3 name="inner3" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-function f4 name="inner4" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
+# END REPEAT
 function f5 name="watch" kind=Plain parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = Builtin builtin=WeakRef

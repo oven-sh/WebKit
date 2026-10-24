@@ -349,11 +349,6 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
     SlotPlanContext context { program, inputs, build, sizeClasses, rows, storage.span(), build.recordedOptions().useWideReferences(), inheritedRows };
 
     SlotUses uses = collectSlotUses(context);
-#if ASSERT_ENABLED
-    bool dumpsPlan = build.options().logging.dumpedPass == PassID::PlanSlots;
-    if (dumpsPlan)
-        dumpFillEstimates(WTF::dataFile(), program, uses);
-#endif
     shareUsesOfInheritedRows(inheritedRows, uses);
     context.layoutsMadeSeldom = findLayoutsMadeSeldom(context, uses);
     if (!finishStep("collectSlotUses"_s))
@@ -378,10 +373,6 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
     parts.formsExpectedOfNames = FormsExpectedOfNames(program, parts.layouts.span(), inputs.heat);
 
     SlotPlan plan(WTF::move(parts));
-#if ASSERT_ENABLED
-    if (dumpsPlan)
-        plan.dump(WTF::dataFile(), program);
-#endif
     return plan;
 }
 

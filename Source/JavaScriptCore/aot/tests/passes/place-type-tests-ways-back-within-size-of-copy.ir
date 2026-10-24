@@ -19,26 +19,12 @@ function f0 name="sixValuesLiveOverFiveLoops" flags=[IsChecked] parameters=[{typ
     v7 = PropGet v0 key="e"
     v8 = PropGet v0 key="f"
     Jump -> next b1()
-  b1():
+# REPEAT: i = 1..5
+  b%(i)():
     LoopHint
-    v10 = Call v1
-    Branch v2 -> taken b1(), notTaken b2()
-  b2():
-    LoopHint
-    v12 = Call v1
-    Branch v2 -> taken b2(), notTaken b3()
-  b3():
-    LoopHint
-    v14 = Call v1
-    Branch v2 -> taken b3(), notTaken b4()
-  b4():
-    LoopHint
-    v16 = Call v1
-    Branch v2 -> taken b4(), notTaken b5()
-  b5():
-    LoopHint
-    v18 = Call v1
-    Branch v2 -> taken b5(), notTaken b6()
+    v%(i*2+8) = Call v1
+    Branch v2 -> taken b%(i)(), notTaken b%(i+1)()
+# END REPEAT
   b6():
     v19 = Sub v3, v4
     v20 = Sub v19, v5

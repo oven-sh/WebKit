@@ -8,124 +8,30 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="integers" parameters=[{type=string}, {type=i32}] results=[{type=int}] {
   b0(v0: string, v1: i32):
     v2 = StringRangeCodeUnitOrMinusOne v0, -, -, v1
-    v3 = Integer integer=97
-    v4 = StrictEq v2, v3 form=Integers
-    TestAndBranch v4 -> taken b1(), notTaken b2()
-  b1():
-    v5 = Integer integer=1
-    Return v5
-  b2():
-    v6 = Integer integer=98
-    v7 = StrictEq v2, v6 form=Integers
-    TestAndBranch v7 -> taken b3(), notTaken b4()
-  b3():
-    v8 = Integer integer=2
-    Return v8
-  b4():
-    v9 = Integer integer=99
-    v10 = StrictEq v2, v9 form=Integers
-    TestAndBranch v10 -> taken b5(), notTaken b6()
-  b5():
-    v11 = Integer integer=3
-    Return v11
-  b6():
-    v12 = Integer integer=100
-    v13 = StrictEq v2, v12 form=Integers
-    TestAndBranch v13 -> taken b7(), notTaken b8()
-  b7():
-    v14 = Integer integer=4
-    Return v14
-  b8():
-    v15 = Integer integer=101
-    v16 = StrictEq v2, v15 form=Integers
-    TestAndBranch v16 -> taken b9(), notTaken b10()
-  b9():
-    v17 = Integer integer=5
-    Return v17
-  b10():
-    v18 = Integer integer=102
-    v19 = StrictEq v2, v18 form=Integers
-    TestAndBranch v19 -> taken b11(), notTaken b12()
-  b11():
-    v20 = Integer integer=6
-    Return v20
-  b12():
-    v21 = Integer integer=103
-    v22 = StrictEq v2, v21 form=Integers
-    TestAndBranch v22 -> taken b13(), notTaken b14()
-  b13():
-    v23 = Integer integer=7
-    Return v23
-  b14():
-    v24 = Integer integer=104
-    v25 = StrictEq v2, v24 form=Integers
-    TestAndBranch v25 -> taken b15(), notTaken b16()
-  b15():
-    v26 = Integer integer=8
-    Return v26
-  b16():
+# REPEAT: i = 1..8
+    v%(i*3) = Integer integer=%(i+96)
+    v%(i*3+1) = StrictEq v2, v%(i*3) form=Integers
+    TestAndBranch v%(i*3+1) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
+    v%(i*3+2) = Integer integer=%(i)
+    Return v%(i*3+2)
+  b%(i*2)():
+# END REPEAT
     v27 = Integer integer=0
     Return v27
 }
 function f1 name="numbers" parameters=[{type=string}, {type=i32}] results=[{type=int}] {
   b0(v0: string, v1: i32):
     v2 = StringRangeCodeUnitOrNaN v0, -, -, v1
-    v3 = Integer integer=97
-    v4 = StrictEq v2, v3 form=Numbers
-    TestAndBranch v4 -> taken b1(), notTaken b2()
-  b1():
-    v5 = Integer integer=1
-    Return v5
-  b2():
-    v6 = Integer integer=98
-    v7 = StrictEq v2, v6 form=Numbers
-    TestAndBranch v7 -> taken b3(), notTaken b4()
-  b3():
-    v8 = Integer integer=2
-    Return v8
-  b4():
-    v9 = Integer integer=99
-    v10 = StrictEq v2, v9 form=Numbers
-    TestAndBranch v10 -> taken b5(), notTaken b6()
-  b5():
-    v11 = Integer integer=3
-    Return v11
-  b6():
-    v12 = Integer integer=100
-    v13 = StrictEq v2, v12 form=Numbers
-    TestAndBranch v13 -> taken b7(), notTaken b8()
-  b7():
-    v14 = Integer integer=4
-    Return v14
-  b8():
-    v15 = Integer integer=101
-    v16 = StrictEq v2, v15 form=Numbers
-    TestAndBranch v16 -> taken b9(), notTaken b10()
-  b9():
-    v17 = Integer integer=5
-    Return v17
-  b10():
-    v18 = Integer integer=102
-    v19 = StrictEq v2, v18 form=Numbers
-    TestAndBranch v19 -> taken b11(), notTaken b12()
-  b11():
-    v20 = Integer integer=6
-    Return v20
-  b12():
-    v21 = Integer integer=103
-    v22 = StrictEq v2, v21 form=Numbers
-    TestAndBranch v22 -> taken b13(), notTaken b14()
-  b13():
-    v23 = Integer integer=7
-    Return v23
-  b14():
-    v24 = Integer integer=104
-    v25 = StrictEq v2, v24 form=Numbers
-    TestAndBranch v25 -> taken b15(), notTaken b16()
-  b15():
-    v26 = Integer integer=8
-    Return v26
-  b16():
+# REPEAT: i = 1..8
+    v%(i*3) = Integer integer=%(i+96)
+    v%(i*3+1) = StrictEq v2, v%(i*3) form=Numbers
+    TestAndBranch v%(i*3+1) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
+    v%(i*3+2) = Integer integer=%(i)
+    Return v%(i*3+2)
+  b%(i*2)():
+# END REPEAT
     v27 = Integer integer=0
     Return v27
 }

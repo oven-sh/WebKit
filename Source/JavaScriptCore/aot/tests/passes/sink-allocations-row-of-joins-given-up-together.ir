@@ -21,83 +21,15 @@ function f0 name="aRowOfMergeBlocksHandsTheObjectOn" parameters=[{type=anything}
     Jump -> next b3(v5)
   b2():
     v7 = NewObject -, v1 layout=L0 fields=[0]
-    Jump -> next b3(v7)
-  b3(v8: L0):
-    Branch v2 -> taken b4(), notTaken b5()
-  b4():
-    v9 = Call v0
-    Jump -> next b6(v8)
-  b5():
-    Jump -> next b6(v8)
-  b6(v10: L0):
-    Branch v2 -> taken b7(), notTaken b8()
-  b7():
-    v11 = Call v0
-    Jump -> next b9(v10)
-  b8():
-    Jump -> next b9(v10)
-  b9(v12: L0):
-    Branch v2 -> taken b10(), notTaken b11()
-  b10():
-    v13 = Call v0
-    Jump -> next b12(v12)
-  b11():
-    Jump -> next b12(v12)
-  b12(v14: L0):
-    Branch v2 -> taken b13(), notTaken b14()
-  b13():
-    v15 = Call v0
-    Jump -> next b15(v14)
-  b14():
-    Jump -> next b15(v14)
-  b15(v16: L0):
-    Branch v2 -> taken b16(), notTaken b17()
-  b16():
-    v17 = Call v0
-    Jump -> next b18(v16)
-  b17():
-    Jump -> next b18(v16)
-  b18(v18: L0):
-    Branch v2 -> taken b19(), notTaken b20()
-  b19():
-    v19 = Call v0
-    Jump -> next b21(v18)
-  b20():
-    Jump -> next b21(v18)
-  b21(v20: L0):
-    Branch v2 -> taken b22(), notTaken b23()
-  b22():
-    v21 = Call v0
-    Jump -> next b24(v20)
-  b23():
-    Jump -> next b24(v20)
-  b24(v22: L0):
-    Branch v2 -> taken b25(), notTaken b26()
-  b25():
-    v23 = Call v0
-    Jump -> next b27(v22)
-  b26():
-    Jump -> next b27(v22)
-  b27(v24: L0):
-    Branch v2 -> taken b28(), notTaken b29()
-  b28():
-    v25 = Call v0
-    Jump -> next b30(v24)
-  b29():
-    Jump -> next b30(v24)
-  b30(v26: L0):
-    Branch v2 -> taken b31(), notTaken b32()
-  b31():
-    v27 = Call v0
-    Jump -> next b33(v26)
-  b32():
-    Jump -> next b33(v26)
-  b33(v28: L0):
-    Branch v2 -> taken b34(), notTaken b35()
-  b34():
-    v29 = Call v0
-    Jump -> next b36(v28)
-  b35():
+# REPEAT: i = 0..10; a = 7 8 10 12 14 16 18 20 22 24 26
+    Jump -> next b%(i*3+3)(v%(a))
+  b%(i*3+3)(v%(i*2+8): L0):
+    Branch v2 -> taken b%(i*3+4)(), notTaken b%(i*3+5)()
+  b%(i*3+4)():
+    v%(i*2+9) = Call v0
+    Jump -> next b%(i*3+6)(v%(i*2+8))
+  b%(i*3+5)():
+# END REPEAT
     Jump -> next b36(v28)
   b36(v30: L0):
     v31 = Call v1, -, v30

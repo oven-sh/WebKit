@@ -12,42 +12,14 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequir
 function f0 name="finishedByParser" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
-  b1() frequency=Rare:
-    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    v3 = JSONObjectBegin layout=L0
-    v4 = Undefined
-    v5 = JSONObjectFinish v3, v2, v4 layout=L0
-    Return v2
-  b2() frequency=Rare:
-    v6 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    v7 = JSONObjectBegin layout=L0
-    v8 = Undefined
-    v9 = JSONObjectFinish v7, v6, v8 layout=L0
-    Return v6
-  b3() frequency=Rare:
-    v10 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    v11 = JSONObjectBegin layout=L0
-    v12 = Undefined
-    v13 = JSONObjectFinish v11, v10, v12 layout=L0
-    Return v10
-  b4() frequency=Rare:
-    v14 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    v15 = JSONObjectBegin layout=L0
-    v16 = Undefined
-    v17 = JSONObjectFinish v15, v14, v16 layout=L0
-    Return v14
-  b5() frequency=Rare:
-    v18 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    v19 = JSONObjectBegin layout=L0
-    v20 = Undefined
-    v21 = JSONObjectFinish v19, v18, v20 layout=L0
-    Return v18
-  b6() frequency=Rare:
-    v22 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    v23 = JSONObjectBegin layout=L0
-    v24 = Undefined
-    v25 = JSONObjectFinish v23, v22, v24 layout=L0
-    Return v22
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*4-2) = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v%(i*4-1) = JSONObjectBegin layout=L0
+    v%(i*4) = Undefined
+    v%(i*4+1) = JSONObjectFinish v%(i*4-1), v%(i*4-2), v%(i*4) layout=L0
+    Return v%(i*4-2)
+# END REPEAT
   b7():
     Return v1
 }
@@ -59,24 +31,11 @@ function f0 name="finishedByParser" parameters=[{type=number}, {type=anything}] 
 function f1 name="notFinished" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
-  b1() frequency=Rare:
-    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    Return v2
-  b2() frequency=Rare:
-    v3 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    Return v3
-  b3() frequency=Rare:
-    v4 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    Return v4
-  b4() frequency=Rare:
-    v5 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    Return v5
-  b5() frequency=Rare:
-    v6 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    Return v6
-  b6() frequency=Rare:
-    v7 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
-    Return v7
+# REPEAT: i = 2..7
+  b%(i-1)() frequency=Rare:
+    v%(i) = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    Return v%(i)
+# END REPEAT
   b7():
     Return v1
 }

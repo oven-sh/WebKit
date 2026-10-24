@@ -19,7 +19,6 @@ void runValueFlowWhyTestCommand(TestCommandContext&);
 void runValueFlowResultsTestCommand(TestCommandContext&);
 void runValueFlowApplyTestCommand(TestCommandContext&);
 
-// What every valueflow-* command runs first: GuardTaintedPositions, as Pipeline::runFlowStage() does. `unguarded` skips it.
 void prepareForFlow(TestCommandContext&);
 
 } } } // namespace JSC::AOT::Typed

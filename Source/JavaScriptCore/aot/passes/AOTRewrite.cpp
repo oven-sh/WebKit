@@ -21,6 +21,15 @@ IRBuilder& Rewrite::builder()
     return *m_builder;
 }
 
+void* Rewrite::allocateInNewRoom(size_t size)
+{
+    size_t sizeOfRoom = std::max<size_t>(size, 8 * KB);
+    m_furtherRooms.append(fastMalloc(sizeOfRoom));
+    m_free = static_cast<std::byte*>(m_furtherRooms.last()) + size;
+    m_endOfRoom = static_cast<std::byte*>(m_furtherRooms.last()) + sizeOfRoom;
+    return m_furtherRooms.last();
+}
+
 Block& Rewrite::edit(BlockID id, OptionSet<BlockEdit> edits)
 {
     m_didEditEdges |= edits.containsAny({ BlockEdit::Edges, BlockEdit::Rest });
@@ -49,8 +58,11 @@ void Rewrite::become(ValueID id, Value&& replacement)
 
 void Rewrite::erase(BlockID block, ValueID id)
 {
-    m_erasedValues.set(id.index());
-    m_blocksOfErasedValues.appendIfNotContains(block);
+    if (m_blocksOfErasedValues.isEmpty())
+        m_erasedValues.ensureSize(function.values.size());
+    m_erasedValues.quickSet(id.index());
+    if (m_blocksOfErasedValues.isEmpty() || m_blocksOfErasedValues.last() != block)
+        m_blocksOfErasedValues.append(block);
 }
 
 void Rewrite::removeParameter(BlockID block, uint32_t parameterIndex)
@@ -75,9 +87,10 @@ PassOutcome Rewrite::commit()
     for (unsigned rule = 0; !m_edits.isEmpty() && rule <= m_rule; ++rule) {
         for (Edit& edit : m_edits) {
             if (edit.rule == rule)
-                edit.run();
+                edit.runAndDestroy(edit.functor);
         }
     }
+    m_edits.shrink(0);
     if (function.numberOfEdits() == m_numberOfEditsAtStart)
         return PassOutcome::Unchanged;
 
@@ -85,11 +98,13 @@ PassOutcome Rewrite::commit()
     for (BlockID block : m_blocksOfErasedValues) {
         const BlockValues& values = at(block).values;
         BitVector indexes;
+        // A block that is listed twice has nothing left to erase the second time.
         for (size_t position = 0; position < values.size(); ++position) {
             if (m_erasedValues.get(values[position].index()))
                 indexes.set(position);
         }
-        builder().eraseValues(block, indexes);
+        if (!indexes.isEmpty())
+            builder().eraseValues(block, indexes);
     }
     for (auto [block, parameterIndex] : m_removedParameters) {
         BitVector indexes;

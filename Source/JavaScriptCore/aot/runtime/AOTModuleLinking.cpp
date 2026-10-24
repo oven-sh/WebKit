@@ -616,8 +616,12 @@ void Modules::fillCapturedExports(ModuleID module)
                 ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found);
                 continue;
             }
-        } else if (hasCapturedExport(module, name))
-            continue;
+        } else {
+            bool hasExport = hasCapturedExport(module, name);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (hasExport)
+                continue;
+        }
         if (syntheticExport.absentIsUndefined) {
             if (syntheticExport.hasVariable)
                 ProgramStatics::writeVariable(m_instance, syntheticExport.variable, jsUndefined());

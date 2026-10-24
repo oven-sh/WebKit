@@ -48,21 +48,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b5():
     v21 = CallDirect v10, v4 function=f1
     PutModuleVariable v10 variable=g0
-    Jump -> next b6()
-  b6():
+# REPEAT: i = 6..10
+    Jump -> next b%(i)()
+  b%(i)():
     LoopHint
-    Jump -> next b7()
-  b7():
-    LoopHint
-    Jump -> next b8()
-  b8():
-    LoopHint
-    Jump -> next b9()
-  b9():
-    LoopHint
-    Jump -> next b10()
-  b10():
-    LoopHint
+# END REPEAT
     v28 = GetModuleVariable variable=g0
     v29 = PropGet v28 key="shared"
     Jump -> next b11()
@@ -72,59 +62,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v32 = PropGet v10 key="sometimes1"
     v33 = PropGet v10 key="sometimes2"
     v34 = PropGet v10 key="sometimes3"
-    v35 = Call v0
-    v36 = ToBoolean v35
-    Branch v36 -> taken b11(), notTaken b12()
-  b12():
-    v37 = Call v0
-    v38 = ToBoolean v37
-    Branch v38 -> taken b10(), notTaken b13()
-  b13():
-    v39 = Call v0
-    v40 = ToBoolean v39
-    Branch v40 -> taken b9(), notTaken b14()
-  b14():
-    v41 = Call v0
-    v42 = ToBoolean v41
-    Branch v42 -> taken b8(), notTaken b15()
-  b15():
-    v43 = Call v0
-    v44 = ToBoolean v43
-    Branch v44 -> taken b7(), notTaken b16()
-  b16():
-    v45 = Call v0
-    v46 = ToBoolean v45
-    Branch v46 -> taken b6(), notTaken b17()
-  b17():
+# REPEAT: i = 12..17
+    v%(i*2+11) = Call v0
+    v%(i*2+12) = ToBoolean v%(i*2+11)
+    Branch v%(i*2+12) -> taken b%(i*-1+23)(), notTaken b%(i)()
+  b%(i)():
+# END REPEAT
     Return
 }
 function f1 name="fill" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     PropSet v0, v1 key="shared"
-    PropSet v0, v1 key="optional0"
-    PropSet v0, v1 key="optional1"
-    PropSet v0, v1 key="optional2"
-    PropSet v0, v1 key="optional3"
-    PropSet v0, v1 key="optional4"
-    PropSet v0, v1 key="optional5"
-    PropSet v0, v1 key="optional6"
-    PropSet v0, v1 key="optional7"
-    PropSet v0, v1 key="optional8"
-    PropSet v0, v1 key="optional9"
-    PropSet v0, v1 key="optional10"
-    PropSet v0, v1 key="optional11"
-    PropSet v0, v1 key="optional12"
-    PropSet v0, v1 key="optional13"
-    PropSet v0, v1 key="optional14"
-    PropSet v0, v1 key="optional15"
-    PropSet v0, v1 key="optional16"
-    PropSet v0, v1 key="optional17"
-    PropSet v0, v1 key="optional18"
-    PropSet v0, v1 key="optional19"
-    PropSet v0, v1 key="optional20"
-    PropSet v0, v1 key="optional21"
-    PropSet v0, v1 key="optional22"
-    PropSet v0, v1 key="optional23"
+# REPEAT: i = 0..23
+    PropSet v0, v1 key="optional%(i)"
+# END REPEAT
     Return
 }
 # CHECK: L1 CompiledObject size=96

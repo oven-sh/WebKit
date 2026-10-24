@@ -47,29 +47,13 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr unsigned variablesPerTask = 256;
 
-// Only the start of a location puts `absent` into its set. No read sees it where a store comes before every read.
 static DeadZone deadZoneOf(const LocationFlow& flow)
 {
     return flow.initialization == InitializationState::Unknown ? DeadZone::MayBeObserved : DeadZone::IsNeverObserved;
 }
 
-// For a position that no node of its own stands for.
-static FlowPositionUpdate updateFrom(const ValueFlowPositionResult& result, const Type& family, TypeArena& types, ValueFlowPositionCounts& counts)
-{
-    FlowPositionUpdate update;
-    update.isProven = result.proof == ValueFlowProof::Proven;
-    if (family.hasObjects() && result.proof != ValueFlowProof::NothingArrives)
-        (update.isProven ? counts.provenPositions : counts.unprovenPositions).fetch_add(1, std::memory_order_relaxed);
-    if (!update.isProven || !result.narrowed)
-        return update;
-    counts.narrowedPositions.fetch_add(1, std::memory_order_relaxed);
-    update.type = types.intern(*result.narrowed);
-    return update;
-}
-
 namespace {
 
-// A set knows numbers by kind alone: an integer is any integer, and the sum of two numbers is any number.
 class NumbersOfPositions final : public ValueFlowNumbersOfValues {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NumbersOfPositions);
 public:
@@ -79,12 +63,10 @@ public:
     ValueFlowNumbers numbersOf(FunctionID, ValueID) const final;
     const ValueFlowNumbers* ofValuesOfMap(ValueFlowObjectID) const final;
 
-    // None where something that nobody has looked at may hand over a number.
     const ValueFlowNumbers* ofVariable(VariableID id) const { return find(id.index()); }
     const ValueFlowNumbers* ofEnvironmentField(LayoutID layout, uint32_t field) const { return find(m_firstField[layout.index()] + field); }
     const ValueFlowNumbers* ofEntryParameter(FunctionID function, uint32_t index) const { return find(m_firstEntryParameter[function.index()] + index); }
     const ValueFlowNumbers* ofResult(FunctionID function, uint32_t index) const { return find(m_firstResult[function.index()] + index); }
-    // What a call by value answers. None where something else than a function of the program may be called.
     std::optional<ValueFlowNumbers> ofCall(FunctionID caller, ValueID call) const;
 
 private:
@@ -94,11 +76,9 @@ private:
 
         uint32_t position;
         FunctionID function;
-        // None for something that nobody has looked at.
         ValueID value;
     };
 
-    // A call whose callees are closures alone, with the set of them.
     struct CallByValue {
         auto order() const { return std::tuple { caller, site, callees.index() }; }
         friend bool operator==(const CallByValue&, const CallByValue&) = default;
@@ -108,7 +88,6 @@ private:
         ValueSetID callees;
     };
 
-    // A call of Map.prototype.get and of nothing else, whose receiver is no other object than these Maps.
     struct ReadOfMaps {
         auto order() const { return std::tuple { caller, site }; }
 
@@ -117,7 +96,6 @@ private:
         ValueSetID maps;
     };
 
-    // What an edge hands to a parameter of a block. None for something that no value of the function stands for.
     struct PassedValue {
         auto order() const { return std::tuple { parameter, value }; }
 
@@ -127,7 +105,6 @@ private:
 
     struct Evaluation {
         TypeArena& arena;
-        // Where given, it takes the followed positions whose numbers the evaluation reads.
         Vector<uint32_t>* positionsRead { nullptr };
         unsigned stepsLeft { maxSteps };
     };
@@ -158,17 +135,14 @@ private:
         uint32_t position;
         uint32_t firstWriter;
         uint32_t endOfWriters;
-        // In the list of its task: the followed positions that its writers are computed from.
         uint32_t firstPositionRead { 0 };
         uint32_t endOfPositionsRead { 0 };
     };
 
-    // The writers of one function with a loop, in m_writersInLoopingFunctions.
     struct LoopingFunction {
         uint32_t firstWriter;
         uint32_t endOfWriters;
         bool isTyped { false };
-        // The followed positions that the last typing has asked about, ascending. A typing that gets the same answers asks the same questions and finds the same types.
         Vector<uint32_t> positionsAsked { };
     };
 
@@ -200,50 +174,37 @@ private:
     bool runRound();
 
     const ValueFlowResultInputs& m_inputs;
-    // The variables, then the fields of the environments, the entry parameters, the results and the Maps.
     Vector<uint32_t> m_firstField;
     Vector<uint32_t> m_firstEntryParameter;
     Vector<uint32_t> m_firstResult;
     uint32_t m_firstMap { 0 };
-    // The Maps that the program allocates and that only followed code gets hold of, ascending.
     Vector<ValueFlowObjectID> m_maps;
     Vector<Writer> m_writersOfMaps;
-    // By Map: the numbers in the constants out of which values of the Map are taken.
     Vector<ValueFlowNumbers> m_numbersInConstantsOfMaps;
     Vector<ReadOfMaps> m_readsOfMaps;
     Vector<ValueFlowNumbers> m_numbers;
     BitVector m_isFollowed;
     Vector<CallByValue> m_calls;
-    // By function. The threads of a loop set them: a rule, an accessor, a protocol or the code of a built-in enters the function.
     Vector<uint8_t> m_hasOtherEntry;
     bool m_someCallEntersAnything { false };
-    // By function. Empty for a function without a check.
     Vector<BitVector> m_restsOnCheck;
-    // By function, in the order of the parameters: what arrives at the parameters of blocks that rest on a check.
     Vector<Vector<PassedValue>> m_passedValues;
-    // Of the positions that are followed: no object and no placeholder arrives, and which kinds of primitives do.
     BitVector m_holdsPrimitivesAlone;
     Vector<uint16_t> m_primitives;
     Vector<Writer> m_writers;
     Vector<FollowedPosition> m_followed;
-    // By writer: what the rules of the IR say about the value, in a function with a loop.
     Vector<ValueFlowNumbers> m_numbersByRules;
-    // The writers in functions with a loop, in the order of the functions.
     Vector<uint32_t> m_writersInLoopingFunctions;
     Vector<LoopingFunction> m_loopingFunctions;
-    // By task of a round. Empty until the first round.
     Vector<Vector<uint32_t>> m_positionsReadInTask;
-    // By position: the last round has found other numbers than the round before it, and some round has since the last typing.
     BitVector m_hasMovedInLastRound;
     BitVector m_hasMovedSinceTyping;
-    // By writer: the last typing has found other numbers than the typing before it, and no round has looked at them.
     Vector<uint8_t> m_rulesHaveMoved;
     bool m_someRulesHaveMoved { false };
     uint64_t m_numberOfRounds { 0 };
     uint64_t m_numberOfPositionsLookedAt { 0 };
     uint64_t m_numberOfTypings { 0 };
     uint64_t m_numberOfFunctionsTyped { 0 };
-    // The variables, the fields of environments and the results that are followed.
     HashMap<const DeclaredType*, uint32_t> m_positionsOfTypes;
     BitVector m_mapsWithOtherWriter;
 };
@@ -282,7 +243,6 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
     m_primitives = Vector<uint16_t>(FillWith { }, next, static_cast<uint16_t>(0));
 
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
-    // Neither asks for what the other finds.
     runTasksInParallel(inputs.loops(), {
         [&] {
             startFromTypes();
@@ -305,7 +265,6 @@ void NumbersOfPositions::followPositions(const FlowResultTables& tables)
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     choosePositions(tables);
     times.didFinish("numbers: positions chosen"_s);
-    // Which Maps are followed is noted behind the positions: the bits of the Maps share a word with those of the results.
     for (uint32_t index = 0; index < m_maps.size(); ++index) {
         if (!m_mapsWithOtherWriter.quickGet(index))
             m_isFollowed.quickSet(m_firstMap + index);
@@ -325,7 +284,6 @@ void NumbersOfPositions::followPositions(const FlowResultTables& tables)
     times.didFinish("numbers: rounds"_s);
 }
 
-// Nothing checks what enters a position that is only expected to hold its type.
 void NumbersOfPositions::startFromTypes()
 {
     const Program& program = m_inputs.program;
@@ -389,7 +347,6 @@ void NumbersOfPositions::findValuesThatRestOnChecks(const FlowResultTables& tabl
     });
 }
 
-// Every rule that enters a closure asks for the group of a set that holds it. A call whose callees are closures alone asks for the group of its callees and for no other, and hands its arguments to their parameters one by one.
 void NumbersOfPositions::collectCalls()
 {
     const ValueFlowSolver& solver = m_inputs.solver();
@@ -409,14 +366,12 @@ void NumbersOfPositions::collectCalls()
         bool callsClosuresAlone = false;
         std::array<ValueSetID, 2> calleeSets { ValueSets::nothing, ValueSets::nothing };
         if (!isMadeByRule && statement.kind == ValueFlowStatementKind::Operation && statement.function && statement.site && (statement.opcode == Opcode::Call || statement.opcode == Opcode::Construct)) {
-            // A node holds what the value is in the typed and in the generic version. A call of a primitive throws.
             const ValueFlowOperand& callee = m_inputs.bodies().operandsOf(statement)[0];
             calleeSets = { callee.node ? solver.valueOf(callee.node) : ValueSets::nothing, callee.constant ? callee.constant : ValueSets::nothing };
             callsClosuresAlone = std::ranges::all_of(calleeSets, [&](ValueSetID set) {
                 return sets.isSubset(set, closuresAndPrimitives);
             });
         }
-        // A mask on the callee may have kept a closure out of the group.
         auto holdsEveryCallee = [&](ValueSetID group) {
             bool holdsAll = true;
             for (ValueSetID set : calleeSets) {
@@ -428,7 +383,6 @@ void NumbersOfPositions::collectCalls()
         };
         ValueFlowCallKind ownKind = statement.opcode == Opcode::Construct ? ValueFlowCallKind::Construct : ValueFlowCallKind::Call;
         m_inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
-            // The statement of a group asks for the nodes of that group.
             if (made == id)
                 return;
             if (ValueSets::isComplement(key.set)) {
@@ -511,7 +465,6 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
         return flow.writers == WriterState::AllKnown && flow.storeNaming == StoreNaming::EveryStoreNamesLocation;
     };
 
-    // A store into a static field whose writers are known names the variable or is listed among the accesses through objects.
     auto everyStoreThroughObjectSpellsItsValue = [&](VariableID id) {
         return std::ranges::all_of(m_inputs.variablesOnObjects->accessesTo(id), [&](const ValueFlowAccessThroughObject& access) {
             return access.kind != ValueFlowAccessThroughObjectKind::Store || indexOfValueStoredIntoProperty(program.at(access.function).at(access.site).opcode);
@@ -540,7 +493,6 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
             && !m_inputs.hasEscaped(closure) && !m_inputs.isLost(closure);
         for (uint32_t parameter = 0; parameter < function.numberOfEntryParameters(); ++parameter) {
             EntryParameter kind = function.entryParameterKind(parameter);
-            // Only an operation that makes a closure, and a call that names the function, fill a capture.
             if (kind == EntryParameter::Capture || (kind == EntryParameter::Parameter && everyEntryIsCall))
                 follow(chooser, m_firstEntryParameter[index] + parameter, nodes.entryParameter(id, parameter));
         }
@@ -591,7 +543,6 @@ void NumbersOfPositions::collectWritersOf(FunctionID id, Vector<Writer>& writers
         const Terminator& terminator = block.terminator;
         if (terminator.kind == TerminatorKind::ReturnCall)
             add(m_firstResult[id.index()], terminator.callOperand());
-        // A return without a value answers undefined.
         if (terminator.kind == TerminatorKind::Return && terminator.valueOperand())
             add(m_firstResult[id.index()], terminator.valueOperand());
     }
@@ -614,7 +565,6 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
                 return;
             const Function& callee = program.at(id);
             uint32_t first = m_firstEntryParameter[id.index()] + callee.firstParameterIndex();
-            // A position that the call leaves empty gets undefined.
             for (uint32_t position = 0; position < std::min<size_t>(arguments.size(), callee.numberOfPositionalParameters()); ++position) {
                 if (m_isFollowed.quickGet(first + position))
                     writers.append({ first + position, call.caller, arguments[position] });
@@ -693,7 +643,6 @@ void NumbersOfPositions::findMaps()
         ValueFlowObjectID object(index);
         if (classOfFollowedContainer(m_inputs, object) != BuiltinClasses::Map || m_inputs.sets().contains(filledAsRecordsSay, object))
             return;
-        // A Map that another built-in answers was filled by that built-in, which spells out no value.
         if (m_inputs.program.at(universe.functionOf(object)).at(universe.siteOf(object)->value).opcode == Opcode::Construct)
             maps.append(object);
     });
@@ -707,7 +656,6 @@ std::optional<uint32_t> NumbersOfPositions::indexOfMap(ValueFlowObjectID object)
     return static_cast<uint32_t>(found - m_maps.begin());
 }
 
-// A value gets into a Map by a call of `set` that spells it out, or out of the pairs that Object.entries has made of objects that operations alone fill.
 BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
 {
     BitVector hasOtherWriter(m_maps.size());
@@ -745,7 +693,6 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
     };
     for (uint32_t index = 0; index < m_maps.size(); ++index) {
         ValueSetID objects = heap.writtenUnder(heap.writtenUnder(maker.of(m_maps[index]), entriesPairsOfMap), sourcesOfEntriesPair);
-        // What was copied onto an object lies on the objects that it was copied from.
         for (;;) {
             ValueSetID copied = heap.writtenUnder(objects, copiedFrom);
             if (sets.isSubset(copied, objects))
@@ -756,7 +703,6 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
             hasOtherWriter.quickSet(index);
             continue;
         }
-        // A string has strings under its indexes, and any other primitive has nothing.
         sets.forEachMember(maker.intersect(objects, universe.objects()), [&](ValueFlowObjectID object) {
             if (isFilledByOperationsAlone(object))
                 sources.append({ object, index });
@@ -833,11 +779,9 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
         });
     };
 
-    // A node holds what the value is in the typed and in the generic version.
     auto wholeValueOf = [&](Found& found, const ValueFlowOperand& operand) {
         return found.maker.unite(operand.node ? solver.valueOf(operand.node) : ValueSets::nothing, operand.constant ? operand.constant : ValueSets::nothing);
     };
-    // A call of a primitive throws, and so does the method on a receiver that is a primitive.
     ValueSetID getOrPrimitive = maker.unite(maker.of(universe.objectOf(builtins.canonicalID(Builtins::MapPrototypeGet))), universe.primitives());
     ValueSetID mapsOrPrimitives = maker.unite(allMaps, ValueSets::complement(universe.objects()));
 
@@ -868,7 +812,6 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
                     found.reads.append({ id, statement.site, found.maker.intersect(receivers, allMaps) });
             }
 
-            // What a call does to an operand its callees do: a function of the program with operations of its own, a built-in as its records say. An operand of a callee that nobody knows has escaped.
             if (effectRuleOf(statement.opcode) == EffectRule::Call)
                 continue;
             std::optional<uint8_t> receiver = receiverOf(statement.opcode);
@@ -881,12 +824,10 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
                 if (!storesIntoProperty && !operandUsesOf(statement.opcode, operand).containsAny(usesWritingObject))
                     continue;
                 ValueSetID written = heap.valueOf(found.maker, operands[operand]);
-                // A property of a Map lies beside what the Map holds.
                 if (storesIntoProperty) {
                     noteStoredIntoSources(found, written, id, operation.operand(*stored));
                     continue;
                 }
-                // The objects that properties are copied from are among the sources. The other two put no value on the object.
                 if (statement.opcode == Opcode::CopyDataProperties || statement.opcode == Opcode::SetLiteralPrototype || statement.opcode == Opcode::FinishObject)
                     continue;
                 noteOtherWriter(found, written);
@@ -933,7 +874,6 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
         }
     });
 
-    // The writers are sorted with all the others, the reads below, and the rest is the same in whatever order it is united.
     auto take = [&](Found& found) {
         m_writersOfMaps.appendVector(WTF::move(found.writers));
         m_readsOfMaps.appendVector(WTF::move(found.reads));
@@ -991,7 +931,6 @@ std::optional<ValueFlowNumbers> NumbersOfPositions::ofCall(FunctionID caller, Va
     for (const CallByValue& call : found) {
         m_inputs.sets().forEachMember(call.callees, [&](ValueFlowObjectID member) {
             FunctionID id = m_inputs.universe().closureFunction(member);
-            // The caller of a coroutine gets a promise or a generator.
             if (id && program.at(id).isUnsplitCoroutine())
                 return;
             numbers.unite(id && program.at(id).results.size() == 1 ? m_numbers[m_firstResult[id.index()]] : ValueFlowNumbers::any());
@@ -1000,7 +939,6 @@ std::optional<ValueFlowNumbers> NumbersOfPositions::ofCall(FunctionID caller, Va
     return numbers;
 }
 
-// The set of a position that is followed holds whatever arrives there, in the typed and in the generic versions of the functions. It says which kinds of primitives those are.
 Type NumbersOfPositions::typeAt(uint32_t position, Type&& known) const
 {
     if (m_holdsPrimitivesAlone.quickGet(position)) {
@@ -1014,7 +952,6 @@ Type NumbersOfPositions::typeAt(uint32_t position, Type&& known) const
     return WTF::move(known);
 }
 
-// Only the numbers of a followed position ever move.
 Type NumbersOfPositions::typeAt(Evaluation& evaluation, uint32_t position, Type&& known) const
 {
     if (evaluation.positionsRead && m_isFollowed.quickGet(position))
@@ -1049,7 +986,6 @@ std::optional<Type> NumbersOfPositions::typeOfCall(Evaluation& evaluation, Funct
     return answered;
 }
 
-// What the value is in the typed and in the generic version of its function.
 Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID valueID, unsigned depth) const
 {
     const Program& program = m_inputs.program;
@@ -1067,7 +1003,6 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
         return known;
     };
 
-    // What was found about a position holds for whoever reads it, with whatever operands.
     switch (value.opcode) {
     case Opcode::GetModuleVariable:
         return typeAt(evaluation, value.variable().index(), WTF::move(known));
@@ -1107,7 +1042,6 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
         Type operand = typeOf(evaluation, id, value.operand(0), depth - 1);
         if (!restsOnCheck)
             return withNumbersOf(operand);
-        // No cast lets the mark of a dead zone through.
         operand.primitives &= ~Primitive::Absent;
         return operand;
     }
@@ -1144,13 +1078,11 @@ void computeNumbersOfPositions(ValueFlowNumbersOfValues& prepared, const FlowRes
     static_cast<NumbersOfPositions&>(prepared).followPositions(tables);
 }
 
-// What a read of the position gives by its type alone.
 Type NumbersOfPositions::typeWithoutProof(const DeclaredType& declared) const
 {
     return m_inputs.program.at(m_inputs.program.provenTypeOf(declared));
 }
 
-// A counter of a loop is an integer by induction, and under a bound by the test that the loop ends on.
 bool NumbersOfPositions::typeWritersByRules(TypeArena& arena, FunctionID id, std::span<const uint32_t> writers, Vector<uint32_t>& positionsAsked)
 {
     const Program& program = m_inputs.program;
@@ -1195,7 +1127,6 @@ bool NumbersOfPositions::typeWritersByRules(TypeArena& arena, FunctionID id, std
     return hasFoundSomething;
 }
 
-// Answers whether it has found something.
 bool NumbersOfPositions::typeLoopsByRules()
 {
     bool verifies = m_inputs.build.options().verifiesAfterEveryPass;
@@ -1228,7 +1159,6 @@ bool NumbersOfPositions::typeLoopsByRules()
     return m_someRulesHaveMoved;
 }
 
-// Answers whether it has found something.
 bool NumbersOfPositions::runRound()
 {
     unsigned numberOfTasks = (m_followed.size() + positionsPerTask - 1) / positionsPerTask;
@@ -1299,7 +1229,6 @@ bool NumbersOfPositions::runRound()
     return hasFoundSomething;
 }
 
-// What is written by something other than an operation is not asked of the set.
 static void narrowEnvironmentFields(const ValueFlowResultInputs& inputs, LayoutID id, const HashSet<uint32_t>& nodesStoredUndefined, const NumbersOfPositions& numbers, ValueFlowPositions& positions, FlowLayoutUpdate& update)
 {
     const Layout& layout = inputs.program.at(id);
@@ -1314,7 +1243,6 @@ static void narrowEnvironmentFields(const ValueFlowResultInputs& inputs, LayoutI
         if (update.fields[index].undefinedAtStartIsNeverRead && !nodesStoredUndefined.contains(node.index()))
             deadZone = DeadZone::UndefinedAtStartIsNeverObserved;
         update.fields[index].position = positions.updateFor(layout.fields[index].declared, node, deadZone, numbers.ofEnvironmentField(id, index));
-        // Nothing deletes or redefines a field of an environment, and each operation that stores to it stores a value of its type.
         if (inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()))
             flow.stability = everyFlagOf<FieldStability>();
         if (flow.location.initialization == InitializationState::SetAtCreation && flow.stability == everyFlagOf<FieldStability>())
@@ -1359,7 +1287,6 @@ static FieldReference fieldDefinedBy(const Program& program, const UnobservedFie
     return declarationOf(program, { definition.classLayout, *program.at(definition.classLayout).findField(definition.key) });
 }
 
-// The initializer of a class runs on the objects of the classes below it. There the name may be a field of its own, with a type of its own: code of the class below stores to it.
 using FieldsDefined = Vector<FieldReference, 2>;
 static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultInputs& inputs)
 {
@@ -1415,7 +1342,6 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
         const UnobservedFieldDefinition& definition = definitions[index];
         if (!inputs.isReached(definition.initializer) || std::ranges::all_of(fieldsDefined[index], holdsUndefined))
             continue;
-        // One operation defines them all, so it defines what all of them hold.
         ScratchTypeArena scratch(types);
         Type common = types.at(typeOf(fieldsDefined[index].first()));
         for (FieldReference reference : fieldsDefined[index].span().subspan(1))
@@ -1431,7 +1357,6 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
     }
 }
 
-// A field is absent until it is stored, which no store says. A value outside the type of a field takes the field out of its slot, so that no such value is ever stored is a result of its own.
 static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID id, const ValueFlowFieldContents& contents, const BitVector& fieldsWithUnobservedDefinition, ValueFlowPositions& positions, TypeArena& types, ValueFlowPositionCounts& counts, FlowLayoutUpdate& update)
 {
     const Program& program = inputs.program;
@@ -1455,14 +1380,11 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
             stored = maker.unite(stored, inputs.universe().undefinedValue());
             result = resultWith(stored);
         }
-        update.fields[index].position = updateFrom(result, asRead, types, counts);
+        update.fields[index].position = positions.updateFrom(result, asRead);
 
-        // The proof speaks for the objects: none is ill-typed and none is a stranger to the family.
         ValueSetID surelyInside = inputs.universe().membersSurelyInside(maker, program, layout.fields[index].declared.type);
-        // A store through a wider view of the object is tested against the view, so the proof, which speaks for what the slot holds, takes nothing on trust here.
         bool storesOnlyObjectsOfType = (result.proof == ValueFlowProof::Proven && !positions.holdsObjectThatMayLieOutside(stored, asRead)) || result.proof == ValueFlowProof::NothingArrives
             || positions.isSurelyInside(maker.intersect(stored, inputs.universe().objects()), asRead);
-        // A set knows integers by kind alone, so the kind is never surely inside a range. The proven types of the values that the operations store say which integers they are.
         const ValueFlowNumbers& storedNumbers = contents.storedNumbers[id.index()][index];
         Range storedIntegers = storedNumbers.integers;
         bool isNeverEmptied = flow.location.initialization == InitializationState::SetAtCreation && flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined });
@@ -1474,27 +1396,21 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         if (!storedNumbers.mayBeOtherThanIntegers)
             storedPrimitives = maker.intersect(storedPrimitives, ValueSets::complement(maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) })));
         bool storesOnlyPrimitivesOfType = inputs.sets().isSubset(storedPrimitives, surelyInside);
-        // Which getters the slot of an accessor takes is a guess: a pair with another getter, or with a setter alone, is turned away and lies beside the slots.
         if (inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) && !update.fields[index].accessor.isAccessor() && (asRead.isAnything() || (storesOnlyObjectsOfType && storesOnlyPrimitivesOfType)))
             flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
-        // An allocation writes the slot without a test.
         if (!flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) && flow.location.stores == StoreCount::AtMostOnce) {
             flow.location.stores = StoreCount::Unknown;
             flow.location.isUnchangedDuringActivation = false;
         }
         if (needsNoMarkers && !storedIntegers.isSubsetOf(asRead.integers) && flow.stability.contains(FieldStability::IsNeverStoredWithOtherType))
             update.fields[index].position = { .type = types.intern(Type::integer(Range::int32())), .isProven = true };
-        // No set stands for a word that is no value of the language, like the token in the brand of a class.
         bool isEverFilled = hasUnobservedDefinition || !inputs.sets().isEmpty(stored) || !asRead.isJavaScriptValue();
-        // DeferClosuresInFields may narrow the slot of a field that is given a closure to objects alone.
         bool slotStaysWide = slotTakesEveryValue(program, layout.fields[index]) && !inputs.sets().meet(stored, inputs.universe().closures());
         bool staysInSlot = flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined }) && (flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || slotStaysWide);
-        // No lookup goes on past a slot that is always filled, so nobody asks what lies above it.
         if (isEverFilled && flow.location.initialization == InitializationState::SetAtCreation && staysInSlot) {
             flow.occupancy = Occupancy::AlwaysFilled;
             flow.prototypeName = PrototypeNameState::Unknown;
         }
-        // No allocation lists the field, no operation stores under its name or under a key nobody knows, and no accessor takes its place.
         if (!isEverFilled && flow.stability == everyFlagOf<FieldStability>() && inputs.build.isEnabled(FlowResultKind::StoreCounts, id.index()))
             flow.location.stores = StoreCount::Never;
     }
@@ -1509,7 +1425,6 @@ struct LocationsStoredUndefined {
 
 } // anonymous namespace
 
-// The host's body puts `undefined` into a variable of `var`. Every other `undefined` in its set comes along an edge or as a constant from the body of a function that stores to the variable.
 static LocationsStoredUndefined findLocationsStoredUndefined(const ValueFlowResultInputs& inputs, const FlowApplication& application)
 {
     const ValueFlowBodies& bodies = inputs.bodies();
@@ -1590,7 +1505,6 @@ static LayoutsCreatedBelowMembers collectLayoutsCreatedBelowMembers(const Progra
     return createdBelow;
 }
 
-// `get status() { return this.res.statusCode; }` in a literal that Object.create is handed: whoever reads `status` reads it from what is made below the literal.
 static void expectThisToBeCreatedBelow(const Program& program, const FlowApplication& application, const DeclaredType& declared, std::span<const LayoutID> createdBelow, TypeArena& types, FlowPositionUpdate& update)
 {
     bool isUnchecked = !declared.site && (declared.flags.contains(PositionFlags::IsExpected) || declared.type == TypeTable::anything);
@@ -1607,7 +1521,6 @@ static void expectThisToBeCreatedBelow(const Program& program, const FlowApplica
     update.replacesExpectation = true;
 }
 
-// The node of a capture holds what every reached operation that makes a closure of the function stores there, and what a call that names the function hands on.
 static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionID id, CallerState callers, const NumbersOfPositions& numbers, const FlowApplication& application, std::span<const LayoutID> createdBelow, ValueFlowPositions& positions, TypeArena& types, FlowSignatureUpdate& update)
 {
     const Function& function = inputs.program.at(id);
@@ -1632,7 +1545,6 @@ static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionI
         update.entryParameters = WTF::move(parameters);
 }
 
-// The result of a coroutine as its callers see it is the promise or the generator that stands for all its calls. The node holds what the body returns, which whoever awaits or steps that object gets.
 static void narrowResults(const ValueFlowResultInputs& inputs, FunctionID id, const NumbersOfPositions& numbers, ValueFlowPositions& positions, TypeArena& types, ValueFlowPositionCounts& counts, FlowSignatureUpdate& update)
 {
     const Program& program = inputs.program;
@@ -1644,13 +1556,12 @@ static void narrowResults(const ValueFlowResultInputs& inputs, FunctionID id, co
         if (!function.isUnsplitCoroutine())
             return positions.updateFor(function.results[index], inputs.bodies().nodes().result(id, index), DeadZone::MayBeObserved, numbers.ofResult(id, index));
         const Type& asRead = program.at(function.results[index].type);
-        return updateFrom(positions.resultAt(asRead, maker.of(inputs.universe().coroutineResultOf(id))), asRead, types, counts);
+        return positions.updateFrom(positions.resultAt(asRead, maker.of(inputs.universe().coroutineResultOf(id))), asRead);
     });
     if (!std::ranges::all_of(results, &FlowPositionUpdate::isEmpty))
         update.results = WTF::move(results);
 }
 
-// The values that the reduced body names: what an operation gives and what it takes, what a branch tests and what a cast checks.
 static bool hasTypeOfNarrowedLocation(const FlowApplication& application, const Value& value)
 {
     switch (value.opcode) {
@@ -1755,11 +1666,9 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         case ValueFlowMaskKind::Plain:
             return maker.intersect(held, operand.mask);
         case ValueFlowMaskKind::Checked:
-            // A placeholder that has passed the test is still whatever it stands for. The positions say what that is inside the type of the value.
             return maker.unite(maker.intersect(held, operand.mask), maker.intersect(held, placeholders));
         case ValueFlowMaskKind::Declared:
         case ValueFlowMaskKind::Expected:
-            // The type is taken on trust, so it cuts nothing: a stranger that has arrived takes the proof away.
             return held;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -1767,10 +1676,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     auto mayComeFromUnseenCaller = [&](ValueID value) {
         return callers != CallerState::AllKnown && function.at(entryBlock).parameters.find(value) != notFound;
     };
-    // The first use of a value decides. A set is a union or an intersection that has to be made, so it is made for that use alone.
     auto aliveForComparisonsOnly = std::ranges::equal_range(inputs.bodies().valuesAliveForComparisonsOnly(), id, { }, &ValueFlowValueOfFunction::function);
     auto prove = [&](ValueID value, NOESCAPE const Invocable<ValueSetID()> auto& findHeld) {
-        // The body keeps it for its set alone, which says which closures somebody can tell apart.
         if (std::ranges::binary_search(aliveForComparisonsOnly, value, { }, &ValueFlowValueOfFunction::value))
             return;
         if (isDecided.quickSet(value.index()) || mayComeFromUnseenCaller(value) || hasTypeOfNarrowedLocation(application, function.at(value)))
@@ -1784,20 +1691,18 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             if (valuesWithoutProof->inside.contains(question))
                 return;
             if (valuesWithoutProof->outsideFamily.contains(question)) {
-                counts.count.fetch_add(1, std::memory_order_relaxed);
+                counts.setsOutsideFamilies.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
         }
         ValueFlowPositionResult result = positions.resultAt(asRead, held, DeadZone::MayBeObserved, answered ? &*answered : nullptr);
         std::optional<Type>& narrowed = result.narrowed;
-        // Later passes answer a lookup by name from the records, also where its narrower type buys nothing. In a validating build the cast brings the test that keeps the lookup.
         bool isTestedLookup = narrowed && inputs.build.validates() && function.at(value).opcode == Opcode::PropGet && !asRead.isSubsetOf(*narrowed, program);
         if (!narrowed || (!isTestedLookup && !isWorthNarrowing(program, asRead, *narrowed))) {
             if (isRemembered)
                 (result.proof == ValueFlowProof::OutsideFamily ? valuesWithoutProof->outsideFamily : valuesWithoutProof->inside).add(question);
             return;
         }
-        // An entry parameter has the type of its position, so a proof that says no more than that type puts no cast into the body. In a validating build the cast brings the test of that type.
         size_t parameter = function.at(entryBlock).parameters.find(value);
         const Vector<FlowPositionUpdate>& parameters = application.signatures[id.index()].entryParameters;
         bool isSaidByPosition = parameter != notFound && parameter < parameters.size() && parameters[parameter].type && !parameters[parameter].replacesExpectation && types.at(parameters[parameter].type).isSubsetOf(*narrowed, program);
@@ -1810,7 +1715,6 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         const Value& operation = function.at(statement.site);
         if (statement.result && !numberOfResultsOf(program, function, operation))
             prove(statement.site, [&] { return inputs.solver().valueOf(statement.result); });
-        // No node holds what an operation allocates itself: its value is the object that stands for all that it allocates. A direct call, which is edges alone, may be the only one that takes the value.
         if (!statement.result && PayloadWord::allocationSite(statement.opcode)) {
             ValueFlowObjectID object = inputs.universe().siteObject(statement);
             const ValueFlowSite* site = object ? inputs.universe().siteOf(object) : nullptr;
@@ -1827,7 +1731,6 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         }
     }
 
-    // What a branch tests and what a cast checks. A check that every member of the set passes tests nothing. No placeholder is sure to pass one.
     for (const ValueFlowObservedValue& observed : std::ranges::equal_range(inputs.bodies().observedValues(), id, { }, &ValueFlowObservedValue::function)) {
         if (!observed.test)
             continue;
@@ -1837,12 +1740,10 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         if (test.opcode != Opcode::Check || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
             continue;
         size_t numberOfClaimsBefore = update.claims.size();
-        // Nothing is proven of what an unseen caller passes.
         if (mayComeFromUnseenCaller(test.operand(0))) {
-        } else if (positions.isSurelyInside(held, test.castType()))
+        } else if (positions.isSurelyInside(held, program.at(test.castType()), test.castType()))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true });
         else if (hasTypeOfNarrowedLocation(application, function.at(test.operand(0)))) {
-            // The type of such a location was only expected, or the check would not stand behind the read. Of any other value the proof of its type stands in front of the check, which then fails by the types alone.
             if (std::optional<Type> arriving = positions.typeWhereNothingPasses(held, program.at(test.castType())))
                 update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving) });
         }
@@ -1852,7 +1753,6 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     AOT::sort(update.proofs, { }, &FlowValueProof::value);
     AOT::sort(update.claims, { }, &FlowClaimUpdate::claim);
 
-    // A test behind a call ends the tail call, so the call stays one where whatever it answers passes every check.
     Vector<std::pair<ValueID, BlockID>, 2> checkedTailCalls;
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
         const Terminator& terminator = function.blocks[index].terminator;
@@ -1874,14 +1774,13 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             continue;
         bool passesEveryCheck = true;
         for (TailCast cast : function.at(checkedTailCalls[found].second).terminator.casts())
-            passesEveryCheck &= cast.resolution != CastResolution::Check || positions.isSurelyInside(held, cast.declared.type);
+            passesEveryCheck &= cast.resolution != CastResolution::Check || positions.isSurelyInside(held, program.at(cast.declared.type), cast.declared.type);
         if (passesEveryCheck)
             update.tailCalls.append(FlowTailCallUpdate { .call = statement.site, .claimsAreRedundant = true });
     }
     AOT::sort(update.tailCalls, { }, &FlowTailCallUpdate::call);
 }
 
-// Such a read has the type of its location, which holds `absent` for the sake of other reads.
 static void proveReadsAfterInitialization(const Program& program, const ParallelLoops& loops, TypeTable& types, FlowApplication& application)
 {
     for (uint32_t index : findIndicesInParallel(loops, application.bodies.size(), [&](unsigned index) {
@@ -1897,7 +1796,6 @@ static void proveReadsAfterInitialization(const Program& program, const Parallel
             const Type& held = types.at(position.type ? position.type : declared.type);
             if (!(held.primitives & Primitive::Absent) || !held.isJavaScriptValue())
                 continue;
-            // Nothing is proven about what a position holds that is only expected to hold its type.
             bool isOnlyExpected = declared.flags.contains(PositionFlags::IsExpected) && !position.isProven;
             update.proofs.append(FlowValueProof { read, isOnlyExpected ? TypeTable::anything : types.intern(held.withoutPrimitives(Primitive::Absent)) });
         }
@@ -1928,7 +1826,6 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     RELEASE_ASSERT(inputs.numbersOfValues);
     const auto& numbers = static_cast<const NumbersOfPositions&>(*inputs.numbersOfValues);
 
-    // The subject of the switches is the variable, the layout or the function that the positions belong to.
     ValueFlowPositionCounts counts(listenerForSetsOutsideTypes);
     auto phase = makeUnique<TypeInterningPhase>(types, numberOfTasks);
     ValueSetMakers makers(inputs);
@@ -1971,7 +1868,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     inputs.build.destroyLater(WTF::move(valuesWithoutProof));
 
     times.didFinish("types: layouts, variables, functions"_s);
-    inputs.build.statistics().count(StatisticID::FlowSetsOutsideTypes, counts.count.load());
+    inputs.build.statistics().count(StatisticID::FlowSetsOutsideTypes, counts.setsOutsideFamilies.load());
     inputs.build.statistics().count(StatisticID::FlowProvenPositions, counts.provenPositions.load());
     inputs.build.statistics().count(StatisticID::FlowUnprovenPositions, counts.unprovenPositions.load());
     inputs.build.statistics().count(StatisticID::FlowNarrowedPositions, counts.narrowedPositions.load());

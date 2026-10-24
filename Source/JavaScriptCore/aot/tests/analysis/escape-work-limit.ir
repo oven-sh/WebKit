@@ -26,22 +26,12 @@ function f0 name="fiveObjects" results=[{type=boolean}] {
 # CHECK-NEXT: o0 reasons: [LimitReached]
 # CHECK: o0 uses: all
 # CHECK-NEXT: o0 live instances: Unknown
-# CHECK: o1 definition: v1
-# CHECK-NEXT: o1 kind: Allocation
-# CHECK-NEXT: o1 state: Unknown
-# CHECK-NEXT: o1 reasons: [LimitReached]
-# CHECK: o2 definition: v2
-# CHECK-NEXT: o2 kind: Allocation
-# CHECK-NEXT: o2 state: Unknown
-# CHECK-NEXT: o2 reasons: [LimitReached]
-# CHECK: o3 definition: v3
-# CHECK-NEXT: o3 kind: Allocation
-# CHECK-NEXT: o3 state: Unknown
-# CHECK-NEXT: o3 reasons: [LimitReached]
-# CHECK: o4 definition: v4
-# CHECK-NEXT: o4 kind: Allocation
-# CHECK-NEXT: o4 state: Unknown
-# CHECK-NEXT: o4 reasons: [LimitReached]
+# REPEAT: i = 1..4
+# CHECK: o%(i) definition: v%(i)
+# CHECK-NEXT: o%(i) kind: Allocation
+# CHECK-NEXT: o%(i) state: Unknown
+# CHECK-NEXT: o%(i) reasons: [LimitReached]
+# END REPEAT
 # CHECK: o4 uses: all
 # CHECK-NEXT: o4 live instances: Unknown
 function f1 name="fourObjects" results=[{type=boolean}] {

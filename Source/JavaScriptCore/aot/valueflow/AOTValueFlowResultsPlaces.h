@@ -8,20 +8,15 @@
 #if ENABLE(AOT)
 
 #include "AOTValueFlowResultsInternal.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Where the program names a built-in, and through which of its statements it comes to a place in the library. It walks every statement of the reached functions, so it is made for a report alone.
 class ValueFlowPlacesInProgram {
     WTF_MAKE_NONCOPYABLE(ValueFlowPlacesInProgram);
 public:
-    // By canonical entry.
     ValueFlowPlacesInProgram(const ValueFlowResultInputs&, const BitVector& builtinsAskedAbout);
 
-    // The first statement in the text of the program that has the built-in as its result or as a constant operand, or that asks for the module whose namespace object it is.
     Witness whereNamed(BuiltinID) const;
-    // The place itself if it is written in the program. Of a place in the library the nearest call, import or require of the program that leads there, the first in the text among equals. None where nobody spells the way out.
     Witness wayTo(const Witness&) const;
 
 private:
@@ -30,11 +25,9 @@ private:
     Vector<Witness> m_namedInLibrary;
     BitVector m_hasEscaped;
     Witness m_readUnderKeyNobodyKnows { noWitness };
-    // By function of the library.
     Vector<Witness> m_wayInto;
 };
 
-// The candidates that reached code binds to or reads by name, or that a string literal of the program spells.
 class ValueFlowNamedBuiltins {
     WTF_MAKE_NONCOPYABLE(ValueFlowNamedBuiltins);
 public:
@@ -43,7 +36,6 @@ public:
         BuiltinID candidate;
     };
 
-    // By canonical entry. The library's code behind a member counts once the member's candidate is named.
     ValueFlowNamedBuiltins(const ValueFlowResultInputs&, const BitVector& candidates, std::span<const Member>);
 
     bool contains(BuiltinID builtin) const { return m_named.quickGet(builtin.index()); }
@@ -52,7 +44,6 @@ private:
     BitVector m_named;
 };
 
-// The locales that the calls of the built-ins whose code runs name. One that is no constant, and one that is left to the host, keeps the data of every language.
 Vector<FlowLocaleUse> collectLocaleUses(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& builtinsWhoseCodeRuns, std::span<const UnseenCodeRecord>);
 
 } } } // namespace JSC::AOT::Typed

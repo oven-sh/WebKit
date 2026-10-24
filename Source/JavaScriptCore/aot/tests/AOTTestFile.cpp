@@ -46,8 +46,11 @@ class TestFileParser {
 public:
     TestFileParser(String&& text, Architecture architecture)
         : m_architecture(architecture)
+        , m_writtenOut(writeOutRepeats(WTF::move(text)))
     {
-        m_file.text = WTF::move(text);
+        m_file.text = WTF::move(m_writtenOut.text);
+        if (!m_writtenOut.error.isNull())
+            addError(m_writtenOut.errorLine, m_writtenOut.error);
     }
 
     TestFile parse();
@@ -93,6 +96,7 @@ private:
     }
 
     const Architecture m_architecture;
+    WrittenOutText m_writtenOut;
     TestFile m_file;
     Vector<DirectiveLine> m_directives;
     Vector<PendingCheckGroup> m_checkGroups;
@@ -260,6 +264,9 @@ static std::expected<CheckLine, String> createCheckLine(const DirectiveLine& dir
 
 TestFile TestFileParser::parse()
 {
+    if (!m_file.errors.isEmpty())
+        return WTF::move(m_file);
+
     collectDirectiveLines();
     parseRunDirectives();
     for (const DirectiveLine& directive : m_directives)
@@ -283,7 +290,7 @@ void TestFileParser::collectDirectiveLines()
         StringView line = text.substring(start, end - start);
         if (hasNewline && line.endsWith('\r'))
             line = line.left(line.length() - 1);
-        if (auto directive = splitDirective(line, number))
+        if (auto directive = splitDirective(line, m_writtenOut.sourceLineOf(number)))
             m_directives.append(WTF::move(*directive));
         start = end + 1;
     }

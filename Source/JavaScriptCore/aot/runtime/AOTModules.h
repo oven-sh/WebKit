@@ -98,10 +98,10 @@ public:
     JSValue readExport(ModuleID, unsigned index);
     JSValue readExportIfInitialized(ModuleID, unsigned index) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
-    JSObject* capturedExports(ModuleID) const;
+    JSObject* capturedExports(ModuleID);
     // Empty if the module has no export of the name. Reads a deferred export now and keeps the value.
     JSValue capturedValue(ModuleID, const Identifier&);
-    bool hasCapturedExport(ModuleID, const Identifier&) const;
+    bool hasCapturedExport(ModuleID, const Identifier&);
     JSObject* moduleNamespace(ModuleID, ModulePhase);
     JSObject* importMeta(ModuleID);
     JSCell* builtinCell(BuiltinID, ModuleID);

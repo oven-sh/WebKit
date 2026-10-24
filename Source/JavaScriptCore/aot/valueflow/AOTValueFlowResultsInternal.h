@@ -32,22 +32,18 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Tables of the sizes and in the orders that FlowResults and ApplyFlowResults expect, which state nothing about the program: applied, they leave it as it was read.
 FlowResultTables createUnknownResultTables(const Program&, BuildContext&);
 
-// What is proven about one array, map, set or promise that the program allocates and that nobody else gets hold of.
 struct ValueFlowContainerFacts {
     Vector<TypeID, 2> contents;
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
-    // Other where what the array holds says the same.
     ArrayStorage arrayStorageToldToCreator { ArrayStorage::Other };
     OptionSet<PristineAspects> pristine;
 };
 
 class ValueFlowContainerResults {
 public:
-    // None for an object about which nothing is proven.
     const ValueFlowContainerFacts* find(ValueFlowObjectID object) const LIFETIME_BOUND
     {
         uint32_t position = object.index() < m_positionOfObject.size() ? m_positionOfObject[object.index()] : 0;
@@ -76,20 +72,16 @@ private:
     Vector<uint8_t> m_isKnown;
 };
 
-// By the object that stands for what built-ins allocate as the result of one call operation: the class of that result. No class where the built-ins that the operation applies do not agree on one.
 using ValueFlowClassesOfBuiltinResults = HashMap<uint32_t, BuiltinClassID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
 enum class ValueFlowAccessThroughObjectKind : uint8_t {
-    // The operation answers what lies under the name.
     Read,
-    // Somebody else gets hold of what lies there, or finds out whether anything does.
     Observation,
     Store,
 };
 
 struct ValueFlowAccessThroughObject {
     VariableID variable;
-    // Neither where no operation of a function spells the access out.
     FunctionID function;
     ValueID site;
     ValueFlowAccessThroughObjectKind kind { ValueFlowAccessThroughObjectKind::Observation };
@@ -97,7 +89,6 @@ struct ValueFlowAccessThroughObject {
     friend auto operator<=>(const ValueFlowAccessThroughObject&, const ValueFlowAccessThroughObject&) = default;
 };
 
-// Where an operation that stores or defines a property has the value. None for an operation that stores in some other way, as a call of a built-in does.
 constexpr std::optional<uint32_t> indexOfValueStoredIntoProperty(Opcode opcode)
 {
     switch (opcode) {
@@ -114,7 +105,6 @@ constexpr std::optional<uint32_t> indexOfValueStoredIntoProperty(Opcode opcode)
     }
 }
 
-// A variable may be a property of an object at once: what a module exports lies on its namespace object, and a static field lies on its class object.
 struct ValueFlowVariablesOnObjects {
     std::span<const ValueFlowAccessThroughObject> accessesTo(VariableID variable) const LIFETIME_BOUND
     {
@@ -122,25 +112,17 @@ struct ValueFlowVariablesOnObjects {
         return { found.begin(), found.end() };
     }
 
-    // By module.
     Vector<NamespaceUse> namespaceUses;
-    // Every access to a static field of a class object that the analysis follows, and to an export of a namespace object that is only read by name. Ascending, each once.
     Vector<ValueFlowAccessThroughObject> accesses;
-    // By variable. The static fields of a class object that somebody holds whom nobody follows: all that can be done to a property is done to them.
     BitVector staticFieldsInUnknownHands;
-    // By variable.
     BitVector staticFieldsOfEscapedClassObjects;
-    // By variable. The run time empties the variable of a static field that is deleted, redefined or stored a value outside its type, and keeps the property elsewhere.
     BitVector deletedStaticFields;
     BitVector redefinedStaticFields;
     BitVector staticFieldsStoredOtherTypes;
-    // By variable.
     BitVector staticFieldsStoredByBuiltins;
-    // By layout. The analysis follows the class object, and but for the definitions of the class itself every store into it names one of its static fields.
     BitVector classObjectsStoredUnderStaticFieldsAlone;
 };
 
-// A set knows numbers by kind alone. This bounds the numbers among some values: whether one may be something else than an integer, and the range of the integers.
 struct ValueFlowNumbers {
     static constexpr ValueFlowNumbers any() { return { true, Range::full() }; }
 
@@ -184,12 +166,10 @@ struct ValueFlowNumbers {
     Range integers { Range::empty() };
 };
 
-// Which numbers a value of a function can be, in the typed and in the generic version of the function.
 class ValueFlowNumbersOfValues {
 public:
     virtual ~ValueFlowNumbersOfValues() = default;
     virtual ValueFlowNumbers numbersOf(FunctionID, ValueID) const = 0;
-    // The numbers among the values of a Map. None where something that nobody has looked at may store a value.
     virtual const ValueFlowNumbers* ofValuesOfMap(ValueFlowObjectID) const = 0;
 };
 
@@ -211,22 +191,15 @@ struct ValueFlowResultInputs {
     const Program& program;
     ValueFlowSolution& solution;
     BuildContext& build;
-    // None until it is computed: until then a number is any number.
     const ValueFlowNumbersOfValues* numbersOfValues { nullptr };
-    // None until it is computed: until then nothing is known about a namespace object or a static field.
     const ValueFlowVariablesOnObjects* variablesOnObjects { nullptr };
-    // What the sets become types with. Each is none until it is computed: until then nothing is proven about a container, no symbol counts as created once, and what a built-in allocates is any object.
     const ValueFlowContainerResults* containers { nullptr };
-    // By key.
     const BitVector* symbolsCreatedOnce { nullptr };
     const ValueFlowClassesOfBuiltinResults* classesOfBuiltinResults { nullptr };
-    // By layout. None until it is computed, which is before the first set of objects becomes a type.
     const BitVector* layoutsOfDictionaries { nullptr };
     std::span<const std::pair<TypeID, TypeID>> typesBehindDictionaries;
     const BitVector* layoutSetsNamingDictionaries { nullptr };
-    // What findLayoutsOfSites() answers. Whoever has none makes it when it is first asked for, once for each ValueFlowPositionCounts.
     const ValueFlowLayoutsOfSites* layoutsOfSites { nullptr };
-    // Whoever has none gets one with each ValueFlowHeapView that it makes.
     const ValueFlowHeapIndex* heapIndex { nullptr };
     const ValueFlowNodesAskedFor* nodesAskedFor { nullptr };
 
@@ -240,18 +213,13 @@ struct ValueFlowResultInputs {
     void forEachMadeNodeAskedForBy(ValueFlowStatementID, ValueFlowKindsOfMadeNodes, bool alsoWithStatement, NOESCAPE const auto& functor) const;
     void forEachIndexOfMadeNodesAskedForBy(ValueFlowStatementID, ValueFlowKindsOfMadeNodes, bool alsoWithStatement, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const;
     void prefetchMadeNodesAskedForBy(uint32_t statement, ValueFlowKindsOfMadeNodes, bool alsoWithStatement) const;
-    // Handed to code that nobody compiles: the unknown object stands for it wherever that code may put it.
     bool hasEscaped(ValueFlowObjectID object) const { return sets().contains(solver().valueOf(ValueFlowProgramNodes::escaped()), object); }
-    // The analysis has stopped following it: the untracked object stands for it from there on.
     bool isLost(ValueFlowObjectID object) const { return sets().contains(solver().valueOf(ValueFlowProgramNodes::lost()), object); }
-    // Code that nobody compiles holds it through what a module of the library exports, and the solve has not let that code call it.
     bool isHeldByNativeCode(ValueFlowObjectID object) const { return sets().contains(solver().valueOf(bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode)), object); }
 
     bool isLayoutOfDictionaries(LayoutID layout) const { return layoutsOfDictionaries && layout && layoutsOfDictionaries->get(layout.index()); }
-    // The solve has followed it as an object with a layout. It is made as an ordinary object.
     bool isDictionary(ValueFlowObjectID object) const { return layoutsOfDictionaries && isLayoutOfDictionaries(universe().layoutOf(object)); }
 
-    // The universe is made before anybody knows the callee of a call, so it has no class for what the callee allocates.
     BuiltinClassID classOf(ValueFlowObjectID object) const
     {
         if (isDictionary(object))
@@ -263,7 +231,6 @@ struct ValueFlowResultInputs {
 
     static constexpr bool isPlaceholder(ValueFlowObjectID object) { return object == ValueFlowUniverse::unknownObject() || object == ValueFlowUniverse::untrackedObject(); }
 
-    // All that may arrive at the operand, as ValueFlowPositions takes it: beside a placeholder the set may or may not list what the placeholder covers.
     ValueSetID valueOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const
     {
         ValueSetID held = operand.constant ? operand.constant : ValueSets::nothing;
@@ -284,10 +251,8 @@ struct ValueFlowResultInputs {
     }
 };
 
-// The sets that a walk over the nodes has met. Most nodes hold what a node just before them held.
 class ValueSetsMet {
 public:
-    // Whether the walk meets the set for the first time.
     bool add(ValueSetID set)
     {
         uint32_t& metLately = m_metLately[(set.index() * 0x9e3779b1u) >> 22];
@@ -302,7 +267,6 @@ private:
     HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_met;
 };
 
-// A maker of sets takes megabytes to set up. A loop over the functions has one for each of its threads, made when the thread first asks for it.
 class ValueSetMakers {
     WTF_MAKE_NONCOPYABLE(ValueSetMakers);
 public:
@@ -325,7 +289,6 @@ public:
         }
     }
 
-    // `worker` is what forEachIndexInParallel() hands to the body of the loop.
     ValueSetMaker& of(unsigned worker)
     {
         if (!m_makers[worker])
@@ -358,7 +321,6 @@ Vector<T> collectWithMakers(const ValueFlowResultInputs& inputs, ValueSetMakers&
     return result;
 }
 
-// The solve has not reached the function, and its operations are compiled all the same: the host may enter it.
 inline bool isUnsolvedCode(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, FunctionID function)
 {
     if (inputs.isReached(function) || !inputs.program.at(function).hasBody())
@@ -366,7 +328,6 @@ inline bool isUnsolvedCode(const ValueFlowResultInputs& inputs, const FlowResult
     return tables.functions.functions[function.index()].reachability != FunctionReachability::Unreached;
 }
 
-// A call of a member asks once more, receiver by receiver, for what the read of its callee has found, and hands each receiver to the functions that it answers.
 inline bool isLookupOfCalleeByCall(const ValueFlowResultInputs& inputs, const ValueFlowStatement& statement, const ValueFlowNodeKey& key)
 {
     if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::Call && statement.opcode != Opcode::CallList) || key.kind != ValueFlowMadeNodeKind::Lookup)
@@ -375,7 +336,6 @@ inline bool isLookupOfCalleeByCall(const ValueFlowResultInputs& inputs, const Va
     return calleeKey && key.name() == ValueFlowName::property(calleeKey) && inputs.sets().onlyMember(key.set);
 }
 
-// An environment is no object of the language, and a closure or a namespace object has its layout without an allocation.
 inline bool hasObjectsThatCodeAlters(LayoutKind kind)
 {
     switch (kind) {
@@ -393,26 +353,20 @@ inline bool hasObjectsThatCodeAlters(LayoutKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The sites of a typed result are made for every call that may turn out to have one. The rule that allocates the result marks each of its objects with a layout: a parser adds the members that the layout does not declare.
 inline bool isSiteOfTypedResultThatNothingAllocates(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
     const ValueFlowSite* site = inputs.universe().siteOf(object);
     return site && site->origin == ValueFlowSiteOrigin::TypedResult && site->layout && !inputs.solver().marksOf(object).contains(ObjectMutation::AddProperty);
 }
 
-// What the rules have marked on the object.
 OptionSet<ObjectMutation> markedMutationsOf(const ValueFlowResultInputs&, ValueFlowObjectID);
-// Nothing is stored to, added to, taken from or redefined on the object once it is made, its prototype stays, and no unknown code gets it.
 bool neverChangesOnceMade(const ValueFlowResultInputs&, ValueFlowObjectID);
 
 enum class ValueFlowMembers : uint8_t {
-    // The functor has seen every member, the placeholders among them. One that the node and the constant both hold came twice.
     Listed,
-    // The operand holds all of the universe but a few members, and the functor has seen none.
     AlmostEverything,
 };
 
-// The members of ValueFlowResultInputs::valueOf() of the operand, without making a set.
 ValueFlowMembers forEachMemberOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor)
 {
     const ValueSets& sets = inputs.sets();
@@ -440,7 +394,6 @@ ValueFlowMembers forEachMemberOf(const ValueFlowResultInputs& inputs, const Valu
     return ValueFlowMembers::Listed;
 }
 
-// What the report on sites says where the unknown object takes a proof away: how that object has come into being.
 constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
 {
     switch (source) {
@@ -466,23 +419,18 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// For every node that holds the unknown object: the operation whose rule has brought that object into being, at the far end of a shortest way against the edges.
 class ValueFlowBirthsOfUnknownObject {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowBirthsOfUnknownObject);
 public:
     explicit ValueFlowBirthsOfUnknownObject(const ValueFlowResultInputs&);
 
-    // None where the node does not hold the object, where the object comes out of the seed of a body, and where a statement has made it that lies in no function.
     Witness witnessOf(ValueFlowNodeID) const;
-    // What the rule at that operation has named as its source. None where the node has no root: the solver's answer stands.
     std::optional<ValueFlowUnknownSource> sourceOf(ValueFlowNodeID) const;
-    // The object also comes from another root: without the one that witnessOf() names the node still holds it.
     bool hasSeveralRoots(ValueFlowNodeID node) const { return node && m_hasSeveralRoots.get(node.index()); }
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
 
-    // An operation that brings the object into being though none of its operands holds it.
     struct Root {
         Witness witness { noWitness };
         ValueFlowUnknownSource source { ValueFlowUnknownSource::UnseenCode };
@@ -491,40 +439,27 @@ private:
 
     void findRoots(const ValueFlowResultInputs&, const Holders&);
 
-    // By node: where its witness stands in the list.
     Vector<uint32_t> m_birthOfNode;
     Vector<Witness> m_witnesses;
-    // What is read out of the unknown object, what it answers when it is called, and what it does with a function or an object that it was handed, begin where that unknown object began.
     Vector<uint32_t> m_rootOfNode;
     Vector<Root> m_roots;
     BitVector m_hasSeveralRoots;
 };
 
-// Where the program makes the object: the operation of its site, or the declaration of the function that a closure, the result of a coroutine or a rest array belongs to. None for any other object.
 Witness witnessOfAllocation(const ValueFlowResultInputs&, ValueFlowObjectID);
-// What a call of JSON.parse or its like has made.
 bool isDataFromOutside(const ValueFlowResultInputs&, ValueFlowObjectID);
-// The operation that the statement stands for, or the declaration of the function in whose body it lies. None for a statement of the host and for one that a rule has made.
 Witness witnessOfStatement(const Program&, const ValueFlowStatement&);
 
-// What the stamps say about the functions, for the results about functions.
 struct ValueFlowStampedCalls {
-    // The functions that the stamp of some call lists.
     BitVector functionsInStamps;
-    // The functions that something enters that lists them in no stamp: an accessor, a protocol, a built-in that calls an operand, a bound function, a call of a placeholder that covers their closure.
     BitVector functionsEnteredWithoutStamp;
-    // Those among them that something enters which the list of indirect calls does not name.
     BitVector functionsEnteredWithoutRecord;
-    // The functions that unsolved code calls or makes closures of, and those whose closures lie where it reads. Filled with the results about functions.
     BitVector functionsNamedByUnsolvedCode;
 };
 
-// All that a store may put into a field of an object, by the layout that declares the field. Nothing for a field that the layout inherits.
 struct ValueFlowFieldContents {
     Vector<Vector<ValueSetID>> stored;
-    // A set knows numbers by kind alone, and the sum of two numbers is any number there. These are the numbers among what is stored, by what the operations that store them make: any number as soon as something else stores one.
     Vector<Vector<ValueFlowNumbers>> storedNumbers;
-    // The same for the fields that the results append to a layout, in the order of FlowLayoutUpdate::appendedFields.
     Vector<Vector<ValueSetID>> storedInAppendedFields;
 };
 
@@ -638,7 +573,6 @@ private:
     SharedMemo<Answer> m_answers;
 };
 
-// What the views of the heap look things up in.
 class ValueFlowHeapIndex {
     WTF_MAKE_NONCOPYABLE(ValueFlowHeapIndex);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowHeapIndex);
@@ -666,9 +600,7 @@ public:
     };
 
     struct CallOfValue {
-        // In ValueFlowBodies::statements().
         uint32_t statement;
-        // What the rules see at the callee.
         ValueSetID callees;
     };
 
@@ -683,7 +615,6 @@ public:
 
     explicit ValueFlowHeapIndex(const ValueFlowResultInputs&);
 
-    // The nodes that hold something, in the order of their numbers. None where nothing was written under the name.
     const NodesWrittenUnderName* findNodesWrittenUnder(ValueFlowName name) const LIFETIME_BOUND
     {
         uint64_t number = static_cast<uint64_t>(name.kind) << 32 | name.payload;
@@ -710,13 +641,11 @@ public:
         }
         return stretches;
     }
-    // The calls and constructions of a value in reached functions at whose callee a built-in function arrives, or a callable object that is neither a closure nor a built-in function. In the order of the statements.
     std::span<const CallOfValue> callsThatMayApplyBuiltins() const LIFETIME_BOUND { return m_callsThatMayApplyBuiltins.span(); }
     void findOperandsOfCalls(const ValueFlowResultInputs&, const ValueFlowHeapView&);
     const OperandsOfCall* operandsOfCallAt(size_t position) const LIFETIME_BOUND { return m_operandsOfCalls.isEmpty() ? nullptr : &m_operandsOfCalls[position]; }
     std::span<const ValueSetID> argumentsOf(const OperandsOfCall& operands) const LIFETIME_BOUND { return m_argumentsOfCalls.subspan(operands.firstArgument, operands.numberOfArguments); }
     std::span<const ValueFlowObjectID> boundFunctionsOf(const OperandsOfCall& operands) const LIFETIME_BOUND { return m_boundFunctionsOfCalls.subspan(operands.firstBoundFunction, operands.numberOfBoundFunctions); }
-    // Ascending.
     std::span<const ValueFlowNodeID> firstNodesOfCallGroups() const LIFETIME_BOUND { return m_firstNodesOfCallGroups.span(); }
     std::span<const ValueFlowNodeID> nodesOfMarks() const LIFETIME_BOUND { return m_nodesOfMarks.span(); }
     ValueFlowAnswersAboutSets& prototypesOfSets() const LIFETIME_BOUND { return m_prototypesOfSets; }
@@ -742,7 +671,6 @@ private:
     mutable ValueFlowAnswersAboutSets m_writtenUnderNames;
 };
 
-// The heap as the solve has left it, for questions that no rule has asked.
 class ValueFlowHeapView {
     WTF_MAKE_NONCOPYABLE(ValueFlowHeapView);
 public:
@@ -753,19 +681,12 @@ public:
     ValueSetMaker& maker() { return m_maker; }
     ValueSetID escaped() const { return m_escaped; }
     ValueSetID lost() const { return m_lost; }
-    // What the rules see at the operand.
     ValueSetID valueOf(const ValueFlowOperand&);
-    // The set with all that its placeholders cover.
     ValueSetID expand(ValueSetID);
-    // A store through the first set may reach one of the objects.
     bool reaches(ValueSetID writtenThrough, ValueSetID objects) const;
-    // All that may have been written into one of the objects under exactly this name.
     ValueSetID writtenUnder(ValueSetID objects, ValueFlowName);
-    // What the objects may inherit from directly. The unknown object stands for a prototype that nothing names.
     ValueSetID prototypesOf(ValueSetID objects);
-    // The objects with all that lies above them.
     ValueSetID chainOf(ValueSetID objects);
-    // The objects with what the program puts above them: the prototypes that they are created with and what a store that names them puts into their prototype links. Not what a placeholder stands for.
     ValueSetID chainBuiltByProgram(ValueSetID objects);
 
     ValueSetID valueOf(ValueSetMaker&, const ValueFlowOperand&) const;
@@ -815,7 +736,6 @@ private:
     ValueSetMaker& m_maker;
     ValueSetID m_escaped;
     ValueSetID m_lost;
-    // The escaped objects that a store through the unknown object may hit, as the rules have it.
     ValueSetID m_escapedAndWritable;
     mutable ChainOfPlaceholder m_chainOfUnknownObject;
     mutable ChainOfPlaceholder m_chainOfUntrackedObject;
@@ -824,13 +744,11 @@ private:
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_prototypesOfSet;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_chainOfSet;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_chainBuiltByProgramOfSet;
-    // What the stores that list an object put into its prototype link, by the number of the object. A store through all objects but some is kept as it is.
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_storedIntoPrototypeLinkOf;
     Vector<WrittenNode> m_prototypeLinksStoredThroughComplements;
     bool m_hasIndexedStoresIntoPrototypeLinks { false };
 };
 
-// One call of a built-in as the rules have applied it.
 class SetsMeetingOneSet {
 public:
     SetsMeetingOneSet(const ValueSets& sets, ValueSetID other)
@@ -858,13 +776,10 @@ private:
 struct ValueFlowBuiltinApplication {
     BuiltinID builtin;
     ValueFlowCallKind kind { ValueFlowCallKind::Call };
-    // The operation that spells the call out. None for what all calls of one set of callees share, and for a call by a protocol.
     FunctionID function;
     ValueID site;
-    // Of a construction: new.target.
     ValueSetID thisValue { ValueSets::nothing };
     Vector<ValueSetID, numberOfGroupedArguments> arguments;
-    // They may land at any position.
     ValueSetID otherArguments { ValueSets::nothing };
 
     BuiltinCallMode mode() const;
@@ -872,13 +787,11 @@ struct ValueFlowBuiltinApplication {
 };
 
 using ValueFlowBuiltinApplicationFunctor = ScopedLambda<void(const ValueFlowBuiltinApplication&)>;
-// Every call of a built-in function by an operation and by a group of callees.
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& onlyOfBuiltins, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
 void forEachBuiltinApplicationOnAllThreads(const ValueFlowResultInputs&, const ValueFlowHeapView&, ValueSetMakers&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ScopedLambda<void(unsigned worker, const ValueFlowBuiltinApplication&)>&);
 
-// Defined in AOTValueFlowResultsFunctions.cpp.
 void computeClosuresNeverCompared(const ValueFlowResultInputs&, ValueFlowHeapView&, FlowResultTables&);
 
 BitVector builtinsWithOverload(const BuiltinTable& builtins, NOESCAPE const Invocable<bool(const BuiltinOverload&)> auto& predicate)
@@ -891,7 +804,6 @@ BitVector builtinsWithOverload(const BuiltinTable& builtins, NOESCAPE const Invo
     return found;
 }
 
-// The view of the heap, and who looks at the objects in ways that no mark records.
 struct ValueFlowUsesOfHeap;
 struct ValueFlowUsesOfHeapDeleter {
     void operator()(ValueFlowUsesOfHeap*) const;
@@ -899,26 +811,18 @@ struct ValueFlowUsesOfHeapDeleter {
 std::unique_ptr<ValueFlowUsesOfHeap, ValueFlowUsesOfHeapDeleter> computeUsesOfHeap(const ValueFlowResultInputs&);
 void listStoresByLayout(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const FlowResultTables&);
 ValueFlowHeapView& heapViewOf(ValueFlowUsesOfHeap&);
-// The objects whose keys somebody may list, with all that lies above them.
 ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap&);
 
-// What the constructors of the program do to the objects that they make, up to the place where somebody else may get hold of the object.
 struct ValueFlowConstructions {
     struct OfLayout {
-        // Every object with the layout is made by the constructor of the layout, and the analysis has followed that constructor.
         bool isFollowed { false };
-        // The constructor and its helpers create fields in one of the orders and nowhere else, and the object does not leave their hands.
         bool createsFieldsOnlyInListedOrders { false };
-        // What every construction has stored when the object leaves the hands of the constructor. Ascending. A field without a key stands here by its declaration.
         Vector<PropertyKeyID> keysStoredBeforeObjectLeaks;
         Vector<FieldReference> fieldsStoredBeforeObjectLeaks;
         Vector<PropertyKeyID> keysStoredAtBirth;
-        // By a store of something that may be another value than undefined and null.
         Vector<PropertyKeyID> keysStoredWithValueAtBirth;
         Vector<FieldReference> fieldsStoredAtBirth;
-        // Of the fields that the layout declares itself.
         Vector<FieldOrder> orders;
-        // Of a class that is not followed: the fields of the classes above under whose names the class, or something between, has an accessor or a member that cannot be written. Ascending.
         Vector<PropertyKeyID> inheritedKeysThatStoresMayNotCreate;
     };
 
@@ -944,90 +848,63 @@ struct ValueFlowConstructions {
     {
         return key && std::ranges::binary_search(layouts[layout.index()].keysStoredWithValueAtBirth, key);
     }
-    // Neither the constructor of a layout nor a function that gets the object of one before the object has leaked.
     bool seesOnlyFinishedObjects(FunctionID function) const { return functionsSeeingOnlyFinishedObjects.get(function.index()); }
 
     Vector<OfLayout> layouts;
     BitVector functionsSeeingOnlyFinishedObjects;
 };
 
-// Asks the solver, and which functions are reached. Defined in AOTFlowConstructionOrders.cpp.
 ValueFlowConstructions computeConstructions(const ValueFlowResultInputs&, ValueFlowHeapView&, const FlowResultTables&);
-// The orders in which object literals that are completed piece by piece get their keys. Rests on the field results. Defined in AOTFlowLiteralOrderResults.cpp.
 void computeLiteralKeyOrders(const ValueFlowResultInputs&, ValueFlowHeapView&, Vector<PropertyKeyKind>&& kindsOfKeys, FlowResultTables&);
 
-// A write that a built-in object may refuse, under a text that names no property anywhere else in the program.
 struct ValueFlowWriteUnderNewName {
     BuiltinID holder;
     StringID text;
     Witness witness;
 };
 
-// Uses of built-ins, features and locales, and the code that the build has not seen.
 Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs&, FlowResultTables&);
-// The records of those writes that the run time refuses. Adds keys to the program, so it comes last.
 void recordLockedWritesUnderNewNames(const Program&, TypeTable&, std::span<const ValueFlowWriteUnderNewName>, FlowResultTables&);
 ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs&);
-// Callee sets.
 ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
-// Functions that are never reached, functions whose callers are all known, the calls that no stamp lists, and the closures and bound functions that are only called. Rests on the stamps.
 void computeFunctionResults(const ValueFlowResultInputs&, ValueFlowStampedCalls&, FlowResultTables&);
-// Functions that run at most once. Rests on the stamps and on the callers.
 void computeExecutionResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
-// By key: the symbols that one call creates, which runs at most once. Rests on the executions.
 BitVector computeCreatedSymbolResults(const ValueFlowResultInputs&, const FlowResultTables&);
 void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
-// How the namespace objects are used, and who gets at a variable through the object that it is a property of. Rests on the functions that unsolved code names.
 struct ValueFlowAccessesThroughObjects;
 struct ValueFlowAccessesThroughObjectsDeleter {
     void operator()(ValueFlowAccessesThroughObjects*) const;
 };
 std::unique_ptr<ValueFlowAccessesThroughObjects, ValueFlowAccessesThroughObjectsDeleter> collectAccessesThroughObjects(const ValueFlowResultInputs&, const ValueFlowStampedCalls&);
 ValueFlowVariablesOnObjects computeVariablesOnObjects(const ValueFlowResultInputs&, ValueFlowAccessesThroughObjects&, const ValueFlowUsesOfHeap&);
-// Who writes, stores to and reads the variables and the fields of environments. Rests on the executions and on the variables on objects.
 struct ValueFlowOperationsOnLocations;
 struct ValueFlowOperationsOnLocationsDeleter {
     void operator()(ValueFlowOperationsOnLocations*) const;
 };
 std::unique_ptr<ValueFlowOperationsOnLocations, ValueFlowOperationsOnLocationsDeleter> noteOperationsOnLocations(const ValueFlowResultInputs&, const FlowResultTables&);
 void computeLocationResults(const ValueFlowResultInputs&, ValueFlowOperationsOnLocations&, FlowResultTables&);
-// Which variables and fields of environments are stored before every read. Rests on the stamps, on the writers of the locations and on the variables on objects.
 void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
-// The layouts that are never allocated, and what can never happen to an object of a layout.
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
-// How often a class is evaluated, what it extends, and which of its members and links stay as it defines them. Rests on the executions and on the variables on objects.
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);
-// Who writes the fields of objects, which are never deleted or redefined, and which every allocation fills. Rests on what never happens to the objects of a layout.
 ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const ValueFlowConstructions&, FlowResultTables&);
-// What the arrays, maps, sets and promises of the program hold, how arrays store it, and which of them behave as the language defines them.
 struct ValueFlowWritesToContainers;
 struct ValueFlowWritesToContainersDeleter {
     void operator()(ValueFlowWritesToContainers*) const;
 };
 std::unique_ptr<ValueFlowWritesToContainers, ValueFlowWritesToContainersDeleter> collectWritesToContainers(const ValueFlowResultInputs&, const FlowResultTables&, TypeTable&);
 ValueFlowContainerResults computeContainerResults(ValueFlowWritesToContainers&);
-// The types of variables, fields, parameters and results of functions and of what operations take and give.
 std::unique_ptr<ValueFlowNumbersOfValues> prepareNumbersOfPositions(const ValueFlowResultInputs&, ValueFlowHeapView&, const FlowResultTables&);
 void computeNumbersOfPositions(ValueFlowNumbersOfValues&, const FlowResultTables&);
-// The class of an instance of a built-in class that the program allocates and that only followed code gets hold of.
 BuiltinClassID classOfFollowedContainer(const ValueFlowResultInputs&, ValueFlowObjectID);
 void computeTypeResults(const ValueFlowResultInputs&, const ValueFlowFieldContents&, TypeTable&, FlowResultTables&, const ListenerForSetsOutsideTypes*);
-// The types of the appended fields, and the layouts none of whose fields is ever stored a value outside its type. Rests on the types.
 void computeLayoutsNeverStoredOtherTypes(const ValueFlowResultInputs&, const ValueFlowFieldContents&, TypeTable&, FlowResultTables&);
-// Receiver sets.
 void computeAccessResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
-// The fields every store to which names them. Rests on the receiver sets.
 void computeStoreNamingResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, FlowResultTables&);
-// The calls of Symbol that give a symbol which is created once: each becomes the constant. Takes the proof about such a call away, so it comes behind the types. Rests on ValueFlowResultInputs::symbolsCreatedOnce.
 void computeSymbolConstantResults(const ValueFlowResultInputs&, FlowResultTables&);
-// The calls whose results compiled parsers and validators allocate by type, and the site that stands for all such objects of a layout. Rests on what never happens to the objects of a layout.
 void computeTypedResultResults(const ValueFlowResultInputs&, FlowResultTables&);
-// The site, the class and the elements of each object and array in the tree of a Data value. Rests on what never happens to the objects of a layout and on the containers.
 void computeDataNodeResults(const ValueFlowResultInputs&, const ValueFlowContainerResults&, TypeTable&, FlowResultTables&);
 BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
-// The type with Object in the place of the layouts whose objects are dictionaries, in what a container holds too.
 Type typeBehindDictionaries(const Program&, const BitVector& layoutsOfDictionaries, std::span<const std::pair<TypeID, TypeID>> ascendingTypes, const Type&, TypeArena&);
-// The constant texts that arrive at an argument whose text decides what a built-in makes: the pattern and the flags of a RegExp. Rests on the stamps and on the callers of the functions.
 void computeSinkOperandResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 
 inline bool isClassLayout(const Layout& layout)

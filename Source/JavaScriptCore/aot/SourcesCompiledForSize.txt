@@ -114,7 +114,6 @@ aot/passes/AOTJSONSupport.cpp
 aot/passes/AOTJSONVerification.cpp
 aot/passes/AOTJSONVerificationCapacity.cpp
 aot/passes/AOTPlaceTypeTestsDump.cpp
-aot/passes/AOTReduceIntegerDivisions.cpp
 aot/passes/AOTRemoveUnreadExports.cpp
 aot/passes/AOTResolveAccessesVariables.cpp
 aot/passes/AOTResolveCallsLists.cpp
@@ -145,7 +144,6 @@ aot/place/AOTRequestRecords.cpp
 aot/place/AOTRequestTableEncoding.cpp
 aot/place/AOTShapeVariants.cpp
 aot/place/AOTSiteWeight.cpp
-aot/place/AOTSlotPlanDump.cpp
 aot/place/AOTStaticsLayout.cpp
 aot/place/AOTStaticsTableEncoding.cpp
 aot/select/AOTArrayRules.cpp

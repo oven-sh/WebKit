@@ -46,7 +46,7 @@ static void hoistTruthinessTest(Rewrite& rewrite, BlockID id, const Block& block
     if (rewrite.uses().useCount(parameter) != 1 || rewrite.uses().useCount(test) != 1 || isConditionOfBranchWithProofs(rewrite.function, rewrite.uses(), test) || !rewrite.analyses.isRemovableWhenUnused(test))
         return;
     rewrite.claim(id);
-    rewrite.later([&rewrite, id, test, parameter, parameterIndex, edges = Vector<Edge, 4>(rewrite.cfg().incomingEdges(id))] {
+    rewrite.later([&rewrite, id, test, parameter, parameterIndex, edges = rewrite.keep(rewrite.cfg().incomingEdges(id))] {
         for (Edge edge : edges) {
             ValueID argument = targetOf(rewrite.function, edge).arguments[parameterIndex];
             if (!rewrite.typeOf(argument).isBoolean())
@@ -88,7 +88,7 @@ static void hoistOperatorOnParameter(Rewrite& rewrite, BlockID id, const Block& 
     if (rewrite.uses().useCount(value.operand(operandIndex)) != 1 || isConditionOfBranchWithProofs(rewrite.function, rewrite.uses(), operation))
         return;
     bool otherOperandIsConstantOfBlock = std::ranges::contains(block.values.span().first(valueIndex), value.operand(1 - operandIndex));
-    rewrite.later([&rewrite, id, operation, operandIndex, parameterIndex, otherOperandIsConstantOfBlock, edges = Vector<Edge, 4>(incomingEdges)] {
+    rewrite.later([&rewrite, id, operation, operandIndex, parameterIndex, otherOperandIsConstantOfBlock, edges = rewrite.keep(incomingEdges)] {
         Opcode opcode = rewrite.at(operation).opcode;
         Origin origin = rewrite.at(operation).origin();
         std::array<ValueID, 2> operands { rewrite.at(operation).operand(0), rewrite.at(operation).operand(1) };

@@ -190,24 +190,14 @@ function f4 name="fillsHolders" module=m0 parameters=[{type=L9}, {type=L10}] res
 
 function f5 name="reads" module=m0 parameters=[{type=L9}, {type=L10}, {type=L9}, {type=L3}] results=[{type=anything}] {
   b0(v0: L9, v1: L10, v2: L9, v3: L3):
-    v4 = IsSlotFilled v0 key="run" receivers=[L9] level=Proven
-    Branch v4 -> taken b1(| 0), notTaken b5()
-  b1(v5: guard):
-    v6 = GetSlot v0, v5 key="run" receivers=[L9] level=Proven
-    v7 = GetCapture v6 function=f9
-    PutModuleVariable v7 variable=g0
-    v9 = IsSlotFilled v1 key="run" receivers=[L10] level=Proven
-    Branch v9 -> taken b2(| 0), notTaken b5()
-  b2(v10: guard):
-    v11 = GetSlot v1, v10 key="run" receivers=[L10] level=Proven
-    v12 = GetCapture v11 function=f9
-    PutModuleVariable v12 variable=g0
-    v14 = IsSlotFilled v2 key="run" receivers=[L9] level=Proven
-    Branch v14 -> taken b3(| 0), notTaken b5()
-  b3(v15: guard):
-    v16 = GetSlot v2, v15 key="run" receivers=[L9] level=Proven
-    v17 = GetCapture v16 function=f9
-    PutModuleVariable v17 variable=g0
+# REPEAT: i = 0..2; a = 9 10 9
+    v%(i*5+4) = IsSlotFilled v%(i) key="run" receivers=[L%(a)] level=Proven
+    Branch v%(i*5+4) -> taken b%(i+1)(| 0), notTaken b5()
+  b%(i+1)(v%(i*5+5): guard):
+    v%(i*5+6) = GetSlot v%(i), v%(i*5+5) key="run" receivers=[L%(a)] level=Proven
+    v%(i*5+7) = GetCapture v%(i*5+6) function=f9
+    PutModuleVariable v%(i*5+7) variable=g0
+# END REPEAT
     PutModuleVariable v16 variable=g0
     v20 = IsSlotFilled v3 key="run" receivers=[L3] level=Proven
     Branch v20 -> taken b4(| 0), notTaken b5()

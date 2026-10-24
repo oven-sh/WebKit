@@ -29,24 +29,11 @@ function f0 name="threeNestedLoops" parameters=[{type=boolean}] results=[{type=u
 # CHECK-NEXT: b0 in cycle: no
 # CHECK-NEXT: b0 depth: 0
 # CHECK-NEXT: b0 outermost cycle: none
-# CHECK-NEXT: b1 in cycle: yes
-# CHECK-NEXT: b1 depth: 1
-# CHECK-NEXT: b1 outermost cycle: b1
-# CHECK-NEXT: b2 in cycle: yes
-# CHECK-NEXT: b2 depth: 2
-# CHECK-NEXT: b2 outermost cycle: b1
-# CHECK-NEXT: b3 in cycle: yes
-# CHECK-NEXT: b3 depth: 3
-# CHECK-NEXT: b3 outermost cycle: b1
-# CHECK-NEXT: b4 in cycle: yes
-# CHECK-NEXT: b4 depth: 3
-# CHECK-NEXT: b4 outermost cycle: b1
-# CHECK-NEXT: b5 in cycle: yes
-# CHECK-NEXT: b5 depth: 2
-# CHECK-NEXT: b5 outermost cycle: b1
-# CHECK-NEXT: b6 in cycle: yes
-# CHECK-NEXT: b6 depth: 1
-# CHECK-NEXT: b6 outermost cycle: b1
+# REPEAT: i = 1..6; a = 1 2 3 3 2 1
+# CHECK-NEXT: b%(i) in cycle: yes
+# CHECK-NEXT: b%(i) depth: %(a)
+# CHECK-NEXT: b%(i) outermost cycle: b1
+# END REPEAT
 # CHECK-NEXT: b7 in cycle: no
 # CHECK-NEXT: b7 depth: 0
 # CHECK-NEXT: b7 outermost cycle: none
@@ -98,15 +85,8 @@ function f2 name="diamond" parameters=[{type=boolean}] results=[{type=undefined}
 }
 # CHECK-LABEL: function f2
 # CHECK-NEXT: cycles:
-# CHECK-NEXT: b0 in cycle: no
-# CHECK-NEXT: b0 depth: 0
-# CHECK-NEXT: b0 outermost cycle: none
-# CHECK-NEXT: b1 in cycle: no
-# CHECK-NEXT: b1 depth: 0
-# CHECK-NEXT: b1 outermost cycle: none
-# CHECK-NEXT: b2 in cycle: no
-# CHECK-NEXT: b2 depth: 0
-# CHECK-NEXT: b2 outermost cycle: none
-# CHECK-NEXT: b3 in cycle: no
-# CHECK-NEXT: b3 depth: 0
-# CHECK-NEXT: b3 outermost cycle: none
+# REPEAT: i = 0..3
+# CHECK-NEXT: b%(i) in cycle: no
+# CHECK-NEXT: b%(i) depth: 0
+# CHECK-NEXT: b%(i) outermost cycle: none
+# END REPEAT

@@ -21,7 +21,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Direct calls, and the modules that operations load.
 static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, bool& libraryLoadsItsModulesByName)
 {
     struct Row {
@@ -51,7 +50,6 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
                 rows.append({ { FunctionID(index), ValueID(valueIndex), value.function() }, { }, false });
                 break;
             case Opcode::Builtin:
-                // The operation names the object of a module of the library, which loads the module.
                 loadRuntimeModule(findCompiledModuleWithObject(program, program.builtins().canonicalID(value.builtin())));
                 break;
             case Opcode::RequireBuiltinModule:
@@ -82,8 +80,6 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
     libraryLoadsItsModulesByName = namesModuleAtRunTime.load(std::memory_order_relaxed);
 }
 
-// Every rule that enters a closure asks for the group of a set that holds it: a call for its callees, an access for the accessors that it finds, and any operation for what its protocols or the built-ins that it calls enter.
-// An entry by a statement that a rule has made, any entry of unsolved code or of a function with callers that nobody knows, and the entry of a closure that a placeholder among the callees of a call stands for, is the host's.
 static void collectCallsOfClosures(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, FlowOrderInputs& order)
 {
     const ValueFlowSolver& solver = inputs.solver();
@@ -101,7 +97,6 @@ static void collectCallsOfClosures(const ValueFlowResultInputs& inputs, const Fl
 
         bool isOperationOfFunction = statement.kind == ValueFlowStatementKind::Operation && statement.function && statement.site;
         inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
-            // The statement of a group asks for the nodes of that group.
             if (made == id)
                 return;
             if (ValueSets::isComplement(key.set)) {
@@ -136,8 +131,6 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
     const BuiltinTable& builtins = program.builtins();
     bool modulesAreNamedAtRunTime = unseenCodeCanRun(inputs.solution) || modulesAreLoadedByName(inputs.solution);
     bool filesOfProgramAreNamedAtRunTime = filesOfProgramAreLoadedByName(inputs.solution);
-    // Native code loads a module of the library whenever it likes once a built-in is used that does so.
-    // The program's own code that names a module at run time has raised the flag. A function of the library names modules of the library.
     BitVector isLoadedByNativeCode(program.modules.size());
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
@@ -162,7 +155,6 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
         order.modulesLoadedByHost.append(ModuleID(static_cast<uint32_t>(module)));
 }
 
-// Whoever looks at a static field holds the class object or an object below it, whether an operation spells the look out or not.
 static void collectStaticFields(const ValueFlowResultInputs& inputs, FlowOrderInputs& order)
 {
     const Program& program = inputs.program;
@@ -220,7 +212,6 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
     FlowModuleOrder moduleOrder = computeModuleOrder(orderInputs);
     FlowScopeOrders orders = computeScopeOrders(orderInputs, moduleOrder);
 
-    // The order counts the function that a variable starts with as a store, and the flow of a location counts operations only.
     auto apply = [&](LocationFlow& flow, FlowLocationOrder order, uint32_t switchSubject, bool startsAsFunction, bool isStaticField) {
         bool areWritersKnown = flow.writers == WriterState::AllKnown;
         if (!areWritersKnown && !isStaticField)
@@ -235,7 +226,6 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
         FlowLocationOrder order = orders.orderOf(VariableID(index));
         bool isStaticField = !!program.variables[index].owner;
         apply(flow, order, index, program.variables[index].initialization == VariableInitialization::Function, isStaticField);
-        // The one store stands outside every cycle of code that runs once, so no loop holds it, and every read comes behind it, wherever inlining puts the read: whoever enters a loop that holds a read has passed the store.
         bool isStoredOnce = flow.stores == StoreCount::AtMostOnce && order.stores == StoreCount::AtMostOnce && flow.storeNaming == StoreNaming::EveryStoreNamesLocation;
         if (isStoredOnce && !isStaticField && flow.initialization == InitializationState::StoredBeforeEveryRead && order.isStoredBeforeCallersOfReaders)
             flow.isUnchangedDuringActivation = true;
@@ -246,7 +236,6 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
         Vector<FlowFieldUpdate>& fields = application.layouts[index].fields;
         for (uint32_t field = 0; field < fields.size(); ++field) {
             FlowLocationOrder order = orders.orderOf(LayoutID(index), field);
-            // Without the switch the field stays set at creation, which is what the allocation says.
             if (order.undefinedAtStartIsNeverRead && (fields[field].flow.location.writers != WriterState::AllKnown || !inputs.build.isEnabled(FlowResultKind::Initialization, index)))
                 order = { InitializationState::SetAtCreation, StoreCount::Unknown };
             fields[field].undefinedAtStartIsNeverRead = order.undefinedAtStartIsNeverRead;

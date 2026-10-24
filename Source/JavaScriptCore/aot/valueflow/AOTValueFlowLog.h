@@ -18,7 +18,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class ValueFlowMadeNodeKind : uint8_t {
-    // Holds the set of its key for ever: what a rule adds to a node is an edge out of one of these.
     Constant,
     Read,
     Written,
@@ -26,16 +25,12 @@ enum class ValueFlowMadeNodeKind : uint8_t {
     CallGroup,
     Hub,
     Masked,
-    // Holds the objects that have one mark.
     Marked,
-    // Holds all that is written through a set under the names of one kind; hands on to all that is read through a set under the names of one kind.
     WrittenUnderKind,
     ReadUnderKind,
-    // What a node of a body holds for some of the calls of its function, and the markers of those calls: see ValueFlowInstancedFunctions.
     Instance,
 };
 
-// Names under which most objects never get anything: see ValueFlowRuleContext::mayFindSomethingWritten().
 enum class ValueFlowRareWrite : uint8_t {
     Accessor,
     Deletion,
@@ -93,14 +88,11 @@ constexpr std::optional<ValueFlowRareWrite> rareWriteFoundUnder(ValueFlowNameKin
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What a node that a rule asks for is found again by.
 struct ValueFlowNodeKey {
     static ValueFlowNodeKey constant(ValueSetID set) { return { ValueFlowMadeNodeKind::Constant, 0, 0, set }; }
-    // A constant through which a rule brings the unknown object into being has one node for each source: whoever walks back along the edges finds the source where the walk ends.
     static ValueFlowNodeKey constant(ValueSetID set, ValueFlowUnknownSource source) { return { ValueFlowMadeNodeKind::Constant, static_cast<uint8_t>(static_cast<uint8_t>(source) + 1), 0, set }; }
     static ValueFlowNodeKey named(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowName name) { return { kind, static_cast<uint8_t>(name.kind), name.payload, set }; }
     static ValueFlowNodeKey underKind(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowNameKind nameKind) { return { kind, static_cast<uint8_t>(nameKind), 0, set }; }
-    // With a marker: the group of the calls that enter the instance of the callee with that marker.
     static ValueFlowNodeKey callGroup(ValueSetID callees, ValueFlowCallKind kind, ValueFlowObjectID marker = { }) { return { ValueFlowMadeNodeKind::CallGroup, static_cast<uint8_t>(kind), marker ? marker.index() + 1 : 0, callees }; }
     static ValueFlowNodeKey instance(ValueFlowNodeID node, ValueSetID markerAlone) { return { ValueFlowMadeNodeKind::Instance, 0, node.index(), markerAlone }; }
     static ValueFlowNodeKey markersOf(FunctionID function) { return { ValueFlowMadeNodeKind::Instance, 1, function.index(), { } }; }
@@ -108,9 +100,7 @@ struct ValueFlowNodeKey {
     static ValueFlowNodeKey hub(ValueFlowBehaviorID behavior) { return { ValueFlowMadeNodeKind::Hub, 0, behavior.index(), { } }; }
     static ValueFlowNodeKey masked(ValueFlowNodeID node, ValueSetID mask, ValueFlowMaskKind kind = ValueFlowMaskKind::Plain) { return { ValueFlowMadeNodeKind::Masked, static_cast<uint8_t>(kind), node.index(), mask }; }
     static ValueFlowNodeKey marked(ObjectMutation mutation) { return { ValueFlowMadeNodeKind::Marked, 0, static_cast<uint32_t>(mutation), { } }; }
-    // Two marks that only rules ask after; no result reads them.
     static ValueFlowNodeKey objectsThatAreNotPlain() { return { ValueFlowMadeNodeKind::Marked, 0, 1u << 16, { } }; }
-    // Those through which somebody has stored or defined under a key that the analysis does not know.
     static ValueFlowNodeKey objectsWrittenUnderUnknownKey() { return { ValueFlowMadeNodeKind::Marked, 0, (1u << 16) + 1, { } }; }
     static ValueFlowNodeKey objectsWithRareWrite(ValueFlowRareWrite write) { return { ValueFlowMadeNodeKind::Marked, 0, (1u << 16) + 2 + static_cast<uint32_t>(write), { } }; }
 
@@ -122,7 +112,6 @@ struct ValueFlowNodeKey {
     ValueFlowBehaviorID behavior() const { return ValueFlowBehaviorID(payload); }
     ValueFlowNodeID maskedNode() const { return ValueFlowNodeID(payload); }
     ValueFlowMaskKind maskKind() const { return static_cast<ValueFlowMaskKind>(detail); }
-    // Of a constant: none where no rule has named a source.
     std::optional<ValueFlowUnknownSource> unknownSource() const { return detail ? std::optional(static_cast<ValueFlowUnknownSource>(detail - 1)) : std::nullopt; }
 
     unsigned numberOfNodes() const { return kind == ValueFlowMadeNodeKind::CallGroup ? numberOfNodesOfCallGroup : 1; }
@@ -151,7 +140,6 @@ inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first)
     return { at(0), at(1), at(6), at(2), at(5), at(3), at(4) };
 }
 
-// What the rules that one thread has run in one round have added.
 class ValueFlowRoundLog {
     WTF_MAKE_NONCOPYABLE(ValueFlowRoundLog);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowRoundLog);
@@ -168,21 +156,17 @@ public:
         OptionSet<BuiltinUse> uses;
     };
 
-    // Numbers in a row that are this thread's to give, so that no two threads take theirs from one counter or write side by side, and what one statement asks for stands in a row.
     struct NumbersToGive {
         uint32_t next { 0 };
         uint32_t end { 0 };
-        // A thread that makes little holds little back.
         uint32_t sizeOfLastBlock { 0 };
     };
 
-    // By ValueFlowSolver's numbers of what it has made.
     struct PartOfMadeNodes {
         uint32_t whole { 0 };
         uint32_t part { 0 };
     };
 
-    // The inputs of a run are those between the end of the run before it and its own end.
     struct Run {
         ValueFlowStatementID statement;
         uint32_t endOfNodesRead { 0 };
@@ -190,7 +174,6 @@ public:
         uint32_t endOfNodesAskedFor { 0 };
         uint32_t endOfEdges { 0 };
         uint32_t endOfReached { 0 };
-        // The edges that the run has asked for, those that an earlier round had added among them.
         uint32_t numberOfConnections { 0 };
         uint32_t endOfMade { 0 };
         uint32_t endOfValuesShown { 0 };
@@ -216,7 +199,6 @@ public:
         return ValueFlowNodeID(made.last().first | numberedByLog);
     }
 
-    // The merge unites the uses of a built-in, so one that the log has already says nothing.
     void use(BuiltinID builtin, OptionSet<BuiltinUse> usesOfBuiltin)
     {
         if (builtin.index() >= m_usesLogged.size())
@@ -252,18 +234,15 @@ public:
 
     Vector<MadeNodes> made;
     uint32_t numberOfMadeNodes { 0 };
-    // What this thread has made in the solver's own lists: see ValueFlowSolver::makeNodesWhereAskedFor(). The solver empties the three lists at the end of the turn. The parts of one whole stand in a row.
     uint32_t numberMadeWhereAskedFor { 0 };
     NumbersToGive recordsToGive;
     NumbersToGive nodesToGive;
     NumbersToGive nodesOfCallGroupsToGive;
     Vector<uint32_t> madeWhereAskedFor;
     Vector<uint32_t> madeWithStatementToRun;
-    // Records with a statement, or with parts, that nobody asked for when this thread did.
     Vector<uint32_t> askedForAtRest;
     uint32_t numberOfRunsWhereMade { 0 };
     Vector<uint32_t> recordsOfRunsWhereMade;
-    // For each entry of `reached`: the statement that reached the function, and what it counts as where a choice among statements shows.
     struct WhoReached {
         ValueFlowStatementID statement;
         uint64_t content { 0 };
@@ -273,7 +252,6 @@ public:
     Vector<PartOfMadeNodes> partsOfMadeNodes;
     Vector<ValueFlowEdge> edgesOfMadeNodes;
     Vector<ValueFlowEdge> edges;
-    // An edge past this many is dropped: the solve is past its budget of edges, and the solver hears of it here.
     uint64_t mostEdges { UINT64_MAX };
     bool hasDroppedEdges { false };
     uint32_t numberOfConnectionsOfRun { 0 };
@@ -283,20 +261,14 @@ public:
     Vector<Run> runs;
     Vector<ValueFlowNodeID> nodesRead;
     Vector<FunctionID> functionsAsked;
-    // What read(), written(), lookup(), group(), hub() and masked() have answered and the asking keeps awake: ValueFlowSolver's number of the record; for what this log has numbered, the first node (numberedByLog is set).
     Vector<uint32_t> madeNodesAskedFor;
-    // All that a node held when newSince() was asked about it. The merge keeps it by statement and node, and the next run of the statement is shown what the node holds beyond it.
     Vector<ValueFlowNodeSet> valuesShown;
-    // What valueWithin() was asked: the statement runs again once the node holds more of the set.
     Vector<ValueFlowNodeSet> partsWatched;
-    // Where in that list the questions of valueWithinAskedLast() stand.
     Vector<uint32_t> partsWatchedLast;
-    // What holdsAnything() has found empty: the statement runs again once the node holds something.
     Vector<ValueFlowNodeID> nodesAskedWhetherEmpty;
 
 private:
     HashedIndex m_madeByKey;
-    // By built-in.
     Vector<OptionSet<BuiltinUse>> m_usesLogged;
 };
 

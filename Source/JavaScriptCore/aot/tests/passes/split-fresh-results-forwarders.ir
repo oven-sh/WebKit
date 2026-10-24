@@ -180,17 +180,9 @@ function f10 name="remember" parameters=[{type=anything}] results=[{type=anythin
 # Whoever calls them needs no object
 function f11 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=anything}] results=[{type=undefined}] {
   b0(v0: number, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: number, v8: number, v9: number, v10: anything):
-    v11 = CallDirect v0 function=f0
-    v12 = CallDirect v1 function=f1
-    v13 = CallDirect v2 function=f2
-    v14 = CallDirect v3 function=f3
-    v15 = CallDirect v4 function=f4
-    v16 = CallDirect v5 function=f5
-    v17 = CallDirect v6 function=f6
-    v18 = CallDirect v7 function=f7
-    v19 = CallDirect v8 function=f8
-    v20 = CallDirect v9 function=f9
-    v21 = CallDirect v10 function=f10
+# REPEAT: i = 0..10
+    v%(i+11) = CallDirect v%(i) function=f%(i)
+# END REPEAT
     v22 = Undefined
     Return v22
 }

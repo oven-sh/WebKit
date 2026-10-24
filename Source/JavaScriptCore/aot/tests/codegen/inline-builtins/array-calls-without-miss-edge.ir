@@ -3,16 +3,9 @@
 # RUN: generate-code
 # DIAGNOSTIC: OpcodeWithoutCode 11
 # CHECK: f0: no code
-# CHECK-NEXT: f1: no code
-# CHECK-NEXT: f2: no code
-# CHECK-NEXT: f3: no code
-# CHECK-NEXT: f4: no code
-# CHECK-NEXT: f5: no code
-# CHECK-NEXT: f6: no code
-# CHECK-NEXT: f7: no code
-# CHECK-NEXT: f8: no code
-# CHECK-NEXT: f9: no code
-# CHECK-NEXT: f10: no code
+# REPEAT: i = 1..10
+# CHECK-NEXT: f%(i): no code
+# END REPEAT
 # CHECK-NEXT: f11: size=
 
 module m0 path="main.js" displayPath="main.js"

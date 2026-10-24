@@ -19,7 +19,6 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/FastBitVector.h>
 #include <wtf/PrintStream.h>
@@ -33,56 +32,6 @@ static_assert(literalStringWord(0) == emptyLiteralStringWord);
 static constexpr OpcodeSet equalityComparisonsOfLiterals { Opcode::StrictEq, Opcode::Eq };
 // Their value is one that another value, a field or a variable of the program held before.
 static constexpr OpcodeSet operationsHandingOnValues { Opcode::Parameter, Opcode::Upcast, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::CallDirect };
-
-namespace {
-
-struct StringsNeedingWords {
-    StringsNeedingWords(const Program& program, const ParallelLoops& loops, bool everyWordHasText)
-        : everyWordHasText(everyWordHasText)
-        , typesToVisit(program.types.size())
-        , typesFromOutsideToVisit(program.types.size())
-        , typesHandedOnToVisit(program.types.size())
-        , strings(program.strings.size())
-        , membersFromOutside(program.strings.size())
-        , membersHandedOn(program.strings.size())
-        , constantsOfCode(program.strings.size())
-        , variablesNamedByCode(program.variables.size())
-    {
-        constexpr unsigned typesInShare = 4096;
-        static_assert(!(typesInShare % 32));
-        unsigned numberOfTypes = program.types.size();
-        forEachIndexInParallel(loops, (numberOfTypes + typesInShare - 1) / typesInShare, [&](unsigned share) {
-            for (unsigned index = share * typesInShare; index < std::min(numberOfTypes, (share + 1) * typesInShare); ++index) {
-                bool hasLiteralStrings = program.at(TypeID(index)).hasLiteralStrings();
-                typesToVisit[index] = hasLiteralStrings;
-                typesFromOutsideToVisit[index] = hasLiteralStrings;
-                typesHandedOnToVisit[index] = hasLiteralStrings;
-            }
-        });
-    }
-
-    void add(StringID string) { strings.atomicSetAndCheck(string.index(), true); }
-
-    void add(std::span<const StringID> list)
-    {
-        for (StringID string : list)
-            add(string);
-    }
-
-    bool everyWordHasText;
-    FastBitVector typesToVisit;
-    FastBitVector typesFromOutsideToVisit;
-    FastBitVector typesHandedOnToVisit;
-    FastBitVector strings;
-    // Each gets a word, and its text only if the program spells it.
-    FastBitVector membersFromOutside;
-    // Each gets a word only if the program spells it.
-    FastBitVector membersHandedOn;
-    FastBitVector constantsOfCode;
-    FastBitVector variablesNamedByCode;
-};
-
-} // anonymous namespace
 
 std::optional<uint32_t> LiteralStringTable::indexOf(StringID string) const
 {
@@ -103,152 +52,96 @@ void LiteralStringTable::dump(PrintStream& out, const Program& program) const
         out.print(index, " \"", byteCast<char8_t>(program.string(m_strings[index])), "\"", isWithoutText(m_strings[index]) ? " without text" : "", "\n");
 }
 
-static void collectLiteralsOf(const Program& program, TypeID id, StringsNeedingWords& found)
-{
-    if (found.typesToVisit.at(id.index()) && found.typesToVisit.atomicSetAndCheck(id.index(), false))
-        found.add(program.at(id).stringLiterals.span());
-}
-
-enum class Source : uint8_t { Program, Anywhere, Parser };
-
-// A string from outside the program gets its word where it comes in, so every member has one there. Where the program hands its own values on, a member that it spells nowhere does not occur.
-// A parse by type compares what it reads with the texts of the members.
-static void collectLiteralsOf(const Program& program, TypeID id, Source source, StringsNeedingWords& found)
-{
-    if (source == Source::Parser || found.everyWordHasText) {
-        collectLiteralsOf(program, id, found);
-        return;
-    }
-    FastBitVector& typesToVisit = source == Source::Anywhere ? found.typesFromOutsideToVisit : found.typesHandedOnToVisit;
-    if (!typesToVisit.at(id.index()) || !typesToVisit.atomicSetAndCheck(id.index(), false))
-        return;
-    FastBitVector& members = source == Source::Anywhere ? found.membersFromOutside : found.membersHandedOn;
-    for (StringID string : program.at(id).stringLiterals)
-        members.atomicSetAndCheck(string.index(), true);
-}
-
-static void collectLiteralsOf(const Program& program, std::span<const DeclaredType> positions, Source source, StringsNeedingWords& found)
-{
-    for (const DeclaredType& declared : positions)
-        collectLiteralsOf(program, declared.type, source, found);
-}
-
-static void collectComparedConstants(const Program& program, const Function& function, const Value& comparison, StringsNeedingWords& found)
-{
-    for (unsigned side = 0; side < 2; ++side) {
-        ValueID other = definitionThroughUpcasts(function, comparison.operand(1 - side));
-        if (!program.typeOf(function, other).hasLiteralStrings())
-            continue;
-        std::optional<ValueID> constant = constantThroughCasts(program, function, comparison.operand(side));
-        if (constant && function.at(*constant).opcode == Opcode::String)
-            found.add(function.at(*constant).string());
-    }
-}
-
-static void collectStringsNeedingWords(const Program& program, FunctionID id, Source sourceOfArguments, StringsNeedingWords& found)
-{
-    const Function& function = program.at(id);
-    collectLiteralsOf(program, function.captures.span(), Source::Program, found);
-    collectLiteralsOf(program, function.thisType.type, sourceOfArguments, found);
-    collectLiteralsOf(program, function.parameters.span(), sourceOfArguments, found);
-    collectLiteralsOf(program, function.results.span(), Source::Program, found);
-
-    auto collectFromValue = [&](const Value& value) {
-        if (value.opcode != Opcode::String)
-            collectLiteralsOf(program, value.type, operationsHandingOnValues.contains(value.opcode) ? Source::Program : Source::Anywhere, found);
-        else
-            found.constantsOfCode.atomicSetAndCheck(value.string().index(), true);
-        forEachType(value, [&](TypeID type) {
-            collectLiteralsOf(program, type, Source::Anywhere, found);
-        });
-        if (equalityComparisonsOfLiterals.contains(value.opcode))
-            collectComparedConstants(program, function, value, found);
-        if (VariableID variable = Value::opcodesWithVariable.contains(value.opcode) ? value.variable() : VariableID())
-            found.variablesNamedByCode.atomicSetAndCheck(variable.index(), true);
-    };
-    auto collectFromTerminator = [&](const Terminator& terminator) {
-        if (terminator.kind == TerminatorKind::SwitchString && program.typeOf(function, terminator.subjectOperand()).hasLiteralStrings())
-            found.add(terminator.strings());
-    };
-
-    BodyIndex* index = program.bodyIndex();
-    if (std::optional<RowOfBody> row = index ? index->rowOf(program, id) : std::nullopt; row && row->listsAllValues) {
-        for (const Value& value : function.values)
-            collectFromValue(value);
-        if (!row->terminators.contains(TerminatorKind::SwitchString))
-            return;
-        for (const Block& block : function.blocks)
-            collectFromTerminator(block.terminator);
-        return;
-    }
-
-    for (const Block& block : function.blocks) {
-        for (ValueID parameter : block.parameters)
-            collectFromValue(function.at(parameter));
-        for (ValueID value : block.values)
-            collectFromValue(function.at(value));
-        collectFromTerminator(block.terminator);
-    }
-}
-
-static void collectStoredLiterals(const Program& program, const FlowResults& flow, StringsNeedingWords& found)
-{
-    for (const Layout& layout : program.layouts) {
-        bool isParsedByType = layout.flow.observedUses.contains(ObservedUse::IsParsedByType);
-        bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
-        for (const Field& field : layout.fields)
-            collectLiteralsOf(program, field.declared.type, isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere, found);
-    }
-    BitVector described = findVariablesDescribedToRunTime(program, flow);
-    for (unsigned index = 0; index < program.variables.size(); ++index) {
-        TypeID type = program.variables[index].declared.type;
-        if (described.quickGet(index) || found.variablesNamedByCode.at(index)) {
-            collectLiteralsOf(program, type, !described.quickGet(index) && program.variables[index].flow.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere, found);
-            continue;
-        }
-        // The text of a constant that was folded into its readers is in the image with them.
-        for (StringID literal : program.at(type).stringLiterals) {
-            if (found.constantsOfCode.at(literal.index()))
-                found.add(literal);
-        }
-    }
-}
-
-struct MembersSpelledNowhere {
-    BitVector withoutText;
-    BitVector leftOut;
-};
-
-static MembersSpelledNowhere findMembersSpelledNowhere(const Program& program, StringsNeedingWords& found)
-{
-    for (const Data& data : program.data) {
-        forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
-            if (const DataNode::String* string = node.tryAs<DataNode::String>())
-                found.constantsOfCode[string->value.index()] = true;
-        });
-    }
-    MembersSpelledNowhere members { BitVector(program.strings.size()), BitVector(program.strings.size()) };
-    found.membersFromOutside.forEachSetBit([&](size_t index) {
-        if (!found.strings.at(index) && !found.constantsOfCode.at(index))
-            members.withoutText.quickSet(index);
-        found.strings[index] = true;
-    });
-    found.membersHandedOn.forEachSetBit([&](size_t index) {
-        if (found.strings.at(index))
-            return;
-        if (found.constantsOfCode.at(index))
-            found.strings[index] = true;
-        else
-            members.leftOut.quickSet(index);
-    });
-    return members;
-}
-
 LiteralStringTable numberLiteralStrings(const Program& program, const FlowResults& flow, BuildContext& build)
 {
+    enum class Source : uint8_t { Program, Anywhere, Parser };
     // A validating build and the report of a mismatch hold every value against its type, also a text that the engine made and no code reads: Object.keys(). They read the texts of the members.
     bool everyWordHasText = build.validates() || build.recordedOptions().policy() == MismatchPolicy::Report;
-    StringsNeedingWords found(program, build.parallelLoops(), everyWordHasText);
+    size_t numberOfStrings = program.strings.size();
+    FastBitVector strings(numberOfStrings);
+    // Each gets a word, and its text only if the program spells it.
+    FastBitVector membersFromOutside(numberOfStrings);
+    // Each gets a word only if the program spells it.
+    FastBitVector membersHandedOn(numberOfStrings);
+    FastBitVector constantsOfCode(numberOfStrings);
+    FastBitVector variablesNamedByCode(program.variables.size());
+
+    constexpr unsigned typesInShare = 4096;
+    static_assert(!(typesInShare % 32));
+    unsigned numberOfTypes = program.types.size();
+    FastBitVector typesToVisit(numberOfTypes);
+    forEachIndexInParallel(build.parallelLoops(), (numberOfTypes + typesInShare - 1) / typesInShare, [&](unsigned share) {
+        for (unsigned index = share * typesInShare; index < std::min(numberOfTypes, (share + 1) * typesInShare); ++index)
+            typesToVisit[index] = program.at(TypeID(index)).hasLiteralStrings();
+    });
+    FastBitVector typesFromOutsideToVisit = typesToVisit;
+    FastBitVector typesHandedOnToVisit = typesToVisit;
+
+    auto add = [&](StringID string) { strings.atomicSetAndCheck(string.index(), true); };
+    // A string from outside the program gets its word where it comes in, so every member has one there. Where the program hands its own values on, a member that it spells nowhere does not occur.
+    // A parse by type compares what it reads with the texts of the members.
+    auto collectLiteralsOf = [&](TypeID id, Source source) {
+        bool needsTexts = source == Source::Parser || everyWordHasText;
+        FastBitVector& toVisit = needsTexts ? typesToVisit : source == Source::Anywhere ? typesFromOutsideToVisit : typesHandedOnToVisit;
+        if (!toVisit.at(id.index()) || !toVisit.atomicSetAndCheck(id.index(), false))
+            return;
+        FastBitVector& members = needsTexts ? strings : source == Source::Anywhere ? membersFromOutside : membersHandedOn;
+        for (StringID string : program.at(id).stringLiterals)
+            members.atomicSetAndCheck(string.index(), true);
+    };
+    auto collectLiteralsOfAll = [&](std::span<const DeclaredType> positions, Source source) {
+        for (const DeclaredType& declared : positions)
+            collectLiteralsOf(declared.type, source);
+    };
+    auto collectStringsOfFunction = [&](FunctionID id, Source sourceOfArguments) {
+        const Function& function = program.at(id);
+        collectLiteralsOfAll(function.captures.span(), Source::Program);
+        collectLiteralsOf(function.thisType.type, sourceOfArguments);
+        collectLiteralsOfAll(function.parameters.span(), sourceOfArguments);
+        collectLiteralsOfAll(function.results.span(), Source::Program);
+
+        auto collectFromValue = [&](const Value& value) {
+            if (value.opcode != Opcode::String)
+                collectLiteralsOf(value.type, operationsHandingOnValues.contains(value.opcode) ? Source::Program : Source::Anywhere);
+            else
+                constantsOfCode.atomicSetAndCheck(value.string().index(), true);
+            forEachType(value, [&](TypeID type) {
+                collectLiteralsOf(type, Source::Anywhere);
+            });
+            for (unsigned side = 0; equalityComparisonsOfLiterals.contains(value.opcode) && side < 2; ++side) {
+                if (!program.typeOf(function, definitionThroughUpcasts(function, value.operand(1 - side))).hasLiteralStrings())
+                    continue;
+                std::optional<ValueID> constant = constantThroughCasts(program, function, value.operand(side));
+                if (constant && function.at(*constant).opcode == Opcode::String)
+                    add(function.at(*constant).string());
+            }
+            if (VariableID variable = Value::opcodesWithVariable.contains(value.opcode) ? value.variable() : VariableID())
+                variablesNamedByCode.atomicSetAndCheck(variable.index(), true);
+        };
+        auto collectFromTerminator = [&](const Terminator& terminator) {
+            if (terminator.kind == TerminatorKind::SwitchString && program.typeOf(function, terminator.subjectOperand()).hasLiteralStrings())
+                std::ranges::for_each(terminator.strings(), add);
+        };
+
+        BodyIndex* index = program.bodyIndex();
+        if (std::optional<RowOfBody> row = index ? index->rowOf(program, id) : std::nullopt; row && row->listsAllValues) {
+            for (const Value& value : function.values)
+                collectFromValue(value);
+            if (!row->terminators.contains(TerminatorKind::SwitchString))
+                return;
+            for (const Block& block : function.blocks)
+                collectFromTerminator(block.terminator);
+            return;
+        }
+        for (const Block& block : function.blocks) {
+            for (ValueID parameter : block.parameters)
+                collectFromValue(function.at(parameter));
+            for (ValueID value : block.values)
+                collectFromValue(function.at(value));
+            collectFromTerminator(block.terminator);
+        }
+    };
+
     BitVector isEnteredOtherwise = functionsCalledByHost(program, build.parallelLoops());
     for (const FlowIndirectCall& call : flow.indirectCalls())
         isEnteredOtherwise.set(call.callee.index());
@@ -257,19 +150,57 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
         if (!hasBody(program, id))
             return;
         bool everyCallIsSeen = !isEnteredOtherwise.get(index) && (program.at(id).hasOnlyDirectCallers() || callerStateOf(flow, id) == CallerState::AllKnown);
-        collectStringsNeedingWords(program, id, everyCallIsSeen ? Source::Program : Source::Anywhere, found);
+        collectStringsOfFunction(id, everyCallIsSeen ? Source::Program : Source::Anywhere);
     });
-    collectStoredLiterals(program, flow, found);
-    MembersSpelledNowhere spelledNowhere = findMembersSpelledNowhere(program, found);
+
+    for (const Layout& layout : program.layouts) {
+        bool isParsedByType = layout.flow.observedUses.contains(ObservedUse::IsParsedByType);
+        bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
+        for (const Field& field : layout.fields)
+            collectLiteralsOf(field.declared.type, isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
+    }
+    BitVector described = findVariablesDescribedToRunTime(program, flow);
+    for (unsigned index = 0; index < program.variables.size(); ++index) {
+        TypeID type = program.variables[index].declared.type;
+        if (described.quickGet(index) || variablesNamedByCode.at(index)) {
+            collectLiteralsOf(type, !described.quickGet(index) && program.variables[index].flow.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
+            continue;
+        }
+        // The text of a constant that was folded into its readers is in the image with them.
+        for (StringID literal : program.at(type).stringLiterals) {
+            if (constantsOfCode.at(literal.index()))
+                add(literal);
+        }
+    }
+    for (const Data& data : program.data) {
+        forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
+            if (const DataNode::String* string = node.tryAs<DataNode::String>())
+                constantsOfCode[string->value.index()] = true;
+        });
+    }
+
+    LiteralStringTable table;
+    table.m_withoutText = BitVector(numberOfStrings);
+    table.m_leftOut = BitVector(numberOfStrings);
+    membersFromOutside.forEachSetBit([&](size_t index) {
+        if (!strings.at(index) && !constantsOfCode.at(index))
+            table.m_withoutText.quickSet(index);
+        strings[index] = true;
+    });
+    membersHandedOn.forEachSetBit([&](size_t index) {
+        if (strings.at(index))
+            return;
+        if (constantsOfCode.at(index))
+            strings[index] = true;
+        else
+            table.m_leftOut.quickSet(index);
+    });
 
     StringID emptyString = program.strings.emptyString();
-    spelledNowhere.withoutText.quickClear(emptyString.index());
-    LiteralStringTable table;
-    table.m_leftOut = WTF::move(spelledNowhere.leftOut);
-    table.m_withoutText = WTF::move(spelledNowhere.withoutText);
-    table.m_strings.reserveInitialCapacity(found.strings.bitCount() + 1);
+    table.m_withoutText.quickClear(emptyString.index());
+    table.m_strings.reserveInitialCapacity(strings.bitCount() + 1);
     table.m_strings.append(emptyString);
-    found.strings.forEachSetBit([&](size_t index) {
+    strings.forEachSetBit([&](size_t index) {
         if (index != emptyString.index())
             table.m_strings.append(StringID(index));
     });

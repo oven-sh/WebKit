@@ -39,6 +39,7 @@ void StarExportResolver::forEachCapturedExport(Modules& modules, ModuleID module
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* captured = modules.capturedExports(module);
+    RETURN_IF_EXCEPTION(scope, void());
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     JSObject::getOwnPropertyNames(captured, instance.globalObject, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, void());
@@ -166,6 +167,7 @@ void StarExportResolver::addCapturedCandidates(ModuleID source, StarCandidates& 
     JSGlobalObject* realm = instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* captured = m_modules.capturedExports(source);
+    RETURN_IF_EXCEPTION(scope, void());
 
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     JSObject::getOwnPropertyNames(captured, realm, names, DontEnumPropertiesMode::Include);
@@ -435,8 +437,11 @@ NameResolution StarExportResolver::resolve(ModuleID exporter, uint32_t nameIdent
     const Identifier& name = m_modules.identifier(nameIdentifier);
 
     // It exports no stars, and a deferred export is not read for the answer.
-    if (m_modules.data(exporter).exportRule == SyntheticExportRule::RuntimeModule)
-        return m_modules.hasCapturedExport(exporter, name) ? NameResolution::Found : NameResolution::NotFound;
+    if (m_modules.data(exporter).exportRule == SyntheticExportRule::RuntimeModule) {
+        bool hasExport = m_modules.hasCapturedExport(exporter, name);
+        RETURN_IF_EXCEPTION(scope, NameResolution::NotFound);
+        return hasExport ? NameResolution::Found : NameResolution::NotFound;
+    }
 
     if (m_modules.data(exporter).isUncompiledCode()) {
         AbstractModuleRecord* record = m_modules.uncompiledRecord(exporter);

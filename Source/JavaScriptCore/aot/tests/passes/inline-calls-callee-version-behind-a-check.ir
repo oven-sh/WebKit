@@ -22,18 +22,9 @@ function f2 name="apply" flags=[IsChecked] parameters=[{type=undefined|null|f0|f
   b0(v0: anything ~ undefined|null|f0|f1, v1: anything):
     v2 = Check v0 castType=undefined|null|f0|f1 site=w0
     v3 = Call v2, -, v1
-    v4 = Add v3, v1
-    v5 = Add v4, v1
-    v6 = Add v5, v1
-    v7 = Add v6, v1
-    v8 = Add v7, v1
-    v9 = Add v8, v1
-    v10 = Add v9, v1
-    v11 = Add v10, v1
-    v12 = Add v11, v1
-    v13 = Add v12, v1
-    v14 = Add v13, v1
-    v15 = Add v14, v1
+# REPEAT: i = 3..14
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
     Return v15
 }
 function f3 name="passesKnownFunction" parameters=[{type=anything}] results=[{type=anything}] {

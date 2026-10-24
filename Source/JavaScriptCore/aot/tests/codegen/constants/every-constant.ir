@@ -16,29 +16,9 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-typesite w0 module=m0 position=10 kind=Parameter
-typesite w1 module=m0 position=20 kind=Parameter
-typesite w2 module=m0 position=30 kind=Parameter
-typesite w3 module=m0 position=40 kind=Parameter
-typesite w4 module=m0 position=50 kind=Parameter
-typesite w5 module=m0 position=60 kind=Parameter
-typesite w6 module=m0 position=70 kind=Parameter
-typesite w7 module=m0 position=80 kind=Parameter
-typesite w8 module=m0 position=90 kind=Parameter
-typesite w9 module=m0 position=100 kind=Parameter
-typesite w10 module=m0 position=110 kind=Parameter
-typesite w11 module=m0 position=120 kind=Parameter
-typesite w12 module=m0 position=130 kind=Parameter
-typesite w13 module=m0 position=140 kind=Parameter
-typesite w14 module=m0 position=150 kind=Parameter
-typesite w15 module=m0 position=160 kind=Parameter
-typesite w16 module=m0 position=170 kind=Parameter
-typesite w17 module=m0 position=180 kind=Parameter
-typesite w18 module=m0 position=190 kind=Parameter
-typesite w19 module=m0 position=200 kind=Parameter
-typesite w20 module=m0 position=210 kind=Parameter
-typesite w21 module=m0 position=220 kind=Parameter
-typesite w22 module=m0 position=230 kind=Parameter
+# REPEAT: i = 0..22
+typesite w%(i) module=m0 position=%(i*10+10) kind=Parameter
+# END REPEAT
 layout L0 kind=Environment fields=[{key="n" declared={type=number|absent}}, {key="i" declared={type=i32|absent}}, {key="s" declared={type=string|absent}}, {key="l" declared={type=absent|"a"}}, {key="v" declared={type=anything|absent}}]
 layout L1 name="Point" fields=[{key="x" declared={type=number}}]
 data d0 root=Array{contents=anything elements=[Boolean{}, Null, Number{}]} module=m0

@@ -25,21 +25,11 @@ function f0 name="guards" parameters=[{type=anything}, {type=anything}, {type=an
     Branch v9 -> taken b5(), notTaken b12()
   b5():
     v10 = TypeTest v4 testedType=number
-    Branch v10 -> taken b6(), notTaken b12()
-  b6():
-    v11 = TypeTest v0 testedType=int
-    Branch v11 -> taken b7(), notTaken b12()
-  b7():
-    v12 = TypeTest v1 testedType=int
-    Branch v12 -> taken b8(), notTaken b12()
-  b8():
-    v13 = TypeTest v2 testedType=int
-    Branch v13 -> taken b9(), notTaken b12()
-  b9():
-    v14 = TypeTest v3 testedType=int
-    Branch v14 -> taken b10(), notTaken b12()
-  b10():
-    v15 = TypeTest v4 testedType=int
+# REPEAT: i = 6..10
+    Branch v%(i+4) -> taken b%(i)(), notTaken b12()
+  b%(i)():
+    v%(i+5) = TypeTest v%(i-6) testedType=int
+# END REPEAT
     Branch v15 -> taken b11(), notTaken b12()
   b11():
     v16 = Integer integer=1

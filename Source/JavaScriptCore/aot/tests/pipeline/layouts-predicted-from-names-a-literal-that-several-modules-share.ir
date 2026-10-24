@@ -17,21 +17,13 @@ function f0 name="" module=m0 kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = Undefined
-    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
-    v4 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
-    v5 = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
-    v6 = NewObject -, v2, v2, v2 layout=L3 fields=[0, 1, 2]
-    v7 = NewObject -, v2, v2, v2 layout=L4 fields=[0, 1, 2]
-    v8 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
-    v9 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
-    v10 = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
-    v11 = NewObject -, v2, v2, v2 layout=L3 fields=[0, 1, 2]
-    v12 = NewObject -, v2, v2, v2 layout=L4 fields=[0, 1, 2]
-    v13 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
-    v14 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
-    v15 = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
-    v16 = NewObject -, v2, v2, v2 layout=L3 fields=[0, 1, 2]
-    v17 = NewObject -, v2, v2, v2 layout=L4 fields=[0, 1, 2]
+# REPEAT: i = 0..2
+    v%(i*5+3) = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v%(i*5+4) = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v%(i*5+5) = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
+    v%(i*5+6) = NewObject -, v2, v2, v2 layout=L3 fields=[0, 1, 2]
+    v%(i*5+7) = NewObject -, v2, v2, v2 layout=L4 fields=[0, 1, 2]
+# END REPEAT
     v18 = NewObject -, v2 layout=L5 fields=[0]
     v19 = NewClosure function=f1
     v20 = NewClosure function=f2

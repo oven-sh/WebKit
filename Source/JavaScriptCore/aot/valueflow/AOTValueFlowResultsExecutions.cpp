@@ -17,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What a call operation enters: the function it names, or what its stamp lists.
 static void forEachFunctionEnteredBy(const Program& program, const FlowBodyUpdate& update, const Function& function, ValueID id, NOESCAPE const Invocable<void(FunctionID)> auto& functor)
 {
     const Value& value = function.at(id);
@@ -41,7 +40,6 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
         const Function& function = program.functions[index];
         if (!inputs.isReached(FunctionID(index)) && !isUnsolvedCode(inputs, tables, FunctionID(index)))
             return;
-        // A stamp stands at an operation of a statement, which some block lists once.
         if (!inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect }))) {
             for (const FlowCallStamp& stamp : application.bodies[index].calls) {
                 if (!PayloadWord::callees(function.at(stamp.value).opcode))
@@ -62,7 +60,6 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
     return counts;
 }
 
-// By module: only the evaluation of the module enters the body. A body that takes its callee can hand itself on.
 static BitVector findModulesWithBodiesThatOnlyLoaderEnters(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls& calls, const Vector<uint32_t>& numberOfEnteringOperations)
 {
     const Program& program = inputs.program;
@@ -71,7 +68,6 @@ static BitVector findModulesWithBodiesThatOnlyLoaderEnters(const ValueFlowResult
         FunctionID body = program.modules[index].body;
         if (!body || !inputs.isReached(body))
             continue;
-        // No stamp lists what a placeholder beside it covers.
         ValueFlowObjectID closure = inputs.universe().closureOf(body);
         if (!numberOfEnteringOperations[body.index()] && !calls.functionsEnteredWithoutStamp.get(body.index()) && !inputs.hasEscaped(closure) && !inputs.isLost(closure))
             modules.quickSet(index);
@@ -79,7 +75,6 @@ static BitVector findModulesWithBodiesThatOnlyLoaderEnters(const ValueFlowResult
     return modules;
 }
 
-// A module of the image is evaluated at most once, whatever its kind: no cache lists it, and a body that has thrown is not run again.
 static bool isEvaluatedAtMostOnce(ModuleKind kind)
 {
     switch (kind) {
@@ -107,8 +102,6 @@ static const ValueFlowStatement* findCallAt(const ValueFlowResultInputs& inputs,
     return nullptr;
 }
 
-// `f.call(t)`, `f.apply(t, list)`, `Reflect.apply(f, t, list)`: the callee is what the built-in itself calls, once, then and there.
-// A built-in or a bound function that arrives where `f` stands is handed the other operands and calls them as often as it likes, and the list of indirect calls does not tell the two apart.
 static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& inputs, const FlowApplication& application, ValueSetMaker& maker, const FlowIndirectCall& call)
 {
     const ValueFlowStatement* statement = findCallAt(inputs, application, call);
@@ -172,7 +165,6 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
             runsAtMostOnce(module.body);
     }
 
-    // The one operation that enters a function runs at most once if it lies outside every cycle of a function that does. An accessor, a protocol or a callback that enters the function too is in no stamp.
     while (!worklist.isEmpty()) {
         FunctionID caller = worklist.takeLast();
         const Function& function = program.at(caller);
@@ -189,7 +181,6 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
                 });
             }
         }
-        // `(function () { .. }).call(this)` enters the function as a call operation does.
         for (const FlowIndirectCall& call : std::ranges::equal_range(indirectCalls, caller, { }, &FlowIndirectCall::caller)) {
             if (call.kind != FlowIndirectCallKind::BuiltinCallback || call.times != BuiltinCallbackTimes::Once || call.isInCycle)
                 continue;

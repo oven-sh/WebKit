@@ -48,30 +48,14 @@ function f5 name="triple2" results=[{type=undefined}] {
     v0 = Undefined
     Return v0
 }
+# REPEAT: i = 0..3
 
-function f6 name="five0" results=[{type=undefined}] {
+function f%(i+6) name="five%(i)" results=[{type=undefined}] {
   b0():
-    v0 = CallDirect function=f7
+    v0 = CallDirect function=f%(i+7)
     Return v0
 }
-
-function f7 name="five1" results=[{type=undefined}] {
-  b0():
-    v0 = CallDirect function=f8
-    Return v0
-}
-
-function f8 name="five2" results=[{type=undefined}] {
-  b0():
-    v0 = CallDirect function=f9
-    Return v0
-}
-
-function f9 name="five3" results=[{type=undefined}] {
-  b0():
-    v0 = CallDirect function=f10
-    Return v0
-}
+# END REPEAT
 
 function f10 name="five4" results=[{type=undefined}] {
   b0():

@@ -26,11 +26,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The rule of a built-in fills the array that stands for what the generic parser makes whenever it allocates a typed result, and nothing else stores into an array that no set holds.
 static BitVector findFilledArraysOfTypedResults(const ValueFlowResultInputs& inputs)
 {
     const ValueFlowUniverse& universe = inputs.universe();
-    // The index lists the nodes that something is written to.
     RELEASE_ASSERT(inputs.heapIndex);
     Vector<ValueFlowHeapIndex::Stretch> stretches = inputs.heapIndex->stretchesOfNodesWrittenUnder([](ValueFlowName name) {
         return name.kind == ValueFlowNameKind::Elements;
@@ -103,7 +101,6 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
         if (AccessSiteID accessSite = accessSites[call->site.index()])
             tables.sites.typedResultCalls.append({ accessSite, result.type, result.layouts });
 
-        // One site for each layout: whatever parser or validator allocates the layout, for whichever call.
         for (LayoutID layout : result.layouts) {
             application.layouts[layout.index()].flow.observedUses.add({ ObservedUse::ReachesTypedParse, ObservedUse::IsParsedByType });
             const Vector<AllocationClassID>& classes = application.layouts[layout.index()].flow.allocationClasses;
@@ -118,7 +115,6 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
     inputs.build.statistics().count(StatisticID::FlowAllocationSites, tables.sites.allocationSites.size() - numberOfOtherSites);
 }
 
-// No mark says which prototype an array is created with, what becomes a prototype by a construction, or what is stored into a slot of native code.
 static constexpr OptionSet<ObjectMutation> mutationsOfArraysWithoutMark {
     ObjectMutation::ChangePrototype,
     ObjectMutation::BecomePrototype,
@@ -132,7 +128,6 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
     FlowApplication& application = *tables.application;
     unsigned indexOfElements = indexOfArrayElementsInType(program.builtins());
     size_t numberOfOtherSites = tables.sites.allocationSites.size();
-    // What holds for a class holds for every array of it in the tree of a Data value. The arrays that no store reaches have a class of their own.
     std::array<AllocationClassID, 2> classesOfArrays;
     size_t numberOfOtherNodes = tables.sites.dataNodes.size();
     ValueFlowPositionCounts counts(nullptr);
@@ -180,12 +175,10 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                     node.markedMutations = markedMutationsOf(inputs, object);
                     node.neverChanges = neverChangesOnceMade(inputs, object);
                     const ValueFlowContainerFacts* facts = containers.find(object);
-                    // Where nothing is ever stored, the record says best which storage to begin with.
                     if (facts && indexOfElements < facts->contents.size() && facts->contents[indexOfElements] != TypeTable::never)
                         node.elements = facts->contents[indexOfElements];
                     if (facts)
                         node.arrayStorage = facts->arrayStorageToldToCreator;
-                    // The value of the operation gets a cast to what is proven of it. An array further down in the tree has no value until the tree is expanded.
                     if (facts && ordinal && (facts->contentsAreProven || !facts->pristine.isEmpty())) {
                         if (!positions)
                             positions.emplace(inputs, arena, counts, index);

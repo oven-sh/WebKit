@@ -87,18 +87,9 @@ function f4 name="chain4" results=[{type=anything}] {
 function f5 name="chain12" results=[{type=anything}] {
   b0():
     v0 = GetModuleVariable variable=g0
-    v1 = PropGet v0 key="next"
-    v2 = PropGet v1 key="next"
-    v3 = PropGet v2 key="next"
-    v4 = PropGet v3 key="next"
-    v5 = PropGet v4 key="next"
-    v6 = PropGet v5 key="next"
-    v7 = PropGet v6 key="next"
-    v8 = PropGet v7 key="next"
-    v9 = PropGet v8 key="next"
-    v10 = PropGet v9 key="next"
-    v11 = PropGet v10 key="next"
-    v12 = PropGet v11 key="next"
+# REPEAT: i = 0..11
+    v%(i+1) = PropGet v%(i) key="next"
+# END REPEAT
     v13 = PropGet v12 key="count"
     Return v13
 }
@@ -120,29 +111,9 @@ function f7 name="store12" results=[{type=anything}] {
   b0():
     v0 = GetModuleVariable variable=g0
     v1 = Integer integer=3
-    PropSet v0, v1 key="count" mode=Strict
-    v3 = PropGet v0 key="next"
-    PropSet v3, v1 key="count" mode=Strict
-    v5 = PropGet v3 key="next"
-    PropSet v5, v1 key="count" mode=Strict
-    v7 = PropGet v5 key="next"
-    PropSet v7, v1 key="count" mode=Strict
-    v9 = PropGet v7 key="next"
-    PropSet v9, v1 key="count" mode=Strict
-    v11 = PropGet v9 key="next"
-    PropSet v11, v1 key="count" mode=Strict
-    v13 = PropGet v11 key="next"
-    PropSet v13, v1 key="count" mode=Strict
-    v15 = PropGet v13 key="next"
-    PropSet v15, v1 key="count" mode=Strict
-    v17 = PropGet v15 key="next"
-    PropSet v17, v1 key="count" mode=Strict
-    v19 = PropGet v17 key="next"
-    PropSet v19, v1 key="count" mode=Strict
-    v21 = PropGet v19 key="next"
-    PropSet v21, v1 key="count" mode=Strict
-    v23 = PropGet v21 key="next"
-    PropSet v23, v1 key="count" mode=Strict
-    v25 = PropGet v23 key="next"
+# REPEAT: i = 0..11; a = 0 3 5 7 9 11 13 15 17 19 21 23
+    PropSet v%(a), v1 key="count" mode=Strict
+    v%(i*2+3) = PropGet v%(a) key="next"
+# END REPEAT
     Return v1
 }

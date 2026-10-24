@@ -5,23 +5,9 @@
 # FORM: Prepared
 # RUN: functions-seeing layouts=L0
 # CHECK: f0
-# CHECK-NEXT: f1
-# CHECK-NEXT: f2
-# CHECK-NEXT: f5
-# CHECK-NEXT: f6
-# CHECK-NEXT: f9
-# CHECK-NEXT: f12
-# CHECK-NEXT: f13
-# CHECK-NEXT: f14
-# CHECK-NEXT: f15
-# CHECK-NEXT: f16
-# CHECK-NEXT: f17
-# CHECK-NEXT: f18
-# CHECK-NEXT: f20
-# CHECK-NEXT: f21
-# CHECK-NEXT: f22
-# CHECK-NEXT: f23
-# CHECK-NEXT: f24
+# REPEAT: i = 0..16; a = 1 2 5 6 9 12 13 14 15 16 17 18 20 21 22 23 24
+# CHECK-NEXT: f%(a)
+# END REPEAT
 # CHECK-NOT: f
 # RUN(VARIABLE): functions-seeing variables=g0
 # VARIABLE: f8
@@ -194,31 +180,9 @@ function f25 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
-    v2 = NewClosure function=f0
-    v3 = NewClosure function=f1
-    v4 = NewClosure function=f2
-    v5 = NewClosure function=f3
-    v6 = NewClosure function=f4
-    v7 = NewClosure function=f5
-    v8 = NewClosure function=f6
-    v9 = NewClosure function=f7
-    v10 = NewClosure function=f8
-    v11 = NewClosure function=f9
-    v12 = NewClosure function=f10
-    v13 = NewClosure function=f11
-    v14 = NewClosure function=f12
-    v15 = NewClosure function=f13
-    v16 = NewClosure function=f14
-    v17 = NewClosure function=f15
-    v18 = NewClosure function=f16
-    v19 = NewClosure function=f17
-    v20 = NewClosure function=f18
-    v21 = NewClosure function=f19
-    v22 = NewClosure function=f20
-    v23 = NewClosure function=f21
-    v24 = NewClosure function=f22
-    v25 = NewClosure function=f23
-    v26 = NewClosure function=f24
+# REPEAT: i = 0..24
+    v%(i+2) = NewClosure function=f%(i)
+# END REPEAT
     v27 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26
     Return v27
 }

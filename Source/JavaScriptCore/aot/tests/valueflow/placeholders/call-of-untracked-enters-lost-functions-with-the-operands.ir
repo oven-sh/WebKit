@@ -33,18 +33,10 @@ variable g0 name="chosen" module=m0 declared={type=anything} initialization=Unde
 variable g1 name="others" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
   b0():
-    v0 = NewClosure function=f1
-    PutModuleVariable v0 variable=g0
-    v2 = NewClosure function=f2
-    PutModuleVariable v2 variable=g0
-    v4 = NewClosure function=f3
-    PutModuleVariable v4 variable=g0
-    v6 = NewClosure function=f4
-    PutModuleVariable v6 variable=g1
-    v8 = NewClosure function=f5
-    PutModuleVariable v8 variable=g1
-    v10 = NewClosure function=f6
-    PutModuleVariable v10 variable=g1
+# REPEAT: i = 1..6; a = 0 0 0 1 1 1
+    v%(i*2-2) = NewClosure function=f%(i)
+    PutModuleVariable v%(i*2-2) variable=g%(a)
+# END REPEAT
     v12 = GetModuleVariable variable=g0
     v13 = NewClosure function=f7
     v14 = Call v12, -, v13

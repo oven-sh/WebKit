@@ -10,60 +10,26 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="guardOnEitherArray" parameters=[{type=number}, {type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
   b0(v0: number, v1: anything, v2: object, v3: boolean):
     Switch v0 cases=[0, 1, 2] -> case b1(), case b7(), case b13(), otherwise b19()
-  b1() frequency=Rare:
-    Branch v3 -> taken b2(), notTaken b3()
-  b2() frequency=Rare:
-    v4 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b4(v4)
-  b3() frequency=Rare:
-    v5 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b4(v5)
-  b4(v6: Array) frequency=Rare:
-    v7 = IsPristine v6 builtinClass=Array aspects=[Storage]
-    TestAndBranch v7 -> taken b5(| 0), notTaken b6()
-  b5(v8) frequency=Rare:
-    v9 = Integer integer=1
+# REPEAT: i = 0..2
+  b%(i*6+1)() frequency=Rare:
+    Branch v3 -> taken b%(i*6+2)(), notTaken b%(i*6+3)()
+  b%(i*6+2)() frequency=Rare:
+    v%(i*8+4) = NewArray v1, v1, v1, v1 contents=anything
+    Jump -> next b%(i*6+4)(v%(i*8+4))
+  b%(i*6+3)() frequency=Rare:
+    v%(i*8+5) = NewArray v1, v1, v1, v1 contents=anything
+    Jump -> next b%(i*6+4)(v%(i*8+5))
+  b%(i*6+4)(v%(i*8+6): Array) frequency=Rare:
+    v%(i*8+7) = IsPristine v%(i*8+6) builtinClass=Array aspects=[Storage]
+    TestAndBranch v%(i*8+7) -> taken b%(i*6+5)(| 0), notTaken b%(i*6+6)()
+  b%(i*6+5)(v%(i*8+8)) frequency=Rare:
+    v%(i*8+9) = Integer integer=1
     PropSet v2, v1 key="seen"
-    v11 = GetArrayElement v6, v9, v8 level=Expected [keyIsIntegral]
-    Return v11
-  b6() frequency=Rare:
+    v%(i*8+11) = GetArrayElement v%(i*8+6), v%(i*8+9), v%(i*8+8) level=Expected [keyIsIntegral]
+    Return v%(i*8+11)
+  b%(i*6+6)() frequency=Rare:
     Return
-  b7() frequency=Rare:
-    Branch v3 -> taken b8(), notTaken b9()
-  b8() frequency=Rare:
-    v12 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b10(v12)
-  b9() frequency=Rare:
-    v13 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b10(v13)
-  b10(v14: Array) frequency=Rare:
-    v15 = IsPristine v14 builtinClass=Array aspects=[Storage]
-    TestAndBranch v15 -> taken b11(| 0), notTaken b12()
-  b11(v16) frequency=Rare:
-    v17 = Integer integer=1
-    PropSet v2, v1 key="seen"
-    v19 = GetArrayElement v14, v17, v16 level=Expected [keyIsIntegral]
-    Return v19
-  b12() frequency=Rare:
-    Return
-  b13() frequency=Rare:
-    Branch v3 -> taken b14(), notTaken b15()
-  b14() frequency=Rare:
-    v20 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b16(v20)
-  b15() frequency=Rare:
-    v21 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b16(v21)
-  b16(v22: Array) frequency=Rare:
-    v23 = IsPristine v22 builtinClass=Array aspects=[Storage]
-    TestAndBranch v23 -> taken b17(| 0), notTaken b18()
-  b17(v24) frequency=Rare:
-    v25 = Integer integer=1
-    PropSet v2, v1 key="seen"
-    v27 = GetArrayElement v22, v25, v24 level=Expected [keyIsIntegral]
-    Return v27
-  b18() frequency=Rare:
-    Return
+# END REPEAT
   b19():
     Return v1
 }
@@ -75,36 +41,18 @@ function f0 name="guardOnEitherArray" parameters=[{type=number}, {type=anything}
 function f1 name="eitherArrayWithoutGuard" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: number, v1: anything, v2: boolean):
     Switch v0 cases=[0, 1, 2] -> case b1(), case b5(), case b9(), otherwise b13()
-  b1() frequency=Rare:
-    Branch v2 -> taken b2(), notTaken b3()
-  b2() frequency=Rare:
-    v3 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b4(v3)
-  b3() frequency=Rare:
-    v4 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b4(v4)
-  b4(v5: Array) frequency=Rare:
-    Return v5
-  b5() frequency=Rare:
-    Branch v2 -> taken b6(), notTaken b7()
-  b6() frequency=Rare:
-    v6 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b8(v6)
-  b7() frequency=Rare:
-    v7 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b8(v7)
-  b8(v8: Array) frequency=Rare:
-    Return v8
-  b9() frequency=Rare:
-    Branch v2 -> taken b10(), notTaken b11()
-  b10() frequency=Rare:
-    v9 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b12(v9)
-  b11() frequency=Rare:
-    v10 = NewArray v1, v1, v1, v1 contents=anything
-    Jump -> next b12(v10)
-  b12(v11: Array) frequency=Rare:
-    Return v11
+# REPEAT: i = 0..2
+  b%(i*4+1)() frequency=Rare:
+    Branch v2 -> taken b%(i*4+2)(), notTaken b%(i*4+3)()
+  b%(i*4+2)() frequency=Rare:
+    v%(i*3+3) = NewArray v1, v1, v1, v1 contents=anything
+    Jump -> next b%(i*4+4)(v%(i*3+3))
+  b%(i*4+3)() frequency=Rare:
+    v%(i*3+4) = NewArray v1, v1, v1, v1 contents=anything
+    Jump -> next b%(i*4+4)(v%(i*3+4))
+  b%(i*4+4)(v%(i*3+5): Array) frequency=Rare:
+    Return v%(i*3+5)
+# END REPEAT
   b13():
     Return v1
 }

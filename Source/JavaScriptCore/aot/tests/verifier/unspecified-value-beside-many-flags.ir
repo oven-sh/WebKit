@@ -22,157 +22,18 @@ function f0 name="badTestInFrontOfTheSwitchBesideManyFlags" parameters=[{type=bo
   b5():
     Return v25
   b6():
-    Branch v2 -> taken b7(), notTaken b8()
-  b7():
-    v26 = Boolean boolean=true
-    Jump -> next b9(v26)
-  b8():
-    v27 = Boolean
-    Jump -> next b9(v27)
-  b9(v28: boolean):
-    Branch v3 -> taken b10(), notTaken b11()
-  b10():
-    v29 = Boolean boolean=true
-    Jump -> next b12(v29)
-  b11():
-    v30 = Boolean
-    Jump -> next b12(v30)
-  b12(v31: boolean):
-    Branch v4 -> taken b13(), notTaken b14()
-  b13():
-    v32 = Boolean boolean=true
-    Jump -> next b15(v32)
-  b14():
-    v33 = Boolean
-    Jump -> next b15(v33)
-  b15(v34: boolean):
-    Branch v5 -> taken b16(), notTaken b17()
-  b16():
-    v35 = Boolean boolean=true
-    Jump -> next b18(v35)
-  b17():
-    v36 = Boolean
-    Jump -> next b18(v36)
-  b18(v37: boolean):
-    Branch v6 -> taken b19(), notTaken b20()
-  b19():
-    v38 = Boolean boolean=true
-    Jump -> next b21(v38)
-  b20():
-    v39 = Boolean
-    Jump -> next b21(v39)
-  b21(v40: boolean):
-    Branch v7 -> taken b22(), notTaken b23()
-  b22():
-    v41 = Boolean boolean=true
-    Jump -> next b24(v41)
-  b23():
-    v42 = Boolean
-    Jump -> next b24(v42)
-  b24(v43: boolean):
-    Branch v8 -> taken b25(), notTaken b26()
-  b25():
-    v44 = Boolean boolean=true
-    Jump -> next b27(v44)
-  b26():
-    v45 = Boolean
-    Jump -> next b27(v45)
-  b27(v46: boolean):
-    Branch v9 -> taken b28(), notTaken b29()
-  b28():
-    v47 = Boolean boolean=true
-    Jump -> next b30(v47)
-  b29():
-    v48 = Boolean
-    Jump -> next b30(v48)
-  b30(v49: boolean):
-    Branch v10 -> taken b31(), notTaken b32()
-  b31():
-    v50 = Boolean boolean=true
-    Jump -> next b33(v50)
-  b32():
-    v51 = Boolean
-    Jump -> next b33(v51)
-  b33(v52: boolean):
-    Branch v11 -> taken b34(), notTaken b35()
-  b34():
-    v53 = Boolean boolean=true
-    Jump -> next b36(v53)
-  b35():
-    v54 = Boolean
-    Jump -> next b36(v54)
-  b36(v55: boolean):
-    Branch v12 -> taken b37(), notTaken b38()
-  b37():
-    v56 = Boolean boolean=true
-    Jump -> next b39(v56)
-  b38():
-    v57 = Boolean
-    Jump -> next b39(v57)
-  b39(v58: boolean):
-    Branch v13 -> taken b40(), notTaken b41()
-  b40():
-    v59 = Boolean boolean=true
-    Jump -> next b42(v59)
-  b41():
-    v60 = Boolean
-    Jump -> next b42(v60)
-  b42(v61: boolean):
-    Branch v14 -> taken b43(), notTaken b44()
-  b43():
-    v62 = Boolean boolean=true
-    Jump -> next b45(v62)
-  b44():
-    v63 = Boolean
-    Jump -> next b45(v63)
-  b45(v64: boolean):
-    Branch v15 -> taken b46(), notTaken b47()
-  b46():
-    v65 = Boolean boolean=true
-    Jump -> next b48(v65)
-  b47():
-    v66 = Boolean
-    Jump -> next b48(v66)
-  b48(v67: boolean):
-    Branch v16 -> taken b49(), notTaken b50()
-  b49():
-    v68 = Boolean boolean=true
-    Jump -> next b51(v68)
-  b50():
-    v69 = Boolean
-    Jump -> next b51(v69)
-  b51(v70: boolean):
-    Branch v17 -> taken b52(), notTaken b53()
-  b52():
-    v71 = Boolean boolean=true
-    Jump -> next b54(v71)
-  b53():
-    v72 = Boolean
-    Jump -> next b54(v72)
-  b54(v73: boolean):
-    Branch v18 -> taken b55(), notTaken b56()
-  b55():
-    v74 = Boolean boolean=true
-    Jump -> next b57(v74)
-  b56():
-    v75 = Boolean
-    Jump -> next b57(v75)
-  b57(v76: boolean):
-    v77 = StrictEq v28, v31
-    v78 = StrictEq v77, v34
-    v79 = StrictEq v78, v37
-    v80 = StrictEq v79, v40
-    v81 = StrictEq v80, v43
-    v82 = StrictEq v81, v46
-    v83 = StrictEq v82, v49
-    v84 = StrictEq v83, v52
-    v85 = StrictEq v84, v55
-    v86 = StrictEq v85, v58
-    v87 = StrictEq v86, v61
-    v88 = StrictEq v87, v64
-    v89 = StrictEq v88, v67
-    v90 = StrictEq v89, v70
-    v91 = StrictEq v90, v73
-    v92 = StrictEq v91, v76
+# REPEAT: i = 2..18
+    Branch v%(i) -> taken b%(i*3+1)(), notTaken b%(i*3+2)()
+  b%(i*3+1)():
+    v%(i*3+20) = Boolean boolean=true
+    Jump -> next b%(i*3+3)(v%(i*3+20))
+  b%(i*3+2)():
+    v%(i*3+21) = Boolean
+    Jump -> next b%(i*3+3)(v%(i*3+21))
+  b%(i*3+3)(v%(i*3+22): boolean):
+# END REPEAT
+# REPEAT: i = 77..92; a = 28 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91
+    v%(i) = StrictEq v%(a), v%(i*3-200)
+# END REPEAT
     Return v92
 }

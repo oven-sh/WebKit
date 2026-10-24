@@ -116,7 +116,6 @@ static void checkDominators(const CFG& graph, const Dominators& cached, const Do
         RELEASE_ASSERT(cached.idom(block) == fresh.idom(block));
         RELEASE_ASSERT(cached.idom(block) == fresh.treeForChecking().idom(block));
     }
-    // What the graph answers in place of the tree.
     for (unsigned blockIndex = 0; blockIndex < graph.numNodes(); ++blockIndex)
         RELEASE_ASSERT(cached.dominates(graph.root(), BlockID(blockIndex)) == fresh.treeForChecking().dominates(graph.root(), BlockID(blockIndex)));
     if (!selfCheck)
@@ -259,7 +258,6 @@ static void checkEffectFacts(Opcode opcode, const Effects& fresh)
     RELEASE_ASSERT(fresh.writes.heaps().containsAll(facts.writtenHeaps));
 }
 
-// An answer outlives a change of the function, so there may be answers where the effects do not count as computed.
 static void checkEffects(const EffectContext& context, const Function& function, const EffectsCache& cached)
 {
     auto checkValue = [&](ValueID id) {
@@ -334,7 +332,6 @@ static void checkUseEffectHistory(const Function& function, const CFG& graph, un
     }
 }
 
-// What comesFromOutside() sees from the definitions is what the sets say.
 static void checkValuesFromOutside(FunctionAnalyses& fresh)
 {
     const Function& function = fresh.function();
@@ -432,7 +429,6 @@ void FunctionAnalyses::verifyFrequencies()
 
 void FunctionAnalyses::verifyCached()
 {
-    // Lists that have been told of changes are compared as the next pass that asks for them will see them.
     if (m_values.useLists)
         m_values.useLists->endSilence();
     if (m_values.useLists && !m_values.useLists->isUpToDate() && !m_values.useLists->mustBeMadeAnew())
@@ -441,7 +437,6 @@ void FunctionAnalyses::verifyCached()
     AnalysisSet cached = computed();
     if (m_controlFlow.mayDescribeFormerGraph && m_controlFlow.cfg->describes(m_function))
         cached.add(heldControlFlowAnalyses());
-    // Frequencies that the next who asks would be handed are compared, too.
     bool wouldKeepFrequencies = m_values.frequenciesMayDescribeFormerFunction && cached.contains(FunctionAnalysis::ControlFlow) && m_values.blockFrequencies->describes(m_context, m_function);
     RELEASE_ASSERT(cached.contains(FunctionAnalysis::ControlFlow) || !m_controlFlow.edgesFromUnreachableBlocks);
     checkEffects(m_effectContext, m_function, m_effects);

@@ -47,7 +47,6 @@ inline void forEachDataNodeInPreorder(const DataNode& root, NOESCAPE const Invoc
     }
 }
 
-// A tree without an object asks nothing of a layout, so its size alone says whether ExpandData makes allocations of it. Flow relies on the answer before the pass has run.
 inline bool isExpandedForItsSizeAlone(const DataNode& root, uint64_t maxExpandedNodes)
 {
     uint64_t numberOfNodes = 0;
@@ -59,7 +58,6 @@ inline bool isExpandedForItsSizeAlone(const DataNode& root, uint64_t maxExpanded
     return !holdsObject && numberOfNodes <= maxExpandedNodes;
 }
 
-// The read-only encoding lists the fields, which the allocation fills, before the other members, which become extra properties. Array indexes are listed before the other own keys wherever they are created.
 inline bool fitsReadOnlyEncoding(const Program& program, const DataNode::Object& object)
 {
     const Layout& layout = program.at(object.layout);

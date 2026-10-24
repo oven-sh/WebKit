@@ -30,7 +30,6 @@ constexpr unsigned numberOfPositionKinds = 5;
 
 struct Position {
     PositionKind kind { PositionKind::Parameter };
-    // The function, the variable or the layout.
     uint32_t owner { 0 };
     uint32_t index { 0 };
 };
@@ -51,13 +50,10 @@ struct Pair {
     Position first;
 };
 
-// The layouts that a declared type names: its family.
 struct Family {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Family);
     BitVector members;
-    // The members that lie below no other member.
     Vector<LayoutID, 2> roots;
-    // What the type admits beside objects with a layout.
     ValueSetID admitted;
 };
 
@@ -71,7 +67,6 @@ public:
     {
     }
 
-    // What has escaped is left out where the unknown object arrives, which stands for it: native code hands every escaped object to every position it can reach.
     void count(const Position&, const DeclaredType&, ValueSetID arrived);
     void print(PrintStream&, size_t numberOfPairs);
 
@@ -129,7 +124,6 @@ const Family* FamilyCounter::familyOf(const DeclaredType& declared)
         if (!liesBelowAnother)
             family->roots.append(LayoutID(member));
     }
-    // Layouts that are converted to each other lie below each other.
     if (family->roots.isEmpty())
         family->roots.append(LayoutID(static_cast<uint32_t>(*family->members.begin())));
     result.iterator->value = WTF::move(family);
@@ -295,7 +289,6 @@ static void countPositionsOfFunctions(ValueFlowSolution& solution, FamilyCounter
         counter.count({ PositionKind::Variable, index, 0 }, program.variables[index].declared, solver.valueOf(nodes.variable(VariableID(index))));
 }
 
-// What is written under a name through a set of objects arrives at the field of that name of each layout that an object of the set has.
 static void countFields(ValueFlowSolution& solution, FamilyCounter& counter, ValueSetMaker& maker)
 {
     const Program& program = solution.program();
@@ -349,7 +342,6 @@ static ExpectedReceiver expectedReceiverOf(const Program& program, const ValueFl
         return ExpectedReceiver::NoLayout;
     if (type.anyFunction || !type.classes.isEmpty() || !type.functions.isEmpty() || !type.builtins.isEmpty())
         return ExpectedReceiver::LayoutsAndMore;
-    // Every layout has one object for what its constructor makes, whether it has a constructor or not.
     for (LayoutID layout : membersOf(program, type)) {
         if (program.layouts[layout.index()].constructor || solution.sets().size(solution.bodies().universe().objectsWith(layout)) > 1)
             return ExpectedReceiver::LayoutsAlone;
@@ -357,7 +349,6 @@ static ExpectedReceiver expectedReceiverOf(const Program& program, const ValueFl
     return ExpectedReceiver::LayoutsNeverAllocated;
 }
 
-// The reads and stores by name in reached functions, by what the receiver may be.
 static void printReceivers(PrintStream& out, ValueFlowSolution& solution)
 {
     struct ReceiverCounts {
@@ -447,7 +438,6 @@ static ExpectedCallee expectedCalleeOf(const Program& program, const Function& f
     return type.layouts || !type.classes.isEmpty() || !type.builtins.isEmpty() ? ExpectedCallee::FunctionAndMore : ExpectedCallee::FunctionAlone;
 }
 
-// The place in the text whose type the checker has written down for the value: at the value itself, or at what it is a copy of.
 static TypeSiteID typeSiteOf(const Program& program, const Function& function, ValueID id)
 {
     for (unsigned steps = 0; id && steps < 16; ++steps) {
@@ -493,7 +483,6 @@ static WrittenAtCallee writtenAtCallee(const Program& program, const Function& f
     return text.toString().contains("=>"_s) ? WrittenAtCallee::Signature : WrittenAtCallee::OtherText;
 }
 
-// The calls in reached functions whose callee may be the unknown object, by what is expected of the callee and by what the checker has written there.
 static void printCallees(PrintStream& out, ValueFlowSolution& solution)
 {
     struct CalleeCounts {
@@ -592,7 +581,6 @@ static ASCIILiteral describeObjectsIn(ValueFlowSolution& solution, ValueSetID se
     return first ? "one-layout"_s : "no-object"_s;
 }
 
-// One line for each call in a reached function whose callee may be the unknown object, its parts set apart by tabs.
 static void printCalleeSites(PrintStream& out, ValueFlowSolution& solution)
 {
     const Program& program = solution.program();
@@ -644,7 +632,6 @@ static void printCalleeSites(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
-// valueflow-families [receivers] [callees] [callee-sites] [pairs=<n>]: for every declared position whose type names layouts, whether an object arrives there whose layout is outside that family.
 void runValueFlowFamiliesTestCommand(TestCommandContext& context)
 {
     size_t numberOfPairs = 40;

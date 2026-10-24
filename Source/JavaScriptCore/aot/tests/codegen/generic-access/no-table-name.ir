@@ -24,30 +24,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = PropDelete v1 key="first" mode=Sloppy
     v9 = RequireObject v1 runtimeError=IteratorResultNotObject
     PropDefine v9, v2 key="first"
-    v11 = NewClosure function=f1
-    v12 = NewClosure function=f2
-    v13 = NewClosure function=f3
-    v14 = NewClosure function=f4
-    v15 = NewClosure function=f5
-    v16 = NewClosure function=f6
-    v17 = NewClosure function=f7
-    v18 = NewClosure function=f8
-    v19 = NewClosure function=f9
-    v20 = NewClosure function=f10
-    v21 = NewClosure function=f11
-    v22 = NewClosure function=f12
-    v23 = NewClosure function=f13
-    v24 = NewClosure function=f14
-    v25 = NewClosure function=f15
-    v26 = NewClosure function=f16
-    v27 = NewClosure function=f17
-    v28 = NewClosure function=f18
-    v29 = NewClosure function=f19
-    v30 = NewClosure function=f20
-    v31 = NewClosure function=f21
-    v32 = NewClosure function=f22
-    v33 = NewClosure function=f23
-    v34 = NewClosure function=f24
+# REPEAT: i = 1..24
+    v%(i+10) = NewClosure function=f%(i)
+# END REPEAT
     v35 = Builtin builtin=GlobalThis
     v36 = PropGet v35 key="register" [isFreeName]
     v37 = Call v36, -, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34

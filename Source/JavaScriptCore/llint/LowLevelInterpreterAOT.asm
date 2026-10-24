@@ -33,6 +33,9 @@ const InstanceGlobalObject = constexpr (AOT_INSTANCE_OFFSET(globalObject))
 const InstanceAuxiliarySpace = constexpr (AOT_INSTANCE_OFFSET(allocation.auxiliarySpace))
 const InstanceCellSpace = constexpr (AOT_INSTANCE_OFFSET(allocation.cellSpace))
 const InstanceCustomAccessors = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.customAccessors))
+const InstanceHasInstanceUID = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.hasInstanceUID))
+const InstancePrototypeUID = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.prototypeUID))
+const InstanceDefaultHasInstanceFunction = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.defaultHasInstanceFunction))
 const InstancePromiseAllocator = constexpr AOT::Interpreter::offsetOfPromiseAllocator
 const InstancePromiseHeader = constexpr AOT::Interpreter::offsetOfPromiseHeader
 const InstanceArrayAllocator = constexpr (AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator))
@@ -700,6 +703,69 @@ aotOp(op_in_by_val, OpInByVal, macro (size, get, dispatch, metadata, return)
 
 .slow:
     callSlowPath(_llint_slow_path_aot_in_by_val)
+    dispatch()
+end)
+
+# t5: the instance, t2: the StructureID of holder, t1: the uid. A data property that the hashed table holds, own or inherited. Clobbers holder. Leaves the value in t0.
+macro getValueFromHashedSlot(holder, slow)
+    findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, slow)
+    bbneq SlotKind[t6], constexpr AOT::Slot::Kind::Value, slow
+    loadhsq SlotLocation[t6], t1
+    btbnz SlotFlags[t6], constexpr AOT::Slot::isOwn, .hasHolder
+    loadp SlotPayload[t6], holder
+.hasHolder:
+    loadPropertyAtWordIndex(holder, t1, t0)
+end
+
+# AOT::generateInstanceOf(): the constructor's Symbol.hasInstance and "prototype" out of the hashed table, then JSObject::defaultHasInstance().
+aotOp(op_instanceof, OpInstanceof, macro (size, get, dispatch, metadata, return)
+    get(m_constructor, t0)
+    loadOperandInRegister(size, t0, t3, .slow)
+    btqnz t3, notCellMask, .slow
+    bbb JSCell::m_type[t3], ObjectType, .slow
+    btbz JSCell::m_flags[t3], ImplementsDefaultHasInstance, .slow
+    loadInstanceOfRealm(t5, .slow)
+    loadi JSCell::m_structureID[t3], t2
+    loadp InstanceHasInstanceUID[t5], t1
+    move t3, t7
+    getValueFromHashedSlot(t7, .slow)
+    bpneq t0, InstanceDefaultHasInstanceFunction[t5], .slow
+
+    get(m_value, t0)
+    loadOperandInRegister(size, t0, t7, .slow)
+    btqnz t7, notCellMask, .false
+    bbb JSCell::m_type[t7], ObjectType, .false
+
+    loadp InstancePrototypeUID[t5], t1
+    getValueFromHashedSlot(t3, .slow)
+    btqnz t0, notCellMask, .slow
+    bbb JSCell::m_type[t0], ObjectType, .slow
+
+.nextLink:
+    btbnz JSCell::m_flags[t7], OverridesGetPrototype, .slow
+    loadStructureWithScratch(t7, t1, t2)
+    loadq Structure::m_prototype[t1], t1
+    btqz t1, .hasPolyProto
+.hasPrototype:
+    bqeq t1, t0, .true
+    btqnz t1, notCellMask, .false
+    move t1, t7
+    jmp .nextLink
+
+.hasPolyProto:
+    move knownPolyProtoOffset, t1
+    loadInlineOffset(t1, t7, t2)
+    move t2, t1
+    jmp .hasPrototype
+
+.true:
+    return(ValueTrue)
+
+.false:
+    return(ValueFalse)
+
+.slow:
+    callSlowPath(_llint_slow_path_aot_instanceof)
     dispatch()
 end)
 
@@ -2138,6 +2204,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpGetLength, op_get_length)
     setEntryAddresses(OpInById, op_in_by_id)
     setEntryAddresses(OpInByVal, op_in_by_val)
+    setEntryAddresses(OpInstanceof, op_instanceof)
     setEntryAddresses(OpJfalse, op_jfalse)
     setEntryAddresses(OpJnstricteq, op_jnstricteq)
     setEntryAddresses(OpJstricteq, op_jstricteq)

@@ -65,76 +65,9 @@ function f4 name="Large" kind=BaseConstructor flags=[HasNewTarget] parameters=[{
   b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
-    v4 = Mul v1, v1
-    v5 = Mul v4, v1
-    v6 = Mul v5, v1
-    v7 = Mul v6, v1
-    v8 = Mul v7, v1
-    v9 = Mul v8, v1
-    v10 = Mul v9, v1
-    v11 = Mul v10, v1
-    v12 = Mul v11, v1
-    v13 = Mul v12, v1
-    v14 = Mul v13, v1
-    v15 = Mul v14, v1
-    v16 = Mul v15, v1
-    v17 = Mul v16, v1
-    v18 = Mul v17, v1
-    v19 = Mul v18, v1
-    v20 = Mul v19, v1
-    v21 = Mul v20, v1
-    v22 = Mul v21, v1
-    v23 = Mul v22, v1
-    v24 = Mul v23, v1
-    v25 = Mul v24, v1
-    v26 = Mul v25, v1
-    v27 = Mul v26, v1
-    v28 = Mul v27, v1
-    v29 = Mul v28, v1
-    v30 = Mul v29, v1
-    v31 = Mul v30, v1
-    v32 = Mul v31, v1
-    v33 = Mul v32, v1
-    v34 = Mul v33, v1
-    v35 = Mul v34, v1
-    v36 = Mul v35, v1
-    v37 = Mul v36, v1
-    v38 = Mul v37, v1
-    v39 = Mul v38, v1
-    v40 = Mul v39, v1
-    v41 = Mul v40, v1
-    v42 = Mul v41, v1
-    v43 = Mul v42, v1
-    v44 = Mul v43, v1
-    v45 = Mul v44, v1
-    v46 = Mul v45, v1
-    v47 = Mul v46, v1
-    v48 = Mul v47, v1
-    v49 = Mul v48, v1
-    v50 = Mul v49, v1
-    v51 = Mul v50, v1
-    v52 = Mul v51, v1
-    v53 = Mul v52, v1
-    v54 = Mul v53, v1
-    v55 = Mul v54, v1
-    v56 = Mul v55, v1
-    v57 = Mul v56, v1
-    v58 = Mul v57, v1
-    v59 = Mul v58, v1
-    v60 = Mul v59, v1
-    v61 = Mul v60, v1
-    v62 = Mul v61, v1
-    v63 = Mul v62, v1
-    v64 = Mul v63, v1
-    v65 = Mul v64, v1
-    v66 = Mul v65, v1
-    v67 = Mul v66, v1
-    v68 = Mul v67, v1
-    v69 = Mul v68, v1
-    v70 = Mul v69, v1
-    v71 = Mul v70, v1
-    v72 = Mul v71, v1
-    v73 = Mul v72, v1
+# REPEAT: i = 4..73; a = 1 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72
+    v%(i) = Mul v%(a), v1
+# END REPEAT
     PropSet v3, v73 key="x"
     Return v3
 }

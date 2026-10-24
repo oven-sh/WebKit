@@ -23,7 +23,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Interned, immutable sets of members of the universe.
 class ValueSets {
     WTF_MAKE_NONCOPYABLE(ValueSets);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueSets);
@@ -72,7 +71,6 @@ public:
         if (!holdsOneMember(storedSetOf(set)))
             __builtin_prefetch(&m_lists.at(storedSetOf(set)));
     }
-    // Whether the two share a member. Makes no set.
     bool meet(ValueSetID first, ValueSetID second) const
     {
         if (first == nothing || second == nothing)
@@ -187,9 +185,7 @@ public:
         }
     }
 
-    // How many members the two share. No set is made. Not for a complement.
     uint32_t numberOfCommonMembers(ValueSetID, ValueSetID) const;
-    // None unless the set has exactly one member.
     ValueFlowObjectID onlyMember(ValueSetID set) const
     {
         if (isComplement(set)) [[unlikely]]
@@ -197,10 +193,8 @@ public:
         return holdsOneMember(storedSetOf(set)) ? ValueFlowObjectID(onlyMemberOf(storedSetOf(set))) : ValueFlowObjectID();
     }
 
-    // Depends on the members alone: the same in every run and on any number of threads, which the numbers of sets are not. What has to come out in one order everywhere is ordered by this.
     uint64_t hashOfMembers(ValueSetID) const;
 
-    // In ascending order.
     void forEachMember(ValueSetID set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const
     {
         if (isComplement(set)) {
@@ -219,7 +213,6 @@ public:
         });
     }
 
-    // In ascending order, until the functor answers true. Not for a complement.
     bool anyMember(ValueSetID set, NOESCAPE const Invocable<bool(ValueFlowObjectID)> auto& functor) const
     {
         RELEASE_ASSERT(!isComplement(set));
@@ -252,7 +245,6 @@ public:
         });
     }
 
-    // The blocks of a set that is no complement, in ascending order of their places.
     void forEachBlock(ValueSetID set, NOESCAPE const Invocable<void(uint64_t nameOfBlock)> auto& functor) const
     {
         RELEASE_ASSERT(!isComplement(set));
@@ -302,16 +294,13 @@ public:
         }
     }
 
-    // Up to four of the blocks of the set, and noBlock for the rest.
     static constexpr uint64_t noBlock = UINT64_MAX;
     std::array<uint64_t, 4> sampleOfBlocks(ValueSetID) const;
 
     size_t numberOfStoredSets() const { return m_lists.size(); }
-    // A number for a table with an entry for each set of several members: no two of them have the same, and all lie below the end; that of a set of one member lies beyond it. They are not dense: see InternedRuns.
     static constexpr uint32_t indexInTableBySet(ValueSetID set) { return (set.index() >> 2) * 2 + (set.index() & 1); }
     uint32_t endOfTableBySet() const { return m_lists.endOfNumbers() + 2; }
     size_t memoryInBytes() const { return m_lists.memoryInBytes() + m_groups.memoryInBytes() + m_blocks.memoryInBytes() + (sizeof(RememberedByAll) << m_bitsOfRememberedByAll); }
-    // While no thread makes a set.
     void freeOutgrownTables()
     {
         m_lists.freeOutgrownTables();
@@ -324,7 +313,6 @@ private:
 
     static constexpr unsigned wordsPerBlock = membersPerBlock / 64;
 
-    // A run of 64-bit words that never changes: this head, and right behind it the words.
     struct Run {
         const uint64_t* words() const LIFETIME_BOUND { return reinterpret_cast<const uint64_t*>(this + 1); }
         std::span<const uint64_t> span() const LIFETIME_BOUND { return unsafeMakeSpan(words(), numberOfWords); }
@@ -332,11 +320,9 @@ private:
         uint32_t numberOfWords { 0 };
         uint32_t numberOfMembers { 0 };
         uint64_t hashOfMembers { 0 };
-        // Of a list and of a short set: the members below 64.
         uint64_t lowestMembers { 0 };
     };
 
-    // Runs found again by their words.
     class InternedRuns {
         WTF_MAKE_NONCOPYABLE(InternedRuns);
     public:
@@ -354,7 +340,6 @@ private:
             uint32_t endOfChunk { 0 };
         };
 
-        // Number 0 is the run without words.
         uint32_t intern(Room&, std::span<const uint64_t> words, uint32_t numberOfMembers, uint64_t hashOfMembers, uint64_t lowestMembers = 0);
 
         void freeOutgrownTables();
@@ -369,14 +354,11 @@ private:
         static constexpr uint32_t unitsPerLine = 64 / bytesPerUnit;
         static constexpr uint32_t unitsOfHeadAndFirstWord = (sizeof(Run) + sizeof(uint64_t)) / bytesPerUnit;
         static constexpr uint32_t unitsPerSegment = 1u << 19;
-        // A number has 30 bits.
         static constexpr uint32_t numberOfSegments = (1u << 30) / unitsPerSegment;
         static constexpr uint32_t unitsPerChunk = 4096;
 
-        // A slot: the hash above, the number of the run below. A run that is there is found without the lock.
         using Slot = std::atomic<uint64_t>;
 
-        // The slots lie at a cache line, so the low bits of their address are free for the binary logarithm of their number: one load gives both.
         class Table {
         public:
             Table()
@@ -400,9 +382,7 @@ private:
         };
 
         struct alignas(64) Shard {
-            // Every lookup reads this line, and only a table that grows writes it.
             std::atomic<Table> table { };
-            // Whoever adds a run writes this one.
             alignas(64) Lock lock;
             uint32_t size { 0 };
             Vector<Table> outgrownTables;
@@ -423,13 +403,11 @@ private:
     };
 
     static constexpr uint32_t storedSetOf(ValueSetID set) { return set.index() >> 1; }
-    // The number of a run has 30 bits.
     static constexpr uint32_t namesOneMember = 1u << 30;
     static constexpr bool holdsOneMember(uint32_t storedSet) { return storedSet & namesOneMember; }
     static constexpr uint32_t onlyMemberOf(uint32_t storedSet) { return storedSet & ~namesOneMember; }
     static constexpr uint32_t storedSetOfOneMember(uint32_t member) { return member | namesOneMember; }
     static constexpr uint32_t placesPerGroup = 64;
-    // The number of a run has 30 bits.
     static constexpr uint32_t namesGroup = 1u << 31;
 
     static constexpr uint32_t placeOf(uint64_t entry) { return static_cast<uint32_t>(entry >> 32); }
@@ -465,7 +443,6 @@ private:
     bool setsOfSeveralMembersMeet(ValueSetID, ValueSetID) const;
     ValueFlowObjectID onlyMemberOfComplement(ValueSetID) const;
 
-    // What an entry stands for: the places of its group that have a block, and the numbers of those blocks in ascending order of their places.
     class BlocksOfEntry {
         WTF_MAKE_NONCOPYABLE(BlocksOfEntry);
     public:
@@ -491,7 +468,6 @@ private:
         uint32_t m_block;
     };
 
-    // In ascending order of the places, until the functor answers true.
     bool anyStoredBlock(std::span<const uint64_t> list, NOESCAPE const Invocable<bool(uint32_t place, uint32_t block)> auto& functor) const
     {
         for (uint64_t entry : list) {
@@ -643,13 +619,11 @@ private:
     InternedRuns m_lists;
 };
 
-// What each placeholder stands for where a value passes a mask: the untracked object for what the analysis has stopped following, the unknown object for what has escaped.
 struct ValueFlowCoveredObjects {
     ValueSetID byUntracked { ValueSets::anything };
     ValueSetID byUnknown { ValueSets::anything };
 };
 
-// One thread's way of making sets: its buffers and what it remembers of the operations it has done.
 class ValueSetMaker {
     WTF_MAKE_NONCOPYABLE(ValueSetMaker);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueSetMaker);
@@ -659,10 +633,8 @@ public:
     const ValueSets& sets() const { return m_sets; }
 
     ValueSetID of(ValueFlowObjectID member) { return ValueSetID(ValueSets::storedSetOfOneMember(member.index()) * 2); }
-    // In any order, with or without repeats.
     ValueSetID of(std::span<const ValueFlowObjectID>);
     ValueSetID ofManyMembers(std::span<const ValueFlowObjectID>);
-    // Every member from the first up to the one before `end`.
     ValueSetID ofRange(ValueFlowObjectID first, ValueFlowObjectID end);
     ValueSetID unite(ValueSetID first, ValueSetID second)
     {
@@ -688,17 +660,14 @@ public:
             return false;
         return nonEmptySetsMeet(first, second);
     }
-    // What a place with a mask takes of a value that arrives there.
     ValueSetID pass(ValueSetID value, ValueSetID mask, ValueSetID familyObjects, ValueFlowMaskKind, const ValueFlowPlaceholders&, const ValueFlowCoveredObjects& = { });
     ValueSetID uniteAll(std::span<const ValueSetID>);
-    // The set as the union of smaller sets, in ascending order: its blocks, or the words of its one block.
     void appendParts(ValueSetID, Vector<ValueSetID>&);
 
 private:
     enum class Operation : uint8_t { Unite, Intersect, Subtract };
 
     struct Remembered {
-        // Of sets: the two operands of an intersection, in ascending order. Of blocks: the operation lies in the two highest bits of the second.
         uint32_t first { 0 };
         uint32_t second { 0 };
         uint32_t result { 0 };
@@ -707,13 +676,11 @@ private:
     struct RememberedEntries {
         uint32_t first { 0 };
         uint32_t second { 0 };
-        // The operation and where in the group of places each of the two begins. Never zero.
         uint32_t detail { 0 };
         uint32_t placeOfResult { 0 };
         uint32_t result { 0 };
     };
 
-    // What the members of some blocks add to the head of whatever holds the blocks.
     struct Totals {
         uint32_t numberOfMembers { 0 };
         uint64_t hashOfMembers { 0 };
@@ -751,17 +718,14 @@ private:
     void makeRoomToScatter();
     void scatter(uint32_t member);
     void sortMembersAndRemoveRepeats();
-    // Of two entries for the same group of places. Nothing is 0.
     uint64_t combineEntries(Operation, uint64_t first, uint64_t second);
     uint32_t combineBlocks(Operation, uint32_t first, uint32_t second);
     Totals totalsOfBlock(uint32_t place, uint32_t block) const;
     Totals totalsOf(uint64_t entry) const;
-    // The entry for the blocks at some places of one group of places. Nothing is 0.
     uint64_t entryFor(uint32_t firstPlace, uint64_t present, std::span<const uint32_t> blocks, Totals);
     uint64_t entryFor(uint32_t firstPlace, uint64_t present, std::span<const uint32_t> blocks);
     uint32_t internList(std::span<const uint64_t>);
     uint32_t internList(std::span<const uint64_t>, Totals, uint64_t lowestMembers);
-    // Of (place << 32 | number of the block), ascending.
     uint32_t internListOfBlocks(std::span<const uint64_t>);
 
     ValueSets& m_sets;
@@ -777,7 +741,6 @@ private:
     Vector<uint64_t> m_listOfBlocks;
     Vector<uint64_t> m_entryAtGroupOfPlaces;
     Vector<uint32_t> m_blockAtPlace;
-    // The words that are present, one bit each, and the words. A word that is not present holds anything.
     struct GatheredBlock {
         uint64_t present { 0 };
         std::array<uint64_t, ValueSets::wordsPerBlock> words;
@@ -786,7 +749,6 @@ private:
     Vector<uint32_t> m_members;
     Vector<uint32_t> m_highMembers;
     Vector<BitsOfWord> m_bitsOfWords;
-    // For ofManyMembers(): a bit for each member of the universe, a bit for each word of a place that holds one, a bit for each place that has such a word. All zero between two calls.
     Vector<uint64_t> m_scatteredMembers;
     Vector<uint64_t> m_wordsTouchedAtPlace;
     Vector<uint64_t> m_placesTouched;

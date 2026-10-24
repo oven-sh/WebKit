@@ -20,15 +20,9 @@ variable g7 name="constant" declared={type=number} initialization=Undefined flag
 variable g8 name="storesUnknown" declared={type=number} initialization=Undefined flow={initialization=StoredBeforeEveryRead isUnchangedDuringActivation=true}
 function f0 name="variables" parameters=[{type=number}] results=[{type=undefined}] {
   b0(v0: number):
-    v1 = GetModuleVariable variable=g0
-    v2 = GetModuleVariable variable=g1
-    v3 = GetModuleVariable variable=g2
-    v4 = GetModuleVariable variable=g3
-    v5 = GetModuleVariable variable=g4
-    v6 = GetModuleVariable variable=g5
-    v7 = GetModuleVariable variable=g6
-    v8 = GetModuleVariable variable=g7
-    v9 = GetModuleVariable variable=g8
+# REPEAT: i = 0..8
+    v%(i+1) = GetModuleVariable variable=g%(i)
+# END REPEAT
     PutModuleVariable v0 variable=g4
     PutModuleVariable v0 variable=g0
     Return

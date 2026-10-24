@@ -122,17 +122,9 @@ function f5 name="textNoNumberIsPrintedAs" parameters=[{type=anything}] results=
     v9 = String string="infinity"
     v10 = String string="-NaN"
     v11 = String string=""
-    v12 = ElemGet v0, v1
-    v13 = ElemGet v0, v2
-    v14 = ElemGet v0, v3
-    v15 = ElemGet v0, v4
-    v16 = ElemGet v0, v5
-    v17 = ElemGet v0, v6
-    v18 = ElemGet v0, v7
-    v19 = ElemGet v0, v8
-    v20 = ElemGet v0, v9
-    v21 = ElemGet v0, v10
-    v22 = ElemGet v0, v11
+# REPEAT: i = 1..11
+    v%(i+11) = ElemGet v0, v%(i)
+# END REPEAT
     Return v12
 }
 # CHECK-LABEL: function f5 name="textNoNumberIsPrintedAs"

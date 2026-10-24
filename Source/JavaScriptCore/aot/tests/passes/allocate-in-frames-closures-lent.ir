@@ -16,15 +16,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Jump -> next b1()
   b1():
     LoopHint
-    v4 = CallDirect v1 function=f1
-    v5 = CallDirect v1 function=f2
-    v6 = CallDirect v1 function=f3
-    v7 = CallDirect v1 function=f4
-    v8 = CallDirect v1 function=f5
-    v9 = CallDirect v1 function=f6
-    v10 = CallDirect v1 function=f7
-    v11 = CallDirect v1 function=f8
-    v12 = CallDirect v1 function=f9
+# REPEAT: i = 1..9
+    v%(i+3) = CallDirect v1 function=f%(i)
+# END REPEAT
     Branch v2 -> taken b1(), notTaken b2()
   b2():
     Return

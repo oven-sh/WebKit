@@ -35,15 +35,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
-    v3 = CallDirect v2 function=f1
-    v4 = CallDirect v2 function=f2
-    v5 = CallDirect v2 function=f3
-    v6 = CallDirect v2 function=f4
-    v7 = CallDirect v2 function=f5
-    v8 = CallDirect v2 function=f6
-    v9 = CallDirect v2 function=f7
-    v10 = CallDirect v2 function=f8
-    v11 = CallDirect v2 function=f9
+# REPEAT: i = 1..9
+    v%(i+2) = CallDirect v2 function=f%(i)
+# END REPEAT
     v12 = NewObject layout=L13
     v13 = CallDirect v2, v12 function=f10
     Return

@@ -13,82 +13,62 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTStringArena.h"
-#include "AOTThreads.h"
 #include "AOTTypeArena.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static BitVector findLayoutSetsNaming(const Program& program, const BitVector& layouts, const ParallelLoops& loops)
+{
+    BitVector sets(program.types.numberOfLayoutSets());
+    for (uint32_t index : findIndicesInParallel(loops, program.types.numberOfLayoutSets(), [&](unsigned index) {
+        return std::ranges::any_of(program.at(LayoutSetID(index)).members, [&](LayoutID member) { return layouts.quickGet(member.index()); });
+    }))
+        sets.quickSet(index);
+    return sets;
+}
+
 namespace {
-
-// Lists the layouts of a set that a record names by itself or in a set of layouts. The types are no records of that sort: see createTypesBehindDictionaries().
-struct NamedLayouts {
-    NamedLayouts(const Program& program, const BitVector& layouts, const ParallelLoops& loops)
-        : program(program)
-        , layouts(layouts)
-        , setsNamingThem(program.types.numberOfLayoutSets())
-    {
-        for (uint32_t index : findIndicesInParallel(loops, program.types.numberOfLayoutSets(), [&](unsigned index) {
-            return std::ranges::any_of(program.at(LayoutSetID(index)).members, [&](LayoutID member) { return layouts.quickGet(member.index()); });
-        }))
-            setsNamingThem.quickSet(index);
-    }
-
-    const Program& program;
-    const BitVector& layouts;
-    BitVector setsNamingThem;
-};
 
 struct NamedLayoutFinder {
     void operator()(LayoutID id) const
     {
-        if (id && named.layouts.quickGet(id.index()))
+        if (id && layouts.quickGet(id.index()))
             found.append(id.index());
     }
     void operator()(LayoutSetID id) const
     {
-        if (!id || !named.setsNamingThem.quickGet(id.index()))
-            return;
-        for (LayoutID member : named.program.at(id).members)
-            (*this)(member);
+        if (id && setsNamingThem.quickGet(id.index()))
+            std::ranges::for_each(program.at(id).members, *this);
     }
     void operator()(const auto&) const { }
 
-    const NamedLayouts& named;
+    const Program& program;
+    const BitVector& layouts;
+    const BitVector& setsNamingThem;
     Vector<uint32_t>& found;
 };
 
 } // anonymous namespace
 
-// What Object.create makes is an ordinary object wherever it has got no field, also where it stays empty: it is made to stand above or below other objects.
-static bool isLayoutOfLiteralWithoutFields(const Layout& layout, const FlowLayoutUpdate& update)
+static bool mayHaveDictionaries(const Layout& layout, const FlowLayoutUpdate& update)
 {
     bool isOfCreatedObject = layout.flags == OptionSet<LayoutFlags> { LayoutFlags::IsOfCreatedObject };
-    return layout.kind == (isOfCreatedObject ? LayoutKind::Instance : LayoutKind::Record) && layout.fields.isEmpty() && layout.staticFields.isEmpty() && layout.supertypes.isEmpty()
-        && !layout.base && !layout.constructor && !layout.name && !layout.computedKeyCount && (layout.flags.isEmpty() || isOfCreatedObject)
-        && update.appendedFields.isEmpty() && (isOfCreatedObject || !update.flow.impossibleMutations.contains(ObjectMutation::AddProperty));
+    if (layout.kind != (isOfCreatedObject ? LayoutKind::Instance : LayoutKind::Record) || !layout.staticFields.isEmpty() || layout.base || layout.constructor || layout.name || layout.computedKeyCount)
+        return false;
+    if (update.objectsArePrototypesOfCreatedObjects && layout.flags.isEmpty())
+        return true;
+    if (!layout.supertypes.isEmpty())
+        return false;
+    if (layout.flags == OptionSet<LayoutFlags> { LayoutFlags::IsWrittenUnderDictionaryType })
+        return !update.flow.impossibleMutations.containsAll({ ObjectMutation::AddProperty, ObjectMutation::DeleteField });
+    return layout.fields.isEmpty() && (layout.flags.isEmpty() || isOfCreatedObject) && update.appendedFields.isEmpty()
+        && (isOfCreatedObject || !update.flow.impossibleMutations.contains(ObjectMutation::AddProperty));
 }
 
-// `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name.
-static bool isLayoutOfLiteralUsedAsDictionary(const Layout& layout, const FlowLayoutUpdate& update)
-{
-    return layout.kind == LayoutKind::Record && layout.flags == OptionSet<LayoutFlags> { LayoutFlags::IsWrittenUnderDictionaryType } && layout.staticFields.isEmpty() && layout.supertypes.isEmpty()
-        && !layout.base && !layout.constructor && !layout.name && !layout.computedKeyCount
-        && !update.flow.impossibleMutations.containsAll({ ObjectMutation::AddProperty, ObjectMutation::DeleteField });
-}
-
-// `const members = { get size() { .. } }   Object.create(members)`
-static bool isLayoutOfLiteralAboveCreatedObjects(const Layout& layout, const FlowLayoutUpdate& update)
-{
-    return update.objectsArePrototypesOfCreatedObjects && layout.kind == LayoutKind::Record && layout.flags.isEmpty() && layout.staticFields.isEmpty()
-        && !layout.base && !layout.constructor && !layout.name && !layout.computedKeyCount;
-}
-
-// A literal that lists its members is worth its slots. It gives them up only where it is made once, like the members of a module, and is written to stand above what Object.create makes: some call is handed that object alone.
 static void listLiteralsThatKeepTheirSlots(const FlowApplication& application, const Function& function, bool functionRunsAtMostOnce, const NamedLayoutFinder& finder)
 {
     auto listsMembers = [&](const Value& value) {
-        return value.opcode == Opcode::NewObject && !value.fields().empty() && finder.named.layouts.quickGet(value.layout().index());
+        return value.opcode == Opcode::NewObject && !value.fields().empty() && finder.layouts.quickGet(value.layout().index());
     };
     if (std::ranges::none_of(function.values, listsMembers))
         return;
@@ -108,14 +88,13 @@ static void listLayoutsNamedIn(const Program& program, const FlowApplication& ap
 {
     forEachReference(static_cast<const FunctionRecord&>(function), finder);
     listLiteralsThatKeepTheirSlots(application, function, functionRunsAtMostOnce, finder);
-    // A test can find a layout, and nothing of an ordinary object: it stops looking for a layout that nothing has any more. One that would look for nothing at all keeps what it looks for.
     auto listLayoutsTestedAlone = [&](TypeID tested) {
         Type rest = program.at(tested);
         LayoutSetID layouts = std::exchange(rest.layouts, LayoutSetID());
         if (!layouts || !rest.isNever())
             return;
         const LayoutSet& set = program.at(layouts);
-        if (!set.hasMembersWithoutLayout && std::ranges::all_of(set.members, [&](LayoutID member) { return finder.named.layouts.quickGet(member.index()); }))
+        if (!set.hasMembersWithoutLayout && std::ranges::all_of(set.members, [&](LayoutID member) { return finder.layouts.quickGet(member.index()); }))
             finder(layouts);
     };
     for (const Value& value : function.values) {
@@ -137,9 +116,7 @@ static void listLayoutsNamedIn(const Program& program, const FlowApplication& ap
     }
 }
 
-enum class InPlaceOfDictionaries : bool { Nothing, Object };
-
-static Type typeBehindDictionaries(const Program& program, const BitVector& layoutsOfDictionaries, const Type& type, TypeArena& types, const Invocable<TypeID(TypeID)> auto& behindOf, InPlaceOfDictionaries inPlace = InPlaceOfDictionaries::Object)
+static Type typeBehindDictionaries(const Program& program, const BitVector& layoutsOfDictionaries, const Type& type, TypeArena& types, const Invocable<TypeID(TypeID)> auto& behindOf, bool namesObjectInTheirPlace = true)
 {
     Type behind = type;
     bool namesDictionaries = false;
@@ -155,7 +132,7 @@ static Type typeBehindDictionaries(const Program& program, const BitVector& layo
         for (TypeID& contents : part.contents)
             contents = behindOf(contents);
     }
-    if (namesDictionaries && inPlace == InPlaceOfDictionaries::Object)
+    if (namesDictionaries && namesObjectInTheirPlace)
         behind = behind.unionWith(Type::builtinClass(BuiltinClasses::Object), types);
     behind.canonicalize();
     return behind;
@@ -168,24 +145,23 @@ Type typeBehindDictionaries(const Program& program, const BitVector& layoutsOfDi
     });
 }
 
-// A type names such a layout by itself or in what a container holds, however deep. A container has its turn behind what it holds.
 static void createTypesBehindDictionaries(const Program& program, const BitVector& layoutsOfDictionaries, TypeTable& types, FlowApplication& application, const ParallelLoops& loops)
 {
-    application.layoutSetsNamingDictionaries = NamedLayouts(program, layoutsOfDictionaries, loops).setsNamingThem;
+    application.layoutSetsNamingDictionaries = findLayoutSetsNaming(program, layoutsOfDictionaries, loops);
     unsigned numberOfTypes = types.size();
-    Vector<TypeID> behindOf(numberOfTypes);
-    auto holdsChangedType = [&](const Type& type) {
-        return std::ranges::any_of(type.classes, [&](const ClassPart& part) {
-            return std::ranges::any_of(part.contents, [&](TypeID contents) { return contents && behindOf[contents.index()]; });
-        });
+    Vector<TypeID> changed(numberOfTypes);
+    auto isChanged = [&](TypeID type) {
+        return type && changed[type.index()];
     };
-
+    auto behindOf = [&](TypeID type) {
+        return isChanged(type) ? changed[type.index()] : type;
+    };
+    auto namesDictionaries = [&](const Type& type) {
+        return type.layouts && application.layoutSetsNamingDictionaries.quickGet(type.layouts.index());
+    };
     Vector<uint32_t> typesThatMayChange = findIndicesInParallel(loops, numberOfTypes, [&](unsigned index) {
         const Type& type = program.at(TypeID(index));
-        bool namesDictionaries = type.layouts && application.layoutSetsNamingDictionaries.quickGet(type.layouts.index());
-        return namesDictionaries || std::ranges::any_of(type.classes, [](const ClassPart& part) {
-            return !part.contents.isEmpty();
-        });
+        return namesDictionaries(type) || std::ranges::any_of(type.classes, [](const ClassPart& part) { return !part.contents.isEmpty(); });
     });
     Vector<uint32_t> changedTypes;
     Vector<TypeID> testedBehind;
@@ -195,40 +171,32 @@ static void createTypesBehindDictionaries(const Program& program, const BitVecto
         for (bool didChange = true; std::exchange(didChange, false);) {
             for (uint32_t index : typesThatMayChange) {
                 const Type& type = program.at(TypeID(index));
-                bool namesDictionaries = type.layouts && application.layoutSetsNamingDictionaries.quickGet(type.layouts.index());
-                if (!namesDictionaries && !holdsChangedType(type))
+                if (!namesDictionaries(type) && !std::ranges::any_of(type.classes, [&](const ClassPart& part) { return std::ranges::any_of(part.contents, isChanged); }))
                     continue;
-                TypeID behind = arena.intern(typeBehindDictionaries(program, layoutsOfDictionaries, type, arena, [&](TypeID contents) {
-                    return contents && behindOf[contents.index()] ? behindOf[contents.index()] : contents;
-                }));
-                if (behindOf[index] == behind)
+                TypeID behind = arena.intern(typeBehindDictionaries(program, layoutsOfDictionaries, type, arena, behindOf));
+                if (changed[index] == behind)
                     continue;
-                if (!behindOf[index])
+                if (!changed[index])
                     changedTypes.append(index);
-                behindOf[index] = behind;
+                changed[index] = behind;
                 didChange = true;
             }
         }
         AOT::sort(changedTypes);
         testedBehind = WTF::map(changedTypes, [&](uint32_t index) {
-            return arena.intern(typeBehindDictionaries(program, layoutsOfDictionaries, program.at(TypeID(index)), arena, [&](TypeID contents) {
-                return contents && behindOf[contents.index()] ? behindOf[contents.index()] : contents;
-            }, InPlaceOfDictionaries::Nothing));
+            return arena.intern(typeBehindDictionaries(program, layoutsOfDictionaries, program.at(TypeID(index)), arena, behindOf, false));
         });
     }
     TypeRemap remap = phase.finish(StringRemap { }, &loops);
-    application.typesBehindDictionaries = WTF::map(changedTypes, [&](uint32_t index) {
-        return std::pair { TypeID(index), remap(behindOf[index]) };
-    });
-    application.typesTestedBehindDictionaries.reserveInitialCapacity(changedTypes.size());
-    for (size_t position = 0; position < changedTypes.size(); ++position)
-        application.typesTestedBehindDictionaries.append({ TypeID(changedTypes[position]), remap(testedBehind[position]) });
     application.typesNamingDictionaries = BitVector(numberOfTypes);
-    for (uint32_t index : changedTypes)
-        application.typesNamingDictionaries.quickSet(index);
+    for (size_t position = 0; position < changedTypes.size(); ++position) {
+        TypeID type(changedTypes[position]);
+        application.typesBehindDictionaries.append({ type, remap(changed[type.index()]) });
+        application.typesTestedBehindDictionaries.append({ type, remap(testedBehind[position]) });
+        application.typesNamingDictionaries.quickSet(type.index());
+    }
 }
 
-// A compiled object without a slot has nothing that an ordinary object lacks, and every name that is stored into it lies in a second object behind it.
 BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -236,52 +204,36 @@ BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs& inputs, Type
     BitVector candidates(program.layouts.size());
     if (!inputs.build.isEnabledEverywhere(FlowResultKind::NarrowedTypes) || !inputs.build.isEnabledEverywhere(FlowResultKind::ProvenLayoutSets))
         return candidates;
-    for (unsigned index = 0; index < program.layouts.size(); ++index) {
-        if (isLayoutOfLiteralWithoutFields(program.layouts[index], application.layouts[index]) || isLayoutOfLiteralUsedAsDictionary(program.layouts[index], application.layouts[index]) || isLayoutOfLiteralAboveCreatedObjects(program.layouts[index], application.layouts[index]))
-            candidates.quickSet(index);
-    }
+    for (unsigned index = 0; index < program.layouts.size(); ++index)
+        candidates.quickSet(index, mayHaveDictionaries(program.layouts[index], application.layouts[index]));
     if (candidates.isEmpty())
         return candidates;
 
-    NamedLayouts named(program, candidates, inputs.loops());
-    Vector<uint32_t> found = collectInParallel<uint32_t>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<uint32_t>& foundInFunction) {
-        listLayoutsNamedIn(program, application, program.functions[index], tables.functions.functions[index].executions == ExecutionCount::AtMostOnce, { named, foundInFunction });
-    });
+    BitVector setsNamingCandidates = findLayoutSetsNaming(program, candidates, inputs.loops());
+    Vector<uint32_t> found;
     auto searchEach = [&](unsigned count, const auto& search) {
         found.appendVector(collectInParallel<uint32_t>(inputs.loops(), count, [&](unsigned index, Vector<uint32_t>& foundInRecord) {
-            search(index, NamedLayoutFinder { named, foundInRecord });
+            search(index, NamedLayoutFinder { program, candidates, setsNamingCandidates, foundInRecord });
         }));
     };
-    auto searchList = [&](const auto& list) {
-        searchEach(list.size(), [&](unsigned index, const NamedLayoutFinder& finder) {
-            forEachReference(list[index], finder);
-        });
+    auto searchLists = [&](const auto&... lists) {
+        (searchEach(lists.size(), [&](unsigned index, const NamedLayoutFinder& finder) { forEachReference(lists[index], finder); }), ...);
     };
+    searchEach(program.functions.size(), [&](unsigned index, const NamedLayoutFinder& finder) {
+        listLayoutsNamedIn(program, application, program.functions[index], tables.functions.functions[index].executions == ExecutionCount::AtMostOnce, finder);
+    });
     searchEach(program.layouts.size(), [&](unsigned index, const NamedLayoutFinder& finder) {
         forEachReference(static_cast<const LayoutRecord&>(program.layouts[index]), finder);
     });
-    searchList(program.typeSites);
-    searchList(program.expectedResults);
-    searchList(program.variables);
-    searchList(program.modules);
-    searchList(program.moduleFailures);
-    searchList(program.evalScopes);
-    searchList(program.entries);
-    searchList(program.runtimeFunctions);
-    searchList(program.webAssemblyModules);
+    searchLists(program.typeSites, program.expectedResults, program.variables, program.modules, program.moduleFailures, program.evalScopes, program.entries, program.runtimeFunctions, program.webAssemblyModules);
     searchEach(program.data.size(), [&](unsigned index, const NamedLayoutFinder& finder) {
-        const Data& data = program.data[index];
-        const auto* object = data.root.tryAs<DataNode::Object>();
+        const auto* object = program.data[index].root.tryAs<DataNode::Object>();
         if (!object || !object->members.isEmpty())
-            forEachReference(data, finder);
+            forEachReference(program.data[index], finder);
     });
-    size_t numberOfCandidates = candidates.bitCount();
     for (uint32_t index : found)
         candidates.quickClear(index);
-    if (inputs.build.options().logging.logsPhaseTimes) [[unlikely]]
-        dataLogLn("AOT flow: the empty literals of ", candidates.bitCount(), " layouts make ordinary objects; ", numberOfCandidates - candidates.bitCount(), " more layouts without a field are named by something else");
 
-    // Nothing has the layout from here on: no test may look for it, and no guess by a name may find it.
     for (size_t index : candidates) {
         application.layouts[index].objectsAreDictionaries = true;
         application.layouts[index].flow.allocation = AllocationState::NeverAllocated;

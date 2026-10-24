@@ -20,73 +20,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 
 function f1 name="small" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = ToBoolean v0
-    v2 = ToBoolean v0
-    v3 = ToBoolean v0
-    v4 = ToBoolean v0
-    v5 = ToBoolean v0
-    v6 = ToBoolean v0
-    v7 = ToBoolean v0
-    v8 = ToBoolean v0
-    v9 = ToBoolean v0
-    v10 = ToBoolean v0
-    v11 = ToBoolean v0
-    v12 = ToBoolean v0
-    v13 = ToBoolean v0
-    v14 = ToBoolean v0
-    v15 = ToBoolean v0
-    v16 = ToBoolean v0
-    v17 = ToBoolean v0
-    v18 = ToBoolean v0
-    v19 = ToBoolean v0
-    v20 = ToBoolean v0
-    v21 = ToBoolean v0
-    v22 = ToBoolean v0
-    v23 = ToBoolean v0
-    v24 = ToBoolean v0
-    v25 = ToBoolean v0
-    v26 = ToBoolean v0
-    v27 = ToBoolean v0
-    v28 = ToBoolean v0
-    v29 = ToBoolean v0
-    v30 = ToBoolean v0
-    v31 = ToBoolean v0
+# REPEAT: i = 1..31
+    v%(i) = ToBoolean v0
+# END REPEAT
     Return v0
 }
 
 function f2 name="oneValueMore" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = ToBoolean v0
-    v2 = ToBoolean v0
-    v3 = ToBoolean v0
-    v4 = ToBoolean v0
-    v5 = ToBoolean v0
-    v6 = ToBoolean v0
-    v7 = ToBoolean v0
-    v8 = ToBoolean v0
-    v9 = ToBoolean v0
-    v10 = ToBoolean v0
-    v11 = ToBoolean v0
-    v12 = ToBoolean v0
-    v13 = ToBoolean v0
-    v14 = ToBoolean v0
-    v15 = ToBoolean v0
-    v16 = ToBoolean v0
-    v17 = ToBoolean v0
-    v18 = ToBoolean v0
-    v19 = ToBoolean v0
-    v20 = ToBoolean v0
-    v21 = ToBoolean v0
-    v22 = ToBoolean v0
-    v23 = ToBoolean v0
-    v24 = ToBoolean v0
-    v25 = ToBoolean v0
-    v26 = ToBoolean v0
-    v27 = ToBoolean v0
-    v28 = ToBoolean v0
-    v29 = ToBoolean v0
-    v30 = ToBoolean v0
-    v31 = ToBoolean v0
-    v32 = ToBoolean v0
+# REPEAT: i = 1..32
+    v%(i) = ToBoolean v0
+# END REPEAT
     Return v0
 }

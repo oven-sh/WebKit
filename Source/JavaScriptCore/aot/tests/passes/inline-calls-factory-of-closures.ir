@@ -71,46 +71,13 @@ function f5 name="unrelated" results=[{type=anything}] {
   b0():
     Return
 }
-function f6 name="m0" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 0..7
+function f%(i+6) name="m%(i)" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number, v1: number):
     v2 = Add v0, v1
     Return v2
 }
-function f7 name="m1" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
-    v2 = Add v0, v1
-    Return v2
-}
-function f8 name="m2" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
-    v2 = Add v0, v1
-    Return v2
-}
-function f9 name="m3" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
-    v2 = Add v0, v1
-    Return v2
-}
-function f10 name="m4" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
-    v2 = Add v0, v1
-    Return v2
-}
-function f11 name="m5" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
-    v2 = Add v0, v1
-    Return v2
-}
-function f12 name="m6" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
-    v2 = Add v0, v1
-    Return v2
-}
-function f13 name="m7" kind=Method captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
-    v2 = Add v0, v1
-    Return v2
-}
+# END REPEAT
 function f14 name="createdAtOneSite" role=ResultWorker parameters=[{type=number}] results=[{type=f6}, {type=f7}, {type=f8}, {type=f9}, {type=f10}, {type=f11}, {type=f12}, {type=f13}] derivation={source=f0} creator=ResultWorker{origin=f0} {
   b0(v0: number):
     v1 = NewClosure v0 function=f6

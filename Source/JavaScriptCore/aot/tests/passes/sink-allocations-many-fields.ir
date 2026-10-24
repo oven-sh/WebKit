@@ -39,26 +39,9 @@ function f0 name="eightStores" parameters=[{type=anything}, {type=anything}, {ty
 function f1 name="twentyStoresInReverseOrder" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject layout=L0
-    PropDefine v3, v0 key="k19" receivers=[L0]
-    PropDefine v3, v1 key="k18" receivers=[L0]
-    PropDefine v3, v0 key="k17" receivers=[L0]
-    PropDefine v3, v1 key="k16" receivers=[L0]
-    PropDefine v3, v0 key="k15" receivers=[L0]
-    PropDefine v3, v1 key="k14" receivers=[L0]
-    PropDefine v3, v0 key="k13" receivers=[L0]
-    PropDefine v3, v1 key="k12" receivers=[L0]
-    PropDefine v3, v0 key="k11" receivers=[L0]
-    PropDefine v3, v1 key="k10" receivers=[L0]
-    PropDefine v3, v0 key="k9" receivers=[L0]
-    PropDefine v3, v1 key="k8" receivers=[L0]
-    PropDefine v3, v0 key="k7" receivers=[L0]
-    PropDefine v3, v1 key="k6" receivers=[L0]
-    PropDefine v3, v0 key="k5" receivers=[L0]
-    PropDefine v3, v1 key="k4" receivers=[L0]
-    PropDefine v3, v0 key="k3" receivers=[L0]
-    PropDefine v3, v1 key="k2" receivers=[L0]
-    PropDefine v3, v0 key="k1" receivers=[L0]
-    PropDefine v3, v1 key="k0" receivers=[L0]
+# REPEAT: i = 0..19; a = 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1
+    PropDefine v3, v%(a) key="k%(i*-1+19)" receivers=[L0]
+# END REPEAT
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v24 = Call v0, -, v3

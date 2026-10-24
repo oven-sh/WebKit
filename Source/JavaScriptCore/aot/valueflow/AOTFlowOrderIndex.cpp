@@ -37,7 +37,6 @@ static FlowScopeLocationNumbering createScopeLocationNumbering(const Program& pr
     return numbering;
 }
 
-// An operation that only evaluates its target, or notes that it was required, hands nobody the value of the module: whoever wants something of it names a variable.
 static bool readsModuleValue(Opcode opcode, ModuleReferenceKind kind)
 {
     if (opcode == Opcode::EvaluateModule || opcode == Opcode::RecordRequire)
@@ -74,7 +73,6 @@ static void markEvalBindingsOpaque(FlowScopeIndex& index, const EvalScope& scope
     }
 }
 
-// One walk over each reached body.
 static void collectAccesses(FlowScopeIndex& index)
 {
     enum class Kind : uint8_t { Read, Store, Allocation, ModuleValueRead, Mention, OpaqueVariable, OpaqueLayout, EvalScope };
@@ -177,7 +175,6 @@ static void collectAccesses(FlowScopeIndex& index)
     parallelSort(loops, index.moduleValueReads.mutableSpan(), std::less<FlowModuleValueRead>());
 }
 
-// The body runs at most once in a realm: no cache lists a module of the image, and a body that has thrown is not run again.
 static bool canOwnVariables(ModuleKind kind)
 {
     switch (kind) {
@@ -201,7 +198,6 @@ static FunctionID moduleBodyOwnerOf(const FlowScopeIndex& index, ModuleID module
     const Module& module = program.at(moduleID);
     if (!canOwnVariables(module.kind) || !module.body || !index.bodies.quickGet(module.body.index()))
         return { };
-    // A function of the module may run before the body does. Every function names the module of the file that it is written in, also where the file holds the bodies of several modules.
     ModuleID file = program.at(module.body).module;
     if (index.modulesOfFunctionsEnteredWithoutMention.quickGet(moduleID.index()) || (file && index.modulesOfFunctionsEnteredWithoutMention.quickGet(file.index())))
         return { };
@@ -231,7 +227,6 @@ static bool isFoundThroughRegistration(FunctionRole role)
     return role == FunctionRole::Library || role == FunctionRole::Model;
 }
 
-// The host names a function of the library, other than the body of a module, only through its registration. A pass links the call of a built-in to the registered function that implements it.
 static BitVector findFunctionsEnteredFromOutside(const FlowScopeIndex& index)
 {
     const Program& program = index.program();
@@ -247,7 +242,6 @@ static BitVector findFunctionsEnteredFromOutside(const FlowScopeIndex& index)
     return functions;
 }
 
-// What a function that is entered from outside mentions, it creates or calls whenever it runs. That may be before the body of its module has run, and what it calls by value then nobody lists.
 static void findFunctionsEnteredWithoutMention(FlowScopeIndex& index, const BitVector& functionsEnteredFromOutside)
 {
     BitVector& functions = index.functionsEnteredWithoutMention;
@@ -317,7 +311,6 @@ static void collectCalls(FlowScopeIndex& index)
 
     const ParallelLoops& loops = inputs.build.parallelLoops();
     sortAndRemoveDuplicates(loops, calls.byCaller);
-    // Every owner asks for every call of the functions it looks at, and the answer lies in the caller's body alone.
     forEachIndexInParallel(loops, calls.byCaller.size(), [&](unsigned call) {
         FlowScopeCall& record = calls.byCaller[call];
         record.subject = variableBehindSubjectOf(index.program().at(record.caller), record.site);
@@ -387,7 +380,6 @@ static void assignExport(FlowScopeIndex& index, VariableID variable, ModuleID ex
         owner.exporters.append(exporter);
 }
 
-// Whoever holds the exporter's namespace object reaches the exported namespace object through it, and every variable behind that one.
 static void assignExportsOfNamespace(FlowScopeIndex& index, ModuleID exportedNamespace, ModuleID exporter)
 {
     const Program& program = index.program();
@@ -428,7 +420,6 @@ static void assignOwnedLocations(FlowScopeIndex& index)
             ownerFor(index, function).environments.append(LayoutID(layout));
     }
     for (unsigned moduleIndex = 0; moduleIndex < program.modules.size(); ++moduleIndex) {
-        // Whoever is answered the value of a CommonJS module reads the variable that holds it, and so does the loader where it takes the names of a module from that value.
         assignExport(index, program.modules[moduleIndex].exportsVariable, ModuleID(moduleIndex));
         if (ModuleID captured = commonJsModuleCapturedBy(program, program.modules[moduleIndex]))
             assignExport(index, program.at(captured).exportsVariable, ModuleID(moduleIndex));

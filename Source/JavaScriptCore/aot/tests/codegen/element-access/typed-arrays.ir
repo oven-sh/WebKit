@@ -245,108 +245,42 @@ function f6 name="readsOfUint32Array" parameters=[{type=Uint32Array}, {type=i32}
 # S: f6 b3 Compact
 # R-LABEL: function f6 name="readsOfUint32Array"
 # R-COUNT-12: undefined|int[0, 4294967295] @OptionalInt64 = GetTypedArrayElement
+# REPEAT: i = 8..10; a = 16 32 64
 # R-NOT: = GetTypedArrayElement
-function f7 name="readsOfFloat16Array" parameters=[{type=Float16Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Float16Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
-    v6 = GetTypedArrayElement v0, v1 typedArrayType=8 level=Proven
-    v7 = GetTypedArrayElement v0, v2 typedArrayType=8 level=Proven
-    v8 = GetTypedArrayElement v0, v3 typedArrayType=8 level=Proven
-    v9 = GetTypedArrayElement v0, v4 typedArrayType=8 level=Proven [keyIsIntegral]
+function f%(i-1) name="readsOfFloat%(a)Array" parameters=[{type=Float%(a)Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Float%(a)Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetTypedArrayElement v0, v1 typedArrayType=%(i) level=Proven
+    v7 = GetTypedArrayElement v0, v2 typedArrayType=%(i) level=Proven
+    v8 = GetTypedArrayElement v0, v3 typedArrayType=%(i) level=Proven
+    v9 = GetTypedArrayElement v0, v4 typedArrayType=%(i) level=Proven [keyIsIntegral]
     v10 = NewArray v6, v7, v8, v9 contents=anything
     Jump -> next b1()
   b1():
     LoopHint
-    v12 = GetTypedArrayElement v0, v1 typedArrayType=8 level=Proven
-    v13 = GetTypedArrayElement v0, v2 typedArrayType=8 level=Proven
-    v14 = GetTypedArrayElement v0, v3 typedArrayType=8 level=Proven
-    v15 = GetTypedArrayElement v0, v4 typedArrayType=8 level=Proven [keyIsIntegral]
+    v12 = GetTypedArrayElement v0, v1 typedArrayType=%(i) level=Proven
+    v13 = GetTypedArrayElement v0, v2 typedArrayType=%(i) level=Proven
+    v14 = GetTypedArrayElement v0, v3 typedArrayType=%(i) level=Proven
+    v15 = GetTypedArrayElement v0, v4 typedArrayType=%(i) level=Proven [keyIsIntegral]
     v16 = NewArray v12, v13, v14, v15 contents=anything
     Branch v5 -> taken b1(), notTaken b2()
   b2():
     Branch v5 -> taken b3(), notTaken b4()
   b3() frequency=Rare:
-    v17 = GetTypedArrayElement v0, v1 typedArrayType=8 level=Proven
-    v18 = GetTypedArrayElement v0, v2 typedArrayType=8 level=Proven
-    v19 = GetTypedArrayElement v0, v3 typedArrayType=8 level=Proven
-    v20 = GetTypedArrayElement v0, v4 typedArrayType=8 level=Proven [keyIsIntegral]
+    v17 = GetTypedArrayElement v0, v1 typedArrayType=%(i) level=Proven
+    v18 = GetTypedArrayElement v0, v2 typedArrayType=%(i) level=Proven
+    v19 = GetTypedArrayElement v0, v3 typedArrayType=%(i) level=Proven
+    v20 = GetTypedArrayElement v0, v4 typedArrayType=%(i) level=Proven [keyIsIntegral]
     v21 = NewArray v17, v18, v19, v20 contents=anything
     Jump -> next b4()
   b4():
     Return
 }
-# S: f7 b0 Balanced
-# S: f7 b1 Fast
-# S: f7 b3 Compact
-# R-LABEL: function f7 name="readsOfFloat16Array"
+# S: f%(i-1) b0 Balanced
+# S: f%(i-1) b1 Fast
+# S: f%(i-1) b3 Compact
+# R-LABEL: function f%(i-1) name="readsOfFloat%(a)Array"
 # R-COUNT-12: undefined|number @OptionalDouble = GetTypedArrayElement
-# R-NOT: = GetTypedArrayElement
-function f8 name="readsOfFloat32Array" parameters=[{type=Float32Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Float32Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
-    v6 = GetTypedArrayElement v0, v1 typedArrayType=9 level=Proven
-    v7 = GetTypedArrayElement v0, v2 typedArrayType=9 level=Proven
-    v8 = GetTypedArrayElement v0, v3 typedArrayType=9 level=Proven
-    v9 = GetTypedArrayElement v0, v4 typedArrayType=9 level=Proven [keyIsIntegral]
-    v10 = NewArray v6, v7, v8, v9 contents=anything
-    Jump -> next b1()
-  b1():
-    LoopHint
-    v12 = GetTypedArrayElement v0, v1 typedArrayType=9 level=Proven
-    v13 = GetTypedArrayElement v0, v2 typedArrayType=9 level=Proven
-    v14 = GetTypedArrayElement v0, v3 typedArrayType=9 level=Proven
-    v15 = GetTypedArrayElement v0, v4 typedArrayType=9 level=Proven [keyIsIntegral]
-    v16 = NewArray v12, v13, v14, v15 contents=anything
-    Branch v5 -> taken b1(), notTaken b2()
-  b2():
-    Branch v5 -> taken b3(), notTaken b4()
-  b3() frequency=Rare:
-    v17 = GetTypedArrayElement v0, v1 typedArrayType=9 level=Proven
-    v18 = GetTypedArrayElement v0, v2 typedArrayType=9 level=Proven
-    v19 = GetTypedArrayElement v0, v3 typedArrayType=9 level=Proven
-    v20 = GetTypedArrayElement v0, v4 typedArrayType=9 level=Proven [keyIsIntegral]
-    v21 = NewArray v17, v18, v19, v20 contents=anything
-    Jump -> next b4()
-  b4():
-    Return
-}
-# S: f8 b0 Balanced
-# S: f8 b1 Fast
-# S: f8 b3 Compact
-# R-LABEL: function f8 name="readsOfFloat32Array"
-# R-COUNT-12: undefined|number @OptionalDouble = GetTypedArrayElement
-# R-NOT: = GetTypedArrayElement
-function f9 name="readsOfFloat64Array" parameters=[{type=Float64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Float64Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
-    v6 = GetTypedArrayElement v0, v1 typedArrayType=10 level=Proven
-    v7 = GetTypedArrayElement v0, v2 typedArrayType=10 level=Proven
-    v8 = GetTypedArrayElement v0, v3 typedArrayType=10 level=Proven
-    v9 = GetTypedArrayElement v0, v4 typedArrayType=10 level=Proven [keyIsIntegral]
-    v10 = NewArray v6, v7, v8, v9 contents=anything
-    Jump -> next b1()
-  b1():
-    LoopHint
-    v12 = GetTypedArrayElement v0, v1 typedArrayType=10 level=Proven
-    v13 = GetTypedArrayElement v0, v2 typedArrayType=10 level=Proven
-    v14 = GetTypedArrayElement v0, v3 typedArrayType=10 level=Proven
-    v15 = GetTypedArrayElement v0, v4 typedArrayType=10 level=Proven [keyIsIntegral]
-    v16 = NewArray v12, v13, v14, v15 contents=anything
-    Branch v5 -> taken b1(), notTaken b2()
-  b2():
-    Branch v5 -> taken b3(), notTaken b4()
-  b3() frequency=Rare:
-    v17 = GetTypedArrayElement v0, v1 typedArrayType=10 level=Proven
-    v18 = GetTypedArrayElement v0, v2 typedArrayType=10 level=Proven
-    v19 = GetTypedArrayElement v0, v3 typedArrayType=10 level=Proven
-    v20 = GetTypedArrayElement v0, v4 typedArrayType=10 level=Proven [keyIsIntegral]
-    v21 = NewArray v17, v18, v19, v20 contents=anything
-    Jump -> next b4()
-  b4():
-    Return
-}
-# S: f9 b0 Balanced
-# S: f9 b1 Fast
-# S: f9 b3 Compact
-# R-LABEL: function f9 name="readsOfFloat64Array"
-# R-COUNT-12: undefined|number @OptionalDouble = GetTypedArrayElement
+# END REPEAT
 # R-NOT: = GetTypedArrayElement
 function f10 name="readsOfBigInt64Array" parameters=[{type=BigInt64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
   b0(v0: BigInt64Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
@@ -685,123 +619,47 @@ function f18 name="storesInUint32Array" parameters=[{type=Uint32Array}, {type=i3
 # S: f18 b1 Fast
 # S: f18 b3 Compact
 # R-LABEL: function f18 name="storesInUint32Array"
+# REPEAT: i = 8..10; a = 16 32 64
 # R: v5: i32 @Int32, v6: int @Int64, v7: number @Double
 # R: PutTypedArrayElement v0, v1, v5 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
-function f19 name="storesInFloat16Array" parameters=[{type=Float16Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Float16Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
-    PutTypedArrayElement v0, v1, v5 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=8 level=Proven [keyIsIntegral]
+function f%(i+11) name="storesInFloat%(a)Array" parameters=[{type=Float%(a)Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Float%(a)Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
+    PutTypedArrayElement v0, v1, v5 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v1, v6 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v1, v7 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v2, v5 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v3, v7 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v4, v7 typedArrayType=%(i) level=Proven [keyIsIntegral]
     Jump -> next b1()
   b1():
     LoopHint
-    PutTypedArrayElement v0, v1, v5 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=8 level=Proven [keyIsIntegral]
+    PutTypedArrayElement v0, v1, v5 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v1, v6 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v1, v7 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v2, v5 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v3, v7 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v4, v7 typedArrayType=%(i) level=Proven [keyIsIntegral]
     Branch v8 -> taken b1(), notTaken b2()
   b2():
     Branch v8 -> taken b3(), notTaken b4()
   b3() frequency=Rare:
-    PutTypedArrayElement v0, v1, v5 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=8 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=8 level=Proven [keyIsIntegral]
+    PutTypedArrayElement v0, v1, v5 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v1, v6 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v1, v7 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v2, v5 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v3, v7 typedArrayType=%(i) level=Proven
+    PutTypedArrayElement v0, v4, v7 typedArrayType=%(i) level=Proven [keyIsIntegral]
     Jump -> next b4()
   b4():
     Return
 }
-# S: f19 b0 Balanced
-# S: f19 b1 Fast
-# S: f19 b3 Compact
-# R-LABEL: function f19 name="storesInFloat16Array"
-# R: v5: i32 @Int32, v6: int @Int64, v7: number @Double
-# R: PutTypedArrayElement v0, v1, v5 typedArrayType=
-# R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
-# R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
-function f20 name="storesInFloat32Array" parameters=[{type=Float32Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Float32Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
-    PutTypedArrayElement v0, v1, v5 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=9 level=Proven [keyIsIntegral]
-    Jump -> next b1()
-  b1():
-    LoopHint
-    PutTypedArrayElement v0, v1, v5 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=9 level=Proven [keyIsIntegral]
-    Branch v8 -> taken b1(), notTaken b2()
-  b2():
-    Branch v8 -> taken b3(), notTaken b4()
-  b3() frequency=Rare:
-    PutTypedArrayElement v0, v1, v5 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=9 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=9 level=Proven [keyIsIntegral]
-    Jump -> next b4()
-  b4():
-    Return
-}
-# S: f20 b0 Balanced
-# S: f20 b1 Fast
-# S: f20 b3 Compact
-# R-LABEL: function f20 name="storesInFloat32Array"
-# R: v5: i32 @Int32, v6: int @Int64, v7: number @Double
-# R: PutTypedArrayElement v0, v1, v5 typedArrayType=
-# R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
-# R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
-function f21 name="storesInFloat64Array" parameters=[{type=Float64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Float64Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
-    PutTypedArrayElement v0, v1, v5 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=10 level=Proven [keyIsIntegral]
-    Jump -> next b1()
-  b1():
-    LoopHint
-    PutTypedArrayElement v0, v1, v5 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=10 level=Proven [keyIsIntegral]
-    Branch v8 -> taken b1(), notTaken b2()
-  b2():
-    Branch v8 -> taken b3(), notTaken b4()
-  b3() frequency=Rare:
-    PutTypedArrayElement v0, v1, v5 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v1, v6 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v1, v7 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v2, v5 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v3, v7 typedArrayType=10 level=Proven
-    PutTypedArrayElement v0, v4, v7 typedArrayType=10 level=Proven [keyIsIntegral]
-    Jump -> next b4()
-  b4():
-    Return
-}
-# S: f21 b0 Balanced
-# S: f21 b1 Fast
-# S: f21 b3 Compact
-# R-LABEL: function f21 name="storesInFloat64Array"
+# S: f%(i+11) b0 Balanced
+# S: f%(i+11) b1 Fast
+# S: f%(i+11) b3 Compact
+# R-LABEL: function f%(i+11) name="storesInFloat%(a)Array"
+# END REPEAT
 # R: v5: i32 @Int32, v6: int @Int64, v7: number @Double
 # R: PutTypedArrayElement v0, v1, v5 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=

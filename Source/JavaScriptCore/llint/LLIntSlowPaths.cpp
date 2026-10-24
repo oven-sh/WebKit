@@ -1837,6 +1837,17 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_in_by_val)
     RELEASE_AND_RETURN(throwScope, llint_slow_path_in_by_val(callFrame, pc));
 }
 
+LLINT_SLOW_PATH_DECL(slow_path_aot_instanceof)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpInstanceof>();
+    std::optional<bool> result = AOT::Interpreter::tryInstanceOf(globalObject, getOperand(callFrame, bytecode.m_value), getOperand(callFrame, bytecode.m_constructor));
+    LLINT_CHECK_EXCEPTION();
+    if (result)
+        LLINT_RETURN(jsBoolean(*result));
+    RELEASE_AND_RETURN(throwScope, llint_slow_path_instanceof(callFrame, pc));
+}
+
 LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_get_by_val)
 {
     LLINT_BEGIN();

@@ -267,7 +267,6 @@ struct FlowPreparation {
     std::optional<EffectSummaries> effects;
 };
 
-// Takes the word "flow", which brings a program in form AsRead to form Prepared.
 FlowPreparation prepareFlow(TestCommandContext&, CommandWords&);
 
 struct Session {

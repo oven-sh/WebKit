@@ -100,6 +100,8 @@ std::optional<bool> tryInById(JSGlobalObject*, JSObject* base, const Identifier&
 std::optional<bool> tryInByVal(JSGlobalObject*, JSObject* base, JSValue key);
 bool tryPutById(JSGlobalObject*, JSCell* base, const Identifier&, JSValue, bool isStrict);
 bool tryPutByVal(JSGlobalObject*, JSCell* base, JSValue key, JSValue, bool isStrict);
+// The whole operator. Files what it reads of the constructor where llint_aot_op_instanceof looks for it.
+std::optional<bool> tryInstanceOf(JSGlobalObject*, JSValue, JSValue constructor);
 
 // What the cache of a get_by_id holds for a field in the cell, whose slot may be empty.
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;

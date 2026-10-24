@@ -21,6 +21,7 @@
 #include "AOTNativeTest.h"
 #include "AOTPass.h"
 #include "AOTPassID.h"
+#include "AOTProgramFile.h"
 #include "AOTSchemaEnums.h"
 #include "AOTTestCommand.h"
 #include "AOTTestRunner.h"
@@ -41,7 +42,7 @@ namespace JSC { namespace AOT {
 
 using namespace Typed;
 
-enum class Subcommand : uint8_t { All, Run, Native, List, Print, Compile, FuzzReader };
+enum class Subcommand : uint8_t { All, Run, Native, List, Print, Compile, WriteOut, FuzzReader };
 
 struct SubcommandEntry {
     ASCIILiteral name;
@@ -66,6 +67,7 @@ static constexpr SubcommandEntry subcommandEntries[] {
     { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics"_s },
     { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] { option word }"_s },
     { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word }"_s },
+    { "write-out"_s, Subcommand::WriteOut, { }, "<file>"_s },
     { "fuzz-reader"_s, Subcommand::FuzzReader, fuzzReaderFlags, "[--seed=<n>] [--count=<n>] [<program>..]"_s },
 };
 
@@ -324,6 +326,20 @@ static int runListSubcommand(std::span<const String> arguments)
     return reportUsage(Subcommand::List);
 }
 
+static int runWriteOutSubcommand(std::span<const String> arguments)
+{
+    if (arguments.size() != 1)
+        return reportUsage(Subcommand::WriteOut);
+
+    FilePrintStream errors(stderr, FilePrintStream::Borrow);
+    std::optional<ProgramFile> file = readProgramFile(arguments[0], errors);
+    if (!file || file->kind != ProgramFile::Kind::Text)
+        return exitCodeForFailure;
+    FilePrintStream out(stdout, FilePrintStream::Borrow);
+    out.print(file->text);
+    return exitCodeForSuccess;
+}
+
 } } // namespace JSC::AOT
 
 int main(int argc, char** argv)
@@ -384,6 +400,8 @@ int main(int argc, char** argv)
         return runPrintSubcommand(arguments);
     case Subcommand::Compile:
         return runCompileSubcommand(arguments);
+    case Subcommand::WriteOut:
+        return runWriteOutSubcommand(arguments);
     case Subcommand::FuzzReader:
         return runFuzzReaderSubcommand(arguments);
     }

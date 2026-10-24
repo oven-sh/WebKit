@@ -3,27 +3,11 @@
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: generate-code
 # CHECK: f0: size=
+# REPEAT: i = 0..6
 # CHECK-NOT: tailCallSites
-# CHECK: f1: size={{*}} tailCallSites=1
-# CHECK-NEXT: f2: size=
-# CHECK-NOT: tailCallSites
-# CHECK: f3: size={{*}} tailCallSites=1
-# CHECK-NEXT: f4: size=
-# CHECK-NOT: tailCallSites
-# CHECK: f5: size={{*}} tailCallSites=1
-# CHECK-NEXT: f6: size=
-# CHECK-NOT: tailCallSites
-# CHECK: f7: size={{*}} tailCallSites=1
-# CHECK-NEXT: f8: size=
-# CHECK-NOT: tailCallSites
-# CHECK: f9: size={{*}} tailCallSites=1
-# CHECK-NEXT: f10: size=
-# CHECK-NOT: tailCallSites
-# CHECK: f11: size={{*}} tailCallSites=1
-# CHECK-NEXT: f12: size=
-# CHECK-NOT: tailCallSites
-# CHECK: f13: size={{*}} tailCallSites=1
-# CHECK-NEXT: f14: size=
+# CHECK: f%(i*2+1): size={{*}} tailCallSites=1
+# CHECK-NEXT: f%(i*2+2): size=
+# END REPEAT
 # CHECK-NOT: tailCallSites
 
 module m0 path="main.js" displayPath="main.js"

@@ -19,21 +19,13 @@ layout L1 kind=Instance name="B" constructor=f3
 layout L2 kind=Instance name="C" constructor=f5
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
   b0():
-    v0 = NewClosure function=f1
-    v1 = NewClass v0 layout=L0
-    v2 = NewClosure function=f2
-    DefineMethod v1, v2 layout=L0 key="m"
-    v4 = FinishClass v1 layout=L0
-    v5 = NewClosure function=f3
-    v6 = NewClass v5 layout=L1
-    v7 = NewClosure function=f4
-    DefineMethod v6, v7 layout=L1 key="m"
-    v9 = FinishClass v6 layout=L1
-    v10 = NewClosure function=f5
-    v11 = NewClass v10 layout=L2
-    v12 = NewClosure function=f6
-    DefineMethod v11, v12 layout=L2 key="m"
-    v14 = FinishClass v11 layout=L2
+# REPEAT: i = 0..2
+    v%(i*5) = NewClosure function=f%(i*2+1)
+    v%(i*5+1) = NewClass v%(i*5) layout=L%(i)
+    v%(i*5+2) = NewClosure function=f%(i*2+2)
+    DefineMethod v%(i*5+1), v%(i*5+2) layout=L%(i) key="m"
+    v%(i*5+4) = FinishClass v%(i*5+1) layout=L%(i)
+# END REPEAT
     v15 = NewClosure function=f7
     v16 = Construct v4
     v17 = Call v15, -, v16

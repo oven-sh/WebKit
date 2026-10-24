@@ -343,7 +343,6 @@ private:
         printMask(operand.mask);
     }
 
-    // `&` where a test stands behind the type, `:` where the type is taken on trust.
     void printMask(uint32_t index)
     {
         const Body::Mask& mask = m_body.masks[index];
@@ -366,7 +365,6 @@ private:
 
 } // namespace
 
-// valueflow-body [fN | host ..]: what is left of a function.
 void runValueFlowBodyTestCommand(TestCommandContext& context)
 {
     const Program& program = *context.program;
@@ -397,7 +395,6 @@ void runValueFlowBodyTestCommand(TestCommandContext& context)
     }
 }
 
-// valueflow-bodies [time] [operations]: how much is left of the whole program.
 void runValueFlowBodiesTestCommand(TestCommandContext& context)
 {
     const Program& program = *context.program;

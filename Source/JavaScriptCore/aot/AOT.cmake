@@ -202,15 +202,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/codegen/AOTCollectorTestCommands.cpp
     aot/codegen/AOTGeneratedCodeTestCommands.cpp
     aot/codegen/AOTValidationTestCommands.cpp
-    aot/passes/AOTFrameAllocationTestCommands.cpp
     aot/passes/AOTPassTestCommands.cpp
     aot/passes/AOTPlaceTypeTestsTestCommands.cpp
     aot/pipeline/AOTPipelineTesting.cpp
-    aot/place/AOTPlacementDump.cpp
-    aot/place/AOTPlacementTestCommands.cpp
-    aot/place/AOTProgramTableTestCommands.cpp
-    aot/place/AOTSlotPlanTestCommands.cpp
-    aot/represent/AOTRepresentationTestCommands.cpp
     aot/select/AOTSelectionFormTestCommands.cpp
     aot/select/AOTSelectionGroupTestCommands.cpp
     aot/select/AOTSelectionTestCommands.cpp
@@ -265,6 +259,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTFlowResultsTests.cpp
     aot/tests/AOTFlowWorkLimitProgramTests.cpp
     aot/tests/AOTForInExpansionProgramTests.cpp
+    aot/tests/AOTFrameAllocationTestCommands.cpp
     aot/tests/AOTFrameCellProgramTests.cpp
     aot/tests/AOTGlobalBindingProgramTests.cpp
     aot/tests/AOTGlobalProxyReadProgramTests.cpp
@@ -334,6 +329,8 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTOptionWordTests.cpp
     aot/tests/AOTParsedOptionalMemberTests.cpp
     aot/tests/AOTPipelineTestCommands.cpp
+    aot/tests/AOTPlacementDump.cpp
+    aot/tests/AOTPlacementTestCommands.cpp
     aot/tests/AOTPrivateAccessorProgramTests.cpp
     aot/tests/AOTPrivateBrandProgramTests.cpp
     aot/tests/AOTPrivateFieldDefinitionTests.cpp
@@ -344,6 +341,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTProgramStaticsTests.cpp
     aot/tests/AOTProgramStringsTests.cpp
     aot/tests/AOTProgramSubcommands.cpp
+    aot/tests/AOTProgramTableTestCommands.cpp
     aot/tests/AOTProofValidationTests.cpp
     aot/tests/AOTPropertyAttributeTests.cpp
     aot/tests/AOTPropertyLookupTableCollectionTests.cpp
@@ -362,6 +360,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTRegExpImageTests.cpp
     aot/tests/AOTRemovableFeatureTests.cpp
     aot/tests/AOTReplacedBuiltinTests.cpp
+    aot/tests/AOTRepresentationTestCommands.cpp
     aot/tests/AOTRequiredNameTests.cpp
     aot/tests/AOTRuntimeCounterTests.cpp
     aot/tests/AOTRuntimeOperationTests.cpp
@@ -373,6 +372,8 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTSiteCacheFillTests.cpp
     aot/tests/AOTSlimClosureTests.cpp
     aot/tests/AOTSlotAccessTests.cpp
+    aot/tests/AOTSlotPlanDump.cpp
+    aot/tests/AOTSlotPlanTestCommands.cpp
     aot/tests/AOTStackCheckTests.cpp
     aot/tests/AOTStackTraceTests.cpp
     aot/tests/AOTStartupTests.cpp

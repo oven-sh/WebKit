@@ -89,18 +89,9 @@ function f1 name="read" results=[{type=anything}] {
 # "free" is at 16 in L0 and L1, which puts "freeShared" at 24 in all three, so bytes 16 to 24 are free in L2. No cell grows.
 # In L5 fields of its own have every byte. The cell of L8 ends at 16. An empty OptionalDouble is not zero. Two members would keep bytes zero for the one that has "rare".
 # CHECK: L2 zero [@16+8]
-# CHECK-NEXT: L3 zero []
-# CHECK-NEXT: L4 zero []
-# CHECK-NEXT: L5 zero []
-# CHECK-NEXT: L6 zero []
-# CHECK-NEXT: L7 zero []
-# CHECK-NEXT: L8 zero []
-# CHECK-NEXT: L9 zero []
-# CHECK-NEXT: L10 zero []
-# CHECK-NEXT: L11 zero []
-# CHECK-NEXT: L12 zero []
-# CHECK-NEXT: L13 zero []
-# CHECK-NEXT: L14 zero []
+# REPEAT: i = 3..14
+# CHECK-NEXT: L%(i) zero []
+# END REPEAT
 # CHECK: "free" {L0 L1 L2} read
 # CHECK-NEXT: one location JSValue @16
 # CHECK-NEXT: without slot {L2} zero

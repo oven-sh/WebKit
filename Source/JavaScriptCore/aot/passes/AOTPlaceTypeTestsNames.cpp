@@ -4,28 +4,25 @@
  */
 
 #include "config.h"
-#include "AOTPlaceTypeTestsInternal.h"
+#include "AOTExpectedTypesByUse.h"
 
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinUses.h"
-#include "AOTExpectedTypesByUse.h"
 #include "AOTFlowResults.h"
 #include "AOTHeat.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTPropertyAccess.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
 #include "AOTSort.h"
-#include "AOTVector.h"
 #include <algorithm>
-#include <optional>
 #include <ranges>
 #include <tuple>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -48,11 +45,6 @@ struct NamedUse {
     bool isAnsweredByBuiltins { false };
 };
 
-struct ExpectedValue {
-    ValueID value;
-    TypeID expected;
-};
-
 struct NameLimits {
     size_t maxDeclarations { 0 };
     size_t maxLayouts { 0 };
@@ -65,6 +57,7 @@ struct LayoutsToTest {
 
 enum class CountedUses : uint8_t { OnEveryPath, All };
 
+using ExpectedValues = Vector<std::pair<ValueID, TypeID>>;
 using NameList = SortedSet<PropertyKeyID, 8>;
 using BuiltinClassList = SortedSet<BuiltinClassID, 4>;
 
@@ -82,18 +75,10 @@ static bool isOrdinaryText(const Program& program, PropertyKeyID key)
 // A name that the program also defines on objects without a layout does not say that the object has one.
 static bool tellsLayoutsApart(const Program& program, PropertyKeyID key)
 {
-    switch (program.at(key).kind) {
-    case PropertyKeyKind::Text:
+    PropertyKeyKind kind = program.at(key).kind;
+    if (kind == PropertyKeyKind::Text)
         return isOrdinaryText(program, key) && !program.builtinNameOf(key) && !program.isDefinedOnObjectsWithoutKnownLayout(key);
-    case PropertyKeyKind::PrivateName:
-    case PropertyKeyKind::CreatedSymbol:
-        return true;
-    case PropertyKeyKind::EnginePrivateName:
-    case PropertyKeyKind::WellKnownSymbol:
-    case PropertyKeyKind::RegisteredSymbol:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::CreatedSymbol;
 }
 
 static std::optional<std::pair<ValueID, PropertyKeyID>> propertyReadBy(const Program& program, const Value& value)
@@ -116,9 +101,7 @@ static Vector<ValueID> findSubjects(FunctionPassContext& context)
 {
     const Function& function = context.function;
     const ValueIdentities& identities = context.analyses.identities();
-    Vector<ValueID> subjects(function.values.size(), [&](size_t index) {
-        return identities.identityOf(ValueID(index));
-    });
+    Vector<ValueID> subjects(function.values.size(), [&](size_t index) { return identities.identityOf(ValueID(index)); });
 
     HashMap<std::pair<ValueID, PropertyKeyID>, ValueID> firstReads;
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
@@ -134,32 +117,36 @@ static Vector<ValueID> findSubjects(FunctionPassContext& context)
     return subjects;
 }
 
-static bool throwsOnUndefined(const Value& user, uint32_t operandIndex)
+// Whether an operation that takes the value as an operand, as it is or behind casts, matches.
+static bool anyUserBehindCasts(FunctionAnalyses& analyses, ValueID value, NOESCAPE const Invocable<bool(const Value& user, uint32_t operandIndex)> auto& matches)
 {
-    Opcode opcode = user.opcode;
-    if (isNamedAccess(opcode))
-        return *receiverOf(opcode) == operandIndex;
-    if (elementAccessOf(opcode))
-        return OperandPosition::object(opcode) == operandIndex;
-    return (opcode == Opcode::Call && operandIndex == OperandIndex::Call::callee) || (opcode == Opcode::CallList && operandIndex == OperandIndex::CallList::callee);
-}
-
-static bool isCalledOrLookedInto(FunctionPassContext& context, ValueID read)
-{
-    const Function& function = context.function;
-    Vector<ValueID, 4> worklist { read };
+    Vector<ValueID, 4> worklist { value };
     while (!worklist.isEmpty()) {
-        for (const Use& use : context.analyses.useLists().usesOf(worklist.takeLast())) {
+        for (const Use& use : analyses.useLists().usesOf(worklist.takeLast())) {
             if (use.kind != Use::Kind::Operand)
                 continue;
-            const Value& user = function.at(use.user);
+            const Value& user = analyses.function().at(use.user);
             if (isCast(user.opcode) && !use.operandIndex)
                 worklist.append(use.user);
-            else if (throwsOnUndefined(user, use.operandIndex))
+            else if (matches(user, use.operandIndex))
                 return true;
         }
     }
     return false;
+}
+
+static bool isCalleeOf(const Value& user, uint32_t operandIndex)
+{
+    return (user.opcode == Opcode::Call && operandIndex == OperandIndex::Call::callee) || (user.opcode == Opcode::CallList && operandIndex == OperandIndex::CallList::callee);
+}
+
+static bool throwsOnUndefined(const Value& user, uint32_t operandIndex)
+{
+    if (isNamedAccess(user.opcode))
+        return *receiverOf(user.opcode) == operandIndex;
+    if (elementAccessOf(user.opcode))
+        return OperandPosition::object(user.opcode) == operandIndex;
+    return isCalleeOf(user, operandIndex);
 }
 
 static NameDemand demandOf(FunctionPassContext& context, ValueID id, PropertyKeyID key)
@@ -170,7 +157,7 @@ static NameDemand demandOf(FunctionPassContext& context, ValueID id, PropertyKey
         return access == Access::Define ? NameDemand::Stored : NameDemand::Required;
     if (access != Access::Read)
         return NameDemand::Stored;
-    return isCalledOrLookedInto(context, id) ? NameDemand::Required : NameDemand::Read;
+    return anyUserBehindCasts(context.analyses, id, throwsOnUndefined) ? NameDemand::Required : NameDemand::Read;
 }
 
 static BuiltinClassList builtinClassesWithMethod(const Program& program, PropertyKeyID key)
@@ -194,50 +181,20 @@ static bool hasCalleesListedByFlow(const Program& program, const Value& call)
     return callees.isComplete || !callees.functions.isEmpty();
 }
 
-static bool isCalledWithCalleesListedByFlow(FunctionAnalyses& analyses, const Program& program, ValueID read)
+static bool isCalledByNameAlone(FunctionAnalyses& analyses, const Program& program, ValueID read)
 {
-    const Function& function = analyses.function();
-    Vector<ValueID, 4> worklist { read };
-    while (!worklist.isEmpty()) {
-        for (const Use& use : analyses.useLists().usesOf(worklist.takeLast())) {
-            if (use.kind != Use::Kind::Operand)
-                continue;
-            const Value& user = function.at(use.user);
-            if (isCast(user.opcode) && !use.operandIndex)
-                worklist.append(use.user);
-            else if (hasCalleesListedByFlow(program, user))
-                return true;
-        }
-    }
-    return false;
+    return isOnlyCalled(analyses, read) && !anyUserBehindCasts(analyses, read, [&](const Value& user, uint32_t) { return hasCalleesListedByFlow(program, user); });
 }
 
 static bool callsBuiltinMethod(FunctionPassContext& context, ValueID read, PropertyKeyID key)
 {
-    if (context.function.at(read).opcode != Opcode::PropGet || !isOnlyCalled(context.analyses, read))
-        return false;
-    if (isCalledWithCalleesListedByFlow(context.analyses, context.program, read))
-        return false;
-    return !builtinClassesWithMethod(context.program, key).isEmpty();
+    return context.function.at(read).opcode == Opcode::PropGet && isCalledByNameAlone(context.analyses, context.program, read) && !builtinClassesWithMethod(context.program, key).isEmpty();
 }
 
 // What is called only behind a join counts as not called: this feeds a guess.
 static bool isCalledInPlace(FunctionPassContext& context, ValueID read)
 {
-    const Function& function = context.function;
-    Vector<ValueID, 4> worklist { read };
-    while (!worklist.isEmpty()) {
-        for (const Use& use : context.analyses.useLists().usesOf(worklist.takeLast())) {
-            if (use.kind != Use::Kind::Operand)
-                continue;
-            Opcode user = function.at(use.user).opcode;
-            if (isCast(user) && !use.operandIndex)
-                worklist.append(use.user);
-            else if ((user == Opcode::Call && use.operandIndex == OperandIndex::Call::callee) || (user == Opcode::CallList && use.operandIndex == OperandIndex::CallList::callee))
-                return true;
-        }
-    }
-    return false;
+    return anyUserBehindCasts(context.analyses, read, isCalleeOf);
 }
 
 static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key)
@@ -260,19 +217,12 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
 {
     const Program& program = context.program;
     const Function& function = context.function;
-
     Vector<NamedUse> uses;
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         // Where a test has failed, the copy that takes over is seldom entered, and the object there is none of those that were expected.
         if (function.at(block).frequency != BlockFrequency::Normal)
             continue;
-        // A read by name is a short call, which cold code keeps. Under a private name it is an operation of the run time.
         std::optional<bool> isColdBlock;
-        auto keepsCallsByName = [&] {
-            if (!isColdBlock)
-                isColdBlock = isCold(heatClassOf(context, block));
-            return *isColdBlock;
-        };
         for (ValueID id : function.at(block).values) {
             const Value& access = function.at(id);
             Opcode opcode = access.opcode;
@@ -287,7 +237,10 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
             // A test for the layouts that have the name would turn such an object away, and what stands behind the test would run in the copy.
             if (PayloadWord::accessSite(opcode) && access.accessSite() && context.inputs.flow.lossOf(access.accessSite()).seesConstructedObject)
                 continue;
-            if (keepsCallsByName() && program.at(key).kind != PropertyKeyKind::PrivateName && (tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, id, key)))
+            // A read by name is a short call, which cold code keeps. Under a private name it is an operation of the run time.
+            if (!isColdBlock)
+                isColdBlock = isCold(heatClassOf(context, block));
+            if (*isColdBlock && program.at(key).kind != PropertyKeyKind::PrivateName && (tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, id, key)))
                 continue;
             // `Promise.resolve` through a variable that is expected to hold the constructor: flow has followed the one object, and it answers.
             if (TypeID expected = function.at(receiver).expected(); expected && !context.types.at(expected).builtins.isEmpty())
@@ -304,12 +257,10 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
     return uses;
 }
 
-static AskedNames namesAskedBehind(const Function& function, BlockID block, const Vector<AskedNames>& askedFrom)
+static AskedNames namesAskedBehind(const Terminator& terminator, const Vector<AskedNames>& askedFrom)
 {
-    const Terminator& terminator = function.at(block).terminator;
     if (returnsToCaller(terminator.kind))
         return BitVector();
-
     AskedNames asked;
     for (const Target& target : terminator.targets) {
         const AskedNames& askedFromTarget = askedFrom[target.block.index()];
@@ -326,22 +277,17 @@ static AskedNames namesAskedBehind(const Function& function, BlockID block, cons
 // A path through a block that is marked as seldom entered does not count, nor does one that ends in a throw or leaves for a handler.
 static Vector<AskedNames> findNamesAskedOnEveryPath(FunctionPassContext& context, const Vector<BitVector>& askedIn)
 {
-    const Function& function = context.function;
-    std::span<const BlockID> reversePostOrder = context.analyses.cfg().reversePostOrder();
-
-    Vector<AskedNames> askedFrom(function.blocks.size());
-    for (bool didChange = true; didChange;) {
-        didChange = false;
-        for (BlockID block : reversePostOrder | std::views::reverse) {
-            if (function.at(block).frequency != BlockFrequency::Normal)
-                continue;
-            AskedNames asked = namesAskedBehind(function, block, askedFrom);
+    Vector<AskedNames> askedFrom(context.function.blocks.size());
+    for (bool didChange = true; std::exchange(didChange, false);) {
+        for (BlockID id : context.analyses.cfg().reversePostOrder() | std::views::reverse) {
+            const Block& block = context.function.at(id);
+            AskedNames asked = block.frequency == BlockFrequency::Normal ? namesAskedBehind(block.terminator, askedFrom) : std::nullopt;
             if (!asked)
                 continue;
-            asked->merge(askedIn[block.index()]);
-            if (asked == askedFrom[block.index()])
+            asked->merge(askedIn[id.index()]);
+            if (asked == askedFrom[id.index()])
                 continue;
-            askedFrom[block.index()] = WTF::move(asked);
+            askedFrom[id.index()] = WTF::move(asked);
             didChange = true;
         }
     }
@@ -350,12 +296,10 @@ static Vector<AskedNames> findNamesAskedOnEveryPath(FunctionPassContext& context
 
 static void forEachSubject(std::span<NamedUse> usesBySubject, NOESCAPE const Invocable<void(std::span<NamedUse>)> auto& functor)
 {
-    for (size_t first = 0; first < usesBySubject.size();) {
-        size_t next = first;
-        while (next < usesBySubject.size() && usesBySubject[next].subject == usesBySubject[first].subject)
-            ++next;
-        functor(usesBySubject.subspan(first, next - first));
-        first = next;
+    while (!usesBySubject.empty()) {
+        size_t count = std::ranges::find_if_not(usesBySubject, [&](const NamedUse& use) { return use.subject == usesBySubject[0].subject; }) - usesBySubject.begin();
+        functor(usesBySubject.first(count));
+        usesBySubject = usesBySubject.subspan(count);
     }
 }
 
@@ -366,14 +310,13 @@ static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse
         std::span<NamedUse> uses;
         uint32_t firstName { 0 };
         Vector<PropertyKeyID, 8> keys;
+
+        uint32_t nameOf(const NamedUse& use) const { return firstName + static_cast<uint32_t>(keys.find(use.key)); }
     };
     Vector<BranchingSubject, 4> subjects;
     uint32_t numberOfNames = 0;
     forEachSubject(usesBySubject, [&](std::span<NamedUse> uses) {
-        bool isInOneBlock = std::ranges::all_of(uses, [&](const NamedUse& use) {
-            return use.block == uses[0].block;
-        });
-        if (isInOneBlock)
+        if (std::ranges::all_of(uses, [&](const NamedUse& use) { return use.block == uses[0].block; }))
             return;
         BranchingSubject subject { uses, numberOfNames, { } };
         for (const NamedUse& use : uses)
@@ -386,13 +329,10 @@ static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse
     if (subjects.isEmpty())
         return;
 
-    auto nameOf = [](const BranchingSubject& subject, const NamedUse& use) {
-        return subject.firstName + static_cast<uint32_t>(subject.keys.find(use.key));
-    };
     Vector<BitVector> askedIn(context.function.blocks.size());
     for (const BranchingSubject& subject : subjects) {
         for (const NamedUse& use : subject.uses)
-            askedIn[use.block.index()].set(nameOf(subject, use));
+            askedIn[use.block.index()].set(subject.nameOf(use));
     }
     Vector<AskedNames> askedFrom = findNamesAskedOnEveryPath(context, askedIn);
 
@@ -405,7 +345,7 @@ static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse
         if (!asked)
             continue;
         for (NamedUse& use : subject.uses)
-            use.isOnEveryPath = asked->get(nameOf(subject, use));
+            use.isOnEveryPath = asked->get(subject.nameOf(use));
     }
 }
 
@@ -416,9 +356,7 @@ static bool isExpectedToFindMember(const Program& program, const Function& funct
     if (!function.at(use.receiver).expected() && !stamp)
         return false;
     std::span<const LayoutID> holders = program.layoutsWithName(use.key);
-    return std::ranges::any_of(receiverCandidates(program, function, use.receiver, stamp).predicted, [&](LayoutID layout) {
-        return std::ranges::binary_search(holders, layout);
-    });
+    return std::ranges::any_of(receiverCandidates(program, function, use.receiver, stamp).predicted, [&](LayoutID layout) { return std::ranges::binary_search(holders, layout); });
 }
 
 static LayoutID declarerOf(const Program& program, LayoutID layout, PropertyKeyID name)
@@ -480,24 +418,11 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     return { LayoutList(kept.span()), kept.size() < layouts.size() };
 }
 
-// A name that this many layouts have tells none of them from the others.
-static LayoutList layoutsWithAnyOf(const Program& program, const NameList& names, size_t maxLayouts)
-{
-    LayoutList layouts;
-    for (PropertyKeyID name : names) {
-        if (program.layoutsWithName(name).size() > maxLayouts)
-            continue;
-        for (LayoutID layout : program.layoutsWithName(name)) {
-            if (hasMemberToFindUnder(program, layout, name))
-                layouts.add(layout);
-        }
-    }
-    return layouts;
-}
-
 // The object is expected to have every name that the uses that count ask it for.
-static LayoutList layoutsExpectedFrom(const Program& program, std::span<const NamedUse> uses, CountedUses countedUses, const NameLimits& limits)
+static LayoutList layoutsExpectedFrom(const Program& program, std::span<const NamedUse> uses, CountedUses countedUses, size_t maxLayouts)
 {
+    // A name that this many layouts have tells none of them from the others.
+    auto isCommon = [&](PropertyKeyID name) { return program.layoutsWithName(name).size() > maxLayouts; };
     NameList names;
     for (NameDemand weakestDemand : { NameDemand::Stored, NameDemand::Read, NameDemand::Required }) {
         names.clear();
@@ -510,29 +435,36 @@ static LayoutList layoutsExpectedFrom(const Program& program, std::span<const Na
         }
         if (names.isEmpty())
             break;
-        bool everyNameIsCommon = std::ranges::all_of(names, [&](PropertyKeyID name) {
-            return program.layoutsWithName(name).size() > limits.maxLayouts;
-        });
-        if (everyNameIsCommon)
+        if (std::ranges::all_of(names, isCommon))
             return { };
-        LayoutList layouts = allocatedLayoutsWith(program, names.span(), limits.maxLayouts);
+        LayoutList layouts = allocatedLayoutsWith(program, names.span(), maxLayouts);
         if (!layouts.isEmpty())
             return layouts;
     }
 
     for (const NamedUse& use : uses)
         names.add(use.key);
-    return layoutsWithAnyOf(program, names, limits.maxLayouts);
+    LayoutList layoutsWithAnyName;
+    for (PropertyKeyID name : names) {
+        if (isCommon(name))
+            continue;
+        for (LayoutID layout : program.layoutsWithName(name)) {
+            if (hasMemberToFindUnder(program, layout, name))
+                layoutsWithAnyName.add(layout);
+        }
+    }
+    return layoutsWithAnyName;
 }
 
 static bool resolvesSomeUse(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layouts)
 {
     return std::ranges::any_of(uses, [&](const NamedUse& use) {
-        std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(context.program, context.function, context.function.at(use.access));
+        const Value& access = context.function.at(use.access);
+        std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(context.program, context.function, access);
         if (!query)
             return false;
         query->maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
-        query->isOnlyCalled = context.function.at(use.access).opcode == Opcode::PropGet && isOnlyCalled(context.analyses, use.access);
+        query->isOnlyCalled = access.opcode == Opcode::PropGet && isOnlyCalled(context.analyses, use.access);
         query->receivers.level = KnowledgeLevel::Expected;
         query->receivers.predicted = layouts;
         PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
@@ -544,21 +476,16 @@ static bool resolvesSomeUse(FunctionPassContext& context, std::span<const NamedU
 
 static bool isAllocatedHere(FunctionPassContext& context, ValueID value)
 {
-    const Function& function = context.function;
-    return !proofsOfAllocation(context.program, function, function.at(context.analyses.identityOf(value))).isEmpty();
-}
-
-static bool holdsOnlyFunctionsUnder(const Program& program, LayoutID layout, PropertyKeyID key)
-{
-    std::optional<FieldReference> field = findField(program, layout, key, BaseChain::Predicted);
-    if (!field)
-        return false;
-    const Type& slotType = program.at(slotTypeOf(program, fieldAt(program, *field)));
-    return !slotType.isUndefinedOrNull() && !(slotType.primitives & ~Primitive::UndefinedOrNull) && slotType.withOnlyObjects().isSubsetOf(Type::function(), program);
+    return !proofsOfAllocation(context.program, context.function, context.function.at(context.analyses.identityOf(value))).isEmpty();
 }
 
 static LayoutList withoutLayoutsOfOtherKind(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layouts)
 {
+    const Program& program = context.program;
+    auto holdsOnlyFunctions = [&](const FieldReference& field) {
+        const Type& slotType = program.at(slotTypeOf(program, fieldAt(program, field)));
+        return !slotType.isUndefinedOrNull() && !(slotType.primitives & ~Primitive::UndefinedOrNull) && slotType.withOnlyObjects().isSubsetOf(Type::function(), program);
+    };
     LayoutList kept = layouts;
     for (const NamedUse& use : uses) {
         bool asksForMethod = use.demand == NameDemand::Required && isCalledInPlace(context, use.access);
@@ -566,8 +493,8 @@ static LayoutList withoutLayoutsOfOtherKind(FunctionPassContext& context, std::s
             continue;
         LayoutList layoutsOfOtherKind;
         for (LayoutID layout : kept) {
-            bool hasField = !!findField(context.program, layout, use.key, BaseChain::Predicted);
-            if (hasField && holdsOnlyFunctionsUnder(context.program, layout, use.key) != asksForMethod)
+            std::optional<FieldReference> field = findField(program, layout, use.key, BaseChain::Predicted);
+            if (field && holdsOnlyFunctions(*field) != asksForMethod)
                 layoutsOfOtherKind.add(layout);
         }
         if (layoutsOfOtherKind.size() < kept.size())
@@ -576,44 +503,42 @@ static LayoutList withoutLayoutsOfOtherKind(FunctionPassContext& context, std::s
     return kept;
 }
 
-static LayoutsToTest chooseLayoutsToTest(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layoutsWithNames, const NameLimits& limits, const LayoutList& layoutsMetElsewhere)
-{
-    if (layoutsWithNames.isEmpty() || layoutsWithNames.size() > limits.maxLayouts)
-        return { };
-    LayoutList expected = withoutLayoutsOfOtherKind(context, uses, layoutsWithNames);
-    LayoutsToTest chosen = keepLikeliestDeclarations(context, expected, uses, limits.maxDeclarations, layoutsMetElsewhere);
-    if (chosen.layouts.isEmpty() || !resolvesSomeUse(context, uses, chosen.layouts))
-        return { };
-    return chosen;
-}
-
 // The names asked on every path leave the layouts in that a name asked on one path would take out. Where they leave more layouts than a test is made for, every name counts.
 static LayoutsToTest findLayoutsToTestFor(FunctionPassContext& context, std::span<const NamedUse> uses, const NameLimits& limits, const LayoutList& layoutsMetElsewhere)
 {
-    LayoutsToTest fromEveryPath = chooseLayoutsToTest(context, uses, layoutsExpectedFrom(context.program, uses, CountedUses::OnEveryPath, limits), limits, layoutsMetElsewhere);
-    bool takesEveryLayout = !fromEveryPath.layouts.isEmpty() && !fromEveryPath.leavesOutDeclarations;
-    if (takesEveryLayout || std::ranges::all_of(uses, &NamedUse::isOnEveryPath))
+    auto choose = [&](CountedUses countedUses) -> LayoutsToTest {
+        LayoutList layoutsWithNames = layoutsExpectedFrom(context.program, uses, countedUses, limits.maxLayouts);
+        if (layoutsWithNames.isEmpty() || layoutsWithNames.size() > limits.maxLayouts)
+            return { };
+        LayoutsToTest chosen = keepLikeliestDeclarations(context, withoutLayoutsOfOtherKind(context, uses, layoutsWithNames), uses, limits.maxDeclarations, layoutsMetElsewhere);
+        if (chosen.layouts.isEmpty() || !resolvesSomeUse(context, uses, chosen.layouts))
+            return { };
+        return chosen;
+    };
+    auto takesEveryLayout = [](const LayoutsToTest& chosen) { return !chosen.layouts.isEmpty() && !chosen.leavesOutDeclarations; };
+
+    LayoutsToTest fromEveryPath = choose(CountedUses::OnEveryPath);
+    if (takesEveryLayout(fromEveryPath) || std::ranges::all_of(uses, &NamedUse::isOnEveryPath))
         return fromEveryPath;
-    LayoutsToTest fromEveryName = chooseLayoutsToTest(context, uses, layoutsExpectedFrom(context.program, uses, CountedUses::All, limits), limits, layoutsMetElsewhere);
-    if (fromEveryPath.layouts.isEmpty() || (!fromEveryName.layouts.isEmpty() && !fromEveryName.leavesOutDeclarations))
+    LayoutsToTest fromEveryName = choose(CountedUses::All);
+    if (fromEveryPath.layouts.isEmpty() || takesEveryLayout(fromEveryName))
         return fromEveryName;
     return fromEveryPath;
 }
 
-static void expectOfReceivers(std::span<const NamedUse> uses, TypeID expected, Vector<ExpectedValue>& expectedValues)
+static void expectOfReceivers(std::span<const NamedUse> uses, TypeID expected, ExpectedValues& expectedValues)
 {
     for (const NamedUse& use : uses) {
-        bool isListed = expectedValues.containsIf([&](const ExpectedValue& listed) {
-            return listed.value == use.receiver;
-        });
-        if (!isListed)
-            expectedValues.append(ExpectedValue { use.receiver, expected });
+        if (!expectedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
+            expectedValues.append({ use.receiver, expected });
     }
 }
 
-static std::optional<Type> receiversAmong(FunctionPassContext& context, const BuiltinClassList& classes, const LayoutList& layouts)
+static std::optional<Type> receiversAmong(FunctionPassContext& context, const BuiltinClassList& classes, std::span<const PropertyKeyID> names)
 {
-    if (classes.size() + layouts.size() > static_cast<size_t>(context.limit(LimitID::MaxDispatchCases)))
+    size_t maxReceivers = context.limit(LimitID::MaxDispatchCases);
+    LayoutList layouts = allocatedLayoutsWith(context.program, names, maxReceivers);
+    if (classes.size() + layouts.size() > maxReceivers)
         return std::nullopt;
 
     Type receivers = layouts.isEmpty() ? Type::never() : Type::forLayouts(layouts.span(), context.types);
@@ -630,36 +555,32 @@ static std::optional<Type> receiversAmong(FunctionPassContext& context, const Bu
 
 static std::optional<Type> receiversWithMethod(FunctionPassContext& context, PropertyKeyID key)
 {
-    return receiversAmong(context, builtinClassesWithMethod(context.program, key), allocatedLayoutsWith(context.program, singleElementSpan(key), context.limit(LimitID::MaxDispatchCases)));
+    return receiversAmong(context, builtinClassesWithMethod(context.program, key), singleElementSpan(key));
 }
 
 static std::optional<Type> receiversWithEveryMethod(FunctionPassContext& context, std::span<const NamedUse> uses, CountedUses countedUses)
 {
-    const Program& program = context.program;
     std::optional<BuiltinClassList> classes;
     NameList names;
     for (const NamedUse& use : uses) {
         if (countedUses == CountedUses::OnEveryPath && !use.isOnEveryPath)
             continue;
         if (use.callsBuiltinMethod) {
-            BuiltinClassList classesWithMethod = builtinClassesWithMethod(program, use.key);
+            BuiltinClassList classesWithMethod = builtinClassesWithMethod(context.program, use.key);
             if (classes)
                 classes->intersect(classesWithMethod);
             else
                 classes = WTF::move(classesWithMethod);
             names.add(use.key);
-        } else if (use.demand == NameDemand::Required && !program.layoutsWithName(use.key).empty()) {
+        } else if (use.demand == NameDemand::Required && !context.program.layoutsWithName(use.key).empty()) {
             classes = BuiltinClassList();
             names.add(use.key);
         }
     }
-    if (!classes)
-        return std::nullopt;
-
-    return receiversAmong(context, *classes, allocatedLayoutsWith(program, names.span(), context.limit(LimitID::MaxDispatchCases)));
+    return classes ? receiversAmong(context, *classes, names.span()) : std::nullopt;
 }
 
-static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::span<const NamedUse> uses, Vector<ExpectedValue>& expectedValues)
+static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::span<const NamedUse> uses, ExpectedValues& expectedValues)
 {
     std::optional<Type> receivers = receiversWithEveryMethod(context, uses, CountedUses::OnEveryPath);
     if (!receivers)
@@ -677,7 +598,6 @@ static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::s
 // `twin.index`, and nothing else is asked of the twin.
 static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layoutsMet)
 {
-    const Program& program = context.program;
     bool isExpectedToBeSomeObject = std::ranges::any_of(uses, [&](const NamedUse& use) {
         TypeID expected = context.function.at(use.receiver).expected();
         return expected && !context.types.at(expected).withOnlyObjects().isNever();
@@ -686,23 +606,20 @@ static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<c
     if (isExpectedToBeSomeObject)
         return layouts;
     for (LayoutID layout : layoutsMet) {
-        bool answersEveryName = std::ranges::all_of(uses, [&](const NamedUse& use) {
-            return std::ranges::binary_search(program.layoutsWithName(use.key), layout);
-        });
-        if (answersEveryName)
+        if (std::ranges::all_of(uses, [&](const NamedUse& use) { return std::ranges::binary_search(context.program.layoutsWithName(use.key), layout); }))
             layouts.add(layout);
     }
     return layouts;
 }
 
 // Answers whether the subject is settled. One whose names have more declarations than a test is made for waits until the layouts of the other subjects are known.
-static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, LayoutList& layoutsMet, bool waitsForOtherSubjects, Vector<ExpectedValue>& expectedValues)
+static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, LayoutList& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues)
 {
-    const Program& program = context.program;
     Function& function = context.function;
-    bool isFollowed = std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) {
-        return isExpectedToFindMember(program, function, use);
-    });
+    auto expectLayouts = [&](std::span<const NamedUse> uses, const LayoutList& layouts) {
+        expectOfReceivers(uses, context.types.intern(Type::forLayouts(layouts.span(), context.types)), expectedValues);
+    };
+    bool isFollowed = std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) { return isExpectedToFindMember(context.program, function, use); });
     // In a checked function what is expected of a value is what the checker says of it. Where that lists layouts the names have nothing to add: a name that none of them holds is found above them.
     bool typeListsLayouts = function.has(FunctionFlags::IsChecked) && std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) {
         TypeID expected = function.at(use.receiver).expected();
@@ -722,7 +639,7 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return false;
         LayoutList layouts = layoutsMetThatAnswer(context, uses, layoutsMet);
         if (!layouts.isEmpty())
-            expectOfReceivers(uses, context.types.intern(Type::forLayouts(layouts.span(), context.types)), expectedValues);
+            expectLayouts(uses, layouts);
         return true;
     }
 
@@ -737,30 +654,26 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
     } else if (chosen.layouts.size() <= limits.maxDeclarations)
         layoutsMet.unite(chosen.layouts);
 
-    expectOfReceivers(uses, context.types.intern(Type::forLayouts(chosen.layouts.span(), context.types)), expectedValues);
+    expectLayouts(uses, chosen.layouts);
     return true;
 }
 
 // The layouts of the receivers that the function knows or expects already. A receiver that may be one of many tells nothing.
 static void addLayoutsOfKnownReceivers(FunctionPassContext& context, LayoutList& met)
 {
-    const Program& program = context.program;
     const Function& function = context.function;
     size_t maxLayoutsOfReceiver = context.limit(LimitID::MaxDeclarationsPredictedFromNames);
-
-    auto add = [&](const LayoutList& layouts) {
-        if (layouts.size() <= maxLayoutsOfReceiver)
-            met.unite(layouts);
-    };
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
             const Value& access = function.at(id);
             std::optional<uint32_t> receiver = receiverOf(access.opcode);
             if (!receiver || !access.operand(*receiver))
                 continue;
-            ReceiverCandidates candidates = receiverCandidates(program, function, access.operand(*receiver));
-            add(candidates.proven);
-            add(candidates.predicted);
+            ReceiverCandidates candidates = receiverCandidates(context.program, function, access.operand(*receiver));
+            for (const LayoutList* layouts : { &candidates.proven, &candidates.predicted }) {
+                if (layouts->size() <= maxLayoutsOfReceiver)
+                    met.unite(*layouts);
+            }
         }
     }
 }
@@ -778,12 +691,12 @@ static DeclaredType* findUncheckedEntryParameter(Function& function, ValueID val
 }
 
 // What is expected of an entry parameter is said by its position: it reaches every use and stays when the values are typed again.
-static bool expectValues(FunctionPassContext& context, std::span<const ExpectedValue> expectedValues, ExpectedTypesByUse& expectations)
+static bool expectValues(FunctionPassContext& context, const ExpectedValues& expectedValues, ExpectedTypesByUse& expectations)
 {
     Function& function = context.function;
-    auto narrowedTypeOf = [&](const ExpectedValue& expected) {
-        const Value& value = function.at(expected.value);
-        TypeID narrowed = context.types.intersectionOf(value.type, expected.expected);
+    auto narrowedTypeOf = [&](ValueID id, TypeID expected) {
+        const Value& value = function.at(id);
+        TypeID narrowed = context.types.intersectionOf(value.type, expected);
         TypeID expectedAlready = value.expected() ? context.types.intersectionOf(narrowed, value.expected()) : TypeTable::never;
         if (expectedAlready != TypeTable::never)
             narrowed = expectedAlready;
@@ -791,33 +704,29 @@ static bool expectValues(FunctionPassContext& context, std::span<const ExpectedV
     };
 
     Vector<ValueID, 4> changedParameters;
-    for (const ExpectedValue& expected : expectedValues) {
-        TypeID narrowed = narrowedTypeOf(expected);
-        DeclaredType* declared = narrowed ? findUncheckedEntryParameter(function, expected.value) : nullptr;
+    for (auto [value, expected] : expectedValues) {
+        TypeID narrowed = narrowedTypeOf(value, expected);
+        DeclaredType* declared = narrowed ? findUncheckedEntryParameter(function, value) : nullptr;
         if (!declared)
             continue;
-        bool isDeclaredAlready = declared->type == narrowed && declared->flags.contains(PositionFlags::IsExpected);
-        if (!isDeclaredAlready) {
+        if (declared->type != narrowed || !declared->flags.contains(PositionFlags::IsExpected)) {
             declared->type = narrowed;
             declared->flags.add(PositionFlags::IsExpected);
-            changedParameters.append(expected.value);
+            changedParameters.append(value);
         }
         if (context.types.at(narrowed).layouts)
-            expectations.didGuessFromNames(expected.value);
+            expectations.didGuessFromNames(value);
     }
-    if (!changedParameters.isEmpty()) {
-        TypePropagationInputs inputs { context.program, context.id, function, context.analyses, context.types, context.build, &context.typingMemo };
-        // A cut renumbers the values.
-        if (narrowValueTypes(inputs, changedParameters.span()).cutBlocks)
-            return true;
-    }
+    // A cut renumbers the values.
+    if (!changedParameters.isEmpty() && narrowValueTypes(TypePropagationInputs { context.program, context.id, function, context.analyses, context.types, context.build, &context.typingMemo }, changedParameters.span()).cutBlocks)
+        return true;
 
-    for (const ExpectedValue& expected : expectedValues) {
-        TypeID narrowed = narrowedTypeOf(expected);
-        if (narrowed && narrowed != function.at(expected.value).expected()) {
-            expectations.expect(expected.value, narrowed);
+    for (auto [value, expected] : expectedValues) {
+        TypeID narrowed = narrowedTypeOf(value, expected);
+        if (narrowed && narrowed != function.at(value).expected()) {
+            expectations.expect(value, narrowed);
             if (context.types.at(narrowed).layouts)
-                expectations.didGuessFromNames(expected.value);
+                expectations.didGuessFromNames(value);
         }
     }
     return !changedParameters.isEmpty();
@@ -825,24 +734,23 @@ static bool expectValues(FunctionPassContext& context, std::span<const ExpectedV
 
 static ValueID receiverOfMethodCall(TestSiteReporter& reporter, const Value& use)
 {
-    if (use.opcode == Opcode::PropGet) {
-        bool isCalledByNameAlone = isOnlyCalled(reporter.analyses(), reporter.use()) && !isCalledWithCalleesListedByFlow(reporter.analyses(), reporter.program(), reporter.use());
-        return isCalledByNameAlone ? use.objectOperand() : ValueID();
-    }
+    if (use.opcode == Opcode::PropGet)
+        return isCalledByNameAlone(reporter.analyses(), reporter.program(), reporter.use()) ? use.objectOperand() : ValueID();
     if (use.opcode == Opcode::Call && use.calleeKey() && !hasCalleesListedByFlow(reporter.program(), use))
         return use.thisValueOperand();
     return { };
 }
 
 // `handle.flags`, `handle.onabort = undefined`, where the handle is the native object or its stand-in written in JavaScript.
-static bool reachesLockedMemberOfBuiltinPart(TestSiteReporter& reporter, PropertyKeyID key, const Type& expected, BuiltinKind kind)
+static ValueID receiverIfBuiltinPartHasLockedMember(TestSiteReporter& reporter, ValueID receiver, PropertyKeyID key, BuiltinKind kind)
 {
     const Program& program = reporter.program();
     const BuiltinTable& builtins = program.builtins();
-    BuiltinMemberName name = builtinMemberNameOf(program, key);
+    std::optional<Type> expected = reporter.expectedPartOf(receiver);
+    BuiltinMemberName name = expected ? builtinMemberNameOf(program, key) : BuiltinMemberName();
     if (!name)
-        return false;
-    return std::ranges::any_of(expected.classes, [&](const ClassPart& part) {
+        return { };
+    bool reachesLockedMember = std::ranges::any_of(expected->classes, [&](const ClassPart& part) {
         BuiltinMemberLookup found = builtins.findForInstance(part.builtinClass, name.name);
         if (found.outcome != BuiltinMemberLookup::Outcome::Found || builtins.at(builtins.canonicalID(found.member)).kind != kind)
             return false;
@@ -850,32 +758,23 @@ static bool reachesLockedMemberOfBuiltinPart(TestSiteReporter& reporter, Propert
             return false;
         return isLockedLocation(program, found.holder, key);
     });
+    return reachesLockedMember ? receiver : ValueID();
 }
 
 static ValueID receiverOfLockedMethodCall(TestSiteReporter& reporter, const Value& use)
 {
-    ValueID receiver;
-    PropertyKeyID key;
-    if (use.opcode == Opcode::PropGet && use.key() && isOnlyCalled(reporter.analyses(), reporter.use())) {
-        receiver = use.objectOperand();
-        key = use.key();
-    } else if (use.opcode == Opcode::Call && use.calleeKey()) {
-        receiver = use.thisValueOperand();
-        key = use.calleeKey();
-    }
-    if (!receiver)
-        return { };
-    std::optional<Type> expected = reporter.expectedPartOf(receiver);
-    return expected && reachesLockedMemberOfBuiltinPart(reporter, key, *expected, BuiltinKind::Method) ? receiver : ValueID();
+    if (use.opcode == Opcode::PropGet && use.key() && isOnlyCalled(reporter.analyses(), reporter.use()) && use.objectOperand())
+        return receiverIfBuiltinPartHasLockedMember(reporter, use.objectOperand(), use.key(), BuiltinKind::Method);
+    if (use.opcode == Opcode::Call && use.calleeKey() && use.thisValueOperand())
+        return receiverIfBuiltinPartHasLockedMember(reporter, use.thisValueOperand(), use.calleeKey(), BuiltinKind::Method);
+    return { };
 }
 
 static ValueID receiverOfAccessorAccess(TestSiteReporter& reporter, const Value& use)
 {
     if ((use.opcode != Opcode::PropGet && use.opcode != Opcode::PropSet) || !use.key())
         return { };
-    ValueID receiver = use.objectOperand();
-    std::optional<Type> expected = reporter.expectedPartOf(receiver);
-    return expected && reachesLockedMemberOfBuiltinPart(reporter, use.key(), *expected, BuiltinKind::Accessor) ? receiver : ValueID();
+    return receiverIfBuiltinPartHasLockedMember(reporter, use.objectOperand(), use.key(), BuiltinKind::Accessor);
 }
 
 // `req.headers`, where the request is expected to be the one of the host's library, which makes its headers in a getter, or a stand-in that keeps them in a field.
@@ -922,11 +821,14 @@ static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter
 void reportUnionReceiverTests(TestSiteReporter& reporter)
 {
     reporter.forEachCandidate([&](const Value& use) {
+        auto reportTestFor = [&](ValueID receiver, const Type& tested) {
+            reporter.report({ makeTypeTest(receiver, reporter.types().intern(tested)) }, reporter.analyses().effectsOf(reporter.use()).normal);
+        };
         BlockFrequency frequency = reporter.function().at(reporter.point().block).frequency;
         if (frequency == BlockFrequency::Rare)
             return;
         if (std::optional<Type> receivers = frequency == BlockFrequency::Normal ? receiversThatAnswerWithFieldOrGetter(reporter, use) : std::nullopt) {
-            reporter.report({ makeTypeTest(use.objectOperand(), reporter.types().intern(*receivers)) }, reporter.analyses().effectsOf(reporter.use()).normal);
+            reportTestFor(use.objectOperand(), *receivers);
             return;
         }
         ValueID receiver = receiverOfLockedMethodCall(reporter, use);
@@ -944,9 +846,8 @@ void reportUnionReceiverTests(TestSiteReporter& reporter)
             return;
         Type testable = expected->withoutClassProofs().withUntestableBuiltinsWidened();
         UnionParts parts = unionPartsOf(testable);
-        if (parts.size() < 2 || parts.size() > static_cast<size_t>(reporter.context().limit(LimitID::MaxDispatchCases)) || !isClosedUnion(parts))
-            return;
-        reporter.report({ makeTypeTest(receiver, reporter.types().intern(testable)) }, reporter.analyses().effectsOf(reporter.use()).normal);
+        if (parts.size() >= 2 && parts.size() <= static_cast<size_t>(reporter.context().limit(LimitID::MaxDispatchCases)) && isClosedUnion(parts))
+            reportTestFor(receiver, testable);
     });
 }
 
@@ -956,23 +857,19 @@ void rewriteTestedUnionReceiver(TestSiteRewriter&)
 
 bool expectsReceiverOfCalledMethod(FunctionPassContext& context, BlockID block, const Value& call)
 {
-    const Program& program = context.program;
     const Function& function = context.function;
-    if (!context.build.recordedOptions().usesExpectedTypes())
-        return false;
-    if (function.at(block).frequency != BlockFrequency::Normal)
+    if (!context.build.recordedOptions().usesExpectedTypes() || function.at(block).frequency != BlockFrequency::Normal)
         return false;
 
     ValueID read = context.analyses.identityOf(call.calleeOperand());
     const Value& callee = function.at(read);
     PropertyKeyID key = call.calleeKey();
-    if (callee.opcode != Opcode::PropGet || callee.key() != key || tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, read, key))
+    if (callee.opcode != Opcode::PropGet || callee.key() != key || tellsLayoutsApart(context.program, key) || !callsBuiltinMethod(context, read, key))
         return false;
     ValueID receiver = callee.objectOperand();
-    const Type& type = program.typeOf(function, receiver);
+    const Type& type = context.program.typeOf(function, receiver);
     if (!type.anyObject || type.layouts || function.at(receiver).expected() || isAllocatedHere(context, receiver))
         return false;
-
     return !!receiversWithMethod(context, key);
 }
 
@@ -989,23 +886,18 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     AOT::stableSort(uses, { }, &NamedUse::subject);
     findUsesOnEveryPath(context, uses.mutableSpan());
 
-    Vector<ExpectedValue> expectedValues;
+    ExpectedValues expectedValues;
     LayoutList layoutsMet;
-    struct RangeOfUses {
-        size_t first { 0 };
-        size_t size { 0 };
-    };
-    Vector<RangeOfUses, 4> unsettledSubjects;
+    Vector<std::span<NamedUse>, 4> unsettledSubjects;
     forEachSubject(uses.mutableSpan(), [&](std::span<NamedUse> usesOfSubject) {
         if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues))
-            unsettledSubjects.append(RangeOfUses { static_cast<size_t>(usesOfSubject.data() - uses.span().data()), usesOfSubject.size() });
+            unsettledSubjects.constructAndAppend(usesOfSubject);
     });
-    if (!unsettledSubjects.isEmpty()) {
+    if (!unsettledSubjects.isEmpty())
         addLayoutsOfKnownReceivers(context, layoutsMet);
-        for (RangeOfUses range : unsettledSubjects)
-            expectLayoutsOf(context, uses.mutableSpan().subspan(range.first, range.size), layoutsMet, false, expectedValues);
-    }
-    return expectValues(context, expectedValues.span(), expectations);
+    for (std::span<NamedUse> usesOfSubject : unsettledSubjects)
+        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues);
+    return expectValues(context, expectedValues, expectations);
 }
 
 } } } // namespace JSC::AOT::Typed

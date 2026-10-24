@@ -18,26 +18,13 @@ function f0 name="inputUnspecifiedOnOnePath" parameters=[{type=number}, {type=bo
     Jump -> next b3(v5)
   b3(v6: L0):
     Switch v0 cases=[0, 1, 2, 3] -> case b4(), case b5(), case b6(), case b7(), otherwise b8()
-  b4() frequency=Rare:
-    v7 = String string="bad"
-    v8 = PropGet v3 key="logger"
-    v9 = CallMethod v8, v7, v6 key="report"
-    Return v9
-  b5() frequency=Rare:
-    v10 = String string="bad"
-    v11 = PropGet v3 key="logger"
-    v12 = CallMethod v11, v10, v6 key="report"
-    Return v12
-  b6() frequency=Rare:
-    v13 = String string="bad"
-    v14 = PropGet v3 key="logger"
-    v15 = CallMethod v14, v13, v6 key="report"
-    Return v15
-  b7() frequency=Rare:
-    v16 = String string="bad"
-    v17 = PropGet v3 key="logger"
-    v18 = CallMethod v17, v16, v6 key="report"
-    Return v18
+# REPEAT: i = 4..7
+  b%(i)() frequency=Rare:
+    v%(i*3-5) = String string="bad"
+    v%(i*3-4) = PropGet v3 key="logger"
+    v%(i*3-3) = CallMethod v%(i*3-4), v%(i*3-5), v6 key="report"
+    Return v%(i*3-3)
+# END REPEAT
   b8():
     Return v3
 }
@@ -55,26 +42,13 @@ function f1 name="inputSpecifiedOnBothPaths" parameters=[{type=number}, {type=bo
     Jump -> next b3(v4)
   b3(v5: L0):
     Switch v0 cases=[0, 1, 2, 3] -> case b4(), case b5(), case b6(), case b7(), otherwise b8()
-  b4() frequency=Rare:
-    v6 = String string="bad"
-    v7 = PropGet v3 key="logger"
-    v8 = CallMethod v7, v6, v5 key="report"
-    Return v8
-  b5() frequency=Rare:
-    v9 = String string="bad"
-    v10 = PropGet v3 key="logger"
-    v11 = CallMethod v10, v9, v5 key="report"
-    Return v11
-  b6() frequency=Rare:
-    v12 = String string="bad"
-    v13 = PropGet v3 key="logger"
-    v14 = CallMethod v13, v12, v5 key="report"
-    Return v14
-  b7() frequency=Rare:
-    v15 = String string="bad"
-    v16 = PropGet v3 key="logger"
-    v17 = CallMethod v16, v15, v5 key="report"
-    Return v17
+# REPEAT: i = 4..7
+  b%(i)() frequency=Rare:
+    v%(i*3-6) = String string="bad"
+    v%(i*3-5) = PropGet v3 key="logger"
+    v%(i*3-4) = CallMethod v%(i*3-5), v%(i*3-6), v5 key="report"
+    Return v%(i*3-4)
+# END REPEAT
   b8():
     Return v3
 }

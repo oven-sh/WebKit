@@ -37,7 +37,6 @@ uint32_t anyModuleNode(const FlowOrderInputs& inputs)
     return inputs.program.modules.size();
 }
 
-// What the host calls can run while any module is being evaluated.
 uint32_t nodeOf(const FlowOrderInputs& inputs, FunctionID function)
 {
     return function == inputs.host() ? anyModuleNode(inputs) : anyModuleNode(inputs) + 1 + function.index();
@@ -59,7 +58,6 @@ bool evaluatesTarget(ImportPhase phase)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The loader goes through a module that is not evaluated to the modules that it imports. What such a module requires nobody visits: no code of it runs.
 BitVector modulesVisitedByLoader(const FlowOrderInputs& inputs)
 {
     const Program& program = inputs.program;
@@ -160,7 +158,6 @@ Vector<uint32_t> numberModuleComponents(const StronglyConnectedComponents& compo
     return componentOf;
 }
 
-// An import has run its target to the end before the body of the importer starts, also a target that lies on a cycle of its own.
 bool completesBeforeRequester(const ModuleRequest& request, const BitVector& modulesInCycles)
 {
     if (!request.completes || !evaluatesTarget(request.phase))

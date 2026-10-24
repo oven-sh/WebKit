@@ -14,46 +14,18 @@ function f0 name="byLength" flags=[HasRestParameter] parameters=[{type=number}, 
   b0(v0: number, v1: Array<number>):
     v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
     Switch v2 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
-  b1():
-    v3 = Mul v0, v0
-    v4 = Mul v3, v0
-    v5 = Mul v4, v0
-    v6 = Mul v5, v0
-    v7 = Mul v6, v0
-    v8 = Mul v7, v0
-    v9 = Mul v8, v0
-    v10 = Mul v9, v0
-    Return v10
-  b2():
-    v11 = Mul v0, v0
-    v12 = Mul v11, v0
-    v13 = Mul v12, v0
-    v14 = Mul v13, v0
-    v15 = Mul v14, v0
-    v16 = Mul v15, v0
-    v17 = Mul v16, v0
-    v18 = Mul v17, v0
-    Return v18
-  b3():
-    v19 = Mul v0, v0
-    v20 = Mul v19, v0
-    v21 = Mul v20, v0
-    v22 = Mul v21, v0
-    v23 = Mul v22, v0
-    v24 = Mul v23, v0
-    v25 = Mul v24, v0
-    v26 = Mul v25, v0
-    Return v26
-  b4():
-    v27 = Mul v0, v0
-    v28 = Mul v27, v0
-    v29 = Mul v28, v0
-    v30 = Mul v29, v0
-    v31 = Mul v30, v0
-    v32 = Mul v31, v0
-    v33 = Mul v32, v0
-    v34 = Mul v33, v0
-    Return v34
+# REPEAT: i = 1..4
+  b%(i)():
+    v%(i*8-5) = Mul v0, v0
+    v%(i*8-4) = Mul v%(i*8-5), v0
+    v%(i*8-3) = Mul v%(i*8-4), v0
+    v%(i*8-2) = Mul v%(i*8-3), v0
+    v%(i*8-1) = Mul v%(i*8-2), v0
+    v%(i*8) = Mul v%(i*8-1), v0
+    v%(i*8+1) = Mul v%(i*8), v0
+    v%(i*8+2) = Mul v%(i*8+1), v0
+    Return v%(i*8+2)
+# END REPEAT
 }
 
 function f1 name="passesOne" parameters=[{type=number}] results=[{type=number}] {

@@ -16,7 +16,7 @@
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Function.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -32,6 +32,12 @@ public:
         , analyses(context.analyses)
         , m_numberOfEditsAtStart(context.function.numberOfEdits())
     {
+    }
+    ~Rewrite()
+    {
+        ASSERT(m_edits.isEmpty());
+        for (void* room : m_furtherRooms)
+            fastFree(room);
     }
 
     FunctionPassContext& context;
@@ -49,13 +55,32 @@ public:
     // A block that a rule has claimed is shown to no other rule in this walk.
     void claim(BlockID block)
     {
-        m_hasClaimedBlocks = true;
-        m_claimedBlocks.set(block.index());
+        if (!std::exchange(m_hasClaimedBlocks, true))
+            m_claimedBlocks.ensureSize(function.blocks.size());
+        m_claimedBlocks.quickSet(block.index());
     }
     bool isClaimed(BlockID block) const { return m_hasClaimedBlocks && m_claimedBlocks.get(block.index()); }
 
     // Runs in commit(): the edits of the first rule of the table in the order in which it left them, then those of the second. An edit asks no analysis: what it needs it captures.
-    void later(WTF::Function<void()>&& edit) { m_edits.append({ m_rule, WTF::move(edit) }); }
+    template<typename Functor>
+    void later(Functor&& functor)
+    {
+        using Stored = std::decay_t<Functor>;
+        Stored* stored = new (NotNull, allocate(sizeof(Stored), alignof(Stored))) Stored(std::forward<Functor>(functor));
+        m_edits.append({ m_rule, stored, [](void* edit) {
+            (*static_cast<Stored*>(edit))();
+            static_cast<Stored*>(edit)->~Stored();
+        } });
+    }
+    // A copy of the list that lives as long as the run, for an edit to capture.
+    template<typename T>
+    std::span<const T> keep(std::span<const T> list)
+    {
+        static_assert(std::is_trivially_copyable_v<T>);
+        T* copy = static_cast<T*>(allocate(list.size_bytes(), alignof(T)));
+        memcpy(static_cast<void*>(copy), list.data(), list.size_bytes());
+        return { copy, list.size() };
+    }
     void setRule(unsigned rule) { m_rule = rule; }
 
     // For edits.
@@ -77,8 +102,19 @@ public:
 private:
     struct Edit {
         unsigned rule;
-        WTF::Function<void()> run;
+        void* functor;
+        void (*runAndDestroy)(void*);
     };
+
+    void* allocate(size_t size, size_t alignment)
+    {
+        uintptr_t start = roundUpToMultipleOf(alignment, reinterpret_cast<uintptr_t>(m_free));
+        if (start + size > reinterpret_cast<uintptr_t>(m_endOfRoom)) [[unlikely]]
+            return allocateInNewRoom(size);
+        m_free = reinterpret_cast<std::byte*>(start + size);
+        return reinterpret_cast<void*>(start);
+    }
+    void* allocateInNewRoom(size_t);
 
     unsigned m_rule { 0 };
     uint32_t m_numberOfEditsAtStart;
@@ -92,6 +128,10 @@ private:
     Vector<std::pair<BlockID, uint32_t>, 4> m_removedParameters;
     std::optional<ValueSubstitution> m_substitution;
     Vector<ValueID, 8> m_retypedValues;
+    Vector<void*, 1> m_furtherRooms;
+    std::byte* m_free { m_firstRoom };
+    std::byte* m_endOfRoom { m_firstRoom + sizeof(m_firstRoom) };
+    alignas(16) std::byte m_firstRoom[1024];
 };
 
 struct Site {

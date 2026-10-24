@@ -29,6 +29,7 @@ class CFG;
 class FunctionAnalyses;
 class PendingTyping;
 class UseLists;
+struct ValueLocation;
 
 struct TypePropagationInputs {
     const Program& program;
@@ -68,19 +69,27 @@ struct TypePropagationOutcome {
     }
 };
 
+// A ResultAt and what a terminator says about an edge are typed from the operands of the value they name.
+inline constexpr OpcodeSet opcodesWithIndirectUsers = []() consteval {
+    OpcodeSet opcodes = opcodesThatMayHaveSeveralResults;
+    for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
+        if (provesOf(static_cast<Opcode>(index)) != Proof::None)
+            opcodes.add(static_cast<Opcode>(index));
+    }
+    return opcodes;
+}();
+
 class TypePropagation {
     WTF_MAKE_NONCOPYABLE(TypePropagation);
 public:
     explicit TypePropagation(const TypePropagationInputs&);
     ~TypePropagation();
 
-    enum class ChangedValues : uint8_t { MayLeaveOthersOutOfDate, EveryOtherValueIsAsTyped };
-
     void typeAllValues();
-    void typeDependentsOf(std::span<const ValueID> changedValues, ChangedValues);
+    // Where every other value is typed as the rules type it, nothing is typed behind a value that keeps its types.
+    void typeDependentsOf(std::span<const ValueID> changedValues, bool everyOtherValueIsAsTyped);
     // A value that was edited is computed again, and so is what is typed from a value whose types have come out different. What is computed to the same types ends there.
     void typePendingValues(PendingTyping&);
-    // For whoever has typed values in another way.
     void tellWhatIsTyped();
 
     void restartAllValues();
@@ -89,13 +98,13 @@ public:
     void restartListedValues(std::span<const ValueID>);
 
     // What the rules give for one value at the proven level, from the types that the values have which it is typed from. Nothing is stored.
-    TypeID provenTypeByRule(ValueID);
-    TypeID provenTypeOfParameterByRule(ValueID, BlockID, uint32_t index);
+    TypeID provenTypeByRule(ValueID id) { return computeValue(typingContext(TypeLevel::Proven), id); }
+    TypeID provenTypeOfParameterByRule(ValueID id, BlockID block, uint32_t index) { return computeParameter(typingContext(TypeLevel::Proven), id, block, index); }
     // Whatever the value is typed from, beside the records of the program. One may come more than once.
-    void forEachSourceOf(ValueID, NOESCAPE const Invocable<void(ValueID)> auto&) const;
+    void forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const { forEachSourceOf(m_inputs.function.at(id), functor); }
     void forEachSourceOfParameter(BlockID, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto&) const;
 
-    void solveTypes();
+    void solveTypes() { solve(TypeLevel::Proven); }
     // Expected types come from the positions that are only expected to hold their type: entry parameters, fields, variables, captures, results.
     void solveExpectedTypes();
     TypePropagationOutcome finish();
@@ -104,6 +113,7 @@ public:
 
 private:
     enum class Direction : uint8_t { Ascending, Descending };
+    enum class QueuedValues : uint8_t { All, OnlyListed, AllButListed };
 
     struct StateBeforeRestart {
         TypeID type;
@@ -120,21 +130,20 @@ private:
         HasOtherExpectedType = 1 << 4,
     };
 
-    std::span<const Edge> incomingEdgesOf(BlockID) const;
-    bool hasRetreatingEdge() const;
+    struct PlaceOfParameter {
+        uint32_t block;
+        uint32_t index;
+    };
+
+    void forEachSourceOf(const Instruction&, NOESCAPE const Invocable<void(ValueID)> auto&) const;
     bool isEveryValueTypedBehindItsSources() const;
     void sweep(TypeLevel);
-    bool hasOperandTypedOtherwise(TypeLevel, const Instruction&) const;
-    bool isValueToSweep(TypeLevel, ValueID) const;
-    bool isParameterToSweep(TypeLevel, BlockID, uint32_t index, ValueID) const;
     void storeSweptType(TypeLevel, ValueID, TypeID computed);
 
-    TypeID partOfExpectedTypeInside(TypeID type, TypeID expected);
-    void typeAgain(ValueID, bool isParameter, BlockID, uint32_t index);
+    TypeID expectedTypeToStore(ValueID, const Value&, TypeID computed);
     bool hasTypesOfEveryArgument(BlockID, uint32_t index, const Value& parameter) const;
     void enqueueParametersOf(BlockID);
     void enqueuePendingValues(PendingTyping&);
-    void typeQueuedValues();
     uint32_t componentOf(ValueID, unsigned cycle);
     void findComponentsOf(unsigned cycle);
     void typeComponent(uint32_t component);
@@ -143,28 +152,29 @@ private:
     void willRestartValues();
     void rememberState(ValueID);
     // The log hears of a remembered value when all is typed, and only where its types are no longer those that were remembered.
+    bool isRemembered(ValueID id) const { return !m_rememberedValues.isEmpty() && m_isRemembered.quickGet(id.index()); }
     ALWAYS_INLINE Value& editTypeOf(ValueID id)
     {
-        if (!m_rememberedValues.isEmpty() && m_isRemembered.quickGet(id.index())) [[likely]]
+        if (isRemembered(id)) [[likely]]
             return m_inputs.function.editAndReportLater(id);
         return m_inputs.function.edit(id, ValueEdit::Type);
     }
-    void reportRetypedValues();
+    void reportRetypedValues(bool countsThem);
     void restart(ValueID);
+    void listFromLastToFirst(std::span<const ValueID>);
     void listRestartedValuesInOrder();
-    bool isJoin(ValueID) const;
 
     void enqueue(ValueID);
     void enqueueUsersOf(ValueID);
     void enqueueIndirectUsersOf(ValueID);
     void enqueueEdgeResultParameters(BlockID from);
-    void enqueueRestartedValues();
     void willTakeValuesFromWorklist();
-    void markSourcesThatWereNotTaken(ValueID, bool isParameter, BlockID, uint32_t index);
 
-    TypingContext typingContext(TypeLevel);
+    TypingContext typingContext(TypeLevel level) { return { m_inputs.program, m_inputs.function, m_inputs.types, level, m_inputs.memo, m_inputs.knownPositions, true }; }
+    void addTypeOutOfDate(ValueID, ASCIILiteral detail);
     void solve(TypeLevel);
     void propagate(TypeLevel, Direction);
+    TypeID compute(const TypingContext&, ValueID, const ValueLocation&);
     TypeID computeValue(const TypingContext&, ValueID);
     TypeID computeParameter(const TypingContext&, ValueID, BlockID, uint32_t index);
     TypeID computeTypeOnEdge(const TypingContext&, EdgeResultPosition, const EdgeResult&);
@@ -175,123 +185,92 @@ private:
     void giveUpOnRounds(TypeLevel, Direction);
 
     TypeID narrowerTypeOrNull(TypeID narrower, TypeID);
+    void replaceUpcastsOfWidenedValues();
     void dropExpectedTypesThatSayNothing();
-    void countChanges();
     bool mayHaveCodeToCut() const;
     void cutAfterNeverValues();
-    void cutBlock(BlockID, uint32_t firstErasedIndex, Origin);
-    void didCutBlocks(Vector<ValueID>& parametersBehindRemovedEdges);
 
     TypePropagationInputs m_inputs;
     TypePropagationOutcome m_outcome;
     const CFG& m_cfg;
+    const bool m_verifies;
     const UseLists* m_uses { nullptr };
+    const BlockCycles* m_cycles { nullptr };
+    ChangeLog::Cursor m_logAtStart;
+    TypingMemo m_ownMemo;
+
     Vector<ValueID, 64> m_worklist;
     BitVector m_isQueued;
-    BitVector m_isRestarted;
+    QueuedValues m_queuedValues { QueuedValues::All };
+    const BitVector* m_listedValues { nullptr };
     BitVector m_wasTakenFromWorklist;
     BitVector m_hasUserThatWasTakenFirst;
-    BitVector m_isRemembered;
-    Vector<OptionSet<SweepFlag>, 64> m_sweepFlags;
     Vector<ValueID, 16> m_valuesAboveTheirRules;
+    Vector<OptionSet<SweepFlag>, 64> m_sweepFlags;
+
+    BitVector m_isRemembered;
     Vector<StateBeforeRestart, 64> m_statesBeforeRestart;
     Vector<ValueID, 64> m_rememberedValues;
     size_t m_numberOfReportedValues { 0 };
+    BitVector m_isRestarted;
     Vector<ValueID, 64> m_restartedValuesFromLastToFirst;
+
     bool m_didListRestartedValues { false };
     bool m_didMarkSourcesOfUnreachableValues { false };
     bool m_everyOtherValueIsAsTyped { false };
     bool m_didTypeAllValues { false };
     bool m_didGiveUp { false };
     bool m_dropsExpectedTypesAtOnce { false };
+
     BitVector m_didEnqueueParametersOf;
-    ChangeLog::Cursor m_logAtStart;
-    const BlockCycles* m_cycles { nullptr };
-    bool m_queuesOnlySomeValues { false };
-    bool m_queuesAllButSomeValues { false };
-    BitVector m_mayBeQueued;
-    struct PlaceOfParameter {
-        uint32_t block;
-        uint32_t index;
-    };
     // Of the parameters that were put into the list with their block. Nothing is written for any other value.
     Vector<PlaceOfParameter> m_placesOfParameters;
-    static constexpr uint32_t notVisited = UINT32_MAX;
-    static constexpr uint32_t noComponent = UINT32_MAX - 1;
     Vector<uint32_t> m_componentOfValue;
     BitVector m_isSearchedCycle;
     Vector<ValueID, 32> m_membersOfComponents;
     Vector<uint32_t, 8> m_firstMemberOfComponent;
     Vector<uint32_t, 8> m_waitingComponents;
     BitVector m_isWaitingComponent;
-    bool m_typesRestartedValuesAlone { false };
-    TypingMemo m_ownMemo;
+    BitVector m_isMemberOfTypedComponent;
 };
 
-// A ResultAt and what a terminator says about an edge are typed from the operands of the value they name.
-inline constexpr OpcodeSet opcodesWithIndirectUsers = []() consteval {
-    OpcodeSet opcodes = opcodesThatMayHaveSeveralResults;
-    for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
-        if (provesOf(static_cast<Opcode>(index)) != Proof::None)
-            opcodes.add(static_cast<Opcode>(index));
-    }
-    return opcodes;
-}();
-
-void TypePropagation::forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
+void TypePropagation::forEachSourceOf(const Instruction& user, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
 {
-    const Function& function = m_inputs.function;
-    function.at(id).forEachOperand([&](ValueID source, uint32_t) {
-        if (!source)
-            return;
+    user.forEachOperand([&](ValueID source, uint32_t) {
         functor(source);
-        if (!opcodesWithIndirectUsers.contains(function.at(source).opcode))
-            return;
-        function.at(source).forEachOperand([&](ValueID indirectSource, uint32_t) {
-            if (indirectSource)
+        if (opcodesWithIndirectUsers.contains(m_inputs.function.at(source).opcode)) {
+            m_inputs.function.at(source).forEachOperand([&](ValueID indirectSource, uint32_t) {
                 functor(indirectSource);
-        });
+            });
+        }
     });
 }
 
 void TypePropagation::forEachSourceOfParameter(BlockID block, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
 {
-    const Function& function = m_inputs.function;
-    for (Edge edge : incomingEdgesOf(block)) {
-        const Target& target = targetOf(function, edge);
-        if (index < target.arguments.size()) {
+    for (Edge edge : m_cfg.incomingEdges(block)) {
+        const Target& target = targetOf(m_inputs.function, edge);
+        if (index < target.arguments.size())
             functor(target.arguments[index]);
-            continue;
-        }
-        if (edge.isHandlerEdge())
-            continue;
-        function.at(edge.from).terminator.forEachOperand([&](ValueID source, uint32_t) {
-            if (!source)
-                return;
-            functor(source);
-            if (!opcodesWithIndirectUsers.contains(function.at(source).opcode))
-                return;
-            function.at(source).forEachOperand([&](ValueID indirectSource, uint32_t) {
-                if (indirectSource)
-                    functor(indirectSource);
-            });
-        });
+        else if (!edge.isHandlerEdge())
+            forEachSourceOf(m_inputs.function.at(edge.from).terminator, functor);
     }
 }
 
-TypePropagationOutcome typeValuesFromNever(const TypePropagationInputs&);
+enum class TypedFirst : uint8_t { Nothing, DependentsOfChangedValues, AllValues, PendingValues };
+TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs&, TypedFirst, std::span<const ValueID> changedValues = { }, bool everyOtherValueIsAsTyped = false);
 
-// What is typed behind a Check holds where the Check has passed.
-bool waitsForGenericVersion(const Program&, const Function&);
+inline TypePropagationOutcome typeValuesFromNever(const TypePropagationInputs& inputs) { return typeUntilNothingIsCut(inputs, TypedFirst::AllValues); }
+inline TypePropagationOutcome narrowValueTypes(const TypePropagationInputs& inputs, std::span<const ValueID> changedValues) { return typeUntilNothingIsCut(inputs, TypedFirst::DependentsOfChangedValues, changedValues); }
+inline TypePropagationOutcome narrowValueTypesBehindChanges(const TypePropagationInputs& inputs, std::span<const ValueID> changedValues) { return typeUntilNothingIsCut(inputs, TypedFirst::DependentsOfChangedValues, changedValues, true); }
 
 // For a caller that may still widen what the function reads: the code behind a value of type never stays. finishTypedValues() cuts it.
 bool hasTypedValues(const Function&);
 void typeValuesWithoutCutting(const TypePropagationInputs&);
-TypePropagationOutcome finishTypedValues(const TypePropagationInputs&);
+inline TypePropagationOutcome finishTypedValues(const TypePropagationInputs& inputs) { return typeUntilNothingIsCut(inputs, TypedFirst::Nothing); }
 
-TypePropagationOutcome narrowValueTypes(const TypePropagationInputs&, std::span<const ValueID> changedValues);
-// For a caller that knows every other value to be typed as the rules type it: nothing is typed behind a value that keeps its types.
-TypePropagationOutcome narrowValueTypesBehindChanges(const TypePropagationInputs&, std::span<const ValueID> changedValues);
+// What is typed behind a Check holds where the Check has passed.
+bool waitsForGenericVersion(const Program&, const Function&);
 
 // Which values of a function have still to be typed again: what the log of changes has named since types were last propagated, less what somebody has typed since.
 class PendingTyping {
@@ -303,7 +282,7 @@ public:
     void setWaitsToCutCode(bool waits) { m_waitsToCutCode = waits; }
     bool isEmpty(const ChangeLog& log) const { return !isEverythingPending(log) && !log.hasChangesSince(m_seen) && m_values.isEmpty() && m_blocks.isEmpty() && !m_valuesTypedFromRecordsArePending; }
 
-    void didTypeEverything(const ChangeLog&);
+    void didTypeEverything(const ChangeLog& log) { didTypeEverythingBefore(log.end()); }
     // A function that says so enters a schedule typed, but for what is typed from its signature, from a variable or from the record of another function.
     void didEnterScheduleTyped(const ChangeLog&);
     // compactFunction(), for whoever keeps track of what is pending.
@@ -311,17 +290,14 @@ public:
     // For a copy of the function as it is now, which has a log of its own.
     PendingTyping forCopyWith(const ChangeLog& logOfCopy, const ChangeLog&) const;
 
-private:
-    friend class TypePropagation;
-
-public:
-    // For the propagation of types.
     void takeEntries(const ChangeLog&);
     void forgetChangesOfTypesAlone();
     void didTypePendingValues();
     void didTypeEverythingBefore(const ChangeLog::Cursor&);
 
 private:
+    friend class TypePropagation;
+
     ChangeLog::Cursor m_seen;
     Vector<ValueChange, 16> m_values;
     Vector<BlockChange, 8> m_blocks;
@@ -330,7 +306,6 @@ private:
     bool m_waitsToCutCode { false };
 };
 
-// Types what is pending.
 TypePropagationOutcome typeChangedValues(const TypePropagationInputs&);
 
 // Turns a typed Convert into what resolveConvert() answers for it, with the types it has. False: nothing is left of it, and its uses are to read its operand.

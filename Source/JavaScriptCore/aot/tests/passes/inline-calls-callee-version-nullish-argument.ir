@@ -14,35 +14,17 @@ function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=n
 function f1 name="apply" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1
-    v3 = Add v2, v1
-    v4 = Add v3, v1
-    v5 = Add v4, v1
-    v6 = Add v5, v1
-    v7 = Add v6, v1
-    v8 = Add v7, v1
-    v9 = Add v8, v1
-    v10 = Add v9, v1
-    v11 = Add v10, v1
-    v12 = Add v11, v1
-    v13 = Add v12, v1
-    v14 = Add v13, v1
+# REPEAT: i = 2..13
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
     Return v14
 }
 function f2 name="applyOptional" parameters=[{type=undefined|function}, {type=anything}] results=[{type=anything}] {
   b0(v0: undefined|function, v1: anything):
     v2 = Call v0, -, v1
-    v3 = Add v2, v1
-    v4 = Add v3, v1
-    v5 = Add v4, v1
-    v6 = Add v5, v1
-    v7 = Add v6, v1
-    v8 = Add v7, v1
-    v9 = Add v8, v1
-    v10 = Add v9, v1
-    v11 = Add v10, v1
-    v12 = Add v11, v1
-    v13 = Add v12, v1
-    v14 = Add v13, v1
+# REPEAT: i = 2..13
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
     Return v14
 }
 

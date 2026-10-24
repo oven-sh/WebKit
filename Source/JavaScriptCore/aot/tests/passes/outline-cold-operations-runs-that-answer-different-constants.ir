@@ -15,62 +15,16 @@ variable g4 name="e" module=m0 declared={type=anything}
 function f0 name="answersDiffer" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
   b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
-  b1() frequency=Rare:
+# REPEAT: i = 1..7; a = 3 21 3 24 3 3 3
+  b%(i)() frequency=Rare:
     PutModuleVariable v1 variable=g0
     PutModuleVariable v1 variable=g1
     PutModuleVariable v1 variable=g2
     PutModuleVariable v1 variable=g3
     PutModuleVariable v1 variable=g4
-    v7 = Double number=3.5
-    Return v7
-  b2() frequency=Rare:
-    PutModuleVariable v1 variable=g0
-    PutModuleVariable v1 variable=g1
-    PutModuleVariable v1 variable=g2
-    PutModuleVariable v1 variable=g3
-    PutModuleVariable v1 variable=g4
-    v13 = Double number=21.5
-    Return v13
-  b3() frequency=Rare:
-    PutModuleVariable v1 variable=g0
-    PutModuleVariable v1 variable=g1
-    PutModuleVariable v1 variable=g2
-    PutModuleVariable v1 variable=g3
-    PutModuleVariable v1 variable=g4
-    v19 = Double number=3.5
-    Return v19
-  b4() frequency=Rare:
-    PutModuleVariable v1 variable=g0
-    PutModuleVariable v1 variable=g1
-    PutModuleVariable v1 variable=g2
-    PutModuleVariable v1 variable=g3
-    PutModuleVariable v1 variable=g4
-    v25 = Double number=24.5
-    Return v25
-  b5() frequency=Rare:
-    PutModuleVariable v1 variable=g0
-    PutModuleVariable v1 variable=g1
-    PutModuleVariable v1 variable=g2
-    PutModuleVariable v1 variable=g3
-    PutModuleVariable v1 variable=g4
-    v31 = Double number=3.5
-    Return v31
-  b6() frequency=Rare:
-    PutModuleVariable v1 variable=g0
-    PutModuleVariable v1 variable=g1
-    PutModuleVariable v1 variable=g2
-    PutModuleVariable v1 variable=g3
-    PutModuleVariable v1 variable=g4
-    v37 = Double number=3.5
-    Return v37
-  b7() frequency=Rare:
-    PutModuleVariable v1 variable=g0
-    PutModuleVariable v1 variable=g1
-    PutModuleVariable v1 variable=g2
-    PutModuleVariable v1 variable=g3
-    PutModuleVariable v1 variable=g4
-    v43 = Double number=3.5
-    Return v43
+    v%(i*6+1) = Double number=%(a).5
+    Return v%(i*6+1)
+# END REPEAT
   b8():
     Return v0
 }

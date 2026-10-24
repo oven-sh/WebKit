@@ -9,19 +9,9 @@ function f0 name="thirteen-callees" parameters=[{type=anything}, {type=anything}
     Jump -> next b1()
   b1():
     LoopHint
-    v15 = Call v0
-    v16 = Call v1
-    v17 = Call v2
-    v18 = Call v3
-    v19 = Call v4
-    v20 = Call v5
-    v21 = Call v6
-    v22 = Call v7
-    v23 = Call v8
-    v24 = Call v9
-    v25 = Call v10
-    v26 = Call v11
-    v27 = Call v12
+# REPEAT: i = 0..12
+    v%(i+15) = Call v%(i)
+# END REPEAT
     Branch v13 -> taken b1(), notTaken b2()
   b2():
     Return

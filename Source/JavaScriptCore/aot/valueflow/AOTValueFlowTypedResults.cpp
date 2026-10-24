@@ -31,7 +31,6 @@ TypeID typedElementTypeOf(const Program& program, const ClassPart& array)
     return array.contentsAt(program.builtins(), ContentsSlot::Element);
 }
 
-// A validator allocates a layout wherever a node of its plan names it. Here every such node stands where the types lead to it: at the root, in a field, in an element of an array.
 bool placesLayoutsWhereTypesNameThem(const ExpectedResult& expected)
 {
     return std::ranges::all_of(expected.validation, [](const ValidationNode& node) {
@@ -61,7 +60,6 @@ bool placesLayoutsWhereTypesNameThem(const ExpectedResult& expected)
     });
 }
 
-// Follows the types that TypedResultAllocation::valueOf() and fill() follow.
 void followTypes(const Program& program, ValueFlowTypedResult& result, bool layoutsStandOnlyWhereTypesNameThem)
 {
     HashSet<TypeID> visitedTypes;
@@ -113,7 +111,6 @@ public:
     {
     }
 
-    // What a parser or a validator puts where the type stands.
     ValueSetID valueOf(TypeID id)
     {
         if (!id)
@@ -130,7 +127,6 @@ public:
         if (type.primitives & Primitive::AnySymbol)
             members.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
 
-        // An ordinary object has no layout, so it stands only where the type admits an object without one.
         bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || (type.layouts && m_program.at(type.layouts).hasMembersWithoutLayout);
         std::span<const LayoutID> layoutsOfType = membersOf(m_program, type);
         for (size_t index = 0; index < m_result.layouts.size() && !layoutsOfType.empty(); ++index) {
@@ -161,7 +157,6 @@ public:
         }
         m_context.add(m_context.written(only(m_result.ordinalOfPlainArray()), elementsName), plainData());
 
-        // What lies in plain data lies in the objects that stand for plain data. Where that is the unknown object, it is what the unknown object stands for.
         ClimbingSet plainObjects = m_plainDataOfCall ? m_context.unite(ClimbingSet(m_context.maker().intersect(m_plainDataOfCall, m_universe.objects())), only(m_result.ordinalOfPlainArray())) : ClimbingSet();
         for (LayoutID layout : m_result.layoutsAmongPlainData) {
             size_t index = std::ranges::lower_bound(m_result.layouts, layout) - m_result.layouts.begin();
@@ -189,7 +184,6 @@ private:
     {
         ValueFlowNodeID node = m_context.written(object, m_program.isIndexLike(field.key) ? elementsName : ValueFlowName::property(field.key));
         m_context.add(node, valueOf(expectationOf(field.declared)));
-        // The text may leave the member out.
         if (!field.declared.type || m_program.at(field.declared.type).primitives & Primitive::Undefined)
             m_context.add(node, m_universe.undefinedValue());
     }
@@ -208,7 +202,6 @@ private:
                     fillField(object, field);
             }
         }
-        // A member that the layout does not declare becomes a property of the object.
         m_context.add(m_context.written(object, unknownKeyName), plainData());
         m_context.mark(object, ObjectMutation::AddProperty);
     }
@@ -274,7 +267,6 @@ ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuil
     return findTypedResult(program, tables, function, uses, call);
 }
 
-// Before the solve only the text of a call says what it may call: the name that its callee was read under, or the built-in that it names.
 static bool mayCallFunctionWithTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const Value& call)
 {
     if (PropertyKeyID key = call.calleeKey()) {
@@ -286,7 +278,6 @@ static bool mayCallFunctionWithTypedResult(const Program& program, const ValueFl
     return callee.opcode == Opcode::Builtin && tables.hasTypedResult(callee.builtin());
 }
 
-// Whatever is called, the result is validated, and the validator allocates. Type arguments alone allocate nothing: `append<Node>(to, value)` calls a function of the program.
 static bool isValidated(const Program& program, const Value& call)
 {
     ExpectedResultID expected = call.expectedResult();
@@ -295,7 +286,6 @@ static bool isValidated(const Program& program, const Value& call)
 
 void appendSitesOfTypedResults(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const CFG& cfg, Vector<ValueFlowSite>& sites)
 {
-    // Nearly every call of typed code is followed by a type with layouts, so the callee is looked at first: where the type of a result comes from, a cast, a test, a parameter or a tail call, takes the uses of the function.
     BitVector candidates;
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& value = function.values[index];
@@ -332,7 +322,6 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     if (!isValidated && !(hasObjects && parses))
         return;
 
-    // What SelectTypedResults puts in the place of the call hands whatever the compiled code gives up on to helpers in the library.
     for (BuiltinID helper : { Builtins::CompilerHelpersValidateByPlan, Builtins::CompilerHelpersInterpretNode, Builtins::CompilerHelpersHoldsRule, Builtins::CompilerHelpersCountCodePoints, Builtins::CompilerHelpersCopyOwnProperties })
         context.use(helper, BuiltinUse::Called);
 
@@ -343,7 +332,6 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         context.connect(description.otherArguments, ValueFlowProgramNodes::escaped());
     };
 
-    // The type reaches more than a typed result lists. The validation stays, and validateByPlan does all of it: what it answers is made in the library, or is the very value that it was given.
     if (!hasObjects) {
         if (description.result)
             context.add(description.result, unknownValue(context, ValueFlowUnknownSource::DataFromOutside));
@@ -365,7 +353,6 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     if (target)
         context.add(target, allocation.valueOf(result.type));
 
-    // Where the plan takes any object or any function, the copy holds the very value that its source held.
     if (isValidated && !parses)
         letArgumentsEscape();
 }

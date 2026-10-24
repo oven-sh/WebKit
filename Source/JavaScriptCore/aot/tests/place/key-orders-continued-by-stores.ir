@@ -12,24 +12,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = Call v0
     v2 = ToNumber v1
     v3 = Builtin builtin=ObjectKeys
-    v4 = NewObject -, v2 layout=L0 fields=[0]
-    v5 = FinishObject v4
-    v6 = NewObject -, v2 layout=L0 fields=[1]
-    v7 = FinishObject v6
-    v8 = NewObject -, v2 layout=L0 fields=[2]
-    v9 = FinishObject v8
-    v10 = NewObject -, v2 layout=L0 fields=[3]
-    v11 = FinishObject v10
-    v12 = NewObject -, v2 layout=L0 fields=[4]
-    v13 = FinishObject v12
-    v14 = NewObject -, v2 layout=L0 fields=[5]
-    v15 = FinishObject v14
-    v16 = NewObject -, v2 layout=L0 fields=[6]
-    v17 = FinishObject v16
-    v18 = NewObject -, v2 layout=L0 fields=[7]
-    v19 = FinishObject v18
-    v20 = NewObject -, v2 layout=L0 fields=[8]
-    v21 = FinishObject v20
+# REPEAT: i = 0..8
+    v%(i*2+4) = NewObject -, v2 layout=L0 fields=[%(i)]
+    v%(i*2+5) = FinishObject v%(i*2+4)
+# END REPEAT
     v22 = CallDirect v5, v2 function=f1
     v23 = CallDirect v5, v2 function=f2
     v24 = CallDirect v5, v2 function=f3
@@ -38,56 +24,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v27 = CallDirect v5, v2 function=f6
     v28 = CallDirect v5, v2 function=f7
     v29 = CallDirect v5, v2 function=f8
-    v30 = Call v3, -, v5
-    v31 = Call v3, -, v7
-    v32 = Call v3, -, v9
-    v33 = Call v3, -, v11
-    v34 = Call v3, -, v13
-    v35 = Call v3, -, v15
-    v36 = Call v3, -, v17
-    v37 = Call v3, -, v19
-    v38 = Call v3, -, v21
+# REPEAT: i = 30..38
+    v%(i) = Call v3, -, v%(i*2-55)
+# END REPEAT
     Return
 }
-function f1 name="add0" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+# REPEAT: i = 0..7
+function f%(i+1) name="add%(i)" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
   b0(v0: L0, v1: number):
-    PropSet v0, v1 key="b0"
+    PropSet v0, v1 key="b%(i)"
     Return
 }
-function f2 name="add1" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
-    PropSet v0, v1 key="b1"
-    Return
-}
-function f3 name="add2" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
-    PropSet v0, v1 key="b2"
-    Return
-}
-function f4 name="add3" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
-    PropSet v0, v1 key="b3"
-    Return
-}
-function f5 name="add4" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
-    PropSet v0, v1 key="b4"
-    Return
-}
-function f6 name="add5" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
-    PropSet v0, v1 key="b5"
-    Return
-}
-function f7 name="add6" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
-    PropSet v0, v1 key="b6"
-    Return
-}
-function f8 name="add7" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
-    PropSet v0, v1 key="b7"
-    Return
-}
+# END REPEAT
 # CHECK: L0 orders=23: [0 9] [0 10] {{*}} [1 15] [1 16] [2] [3] [4] [5] [6] [7] [8]
 # CHECK: L0 creating [9]: order=0 count=1 -> order=0 count=2; order=8 count=1 -> order=8 count=2;

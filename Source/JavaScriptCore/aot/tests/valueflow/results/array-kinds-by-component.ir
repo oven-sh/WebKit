@@ -90,18 +90,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v28 = NewClosure function=f4
     v29 = Call v28, -, v0
     PutModuleVariable v29 variable=g6
-    v31 = NewArray v2 contents=anything
-    PutModuleVariable v31 variable=g7
-    v33 = PropGet v31 key="push"
-    v34 = Call v33, v31, v3 calleeKey="push"
-    v35 = NewArray v2 contents=anything
-    PutModuleVariable v35 variable=g8
-    v37 = PropGet v35 key="push"
-    v38 = Call v37, v35, v4 calleeKey="push"
-    v39 = NewArray v2 contents=anything
-    PutModuleVariable v39 variable=g9
-    v41 = PropGet v39 key="push"
-    v42 = Call v41, v39, v5 calleeKey="push"
+# REPEAT: i = 3..5
+    v%(i*4+19) = NewArray v2 contents=anything
+    PutModuleVariable v%(i*4+19) variable=g%(i+4)
+    v%(i*4+21) = PropGet v%(i*4+19) key="push"
+    v%(i*4+22) = Call v%(i*4+21), v%(i*4+19), v%(i) calleeKey="push"
+# END REPEAT
     v43 = NewArray v0, v1 contents=anything holes=[1]
     PutModuleVariable v43 variable=g10
     Return

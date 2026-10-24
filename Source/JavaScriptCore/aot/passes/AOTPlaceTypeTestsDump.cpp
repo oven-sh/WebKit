@@ -12,9 +12,6 @@
 #include "AOTAnalysisDump.h"
 #include "AOTIRPrinter.h"
 #include "AOTSort.h"
-#include "AOTVector.h"
-#include <wtf/BitVector.h>
-#include <wtf/CommaPrinter.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -24,47 +21,6 @@ void TestConditions::dump(PrintStream& out, const Program& program, TestConditio
     IRPrinter printer(out, program);
     out.print(nameOf(test.opcode));
     printFields(printer, test);
-}
-
-static void dumpPlannedTest(PrintStream& out, const Program& program, const TestPlacementPlan& plan, const PlannedTest& test)
-{
-    out.print("test ");
-    plan.conditions->dump(out, program, test.condition);
-
-    switch (test.position) {
-    case PlannedTestPosition::BeforeUse:
-        out.print(" before ");
-        dumpID(out, plan.sites.sites[plan.requirements[test.requirement].site].use);
-        return;
-    case PlannedTestPosition::OnEdge:
-        out.print(" on ");
-        dumpEdge(out, test.edge);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpExistingProof(PrintStream& out, const ExistingProof& proof)
-{
-    switch (proof.source) {
-    case ProofSource::TakenEdge:
-        out.print("proof taken-edge ");
-        dumpEdge(out, proof.edge);
-        return;
-    case ProofSource::SwitchCase:
-        out.print("proof switch-case ");
-        dumpEdge(out, proof.edge);
-        return;
-    case ProofSource::GuardValue:
-        out.print("proof guard ");
-        dumpID(out, proof.value);
-        return;
-    case ProofSource::Allocation:
-        out.print("proof allocation ");
-        dumpID(out, proof.value);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void TestPlacementPlan::dump(PrintStream& out, const Program& program) const
@@ -89,14 +45,29 @@ void TestPlacementPlan::dump(PrintStream& out, const Program& program) const
         for (const PlannedTest& test : tests) {
             if (test.stretch != stretch)
                 continue;
-            out.print(separator);
-            dumpPlannedTest(out, program, *this, test);
+            out.print(separator, "test ");
+            conditions->dump(out, program, test.condition);
+            out.print(test.position == PlannedTestPosition::BeforeUse ? " before " : " on ");
+            if (test.position == PlannedTestPosition::BeforeUse)
+                dumpID(out, sites.sites[requirements[test.requirement].site].use);
+            else
+                dumpEdge(out, test.edge);
         }
         for (const ExistingProof& proof : proofs) {
             if (!requiredConditions.get(proof.condition.index()))
                 continue;
-            out.print(separator);
-            dumpExistingProof(out, proof);
+            switch (proof.source) {
+            case ProofSource::TakenEdge:
+            case ProofSource::SwitchCase:
+                out.print(separator, proof.source == ProofSource::TakenEdge ? "proof taken-edge " : "proof switch-case ");
+                dumpEdge(out, proof.edge);
+                break;
+            case ProofSource::GuardValue:
+            case ProofSource::Allocation:
+                out.print(separator, proof.source == ProofSource::GuardValue ? "proof guard " : "proof allocation ");
+                dumpID(out, proof.value);
+                break;
+            }
         }
         for (const PlannedSlowPath& slowPath : slowPaths) {
             if (slowPath.stretch != stretch)

@@ -14,21 +14,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
-    v2 = NewClosure function=f1
-    v3 = NewClosure function=f2
-    v4 = NewClosure function=f3
-    v5 = NewClosure function=f4
-    v6 = NewClosure function=f5
-    v7 = NewClosure function=f6
-    v8 = NewClosure function=f7
-    v9 = NewClosure function=f8
-    v10 = NewClosure function=f9
-    v11 = NewClosure function=f10
-    v12 = NewClosure function=f11
-    v13 = NewClosure function=f12
-    v14 = NewClosure function=f13
-    v15 = NewClosure function=f14
-    v16 = NewClosure function=f15
+# REPEAT: i = 1..15
+    v%(i+1) = NewClosure function=f%(i)
+# END REPEAT
     v17 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16
     Return
 }

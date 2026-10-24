@@ -24,37 +24,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 
 function f1 name="alsoCalledByName" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
-    v1 = Mul v0, v0
-    v2 = Mul v1, v0
-    v3 = Mul v2, v0
-    v4 = Mul v3, v0
-    v5 = Mul v4, v0
-    v6 = Mul v5, v0
-    v7 = Mul v6, v0
-    v8 = Mul v7, v0
-    v9 = Mul v8, v0
-    v10 = Mul v9, v0
-    v11 = Mul v10, v0
-    v12 = Mul v11, v0
-    v13 = Mul v12, v0
+# REPEAT: i = 0..12
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
     Return v13
 }
 
 function f2 name="enteredThroughClosuresAlone" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
-    v1 = Mul v0, v0
-    v2 = Mul v1, v0
-    v3 = Mul v2, v0
-    v4 = Mul v3, v0
-    v5 = Mul v4, v0
-    v6 = Mul v5, v0
-    v7 = Mul v6, v0
-    v8 = Mul v7, v0
-    v9 = Mul v8, v0
-    v10 = Mul v9, v0
-    v11 = Mul v10, v0
-    v12 = Mul v11, v0
-    v13 = Mul v12, v0
+# REPEAT: i = 0..12
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
     Return v13
 }
 # CHECK-LABEL: name="alsoCalledByName" module=m0 role=GenericEntrypoint

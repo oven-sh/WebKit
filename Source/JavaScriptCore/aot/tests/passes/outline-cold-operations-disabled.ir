@@ -11,30 +11,12 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="scopeLookups" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
-  b1() frequency=Rare:
-    v2 = Builtin builtin=GlobalThis
-    v3 = PropGet v2 key="settings" [isFreeName]
-    Return v3
-  b2() frequency=Rare:
-    v4 = Builtin builtin=GlobalThis
-    v5 = PropGet v4 key="settings" [isFreeName]
-    Return v5
-  b3() frequency=Rare:
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="settings" [isFreeName]
-    Return v7
-  b4() frequency=Rare:
-    v8 = Builtin builtin=GlobalThis
-    v9 = PropGet v8 key="settings" [isFreeName]
-    Return v9
-  b5() frequency=Rare:
-    v10 = Builtin builtin=GlobalThis
-    v11 = PropGet v10 key="settings" [isFreeName]
-    Return v11
-  b6() frequency=Rare:
-    v12 = Builtin builtin=GlobalThis
-    v13 = PropGet v12 key="settings" [isFreeName]
-    Return v13
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2) = Builtin builtin=GlobalThis
+    v%(i*2+1) = PropGet v%(i*2) key="settings" [isFreeName]
+    Return v%(i*2+1)
+# END REPEAT
   b7():
     Return v1
 }

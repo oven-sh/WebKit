@@ -382,13 +382,13 @@ BitVector MakerCopier::run()
     const Program::BodiesAsRead* bodies = m_program.bodiesAsRead();
     if (!bodies) {
         const BuiltinTable& builtins = m_program.builtins();
-        for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
+        found = collectInParallel<FunctionID>(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index, Vector<FunctionID>& functions) {
             bool namesObjectCreate = std::ranges::any_of(m_program.functions[index].values, [&](const Value& value) {
                 return value.opcode == Opcode::Builtin && builtins.canonicalID(value.builtin()) == Builtins::ObjectCreate;
             });
             if (namesObjectCreate)
-                found.append(FunctionID(index));
-        }
+                functions.append(FunctionID(index));
+        });
     }
     std::span<const FunctionID> functionsThatNameObjectCreate = bodies ? bodies->functionsThatNameObjectCreate.span() : found.span();
     if (functionsThatNameObjectCreate.empty())

@@ -21,13 +21,11 @@ inline bool isLockedLocation(const BuiltinTable& builtins, BuiltinID member)
     return builtins.at(member).mutability == BuiltinMutability::AlwaysLocked || builtins.isLocationOfLockedObject(member);
 }
 
-// A member that is constant unless written and that start-up finds by its path from the global object.
 inline bool canLockAtStartUp(const BuiltinTable& builtins, BuiltinID member)
 {
     const Builtin& entry = builtins.at(member);
     if (!entry.holder || !entry.name || entry.mutability != BuiltinMutability::ConstantUnlessWritten || isLockedLocation(builtins, member))
         return false;
-    // A realm has no object of a built-in that exists once per module, and start-up finds a holder by its path from the global object.
     return entry.scope == BuiltinScope::Realm && builtins.isUnder(member, Builtins::GlobalThis);
 }
 
@@ -48,14 +46,12 @@ inline Vector<BuiltinID> constantBuiltinMembersToLock(const Program& program, co
     return members;
 }
 
-// The property that holds the built-in when the realm is created may hold something else later.
 inline bool mayBeReplaced(const Program& program, const FlowResults& flow, BuiltinID builtin)
 {
     const BuiltinTable& builtins = program.builtins();
     const Builtin& entry = builtins.at(builtin);
     if (!entry.holder || !entry.name || isLockedLocation(builtins, builtin))
         return false;
-    // No object stands for the holder of a compiler helper, so no store reaches the helper.
     if (entry.flags.contains(BuiltinFlag::IsCompilerHelper))
         return false;
     return flow.builtinLocation(builtin) != BuiltinLocationState::Constant;

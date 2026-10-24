@@ -27,7 +27,6 @@ static FlowResults analyzeAndApply(TestCommandContext& context, const ListenerFo
     return results;
 }
 
-// valueflow-results: the tables that the stage AnalyzeFlow hands on, then the sets that name an object outside the type of the place where it arrives.
 void runValueFlowResultsTestCommand(TestCommandContext& context)
 {
     for (const String& word : context.arguments) {
@@ -51,7 +50,6 @@ void runValueFlowResultsTestCommand(TestCommandContext& context)
         context.out.println("outside-type "_s, line);
 }
 
-// valueflow-apply: the program with the tables applied, validated and verified.
 void runValueFlowApplyTestCommand(TestCommandContext& context)
 {
     for (const String& word : context.arguments) {

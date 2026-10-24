@@ -39,24 +39,11 @@ static constexpr bool canBeEnvironment(OperandKind kind)
     return kind == OperandKind::Layout || kind == OperandKind::Declared || kind == OperandKind::Environment || kind == OperandKind::EvalOperand || kind == OperandKind::Convertible;
 }
 
-static bool hasCodeAfter(const Block& block, ValueID id)
-{
-    return block.values.last() != id || block.terminator.kind != TerminatorKind::Unreachable;
-}
-
 static bool canUseMultipleResults(const Function& function, const Use& use)
 {
-    switch (use.kind) {
-    case Use::Kind::Operand:
+    if (use.kind == Use::Kind::Operand)
         return function.at(use.user).operandKind(use.operandIndex) == OperandKind::Results;
-    case Use::Kind::TerminatorOperand:
-        return function.at(use.block).terminator.kind == TerminatorKind::Return;
-    case Use::Kind::EdgeArgument:
-    case Use::Kind::HandlerArgument:
-    case Use::Kind::BlockSubject:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.kind == TerminatorKind::Return;
 }
 
 static bool isOnlyReturned(std::span<const Use> uses)
@@ -64,12 +51,6 @@ static bool isOnlyReturned(std::span<const Use> uses)
     return !uses.empty() && std::ranges::all_of(uses, [](const Use& use) {
         return use.kind == Use::Kind::TerminatorOperand;
     });
-}
-
-static bool hasValidTypeIDs(const FunctionVerifier& verifier, const Value& value)
-{
-    TypeID expected = value.expected();
-    return verifier.isValid(value.type) && (!expected || verifier.isValid(expected));
 }
 
 // An expected type is set where it says more than the type does.
@@ -88,12 +69,12 @@ static ValueID findValueWithInvalidTypeID(const FunctionVerifier& verifier, cons
     const Function& function = verifier.function();
     ValueID found;
     auto visit = [&](ValueID id) {
-        if (!found && !hasValidTypeIDs(verifier, function.at(id)))
+        TypeID expected = function.at(id).expected();
+        if (!found && (!verifier.isValid(function.at(id).type) || (expected && !verifier.isValid(expected))))
             found = id;
     };
 
-    for (ValueID parameter : block.parameters)
-        visit(parameter);
+    std::ranges::for_each(block.parameters, visit);
     for (ValueID id : block.values) {
         visit(id);
         function.at(id).forEachChild(visit);
@@ -152,21 +133,19 @@ void FunctionVerifier::verifyTypes()
             if (!hasFailed())
                 verifyRepresentations(blockID, parameter, value);
         }
-        if (hasFailed())
-            return;
-
         for (ValueID id : block.values) {
             const Value& value = m_function.at(id);
-            verifyOwnType(blockID, id, value);
+            if (!hasFailed())
+                verifyOwnType(blockID, id, value);
             if (!hasFailed())
                 verifyOperands(blockID, id, value);
             if (!hasFailed())
                 verifyRequiredTypes(blockID, id, value);
             if (!hasFailed())
                 verifyRepresentations(blockID, id, value);
-            if (hasFailed())
-                return;
         }
+        if (hasFailed())
+            return;
 
         verifyOperands(blockID, block.terminator);
         // A join takes in what the code behind a never value hands on, so until that code is cut the returned value may be typed wider than the result.
@@ -186,12 +165,7 @@ void FunctionVerifier::verifyOwnType(BlockID block, ValueID id, const Value& val
     computed.canonicalize();
     // A pass is verified before what its arena has interned is merged, and another arena gives the same list of layouts another id.
     bool isAsStored = computed == stored || computed == typing().types.adopt(stored);
-    if (!isAsStored && (!isOptimizing() || !computed.isSubsetOf(stored, m_program))) {
-        fail(InternalErrorKind::TypeOutOfDate, block, id);
-        return;
-    }
-
-    if (!hasExpectedTypeInsideType(m_program, value)) {
+    if ((!isAsStored && (!isOptimizing() || !computed.isSubsetOf(stored, m_program))) || !hasExpectedTypeInsideType(m_program, value)) {
         fail(InternalErrorKind::TypeOutOfDate, block, id);
         return;
     }
@@ -240,12 +214,9 @@ void FunctionVerifier::verifyParameterTypes(BlockID block, const Block& contents
 
 void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& value)
 {
-    if (std::optional<uint32_t> expectedNumber = expectedNumberOfVariadicOperands(m_program, value)) {
-        uint32_t number = value.numberOfVariadicOperands();
-        if (number != *expectedNumber) {
-            fail(InternalErrorKind::ArgumentCountMismatch, block, id, number);
-            return;
-        }
+    if (std::optional<uint32_t> expectedNumber = expectedNumberOfVariadicOperands(m_program, value); expectedNumber && value.numberOfVariadicOperands() != *expectedNumber) {
+        fail(InternalErrorKind::ArgumentCountMismatch, block, id, value.numberOfVariadicOperands());
+        return;
     }
 
     if (value.opcode == Opcode::GetEnvironmentField || value.opcode == Opcode::PutEnvironmentField) {
@@ -275,81 +246,65 @@ void FunctionVerifier::verifyOperands(BlockID block, const Terminator& terminato
 void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, ValueID operand, OperandKind kind, LayoutID layoutPayload)
 {
     const Type& type = typeOf(operand);
-    bool hasKind = false;
-    switch (kind) {
-    case OperandKind::Any:
-        hasKind = type.isJavaScriptValue();
-        break;
-    case OperandKind::Boolean:
-        hasKind = type.hasOnlyPrimitives(Primitive::Boolean);
-        break;
-    case OperandKind::Integer:
-        hasKind = type.hasOnlyPrimitives(Primitive::Integer);
-        break;
-    case OperandKind::Number:
-        hasKind = type.hasOnlyPrimitives(Primitive::Number);
-        break;
-    case OperandKind::String:
-        hasKind = type.hasOnlyPrimitives(Primitive::AnyString) || type.isOpaque(OpaqueKind::FlatString);
-        break;
-    case OperandKind::PropertyKey:
-        hasKind = type.hasOnlyPrimitives(propertyKeyPrimitives);
-        break;
-    case OperandKind::Object:
-        hasKind = hasOnlyObjects(type);
-        break;
-    case OperandKind::Callable:
-        hasKind = type.isSubsetOf(m_program.at(TypeTable::function), m_program);
-        break;
-    case OperandKind::Array:
-        hasKind = type.isSubsetOf(Type::builtinClass(BuiltinClasses::Array), m_program);
-        break;
-    case OperandKind::Layout: {
-        bool isEnvironmentLayout = layoutPayload && m_program.at(layoutPayload).isEnvironment();
-        hasKind = isEnvironmentLayout ? isEnvironment(type) && type.environment == layoutPayload : hasOnlyObjects(type);
-        break;
-    }
-    case OperandKind::Declared:
-        return;
-    case OperandKind::Environment:
-        hasKind = isEnvironment(type);
-        break;
-    case OperandKind::EvalOperand:
-        hasKind = type.isJavaScriptValue() || isEnvironment(type) || type.isOpaque(OpaqueKind::ClassToken);
-        break;
-    case OperandKind::Convertible:
-        hasKind = type.isJavaScriptValue() || isEnvironment(type) || (type.opaque && holdsCells(representationOf(*type.opaque)));
-        break;
-    case OperandKind::Results: {
-        std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_program, m_function, m_function.at(operand));
-        if (numberOfResults && user && m_function.at(user).opcode == Opcode::ResultAt) {
-            uint32_t resultIndex = m_function.at(user).index();
-            if (resultIndex >= *numberOfResults) {
-                fail(InternalErrorKind::ResultIndexOutOfRange, block, user, resultIndex);
-                return;
-            }
+    auto hasKind = [&] {
+        switch (kind) {
+        case OperandKind::Any:
+            return type.isJavaScriptValue();
+        case OperandKind::Boolean:
+            return type.hasOnlyPrimitives(Primitive::Boolean);
+        case OperandKind::Integer:
+            return type.hasOnlyPrimitives(Primitive::Integer);
+        case OperandKind::Number:
+            return type.hasOnlyPrimitives(Primitive::Number);
+        case OperandKind::String:
+            return type.hasOnlyPrimitives(Primitive::AnyString) || type.isOpaque(OpaqueKind::FlatString);
+        case OperandKind::PropertyKey:
+            return type.hasOnlyPrimitives(propertyKeyPrimitives);
+        case OperandKind::Object:
+            return hasOnlyObjects(type);
+        case OperandKind::Callable:
+            return type.isSubsetOf(m_program.at(TypeTable::function), m_program);
+        case OperandKind::Array:
+            return type.isSubsetOf(Type::builtinClass(BuiltinClasses::Array), m_program);
+        case OperandKind::Layout:
+            if (layoutPayload && m_program.at(layoutPayload).isEnvironment())
+                return isEnvironment(type) && type.environment == layoutPayload;
+            return hasOnlyObjects(type);
+        case OperandKind::Declared:
+            return true;
+        case OperandKind::Environment:
+            return isEnvironment(type);
+        case OperandKind::EvalOperand:
+            return type.isJavaScriptValue() || isEnvironment(type) || type.isOpaque(OpaqueKind::ClassToken);
+        case OperandKind::Convertible:
+            return type.isJavaScriptValue() || isEnvironment(type) || (type.opaque && holdsCells(representationOf(*type.opaque)));
+        case OperandKind::Results:
+            return numberOfResultsOf(m_program, m_function, m_function.at(operand)).has_value();
+        case OperandKind::Guard:
+            return type.isOpaque(OpaqueKind::Guard) || !proofsOfAllocation(m_program, m_function, m_function.at(operand)).isEmpty();
+        case OperandKind::IteratorState:
+        case OperandKind::Enumerator:
+        case OperandKind::Exception:
+        case OperandKind::ClassToken:
+        case OperandKind::StringBuilder:
+        case OperandKind::Cursor:
+        case OperandKind::KeyOrder:
+        case OperandKind::FlatString:
+        case OperandKind::CodeAddress:
+        case OperandKind::SourcePlan:
+        case OperandKind::BuilderCursor:
+            return type.isOpaque(*opaqueKindOf(kind));
         }
-        hasKind = numberOfResults.has_value();
-        break;
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    if (kind == OperandKind::Results && user && m_function.at(user).opcode == Opcode::ResultAt) {
+        std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_program, m_function, m_function.at(operand));
+        if (numberOfResults && m_function.at(user).index() >= *numberOfResults) {
+            fail(InternalErrorKind::ResultIndexOutOfRange, block, user, m_function.at(user).index());
+            return;
+        }
     }
-    case OperandKind::Guard:
-        hasKind = type.isOpaque(OpaqueKind::Guard) || !proofsOfAllocation(m_program, m_function, m_function.at(operand)).isEmpty();
-        break;
-    case OperandKind::IteratorState:
-    case OperandKind::Enumerator:
-    case OperandKind::Exception:
-    case OperandKind::ClassToken:
-    case OperandKind::StringBuilder:
-    case OperandKind::Cursor:
-    case OperandKind::KeyOrder:
-    case OperandKind::FlatString:
-    case OperandKind::CodeAddress:
-    case OperandKind::SourcePlan:
-    case OperandKind::BuilderCursor:
-        hasKind = type.isOpaque(*opaqueKindOf(kind));
-        break;
-    }
-    if (hasKind)
+    if (hasKind())
         return;
 
     bool isMisplacedEnvironment = type.environment && !canBeEnvironment(kind);
@@ -393,25 +348,17 @@ void FunctionVerifier::verifyEntryParameters()
 void FunctionVerifier::verifyReturn(BlockID block, const Terminator& terminator)
 {
     ValueID returned = terminator.valueOperand();
-    std::optional<uint32_t> numberOfReturnedResults;
-    if (returned)
-        numberOfReturnedResults = numberOfResultsOf(m_program, m_function, m_function.at(returned));
+    std::optional<uint32_t> numberOfReturnedResults = returned ? numberOfResultsOf(m_program, m_function, m_function.at(returned)) : std::nullopt;
 
     // The type of an expected result bounds nothing that is returned.
     TypingContext context = typing();
     bool returnsInnerValue = m_function.isUnsplitCoroutine();
     if (!returnsInnerValue && m_function.results.size() != 1) {
-        if (numberOfReturnedResults != m_function.results.size()) {
+        bool isInsideResults = numberOfReturnedResults == m_function.results.size();
+        for (uint32_t resultIndex = 0; isInsideResults && resultIndex < *numberOfReturnedResults; ++resultIndex)
+            isInsideResults = computeResultType(context, m_function.at(returned), resultIndex).isSubsetOf(context.typeOf(m_function.results[resultIndex]), m_program);
+        if (!isInsideResults)
             fail(InternalErrorKind::ReturnTypeMismatch, block);
-            return;
-        }
-        for (uint32_t resultIndex = 0; resultIndex < *numberOfReturnedResults; ++resultIndex) {
-            Type result = computeResultType(context, m_function.at(returned), resultIndex);
-            if (!result.isSubsetOf(context.typeOf(m_function.results[resultIndex]), m_program)) {
-                fail(InternalErrorKind::ReturnTypeMismatch, block);
-                return;
-            }
-        }
         return;
     }
 
@@ -426,26 +373,17 @@ void FunctionVerifier::verifyReturn(BlockID block, const Terminator& terminator)
     }
 
     const Type& declared = context.typeOf(m_function.result());
-    if (returned) {
+    if (returned)
         need(InternalErrorKind::ReturnTypeMismatch, block, { }, returned, declared);
-        return;
-    }
-    if (!m_program.at(TypeTable::undefined).isSubsetOf(declared, m_program))
+    else if (!m_program.at(TypeTable::undefined).isSubsetOf(declared, m_program))
         fail(InternalErrorKind::ReturnTypeMismatch, block);
 }
 
 void FunctionVerifier::verifyRepresentations(BlockID block, ValueID id, const Value& value)
 {
-    if (!m_function.representationsAreChosen) {
-        if (value.representation != Representation::Unchosen)
-            fail(InternalErrorKind::WrongRepresentation, block, id);
-        return;
-    }
-
-    if (!isLegalRepresentation(typeOf(id), value.representation)) {
+    bool isLegal = m_function.representationsAreChosen ? isLegalRepresentation(typeOf(id), value.representation) : value.representation == Representation::Unchosen;
+    if (!isLegal)
         fail(InternalErrorKind::WrongRepresentation, block, id);
-        return;
-    }
 }
 
 void FunctionVerifier::verifyCodeAfterNever(BlockID block, const Block& contents)
@@ -454,7 +392,7 @@ void FunctionVerifier::verifyCodeAfterNever(BlockID block, const Block& contents
         const Value& value = m_function.at(id);
         if (value.type != TypeTable::never || resultRuleOf(value.opcode) == ResultRule::None)
             continue;
-        if (hasCodeAfter(contents, id))
+        if (contents.values.last() != id || contents.terminator.kind != TerminatorKind::Unreachable)
             fail(InternalErrorKind::ValueAfterNever, block, id);
         return;
     }

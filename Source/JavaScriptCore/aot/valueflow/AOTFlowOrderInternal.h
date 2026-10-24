@@ -69,13 +69,11 @@ struct FlowScopeCall {
     FunctionID caller;
     FunctionID callee;
     ValueID site;
-    // The variable that the callee of the operation comes from, through reads of properties. See variableBehindSubjectOf().
     VariableID subject;
 
     friend auto operator<=>(const FlowScopeCall&, const FlowScopeCall&) = default;
 };
 
-// A call or a property access throws on a callee or a receiver that is undefined or absent.
 VariableID variableBehindSubjectOf(const Function&, ValueID operation);
 
 struct FlowScopeCalls {
@@ -83,7 +81,6 @@ struct FlowScopeCalls {
     Vector<FlowCallSite> soleCallSites;
     Vector<FlowScopeCall> byCaller;
     Vector<FlowScopeCall> byCallee;
-    // Where the calls of each function begin in the two lists. One entry more than there are functions.
     Vector<uint32_t> firstByCaller;
     Vector<uint32_t> firstByCallee;
     BitVector functionsEnteredByHost;
@@ -111,9 +108,7 @@ struct FlowScopeOwner {
 struct FlowScopeIndex {
     const FlowOrderInputs& inputs;
     const FlowModuleOrder& moduleOrder;
-    // The reached functions with a body.
     BitVector bodies;
-    // What each body mentions, in the order of its blocks. One entry more in the second list than there are functions.
     Vector<FlowFunctionMention> mentions;
     Vector<uint32_t> firstMention;
     FlowScopeLocationNumbering numbering;
@@ -125,10 +120,8 @@ struct FlowScopeIndex {
     Vector<FlowModuleValueRead> moduleValueReads;
     BitVector opaqueLocations;
     BitVector syntheticVariables;
-    // No mention in the body of an owner says when such a function is first entered: the host, or a call that a pass creates later, enters it or a function that leads to it by mentions.
     BitVector functionsEnteredWithoutMention;
     BitVector modulesOfFunctionsEnteredWithoutMention;
-    // The host reads the value of such a module at a time nobody knows.
     BitVector modulesReadByHost;
     Vector<FunctionID> locationOwners;
     Vector<FunctionID> environmentOwners;
@@ -162,7 +155,6 @@ constexpr FlowScopeEntry scopeEntryAfter(FunctionID function, ProgramPoint point
 FlowScopeIndex createScopeIndex(const FlowOrderInputs&, const FlowModuleOrder&);
 void computeSyntheticExportOrders(const FlowScopeIndex&, std::span<FlowLocationOrder>);
 
-// The body of the owner, or of a function whose one mention in reached code is a direct call in a frame. Such a function runs only while that call runs.
 struct FlowScopeFrame {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FlowScopeFrame);
 
@@ -200,7 +192,6 @@ private:
         FlowScopeEntry store;
     };
 
-    // Whoever reads a location may take out each function that is stored there, and whoever reads the value of a module each function in a variable that the module exports.
     struct StoredFunctionReader {
         FunctionID reader;
         uint32_t first;

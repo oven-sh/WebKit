@@ -42,21 +42,16 @@ namespace {
 
 using Objects = Vector<ValueFlowObjectID, 32>;
 
-// The holders of one name of the table, as a program spells the name and as the engine's own code does.
 struct HoldersOfName {
     Vector<ValueFlowObjectID> holders;
     Vector<ValueFlowObjectID> holdersUnderPrivateName;
     Vector<BuiltinID> entriesOfHolders;
-    // Of the holders on which a name may be closed, those that have the name among their members, their closed keys or their open names.
     Vector<BuiltinID> entriesWithClosedKeysThatListName;
-    // The holders whose member under the name lets in unseen code, however the name is spelled.
     Vector<ValueFlowObjectID> holdersOfEvaluators;
-    // The prototype objects of the classes whose new instances get the name.
     Vector<ValueFlowObjectID> prototypesOfInstancesWithName;
     ValueSetID instancesThatKeepProperty { ValueSets::nothing };
 };
 
-// The objects of one layout that declares a field under the key.
 struct ObjectsDeclaringField {
     PropertyKeyID key;
     ValueSetID objects;
@@ -67,7 +62,6 @@ struct ObjectCreatedWithKey {
     ValueFlowObjectID object;
 };
 
-// What the allocations of one stretch of the universe create.
 struct ObjectsCreatedWithFields {
     Vector<ObjectCreatedWithKey> underKeys;
     Vector<ValueFlowObjectID> objects;
@@ -76,7 +70,6 @@ struct ObjectsCreatedWithFields {
 
 } // anonymous namespace
 
-// Turns the number of entries of each key into where the entries of the key start in one list of all of them. Whoever fills the list moves each start on, so that it ends as the end.
 static uint32_t layOutByKey(Vector<uint32_t>& numberOfEntriesOfKey)
 {
     uint32_t numberOfEntries = 0;
@@ -100,13 +93,11 @@ static ValueSetID kindsOf(ValueSetMaker& maker, uint16_t primitives)
     return maker.of(members.span());
 }
 
-// The language lets nobody delete these own properties of instances or make accessors of them. The name and the length of a function can be deleted, and not every error has a message or a cause.
 static bool isKeptByInstancesForLife(BuiltinID member)
 {
     return member == Builtins::ArrayPrototypeLength || member == Builtins::StringPrototypeLength || member == Builtins::RegExpPrototypeLastIndex;
 }
 
-// By the entry that they inherit from, and then in the order of the table.
 struct EntryBelow {
     BuiltinID parent;
     BuiltinID entry;
@@ -139,7 +130,6 @@ static ValueSetID entriesRightBelow(const BuiltinTable& builtins, const ValueFlo
 void ValueFlowHeapTables::collectNamesReadByNativeCode(const Program& program, const ValueFlowUniverse& universe, ValueSetMaker& maker)
 {
     const BuiltinTable& builtins = program.builtins();
-    // What one entry only inspects another may keep.
     auto appendNamesOf = [&](const BuiltinNamesReadByNativeCode& record, ValueFlowNamesReadByNativeCode& listed) {
         for (BuiltinName name : record.names) {
             bool isOnlyInspected = std::ranges::binary_search(record.namesOnlyInspected, name);
@@ -258,7 +248,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
         for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
             const RuntimeModuleData& module = builtins.at(RuntimeModuleID(index));
-            // `process` and `Bun` are also members of the global object: code comes to them without a load.
             if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !module.flags.contains(RuntimeModuleFlag::HasSource) && !builtins.at(builtins.canonicalID(module.namespaceObject)).holder)
                 objectsOfNativeModules.append(universe.objectOf(module.namespaceObject));
         }
@@ -277,7 +266,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             if (!builtinClass.prototype)
                 continue;
             ValueFlowObjectID prototype = universe.objectOf(builtinClass.prototype);
-            // No program gets hold of an AsyncFromSyncIterator or of its prototype object: the engine makes one where `for await` goes over an iterator that is not asynchronous, and steps it by itself.
             bool reachesPrograms = builtinClass.id != BuiltinClasses::AsyncFromSyncIterator;
             if (builtinClass.instancesAreEntries) {
                 m_classesOfEntries.append({ prototype, entriesRightBelow(builtins, universe, maker, entriesBelowEntries.span(), builtinClass.prototype) });
@@ -331,7 +319,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects holdersWithLockedIndexes;
         Objects holdersWithLockedPrototypeLink;
         Objects holdersClosedToOtherNames;
-        // The holders on which a name that is none of their members may be closed.
         Vector<BuiltinID> entriesWithClosedKeys;
         Objects functionsOfEngine;
         Objects prototypesOfInstancesWithNames;
@@ -354,7 +341,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
 
             Objects objects;
             universe.appendObjectsOf(holder, objects);
-            // Whatever the table does not list of the object of a compiled module lies on what the body of the module makes.
             if (entry.flags.contains(BuiltinFlag::ListsAllMembers) || m_compiledModuleOfHolder[index])
                 holdersThatListAllMembers.appendVector(objects);
             if (entry.flags.contains(BuiltinFlag::IsLockedObject))
@@ -370,7 +356,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             if (builtins.isFunctionOfEngine(holder))
                 functionsOfEngine.appendVector(objects);
             if (entry.kind == BuiltinKind::Prototype && entry.instanceClass) {
-                // What native code puts under a name whose type the class says lies on the object that stands for the instance: whoever allocates the instance writes it there.
                 bool listsNameWithoutType = false;
                 for (BuiltinName name : builtins.at(entry.instanceClass).namesDefinedOnNewInstances) {
                     if (builtins.typeOfNameDefinedOnNewInstances(entry.instanceClass, name))
@@ -432,7 +417,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     }
                 }
 
-                // A module's namespace binds `default` to the object. The object has no such property.
                 if (!memberEntry.name || memberEntry.flags.contains(BuiltinFlag::IsDefaultExport))
                     continue;
                 if (isMadeWithCodeOfLibrary(builtins, member))
@@ -455,7 +439,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     holders.holdersUnderPrivateName.appendVector(objects);
                 if (isEvaluator)
                     holders.holdersOfEvaluators.appendVector(objects);
-                // The host's own modules reach some of its functions under private names of the global object.
                 if (holder == Builtins::PrivateGlobals) {
                     holders.holdersUnderPrivateName.appendVector(objectsOfGlobal);
                     if (isEvaluator)
@@ -475,7 +458,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());
         m_holdersWithLockedPrototypeLink = maker.of(holdersWithLockedPrototypeLink.span());
 
-        // The first three records are those of a key that the table does not have: a symbol or a private name of the program, a private name of the engine, under which no holder lists all it has, and a text.
         constexpr uint32_t recordOfOtherKey = 0;
         constexpr uint32_t recordOfEnginePrivateName = 1;
         constexpr uint32_t recordOfText = 2;
@@ -551,7 +533,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 }
                 for (BuiltinID holder : holdersOfName.entriesWithClosedKeysThatListName)
                     listsNameOfKey.quickClear(holder.index());
-                // There are thousands of them, and four names.
                 if (!isPrivateName && builtins.isClosedOnHostFunctions(name.name))
                     locked.appendVector(functionsOfEngine);
                 Objects membersOfEngineAndLibrary;
@@ -567,9 +548,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         });
     };
     auto listObjectsCreatedWithKeys = [&] {
-        // The allocation in the constructor of a base class also makes what stands for the instances of that class and of the classes below it.
         const ValueSets& sets = maker.sets();
-        // By the class: the instances of the classes below it, found the way ValueFlowUniverse::objectAllocatedUnder() goes up from a class.
         Vector<Vector<ValueFlowObjectID>> instancesOfClassesBelow(program.layouts.size());
         sets.forEachMember(universe.instancesOfClasses(), [&](ValueFlowObjectID instance) {
             LayoutID classOfInstance = universe.layoutOf(instance);
@@ -593,7 +572,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             for (ValueFlowObjectID instance : instancesOfClassesBelow[ownClass.index()])
                 functor(instance);
         };
-        // Where a constructor has more than one such allocation, nothing is said of what an instance is created with.
         HashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberOfAllocationsOfInstance;
         sets.forEachMember(universe.objectsThatPickTheirLayout(), [&](ValueFlowObjectID object) {
             forEachInstanceAllocatedAt(object, [&](ValueFlowObjectID instance) {
@@ -601,7 +579,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             });
         });
 
-        // The objects of the sites of one function lie side by side. Each stretch fills a list of its own, and a set takes its members in any order.
         constexpr uint32_t objectsInStretch = 4096;
         Vector<ObjectsCreatedWithFields> createdInStretches((universe.numberOfObjects() + objectsInStretch - 1) / objectsInStretch);
         forEachIndexInParallel(loops, createdInStretches.size(), [&](unsigned stretch) {
@@ -717,7 +694,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         auto without = [&](ValueSetID set, ValueSetID leftOut) {
             return maker.intersect(set, ValueSets::complement(leftOut));
         };
-        // Thousands of layouts declare a field under one name: their objects are listed by the key first, so that each key takes one union.
         Vector<ObjectsDeclaringField> declaredFields;
         Vector<uint32_t> endOfObjectsDeclaringField;
         endOfObjectsDeclaringField.fill(0u, numberOfKeys);
@@ -832,7 +808,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             });
         },
         [&] {
-            // A function of the library is created without the property. One that constructs gets it from $toClass or from a store, in front of every read, and only $toClass puts such a function below another.
             for (uint32_t index = 0; index < program.functions.size(); ++index) {
                 const Function& function = program.functions[index];
                 if (hasPrototypeProperty(program, function) || (function.constructedClass && isInRuntimeModule(program, function)))

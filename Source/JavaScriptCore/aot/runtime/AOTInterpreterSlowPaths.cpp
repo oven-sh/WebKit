@@ -450,6 +450,15 @@ bool tryPutByVal(JSGlobalObject* globalObject, JSCell* base, JSValue key, JSValu
     return uid && tryPutById(globalObject, base, Identifier::fromUid(globalObject->vm(), uid), value, isStrict);
 }
 
+std::optional<bool> tryInstanceOf(JSGlobalObject* globalObject, JSValue value, JSValue constructor)
+{
+    Instance* instance = runningInstanceOf(globalObject);
+    if (!instance)
+        return std::nullopt;
+    count(*instance, RuntimeCounterID::InterpreterReadSlowPaths);
+    return instanceOfAndCache(instance, value, constructor);
+}
+
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ObjectLiteralPlans);
 
 static uintptr_t& allocatorWord(ObjectAllocationProfile& profile)

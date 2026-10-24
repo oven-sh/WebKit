@@ -26,26 +26,12 @@ variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefi
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Integer integer=7
-    v1 = NewClosure function=f1
-    v2 = NewClass v1 layout=L0
-    v3 = FinishClass v2 layout=L0
-    v4 = Construct v3, -, v0
-    v5 = NewClosure function=f3
-    v6 = NewClass v5 layout=L1
-    v7 = FinishClass v6 layout=L1
-    v8 = Construct v7, -, v0
-    v9 = NewClosure function=f5
-    v10 = NewClass v9 layout=L2
-    v11 = FinishClass v10 layout=L2
-    v12 = Construct v11, -, v0
-    v13 = NewClosure function=f7
-    v14 = NewClass v13 layout=L3
-    v15 = FinishClass v14 layout=L3
-    v16 = Construct v15, -, v0
-    v17 = NewClosure function=f9
-    v18 = NewClass v17 layout=L4
-    v19 = FinishClass v18 layout=L4
-    v20 = Construct v19, -, v0
+# REPEAT: i = 0..4
+    v%(i*4+1) = NewClosure function=f%(i*2+1)
+    v%(i*4+2) = NewClass v%(i*4+1) layout=L%(i)
+    v%(i*4+3) = FinishClass v%(i*4+2) layout=L%(i)
+    v%(i*4+4) = Construct v%(i*4+3), -, v0
+# END REPEAT
     v21 = NewClosure function=f11
     v22 = ResolveHeritage v3
     v23 = NewClass v21, v3, v22 layout=L5

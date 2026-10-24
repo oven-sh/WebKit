@@ -39,21 +39,11 @@ function f1 name="mark" parameters=[{type=L0|L1|L2|L3 flags=[IsExpected]}] resul
     PropSet v1, v2 key="marked" mode=Strict
     Return
 }
-function f2 name="isMarked0" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+# REPEAT: i = 0..2
+function f%(i+2) name="isMarked%(i)" parameters=[{type=L%(i) flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L0
+    v1 = Check v0 castType=L%(i)
     v2 = PropGet v1 key="marked"
     Return v2
 }
-function f3 name="isMarked1" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = Check v0 castType=L1
-    v2 = PropGet v1 key="marked"
-    Return v2
-}
-function f4 name="isMarked2" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = Check v0 castType=L2
-    v2 = PropGet v1 key="marked"
-    Return v2
-}
+# END REPEAT

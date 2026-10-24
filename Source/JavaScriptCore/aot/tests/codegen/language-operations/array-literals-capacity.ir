@@ -15,22 +15,10 @@ function f0 name="capacitiesForLiteralsOfInt32" parameters=[{type=i32}, {type=in
     v7 = Integer integer=5
     v8 = Integer integer=64
     v9 = Integer integer=200000
-    v10 = NewArray contents=i32 capacity=v4
-    v11 = NewArray v0, v0 contents=i32 capacity=v4
-    v12 = NewArray contents=i32 capacity=v5
-    v13 = NewArray v0, v0 contents=i32 capacity=v5
-    v14 = NewArray contents=i32 capacity=v6
-    v15 = NewArray v0, v0 contents=i32 capacity=v6
-    v16 = NewArray contents=i32 capacity=v7
-    v17 = NewArray v0, v0 contents=i32 capacity=v7
-    v18 = NewArray contents=i32 capacity=v8
-    v19 = NewArray v0, v0 contents=i32 capacity=v8
-    v20 = NewArray contents=i32 capacity=v9
-    v21 = NewArray v0, v0 contents=i32 capacity=v9
-    v22 = NewArray contents=i32 capacity=v1
-    v23 = NewArray v0, v0 contents=i32 capacity=v1
-    v24 = NewArray contents=i32 capacity=v2
-    v25 = NewArray v0, v0 contents=i32 capacity=v2
+# REPEAT: i = 0..7; a = 4 5 6 7 8 9 1 2
+    v%(i*2+10) = NewArray contents=i32 capacity=v%(a)
+    v%(i*2+11) = NewArray v0, v0 contents=i32 capacity=v%(a)
+# END REPEAT
     v26 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 capacity=v8
     Jump -> next b1()
   b1():
@@ -41,22 +29,10 @@ function f0 name="capacitiesForLiteralsOfInt32" parameters=[{type=i32}, {type=in
     v31 = Integer integer=5
     v32 = Integer integer=64
     v33 = Integer integer=200000
-    v34 = NewArray contents=i32 capacity=v28
-    v35 = NewArray v0, v0 contents=i32 capacity=v28
-    v36 = NewArray contents=i32 capacity=v29
-    v37 = NewArray v0, v0 contents=i32 capacity=v29
-    v38 = NewArray contents=i32 capacity=v30
-    v39 = NewArray v0, v0 contents=i32 capacity=v30
-    v40 = NewArray contents=i32 capacity=v31
-    v41 = NewArray v0, v0 contents=i32 capacity=v31
-    v42 = NewArray contents=i32 capacity=v32
-    v43 = NewArray v0, v0 contents=i32 capacity=v32
-    v44 = NewArray contents=i32 capacity=v33
-    v45 = NewArray v0, v0 contents=i32 capacity=v33
-    v46 = NewArray contents=i32 capacity=v1
-    v47 = NewArray v0, v0 contents=i32 capacity=v1
-    v48 = NewArray contents=i32 capacity=v2
-    v49 = NewArray v0, v0 contents=i32 capacity=v2
+# REPEAT: i = 0..7; a = 28 29 30 31 32 33 1 2
+    v%(i*2+34) = NewArray contents=i32 capacity=v%(a)
+    v%(i*2+35) = NewArray v0, v0 contents=i32 capacity=v%(a)
+# END REPEAT
     v50 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 capacity=v32
     Branch v3 -> taken b1(), notTaken b2()
   b2():
@@ -68,22 +44,10 @@ function f0 name="capacitiesForLiteralsOfInt32" parameters=[{type=i32}, {type=in
     v54 = Integer integer=5
     v55 = Integer integer=64
     v56 = Integer integer=200000
-    v57 = NewArray contents=i32 capacity=v51
-    v58 = NewArray v0, v0 contents=i32 capacity=v51
-    v59 = NewArray contents=i32 capacity=v52
-    v60 = NewArray v0, v0 contents=i32 capacity=v52
-    v61 = NewArray contents=i32 capacity=v53
-    v62 = NewArray v0, v0 contents=i32 capacity=v53
-    v63 = NewArray contents=i32 capacity=v54
-    v64 = NewArray v0, v0 contents=i32 capacity=v54
-    v65 = NewArray contents=i32 capacity=v55
-    v66 = NewArray v0, v0 contents=i32 capacity=v55
-    v67 = NewArray contents=i32 capacity=v56
-    v68 = NewArray v0, v0 contents=i32 capacity=v56
-    v69 = NewArray contents=i32 capacity=v1
-    v70 = NewArray v0, v0 contents=i32 capacity=v1
-    v71 = NewArray contents=i32 capacity=v2
-    v72 = NewArray v0, v0 contents=i32 capacity=v2
+# REPEAT: i = 0..7; a = 51 52 53 54 55 56 1 2
+    v%(i*2+57) = NewArray contents=i32 capacity=v%(a)
+    v%(i*2+58) = NewArray v0, v0 contents=i32 capacity=v%(a)
+# END REPEAT
     v73 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 capacity=v55
     Jump -> next b4()
   b4():
@@ -100,22 +64,10 @@ function f1 name="capacitiesForLiteralsOfNumbers" parameters=[{type=number}, {ty
     v7 = Integer integer=5
     v8 = Integer integer=64
     v9 = Integer integer=200000
-    v10 = NewArray contents=number capacity=v4
-    v11 = NewArray v0, v0 contents=number capacity=v4
-    v12 = NewArray contents=number capacity=v5
-    v13 = NewArray v0, v0 contents=number capacity=v5
-    v14 = NewArray contents=number capacity=v6
-    v15 = NewArray v0, v0 contents=number capacity=v6
-    v16 = NewArray contents=number capacity=v7
-    v17 = NewArray v0, v0 contents=number capacity=v7
-    v18 = NewArray contents=number capacity=v8
-    v19 = NewArray v0, v0 contents=number capacity=v8
-    v20 = NewArray contents=number capacity=v9
-    v21 = NewArray v0, v0 contents=number capacity=v9
-    v22 = NewArray contents=number capacity=v1
-    v23 = NewArray v0, v0 contents=number capacity=v1
-    v24 = NewArray contents=number capacity=v2
-    v25 = NewArray v0, v0 contents=number capacity=v2
+# REPEAT: i = 0..7; a = 4 5 6 7 8 9 1 2
+    v%(i*2+10) = NewArray contents=number capacity=v%(a)
+    v%(i*2+11) = NewArray v0, v0 contents=number capacity=v%(a)
+# END REPEAT
     v26 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number capacity=v8
     Jump -> next b1()
   b1():
@@ -126,22 +78,10 @@ function f1 name="capacitiesForLiteralsOfNumbers" parameters=[{type=number}, {ty
     v31 = Integer integer=5
     v32 = Integer integer=64
     v33 = Integer integer=200000
-    v34 = NewArray contents=number capacity=v28
-    v35 = NewArray v0, v0 contents=number capacity=v28
-    v36 = NewArray contents=number capacity=v29
-    v37 = NewArray v0, v0 contents=number capacity=v29
-    v38 = NewArray contents=number capacity=v30
-    v39 = NewArray v0, v0 contents=number capacity=v30
-    v40 = NewArray contents=number capacity=v31
-    v41 = NewArray v0, v0 contents=number capacity=v31
-    v42 = NewArray contents=number capacity=v32
-    v43 = NewArray v0, v0 contents=number capacity=v32
-    v44 = NewArray contents=number capacity=v33
-    v45 = NewArray v0, v0 contents=number capacity=v33
-    v46 = NewArray contents=number capacity=v1
-    v47 = NewArray v0, v0 contents=number capacity=v1
-    v48 = NewArray contents=number capacity=v2
-    v49 = NewArray v0, v0 contents=number capacity=v2
+# REPEAT: i = 0..7; a = 28 29 30 31 32 33 1 2
+    v%(i*2+34) = NewArray contents=number capacity=v%(a)
+    v%(i*2+35) = NewArray v0, v0 contents=number capacity=v%(a)
+# END REPEAT
     v50 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number capacity=v32
     Branch v3 -> taken b1(), notTaken b2()
   b2():
@@ -153,22 +93,10 @@ function f1 name="capacitiesForLiteralsOfNumbers" parameters=[{type=number}, {ty
     v54 = Integer integer=5
     v55 = Integer integer=64
     v56 = Integer integer=200000
-    v57 = NewArray contents=number capacity=v51
-    v58 = NewArray v0, v0 contents=number capacity=v51
-    v59 = NewArray contents=number capacity=v52
-    v60 = NewArray v0, v0 contents=number capacity=v52
-    v61 = NewArray contents=number capacity=v53
-    v62 = NewArray v0, v0 contents=number capacity=v53
-    v63 = NewArray contents=number capacity=v54
-    v64 = NewArray v0, v0 contents=number capacity=v54
-    v65 = NewArray contents=number capacity=v55
-    v66 = NewArray v0, v0 contents=number capacity=v55
-    v67 = NewArray contents=number capacity=v56
-    v68 = NewArray v0, v0 contents=number capacity=v56
-    v69 = NewArray contents=number capacity=v1
-    v70 = NewArray v0, v0 contents=number capacity=v1
-    v71 = NewArray contents=number capacity=v2
-    v72 = NewArray v0, v0 contents=number capacity=v2
+# REPEAT: i = 0..7; a = 51 52 53 54 55 56 1 2
+    v%(i*2+57) = NewArray contents=number capacity=v%(a)
+    v%(i*2+58) = NewArray v0, v0 contents=number capacity=v%(a)
+# END REPEAT
     v73 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number capacity=v55
     Jump -> next b4()
   b4():
@@ -185,22 +113,10 @@ function f2 name="capacitiesForLiteralsOfAnything" parameters=[{type=anything}, 
     v7 = Integer integer=5
     v8 = Integer integer=64
     v9 = Integer integer=200000
-    v10 = NewArray contents=anything capacity=v4
-    v11 = NewArray v0, v0 contents=anything capacity=v4
-    v12 = NewArray contents=anything capacity=v5
-    v13 = NewArray v0, v0 contents=anything capacity=v5
-    v14 = NewArray contents=anything capacity=v6
-    v15 = NewArray v0, v0 contents=anything capacity=v6
-    v16 = NewArray contents=anything capacity=v7
-    v17 = NewArray v0, v0 contents=anything capacity=v7
-    v18 = NewArray contents=anything capacity=v8
-    v19 = NewArray v0, v0 contents=anything capacity=v8
-    v20 = NewArray contents=anything capacity=v9
-    v21 = NewArray v0, v0 contents=anything capacity=v9
-    v22 = NewArray contents=anything capacity=v1
-    v23 = NewArray v0, v0 contents=anything capacity=v1
-    v24 = NewArray contents=anything capacity=v2
-    v25 = NewArray v0, v0 contents=anything capacity=v2
+# REPEAT: i = 0..7; a = 4 5 6 7 8 9 1 2
+    v%(i*2+10) = NewArray contents=anything capacity=v%(a)
+    v%(i*2+11) = NewArray v0, v0 contents=anything capacity=v%(a)
+# END REPEAT
     v26 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything capacity=v8
     Jump -> next b1()
   b1():
@@ -211,22 +127,10 @@ function f2 name="capacitiesForLiteralsOfAnything" parameters=[{type=anything}, 
     v31 = Integer integer=5
     v32 = Integer integer=64
     v33 = Integer integer=200000
-    v34 = NewArray contents=anything capacity=v28
-    v35 = NewArray v0, v0 contents=anything capacity=v28
-    v36 = NewArray contents=anything capacity=v29
-    v37 = NewArray v0, v0 contents=anything capacity=v29
-    v38 = NewArray contents=anything capacity=v30
-    v39 = NewArray v0, v0 contents=anything capacity=v30
-    v40 = NewArray contents=anything capacity=v31
-    v41 = NewArray v0, v0 contents=anything capacity=v31
-    v42 = NewArray contents=anything capacity=v32
-    v43 = NewArray v0, v0 contents=anything capacity=v32
-    v44 = NewArray contents=anything capacity=v33
-    v45 = NewArray v0, v0 contents=anything capacity=v33
-    v46 = NewArray contents=anything capacity=v1
-    v47 = NewArray v0, v0 contents=anything capacity=v1
-    v48 = NewArray contents=anything capacity=v2
-    v49 = NewArray v0, v0 contents=anything capacity=v2
+# REPEAT: i = 0..7; a = 28 29 30 31 32 33 1 2
+    v%(i*2+34) = NewArray contents=anything capacity=v%(a)
+    v%(i*2+35) = NewArray v0, v0 contents=anything capacity=v%(a)
+# END REPEAT
     v50 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything capacity=v32
     Branch v3 -> taken b1(), notTaken b2()
   b2():
@@ -238,22 +142,10 @@ function f2 name="capacitiesForLiteralsOfAnything" parameters=[{type=anything}, 
     v54 = Integer integer=5
     v55 = Integer integer=64
     v56 = Integer integer=200000
-    v57 = NewArray contents=anything capacity=v51
-    v58 = NewArray v0, v0 contents=anything capacity=v51
-    v59 = NewArray contents=anything capacity=v52
-    v60 = NewArray v0, v0 contents=anything capacity=v52
-    v61 = NewArray contents=anything capacity=v53
-    v62 = NewArray v0, v0 contents=anything capacity=v53
-    v63 = NewArray contents=anything capacity=v54
-    v64 = NewArray v0, v0 contents=anything capacity=v54
-    v65 = NewArray contents=anything capacity=v55
-    v66 = NewArray v0, v0 contents=anything capacity=v55
-    v67 = NewArray contents=anything capacity=v56
-    v68 = NewArray v0, v0 contents=anything capacity=v56
-    v69 = NewArray contents=anything capacity=v1
-    v70 = NewArray v0, v0 contents=anything capacity=v1
-    v71 = NewArray contents=anything capacity=v2
-    v72 = NewArray v0, v0 contents=anything capacity=v2
+# REPEAT: i = 0..7; a = 51 52 53 54 55 56 1 2
+    v%(i*2+57) = NewArray contents=anything capacity=v%(a)
+    v%(i*2+58) = NewArray v0, v0 contents=anything capacity=v%(a)
+# END REPEAT
     v73 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything capacity=v55
     Jump -> next b4()
   b4():

@@ -24,66 +24,59 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t updatesBeforeJoiningBound = 8;
+static constexpr uint32_t notVisited = UINT32_MAX;
+static constexpr uint32_t noComponent = UINT32_MAX - 1;
 
 static_assert(!TypeTable::never.index());
 
+static void forEachValueOf(const Block& block, NOESCAPE const Invocable<void(ValueID)> auto& functor)
+{
+    std::ranges::for_each(block.parameters, functor);
+    std::ranges::for_each(block.values, functor);
+}
+
 static void forEachListedValue(const Function& function, const CFG& cfg, NOESCAPE const Invocable<void(ValueID)> auto& functor)
 {
-    for (BlockID id : cfg.reversePostOrder()) {
-        const Block& block = function.at(id);
-        for (ValueID parameter : block.parameters)
-            functor(parameter);
-        for (ValueID value : block.values)
-            functor(value);
-    }
+    for (BlockID id : cfg.reversePostOrder())
+        forEachValueOf(function.at(id), functor);
 }
 
-static void setTypeAt(Value& value, TypeLevel level, TypeID type)
+static bool isSeldomTaken(const Function& function, Edge edge)
 {
-    switch (level) {
-    case TypeLevel::Proven:
-        value.type = type;
-        return;
-    case TypeLevel::Expected:
-        value.setExpected(type);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return function.at(edge.from).frequency != BlockFrequency::Normal;
 }
 
-static TypeID typeOfEntryParameter(const TypingContext& context, unsigned index)
+// What a path that is seldom taken brings says nothing about what a parameter usually holds.
+static bool isEveryEdgeSeldomTaken(const Function& function, std::span<const Edge> edges)
 {
-    if (index >= context.function.numberOfEntryParameters())
-        return TypeTable::anything;
-    return declaredEntryTypeOf(context, context.function, index);
-}
-
-static TypeID widenAfterGivingUp(const Program& program, TypeArena& types, TypeID grown, TypeID bound)
-{
-    const Type& type = types.at(grown);
-    if (!type.isJavaScriptValue())
-        return grown;
-    if (bound && type.isSubsetOf(types.at(bound), program))
-        return bound;
-    return types.withPrimitives(TypeTable::anything, type.primitives & Primitive::Absent);
+    return std::ranges::all_of(edges, [&](Edge edge) {
+        return isSeldomTaken(function, edge);
+    });
 }
 
 TypePropagation::TypePropagation(const TypePropagationInputs& inputs)
     : m_inputs(inputs)
     , m_cfg(inputs.analyses.cfg())
+    , m_verifies(inputs.build.options().verifiesAfterEveryPass)
 {
     RELEASE_ASSERT(!inputs.memo || !inputs.knownPositions);
+    if (!m_inputs.memo)
+        m_inputs.memo = &m_ownMemo;
     if (const ChangeLog* log = inputs.function.changeLog())
         m_logAtStart = log->end();
+}
+
+TypePropagation::~TypePropagation()
+{
+    reportRetypedValues(false);
 }
 
 void TypePropagation::willTypeValues()
 {
     if (!m_statesBeforeRestart.isEmpty())
         return;
-    size_t numberOfValues = m_inputs.function.values.size();
-    m_isRemembered.ensureSize(numberOfValues);
-    m_statesBeforeRestart.grow(numberOfValues);
+    m_isRemembered.ensureSize(m_inputs.function.values.size());
+    m_statesBeforeRestart.grow(m_inputs.function.values.size());
 }
 
 void TypePropagation::willRestartValues()
@@ -91,27 +84,32 @@ void TypePropagation::willRestartValues()
     if (m_uses)
         return;
     willTypeValues();
-    size_t numberOfValues = m_inputs.function.values.size();
     m_uses = &m_inputs.analyses.useLists();
-    m_isQueued.ensureSize(numberOfValues);
-    m_isRestarted.ensureSize(numberOfValues);
+    m_isQueued.ensureSize(m_inputs.function.values.size());
+    m_isRestarted.ensureSize(m_inputs.function.values.size());
 }
 
-void TypePropagation::reportRetypedValues()
+void TypePropagation::addTypeOutOfDate(ValueID id, ASCIILiteral detail)
 {
-    Function& function = m_inputs.function;
+    m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = detail });
+}
+
+void TypePropagation::reportRetypedValues(bool countsThem)
+{
+    RELEASE_ASSERT(!countsThem || !m_numberOfReportedValues);
     for (ValueID id : m_rememberedValues.span().subspan(m_numberOfReportedValues)) {
-        const Value& value = function.at(id);
+        const Value& value = m_inputs.function.at(id);
         const StateBeforeRestart& previous = m_statesBeforeRestart[id.index()];
-        if (value.type != previous.type || value.expected() != previous.expected)
-            function.didEdit(id, ValueEdit::Type, previous.type, previous.expected);
+        bool isRetyped = value.type != previous.type;
+        bool isExpectedToBeOther = value.expected() != previous.expected;
+        if (countsThem) {
+            m_outcome.retypedValues += isRetyped;
+            m_outcome.changedExpectedTypes += isExpectedToBeOther;
+        }
+        if (isRetyped || isExpectedToBeOther)
+            m_inputs.function.didEdit(id, ValueEdit::Type, previous.type, previous.expected);
     }
     m_numberOfReportedValues = m_rememberedValues.size();
-}
-
-TypePropagation::~TypePropagation()
-{
-    reportRetypedValues();
 }
 
 void TypePropagation::rememberState(ValueID id)
@@ -121,26 +119,6 @@ void TypePropagation::rememberState(ValueID id)
     const Value& value = m_inputs.function.at(id);
     m_statesBeforeRestart[id.index()] = { value.type, value.expected(), value.expectedOrTypeForTyping(), 0 };
     m_rememberedValues.append(id);
-}
-
-std::span<const Edge> TypePropagation::incomingEdgesOf(BlockID block) const
-{
-    return m_cfg.incomingEdges(block);
-}
-
-TypeID TypePropagation::provenTypeByRule(ValueID id)
-{
-    return computeValue(typingContext(TypeLevel::Proven), id);
-}
-
-TypeID TypePropagation::provenTypeOfParameterByRule(ValueID id, BlockID block, uint32_t index)
-{
-    return computeParameter(typingContext(TypeLevel::Proven), id, block, index);
-}
-
-bool TypePropagation::hasRetreatingEdge() const
-{
-    return m_cfg.hasCycle();
 }
 
 bool TypePropagation::isEveryValueTypedBehindItsSources() const
@@ -172,7 +150,7 @@ bool TypePropagation::isEveryValueTypedBehindItsSources() const
 void TypePropagation::typeAllValues()
 {
     m_didTypeAllValues = true;
-    if (hasRetreatingEdge() || !isEveryValueTypedBehindItsSources()) {
+    if (m_cfg.hasCycle() || !isEveryValueTypedBehindItsSources()) {
         restartAllValues();
         solveTypes();
         solveExpectedTypes();
@@ -180,26 +158,17 @@ void TypePropagation::typeAllValues()
     }
 
     willTypeValues();
-    Function& function = m_inputs.function;
-    m_sweepFlags.fill(SweepFlag::IsChangedValue, function.values.size());
-    auto startOver = [&](ValueID id) {
-        rememberState(id);
-        Value& value = function.editAndReportLater(id);
-        value.type = TypeTable::never;
-        value.setExpected({ });
-    };
-    for (const Block& block : function.blocks) {
-        std::ranges::for_each(block.parameters, startOver);
-        std::ranges::for_each(block.values, startOver);
-    }
+    m_sweepFlags.fill(SweepFlag::IsChangedValue, m_inputs.function.values.size());
+    for (const Block& block : m_inputs.function.blocks)
+        forEachValueOf(block, [&](ValueID id) { restart(id); });
     sweep(TypeLevel::Proven);
     sweep(TypeLevel::Expected);
 }
 
-void TypePropagation::typeDependentsOf(std::span<const ValueID> changedValues, ChangedValues kind)
+void TypePropagation::typeDependentsOf(std::span<const ValueID> changedValues, bool everyOtherValueIsAsTyped)
 {
-    m_everyOtherValueIsAsTyped = kind == ChangedValues::EveryOtherValueIsAsTyped;
-    if (hasRetreatingEdge()) {
+    m_everyOtherValueIsAsTyped = everyOtherValueIsAsTyped;
+    if (m_cfg.hasCycle()) {
         restartDependentsOf(changedValues);
         solveTypes();
         solveExpectedTypes();
@@ -207,7 +176,7 @@ void TypePropagation::typeDependentsOf(std::span<const ValueID> changedValues, C
     }
 
     willTypeValues();
-        m_sweepFlags.fill({ }, m_inputs.function.values.size());
+    m_sweepFlags.fill({ }, m_inputs.function.values.size());
     for (ValueID id : changedValues)
         m_sweepFlags[id.index()].add(SweepFlag::IsChangedValue);
     sweep(TypeLevel::Proven);
@@ -218,75 +187,56 @@ void TypePropagation::sweep(TypeLevel level)
 {
     const Function& function = m_inputs.function;
     TypingContext context = typingContext(level);
+    bool isProven = level == TypeLevel::Proven;
+    SweepFlag hasOtherType = isProven ? SweepFlag::HasOtherType : SweepFlag::HasOtherExpectedType;
+    SweepFlag isTyped = isProven ? SweepFlag::IsTyped : SweepFlag::IsExpectedTyped;
+    auto hasOperandTypedOtherwise = [&](const Instruction& user) {
+        bool found = false;
+        user.forEachOperand([&](ValueID operand, uint32_t) {
+            OptionSet<SweepFlag> flags = m_sweepFlags[operand.index()];
+            found |= flags.contains(hasOtherType) || (flags.contains(isTyped) && opcodesWithIndirectUsers.contains(function.at(operand).opcode));
+        });
+        return found;
+    };
+    auto hasArgumentTypedOtherwise = [&](BlockID block, uint32_t index) {
+        return std::ranges::any_of(m_cfg.incomingEdges(block), [&](Edge edge) {
+            const Target& target = targetOf(function, edge);
+            if (index < target.arguments.size())
+                return m_sweepFlags[target.arguments[index].index()].contains(hasOtherType);
+            return !edge.isHandlerEdge() && hasOperandTypedOtherwise(function.at(edge.from).terminator);
+        });
+    };
     // Nothing in front of the first changed value is typed from a changed value.
     bool hasReachedChangedValue = false;
-    auto standsInFrontOfChangedValues = [&](ValueID id) {
-        if (hasReachedChangedValue)
-            return false;
-        hasReachedChangedValue = m_sweepFlags[id.index()].contains(SweepFlag::IsChangedValue);
-        return !hasReachedChangedValue;
+    auto isToSweep = [&](ValueID id, NOESCAPE const Invocable<bool()> auto& hasSourceTypedOtherwise) {
+        OptionSet<SweepFlag> flags = m_sweepFlags[id.index()];
+        hasReachedChangedValue |= flags.contains(SweepFlag::IsChangedValue);
+        return hasReachedChangedValue && (flags.contains(SweepFlag::IsChangedValue) || (!isProven && flags.contains(SweepFlag::IsTyped)) || hasSourceTypedOtherwise());
     };
+
     for (BlockID blockID : m_cfg.reversePostOrder()) {
         const Block& block = function.at(blockID);
         for (uint32_t index = 0; index < block.parameters.size(); ++index) {
             ValueID id = block.parameters[index];
-            if (!standsInFrontOfChangedValues(id) && isParameterToSweep(level, blockID, index, id))
+            if (isToSweep(id, [&] { return hasArgumentTypedOtherwise(blockID, index); }))
                 storeSweptType(level, id, computeParameter(context, id, blockID, index));
         }
         for (ValueID id : block.values) {
-            if (!standsInFrontOfChangedValues(id) && isValueToSweep(level, id))
+            if (isToSweep(id, [&] { return hasOperandTypedOtherwise(function.at(id)); }))
                 storeSweptType(level, id, computeValue(context, id));
         }
     }
 }
 
-bool TypePropagation::hasOperandTypedOtherwise(TypeLevel level, const Instruction& user) const
-{
-    const Function& function = m_inputs.function;
-    SweepFlag hasOtherType = level == TypeLevel::Proven ? SweepFlag::HasOtherType : SweepFlag::HasOtherExpectedType;
-    SweepFlag isTyped = level == TypeLevel::Proven ? SweepFlag::IsTyped : SweepFlag::IsExpectedTyped;
-    bool found = false;
-    user.forEachOperand([&](ValueID operand, uint32_t) {
-        OptionSet<SweepFlag> flags = m_sweepFlags[operand.index()];
-        found |= flags.contains(hasOtherType) || (flags.contains(isTyped) && opcodesWithIndirectUsers.contains(function.at(operand).opcode));
-    });
-    return found;
-}
-
-bool TypePropagation::isValueToSweep(TypeLevel level, ValueID id) const
-{
-    OptionSet<SweepFlag> flags = m_sweepFlags[id.index()];
-    if (flags.contains(SweepFlag::IsChangedValue) || (level == TypeLevel::Expected && flags.contains(SweepFlag::IsTyped)))
-        return true;
-    return hasOperandTypedOtherwise(level, m_inputs.function.at(id));
-}
-
-bool TypePropagation::isParameterToSweep(TypeLevel level, BlockID block, uint32_t index, ValueID id) const
-{
-    OptionSet<SweepFlag> flags = m_sweepFlags[id.index()];
-    if (flags.contains(SweepFlag::IsChangedValue) || (level == TypeLevel::Expected && flags.contains(SweepFlag::IsTyped)))
-        return true;
-
-    const Function& function = m_inputs.function;
-    SweepFlag hasOtherType = level == TypeLevel::Proven ? SweepFlag::HasOtherType : SweepFlag::HasOtherExpectedType;
-    for (Edge edge : m_cfg.incomingEdges(block)) {
-        const Target& target = targetOf(function, edge);
-        if (index < target.arguments.size()) {
-            if (m_sweepFlags[target.arguments[index].index()].contains(hasOtherType))
-                return true;
-            continue;
-        }
-        if (!edge.isHandlerEdge() && hasOperandTypedOtherwise(level, function.at(edge.from).terminator))
-            return true;
-    }
-    return false;
-}
-
 // Null where nothing narrower than the type is expected.
-TypeID TypePropagation::partOfExpectedTypeInside(TypeID type, TypeID expected)
+TypeID TypePropagation::expectedTypeToStore(ValueID id, const Value& value, TypeID computed)
 {
-    expected = m_inputs.types.intersectionOf(type, expected);
-    return expected == TypeTable::never ? TypeID() : narrowerTypeOrNull(expected, type);
+    // Flow finds classes below the one that allocates. Nothing but the rule says what such an allocation makes.
+    TypeID expected = mayAllocateOtherLayout(m_inputs.program, value) ? computed : meetWithPreviousExpectation(id, computed);
+    if (expected == TypeTable::never)
+        return expected;
+    expected = m_inputs.types.intersectionOf(value.type, expected);
+    return expected == TypeTable::never ? TypeID() : narrowerTypeOrNull(expected, value.type);
 }
 
 void TypePropagation::storeSweptType(TypeLevel level, ValueID id, TypeID computed)
@@ -296,26 +246,17 @@ void TypePropagation::storeSweptType(TypeLevel level, ValueID id, TypeID compute
     const StateBeforeRestart& before = m_statesBeforeRestart[id.index()];
     OptionSet<SweepFlag>& flags = m_sweepFlags[id.index()];
     bool isChangedValue = !m_everyOtherValueIsAsTyped || flags.contains(SweepFlag::IsChangedValue);
-    switch (level) {
-    case TypeLevel::Proven:
+    if (level == TypeLevel::Proven) {
         value.type = computed;
         flags.add(SweepFlag::IsTyped);
         if (isChangedValue || computed != before.type)
             flags.add(SweepFlag::HasOtherType);
         return;
-    case TypeLevel::Expected: {
-        // Flow finds classes below the one that allocates. Nothing but the rule says what such an allocation makes.
-        TypeID expected = mayAllocateOtherLayout(m_inputs.program, value) ? computed : meetWithPreviousExpectation(id, computed);
-        if (expected != TypeTable::never)
-            expected = partOfExpectedTypeInside(value.type, expected);
-        value.setExpected(expected);
-        flags.add(SweepFlag::IsExpectedTyped);
-        if (isChangedValue || value.expectedOrTypeForTyping() != before.expectedOrType)
-            flags.add(SweepFlag::HasOtherExpectedType);
-        return;
     }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    value.setExpected(expectedTypeToStore(id, value, computed));
+    flags.add(SweepFlag::IsExpectedTyped);
+    if (isChangedValue || value.expectedOrTypeForTyping() != before.expectedOrType)
+        flags.add(SweepFlag::HasOtherExpectedType);
 }
 
 void TypePropagation::restart(ValueID id)
@@ -324,26 +265,23 @@ void TypePropagation::restart(ValueID id)
     Value& value = m_inputs.function.editAndReportLater(id);
     value.type = TypeTable::never;
     value.setExpected({ });
-    m_isRestarted.quickSet(id.index());
+    if (m_uses)
+        m_isRestarted.quickSet(id.index());
 }
 
 void TypePropagation::restartAllValues()
 {
     willRestartValues();
-    auto restartValue = [&](ValueID id) {
-        restart(id);
-    };
     // The verifier reads the type ids of unreachable blocks too.
-    for (const Block& block : m_inputs.function.blocks) {
-        std::ranges::for_each(block.parameters, restartValue);
-        std::ranges::for_each(block.values, restartValue);
-    }
+    for (const Block& block : m_inputs.function.blocks)
+        forEachValueOf(block, [&](ValueID id) { restart(id); });
 }
 
 void TypePropagation::restartListedValues(std::span<const ValueID> values)
 {
     willRestartValues();
-    m_typesRestartedValuesAlone = true;
+    m_queuedValues = QueuedValues::OnlyListed;
+    m_listedValues = &m_isRestarted;
     for (ValueID id : values)
         restart(id);
 }
@@ -364,6 +302,21 @@ void TypePropagation::restartDependentsOf(std::span<const ValueID> values)
     m_worklist.shrink(0);
 }
 
+void TypePropagation::listFromLastToFirst(std::span<const ValueID> values)
+{
+    Vector<std::pair<uint64_t, ValueID>, 64> positions;
+    for (ValueID id : values) {
+        ValueLocation location = m_uses->locationOf(id);
+        if (location.placement == ValuePlacement::Detached)
+            continue;
+        uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
+        positions.append({ static_cast<uint64_t>(m_cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index, id });
+    }
+    AOT::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
+    for (auto [position, id] : positions)
+        m_restartedValuesFromLastToFirst.append(id);
+}
+
 void TypePropagation::listRestartedValuesInOrder()
 {
     if (std::exchange(m_didListRestartedValues, true))
@@ -372,17 +325,7 @@ void TypePropagation::listRestartedValuesInOrder()
     const Function& function = m_inputs.function;
     constexpr size_t valuesWalkedForOneSorted = 8;
     if (m_rememberedValues.size() * valuesWalkedForOneSorted < function.values.size()) {
-        Vector<std::pair<uint64_t, ValueID>, 64> positions;
-        for (ValueID id : m_rememberedValues) {
-            ValueLocation location = m_uses->locationOf(id);
-            if (location.placement == ValuePlacement::Detached)
-                continue;
-            uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
-            positions.append({ static_cast<uint64_t>(m_cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index, id });
-        }
-        AOT::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
-        for (auto [position, id] : positions)
-            m_restartedValuesFromLastToFirst.append(id);
+        listFromLastToFirst(m_rememberedValues.span());
         return;
     }
 
@@ -390,30 +333,16 @@ void TypePropagation::listRestartedValuesInOrder()
         if (m_isRestarted.quickGet(id.index()))
             m_restartedValuesFromLastToFirst.append(id);
     };
-    std::span<const BlockID> order = m_cfg.reversePostOrder();
-    for (size_t blockIndex = order.size(); blockIndex--;) {
-        const Block& block = function.at(order[blockIndex]);
-        for (size_t index = block.values.size(); index--;)
-            appendIfRestarted(block.values[index]);
-        for (size_t index = block.parameters.size(); index--;)
-            appendIfRestarted(block.parameters[index]);
+    for (BlockID id : m_cfg.reversePostOrder() | std::views::reverse) {
+        std::ranges::for_each(function.at(id).values.span() | std::views::reverse, appendIfRestarted);
+        std::ranges::for_each(function.at(id).parameters.span() | std::views::reverse, appendIfRestarted);
     }
-}
-
-bool TypePropagation::isJoin(ValueID id) const
-{
-    ValueLocation location = m_uses->locationOf(id);
-    return location.placement == ValuePlacement::Parameter && m_cfg.incomingEdges(location.block).size() > 1;
 }
 
 void TypePropagation::enqueue(ValueID id)
 {
     RELEASE_ASSERT(id.index() < m_statesBeforeRestart.size());
-    if (m_queuesOnlySomeValues && !m_mayBeQueued.quickGet(id.index()))
-        return;
-    if (m_queuesAllButSomeValues && m_mayBeQueued.quickGet(id.index()))
-        return;
-    if (m_typesRestartedValuesAlone && !m_isRestarted.quickGet(id.index()))
+    if (m_queuedValues != QueuedValues::All && m_listedValues->quickGet(id.index()) != (m_queuedValues == QueuedValues::OnlyListed))
         return;
     if (!m_isQueued.quickSet(id.index()))
         m_worklist.append(id);
@@ -477,33 +406,26 @@ void TypePropagation::enqueueUsersOf(ValueID id)
     }
 }
 
-void TypePropagation::enqueueRestartedValues()
-{
-    listRestartedValuesInOrder();
-    for (ValueID id : m_restartedValuesFromLastToFirst)
-        enqueue(id);
-}
-
-TypingContext TypePropagation::typingContext(TypeLevel level)
-{
-    return { m_inputs.program, m_inputs.function, m_inputs.types, level, m_inputs.memo ? m_inputs.memo : &m_ownMemo, m_inputs.knownPositions, true };
-}
-
 void TypePropagation::propagate(TypeLevel level, Direction direction)
 {
     TypingContext context = typingContext(level);
+    // The other end of enqueueUsersOf(): whatever a value is typed from and has not had its turn yet will have to look for its users when it gets one.
+    auto markIfNotTaken = [&](ValueID source) {
+        if (source && !m_wasTakenFromWorklist.quickGet(source.index()))
+            m_hasUserThatWasTakenFirst.quickSet(source.index());
+    };
     while (!m_worklist.isEmpty()) {
         ValueID id = m_worklist.takeLast();
         m_isQueued.quickClear(id.index());
-        bool isTakenAgain = m_wasTakenFromWorklist.quickGet(id.index());
-
         ValueLocation location = m_uses->locationOf(id);
-        bool isParameter = location.placement == ValuePlacement::Parameter;
         // A parameter may be passed for itself.
-        if (!isTakenAgain)
-            markSourcesThatWereNotTaken(id, isParameter, location.block, location.index);
+        bool isTakenAgain = m_wasTakenFromWorklist.quickGet(id.index());
+        if (!isTakenAgain && location.placement == ValuePlacement::Parameter)
+            forEachSourceOfParameter(location.block, location.index, markIfNotTaken);
+        else if (!isTakenAgain)
+            forEachSourceOf(id, markIfNotTaken);
         m_wasTakenFromWorklist.quickSet(id.index());
-        TypeID computed = isParameter ? computeParameter(context, id, location.block, location.index) : computeValue(context, id);
+        TypeID computed = compute(context, id, location);
         if (level == TypeLevel::Expected)
             computed = meetWithPreviousExpectation(id, computed);
 
@@ -514,11 +436,11 @@ void TypePropagation::propagate(TypeLevel level, Direction direction)
             enqueueUsersOf(id);
             continue;
         }
-        if (m_inputs.build.options().verifiesAfterEveryPass) [[unlikely]] {
+        if (m_verifies) [[unlikely]] {
             size_t numberOfWaitingValues = m_worklist.size();
             enqueueUsersOf(id);
             if (m_worklist.size() != numberOfWaitingValues)
-                m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = "a user of the value was not waiting to be typed again"_s });
+                addTypeOutOfDate(id, "a user of the value was not waiting to be typed again"_s);
         }
     }
 }
@@ -527,30 +449,26 @@ void TypePropagation::propagate(TypeLevel level, Direction direction)
 void TypePropagation::willTakeValuesFromWorklist()
 {
     const Function& function = m_inputs.function;
-    size_t numberOfValues = function.values.size();
     m_wasTakenFromWorklist.clearAll();
-    m_wasTakenFromWorklist.ensureSize(numberOfValues);
+    m_wasTakenFromWorklist.ensureSize(function.values.size());
     if (std::exchange(m_didMarkSourcesOfUnreachableValues, true))
         return;
 
-    m_hasUserThatWasTakenFirst.ensureSize(numberOfValues);
+    m_hasUserThatWasTakenFirst.ensureSize(function.values.size());
     if (m_cfg.reversePostOrder().size() == function.blocks.size())
         return;
     auto mark = [&](ValueID id, uint32_t = 0) {
         if (id)
             m_hasUserThatWasTakenFirst.quickSet(id.index());
     };
-    auto markWithOperands = [&](ValueID id, uint32_t = 0) {
-        if (!id)
-            return;
+    auto markWithOperands = [&](ValueID id, uint32_t) {
         mark(id);
         function.at(id).forEachOperand(mark);
     };
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-        BlockID blockID(blockIndex);
-        if (m_cfg.isReachable(blockID))
+        if (m_cfg.isReachable(BlockID(blockIndex)))
             continue;
-        const Block& block = function.at(blockID);
+        const Block& block = function.blocks[blockIndex];
         for (ValueID id : block.values)
             function.at(id).forEachOperand(markWithOperands);
         for (const Target& target : block.terminator.targets)
@@ -561,41 +479,13 @@ void TypePropagation::willTakeValuesFromWorklist()
     }
 }
 
-// The other end of enqueueUsersOf(): whatever the value is typed from and has not had its turn yet will have to look for its users when it gets one.
-void TypePropagation::markSourcesThatWereNotTaken(ValueID id, bool isParameter, BlockID block, uint32_t index)
-{
-    const Function& function = m_inputs.function;
-    auto mark = [&](ValueID source, uint32_t = 0) {
-        if (source && !m_wasTakenFromWorklist.quickGet(source.index()))
-            m_hasUserThatWasTakenFirst.quickSet(source.index());
-    };
-    // A ResultAt and what a terminator says about an edge are typed from the operands of the value they name. Where that value has had its turn, it has marked them itself.
-    auto markWithOperands = [&](ValueID source, uint32_t = 0) {
-        if (!source || m_wasTakenFromWorklist.quickGet(source.index()))
-            return;
-        m_hasUserThatWasTakenFirst.quickSet(source.index());
-        if (opcodesWithIndirectUsers.contains(function.at(source).opcode))
-            function.at(source).forEachOperand(mark);
-    };
-
-    if (!isParameter) {
-        function.at(id).forEachOperand(markWithOperands);
-        return;
-    }
-    for (Edge edge : m_cfg.incomingEdges(block)) {
-        const Target& target = targetOf(function, edge);
-        if (index < target.arguments.size())
-            mark(target.arguments[index]);
-        else if (!edge.isHandlerEdge())
-            function.at(edge.from).terminator.forEachOperand(markWithOperands);
-    }
-}
-
 void TypePropagation::solve(TypeLevel level)
 {
     willRestartValues();
     willTakeValuesFromWorklist();
-    enqueueRestartedValues();
+    listRestartedValuesInOrder();
+    for (ValueID id : m_restartedValuesFromLastToFirst)
+        enqueue(id);
     propagate(level, Direction::Ascending);
 
     // Where the ascent stopped every type holds, so whatever the rules give from here on holds too: it takes back what widening added without need, and what a rule answered for a narrower operand and no longer answers.
@@ -605,11 +495,6 @@ void TypePropagation::solve(TypeLevel level)
     propagate(level, Direction::Descending);
     for (ValueID id : m_restartedValuesFromLastToFirst)
         m_statesBeforeRestart[id.index()].numberOfUpdates = 0;
-}
-
-void TypePropagation::solveTypes()
-{
-    solve(TypeLevel::Proven);
 }
 
 void TypePropagation::solveExpectedTypes()
@@ -634,13 +519,18 @@ TypeID TypePropagation::meetWithPreviousExpectation(ValueID id, TypeID computed)
     return disagreeAboutObjects ? computed : met;
 }
 
+TypeID TypePropagation::compute(const TypingContext& context, ValueID id, const ValueLocation& location)
+{
+    return location.placement == ValuePlacement::Parameter ? computeParameter(context, id, location.block, location.index) : computeValue(context, id);
+}
+
 TypeID TypePropagation::computeValue(const TypingContext& context, ValueID id)
 {
     const Value& value = context.function.at(id);
     TypeID type = computeResultTypeID(context, value);
-    if (m_inputs.build.options().verifiesAfterEveryPass && type != context.types.intern(context.types.adopt(computeResultType(context, value)))) [[unlikely]]
-        m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = "the rule that answers with a type id disagrees with the rule that answers with a type"_s });
-    // A proof that leaves nothing of what its operand was expected to be: as in partOfExpectedTypeInside().
+    if (m_verifies && type != context.types.intern(context.types.adopt(computeResultType(context, value)))) [[unlikely]]
+        addTypeOutOfDate(id, "the rule that answers with a type id disagrees with the rule that answers with a type"_s);
+    // A proof that leaves nothing of what its operand was expected to be: as in expectedTypeToStore().
     if (type == TypeTable::never && context.level == TypeLevel::Expected && value.opcode == Opcode::AssumeType && context.typeIDOf(value.valueOperand()) != TypeTable::never)
         return value.type;
     return type;
@@ -648,20 +538,15 @@ TypeID TypePropagation::computeValue(const TypingContext& context, ValueID id)
 
 TypeID TypePropagation::computeParameter(const TypingContext& context, ValueID id, BlockID block, uint32_t index)
 {
-    if (block == entryBlock)
-        return typeOfEntryParameter(context, index);
-
     const Function& function = context.function;
-    auto isSeldomTaken = [&](Edge edge) {
-        return function.at(edge.from).frequency != BlockFrequency::Normal;
-    };
-    // What a path that is seldom taken brings says nothing about what the parameter usually holds.
-    auto incomingEdges = m_cfg.incomingEdges(block);
-    bool skipsSeldomTakenEdges = context.level == TypeLevel::Expected && !std::ranges::all_of(incomingEdges, isSeldomTaken);
+    if (block == entryBlock)
+        return index < function.numberOfEntryParameters() ? declaredEntryTypeOf(context, function, index) : TypeTable::anything;
 
+    auto incomingEdges = m_cfg.incomingEdges(block);
+    bool skipsSeldomTakenEdges = context.level == TypeLevel::Expected && !isEveryEdgeSeldomTaken(function, incomingEdges);
     TypeID joined = TypeTable::never;
     for (Edge edge : incomingEdges) {
-        if (skipsSeldomTakenEdges && isSeldomTaken(edge))
+        if (skipsSeldomTakenEdges && isSeldomTaken(function, edge))
             continue;
         // Typing runs before the verifier has checked the edges.
         const Target& target = targetOf(function, edge);
@@ -680,10 +565,13 @@ TypeID TypePropagation::computeParameter(const TypingContext& context, ValueID i
 
 TypeID TypePropagation::computeTypeOnEdge(const TypingContext& context, EdgeResultPosition position, const EdgeResult& result)
 {
+    auto computeByRule = [&] {
+        return context.types.intern(context.types.adopt(Typed::computeTypeOnEdge(context, position)));
+    };
     if (result.kind == EdgeResultKind::Guard)
         return TypeTable::guard;
     if (result.kind != EdgeResultKind::NarrowedOperand || !result.test)
-        return context.types.intern(context.types.adopt(Typed::computeTypeOnEdge(context, position)));
+        return computeByRule();
 
     constexpr uint32_t keyOfNarrowedOperand = UINT32_MAX - 16;
     const Value& test = context.function.at(result.test);
@@ -699,16 +587,14 @@ TypeID TypePropagation::computeTypeOnEdge(const TypingContext& context, EdgeResu
     addWords(hasher);
 
     TypeID known = context.memo->results.find(hasher.hash());
-    if (known && !m_inputs.build.options().verifiesAfterEveryPass) [[likely]]
+    if (known && !m_verifies) [[likely]]
         return known;
     // A test narrows by its own words and the types of its operands.
-    TypeID type = sharedOrComputedType(context, SharedAnswers::AboutTypes, hasher.hash(), addWords, [&] {
-        return context.types.intern(context.types.adopt(Typed::computeTypeOnEdge(context, position)));
-    });
+    TypeID type = sharedOrComputedType(context, SharedAnswers::AboutTypes, hasher.hash(), addWords, computeByRule);
     if (!known)
         context.memo->results.add(hasher.hash(), type);
     else if (known != type)
-        m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = result.test, .detail = "the type remembered for the edge is not what the rule gives now"_s });
+        addTypeOutOfDate(result.test, "the type remembered for the edge is not what the rule gives now"_s);
     return type;
 }
 
@@ -768,7 +654,11 @@ bool TypePropagation::update(TypeLevel level, Direction direction, ValueID id, T
     if (direction == Direction::Ascending) {
         next = types.unionOf(old, computed);
         // Only a join can feed itself. The parameter of a block with one incoming edge follows the values that dominate it, so the range an edge cuts stays cut.
-        if (next != old && isJoin(id))
+        auto isJoin = [&] {
+            ValueLocation location = m_uses->locationOf(id);
+            return location.placement == ValuePlacement::Parameter && m_cfg.incomingEdges(location.block).size() > 1;
+        };
+        if (next != old && isJoin())
             next = widenGrownParameter(id, old, next);
         // Not every rule answers more for a wider operand: a cast takes the contents of an array from its operand while they are proven, and from its type afterwards.
         if (next != computed)
@@ -783,7 +673,10 @@ bool TypePropagation::update(TypeLevel level, Direction direction, ValueID id, T
         return false;
 
     // The update that passes the limit still counts: a pass that asks for one value to be retyped relies on that type.
-    setTypeAt(editTypeOf(id), level, next);
+    if (level == TypeLevel::Proven)
+        editTypeOf(id).type = next;
+    else
+        editTypeOf(id).setExpected(next);
     if (++m_statesBeforeRestart[id.index()].numberOfUpdates > m_inputs.build.limit(LimitID::MaxTypeValuesRounds)) {
         giveUpOnRounds(level, direction);
         return false;
@@ -808,20 +701,14 @@ void TypePropagation::giveUpOnRounds(TypeLevel level, Direction direction)
             TypeID previous = m_statesBeforeRestart[id.index()].expected;
             value.setExpected(previous ? types.intersectionOf(value.type, previous) : TypeID());
         };
-        switch (direction) {
-        case Direction::Ascending:
+        if (direction == Direction::Ascending)
             std::ranges::for_each(m_restartedValuesFromLastToFirst | std::views::reverse, expectAsBefore);
-            return;
-        case Direction::Descending:
+        else
             std::ranges::for_each(pendingValues, expectAsBefore);
-            return;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
+        return;
     }
 
-    forEachListedValue(function, m_cfg, [&](ValueID id) {
-        rememberState(id);
-    });
+    forEachListedValue(function, m_cfg, [&](ValueID id) { rememberState(id); });
 
     TypingContext context = typingContext(TypeLevel::Proven);
     auto retype = [&](ValueID id, TypeID type) {
@@ -833,7 +720,12 @@ void TypePropagation::giveUpOnRounds(TypeLevel level, Direction direction)
     auto widenParameter = [&](ValueID parameter, BlockID block, uint32_t index) {
         TypeID old = function.at(parameter).type;
         TypeID grown = types.unionOf(old, computeParameter(context, parameter, block, index));
-        return grown != old && retype(parameter, widenAfterGivingUp(m_inputs.program, types, grown, m_statesBeforeRestart[parameter.index()].type));
+        if (grown == old)
+            return false;
+        TypeID bound = m_statesBeforeRestart[parameter.index()].type;
+        if (const Type& type = types.at(grown); type.isJavaScriptValue())
+            grown = bound && type.isSubsetOf(types.at(bound), m_inputs.program) ? bound : types.withPrimitives(TypeTable::anything, type.primitives & Primitive::Absent);
+        return retype(parameter, grown);
     };
 
     // The last sweep changes nothing: every join is inside its parameter and every other type is what its rule gives.
@@ -843,10 +735,7 @@ void TypePropagation::giveUpOnRounds(TypeLevel level, Direction direction)
             const Block& block = function.at(id);
             for (uint32_t index = 0; index < block.parameters.size(); ++index) {
                 ValueID parameter = block.parameters[index];
-                if (id == entryBlock)
-                    didChange |= retype(parameter, computeParameter(context, parameter, id, index));
-                else
-                    didChange |= widenParameter(parameter, id, index);
+                didChange |= id == entryBlock ? retype(parameter, computeParameter(context, parameter, id, index)) : widenParameter(parameter, id, index);
             }
             for (ValueID value : block.values)
                 didChange |= retype(value, computeValue(context, value));
@@ -860,7 +749,7 @@ TypeID TypePropagation::narrowerTypeOrNull(TypeID narrower, TypeID type)
     if (narrower == TypeTable::never || narrower == type)
         return { };
 
-    TypeMemo& memo = (m_inputs.memo ? m_inputs.memo : &m_ownMemo)->narrowerTypes;
+    TypeMemo& memo = m_inputs.memo->narrowerTypes;
     uint64_t key = TypeMemo::keyOf(narrower, type);
     if (TypeID known = memo.find(key))
         return known == TypeTable::never ? TypeID() : known;
@@ -872,12 +761,8 @@ TypeID TypePropagation::narrowerTypeOrNull(TypeID narrower, TypeID type)
 
 void TypePropagation::dropExpectedTypesThatSayNothing()
 {
-    Function& function = m_inputs.function;
-    auto isRemembered = [&](ValueID id) {
-        return !m_rememberedValues.isEmpty() && m_isRemembered.quickGet(id.index());
-    };
     auto dropIfItSaysNothing = [&](ValueID id) {
-        const Value& value = function.at(id);
+        const Value& value = m_inputs.function.at(id);
         TypeID expected = value.expected();
         if (!expected)
             return;
@@ -892,7 +777,7 @@ void TypePropagation::dropExpectedTypesThatSayNothing()
     if (m_everyOtherValueIsAsTyped)
         std::ranges::for_each(m_rememberedValues, dropIfItSaysNothing);
     else
-        forEachListedValue(function, m_cfg, dropIfItSaysNothing);
+        forEachListedValue(m_inputs.function, m_cfg, dropIfItSaysNothing);
 }
 
 TypePropagationOutcome TypePropagation::finish()
@@ -906,9 +791,9 @@ TypePropagationOutcome TypePropagation::finish()
     return m_outcome;
 }
 
-TypePropagationOutcome TypePropagation::finishWithoutCompacting(Vector<ValueID>& parametersBehindRemovedEdges)
+// A join is widened where its list has grown past a limit, and a list grows where one side of the join gets narrower.
+void TypePropagation::replaceUpcastsOfWidenedValues()
 {
-    // A join is widened where its list has grown past a limit, and a list grows where one side of the join gets narrower.
     Function& function = m_inputs.function;
     const TypeArena& types = m_inputs.types;
     for (ValueID id : m_rememberedValues) {
@@ -936,21 +821,22 @@ TypePropagationOutcome TypePropagation::finishWithoutCompacting(Vector<ValueID>&
     }
     if (m_outcome.replacedUpcasts)
         m_inputs.analyses.didChangeValues();
+}
 
+TypePropagationOutcome TypePropagation::finishWithoutCompacting(Vector<ValueID>& parametersBehindRemovedEdges)
+{
+    replaceUpcastsOfWidenedValues();
     dropExpectedTypesThatSayNothing();
-    countChanges();
+    reportRetypedValues(true);
     if (mayHaveCodeToCut())
         cutAfterNeverValues();
 
-    if (m_outcome.cutBlocks)
-        didCutBlocks(parametersBehindRemovedEdges);
-    else if (m_outcome.didChange())
-        m_inputs.analyses.didRetypeValues();
-    return m_outcome;
-}
+    if (!m_outcome.cutBlocks) {
+        if (m_outcome.didChange())
+            m_inputs.analyses.didRetypeValues();
+        return m_outcome;
+    }
 
-void TypePropagation::didCutBlocks(Vector<ValueID>& parametersBehindRemovedEdges)
-{
     const Function& function = m_inputs.function;
     Vector<uint32_t, 32> numberOfIncomingEdgesBefore(FillWith { }, function.blocks.size(), 0u);
     for (BlockID id : m_cfg.reversePostOrder())
@@ -962,23 +848,7 @@ void TypePropagation::didCutBlocks(Vector<ValueID>& parametersBehindRemovedEdges
         if (cfg.incomingEdges(id).size() != numberOfIncomingEdgesBefore[id.index()])
             parametersBehindRemovedEdges.append(function.at(id).parameters.span());
     }
-}
-
-void TypePropagation::countChanges()
-{
-    RELEASE_ASSERT(!m_numberOfReportedValues);
-    Function& function = m_inputs.function;
-    for (ValueID id : m_rememberedValues) {
-        const Value& value = function.at(id);
-        const StateBeforeRestart& previous = m_statesBeforeRestart[id.index()];
-        bool isRetyped = value.type != previous.type;
-        bool isExpectedToBeOther = value.expected() != previous.expected;
-        m_outcome.retypedValues += isRetyped;
-        m_outcome.changedExpectedTypes += isExpectedToBeOther;
-        if (isRetyped || isExpectedToBeOther)
-            function.didEdit(id, ValueEdit::Type, previous.type, previous.expected);
-    }
-    m_numberOfReportedValues = m_rememberedValues.size();
+    return m_outcome;
 }
 
 bool waitsForGenericVersion(const Program& program, const Function& function)
@@ -1021,56 +891,26 @@ void TypePropagation::cutAfterNeverValues()
     for (BlockID id : m_cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         bool endsInUnreachable = block.terminator.kind == TerminatorKind::Unreachable;
-        if (id != entryBlock && std::ranges::any_of(block.parameters, isNever)) {
-            if (endsInUnreachable && block.values.isEmpty())
-                continue;
-            if (waits) {
-                m_outcome.waitsToCutCode = true;
-                return;
-            }
-            cutBlock(id, 0, block.terminator.origin());
-            continue;
-        }
-
-        size_t index = block.values.findIf([&](ValueID value) {
+        bool isNeverEntered = id != entryBlock && std::ranges::any_of(block.parameters, isNever);
+        size_t index = isNeverEntered ? 0 : block.values.findIf([&](ValueID value) {
             return (isNever(value) && resultRuleOf(function.at(value).opcode) != ResultRule::None) || isNeverReached(value);
         });
         if (index == notFound)
             continue;
-        bool isReached = !isNeverReached(block.values[index]);
-        if (isReached && endsInUnreachable && index + 1 == block.values.size())
+        bool keepsValue = !isNeverEntered && !isNeverReached(block.values[index]);
+        if (endsInUnreachable && (isNeverEntered ? block.values.isEmpty() : keepsValue && index + 1 == block.values.size()))
             continue;
         if (waits) {
             m_outcome.waitsToCutCode = true;
             return;
         }
-        cutBlock(id, static_cast<uint32_t>(isReached ? index + 1 : index), function.at(block.values[index]).origin());
+        Origin origin = isNeverEntered ? block.terminator.origin() : function.at(block.values[index]).origin();
+        Block& cut = m_inputs.function.edit(id);
+        cut.values.shrink(index + keepsValue);
+        cut.terminator.become(TerminatorKind::Unreachable);
+        cut.terminator.setOrigin(origin);
+        ++m_outcome.cutBlocks;
     }
-}
-
-void TypePropagation::cutBlock(BlockID id, uint32_t firstErasedIndex, Origin origin)
-{
-    Block& block = m_inputs.function.edit(id);
-    block.values.shrink(firstErasedIndex);
-    block.terminator.become(TerminatorKind::Unreachable);
-    block.terminator.setOrigin(origin);
-    ++m_outcome.cutBlocks;
-}
-
-void TypePropagation::typeAgain(ValueID id, bool isParameter, BlockID block, uint32_t index)
-{
-    willTypeValues();
-    rememberState(id);
-    Value& value = m_inputs.function.editAndReportLater(id);
-    TypingContext proving = typingContext(TypeLevel::Proven);
-    value.type = isParameter ? computeParameter(proving, id, block, index) : computeValue(proving, id);
-
-    TypingContext expecting = typingContext(TypeLevel::Expected);
-    TypeID computed = isParameter ? computeParameter(expecting, id, block, index) : computeValue(expecting, id);
-    TypeID expected = mayAllocateOtherLayout(m_inputs.program, value) ? computed : meetWithPreviousExpectation(id, computed);
-    if (expected != TypeTable::never)
-        expected = partOfExpectedTypeInside(value.type, expected);
-    value.setExpected(expected == value.type ? TypeID() : expected);
 }
 
 // A join of arguments that all have the types of the parameter gives those types again.
@@ -1078,10 +918,7 @@ bool TypePropagation::hasTypesOfEveryArgument(BlockID block, uint32_t index, con
 {
     const Function& function = m_inputs.function;
     std::span<const Edge> edges = m_cfg.incomingEdges(block);
-    auto isSeldomTaken = [&](Edge edge) {
-        return function.at(edge.from).frequency != BlockFrequency::Normal;
-    };
-    bool countsSeldomTakenEdges = std::ranges::all_of(edges, isSeldomTaken);
+    bool countsSeldomTakenEdges = isEveryEdgeSeldomTaken(function, edges);
     TypeID expected = parameter.expectedOrTypeForTyping();
     for (Edge edge : edges) {
         const Target& target = targetOf(function, edge);
@@ -1090,7 +927,7 @@ bool TypePropagation::hasTypesOfEveryArgument(BlockID block, uint32_t index, con
         const Value& argument = function.at(target.arguments[index]);
         if (argument.type != parameter.type)
             return false;
-        if ((countsSeldomTakenEdges || !isSeldomTaken(edge)) && argument.expectedOrTypeForTyping() != expected)
+        if ((countsSeldomTakenEdges || !isSeldomTaken(function, edge)) && argument.expectedOrTypeForTyping() != expected)
             return false;
     }
     return !edges.empty();
@@ -1128,7 +965,6 @@ void TypePropagation::enqueueParametersOf(BlockID blockID)
     }
 }
 
-// What the log of changes has named since types were last propagated.
 void TypePropagation::enqueuePendingValues(PendingTyping& pending)
 {
     const Function& function = m_inputs.function;
@@ -1190,37 +1026,29 @@ void TypePropagation::enqueuePendingValues(PendingTyping& pending)
     for (const BlockChange& change : pending.m_blocks) {
         if (change.edits.containsAny(editsOfOwnParameters))
             enqueueParametersOf(change.block);
-        if (change.edits.contains(BlockEdit::OperandsOfSameTypes)) {
-            if (m_cycles) {
-                function.at(change.block).forEachTarget([&](const Target& target) {
-                    if (target.block && m_cfg.isReachable(target.block) && m_cycles->isInCycle(target.block))
-                        std::ranges::for_each(function.at(target.block).parameters, enqueueIfTypedFromItself);
-                });
-            }
-            continue;
-        }
-        if (!change.edits.containsAny(editsOfWhatIsPassedOn) || didLookAtTargetsOf.set(change.block.index()))
+        bool hasOperandsOfSameTypes = change.edits.contains(BlockEdit::OperandsOfSameTypes);
+        if (hasOperandsOfSameTypes ? !m_cycles : !change.edits.containsAny(editsOfWhatIsPassedOn) || didLookAtTargetsOf.set(change.block.index()))
             continue;
         function.at(change.block).forEachTarget([&](const Target& target) {
-            if (target.block)
+            if (!target.block)
+                return;
+            if (!hasOperandsOfSameTypes)
                 enqueueParametersOf(target.block);
+            else if (m_cfg.isReachable(target.block) && m_cycles->isInCycle(target.block))
+                std::ranges::for_each(function.at(target.block).parameters, enqueueIfTypedFromItself);
         });
     }
 }
 
+// Every value in the list is computed from the types that its sources have now, and what is typed from it follows where its types come out different.
 void TypePropagation::typePendingValues(PendingTyping& pending)
 {
+    const Function& function = m_inputs.function;
     m_everyOtherValueIsAsTyped = true;
     m_dropsExpectedTypesAtOnce = true;
     enqueuePendingValues(pending);
-    if (!m_worklist.isEmpty())
-        typeQueuedValues();
-}
-
-// Every value in the list is computed from the types that its sources have now, and what is typed from it follows where its types come out different.
-void TypePropagation::typeQueuedValues()
-{
-    const Function& function = m_inputs.function;
+    if (m_worklist.isEmpty())
+        return;
     if (m_cycles)
         willRestartValues();
     // The first in the list have their turn first.
@@ -1230,35 +1058,28 @@ void TypePropagation::typeQueuedValues()
         while (!m_worklist.isEmpty()) {
             ValueID id = m_worklist.takeLast();
             m_isQueued.quickClear(id.index());
-            const Value& value = function.at(id);
-            bool isParameter = value.opcode == Opcode::Parameter;
-            BlockID block;
-            uint32_t index = 0;
+            ValueLocation location;
             if (m_uses) {
-                ValueLocation location = m_uses->locationOf(id);
+                location = m_uses->locationOf(id);
                 if (location.placement == ValuePlacement::Detached || !m_cfg.isReachable(location.block))
                     continue;
-                block = location.block;
-                index = location.index;
-            } else if (isParameter) {
-                block = BlockID(m_placesOfParameters[id.index()].block);
-                index = m_placesOfParameters[id.index()].index;
+            } else if (function.at(id).opcode == Opcode::Parameter)
+                location = { ValuePlacement::Parameter, BlockID(m_placesOfParameters[id.index()].block), m_placesOfParameters[id.index()].index };
+
+            std::optional<unsigned> cycle = m_cycles ? m_cycles->outermostCycleOf(location.block) : std::nullopt;
+            if (uint32_t component = cycle ? componentOf(id, *cycle) : noComponent; component != noComponent) {
+                if (!m_isWaitingComponent.set(component))
+                    m_waitingComponents.append(component);
+                continue;
             }
 
-            if (m_cycles) {
-                if (std::optional<unsigned> cycle = m_cycles->outermostCycleOf(block)) {
-                    uint32_t component = componentOf(id, *cycle);
-                    if (component != noComponent) {
-                        if (!m_isWaitingComponent.set(component))
-                            m_waitingComponents.append(component);
-                        continue;
-                    }
-                }
-            }
-
+            rememberState(id);
+            Value& value = m_inputs.function.editAndReportLater(id);
             TypeID type = value.type;
             TypeID expected = value.expectedOrTypeForTyping();
-            typeAgain(id, isParameter, block, index);
+            value.type = compute(typingContext(TypeLevel::Proven), id, location);
+            TypeID expectedNow = expectedTypeToStore(id, value, compute(typingContext(TypeLevel::Expected), id, location));
+            value.setExpected(expectedNow == value.type ? TypeID() : expectedNow);
             if (value.type != type || value.expectedOrTypeForTyping() != expected) {
                 willRestartValues();
                 enqueueUsersOf(id);
@@ -1284,8 +1105,7 @@ uint32_t TypePropagation::componentOf(ValueID id, unsigned cycle)
         m_componentOfValue.fill(notVisited, m_inputs.function.values.size());
     if (!m_isSearchedCycle.set(cycle))
         findComponentsOf(cycle);
-    uint32_t component = m_componentOfValue[id.index()];
-    return component == notVisited ? noComponent : component;
+    return std::min(m_componentOfValue[id.index()], noComponent);
 }
 
 void TypePropagation::findComponentsOf(unsigned cycle)
@@ -1307,31 +1127,28 @@ void TypePropagation::findComponentsOf(unsigned cycle)
     constexpr uint32_t isOnStack = 1u << 31;
     uint32_t nextNumber = 0;
 
+    auto addSource = [&](ValueID source) {
+        if (!source)
+            return;
+        ValueLocation location = m_uses->locationOf(source);
+        if (location.placement != ValuePlacement::Detached && m_cfg.isReachable(location.block) && m_cycles->outermostCycleOf(location.block) == cycle)
+            sources.append(source);
+    };
     auto push = [&](ValueID id) {
         uint32_t number = nextNumber++;
         m_componentOfValue[id.index()] = number | isOnStack;
         stack.append(id);
         uint32_t firstSource = sources.size();
-        auto addSource = [&](ValueID source) {
-            if (!source)
-                return;
-            ValueLocation location = m_uses->locationOf(source);
-            if (location.placement != ValuePlacement::Detached && m_cfg.isReachable(location.block) && m_cycles->outermostCycleOf(location.block) == cycle)
-                sources.append(source);
-        };
         ValueLocation location = m_uses->locationOf(id);
-        if (location.placement != ValuePlacement::Parameter) {
-            for (ValueID operand : function.at(id).operands())
-                addSource(operand);
-        } else {
+        if (location.placement != ValuePlacement::Parameter)
+            std::ranges::for_each(function.at(id).operands(), addSource);
+        else {
             for (Edge edge : m_cfg.incomingEdges(location.block)) {
                 const Target& target = targetOf(function, edge);
                 if (location.index < target.arguments.size())
                     addSource(target.arguments[location.index]);
-                else if (!edge.isHandlerEdge()) {
-                    for (ValueID operand : function.at(edge.from).terminator.operands())
-                        addSource(operand);
-                }
+                else if (!edge.isHandlerEdge())
+                    std::ranges::for_each(function.at(edge.from).terminator.operands(), addSource);
             }
         }
         frames.append({ id, number, number, firstSource, static_cast<uint32_t>(sources.size()), false });
@@ -1355,44 +1172,33 @@ void TypePropagation::findComponentsOf(unsigned cycle)
                 continue;
             }
 
-            Frame finished = frame;
-            frames.removeLast();
+            Frame finished = frames.takeLast();
             sources.shrink(frames.isEmpty() ? 0 : frames.last().endOfSources);
             if (!frames.isEmpty())
                 frames.last().lowest = std::min(frames.last().lowest, finished.lowest);
             if (finished.lowest != finished.number)
                 continue;
             if (stack.last() == finished.value && !finished.isTypedFromItselfAlone) {
-                stack.removeLast();
-                m_componentOfValue[finished.value.index()] = noComponent;
+                m_componentOfValue[stack.takeLast().index()] = noComponent;
                 continue;
             }
             uint32_t component = m_firstMemberOfComponent.size();
             m_firstMemberOfComponent.append(m_membersOfComponents.size());
-            while (true) {
-                ValueID member = stack.takeLast();
-                m_componentOfValue[member.index()] = component;
-                m_membersOfComponents.append(member);
-                if (member == finished.value)
-                    break;
-            }
+            do {
+                m_componentOfValue[stack.last().index()] = component;
+                m_membersOfComponents.append(stack.last());
+            } while (stack.takeLast() != finished.value);
         }
     };
 
     for (BlockID blockID : m_cfg.reversePostOrder()) {
         if (m_cycles->outermostCycleOf(blockID) != cycle)
             continue;
-        const Block& block = function.at(blockID);
-        if (block.parameters.isEmpty())
-            continue;
-        uint32_t order = m_cfg.reversePostOrderIndex(blockID);
         bool isHeader = std::ranges::any_of(m_cfg.incomingEdges(blockID), [&](Edge edge) {
-            return m_cfg.reversePostOrderIndex(edge.from) >= order;
+            return m_cfg.reversePostOrderIndex(edge.from) >= m_cfg.reversePostOrderIndex(blockID);
         });
-        if (!isHeader)
-            continue;
-        for (ValueID parameter : block.parameters)
-            search(parameter);
+        if (isHeader)
+            std::ranges::for_each(function.at(blockID).parameters, search);
     }
 }
 
@@ -1401,33 +1207,25 @@ void TypePropagation::typeComponent(uint32_t component)
     const Function& function = m_inputs.function;
     size_t first = m_firstMemberOfComponent[component];
     size_t end = component + 1 < m_firstMemberOfComponent.size() ? m_firstMemberOfComponent[component + 1] : m_membersOfComponents.size();
-    std::span<const ValueID> members = m_membersOfComponents.span().subspan(first, end - first);
-
-    Vector<std::pair<uint64_t, ValueID>, 32> positions;
-    Vector<std::pair<TypeID, TypeID>, 32> typesBefore;
-    for (ValueID id : members) {
-        ValueLocation location = m_uses->locationOf(id);
-        uint64_t isInBlock = location.placement == ValuePlacement::InBlock;
-        positions.append({ static_cast<uint64_t>(m_cfg.reversePostOrderIndex(location.block)) << 33 | isInBlock << 32 | location.index, id });
-    }
-    AOT::sort(positions, std::ranges::greater { }, &std::pair<uint64_t, ValueID>::first);
 
     m_restartedValuesFromLastToFirst.shrink(0);
-    m_mayBeQueued.ensureSize(function.values.size());
-    for (auto [position, id] : positions) {
-        const Value& value = function.at(id);
-        typesBefore.append({ value.type, value.expectedOrTypeForTyping() });
-        restart(id);
-        m_mayBeQueued.quickSet(id.index());
-        m_restartedValuesFromLastToFirst.append(id);
-    }
+    listFromLastToFirst(m_membersOfComponents.span().subspan(first, end - first));
     m_didListRestartedValues = true;
-    m_queuesOnlySomeValues = true;
+    const auto& members = m_restartedValuesFromLastToFirst;
+
+    Vector<std::pair<TypeID, TypeID>, 32> typesBefore;
+    m_isMemberOfTypedComponent.ensureSize(function.values.size());
+    m_listedValues = &m_isMemberOfTypedComponent;
+    for (ValueID id : members) {
+        typesBefore.append({ function.at(id).type, function.at(id).expectedOrTypeForTyping() });
+        restart(id);
+        m_isMemberOfTypedComponent.quickSet(id.index());
+    }
+    m_queuedValues = QueuedValues::OnlyListed;
     solveTypes();
     solveExpectedTypes();
-    m_queuesOnlySomeValues = false;
 
-    for (auto [position, id] : positions) {
+    for (ValueID id : members) {
         const Value& value = function.at(id);
         if (TypeID expected = value.expected())
             editTypeOf(id).setExpected(narrowerTypeOrNull(expected, value.type));
@@ -1435,25 +1233,25 @@ void TypePropagation::typeComponent(uint32_t component)
             editTypeOf(id).setExpected({ });
     }
     // The members have come to rest, so only what stands outside follows.
-    m_queuesAllButSomeValues = true;
-    for (size_t index = 0; index < positions.size(); ++index) {
-        const Value& value = function.at(positions[index].second);
+    m_queuedValues = QueuedValues::AllButListed;
+    for (size_t index = 0; index < members.size(); ++index) {
+        const Value& value = function.at(members[index]);
         if (value.type != typesBefore[index].first || value.expectedOrTypeForTyping() != typesBefore[index].second)
-            enqueueUsersOf(positions[index].second);
+            enqueueUsersOf(members[index]);
     }
-    m_queuesAllButSomeValues = false;
-    for (auto [position, id] : positions)
-        m_mayBeQueued.quickClear(id.index());
+    m_queuedValues = QueuedValues::All;
+    for (ValueID id : members)
+        m_isMemberOfTypedComponent.quickClear(id.index());
 }
 
 // Whatever this has typed was computed by its rule behind every edit that the log held when this began, and so was all that is typed from it.
 void TypePropagation::tellWhatIsTyped()
 {
-    PendingTyping* pending = m_inputs.memo ? m_inputs.memo->pendingTyping : nullptr;
+    PendingTyping* pending = m_inputs.memo->pendingTyping;
     const ChangeLog* log = m_inputs.function.changeLog();
     if (!pending || !log)
         return;
-    reportRetypedValues();
+    reportRetypedValues(false);
     if (log->hasForgottenSince(m_logAtStart))
         return;
     if (m_didTypeAllValues || m_didGiveUp) {
@@ -1463,28 +1261,23 @@ void TypePropagation::tellWhatIsTyped()
         pending->forgetChangesOfTypesAlone();
         return;
     }
-    if (pending->isEverythingPending(*log))
-        return;
-
     // Where it stops behind a value that keeps its types, what is typed from a value that somebody has given other types by hand may not have had its turn.
-    if (m_everyOtherValueIsAsTyped)
+    if (pending->isEverythingPending(*log) || m_everyOtherValueIsAsTyped)
         return;
 
     const Function& function = m_inputs.function;
     auto isTyped = [&](ValueID id) {
-        return !m_rememberedValues.isEmpty() && id.index() < m_isRemembered.size() && m_isRemembered.quickGet(id.index());
+        return id.index() < m_isRemembered.size() && isRemembered(id);
     };
     auto areParametersTyped = [&](BlockID block) {
         return std::ranges::all_of(function.at(block).parameters, isTyped);
     };
-    auto isStillPending = [&](const BlockChange& change) {
-        if (!areParametersTyped(change.block))
-            return true;
-        bool isPending = false;
-        function.at(change.block).forEachTarget([&](const Target& target) {
-            isPending |= target.block && !areParametersTyped(target.block);
+    auto isTypedWithItsTargets = [&](BlockID block) {
+        bool areAllTyped = areParametersTyped(block);
+        function.at(block).forEachTarget([&](const Target& target) {
+            areAllTyped &= !target.block || areParametersTyped(target.block);
         });
-        return isPending;
+        return areAllTyped;
     };
 
     size_t numberOfOwnValueEntries = log->valuesSince(m_logAtStart).size();
@@ -1492,37 +1285,23 @@ void TypePropagation::tellWhatIsTyped()
     pending->takeEntries(*log);
     size_t firstOwnValueEntry = pending->m_values.size() - numberOfOwnValueEntries;
     size_t firstOwnBlockEntry = pending->m_blocks.size() - numberOfOwnBlockEntries;
-    size_t kept = 0;
-    for (size_t index = 0; index < pending->m_values.size(); ++index) {
-        const ValueChange& change = pending->m_values[index];
+    size_t index = 0;
+    pending->m_values.removeAllMatching([&](const ValueChange& change) {
         // Its own entries say which types have changed, but for an upcast that it has replaced.
-        bool isPending = index < firstOwnValueEntry ? !isTyped(change.value) : change.edits.containsAny({ ValueEdit::Added, ValueEdit::Definition });
-        if (isPending)
-            pending->m_values[kept++] = change;
-    }
-    pending->m_values.shrink(kept);
-    kept = 0;
-    for (size_t index = 0; index < pending->m_blocks.size(); ++index) {
-        const BlockChange& change = pending->m_blocks[index];
-        if (index >= firstOwnBlockEntry || isStillPending(change))
-            pending->m_blocks[kept++] = change;
-    }
-    pending->m_blocks.shrink(kept);
+        return index++ < firstOwnValueEntry ? isTyped(change.value) : !change.edits.containsAny({ ValueEdit::Added, ValueEdit::Definition });
+    });
+    index = 0;
+    pending->m_blocks.removeAllMatching([&](const BlockChange& change) {
+        return index++ < firstOwnBlockEntry && isTypedWithItsTargets(change.block);
+    });
 }
-
-namespace {
-
-enum class TypedFirst : uint8_t { Nothing, DependentsOfChangedValues, AllValues, PendingValues };
-using ChangedValues = TypePropagation::ChangedValues;
-
-} // anonymous namespace
 
 static PendingTyping* pendingTypingOf(const TypePropagationInputs& inputs)
 {
     return inputs.memo && inputs.function.changeLog() ? inputs.memo->pendingTyping : nullptr;
 }
 
-static TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs& inputs, TypedFirst typedFirst, std::span<const ValueID> changedValues = { }, ChangedValues kind = ChangedValues::MayLeaveOthersOutOfDate)
+TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs& inputs, TypedFirst typedFirst, std::span<const ValueID> changedValues, bool everyOtherValueIsAsTyped)
 {
     PendingTyping* pending = pendingTypingOf(inputs);
     TypePropagationOutcome total;
@@ -1533,7 +1312,7 @@ static TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs&
         case TypedFirst::Nothing:
             break;
         case TypedFirst::DependentsOfChangedValues:
-            propagation.typeDependentsOf(changedValues, kind);
+            propagation.typeDependentsOf(changedValues, everyOtherValueIsAsTyped);
             break;
         case TypedFirst::AllValues:
             propagation.typeAllValues();
@@ -1547,12 +1326,12 @@ static TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs&
         parametersBehindRemovedEdges.shrink(0);
         TypePropagationOutcome outcome = propagation.finishWithoutCompacting(parametersBehindRemovedEdges);
         if (typedFirst == TypedFirst::PendingValues) {
-            // What it has written into the log itself: which types have changed, an upcast that it has replaced, a block that it has cut.
             pending->didTypePendingValues();
             pending->takeEntries(*inputs.function.changeLog());
             pending->forgetChangesOfTypesAlone();
         } else if (typedFirst != TypedFirst::Nothing)
             propagation.tellWhatIsTyped();
+
         total += outcome;
         if (!outcome.cutBlocks || parametersBehindRemovedEdges.isEmpty())
             break;
@@ -1575,11 +1354,6 @@ static TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs&
     return total;
 }
 
-TypePropagationOutcome typeValuesFromNever(const TypePropagationInputs& inputs)
-{
-    return typeUntilNothingIsCut(inputs, TypedFirst::AllValues);
-}
-
 bool hasTypedValues(const Function& function)
 {
     for (const Block& block : function.blocks) {
@@ -1594,21 +1368,6 @@ void typeValuesWithoutCutting(const TypePropagationInputs& inputs)
     TypePropagation propagation(inputs);
     propagation.typeAllValues();
     propagation.tellWhatIsTyped();
-}
-
-TypePropagationOutcome finishTypedValues(const TypePropagationInputs& inputs)
-{
-    return typeUntilNothingIsCut(inputs, TypedFirst::Nothing);
-}
-
-TypePropagationOutcome narrowValueTypes(const TypePropagationInputs& inputs, std::span<const ValueID> changedValues)
-{
-    return typeUntilNothingIsCut(inputs, TypedFirst::DependentsOfChangedValues, changedValues);
-}
-
-TypePropagationOutcome narrowValueTypesBehindChanges(const TypePropagationInputs& inputs, std::span<const ValueID> changedValues)
-{
-    return typeUntilNothingIsCut(inputs, TypedFirst::DependentsOfChangedValues, changedValues, ChangedValues::EveryOtherValueIsAsTyped);
 }
 
 void PendingTyping::takeEntries(const ChangeLog& log)
@@ -1634,13 +1393,6 @@ void PendingTyping::didTypePendingValues()
     m_valuesTypedFromRecordsArePending = false;
 }
 
-void PendingTyping::didTypeEverything(const ChangeLog& log)
-{
-    didTypePendingValues();
-    m_isEverythingPending = false;
-    m_seen = log.end();
-}
-
 void PendingTyping::didTypeEverythingBefore(const ChangeLog::Cursor& cursor)
 {
     didTypePendingValues();
@@ -1663,20 +1415,12 @@ bool PendingTyping::compact(Function& function, Renumbering* renumberingForCalle
     Renumbering renumbering;
     bool didMove = compactFunction(function, &renumbering);
     if (didMove && !wasEverythingPending) {
-        size_t kept = 0;
-        for (ValueChange change : m_values) {
-            change.value = renumbering.newIDOf(change.value);
-            if (change.value)
-                m_values[kept++] = change;
-        }
-        m_values.shrink(kept);
-        kept = 0;
-        for (BlockChange change : m_blocks) {
-            change.block = renumbering.newIDOf(change.block);
-            if (change.block)
-                m_blocks[kept++] = change;
-        }
-        m_blocks.shrink(kept);
+        m_values.removeAllMatching([&](ValueChange& change) {
+            return !(change.value = renumbering.newIDOf(change.value));
+        });
+        m_blocks.removeAllMatching([&](BlockChange& change) {
+            return !(change.block = renumbering.newIDOf(change.block));
+        });
         m_seen = log.end();
     }
     if (renumberingForCaller)
@@ -1697,26 +1441,18 @@ PendingTyping PendingTyping::forCopyWith(const ChangeLog& logOfCopy, const Chang
 static ValueID findValueTypedWider(const TypePropagationInputs& inputs, const Function& typedFromNever)
 {
     const Function& function = inputs.function;
+    ValueID found;
     // A narrower type may have cut a block that the wider one leaves, and a cut renumbers the values.
     if (function.values.size() != typedFromNever.values.size())
-        return { };
-    auto isTypedWider = [&](ValueID id) {
+        return found;
+    // Typing from never visits no block that nothing reaches, so a value there stays never, whatever type the pass that made it gave it.
+    forEachListedValue(function, inputs.analyses.cfg(), [&](ValueID id) {
         TypeID type = function.at(id).type;
         TypeID fromNever = typedFromNever.at(id).type;
-        return type != fromNever && !inputs.types.at(type).isSubsetOf(inputs.types.at(fromNever), inputs.program);
-    };
-    // Typing from never visits no block that nothing reaches, so a value there stays never, whatever type the pass that made it gave it.
-    for (BlockID block : inputs.analyses.cfg().reversePostOrder()) {
-        for (ValueID parameter : function.at(block).parameters) {
-            if (isTypedWider(parameter))
-                return parameter;
-        }
-        for (ValueID value : function.at(block).values) {
-            if (isTypedWider(value))
-                return value;
-        }
-    }
-    return { };
+        if (!found && type != fromNever && !inputs.types.at(type).isSubsetOf(inputs.types.at(fromNever), inputs.program))
+            found = id;
+    });
+    return found;
 }
 
 TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
@@ -1746,12 +1482,10 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
             FunctionAnalyses analyses(inputs.analyses.context(), *typedFromNever);
             typeValuesFromNever({ inputs.program, inputs.id, *typedFromNever, analyses, inputs.types, inputs.build });
         }
-        outcome = typeUntilNothingIsCut(inputs, TypedFirst::PendingValues, { }, ChangedValues::EveryOtherValueIsAsTyped);
+        outcome = typeUntilNothingIsCut(inputs, TypedFirst::PendingValues);
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
-        if (typedFromNever) {
-            if (ValueID value = findValueTypedWider(inputs, *typedFromNever))
-                inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
-        }
+        if (ValueID value = typedFromNever ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
+            inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
     // An upcast that was replaced has still to be typed.
     if (pending->isEmpty(log) && !pending->waitsToCutCode())

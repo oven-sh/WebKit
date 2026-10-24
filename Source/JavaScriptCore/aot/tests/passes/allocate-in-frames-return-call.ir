@@ -113,26 +113,12 @@ function f7 name="callsParameter" parameters=[{type=anything}] results=[{type=an
 # CHECK-LABEL: function f7 name="callsParameter"
 # PLAN-LABEL: function f7
 
-function f8 name="callback" kind=Arrow results=[{type=anything}] {
+# REPEAT: i = 8..12
+function f%(i) name="callback" kind=Arrow results=[{type=anything}] {
   b0():
     Return
 }
-function f9 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-function f10 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-function f11 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-function f12 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
+# END REPEAT
 function f13 name="readsScope" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
     v1 = GetEnvironmentField v0 layout=L0 field=0

@@ -59,18 +59,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     LoopHint
     v35 = GetModuleVariable variable=g1
     v36 = PropGet v35 key="original"
-    v37 = Call v0
-    v38 = ToBoolean v37
-    Branch v38 -> taken b3(), notTaken b4()
-  b4():
-    v39 = Call v0
-    v40 = ToBoolean v39
-    Branch v40 -> taken b2(), notTaken b5()
-  b5():
-    v41 = Call v0
-    v42 = ToBoolean v41
-    Branch v42 -> taken b1(), notTaken b6()
-  b6():
+# REPEAT: i = 4..6
+    v%(i*2+29) = Call v0
+    v%(i*2+30) = ToBoolean v%(i*2+29)
+    Branch v%(i*2+30) -> taken b%(i*-1+7)(), notTaken b%(i)()
+  b%(i)():
+# END REPEAT
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {

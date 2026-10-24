@@ -130,31 +130,9 @@ function f7 name="readInLoop" parameters=[{type=L0}] results=[{type=anything}] {
 function f8 name="largeStart" parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: L0):
     v1 = PropGet v0 key="a" receivers=[L0]
-    v2 = Integer integer=0
-    v3 = Integer integer=0
-    v4 = Integer integer=0
-    v5 = Integer integer=0
-    v6 = Integer integer=0
-    v7 = Integer integer=0
-    v8 = Integer integer=0
-    v9 = Integer integer=0
-    v10 = Integer integer=0
-    v11 = Integer integer=0
-    v12 = Integer integer=0
-    v13 = Integer integer=0
-    v14 = Integer integer=0
-    v15 = Integer integer=0
-    v16 = Integer integer=0
-    v17 = Integer integer=0
-    v18 = Integer integer=0
-    v19 = Integer integer=0
-    v20 = Integer integer=0
-    v21 = Integer integer=0
-    v22 = Integer integer=0
-    v23 = Integer integer=0
-    v24 = Integer integer=0
-    v25 = Integer integer=0
-    v26 = Integer integer=0
+# REPEAT: i = 2..26
+    v%(i) = Integer integer=0
+# END REPEAT
     v27 = PropGet v0 key="b" receivers=[L0]
     v28 = Builtin builtin=GlobalThis
     v29 = PropGet v28 key="sink" [isFreeName]

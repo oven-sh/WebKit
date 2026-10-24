@@ -5,18 +5,11 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="fourNestedLoops" parameters=[{type=boolean}] results=[{type=undefined}] {
   b0(v0: boolean):
-    Jump -> next b1()
-  b1():
+# REPEAT: i = 1..4
+    Jump -> next b%(i)()
+  b%(i)():
     LoopHint
-    Jump -> next b2()
-  b2():
-    LoopHint
-    Jump -> next b3()
-  b3():
-    LoopHint
-    Jump -> next b4()
-  b4():
-    LoopHint
+# END REPEAT
     Branch v0 -> taken b4(), notTaken b5()
   b5():
     Branch v0 -> taken b3(), notTaken b6()

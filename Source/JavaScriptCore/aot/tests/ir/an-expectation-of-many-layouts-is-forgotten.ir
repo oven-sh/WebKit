@@ -7,23 +7,9 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="T0" fields=[{key="k0" declared={type=number} flags=[IsRequired]}]
-layout L1 name="T1" fields=[{key="k1" declared={type=number} flags=[IsRequired]}]
-layout L2 name="T2" fields=[{key="k2" declared={type=number} flags=[IsRequired]}]
-layout L3 name="T3" fields=[{key="k3" declared={type=number} flags=[IsRequired]}]
-layout L4 name="T4" fields=[{key="k4" declared={type=number} flags=[IsRequired]}]
-layout L5 name="T5" fields=[{key="k5" declared={type=number} flags=[IsRequired]}]
-layout L6 name="T6" fields=[{key="k6" declared={type=number} flags=[IsRequired]}]
-layout L7 name="T7" fields=[{key="k7" declared={type=number} flags=[IsRequired]}]
-layout L8 name="T8" fields=[{key="k8" declared={type=number} flags=[IsRequired]}]
-layout L9 name="T9" fields=[{key="k9" declared={type=number} flags=[IsRequired]}]
-layout L10 name="T10" fields=[{key="k10" declared={type=number} flags=[IsRequired]}]
-layout L11 name="T11" fields=[{key="k11" declared={type=number} flags=[IsRequired]}]
-layout L12 name="T12" fields=[{key="k12" declared={type=number} flags=[IsRequired]}]
-layout L13 name="T13" fields=[{key="k13" declared={type=number} flags=[IsRequired]}]
-layout L14 name="T14" fields=[{key="k14" declared={type=number} flags=[IsRequired]}]
-layout L15 name="T15" fields=[{key="k15" declared={type=number} flags=[IsRequired]}]
-layout L16 name="T16" fields=[{key="k16" declared={type=number} flags=[IsRequired]}]
+# REPEAT: i = 0..16
+layout L%(i) name="T%(i)" fields=[{key="k%(i)" declared={type=number} flags=[IsRequired]}]
+# END REPEAT
 layout L17 name="Holder" fields=[{key="few" declared={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15 flags=[IsExpected]} flags=[IsRequired]}, {key="many" declared={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16 flags=[IsExpected]} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {

@@ -282,42 +282,19 @@ function f15 name="unrelatedEnclosingTests" parameters=[{type=number}, {type=num
   b0(v0: number, v1: number, v2: number, v3: number):
     v4 = Integer integer=0
     v5 = Integer integer=1
-    Jump -> next b1(v4)
-  b1(v6):
+# REPEAT: i = 0..3
+    Jump -> next b%(i*2+1)(v4)
+  b%(i*2+1)(v%(i*3+6)):
     LoopHint
-    v8 = Less v6, v0
-    Branch v8 -> taken b2(), notTaken b12()
-  b2():
-    Jump -> next b3(v4)
-  b3(v9):
-    LoopHint
-    v11 = Less v9, v1
-    Branch v11 -> taken b4(), notTaken b11()
-  b4():
-    Jump -> next b5(v4)
-  b5(v12):
-    LoopHint
-    v14 = Less v12, v2
-    Branch v14 -> taken b6(), notTaken b10()
-  b6():
-    Jump -> next b7(v4)
-  b7(v15):
-    LoopHint
-    v17 = Less v15, v3
-    Branch v17 -> taken b8(), notTaken b9()
-  b8():
-    v18 = Add v15, v5
-    Jump -> next b7(v18)
-  b9():
-    v19 = Add v12, v5
-    Jump -> next b5(v19)
-  b10():
-    v20 = Add v9, v5
-    Jump -> next b3(v20)
-  b11():
-    v21 = Add v6, v5
-    Jump -> next b1(v21)
-  b12():
+    v%(i*3+8) = Less v%(i*3+6), v%(i)
+    Branch v%(i*3+8) -> taken b%(i*2+2)(), notTaken b%(i*-1+12)()
+  b%(i*2+2)():
+# END REPEAT
+# REPEAT: i = 18..21
+    v%(i) = Add v%(i*-3+69), v5
+    Jump -> next b%(i*-2+43)(v%(i))
+  b%(i-9)():
+# END REPEAT
     Return
 }
 

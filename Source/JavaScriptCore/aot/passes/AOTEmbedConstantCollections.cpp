@@ -21,7 +21,6 @@
 #include "AOTThreads.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
-#include "AOTVector.h"
 #include "ArrayConventions.h"
 #include "PureNaN.h"
 #include "Structure.h"
@@ -30,7 +29,6 @@
 #include <cmath>
 #include <optional>
 #include <span>
-#include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Hasher.h>
@@ -44,10 +42,10 @@ namespace {
 struct ConstructionSite {
     ValueID construction;
     ConstantCollectionKind kind;
-    DataID existingData;
+    // The contents, or the record of the program that holds them already.
     DataNode contents;
-    Vector<ValueID> deadValues;
     DataID data;
+    Vector<ValueID> deadValues;
     // A collection of constants that nobody reads is made for nothing: no code runs, and only the lack of memory keeps it from being made.
     bool isUnused { false };
 };
@@ -65,10 +63,13 @@ struct DictionaryLiteral {
     // Every name that the literal defines, in the order of the definitions: those of the contents, then those that are defined with something else.
     Vector<PropertyKeyID> names;
     bool runsAtMostOnce { false };
+    bool isEmbedded { false };
     DataID data;
 };
 
 struct ConstantCollectionSites {
+    bool isEmpty() const { return sites.isEmpty() && unwrittenLiterals.isEmpty() && dictionaries.isEmpty(); }
+
     FunctionID function;
     Vector<ConstructionSite> sites;
     Vector<UnwrittenLiteral> unwrittenLiterals;
@@ -77,96 +78,23 @@ struct ConstantCollectionSites {
 
 using KeyIdentity = std::pair<uint8_t, uint64_t>;
 using KeyIdentityTraits = WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint8_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-using PositionsByKey = UncheckedKeyHashMap<KeyIdentity, uint32_t, DefaultHash<KeyIdentity>, KeyIdentityTraits>;
-using RecordsByHash = UncheckedKeyHashMap<uint64_t, Vector<DataID, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+template<typename T> using ListsByHash = UncheckedKeyHashMap<uint64_t, Vector<T, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
 } // anonymous namespace
 
-static AnalysisContext contextOf(const AnalysisContext& programContext, FunctionID id)
-{
-    return { programContext.build, programContext.program, programContext.flow, programContext.effects, id };
-}
-
-static Opcode operationFor(ConstantCollectionKind kind)
-{
-    switch (kind) {
-    case ConstantCollectionKind::Set:
-        return Opcode::NewSetFromData;
-    case ConstantCollectionKind::Map:
-        return Opcode::NewMapFromData;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
+// The key, and behind it the value if there is one.
 template<typename Node>
-static Node& keyOf(Node& entry, ConstantCollectionKind kind)
+static std::span<Node> partsOf(Node& entry, ConstantCollectionKind kind)
 {
     switch (kind) {
     case ConstantCollectionKind::Set:
-        return entry;
-    case ConstantCollectionKind::Map:
-        return entry.template as<DataNode::Array>().elements[0];
+        return { &entry, 1 };
+    case ConstantCollectionKind::Map: {
+        auto& pair = entry.template as<DataNode::Array>().elements;
+        return { pair.begin(), pair.size() };
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool isPrimitive(const DataNode& node)
-{
-    switch (node.kind()) {
-    case DataNode::Kind::Undefined:
-    case DataNode::Kind::Null:
-    case DataNode::Kind::Boolean:
-    case DataNode::Kind::Number:
-    case DataNode::Kind::String:
-    case DataNode::Kind::BigInt:
-        return true;
-    case DataNode::Kind::Hole:
-    case DataNode::Kind::Array:
-    case DataNode::Kind::Object:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool isHole(const DataNode& node)
-{
-    return node.is<DataNode::Hole>();
-}
-
-static bool isUsableAs(const DataNode::Array& contents, ConstantCollectionKind kind)
-{
-    if (contents.elements.isEmpty())
-        return false;
-    return std::ranges::all_of(contents.elements, [&](const DataNode& entry) {
-        switch (kind) {
-        case ConstantCollectionKind::Set:
-            return !isHole(entry);
-        case ConstantCollectionKind::Map: {
-            const auto* pair = entry.tryAs<DataNode::Array>();
-            return pair && pair->elements.size() == 2 && std::ranges::none_of(pair->elements, isHole);
-        }
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    });
-}
-
-static bool createsObjects(const DataNode::Array& contents, ConstantCollectionKind kind)
-{
-    return !std::ranges::all_of(contents.elements, [&](const DataNode& entry) {
-        switch (kind) {
-        case ConstantCollectionKind::Set:
-            return isPrimitive(entry);
-        case ConstantCollectionKind::Map:
-            return std::ranges::all_of(entry.as<DataNode::Array>().elements, isPrimitive);
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    });
-}
-
-static bool isNegativeZero(const DataNode& node)
-{
-    const auto* number = node.tryAs<DataNode::Number>();
-    return number && !number->value && std::signbit(number->value);
 }
 
 static std::optional<KeyIdentity> identityOf(const DataNode& key)
@@ -197,14 +125,41 @@ static std::optional<KeyIdentity> identityOf(const DataNode& key)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool isUsableAs(const DataNode::Array& contents, ConstantCollectionKind kind)
+{
+    return !contents.elements.isEmpty() && std::ranges::all_of(contents.elements, [&](const DataNode& entry) {
+        const auto* pair = entry.tryAs<DataNode::Array>();
+        if (kind == ConstantCollectionKind::Map && (!pair || pair->elements.size() != 2))
+            return false;
+        return std::ranges::none_of(partsOf(entry, kind), [](const DataNode& part) {
+            return part.is<DataNode::Hole>();
+        });
+    });
+}
+
+static bool createsObjects(const DataNode::Array& contents, ConstantCollectionKind kind)
+{
+    return std::ranges::any_of(contents.elements, [&](const DataNode& entry) {
+        return std::ranges::any_of(partsOf(entry, kind), [](const DataNode& part) {
+            return !identityOf(part);
+        });
+    });
+}
+
+static bool isNegativeZero(const DataNode& node)
+{
+    const auto* number = node.tryAs<DataNode::Number>();
+    return number && !number->value && std::signbit(number->value);
+}
+
 static std::optional<Vector<DataNode>> removeRepeatedKeys(std::span<const DataNode> entries, ConstantCollectionKind kind)
 {
-    PositionsByKey positions;
+    UncheckedKeyHashMap<KeyIdentity, uint32_t, DefaultHash<KeyIdentity>, KeyIdentityTraits> positions;
     Vector<uint32_t> sources;
     sources.reserveInitialCapacity(entries.size());
     bool changesEntries = false;
     for (uint32_t index = 0; index < entries.size(); ++index) {
-        const DataNode& key = keyOf(entries[index], kind);
+        const DataNode& key = partsOf(entries[index], kind)[0];
         changesEntries |= isNegativeZero(key);
         if (std::optional<KeyIdentity> identity = identityOf(key)) {
             auto position = positions.add(*identity, static_cast<uint32_t>(sources.size()));
@@ -220,15 +175,12 @@ static std::optional<Vector<DataNode>> removeRepeatedKeys(std::span<const DataNo
     if (!changesEntries)
         return std::nullopt;
 
-    Vector<DataNode> result;
-    result.reserveInitialCapacity(sources.size());
-    for (uint32_t source : sources) {
+    return sources.map([&](uint32_t source) {
         DataNode entry = entries[source];
-        if (isNegativeZero(keyOf(entry, kind)))
-            keyOf(entry, kind) = DataNode(DataNode::Number { 0 });
-        result.append(WTF::move(entry));
-    }
-    return result;
+        if (DataNode& key = partsOf(entry, kind)[0]; isNegativeZero(key))
+            key = DataNode(DataNode::Number { 0 });
+        return entry;
+    });
 }
 
 static std::optional<DataNode> constantNodeOf(const Program& program, const Function& function, ValueID id)
@@ -237,9 +189,6 @@ static std::optional<DataNode> constantNodeOf(const Program& program, const Func
     if (!constantID)
         return std::nullopt;
     const Value& constant = function.at(*constantID);
-    if (!constantNodeOpcodes.contains(constant.opcode))
-        return std::nullopt;
-
     switch (constant.opcode) {
     case Opcode::Undefined:
         return DataNode(DataNode::Undefined { });
@@ -256,21 +205,24 @@ static std::optional<DataNode> constantNodeOf(const Program& program, const Func
     case Opcode::BigInt:
         return DataNode(DataNode::BigInt { constant.digits() });
     default:
-        RELEASE_ASSERT_NOT_REACHED();
+        ASSERT(!constantNodeOpcodes.contains(constant.opcode));
+        return std::nullopt;
     }
 }
 
-static bool isNeverStoredInto(const FlowResults& flow, const Value& allocation)
+static std::optional<DataNode> constantNodeOf(FunctionAnalyses& analyses, ValueID id)
 {
-    AllocationSiteID site = allocation.allocationSite();
-    AllocationClassID allocationClass = site ? flow.at(site).allocationClass : AllocationClassID();
-    return allocationClass && flow.at(allocationClass).impossibleMutations.contains(ObjectMutation::StoreAfterCreation);
+    return constantNodeOf(analyses.program(), analyses.function(), id);
 }
 
 // The arrays of a literal of constants that the optimizer has left in the heap, and that no store of the program reaches, are cells around one storage: it lies in the image unless it holds strings.
 static std::optional<DataNode> tryReadUnwrittenLiteral(const AnalysisContext& context, const Function& function, const Value& literal)
 {
-    if (literal.storage() != AllocationStorage::Heap || literal.capacityOperand() || !literal.holes().empty() || !context.flow || !isNeverStoredInto(*context.flow, literal))
+    if (literal.storage() != AllocationStorage::Heap || literal.capacityOperand() || !literal.holes().empty() || !context.flow)
+        return std::nullopt;
+    AllocationSiteID site = literal.allocationSite();
+    AllocationClassID allocationClass = site ? context.flow->at(site).allocationClass : AllocationClassID();
+    if (!allocationClass || !context.flow->at(allocationClass).impossibleMutations.contains(ObjectMutation::StoreAfterCreation))
         return std::nullopt;
 
     DataNode::Array array { literal.contents(), { } };
@@ -327,210 +279,152 @@ static bool hasToStayLiteral(FunctionAnalyses& analyses, ValueID literal)
     });
 }
 
-namespace {
+// An array literal without holes that nothing but the user sees.
+static std::optional<ObjectID> findPrivateLiteral(FunctionAnalyses& analyses, ValueID value, ValueID user)
+{
+    const EscapeAnalysis& escape = analyses.escape();
+    std::optional<ObjectID> object = escape.singleObject(value);
+    if (!object)
+        return std::nullopt;
+    const Value& literal = analyses.function().at(escape.at(*object).definition);
+    if (literal.opcode != Opcode::NewArray || !literal.holes().empty() || literal.capacityOperand())
+        return std::nullopt;
+    std::span<const ObjectUse> uses = escape.usesOf(*object);
+    if (uses.size() != 1 || uses.front().use.kind != Use::Kind::Operand || uses.front().use.user != user)
+        return std::nullopt;
+    bool canEraseWhenUnused = std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) {
+        return analyses.useLists().locationOf(alias).placement == ValuePlacement::InBlock && analyses.isRemovableWhenUnused(alias);
+    });
+    return canEraseWhenUnused ? object : std::nullopt;
+}
 
-class LiteralReader {
-public:
-    LiteralReader(const AnalysisContext& context, const Function& function)
-        : m_program(context.program)
-        , m_function(function)
-        , m_analyses(context, function)
-    {
-    }
+// The entries of a set are constants, those of a map are private literals themselves: pairs of constants.
+static std::optional<DataNode> tryReadLiteral(FunctionAnalyses& analyses, ValueID value, ValueID user, bool holdsPairs, bool isPair, Vector<ValueID>& deadValues)
+{
+    std::optional<ObjectID> object = findPrivateLiteral(analyses, value, user);
+    if (!object)
+        return std::nullopt;
+    ValueID id = analyses.escape().at(*object).definition;
+    const Value& literal = analyses.function().at(id);
+    if (isPair ? literal.elementsOperands().size() != 2 : literal.elementsOperands().empty())
+        return std::nullopt;
 
-    FunctionAnalyses& analyses() { return m_analyses; }
-
-    std::optional<ConstructionSite> tryRead(ValueID construction, ConstantCollectionKind kind)
-    {
-        ConstructionSite site { .construction = construction, .kind = kind };
-        ValueID argument = m_function.at(construction).argumentsOperands()[0];
-        // What flow proved about the array stands between it and the constructor as a cast.
-        ValueID definition = argument;
-        while (isCastWithoutTest(m_function.at(definition).opcode))
-            definition = m_function.at(definition).operand(0);
-        bool isData = m_function.at(definition).opcode == Opcode::Data;
-        if (!(isData ? tryReadData(argument, definition, site) : tryReadLiteral(argument, site)))
+    deadValues.append(analyses.escape().aliasesOf(*object));
+    DataNode::Array array { literal.contents(), { } };
+    array.elements.reserveInitialCapacity(literal.elementsOperands().size());
+    for (ValueID element : literal.elementsOperands()) {
+        std::optional<DataNode> node = holdsPairs ? tryReadLiteral(analyses, element, id, false, true, deadValues) : constantNodeOf(analyses, element);
+        if (!node)
             return std::nullopt;
-
-        const auto& contents = (site.existingData ? m_program.at(site.existingData).root : site.contents).as<DataNode::Array>();
-        if (std::optional<Vector<DataNode>> entries = removeRepeatedKeys(contents.elements.span(), kind)) {
-            site.contents = DataNode(DataNode::Array { contents.contents, WTF::move(*entries) });
-            site.existingData = { };
-        }
-        return site;
+        array.elements.append(WTF::move(*node));
     }
+    return DataNode(WTF::move(array));
+}
 
-    // `{ "+1": "a", smile: "b", .. }` where the type names no keys: an ordinary object that is filled name by name behind its allocation.
-    std::optional<DictionaryLiteral> tryReadDictionary(ValueID dictionary)
-    {
-        ValueLocation location = m_analyses.useLists().locationOf(dictionary);
-        if (location.placement != ValuePlacement::InBlock)
-            return std::nullopt;
+static bool tryReadData(FunctionAnalyses& analyses, ValueID argument, ValueID definition, ConstructionSite& site)
+{
+    const Function& function = analyses.function();
+    DataID data = function.at(definition).data();
+    const auto* contents = analyses.program().at(data).root.tryAs<DataNode::Array>();
+    if (!contents || !isUsableAs(*contents, site.kind))
+        return false;
 
-        DictionaryLiteral literal { .dictionary = dictionary, .runsAtMostOnce = m_analyses.executionCountOf(location.block) == ExecutionCount::AtMostOnce };
-        bool takesConstants = true;
-        Vector<ValueID, 2> aliases { dictionary };
-        UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> positions;
-        const BlockValues& values = m_function.at(location.block).values;
-        for (size_t index = location.index + 1; index < values.size(); ++index) {
-            ValueID id = values[index];
-            const Value& value = m_function.at(id);
-            bool takesDictionary = false;
-            value.forEachOperand([&](ValueID operand, uint32_t) {
-                takesDictionary |= aliases.contains(operand);
-            });
-            if (!takesDictionary)
-                continue;
-            if (isCastWithoutTest(value.opcode)) {
-                aliases.append(id);
-                continue;
-            }
-            if (value.opcode == Opcode::ElemDefine && !aliases.contains(value.valueOperand()) && isConstantIndex(value.propertyOperand()))
-                continue;
-            if (value.opcode != Opcode::PropDefine || aliases.contains(value.valueOperand()) || !isNameOfOrdinaryProperty(value.key()))
-                break;
-            auto position = positions.add(value.key().index(), literal.names.size());
-            if (position.isNewEntry)
-                literal.names.append(value.key());
-            std::optional<DataNode> member = takesConstants ? constantNodeOf(value.valueOperand()) : std::nullopt;
-            takesConstants = !!member;
-            if (!member)
-                continue;
-            if (position.isNewEntry)
-                literal.contents.members.append(DataMember { value.key(), WTF::move(*member) });
-            else
-                literal.contents.members[position.iterator->value].value = WTF::move(*member);
-            literal.deadValues.append(id);
-        }
-        if (literal.names.isEmpty())
-            return std::nullopt;
-        return literal;
-    }
-
-private:
-    bool isConstantIndex(ValueID property) const
-    {
-        std::optional<ValueID> constant = constantThroughCasts(m_program, m_function, property);
-        return constant && m_function.at(*constant).opcode == Opcode::Integer && m_function.at(*constant).integer() >= 0 && m_function.at(*constant).integer() <= MAX_ARRAY_INDEX;
-    }
-
-    bool isNameOfOrdinaryProperty(PropertyKeyID key) const
-    {
-        return m_program.at(key).kind == PropertyKeyKind::Text && !m_program.isIndexLike(key);
-    }
-
-    bool tryReadData(ValueID argument, ValueID definition, ConstructionSite& site)
-    {
-        DataID data = m_function.at(definition).data();
-        const auto* contents = m_program.at(data).root.tryAs<DataNode::Array>();
-        if (!contents || !isUsableAs(*contents, site.kind))
+    const UseLists& useLists = analyses.useLists();
+    ValueID user = site.construction;
+    for (ValueID id = argument;; id = function.at(id).valueOperand()) {
+        std::optional<Use> use = useLists.singleUse(id);
+        if (!use || use->kind != Use::Kind::Operand || use->user != user || useLists.locationOf(id).placement != ValuePlacement::InBlock)
             return false;
+        site.deadValues.append(id);
+        if (id == definition)
+            break;
+        user = id;
+    }
 
-        const UseLists& useLists = m_analyses.useLists();
-        ValueID user = site.construction;
-        for (ValueID id = argument;; id = m_function.at(id).valueOperand()) {
-            std::optional<Use> use = useLists.singleUse(id);
-            if (!use || use->kind != Use::Kind::Operand || use->user != user || useLists.locationOf(id).placement != ValuePlacement::InBlock)
-                return false;
-            site.deadValues.append(id);
-            if (id == definition)
-                break;
-            user = id;
+    // Every collection built from one array shares its objects, so the array has to be created exactly once per collection.
+    if (createsObjects(*contents, site.kind) && useLists.blockOf(definition) != useLists.blockOf(site.construction))
+        return false;
+
+    site.data = data;
+    return true;
+}
+
+static std::optional<ConstructionSite> tryReadConstruction(FunctionAnalyses& analyses, ValueID construction, ConstantCollectionKind kind)
+{
+    const Function& function = analyses.function();
+    ConstructionSite site { .construction = construction, .kind = kind };
+    ValueID argument = function.at(construction).argumentsOperands()[0];
+    // What flow proved about the array stands between it and the constructor as a cast.
+    ValueID definition = argument;
+    while (isCastWithoutTest(function.at(definition).opcode))
+        definition = function.at(definition).operand(0);
+    if (function.at(definition).opcode != Opcode::Data) {
+        std::optional<DataNode> contents = tryReadLiteral(analyses, argument, construction, kind == ConstantCollectionKind::Map, false, site.deadValues);
+        if (!contents)
+            return std::nullopt;
+        site.contents = WTF::move(*contents);
+    } else if (!tryReadData(analyses, argument, definition, site))
+        return std::nullopt;
+
+    const auto& contents = (site.data ? analyses.program().at(site.data).root : site.contents).as<DataNode::Array>();
+    if (std::optional<Vector<DataNode>> entries = removeRepeatedKeys(contents.elements.span(), kind)) {
+        site.contents = DataNode(DataNode::Array { contents.contents, WTF::move(*entries) });
+        site.data = { };
+    }
+    site.isUnused = !analyses.useLists().useCount(construction);
+    return site;
+}
+
+// `{ "+1": "a", smile: "b", .. }` where the type names no keys: an ordinary object that is filled name by name behind its allocation.
+static std::optional<DictionaryLiteral> tryReadDictionary(FunctionAnalyses& analyses, ValueID dictionary)
+{
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    ValueLocation location = analyses.useLists().locationOf(dictionary);
+    if (location.placement != ValuePlacement::InBlock)
+        return std::nullopt;
+    auto isConstantIndex = [&](ValueID property) {
+        std::optional<ValueID> constant = constantThroughCasts(program, function, property);
+        return constant && function.at(*constant).opcode == Opcode::Integer && function.at(*constant).integer() >= 0 && function.at(*constant).integer() <= MAX_ARRAY_INDEX;
+    };
+
+    DictionaryLiteral literal { .dictionary = dictionary, .runsAtMostOnce = analyses.executionCountOf(location.block) == ExecutionCount::AtMostOnce };
+    bool takesConstants = true;
+    Vector<ValueID, 2> aliases { dictionary };
+    HashMap<PropertyKeyID, uint32_t> positions;
+    for (ValueID id : function.at(location.block).values.subspan(location.index + 1)) {
+        const Value& value = function.at(id);
+        bool takesDictionary = false;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            takesDictionary |= aliases.contains(operand);
+        });
+        if (!takesDictionary)
+            continue;
+        if (isCastWithoutTest(value.opcode)) {
+            aliases.append(id);
+            continue;
         }
-
-        // Every collection built from one array shares its objects, so the array has to be created exactly once per collection.
-        if (createsObjects(*contents, site.kind) && useLists.blockOf(definition) != useLists.blockOf(site.construction))
-            return false;
-
-        site.existingData = data;
-        return true;
+        if (value.opcode == Opcode::ElemDefine && !aliases.contains(value.valueOperand()) && isConstantIndex(value.propertyOperand()))
+            continue;
+        if (value.opcode != Opcode::PropDefine || aliases.contains(value.valueOperand()) || program.at(value.key()).kind != PropertyKeyKind::Text || program.isIndexLike(value.key()))
+            break;
+        auto position = positions.add(value.key(), literal.names.size());
+        if (position.isNewEntry)
+            literal.names.append(value.key());
+        std::optional<DataNode> member = takesConstants ? constantNodeOf(analyses, value.valueOperand()) : std::nullopt;
+        takesConstants = !!member;
+        if (!member)
+            continue;
+        if (position.isNewEntry)
+            literal.contents.members.append(DataMember { value.key(), WTF::move(*member) });
+        else
+            literal.contents.members[position.iterator->value].value = WTF::move(*member);
+        literal.deadValues.append(id);
     }
-
-    bool tryReadLiteral(ValueID argument, ConstructionSite& site)
-    {
-        const EscapeAnalysis& escape = m_analyses.escape();
-        std::optional<ObjectID> list = findPrivateLiteral(argument, site.construction);
-        if (!list)
-            return false;
-        ValueID literalID = escape.at(*list).definition;
-        const Value& literal = m_function.at(literalID);
-        if (literal.elementsOperands().empty())
-            return false;
-
-        site.deadValues.append(escape.aliasesOf(*list));
-        Vector<DataNode> entries;
-        entries.reserveInitialCapacity(literal.elementsOperands().size());
-        for (ValueID element : literal.elementsOperands()) {
-            std::optional<DataNode> entry = tryReadEntry(element, literalID, site);
-            if (!entry)
-                return false;
-            entries.append(WTF::move(*entry));
-        }
-        site.contents = DataNode(DataNode::Array { literal.contents(), WTF::move(entries) });
-        return true;
-    }
-
-    std::optional<DataNode> tryReadEntry(ValueID element, ValueID list, ConstructionSite& site)
-    {
-        switch (site.kind) {
-        case ConstantCollectionKind::Set:
-            return constantNodeOf(element);
-        case ConstantCollectionKind::Map:
-            return tryReadPair(element, list, site.deadValues);
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-
-    std::optional<DataNode> tryReadPair(ValueID element, ValueID list, Vector<ValueID>& deadValues)
-    {
-        const EscapeAnalysis& escape = m_analyses.escape();
-        std::optional<ObjectID> pair = findPrivateLiteral(element, list);
-        if (!pair)
-            return std::nullopt;
-        const Value& literal = m_function.at(escape.at(*pair).definition);
-        std::span<const ValueID> members = literal.elementsOperands();
-        if (members.size() != 2)
-            return std::nullopt;
-
-        std::optional<DataNode> key = constantNodeOf(members[0]);
-        std::optional<DataNode> value = constantNodeOf(members[1]);
-        if (!key || !value)
-            return std::nullopt;
-        deadValues.append(escape.aliasesOf(*pair));
-        return DataNode(DataNode::Array { literal.contents(), Vector<DataNode>::from(WTF::move(*key), WTF::move(*value)) });
-    }
-
-    std::optional<ObjectID> findPrivateLiteral(ValueID value, ValueID user)
-    {
-        const EscapeAnalysis& escape = m_analyses.escape();
-        std::optional<ObjectID> object = escape.singleObject(value);
-        if (!object)
-            return std::nullopt;
-        const Value& literal = m_function.at(escape.at(*object).definition);
-        if (literal.opcode != Opcode::NewArray || !literal.holes().empty() || literal.capacityOperand())
-            return std::nullopt;
-        std::span<const ObjectUse> uses = escape.usesOf(*object);
-        if (uses.size() != 1 || uses.front().use.kind != Use::Kind::Operand || uses.front().use.user != user)
-            return std::nullopt;
-        if (!std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) { return canEraseWhenUnused(alias); }))
-            return std::nullopt;
-        return object;
-    }
-
-    bool canEraseWhenUnused(ValueID id)
-    {
-        return m_analyses.useLists().locationOf(id).placement == ValuePlacement::InBlock
-            && m_analyses.isRemovableWhenUnused(id);
-    }
-
-    std::optional<DataNode> constantNodeOf(ValueID id) const { return Typed::constantNodeOf(m_program, m_function, id); }
-
-    const Program& m_program;
-    const Function& m_function;
-    FunctionAnalyses m_analyses;
-};
-
-} // anonymous namespace
+    if (literal.names.isEmpty())
+        return std::nullopt;
+    return literal;
+}
 
 static std::optional<ConstantCollectionKind> collectionKindOf(const Program& program, const Value& call)
 {
@@ -560,223 +454,166 @@ static void collectSites(const AnalysisContext& context, Vector<ConstantCollecti
     if (!function.hasBody() || !context.build.isEnabled(PassID::EmbedConstantCollections, context.id))
         return;
 
-    std::optional<LiteralReader> reader;
-    Vector<ConstructionSite> sites;
-    Vector<UnwrittenLiteral> unwrittenLiterals;
-    Vector<DictionaryLiteral> dictionaries;
+    std::optional<FunctionAnalyses> analysesIfAsked;
+    auto analyses = [&]() -> FunctionAnalyses& {
+        return analysesIfAsked ? *analysesIfAsked : analysesIfAsked.emplace(context, function);
+    };
+    ConstantCollectionSites inFunction { .function = context.id };
     forEachListedValue(context.program, context.id, opcodesOfSites, [&](BlockID, uint32_t, ValueID id, const Value& value) {
         if (value.opcode == Opcode::NewDictionary) {
-            if (!reader)
-                reader.emplace(context, function);
-            if (std::optional<DictionaryLiteral> literal = reader->tryReadDictionary(id))
-                dictionaries.append(WTF::move(*literal));
-            return;
-        }
-        if (value.opcode == Opcode::NewArray) {
+            if (std::optional<DictionaryLiteral> literal = tryReadDictionary(analyses(), id))
+                inFunction.dictionaries.append(WTF::move(*literal));
+        } else if (value.opcode == Opcode::NewArray) {
             std::optional<DataNode> contents = tryReadUnwrittenLiteral(context, function, value);
             if (!contents)
                 return;
-            if (!reader)
-                reader.emplace(context, function);
             // Storage with cells is made by the first array, for those that follow.
-            if (!isStorageOfArray(*contents->tryAs<DataNode::Array>()) && reader->analyses().executionCountOf(reader->analyses().useLists().blockOf(id)) == ExecutionCount::AtMostOnce)
+            if (!isStorageOfArray(*contents->tryAs<DataNode::Array>()) && analyses().executionCountOf(analyses().useLists().blockOf(id)) == ExecutionCount::AtMostOnce)
                 return;
-            if (!hasToStayLiteral(reader->analyses(), id))
-                unwrittenLiterals.append({ id, WTF::move(*contents), { } });
-            return;
-        }
-
-        std::optional<ConstantCollectionKind> kind = collectionKindOf(context.program, value);
-        if (!kind)
-            return;
-        if (!reader)
-            reader.emplace(context, function);
-        if (std::optional<ConstructionSite> site = reader->tryRead(id, *kind)) {
-            site->isUnused = !reader->analyses().useLists().useCount(id);
-            sites.append(WTF::move(*site));
+            if (!hasToStayLiteral(analyses(), id))
+                inFunction.unwrittenLiterals.append({ id, WTF::move(*contents), { } });
+        } else if (std::optional<ConstantCollectionKind> kind = collectionKindOf(context.program, value)) {
+            if (std::optional<ConstructionSite> site = tryReadConstruction(analyses(), id, *kind))
+                inFunction.sites.append(WTF::move(*site));
         }
     });
     // The literal that a collection is made of goes away with the construction.
-    unwrittenLiterals.removeAllMatching([&](const UnwrittenLiteral& unwritten) {
-        return std::ranges::any_of(sites, [&](const ConstructionSite& site) {
+    inFunction.unwrittenLiterals.removeAllMatching([&](const UnwrittenLiteral& unwritten) {
+        return std::ranges::any_of(inFunction.sites, [&](const ConstructionSite& site) {
             return site.deadValues.contains(unwritten.literal);
         });
     });
-    if (!sites.isEmpty() || !unwrittenLiterals.isEmpty() || !dictionaries.isEmpty())
-        found.append(ConstantCollectionSites { context.id, WTF::move(sites), WTF::move(unwrittenLiterals), WTF::move(dictionaries) });
+    if (!inFunction.isEmpty())
+        found.append(WTF::move(inFunction));
 }
 
 static void add(Hasher& hasher, const DataNode& node)
 {
     add(hasher, node.kind());
-    switch (node.kind()) {
-    case DataNode::Kind::Undefined:
-    case DataNode::Kind::Null:
-    case DataNode::Kind::Hole:
-        return;
-    case DataNode::Kind::Boolean:
-        add(hasher, node.as<DataNode::Boolean>().value);
-        return;
-    case DataNode::Kind::Number:
-        add(hasher, node.as<DataNode::Number>().value);
-        return;
-    case DataNode::Kind::String:
-        add(hasher, node.as<DataNode::String>().value);
-        return;
-    case DataNode::Kind::BigInt:
-        add(hasher, node.as<DataNode::BigInt>().digits);
-        return;
-    case DataNode::Kind::Array: {
-        auto& array = node.as<DataNode::Array>();
-        add(hasher, array.contents);
-        add(hasher, static_cast<uint32_t>(array.elements.size()));
-        for (const DataNode& element : array.elements)
+    if (std::optional<KeyIdentity> identity = identityOf(node))
+        add(hasher, identity->second);
+    else if (const auto* array = node.tryAs<DataNode::Array>()) {
+        add(hasher, array->contents);
+        for (const DataNode& element : array->elements)
             add(hasher, element);
-        return;
-    }
-    case DataNode::Kind::Object: {
-        auto& object = node.as<DataNode::Object>();
-        add(hasher, object.layout);
-        add(hasher, static_cast<uint32_t>(object.members.size()));
-        for (const DataMember& member : object.members) {
+    } else if (const auto* object = node.tryAs<DataNode::Object>()) {
+        add(hasher, object->layout);
+        for (const DataMember& member : object->members) {
             add(hasher, member.key);
             add(hasher, member.value);
         }
-        return;
     }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
-static DataID findOrAddData(ProgramEditor& editor, RecordsByHash& recordsByHash, Data&& data)
+static DataID findOrAddData(ProgramEditor& editor, ListsByHash<DataID>& recordsByHash, DataNode&& root, ModuleID module)
 {
-    Vector<DataID, 1>& records = recordsByHash.add(computeHash(data.root), Vector<DataID, 1>()).iterator->value;
+    Vector<DataID, 1>& records = recordsByHash.add(computeHash(root), Vector<DataID, 1>()).iterator->value;
     for (DataID record : records) {
-        if (editor.program().at(record).root == data.root)
+        if (editor.program().at(record).root == root)
             return record;
     }
-    DataID id = editor.addData(WTF::move(data));
-    records.append(id);
-    return id;
+    records.append(editor.addData(Data { WTF::move(root), module }));
+    return records.last();
 }
 
-static void eraseDeadValues(IRBuilder& builder, const BitVector& deadValues)
+static void rewriteFunction(const AnalysisContext& context, Function& function, TypeArena& types, const ConstantCollectionSites& found)
 {
-    Function& function = builder.function();
+    BitVector deadValues(function.values.size());
+    auto addDeadValues = [&](const Vector<ValueID>& values) {
+        for (ValueID dead : values)
+            deadValues.quickSet(dead.index());
+    };
+    auto becomeReadOfData = [&](ValueID id, Opcode operation, DataID data) -> Value& {
+        Value& value = function.edit(id);
+        AllocationSiteID allocationSite = value.allocationSite();
+        value.become(operation);
+        value.setData(data);
+        value.setAllocationSite(allocationSite);
+        value.type = resultTypeOf(context.program, function, value, types);
+        return value;
+    };
+
+    if (!found.unwrittenLiterals.isEmpty() || !found.dictionaries.isEmpty()) {
+        // The constants that only the literals have used.
+        FunctionAnalyses analyses(context, function);
+        const UseLists& useLists = analyses.useLists();
+        HashMap<ValueID, uint32_t> usesByLiterals;
+        for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals) {
+            for (ValueID element : function.at(unwritten.literal).elementsOperands())
+                ++usesByLiterals.add(element, 0).iterator->value;
+        }
+        for (const DictionaryLiteral& dictionary : found.dictionaries) {
+            for (ValueID definition : dictionary.deadValues)
+                ++usesByLiterals.add(function.at(definition).valueOperand(), 0).iterator->value;
+        }
+        for (auto [id, uses] : usesByLiterals) {
+            if (constantNodeOpcodes.contains(function.at(id).opcode) && useLists.useCount(id) == uses && useLists.locationOf(id).placement == ValuePlacement::InBlock)
+                deadValues.quickSet(id.index());
+        }
+    }
+    for (const DictionaryLiteral& literal : found.dictionaries) {
+        addDeadValues(literal.deadValues);
+        Value& dictionary = function.edit(literal.dictionary);
+        dictionary.become(Opcode::Data);
+        dictionary.setData(literal.data);
+    }
+    for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals)
+        becomeReadOfData(unwritten.literal, Opcode::Data, unwritten.data);
+    Vector<ValueID> constructions;
+    constructions.reserveInitialCapacity(found.sites.size());
+    for (const ConstructionSite& site : found.sites) {
+        addDeadValues(site.deadValues);
+        if (site.isUnused) {
+            deadValues.quickSet(site.construction.index());
+            continue;
+        }
+        becomeReadOfData(site.construction, site.kind == ConstantCollectionKind::Set ? Opcode::NewSetFromData : Opcode::NewMapFromData, site.data).setExpected({ });
+        constructions.append(site.construction);
+    }
+
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(context, function, types, &analyses);
     for (unsigned blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-        BlockID block(blockIndex);
-        const BlockValues& values = function.at(block).values;
+        const BlockValues& values = function.blocks[blockIndex].values;
         BitVector deadIndexes;
         for (size_t index = 0; index < values.size(); ++index) {
             if (deadValues.quickGet(values[index].index()))
                 deadIndexes.set(index);
         }
         if (!deadIndexes.isEmpty())
-            builder.eraseValues(block, deadIndexes);
+            builder.eraseValues(BlockID(blockIndex), deadIndexes);
     }
-}
-
-// The constants that only the literals have used.
-static void collectElementsOf(const AnalysisContext& context, const Function& function, std::span<const UnwrittenLiteral> literals, std::span<const DictionaryLiteral> dictionaries, BitVector& deadValues)
-{
-    if (literals.empty() && dictionaries.empty())
-        return;
-    FunctionAnalyses analyses(context, function);
-    const UseLists& useLists = analyses.useLists();
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usesByLiterals;
-    for (const UnwrittenLiteral& unwritten : literals) {
-        for (ValueID element : function.at(unwritten.literal).elementsOperands())
-            ++usesByLiterals.add(element.index(), 0).iterator->value;
-    }
-    for (const DictionaryLiteral& dictionary : dictionaries) {
-        for (ValueID definition : dictionary.deadValues)
-            ++usesByLiterals.add(function.at(definition).valueOperand().index(), 0).iterator->value;
-    }
-    for (auto [element, uses] : usesByLiterals) {
-        ValueID id(element);
-        if (constantNodeOpcodes.contains(function.at(id).opcode) && useLists.useCount(id) == uses && useLists.locationOf(id).placement == ValuePlacement::InBlock)
-            deadValues.quickSet(element);
-    }
-}
-
-static void rewriteFunction(const AnalysisContext& context, Function& function, TypeArena& types, std::span<const ConstructionSite> sites, std::span<const UnwrittenLiteral> literals, std::span<const DictionaryLiteral> dictionaries)
-{
-    const Program& program = context.program;
-    BitVector deadValues(function.values.size());
-    collectElementsOf(context, function, literals, dictionaries, deadValues);
-    for (const DictionaryLiteral& literal : dictionaries) {
-        for (ValueID dead : literal.deadValues)
-            deadValues.quickSet(dead.index());
-        Value& dictionary = function.edit(literal.dictionary);
-        dictionary.become(Opcode::Data);
-        dictionary.setData(literal.data);
-    }
-    for (const UnwrittenLiteral& unwritten : literals) {
-        Value& literal = function.edit(unwritten.literal);
-        AllocationSiteID allocationSite = literal.allocationSite();
-        literal.become(Opcode::Data);
-        literal.setData(unwritten.data);
-        literal.setAllocationSite(allocationSite);
-        literal.type = resultTypeOf(program, function, literal, types);
-    }
-    Vector<ValueID> constructions;
-    constructions.reserveInitialCapacity(sites.size());
-    for (const ConstructionSite& site : sites) {
-        for (ValueID dead : site.deadValues)
-            deadValues.quickSet(dead.index());
-        if (site.isUnused) {
-            deadValues.quickSet(site.construction.index());
-            continue;
-        }
-        Value& construction = function.edit(site.construction);
-        AllocationSiteID allocationSite = construction.allocationSite();
-        construction.become(operationFor(site.kind));
-        construction.setData(site.data);
-        construction.setAllocationSite(allocationSite);
-        construction.type = resultTypeOf(program, function, construction, types);
-        construction.setExpected({ });
-        constructions.append(site.construction);
-    }
-
-    FunctionAnalyses analyses(context, function);
-    IRBuilder builder(context, function, types, &analyses);
-    eraseDeadValues(builder, deadValues);
-    narrowValueTypes(TypePropagationInputs { program, context.id, function, analyses, types, context.build }, constructions.span());
+    narrowValueTypes(TypePropagationInputs { context.program, context.id, function, analyses, types, context.build }, constructions.span());
     compactFunction(function);
 }
 
 // Objects with the same names in the same order share their Structures: the first pays for them, and a place that reads a name from all of them finds one Structure there.
 static void keepDictionariesThatShareNothing(Vector<ConstantCollectionSites>& found)
 {
-    UncheckedKeyHashMap<uint64_t, Vector<const DictionaryLiteral*, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> literalsByNames;
-    for (const ConstantCollectionSites& entry : found) {
-        for (const DictionaryLiteral& literal : entry.dictionaries) {
+    ListsByHash<DictionaryLiteral*> literalsByNames;
+    for (ConstantCollectionSites& entry : found) {
+        for (DictionaryLiteral& literal : entry.dictionaries) {
             Hasher hasher;
             for (PropertyKeyID name : literal.names)
                 add(hasher, name);
-            literalsByNames.add(hasher.hash(), Vector<const DictionaryLiteral*, 1>()).iterator->value.append(&literal);
+            literalsByNames.add(hasher.hash(), Vector<DictionaryLiteral*, 1>()).iterator->value.append(&literal);
         }
     }
-    UncheckedKeyHashSet<const DictionaryLiteral*> kept;
     for (auto& literals : literalsByNames.values()) {
-        for (const DictionaryLiteral* literal : literals) {
+        for (DictionaryLiteral* literal : literals) {
             bool isOnlyOneWithItsNames = literal->runsAtMostOnce && std::ranges::none_of(literals, [&](const DictionaryLiteral* other) {
                 return other != literal && other->names == literal->names;
             });
-            if (!literal->contents.members.isEmpty() && (isOnlyOneWithItsNames || literal->contents.members.size() > static_cast<size_t>(Structure::s_maxTransitionLength)))
-                kept.add(literal);
+            literal->isEmbedded = !literal->contents.members.isEmpty() && (isOnlyOneWithItsNames || literal->contents.members.size() > static_cast<size_t>(Structure::s_maxTransitionLength));
         }
     }
     for (ConstantCollectionSites& entry : found) {
-        Vector<DictionaryLiteral> dictionaries;
-        for (DictionaryLiteral& literal : entry.dictionaries) {
-            if (kept.contains(&literal))
-                dictionaries.append(WTF::move(literal));
-        }
-        entry.dictionaries = WTF::move(dictionaries);
+        entry.dictionaries.removeAllMatching([](const DictionaryLiteral& literal) {
+            return !literal.isEmbedded;
+        });
     }
     found.removeAllMatching([](const ConstantCollectionSites& entry) {
-        return entry.sites.isEmpty() && entry.unwrittenLiterals.isEmpty() && entry.dictionaries.isEmpty();
+        return entry.isEmpty();
     });
 }
 
@@ -786,39 +623,37 @@ ConstantCollections embedConstantCollections(ProgramEditor& editor, const FlowRe
     std::optional<EffectSummaries> ownSummaries;
     if (!summariesFromFlow)
         summariesFromFlow = &ownSummaries.emplace(createSummariesFromFlow(program, flow, build));
-    AnalysisContext programContext { build, program, &flow, summariesFromFlow };
     Vector<ConstantCollectionSites> found = collectInParallel<ConstantCollectionSites>(build.parallelLoops(), program.functions.size(), largeFunctions(program, build.parallelLoops()).span(), [&](unsigned index, Vector<ConstantCollectionSites>& foundInChunk) {
-        collectSites(contextOf(programContext, FunctionID(index)), foundInChunk);
+        collectSites({ build, program, &flow, summariesFromFlow, FunctionID(index) }, foundInChunk);
     });
     keepDictionariesThatShareNothing(found);
 
     ConstantCollections collections;
-    RecordsByHash recordsByHash;
-    uint64_t numberOfSites = 0;
+    ListsByHash<DataID> recordsByHash;
     for (ConstantCollectionSites& entry : found) {
         ModuleID module = program.at(entry.function).module;
         for (ConstructionSite& site : entry.sites) {
             if (site.isUnused)
                 continue;
-            site.data = site.existingData ? site.existingData : findOrAddData(editor, recordsByHash, Data { WTF::move(site.contents), module });
+            if (!site.data)
+                site.data = findOrAddData(editor, recordsByHash, WTF::move(site.contents), module);
             collections.m_collections.append(ConstantCollection { site.data, site.kind });
         }
         for (UnwrittenLiteral& unwritten : entry.unwrittenLiterals)
-            unwritten.data = findOrAddData(editor, recordsByHash, Data { WTF::move(unwritten.contents), module });
+            unwritten.data = findOrAddData(editor, recordsByHash, WTF::move(unwritten.contents), module);
         for (DictionaryLiteral& dictionary : entry.dictionaries)
-            dictionary.data = findOrAddData(editor, recordsByHash, Data { DataNode(WTF::move(dictionary.contents)), module });
-        numberOfSites += std::ranges::count(entry.sites, false, &ConstructionSite::isUnused);
+            dictionary.data = findOrAddData(editor, recordsByHash, DataNode(WTF::move(dictionary.contents)), module);
     }
+    build.statistics().count(StatisticID::ConstantCollectionsEmbedded, collections.m_collections.size());
 
-    Vector<FunctionID> functions(found.size(), [&](size_t index) {
-        return found[index].function;
+    Vector<FunctionID> functions = found.map([](const ConstantCollectionSites& entry) {
+        return entry.function;
     });
     editFunctionsInParallel(editor, build, functions.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
-        rewriteFunction(contextOf(programContext, id), function, arenas.types, found[index].sites.span(), found[index].unwrittenLiterals.span(), found[index].dictionaries.span());
+        rewriteFunction({ build, program, &flow, summariesFromFlow, id }, function, arenas.types, found[index]);
     });
 
     sortAndRemoveDuplicates(build.parallelLoops(), collections.m_collections);
-    build.statistics().count(StatisticID::ConstantCollectionsEmbedded, numberOfSites);
     if (ownSummaries)
         build.destroyLater(WTF::move(*ownSummaries));
     return collections;

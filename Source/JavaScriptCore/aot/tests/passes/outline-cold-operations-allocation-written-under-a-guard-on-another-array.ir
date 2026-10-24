@@ -42,8 +42,9 @@ function f0 name="restOfList" parameters=[{type=Array}, {type=boolean}] results=
 # CHECK-COUNT-2: = NewArray
 # CHECK-LABEL: function f1
 # CHECK: = CallDirect function=
+# REPEAT: i = 1..8
 
-function f1 name="plain1" parameters=[{type=boolean}] results=[{type=anything}] {
+function f%(i) name="plain%(i)" parameters=[{type=boolean}] results=[{type=anything}] {
   b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
@@ -53,80 +54,4 @@ function f1 name="plain1" parameters=[{type=boolean}] results=[{type=anything}] 
   b2():
     Return
 }
-
-function f2 name="plain2" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
-    Branch v0 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
-    v1 = Integer integer=7
-    v2 = NewArray v1, v1, v1, v1 contents=anything
-    Return v2
-  b2():
-    Return
-}
-
-function f3 name="plain3" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
-    Branch v0 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
-    v1 = Integer integer=7
-    v2 = NewArray v1, v1, v1, v1 contents=anything
-    Return v2
-  b2():
-    Return
-}
-
-function f4 name="plain4" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
-    Branch v0 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
-    v1 = Integer integer=7
-    v2 = NewArray v1, v1, v1, v1 contents=anything
-    Return v2
-  b2():
-    Return
-}
-
-function f5 name="plain5" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
-    Branch v0 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
-    v1 = Integer integer=7
-    v2 = NewArray v1, v1, v1, v1 contents=anything
-    Return v2
-  b2():
-    Return
-}
-
-function f6 name="plain6" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
-    Branch v0 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
-    v1 = Integer integer=7
-    v2 = NewArray v1, v1, v1, v1 contents=anything
-    Return v2
-  b2():
-    Return
-}
-
-function f7 name="plain7" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
-    Branch v0 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
-    v1 = Integer integer=7
-    v2 = NewArray v1, v1, v1, v1 contents=anything
-    Return v2
-  b2():
-    Return
-}
-
-function f8 name="plain8" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
-    Branch v0 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
-    v1 = Integer integer=7
-    v2 = NewArray v1, v1, v1, v1 contents=anything
-    Return v2
-  b2():
-    Return
-}
+# END REPEAT

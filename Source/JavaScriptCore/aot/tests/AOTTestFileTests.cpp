@@ -144,11 +144,36 @@ static void testRunnerSkipsOtherArchitecture()
     AOT_TEST_CHECK(runTestText(makeString("# RUN: print\n# CHECK: Negate\n# REQUIRES: "_s, otherArchitecture, '\n', sampleProgram)).isEmpty());
 }
 
+static void testRepeatIsWrittenOut()
+{
+    TestFile file = parseTestFile("# RUN: print\n# REPEAT: i = 1..2; word = a b\n# CHECK: %(word)%(i*2-1:2)\n# REPEAT: j = 8..9\n# CHECK: %(i)%(j)\n# END REPEAT\n# END REPEAT\n# CHECK: end\n"_s);
+    AOT_TEST_CHECK(file.errors.isEmpty());
+    AOT_TEST_CHECK(file.text == "# RUN: print\n# CHECK: a01\n# CHECK: 18\n# CHECK: 19\n# CHECK: b03\n# CHECK: 28\n# CHECK: 29\n# CHECK: end\n"_s);
+    AOT_TEST_CHECK(std::ranges::equal(file.checkLinesFor("CHECK"_s), std::initializer_list<unsigned> { 3, 5, 5, 3, 5, 5, 8 }, { }, &CheckLine::line));
+}
+
+static void testRepeatMalformed()
+{
+    expectErrorLines("# RUN: print\n# REPEAT: i = 0..1\n# CHECK: x\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# CHECK: x\n# END REPEAT\n# REPEAT: i = 0..1\n# END REPEAT\n"_s, { 3 });
+    expectErrorLines("# RUN: print\n# REPEAT:\n# CHECK: x\n# END REPEAT\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REPEAT: i\n# CHECK: x\n# END REPEAT\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REPEAT: i =\n# CHECK: x\n# END REPEAT\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REPEAT: i = 0..2; word = a b\n# CHECK: x\n# END REPEAT\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REPEAT: i = 0..9999999\n# END REPEAT\n# CHECK: x\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REPEAT: i = 0..1\n# CHECK: %(j)\n# END REPEAT\n"_s, { 3 });
+    expectErrorLines("# RUN: print\n# REPEAT: i = 0..1\n# CHECK: %(i\n# END REPEAT\n"_s, { 3 });
+    expectErrorLines("# RUN: print\n# REPEAT: i = 0..1\n# CHECK: %(i*)\n# END REPEAT\n"_s, { 3 });
+    expectErrorLines("# RUN: print\n# REPEAT: word = a b\n# CHECK: %(word+1)\n# END REPEAT\n"_s, { 3 });
+}
+
 std::span<const NativeTest> testFileTests()
 {
     static constexpr NativeTest tests[] = {
         { "test-file/requires-selects-runs"_s, testRequiresSelectsRuns },
         { "test-file/requires-malformed"_s, testRequiresMalformed },
+        { "test-file/repeat-is-written-out"_s, testRepeatIsWrittenOut },
+        { "test-file/repeat-malformed"_s, testRepeatMalformed },
         { "runner/skips-other-architecture"_s, testRunnerSkipsOtherArchitecture },
     };
     return tests;

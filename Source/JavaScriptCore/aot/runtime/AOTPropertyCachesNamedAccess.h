@@ -27,6 +27,7 @@ struct NamedAccess {
 JSValue getAndCache(const NamedAccess&, JSValue base);
 void putAndCache(const NamedAccess&, JSCell* base, JSValue, PutMode);
 bool hasPropertyAndCache(Instance*, JSObject*, const CachedName&);
+bool instanceOfAndCache(Instance*, JSValue, JSValue constructor);
 // Class objects that nobody has looked into share a Structure although they declare different names, so no slot answers for one, be it the receiver or an object above it.
 void createClassObjectsOnChain(VM&, JSCell* receiver, UniquedStringImpl* nameAskedFor);
 

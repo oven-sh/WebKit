@@ -17,85 +17,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="fortyLiveValues" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Call v0
-    v2 = Call v0
-    v3 = Call v0
-    v4 = Call v0
-    v5 = Call v0
-    v6 = Call v0
-    v7 = Call v0
-    v8 = Call v0
-    v9 = Call v0
-    v10 = Call v0
-    v11 = Call v0
-    v12 = Call v0
-    v13 = Call v0
-    v14 = Call v0
-    v15 = Call v0
-    v16 = Call v0
-    v17 = Call v0
-    v18 = Call v0
-    v19 = Call v0
-    v20 = Call v0
-    v21 = Call v0
-    v22 = Call v0
-    v23 = Call v0
-    v24 = Call v0
-    v25 = Call v0
-    v26 = Call v0
-    v27 = Call v0
-    v28 = Call v0
-    v29 = Call v0
-    v30 = Call v0
-    v31 = Call v0
-    v32 = Call v0
-    v33 = Call v0
-    v34 = Call v0
-    v35 = Call v0
-    v36 = Call v0
-    v37 = Call v0
-    v38 = Call v0
-    v39 = Call v0
-    v40 = Call v0
-    v41 = Call v0
-    v42 = Add v1, v2
-    v43 = Add v42, v3
-    v44 = Add v43, v4
-    v45 = Add v44, v5
-    v46 = Add v45, v6
-    v47 = Add v46, v7
-    v48 = Add v47, v8
-    v49 = Add v48, v9
-    v50 = Add v49, v10
-    v51 = Add v50, v11
-    v52 = Add v51, v12
-    v53 = Add v52, v13
-    v54 = Add v53, v14
-    v55 = Add v54, v15
-    v56 = Add v55, v16
-    v57 = Add v56, v17
-    v58 = Add v57, v18
-    v59 = Add v58, v19
-    v60 = Add v59, v20
-    v61 = Add v60, v21
-    v62 = Add v61, v22
-    v63 = Add v62, v23
-    v64 = Add v63, v24
-    v65 = Add v64, v25
-    v66 = Add v65, v26
-    v67 = Add v66, v27
-    v68 = Add v67, v28
-    v69 = Add v68, v29
-    v70 = Add v69, v30
-    v71 = Add v70, v31
-    v72 = Add v71, v32
-    v73 = Add v72, v33
-    v74 = Add v73, v34
-    v75 = Add v74, v35
-    v76 = Add v75, v36
-    v77 = Add v76, v37
-    v78 = Add v77, v38
-    v79 = Add v78, v39
-    v80 = Add v79, v40
+# REPEAT: i = 1..41
+    v%(i) = Call v0
+# END REPEAT
+# REPEAT: i = 2..40; a = 1 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
+    v%(i+40) = Add v%(a), v%(i)
+# END REPEAT
     Return v80
 }

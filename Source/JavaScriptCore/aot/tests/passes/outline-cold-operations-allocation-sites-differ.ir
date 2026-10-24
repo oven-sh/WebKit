@@ -12,21 +12,11 @@ layout L0 name="Failure" fields=[{key="cause" declared={type=anything}}, {key="d
 function f0 name="allocationSitesDiffer" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
-  b1() frequency=Rare:
-    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=1
-    Return v2
-  b2() frequency=Rare:
-    v3 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=2
-    Return v3
-  b3() frequency=Rare:
-    v4 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=3
-    Return v4
-  b4() frequency=Rare:
-    v5 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=4
-    Return v5
-  b5() frequency=Rare:
-    v6 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=5
-    Return v6
+# REPEAT: i = 1..5
+  b%(i)() frequency=Rare:
+    v%(i+1) = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=%(i)
+    Return v%(i+1)
+# END REPEAT
   b6() frequency=Rare:
     v7 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
     Return v7
@@ -41,24 +31,11 @@ function f0 name="allocationSitesDiffer" parameters=[{type=number}, {type=anythi
 function f1 name="copiesOfOneAllocationSite" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
-  b1() frequency=Rare:
-    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=6
-    Return v2
-  b2() frequency=Rare:
-    v3 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=6
-    Return v3
-  b3() frequency=Rare:
-    v4 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=6
-    Return v4
-  b4() frequency=Rare:
-    v5 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=6
-    Return v5
-  b5() frequency=Rare:
-    v6 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=6
-    Return v6
-  b6() frequency=Rare:
-    v7 = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=6
-    Return v7
+# REPEAT: i = 2..7
+  b%(i-1)() frequency=Rare:
+    v%(i) = NewObject -, v1, v1 layout=L0 fields=[0, 1] allocationSite=6
+    Return v%(i)
+# END REPEAT
   b7():
     Return v1
 }

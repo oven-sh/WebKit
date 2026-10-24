@@ -26,6 +26,17 @@ struct ProgramFile {
     String text;
 };
 
+struct WrittenOutText {
+    String text;
+    Vector<unsigned> sourceLines;
+    unsigned errorLine { 0 };
+    String error;
+
+    unsigned sourceLineOf(unsigned line) const { return line - 1 < sourceLines.size() ? sourceLines[line - 1] : line; }
+};
+
+WrittenOutText writeOutRepeats(String&& text);
+
 ProgramFile::Kind programKindOf(std::span<const uint8_t>);
 std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& errors);
 std::unique_ptr<Program> createProgram(const ProgramFile&, BuildContext&);

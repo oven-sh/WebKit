@@ -325,7 +325,6 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
         m_predecessors.grow(m_numberOfNodes, capacity);
         m_value.grow(m_numberOfNodes, capacity);
         m_capacity = capacity;
-        // Everything up to here has just been copied, which has written to its pages.
         Vector<std::atomic<uint64_t>> arePagesWritable((capacity >> m_shiftFromNodeToPage) / 64 + 1);
         for (uint32_t page = 0; page < m_numberOfNodes >> m_shiftFromNodeToPage; ++page)
             arePagesWritable[page / 64].store(arePagesWritable[page / 64].load(std::memory_order_relaxed) | 1ull << page % 64, std::memory_order_relaxed);
@@ -347,7 +346,6 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
     return first;
 }
 
-// The arrays come from the system as pages that are not there yet.
 NEVER_INLINE void ValueFlowGraph::makePagesWritable(uint32_t page) const
 {
 #if OS(LINUX)
@@ -355,7 +353,6 @@ NEVER_INLINE void ValueFlowGraph::makePagesWritable(uint32_t page) const
 #define MADV_POPULATE_WRITE 23
 #endif
     size_t firstNode = static_cast<size_t>(page) << m_shiftFromNodeToPage;
-    // An older kernel does not know the word, and all is as it was.
     madvise(m_rows.data() + firstNode, pageSize(), MADV_POPULATE_WRITE);
     madvise(m_successors.data() + firstNode, pageSize(), MADV_POPULATE_WRITE);
     madvise(m_predecessors.data() + firstNode, pageSize(), MADV_POPULATE_WRITE);
@@ -504,7 +501,6 @@ void ValueFlowGraph::startWithValuesOf(std::span<const ValueFlowEdge> edges)
         }
         return;
     }
-    // A shard has one thread: where a placeholder stops is noted with the shard of the node.
     m_team->run(numberOfShards, [&](unsigned number, unsigned worker) {
         for (ValueFlowEdge edge : edges) {
             if (shardOf(edge.to.index()) == number)
@@ -569,7 +565,6 @@ void ValueFlowGraph::EdgeSet::prefetch(ValueFlowEdge edge) const
 void ValueFlowGraph::EdgeSet::grow()
 {
     size_t size = std::max<size_t>(m_slots.span().size() * 2, 1024);
-    // Written here, not asked for as zeros: a slot is read in front of each write. See makePagesWritable().
     MallocSpan<uint64_t> previous = std::exchange(m_slots, MallocSpan<uint64_t>::malloc(size * sizeof(uint64_t)));
     zeroSpan(m_slots.mutableSpan());
     size_t mask = size - 1;
@@ -614,7 +609,6 @@ ALWAYS_INLINE bool ValueFlowGraph::addSuccessorIfAbsent(ValueFlowEdge edge)
     return true;
 }
 
-// From here on the constants among the predecessors of the node are looked for in the set.
 void ValueFlowGraph::willHaveManyPredecessors(Shard& shard, uint32_t node)
 {
     const Links& predecessors = m_predecessors[node];
@@ -625,7 +619,6 @@ void ValueFlowGraph::willHaveManyPredecessors(Shard& shard, uint32_t node)
     }
 }
 
-// The link is made here and not in takeEdgesIntoLists(): it says that the edge is there.
 ALWAYS_INLINE bool ValueFlowGraph::addEdgeOutOfConstantIfAbsent(ValueFlowEdge edge)
 {
     Shard& shard = *m_shards[shardOf(edge.to.index())];
@@ -750,7 +743,6 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
     AOT_THRESHOLD(size_t, fewestEdgesForThreads, 4096);
     auto takeEdge = [&](Shard& shard, ValueFlowEdge edge, Vector<Message>& messages) {
         willUse(edge.to.index());
-        // An edge out of a constant has its link since it was added.
         if (!isConstant(edge.from.index())) {
             Links& predecessors = m_predecessors[edge.to.index()];
             if (predecessors.count == mostPredecessorsScanned)
@@ -780,7 +772,6 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
         m_hasLeftMessagesWithShards = true;
         size_t edgesPerPart = (edges.size() + numberOfParts - 1) / numberOfParts;
         m_edgesByTarget.grow(numberOfParts * numberOfShards);
-        // A covered node gets tens of thousands of edges a round and has one shard. Whether an edge brings it anything is looked at here, on all threads.
         m_edgesOnlyToLink.grow(numberOfParts);
         team.run(numberOfParts, [&](unsigned part, unsigned) {
             size_t first = std::min(edges.size(), part * edgesPerPart);
@@ -885,7 +876,6 @@ void ValueFlowGraph::noteWhatCoveredNodesHold()
     }
 }
 
-// One thread unites all that is sent to a covered node, and almost all of it is there already. Each sender looks for itself.
 bool ValueFlowGraph::didCoveredNodeHoldAllOf(uint32_t covered, uint64_t low, uint32_t set) const
 {
     for (const Covering& covering : m_coverings) {
@@ -1130,7 +1120,6 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     Gate gate = m_gates[node];
     bool bringsWhatIsKeptOut = m_isMadeForPlaceholder && ((low & m_lowMembersKeptOutOfNodesMadeForPlaceholders) || (set != ValueSets::nothing && !m_sets.isSubset(set, m_allButKeptOutOfNodesMadeForPlaceholders)));
     if (bringsWhatIsKeptOut && m_isMadeForPlaceholder(m_contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))) [[unlikely]] {
-        // What was handed to the placeholder is what the placeholder covers from now on.
         uint64_t lowKeptOut = low & m_lowMembersKeptOutOfNodesMadeForPlaceholders;
         ValueSetID setKeptOut = maker.intersect(set, ValueSets::complement(m_allButKeptOutOfNodesMadeForPlaceholders));
         if (setKeptOut != ValueSets::nothing && (lowKeptOut & lowInNoSet))

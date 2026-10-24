@@ -19,225 +19,127 @@
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool isLayoutOfClass(const Layout& layout)
+ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs& inputs)
 {
-    return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
-}
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    const ValueFlowBodies& bodies = inputs.bodies();
+    const ValueFlowSolver& solver = inputs.solver();
+    const ValueSets& sets = inputs.sets();
+    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+    ValueSetMaker& maker = borrowedMaker.get();
+    ValueFlowLayoutsOfSites found;
+    auto& bySite = found.bySite;
 
-namespace {
-
-// The constructor of a base class allocates the instances of the classes below it too: the run time answers with an instance of the class whose prototype object the allocation is given (ClassTable::instanceWithPrototype).
-class LayoutPicks {
-public:
-    LayoutPicks(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
-        : m_inputs(inputs)
-        , m_maker(maker)
-    {
-    }
-
-    ValueFlowPositionCounts::LayoutsOfSites find();
-
-private:
-    struct Allocation {
-        ValueFlowObjectID object;
-        LayoutID layout;
-        ValueSetID prototypes;
-    };
-
-    void listSites();
-    void listInstances();
-    void collectOperands();
-    LayoutID baseOf(LayoutID) const;
-    bool isBelow(LayoutID, LayoutID base) const;
-    void notePicksOf(const Allocation&);
-    ValueSetID closuresIn(ValueSetID);
-    bool getsOwnLayoutFromEach(LayoutID newTarget, std::span<const LayoutID> sortedConstructorFunctions) const;
-    void findInstancesMadeForOtherConstructorFunctions();
-
-    const ValueFlowResultInputs& m_inputs;
-    ValueSetMaker& m_maker;
-    ValueFlowPositionCounts::LayoutsOfSites m_layoutsOfSites;
-    // By class: all that its heritage may be. Nothing for a class that no code evaluates whose operations the solve has followed.
-    Vector<ValueSetID> m_heritageOfClass;
-    Vector<Allocation> m_allocations;
-};
-
-} // anonymous namespace
-
-// Of an allocation whose operands nobody has followed nothing is known.
-void LayoutPicks::listSites()
-{
-    const Program& program = m_inputs.program;
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    Vector<uint32_t> sites = findIndicesInParallel(m_inputs.loops(), universe.numberOfObjects(), [&](unsigned index) {
+    for (uint32_t index : findIndicesInParallel(inputs.loops(), universe.numberOfObjects(), [&](unsigned index) {
         ValueFlowObjectID object(index);
         const ValueFlowSite* site = universe.siteOf(object);
         if (!site || !site->layout || site->origin != ValueFlowSiteOrigin::Operation || !program.prototypeMaySelectOtherClass(site->layout))
             return false;
         return mayAllocateOtherLayout(program, program.at(universe.functionOf(object)).at(site->value));
-    });
-    for (uint32_t index : sites)
-        m_layoutsOfSites.add(index, ValueFlowLayoutsOfSite { { universe.siteOf(ValueFlowObjectID(index))->layout }, true });
-}
-
-// The rules hand a constructor function the instance of new.target, whatever the function is.
-void LayoutPicks::listInstances()
-{
-    const Program& program = m_inputs.program;
+    }))
+        bySite.add(index, ValueFlowLayoutsOfSite { { universe.siteOf(ValueFlowObjectID(index))->layout }, true });
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         if (program.layouts[index].kind == LayoutKind::Instance && program.layouts[index].constructor)
-            m_layoutsOfSites.add(m_inputs.universe().instanceOf(LayoutID(index)).index(), ValueFlowLayoutsOfSite { { LayoutID(index) }, false });
+            bySite.add(universe.instanceOf(LayoutID(index)).index(), ValueFlowLayoutsOfSite { { LayoutID(index) }, false });
     }
-}
+    if (bySite.isEmpty())
+        return found;
 
-void LayoutPicks::collectOperands()
-{
-    const Program& program = m_inputs.program;
-    const ValueFlowBodies& bodies = m_inputs.bodies();
-    m_heritageOfClass.fill(ValueSets::nothing, program.layouts.size());
-    // A heritage that is a primitive other than null makes the definition of the class throw, so no class has it.
-    ValueSetID heritagesOfClasses = m_maker.unite(m_inputs.universe().objects(), m_maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Null)));
-    Vector<const ValueFlowStatement*> statements = collectInParallel<const ValueFlowStatement*>(m_inputs.loops(), program.functions.size(), [&](unsigned index, Vector<const ValueFlowStatement*>& found) {
-        if (!m_inputs.isReached(FunctionID(index)))
+    Vector<const ValueFlowStatement*> statements = collectInParallel<const ValueFlowStatement*>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<const ValueFlowStatement*>& list) {
+        if (!inputs.isReached(FunctionID(index)))
             return;
-        const Function& function = program.functions[index];
         for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
             if (statement.kind != ValueFlowStatementKind::Operation)
                 continue;
-            if (statement.opcode == Opcode::NewClass) {
-                if (function.at(statement.site).heritageOperand())
-                    found.append(&statement);
-                continue;
-            }
-            if (statement.opcode != Opcode::NewObject)
-                continue;
-            ValueFlowObjectID object = m_inputs.universe().siteObject(statement);
-            if (object && m_layoutsOfSites.contains(object.index()))
-                found.append(&statement);
+            ValueFlowObjectID object = statement.opcode == Opcode::NewObject ? universe.siteObject(statement) : ValueFlowObjectID();
+            if (statement.opcode == Opcode::NewClass ? !!program.functions[index].at(statement.site).heritageOperand() : object && bySite.contains(object.index()))
+                list.append(&statement);
         }
     });
-    for (const ValueFlowStatement* found : statements) {
-        const ValueFlowStatement& statement = *found;
-        const Value& operation = program.at(statement.function).at(statement.site);
-        if (statement.opcode == Opcode::NewClass) {
-            ValueSetID& heritage = m_heritageOfClass[operation.layout().index()];
-            heritage = m_maker.unite(heritage, m_maker.intersect(m_inputs.valueOf(m_maker, bodies.operandsOf(statement)[OperandIndex::NewClass::heritage]), heritagesOfClasses));
+    auto layoutAt = [&](const ValueFlowStatement& statement) {
+        return program.at(statement.function).at(statement.site).layout();
+    };
+
+    Vector<ValueSetID> heritageOfClass(FillWith { }, program.layouts.size(), ValueSets::nothing);
+    ValueSetID heritagesOfClasses = maker.unite(universe.objects(), maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Null)));
+    for (const ValueFlowStatement* statement : statements) {
+        if (statement->opcode != Opcode::NewClass)
             continue;
+        ValueSetID& heritage = heritageOfClass[layoutAt(*statement).index()];
+        heritage = maker.unite(heritage, maker.intersect(inputs.valueOf(maker, bodies.operandsOf(*statement)[OperandIndex::NewClass::heritage]), heritagesOfClasses));
+    }
+    auto layoutAbove = [&](LayoutID layout) {
+        ValueFlowObjectID heritage = sets.onlyMember(heritageOfClass[layout.index()]);
+        FunctionID constructor = heritage ? universe.closureFunction(heritage) : FunctionID();
+        return constructor ? program.at(constructor).constructedClass : LayoutID();
+    };
+    auto isBelow = [&](LayoutID layout, LayoutID base) {
+        for (size_t steps = 0; layout && steps <= program.layouts.size(); ++steps) {
+            if (layout == base)
+                return true;
+            if (!program.at(layout).has(LayoutFlags::HasHeritage))
+                return false;
+            layout = layoutAbove(layout);
+            if (layout && !isClassLayout(program.at(layout)))
+                return false;
         }
-        m_allocations.append({ m_inputs.universe().siteObject(statement), operation.layout(), m_inputs.valueOf(m_maker, bodies.operandsOf(statement)[OperandIndex::NewObject::prototype]) });
+        return false;
+    };
+
+    for (const ValueFlowStatement* statement : statements) {
+        if (statement->opcode != Opcode::NewObject)
+            continue;
+        ValueFlowObjectID allocation = universe.siteObject(*statement);
+        ValueSetID prototypes = inputs.valueOf(maker, bodies.operandsOf(*statement)[OperandIndex::NewObject::prototype]);
+        ValueFlowLayoutsOfSite picked { { layoutAt(*statement) }, ValueSets::isComplement(prototypes) || sets.meet(prototypes, universe.placeholdersAlone()) };
+        LayoutID ownClass = declaredLayoutOf(program, layoutAt(*statement));
+        sets.forEachMember(ValueSets::isComplement(prototypes) ? ValueSets::nothing : prototypes, [&](ValueFlowObjectID prototype) {
+            LayoutID requested = universe.classLayoutOf(prototype);
+            if (!requested || requested == ownClass || !isClassLayout(program.at(requested)))
+                return;
+            ValueFlowObjectID made = universe.objectAllocatedUnder(program, allocation, prototype);
+            ValueFlowLayoutsOfSite& picksOfMade = made == allocation ? picked : bySite.find(made.index())->value;
+            if (!isBelow(requested, ownClass))
+                picksOfMade.mayBeOtherObject = true;
+            else if (made == allocation)
+                picked.layouts.append(requested);
+        });
+        bySite.set(allocation.index(), WTF::move(picked));
     }
-}
 
-// None unless the heritage is the constructor of one class whatever happens. Then whatever the results say about the base of the class, they name that class or nothing.
-LayoutID LayoutPicks::baseOf(LayoutID layout) const
-{
-    const Program& program = m_inputs.program;
-    ValueFlowObjectID heritage = m_inputs.sets().onlyMember(m_heritageOfClass[layout.index()]);
-    FunctionID constructor = heritage ? m_inputs.universe().closureFunction(heritage) : FunctionID();
-    LayoutID base = constructor ? program.at(constructor).constructedClass : LayoutID();
-    return base && isLayoutOfClass(program.at(base)) ? base : LayoutID();
-}
+    auto closuresIn = [&](ValueSetID set) {
+        if (ValueSets::isComplement(set) || sets.contains(set, ValueFlowUniverse::untrackedObject()))
+            set = maker.unite(set, solver.valueOf(ValueFlowProgramNodes::lost()));
+        return maker.intersect(set, universe.closures());
+    };
+    auto getsOwnLayoutFromEach = [&](LayoutID newTarget, std::span<const LayoutID> sortedConstructorFunctions) {
+        size_t numberOnChain = 0;
+        for (size_t steps = 0; newTarget && steps <= program.layouts.size(); ++steps, newTarget = layoutAbove(newTarget)) {
+            numberOnChain += std::ranges::binary_search(sortedConstructorFunctions, newTarget);
+            if (!program.at(newTarget).has(LayoutFlags::HasHeritage))
+                return numberOnChain == sortedConstructorFunctions.size();
+        }
+        return true;
+    };
 
-bool LayoutPicks::isBelow(LayoutID layout, LayoutID base) const
-{
-    const Program& program = m_inputs.program;
-    LayoutID current = layout;
-    for (size_t steps = 0; current && steps <= program.layouts.size(); ++steps) {
-        if (current == base)
-            return true;
-        if (!program.at(current).has(LayoutFlags::HasHeritage))
-            return false;
-        current = baseOf(current);
-    }
-    return false;
-}
-
-// The prototype object of the class itself and an object that is the prototype object of no class leave the allocation as it is.
-void LayoutPicks::notePicksOf(const Allocation& allocation)
-{
-    const Program& program = m_inputs.program;
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    const ValueSets& sets = m_inputs.sets();
-
-    // A placeholder may be the prototype object of any class.
-    ValueFlowLayoutsOfSite picked { { allocation.layout }, ValueSets::isComplement(allocation.prototypes) || sets.meet(allocation.prototypes, universe.placeholdersAlone()) };
-    LayoutID ownClass = declaredLayoutOf(program, allocation.layout);
-    sets.forEachMember(ValueSets::isComplement(allocation.prototypes) ? ValueSets::nothing : allocation.prototypes, [&](ValueFlowObjectID prototype) {
-        LayoutID requested = universe.classLayoutOf(prototype);
-        if (requested == ownClass)
-            return;
-        if (!requested || !isLayoutOfClass(program.at(requested)))
-            return;
-        ValueFlowObjectID made = universe.objectAllocatedUnder(program, allocation.object, prototype);
-        ValueFlowLayoutsOfSite& picksOfMade = made == allocation.object ? picked : m_layoutsOfSites.find(made.index())->value;
-        if (!isBelow(requested, ownClass))
-            picksOfMade.mayBeOtherObject = true;
-        else if (made == allocation.object)
-            picked.layouts.append(requested);
-    });
-    m_layoutsOfSites.set(allocation.object.index(), WTF::move(picked));
-}
-
-// The closures that the rule of a group finds in the set: those it lists, and behind the untracked object those that the analysis has stopped following.
-ValueSetID LayoutPicks::closuresIn(ValueSetID set)
-{
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    const ValueFlowSolver& solver = m_inputs.solver();
-    ValueSetID found = set;
-    if (ValueSets::isComplement(set) || m_inputs.sets().contains(set, ValueFlowUniverse::untrackedObject()))
-        found = m_maker.unite(found, solver.valueOf(ValueFlowProgramNodes::lost()));
-    return m_maker.intersect(found, universe.closures());
-}
-
-// ClassTable::createThis() walks up from the layout of new.target.
-bool LayoutPicks::getsOwnLayoutFromEach(LayoutID newTarget, std::span<const LayoutID> sortedConstructorFunctions) const
-{
-    const Program& program = m_inputs.program;
-    size_t numberOnChain = 0;
-    LayoutID current = newTarget;
-    for (size_t steps = 0; steps <= program.layouts.size(); ++steps) {
-        numberOnChain += std::ranges::binary_search(sortedConstructorFunctions, current);
-        if (!program.at(current).has(LayoutFlags::HasHeritage))
-            return numberOnChain == sortedConstructorFunctions.size();
-        ValueFlowObjectID heritage = m_inputs.sets().onlyMember(m_heritageOfClass[current.index()]);
-        FunctionID constructor = heritage ? m_inputs.universe().closureFunction(heritage) : FunctionID();
-        current = constructor ? program.at(constructor).constructedClass : LayoutID();
-        if (!current)
-            return true;
-    }
-    return true;
-}
-
-// For a new.target that is not below the constructor function the run time makes an ordinary object.
-void LayoutPicks::findInstancesMadeForOtherConstructorFunctions()
-{
-    const Program& program = m_inputs.program;
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    const ValueFlowSolver& solver = m_inputs.solver();
-    ValueSetID newTargetsFromOperands = closuresIn(solver.valueOf(m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands)));
-    if (m_inputs.sets().isEmpty(newTargetsFromOperands))
-        return;
-
+    ValueSetID newTargetsFromOperands = closuresIn(solver.valueOf(bodies.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands)));
+    if (sets.isEmpty(newTargetsFromOperands))
+        return found;
     uint32_t firstMadeNode = solver.input().numberOfNodes;
-    Vector<uint32_t> groupsOfConstructions = findIndicesInParallel(m_inputs.loops(), solver.graph().numberOfNodes() - firstMadeNode, [&](unsigned position) {
+    for (uint32_t position : findIndicesInParallel(inputs.loops(), solver.graph().numberOfNodes() - firstMadeNode, [&](unsigned position) {
         ValueFlowNodeID node(firstMadeNode + position);
         const ValueFlowNodeKey& key = *solver.keyOfMadeNode(node);
         return key.kind == ValueFlowMadeNodeKind::CallGroup && isConstruction(key.callKind()) && solver.firstOfMadeNodesAt(solver.indexOfMadeNodes(key)) == node;
-    });
-    for (uint32_t position : groupsOfConstructions) {
+    })) {
         ValueFlowNodeID node(firstMadeNode + position);
-        const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
-        ValueFlowCallGroup group = callGroupAt(node);
-
         Vector<LayoutID, 8> constructorFunctions;
-        // A function without a layout has no class that new.target could be below.
         bool constructsFunctionWithoutLayout = false;
-        m_inputs.sets().forEachMember(closuresIn(key->set), [&](ValueFlowObjectID callee) {
+        sets.forEachMember(closuresIn(solver.keyOfMadeNode(node)->set), [&](ValueFlowObjectID callee) {
             const Function& function = program.at(universe.closureFunction(callee));
             if (function.kind != FunctionKind::Plain)
                 return;
@@ -251,90 +153,15 @@ void LayoutPicks::findInstancesMadeForOtherConstructorFunctions()
         AOT::sort(constructorFunctions);
         constructorFunctions.shrink(constructorFunctions.size() - std::ranges::unique(constructorFunctions).size());
 
-        m_inputs.sets().forEachMember(m_maker.intersect(closuresIn(solver.valueOf(group.newTarget)), newTargetsFromOperands), [&](ValueFlowObjectID newTarget) {
+        sets.forEachMember(maker.intersect(closuresIn(solver.valueOf(callGroupAt(node).newTarget)), newTargetsFromOperands), [&](ValueFlowObjectID newTarget) {
             LayoutID layout = program.at(universe.closureFunction(newTarget)).constructedClass;
             if (!layout || (!constructsFunctionWithoutLayout && getsOwnLayoutFromEach(layout, constructorFunctions.span())))
                 return;
-            auto instance = m_layoutsOfSites.find(universe.instanceOf(layout).index());
-            if (instance != m_layoutsOfSites.end())
+            if (auto instance = bySite.find(universe.instanceOf(layout).index()); instance != bySite.end())
                 instance->value.mayBeOtherObject = true;
         });
     }
-}
-
-ValueFlowPositionCounts::LayoutsOfSites LayoutPicks::find()
-{
-    listSites();
-    listInstances();
-    if (m_layoutsOfSites.isEmpty())
-        return { };
-    collectOperands();
-    for (const Allocation& allocation : m_allocations)
-        notePicksOf(allocation);
-    findInstancesMadeForOtherConstructorFunctions();
-    return WTF::move(m_layoutsOfSites);
-}
-
-ValueFlowPositionCounts::ValueFlowPositionCounts(const ListenerForSetsOutsideTypes* listener, ValueFlowTypesOfSets typesOfSets)
-    : listsThem(listener)
-    , sharesTypesOfSets(typesOfSets == ValueFlowTypesOfSets::StayTheSame)
-    , listener(listener)
-{
-}
-
-ValueFlowPositionCounts::~ValueFlowPositionCounts() = default;
-
-void ValueFlowPositionCounts::note(const String& place, const Type& held, const Type& family)
-{
-    Locker locker { lock };
-    (*listener)(place, held, family);
-}
-
-const ValueFlowSharedTypeOfSet* ValueFlowPositionCounts::findTypeOfSet(ValueSetID set)
-{
-    TypesOfSets& types = typesOfSetsFor(set);
-    Locker locker { types.lock };
-    auto found = types.bySet.find(set.index());
-    return found == types.bySet.end() ? nullptr : found->value.get();
-}
-
-void ValueFlowPositionCounts::addTypeOfSet(ValueSetID set, std::unique_ptr<ValueFlowSharedTypeOfSet>&& type)
-{
-    const Type& listed = type->withoutLayoutsAndInstances;
-    size_t bytes = sizeof(ValueFlowSharedTypeOfSet) + listed.stringLiterals.span().size_bytes() + listed.symbolLiterals.span().size_bytes() + listed.functions.span().size_bytes() + listed.builtins.span().size_bytes()
-        + type->layouts.sizeInBytes() + type->instances.sizeInBytes();
-    if (m_bytesOfTypesOfSets.load(std::memory_order_relaxed) + bytes > mostBytesOfTypesOfSets)
-        return;
-    TypesOfSets& types = typesOfSetsFor(set);
-    Locker locker { types.lock };
-    if (types.bySet.add(set.index(), WTF::move(type)).isNewEntry)
-        m_bytesOfTypesOfSets.fetch_add(bytes, std::memory_order_relaxed);
-}
-
-ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs& inputs)
-{
-    BorrowedValueSetMaker maker(inputs.makerPool());
-    return { LayoutPicks(inputs, maker.get()).find() };
-}
-
-const ValueFlowPositionCounts::LayoutsOfSites& ValueFlowPositionCounts::layoutsOfSites(const ValueFlowResultInputs& inputs)
-{
-    if (inputs.layoutsOfSites)
-        return inputs.layoutsOfSites->bySite;
-    std::call_once(m_findLayoutsOfSites, [&] {
-        m_layoutsOfSites = findLayoutsOfSites(inputs).bySite;
-    });
-    return m_layoutsOfSites;
-}
-
-const ValueFlowBirthsOfUnknownObject* ValueFlowPositionCounts::births(const ValueFlowResultInputs& inputs)
-{
-    if (!inputs.solver().input().remembersWhoLoggedEachEdge)
-        return nullptr;
-    std::call_once(m_findBirths, [&] {
-        m_births.emplace(inputs);
-    });
-    return &*m_births;
+    return found;
 }
 
 ValueFlowPositions::ValueFlowPositions(const ValueFlowResultInputs& inputs, TypeArena& types, ValueFlowPositionCounts& counts, uint32_t switchSubject, ValueSetMaker* makerOfThread)
@@ -363,19 +190,21 @@ ValueSetMaker& ValueFlowPositions::maker()
 
 const ValueFlowLayoutsOfSite* ValueFlowPositions::findLayoutsPickedBy(ValueFlowObjectID object)
 {
-    const ValueFlowPositionCounts::LayoutsOfSites& layoutsOfSites = m_counts.layoutsOfSites(m_inputs);
-    auto found = layoutsOfSites.find(object.index());
-    return found == layoutsOfSites.end() ? nullptr : &found->value;
+    if (!m_inputs.layoutsOfSites) {
+        std::call_once(m_counts.hasFoundLayoutsOfSites, [&] {
+            m_counts.layoutsOfSites = findLayoutsOfSites(m_inputs);
+        });
+    }
+    const auto& bySite = (m_inputs.layoutsOfSites ? *m_inputs.layoutsOfSites : m_counts.layoutsOfSites).bySite;
+    auto found = bySite.find(object.index());
+    return found == bySite.end() ? nullptr : &found->value;
 }
 
-bool ValueFlowPositions::isSurelyInside(ValueSetID set, const Type& type)
+static bool picksOnlyAmong(const ValueFlowLayoutsOfSite& picked, std::span<const LayoutID> members)
 {
-    return isSurelyInside(set, type, m_inputs.program.types.find(type));
-}
-
-bool ValueFlowPositions::isSurelyInside(ValueSetID set, TypeID type)
-{
-    return isSurelyInside(set, m_inputs.program.at(type), type);
+    return !picked.mayBeOtherObject && std::ranges::all_of(picked.layouts, [&](LayoutID layout) {
+        return std::ranges::binary_search(members, layout);
+    });
 }
 
 bool ValueFlowPositions::isSurelyInside(ValueSetID set, const Type& type, std::optional<TypeID> number)
@@ -383,25 +212,20 @@ bool ValueFlowPositions::isSurelyInside(ValueSetID set, const Type& type, std::o
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
     ValueSetID picking = universe.objectsThatPickTheirLayout();
-    // The universe remembers the members by the number of the type. To unite them again takes longer than all else that is asked of a check.
+    if (!number)
+        number = program.types.find(type);
     ValueSetID surelyInside = number ? universe.membersSurelyInside(maker(), program, *number) : universe.membersSurelyInside(maker(), program, type);
     if (!m_inputs.sets().isSubset(maker().intersect(set, ValueSets::complement(picking)), surelyInside))
         return false;
     if (type.anyObject)
         return true;
-
     std::span<const LayoutID> members = membersOf(program, type);
-    bool isInside = true;
-    m_inputs.sets().forEachMember(maker().intersect(set, picking), [&](ValueFlowObjectID object) {
+    return !m_inputs.sets().anyMember(maker().intersect(set, picking), [&](ValueFlowObjectID object) {
         const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(object);
-        isInside &= picked && !picked->mayBeOtherObject && std::ranges::all_of(picked->layouts, [&](LayoutID layout) {
-            return std::ranges::binary_search(members, layout);
-        });
+        return !picked || !picksOnlyAmong(*picked, members);
     });
-    return isInside;
 }
 
-// A check tells what the type expects from all else, which goes on by name behind it.
 std::optional<Type> ValueFlowPositions::typeWhereNothingPasses(ValueSetID set, const Type& type)
 {
     const Program& program = m_inputs.program;
@@ -410,17 +234,28 @@ std::optional<Type> ValueFlowPositions::typeWhereNothingPasses(ValueSetID set, c
         return std::nullopt;
     if (!m_inputs.sets().meet(set, universe.objects()))
         return std::nullopt;
-    bool mayPass = false;
-    m_inputs.sets().forEachMember(set, [&](ValueFlowObjectID member) {
-        if (mayPass || member == ValueFlowUniverse::primitive(PrimitiveSet::Undefined) || member == ValueFlowUniverse::primitive(PrimitiveSet::Null) || member == ValueFlowUniverse::primitive(PrimitiveSet::Absent))
-            return;
-        Type typeOfMemberAlone = typeOfMember(member);
-        // An object of which nothing says what it is may be made as the type expects it: what a parser answers.
-        mayPass = typeOfMemberAlone.anyObject || typeOfMemberAlone.isSubsetOf(type, program) || ((!universe.isObject(member) || findLayoutsPickedBy(member)) && typeOfMemberAlone.overlaps(type, program));
+    bool mayPass = m_inputs.sets().anyMember(set, [&](ValueFlowObjectID member) {
+        if (member == ValueFlowUniverse::primitive(PrimitiveSet::Undefined) || member == ValueFlowUniverse::primitive(PrimitiveSet::Null) || member == ValueFlowUniverse::primitive(PrimitiveSet::Absent))
+            return false;
+        Type alone = typeOfObject(member);
+        return alone.anyObject || alone.isSubsetOf(type, program) || ((!universe.isObject(member) || findLayoutsPickedBy(member)) && alone.overlaps(type, program));
     });
     if (mayPass)
         return std::nullopt;
     return withinLimits(typeOf(set));
+}
+
+bool ValueFlowPositions::holdsObjectThatMayLieOutside(ValueSetID set, const Type& type)
+{
+    if (type.anyObject)
+        return false;
+    if (holds(set, ValueFlowUniverse::untrackedObject()))
+        return true;
+    std::span<const LayoutID> members = membersOf(m_inputs.program, type);
+    return m_inputs.sets().anyMember(maker().intersect(set, m_inputs.universe().objectsThatPickTheirLayout()), [&](ValueFlowObjectID object) {
+        const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(object);
+        return picked && !picksOnlyAmong(*picked, members);
+    });
 }
 
 bool ValueFlowPositions::turnsAwayConstructedObject(ValueSetID set, const Type& type)
@@ -431,71 +266,23 @@ bool ValueFlowPositions::turnsAwayConstructedObject(ValueSetID set, const Type& 
     return !m_inputs.sets().isSubset(maker().intersect(set, universe.constructedObjects()), universe.maskOf(maker(), m_inputs.program, type));
 }
 
-bool ValueFlowPositions::holdsObjectThatMayLieOutside(ValueSetID set, const Type& type)
-{
-    if (type.anyObject)
-        return false;
-    if (holds(set, ValueFlowUniverse::untrackedObject()))
-        return true;
-
-    std::span<const LayoutID> members = membersOf(m_inputs.program, type);
-    bool mayLieOutside = false;
-    m_inputs.sets().forEachMember(maker().intersect(set, m_inputs.universe().objectsThatPickTheirLayout()), [&](ValueFlowObjectID object) {
-        const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(object);
-        mayLieOutside |= picked && (picked->mayBeOtherObject || !std::ranges::all_of(picked->layouts, [&](LayoutID layout) {
-            return std::ranges::binary_search(members, layout);
-        }));
-    });
-    return mayLieOutside;
-}
-
-// A compiled object keeps its shape for life, so an object that is allocated with a layout has that layout wherever it arrives.
-void ValueFlowPositions::addObjectWithLayout(Type& type, Vector<LayoutID, 8>& layouts, ValueFlowObjectID member, LayoutID layout)
-{
-    if (const ValueFlowSite* site = m_inputs.universe().siteOf(member)) {
-        switch (site->origin) {
-        case ValueFlowSiteOrigin::Operation:
-        case ValueFlowSiteOrigin::DataNode:
-        case ValueFlowSiteOrigin::TypedResult:
-            break;
-        case ValueFlowSiteOrigin::BuiltinResult:
-            // What the constructor of a built-in class makes for a class of the program is an object of the built-in class, without slots.
-            type.anyObject = type.anyFunction = true;
-            return;
-        }
-    }
-    const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(member);
-    if (!picked) {
-        layouts.append(layout);
-        return;
-    }
-    layouts.appendVector(picked->layouts);
-    if (picked->mayBeOtherObject)
-        type.anyObject = type.anyFunction = true;
-}
-
 bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member, BuiltinClassID builtinClass)
 {
     Type instance = Type::builtinClass(builtinClass);
     ClassPart& part = instance.classes[0];
+    const ValueFlowSite* site = m_inputs.universe().siteOf(member);
     if (const ValueFlowContainerFacts* facts = m_inputs.containers ? m_inputs.containers->find(member) : nullptr) {
-        // The parsers of a typed result are made from the types of the fields, which say what an array is expected to hold. Beside the arrays of the generic parser the proof says "anything", and it would take the place of that.
-        const ValueFlowSite* allocation = m_inputs.universe().siteOf(member);
-        bool isArrayOfTypedResult = allocation && allocation->origin == ValueFlowSiteOrigin::TypedResult;
-        if (isEnabled(FlowResultKind::ProvenContents) && !isArrayOfTypedResult) {
+        if (isEnabled(FlowResultKind::ProvenContents) && !(site && site->origin == ValueFlowSiteOrigin::TypedResult)) {
             part.contents = facts->contents;
             part.contentsAreProven = facts->contentsAreProven;
         }
-        // The kind rests on what is stored.
         if (isEnabled(FlowResultKind::ArrayStorageKinds) && part.contentsAreProven)
             part.arrayStorage = facts->arrayStorage;
         if (isEnabled(FlowResultKind::PristineInstances))
             part.provenPristine = facts->pristine;
     }
-    // The type of a literal names the pattern and the flags that the literal is created with. Beside a RegExp that something else creates the union names none.
     bool isRegExp = builtinClass == BuiltinClasses::RegExp;
-    const ValueFlowSite* site = isRegExp ? m_inputs.universe().siteOf(member) : nullptr;
-    if (site && site->origin == ValueFlowSiteOrigin::Operation) {
+    if (isRegExp && site && site->origin == ValueFlowSiteOrigin::Operation) {
         const Value& creation = m_inputs.program.at(m_inputs.universe().functionOf(member)).at(site->value);
         if (creation.opcode == Opcode::NewRegExp)
             instance.regExpLiteralSet.add({ creation.pattern(), creation.regExpFlags().toRaw() });
@@ -507,12 +294,6 @@ bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member
     bool saysSomethingElse = united.classes != type.classes || united.regExpLiteralSet != type.regExpLiteralSet;
     type = WTF::move(united);
     return saysSomethingElse;
-}
-
-void ValueFlowPositions::add(Type& type, Vector<LayoutID, 8>& layouts, ValueFlowObjectID member)
-{
-    if (BuiltinClassID builtinClass = addUnlessInstanceOfClass(type, layouts, member))
-        addInstanceOfClass(type, member, builtinClass);
 }
 
 BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<LayoutID, 8>& layouts, ValueFlowObjectID member)
@@ -529,7 +310,6 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
         else if (kind == Primitive::LiteralSymbol)
             kind = Primitive::Symbol;
         type.primitives |= kind & Primitive::Defined;
-        // A union on the way takes integers without a range for none.
         if (kind == Primitive::Integer)
             type.integers = Range::full();
         return { };
@@ -541,7 +321,6 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
             type.stringLiterals.add(key.text);
         else if (key.kind == PropertyKeyKind::RegisteredSymbol || key.kind == PropertyKeyKind::WellKnownSymbol
             || (key.kind == PropertyKeyKind::CreatedSymbol && m_inputs.symbolsCreatedOnce && m_inputs.symbolsCreatedOnce->get(id.index()))) {
-            // Any other symbol that an operation creates is another one each time the operation runs.
             type.symbolLiterals.add(id);
             type.primitives |= Primitive::LiteralSymbol;
         } else
@@ -559,12 +338,10 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
     }
     case ValueFlowObjectKind::Builtin:
     case ValueFlowObjectKind::ModuleBuiltin: {
-        // What stands for all that a native binding answers is no object of the realm, and no type names it. Neither is what stands above an object whose prototype link nobody knows.
         BuiltinID builtin = builtins.canonicalID(universe.builtinOf(member));
-        if (isObjectKind(builtins.at(builtin).kind) && builtin != Builtins::UndeclaredNativeCode)
-            type.builtins.add(builtin);
-        else
-            type.anyObject = type.anyFunction = true;
+        if (!isObjectKind(builtins.at(builtin).kind) || builtin == Builtins::UndeclaredNativeCode)
+            break;
+        type.builtins.add(builtin);
         return { };
     }
     case ValueFlowObjectKind::Instance:
@@ -572,16 +349,24 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
     case ValueFlowObjectKind::RestArray:
     case ValueFlowObjectKind::Site: {
         if (LayoutID layout = universe.layoutOf(member); layout && !m_inputs.isLayoutOfDictionaries(layout)) {
-            addObjectWithLayout(type, layouts, member, layout);
+            const ValueFlowSite* site = universe.siteOf(member);
+            if (site && site->origin == ValueFlowSiteOrigin::BuiltinResult)
+                break;
+            const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(member);
+            if (picked && picked->mayBeOtherObject)
+                break;
+            if (picked)
+                layouts.appendVector(picked->layouts);
+            else
+                layouts.append(layout);
             return { };
         }
         BuiltinClassID builtinClass = m_inputs.classOf(member);
         if (!builtinClass)
-            type.anyObject = type.anyFunction = true;
-        else if (builtins.at(builtinClass).hasClosureInstances)
-            type.anyFunction = true;
-        else
+            break;
+        if (!builtins.at(builtinClass).hasClosureInstances)
             return builtinClass;
+        type.anyFunction = true;
         return { };
     }
     case ValueFlowObjectKind::FunctionPrototype:
@@ -589,165 +374,123 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
         type.anyObject = true;
         return { };
     case ValueFlowObjectKind::Namespace:
-        // The namespace object of a module of any other kind gets its names when it is linked.
         if (LayoutID layout = program.layoutOfWholeNamespace(universe.moduleOf(member))) {
             layouts.append(layout);
             return { };
         }
-        type.anyObject = type.anyFunction = true;
-        return { };
+        break;
     case ValueFlowObjectKind::UnknownObject:
     case ValueFlowObjectKind::Prototype:
     case ValueFlowObjectKind::ResultOfBuiltin:
-        type.anyObject = type.anyFunction = true;
-        return { };
+        break;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    type.anyObject = type.anyFunction = true;
+    return { };
 }
 
-Type ValueFlowPositions::finish(Type&& type, std::span<const LayoutID> layouts)
+Type ValueFlowPositions::finish(Type&& type, Type&& instances, std::span<const LayoutID> layouts)
 {
+    type.classes = WTF::move(instances.classes);
+    type.regExpLiteralSet = WTF::move(instances.regExpLiteralSet);
     type.canonicalize();
     if (!layouts.empty() && !type.anyObject)
         type.layouts = m_types.completeLayoutSet(layouts);
     return WTF::move(type);
 }
 
-Type ValueFlowPositions::typeOfMember(ValueFlowObjectID member)
+Type ValueFlowPositions::typeOfObject(ValueFlowObjectID member)
 {
     Type type;
+    Type instance;
     Vector<LayoutID, 8> layouts;
-    add(type, layouts, member);
-    return finish(WTF::move(type), layouts.span());
+    if (BuiltinClassID builtinClass = addUnlessInstanceOfClass(type, layouts, member))
+        addInstanceOfClass(instance, member, builtinClass);
+    return finish(WTF::move(type), WTF::move(instance), layouts.span());
 }
 
-// Whoever asks has dealt with the placeholders. The untracked object is passed over: what it stands for depends on the family.
 Type ValueFlowPositions::typeOf(ValueSetID set)
 {
-    auto found = m_indexOfSet.find(set.index());
-    if (found != m_indexOfSet.end())
+    if (auto found = m_indexOfSet.find(set.index()); found != m_indexOfSet.end())
         return m_typesOfSets[found->value];
-
-    auto make = [&] {
-        if (!sharesTypeOf(set))
-            return typeOfMembers(set);
-        const ValueFlowSharedTypeOfSet* shared = m_counts.findTypeOfSet(set);
-        return shared ? typeFrom(*shared) : typeOfMembersToShare(set);
-    };
-    Type type = make();
+    Type type = typeOfMembers(set);
     m_indexOfSet.add(set.index(), m_typesOfSets.size());
     m_typesOfSets.append(type);
     return type;
 }
 
-// What a switch turns off for one subject is left out of the types of that subject alone.
-bool ValueFlowPositions::sharesTypeOf(ValueSetID set) const
-{
-    AOT_THRESHOLD(uint32_t, fewestMembersOfSharedSet, 32);
-    return m_counts.sharesTypesOfSets && m_inputs.sets().size(set) >= fewestMembersOfSharedSet
-        && isEnabled(FlowResultKind::ProvenContents) && isEnabled(FlowResultKind::ArrayStorageKinds) && isEnabled(FlowResultKind::PristineInstances);
-}
-
-// More texts than a type lists make a string: see withinLimits(). They need no order for that.
-void ValueFlowPositions::listTexts(Type& type, std::span<const StringID> texts)
-{
-    if (texts.size() > m_inputs.build.limit(LimitID::MaxLiteralsInType))
-        type.primitives |= Primitive::String;
-    else if (!texts.empty())
-        type.stringLiterals = SortedSet<StringID>(texts);
-}
-
 Type ValueFlowPositions::typeOfMembers(ValueSetID set)
 {
-    Type type;
-    Vector<LayoutID, 8> layouts;
-    // A set may hold thousands of keys, in the order of their numbers and not of their texts. They are sorted once.
+    AOT_THRESHOLD(uint32_t, fewestMembersOfSharedSet, 32);
+    AOT_THRESHOLD(size_t, mostBytesOfTypesOfSets, 256 * MB);
     const ValueFlowUniverse& universe = m_inputs.universe();
-    Vector<StringID, 16> texts;
-    m_inputs.sets().forEachMember(set, [&](ValueFlowObjectID member) {
-        if (member == ValueFlowUniverse::untrackedObject())
-            return;
-        if (universe.kindOf(member) == ValueFlowObjectKind::Key) {
-            const PropertyKey& key = m_inputs.program.at(universe.keyOf(member));
-            if (key.kind == PropertyKeyKind::Text) {
-                texts.append(key.text);
-                return;
-            }
-        }
-        add(type, layouts, member);
-    });
-    listTexts(type, texts.span());
-    return finish(WTF::move(type), layouts.span());
-}
-
-// The instances are united by themselves, in a type that holds nothing else.
-Type ValueFlowPositions::typeOfMembersToShare(ValueSetID set)
-{
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    auto shared = makeUnique<ValueFlowSharedTypeOfSet>();
-    Type& type = shared->withoutLayoutsAndInstances;
+    bool isShared = m_counts.sharesTypesOfSets && m_inputs.sets().size(set) >= fewestMembersOfSharedSet
+        && isEnabled(FlowResultKind::ProvenContents) && isEnabled(FlowResultKind::ArrayStorageKinds) && isEnabled(FlowResultKind::PristineInstances);
+    uint32_t hash = IntHash<uint32_t>::hash(set.index());
+    auto isWanted = [&](const ValueFlowSharedTypeOfSet& known) {
+        return known.set == set;
+    };
     Type instances;
+    if (const ValueFlowSharedTypeOfSet* known = isShared ? m_counts.typesOfSets.find(hash, isWanted) : nullptr) {
+        if (known->firstInstanceMeetsOtherMembers)
+            instances.primitives = Primitive::Undefined;
+        for (uint32_t index = 0; index < known->instances.size(); ++index) {
+            if (index == known->numberOfInstancesBeforeAnyObject)
+                instances.anyObject = true;
+            addInstanceOfClass(instances, known->instances[index].object, known->instances[index].builtinClass);
+        }
+        return finish(Type(known->withoutLayoutsAndInstances), WTF::move(instances), known->layouts.span());
+    }
+
+    ValueFlowSharedTypeOfSet shared { .set = set };
+    Type& type = shared.withoutLayoutsAndInstances;
     Vector<LayoutID, 8> layouts;
     Vector<StringID, 16> texts;
     bool hasMetInstance = false;
-    // The primitives have the lowest numbers and the keys the highest. An object adds nothing to any object, once no classes are left that a union could ask the arena about.
-    m_inputs.sets().anyMember(maker().intersect(set, ValueSets::complement(universe.keys())), [&](ValueFlowObjectID member) {
+    m_inputs.sets().forEachMember(set, [&](ValueFlowObjectID member) {
         if (member == ValueFlowUniverse::untrackedObject())
-            return false;
+            return;
+        bool isKey = universe.kindOf(member) == ValueFlowObjectKind::Key;
+        if (const PropertyKey* key = isKey ? &m_inputs.program.at(universe.keyOf(member)) : nullptr; key && key->kind == PropertyKeyKind::Text) {
+            if (!(type.primitives & Primitive::String))
+                texts.append(key->text);
+            return;
+        }
+        if (!isKey && type.anyObject && instances.classes.isEmpty())
+            return;
         BuiltinClassID builtinClass = addUnlessInstanceOfClass(type, layouts, member);
         if (!builtinClass)
-            return type.anyObject && instances.classes.isEmpty();
+            return;
         if (!std::exchange(hasMetInstance, true) && !type.isNever()) {
-            shared->firstInstanceMeetsOtherMembers = true;
+            shared.firstInstanceMeetsOtherMembers = true;
             instances.primitives = Primitive::Undefined;
         }
         if (type.anyObject && !instances.anyObject) {
-            shared->numberOfInstancesBeforeAnyObject = shared->instances.size();
+            shared.numberOfInstancesBeforeAnyObject = shared.instances.size();
             instances.anyObject = true;
         }
         if (addInstanceOfClass(instances, member, builtinClass))
-            shared->instances.append({ member, builtinClass });
-        return instances.anyObject && instances.classes.isEmpty();
+            shared.instances.append({ member, builtinClass });
     });
-    m_inputs.sets().forEachMember(maker().intersect(set, universe.keys()), [&](ValueFlowObjectID member) {
-        const PropertyKey& key = m_inputs.program.at(universe.keyOf(member));
-        if (key.kind != PropertyKeyKind::Text)
-            addUnlessInstanceOfClass(type, layouts, member);
-        else if (!(type.primitives & Primitive::String))
-            texts.append(key.text);
-    });
-    listTexts(type, texts.span());
+    if (texts.size() > m_inputs.build.limit(LimitID::MaxLiteralsInType))
+        type.primitives |= Primitive::String;
+    else if (!texts.isEmpty())
+        type.stringLiterals = SortedSet<StringID>(texts.span());
     type.canonicalize();
     if (!type.anyObject) {
         AOT::sort(layouts);
-        shared->layouts.append(layouts.span().first(layouts.size() - std::ranges::unique(layouts).size()));
+        shared.layouts.append(layouts.span().first(layouts.size() - std::ranges::unique(layouts).size()));
     }
 
-    Type result = type;
-    result.classes = WTF::move(instances.classes);
-    result.regExpLiteralSet = WTF::move(instances.regExpLiteralSet);
-    result = finish(WTF::move(result), shared->layouts.span());
-    m_counts.addTypeOfSet(set, WTF::move(shared));
+    if (!isShared)
+        return finish(WTF::move(type), WTF::move(instances), shared.layouts.span());
+    Type result = finish(Type(type), WTF::move(instances), shared.layouts.span());
+    size_t bytes = sizeof(ValueFlowSharedTypeOfSet) + type.stringLiterals.span().size_bytes() + type.symbolLiterals.span().size_bytes() + type.functions.span().size_bytes() + type.builtins.span().size_bytes()
+        + shared.layouts.sizeInBytes() + shared.instances.sizeInBytes();
+    if (m_counts.bytesOfTypesOfSets.fetch_add(bytes, std::memory_order_relaxed) + bytes <= mostBytesOfTypesOfSets)
+        m_counts.typesOfSets.add(hash, WTF::move(shared), isWanted);
     return result;
 }
 
-Type ValueFlowPositions::typeFrom(const ValueFlowSharedTypeOfSet& shared)
-{
-    Type instances;
-    if (shared.firstInstanceMeetsOtherMembers)
-        instances.primitives = Primitive::Undefined;
-    for (uint32_t index = 0; index < shared.instances.size(); ++index) {
-        if (index == shared.numberOfInstancesBeforeAnyObject)
-            instances.anyObject = true;
-        addInstanceOfClass(instances, shared.instances[index].object, shared.instances[index].builtinClass);
-    }
-    Type type = shared.withoutLayoutsAndInstances;
-    type.classes = WTF::move(instances.classes);
-    type.regExpLiteralSet = WTF::move(instances.regExpLiteralSet);
-    return finish(WTF::move(type), shared.layouts.span());
-}
-
-// A part that is left out is widened, so that the meet with the family leaves that part of the family as it is.
 Type ValueFlowPositions::withinLimits(Type&& type)
 {
     BuildContext& build = m_inputs.build;
@@ -770,23 +513,12 @@ Type ValueFlowPositions::withinLimits(Type&& type)
     return WTF::move(type);
 }
 
-ValueSetID ValueFlowPositions::expand(ValueSetID set, const Type& family)
-{
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    if (!holds(set, ValueFlowUniverse::untrackedObject()) || !universe.namesProgramObjectsAlone(m_inputs.program, family))
-        return set;
-    ValueSetID listed = maker().intersect(set, ValueSets::complement(universe.untrackedObjectAlone()));
-    return maker().unite(listed, universe.familyObjectsOf(maker(), m_inputs.program, family));
-}
-
-// A member that lies outside whatever it is comes before one of which only a part may lie outside.
 ValueFlowObjectID ValueFlowPositions::findStranger(ValueSetID set, const Type& family, Trust trust)
 {
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
     ValueFlowObjectID outside;
     ValueFlowObjectID undecided;
-    // Thousands of objects share a few layouts, and the type of an object that has its layout for sure is that layout.
     BitVector layoutsInside;
     auto sureLayoutOf = [&](ValueFlowObjectID member) {
         if (universe.kindOf(member) != ValueFlowObjectKind::Site && universe.kindOf(member) != ValueFlowObjectKind::Instance)
@@ -797,27 +529,23 @@ ValueFlowObjectID ValueFlowPositions::findStranger(ValueSetID set, const Type& f
         const ValueFlowSite* site = universe.siteOf(member);
         return site && site->origin == ValueFlowSiteOrigin::BuiltinResult ? LayoutID() : layout;
     };
-    m_inputs.sets().forEachMember(trust >= Trust::Primitives ? maker().intersect(set, universe.objects()) : set, [&](ValueFlowObjectID member) {
-        if (outside || member == ValueFlowUniverse::untrackedObject())
-            return;
+    m_inputs.sets().anyMember(trust >= Trust::Primitives ? maker().intersect(set, universe.objects()) : set, [&](ValueFlowObjectID member) {
         LayoutID sureLayout = sureLayoutOf(member);
-        if (sureLayout && layoutsInside.get(sureLayout.index()))
-            return;
-        Type type = typeOfMember(member);
+        if (member == ValueFlowUniverse::untrackedObject() || (sureLayout && layoutsInside.get(sureLayout.index())))
+            return false;
+        Type type = typeOfObject(member);
         if (type.isSubsetOf(family, program)) {
             if (sureLayout)
                 layoutsInside.set(sureLayout.index());
-            return;
-        }
-        if (!findLayoutsPickedBy(member) || !type.overlaps(family, program))
+        } else if (!findLayoutsPickedBy(member) || !type.overlaps(family, program))
             outside = member;
         else if (!undecided)
             undecided = member;
+        return !!outside;
     });
     return outside ? outside : undecided;
 }
 
-// What held.withOnlyObjects().isSubsetOf(family, program) answers. The lists of literals may be long, and this is asked of every position: they are set aside, not copied.
 static bool holdsOnlyObjectsOf(Type& held, const Type& family, const Program& program)
 {
     uint16_t primitives = std::exchange(held.primitives, 0);
@@ -832,12 +560,10 @@ static bool holdsOnlyObjectsOf(Type& held, const Type& family, const Program& pr
     return isSubset;
 }
 
-// What the type as read becomes when the results are applied.
 std::optional<Type> ValueFlowPositions::familyBehindDictionaries(const Type& family)
 {
     if (m_inputs.typesBehindDictionaries.empty())
         return std::nullopt;
-    // A family may list hundreds of layouts, and this is asked of every position.
     auto namesDictionaries = [&](LayoutSetID set) {
         if (!TypeTable::isProvisional(set) && set.index() < m_inputs.layoutSetsNamingDictionaries->size())
             return m_inputs.layoutSetsNamingDictionaries->quickGet(set.index());
@@ -853,25 +579,22 @@ std::optional<Type> ValueFlowPositions::familyBehindDictionaries(const Type& fam
     return typeBehindDictionaries(m_inputs.program, *m_inputs.layoutsOfDictionaries, m_inputs.typesBehindDictionaries, family, m_types);
 }
 
-ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, ValueSetID set, DeadZone deadZone, Trust trust, const ValueFlowNumbers* numbers, NOESCAPE const Invocable<String()> auto& place)
+ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, ValueSetID set, DeadZone deadZone, Trust trust, const ValueFlowNumbers* numbers, ValueFlowNodeID node)
 {
     const Program& program = m_inputs.program;
     std::optional<Type> familyBehind = familyBehindDictionaries(familyAsRead);
     const Type& family = familyBehind ? *familyBehind : familyAsRead;
-    // An environment and an opaque word are no values of the language, and no set stands for one.
     if (!family.isJavaScriptValue() || m_inputs.sets().isEmpty(set))
         return { };
     if (!isEnabled(FlowResultKind::NarrowedTypes))
         return { .proof = ValueFlowProof::Disabled };
     bool holdsUnknownValue = ValueSets::isComplement(set) || holds(set, ValueFlowUniverse::unknownObject());
     bool holdsUntrackedObject = holds(set, ValueFlowUniverse::untrackedObject());
-    // Whatever a placeholder stands for is a value of the language, so it lies inside a family that takes them all. Beyond them such a family holds `absent` alone, which no placeholder stands for.
     bool hasDeadZoneToRemove = family.primitives & Primitive::Absent && deadZone != DeadZone::MayBeObserved && isEnabled(FlowResultKind::Initialization);
     if ((holdsUnknownValue || holdsUntrackedObject) && family.isAnything() && hasDeadZoneToRemove)
         return { .proof = ValueFlowProof::Proven, .narrowed = family.withoutPrimitives(Primitive::Absent) };
     if (holdsUnknownValue)
         return { .proof = ValueFlowProof::IllTyped };
-    // Nothing keeps an object that nobody follows inside a type that is only expected.
     if (holdsUntrackedObject && (trust == Trust::Nothing || !m_inputs.universe().namesProgramObjectsAlone(program, family)))
         return { .proof = ValueFlowProof::Untracked };
 
@@ -889,9 +612,7 @@ ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, Val
     if (!isEnabled(FlowResultKind::Initialization))
         held.primitives |= family.primitives & Primitive::Absent;
 
-    // The meet would drop a value that is there.
     bool isInside = trust == Trust::PassedTest || (trust >= Trust::Primitives ? holdsOnlyObjectsOf(held, family, program) : held.isSubsetOf(family, program));
-    // The range of an expected number is a guess. Where integers arrive, alone or beside what the family takes as it is, the position holds those, and the check behind it tests one of them against the guess.
     auto liesOutsideGuessedRangeAlone = [&] {
         if (held.isInteger() && family.isNumber())
             return true;
@@ -905,19 +626,19 @@ ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, Val
         return { .proof = ValueFlowProof::Proven, .narrowed = WTF::move(held) };
     if (!isInside) {
         ValueFlowObjectID stranger = findStranger(set, family, trust);
-        bool isUndecided = stranger && findLayoutsPickedBy(stranger) && typeOfMember(stranger).overlaps(family, program);
+        bool isUndecided = stranger && findLayoutsPickedBy(stranger) && typeOfObject(stranger).overlaps(family, program);
         if (!isUndecided) {
-            m_counts.count.fetch_add(1, std::memory_order_relaxed);
-            if (m_counts.listsThem)
-                m_counts.note(place(), held, family);
+            m_counts.setsOutsideFamilies.fetch_add(1, std::memory_order_relaxed);
+            if (m_counts.listener) {
+                Locker locker { m_counts.lockOfListener };
+                (*m_counts.listener)(placeOf(node), held, family);
+            }
             return { .proof = ValueFlowProof::OutsideFamily, .stranger = stranger };
         }
-        // Of all that such an allocation makes only what lies inside gets into a position that is checked.
         if (trust < Trust::Position)
             return { .proof = ValueFlowProof::UndecidedLayout, .stranger = stranger };
     }
 
-    // Inside such a family the untracked object is one of the objects that the family lists, whichever.
     if (holdsUntrackedObject)
         held = held.unionWith(family.withOnlyObjects(), m_types);
     Type narrowed = withinLimits(WTF::move(held)).intersectWith(family, m_types);
@@ -928,16 +649,25 @@ ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, Val
 
 ValueFlowPositionResult ValueFlowPositions::resultAt(const Type& family, ValueSetID set, DeadZone deadZone, const ValueFlowNumbers* numbers)
 {
-    return decide(family, set, deadZone, Trust::Primitives, numbers, [&] {
-        return makeString("subject "_s, m_switchSubject);
-    });
+    return decide(family, set, deadZone, Trust::Primitives, numbers);
 }
 
 ValueFlowPositionResult ValueFlowPositions::resultAt(const DeclaredType& declared, ValueSetID set, DeadZone deadZone)
 {
-    return decide(m_inputs.program.at(declared.type), set, deadZone, declared.flags.contains(PositionFlags::IsExpected) ? Trust::Nothing : Trust::Position, nullptr, [&] {
-        return makeString("subject "_s, m_switchSubject);
-    });
+    return decide(m_inputs.program.at(declared.type), set, deadZone, declared.flags.contains(PositionFlags::IsExpected) ? Trust::Nothing : Trust::Position, nullptr);
+}
+
+FlowPositionUpdate ValueFlowPositions::updateFrom(const ValueFlowPositionResult& result, const Type& family)
+{
+    FlowPositionUpdate update;
+    update.isProven = result.proof == ValueFlowProof::Proven;
+    if (family.hasObjects() && result.proof != ValueFlowProof::NothingArrives)
+        (update.isProven ? m_counts.provenPositions : m_counts.unprovenPositions).fetch_add(1, std::memory_order_relaxed);
+    if (update.isProven && result.narrowed) {
+        m_counts.narrowedPositions.fetch_add(1, std::memory_order_relaxed);
+        update.type = m_types.intern(*result.narrowed);
+    }
+    return update;
 }
 
 FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, ValueFlowNodeID node, DeadZone deadZone, const ValueFlowNumbers* numbers)
@@ -947,20 +677,14 @@ FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, V
     Trust trust = declared.flags.contains(PositionFlags::IsExpected) ? Trust::Nothing : Trust::Position;
     if (trust == Trust::Position && solver.graph().maskKindOf(node) == ValueFlowMaskKind::Checked)
         trust = Trust::PassedTest;
-    ValueFlowPositionResult result = decide(family, solver.valueOf(node), deadZone, trust, numbers, [&] {
-        return placeOf(node);
-    });
-    // The solver compares with the mask of the node, which is made from the same type.
+    ValueFlowPositionResult result = decide(family, solver.valueOf(node), deadZone, trust, numbers, node);
     if (result.proof == ValueFlowProof::Proven && solver.holdsObjectOutsideFamily(node))
         result = { .proof = ValueFlowProof::OutsideFamily };
 
-    FlowPositionUpdate update;
-    update.isProven = result.proof == ValueFlowProof::Proven;
-    if (family.hasObjects() && result.proof != ValueFlowProof::NothingArrives)
-        (update.isProven ? m_counts.provenPositions : m_counts.unprovenPositions).fetch_add(1, std::memory_order_relaxed);
-    // What bounds the numbers holds whatever else arrives, and nobody doubts the type of a position that is more than expected.
-    bool isInDoubt = result.proof == ValueFlowProof::IllTyped || result.proof == ValueFlowProof::Untracked || result.proof == ValueFlowProof::OutsideFamily || result.proof == ValueFlowProof::UndecidedLayout;
-    if (isInDoubt && numbers && trust != Trust::Nothing) {
+    FlowPositionUpdate update = updateFrom(result, family);
+    if (update.isProven)
+        return update;
+    if (result.proof != ValueFlowProof::NothingArrives && result.proof != ValueFlowProof::Disabled && numbers && trust != Trust::Nothing) {
         Type narrowed = family;
         numbers->narrow(narrowed);
         if (narrowed != family) {
@@ -970,18 +694,11 @@ FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, V
             return update;
         }
     }
-    if (!update.isProven) {
-        FlowSiteLoss loss = lossOf(result, node);
-        update.cause = loss.cause;
-        update.witness = loss.witness;
-        if (family.isJavaScriptValue() && family.primitives & Primitive::Absent && deadZone != DeadZone::MayBeObserved && isEnabled(FlowResultKind::Initialization))
-            update.type = m_types.intern(family.withoutPrimitives(Primitive::Absent));
-        return update;
-    }
-    if (result.narrowed) {
-        m_counts.narrowedPositions.fetch_add(1, std::memory_order_relaxed);
-        update.type = m_types.intern(*result.narrowed);
-    }
+    FlowSiteLoss loss = lossOf(result, node);
+    update.cause = loss.cause;
+    update.witness = loss.witness;
+    if (family.isJavaScriptValue() && family.primitives & Primitive::Absent && deadZone != DeadZone::MayBeObserved && isEnabled(FlowResultKind::Initialization))
+        update.type = m_types.intern(family.withoutPrimitives(Primitive::Absent));
     return update;
 }
 
@@ -1020,14 +737,6 @@ std::optional<LayoutSet> ValueFlowPositions::receiversAt(const Type& family, Val
     return receivers;
 }
 
-static bool throwsInFrontOfBody(const Function& callee, bool isConstruction)
-{
-    if (isConstruction)
-        return callee.constructorForm() == ConstructorForm::NotConstructor;
-    return callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
-}
-
-// A bound function, a proxy and whatever else can be called enter code that nobody lists, so an object that is neither a closure nor a built-in function leaves the set open.
 ValueSetID ValueFlowPositions::withoutWhatPlaceholdersCover(ValueSetID set)
 {
     const ValueFlowUniverse& universe = m_inputs.universe();
@@ -1047,9 +756,10 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
 
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
-    ValueSetID arriving = expand(set, family);
+    ValueSetID arriving = set;
+    if (holds(set, ValueFlowUniverse::untrackedObject()) && universe.namesProgramObjectsAlone(program, family))
+        arriving = maker().unite(maker().intersect(set, ValueSets::complement(universe.untrackedObjectAlone())), universe.familyObjectsOf(maker(), program, family));
     ValueSetID listed = withoutWhatPlaceholdersCover(arriving);
-    // The pass that hands the object it has allocated to the constructor above tests the link to that constructor at run time, and it finds in the list which version of the constructor is entered.
     bool isConstruction = !!calleeOfConstruction;
     if (isConstruction && listed != arriving) {
         ValueSetID followed = calleeOfConstruction->constant ? calleeOfConstruction->constant : ValueSets::nothing;
@@ -1065,21 +775,19 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
         if (!universe.isObject(member))
             return;
         if (FunctionID function = universe.closureFunction(member)) {
-            if (!throwsInFrontOfBody(program.at(function), isConstruction))
+            const Function& callee = program.at(function);
+            bool throwsInFrontOfBody = isConstruction ? callee.constructorForm() == ConstructorForm::NotConstructor : callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
+            if (!throwsInFrontOfBody)
                 callees.functions.append(function);
-            return;
-        }
-        if (holds(universe.builtinFunctions(), member)) {
+        } else if (holds(universe.builtinFunctions(), member))
             callees.builtins.append(program.builtins().canonicalID(universe.builtinOf(member)));
-            return;
-        }
-        callees.isComplete = false;
+        else
+            callees.isComplete = false;
     });
     canonicalize(callees);
     return callees;
 }
 
-// What a call of JSON.parse or its like has made: a built-in whose row answers plain data is among the callees of the call that the object stands for.
 bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
     const ValueFlowUniverse& universe = inputs.universe();
@@ -1093,12 +801,8 @@ bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID ob
         if (statement.kind != ValueFlowStatementKind::Operation || statement.site != site->value)
             continue;
         std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
-        if (operands.empty() || !operands[0].node)
-            continue;
-        ValueSetID callees = inputs.solver().valueOf(operands[0].node);
-        if (ValueSets::isComplement(callees))
-            continue;
-        inputs.sets().forEachMember(callees, [&](ValueFlowObjectID callee) {
+        ValueSetID callees = !operands.empty() && operands[0].node ? inputs.solver().valueOf(operands[0].node) : ValueSets::nothing;
+        inputs.sets().forEachMember(ValueSets::isComplement(callees) ? ValueSets::nothing : callees, [&](ValueFlowObjectID callee) {
             BuiltinID builtin = universe.isObject(callee) ? universe.builtinOf(callee) : BuiltinID();
             if (!builtin)
                 return;
@@ -1109,13 +813,9 @@ bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID ob
     return answersPlainData;
 }
 
-Witness ValueFlowPositions::witnessOfStranger(const ValueFlowPositionResult& result) const
-{
-    return result.stranger && m_inputs.universe().isObject(result.stranger) ? witnessOfAllocation(m_inputs, result.stranger) : noWitness;
-}
-
 FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, ValueFlowNodeID node)
 {
+    Witness witnessOfStranger = result.stranger && m_inputs.universe().isObject(result.stranger) ? witnessOfAllocation(m_inputs, result.stranger) : noWitness;
     switch (result.proof) {
     case ValueFlowProof::Proven:
     case ValueFlowProof::NothingArrives:
@@ -1128,10 +828,13 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
             return loss;
         if (std::optional<ValueFlowUnknownSource> source = m_inputs.solver().unknownSourceOf(node))
             loss.cause = unprovenCauseOf(*source);
-        if (const ValueFlowBirthsOfUnknownObject* births = m_counts.births(m_inputs)) {
-            loss.witness = births->witnessOf(node);
-            loss.hasOtherRoots = births->hasSeveralRoots(node);
-            if (std::optional<ValueFlowUnknownSource> source = births->sourceOf(node))
+        if (m_inputs.solver().input().remembersWhoLoggedEachEdge) {
+            std::call_once(m_counts.hasFoundBirths, [&] {
+                m_counts.births.emplace(m_inputs);
+            });
+            loss.witness = m_counts.births->witnessOf(node);
+            loss.hasOtherRoots = m_counts.births->hasSeveralRoots(node);
+            if (std::optional<ValueFlowUnknownSource> source = m_counts.births->sourceOf(node))
                 loss.cause = unprovenCauseOf(*source);
         }
         return loss;
@@ -1139,18 +842,19 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
     case ValueFlowProof::Untracked:
         return { .cause = UnprovenCause::Untracked };
     case ValueFlowProof::OutsideFamily:
-        return { .cause = result.stranger && isDataFromOutside(m_inputs, result.stranger) ? UnprovenCause::DataFromOutside : UnprovenCause::LayoutOutsideFamily, .witness = witnessOfStranger(result) };
+        return { .cause = result.stranger && isDataFromOutside(m_inputs, result.stranger) ? UnprovenCause::DataFromOutside : UnprovenCause::LayoutOutsideFamily, .witness = witnessOfStranger };
     case ValueFlowProof::UndecidedLayout:
-        return { .cause = UnprovenCause::OtherNewTarget, .witness = witnessOfStranger(result) };
+        return { .cause = UnprovenCause::OtherNewTarget, .witness = witnessOfStranger };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// In the words of the IR text.
 String ValueFlowPositions::placeOf(ValueFlowNodeID node) const
 {
     const Program& program = m_inputs.program;
     const ValueFlowProgramNodes& nodes = m_inputs.bodies().nodes();
+    if (!node)
+        return makeString("subject "_s, m_switchSubject);
     if (FunctionID function = nodes.functionOf(node); function && function.index() < program.functions.size()) {
         uint32_t firstResult = nodes.result(function, 0).index();
         if (node.index() < firstResult)

@@ -7,23 +7,9 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
-    v0 = CallDirect function=f1
-    v1 = CallDirect function=f2
-    v2 = CallDirect function=f3
-    v3 = CallDirect function=f4
-    v4 = CallDirect function=f5
-    v5 = CallDirect function=f6
-    v6 = CallDirect function=f7
-    v7 = CallDirect function=f8
-    v8 = CallDirect function=f9
-    v9 = CallDirect function=f10
-    v10 = CallDirect function=f11
-    v11 = CallDirect function=f12
-    v12 = CallDirect function=f13
-    v13 = CallDirect function=f14
-    v14 = CallDirect function=f15
-    v15 = CallDirect function=f16
-    v16 = CallDirect function=f17
+# REPEAT: i = 0..16
+    v%(i) = CallDirect function=f%(i+1)
+# END REPEAT
     Return
 }
 

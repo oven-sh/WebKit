@@ -46,18 +46,10 @@ function f2 name="ofSixCopies" results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
-    v2 = NewObject layout=L1
-    CopyDataProperties v2, v1
-    v4 = NewObject layout=L1
-    CopyDataProperties v4, v2
-    v6 = NewObject layout=L1
-    CopyDataProperties v6, v4
-    v8 = NewObject layout=L1
-    CopyDataProperties v8, v6
-    v10 = NewObject layout=L1
-    CopyDataProperties v10, v8
-    v12 = NewObject layout=L1
-    CopyDataProperties v12, v10
+# REPEAT: i = 0..5; a = 1 2 4 6 8 10
+    v%(i*2+2) = NewObject layout=L1
+    CopyDataProperties v%(i*2+2), v%(a)
+# END REPEAT
     v14 = Builtin builtin=Object
     v15 = Builtin builtin=ObjectValues
     v16 = Call v15, v14, v12
@@ -70,20 +62,10 @@ function f3 name="ofSevenCopies" results=[{type=anything}] {
   b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
-    v2 = NewObject layout=L1
-    CopyDataProperties v2, v1
-    v4 = NewObject layout=L1
-    CopyDataProperties v4, v2
-    v6 = NewObject layout=L1
-    CopyDataProperties v6, v4
-    v8 = NewObject layout=L1
-    CopyDataProperties v8, v6
-    v10 = NewObject layout=L1
-    CopyDataProperties v10, v8
-    v12 = NewObject layout=L1
-    CopyDataProperties v12, v10
-    v14 = NewObject layout=L1
-    CopyDataProperties v14, v12
+# REPEAT: i = 0..6; a = 1 2 4 6 8 10 12
+    v%(i*2+2) = NewObject layout=L1
+    CopyDataProperties v%(i*2+2), v%(a)
+# END REPEAT
     v16 = Builtin builtin=Object
     v17 = Builtin builtin=ObjectValues
     v18 = Call v17, v16, v14

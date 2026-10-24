@@ -220,23 +220,13 @@ function f9 name="captureParameterDies" captures=[{type=env L7}] parameters=[{ty
 # CHECK: b3():
 # CHECK-NEXT: ReleaseEnvironment v6
 # CHECK-NOT: ReleaseEnvironment
+# REPEAT: i = 10..12; a = 0 2 5
 
-function f10 name="callback" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
-  b0(v0: env L0):
-    v1 = GetEnvironmentField v0 layout=L0 field=0
+function f%(i) name="callback" kind=Arrow captures=[{type=env L%(a)}] results=[{type=anything}] {
+  b0(v0: env L%(a)):
+    v1 = GetEnvironmentField v0 layout=L%(a) field=0
     Return v1
 }
-
-function f11 name="callback" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
-  b0(v0: env L2):
-    v1 = GetEnvironmentField v0 layout=L2 field=0
-    Return v1
-}
-
-function f12 name="callback" kind=Arrow captures=[{type=env L5}] results=[{type=anything}] {
-  b0(v0: env L5):
-    v1 = GetEnvironmentField v0 layout=L5 field=0
-    Return v1
-}
+# END REPEAT
 
 function f13 name="withoutBody" kind=Arrow captures=[{type=env L6}] results=[{type=anything}]

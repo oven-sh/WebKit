@@ -165,7 +165,6 @@ static void printNode(PrintStream& out, ValueFlowSolution& solution, ValueFlowNo
         out.print("of the program");
 }
 
-// From the function back to the host: who reached it, who reached the function of that statement, and so on.
 static void printWhyReached(PrintStream& out, ValueFlowSolution& solution, FunctionID function)
 {
     const ValueFlowSolver& solver = solution.solver();
@@ -195,7 +194,6 @@ static void printWhyReached(PrintStream& out, ValueFlowSolution& solution, Funct
 
 static void printValue(PrintStream&, ValueFlowSolution&, ValueSetID);
 
-// In the order of the rounds: the edges that rules have logged into the flags of the host, and the first edges into `escaped` and into `lost` from a node that in the end holds a built-in that lets in unseen code.
 static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
 {
     constexpr unsigned numberOfEdgesPrinted = 60;
@@ -253,7 +251,6 @@ static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
-// The used built-ins whose code the function of the library is, and those with a row that says native code calls it.
 static void printUsedBuiltinsBehind(PrintStream& out, ValueFlowSolution& solution, FunctionID function)
 {
     const Program& program = solution.program();
@@ -278,7 +275,6 @@ static void printUsedBuiltinsBehind(PrintStream& out, ValueFlowSolution& solutio
     }
 }
 
-// The functions in the order of the rounds in which they were reached, each with the statement that reached it.
 static void printFunctionsInOrderReached(PrintStream& out, ValueFlowSolution& solution)
 {
     const ValueFlowSolver& solver = solution.solver();
@@ -418,13 +414,11 @@ static void printObject(PrintStream& out, ValueFlowSolution& solution, ValueFlow
 
 namespace {
 
-// How an object has escaped: the statement that logged the last edge of a shortest way into `escaped`, and where the edge comes out of what is written into an escaped object, that object.
 class WaysOfEscape {
 public:
     struct Step {
         ValueFlowStatementID logger;
         ValueFlowObjectID holder;
-        // Without a logger: the opcodes of the operations that take the node from which the last edge starts, or what that node is.
         String takers;
     };
 
@@ -481,14 +475,12 @@ public:
     }
 
 private:
-    // The statement of kind Escape, or one that it has made for a family of escaped instances.
     bool isStatementOfEscape(ValueFlowStatementID id) const
     {
         ValueFlowStatementKind kind = m_solver.statementAt(id).kind;
         return kind == ValueFlowStatementKind::Escape || (kind == ValueFlowStatementKind::Lookup && m_solver.keyOf(id).name().kind == ValueFlowNameKind::FoundThroughEscapedInstances);
     }
 
-    // The graph retires a node all of whose members end up in `escaped`, and gives each node with an edge into it an edge of its own straight into `escaped`, which nobody has logged.
     ValueFlowStatementID loggerOfEdgeIntoRetiredNode(ValueFlowNodeID from)
     {
         if (!std::exchange(m_hasLookedForRetiredNodes, true)) {
@@ -537,7 +529,6 @@ private:
 
 } // anonymous namespace
 
-// An object that has escaped because an escaped object holds it is counted for that holder, and so on up to an object that a statement other than Escape has let escape.
 static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
 {
     constexpr size_t numberOfRootsPrinted = 30;
@@ -611,13 +602,11 @@ static void printValue(PrintStream& out, ValueFlowSolution& solution, ValueSetID
 
 enum class EscapeIsCountedFor : uint8_t { ObjectItself, Root };
 
-// For each counted object that has escaped, the statement that logged the last edge of a shortest way into `escaped`: who lets how many objects escape, and how many closures among them.
 static void printWhoLetsEscape(PrintStream& out, ValueFlowSolution& solution, WaysOfEscape& ways, EscapeIsCountedFor countedFor, NOESCAPE const Invocable<bool(ValueFlowObjectID)> auto& isCounted)
 {
     struct Line {
         ValueFlowStatementKind kind;
         Opcode opcode;
-        // Of a statement that a rule has made: the kind of name or of call in its key.
         uint8_t detail { 0 };
         uint32_t objects { 0 };
         uint32_t closures { 0 };
@@ -706,7 +695,6 @@ static void printWhoLetsEscape(PrintStream& out, ValueFlowSolution& solution, Wa
     }
 }
 
-// Where the unknown object in the first operand of the counted operations of reached functions was born: by what the rule that made it has named as its source, then the operations behind the most operands.
 static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solution, BuildContext& build, NOESCAPE const Invocable<bool(Opcode)> auto& isCounted)
 {
     constexpr size_t numberOfBirthsPrinted = 40;
@@ -728,7 +716,6 @@ static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solu
     uint32_t withUnknownObject = 0;
     uint32_t withoutSource = 0;
     uint32_t withoutBirth = 0;
-    // What the program wrote, its generic versions, the library.
     enum Part : uint8_t { Program, GenericVersions, Library, NumberOfParts };
     std::array<uint32_t, NumberOfParts> countedInPart { };
     std::array<uint32_t, NumberOfParts> withUnknownObjectInPart { };
@@ -751,7 +738,6 @@ static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solu
             ++withUnknownObject;
             ++withUnknownObjectInPart[part];
             if (part == Program) {
-                // What the front end says of the operand, and which operation has made it.
                 const Function& function = program.functions[index];
                 ValueID value = function.at(statement.site).operand(0);
                 const Value& producer = function.at(value);
@@ -808,11 +794,9 @@ static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solu
 
 namespace {
 
-// What arrives at a check, the worst first.
 enum class ArrivalAtCheck : uint8_t { UnknownObject, UntrackedObject, SomeDoNotFit, AllFit, Nothing };
 constexpr size_t numberOfArrivalsAtChecks = 5;
 
-// A member of a set without a placeholder that is not sure to pass the check at which it arrives.
 enum class StrangerAtCheck : uint8_t {
     OtherLayoutOfProgram,
     AllocationThatPicksItsLayout,
@@ -830,13 +814,11 @@ constexpr ASCIILiteral namesOfStrangersAtChecks[numberOfStrangersAtChecks] { "an
 
 struct CountsOfChecks {
     std::array<uint32_t, numberOfArrivalsAtChecks> arrivals { };
-    // A check counts once for each kind of stranger that arrives at it.
     std::array<uint32_t, numberOfStrangersAtChecks> strangers { };
 
     uint32_t total() const { return arrivals[0] + arrivals[1] + arrivals[2] + arrivals[3] + arrivals[4]; }
 };
 
-// Who enters a function that checks its parameters, the worst first. From PassUnknownObject on the solve has followed every caller, and the function counts by the worst of its parameters.
 enum class CallersOfCheckedFunction : uint8_t { ClosureHasEscaped, ClosureIsLost, ClosureIsHeldByNativeCode, PassUnknownObject, PassUntrackedObject, PassStranger, PassWhatFits, PassNothing };
 constexpr size_t numberOfCallersOfCheckedFunctions = 8;
 constexpr ASCIILiteral namesOfCallersOfCheckedFunctions[numberOfCallersOfCheckedFunctions] {
@@ -852,11 +834,9 @@ constexpr ASCIILiteral namesOfCallersOfCheckedFunctions[numberOfCallersOfChecked
 
 } // anonymous namespace
 
-// checks: the checks of the reached functions, by what arrives at them: a placeholder; no placeholder and every member is sure to fit the type; no placeholder and some member is not.
 static void printChecks(PrintStream& out, ValueFlowSolution& solution, BuildContext& build)
 {
     constexpr size_t numberOfSiteKinds = numberOfEnumerators<TypeSiteKind>;
-    // Behind the kinds of sites: no site, and the site of a parameter at a check that is not at the head of the function: a store to the parameter.
     constexpr size_t rowWithoutSite = numberOfSiteKinds;
     constexpr size_t rowOfStoresToParameters = numberOfSiteKinds + 1;
     constexpr size_t numberOfRows = numberOfSiteKinds + 2;
@@ -896,7 +876,6 @@ static void printChecks(PrintStream& out, ValueFlowSolution& solution, BuildCont
             return StrangerAtCheck::InstanceOfBuiltinClass;
         return universe.layoutOf(member) ? StrangerAtCheck::OtherLayoutOfTable : StrangerAtCheck::ObjectWithoutLayout;
     };
-    // One bit for each kind.
     auto strangersIn = [&](ValueSetID held, const Type& type) {
         uint32_t kinds = 0;
         sets.forEachMember(maker.intersect(held, ValueSets::complement(universe.membersSurelyInside(maker, program, type))), [&](ValueFlowObjectID member) {
@@ -912,7 +891,6 @@ static void printChecks(PrintStream& out, ValueFlowSolution& solution, BuildCont
         ArrivalAtCheck worst { ArrivalAtCheck::Nothing };
         uint32_t checks { 0 };
         uint32_t strangers { 0 };
-        // Of the first parameter at which the worst arrives.
         ValueFlowNodeID node;
     };
     Vector<CheckedFunction> checkedFunctions;
@@ -1082,7 +1060,6 @@ static void printChecks(PrintStream& out, ValueFlowSolution& solution, BuildCont
     printWhoLetsEscape(out, solution, ways, EscapeIsCountedFor::Root, isCounted);
 }
 
-// In words that somebody can find in the program: the function and what of it the node holds, the variable, or the field.
 static void printPlaceOfNode(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node)
 {
     const Program& program = solution.program();
@@ -1125,7 +1102,6 @@ static void printPlaceOfNode(PrintStream& out, ValueFlowSolution& solution, Valu
     }
 }
 
-// choke-points: the dominators of the graph along which the unknown object flows.
 static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, BuildContext& build)
 {
     constexpr size_t numberOfChildrenPrinted = 40;
@@ -1153,7 +1129,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
         else
             carries.quickSet(index);
     }
-    // A node that carries the object and gets it from no node that does has it from the start.
     BitVector isBirth(numberOfNodes);
     Vector<uint32_t> births;
     for (uint32_t index : carries) {
@@ -1169,7 +1144,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
         }
     }
 
-    // The edges between nodes that carry the object, by the node at which they start.
     Vector<uint32_t> firstSuccessorOf(FillWith { }, numberOfNodes + 2, 0u);
     for (uint32_t index : carries) {
         graph.forEachPredecessor(ValueFlowNodeID(index), [&](ValueFlowNodeID predecessor) {
@@ -1187,7 +1161,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
         });
     }
 
-    // Postorder from the root.
     Vector<uint32_t> postorder;
     Vector<uint32_t> numberInPostorder(FillWith { }, numberOfNodes + 1, none);
     {
@@ -1218,7 +1191,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
         postorder.append(root);
     }
 
-    // Cooper, Harvey and Kennedy: a simple, fast dominance algorithm.
     Vector<uint32_t> dominatorOf(FillWith { }, numberOfNodes + 1, none);
     dominatorOf[root] = root;
     auto meet = [&](uint32_t first, uint32_t second) {
@@ -1291,7 +1263,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
         weightBelow[dominatorOf[node]].accesses += weightBelow[node].accesses;
     }
 
-    // The children of each node that is printed: the tree has no lists of children.
     Vector<uint32_t> heaviestChildOf(FillWith { }, numberOfNodes + 1, none);
     Vector<uint32_t> childrenOfRoot;
     auto weighs = [&](uint32_t node) {
@@ -1320,7 +1291,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
     out.println("checks of the program with it ", weightBelow[root].checks, ", receivers and callees with it ", weightBelow[root].accesses, ", at no node ", withoutNode);
     out.println("children of the root ", childrenOfRoot.size(), ", births among them ", birthsAmongChildren, ", with a check or an access below them ", childrenWithWeight);
 
-    // The births by the source that the rule has named and by the kind of the statement that has logged the edge, with what hangs below these births alone.
     struct BirthLine {
         String name;
         uint32_t births { 0 };
@@ -1379,7 +1349,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
     };
     for (uint32_t child : childrenOfRoot.span().first(std::min(childrenOfRoot.size(), numberOfChildrenPrinted))) {
         printLine(child);
-        // Down the heaviest children while they keep most of the weight: where the way fans out.
         uint32_t node = child;
         for (unsigned step = 0; step < numberOfStepsPrinted; ++step) {
             uint32_t next = heaviestChildOf[node];
@@ -1392,7 +1361,6 @@ static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, Buil
     }
 }
 
-// receiver-layouts: the reads and stores of named properties in the reached functions of the program but for its generic versions, by what their receiver may be.
 static void printLayoutsOfReceivers(PrintStream& out, ValueFlowSolution& solution)
 {
     const Program& program = solution.program();
@@ -1472,7 +1440,6 @@ static void printMembersByName(PrintStream& out, ValueFlowSolution& solution, Va
         out.print(" ..");
 }
 
-// What a statement got from read(), written(), lookup(), group(), hub() and masked(), each with what the node holds, and the same for the statements that were made with those.
 static void printWhatIsAskedFor(PrintStream& out, ValueFlowSolution& solution, ValueFlowStatementID id, unsigned depth)
 {
     constexpr unsigned deepestLevel = 3;
@@ -1492,7 +1459,6 @@ static void printWhatIsAskedFor(PrintStream& out, ValueFlowSolution& solution, V
     });
 }
 
-// The statements that have brought the unknown object into being, or would have if their source were not left out: in the order of the rounds, each once for each source, with what the statement was made for by name.
 static void printSeeds(PrintStream& out, ValueFlowSolution& solution)
 {
     const ValueFlowSolver& solver = solution.solver();
@@ -1578,7 +1544,6 @@ static void printSeeds(PrintStream& out, ValueFlowSolution& solution)
     out.println("escaped closures: ", closures);
 }
 
-// What the operands of the operation hold, in the order of the operands, and what its result holds.
 static void printValuesAt(PrintStream& out, ValueFlowSolution& solution, const ValueFlowStatement& statement)
 {
     out.println("  ", statement.opcode, solution.solver().isReached(statement.function) ? "" : " in a function that is not reached");
@@ -1867,7 +1832,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
         if (word.startsWith("rounds="_s))
             mostRounds = parseInteger<uint32_t>(StringView(word).substring(7)).value_or(UINT32_MAX);
     }
-    // without=Source,Source: what holds if no rule brings the unknown object into being for these reasons.
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
     for (const String& word : context.arguments) {
         if (!word.startsWith("without="_s))
@@ -1978,7 +1942,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             continue;
         }
         if (word.startsWith("holds="_s)) {
-            // holds=nN:#M
             size_t colon = word.find(':');
             std::optional<uint32_t> node = numberAfter(word, 7);
             std::optional<uint32_t> object = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
@@ -2022,7 +1985,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             continue;
         }
         if (word.startsWith("raisers=h"_s)) {
-            // flag=hN names the first of them. Whoever takes that one away sees here who takes over.
             std::optional<uint32_t> number = numberAfter(word, equals + 2);
             if (!number || *number >= numberOfValueFlowHostNodes)
                 return printBadArgument(context.out, word);
@@ -2045,7 +2007,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             continue;
         }
         if (word.startsWith("field="_s) || word.startsWith("variable="_s)) {
-            // field=L1:2 | variable=g3: what the node of a field with a node of its own, or of a variable, holds, and how each member that does not surely fit the declared type has come there.
             std::optional<uint32_t> owner = numberAfter(word, equals + 2);
             size_t colon = word.find(':');
             std::optional<uint32_t> field = colon == notFound ? std::nullopt : numberAfter(word, colon + 1);
@@ -2172,7 +2133,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             }
             continue;
         }
-        // asked=dN:oM: the statements that have asked for a node of the name kind N over a set of at most eight members that holds the object M. asked=lN:oM.
         if (word.startsWith("asked=d"_s) || word.startsWith("asked=l"_s) || word.startsWith("asked=g"_s)) {
             bool asksForGroups = word.startsWith("asked=g"_s);
             bool asksForLookupsAlone = word.startsWith("asked=l"_s);
@@ -2195,7 +2155,6 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 context.out.print("  ");
                 printStatement(context.out, solver, id);
                 context.out.println();
-                // A statement that a rule has made belongs to nobody: its set, and the first who has asked for it, down to an operation of a function.
                 ValueFlowStatementID made = id;
                 for (unsigned depth = 0; depth < 6 && solver.isMadeByRule(made) && solver.statementAt(made).kind != ValueFlowStatementKind::Escape; ++depth) {
                     context.out.print("      of");

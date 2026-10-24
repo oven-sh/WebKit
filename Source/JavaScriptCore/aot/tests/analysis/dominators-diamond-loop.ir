@@ -58,21 +58,11 @@ function f0 name="diamondInLoop" parameters=[{type=boolean}, {type=boolean}] res
 # CHECK-NEXT: b0 in cycle: no
 # CHECK-NEXT: b0 depth: 0
 # CHECK-NEXT: b0 outermost cycle: none
-# CHECK-NEXT: b1 in cycle: yes
-# CHECK-NEXT: b1 depth: 1
-# CHECK-NEXT: b1 outermost cycle: b1
-# CHECK-NEXT: b2 in cycle: yes
-# CHECK-NEXT: b2 depth: 1
-# CHECK-NEXT: b2 outermost cycle: b1
-# CHECK-NEXT: b3 in cycle: yes
-# CHECK-NEXT: b3 depth: 2
-# CHECK-NEXT: b3 outermost cycle: b1
-# CHECK-NEXT: b4 in cycle: yes
-# CHECK-NEXT: b4 depth: 1
-# CHECK-NEXT: b4 outermost cycle: b1
-# CHECK-NEXT: b5 in cycle: yes
-# CHECK-NEXT: b5 depth: 1
-# CHECK-NEXT: b5 outermost cycle: b1
+# REPEAT: i = 1..5; a = 1 1 2 1 1
+# CHECK-NEXT: b%(i) in cycle: yes
+# CHECK-NEXT: b%(i) depth: %(a)
+# CHECK-NEXT: b%(i) outermost cycle: b1
+# END REPEAT
 # CHECK-NEXT: b6 in cycle: no
 # CHECK-NEXT: b6 depth: 0
 # CHECK-NEXT: b6 outermost cycle: none

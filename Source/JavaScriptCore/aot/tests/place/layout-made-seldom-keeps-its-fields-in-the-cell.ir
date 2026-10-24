@@ -46,87 +46,24 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="fillOptions" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
     PropSet v0, v1 key="initialized"
-    PropSet v0, v1 key="optional0"
-    PropSet v0, v1 key="optional1"
-    PropSet v0, v1 key="optional2"
-    PropSet v0, v1 key="optional3"
-    PropSet v0, v1 key="optional4"
-    PropSet v0, v1 key="optional5"
-    PropSet v0, v1 key="optional6"
-    PropSet v0, v1 key="optional7"
-    PropSet v0, v1 key="optional8"
-    PropSet v0, v1 key="optional9"
-    PropSet v0, v1 key="optional10"
-    PropSet v0, v1 key="optional11"
-    PropSet v0, v1 key="optional12"
-    PropSet v0, v1 key="optional13"
-    PropSet v0, v1 key="optional14"
-    PropSet v0, v1 key="optional15"
-    PropSet v0, v1 key="optional16"
-    PropSet v0, v1 key="optional17"
-    PropSet v0, v1 key="optional18"
-    PropSet v0, v1 key="optional19"
-    PropSet v0, v1 key="optional20"
-    PropSet v0, v1 key="optional21"
-    PropSet v0, v1 key="optional22"
-    PropSet v0, v1 key="optional23"
-    PropSet v0, v1 key="optional24"
-    PropSet v0, v1 key="optional25"
-    PropSet v0, v1 key="optional26"
-    PropSet v0, v1 key="optional27"
-    PropSet v0, v1 key="optional28"
-    PropSet v0, v1 key="optional29"
-    PropSet v0, v1 key="optional30"
-    PropSet v0, v1 key="optional31"
-    PropSet v0, v1 key="optional32"
-    PropSet v0, v1 key="optional33"
-    PropSet v0, v1 key="optional34"
-    PropSet v0, v1 key="optional35"
-    PropSet v0, v1 key="optional36"
-    PropSet v0, v1 key="optional37"
-    PropSet v0, v1 key="optional38"
-    PropSet v0, v1 key="optional39"
+# REPEAT: i = 0..39
+    PropSet v0, v1 key="optional%(i)"
+# END REPEAT
     PropSet v0, v1 key="hot"
     Return
 }
 function f2 name="fillObject" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
-    PropSet v0, v1 key="listed0"
-    PropSet v0, v1 key="listed1"
-    PropSet v0, v1 key="listed2"
-    PropSet v0, v1 key="listed3"
-    PropSet v0, v1 key="listed4"
-    PropSet v0, v1 key="listed5"
-    PropSet v0, v1 key="listed6"
-    PropSet v0, v1 key="listed7"
-    PropSet v0, v1 key="listed8"
-    PropSet v0, v1 key="listed9"
-    PropSet v0, v1 key="listed10"
-    PropSet v0, v1 key="listed11"
-    PropSet v0, v1 key="listed12"
-    PropSet v0, v1 key="listed13"
-    PropSet v0, v1 key="listed14"
-    PropSet v0, v1 key="listed15"
+# REPEAT: i = 0..15
+    PropSet v0, v1 key="listed%(i)"
+# END REPEAT
     Return
 }
 function f3 name="fillObjectOrNumber" flags=[IsSloppy] parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
-    PropSet v0, v1 key="listed0"
-    PropSet v0, v1 key="listed1"
-    PropSet v0, v1 key="listed2"
-    PropSet v0, v1 key="listed3"
-    PropSet v0, v1 key="listed4"
-    PropSet v0, v1 key="listed5"
-    PropSet v0, v1 key="listed6"
-    PropSet v0, v1 key="listed7"
-    PropSet v0, v1 key="listed8"
-    PropSet v0, v1 key="listed9"
-    PropSet v0, v1 key="listed10"
-    PropSet v0, v1 key="listed11"
-    PropSet v0, v1 key="listed12"
-    PropSet v0, v1 key="listed13"
-    PropSet v0, v1 key="listed14"
-    PropSet v0, v1 key="listed15"
+# REPEAT: i = 0..15
+    PropSet v0, v1 key="listed%(i)"
+# END REPEAT
     Return
 }
 

@@ -47,38 +47,9 @@ function f3 name="readsUntypedField" flags=[IsChecked] parameters=[{type=L0 flag
     v1 = PropGet v0 key="x"
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="log" [isFreeName]
-    v4 = Call v3, -
-    v5 = Call v3, -
-    v6 = Call v3, -
-    v7 = Call v3, -
-    v8 = Call v3, -
-    v9 = Call v3, -
-    v10 = Call v3, -
-    v11 = Call v3, -
-    v12 = Call v3, -
-    v13 = Call v3, -
-    v14 = Call v3, -
-    v15 = Call v3, -
-    v16 = Call v3, -
-    v17 = Call v3, -
-    v18 = Call v3, -
-    v19 = Call v3, -
-    v20 = Call v3, -
-    v21 = Call v3, -
-    v22 = Call v3, -
-    v23 = Call v3, -
-    v24 = Call v3, -
-    v25 = Call v3, -
-    v26 = Call v3, -
-    v27 = Call v3, -
-    v28 = Call v3, -
-    v29 = Call v3, -
-    v30 = Call v3, -
-    v31 = Call v3, -
-    v32 = Call v3, -
-    v33 = Call v3, -
-    v34 = Call v3, -
-    v35 = Call v3, -
+# REPEAT: i = 4..35
+    v%(i) = Call v3, -
+# END REPEAT
     Return v1
 }
 # CHECK-LABEL: function f3 name="readsUntypedField"
@@ -91,38 +62,9 @@ function f4 name="readsTypedField" flags=[IsChecked] parameters=[{type=L1 flags=
     v1 = PropGet v0 key="y"
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="log" [isFreeName]
-    v4 = Call v3, -
-    v5 = Call v3, -
-    v6 = Call v3, -
-    v7 = Call v3, -
-    v8 = Call v3, -
-    v9 = Call v3, -
-    v10 = Call v3, -
-    v11 = Call v3, -
-    v12 = Call v3, -
-    v13 = Call v3, -
-    v14 = Call v3, -
-    v15 = Call v3, -
-    v16 = Call v3, -
-    v17 = Call v3, -
-    v18 = Call v3, -
-    v19 = Call v3, -
-    v20 = Call v3, -
-    v21 = Call v3, -
-    v22 = Call v3, -
-    v23 = Call v3, -
-    v24 = Call v3, -
-    v25 = Call v3, -
-    v26 = Call v3, -
-    v27 = Call v3, -
-    v28 = Call v3, -
-    v29 = Call v3, -
-    v30 = Call v3, -
-    v31 = Call v3, -
-    v32 = Call v3, -
-    v33 = Call v3, -
-    v34 = Call v3, -
-    v35 = Call v3, -
+# REPEAT: i = 4..35
+    v%(i) = Call v3, -
+# END REPEAT
     Return v1
 }
 # CHECK-LABEL: function f4 name="readsTypedField"
@@ -142,38 +84,9 @@ function f6 name="readsInLoop" flags=[IsChecked] parameters=[{type=L0 flags=[IsE
   b0(v0: anything ~ L0):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="log" [isFreeName]
-    v3 = Call v2, -
-    v4 = Call v2, -
-    v5 = Call v2, -
-    v6 = Call v2, -
-    v7 = Call v2, -
-    v8 = Call v2, -
-    v9 = Call v2, -
-    v10 = Call v2, -
-    v11 = Call v2, -
-    v12 = Call v2, -
-    v13 = Call v2, -
-    v14 = Call v2, -
-    v15 = Call v2, -
-    v16 = Call v2, -
-    v17 = Call v2, -
-    v18 = Call v2, -
-    v19 = Call v2, -
-    v20 = Call v2, -
-    v21 = Call v2, -
-    v22 = Call v2, -
-    v23 = Call v2, -
-    v24 = Call v2, -
-    v25 = Call v2, -
-    v26 = Call v2, -
-    v27 = Call v2, -
-    v28 = Call v2, -
-    v29 = Call v2, -
-    v30 = Call v2, -
-    v31 = Call v2, -
-    v32 = Call v2, -
-    v33 = Call v2, -
-    v34 = Call v2, -
+# REPEAT: i = 3..34
+    v%(i) = Call v2, -
+# END REPEAT
     Jump -> next b1()
   b1():
     LoopHint

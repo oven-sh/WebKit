@@ -402,19 +402,25 @@ JSValue Modules::readExport(ModuleID module, unsigned index)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-JSObject* Modules::capturedExports(ModuleID module) const
+// Whoever asks before the evaluation has come to the file gets what a link would have captured: the file runs now, and one that is running has exported what it has exported by now.
+JSObject* Modules::capturedExports(ModuleID module)
 {
-    LoadedModule* loaded = loadedIfExists(module);
-    if (loaded && !loaded->capturedExports && loaded->capturedFields)
-        const_cast<Modules*>(this)->makeTableOfCapturedFields(*loaded);
-    RELEASE_ASSERT(loaded && loaded->capturedExports);
-    return loaded->capturedExports;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    captureExports(module);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    LoadedModule& loaded = ensureLoaded(module);
+    if (!loaded.capturedExports && loaded.capturedFields)
+        makeTableOfCapturedFields(loaded);
+    RELEASE_ASSERT(loaded.capturedExports);
+    return loaded.capturedExports;
 }
 
 JSValue Modules::capturedValue(ModuleID module, const Identifier& name)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    captureExports(module);
+    RETURN_IF_EXCEPTION(scope, { });
     LoadedModule& loaded = ensureLoaded(module);
     JSObject* captured = loaded.capturedExports;
     if (!captured && loaded.capturedFields)
@@ -435,12 +441,16 @@ JSValue Modules::capturedValue(ModuleID module, const Identifier& name)
     return value;
 }
 
-bool Modules::hasCapturedExport(ModuleID module, const Identifier& name) const
+bool Modules::hasCapturedExport(ModuleID module, const Identifier& name)
 {
-    LoadedModule* loaded = loadedIfExists(module);
-    if (loaded && !loaded->capturedExports && loaded->capturedFields)
-        return !!capturedField(*loaded, name.impl());
-    return !!StarExportResolver::storedValue(m_instance.globalObject, capturedExports(module), name);
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    captureExports(module);
+    RETURN_IF_EXCEPTION(scope, false);
+    LoadedModule& loaded = ensureLoaded(module);
+    if (!loaded.capturedExports && loaded.capturedFields)
+        return !!capturedField(loaded, name.impl());
+    RELEASE_ASSERT(loaded.capturedExports);
+    return !!StarExportResolver::storedValue(m_instance.globalObject, loaded.capturedExports, name);
 }
 
 bool Modules::isExportAmbiguous(ModuleID module, unsigned index) const

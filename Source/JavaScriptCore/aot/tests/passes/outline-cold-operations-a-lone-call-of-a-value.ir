@@ -11,78 +11,11 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="loneCalls" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything, v2: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
-  b1() frequency=Rare:
-    v3 = Call v1, -, v2
-    Return v3
-  b2() frequency=Rare:
-    v4 = Call v1, -, v2
-    Return v4
-  b3() frequency=Rare:
-    v5 = Call v1, -, v2
-    Return v5
-  b4() frequency=Rare:
-    v6 = Call v1, -, v2
-    Return v6
-  b5() frequency=Rare:
-    v7 = Call v1, -, v2
-    Return v7
-  b6() frequency=Rare:
-    v8 = Call v1, -, v2
-    Return v8
-  b7() frequency=Rare:
-    v9 = Call v1, -, v2
-    Return v9
-  b8() frequency=Rare:
-    v10 = Call v1, -, v2
-    Return v10
-  b9() frequency=Rare:
-    v11 = Call v1, -, v2
-    Return v11
-  b10() frequency=Rare:
-    v12 = Call v1, -, v2
-    Return v12
-  b11() frequency=Rare:
-    v13 = Call v1, -, v2
-    Return v13
-  b12() frequency=Rare:
-    v14 = Call v1, -, v2
-    Return v14
-  b13() frequency=Rare:
-    v15 = Call v1, -, v2
-    Return v15
-  b14() frequency=Rare:
-    v16 = Call v1, -, v2
-    Return v16
-  b15() frequency=Rare:
-    v17 = Call v1, -, v2
-    Return v17
-  b16() frequency=Rare:
-    v18 = Call v1, -, v2
-    Return v18
-  b17() frequency=Rare:
-    v19 = Call v1, -, v2
-    Return v19
-  b18() frequency=Rare:
-    v20 = Call v1, -, v2
-    Return v20
-  b19() frequency=Rare:
-    v21 = Call v1, -, v2
-    Return v21
-  b20() frequency=Rare:
-    v22 = Call v1, -, v2
-    Return v22
-  b21() frequency=Rare:
-    v23 = Call v1, -, v2
-    Return v23
-  b22() frequency=Rare:
-    v24 = Call v1, -, v2
-    Return v24
-  b23() frequency=Rare:
-    v25 = Call v1, -, v2
-    Return v25
-  b24() frequency=Rare:
-    v26 = Call v1, -, v2
-    Return v26
+# REPEAT: i = 3..26
+  b%(i-2)() frequency=Rare:
+    v%(i) = Call v1, -, v2
+    Return v%(i)
+# END REPEAT
   b25():
     Return v1
 }
@@ -94,78 +27,11 @@ function f0 name="loneCalls" parameters=[{type=number}, {type=anything}, {type=a
 function f1 name="loneCallsOfMethods" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything, v2: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
-  b1() frequency=Rare:
-    v3 = CallMethod v1, v2 key="run"
-    Return v3
-  b2() frequency=Rare:
-    v4 = CallMethod v1, v2 key="run"
-    Return v4
-  b3() frequency=Rare:
-    v5 = CallMethod v1, v2 key="run"
-    Return v5
-  b4() frequency=Rare:
-    v6 = CallMethod v1, v2 key="run"
-    Return v6
-  b5() frequency=Rare:
-    v7 = CallMethod v1, v2 key="run"
-    Return v7
-  b6() frequency=Rare:
-    v8 = CallMethod v1, v2 key="run"
-    Return v8
-  b7() frequency=Rare:
-    v9 = CallMethod v1, v2 key="run"
-    Return v9
-  b8() frequency=Rare:
-    v10 = CallMethod v1, v2 key="run"
-    Return v10
-  b9() frequency=Rare:
-    v11 = CallMethod v1, v2 key="run"
-    Return v11
-  b10() frequency=Rare:
-    v12 = CallMethod v1, v2 key="run"
-    Return v12
-  b11() frequency=Rare:
-    v13 = CallMethod v1, v2 key="run"
-    Return v13
-  b12() frequency=Rare:
-    v14 = CallMethod v1, v2 key="run"
-    Return v14
-  b13() frequency=Rare:
-    v15 = CallMethod v1, v2 key="run"
-    Return v15
-  b14() frequency=Rare:
-    v16 = CallMethod v1, v2 key="run"
-    Return v16
-  b15() frequency=Rare:
-    v17 = CallMethod v1, v2 key="run"
-    Return v17
-  b16() frequency=Rare:
-    v18 = CallMethod v1, v2 key="run"
-    Return v18
-  b17() frequency=Rare:
-    v19 = CallMethod v1, v2 key="run"
-    Return v19
-  b18() frequency=Rare:
-    v20 = CallMethod v1, v2 key="run"
-    Return v20
-  b19() frequency=Rare:
-    v21 = CallMethod v1, v2 key="run"
-    Return v21
-  b20() frequency=Rare:
-    v22 = CallMethod v1, v2 key="run"
-    Return v22
-  b21() frequency=Rare:
-    v23 = CallMethod v1, v2 key="run"
-    Return v23
-  b22() frequency=Rare:
-    v24 = CallMethod v1, v2 key="run"
-    Return v24
-  b23() frequency=Rare:
-    v25 = CallMethod v1, v2 key="run"
-    Return v25
-  b24() frequency=Rare:
-    v26 = CallMethod v1, v2 key="run"
-    Return v26
+# REPEAT: i = 3..26
+  b%(i-2)() frequency=Rare:
+    v%(i) = CallMethod v1, v2 key="run"
+    Return v%(i)
+# END REPEAT
   b25():
     Return v1
 }
@@ -177,102 +43,12 @@ function f1 name="loneCallsOfMethods" parameters=[{type=number}, {type=anything}
 function f2 name="callsBehindARead" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything, v2: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
-  b1() frequency=Rare:
-    v3 = PropGet v1 key="handler"
-    v4 = Call v3, -, v2
-    Return v4
-  b2() frequency=Rare:
-    v5 = PropGet v1 key="handler"
-    v6 = Call v5, -, v2
-    Return v6
-  b3() frequency=Rare:
-    v7 = PropGet v1 key="handler"
-    v8 = Call v7, -, v2
-    Return v8
-  b4() frequency=Rare:
-    v9 = PropGet v1 key="handler"
-    v10 = Call v9, -, v2
-    Return v10
-  b5() frequency=Rare:
-    v11 = PropGet v1 key="handler"
-    v12 = Call v11, -, v2
-    Return v12
-  b6() frequency=Rare:
-    v13 = PropGet v1 key="handler"
-    v14 = Call v13, -, v2
-    Return v14
-  b7() frequency=Rare:
-    v15 = PropGet v1 key="handler"
-    v16 = Call v15, -, v2
-    Return v16
-  b8() frequency=Rare:
-    v17 = PropGet v1 key="handler"
-    v18 = Call v17, -, v2
-    Return v18
-  b9() frequency=Rare:
-    v19 = PropGet v1 key="handler"
-    v20 = Call v19, -, v2
-    Return v20
-  b10() frequency=Rare:
-    v21 = PropGet v1 key="handler"
-    v22 = Call v21, -, v2
-    Return v22
-  b11() frequency=Rare:
-    v23 = PropGet v1 key="handler"
-    v24 = Call v23, -, v2
-    Return v24
-  b12() frequency=Rare:
-    v25 = PropGet v1 key="handler"
-    v26 = Call v25, -, v2
-    Return v26
-  b13() frequency=Rare:
-    v27 = PropGet v1 key="handler"
-    v28 = Call v27, -, v2
-    Return v28
-  b14() frequency=Rare:
-    v29 = PropGet v1 key="handler"
-    v30 = Call v29, -, v2
-    Return v30
-  b15() frequency=Rare:
-    v31 = PropGet v1 key="handler"
-    v32 = Call v31, -, v2
-    Return v32
-  b16() frequency=Rare:
-    v33 = PropGet v1 key="handler"
-    v34 = Call v33, -, v2
-    Return v34
-  b17() frequency=Rare:
-    v35 = PropGet v1 key="handler"
-    v36 = Call v35, -, v2
-    Return v36
-  b18() frequency=Rare:
-    v37 = PropGet v1 key="handler"
-    v38 = Call v37, -, v2
-    Return v38
-  b19() frequency=Rare:
-    v39 = PropGet v1 key="handler"
-    v40 = Call v39, -, v2
-    Return v40
-  b20() frequency=Rare:
-    v41 = PropGet v1 key="handler"
-    v42 = Call v41, -, v2
-    Return v42
-  b21() frequency=Rare:
-    v43 = PropGet v1 key="handler"
-    v44 = Call v43, -, v2
-    Return v44
-  b22() frequency=Rare:
-    v45 = PropGet v1 key="handler"
-    v46 = Call v45, -, v2
-    Return v46
-  b23() frequency=Rare:
-    v47 = PropGet v1 key="handler"
-    v48 = Call v47, -, v2
-    Return v48
-  b24() frequency=Rare:
-    v49 = PropGet v1 key="handler"
-    v50 = Call v49, -, v2
-    Return v50
+# REPEAT: i = 1..24
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = PropGet v1 key="handler"
+    v%(i*2+2) = Call v%(i*2+1), -, v2
+    Return v%(i*2+2)
+# END REPEAT
   b25():
     Return v1
 }

@@ -104,7 +104,6 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution, const Va
     out.println();
 }
 
-// For each operation that runs a protocol of the language.
 static void printProtocols(PrintStream& out, ValueFlowSolution& solution)
 {
     constexpr unsigned numberOfPlacesPrinted = 12;
@@ -137,7 +136,6 @@ static void printProtocols(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
-// valueflow-solve [full] [times] [calls] [primitives] [unreached] [unseen] [used] [protocols] [views].
 void prepareForFlow(TestCommandContext& context)
 {
     auto isGiven = [&](ASCIILiteral word) {

@@ -31,7 +31,6 @@ bool FlowScopeOwnerAnalysis::completesBeforeReturn(FlowScopeFrame& frame, ValueI
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Seen from a caller, a store has run when the call returns, and a function that is entered during the call may be entered as soon as the call starts.
 bool FlowScopeOwnerAnalysis::precedes(const FlowScopeLocationAccess& store, const FlowScopeEntry& entry)
 {
     switch (entry.state) {
@@ -72,7 +71,6 @@ std::span<const FlowScopeLocationAccess> FlowScopeOwnerAnalysis::definitionsOf(F
     return accessesAt(m_definitions.span(), location);
 }
 
-// An environment is followed in the body of its owner only.
 auto FlowScopeOwnerAnalysis::initializingStoresOf(FlowScopeLocation location) -> InitializingStores
 {
     bool isOneLocation = m_index.numbering.isOneLocation(location);
@@ -87,12 +85,10 @@ auto FlowScopeOwnerAnalysis::initializingStoresOf(FlowScopeLocation location) ->
 
 bool FlowScopeOwnerAnalysis::isDefinedAtEveryAccessThroughClassObject(FlowScopeLocation location, const InitializingStores& stores)
 {
-    // All evaluations of a class share the variables of its static fields, and a definition says nothing about the class object of another evaluation.
     LayoutID owningClass = m_index.program().variables[location].owner;
     if (!m_classesEvaluatedOnce.get(owningClass.index()))
         return false;
 
-    // Outside the frames nobody holds the class object, or an object that inherits from it, before somebody can reach the constructor.
     bool isDefinedWhenHeld = anyPrecedes(stores, entryByUseOf(m_index.program().at(owningClass).constructor));
     if (m_index.inputs.staticFieldsOfEscapedClasses.get(location) && !isDefinedWhenHeld)
         return false;
@@ -124,7 +120,6 @@ InitializationState FlowScopeOwnerAnalysis::initializationOf(FlowScopeLocation l
     if (isEveryReadCovered)
         return InitializationState::StoredBeforeEveryRead;
 
-    // Whoever else may find the location empty takes nothing from a read that a store comes before.
     if (startsAbsent && !isStaticField && !stores.isEmpty()) {
         for (const FlowScopeLocationAccess& read : accessesAt(m_index.reads.span(), location)) {
             if (anyPrecedes(stores, entryOf(read)))
@@ -134,7 +129,6 @@ InitializationState FlowScopeOwnerAnalysis::initializationOf(FlowScopeLocation l
     return InitializationState::Unknown;
 }
 
-// A function is entered only by a call that flow has linked. What the host enters, a call that flow has not linked may enter too.
 bool FlowScopeOwnerAnalysis::anyPrecedesCallersOf(const InitializingStores& stores, FunctionID reader)
 {
     AOT_THRESHOLD(size_t, mostCallersToFollow, 64);
@@ -154,7 +148,6 @@ bool FlowScopeOwnerAnalysis::anyPrecedesCallersOf(const InitializingStores& stor
     return true;
 }
 
-// The one call of a frame stands in a frame, so that is the only place where its body may come to stand.
 bool FlowScopeOwnerAnalysis::isStoredBeforeCallersOfReaders(FlowScopeLocation location)
 {
     InitializingStores stores = initializingStoresOf(location);
@@ -257,7 +250,6 @@ void FlowScopeOwnerAnalysis::computeEnvironmentOrders(LayoutID layout, std::span
             };
             continue;
         }
-        // A `var` is listed with `undefined`, which is no value that the program gave it. It is asked what a `let` is asked.
         if (isSetAtCreation && isListedWithUndefinedAlone(sites, field) && initializationOf(location, false, false) == InitializationState::StoredBeforeEveryRead) {
             orders[location] = {
                 InitializationState::StoredBeforeEveryRead,
@@ -308,7 +300,6 @@ static bool runsAfterCompletion(const FlowScopeIndex& index, FunctionID function
 static bool canObserveUnfinishedModule(const Program& program, const FlowModuleValueRead& read)
 {
     Opcode opcode = program.at(read.function).at(read.value).opcode;
-    // The promise of an import is resolved with the namespace object after the evaluation has completed.
     if (opcode == Opcode::ImportModule)
         return false;
     if (opcode == Opcode::RequireModule)

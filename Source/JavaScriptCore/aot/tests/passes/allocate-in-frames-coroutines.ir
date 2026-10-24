@@ -78,30 +78,14 @@ function f5 name="callsParameter" parameters=[{type=anything}] results=[{type=an
 }
 # PLAN-LABEL: function f5
 
-function f6 name="callback" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
-  b0(v0: env L0):
-    v1 = GetEnvironmentField v0 layout=L0 field=0
+# REPEAT: i = 0..3
+function f%(i+6) name="callback" kind=Arrow captures=[{type=env L%(i)}] results=[{type=anything}] {
+  b0(v0: env L%(i)):
+    v1 = GetEnvironmentField v0 layout=L%(i) field=0
     v2 = ToBoolean v1
     Return v2
 }
-function f7 name="callback" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
-  b0(v0: env L1):
-    v1 = GetEnvironmentField v0 layout=L1 field=0
-    v2 = ToBoolean v1
-    Return v2
-}
-function f8 name="callback" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
-  b0(v0: env L2):
-    v1 = GetEnvironmentField v0 layout=L2 field=0
-    v2 = ToBoolean v1
-    Return v2
-}
-function f9 name="callback" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
-  b0(v0: env L3):
-    v1 = GetEnvironmentField v0 layout=L3 field=0
-    v2 = ToBoolean v1
-    Return v2
-}
+# END REPEAT
 # CHECK-LABEL: name="deadBeforeAwait" module=m0 role=CoroutineBody
 # CHECK: = NewObject {{*}}layout=L0 {{*}}storage=Frame
 # CHECK: = NewClosure {{*}}function=f6 {{*}}storage=Frame

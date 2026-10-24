@@ -88,6 +88,7 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_in_by_val);
 #if ENABLE(AOT)
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_in_by_id);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_in_by_val);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_instanceof);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_enumerator_get_by_val);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_object);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_array);

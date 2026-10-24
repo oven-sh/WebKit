@@ -298,31 +298,13 @@ function f25 name="callback" kind=Arrow captures=[{type=env L2}] results=[{type=
     v1 = GetEnvironmentField v0 layout=L2 field=0
     Return v1
 }
+# REPEAT: i = 26..30
 
-function f26 name="callback" kind=Arrow results=[{type=anything}] {
+function f%(i) name="callback" kind=Arrow results=[{type=anything}] {
   b0():
     Return
 }
-
-function f27 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-
-function f28 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-
-function f29 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-
-function f30 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
+# END REPEAT
 
 function f31 name="callback" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
   b0(v0: env L3):
@@ -334,24 +316,14 @@ function f32 name="callback" kind=Arrow results=[{type=anything}] {
   b0():
     Return
 }
+# REPEAT: i = 33..35; a = 5 5 6
 
-function f33 name="callback" kind=Arrow captures=[{type=env L5}] results=[{type=anything}] {
-  b0(v0: env L5):
-    v1 = GetEnvironmentField v0 layout=L5 field=0
+function f%(i) name="callback" kind=Arrow captures=[{type=env L%(a)}] results=[{type=anything}] {
+  b0(v0: env L%(a)):
+    v1 = GetEnvironmentField v0 layout=L%(a) field=0
     Return v1
 }
-
-function f34 name="callback" kind=Arrow captures=[{type=env L5}] results=[{type=anything}] {
-  b0(v0: env L5):
-    v1 = GetEnvironmentField v0 layout=L5 field=0
-    Return v1
-}
-
-function f35 name="callback" kind=Arrow captures=[{type=env L6}] results=[{type=anything}] {
-  b0(v0: env L6):
-    v1 = GetEnvironmentField v0 layout=L6 field=0
-    Return v1
-}
+# END REPEAT
 
 function f36 name="returnedByCallee" results=[{type=anything}] {
   b0():

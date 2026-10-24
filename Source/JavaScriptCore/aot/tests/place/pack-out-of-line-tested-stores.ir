@@ -41,146 +41,44 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="storeNumbers" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
-    PropSet v0, v1 key="late0"
-    PropSet v0, v1 key="late1"
-    PropSet v0, v1 key="late2"
-    PropSet v0, v1 key="late3"
-    PropSet v0, v1 key="late4"
-    PropSet v0, v1 key="late5"
-    PropSet v0, v1 key="late6"
-    PropSet v0, v1 key="late7"
-    PropSet v0, v1 key="late8"
-    PropSet v0, v1 key="late9"
-    PropSet v0, v1 key="late10"
-    PropSet v0, v1 key="late11"
-    PropSet v0, v1 key="late12"
-    PropSet v0, v1 key="late13"
-    PropSet v0, v1 key="late14"
-    PropSet v0, v1 key="late15"
-    PropSet v0, v1 key="late16"
-    PropSet v0, v1 key="late17"
-    PropSet v0, v1 key="late18"
-    PropSet v0, v1 key="late19"
+# REPEAT: i = 0..19
+    PropSet v0, v1 key="late%(i)"
+# END REPEAT
     Return
 }
 function f2 name="storeStrings" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
   b0(v0: anything, v1: string):
-    PropSet v0, v1 key="late0"
-    PropSet v0, v1 key="late1"
-    PropSet v0, v1 key="late2"
-    PropSet v0, v1 key="late3"
-    PropSet v0, v1 key="late4"
-    PropSet v0, v1 key="late5"
-    PropSet v0, v1 key="late6"
-    PropSet v0, v1 key="late7"
-    PropSet v0, v1 key="late8"
-    PropSet v0, v1 key="late9"
-    PropSet v0, v1 key="late10"
-    PropSet v0, v1 key="late11"
-    PropSet v0, v1 key="late12"
-    PropSet v0, v1 key="late13"
-    PropSet v0, v1 key="late14"
-    PropSet v0, v1 key="late15"
-    PropSet v0, v1 key="late16"
-    PropSet v0, v1 key="late17"
-    PropSet v0, v1 key="late18"
-    PropSet v0, v1 key="late19"
+# REPEAT: i = 0..19
+    PropSet v0, v1 key="late%(i)"
+# END REPEAT
     Return
 }
 function f3 name="storeNumbersInListed" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
-    PropSet v0, v1 key="listed0"
-    PropSet v0, v1 key="listed1"
-    PropSet v0, v1 key="listed2"
-    PropSet v0, v1 key="listed3"
-    PropSet v0, v1 key="listed4"
-    PropSet v0, v1 key="listed5"
-    PropSet v0, v1 key="listed6"
-    PropSet v0, v1 key="listed7"
-    PropSet v0, v1 key="listed8"
-    PropSet v0, v1 key="listed9"
-    PropSet v0, v1 key="listed10"
-    PropSet v0, v1 key="listed11"
-    PropSet v0, v1 key="listed12"
-    PropSet v0, v1 key="listed13"
-    PropSet v0, v1 key="listed14"
-    PropSet v0, v1 key="listed15"
-    PropSet v0, v1 key="listed16"
-    PropSet v0, v1 key="listed17"
-    PropSet v0, v1 key="listed18"
-    PropSet v0, v1 key="listed19"
+# REPEAT: i = 0..19
+    PropSet v0, v1 key="listed%(i)"
+# END REPEAT
     Return
 }
 function f4 name="storeStringsInListed" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
   b0(v0: anything, v1: string):
-    PropSet v0, v1 key="listed0"
-    PropSet v0, v1 key="listed1"
-    PropSet v0, v1 key="listed2"
-    PropSet v0, v1 key="listed3"
-    PropSet v0, v1 key="listed4"
-    PropSet v0, v1 key="listed5"
-    PropSet v0, v1 key="listed6"
-    PropSet v0, v1 key="listed7"
-    PropSet v0, v1 key="listed8"
-    PropSet v0, v1 key="listed9"
-    PropSet v0, v1 key="listed10"
-    PropSet v0, v1 key="listed11"
-    PropSet v0, v1 key="listed12"
-    PropSet v0, v1 key="listed13"
-    PropSet v0, v1 key="listed14"
-    PropSet v0, v1 key="listed15"
-    PropSet v0, v1 key="listed16"
-    PropSet v0, v1 key="listed17"
-    PropSet v0, v1 key="listed18"
-    PropSet v0, v1 key="listed19"
+# REPEAT: i = 0..19
+    PropSet v0, v1 key="listed%(i)"
+# END REPEAT
     Return
 }
 function f5 name="storeNumbersInFilled" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number):
-    PropSet v0, v1 key="filled0"
-    PropSet v0, v1 key="filled1"
-    PropSet v0, v1 key="filled2"
-    PropSet v0, v1 key="filled3"
-    PropSet v0, v1 key="filled4"
-    PropSet v0, v1 key="filled5"
-    PropSet v0, v1 key="filled6"
-    PropSet v0, v1 key="filled7"
-    PropSet v0, v1 key="filled8"
-    PropSet v0, v1 key="filled9"
-    PropSet v0, v1 key="filled10"
-    PropSet v0, v1 key="filled11"
-    PropSet v0, v1 key="filled12"
-    PropSet v0, v1 key="filled13"
-    PropSet v0, v1 key="filled14"
-    PropSet v0, v1 key="filled15"
-    PropSet v0, v1 key="filled16"
-    PropSet v0, v1 key="filled17"
-    PropSet v0, v1 key="filled18"
-    PropSet v0, v1 key="filled19"
+# REPEAT: i = 0..19
+    PropSet v0, v1 key="filled%(i)"
+# END REPEAT
     Return
 }
 function f6 name="storeStringsInFilled" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
   b0(v0: anything, v1: string):
-    PropSet v0, v1 key="filled0"
-    PropSet v0, v1 key="filled1"
-    PropSet v0, v1 key="filled2"
-    PropSet v0, v1 key="filled3"
-    PropSet v0, v1 key="filled4"
-    PropSet v0, v1 key="filled5"
-    PropSet v0, v1 key="filled6"
-    PropSet v0, v1 key="filled7"
-    PropSet v0, v1 key="filled8"
-    PropSet v0, v1 key="filled9"
-    PropSet v0, v1 key="filled10"
-    PropSet v0, v1 key="filled11"
-    PropSet v0, v1 key="filled12"
-    PropSet v0, v1 key="filled13"
-    PropSet v0, v1 key="filled14"
-    PropSet v0, v1 key="filled15"
-    PropSet v0, v1 key="filled16"
-    PropSet v0, v1 key="filled17"
-    PropSet v0, v1 key="filled18"
-    PropSet v0, v1 key="filled19"
+# REPEAT: i = 0..19
+    PropSet v0, v1 key="filled%(i)"
+# END REPEAT
     Return
 }
 

@@ -44,18 +44,9 @@ variable g6 name="InitializerIsClosure" module=m0 declared={type=function|absent
 variable g7 name="readAll" module=m0 declared={type=function} initialization=Function function=f16 flags=[IsImmutable]
 variable g8 name="unusedFirst" module=m0 declared={type=anything} initialization=Undefined
 variable g9 name="unusedSecond" module=m0 declared={type=anything} initialization=Undefined
-variable g10 module=m0 declared={type=anything} owner=L0
-variable g11 module=m0 declared={type=anything} owner=L0
-variable g12 module=m0 declared={type=anything} owner=L0
-variable g13 module=m0 declared={type=anything} owner=L1
-variable g14 module=m0 declared={type=anything} owner=L1
-variable g15 module=m0 declared={type=anything} owner=L2
-variable g16 module=m0 declared={type=anything} owner=L2
-variable g17 module=m0 declared={type=anything} owner=L2
-variable g18 module=m0 declared={type=anything} owner=L3
-variable g19 module=m0 declared={type=anything} owner=L4
-variable g20 module=m0 declared={type=anything} owner=L5
-variable g21 module=m0 declared={type=anything} owner=L6
+# REPEAT: i = 10..21; a = 0 0 0 1 1 2 2 2 3 4 5 6
+variable g%(i) module=m0 declared={type=anything} owner=L%(a)
+# END REPEAT
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=GlobalThis

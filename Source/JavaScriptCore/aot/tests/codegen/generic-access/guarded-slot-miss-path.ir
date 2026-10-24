@@ -32,38 +32,10 @@ function f1 name="readsPointBetweenCalls" parameters=[{type=anything}, {type=und
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="report" [isFreeName]
     v4 = PropGet v0 key="first"
-    v5 = Call v3, -, v4
-    v6 = PropGet v1 key="x" receivers=[L0]
-    v7 = Call v3, -, v6
-    v8 = PropGet v1 key="x" receivers=[L0]
-    v9 = Call v3, -, v8
-    v10 = PropGet v1 key="x" receivers=[L0]
-    v11 = Call v3, -, v10
-    v12 = PropGet v1 key="x" receivers=[L0]
-    v13 = Call v3, -, v12
-    v14 = PropGet v1 key="x" receivers=[L0]
-    v15 = Call v3, -, v14
-    v16 = PropGet v1 key="x" receivers=[L0]
-    v17 = Call v3, -, v16
-    v18 = PropGet v1 key="x" receivers=[L0]
-    v19 = Call v3, -, v18
-    v20 = PropGet v1 key="x" receivers=[L0]
-    v21 = Call v3, -, v20
-    v22 = PropGet v1 key="x" receivers=[L0]
-    v23 = Call v3, -, v22
-    v24 = PropGet v1 key="x" receivers=[L0]
-    v25 = Call v3, -, v24
-    v26 = PropGet v1 key="x" receivers=[L0]
-    v27 = Call v3, -, v26
-    v28 = PropGet v1 key="x" receivers=[L0]
-    v29 = Call v3, -, v28
-    v30 = PropGet v1 key="x" receivers=[L0]
-    v31 = Call v3, -, v30
-    v32 = PropGet v1 key="x" receivers=[L0]
-    v33 = Call v3, -, v32
-    v34 = PropGet v1 key="x" receivers=[L0]
-    v35 = Call v3, -, v34
-    v36 = PropGet v1 key="x" receivers=[L0]
+# REPEAT: i = 0..15
+    v%(i*2+5) = Call v3, -, v%(i*2+4)
+    v%(i*2+6) = PropGet v1 key="x" receivers=[L0]
+# END REPEAT
     v37 = Call v3, -, v36
     Return v37
 }

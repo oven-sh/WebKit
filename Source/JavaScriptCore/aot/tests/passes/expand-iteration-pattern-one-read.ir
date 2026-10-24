@@ -419,18 +419,9 @@ function f14 name="byForm" parameters=[{type=anything}] results=[{type=anything}
     v4 = ResultAt v2 index=1
     v5 = IteratorResume v1 stepIndex=1
     v6 = ResultAt v5 index=1
-    v7 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v8 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v9 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v10 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v11 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v12 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v13 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v14 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v15 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v16 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v17 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
-    v18 = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+# REPEAT: i = 7..18
+    v%(i) = NewArray v4, v6, v4, v6, v4, v6, v4, v6 contents=anything
+# END REPEAT
     Jump -> next b2()
   b2():
     IteratorClose v1

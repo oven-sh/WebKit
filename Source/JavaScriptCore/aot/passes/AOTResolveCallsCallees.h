@@ -29,8 +29,6 @@ struct CalleeCandidates {
     // PlaceTypeTests puts the test for one expected callee. Several that are only expected get neither a test nor arms: chooseDispatchedCallees() says why.
     bool hasOneExpectedCallee() const { return proof == CalleeProof::Test && expected.size() == 1; }
     bool isDispatchedAtOperation() const { return proof != CalleeProof::Unknown && !hasOneExpectedCallee(); }
-
-    void dump(PrintStream&) const;
 };
 
 CalleeCandidates calleeCandidates(const Program&, const Function&, ValueID callee);

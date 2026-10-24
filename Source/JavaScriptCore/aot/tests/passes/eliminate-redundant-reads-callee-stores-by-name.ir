@@ -155,24 +155,14 @@ function f2 name="callsStores" module=m0 position=187 flags=[HasExplicitName] le
     v6 = Integer integer=1 @235
     v7 = Call v5, -, v6 calleeName="pad" @231
     v8 = Convert v7 declared={type=number flags=[IsExpected]} @231
-    v9 = GetModuleVariable variable=g0 @240
-    v10 = Convert v9 declared={type=function flags=[IsExpected]} @240
-    v11 = Integer integer=2 @244
-    v12 = Call v10, -, v11 calleeName="pad" @240
-    v13 = Convert v12 declared={type=number flags=[IsExpected]} @240
-    v14 = Add v8, v13 @231
-    v15 = GetModuleVariable variable=g0 @249
-    v16 = Convert v15 declared={type=function flags=[IsExpected]} @249
-    v17 = Integer integer=3 @253
-    v18 = Call v16, -, v17 calleeName="pad" @249
-    v19 = Convert v18 declared={type=number flags=[IsExpected]} @249
-    v20 = Add v14, v19 @231
-    v21 = GetModuleVariable variable=g0 @258
-    v22 = Convert v21 declared={type=function flags=[IsExpected]} @258
-    v23 = Integer integer=4 @262
-    v24 = Call v22, -, v23 calleeName="pad" @258
-    v25 = Convert v24 declared={type=number flags=[IsExpected]} @258
-    v26 = Add v20, v25 @231
+# REPEAT: i = 2..4
+    v%(i*6-3) = GetModuleVariable variable=g0 @%(i*9+222)
+    v%(i*6-2) = Convert v%(i*6-3) declared={type=function flags=[IsExpected]} @%(i*9+222)
+    v%(i*6-1) = Integer integer=%(i) @%(i*9+226)
+    v%(i*6) = Call v%(i*6-2), -, v%(i*6-1) calleeName="pad" @%(i*9+222)
+    v%(i*6+1) = Convert v%(i*6) declared={type=number flags=[IsExpected]} @%(i*9+222)
+    v%(i*6+2) = Add v%(i*6-4), v%(i*6+1) @231
+# END REPEAT
     v27 = Convert v26 declared={type=number flags=[IsExpected]} @231
     Return v27 @231
 }

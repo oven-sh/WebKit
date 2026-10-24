@@ -9,237 +9,27 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="loneReadsByName" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
   b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
-  b1() frequency=Rare:
-    v2 = PropGet v1 key="handler"
-    Return v2
-  b2() frequency=Rare:
-    v3 = PropGet v1 key="handler"
-    Return v3
-  b3() frequency=Rare:
-    v4 = PropGet v1 key="handler"
-    Return v4
-  b4() frequency=Rare:
-    v5 = PropGet v1 key="handler"
-    Return v5
-  b5() frequency=Rare:
-    v6 = PropGet v1 key="handler"
-    Return v6
-  b6() frequency=Rare:
-    v7 = PropGet v1 key="handler"
-    Return v7
-  b7() frequency=Rare:
-    v8 = PropGet v1 key="handler"
-    Return v8
-  b8() frequency=Rare:
-    v9 = PropGet v1 key="handler"
-    Return v9
-  b9() frequency=Rare:
-    v10 = PropGet v1 key="handler"
-    Return v10
-  b10() frequency=Rare:
-    v11 = PropGet v1 key="handler"
-    Return v11
-  b11() frequency=Rare:
-    v12 = PropGet v1 key="handler"
-    Return v12
-  b12() frequency=Rare:
-    v13 = PropGet v1 key="handler"
-    Return v13
-  b13() frequency=Rare:
-    v14 = PropGet v1 key="handler"
-    Return v14
-  b14() frequency=Rare:
-    v15 = PropGet v1 key="handler"
-    Return v15
-  b15() frequency=Rare:
-    v16 = PropGet v1 key="handler"
-    Return v16
-  b16() frequency=Rare:
-    v17 = PropGet v1 key="handler"
-    Return v17
-  b17() frequency=Rare:
-    v18 = PropGet v1 key="handler"
-    Return v18
-  b18() frequency=Rare:
-    v19 = PropGet v1 key="handler"
-    Return v19
-  b19() frequency=Rare:
-    v20 = PropGet v1 key="handler"
-    Return v20
-  b20() frequency=Rare:
-    v21 = PropGet v1 key="handler"
-    Return v21
-  b21() frequency=Rare:
-    v22 = PropGet v1 key="handler"
-    Return v22
-  b22() frequency=Rare:
-    v23 = PropGet v1 key="handler"
-    Return v23
-  b23() frequency=Rare:
-    v24 = PropGet v1 key="handler"
-    Return v24
-  b24() frequency=Rare:
-    v25 = PropGet v1 key="handler"
-    Return v25
-  b25() frequency=Rare:
-    v26 = PropGet v1 key="handler"
-    Return v26
+# REPEAT: i = 2..26
+  b%(i-1)() frequency=Rare:
+    v%(i) = PropGet v1 key="handler"
+    Return v%(i)
+# END REPEAT
 }
 function f1 name="loneComparisons" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=boolean}] {
   b0(v0: number, v1: anything, v2: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
-  b1() frequency=Rare:
-    v3 = StrictEq v1, v2
-    Return v3
-  b2() frequency=Rare:
-    v4 = StrictEq v1, v2
-    Return v4
-  b3() frequency=Rare:
-    v5 = StrictEq v1, v2
-    Return v5
-  b4() frequency=Rare:
-    v6 = StrictEq v1, v2
-    Return v6
-  b5() frequency=Rare:
-    v7 = StrictEq v1, v2
-    Return v7
-  b6() frequency=Rare:
-    v8 = StrictEq v1, v2
-    Return v8
-  b7() frequency=Rare:
-    v9 = StrictEq v1, v2
-    Return v9
-  b8() frequency=Rare:
-    v10 = StrictEq v1, v2
-    Return v10
-  b9() frequency=Rare:
-    v11 = StrictEq v1, v2
-    Return v11
-  b10() frequency=Rare:
-    v12 = StrictEq v1, v2
-    Return v12
-  b11() frequency=Rare:
-    v13 = StrictEq v1, v2
-    Return v13
-  b12() frequency=Rare:
-    v14 = StrictEq v1, v2
-    Return v14
-  b13() frequency=Rare:
-    v15 = StrictEq v1, v2
-    Return v15
-  b14() frequency=Rare:
-    v16 = StrictEq v1, v2
-    Return v16
-  b15() frequency=Rare:
-    v17 = StrictEq v1, v2
-    Return v17
-  b16() frequency=Rare:
-    v18 = StrictEq v1, v2
-    Return v18
-  b17() frequency=Rare:
-    v19 = StrictEq v1, v2
-    Return v19
-  b18() frequency=Rare:
-    v20 = StrictEq v1, v2
-    Return v20
-  b19() frequency=Rare:
-    v21 = StrictEq v1, v2
-    Return v21
-  b20() frequency=Rare:
-    v22 = StrictEq v1, v2
-    Return v22
-  b21() frequency=Rare:
-    v23 = StrictEq v1, v2
-    Return v23
-  b22() frequency=Rare:
-    v24 = StrictEq v1, v2
-    Return v24
-  b23() frequency=Rare:
-    v25 = StrictEq v1, v2
-    Return v25
-  b24() frequency=Rare:
-    v26 = StrictEq v1, v2
-    Return v26
-  b25() frequency=Rare:
-    v27 = StrictEq v1, v2
-    Return v27
+# REPEAT: i = 3..27
+  b%(i-2)() frequency=Rare:
+    v%(i) = StrictEq v1, v2
+    Return v%(i)
+# END REPEAT
 }
 function f2 name="loneTruthTests" parameters=[{type=number}, {type=anything}] results=[{type=boolean}] {
   b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
-  b1() frequency=Rare:
-    v2 = ToBoolean v1
-    Return v2
-  b2() frequency=Rare:
-    v3 = ToBoolean v1
-    Return v3
-  b3() frequency=Rare:
-    v4 = ToBoolean v1
-    Return v4
-  b4() frequency=Rare:
-    v5 = ToBoolean v1
-    Return v5
-  b5() frequency=Rare:
-    v6 = ToBoolean v1
-    Return v6
-  b6() frequency=Rare:
-    v7 = ToBoolean v1
-    Return v7
-  b7() frequency=Rare:
-    v8 = ToBoolean v1
-    Return v8
-  b8() frequency=Rare:
-    v9 = ToBoolean v1
-    Return v9
-  b9() frequency=Rare:
-    v10 = ToBoolean v1
-    Return v10
-  b10() frequency=Rare:
-    v11 = ToBoolean v1
-    Return v11
-  b11() frequency=Rare:
-    v12 = ToBoolean v1
-    Return v12
-  b12() frequency=Rare:
-    v13 = ToBoolean v1
-    Return v13
-  b13() frequency=Rare:
-    v14 = ToBoolean v1
-    Return v14
-  b14() frequency=Rare:
-    v15 = ToBoolean v1
-    Return v15
-  b15() frequency=Rare:
-    v16 = ToBoolean v1
-    Return v16
-  b16() frequency=Rare:
-    v17 = ToBoolean v1
-    Return v17
-  b17() frequency=Rare:
-    v18 = ToBoolean v1
-    Return v18
-  b18() frequency=Rare:
-    v19 = ToBoolean v1
-    Return v19
-  b19() frequency=Rare:
-    v20 = ToBoolean v1
-    Return v20
-  b20() frequency=Rare:
-    v21 = ToBoolean v1
-    Return v21
-  b21() frequency=Rare:
-    v22 = ToBoolean v1
-    Return v22
-  b22() frequency=Rare:
-    v23 = ToBoolean v1
-    Return v23
-  b23() frequency=Rare:
-    v24 = ToBoolean v1
-    Return v24
-  b24() frequency=Rare:
-    v25 = ToBoolean v1
-    Return v25
-  b25() frequency=Rare:
-    v26 = ToBoolean v1
-    Return v26
+# REPEAT: i = 2..26
+  b%(i-1)() frequency=Rare:
+    v%(i) = ToBoolean v1
+    Return v%(i)
+# END REPEAT
 }

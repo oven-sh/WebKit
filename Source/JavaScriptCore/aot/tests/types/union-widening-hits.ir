@@ -13,13 +13,7 @@
 # CHECK-NEXT: laws hold
 
 module m0 path="main.js" displayPath="main.js"
-layout L0
-layout L1
-layout L2
-layout L3
-layout L4
-layout L5
-layout L6
-layout L7
-layout L8
+# REPEAT: i = 0..8
+layout L%(i)
+# END REPEAT
 function f0 name="types" parameters=[{type=L0|L1|L2|L3|L4|L5|L6|L7}, {type=L8}, {type=L0}] results=[{type=undefined}]

@@ -16,24 +16,14 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-NEXT: Branch [[second]] -> taken b7(), notTaken b8()
 function f0 name="fraction-after-three-integers" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Integer integer=1
-    v2 = StrictEq v0, v1
-    Branch v2 -> taken b1(), notTaken b2()
-  b1():
+# REPEAT: i = 1..3
+    v%(i*2-1) = Integer integer=%(i)
+    v%(i*2) = StrictEq v0, v%(i*2-1)
+    Branch v%(i*2) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
     Return v0
-  b2():
-    v3 = Integer integer=2
-    v4 = StrictEq v0, v3
-    Branch v4 -> taken b3(), notTaken b4()
-  b3():
-    Return v0
-  b4():
-    v5 = Integer integer=3
-    v6 = StrictEq v0, v5
-    Branch v6 -> taken b5(), notTaken b6()
-  b5():
-    Return v0
-  b6():
+  b%(i*2)():
+# END REPEAT
     v7 = Double number=2.5
     v8 = StrictEq v0, v7
     Branch v8 -> taken b7(), notTaken b8()

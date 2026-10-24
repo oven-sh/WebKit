@@ -44,6 +44,7 @@ testaot native [<filter>] [--after=<name>] [--single-process]
 testaot list commands|passes|options|limits|statistics|diagnostics
 testaot print <program> [--until=<PassID>] [--function=f<n>].. [--wire] { option word }
 testaot compile <program> --output=<image> { option word }        prints "entry <i> <id>" for each entry point
+testaot write-out <file>                                          prints IR text with its REPEAT blocks written out
 testaot fuzz-reader [--seed=<n>] [--count=<n>] [<program>..]
 ```
 
@@ -140,6 +141,8 @@ STATISTIC: <StatisticID> ( = | >= | <= ) <n>
 LOSS: <LimitID> { x<count> | f<n> | v<n> | L<n> }
 LIBRARY: own
 TODO: <owner>: <what is lost>
+REPEAT: <name> = ( <first>..<last> | <word> { <word> } ) { ; <name> = .. }
+END REPEAT
 ```
 
 A directive is a whole comment line: `#`, a name in capitals, then `:`. A comment after IR tokens on the same line is never a
@@ -200,6 +203,22 @@ soon as it passes it fails, with `passes: remove the TODO line`, so no mark outl
 plain words, the thing that is lost: the `TODO` lines of the folder are the list of debts. A file has at most one. A file that
 crashes, or whose directives are wrong, fails as ever. A test whose expectation is out of date is restated and gets no `TODO`, and
 neither does one that shows wrong code. Under `--option` and `--only-diagnostic` a file with a `TODO` line may pass.
+
+`REPEAT` is for a program, or for check lines, that are a loop written out. The lines up to `# END REPEAT` are written once for each
+value of its names before anything else reads the file: the parser and the other directives see the lines as written out, and so do
+`testaot print` and `testaot compile`. A name takes the numbers of a range, both ends included, or the words of a list, and all names of
+one `REPEAT` take equally many values. `%(name)` is the value. A number can be multiplied, moved and padded with zeros, in this order:
+`%(i*2+1)`, `%(i-3)`, `%(i:2)`. One `REPEAT` can stand inside another. Both lines start in the first column, and `# END REPEAT` has no
+colon. A failure names the line in the file; a line that the parser names in a message is a line of `testaot write-out <file>`. This is from `place/guard-bits-beyond-the-limit.ir`:
+
+```
+# REPEAT: i = 0..69
+function f%(i+3) name="m%(i:2)" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+# END REPEAT
+```
 
 Directives can appear in any order. Only the order of the check lines with the same prefix matters.
 

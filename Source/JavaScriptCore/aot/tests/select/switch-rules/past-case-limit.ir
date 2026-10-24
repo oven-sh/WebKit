@@ -14,38 +14,12 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-NOT: StrictEq
 function f0 name="eight-numbers" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Integer integer=1
-    v2 = StrictEq v0, v1
-    Branch v2 -> taken b8(), notTaken b1()
-  b1():
-    v3 = Integer integer=2
-    v4 = StrictEq v0, v3
-    Branch v4 -> taken b8(), notTaken b2()
-  b2():
-    v5 = Integer integer=3
-    v6 = StrictEq v0, v5
-    Branch v6 -> taken b8(), notTaken b3()
-  b3():
-    v7 = Integer integer=4
-    v8 = StrictEq v0, v7
-    Branch v8 -> taken b8(), notTaken b4()
-  b4():
-    v9 = Integer integer=5
-    v10 = StrictEq v0, v9
-    Branch v10 -> taken b8(), notTaken b5()
-  b5():
-    v11 = Integer integer=6
-    v12 = StrictEq v0, v11
-    Branch v12 -> taken b8(), notTaken b6()
-  b6():
-    v13 = Integer integer=7
-    v14 = StrictEq v0, v13
-    Branch v14 -> taken b8(), notTaken b7()
-  b7():
-    v15 = Integer integer=8
-    v16 = StrictEq v0, v15
-    Branch v16 -> taken b8(), notTaken b9()
-  b8():
+# REPEAT: i = 1..8; a = 1 2 3 4 5 6 7 9
+    v%(i*2-1) = Integer integer=%(i)
+    v%(i*2) = StrictEq v0, v%(i*2-1)
+    Branch v%(i*2) -> taken b8(), notTaken b%(a)()
+  b%(i)():
+# END REPEAT
     Return v0
   b9():
     Return v0
@@ -66,46 +40,12 @@ function f0 name="eight-numbers" parameters=[{type=anything}] results=[{type=any
 # CHECK-NEXT: Branch [[second]] -> taken b4(), notTaken b5()
 function f1 name="ten-numbers" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Integer integer=1
-    v2 = StrictEq v0, v1
-    Branch v2 -> taken b10(), notTaken b1()
-  b1():
-    v3 = Integer integer=2
-    v4 = StrictEq v0, v3
-    Branch v4 -> taken b10(), notTaken b2()
-  b2():
-    v5 = Integer integer=3
-    v6 = StrictEq v0, v5
-    Branch v6 -> taken b10(), notTaken b3()
-  b3():
-    v7 = Integer integer=4
-    v8 = StrictEq v0, v7
-    Branch v8 -> taken b10(), notTaken b4()
-  b4():
-    v9 = Integer integer=5
-    v10 = StrictEq v0, v9
-    Branch v10 -> taken b10(), notTaken b5()
-  b5():
-    v11 = Integer integer=6
-    v12 = StrictEq v0, v11
-    Branch v12 -> taken b10(), notTaken b6()
-  b6():
-    v13 = Integer integer=7
-    v14 = StrictEq v0, v13
-    Branch v14 -> taken b10(), notTaken b7()
-  b7():
-    v15 = Integer integer=8
-    v16 = StrictEq v0, v15
-    Branch v16 -> taken b10(), notTaken b8()
-  b8():
-    v17 = Integer integer=9
-    v18 = StrictEq v0, v17
-    Branch v18 -> taken b10(), notTaken b9()
-  b9():
-    v19 = Integer integer=10
-    v20 = StrictEq v0, v19
-    Branch v20 -> taken b10(), notTaken b11()
-  b10():
+# REPEAT: i = 1..10; a = 1 2 3 4 5 6 7 8 9 11
+    v%(i*2-1) = Integer integer=%(i)
+    v%(i*2) = StrictEq v0, v%(i*2-1)
+    Branch v%(i*2) -> taken b10(), notTaken b%(a)()
+  b%(i)():
+# END REPEAT
     Return v0
   b11():
     Return v0
@@ -117,22 +57,12 @@ function f1 name="ten-numbers" parameters=[{type=anything}] results=[{type=anyth
 # CHECK-NOT: Switch
 function f2 name="four-numbers" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Integer integer=1
-    v2 = StrictEq v0, v1
-    Branch v2 -> taken b4(), notTaken b1()
-  b1():
-    v3 = Integer integer=2
-    v4 = StrictEq v0, v3
-    Branch v4 -> taken b4(), notTaken b2()
-  b2():
-    v5 = Integer integer=3
-    v6 = StrictEq v0, v5
-    Branch v6 -> taken b4(), notTaken b3()
-  b3():
-    v7 = Integer integer=4
-    v8 = StrictEq v0, v7
-    Branch v8 -> taken b4(), notTaken b5()
-  b4():
+# REPEAT: i = 1..4; a = 1 2 3 5
+    v%(i*2-1) = Integer integer=%(i)
+    v%(i*2) = StrictEq v0, v%(i*2-1)
+    Branch v%(i*2) -> taken b4(), notTaken b%(a)()
+  b%(i)():
+# END REPEAT
     Return v0
   b5():
     Return v0

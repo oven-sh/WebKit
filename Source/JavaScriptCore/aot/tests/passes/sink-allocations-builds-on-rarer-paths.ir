@@ -162,18 +162,12 @@ function f4 name="variableOfCallbackInLoop" parameters=[{type=anything}, {type=a
     v16 = Add v10, v4
     Jump -> next b3(v16)
   b5():
-    v17 = GetEnvironmentField v5 layout=L0 field=0
-    Return v17
-  b6() frequency=Rare:
-    v18 = Call v1, v0, v6
-    v19 = GetEnvironmentField v5 layout=L0 field=0
-    Return v19
-  b7() frequency=Rare:
-    v20 = Call v1, v0, v6
-    v21 = GetEnvironmentField v5 layout=L0 field=0
-    Return v21
-  b8() frequency=Rare:
-    v22 = Call v1, v0, v6
+# REPEAT: i = 6..8
+    v%(i*2+5) = GetEnvironmentField v5 layout=L0 field=0
+    Return v%(i*2+5)
+  b%(i)() frequency=Rare:
+    v%(i*2+6) = Call v1, v0, v6
+# END REPEAT
     v23 = GetEnvironmentField v5 layout=L0 field=0
     Return v23
 }

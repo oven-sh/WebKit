@@ -31,7 +31,6 @@ ValueSets::InternedRuns::InternedRuns()
 {
     for (Shard& shard : m_shards)
         shard.table.store(createTable(6), std::memory_order_relaxed);
-    // The run without words.
     uint32_t number = takeUnits(unitsPerLine);
     RELEASE_ASSERT(!number);
     mutableRunAt(number) = Run { };
@@ -47,7 +46,6 @@ ValueSets::InternedRuns::~InternedRuns()
         fastFree(segment.load(std::memory_order_relaxed));
 }
 
-// At a cache line, and within one segment.
 uint32_t ValueSets::InternedRuns::takeUnits(uint32_t numberOfUnits)
 {
     RELEASE_ASSERT(numberOfUnits <= unitsPerSegment);
@@ -69,7 +67,6 @@ uint32_t ValueSets::InternedRuns::allocate(Room& room, size_t numberOfWords)
 {
     size_t bytes = sizeof(Run) + numberOfWords * sizeof(uint64_t);
     uint32_t numberOfUnits = static_cast<uint32_t>((bytes + bytesPerUnit - 1) / bytesPerUnit);
-    // What is left of a chunk is given up only for a run that fits into a fresh one.
     if (numberOfUnits > unitsPerChunk / 4)
         return takeUnits(numberOfUnits);
     uint32_t first = room.nextUnit;
@@ -155,7 +152,6 @@ uint32_t ValueSets::InternedRuns::intern(Room& room, std::span<const uint64_t> w
     std::ranges::copy(words, const_cast<uint64_t*>(run.words()));
 
     Locker locker { shard.lock };
-    // Slots are only ever filled: what has come in the meantime lies at or behind the slot that was free.
     if (Table current = shard.table.load(std::memory_order_relaxed); current != table) {
         table = current;
         position = hash & table.mask();
@@ -354,7 +350,6 @@ static void forEachCommonWord(const uint64_t* first, const uint64_t* second, NOE
     }
 }
 
-// The first entry from the given one on that lies in the group of places or behind it.
 size_t ValueSets::positionOfGroupOfPlaces(std::span<const uint64_t> list, size_t from, uint32_t groupOfPlaces)
 {
     for (size_t end = std::min(from + 4, list.size()); from < end; ++from) {
@@ -568,7 +563,6 @@ bool ValueSets::setsOfSeveralMembersMeet(ValueSetID first, ValueSetID second) co
     if (!isComplement(first) && !isComplement(second))
         return storedSetsMeet(first, second);
     if (isComplement(first) && isComplement(second)) {
-        // Something lies outside both stored sets unless the two cover the universe.
         uint32_t most = size(complement(first)) + size(complement(second));
         if (most < m_sizeOfUniverse)
             return true;
@@ -707,7 +701,6 @@ uint64_t ValueSetMaker::combineEntries(Operation operation, uint64_t first, uint
         std::swap(first, second);
 
     uint32_t firstPlace = ValueSets::placeOf(first) & ~(ValueSets::placesPerGroup - 1);
-    // Two blocks say nothing of the group of places they lie in.
     bool isRemembered = ValueSets::isGroup(first) || ValueSets::isGroup(second);
     uint32_t detail = 1 + static_cast<uint32_t>(operation) + (ValueSets::placeOf(first) % ValueSets::placesPerGroup << 2) + (ValueSets::placeOf(second) % ValueSets::placesPerGroup << 8);
     RememberedEntries& remembered = m_rememberedEntries[placeInTable(static_cast<uint32_t>(first) + detail * 0xc2b2ae35u, static_cast<uint32_t>(second), bitsOfRememberedEntries)];
@@ -721,7 +714,6 @@ uint64_t ValueSetMaker::combineEntries(Operation operation, uint64_t first, uint
     uint64_t present = 0;
     bool isFirst = true;
     bool isSecond = true;
-    // The result is mostly most of one of the two: the totals of that one, and what has changed.
     bool startsFromSecond = operation == Operation::Unite && std::popcount(b.present) > std::popcount(a.present);
     Totals totals = operation == Operation::Intersect ? Totals { } : totalsOf(startsFromSecond ? second : first);
     auto add = [&](uint32_t place, uint32_t block) {
@@ -1423,7 +1415,6 @@ NEVER_INLINE ValueSetID ValueSetMaker::intersectUncached(ValueSetID first, Value
 {
     uint32_t a = ValueSets::storedSetOf(first);
     uint32_t b = ValueSets::storedSetOf(second);
-    // The name of a set of one member is greater than that of any other set, so it stands second.
     if (ValueSets::holdsOneMember(b)) {
         bool isHeld = m_sets.contains(first, ValueFlowObjectID(ValueSets::onlyMemberOf(b)));
         if (!ValueSets::isComplement(second) || !isHeld) {
@@ -1490,7 +1481,6 @@ ValueSetID ValueSetMaker::pass(ValueSetID value, ValueSetID mask, ValueSetID fam
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Nothing is sorted: the members are scattered into words, and the masks say in ascending order which words hold something.
 ALWAYS_INLINE void ValueSetMaker::scatter(uint32_t index)
 {
     uint32_t place = index / ValueSets::membersPerBlock;
@@ -1681,7 +1671,6 @@ void ValueSetMaker::appendParts(ValueSetID set, Vector<ValueSetID>& parts)
 
 ValueSetID ValueSetMaker::uniteAll(std::span<const ValueSetID> sets)
 {
-    // A complement among them is rare: the pairs do it.
     if (sets.size() < 3 || std::ranges::any_of(sets, ValueSets::isComplement)) {
         ValueSetID result = ValueSets::nothing;
         for (ValueSetID set : sets)
@@ -1722,7 +1711,6 @@ ValueSetID ValueSetMaker::uniteAll(std::span<const ValueSetID> sets)
 
 uint32_t ValueSetMaker::uniteAllLists(std::span<const ValueSetID> sets)
 {
-    // The number of a block has 30 bits.
     constexpr uint32_t isGathered = 1u << 31;
     uint32_t numberOfGatheredBlocks = 0;
     auto addTo = [&](GatheredBlock& gathered, uint32_t block) {
@@ -1753,7 +1741,6 @@ uint32_t ValueSetMaker::uniteAllLists(std::span<const ValueSetID> sets)
             }
         });
     };
-    // No entry looks like this: no run has the number 1.
     constexpr uint64_t isSpread = 1;
     static_assert(!ValueSets::isGroup(isSpread));
     uint32_t lowest = UINT32_MAX;

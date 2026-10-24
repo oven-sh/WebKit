@@ -10,8 +10,6 @@
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTSplitUnions.h"
-#include "AOTVector.h"
-#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -31,24 +29,6 @@ struct StringRangeSource {
     bool isSingleUnit() const { return !bounds && (method == StringRangeMethod::SingleIndex || method == StringRangeMethod::SingleRelativeIndex); }
 };
 
-constexpr InlineBuiltin inlineBuiltinOf(StringRangeMethod method)
-{
-    switch (method) {
-    case StringRangeMethod::Slice:
-        return InlineBuiltin::StringSlice;
-    case StringRangeMethod::Substring:
-        return InlineBuiltin::StringSubstring;
-    case StringRangeMethod::Substr:
-        return InlineBuiltin::StringSubstr;
-    case StringRangeMethod::SingleIndex:
-        return InlineBuiltin::StringCharAt;
-    case StringRangeMethod::SingleRelativeIndex:
-        return InlineBuiltin::StringAt;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-std::optional<StringRangeMethod> rangeMethodOf(InlineBuiltin);
 std::optional<StringRangeSource> stringRangeSourceOf(const Program&, const Function&, const Value&);
 StringRangeBounds insertStringRange(IRBuilder&, ProgramPoint, const StringRangeSource&, std::optional<StringRangeBounds> enclosing);
 

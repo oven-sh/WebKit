@@ -147,38 +147,9 @@ function f12 name="workerIsLeftAlone" results=[{type=Promise}] {
 # The operation has a bit for each of the first 32 elements
 function f13 name="thirtyTwoCallsAndAValue" parameters=[{type=anything}] results=[{type=Promise}] {
   b0(v0: anything):
-    v1 = CallDirect function=f1
-    v2 = CallDirect function=f1
-    v3 = CallDirect function=f1
-    v4 = CallDirect function=f1
-    v5 = CallDirect function=f1
-    v6 = CallDirect function=f1
-    v7 = CallDirect function=f1
-    v8 = CallDirect function=f1
-    v9 = CallDirect function=f1
-    v10 = CallDirect function=f1
-    v11 = CallDirect function=f1
-    v12 = CallDirect function=f1
-    v13 = CallDirect function=f1
-    v14 = CallDirect function=f1
-    v15 = CallDirect function=f1
-    v16 = CallDirect function=f1
-    v17 = CallDirect function=f1
-    v18 = CallDirect function=f1
-    v19 = CallDirect function=f1
-    v20 = CallDirect function=f1
-    v21 = CallDirect function=f1
-    v22 = CallDirect function=f1
-    v23 = CallDirect function=f1
-    v24 = CallDirect function=f1
-    v25 = CallDirect function=f1
-    v26 = CallDirect function=f1
-    v27 = CallDirect function=f1
-    v28 = CallDirect function=f1
-    v29 = CallDirect function=f1
-    v30 = CallDirect function=f1
-    v31 = CallDirect function=f1
-    v32 = CallDirect function=f1
+# REPEAT: i = 1..32
+    v%(i) = CallDirect function=f1
+# END REPEAT
     v33 = PromiseAllOfElements v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v0 contents=anything
     Return v33
 }
@@ -190,39 +161,9 @@ function f13 name="thirtyTwoCallsAndAValue" parameters=[{type=anything}] results
 # The call for the element without a bit keeps its promise, and it runs behind all the others
 function f14 name="thirtyThreeCalls" results=[{type=Promise}] {
   b0():
-    v0 = CallDirect function=f1
-    v1 = CallDirect function=f1
-    v2 = CallDirect function=f1
-    v3 = CallDirect function=f1
-    v4 = CallDirect function=f1
-    v5 = CallDirect function=f1
-    v6 = CallDirect function=f1
-    v7 = CallDirect function=f1
-    v8 = CallDirect function=f1
-    v9 = CallDirect function=f1
-    v10 = CallDirect function=f1
-    v11 = CallDirect function=f1
-    v12 = CallDirect function=f1
-    v13 = CallDirect function=f1
-    v14 = CallDirect function=f1
-    v15 = CallDirect function=f1
-    v16 = CallDirect function=f1
-    v17 = CallDirect function=f1
-    v18 = CallDirect function=f1
-    v19 = CallDirect function=f1
-    v20 = CallDirect function=f1
-    v21 = CallDirect function=f1
-    v22 = CallDirect function=f1
-    v23 = CallDirect function=f1
-    v24 = CallDirect function=f1
-    v25 = CallDirect function=f1
-    v26 = CallDirect function=f1
-    v27 = CallDirect function=f1
-    v28 = CallDirect function=f1
-    v29 = CallDirect function=f1
-    v30 = CallDirect function=f1
-    v31 = CallDirect function=f1
-    v32 = CallDirect function=f1
+# REPEAT: i = 0..32
+    v%(i) = CallDirect function=f1
+# END REPEAT
     v33 = PromiseAllOfElements v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32 contents=anything
     Return v33
 }

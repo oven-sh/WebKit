@@ -116,18 +116,9 @@ function f2 name="casts" parameters=[{type=anything}] results=[{type=anything}] 
 
 function f3 name="types" parameters=[{type=L0}, {type=L0|L1}, {type=undefined|L0}, {type=object}, {type=L0|f0}, {type=f0}, {type=function}, {type=7}, {type=int[7, 8]}, {type="a"}, {type="a"|"b"}, {type=null}] results=[{type=undefined}] {
   b0(v0: L0, v1: L0|L1, v2: undefined|L0, v3: object, v4: L0|f0, v5: f0, v6: function, v7: 7, v8: int[7, 8], v9: "a", v10: "a"|"b", v11: null):
-    v12 = Upcast v0 castType=anything
-    v13 = Upcast v1 castType=anything
-    v14 = Upcast v2 castType=anything
-    v15 = Upcast v3 castType=anything
-    v16 = Upcast v4 castType=anything
-    v17 = Upcast v5 castType=anything
-    v18 = Upcast v6 castType=anything
-    v19 = Upcast v7 castType=anything
-    v20 = Upcast v8 castType=anything
-    v21 = Upcast v9 castType=anything
-    v22 = Upcast v10 castType=anything
-    v23 = Upcast v11 castType=anything
+# REPEAT: i = 0..11
+    v%(i+12) = Upcast v%(i) castType=anything
+# END REPEAT
     Return
 }
 # TYPES: v12 known: Object

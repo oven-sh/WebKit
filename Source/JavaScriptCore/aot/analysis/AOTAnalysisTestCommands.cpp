@@ -115,7 +115,6 @@ static void runOnFunction(TestCommandContext& context)
         return;
     bool printsUseLists = words.parseFlag("use-lists"_s);
     Session session(context, id);
-    // The lists outlive an edit only in a pass that tells of every change, as the commands do: they edit through the builder alone.
     if (printsUseLists)
         session.analyses.setRunningPass(PassID::CompactBlocks);
     run(context, words, session);
@@ -231,7 +230,6 @@ static void addVariables(SSARepair& repair, const Vector<Vector<ValueID>>& varia
     }
 }
 
-// A pass hands out one definition wherever its variable is used and leaves it to the repair to find the definition that reaches the use.
 static void nameFirstDefinitions(Session& session, const Vector<Vector<ValueID>>& variables)
 {
     ValueSubstitution substitution(session.function);
@@ -254,7 +252,6 @@ static void duplicateRegion(TestCommandContext& context, CommandWords& words, Se
     if (!beginRewrite(words, session))
         return;
 
-    // An edge of the region itself that is redirected makes its target an entry of the copy.
     Vector<BlockID> entries;
     for (Edge edge : redirectedEdges) {
         BlockID target = targetOf(function, edge).block;

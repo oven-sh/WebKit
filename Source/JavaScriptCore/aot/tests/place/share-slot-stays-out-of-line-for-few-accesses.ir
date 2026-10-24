@@ -53,30 +53,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="fill" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     PropSet v0, v1 key="shared"
-    PropSet v0, v1 key="optional0"
-    PropSet v0, v1 key="optional1"
-    PropSet v0, v1 key="optional2"
-    PropSet v0, v1 key="optional3"
-    PropSet v0, v1 key="optional4"
-    PropSet v0, v1 key="optional5"
-    PropSet v0, v1 key="optional6"
-    PropSet v0, v1 key="optional7"
-    PropSet v0, v1 key="optional8"
-    PropSet v0, v1 key="optional9"
-    PropSet v0, v1 key="optional10"
-    PropSet v0, v1 key="optional11"
-    PropSet v0, v1 key="optional12"
-    PropSet v0, v1 key="optional13"
-    PropSet v0, v1 key="optional14"
-    PropSet v0, v1 key="optional15"
-    PropSet v0, v1 key="optional16"
-    PropSet v0, v1 key="optional17"
-    PropSet v0, v1 key="optional18"
-    PropSet v0, v1 key="optional19"
-    PropSet v0, v1 key="optional20"
-    PropSet v0, v1 key="optional21"
-    PropSet v0, v1 key="optional22"
-    PropSet v0, v1 key="optional23"
+# REPEAT: i = 0..23
+    PropSet v0, v1 key="optional%(i)"
+# END REPEAT
     Return
 }
 # CHECK: L1 CompiledObject size=80

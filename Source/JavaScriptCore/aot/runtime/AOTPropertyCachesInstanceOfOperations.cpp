@@ -26,14 +26,14 @@ static void cacheRead(Instance* instance, JSObject* constructor, Structure* stru
     ensureStillAliveHere(structureBefore);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor))
+bool instanceOfAndCache(Instance* instance, JSValue value, JSValue constructor)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTInstanceOfAndCache);
-    JSValue value = JSValue::decode(encodedValue);
-    JSValue constructor = JSValue::decode(encodedConstructor);
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!constructor.isObject()) {
         throwException(globalObject, scope, createInstanceofRightHandSideNotObjectError(globalObject));
-        OPERATION_RETURN(scope, false);
+        return false;
     }
 
     JSObject* constructorObject = asObject(constructor);
@@ -41,12 +41,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* inst
     Structure* structureBeforeHasInstance = WTF::opaque(constructorObject->structure());
     PropertySlot hasInstanceSlot(constructorObject, PropertySlot::InternalMethodType::Get);
     bool hasHasInstance = constructorObject->getPropertySlot(globalObject, vm.propertyNames->hasInstanceSymbol, hasInstanceSlot);
-    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, false);
     JSValue hasInstance = hasHasInstance ? hasInstanceSlot.getValue(globalObject, vm.propertyNames->hasInstanceSymbol) : jsUndefined();
-    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, false);
     cacheRead(instance, constructorObject, structureBeforeHasInstance, vm.propertyNames->hasInstanceSymbol, hasInstanceSlot);
     if (hasInstance != globalObject->functionProtoHasInstanceSymbolFunction() || !constructorObject->structure()->typeInfo().implementsDefaultHasInstance())
-        OPERATION_RETURN(scope, constructorObject->hasInstance(globalObject, value, hasInstance));
+        RELEASE_AND_RETURN(scope, constructorObject->hasInstance(globalObject, value, hasInstance));
 
     // OrdinaryHasInstance reads "prototype" only for an object, so for any other value the lookup that fills the cache may run no code.
     bool readsPrototype = value.isObject();
@@ -54,12 +54,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* inst
     PropertySlot prototypeSlot(constructorObject, readsPrototype ? PropertySlot::InternalMethodType::Get : PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool hasPrototype = constructorObject->getPropertySlot(globalObject, vm.propertyNames->prototype, prototypeSlot);
     prototypeSlot.disallowVMEntry.reset();
-    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, false);
     JSValue prototype = hasPrototype && readsPrototype ? prototypeSlot.getValue(globalObject, vm.propertyNames->prototype) : jsUndefined();
-    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, false);
     if (!prototypeSlot.isTaintedByOpaqueObject())
         cacheRead(instance, constructorObject, structureBeforePrototype, vm.propertyNames->prototype, prototypeSlot);
-    OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, value, prototype));
+    RELEASE_AND_RETURN(scope, JSObject::defaultHasInstance(globalObject, value, prototype));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTInstanceOfAndCache);
+    OPERATION_RETURN(scope, instanceOfAndCache(instance, JSValue::decode(encodedValue), JSValue::decode(encodedConstructor)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedPrototype))

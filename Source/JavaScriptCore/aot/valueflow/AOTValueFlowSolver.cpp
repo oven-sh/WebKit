@@ -69,7 +69,6 @@ void ValueFlowPairSet::prefetch(uint32_t first, uint32_t second) const
 void ValueFlowPairSet::grow()
 {
     size_t size = std::max<size_t>(m_slots.span().size() * 2, 1024);
-    // Written here: a page of zeroed memory fresh from the system that is read first costs a second fault at its first write.
     MallocSpan<uint64_t> previous = std::exchange(m_slots, MallocSpan<uint64_t>::malloc(size * sizeof(uint64_t)));
     zeroSpan(m_slots.mutableSpan());
     size_t mask = size - 1;
@@ -100,11 +99,9 @@ struct ValueFlowSolver::Thread {
     ValueFlowRuleContext context;
     Seconds busyInTurn;
     Seconds longestShareInTurn;
-    // Of the statements that have begun to wait in this round: where what they throw goes.
     Vector<ValueFlowNodeID> thrownOfStatementsThatWait;
     uint32_t numberOfDueStatementsThatWait { 0 };
     uint32_t numberOfDueStatementsTaken { 0 };
-    // What the functions that this thread has reached bring: for the loop that runs, for the next turn, for the merge.
     Vector<ValueFlowStatementID> statementsFound;
     Vector<ValueFlowStatementID> dueInNextTurn;
     Vector<uint32_t> bodiesReached;
@@ -115,21 +112,16 @@ struct ValueFlowSolver::Thread {
         ValueFlowStatementID statement;
         bool isAskedLast { false };
     };
-    // The parts that the log says are watched, for noteWatchers().
     std::array<Vector<PartWatched>, numberOfWatchShards> partsWatchedOfShard;
-    // What it says is read, for noteReaders().
     std::array<Vector<NodeRead>, numberOfReaderShards> nodesReadOfShard;
     std::array<Vector<NodeRead>, numberOfReaderShards> nodesAskedWhetherEmptyOfShard;
-    // By the log's number of a node: its number in the graph.
     Vector<uint32_t> numberOfMadeNode;
-    // How much of the log the turns before this one have dealt with.
     size_t numberOfReachedTaken { 0 };
     size_t numberOfMadeTaken { 0 };
     size_t numberOfRunsTaken { 0 };
     size_t numberOfFunctionsAskedTaken { 0 };
     uint32_t numberOfValuesShownTaken { 0 };
     uint32_t numberOfNodesAskedForTaken { 0 };
-    // Of the runs of the last turn that ask for something else than the last run of their statement, in the order of the runs: where what they ask for ends in the list.
     struct RunThatAsksAnew {
         size_t run { 0 };
         uint32_t endOfAskedFor { 0 };
@@ -155,7 +147,6 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
     , m_makers(makeMakers(sets, loops))
     , m_graph(loops, m_makers.span())
 {
-    // A solve makes about two keys and two and a half nodes for each node of its input. Room that is asked for here and not used is never there; room that is doubled later is copied, on one thread.
     m_numberOfUsers.reserveCapacity(2 * static_cast<size_t>(m_input.numberOfNodes));
     m_askerThatKeepsNothingAwake.reserveCapacity(2 * static_cast<size_t>(m_input.numberOfNodes));
     m_partsOfMadeNodes.reserveCapacity(2 * static_cast<size_t>(m_input.numberOfNodes));
@@ -193,12 +184,8 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         m_kindsThatCoverKeys.append({ ValueFlowUniverse::primitive(PrimitiveSet::Symbol), ValueSets::complement(maker.intersect(m_input.universe->symbols(), keys)) });
     }
 
-    // A node that hands on all it gets to what a placeholder covers, and holds the placeholder, need not list what the placeholder stands for.
     if (placeholders.unknown && m_input.escaped) {
-        // The object on which the exports of a module of the library hang is kept and not searched when it escapes: what hangs on it has not escaped with it.
         m_coverings.append({ placeholders.unknown, m_input.escaped, maker.intersect(m_objectsThatPlaceholdersMayCover, ValueSets::complement(m_objectsAlwaysFollowed)) });
-        // That a holder of exports or an evaluator has escaped keeps none of its members: the rules ask whether the operand lists it. So it is listed wherever it comes by ways that are followed, however late:
-        // a retired node goes on taking it. What is read, looked up or called through the unknown object is a value nobody knows and lists nothing, however early.
         if (m_input.universe) {
             const ValueFlowHeapTables& heap = m_input.universe->builtinTables().heap();
             m_objectsLookedForBesideUnknownObject = maker.unite(m_input.universe->holdersOfLibraryExports(), maker.intersect(m_objectsAlwaysFollowed, heap.holdersWithMembers()));
@@ -216,7 +203,6 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         if (m_input.program && m_input.universe && m_input.nodes)
             prepareSaturation();
     }
-    // The rules ask for each of these again and again, from every thread.
     constexpr size_t operandsInStretch = 1 << 16;
     Vector<Vector<uint32_t>> masksInStretches((m_input.operands.size() + operandsInStretch - 1) / operandsInStretch);
     forEachIndexInParallel(loops, masksInStretches.size(), [&](unsigned stretch) {
@@ -272,7 +258,6 @@ ALWAYS_INLINE ValueFlowNodeID ValueFlowSolver::nodeAwaitedBy(ValueFlowStatementI
     const ValueFlowOperand& first = m_input.operands[statement.firstOperand];
     if (!first.node || (first.constant && first.constant != ValueSets::nothing) || m_graph.valueOf(first.node) != ValueSets::nothing)
         return { };
-    // The statements of such a function run on the nodes of its instances.
     if (m_input.instancedFunctions && m_input.instancedFunctions->find(statement.function))
         return { };
     return first.node;
@@ -328,7 +313,6 @@ void ValueFlowSolver::IndexOfMadeNodes::add(std::atomic<Table>& current, uint32_
     if (tables.isEmpty() || (size + 1) * 2 > tables.last().numberOfSlots()) {
         size_t numberOfSlots = tables.isEmpty() ? fewestSlots : tables.last().numberOfSlots() * 2;
         Table larger { static_cast<Slot*>(fastAlignedMalloc(64, numberOfSlots * sizeof(Slot))), static_cast<unsigned>(std::countr_zero(numberOfSlots)) };
-        // Written, not asked for as zeroes: a page that is read before it is written costs a second fault, which stops every thread.
         zeroSpan(slotsOf(larger));
         if (!tables.isEmpty()) {
             for (const Slot& slot : slotsOf(tables.last())) {
@@ -408,7 +392,6 @@ void ValueFlowSolver::makeDue(ValueFlowStatementID statement)
 
 void ValueFlowSolver::listIfItMayBecomeDue(ValueFlowStatementID statement, Vector<ValueFlowStatementID>& list) const
 {
-    // On any thread: whoever marks it lists it, so no two lists hold one statement.
     if (isAtRest(statement) || m_isDue.get(statement.index()) || m_isDue.set(statement.index()))
         return;
     list.append(statement);
@@ -536,7 +519,6 @@ void ValueFlowSolver::StepTimes::dump() const
     dataLogLn("AOT flow loop over due statements | busy on all threads ", busyOnAllThreads.milliseconds(), " ms | the busiest thread of each turn ", busiestThreadOfTurn.milliseconds(), " ms | the longest share of each turn ", longestShareOfTurn.milliseconds(), " ms");
 }
 
-// A statement that runs marks itself as run before it stops being due, and whoever makes it due looks in the other order: so it either sees what has happened or runs again in the next turn.
 void ValueFlowSolver::makeDueInRunningLoop(Thread& thread, ValueFlowStatementID statement)
 {
     if (isAtRest(statement) || m_isDue.setInOrder(statement.index()))
@@ -574,7 +556,6 @@ void ValueFlowSolver::reachFunctionsFoundBy(Thread& thread)
     }
 }
 
-// The statements of a function that a run reaches join the loop. A further lap runs only what few threads found when the others had gone.
 void ValueFlowSolver::runDueStatements(bool isFirstLapOfTurn)
 {
     AOT_THRESHOLD(size_t, mostStatementsPerShare, 32);
@@ -582,8 +563,6 @@ void ValueFlowSolver::runDueStatements(bool isFirstLapOfTurn)
     constexpr size_t sharesPerThread = 4;
     Vector<ValueFlowStatementID> due = std::exchange(m_due, Vector<ValueFlowStatementID>());
     growByDoubling(m_hasRunInTurn, numberOfStatements());
-    // One dear statement costs as much as thousands of others. Each has a thread to itself from the start, and the others fill the threads beside them. Who runs what makes no difference to what is logged.
-    // Under a seed, and behind long rows, some that are due wait outside the list.
     Vector<ValueFlowStatementID, 16> dearStatements;
     for (ValueFlowStatementID statement : m_dearStatements) {
         if (m_isDue.get(statement.index()) && !m_hasRunInTurn.get(statement.index()) && ((!m_seedOfSchedule && m_dueBehindLongRows.isEmpty()) || due.contains(statement)))
@@ -593,7 +572,6 @@ void ValueFlowSolver::runDueStatements(bool isFirstLapOfTurn)
     uint64_t edgesLogged = m_counters.edgesLogged;
     for (const std::unique_ptr<Thread>& thread : m_threads)
         edgesLogged += thread->log.edges.size();
-    // Where sets can be given up no edge is dropped: which edges a thread drops depends on what else it has run.
     for (const std::unique_ptr<Thread>& thread : m_threads)
         thread->log.mostEdges = m_saturates ? UINT64_MAX : thread->log.edges.size() + (m_input.mostEdgesLogged - std::min(edgesLogged, m_input.mostEdgesLogged));
     size_t statementsPerShare = std::clamp<size_t>(due.size() / (m_threads.size() * sharesPerThread), 1, mostStatementsPerShare);
@@ -747,7 +725,6 @@ void ValueFlowSolver::findStatementsWithLongRowsBehindThem()
                 const ValueFlowStatement& statement = m_input.statements[index];
                 if (lengthBehind[index] >= fewestStatementsOfLongRow)
                     foundOfShare[share].append(index);
-                // As in nodeAwaitedBy().
                 if (statement.kind != ValueFlowStatementKind::Operation || !statement.operandCount || (statement.opcode != Opcode::PropGet && statement.opcode != Opcode::Call && statement.opcode != Opcode::Construct))
                     continue;
                 const ValueFlowOperand& operand = m_input.operands[statement.firstOperand];
@@ -769,7 +746,6 @@ void ValueFlowSolver::findStatementsWithLongRowsBehindThem()
     }
 }
 
-// Whatever else is due waits until no statement with a long row behind it is.
 void ValueFlowSolver::letLongRowsGoFirst()
 {
     if (m_numberDueWithLongRows.exchange(0, std::memory_order_relaxed)) {
@@ -796,7 +772,6 @@ void ValueFlowSolver::letLongRowsGoFirst()
     m_due = std::exchange(m_dueBehindLongRows, { });
 }
 
-// About half of the due statements, chosen by the seed, wait for a later round. Nothing is dropped: whoever waits stays due, and the solve does not end while a statement waits.
 void ValueFlowSolver::letSomeDueStatementsWait()
 {
     m_due.appendVector(std::exchange(m_dueStatementsThatWait, { }));
@@ -853,12 +828,10 @@ bool ValueFlowSolver::runRules()
 }
 
 
-// Makes the nodes of some keys beside the other makers. What it makes has the numbers that follow what was there before all of them; takeWhatWasMade() moves them up behind the makers before it.
 class ValueFlowSolver::NodeMaker {
     WTF_MAKE_NONCOPYABLE(NodeMaker);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NodeMaker);
 public:
-    // The nodes of `key` are wanted by those of `madeNodes`: they are its parts once they are there.
     struct Wish {
         uint32_t madeNodes { 0 };
         ValueFlowNodeKey key;
@@ -886,7 +859,6 @@ public:
     {
         return kind == ValueFlowMadeNodeKind::Read || kind == ValueFlowMadeNodeKind::Written || kind == ValueFlowMadeNodeKind::ReadUnderKind || kind == ValueFlowMadeNodeKind::WrittenUnderKind;
     }
-    // Only a node that reads or writes many objects brings others with it, and those have its name: see makeUnionWithEarlierNode().
     static bool mayBringOthers(const ValueSets& sets, const ValueFlowNodeKey& key)
     {
         return readsOrWrites(key.kind) && !ValueSets::isComplement(key.set) && sets.size(key.set) > mostObjectsLookedUpOneByOne;
@@ -896,7 +868,6 @@ public:
         return makerOfName(mayBringOthers(sets, toMake.key) ? nameOf(toMake.key) : nameOf(toMake.key) ^ toMake.hashOfMembers);
     }
 
-    // The keys of a name stand in a row.
     void run(std::span<KeyToMake> all, ValueSetMaker& maker, bool mayBeThereAsParts = false)
     {
         m_maker = &maker;
@@ -931,7 +902,6 @@ public:
     ValueFlowStatementID statementMovedUp(ValueFlowStatementID statement) const { return statement ? ValueFlowStatementID(movedUp(statement.index(), m_firstStatement, statementsBefore)) : statement; }
     uint32_t partMovedUp(uint32_t position) const { return movedUp(position, m_firstPart, partsBefore); }
 
-    // Positions among all the keys to make.
     Vector<uint32_t> keys;
     Vector<MadeNodes> madeNodes;
     uint32_t numberOfNodes { 0 };
@@ -947,7 +917,6 @@ public:
     Vector<uint32_t> stayingAtRest;
     Vector<Masked> masked;
 
-    // What the makers before this one have made.
     uint32_t madeNodesBefore { 0 };
     uint32_t nodesBefore { 0 };
     uint32_t statementsBefore { 0 };
@@ -1016,7 +985,6 @@ private:
         (isRead ? readToLink : writtenToLink).append(NodeToLink { { key.set, at(number).first }, key.name(), standsForKind });
     }
 
-    // While somebody asks for a node that reads or writes, it asks for the node that stands for its kind.
     void joinNodeUnderKind(uint32_t number)
     {
         const ValueFlowNodeKey& key = at(number).key;
@@ -1056,7 +1024,6 @@ private:
             listToLink(number);
             break;
         case ValueFlowMadeNodeKind::Lookup:
-            // What lies above a set of objects is what lies above each of them.
             m_setsOfParts.shrink(0);
             if (key.name().kind == ValueFlowNameKind::PrototypeLink)
                 m_maker->appendParts(key.set, m_setsOfParts);
@@ -1066,7 +1033,6 @@ private:
                 makeStatement(number, ValueFlowStatementKind::Lookup, first, { });
             break;
         case ValueFlowMadeNodeKind::CallGroup: {
-            // The group of a big set of callees hands on to the groups of the parts of the set.
             m_setsOfParts.shrink(0);
             m_maker->appendParts(key.set, m_setsOfParts);
             for (ValueSetID part : m_setsOfParts)
@@ -1094,7 +1060,6 @@ private:
         return number;
     }
 
-    // The sets that the sites of a program ask for under one name are mostly no supersets of one another: they have a core in common, and each has a few members of its own.
     bool makeUnionOfCoreAndOthers(uint32_t number, size_t sizeOfEarlierSubset, std::span<const uint32_t> similar)
     {
         ValueFlowNodeKey key = at(number).key;
@@ -1102,7 +1067,6 @@ private:
         uint32_t sharingMost = noSolverIndex;
         size_t sizeOfCore = std::max<size_t>({ sizeOfEarlierSubset, size / 2, mostObjectsLookedUpOneByOne });
         for (uint32_t candidate : similar) {
-            // What two sets share is no larger than either.
             if (m_sets.size(at(candidate).key.set) <= sizeOfCore)
                 continue;
             size_t shared = m_sets.numberOfCommonMembers(key.set, at(candidate).key.set);
@@ -1131,7 +1095,6 @@ private:
         return true;
     }
 
-    // A set that climbs is asked for again round after round, each time with a few members more, and linking a node of many objects costs a look at every node on the other side.
     bool makeUnionWithEarlierNode(uint32_t number)
     {
         constexpr size_t mostLeaves = 64;
@@ -1164,7 +1127,6 @@ private:
         std::ranges::copy_backward(latest.begin(), latest.end() - 1, latest.end());
         latest[0] = position;
 
-        // Many sites ask under one name in turn, and each of their sets climbs by itself. A set holds most of the blocks of its earlier self.
         std::array<uint64_t, 4> sample = nodes.sampleOfSet.ensure(key.set.index(), [&] {
             return m_sets.sampleOfBlocks(key.set);
         }).iterator->value;
@@ -1219,7 +1181,6 @@ private:
     const uint32_t m_firstNode;
     const uint32_t m_firstStatement;
     const uint32_t m_firstPart;
-    // Of what was made under the name at hand, once something is looked for.
     HashedIndex m_byKey;
     size_t m_numberFoundByKey { 0 };
     uint64_t m_name { UINT64_MAX };
@@ -1352,7 +1313,6 @@ void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>
             m_graph.startWithValueOf(made.first, made.key.maskedNode());
         }
         for (uint32_t number : maker->instances) {
-            // What stands in the way of a value at the node stands in its way here.
             const MadeNodes& made = m_madeNodes[maker->madeNodesMovedUp(number)];
             ValueFlowNodeID node = made.key.nodeOfInstance();
             if (m_graph.maskOf(node) != ValueSets::anything)
@@ -1379,7 +1339,6 @@ void ValueFlowSolver::makeNodesOf(std::span<KeyToMake> keys)
         takeWhatWasMade(makers.span(), keys);
         wishes = WTF::move(makers[0]->wishes);
     } else {
-        // The maker of each key, and in the highest bit whether the key may bring others.
         constexpr size_t keysPerShare = 256;
         Vector<uint8_t> makerOfKey(keys.size());
         static_assert(numberOfNodeMakers <= 128);
@@ -1387,7 +1346,6 @@ void ValueFlowSolver::makeNodesOf(std::span<KeyToMake> keys)
             for (size_t index = share * keysPerShare; index < std::min(keys.size(), (share + 1) * keysPerShare); ++index)
                 makerOfKey[index] = NodeMaker::makerOf(m_sets, keys[index]) | (NodeMaker::mayBringOthers(m_sets, keys[index].key) ? 128 : 0);
         });
-        // First the keys that may bring others with them, each name by one maker. Then the others, any of which may have come as a part.
         for (bool bringOthers : { true, false }) {
             Vector<std::unique_ptr<NodeMaker>> makers(numberOfNodeMakers, [&](size_t) {
                 return makeUnique<NodeMaker>(*this);
@@ -1454,7 +1412,6 @@ void ValueFlowSolver::makeNodesOf(std::span<KeyToMake> keys)
         m_stepTimes.didFinish("rules: made: wishes looked up again"_s);
     }
 
-    // The wishes of one node stand in a row.
     size_t firstPart = m_partsOfMadeNodes.size();
     makeRoomByDoubling(m_partsOfMadeNodes, wishes.size());
     m_partsOfMadeNodes.grow(firstPart + wishes.size());
@@ -1527,7 +1484,6 @@ void ValueFlowSolver::runStatementsMadeBy(Thread& thread)
     }
 }
 
-// Whoever asks for a record that is at rest runs its statement behind its own run, as it does for a record that it makes: no further turn. The books at the end of the turn wake the record.
 void ValueFlowSolver::runStatementsWokenBy(Thread& thread)
 {
     ValueFlowRoundLog& log = thread.log;
@@ -1573,7 +1529,6 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
 
     MadeNodes made { key, { }, { } };
     made.staysAtRest = key.set == ValueSets::nothing && (key.kind == ValueFlowMadeNodeKind::Written || key.kind == ValueFlowMadeNodeKind::CallGroup);
-    // What lies above a set of objects is what lies above each of them, and the group of a big set of callees hands on to the groups of the parts of the set.
     Vector<ValueSetID> setsOfParts;
     bool mayHaveParts = key.kind == ValueFlowMadeNodeKind::CallGroup || (key.kind == ValueFlowMadeNodeKind::Lookup && key.name().kind == ValueFlowNameKind::PrototypeLink);
     if (mayHaveParts && !made.staysAtRest)
@@ -1624,7 +1579,6 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     if (made.staysAtRest)
         return number;
 
-    // Outside the lock: a part has a lock of its own.
     Vector<uint32_t, 8> parts;
     auto join = [&](const ValueFlowNodeKey& keyOfPart) {
         std::optional<uint32_t> part = findOrMakeNodesWhereAskedFor(keyOfPart, keyOfPart.hash(), log, maker);
@@ -1645,7 +1599,6 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     switch (key.kind) {
     case ValueFlowMadeNodeKind::Read:
     case ValueFlowMadeNodeKind::Written: {
-        // While somebody asks for a node that reads or writes, it asks for the node that stands for its kind.
         bool isRead = key.kind == ValueFlowMadeNodeKind::Read;
         const KindOfNames& kind = m_kindsOfNames[static_cast<unsigned>(key.name().kind)];
         if (isRead ? kind.writtenKindsItMayFind : kind.readKindsThatMayFindIt)
@@ -1676,7 +1629,6 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     return number;
 }
 
-// What NodeMaker and takeWhatWasMade() do for the keys of the logs, for the records that the rules of the turn have written.
 void ValueFlowSolver::takeWhatRulesHaveMade()
 {
     for (IndexOfMadeNodes& index : m_madeNodesByKey)
@@ -1708,7 +1660,6 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
         makeRoomByDoubling(list, more);
         list.grow(list.size() + more);
     };
-    // With the numbers that threads hold and have not given yet.
     uint32_t statements = m_nextStatement.load(std::memory_order_relaxed) - numberOfStatements();
     m_graph.addNodes(m_nextNode.load(std::memory_order_relaxed) - m_graph.numberOfNodes());
     growAndFill(m_numberOfUsers, m_madeNodes.size(), 0u);
@@ -1738,7 +1689,6 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
                 m_madeStatements[position] = MadeStatement { statementMadeWith(made), key };
                 m_madeNodesOfStatement[position] = number;
             }
-            // A masked node stays of this turn until it has its mask.
             made.isOfThisTurn = key.kind == ValueFlowMadeNodeKind::Masked;
             if (made.staysAtRest) {
                 m_graph.putToRest(made.first, key.numberOfNodes());
@@ -1784,7 +1734,6 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
     m_readToLink.makeRoomToFill(readToLink - m_readToLink.size());
     m_writtenToLink.makeRoomToFill(writtenToLink - m_writtenToLink.size());
 
-    // The parts of a whole stand in a row in the log of the thread that has made it.
     Vector<size_t> firstPartOfThread;
     Vector<size_t> firstEdgeOfThread;
     size_t parts = m_partsOfMadeNodes.size();
@@ -1820,7 +1769,6 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
         log.edgesOfMadeNodes.shrink(0);
     });
 
-    // A masked node begins with what the node that it masks holds. Where that is a masked node of this turn too, it comes first.
     Vector<NodeMaker::Masked> masked;
     for (const Share& share : shares)
         masked.appendVector(share.masked);
@@ -1845,7 +1793,6 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
             toStart.append(ValueFlowEdge { node, made.first });
             started.append(toMask.madeNodes);
         }
-        // Whoever waits for one of these looks at it in the next walk.
         m_graph.startWithValuesOf(toStart.span());
         for (uint32_t number : started)
             m_madeNodes[number].isOfThisTurn = false;
@@ -1854,7 +1801,6 @@ void ValueFlowSolver::takeWhatRulesHaveMade()
     }
     for (const Share& share : shares) {
         for (uint32_t number : share.instances) {
-            // What stands in the way of a value at the node stands in its way here.
             const MadeNodes& made = m_madeNodes[number];
             ValueFlowNodeID node = made.key.nodeOfInstance();
             if (m_graph.maskOf(node) != ValueSets::anything)
@@ -1878,7 +1824,6 @@ void ValueFlowSolver::fillNumbersThatNobodyGave()
         }
         log.recordsToGive = { };
     }
-    // A record stands for a node and a node has a record.
     while (records.size() < nodes.size())
         records.append(m_madeNodes.makeRoomToFill(1));
     if (nodes.size() < records.size()) {
@@ -1922,7 +1867,6 @@ ValueFlowNodeID ValueFlowSolver::ensureConstant(ValueSetID set)
     return makeNodes(key);
 }
 
-// The nodes that the logs have made get their numbers in an order that depends on their keys alone, and a set counts in it by its members, not by its number.
 void ValueFlowSolver::numberMadeNodes()
 {
     struct Candidate {
@@ -1950,7 +1894,6 @@ void ValueFlowSolver::numberMadeNodes()
     Vector<KeyToMake> keysToMake;
     Vector<uint32_t> madeNodesOfCandidate;
     for (bool isFirstPass = true;; isFirstPass = false) {
-        // The key of a masked node names another node, which has to have its number first.
         auto gatherCandidatesOf = [&](unsigned thread) {
             candidatesOfThread[thread].shrink(0);
             waiting[thread].removeAllMatching([&](uint32_t position) {
@@ -1988,7 +1931,6 @@ void ValueFlowSolver::numberMadeNodes()
             return orderOf(first) < orderOf(second);
         });
         m_stepTimes.didFinish("rules: made: candidates sorted"_s);
-        // Of the first candidate with a key: the nodes that are there, or where the key stands among those to make, with the highest bit set.
         constexpr uint32_t isToMake = 1u << 31;
         unsigned numberOfShares = (candidates.size() + candidatesPerShare - 1) / candidatesPerShare;
         keysToMakeOfShare.resize(numberOfShares);
@@ -1999,7 +1941,6 @@ void ValueFlowSolver::numberMadeNodes()
                 const Candidate& candidate = candidates[index];
                 if (index && candidates[index - 1].key == candidate.key)
                     continue;
-                // A rule logs a key only after it has looked for it among the made nodes, and none has been made since. What waited for a node of this turn was not looked for.
                 ASSERT(!isFirstPass || !findNumberOfMadeNodes(candidate.key));
                 if (std::optional<uint32_t> existing = isFirstPass ? std::nullopt : findNumberOfMadeNodes(candidate.key)) {
                     madeNodesOfCandidate[index] = *existing;
@@ -2064,13 +2005,11 @@ static bool hasFewObjects(const ValueSets& sets, ValueSetID set)
     return !ValueSets::isComplement(set) && sets.size(set) <= mostObjectsOfFew;
 }
 
-// By name, side and whether the nodes listed have few objects: what the chains of members are found under. The number of a name and that of a member have 31 bits each.
 static uint64_t tableOfMembers(uint32_t numberOfName, bool isRead, bool hasFew)
 {
     return static_cast<uint64_t>(numberOfName) << 33 | static_cast<uint64_t>(isRead) << 32 | static_cast<uint64_t>(hasFew) << 31;
 }
 
-// A node at rest is passed over: it is linked when it wakes.
 void ValueFlowSolver::link(const NodeOfSet& node, bool isRead, NodesOfName& others, uint32_t numberOfName, Linked& linked)
 {
     auto connect = [&](ValueFlowNodeID other) {
@@ -2107,7 +2046,6 @@ void ValueFlowSolver::link(const NodeOfSet& node, bool isRead, NodesOfName& othe
     };
 
     connectWhereSetsMeet(others.ofVeryManyObjects);
-    // Two nodes of many objects may share many: one look at the pair is cheaper than finding it once for each.
     if (hasFewObjects(m_sets, node.set) && !others.ofManyObjects.isEmpty())
         connectByMembers(false);
     else
@@ -2155,12 +2093,10 @@ void ValueFlowSolver::insert(const NodeToLink& toLink, bool isRead, NodesOfName&
         m_sets.forEachMember(node.set, add);
 }
 
-// What is written through a set reaches what is read under a name that may be the same through every set that shares an object with it. Each pair of nodes is looked at once, when the later of the two is made.
 void ValueFlowSolver::prepareNodesToLink()
 {
     constexpr size_t nodesPerShare = 2048;
     for (ListWithRoomToFill<NodeToLink>* list : { &m_writtenToLink, &m_readToLink }) {
-        // All that waits for memory and asks nobody: on all threads. A shard has one thread when its nodes go into the tables.
         Vector<Vector<uint32_t>> withNewNamesOfShare((list->size() + nodesPerShare - 1) / nodesPerShare);
         forEachIndexInParallel(m_loops, withNewNamesOfShare.size(), [&](unsigned share) {
             for (NodeToLink& toLink : list->mutableSpan().subspan(share * nodesPerShare, std::min(nodesPerShare, list->size() - share * nodesPerShare))) {
@@ -2179,7 +2115,6 @@ void ValueFlowSolver::prepareNodesToLink()
                     withNewNamesOfShare[share].append(static_cast<uint32_t>(&toLink - list->mutableSpan().data()));
             }
         });
-        // The new names, in the order of the list.
         for (const Vector<uint32_t>& withNewNames : withNewNamesOfShare) {
             for (uint32_t index : withNewNames) {
                 NodeToLink& toLink = (*list)[index];
@@ -2189,7 +2124,6 @@ void ValueFlowSolver::prepareNodesToLink()
     }
 }
 
-// A shard first with its nodes that write, then with those that read.
 void ValueFlowSolver::linkNamedNodes(unsigned numberOfShard, bool isRead)
 {
     Linked& linked = m_linkShards[numberOfShard].linked;
@@ -2229,13 +2163,11 @@ void ValueFlowSolver::insertNode(const NodeToLink& toLink, bool isRead)
     insert(toLink, isRead, isRead ? m_kindsOfNames[kind].read : m_kindsOfNames[kind].written);
 }
 
-// Linking a node reads the tables of the other side alone, so the nodes of one side are linked on all threads, whatever their names. They go into the tables of their own side afterwards.
 void ValueFlowSolver::linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOESCAPE const ScopedLambda<void(unsigned task, unsigned worker)>& otherTask)
 {
     constexpr size_t nodesPerChunk = 16;
     const ListWithRoomToFill<NodeToLink>& toLink = isRead ? m_readToLink : m_writtenToLink;
     size_t numberOfChunks = (toLink.size() + nodesPerChunk - 1) / nodesPerChunk;
-    // One dear node takes as long as thousands of others. Each is a task of its own, and they come first: a loop lasts as long as the task that ends last.
     Vector<uint32_t> dearNodes;
     for (size_t index = 0; index < toLink.size(); ++index) {
         if (toLink[index].isDearToLink)
@@ -2305,7 +2237,6 @@ void ValueFlowSolver::finishInsertionOfNodesThatRead()
         task->finish();
 }
 
-// Shard by shard, so that the order of the edges does not depend on who was done first.
 void ValueFlowSolver::takeEdgesOfLinkShards()
 {
     for (LinkShard& shard : m_linkShards) {
@@ -2483,7 +2414,6 @@ void ValueFlowSolver::listReadersOfWatch(const WatchShard& shard, uint32_t watch
     }
 }
 
-// The watches of single members are left to whoever goes through the new members: one node may get a hundred thousand of them at once.
 void ValueFlowSolver::listWatchersOf(ValueFlowNodeID node, ValueSetMaker& maker, Vector<ValueFlowStatementID>& readers, Vector<NewMemberOfWatchedNode>& newMembers, Vector<WatchesToTest>& watchesToTest)
 {
     if (holdsWhatPlaceholderCovers(node)) {
@@ -2530,7 +2460,6 @@ void ValueFlowSolver::listWatchersOf(ValueFlowNodeID node, ValueSetMaker& maker,
         watchesToTest.append({ numberOfShard, number, whatIsNew });
 }
 
-// Answers the list of uses with one more in front.
 ALWAYS_INLINE uint32_t ValueFlowSolver::takeUse(UsesOfThread& uses)
 {
     constexpr size_t usesInBlock = 256;
@@ -2561,7 +2490,6 @@ void ValueFlowSolver::letThreadsTakeUses()
     m_numberOfFreeUsesLeft.store(m_freeUses.size(), std::memory_order_relaxed);
 }
 
-// What a thread has taken and not given out is free again.
 void ValueFlowSolver::takeBackUsesOfThreads()
 {
     Vector<uint32_t, 64> left;
@@ -2574,7 +2502,6 @@ void ValueFlowSolver::takeBackUsesOfThreads()
     m_freeUses.appendVector(left);
 }
 
-// While somebody asks for nodes, they ask for their parts. The counts are raised by whoever comes; whoever raises one from zero takes up the parts of those nodes at once.
 void ValueFlowSolver::takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& nodes)
 {
     if (nodes.isEmpty())
@@ -2613,7 +2540,6 @@ void ValueFlowSolver::takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& nodes)
             const MadeNodes& madeNodes = m_madeNodes[number];
             --m_counters.madeNodesAtRest;
             m_graph.wake(madeNodes.first, madeNodes.key.numberOfNodes());
-            // Nothing was linked to it while it was at rest.
             switch (madeNodes.key.kind) {
             case ValueFlowMadeNodeKind::Read:
             case ValueFlowMadeNodeKind::Written:
@@ -2639,7 +2565,6 @@ void ValueFlowSolver::takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& nodes)
     }
 }
 
-// Nodes that nobody asks for any more go to rest, and let go of their parts and of what their statement has asked for: whoever brings a count to zero does that at once.
 void ValueFlowSolver::letGoOf(Vector<uint32_t>&& lists)
 {
     if (lists.isEmpty())
@@ -2665,7 +2590,6 @@ void ValueFlowSolver::letGoOf(Vector<uint32_t>&& lists)
                 MadeNodes& madeNodes = m_madeNodes[number];
                 madeNodes.hasBeenAtRest = true;
                 m_graph.putToRest(madeNodes.first, madeNodes.key.numberOfNodes());
-                // What its statement has asked for is no longer asked for by it. Once it wakes it has to ask for all of that again, so it is shown everything again.
                 if (madeNodes.statement) {
                     if (uint32_t list = std::exchange(m_firstUseOfStatement[madeNodes.statement.index()], noSolverIndex); list != noSolverIndex)
                         toLetGo.append(list);
@@ -2709,11 +2633,9 @@ void ValueFlowSolver::noteFunctionsAsked()
     }
 }
 
-// After each turn, in which a statement runs once at the most: its last run says what the statement asks for.
 void ValueFlowSolver::noteNodesAskedFor()
 {
     growAndFill(m_firstUseOfStatement, numberOfStatements(), noSolverIndex);
-    // A statement runs once in a turn at the most, so nothing that is looked at here changes before all logs are through.
     constexpr size_t runsPerShare = 256;
     struct ShareOfRuns {
         unsigned thread { 0 };
@@ -2764,7 +2686,6 @@ void ValueFlowSolver::noteNodesAskedFor()
                 }
                 share.askedForAnew.append(madeNodes);
             }
-            // A run that was shown only what is new in a node has asked on behalf of that alone. What the runs before it have asked for stays asked for.
             bool addsToEarlierRuns = std::exchange(valuesShown, run.endOfValuesShown) < run.endOfValuesShown;
             if (!addsToEarlierRuns) {
                 uint32_t use = m_firstUseOfStatement[run.statement.index()];
@@ -2778,7 +2699,6 @@ void ValueFlowSolver::noteNodesAskedFor()
             }
             share.runsThatAskAnew.append({ number, static_cast<uint32_t>(share.askedForAnew.size()), addsToEarlierRuns });
         }
-        // A statement has one run in a turn, so its list has one writer. The counts are raised by whoever comes; whoever raises one from zero says so.
         uint32_t next = 0;
         for (const Thread::RunThatAsksAnew& asksAnew : share.runsThatAskAnew) {
             uint32_t& firstUse = m_firstUseOfStatement[thread.log.runs[asksAnew.run].statement.index()];
@@ -2805,7 +2725,6 @@ void ValueFlowSolver::noteNodesAskedFor()
         thread.numberOfNodesAskedForTaken = thread.log.runs[share.endOfRuns - 1].endOfNodesAskedFor;
         for (const Thread::RunThatAsksAnew& asksAnew : share.runsThatAskAnew) {
             const ValueFlowRoundLog::Run& run = thread.log.runs[asksAnew.run];
-            // The runs in between were shown nothing of this sort: they would be among these.
             for (; thread.numberOfValuesShownTaken < run.endOfValuesShown; ++thread.numberOfValuesShownTaken) {
                 ValueFlowNodeSet shown = thread.log.valuesShown[thread.numberOfValuesShownTaken];
                 shown.node = thread.numberInGraph(shown.node);
@@ -2828,7 +2747,6 @@ void ValueFlowSolver::noteNodesAskedFor()
         usesBefore.appendVector(share.usesBefore);
     }
     takeUpPartsOfNodesWithFirstUser(WTF::move(nodesWithFirstUser));
-    // Afterwards, so that what one statement lets go of and another one takes up does not go to rest in between, whichever of the two comes first.
     letGoOf(WTF::move(usesBefore));
 }
 
@@ -2897,7 +2815,6 @@ void ValueFlowSolver::countRunsAndEdges()
             m_runsAndEdges[index].edgesLogged += row.edgesLogged;
         }
         for (auto [statement, isDear] : counts.statementsThatTurnDearOrCheap) {
-            // A statement that has run in several turns of the round may stand in several logs.
             if (m_isDear.get(statement.index()) == isDear)
                 continue;
             m_isDear.set(statement.index(), isDear);
@@ -2961,7 +2878,6 @@ Vector<ValueFlowNodeID> ValueFlowSolver::explain(ValueFlowNodeID start, ValueFlo
     if (!m_sets.contains(valueOf(start), member))
         return { };
 
-    // Breadth first, against the edges, through the nodes that hold what is looked for: the member, and behind a mask that has put the member in the place of a placeholder, the placeholder.
     struct Step {
         ValueFlowNodeID node;
         ValueFlowObjectID lookedFor;
@@ -2986,7 +2902,6 @@ Vector<ValueFlowNodeID> ValueFlowSolver::explain(ValueFlowNodeID start, ValueFlo
         auto goOnThroughHoldersOf = [&](ValueFlowObjectID lookedFor) {
             bool hasHolder = false;
             for (ValueFlowNodeID predecessor : predecessors) {
-                // What is kept out of a node that is made for the unknown object has come by it all the same.
                 bool hasComeBy = m_sets.contains(m_objectsLookedForBesideUnknownObject, lookedFor) && isMadeForUnknownObject(predecessor);
                 if (!hasComeBy && !m_sets.contains(valueOf(predecessor), lookedFor))
                     continue;
@@ -3032,7 +2947,6 @@ bool ValueFlowSolver::merge()
     bool hasReached = !m_bodiesReachedInRound.isEmpty();
 
     m_sets.freeOutgrownTables();
-    // Both read the logs. Neither asks for what the other one makes, and much of each runs on one thread.
     auto takeEdgesOfLogsAndBodies = [&] {
     Vector<size_t> firstEdgeOfLog;
     size_t numberOfEdgesOfRound = m_edgesOfRound.size();
@@ -3053,7 +2967,6 @@ bool ValueFlowSolver::merge()
     AOT::sort(m_bodiesReachedInRound);
     Vector<ValueFlowNodeSet> seeds;
     Vector<KeyToMake> constantsToMake;
-    // By the set: the node that holds it; none until it is made.
     HashMap<uint32_t, ValueFlowNodeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> holding;
     for (uint32_t body : m_bodiesReachedInRound) {
         const ValueFlowBodyRange& range = m_input.ranges[body];
@@ -3087,7 +3000,6 @@ bool ValueFlowSolver::merge()
         holding.set(made.key.set.index(), m_madeNodes[made.madeNodes].first);
     for (const ValueFlowNodeSet& seed : seeds)
         m_edgesOfRound.append(ValueFlowEdge { holding.get(seed.set.index()), seed.node });
-    // What the rule of a statement that waits would have said: unknownValue(ThrownByRunTime) into `thrown`.
     ValueFlowNodeID holdingWhatRunTimeThrows;
     for (const std::unique_ptr<Thread>& thread : m_threads) {
         if (thread->thrownOfStatementsThatWait.isEmpty())
@@ -3116,7 +3028,6 @@ bool ValueFlowSolver::merge()
     });
     m_stepTimes.didFinish("merge: runs and edges counted, beside"_s);
 
-    // Linking fills the tables of names and the edges of the graph.
     growAndFill(m_firstReaderOfNode, m_graph.numberOfNodes(), noSolverIndex);
     growAndFill(m_seenByReadersOfNode, m_graph.numberOfNodes(), ValueSets::nothing);
     growAndFill(m_listenersOfNode, m_graph.numberOfNodes(), static_cast<uint8_t>(0));
@@ -3232,7 +3143,6 @@ ValueSetID ValueFlowSolver::withoutWhatOtherMembersCover(ValueSetID value, Value
 
 ValueSetID ValueFlowSolver::valueForReadersOf(ValueFlowNodeID node, ValueSetMaker& maker) const
 {
-    // A node of this turn holds nothing yet, whether it has its number from a log or from the solver.
     if (node.index() >= m_graph.numberOfNodes())
         return ValueSets::nothing;
     if (node.index() < m_firstReaderOfNode.size() && m_firstReaderOfNode[node.index()] != noSolverIndex)
@@ -3252,7 +3162,6 @@ ValueSetID ValueFlowSolver::valueShownTo(ValueFlowStatementID statement, ValueFl
     return ValueSets::nothing;
 }
 
-// A mask that admits an object of which somebody says that it is something else than an object with a layout of the program or a closure is the mask of a type that other code makes values of too.
 ValueSetID ValueFlowSolver::findFamilyObjectsOf(ValueSetID mask, ValueSetMaker& maker) const
 {
     ValueSetID listed = maker.intersect(mask, m_objectsSaidToBeSomething);
@@ -3267,7 +3176,6 @@ ValueSetID ValueFlowSolver::familyObjectsOf(ValueSetID mask, ValueSetMaker& make
 
 void ValueFlowSolver::noteWhatPlaceholdersCover()
 {
-    // The untracked object among what was handed to code that nobody compiles may be any object that it stands for.
     if (m_input.escaped && m_input.lost && m_input.placeholders.untracked && !m_haveLostObjectsEscaped && m_sets.contains(valueOf(m_input.escaped), m_input.placeholders.untracked)) {
         m_haveLostObjectsEscaped = true;
         m_edgesOfRound.append(ValueFlowEdge { m_input.lost, m_input.escaped });
@@ -3276,7 +3184,6 @@ void ValueFlowSolver::noteWhatPlaceholdersCover()
         covering.allButCovered = ValueSets::complement(m_makers[0]->intersect(valueOf(covering.covered), covering.objectsThatMayBeCovered));
 }
 
-// Behind a type that names objects of the program alone an object nobody knows is one of those objects, and of those one that the placeholder covers: one that has escaped, or that the analysis has stopped following.
 void ValueFlowSolver::connectWhatStoppedPlaceholdersCover()
 {
     m_graph.takeNodesAtWhichPlaceholdersStopped(m_placeholdersStopped);
@@ -3290,7 +3197,6 @@ void ValueFlowSolver::connectWhatStoppedPlaceholdersCover()
     }
 }
 
-// In which order the statements become due makes no difference: a turn runs all that are due, each on whichever thread takes it.
 void ValueFlowSolver::makeReadersDue(std::span<const ValueFlowNodeID> moved)
 {
     constexpr size_t nodesPerShare = 256;
@@ -3329,7 +3235,6 @@ void ValueFlowSolver::makeReadersDue(std::span<const ValueFlowNodeID> moved)
             }
             if (!(listeners & ReadsNode))
                 continue;
-            // What the readers of the node are shown from now on.
             ValueSetID value = withoutWhatOtherMembersCover(node, maker);
             if (m_sets.isSubset(value, m_seenByReadersOfNode[node.index()]))
                 continue;
@@ -3369,7 +3274,6 @@ void ValueFlowSolver::makeReadersDue(std::span<const ValueFlowNodeID> moved)
         }
     });
 
-    // One node may have thousands of watches of many objects.
     constexpr uint32_t watchesPerShare = 128;
     struct ShareOfWatches {
         WatchesToTest watches;
@@ -3395,7 +3299,6 @@ void ValueFlowSolver::makeReadersDue(std::span<const ValueFlowNodeID> moved)
         }
     });
 
-    // Whether a statement is at rest was looked at where it was listed, and there it was marked.
     size_t numberFound = 0;
     for (const Vector<ValueFlowStatementID>& found : readersOfWorker)
         numberFound += found.size();
@@ -3406,7 +3309,6 @@ void ValueFlowSolver::makeReadersDue(std::span<const ValueFlowNodeID> moved)
     }
 }
 
-// What counts is what the results count: five hundred sites of one layout are a good answer.
 void ValueFlowSolver::prepareSaturation()
 {
     const ValueFlowUniverse& universe = *m_input.universe;
@@ -3495,7 +3397,6 @@ bool ValueFlowSolver::isMadeForUnknownObject(ValueFlowNodeID node) const
     case ValueFlowMadeNodeKind::CallGroup:
     case ValueFlowMadeNodeKind::WrittenUnderKind:
     case ValueFlowMadeNodeKind::ReadUnderKind:
-        // What is read, looked up or called through a set that holds known objects too may come out of one of those.
         return key->set && m_sets.onlyMember(key->set) == m_input.placeholders.unknown;
     case ValueFlowMadeNodeKind::Constant:
     case ValueFlowMadeNodeKind::Hub:
@@ -3548,7 +3449,6 @@ bool ValueFlowSolver::hasTooManyLayoutsAndCallees(ValueSetID set)
     }).iterator->value;
 }
 
-// The members of a set that is given up go to `lost`, whatever arrives later too, and the node holds the untracked object.
 void ValueFlowSolver::saturate(std::span<const ValueFlowNodeID> moved)
 {
     ValueFlowNodeID holdingUntrackedObject;
@@ -3567,7 +3467,6 @@ void ValueFlowSolver::saturate(std::span<const ValueFlowNodeID> moved)
     for (const Vector<ValueFlowNodeID>& ofShare : nodesToLookAtOfShare)
         nodesToLookAt.appendVector(ofShare);
     for (ValueFlowNodeID node : nodesToLookAt) {
-        // What a placeholder beside it covers is no member that anybody sees.
         ValueSetID value = withoutWhatOtherMembersCover(node, maker);
         bool isGivenUp = m_counters.isPastEdgeBudget ? m_sets.meet(value, m_objectsThatPlaceholdersMayCover) : hasTooManyLayoutsAndCallees(value);
         if (!isGivenUp)
@@ -3593,7 +3492,6 @@ void ValueFlowSolver::spreadMarks()
         });
     }
 
-    // What was done through the untracked object may have been done to any object that it stands for.
     if (!m_input.lost || !m_input.placeholders.untracked)
         return;
     OptionSet<ObjectMutation> marksOfUntrackedObject = m_marksOfObject[m_input.placeholders.untracked.index()];
@@ -3604,7 +3502,6 @@ void ValueFlowSolver::spreadMarks()
     });
 }
 
-// A mask that is made from a type nobody tests takes nothing away but the untracked object, in whose place it puts the family.
 void ValueFlowSolver::findObjectsOutsideFamilies()
 {
     Vector<ValueFlowNodeSet> masks;
@@ -3626,7 +3523,6 @@ void ValueFlowSolver::findObjectsOutsideFamilies()
     Vector<Vector<ObjectOutsideFamily>> foundByWorker(m_makers.size());
     forEachIndexInParallel(m_loops, (masks.size() + masksPerShare - 1) / masksPerShare, [&](unsigned share, unsigned worker) {
         ValueSetMaker& maker = *m_makers[worker];
-        // None if all of the first set lies in the second.
         auto firstMemberOutside = [&](ValueSetID set, ValueSetID within) {
             ValueFlowObjectID first;
             if (m_sets.isSubset(set, within))
@@ -3654,7 +3550,6 @@ void ValueFlowSolver::findObjectsOutsideFamilies()
     });
 
     for (Vector<ObjectOutsideFamily>& found : foundByWorker) {
-        // Values flow in the body of a function that is never reached too. What arrives there arrives nowhere.
         found.removeAllMatching([&](const ObjectOutsideFamily& entry) {
             FunctionID function = subjectOf(entry.node).function;
             return function && !isReached(function);
@@ -3667,7 +3562,6 @@ void ValueFlowSolver::findObjectsOutsideFamilies()
     m_counters.nodesHoldingObjectsOutsideFamily = m_objectsOutsideFamilies.size();
 }
 
-// Breadth first, along the edges, from the constants through which the rules have brought the unknown object into being, through the nodes that hold it.
 void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& whatRunsBesideTheWalk)
 {
     ValueFlowObjectID unknownObject = m_input.placeholders.unknown;
@@ -3693,7 +3587,6 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
         return;
     }
 
-    // A share is a multiple of 64 nodes, so that no two threads write to one word of the bits.
     constexpr uint32_t nodesPerShare = 1 << 14;
     unsigned numberOfShares = (numberOfNodes + nodesPerShare - 1) / nodesPerShare;
     auto forEachNodeOfShare = [&](unsigned share, const auto& functor) {
@@ -3707,7 +3600,6 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
                 holdsUnknownObject.quickSet(node);
         });
     });
-    // The graph keeps an edge out of a constant at its target, and lists those of the constants that the walk begins at. So far nobody else has a source.
     size_t numberOfConstantsFound = found.size();
     Vector<ValueFlowEdge> edgesOutOfConstantsFound;
     m_graph.forEachListedEdgeOutOfConstants([&](ValueFlowEdge edge) {
@@ -3768,13 +3660,10 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
         });
     });
 
-    // The walk goes wherever the edges lead, and waits for memory at every step. The queue says where it will be a few steps on: that is asked for ahead.
     constexpr size_t stepsAheadForRow = 16;
     constexpr size_t stepsAheadForSuccessors = 8;
     constexpr size_t stepsAheadForSources = 4;
     AOT_THRESHOLD(uint32_t, mostSourcesAskedFor, 8);
-    // Of the sources that are nearest to a node it takes the lowest: the numbers of the nodes follow the order of the solve, and the answer must not.
-    // That native code may answer too is said of every read out of an object nobody knows, so that source is named where no other is as near.
     auto rankOf = [](uint8_t source) {
         return source == 1 + static_cast<uint8_t>(ValueFlowUnknownSource::UndescribedNativeResult) ? std::numeric_limits<uint8_t>::max() : source;
     };
@@ -3822,7 +3711,6 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
     });
 }
 
-// The function and the value that a node of a body stands for, as far as the solver can tell: an entry parameter, or the result of an operation that has a statement.
 Subject ValueFlowSolver::subjectOf(ValueFlowNodeID node) const
 {
     Subject subject;
@@ -3868,7 +3756,6 @@ void ValueFlowSolver::report()
     build.statistics().count(hitsOf(LimitID::MaxValueFlowSetMembers), m_counters.nodesSaturated);
     build.statistics().count(StatisticID::LayoutsOutsideFamily, m_counters.nodesHoldingObjectsOutsideFamily);
 
-    // A product is built all the same: the node is not proven, so nothing rests on it. A validating build is there to find the fault.
     if (!build.validates())
         return;
     for (const ObjectOutsideFamily& entry : m_objectsOutsideFamilies.span().first(std::min<size_t>(m_objectsOutsideFamilies.size(), mostNodesReportedOutsideFamily))) {
@@ -3884,7 +3771,6 @@ void ValueFlowSolver::report()
     }
 }
 
-// In the words that valueflow-why takes (holds=nN:#M), and the values on the way from where the member comes into being.
 String ValueFlowSolver::describeWayOf(const ObjectOutsideFamily& entry) const
 {
     AOT_THRESHOLD(size_t, mostValuesNamed, 12);
@@ -3909,7 +3795,6 @@ bool ValueFlowSolver::solve()
     if (m_input.build)
         m_seedOfSchedule = m_input.build->recordedOptions().has(TestingSwitch::DelayFlowRules) + 2 * m_input.build->recordedOptions().has(TestingSwitch::DelayOtherFlowRules);
     m_graph.addNodes(m_input.numberOfNodes);
-    // A mask stands at the gate of a node and an edge in the links of two: whoever sets the one looks at nothing of the other.
     runTasksInParallel(m_loops, {
         [&] {
             for (const ValueFlowNodeMask& mask : m_input.masks)
@@ -3966,7 +3851,6 @@ bool ValueFlowSolver::solve()
         MonotonicTime start = MonotonicTime::now();
         m_stepTimes.begin();
         m_numberOfNodesBeforeRound = m_numberOfNodesMade;
-        // Not in the round that runs every statement once more to see that nothing moves.
         if (m_due.isEmpty() && m_dueBehindLongRows.isEmpty()) {
             for (ValueFlowStatementID statement : std::exchange(m_dueLast, { })) {
                 if (m_isDueLast.clear(statement.index()))
@@ -3998,7 +3882,6 @@ bool ValueFlowSolver::solve()
             },
         });
         m_stepTimes.didFinish("values: readers made due, beside nodes retired"_s);
-        // It asks who is retired.
         if (m_saturates)
             saturate(moved.span());
         m_stepTimes.didFinish("values: saturation"_s);
@@ -4026,7 +3909,6 @@ bool ValueFlowSolver::solve()
         if (isQuiet && isFullRound && m_rounds == Rounds::Due && !m_usesGeneralRulesOnly) {
             m_usesGeneralRulesOnly = true;
             heldAtRest.appendRange(m_graph.values().begin(), m_graph.values().end());
-            // A node at rest takes nothing, and a number that a thread holds is given to a new node: what either holds later says nothing.
             for (uint32_t index = 0; index < heldAtRest.size(); ++index) {
                 if (m_graph.isAtRest(ValueFlowNodeID(index)) || (index >= m_input.numberOfNodes && m_madeNodesOfNode[index - m_input.numberOfNodes] == noSolverIndex))
                     heldAtRest[index] = ValueSetID();
@@ -4068,12 +3950,10 @@ bool ValueFlowSolver::solve()
     return true;
 }
 
-// Who is to run again when what moves, which stores and loads have met, what each thread has logged: the rounds read that and nobody else does.
 void ValueFlowSolver::releaseRoundState()
 {
     m_memoryInBytesAtEndOfRounds = memoryInBytes();
     m_graph.releaseSolvingState(m_input.isAskedHowValuesCame || m_input.remembersWhoLoggedEachEdge ? ValueFlowGraph::Predecessors::AreKept : ValueFlowGraph::Predecessors::AreReleased);
-    // Millions of small blocks: they are freed beside the results, as the rest of the solver is freed beside Optimize.
     auto release = [&](auto& state) {
         auto taken = std::exchange(state, { });
         if (m_input.build)

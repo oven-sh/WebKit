@@ -18,7 +18,6 @@ namespace Typed {
 class EffectSummaries;
 class FlowResults;
 
-// NotFollowed: an object that a call may return escapes at the call, and the result of the call is no alias of it.
 enum class CallResults : uint8_t { MayAliasOperands, NotFollowed };
 
 struct AnalysisContext {

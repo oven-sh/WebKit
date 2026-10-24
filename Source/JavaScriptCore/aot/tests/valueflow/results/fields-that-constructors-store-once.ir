@@ -23,21 +23,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = Construct v3, -, v0
     v5 = PropGet v4 key="a"
     v6 = PropGet v4 key="b"
-    v7 = NewClosure function=f3
-    v8 = NewClass v7 layout=L1
-    v9 = FinishClass v8 layout=L1
-    v10 = Construct v9, -, v0
-    v11 = PropGet v10 key="a"
-    v12 = NewClosure function=f4
-    v13 = NewClass v12 layout=L2
-    v14 = FinishClass v13 layout=L2
-    v15 = Construct v14, -, v0
-    v16 = PropGet v15 key="a"
-    v17 = NewClosure function=f5
-    v18 = NewClass v17 layout=L3
-    v19 = FinishClass v18 layout=L3
-    v20 = Construct v19, -, v0
-    v21 = PropGet v20 key="a"
+# REPEAT: i = 1..3
+    v%(i*5+2) = NewClosure function=f%(i+2)
+    v%(i*5+3) = NewClass v%(i*5+2) layout=L%(i)
+    v%(i*5+4) = FinishClass v%(i*5+3) layout=L%(i)
+    v%(i*5+5) = Construct v%(i*5+4), -, v0
+    v%(i*5+6) = PropGet v%(i*5+5) key="a"
+# END REPEAT
     v22 = NewClosure function=f7
     v23 = NewClass v22 layout=L4
     v24 = NewClosure function=f8
