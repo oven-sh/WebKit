@@ -624,7 +624,11 @@ private:
 
         class Table {
         public:
-            Table() = default;
+            Table()
+                : m_bits(0)
+            {
+            }
+
             Table(Slot* slots, unsigned bits)
                 : m_bits(reinterpret_cast<uintptr_t>(slots) | bits)
             {
@@ -635,7 +639,7 @@ private:
             size_t numberOfSlots() const { return static_cast<size_t>(1) << (m_bits & 63); }
 
         private:
-            uintptr_t m_bits { 0 };
+            uintptr_t m_bits;
         };
 
         ~IndexOfMadeNodes();

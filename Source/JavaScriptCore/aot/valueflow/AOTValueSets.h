@@ -332,7 +332,11 @@ private:
 
         class Table {
         public:
-            Table() = default;
+            Table()
+                : m_bits(0)
+            {
+            }
+
             Table(Slot* slots, unsigned bits)
                 : m_bits(reinterpret_cast<uintptr_t>(slots) | bits)
             {
@@ -345,7 +349,7 @@ private:
             friend bool operator==(Table, Table) = default;
 
         private:
-            uintptr_t m_bits { 0 };
+            uintptr_t m_bits;
         };
 
         struct alignas(64) Shard {
