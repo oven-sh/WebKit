@@ -68,7 +68,7 @@ struct CompileOutput {
     Vector<FunctionReport> functionReports;
     Vector<uint8_t> symbols;
     ObfuscatedSites obfuscatedSites;
-    Typed::ArrivalSiteReport arrivalSites;
+    UTF8CString arrivalSites;
     WTF::BitSet<numberOfEntries> entriesUsed;
     ImageContents contents;
 };

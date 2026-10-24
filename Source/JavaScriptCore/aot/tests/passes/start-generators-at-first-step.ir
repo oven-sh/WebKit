@@ -210,21 +210,18 @@ function f8 name="yieldsOnce" position=10 role=CoroutineBody flags=[IsGenerator,
 function f9 name="storesFirst" position=20 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f7} creator=Coroutine{ramp=f7 body=f9 promiseParameter=2} {
   b0(v0: function, v1: anything, v2: Generator):
     PutModuleVariable v1 variable=g0 @20
-    v4 = IsGeneratorRunning v2 @20
-    Branch v4 -> taken b4(), notTaken b1() @20
-  b1():
-    v5 = Undefined @20
-    v6 = YieldBySavingFrame v2, v5 @20
-    v7 = ResultAt v6 index=0 @20
-    v8 = ResultAt v6 index=1 @20
-    Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4() @20
+    v4 = Undefined @20
+    v5 = YieldBySavingFrame v2, v4 @20
+    v6 = ResultAt v5 index=0 @20
+    v7 = ResultAt v5 index=1 @20
+    Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @20
+  b1() frequency=Rare:
+    Throw v6 @20
   b2() frequency=Rare:
-    Throw v7 @20
-  b3() frequency=Rare:
-    Return v7 @20
-  b4():
-    v9 = Undefined
-    Return v9
+    Return v6 @20
+  b3():
+    v8 = Undefined
+    Return v8
 }
 
 function f10 name="seenThroughACast" parameters=[{type=anything}] results=[{type=anything}] {

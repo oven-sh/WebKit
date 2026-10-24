@@ -32,7 +32,6 @@ public:
     void moveStorageOutOfOwnCell(const OperationContext&, CellPointer array);
     CellPointer allocateArrayCell(Integer header, Pointer butterfly, LBasicBlock slowPath);
     Integer headerOfNewArray(const ArrayStorageForm&);
-    Integer headerOfNewArrayWithShape(Word32 shape);
 
 private:
     using RawElements = Vector<Operand, 16>;

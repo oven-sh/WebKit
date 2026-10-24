@@ -15,6 +15,7 @@
 #include "AOTOperationScope.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CustomGetterSetter.h"
 #include "ErrorInstance.h"
@@ -65,8 +66,8 @@ PropertyName hiddenName(SymbolImpl::StaticSymbolImpl& name)
     return PropertyName(&static_cast<SymbolImpl&>(name));
 }
 
-constexpr unsigned maxDepthOfCopiedData = 32;
-constexpr unsigned maxObjectsOfCopiedData = 1024;
+AOT_THRESHOLD(unsigned, maxDepthOfCopiedData, 32);
+AOT_THRESHOLD(unsigned, maxObjectsOfCopiedData, 1024);
 
 // A copy of a value made of plain objects, arrays and primitives. Making it runs nothing of the program. Empty for any other value.
 JSValue tryCopyPlainData(JSGlobalObject* realm, JSValue value, unsigned remainingDepth, unsigned& remainingObjects)
@@ -217,7 +218,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetPreparedPlans, EncodedJSValue, 
         JSMap* map = JSMap::create(vm, globalObject->mapStructure());
         // A plan and a rule are JSON, which neither name is.
         map->set(globalObject, jsNontrivialString(vm, "deferReport"_s), JSFunction::create(vm, globalObject, 3, "deferReport"_s, deferReport, ImplementationVisibility::Private));
+        scope.releaseAssertNoException();
         map->set(globalObject, jsNontrivialString(vm, "matchesPattern"_s), JSFunction::create(vm, globalObject, 2, "matchesPattern"_s, matchesPattern, ImplementationVisibility::Private));
+        scope.releaseAssertNoException();
         vm.mutatorFence();
         kept = map;
     }

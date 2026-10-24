@@ -381,7 +381,7 @@ HoistDecision LoopInvariance::canHoist(Value* value)
 
 void LoopInvariance::visit(Value* value)
 {
-    if (isLoopPoll(value))
+    if (isLoopPoll(value) || isMovedLoadCheck(value))
         return;
     if (value->opcode() == Phi) {
         if (m_resolution == PhiResolution::Resolve)

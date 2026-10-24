@@ -1,6 +1,6 @@
 enum KnowledgeLevel { Unknown Expected Proven }
 enum AccessCost { ByName TestsReceiver TestsSlot Free }
-enum AccessKind { Unknown Read Store Define Has Delete Call Construct }
+enum AccessKind { Unknown Read Store Define Has Delete Call Construct Truthiness Equality Arithmetic Comparison Conversion TypeOf InstanceOf Iteration Spread }
 enum UnprovenCauseFamily { UnprovenType UnknownCode Mutation Limit }
 enum UnprovenCause (family: UnprovenCauseFamily) {
     Unknown(UnprovenType) ResultDisabled(UnprovenType) LimitReached(Limit) UnknownObject(UnknownCode) NonLayoutObject(UnprovenType) BuiltinBase(UnprovenType)
@@ -82,7 +82,7 @@ record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witnes
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
 record AccessRecord abi {
     location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause limit: LimitID layout: Layout? copies: UInt32 distance: UInt32 witness: Witness
-    function: Function? illTypedCause: IllTypedCause cost: AccessCost
+    function: Function? illTypedCause: IllTypedCause cost: AccessCost hasOtherRoots: UInt32 reserved: UInt32 heat: Double
 }
 record AccessCountRecord abi { module: Module accesses: UInt32[3] calls: UInt32[3] typeTests: UInt32 accessCosts: UInt32[4] }
 record TypeTestRecord abi { location: SourceLocation function: Function? failure: TypeTestFailure copies: UInt32 }
@@ -123,6 +123,10 @@ enum Sabotage {
     StackNamesNoInnerCell NarrowReferenceOnStackNamesNoInnerCell InnerObjectIsVisitedWithoutItsFields InnerArrayIsVisitedWithoutItsElements InnerCellVisitedInPlaceStaysWhite
     InnerCellIsMarkedWithoutItsOuterCell InnerCellLetGoKeepsItsHeader
     NoCallCollects
+    NoCallWrites FieldsNeverChange ClosureInFrameKeepsNoCaptures RangesEndOneEarly
+    WritesMayRunTwice SharedPatternsReachCalls SharedPatternsAreSticky SharedPatternsAdvance SharedPatternsAreUsedInUnknownWays FirstStepsStandUnderHandlers GeneratorsAreReadBeforeTheirFirstStep StepsInCyclesAreFirstSteps RemovedLoopsHaveEffects PromotedEnvironmentsAreMadeOften FlooredQuotientsHaveAnyDivisor RoundedQuotientsHaveAnySign SkippedBlocksHaveEffects RemovedFieldsHaveUnknownReaders ProofsOutlastWritesToTheirSubject
+    RemovedLoopsMayNotEnd GeneratorHeadsHaveEffects
+    ProofsOutlastWritesToEverything ErasedValuesHaveEffects
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

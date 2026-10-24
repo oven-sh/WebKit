@@ -20,6 +20,8 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
@@ -31,6 +33,34 @@ namespace JSC { namespace AOT {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Image);
 
 std::atomic<const Image*> Image::s_current { nullptr };
+
+static thread_local const Image* t_currentImage { nullptr };
+static Lock s_publishedImagesLock;
+static Vector<const Image*>& publishedImages() WTF_REQUIRES_LOCK(s_publishedImagesLock)
+{
+    static NeverDestroyed<Vector<const Image*>> images;
+    return images.get();
+}
+
+const Image* Image::currentOfThread()
+{
+    return t_currentImage;
+}
+
+void Image::setCurrentOfThread(const Image* image)
+{
+    t_currentImage = image;
+}
+
+const Image* Image::find(std::span<const uint8_t> bytes)
+{
+    Locker locker { s_publishedImagesLock };
+    for (const Image* image : publishedImages()) {
+        if (image->m_bytes.data() == bytes.data())
+            return image;
+    }
+    return nullptr;
+}
 
 static_assert(!offsetof(ImageHeader, magic) && offsetof(ImageHeader, stamp) == 8 && offsetof(ImageHeader, identity) == 16 && offsetof(ImageHeader, size) == 32, "check() reads magic, stamp and identity before it knows that the rest of the header has this build's layout");
 static_assert(alignof(ImageHeader) <= imageSectionAlignment && alignof(ProgramTables) <= imageSectionAlignment);
@@ -289,17 +319,21 @@ std::unique_ptr<Image> Image::create(std::span<const uint8_t> bytes, const uint8
     return std::unique_ptr<Image>(new Image(bytes, code));
 }
 
-bool Image::publish(std::unique_ptr<Image>&& unpublishedImage)
+void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const uint8_t> allImages)
 {
     std::unique_ptr<Image> image = WTF::move(unpublishedImage);
     RELEASE_ASSERT(image);
-    const Image* expected = nullptr;
-    if (!s_current.compare_exchange_strong(expected, image.get(), std::memory_order_release, std::memory_order_relaxed))
-        return false;
-    JSCellButterfly::setStorageOutsideHeap(image->m_bytes);
-    Thread::setSurvivesFailedCreation();
-    image.release();
-    return true;
+    Locker locker { s_publishedImagesLock };
+    Vector<const Image*>& images = publishedImages();
+    image->m_number = images.size();
+    if (images.isEmpty()) {
+        JSCellButterfly::setStorageOutsideHeap(allImages.empty() ? image->m_bytes : allImages);
+        Thread::setSurvivesFailedCreation();
+    }
+    RELEASE_ASSERT(JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data())) && JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data() + image->m_bytes.size() - 1)));
+    t_currentImage = image.get();
+    s_current.store(images.isEmpty() ? image.get() : differsByThread(), std::memory_order_release);
+    images.append(image.release());
 }
 
 std::span<const uint8_t> Image::regExpCode() const

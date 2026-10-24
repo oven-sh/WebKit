@@ -154,6 +154,8 @@ struct ConvertResolution {
     TypeID castType;
 };
 
+// The type that a value is converted to where it enters a position that is not only expected to hold its type.
+TypeID targetOfConvert(const TypingContext&, const DeclaredType&);
 ConvertResolution resolveConvert(const TypingContext&, const Type& proven, const DeclaredType&);
 // What the converted value has at the level of the context, where it had `source` at that level.
 Type typeOfConvert(const TypingContext&, const Type& source, const Type& proven, const DeclaredType&);

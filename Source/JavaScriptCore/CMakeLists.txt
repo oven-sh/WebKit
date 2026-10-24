@@ -2043,6 +2043,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     yarr/YarrMatchingContextHolder.h
     yarr/YarrParser.h
     yarr/YarrPattern.h
+    yarr/YarrRequiredText.h
     yarr/YarrUnicodeProperties.h
 
     bytecode/Opcode.h

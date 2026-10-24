@@ -622,7 +622,7 @@ void generateCallNotClosureWithCount(StubAssembler& jit)
     const GPRReg total = registers.word;
     JumpList isEngineCallee;
 
-    isEngineCallee.append(jit.branchIfNotCell(calleeGPR));
+    Jump isNotCell = jit.branchIfNotCell(calleeGPR);
     jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
     Jump hasOriginalStructure = jit.branch32(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionStructureID)));
     isEngineCallee.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
@@ -667,6 +667,9 @@ void generateCallNotClosureWithCount(StubAssembler& jit)
     emitCallWithBoundArgumentsInListFrame(jit, registers, count, isEngineCallee);
 
     jit.linkToStub(isEngineCallee, callEngineCallee());
+
+    isNotCell.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .secondArgumentIn = calleeGPR });
 }
 
 static void emitSpillArgumentsAndPushFrame(StubAssembler& jit)

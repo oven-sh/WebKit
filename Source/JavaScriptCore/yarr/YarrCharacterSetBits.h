@@ -58,7 +58,7 @@ inline void addLatin1Range(std::array<uint64_t, 4>& bits, unsigned begin, unsign
 }
 
 JS_EXPORT_PRIVATE CharacterSetBits buildCharacterSetBits(const CharacterClass&, bool isInverted, Vector<CharacterRange>& wideRanges);
-JS_EXPORT_PRIVATE CharacterSetBits buildCharacterSetBits(char16_t first, char16_t second, Vector<CharacterRange>& wideRanges);
+JS_EXPORT_PRIVATE CharacterSetBits buildCharacterSetBits(char32_t first, char32_t second, Vector<CharacterRange>& wideRanges);
 
 JS_EXPORT_PRIVATE bool wideRangesContain(std::span<const CharacterRange> wideRanges, const CharacterSetBits&, char32_t);
 

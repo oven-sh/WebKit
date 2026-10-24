@@ -14,6 +14,7 @@
 #include "AOTObject.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
@@ -76,6 +77,9 @@ JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject* globalObject, JSValue va
         RELEASE_AND_RETURN(scope, compiled->propertyNameEnumerator(globalObject));
     // The enumerator lists the own names from the structure that the object has when it is asked for.
     PropertyWalk::materializeLazyProperties(vm, object);
+    // No enumerator is kept for a dictionary.
+    if (object->structure()->isDictionary()) [[unlikely]]
+        flattenForListing(vm, object);
     RELEASE_AND_RETURN(scope, JSC::propertyNameEnumerator(globalObject, object));
 }
 

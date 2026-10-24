@@ -465,18 +465,6 @@ const uint8_t* JSONSourceScope::start() const
     return m_instance.json.sourceStart;
 }
 
-static String decodeUTF16LittleEndian(std::span<const uint8_t> bytes)
-{
-    size_t length = bytes.size() / sizeof(char16_t);
-    std::span<char16_t> characters;
-    RefPtr<StringImpl> text = StringImpl::tryCreateUninitialized(length, characters);
-    if (!text)
-        return { };
-    for (size_t index = 0; index < length; ++index)
-        characters[index] = static_cast<char16_t>(bytes[2 * index] | bytes[2 * index + 1] << 8);
-    return String(WTF::move(text));
-}
-
 JSValue decodeJSONBody(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -488,13 +476,15 @@ JSValue decodeJSONBody(JSGlobalObject* globalObject, JSValue value)
         const ModuleHost* host = globalObject->globalObjectMethodTable()->moduleHost;
         if (host && host->createEmptyJSONBodyError)
             throwException(globalObject, scope, host->createEmptyJSONBodyError(globalObject));
-        else
+        else {
+            scope.release();
             JSONParseWithException(globalObject, emptyString());
+        }
         return { };
     }
     if (!StringImpl::isValidLength<char16_t>(bytes.size()))
         return value;
-    String text = hasUTF16LittleEndianMark(bytes) ? decodeUTF16LittleEndian(bytes.subspan(2)) : String::fromUTF8ReplacingInvalidSequences(withoutByteOrderMark(bytes));
+    String text = String::fromUTF8ReplacingInvalidSequences(withoutByteOrderMark(bytes));
     return text.isNull() ? value : jsString(vm, WTF::move(text));
 }
 

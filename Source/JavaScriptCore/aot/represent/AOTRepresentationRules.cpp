@@ -313,6 +313,8 @@ Representation wantedRepresentationOf(const Program& program, const Function& fu
     }
     case TerminatorKind::SwitchString: {
         Representation natural = defaultRepresentationOf(program.typeOf(function, operand));
+        if (natural == Representation::LiteralString && isSameWord(function.at(operand).representation, Representation::JSValue))
+            return function.at(operand).representation;
         return stringSubjectRepresentations.contains(natural) ? natural : Representation::JSValue;
     }
     case TerminatorKind::ReturnCall:

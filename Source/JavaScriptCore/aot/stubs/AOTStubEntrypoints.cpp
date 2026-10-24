@@ -36,28 +36,33 @@ void* addressOfStubInCurrentImage(StubKey key)
     return const_cast<void*>(address);
 }
 
+CodePtr<JSEntryPtrTag> entrypointInCurrentImage(Image::FrequentStub stub, StubKey key)
+{
+    const Image* image = Image::current();
+    RELEASE_ASSERT_WITH_MESSAGE(image, "No AOT image with code is registered.");
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(image->frequentStub(stub, [&] {
+        return tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(key));
+    }));
+}
+
 CodePtr<JSEntryPtrTag> closureEntrypoint()
 {
-    static void* const entrypoint = tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(StubKey(StubFamily::EnterClosure)));
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
+    return entrypointInCurrentImage(Image::FrequentStub::EnterClosure, StubKey(StubFamily::EnterClosure));
 }
 
 CodePtr<JSEntryPtrTag> slimClosureEntrypoint()
 {
-    static void* const entrypoint = tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(StubKey(StubFamily::EnterSlimClosure)));
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
+    return entrypointInCurrentImage(Image::FrequentStub::EnterSlimClosure, StubKey(StubFamily::EnterSlimClosure));
 }
 
 CodePtr<JSEntryPtrTag> moduleBodyEntrypoint()
 {
-    static void* const entrypoint = tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(StubKey(StubFamily::EnterModuleBody)));
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
+    return entrypointInCurrentImage(Image::FrequentStub::EnterModuleBody, StubKey(StubFamily::EnterModuleBody));
 }
 
 CodePtr<JSEntryPtrTag> constructEntrypoint()
 {
-    static void* const entrypoint = tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(StubKey(StubFamily::EnterClosureForConstruct)));
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
+    return entrypointInCurrentImage(Image::FrequentStub::EnterClosureForConstruct, StubKey(StubFamily::EnterClosureForConstruct));
 }
 
 static BoxedCallEntry& findBoxedCallEntry(std::span<BoxedCallEntry> entries, const void* nativeFunction)

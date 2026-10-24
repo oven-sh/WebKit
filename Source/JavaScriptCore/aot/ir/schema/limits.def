@@ -158,6 +158,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxContractedModuleRequests(NumberAndEncode, Memory, NotOptimized, 8, 8, 0, "modules listed in place of a module with nothing of its own to link or run")
 
     MaxFrameSizeInBytes(GenerateCode, BitWidth, BuildError, 1048560, 1048560, 0, "stack frame size")
+    MaxBarrierBlocks(GenerateCode, CompileTime, NotOptimized, 4096, 4096, 0, "the size of a function whose write barriers are optimized")
     MaxFrameMapRoots(GenerateCode, BitWidth, BuildError, 65535, 65535, 0, "live references across an await or yield")
     MaxLandingPadsSearched(GenerateCode, CompileTime, NotOptimized, 4, 4, 0, "exception landing pads compared for sharing")
 

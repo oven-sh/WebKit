@@ -11,6 +11,7 @@
 #include "AOTRuntimeTable.h"
 #include <wtf/DataLog.h>
 #include <wtf/Lock.h>
+#include <wtf/HexNumber.h>
 
 namespace JSC { namespace AOT {
 
@@ -29,11 +30,17 @@ static ASCIILiteral nameOf(BrokenClaim claim)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (Instance*, uint32_t claim, uint32_t function, uint32_t valueIndex))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t claimAndOffset, uint32_t function, uint32_t valueIndex, const uint64_t* foundAndGiven))
 {
+    uint32_t claim = claimAndOffset & 0xff;
     static Lock lock;
     lock.lock();
-    dataLogLn("AOT claim check: ", nameOf(static_cast<BrokenClaim>(claim)), " f", function, " v", static_cast<int32_t>(valueIndex));
+    dataLog("AOT claim check: ", nameOf(static_cast<BrokenClaim>(claim)), " f", function, " v", static_cast<int32_t>(valueIndex));
+    if (static_cast<BrokenClaim>(claim) != BrokenClaim::ValueIsInRange)
+        dataLog(" at +", static_cast<int32_t>(claimAndOffset) >> 8);
+    if (static_cast<BrokenClaim>(claim) == BrokenClaim::WordNeverChanges || static_cast<BrokenClaim>(claim) == BrokenClaim::LoadMayMove)
+        dataLog(" holds 0x", hex(foundAndGiven[0], Lowercase), ", not 0x", hex(foundAndGiven[1], Lowercase));
+    dataLogLn();
     CRASH_WITH_INFO(claim, function, valueIndex);
 }
 

@@ -22,15 +22,14 @@
 #include <tuple>
 #include <utility>
 #include <wtf/CommaPrinter.h>
-#include <wtf/HashMap.h>
 #include <wtf/PrintStream.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 using Wire::ArrivalStamp;
-using Wire::TextRange;
 
 namespace {
 
@@ -49,51 +48,6 @@ struct ArrivalSiteDescription {
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     ArrivalStamp stamp { ArrivalStamp::None };
     LayoutList expected;
-};
-
-// Each name is in the text once.
-class ReportText {
-public:
-    ReportText(Vector<uint8_t>& text, const StringTable& strings)
-        : m_text(text)
-        , m_strings(strings)
-    {
-    }
-
-    TextRange ensure(Opcode opcode) { return ensureName(m_operations[static_cast<size_t>(opcode)], nameOf(opcode)); }
-    TextRange ensure(LayoutKind kind) { return ensureName(m_layoutKinds[static_cast<size_t>(kind)], nameOf(kind)); }
-
-    TextRange ensure(StringID string)
-    {
-        if (!string || m_strings[string].empty())
-            return { };
-        return m_rangesOfStrings.ensure(string, [&] {
-            if (m_strings.isAllASCII(string))
-                return append(m_strings[string]);
-            return append(byteCast<uint8_t>(m_strings.toWTFString(string).utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD).span()));
-        }).iterator->value;
-    }
-
-private:
-    TextRange ensureName(std::optional<TextRange>& range, ASCIILiteral name)
-    {
-        if (!range)
-            range = append(byteCast<uint8_t>(name.span8()));
-        return *range;
-    }
-
-    TextRange append(std::span<const uint8_t> utf8)
-    {
-        uint32_t offset = static_cast<uint32_t>(m_text.size());
-        m_text.append(utf8);
-        return { offset, static_cast<uint32_t>(utf8.size()) };
-    }
-
-    Vector<uint8_t>& m_text;
-    const StringTable& m_strings;
-    std::array<std::optional<TextRange>, numberOfEnumerators<Opcode>> m_operations;
-    std::array<std::optional<TextRange>, numberOfEnumerators<LayoutKind>> m_layoutKinds;
-    UncheckedKeyHashMap<StringID, TextRange> m_rangesOfStrings;
 };
 
 } // anonymous namespace
@@ -376,33 +330,42 @@ static FunctionID functionHolding(Origin origin, const Function& function, Funct
     return function.inlineFrames[origin.inlineFrame].callee;
 }
 
-static void appendSite(ArrivalSiteReport& report, ReportText& text, const PropertyAccessContext& context, FunctionID id, uint32_t number, const ArrivalSiteDescription& description)
+static String escaped(const Program& program, StringID id)
+{
+    String text = id ? program.strings.toWTFString(id) : emptyString();
+    for (auto [character, written] : { std::pair { "\\"_s, "\\\\"_s }, std::pair { "\t"_s, "\\t"_s }, std::pair { "\n"_s, "\\n"_s }, std::pair { "\r"_s, "\\r"_s }, std::pair { ","_s, "\\,"_s } })
+        text = makeStringByReplacingAll(text, character, written);
+    return text;
+}
+
+static void printSite(PrintStream& out, const PropertyAccessContext& context, FunctionID id, uint32_t number, const ArrivalSiteDescription& description)
 {
     const Program& program = context.program;
     const Function& function = program.at(id);
-    Wire::ArrivalSiteRecord record {
-        .number = number,
-        .location = function.locationOf(description.origin),
-        .function = findFunctionAsRead(&program, functionHolding(description.origin, function, id)).index(),
-        .operation = text.ensure(description.operation),
-        .kind = description.kind,
-        .level = description.level,
-        .cause = UnprovenCause::Unknown,
-        .firstExpectedLayout = static_cast<uint32_t>(report.siteLayouts.size()),
-        .expectedLayoutCount = static_cast<uint32_t>(description.expected.size()),
-        .stamp = description.stamp,
-    };
+    Wire::SourceLocation location = function.locationOf(description.origin);
+    FunctionID holder = findFunctionAsRead(&program, functionHolding(description.origin, function, id));
+    AccessKind kind = description.kind;
+    UnprovenCause cause = UnprovenCause::Unknown;
     // The list of access sites in the report has these words for the same access, so the two lists agree on where it is.
     if (const AccessSite* access = findAccessSite(context.flow, description.accessSite)) {
-        record.location = access->location;
-        record.function = findFunctionAsRead(&program, access->function).index();
-        record.kind = access->kind;
+        location = access->location;
+        holder = findFunctionAsRead(&program, access->function);
+        kind = access->kind;
         if (description.level != KnowledgeLevel::Proven)
-            record.cause = context.flow->lossOf(description.accessSite).cause;
+            cause = context.flow->lossOf(description.accessSite).cause;
     }
+    out.print("S\t", number, "\t", nameOf(description.operation), "\t", nameOf(kind), "\t", nameOf(description.level), "\t", nameOf(cause), "\t", nameOf(description.stamp), "\t");
+    if (hasModule(location)) {
+        ModuleID module(location.module);
+        LineColumn place = program.lineColumnFor(module, location.position);
+        out.print(escaped(program, program.pathForLineColumns(module)), "\t", place.line, "\t", place.column);
+    } else
+        out.print("\t0\t0");
+    out.print("\t", holder ? escaped(program, program.at(holder).name) : emptyString(), "\t");
+    CommaPrinter comma(","_s);
     for (LayoutID layout : description.expected)
-        report.siteLayouts.append(layout.index());
-    report.sites.append(record);
+        out.print(comma, layout.index());
+    out.println();
 }
 
 static bool isOwnDataPropertyWithTextKey(const Program& program, const Field& field)
@@ -411,35 +374,26 @@ static bool isOwnDataPropertyWithTextKey(const Program& program, const Field& fi
     return field.key && program.at(field.key).kind == PropertyKeyKind::Text && !field.flags.containsAny(flagsOfOtherFields);
 }
 
-static void appendLayout(ArrivalSiteReport& report, ReportText& text, const Program& program, LayoutID id)
+static void printLayout(PrintStream& out, const Program& program, LayoutID id)
 {
     const Layout& layout = program.at(id);
-    uint32_t firstField = static_cast<uint32_t>(report.layoutFields.size());
+    out.print("L\t", id.index(), "\t", nameOf(layout.kind), "\t", escaped(program, layout.name), "\t");
+    // Of a derived layout: the layout it was derived from.
+    if (LayoutID base = expectedBaseOf(layout))
+        out.print(base.index());
+    out.print("\t");
+    CommaPrinter comma(","_s);
     for (const Field& field : layout.fields) {
-        if (!isOwnDataPropertyWithTextKey(program, field))
-            continue;
-        report.layoutFields.append(Wire::ArrivalLayoutFieldRecord {
-            .name = text.ensure(program.at(field.key).text),
-            .flags = field.flags.contains(FieldFlags::IsRequired) ? Wire::ArrivalFieldFlags { } : Wire::ArrivalFieldFlags::IsOptional,
-        });
+        if (isOwnDataPropertyWithTextKey(program, field))
+            out.print(comma, escaped(program, program.at(field.key).text), field.flags.contains(FieldFlags::IsRequired) ? "" : "?");
     }
-    report.layouts.append(Wire::ArrivalLayoutRecord {
-        .layout = id.index(),
-        // Of a derived layout: the layout it was derived from.
-        .base = expectedBaseOf(layout).index(),
-        .kind = text.ensure(layout.kind),
-        .name = text.ensure(layout.name),
-        .firstField = firstField,
-        .fieldCount = static_cast<uint32_t>(report.layoutFields.size()) - firstField,
-        .flags = layout.isDerived() ? Wire::ArrivalLayoutFlags::IsDerived : Wire::ArrivalLayoutFlags { },
-    });
+    out.println();
 }
 
-ArrivalSiteReport describeArrivalSites(const PropertyAccessContext& context, const ArrivalSiteNumbers& numbers, BuildContext& build)
+UTF8CString describeArrivalSites(const PropertyAccessContext& context, const ArrivalSiteNumbers& numbers, BuildContext& build)
 {
-    ArrivalSiteReport report;
     if (!numbers.isCounting())
-        return report;
+        return { };
 
     const Program& program = context.program;
     unsigned count = program.functions.size();
@@ -448,21 +402,21 @@ ArrivalSiteReport describeArrivalSites(const PropertyAccessContext& context, con
         descriptionsOfFunctions[index] = describeSitesOf(program, numbers, FunctionID(index));
     });
 
-    ReportText text(report.text, program.strings);
+    StringPrintStream out;
     for (unsigned index = 0; index < count; ++index) {
         FunctionID id(index);
         const Vector<ArrivalSiteDescription>& descriptions = descriptionsOfFunctions[index];
         for (uint32_t ordinal = 0; ordinal < descriptions.size(); ++ordinal)
-            appendSite(report, text, context, id, numbers.numberFor(id, ordinal), descriptions[ordinal]);
+            printSite(out, context, id, numbers.numberFor(id, ordinal), descriptions[ordinal]);
     }
     build.destroyLater(WTF::move(descriptionsOfFunctions));
 
     // Which layouts arrive is known after the run.
     for (unsigned index = 0; index < program.layouts.size(); ++index) {
         if (!program.layouts[index].isEnvironment())
-            appendLayout(report, text, program, LayoutID(index));
+            printLayout(out, program, LayoutID(index));
     }
-    return report;
+    return out.toUTF8CString();
 }
 
 void ArrivalSiteNumbers::dump(PrintStream& out, const Program& program) const

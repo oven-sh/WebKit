@@ -70,6 +70,7 @@ public:
         , m_function(context.function)
         , m_escape(context.analyses.escape())
         , m_identities(context.analyses.identities())
+        , m_build(context.build)
     {
     }
 
@@ -106,7 +107,7 @@ private:
             return isOnlyInspected(objectUse);
         case EffectRule::Call:
             // A callee may evaluate the site of the literal again, and would find the two objects identical.
-            return false;
+            return m_build.isSabotaged(Sabotage::SharedPatternsReachCalls);
         case EffectRule::Builtin:
             return isHarmlessInBuiltin(user, objectUse, m_function.at(literal).regExpFlags());
         case EffectRule::Inline:
@@ -133,13 +134,13 @@ private:
     {
         switch (lastIndexUseOf(call, objectUse)) {
         case LastIndexUse::Unknown:
-            return false;
+            return m_build.isSabotaged(Sabotage::SharedPatternsAreUsedInUnknownWays);
         case LastIndexUse::Ignores:
             return isOnlyInspected(objectUse);
         case LastIndexUse::ResetsIfGlobal:
-            return !flags.contains(RegExpFlags::Sticky);
+            return !flags.contains(RegExpFlags::Sticky) || m_build.isSabotaged(Sabotage::SharedPatternsAreSticky);
         case LastIndexUse::AdvancesIfGlobalOrSticky:
-            return !flags.containsAny({ RegExpFlags::Global, RegExpFlags::Sticky });
+            return !flags.containsAny({ RegExpFlags::Global, RegExpFlags::Sticky }) || m_build.isSabotaged(Sabotage::SharedPatternsAdvance);
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -180,6 +181,7 @@ private:
     const Function& m_function;
     const EscapeAnalysis& m_escape;
     const ValueIdentities& m_identities;
+    const BuildContext& m_build;
 };
 
 } // anonymous namespace

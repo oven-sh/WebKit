@@ -165,6 +165,11 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
             giveUpOnSpecialPropertyCache(key);
         return;
     }
+    // A class makes its static members when one of them is first asked for. Until then it shares a Structure that lists none of them with other classes.
+    if (ownStructure->typeInfo().type() == CompiledClosureType) [[unlikely]] {
+        giveUpOnSpecialPropertyCache(key);
+        return;
+    }
 #endif
 
     if (!ownStructure->propertyAccessesAreCacheable() || ownStructure->isProxy()) {

@@ -1,0 +1,27 @@
+# Throwing allocates the error, so a young environment may be marked in the handler of a value that cannot collect
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+# CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+# CHECK: CatchValue
+# CHECK-NEXT: PutEnvironmentField v1, v0 layout=L0 field=1
+# CHECK-NOT: ownerCannotBeMarked
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="young-owner-at-handler" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = RequireObjectCoercible v0 nullishAccess=Read
+    Jump -> next b2()
+  b2():
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    PutEnvironmentField v1, v0 layout=L0 field=1
+    Return
+}

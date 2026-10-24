@@ -168,7 +168,7 @@ static void testDecodeBytes()
     static constexpr uint8_t markAndOne[] = { 0xef, 0xbb, 0xbf, '1' };
     static constexpr uint8_t twoByteSequence[] = { '"', 0xc3, 0xa9, '"' };
     static constexpr uint8_t invalidByte[] = { '"', 0xff, '"' };
-    static constexpr uint8_t littleEndianText[] = { 0xff, 0xfe, '"', 0x00, 0xe5, 0x65, '"', 0x00 };
+    static constexpr uint8_t littleEndianMarkAndOne[] = { 0xff, 0xfe, '1' };
     static constexpr uint8_t littleEndianMarkAlone[] = { 0xff, 0xfe };
     static constexpr ASCIILiteral otherCells[] = { "({})"_s, "[49]"_s, "new Uint16Array(2)"_s, "new Uint8ClampedArray(2)"_s, "new ArrayBuffer(2)"_s, "new DataView(new ArrayBuffer(2))"_s };
 
@@ -177,7 +177,7 @@ static void testDecodeBytes()
     checkDecodedBytes(fixture, markAndOne, "1"_s);
     checkDecodedBytes(fixture, twoByteSequence, text16(u"\"\u00e9\""));
     checkDecodedBytes(fixture, invalidByte, text16(u"\"\ufffd\""));
-    checkDecodedBytes(fixture, littleEndianText, text16(u"\"日\""));
+    checkDecodedBytes(fixture, littleEndianMarkAndOne, text16(u"\ufffd\ufffd1"));
     checkDecodedBytes(fixture, littleEndianMarkAlone, text16(u"\ufffd\ufffd"));
     checkDecodedBytes(fixture, markAlone, emptyString());
     checkEmptyBodyThrows(fixture, { });

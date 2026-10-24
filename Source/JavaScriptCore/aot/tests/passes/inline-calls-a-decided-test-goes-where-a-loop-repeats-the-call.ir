@@ -1,0 +1,96 @@
+# function f(kind, x) { if (kind === "error") { .. } .. }: where the site passes a text, the comparison and its branch go with the side that folds. They are taken off the cost only where a loop of the caller
+# repeats the call. How often a function is entered is a product along paths of calls: in a program of any size the code that it calls hottest answers errors and timeouts, and a copy there is never run
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="byText" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number):
+    v2 = String string="error"
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Mul v1, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    v10 = Mul v9, v1
+    v11 = Mul v10, v1
+    Return v11
+  b2():
+    v12 = Mul v1, v1
+    v13 = Mul v12, v1
+    v14 = Mul v13, v1
+    v15 = Mul v14, v1
+    v16 = Mul v15, v1
+    v17 = Mul v16, v1
+    v18 = Mul v17, v1
+    v19 = Mul v18, v1
+    v20 = Mul v19, v1
+    v21 = Mul v20, v1
+    v22 = Mul v21, v1
+    v23 = Mul v22, v1
+    v24 = Mul v23, v1
+    v25 = Mul v24, v1
+    v26 = Mul v25, v1
+    v27 = Mul v26, v1
+    v28 = Mul v27, v1
+    v29 = Mul v28, v1
+    v30 = Mul v29, v1
+    v31 = Mul v30, v1
+    v32 = Mul v31, v1
+    v33 = Mul v32, v1
+    v34 = Mul v33, v1
+    v35 = Mul v34, v1
+    v36 = Mul v35, v1
+    v37 = Mul v36, v1
+    v38 = Mul v37, v1
+    v39 = Mul v38, v1
+    v40 = Mul v39, v1
+    v41 = Mul v40, v1
+    v42 = Mul v41, v1
+    v43 = Mul v42, v1
+    v44 = Mul v43, v1
+    v45 = Mul v44, v1
+    v46 = Mul v45, v1
+    v47 = Mul v46, v1
+    v48 = Mul v47, v1
+    v49 = Mul v48, v1
+    v50 = Mul v49, v1
+    v51 = Mul v50, v1
+    Return v51
+}
+
+function f1 name="inALoop" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v1 key="more"
+    v4 = ToBoolean v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = String string="data"
+    v6 = CallDirect v5, v0 function=f0
+    PropSet v1, v6 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f1 name="inALoop"
+# CHECK-NOT: CallDirect
+
+function f2 name="outsideALoop" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = String string="data"
+    v2 = CallDirect v1, v0 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="outsideALoop"
+# CHECK: = CallDirect v1, v0 function=f0

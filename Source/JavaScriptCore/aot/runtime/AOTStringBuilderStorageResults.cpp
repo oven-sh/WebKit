@@ -645,8 +645,8 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateOtherCou
 static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateShortKey(Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey)
 {
     ShortKeyCharacters characters;
-    if (tryWriteShortKeyInline(unsafeMakeSpan(parts, count), characters) && characters.length >= 2) [[likely]] {
-        StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+    StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+    if (tryWriteShortKeyInline(unsafeMakeSpan(parts, count), characters) && characters.length - 2 <= keys.maxCachedKeyLength() - 2) [[likely]] {
         // A rope is made anew each time, so nobody asks for these parts again.
         if (characters.hasRopePart)
             keys.lastLookupByParts().countAndKinds = 0;

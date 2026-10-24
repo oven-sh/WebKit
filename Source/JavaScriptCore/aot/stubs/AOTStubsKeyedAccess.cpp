@@ -660,7 +660,7 @@ static void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation
         .size = registers.payload,
         .vector = registers.entry,
         .index = indexRegisterOfObjectLookup(jit),
-    }, ObjectLookupName::IsGivenByUID, value, miss);
+    }, ObjectLookupName::IsGivenByUID, value, miss, operation == SlotOperation::Define ? InvalidGPRReg : registers.key);
 }
 
 static void storeByKeyedSlot(StubAssembler& jit, SlotOperation operation, const KeyedProbeRegisters& registers, GPRReg value, JumpList& miss)

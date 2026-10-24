@@ -13,7 +13,7 @@
 #include "Options.h"
 #include "VM.h"
 #include <atomic>
-#include <mutex>
+#include <wtf/Lock.h>
 #include <wtf/PageBlock.h>
 
 #if ENABLE(AOT)
@@ -58,10 +58,13 @@ Stubs::Stubs(InvokeStubFunction invoke, Vector<void*>&& callbackEntries, std::sp
 
 const Stubs* Stubs::current()
 {
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [] {
+    // The stubs serve the whole process. Of several images, the first that is asked and has them gives them.
+    if (const Stubs* stubs = s_currentStubs.load(std::memory_order_acquire)) [[likely]]
+        return stubs;
+    static Lock lock;
+    Locker locker { lock };
+    if (!s_currentStubs.load(std::memory_order_acquire))
         s_currentStubs.store(tryCreateFromImage().release(), std::memory_order_release);
-    });
     return s_currentStubs.load(std::memory_order_acquire);
 }
 

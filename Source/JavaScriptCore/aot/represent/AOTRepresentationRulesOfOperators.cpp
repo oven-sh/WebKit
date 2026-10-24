@@ -84,7 +84,9 @@ static bool comparesLiteralStringWords(const OperatorContext& operation)
         return false;
     bool areWords = true;
     operation.value.forEachChild([&](ValueID operand) {
-        areWords = areWords && defaultRepresentationOf(operation.program.typeOf(operation.function, operand)) == Representation::LiteralString;
+        // The word of a cell is found by a search for its text, which costs more than the comparison.
+        areWords = areWords && defaultRepresentationOf(operation.program.typeOf(operation.function, operand)) == Representation::LiteralString
+            && !isSameWord(operation.function.at(operand).representation, Representation::JSValue);
     });
     return areWords;
 }

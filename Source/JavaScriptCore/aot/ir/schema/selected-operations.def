@@ -11,7 +11,7 @@ operation CallMethod (receiver: Any/retains, arguments...: Any/retains, key: Pro
 operation TryPutByIds (object: Object/inspects, keys: List<PropertyKey>, values...: Any/retains(object), from Placed request?: Request, from Placed siteCache?: SiteCache) [isDefinition] -> natural(boolean) ; Allocates reads(ShapeWords, OrderWords, NamedProperties, ObjectFields) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, RuntimeState) ; replaces = PropSet, PropDefine ; runtime = TryPutProperties ; siteCaches = 1
 
 family SlotRun Selected..Placed ; accessClass = Slot
-operation PutSlots (object: Object/inspects, guard?: Guard/inspects, placedKeys: List<PlacedKey>, receivers: LayoutSet, values...: Declared/retains(object)) -> none ; AllocatesWithoutCollecting reads(ObjectFields, OrderWords) writes(ObjectFields, OrderWords, RuntimeState) by Access ; relies = Shape, NotFrozen ; guarded = object ; replaces = PutSlot, PutSlotOrAdd ; runsOwnerBarrier = true
+operation PutSlots (object: Object/inspects, guard?: Guard/inspects, placedKeys: List<PlacedKey>, receivers: LayoutSet, values...: Declared/retains(object)) -> none ; AllocatesWithoutCollecting reads(ObjectFields, OrderWords) writes(ObjectFields, OrderWords, RuntimeState) by Access ; relies = Shape, NotFrozen ; guarded = object ; replaces = PutSlot, PutSlotOrAdd ; runsOwnerBarrier = true ; remembersOwner = true
 
 family ObjectCreation Selected..Placed
 operation DefineOwnProperty (object: Object/inspects+returns+definesName+runs(OwnKeys), computedKey: PropertyKey/inspects, value?: Any/retains(object), getter?: Any/retains(object), setter?: Any/retains(object), descriptorFlags: PropertyDescriptorFlags) -> natural(same(object)) ; DefinesProperty UsesRuntime ResolvesRopes reads(Elements, ArrayStorage) writes(MemberGuards, Elements, ArrayStorage) ; replaces = CallBuiltin, NewObject ; runtime = DefineOwnProperty
@@ -19,7 +19,7 @@ operation DefineAccessors (object: Object/inspects+definesName, keys: List<Prope
 
 family SelectedOperator Selected..Placed
 operation IntegerBound (number: Number/inspects, comparison: Opcode) [numberIsOnLeft] -> natural(integer) ; none
-operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: Any/retains(promise), guard?: Guard/inspects) -> none ; writes(PromiseState) ; relies = NotThenable ; guarded = value ; replaces = ReturnAsyncResult, ResolvePromise ; runsOwnerBarrier = true
+operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: Any/retains(promise), guard?: Guard/inspects) -> none ; writes(PromiseState) ; relies = NotThenable ; guarded = value ; replaces = ReturnAsyncResult, ResolvePromise ; runsOwnerBarrier = true ; remembersOwner = true
 
 family String Selected..Placed
 operation Substring (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin, ElemGet ; runtime = Substring

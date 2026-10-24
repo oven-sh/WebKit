@@ -184,7 +184,7 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
         return { WTF::move(plan), { } };
     }
 
-    if (hasFlag(context.options().reports, ReportSet::Arrivals) && context.recordedOptions().countsArrivals) {
+    if (context.options().writesCodeSizeMap() && context.recordedOptions().countsArrivals) {
         output.arrivalSites = Typed::describeArrivalSites({ *pipeline.program, pipeline.flow.get() }, plan.arrivalSites, context);
         times.didFinish("describe arrival sites"_s);
     }
@@ -274,6 +274,15 @@ static LevelCounts* countersOf(SiteCounts& counts, Wire::AccessKind kind)
 {
     switch (kind) {
     case Wire::AccessKind::Unknown:
+    case Wire::AccessKind::Truthiness:
+    case Wire::AccessKind::Equality:
+    case Wire::AccessKind::Arithmetic:
+    case Wire::AccessKind::Comparison:
+    case Wire::AccessKind::Conversion:
+    case Wire::AccessKind::TypeOf:
+    case Wire::AccessKind::InstanceOf:
+    case Wire::AccessKind::Iteration:
+    case Wire::AccessKind::Spread:
         return nullptr;
     case Wire::AccessKind::Read:
     case Wire::AccessKind::Store:
@@ -343,7 +352,7 @@ static void writeSymbols(const Typed::PipelineOutput& pipeline, const BuiltImage
     if (!encodesSymbols && !options.writesCodeSizeMap())
         return;
 
-    ImageSymbolInputs inputs { built, *pipeline.program, *pipeline.heat, *pipeline.regExpRequests };
+    ImageSymbolInputs inputs { built, *pipeline.program, *pipeline.heat, *pipeline.regExpRequests, output.arrivalSites };
     Vector<ImageSymbol> symbols = collectSymbols(inputs);
     if (encodesSymbols)
         output.symbols = encodeSymbols(symbols.span(), output.image.span());
@@ -373,8 +382,8 @@ static Vector<SiteCounts> buildFlowReport(Typed::PipelineOutput& pipeline, Typed
 {
     const CompileOptions& options = context.options();
     const Typed::Program& program = *pipeline.program;
-    Vector<Typed::FlowSiteLevel> accessSiteLevels = Typed::gradeAccessSites(*pipeline.flow, WTF::move(pipeline.accessSiteObservations), context);
-    output.flowReport = Typed::buildFlowReport(program, *pipeline.flow, accessSiteLevels.span(), pipeline.remainingChecks.span(), WTF::move(bodyRecords), context);
+    Typed::GradedSites gradedSites = Typed::gradeAccessSites(program, *pipeline.flow, WTF::move(pipeline.accessSiteObservations), context);
+    output.flowReport = Typed::buildFlowReport(program, *pipeline.flow, gradedSites, pipeline.remainingChecks.span(), WTF::move(bodyRecords), context);
     Vector<SiteCounts> sitesByFunctionAsRead;
     if (hasFlag(options.reports, ReportSet::Functions))
         sitesByFunctionAsRead = countSitesByFunctionAsRead(program, output.flowReport.accesses.span());

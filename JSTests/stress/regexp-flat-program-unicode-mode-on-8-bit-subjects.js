@@ -1,7 +1,7 @@
 //@ runDefault("--useRegExpJIT=0", "--validateRegExpFlatProgram=1")
 
 // A pattern in unicode mode with a step that can consume a surrogate pair (a negated class, a class with characters beyond the BMP, the dot, a property escape)
-// runs on a flat program where the subject has 8-bit characters, and in the bytecode interpreter on any other subject. The option compares the two at every match.
+// runs on a flat program, whatever the subject's characters. The option compares it with the bytecode interpreter at every match.
 
 function shouldBe(actual, expected, what) {
     if (JSON.stringify(actual) !== JSON.stringify(expected))

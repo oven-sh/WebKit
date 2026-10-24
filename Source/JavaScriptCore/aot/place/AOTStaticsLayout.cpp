@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFlowResults.h"
 #include "AOTOperationData.h"
+#include "AOTReuseEnvironments.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -363,6 +364,17 @@ static void placeLastArrays(StaticsBuilder& builder)
     uint64_t size = static_cast<uint64_t>(builder.sites.profiledArrayLiterals.size()) * staticsWordSize;
     builder.plan.distanceFromArrayProfileToLastArray = static_cast<uint32_t>(size);
     builder.firstClearedOffset = builder.allocator.allocate(size, staticsWordSize);
+}
+
+static void placeFreeEnvironmentCells(StaticsBuilder& builder)
+{
+    unsigned numberOfLayouts = builder.context.program.layouts.size();
+    builder.plan.freeCellOffsets.fill(std::nullopt, numberOfLayouts);
+    for (unsigned i = 0; i < numberOfLayouts; ++i) {
+        if (!builder.context.inputs.environmentReuse.isReused(LayoutID(i)))
+            continue;
+        builder.plan.freeCellOffsets[i] = builder.allocator.allocate(staticsWordSize, staticsWordSize);
+    }
     uint64_t clearedSize = builder.allocator.end() - builder.firstClearedOffset;
     if (clearedSize)
         builder.plan.clearedEachCollection.append({ builder.firstClearedOffset, static_cast<uint32_t>(clearedSize) });
@@ -379,6 +391,7 @@ static constexpr RegionStep regionSteps[] = {
     placeTemplateObjects,
     placeArrayProfiles,
     placeLastArrays,
+    placeFreeEnvironmentCells,
 };
 
 std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& context, const PlacedSites& sites, GuardBitTable& guardBits)

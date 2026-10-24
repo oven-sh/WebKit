@@ -314,6 +314,9 @@ static std::optional<OwnKeyWalkPlan> planWalkByLayouts(FunctionPassContext& cont
 {
     const Program& program = context.program;
     auto [isProven, layouts] = walkedLayoutsOf(context, site);
+    // Behind arms the list of the built-in meets the lists of the arms, and is made even where only its length is asked for. Objects that have none of the expected layouts may be all that comes.
+    if (site.walk == OwnKeyWalk::Keys && !isProven)
+        return std::nullopt;
 
     // HasKeyOrder compares a word that is numbered per layout, so the arms of several proven layouts test the shape too.
     OwnKeyWalkPlan plan { .needsShapeTest = !isProven || layouts.size() > 1 };

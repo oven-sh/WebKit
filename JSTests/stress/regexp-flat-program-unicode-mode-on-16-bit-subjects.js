@@ -1,7 +1,7 @@
 //@ runDefault("--useRegExpJIT=0", "--validateRegExpFlatProgram=1")
 
-// A pattern in unicode mode with a step that can consume a surrogate pair runs on a flat program for code units as long as the match meets no surrogate. Where it meets one, in a step that tests
-// for a class or where an attempt begins, the bytecode interpreter makes the match. The validation runs the two side by side wherever the flat program answers.
+// A pattern in unicode mode with a step that can consume a surrogate pair runs on a flat program that takes a lead surrogate and the trail surrogate behind it as one character.
+// The validation runs it beside the bytecode interpreter on every match.
 function shouldBe(actual, expected, what) {
     if (actual !== expected)
         throw new Error(what + ": " + actual + " instead of " + expected);

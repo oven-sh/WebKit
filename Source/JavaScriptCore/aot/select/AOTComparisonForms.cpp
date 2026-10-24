@@ -18,6 +18,11 @@ static bool isObjectOrNullish(const Type& type)
     return !(type.primitives & ~Primitive::UndefinedOrNull) && type.isJavaScriptValue();
 }
 
+static bool isBooleanOrNullish(const Type& type)
+{
+    return type.hasOnlyPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull);
+}
+
 static bool isInt32AndBoxedValue(const Type& integer, const Type& other)
 {
     return integer.isInt32() && defaultRepresentationOf(other) == Representation::JSValue;
@@ -108,7 +113,7 @@ static OperatorForm chooseLooseEqualityForm(const OperatorTypes& types, CodeShap
         return OperatorForm::Numbers;
     if (shape == CodeShape::Fast && areBoth(types, &Type::isAnyStringOrNullish))
         return OperatorForm::NullableStrings;
-    if (areBoth(types, isObjectOrNullish))
+    if (areBoth(types, isObjectOrNullish) || areBoth(types, isBooleanOrNullish))
         return OperatorForm::Bits;
     return OperatorForm::Generic;
 }

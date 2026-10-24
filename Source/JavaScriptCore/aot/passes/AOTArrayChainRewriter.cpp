@@ -236,7 +236,7 @@ static void declineAll(FunctionPassContext& context, const Vector<ArrayChain>& c
         context.addDecline(Wire::DeclineKind::ArrayChainNotFused, chain.lastCall, ArrayChainDeclineReason::Unknown);
 }
 
-PassOutcome fuseArrayChains(FunctionPassContext& context)
+static PassOutcome fuseArrayChains(FunctionPassContext& context, const BitVector* callsTakenAlone)
 {
     if (context.function.role == FunctionRole::ChainStep || context.function.enclosingRuntimeFunction)
         return PassOutcome::Unchanged;
@@ -245,7 +245,7 @@ PassOutcome fuseArrayChains(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     Vector<ArrayChain> accepted;
-    for (ArrayChain& chain : findArrayChains(context)) {
+    for (ArrayChain& chain : findArrayChains(context, callsTakenAlone)) {
         ArrayChainDeclineReason obstacle = checkInterleaving(context, chain);
         if (obstacle == ArrayChainDeclineReason::None)
             accepted.append(WTF::move(chain));
@@ -286,6 +286,16 @@ PassOutcome fuseArrayChains(FunctionPassContext& context)
     // A chain is rewritten inside its block: the fused body has the blocks, the targets and the handlers of the body that it replaces.
     context.keptAnalyses = controlFlowAnalyses;
     return PassOutcome::Changed;
+}
+
+PassOutcome fuseArrayChains(FunctionPassContext& context)
+{
+    return fuseArrayChains(context, nullptr);
+}
+
+PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVector& calls)
+{
+    return fuseArrayChains(context, &calls);
 }
 
 } } } // namespace JSC::AOT::Typed

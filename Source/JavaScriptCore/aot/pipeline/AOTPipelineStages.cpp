@@ -35,6 +35,7 @@
 #include "AOTRegExpCompiler.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRemoveUnreachableFunctions.h"
+#include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTThreads.h"
@@ -130,6 +131,7 @@ static std::unique_ptr<PipelineOutput> createOutput(BuildContext& build)
     createDefaultResult(output->heat);
     createDefaultResult(output->callingConventions);
     createDefaultResult(output->frameAllocation);
+    createDefaultResult(output->environmentReuse);
     createDefaultResult(output->literalStrings);
     createDefaultResult(output->constantCollections);
     createDefaultResult(output->slots);
@@ -198,6 +200,7 @@ void PipelineOutput::releaseCodeGenerationInputs(BuildContext& build)
     build.destroyLater(WTF::move(effects));
     build.destroyLater(WTF::move(callingConventions));
     build.destroyLater(WTF::move(frameAllocation));
+    build.destroyLater(WTF::move(environmentReuse));
     build.destroyLater(WTF::move(literalStrings));
     build.destroyLater(WTF::move(constantCollections));
     build.destroyLater(WTF::move(slots));
@@ -362,6 +365,7 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::DeferClosuresInFields);
     stage.run(PassID::AllocateInFrames);
     stage.run(PassID::AllocateInnerObjects);
+    stage.run(PassID::ReuseEnvironments);
     stage.verifyAtEndOfPreparedForm();
 }
 
@@ -377,6 +381,11 @@ void Pipeline::runSlotStage()
     stage.didFinish(nameOf(PassID::PlanSlots));
 }
 
+const Heat* Pipeline::heatForReport()
+{
+    return hasFlag(m_build.options().reports, ReportSet::Flow) && !m_runner.isStopped() ? &m_analyses.heat(flow()) : nullptr;
+}
+
 void Pipeline::runSelectStage()
 {
     TimedStage stage(*this, Stage::Select);
@@ -385,7 +394,7 @@ void Pipeline::runSelectStage()
         // Whoever only reads a function reads it where it is in the cache: behind its selection, or behind the last step that changes it.
         bool findsOutliningSites = m_build.isEnabled(PassID::OutlineColdOperations, FunctionID());
         OutliningSiteFinder finder(m_program, inputsFor(PassID::OutlineColdOperations), m_build);
-        AccessSiteObserver observer(m_program, flow(), m_build);
+        AccessSiteObserver observer(m_program, flow(), m_build, heatForReport());
         m_factsOfSelectedBodies = makeUnique<FactsOfSelectedBodies>(*this);
         FactsOfSelectedBodies& facts = *m_factsOfSelectedBodies;
         std::span<const uint8_t> hasOutliningSites = finder.hasSites();
@@ -436,7 +445,7 @@ void Pipeline::runSelectStage()
         stage.verifyOnRequest(IRForm::Selected);
         advanceTo(IRForm::Selected, wasRunning);
         if (!m_runner.isStopped())
-            m_output->accessSiteObservations = observeAccessSites(m_program, flow(), m_build);
+            m_output->accessSiteObservations = observeAccessSites(m_program, flow(), m_build, heatForReport());
         stage.didFinish("observe access sites"_s);
         stage.run(PassID::OutlineColdOperations);
         stage.run(PassID::InlineHeads);

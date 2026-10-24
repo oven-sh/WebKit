@@ -238,11 +238,6 @@ function f0 name="readX" module=m0 parameters=[{type=L0|L2 flags=[IsExpected]}, 
 }
 )IR"_s;
 
-static String textOf(const Typed::ArrivalSiteReport& report, Wire::TextRange range)
-{
-    return String::fromUTF8ReplacingInvalidSequences(report.text.span().subspan(range.offset, range.length));
-}
-
 static void testReportListsSitesAndLayouts()
 {
     Wire::CompileOptions options = makeDefaultCompileOptions();
@@ -253,32 +248,14 @@ static void testReportListsSitesAndLayouts()
 
     Typed::ArrivalSiteNumbers numbers = Typed::numberArrivalSites(*program, build);
     AOT_TEST_CHECK(numbers.isCounting());
-    Typed::ArrivalSiteReport report = Typed::describeArrivalSites({ *program }, numbers, build);
+    Vector<String> lines = String::fromUTF8(Typed::describeArrivalSites({ *program }, numbers, build).span()).split('\n');
 
-    AOT_TEST_CHECK(report.sites.size() == 2);
-    const Wire::ArrivalSiteRecord& readSite = report.sites[0];
-    AOT_TEST_CHECK(!readSite.number && !readSite.function && !readSite.location.module && readSite.location.position == 7);
-    AOT_TEST_CHECK(textOf(report, readSite.operation) == "PropGet"_s && readSite.kind == Wire::AccessKind::Read);
-    AOT_TEST_CHECK(readSite.level == Wire::KnowledgeLevel::Unknown && readSite.stamp == Wire::ArrivalStamp::Open);
-    AOT_TEST_CHECK(!readSite.firstExpectedLayout && readSite.expectedLayoutCount == 2);
-    const Wire::ArrivalSiteRecord& storeSite = report.sites[1];
-    AOT_TEST_CHECK(storeSite.number == 1 && storeSite.location.position == 9);
-    AOT_TEST_CHECK(textOf(report, storeSite.operation) == "PropSet"_s && storeSite.kind == Wire::AccessKind::Store);
-    AOT_TEST_CHECK(storeSite.firstExpectedLayout == 2 && !storeSite.expectedLayoutCount);
-    AOT_TEST_CHECK(report.siteLayouts == Vector<uint32_t>({ 0, 2 }));
-
+    AOT_TEST_CHECK(lines.size() >= 4);
+    AOT_TEST_CHECK(lines[0].startsWith("S\t0\tPropGet\tRead\tUnknown\tUnknown\tOpen\tmain.js\t"_s) && lines[0].endsWith("\treadX\t0,2"_s));
+    AOT_TEST_CHECK(lines[1].startsWith("S\t1\tPropSet\tStore\tUnknown\tUnknown\tNone\tmain.js\t"_s) && lines[1].endsWith("\treadX\t"_s));
     // An environment is no receiver. The layouts that the engine adds to every program come after those of the text.
-    AOT_TEST_CHECK(report.layouts.size() >= 2);
-    const Wire::ArrivalLayoutRecord& point = report.layouts[0];
-    AOT_TEST_CHECK(!point.layout && point.base == Wire::none && point.flags == Wire::ArrivalLayoutFlags { });
-    AOT_TEST_CHECK(textOf(report, point.kind) == "Record"_s && textOf(report, point.name) == "Point"_s);
-    AOT_TEST_CHECK(!point.firstField && point.fieldCount == 2);
-    AOT_TEST_CHECK(textOf(report, report.layoutFields[0].name) == "x"_s && report.layoutFields[0].flags == Wire::ArrivalFieldFlags { });
-    AOT_TEST_CHECK(textOf(report, report.layoutFields[1].name) == "label"_s && report.layoutFields[1].flags == Wire::ArrivalFieldFlags::IsOptional);
-    const Wire::ArrivalLayoutRecord& unnamed = report.layouts[1];
-    AOT_TEST_CHECK(unnamed.layout == 2 && !unnamed.name.length);
-    AOT_TEST_CHECK(unnamed.firstField == 2 && unnamed.fieldCount == 1);
-    AOT_TEST_CHECK(report.layoutFields[2].name == report.layoutFields[0].name);
+    AOT_TEST_CHECK(lines[2] == "L\t0\tRecord\tPoint\t\tx,label?"_s);
+    AOT_TEST_CHECK(lines[3] == "L\t2\tRecord\t\t\tx"_s);
 }
 
 static void testReportIsEmptyWithoutTheOption()
@@ -290,8 +267,7 @@ static void testReportIsEmptyWithoutTheOption()
     Typed::ArrivalSiteNumbers numbers = Typed::numberArrivalSites(*program, build);
     AOT_TEST_CHECK(!numbers.isCounting());
     AOT_TEST_CHECK(!numbers.numberOf(Typed::FunctionID(0u), Typed::ValueID(2u), 0));
-    Typed::ArrivalSiteReport report = Typed::describeArrivalSites({ *program }, numbers, build);
-    AOT_TEST_CHECK(report.sites.isEmpty() && report.siteLayouts.isEmpty() && report.layouts.isEmpty() && report.layoutFields.isEmpty() && report.text.isEmpty());
+    AOT_TEST_CHECK(Typed::describeArrivalSites({ *program }, numbers, build).isNull());
 }
 
 std::span<const NativeTest> arrivalCountTests()

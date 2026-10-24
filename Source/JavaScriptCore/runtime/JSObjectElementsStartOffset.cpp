@@ -53,8 +53,8 @@ bool JSObject::tryReallocateWithElementsStartOffset(VM& vm, unsigned vectorLengt
         return false;
 
     memcpy(newButterfly->base(0, propertyCapacity), oldButterfly->base(0, propertyCapacity), Butterfly::totalSize(0, propertyCapacity, true, numberOfCopiedElements * sizeof(EncodedJSValue)));
-    Butterfly::clearRange(oldStructure->indexingType(), newButterfly, numberOfCopiedElements, vectorLength);
     newButterfly->setVectorLength(vectorLength);
+    Butterfly::clearRange(oldStructure->indexingType(), newButterfly, numberOfCopiedElements, vectorLength);
     newButterfly->setPublicLength(std::min(oldButterfly->publicLength(), vectorLength));
     newButterfly->indexingHeader()->elementsStartOffset(propertyCapacity) = numberOfFreeSlots;
 

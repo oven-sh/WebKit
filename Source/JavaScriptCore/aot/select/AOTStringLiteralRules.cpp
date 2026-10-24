@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTEdgeResults.h"
 #include "AOTFlowResults.h"
 #include "AOTInductionVariables.h"
 #include "AOTInlineBuiltinForms.h"
@@ -107,10 +108,30 @@ static std::optional<ComparedLiteral> findComparedLiteral(SelectionContext& cont
     return std::nullopt;
 }
 
+// An array holds cells, whatever the type of its elements: the word of one is found by a search for its text.
+static bool comesOutOfArray(SelectionContext& context, ValueID id, unsigned blocksLeft = 4)
+{
+    const Function& function = context.function();
+    if (function.at(id).opcode == Opcode::GetArrayElement)
+        return true;
+    ValueLocation location = context.analyses().useLists().locationOf(id);
+    if (function.at(id).opcode != Opcode::Parameter || location.placement != ValuePlacement::Parameter || !blocksLeft)
+        return false;
+    return std::ranges::any_of(context.analyses().cfg().incomingEdges(location.block), [&](Edge edge) {
+        const Target& target = targetOf(function, edge);
+        if (location.index < target.arguments.size())
+            return comesOutOfArray(context, target.arguments[location.index], blocksLeft - 1);
+        if (edge.isHandlerEdge())
+            return false;
+        ValueID narrowed = operandNarrowedOnEdge(function, { edge.from, edge.targetIndex, location.index - static_cast<uint32_t>(target.arguments.size()) });
+        return narrowed && comesOutOfArray(context, narrowed, blocksLeft - 1);
+    });
+}
+
 // The rows take a cell or a boxed value. The operator compares two literal string words without decoding either.
 static bool isLiteralStringWord(SelectionContext& context, ValueID id)
 {
-    return defaultRepresentationOf(context.typeOf(id)) == Representation::LiteralString;
+    return defaultRepresentationOf(context.typeOf(id)) == Representation::LiteralString && !comesOutOfArray(context, id);
 }
 
 static std::optional<StringLiteralMatch> findEqualityOfValue(SelectionContext& context, ValueID id)
@@ -121,7 +142,7 @@ static std::optional<StringLiteralMatch> findEqualityOfValue(SelectionContext& c
 
     bool isStrict = context.function().at(id).opcode == Opcode::StrictEq;
     const Type& subjectType = context.typeOf(compared->subject);
-    if (isStrict && defaultRepresentationOf(subjectType) != Representation::JSValue)
+    if (isStrict && defaultRepresentationOf(subjectType) != Representation::JSValue && defaultRepresentationOf(subjectType) != Representation::LiteralString)
         return std::nullopt;
     // StrictEq reads no string where one operand is never one, and the row reads string storage whatever it is given.
     if (isStrict && !(subjectType.primitives & Primitive::AnyString))

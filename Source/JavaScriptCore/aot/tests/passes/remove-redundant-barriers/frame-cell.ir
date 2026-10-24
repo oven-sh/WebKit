@@ -1,0 +1,41 @@
+# A store to an environment that is in the frame for certain needs no barrier even after a collection, because the collector never marks a frame cell.
+# FORM: Placed
+# RUN: pass RemoveRedundantBarriers
+# STATISTIC: BarriersCoveredLater = 0
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1
+function f0 name="frame-cell" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything @JSValue):
+    v1 @Cell = NewObject layout=L0 fields=[] storage=Frame allocation=0
+    v2 @Cell = NewObject layout=L1 fields=[] allocation=1
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    v4 @JSValue = Undefined
+    Return v4
+}
+# CHECK-LABEL: function f0 name="frame-cell"
+# CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+function f1 name="heap-cell" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything @JSValue):
+    v1 @Cell = NewObject layout=L0 fields=[] allocation=0
+    v2 @Cell = NewObject layout=L1 fields=[] allocation=1
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    v4 @JSValue = Undefined
+    Return v4
+}
+# CHECK-LABEL: function f1 name="heap-cell"
+# CHECK: PutEnvironmentField v1, v0 layout=L0
+# CHECK-NOT: ownerCannotBeMarked
+function f2 name="frame-cell-until-materialized" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything @JSValue):
+    v1 @Cell = NewObject layout=L0 fields=[] storage=FrameUntilMaterialized allocation=0
+    v2 @Cell = NewObject layout=L1 fields=[] allocation=1
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    v4 @JSValue = Undefined
+    Return v4
+}
+# CHECK-LABEL: function f2 name="frame-cell-until-materialized"
+# CHECK: PutEnvironmentField v1, v0 layout=L0
+# CHECK-NOT: ownerCannotBeMarked

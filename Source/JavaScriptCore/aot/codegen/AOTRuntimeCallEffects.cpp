@@ -20,6 +20,8 @@ Effects RuntimeCallEmitter::effectsOfCall(const OperationContext& context, const
     Effects effects = context.effects().onAnyEdge().intersectedWith(effectsOfCallee);
     if (m_options.recorded.isSabotaged(Sabotage::NoCallCollects))
         effects.mayCollect = false;
+    if (m_options.recorded.isSabotaged(Sabotage::NoCallWrites))
+        effects.writes = { };
     return effects;
 }
 

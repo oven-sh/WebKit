@@ -279,8 +279,12 @@ static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedSt
         if (StructuralRead read = readByFiledSlot(base, *filedSlot); read.value)
             return read;
     }
-    bool shouldCache = (structure->isDictionary() ? isHeldByCacheableDictionary(structure, uid) : true) && !filedSlot;
-    shouldCache = shouldCache && instance->state->propertyCaches->shouldFile(structure->id(), uid, SlotAccess::Read);
+    bool canFile = !structure->isDictionary() || isHeldByCacheableDictionary(structure, uid);
+    bool shouldCache = !filedSlot && instance->state->propertyCaches->shouldFile(structure->id(), uid, SlotAccess::Read);
+    // What a dictionary lacks is filed once it is no dictionary any more, and the caching operation makes it so once.
+    if (shouldCache && !canFile && !structure->hasBeenFlattenedBefore() && base->type() == FinalObjectType)
+        return { };
+    shouldCache = shouldCache && canFile;
     Object* object = compiledObjectOrNull(base);
     bool isNamespace = base->type() == ObjectType && isModuleNamespace(base);
     bool isOrdinary = !object && !isNamespace;
@@ -459,9 +463,14 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
     if (canOnlyReplace || !structure->isStructureExtensible())
         return LeafAnswer::TakeSlowPath;
     bool repeatsAddition = repeatsPropertyAddition(structure, uid);
+    bool makesStructure = !repeatsAddition && instance->state->propertyCaches->shouldMakeStructureForAdditionByKey(structure, uid);
+    if (!repeatsAddition && !makesStructure)
+        object->convertToDictionary(vm);
     object->putDirect(vm, uid, value, slot);
     if (repeatsAddition)
         cacheStore(instance, object, structure, uid, slot);
+    else if (makesStructure)
+        instance->state->propertyCaches->didMakeStructureForAdditionByKey(object->structure());
     return LeafAnswer::Yes;
 }
 

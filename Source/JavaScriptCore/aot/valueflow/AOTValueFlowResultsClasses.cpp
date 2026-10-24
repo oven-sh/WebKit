@@ -358,12 +358,61 @@ static void invalidateCyclicBases(Vector<BaseOfClass>& bases)
     }
 }
 
+static uint64_t countFieldsWithInheritedOnes(const Program& program, std::span<const BaseOfClass> bases, LayoutID id)
+{
+    uint64_t numberOfUnnamedFields = 0;
+    Vector<PropertyKeyID> keys;
+    for (LayoutID current = id; current; current = provenBaseOf(bases[current.index()])) {
+        for (const Field& field : program.at(current).fields) {
+            if (field.key)
+                keys.append(field.key);
+            else
+                ++numberOfUnnamedFields;
+        }
+    }
+    AOT::sort(keys);
+    removeRepeatedElements(keys);
+    return numberOfUnnamedFields + keys.size();
+}
+
+// The objects of a class whose base is proven hold the fields of the classes above in slots, and an object has only so many. Below a base nobody has proven they are extra properties.
+static void invalidateBasesWhoseFieldsHaveNoRoom(const ValueFlowResultInputs& inputs, Vector<BaseOfClass>& bases)
+{
+    const Program& program = inputs.program;
+    uint64_t maxFields = inputs.build.limit(LimitID::FieldsInKeyOrder);
+    // No fewer than the objects of the layout hold.
+    Vector<uint64_t> fieldCounts(FillWith { }, bases.size(), static_cast<uint64_t>(0));
+    BitVector isCounted(bases.size());
+    Vector<LayoutID, 16> path;
+    for (size_t index = 0; index < bases.size(); ++index) {
+        for (LayoutID current(static_cast<uint32_t>(index)); current && !isCounted.quickSet(current.index()); current = provenBaseOf(bases[current.index()]))
+            path.append(current);
+        while (!path.isEmpty()) {
+            LayoutID id = path.takeLast();
+            uint64_t& count = fieldCounts[id.index()];
+            count = program.at(id).fields.size();
+            LayoutID base = provenBaseOf(bases[id.index()]);
+            if (!base)
+                continue;
+            count += fieldCounts[base.index()];
+            if (count <= maxFields || program.at(id).isDerived())
+                continue;
+            count = countFieldsWithInheritedOnes(program, bases.span(), id);
+            if (!inputs.build.exceeds(LimitID::FieldsInKeyOrder, count, Subject { .layout = id }))
+                continue;
+            bases[id.index()] = BaseOfClass { };
+            count = program.at(id).fields.size();
+        }
+    }
+}
+
 static void computeBaseResults(const ValueFlowResultInputs& inputs, std::span<const ClassDefinition> classes, FlowApplication& application)
 {
     Vector<BaseOfClass> bases(classes.size(), [&](size_t index) {
         return computeBase(inputs, LayoutID(static_cast<uint32_t>(index)), classes[index]);
     });
     invalidateCyclicBases(bases);
+    invalidateBasesWhoseFieldsHaveNoRoom(inputs, bases);
     for (size_t index = 0; index < bases.size(); ++index) {
         LayoutFlow& flow = application.layouts[index].flow;
         flow.baseState = bases[index].state;

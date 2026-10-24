@@ -105,9 +105,11 @@ private:
     CellPointer cellAroundInnerObject(const ValueContext&, const PlaceInCell&);
     TypedPointer addressOfReferenceToInnerObject(CellPointer outer, LayoutID outerLayout, uint32_t field);
     void storeReferenceTo(CellPointer inner, CellPointer outer, LayoutID outerLayout, uint32_t field);
+    CellPointer takeReleasedCellOrAllocate(const ValueContext&, AllocationID, WholeCell, uint32_t freeCellOffset);
     void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, CellBody = CellBody::Unwritten);
     void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
     void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, EmptySlots = EmptySlots::All, CellBody = CellBody::Unwritten);
+    void emitBarrierIfReleased(const ValueContext&, CellPointer, LayoutID, const InitialFields&);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&, OwnerBarrier);
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype, std::optional<Word32> numberOfAllocation = std::nullopt);
     Vector<WordOfEmptyObject, 8> wordsOfEmptyObject(LayoutID);

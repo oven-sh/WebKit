@@ -53,6 +53,7 @@ public:
     const CompileOptions& options() const { return m_options; }
     const RecordedOptions& recordedOptions() const { return m_options.recorded; }
     bool validates() const { return m_options.recorded.validates; }
+    bool isSabotaged(Sabotage part) const { return m_options.recorded.isSabotaged(part); }
 
     bool isEnabled(FlowResultKind kind, uint32_t subject) const { return m_options.recorded.isEnabled(kind, subject); }
     bool isEnabledForProgram(FlowResultKind kind) const { return m_options.recorded.isEnabledForProgram(kind); }

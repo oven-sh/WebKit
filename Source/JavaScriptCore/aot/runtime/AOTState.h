@@ -122,6 +122,8 @@ struct State {
     std::unique_ptr<GlobalBindings> globalBindings;
     std::unique_ptr<ArrivalCounts> arrivalCounts;
     std::unique_ptr<AllocationCounts> allocationCounts;
+    // What registerWrittenAtFaults held at the last null check that faulted. The handler may run on another thread than the one that faulted.
+    uint64_t registerBeforeFault { 0 };
 
 private:
     explicit State(Instance&);

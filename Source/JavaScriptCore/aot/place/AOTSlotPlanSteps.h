@@ -265,6 +265,7 @@ struct PackedLayouts {
     Vector<uint32_t> sizes;
     Vector<uint32_t> inlineLimits;
     Vector<uint32_t> extensionSizes;
+    Vector<std::optional<uint32_t>> isEscapedOffsets;
     Vector<Vector<ReservedBytes>> bytesKeptZero;
     Vector<SharedLocation> sharedLocations;
     Vector<uint32_t> sharedLocationOfRow;

@@ -29,6 +29,7 @@
 #include "YarrErrorCode.h"
 #include "YarrFlags.h"
 #include "YarrFlatProgram.h"
+#include "YarrRequiredText.h"
 #include "YarrPattern.h"
 #include <wtf/TZoneMalloc.h>
 
@@ -534,8 +535,6 @@ public:
         size_t size = m_body ? m_body->estimatedSizeInBytes() : 0;
         if (m_flatProgram)
             size += m_flatProgram->estimatedSizeInBytes();
-        if (m_flatProgramFor8BitSubjects)
-            size += m_flatProgramFor8BitSubjects->estimatedSizeInBytes();
         if (m_bytecodeBehindFlatProgram)
             size += m_bytecodeBehindFlatProgram->estimatedSizeInBytes();
         if (m_flatProgramThatCountsTurns)
@@ -590,12 +589,10 @@ public:
     CharacterClass* ignoreCaseWordcharCharacterClass;
 
     static constexpr ptrdiff_t offsetOfFlatProgram() { return OBJECT_OFFSETOF(BytecodePattern, m_flatProgram); }
-    static constexpr ptrdiff_t offsetOfFlatProgramFor8BitSubjects() { return OBJECT_OFFSETOF(BytecodePattern, m_flatProgramFor8BitSubjects); }
 
     std::unique_ptr<FlatProgram> m_flatProgram;
-    // One with givesUpAtSurrogates, beside the bytecode for the matches that it gives up. In a subject of 8-bit characters it gives none up.
-    std::unique_ptr<FlatProgram> m_flatProgramFor8BitSubjects;
     std::optional<FlatProgramDecline> m_flatProgramDecline;
+    RequiredTexts m_requiredTexts;
     // A pattern that has only a flat program gets its bytecode out of its text on the day the flat program runs out of frames.
     String m_source;
     std::unique_ptr<BytecodePattern> m_bytecodeBehindFlatProgram;

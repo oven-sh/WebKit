@@ -368,21 +368,26 @@ static bool asksForElementOfArray(const FunctionPassContext& context, const Valu
 }
 
 // Arrays seldom have holes. The arm that a hole takes, in the loop of map() for one, is a slow path: what holds in front of the question holds behind it on the typed path, and the arm comes back through the tests.
-static PassOutcome markArmsOfAbsentElements(FunctionPassContext& context)
+// A new array takes what is stored into it but where it has left the storage that it was made with: the arm behind a store that failed gets no tests.
+static PassOutcome markArmsThatAreSeldomTaken(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
     const CFG& cfg = context.analyses.cfg();
     for (BlockID id : cfg.reversePostOrder()) {
         const Block& block = context.function.at(id);
-        if (block.frequency != BlockFrequency::Normal || !block.terminator.isConditionalBranch())
+        if (!block.terminator.isConditionalBranch() || cfg.incomingEdges(block.terminator.notTaken().block).size() != 1)
             continue;
-        if (!asksForElementOfArray(context, context.function.at(block.terminator.conditionOperand())))
-            continue;
+        const Value& test = context.function.at(block.terminator.conditionOperand());
+        const Block& arm = context.function.at(block.terminator.notTaken().block);
+        BlockFrequency frequency = arm.frequency;
+        if (test.opcode == Opcode::TryPutByValDirect)
+            frequency = BlockFrequency::Rare;
         // An arm with code of its own is code of the program, which gets its tests as any other.
-        const Block& absent = context.function.at(block.terminator.notTaken().block);
-        if (absent.frequency != BlockFrequency::Normal || !absent.values.isEmpty() || absent.terminator.kind != TerminatorKind::Jump || cfg.incomingEdges(block.terminator.notTaken().block).size() != 1)
+        else if (block.frequency == BlockFrequency::Normal && arm.frequency == BlockFrequency::Normal && arm.values.isEmpty() && arm.terminator.kind == TerminatorKind::Jump && asksForElementOfArray(context, test))
+            frequency = BlockFrequency::Unlikely;
+        if (frequency == arm.frequency)
             continue;
-        context.function.edit(block.terminator.notTaken().block, BlockEdit::Rest).frequency = BlockFrequency::Unlikely;
+        context.function.edit(block.terminator.notTaken().block, BlockEdit::Rest).frequency = frequency;
         outcome = PassOutcome::Changed;
     }
     if (outcome == PassOutcome::Changed)
@@ -400,6 +405,8 @@ static bool placesTestsBehindRounds(FunctionPassContext& context)
 PassOutcome placeTypeTests(FunctionPassContext& context)
 {
     bool hasUsesLeftByLastRound = std::exchange(context.hasUsesAwaitingExpansion, false);
+    // An operator whose one operand has become an integer is worth a test of the other.
+    hasUsesLeftByLastRound |= std::exchange(context.hasCountersConvertedSinceTestsWerePlaced, false);
     if (context.isBehindRounds ? !hasUsesLeftByLastRound && !placesTestsBehindRounds(context) : context.isInRounds && placesTestsBehindRounds(context))
         return PassOutcome::Unchanged;
     if (everyBlockRunsAtMostOnce(context))
@@ -408,7 +415,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
     if (context.function.runsOnlyBehindFailedTest())
         return PassOutcome::Unchanged;
 
-    PassOutcome marked = markArmsOfAbsentElements(context);
+    PassOutcome marked = markArmsThatAreSeldomTaken(context);
     ExpectedTypesByUse expectations(context.function);
     PassOutcome outcome = expectTypesByUses(context, expectations);
     outcome |= placePlannedTests(context, expectations);

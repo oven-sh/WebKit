@@ -138,7 +138,7 @@ JSC_DEFINE_HOST_FUNCTION(callCompiledBuiltin, (JSGlobalObject* globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(constructCompiledBuiltin, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     JSObject* closure = compiledClosureOfCallee(globalObject, callFrame);
-    return JSValue::encode(JSC::construct(globalObject, closure, JSC::getConstructData(closure), ArgList(callFrame), callFrame->newTarget()));
+    return JSValue::encode(JSC::constructAllowingPrimitiveResult(globalObject, closure, JSC::getConstructData(closure), ArgList(callFrame), callFrame->newTarget()));
 }
 
 NativeExecutable* builtinExecutable(JSGlobalObject* globalObject, uint32_t id)

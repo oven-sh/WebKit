@@ -42,11 +42,15 @@ function f2 name="afterAwait" flags=[IsAsync] parameters=[{type=number}] results
 # IR-LABEL: function f5 name="afterAwait" module=m0 role=CoroutineBody
 # IR-NOT: FulfillFreshPromise
 # IR: = ReturnAsyncResult
+# The promise is younger than what is stored into it, so the store has no barrier.
 # CHECK: f1: size=
 # CHECK-NOT: stub ReturnAsyncResult
+# CHECK-NOT: stub WriteBarrier
 # CHECK: f2: size=
 # CHECK: f4: size=
 # CHECK-NEXT: stub AllocateCell{{*}} x1
 # CHECK-NEXT: f5: size=
+# CHECK-NOT: stub WriteBarrier
 # CHECK: stub ReturnAsyncResult x1
+# CHECK-NOT: stub WriteBarrier
 # CHECK: f6: size=

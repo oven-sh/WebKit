@@ -134,7 +134,7 @@ static bool canTestConditions(FunctionPassContext& context, const CallSite& site
     if (!isMemberOfClass(answer) || !answer.receiverProofs.isEmpty())
         return false;
     // The failing side reads the member again, at the call.
-    if (site.opcode == Opcode::Call && !site.memberRead.canSinkToCall)
+    if (site.opcode == Opcode::Call && !site.memberRead.canSinkToCall && !site.prototypeMemberRead.reads.canSinkToCall)
         return false;
 
     // Rare code stays small: there the operations give way only to what takes their place without a branch.
@@ -319,6 +319,76 @@ PlanOrDecline<HolderMemberPlan> CallResolver::planSuperMember(const CallSite& si
     if (answer.kind == MemberKind::Field || answer.kind == MemberKind::Variable)
         return std::unexpected(CallDeclineReason::UnknownMember);
     return planHolderMember(site, answer, access->receiverOperand());
+}
+
+// While the condition holds, the property holds the prototype object of the class.
+static void addConditionOfPrototypeProperty(const Program& program, LayoutID classLayout, MemberAnswer& answer)
+{
+    const Layout& layout = program.at(classLayout);
+    // No code can change the property of a class.
+    if (!layout.has(LayoutFlags::IsConstructorFunction) || layout.classFlow.prototypeProperty == MemberMutability::Fixed)
+        return;
+    addCondition(answer.conditions, { MemberCondition::Kind::MemberUnchanged, classLayout, ClassSide::Static, program.keyOf(BuiltinNames::prototype) });
+    setLevel(answer);
+}
+
+PlanOrDecline<PrototypeMemberPlan> CallResolver::planPrototypeMember(const CallSite& site)
+{
+    const PrototypeMemberRead& read = site.prototypeMemberRead;
+    // Both reads go to the side where the conditions fail.
+    if (!read || !read.reads.canSinkToCall || !isEvaluatedOnce(m_program, m_program.at(read.classLayout)))
+        return std::unexpected(CallDeclineReason::None);
+    // The body of a module runs once, and it is where the prototype objects are filled: the class is not to be defined by a read in the middle of that.
+    AccessSiteID accessSite = m_function.at(read.reads.read().value).accessSite();
+    FunctionID writtenIn = m_flow.hasResults() && accessSite ? m_flow.at(accessSite).function : FunctionID();
+    if (writtenIn && m_program.at(writtenIn).isModuleBody())
+        return std::unexpected(CallDeclineReason::None);
+    MemberAnswer answer = findMember(accessContext(), { MemberStart::ClassPrototype, read.classLayout, read.key, Access::Read });
+    if (answer.kind != MemberKind::Method || !m_program.at(answer.method).captures.isEmpty())
+        return std::unexpected(CallDeclineReason::None);
+    addConditionOfPrototypeProperty(m_program, read.classLayout, answer);
+    if (!canTestConditions(m_context, site, answer))
+        return std::unexpected(CallDeclineReason::NeedsTest);
+
+    if (site.opcode == Opcode::Call) {
+        if (!m_function.at(site.position.value).thisValueOperand() || !canCallWithoutClosure(m_program, answer.method))
+            return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
+    } else if (!answer.holder || !isEvaluatedOnce(m_program, m_program.at(answer.holder)))
+        return std::unexpected(CallDeclineReason::None);
+    return PrototypeMemberPlan { answer.method, WTF::move(answer.conditions) };
+}
+
+void CallResolver::rewritePrototypeMember(const CallSite& site, const PrototypeMemberPlan& plan)
+{
+    const PrototypeMemberRead& read = site.prototypeMemberRead;
+    bool isCall = site.opcode == Opcode::Call;
+
+    m_expansion.begin(site.position);
+    retireReads(read.reads, false, { }, isCall ? OperandIndex::Call::callee : OperandIndex::PropGet::object);
+    // The guards of a constructor function begin with the first object that it makes, and many a base makes none.
+    branchOnConditions(plan.conditions.span(), { }, m_program.at(read.classLayout).has(LayoutFlags::IsConstructorFunction) ? read.classLayout : LayoutID());
+
+    if (m_context.build.validates()) {
+        Value prototype = IRBuilder::make(Opcode::GetClassPrototype, { read.classObject });
+        prototype.setLayout(read.classLayout);
+        appendLookupValidation(m_builder, plan.method, { m_expansion.append(WTF::move(prototype)), read.key });
+    }
+    if (!isCall) {
+        Value closure = IRBuilder::make(Opcode::NewClosure);
+        closure.setFunction(plan.method);
+        closure.setIsHeldByClosureTable(true);
+        m_expansion.finishArm(m_expansion.append(WTF::move(closure)));
+        m_expansion.end();
+        return;
+    }
+
+    Vector<ValueID, 4> arguments(m_expansion.original().argumentsOperands());
+    ValueID result = appendCall(createDirectCallArm(plan.method), m_expansion.original().thisValueOperand(), { }, arguments.span());
+    if (typeOf(result).isNever())
+        m_expansion.finishArmAsUnreachable();
+    else
+        m_expansion.finishArm(result);
+    m_expansion.end();
 }
 
 void CallResolver::rewriteHolderMember(const CallSite& site, const HolderMemberPlan& plan)

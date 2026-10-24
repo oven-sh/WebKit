@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowUnseenCode.h"
+#include "AOTKnownClosures.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPrimitiveKeyTexts.h"
 #include "AOTSchemaOperandPositions.h"
@@ -791,12 +792,26 @@ static Vector<UnseenCodeRecord> collectUnseenCode(const ValueFlowResultInputs& i
     return records;
 }
 
+// `load(name)`, where a loader has come to `load` as a value. The build holds a module of the library whose name the program writes.
+static bool isCallOfProgramUnderComputedName(const Program& program, const Witness& witness)
+{
+    const Function& function = program.at(FunctionID(witness.function));
+    const Value& call = function.at(ValueID(witness.value));
+    constexpr unsigned positionOfName = 2;
+    if (!isWrittenInProgram(function) || call.opcode != Opcode::Call || call.numberOfOperands() <= positionOfName || !call.operand(positionOfName))
+        return false;
+    return function.at(definitionThroughSameValues(function, call.operand(positionOfName))).opcode != Opcode::String;
+}
+
 // A function and a copy of it hold the same load, and the program's author wrote it once.
-static void warnAboutLoadsUnderComputedNames(BuildContext& build, std::span<const UnseenCodeRecord> records)
+static void warnAboutLoadsUnderComputedNames(const Program& program, BuildContext& build, std::span<const UnseenCodeRecord> records)
 {
     Vector<SourceLocation> reportedLocations;
     for (const UnseenCodeRecord& record : records) {
-        if (record.cause != UnseenCodeCause::LoadsModuleByName || record.builtin != Wire::none || record.witness.value == Wire::none)
+        if (record.cause != UnseenCodeCause::LoadsModuleByName || record.witness.value == Wire::none)
+            continue;
+        bool isCallOfLoader = record.builtin != Wire::none;
+        if (isCallOfLoader && !isCallOfProgramUnderComputedName(program, record.witness))
             continue;
         if (hasModule(record.witness.location)) {
             if (reportedLocations.contains(record.witness.location))
@@ -804,7 +819,7 @@ static void warnAboutLoadsUnderComputedNames(BuildContext& build, std::span<cons
             reportedLocations.append(record.witness.location);
         }
         build.diagnostics().add(UserDiagnostic {
-            .kind = UserDiagnosticKind::CodeOutsideImageIsRefused,
+            .kind = isCallOfLoader ? UserDiagnosticKind::ModuleNamedAtRunTimeIsRefused : UserDiagnosticKind::CodeOutsideImageIsRefused,
             .function = FunctionID(record.witness.function),
             .value = ValueID(record.witness.value),
             .location = record.witness.location,
@@ -1478,7 +1493,7 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     times.didFinish("built-ins: locations"_s);
     BitVector builtinsWhoseCodeRuns = findBuiltinsWhoseCodeRuns(inputs);
     tables.wholeProgram.unseenCode = collectUnseenCode(inputs, tables.wholeProgram.loadsOfMachineCode);
-    warnAboutLoadsUnderComputedNames(inputs.build, tables.wholeProgram.unseenCode.span());
+    warnAboutLoadsUnderComputedNames(inputs.program, inputs.build, tables.wholeProgram.unseenCode.span());
     tables.wholeProgram.instances = countProgramInstances(inputs);
     times.didFinish("built-ins: code that runs, unseen code, instances"_s);
     tables.builtins.uses = collectBuiltinUses(inputs);

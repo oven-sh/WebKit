@@ -445,11 +445,17 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     PropertyKeyID nameOfSubject;
     if (auto read = propertyReadBy(program, context.function.at(context.analyses.identityOf(uses[0].receiver))))
         nameOfSubject = read->second;
-    using Likelihood = std::tuple<bool, bool, bool, double>;
+    // What flow saw arrive at one of the uses does arrive there, whatever else does.
+    LayoutList layoutsSeenToArrive;
+    for (const NamedUse& use : uses) {
+        if (use.stamp)
+            layoutsSeenToArrive.unite(LayoutList(program.at(use.stamp).members.span()));
+    }
+    using Likelihood = std::tuple<bool, bool, bool, bool, double>;
     using RankedLayout = std::pair<Likelihood, LayoutID>;
     Vector<RankedLayout, 16> likeliestFirst(layouts.size(), [&](size_t index) {
         LayoutID layout = layouts.span()[index];
-        return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module)), heat.allocationsOf(layout) }, layout };
+        return RankedLayout { Likelihood { layoutsSeenToArrive.contains(layout), nameOfSubject && heat.isStoredUnder(layout, nameOfSubject), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module)), heat.allocationsOf(layout) }, layout };
     });
     AOT::stableSort(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
 

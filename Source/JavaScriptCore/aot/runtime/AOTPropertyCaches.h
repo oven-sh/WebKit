@@ -157,6 +157,10 @@ public:
     // An access by name that left compiled code: what its receiver was, and where it stands (the offset in the image's code of the address that the nearest compiled function is returned to).
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
     void dumpNamedCounts(PrintStream&) const;
+    // A store by key is about to give an object of the Structure a name that no object of it has been given. A Structure is made for what comes again: the first such object becomes a dictionary,
+    // and the next one that is given the same name there, and whatever it is given behind that, makes Structures.
+    bool shouldMakeStructureForAdditionByKey(Structure*, UniquedStringImpl*);
+    void didMakeStructureForAdditionByKey(Structure* made) { m_structureMadeForAdditionByKey = made->id(); }
     // For an addition that is not filed because it is the first of its kind, too: if its Structure ended at the next collection, the second would look like the first for ever.
     void didAddProperty(Structure* before, Structure* after);
     // An access by key probes the hashed table alone, so a slot that only the front has is copied there first.
@@ -196,6 +200,10 @@ private:
     void countFiling(const CachedAccess&);
 
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
+    static constexpr uint32_t numberOfFirstAdditionsByKey = 1 << 12;
+    // A hash of the Structure and the name at which an object became a dictionary.
+    std::array<uint32_t, numberOfFirstAdditionsByKey> m_firstAdditionsByKey { };
+    StructureID m_structureMadeForAdditionByKey;
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
     UncheckedKeyHashMap<String, uint64_t> m_namedCounts;

@@ -992,8 +992,38 @@ NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVis
     return getHostFunction(function, implementationVisibility, NoIntrinsic, constructor, nullptr, length, name);
 }
 
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+// What a call from bytecode enters in place of llint_native_call_trampoline in a process without a JIT: llint/LowLevelInterpreterAOT.asm.
+static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
+{
+    switch (intrinsic) {
+    case CharCodeAtIntrinsic:
+        return llint_aot_char_code_at_thunk;
+    case BoundFunctionCallIntrinsic:
+        return llint_aot_bound_function_call_thunk;
+    case GlobalIsNaNIntrinsic:
+    case NumberIsNaNIntrinsic:
+        return llint_aot_is_nan_thunk;
+    case GlobalIsFiniteIntrinsic:
+    case NumberIsFiniteIntrinsic:
+        return llint_aot_is_finite_thunk;
+    case NumberIsIntegerIntrinsic:
+    case NumberIsSafeIntegerIntrinsic:
+        return llint_aot_is_integer_thunk;
+    case ArrayIsArrayIntrinsic:
+        return llint_aot_is_array_thunk;
+    default:
+        return nullptr;
+    }
+}
+#endif
+
 static Ref<NativeJITCode> jitCodeForCallTrampoline(Intrinsic intrinsic)
 {
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+    if (auto* thunk = Options::runsCompiledImage() ? thunkBesideCompiledCode(intrinsic) : nullptr)
+        return adoptRef(*new NativeJITCode(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(CodePtr<JSEntryPtrTag>::fromUntaggedPtr(reinterpret_cast<void*>(thunk))), JITType::HostCallThunk, NoIntrinsic));
+#endif
     switch (intrinsic) {
 #if ENABLE(WEBASSEMBLY)
     case WasmFunctionIntrinsic: {
@@ -1001,19 +1031,6 @@ static Ref<NativeJITCode> jitCodeForCallTrampoline(Intrinsic intrinsic)
         static std::once_flag onceKey;
         std::call_once(onceKey, [&] {
             result.construct(adoptRef(*new NativeJITCode(LLInt::getCodeRef<JSEntryPtrTag>(js_to_wasm_wrapper_entry), JITType::HostCallThunk, intrinsic)));
-        });
-        return result.get();
-    }
-#endif
-#if ENABLE(AOT) && !ENABLE(C_LOOP)
-    case CharCodeAtIntrinsic: {
-        if (!Options::runsCompiledImage())
-            return jitCodeForCallTrampoline(NoIntrinsic);
-        static LazyNeverDestroyed<Ref<NativeJITCode>> result;
-        static std::once_flag onceKey;
-        std::call_once(onceKey, [&] {
-            auto thunk = CodePtr<JSEntryPtrTag>::fromUntaggedPtr(reinterpret_cast<void*>(llint_aot_char_code_at_thunk));
-            result.construct(adoptRef(*new NativeJITCode(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(thunk), JITType::HostCallThunk, NoIntrinsic)));
         });
         return result.get();
     }
@@ -1087,7 +1104,7 @@ NativeExecutable* VM::getBoundFunction(bool isJSFunction, SourceTaintedOrigin ta
         NativeExecutable* result = getHostFunction(
             slowCase ? boundFunctionCall : boundThisNoArgsFunctionCall,
             ImplementationVisibility::Private, // Bound function's visibility is private on the stack.
-            slowCase ? NoIntrinsic : BoundFunctionCallIntrinsic,
+            slowCase && !Options::runsCompiledImage() ? NoIntrinsic : BoundFunctionCallIntrinsic,
             boundFunctionConstruct, nullptr, 0, String());
         slot.setWithoutWriteBarrier(result);
         return result;

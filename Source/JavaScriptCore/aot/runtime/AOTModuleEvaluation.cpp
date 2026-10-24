@@ -746,6 +746,50 @@ bool Modules::isPassedOverByEvaluationInProgress(ModuleID module) const
     return false;
 }
 
+// A CommonJS file that is imported runs in front of its importers, which were linked with it. An importer that the file requires binds what the file has exported by then, as under `bun run`.
+void Modules::captureExportsOfFilesBeingEvaluated(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+
+    Vector<ModuleID, 4> filesBeingEvaluated;
+    for (const EvaluationInProgress* evaluation = m_innermostEvaluation; evaluation; evaluation = evaluation->outer) {
+        for (const EvaluationFrame& frame : evaluation->frames) {
+            if (data(frame.module).capturesExportsBehindEvaluation() && !didCaptureExports(frame.module))
+                filesBeingEvaluated.append(frame.module);
+        }
+    }
+    if (filesBeingEvaluated.isEmpty()) [[likely]]
+        return;
+
+    struct Importer {
+        std::span<const ModuleRequestData> requests;
+        size_t next { 0 };
+    };
+    BitVector seen(m_table.size());
+    seen.quickSet(root.index());
+    Vector<Importer, 16> path;
+    path.append(Importer { m_table.requests(root) });
+    while (!path.isEmpty()) {
+        Importer& importer = path.last();
+        if (importer.next == importer.requests.size()) {
+            path.removeLast();
+            continue;
+        }
+        const ModuleRequestData& request = importer.requests[importer.next++];
+        ModuleID target = request.targetModule();
+        if (request.isRequire || request.isDeferred || seen.quickSet(target.index()))
+            continue;
+        if (filesBeingEvaluated.contains(target)) {
+            captureExports(target);
+            RETURN_IF_EXCEPTION(scope, void());
+            continue;
+        }
+        // Only what has not begun runs now.
+        if (status(target) == ModuleStatus::Unlinked || status(target) == ModuleStatus::Linked)
+            path.append(Importer { m_table.requests(target) });
+    }
+}
+
 void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason reason)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -785,9 +829,11 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     case ModuleStatus::Failed:
         RELEASE_AND_RETURN(scope, throwEvaluationError(module));
     case ModuleStatus::Evaluating:
-        if (moduleData.hasTopLevelAwait())
+        if (moduleData.hasTopLevelAwait()) {
             throwAsyncModuleError();
-        return;
+            return;
+        }
+        RELEASE_AND_RETURN(scope, captureExportsOfFilesBeingEvaluated(module));
     case ModuleStatus::EvaluatingAsync:
         throwAsyncModuleError();
         return;
@@ -795,6 +841,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         isUnlinked = true;
         break;
     case ModuleStatus::Linked:
+        captureExportsOfFilesBeingEvaluated(module);
+        RETURN_IF_EXCEPTION(scope, void());
         break;
     }
     if (isPassedOverByEvaluationInProgress(module))

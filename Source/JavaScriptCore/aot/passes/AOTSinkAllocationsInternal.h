@@ -167,6 +167,7 @@ struct RewriteTables {
     BitVector blocksWithHeadParameters;
     // Those that a rewritten block still leads to once its terminator is folded, and the entry.
     BitVector enteredBlocks;
+    Vector<BlockID, 2> blocksWithDecidedBranches;
     Vector<std::pair<ValueID, ValueID>> replacedReads;
     Vector<ValueID> entryConstants;
     Vector<BlockID> order;
@@ -236,6 +237,7 @@ public:
     bool duplicateLiveRange(IRBuilder&);
     bool testElementsOfLists(IRBuilder&);
     void rewrite(IRBuilder&, const FreshResultShape* = nullptr);
+    void raiseFrequenciesBehindDecidedBranches();
     void recordLosses();
     void countStatistics();
     Vector<SunkAllocation> outcomes() const;
@@ -395,7 +397,7 @@ private:
     void rewriteBlock(BlockID);
     void rewriteEdges(ObjectInterpreter&, Terminator&, std::span<const OutgoingEdge>);
     void rewriteEdge(ObjectInterpreter&, Terminator&, const OutgoingEdge&);
-    void foldTerminator(ObjectInterpreter&, Terminator&);
+    bool foldTerminator(ObjectInterpreter&, Terminator&);
     void convertProofsToArguments(ObjectInterpreter&, const OutgoingEdge&, Target&);
     void loadHeadValues(BlockID, const SinkingState& head, ObjectValueMap&);
     void fillTarget(ObjectInterpreter&, const OutgoingEdge&, Target&);

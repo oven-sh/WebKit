@@ -887,7 +887,7 @@ void ContainerAnalysis::settleWhichResultsAreCreatedDense()
     }
 }
 
-// A hole is read from the prototypes, of which the arrays say nothing.
+// A hole is read from the prototypes: no number comes from there while the array keeps the prototype that it was made with, on which no element can be defined.
 void ContainerAnalysis::settleNumbersOfCopies()
 {
     bool didChange = true;
@@ -901,7 +901,8 @@ void ContainerAnalysis::settleNumbersOfCopies()
             bool areBounded = true;
             forEachContainerIn(maker(), made.arraysWhoseElementsAreCopied, m_arrays, [&](uint32_t source) {
                 const ArrayWrites& copied = m_arrayWrites[source];
-                areBounded &= copied.everyStoreIsKnown() && copied.isDense() && !(made.mayRunCodeWhileCopying && copied.has(ArrayWrites::MayGetShorter));
+                bool readsNoNumberFromHoles = copied.isDense() || !m_containers[source].possibleMutations.containsAny({ ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype });
+                areBounded &= copied.everyStoreIsKnown() && readsNoNumberFromHoles && !(made.mayRunCodeWhileCopying && copied.has(ArrayWrites::MayGetShorter));
                 numbers.unite(copied.storedNumbers);
             });
             if (!areBounded)

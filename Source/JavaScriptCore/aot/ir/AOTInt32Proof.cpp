@@ -101,6 +101,11 @@ TypeSiteKind siteKindOf(const Program& program, const DeclaredType& declared)
     return declared.site ? program.at(declared.site).kind : TypeSiteKind::Unknown;
 }
 
+bool isAssertionOfDependency(const Program& program, const DeclaredType& declared)
+{
+    return declared.flags.contains(PositionFlags::IsDeclaredByDependency) && siteKindOf(program, declared) == TypeSiteKind::Assertion;
+}
+
 static NumberBounds join(const NumberBounds& a, const NumberBounds& b)
 {
     auto joinNumbers = [&]() -> NumberBounds {
@@ -409,7 +414,7 @@ NumberBounds Int32Prover::computePromise(const Value& request)
 {
     DeclaredType declared = request.declared();
     TypeSiteKind site = siteKindOf(m_inputs.program, declared);
-    if (!isEnteredAt(site))
+    if (!isEnteredAt(site) || isAssertionOfDependency(m_inputs.program, declared))
         return NumberBounds::integers(Range::int32());
 
     uint32_t reachedBefore = std::exchange(m_outermostOpenDepthReached, noDepth);

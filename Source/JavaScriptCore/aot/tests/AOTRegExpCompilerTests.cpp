@@ -279,7 +279,10 @@ static void checkPatternServesBothWidthsAndRetries(ASCIILiteral patternString)
 static void testOnePatternServesBothWidthsAndRetries()
 {
     checkPatternServesBothWidthsAndRetries("[a-c]xyz"_s);
-    AOT_TEST_CHECK(compileToCode({ "a*b"_s, { } }).code[0]->hasElidedFrame);
+    AOT_TEST_CHECK(compileToCode({ "a*e"_s, { } }).code[0]->hasElidedFrame);
+    checkPatternServesBothWidthsAndRetries("a*e"_s);
+    // Where the b that every match holds was last found lies in the frame.
+    AOT_TEST_CHECK(!compileToCode({ "a*b"_s, { } }).code[0]->hasElidedFrame);
     checkPatternServesBothWidthsAndRetries("a*b"_s);
 }
 

@@ -331,7 +331,7 @@ static bool isAssertedInt32(const Program& program, const DeclaredType& declared
     return declared.flags.contains(PositionFlags::IsInt32Promise) && declared.site && program.at(declared.site).kind == TypeSiteKind::Assertion;
 }
 
-static TypeID targetOfConvert(const TypingContext& context, const DeclaredType& declared)
+TypeID targetOfConvert(const TypingContext& context, const DeclaredType& declared)
 {
     if (!isAssertedInt32(context.program, declared))
         return declared.type;

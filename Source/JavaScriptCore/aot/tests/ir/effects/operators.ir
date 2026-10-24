@@ -44,8 +44,8 @@ function f2 name="strictEq" parameters=[{type=object}, {type=string}, {type=unde
 # CHECK-NEXT: v4 StrictEq: none
 # CHECK-NEXT: v5 StrictEq: none
 # CHECK-NEXT: v6 StrictEq: none
-# CHECK-NEXT: v7 StrictEq: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
-# CHECK-NEXT: v8 StrictEq: reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+# CHECK-NEXT: v7 StrictEq: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v8 StrictEq: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
 function f3 name="conversions" parameters=[{type=number}, {type=string}, {type=symbol}] results=[{type=undefined}] {
   b0(v0: number, v1: string, v2: symbol):
     v3 = ToString v0

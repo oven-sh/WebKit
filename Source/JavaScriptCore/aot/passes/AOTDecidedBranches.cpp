@@ -709,6 +709,18 @@ KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranche
     return outcome;
 }
 
+void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge decided)
+{
+    BlockFrequency expected = function.at(targetOf(function, decided).block).frequency;
+    BlockFrequency actual = function.at(decided.from).frequency;
+    if (!isRarerThan(expected, actual))
+        return;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        if (function.at(block).frequency == expected && analyses.dominates(decided, block))
+            function.edit(block, BlockEdit::Rest).frequency = actual;
+    }
+}
+
 void decideTerminator(IRBuilder& builder, BlockID block, uint32_t targetIndex)
 {
     Function& function = builder.function();

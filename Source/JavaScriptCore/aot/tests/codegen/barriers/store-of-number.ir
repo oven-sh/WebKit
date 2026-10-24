@@ -1,8 +1,10 @@
-# A store of a value that is never a cell gets no barrier, and neither counter counts it.
+# A store of a value that is never a cell gets no barrier, and none of the three counters counts it.
 # FORM: Selected
+# OPTIONS: disable=pass:RemoveRedundantBarriers
 # RUN: generate-code
 # STATISTIC: BarriersEmitted = 0
 # STATISTIC: BarriersOnUnmarkableOwners = 0
+# STATISTIC: BarriersCoveredLater = 0
 # CHECK: f0: size=
 
 module m0 path="main.js" displayPath="main.js"

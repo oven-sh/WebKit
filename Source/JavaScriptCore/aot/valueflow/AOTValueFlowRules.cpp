@@ -125,7 +125,8 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
 
     for (ValueFlowNameKind kind : kindsOfMembers)
         context.connect(context.read(arrived, { kind, 0 }), escapedNode);
-    context.connect(context.read(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), escapedNode);
+    // The rule of the copy hands over what the other sources hold.
+    context.connect(context.masked(context.read(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), ValueSets::complement(universe.builtinTables().heap().objectsHoldingOnlyWhatWasWritten())), escapedNode);
     // What lies above an instance is found through it and is not handed out with it.
     context.connect(context.masked(context.read(others, prototypeLinkName), ValueSets::complement(universe.builtinTables().heap().objectsThatLetInUnseenCode())), escapedNode);
     context.add(escapedNode, objectsHeldFromCreation(context, others));

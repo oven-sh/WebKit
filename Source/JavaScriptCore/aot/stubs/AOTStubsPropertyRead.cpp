@@ -103,18 +103,23 @@ static void returnAnswer(StubAssembler& jit, ObjectLookupQuestion question, bool
 }
 
 // object has no lookup of its own, and structure is its Structure: what the Structure's property table lists is all that the object has under a name.
-void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown)
+void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown, EmptyWordsOfPropertyTable* emptyWords)
 {
-    AOT_THRESHOLD(unsigned, maxProbes, 4);
+    AOT_THRESHOLD(unsigned, maxProbesForName, 4);
+    // A name that the table lacks is looked for until a word is empty: in a table that is half full one search in sixteen goes beyond four words.
+    AOT_THRESHOLD(unsigned, maxProbesForEmptyWord, 8);
+    const unsigned maxProbes = emptyWords ? maxProbesForEmptyWord : maxProbesForName;
     constexpr unsigned typeShift = 48;
     static_assert(sizeof(Structure::SeenProperties) == sizeof(uint64_t) && sizeof(CompactPropertyTableEntry) == sizeof(uint64_t) && PropertyTable::EmptyEntryIndex == 0);
     const GPRReg entry = r.structure;
     RELEASE_ASSERT(noOverlap(r.receiver, r.name, r.uid, r.object, r.structure, r.size, r.vector, r.index));
 
     // The Structure keeps the union of the bits of the names that it has seen, whether or not its table is there.
-    jit.load64(Address(r.structure, Structure::seenPropertiesOffset()), r.index);
-    jit.and64(r.uid, r.index);
-    isAbsentHere.append(jit.branch64(CCallHelpers::NotEqual, r.index, r.uid));
+    if (!emptyWords) {
+        jit.load64(Address(r.structure, Structure::seenPropertiesOffset()), r.index);
+        jit.and64(r.uid, r.index);
+        isAbsentHere.append(jit.branch64(CCallHelpers::NotEqual, r.index, r.uid));
+    }
 
     jit.loadPtr(Address(r.structure, Structure::propertyTableUnsafeOffset()), r.size);
     isUnknown.append(jit.branchTestPtr(CCallHelpers::Zero, r.size));
@@ -136,7 +141,7 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
         jit.add32(TrustedImm32(-1), r.size, entry);
         jit.and32(entry, r.index);
         jit.load8(BaseIndex(r.vector, r.index, CCallHelpers::TimesOne, -1), entry);
-        isAbsentHere.append(jit.branchTest32(CCallHelpers::Zero, entry));
+        (emptyWords ? emptyWords->inCompactIndex : isAbsentHere).append(jit.branchTest32(CCallHelpers::Zero, entry));
         jit.getEffectiveAddress(BaseIndex(r.vector, entry, CCallHelpers::TimesEight, -1 - static_cast<int32_t>(sizeof(CompactPropertyTableEntry))), entry);
         jit.load64(BaseIndex(entry, r.size, CCallHelpers::TimesOne), entry);
         // The name is in the low 48 bits. Above it: the offset, then the attributes.
@@ -167,7 +172,7 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
         jit.add32(TrustedImm32(-1), r.size, entry);
         jit.and32(entry, r.index);
         jit.load32(BaseIndex(r.vector, r.index, CCallHelpers::TimesFour), entry);
-        isAbsentHere.append(jit.branchTest32(CCallHelpers::Zero, entry));
+        (emptyWords ? emptyWords->inWideIndex : isAbsentHere).append(jit.branchTest32(CCallHelpers::Zero, entry));
         jit.lshift64(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(PropertyTableEntry)))), entry);
         jit.getEffectiveAddress(BaseIndex(entry, r.size, CCallHelpers::TimesFour, -static_cast<int32_t>(sizeof(PropertyTableEntry))), entry);
         jit.addPtr(r.vector, entry);
@@ -487,7 +492,174 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     jit.jump().linkTo(askObjectAbove, &jit);
 }
 
-void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const ObjectLookupRegisters& r, ObjectLookupName name, GPRReg value, JumpList& cannot)
+// StringImpl::ref().
+static void refName(StubAssembler& jit, GPRReg uid, GPRReg scratch, GPRReg otherScratch)
+{
+    constexpr int32_t increment = 2;
+    static_assert(StringImpl::lengthMemoryOffset() == sizeof(uint32_t) && StringImpl::refCountOfStaticString() == 1);
+    {
+        Ref<StringImpl> sample = StringImpl::create("sample"_s);
+        uint32_t count;
+        memcpy(&count, sample.ptr(), sizeof(count));
+        RELEASE_ASSERT(sample->hasOneRef() && count == increment);
+    }
+    const Address count(uid);
+    // The count of a static string stays as it is.
+    Jump isStatic = jit.branchTest32(CCallHelpers::NonZero, count, TrustedImm32(StringImpl::refCountOfStaticString()));
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    UNUSED_PARAM(otherScratch);
+    jit.atomicAdd32(TrustedImm32(increment), count);
+#else
+    Label again = jit.label();
+    jit.loadLink32(count, scratch);
+    jit.add32(TrustedImm32(increment), scratch);
+    jit.storeCond32(scratch, count, otherScratch);
+    jit.branchTest32(CCallHelpers::NonZero, otherScratch).linkTo(again, &jit);
+#endif
+    isStatic.link(&jit);
+}
+
+// What JSObject::putDirectInternal() does for a dictionary that lacks the name, where Structure::addOrReplacePropertyWithoutTransition() finds room in the table and the object has room in its storage.
+// It takes no lock: beside compiled code there are no compiler threads, and of all this the collector reads the address of the table and the greatest offset alone.
+// Goes on with the offset of the new property in r.structure. Until then every register that the caller's way out needs is as it was.
+static void addToDictionary(StubAssembler& jit, const ObjectLookupRegisters& r, EmptyWordsOfPropertyTable& emptyWords, GPRReg spare, JumpList& cannot)
+{
+    constexpr int32_t dictionaryKinds = Structure::s_dictionaryKindMask << Structure::s_dictionaryKindShift;
+    // An object that may be a prototype reports what it is given.
+    constexpr int32_t bitsThatForbid = Structure::s_mayBePrototypeBits | Structure::s_didPreventExtensionsBits;
+    constexpr int32_t overridesPut = OverridesPut >> numberOfInlineBits;
+    constexpr unsigned offsetShiftInCompactEntry = 56;
+    static_assert(sizeof(TypeInfo::OutOfLineTypeFlags) == sizeof(uint16_t) && overridesPut <= INT16_MAX && initialOutOfLineCapacity == 4 && outOfLineGrowthFactor == 2);
+    static_assert(sizeof(std::unique_ptr<Vector<PropertyOffset>>) == sizeof(void*));
+    {
+        CompactPropertyTableEntry sample(nullptr, 0x7f, 0);
+        uint64_t bits;
+        memcpy(&bits, &sample, sizeof(bits));
+        RELEASE_ASSERT(bits == static_cast<uint64_t>(0x7f) << offsetShiftInCompactEntry);
+    }
+    const GPRReg owner = r.object;
+    const GPRReg structure = r.structure;
+    const GPRReg word = r.index;
+    const GPRReg entries = r.vector;
+    const GPRReg offset = r.size;
+    const GPRReg scratch = r.name;
+    const GPRReg table = r.name;
+    const GPRReg numberOfEntry = spare;
+    RELEASE_ASSERT(noOverlap(spare, r.receiver, r.name, r.uid, r.object, r.structure, r.size, r.vector, r.index));
+
+    emptyWords.inCompactIndex.link(&jit);
+    jit.getEffectiveAddress(BaseIndex(r.vector, r.index, CCallHelpers::TimesOne, -1), word);
+    jit.getEffectiveAddress(BaseIndex(r.vector, r.size, CCallHelpers::TimesOne, -1), entries);
+    Jump hasAddresses = jit.jump();
+
+    emptyWords.inWideIndex.link(&jit);
+    jit.getEffectiveAddress(BaseIndex(r.vector, r.index, CCallHelpers::TimesFour), word);
+    jit.getEffectiveAddress(BaseIndex(r.vector, r.size, CCallHelpers::TimesFour), entries);
+    hasAddresses.link(&jit);
+
+    // Structure::didAddProperty() sets a bit for each of two names. A hash that equals one of theirs leaves too.
+    jit.load32(Address(r.uid, StringImpl::flagsOffset()), scratch);
+    jit.urshift32(TrustedImm32(StringImpl::s_flagCount), scratch);
+    cannot.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(static_cast<int32_t>(StringHasher::computeLiteralHashAndMaskTop8Bits("then"_s)))));
+    cannot.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(static_cast<int32_t>(StringHasher::computeLiteralHashAndMaskTop8Bits("__proto__"_s)))));
+    // A name that begins with a digit may spell an index. Of a character of 16 bits this is the low half.
+    jit.loadPtr(Address(r.uid, StringImpl::dataOffset()), scratch);
+    jit.load8(Address(scratch), scratch);
+    jit.sub32(TrustedImm32('0'), scratch);
+    cannot.append(jit.branch32(CCallHelpers::BelowOrEqual, scratch, TrustedImm32(9)));
+
+    // What is above a compiled object is not asked here.
+    cannot.append(jit.branchPtr(CCallHelpers::NotEqual, owner, r.receiver));
+    loadStructure(jit, owner, structure);
+    cannot.append(jit.branchTest32(CCallHelpers::Zero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(dictionaryKinds)));
+    cannot.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(bitsThatForbid)));
+    // JSObject::canPerformFastPutInlineExcludingProto(), for the objects above.
+    const GPRReg objectAbove = scratch;
+    Label askObjectAbove = jit.label();
+    jit.load64(Address(structure, Structure::prototypeOffset()), objectAbove);
+    // Empty where each object has its prototype in a slot of its own.
+    cannot.append(jit.branchTest64(CCallHelpers::Zero, objectAbove));
+    Jump isTop = jit.branch64(CCallHelpers::Equal, objectAbove, TrustedImm32(JSValue::ValueNull));
+    cannot.append(jit.branchTest8(CCallHelpers::NonZero, Address(objectAbove, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
+    loadStructure(jit, objectAbove, structure);
+    cannot.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)));
+    cannot.append(jit.branchTest16(CCallHelpers::NonZero, Address(structure, Structure::outOfLineTypeFlagsOffset()), TrustedImm32(overridesPut)));
+    jit.jump().linkTo(askObjectAbove, &jit);
+
+    isTop.link(&jit);
+    loadStructure(jit, owner, structure);
+
+    // PropertyTable::canInsert().
+    const GPRReg room = r.size;
+    jit.loadPtr(Address(structure, Structure::propertyTableUnsafeOffset()), table);
+    jit.urshift32(TrustedImm32(1), room);
+    jit.sub32(Address(table, PropertyTable::offsetOfKeyCount()), room);
+    jit.sub32(Address(table, PropertyTable::offsetOfDeletedCount()), room);
+    cannot.append(jit.branch32(CCallHelpers::LessThanOrEqual, room, TrustedImm32(0)));
+    // The next offset of the table. One that a deleted property has left would be taken first.
+    const GPRReg deletedOffsets = r.size;
+    jit.loadPtr(Address(table, PropertyTable::offsetOfDeletedOffsets()), deletedOffsets);
+    Jump hasNoDeletedOffsets = jit.branchTestPtr(CCallHelpers::Zero, deletedOffsets);
+    cannot.append(jit.branchTest32(CCallHelpers::NonZero, Address(deletedOffsets, Vector<PropertyOffset>::sizeMemoryOffset())));
+    hasNoDeletedOffsets.link(&jit);
+    jit.load32(Address(table, PropertyTable::offsetOfKeyCount()), offset);
+    jit.load8(Address(structure, Structure::inlineCapacityOffset()), scratch);
+    Jump isInCell = jit.branch32(CCallHelpers::Below, offset, scratch);
+    jit.sub32(scratch, offset);
+    // Structure::outOfLineCapacity(): the storage is full where the number of its slots in use is none, or a power of two from four on.
+    cannot.append(jit.branchTest32(CCallHelpers::Zero, offset));
+    Jump hasRoom = jit.branch32(CCallHelpers::Below, offset, TrustedImm32(initialOutOfLineCapacity));
+    jit.sub32(offset, TrustedImm32(1), scratch);
+    cannot.append(jit.branchTest32(CCallHelpers::Zero, scratch, offset));
+    hasRoom.link(&jit);
+    jit.add32(TrustedImm32(firstOutOfLineOffset), offset);
+    isInCell.link(&jit);
+
+    // PropertyTable::addAfterFind().
+    auto takeNextEntry = [&] {
+        jit.load32(Address(table, PropertyTable::offsetOfDeletedCount()), numberOfEntry);
+        jit.add32(Address(table, PropertyTable::offsetOfKeyCount()), numberOfEntry);
+        jit.add32(TrustedImm32(1), Address(table, PropertyTable::offsetOfKeyCount()));
+    };
+    jit.loadPtr(Address(structure, Structure::propertyTableUnsafeOffset()), table);
+    Jump isWide = jit.branchTest32(CCallHelpers::Zero, Address(table, PropertyTable::offsetOfIndexVector()), TrustedImm32(PropertyTable::flagOfCompactIndexVector));
+    cannot.append(jit.branch32(CCallHelpers::Above, offset, TrustedImm32(UINT8_MAX)));
+    takeNextEntry();
+    jit.move(offset, scratch);
+    jit.lshift64(TrustedImm32(offsetShiftInCompactEntry), scratch);
+    jit.or64(r.uid, scratch);
+    jit.store64(scratch, BaseIndex(entries, numberOfEntry, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), numberOfEntry);
+    jit.store8(numberOfEntry, Address(word));
+    Jump isListed = jit.jump();
+
+    isWide.link(&jit);
+    cannot.append(jit.branch32(CCallHelpers::Above, offset, TrustedImm32(Structure::greatestMaxOffsetOutsideRareData)));
+    takeNextEntry();
+    static_assert(sizeof(PropertyTableEntry) == 2 * sizeof(uint64_t));
+    jit.add32(numberOfEntry, numberOfEntry, scratch);
+    jit.storePtr(r.uid, BaseIndex(entries, scratch, CCallHelpers::TimesEight));
+    // The offset, and no attributes behind it.
+    jit.store64(offset, BaseIndex(entries, scratch, CCallHelpers::TimesEight, sizeof(UniquedStringImpl*)));
+    jit.add32(TrustedImm32(1), numberOfEntry);
+    jit.store32(numberOfEntry, Address(word));
+    isListed.link(&jit);
+
+    jit.store16(offset, Address(structure, Structure::maxOffsetOffset()));
+    // Structure::didAddProperty().
+    jit.load64(Address(structure, Structure::seenPropertiesOffset()), scratch);
+    jit.or64(r.uid, scratch);
+    jit.store64(scratch, Address(structure, Structure::seenPropertiesOffset()));
+    jit.load32(Address(r.uid, StringImpl::flagsOffset()), scratch);
+    jit.urshift32(TrustedImm32(StringImpl::s_flagCount), scratch);
+    jit.xor32(Address(structure, Structure::propertyHashOffset()), scratch);
+    jit.store32(scratch, Address(structure, Structure::propertyHashOffset()));
+    refName(jit, r.uid, scratch, numberOfEntry);
+    jit.move(offset, r.structure);
+}
+
+void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const ObjectLookupRegisters& r, ObjectLookupName name, GPRReg value, JumpList& cannot, GPRReg spare)
 {
     constexpr uint32_t bitsThatForbid = Structure::s_hasImmutablePropertiesBits | Structure::s_hasListedImmutablePropertiesBits | Structure::s_isWatchingReplacementBits;
     // A definition gives the property the attributes of a plain one, so it replaces the value alone only where the property has them.
@@ -522,9 +694,12 @@ void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const
     isOrdinary.link(&jit);
     loadStructure(jit, owner, r.structure);
     cannot.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.structure, Structure::bitFieldOffset()), TrustedImm32(static_cast<int32_t>(bitsThatForbid))));
-    findInPropertyTable(jit, r, cannot, cannot);
+    const bool addsToDictionaries = spare != InvalidGPRReg && name == ObjectLookupName::IsGivenByUID;
+    EmptyWordsOfPropertyTable emptyWords;
+    findInPropertyTable(jit, r, cannot, cannot, addsToDictionaries ? &emptyWords : nullptr);
     cannot.append(jit.branchTest32(CCallHelpers::NonZero, offset, TrustedImm32(attributesThatForbid)));
     jit.urshift32(TrustedImm32(8), offset);
+    Label storeAtOffset = jit.label();
     Jump isOutOfLine = jit.branch32(CCallHelpers::AboveOrEqual, offset, TrustedImm32(firstOutOfLineOffset));
     jit.store64(value, BaseIndex(owner, offset, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
     returnAfterStoring(jit, owner, value);
@@ -534,6 +709,13 @@ void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const
     jit.neg64(offset);
     jit.store64(value, BaseIndex(storage, offset, CCallHelpers::TimesEight, (firstOutOfLineOffset - 2) * static_cast<int32_t>(sizeof(EncodedJSValue))));
     returnAfterStoring(jit, owner, value);
+
+    if (addsToDictionaries) {
+        // A definition asks nothing of the objects above.
+        RELEASE_ASSERT(spare != value && operation != SlotOperation::Define);
+        addToDictionary(jit, r, emptyWords, spare, cannot);
+        jit.jump().linkTo(storeAtOffset, &jit);
+    }
 }
 
 void countMissOfPair(StubAssembler& jit, GPRReg structureID, GPRReg uid, GPRReg counter, JumpList& isDueForFiling)

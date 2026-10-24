@@ -23,6 +23,7 @@ class BuildContext;
 namespace Typed {
 
 class FlowResults;
+class Heat;
 class Program;
 
 struct AllocationSiteReport {
@@ -55,6 +56,8 @@ struct FlowSiteLevel {
     PropertyKeyID key;
     // Of an operation that the passes left as it was: the receivers or the callees that flow lists for it, where the list is complete.
     uint32_t candidatesOfLeftOperation { 0 };
+    // How often all the copies outside generic versions are taken to run, against code that runs once in the coldest of functions. Nothing unless the report lists the sites.
+    double heat { 0 };
 };
 
 class AccessSiteObservations {
@@ -75,13 +78,14 @@ private:
 };
 
 // Outlining merges equal operations of many sites into one body, so the sites are observed before it runs.
-AccessSiteObservations observeAccessSites(const Program&, const FlowResults&, BuildContext&);
+// With the heat, which only a report that lists the sites asks for: how often each is taken to run, and the operators, tests and protocols that are left in their general form.
+AccessSiteObservations observeAccessSites(const Program&, const FlowResults&, BuildContext&, const Heat* = nullptr);
 
 // The same, one function at a time, so that whoever has a function in the cache can have it observed there.
 class AccessSiteObserver {
     WTF_MAKE_NONCOPYABLE(AccessSiteObserver);
 public:
-    AccessSiteObserver(const Program&, const FlowResults&, BuildContext&);
+    AccessSiteObserver(const Program&, const FlowResults&, BuildContext&, const Heat* = nullptr);
     ~AccessSiteObserver();
 
     // Once for a function with a body, from any thread.
@@ -93,8 +97,13 @@ private:
     struct State;
     std::unique_ptr<State> m_state;
 };
-// Indexed by AccessSiteID.
-Vector<FlowSiteLevel> gradeAccessSites(const FlowResults&, AccessSiteObservations&&, BuildContext&);
+struct GradedSites {
+    // Indexed by AccessSiteID.
+    Vector<FlowSiteLevel> levels;
+    // One for each operation in its general form that has a place in the source, in the order of the places.
+    Vector<Wire::AccessRecord> generalOperations;
+};
+GradedSites gradeAccessSites(const Program&, const FlowResults&, AccessSiteObservations&&, BuildContext&);
 
 // The checks that are in the program, and the tests of arguments that some caller may fail.
 Vector<Wire::RemainingCheckRecord> collectRemainingChecks(const Program&, BuildContext&);
@@ -111,7 +120,7 @@ struct FlowReportBodyRecords {
 };
 
 FlowReportBodyRecords collectFlowReportBodyRecords(const Program&, BuildContext&);
-FlowReport buildFlowReport(const Program&, const FlowResults&, std::span<const FlowSiteLevel>, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&&, BuildContext&);
+FlowReport buildFlowReport(const Program&, const FlowResults&, const GradedSites&, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&&, BuildContext&);
 
 } // namespace Typed
 

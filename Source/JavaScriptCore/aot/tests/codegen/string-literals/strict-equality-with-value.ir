@@ -41,11 +41,23 @@ function f3 name="emptyText" parameters=[{type=anything}] results=[{type=boolean
 # CHECK-NEXT: f3: size={{*}} constants=0
 # CHECK-NEXT: stub ValueEqualsLiteralOfLength{{*}} x1
 
-function f4 name="generalComparison" parameters=[{type=anything}] results=[{type=boolean}] {
+# The operator itself, where no rule has made the row of it: the condition of a branch that passes proofs, for one.
+function f4 name="operatorBesideWrittenText" parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: anything):
     v1 = String string="GET"
     v2 = StrictEq v0, v1 form=StringAndValue
     Return v2
 }
 # CHECK-NEXT: f4: size=
-# CHECK-NOT: EqualsLiteral
+# CHECK: stub ValueEqualsLiteralOfLength{{*}} x1
+
+function f5 name="operatorOnStringBesideWrittenText" parameters=[{type=string}] results=[{type=boolean}] {
+  b0(v0: string):
+    v1 = String string="constructor"
+    v2 = StrictEq v0, v1 form=Strings
+    Return v2
+}
+# CHECK-NEXT: f5: size=
+# CHECK-NOT: StringsAreEqual
+# CHECK: stub StringEqualsLiteral x1
+# CHECK-NOT: StringsAreEqual

@@ -428,6 +428,313 @@ static void testStoresReplaceOwnValues()
     CHECK_OUTPUT(STATEMENTS_STORING_BY_KEY, OUTPUT_OF_STORES);
 }
 
+// A store gives a dictionary a name that it lacks in the stub, where neither the table of its names nor its storage has to grow. Each kind makes { object, key, value, isRight, throws }.
+#define STATEMENTS_ADDING_BY_KEY R"JS(
+globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy, makeRecord) => {
+    const dictionary = (object, givesNamesUp) => {
+        if (givesNamesUp) $vm.toUncacheableDictionary(object);
+        else $vm.toCacheableDictionary(object);
+        return object;
+    };
+    const namesOf = object => { const own = Object.keys(object); let names = ""; for (let k = 0; k < own.length; k++) names += "," + own[k]; return names; };
+    const added = (object, key = "added") => {
+        const namesBefore = namesOf(object);
+        return { object, key, isRight: value => object[key] === value && Object.hasOwn(object, key) && namesOf(object) === namesBefore + "," + key };
+    };
+    const refused = object => {
+        const namesBefore = namesOf(object);
+        return { object, key: "added", throws: true, isRight: () => object.added === undefined && !("added" in object) && namesOf(object) === namesBefore };
+    };
+    const kinds = {
+        "without a prototype": n => added(dictionary(fresh(null))),
+        "below Object.prototype": n => added(dictionary(fresh())),
+        "one that gives names up": n => added(dictionary(fresh(), true)),
+        "room outside the cell": n => added(dictionary(withManyNames(fresh(), 6))),
+        "among 100 names": n => added(dictionary(withManyNames(fresh(), 99))),
+        "among 300 names": n => added(withManyNames(fresh(), 299)),
+        "a plain value above": n => { const above = fresh(); above.added = -1; return added(dictionary(fresh(above))); },
+        "a name of wide characters": n => added(dictionary(fresh()), "\u4e2d\u6587"),
+        "behind a name that was deleted and another that took its place": n => {
+            const object = dictionary(withManyNames(fresh(), 3));
+            delete object.filler1;
+            object.later = n;
+            return added(object);
+        },
+        "no storage outside the cell yet": n => added(dictionary(withManyNames(fresh(), 5))),
+        "a full table": n => added(dictionary(withManyNames(fresh(), 7))),
+        "full storage": n => added(dictionary(withManyNames(fresh(), 9))),
+        "the place of a deleted name is free": n => { const object = dictionary(withManyNames(fresh(), 3)); delete object.filler1; return added(object); },
+        "the name was there and was deleted": n => { const object = dictionary(withManyNames(fresh(), 3)); object.added = -1; object.last = n; delete object.added; return added(object); },
+        "a name that spells an index": n => {
+            const object = dictionary(fresh());
+            const namesBefore = namesOf(object);
+            return { object, key: "7", isRight: value => object[7] === value && namesOf(object) === ",7" + namesBefore };
+        },
+        "a name that begins with a digit": n => added(dictionary(fresh()), "7th"),
+        "a wide character whose low half is a digit": n => added(dictionary(fresh()), "\u0137th"),
+        "the empty name": n => added(dictionary(fresh()), ""),
+        "then": n => added(dictionary(fresh()), "then"),
+        "__proto__ without a prototype": n => added(dictionary(fresh(null)), "__proto__"),
+        "__proto__ below Object.prototype": n => {
+            const object = dictionary(fresh());
+            const value = { };
+            return { object, key: "__proto__", value, isRight: () => Object.getPrototypeOf(object) === value && !Object.hasOwn(object, "__proto__") };
+        },
+        "a symbol": n => {
+            const object = dictionary(fresh());
+            const key = Symbol("added");
+            return { object, key, isRight: value => object[key] === value && Object.getOwnPropertySymbols(object)[0] === key };
+        },
+        "not extensible": n => refused(Object.preventExtensions(dictionary(fresh()))),
+        "sealed": n => refused(Object.seal(dictionary(fresh()))),
+        "frozen": n => refused(Object.freeze(dictionary(fresh()))),
+        "a setter above": n => {
+            const above = fresh();
+            let stored;
+            Object.defineProperty(above, "added", { set(value) { stored = value; }, configurable: true });
+            const object = dictionary(fresh(above));
+            return { object, key: "added", isRight: value => stored === value && !Object.hasOwn(object, "added") };
+        },
+        "a value above that cannot be written": n => {
+            const above = fresh();
+            Object.defineProperty(above, "added", { value: undefined, writable: false, configurable: true });
+            const object = dictionary(fresh(above));
+            return { object, key: "added", throws: true, isRight: () => !Object.hasOwn(object, "added") };
+        },
+        "a proxy above": n => {
+            let stored;
+            const object = dictionary(fresh(new Proxy({ }, { set(target, key, value) { stored = value; return true; } })));
+            return { object, key: "added", isRight: value => stored === value && !Object.hasOwn(object, "added") };
+        },
+        "a prototype": n => {
+            const object = dictionary(fresh());
+            const below = fresh(object);
+            const wasAbsent = read(below) === undefined && readByKey(below, "shared") === undefined;
+            return { object, key: "shared", isRight: value => wasAbsent && read(below) === value && readByKey(below, "shared") === value && hasByKey(below, "shared") };
+        },
+        "no dictionary": n => added(fresh()),
+        "a record with 200 names beside its fields": n => {
+            const object = withManyNames(makeRecord(n, n), 200);
+            return { object, key: "added", isRight: value => object.added === value && Object.hasOwn(object, "added") };
+        },
+    };
+    const storesRightly = (store, isStrict) => n => {
+        const made = kinds[kind](n);
+        const value = "value" in made ? made.value : n + 100;
+        let threw = false;
+        try { store(made.object, made.key, value); } catch (error) { threw = error instanceof TypeError; }
+        return made.isRight(value) && threw === (isStrict && !!made.throws);
+    };
+    var kind;
+    for (kind in kinds)
+        printAnswers(kind, { "strict": verdict(storesRightly(storeByKey, true)), "sloppy": verdict(storesRightly(storeByKeySloppy, false)) });
+};
+)JS"
+
+#define OUTPUT_OF_ADDITIONS(objects, operations, fewOperations) \
+    LINE_OF_STORE("without a prototype", objects) \
+    LINE_OF_STORE("below Object.prototype", objects) \
+    LINE_OF_STORE("one that gives names up", objects) \
+    LINE_OF_STORE("room outside the cell", objects) \
+    LINE_OF_STORE("among 100 names", objects) \
+    LINE_OF_STORE("among 300 names", objects) \
+    LINE_OF_STORE("a plain value above", objects) \
+    LINE_OF_STORE("a name of wide characters", objects) \
+    LINE_OF_STORE("behind a name that was deleted and another that took its place", objects) \
+    LINE_OF_STORE("no storage outside the cell yet", operations) \
+    LINE_OF_STORE("a full table", operations) \
+    LINE_OF_STORE("full storage", operations) \
+    LINE_OF_STORE("the place of a deleted name is free", operations) \
+    LINE_OF_STORE("the name was there and was deleted", operations) \
+    LINE_OF_STORE("a name that spells an index", operations) \
+    LINE_OF_STORE("a name that begins with a digit", operations) \
+    LINE_OF_STORE("a wide character whose low half is a digit", operations) \
+    LINE_OF_STORE("the empty name", operations) \
+    LINE_OF_STORE("then", operations) \
+    LINE_OF_STORE("__proto__ without a prototype", operations) \
+    LINE_OF_STORE("__proto__ below Object.prototype", operations) \
+    LINE_OF_STORE("a symbol", operations) \
+    LINE_OF_STORE("not extensible", operations) \
+    LINE_OF_STORE("sealed", operations) \
+    LINE_OF_STORE("frozen", operations) \
+    LINE_OF_STORE("a setter above", operations) \
+    LINE_OF_STORE("a value above that cannot be written", operations) \
+    LINE_OF_STORE("a proxy above", operations) \
+    LINE_OF_STORE("a prototype", operations) \
+    LINE_OF_STORE("no dictionary", operations) \
+    LINE_OF_STORE("a record with 200 names beside its fields", operations)
+
+static void testStoresAddToDictionaries()
+{
+    CHECK_OUTPUT(STATEMENTS_ADDING_BY_KEY, OUTPUT_OF_ADDITIONS);
+}
+
+// What the stub has written the engine reads: the order of the names, each value, and every way in which an object changes later. The names are made at run time, and nothing but the dictionary keeps them.
+#define STATEMENTS_GROWING_DICTIONARIES R"JS(
+globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy) => {
+    const nameAt = k => "name" + k * 7 + "x";
+    // A text becomes a name where it is first stored under. The object that it is stored in here dies.
+    const asName = text => { ({ })[text] = 0; return text; };
+    const grow = (object, howMany, keyAt = k => asName(nameAt(k))) => {
+        const callsBefore = calls();
+        for (let k = 0; k < howMany; k++) storeByKey(object, keyAt(k), { k });
+        return calls() - callsBefore;
+    };
+    const isWhole = (object, howMany, first = 0) => {
+        let k = first;
+        for (const name in object) {
+            if (name !== nameAt(k) || object[name].k !== k || readByKey(object, name).k !== k || !hasOwnByKey(object, name)) return false;
+            k++;
+        }
+        return k === howMany && !hasByKey(object, nameAt(howMany));
+    };
+    const report = (what, isRight, callsMade, most) => print(what + ": " + (!isRight ? "WRONG" : !globalThis.printsCalls ? "right" : callsMade <= most ? "a few operations" : callsMade + " operations"));
+    for (const howMany of [5, 40, 128, 129, 700]) {
+        for (const prototype of [null, Object.prototype]) {
+            const object = Object.create(prototype);
+            $vm.toCacheableDictionary(object);
+            const callsMade = grow(object, howMany);
+            fullGC();
+            report(howMany + " names " + (prototype ? "below Object.prototype" : "without a prototype"), isWhole(object, howMany), callsMade, 12 + howMany / 8);
+        }
+    }
+    {
+        const object = Object.create(null);
+        $vm.toCacheableDictionary(object);
+        grow(object, 40, nameAt);
+        fullGC();
+        report("40 texts that were no names", isWhole(object, 40), 0, 0);
+    }
+    const make = () => { const object = Object.create(null); $vm.toCacheableDictionary(object); grow(object, 40); return object; };
+    const check = (what, isRight) => report(what, isRight, 0, 0);
+
+    let object = make();
+    for (let k = 0; k < 10; k++) delete object[nameAt(k)];
+    check("ten names deleted", isWhole(object, 40, 10));
+    for (let k = 40; k < 60; k++) storeByKey(object, asName(nameAt(k)), { k });
+    fullGC();
+    check("twenty names behind them", isWhole(object, 60, 10));
+
+    object = make();
+    Object.defineProperty(object, nameAt(39), { get() { return { k: 39 }; }, enumerable: true, configurable: true });
+    check("a getter in the place of the last value", isWhole(object, 40));
+    storeByKey(object, nameAt(40), { k: 40 });
+    check("a name behind the getter", isWhole(object, 41));
+
+    object = make();
+    check("written as JSON", JSON.stringify(object).length === JSON.stringify(Object.assign({ }, object)).length && isWhole(JSON.parse(JSON.stringify(object)), 40));
+    check("copied", isWhole({ ...object }, 40) && isWhole(Object.assign(Object.create(null), object), 40));
+    check("its names listed", Object.keys(object).length === 40 && Object.getOwnPropertyNames(object)[39] === nameAt(39) && Object.entries(object)[39][1].k === 39);
+    Object.freeze(object);
+    let threw = false;
+    try { storeByKey(object, nameAt(40), { k: 40 }); } catch (error) { threw = error instanceof TypeError; }
+    check("frozen", threw && Object.isFrozen(object) && isWhole(object, 40));
+
+    object = make();
+    $vm.flattenDictionaryObject(object);
+    check("no dictionary any more", isWhole(object, 40));
+    storeByKey(object, nameAt(40), { k: 40 });
+    check("a name behind that", isWhole(object, 41));
+
+    object = make();
+    const below = Object.create(object);
+    check("a prototype", readByKey(below, nameAt(39)).k === 39 && readByKey(below, nameAt(40)) === undefined);
+    storeByKey(object, nameAt(40), { k: 40 });
+    check("a prototype given a name", readByKey(below, nameAt(40)).k === 40 && isWhole(object, 41));
+
+    // Many dictionaries die with their names, and the names are made anew.
+    let wrong = 0;
+    for (let round = 0; round < 30; round++) {
+        wrong += isWhole(make(), 40) ? 0 : 1;
+        if (round % 10 === 9) fullGC();
+    }
+    check("thirty that die", !wrong);
+};
+)JS"
+
+#define LINE_OF_GROWTH(what, answer) what ": " answer "\n"
+#define OUTPUT_OF_GROWTH(objects, operations, fewOperations) \
+    LINE_OF_GROWTH("5 names without a prototype", fewOperations) \
+    LINE_OF_GROWTH("5 names below Object.prototype", fewOperations) \
+    LINE_OF_GROWTH("40 names without a prototype", fewOperations) \
+    LINE_OF_GROWTH("40 names below Object.prototype", fewOperations) \
+    LINE_OF_GROWTH("128 names without a prototype", fewOperations) \
+    LINE_OF_GROWTH("128 names below Object.prototype", fewOperations) \
+    LINE_OF_GROWTH("129 names without a prototype", fewOperations) \
+    LINE_OF_GROWTH("129 names below Object.prototype", fewOperations) \
+    LINE_OF_GROWTH("700 names without a prototype", fewOperations) \
+    LINE_OF_GROWTH("700 names below Object.prototype", fewOperations) \
+    LINE_OF_GROWTH("40 texts that were no names", fewOperations) \
+    LINE_OF_GROWTH("ten names deleted", fewOperations) \
+    LINE_OF_GROWTH("twenty names behind them", fewOperations) \
+    LINE_OF_GROWTH("a getter in the place of the last value", fewOperations) \
+    LINE_OF_GROWTH("a name behind the getter", fewOperations) \
+    LINE_OF_GROWTH("written as JSON", fewOperations) \
+    LINE_OF_GROWTH("copied", fewOperations) \
+    LINE_OF_GROWTH("its names listed", fewOperations) \
+    LINE_OF_GROWTH("frozen", fewOperations) \
+    LINE_OF_GROWTH("no dictionary any more", fewOperations) \
+    LINE_OF_GROWTH("a name behind that", fewOperations) \
+    LINE_OF_GROWTH("a prototype", fewOperations) \
+    LINE_OF_GROWTH("a prototype given a name", fewOperations) \
+    LINE_OF_GROWTH("thirty that die", fewOperations)
+
+static void testDictionariesGrownByStoresAreWhole()
+{
+    CHECK_OUTPUT(STATEMENTS_GROWING_DICTIONARIES, OUTPUT_OF_GROWTH);
+}
+
+// A Structure is made for what comes again. The first object that a store by key gives a name which no object of its Structure has been given becomes a dictionary.
+// The next one that is given the same name there gets a Structure for it, and for each name behind it. A dictionary that is asked again and again for what it lacks ceases to be one.
+#define STATEMENTS_GIVING_NAMES_AGAIN R"JS(
+globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey) => {
+    const kindOf = object => $vm.value(object).indexOf(", Dictionary") >= 0 ? "a dictionary" : "no dictionary";
+    const structureOf = object => { const text = $vm.value(object); return text.substring(text.indexOf("StructureID: ")); };
+    const build = (names, prototype = null) => {
+        const object = Object.create(prototype);
+        for (let k = 0; k < names.length; k++) storeByKey(object, names[k], k);
+        for (let k = 0; k < names.length; k++) if (object[names[k]] !== k) return "WRONG";
+        return object;
+    };
+    const names = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
+    print("names that come for the first time: " + kindOf(build(names)));
+    const second = build(names);
+    print("the same names again: " + kindOf(second));
+    const third = build(names);
+    print("and again: " + kindOf(third) + ", " + (structureOf(second) === structureOf(third) ? "of the same Structure" : "of another Structure"));
+    print("the same names below Object.prototype: " + kindOf(build(names, Object.prototype)) + ", then " + kindOf(build(names, Object.prototype)));
+    const others = ["first", "second", "third", "other", "another"];
+    print("the same beginning and another end: " + kindOf(build(others)) + ", then " + kindOf(build(others)));
+    print("one name: " + kindOf(build(["alone"])) + ", then " + kindOf(build(["alone"])));
+
+    let object = build(["asked", "often"]);
+    let found = 0;
+    for (let k = 0; k < 400; k++) found += readByKey(object, "lacking") === undefined ? 0 : 1;
+    print("a dictionary asked 400 times for what it lacks: " + kindOf(object) + ", found " + found + " times");
+    storeByKey(object, "later", 2);
+    print("given one more name: " + kindOf(object) + ", " + object.asked + object.often + object.later);
+    object = build(["sought", "seldom"]);
+    for (let k = 0; k < 400; k++) found += readByKey(object, "lacking" + k) === undefined ? 0 : 1;
+    print("a dictionary asked for 400 names that it lacks: " + kindOf(object) + ", found " + found + " times");
+};
+)JS"
+
+#define OUTPUT_OF_NAMES_GIVEN_AGAIN(objects, operations, fewOperations) \
+    "names that come for the first time: a dictionary\n" \
+    "the same names again: no dictionary\n" \
+    "and again: no dictionary, of the same Structure\n" \
+    "the same names below Object.prototype: a dictionary, then no dictionary\n" \
+    "the same beginning and another end: a dictionary, then no dictionary\n" \
+    "one name: a dictionary, then no dictionary\n" \
+    "a dictionary asked 400 times for what it lacks: no dictionary, found 0 times\n" \
+    "given one more name: a dictionary, 012\n" \
+    "a dictionary asked for 400 names that it lacks: a dictionary, found 0 times\n"
+
+static void testStructuresAreMadeForWhatComesAgain()
+{
+    CHECK_OUTPUT(STATEMENTS_GIVING_NAMES_AGAIN, OUTPUT_OF_NAMES_GIVEN_AGAIN);
+}
+
 // The objects of a layout share a Structure, so each pair of a Structure and a name is asked fewer times in all than the stubs answer before they leave.
 #define STATEMENTS_ASKING_COMPILED_OBJECTS R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey, storeByKeySloppy, makeRecord, construct, classes) => {
@@ -500,6 +807,9 @@ std::span<const NativeTest> lookupBehindTablesProgramTests()
         { "lookup-behind-tables/programs/texts-that-are-no-atoms-are-names"_s, testTextsThatAreNoAtomsAreNames },
         { "lookup-behind-tables/programs/symbols-are-names"_s, testSymbolsAreNames },
         { "lookup-behind-tables/programs/stores-replace-own-values"_s, testStoresReplaceOwnValues },
+        { "lookup-behind-tables/programs/stores-add-to-dictionaries"_s, testStoresAddToDictionaries },
+        { "lookup-behind-tables/programs/dictionaries-grown-by-stores-are-whole"_s, testDictionariesGrownByStoresAreWhole },
+        { "lookup-behind-tables/programs/structures-are-made-for-what-comes-again"_s, testStructuresAreMadeForWhatComesAgain },
         { "lookup-behind-tables/programs/compiled-objects-answer"_s, testCompiledObjectsAnswer },
     };
     return tests;

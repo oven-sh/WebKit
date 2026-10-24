@@ -403,6 +403,13 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 void CodeGenerator::finishProcedure()
 {
     m_heaps.computeRangesAndDecorateInstructions();
+    if (build().recordedOptions().isSabotaged(Sabotage::FieldsNeverChange)) {
+        B3::HeapRange fields = m_heaps.rangeOf(m_heaps.entire(AbstractHeap::ObjectFields));
+        for (B3::Value* value : m_proc.values()) {
+            if (auto* load = value->as<B3::MemoryValue>(); load && load->isLoad() && load->range() && fields.begin() <= load->range().begin() && load->range().end() <= fields.end())
+                load->setReadsMutability(B3::Mutability::Immutable);
+        }
+    }
     m_proc.deleteOrphans();
     m_out.applyBlockOrder();
 }

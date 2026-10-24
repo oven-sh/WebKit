@@ -291,10 +291,7 @@ static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registe
     const GPRReg bytecode = length;
     jit.loadPtr(Address(regExp, RegExp::offsetOfRegExpBytecode()), bytecode);
     jit.loadPtr(Address(bytecode, Yarr::BytecodePattern::offsetOfFlatProgram()), program);
-    Jump hasProgram = jit.branchTestPtr(CCallHelpers::NonZero, program);
-    jit.loadPtr(Address(bytecode, Yarr::BytecodePattern::offsetOfFlatProgramFor8BitSubjects()), program);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, program));
-    hasProgram.link(&jit);
     bumpRuntimeCounter(jit, RuntimeCounterID::RegExpMatchesInterpreted, length);
     Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
 

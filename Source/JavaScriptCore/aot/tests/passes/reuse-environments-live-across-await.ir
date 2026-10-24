@@ -1,0 +1,61 @@
+# An environment that is live at a suspension is marked as escaped unless the suspended activation allocated it
+# FORM: Prepared
+# RUN: pass ReuseEnvironments
+# STATISTIC: EnvironmentsReused = 2
+# CHECK: reused environments: [L0 L1]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="allocatedBeforeAwait" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="capturedBeforeAwait" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="allocatedBeforeAwait" flags=[IsAsync] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = Await v0
+    v5 = GetEnvironmentField v3 layout=L0 field=0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="allocatedBeforeAwait"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: GetEnvironmentField v3
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+
+function f1 name="passesCapture" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = CallDirect v3, v0 function=f2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f1 name="passesCapture"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: CallDirect
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+
+function f2 name="capturedBeforeAwait" kind=Arrow flags=[IsAsync] captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything):
+    v2 = Await v1
+    v3 = GetEnvironmentField v0 layout=L1 field=0
+    Return v3
+}
+# CHECK-LABEL: function f2 name="capturedBeforeAwait"
+# CHECK: b0(
+# CHECK-NEXT: MarkEnvironmentEscaped v0
+# CHECK-NEXT: Await
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped

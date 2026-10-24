@@ -11,6 +11,7 @@
 #include "B3Opcode.h"
 #include "B3Origin.h"
 #include "B3Type.h"
+#include "GPRInfo.h"
 #include <optional>
 #include <wtf/SharedTask.h>
 
@@ -34,10 +35,12 @@ struct MovedLoad {
     Type type;
     int32_t offset;
     Origin origin;
+    // If set: a difference counts only where one of the two words has one of these bits.
+    uint64_t bitsOfWordsThatCount { 0 };
 };
 
 // Stands where the load stood: it reads the location again and reports unless it holds what the users of the load are given. No load or store waits for it.
-using DifferenceReport = SharedTask<void(CCallHelpers&, Origin)>;
+using DifferenceReport = SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>;
 JS_EXPORT_PRIVATE PatchpointValue* createMovedLoadCheck(Procedure&, const MovedLoad&, Value* address, Value* givenToUsers, RefPtr<DifferenceReport>);
 PatchpointValue* createMovedLoadCheck(Procedure&, const MovedLoad&, Value* address, Value* givenToUsers);
 

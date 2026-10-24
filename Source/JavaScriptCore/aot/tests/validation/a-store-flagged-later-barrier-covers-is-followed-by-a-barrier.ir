@@ -1,0 +1,40 @@
+# let held, other; const readBoth = () => [held, other]; collect(readBoth); held = { x: 1.5 }; other = held; collect()
+# The flag laterBarrierCovers where it says the truth: a store to the same environment follows, with its barrier, before anything can collect. A validating build has nothing to say,
+# with a collection in front of the two stores, which marks the environment, and without.
+# The closure reads both variables: a store that nobody reads is removed, its barrier with it, and the flag would be a lie.
+# The closure goes to code that nobody compiled, so the environment lies on the heap, and the pass that would turn it into variables of the module is off. The pass that sets the flags is off too, so the flag stays as written.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.collect = () => { gc(); };
+# RUN(SAME): run-in-shell globalThis.collect = () => { };
+# OPTIONS: validate disable=pass:RemoveRedundantBarriers disable=pass:PromoteEnvironmentsToVariables
+# CHECK-NOT: AOT validation
+# CHECK: exited with 0
+# SAME-NOT: AOT validation
+# SAME: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment fields=[{key="held" declared={type=anything}}, {key="other" declared={type=anything}}]
+layout L1 name="Thing" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="collect" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = Double number=1.5
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    PutEnvironmentField v0, v7 layout=L0 field=0 [laterBarrierCovers]
+    PutEnvironmentField v0, v7 layout=L0 field=1
+    v10 = Call v3, -
+    Return
+}
+function f1 name="readBoth" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = GetEnvironmentField v0 layout=L0 field=1
+    v3 = NewArray v1, v2 contents=anything holes=[]
+    Return v3
+}

@@ -400,14 +400,19 @@ void ValueFlowSolver::makeDue(ValueFlowStatementID statement)
 {
     if (isAtRest(statement) || m_isDue.set(statement.index()))
         return;
+    if (hasLongRowBehindIt(statement))
+        m_numberDueWithLongRows.fetch_add(1, std::memory_order_relaxed);
     m_due.append(statement);
 }
 
 void ValueFlowSolver::listIfItMayBecomeDue(ValueFlowStatementID statement, Vector<ValueFlowStatementID>& list) const
 {
     // On any thread: whoever marks it lists it, so no two lists hold one statement.
-    if (!isAtRest(statement) && !m_isDue.get(statement.index()) && !m_isDue.set(statement.index()))
-        list.append(statement);
+    if (isAtRest(statement) || m_isDue.get(statement.index()) || m_isDue.set(statement.index()))
+        return;
+    list.append(statement);
+    if (hasLongRowBehindIt(statement))
+        m_numberDueWithLongRows.fetch_add(1, std::memory_order_relaxed);
 }
 
 void ValueFlowSolver::makeStatementsDue(uint32_t first, uint32_t end)
@@ -577,10 +582,10 @@ void ValueFlowSolver::runDueStatements(bool isFirstLapOfTurn)
     Vector<ValueFlowStatementID> due = std::exchange(m_due, Vector<ValueFlowStatementID>());
     growByDoubling(m_hasRunInTurn, numberOfStatements());
     // One dear statement costs as much as thousands of others. Each has a thread to itself from the start, and the others fill the threads beside them. Who runs what makes no difference to what is logged.
-    // Under a seed some that are due wait outside the list.
+    // Under a seed, and behind long rows, some that are due wait outside the list.
     Vector<ValueFlowStatementID, 16> dearStatements;
     for (ValueFlowStatementID statement : m_dearStatements) {
-        if (m_isDue.get(statement.index()) && !m_hasRunInTurn.get(statement.index()) && (!m_seedOfSchedule || due.contains(statement)))
+        if (m_isDue.get(statement.index()) && !m_hasRunInTurn.get(statement.index()) && ((!m_seedOfSchedule && m_dueBehindLongRows.isEmpty()) || due.contains(statement)))
             dearStatements.append(statement);
     }
     growAndFill(m_rememberedByStatement, numberOfStatements(), ValueSetID());
@@ -712,6 +717,81 @@ void ValueFlowSolver::runDueStatements(bool isFirstLapOfTurn)
         m_stepTimes.busiestThreadOfTurn += busiest;
         m_stepTimes.longestShareOfTurn += longest;
     }
+}
+
+void ValueFlowSolver::findStatementsWithLongRowsBehindThem()
+{
+    AOT_THRESHOLD(unsigned, fewestStatementsOfLongRow, 16);
+    if (!m_statementsWait)
+        return;
+    Vector<uint32_t> producerOfNode;
+    producerOfNode.fill(noSolverIndex, m_input.numberOfNodes);
+    Vector<uint16_t> lengthBehind;
+    lengthBehind.fill(static_cast<uint16_t>(0), m_input.statements.size());
+    uint32_t numberOfBodies = m_input.ranges.size() - 1;
+    constexpr uint32_t bodiesPerShare = 512;
+    Vector<Vector<uint32_t>> foundOfShare((numberOfBodies + bodiesPerShare - 1) / bodiesPerShare);
+    forEachIndexInParallel(m_loops, foundOfShare.size(), [&](unsigned share) {
+        for (uint32_t body = share * bodiesPerShare; body < std::min(numberOfBodies, (share + 1) * bodiesPerShare); ++body) {
+            uint32_t first = m_input.ranges[body].statement;
+            uint32_t end = m_input.ranges[body + 1].statement;
+            if (end - first <= fewestStatementsOfLongRow)
+                continue;
+            for (uint32_t index = first; index < end; ++index) {
+                if (ValueFlowNodeID result = m_input.statements[index].result; result && result.index() < m_input.numberOfNodes)
+                    producerOfNode[result.index()] = index;
+            }
+            for (uint32_t index = end; index-- > first;) {
+                const ValueFlowStatement& statement = m_input.statements[index];
+                if (lengthBehind[index] >= fewestStatementsOfLongRow)
+                    foundOfShare[share].append(index);
+                // As in nodeAwaitedBy().
+                if (statement.kind != ValueFlowStatementKind::Operation || !statement.operandCount || (statement.opcode != Opcode::PropGet && statement.opcode != Opcode::Call && statement.opcode != Opcode::Construct))
+                    continue;
+                const ValueFlowOperand& operand = m_input.operands[statement.firstOperand];
+                if (!operand.node || operand.node.index() >= m_input.numberOfNodes || (operand.constant && operand.constant != ValueSets::nothing))
+                    continue;
+                uint32_t producer = producerOfNode[operand.node.index()];
+                if (producer == noSolverIndex || producer < first || producer >= index)
+                    continue;
+                lengthBehind[producer] = std::max<uint16_t>(lengthBehind[producer], static_cast<uint16_t>(std::min<unsigned>(lengthBehind[index] + 1, UINT16_MAX)));
+            }
+        }
+    });
+    for (const Vector<uint32_t>& found : foundOfShare) {
+        for (uint32_t index : found) {
+            if (!std::exchange(m_hasLongRows, true))
+                m_hasLongRowBehindIt.ensureSize(m_input.statements.size());
+            m_hasLongRowBehindIt.quickSet(index);
+        }
+    }
+}
+
+// Whatever else is due waits until no statement with a long row behind it is.
+void ValueFlowSolver::letLongRowsGoFirst()
+{
+    if (m_numberDueWithLongRows.exchange(0, std::memory_order_relaxed)) {
+        size_t numberThatRun = 0;
+        size_t numberThatWaited = m_dueBehindLongRows.size();
+        makeRoomByDoubling(m_dueBehindLongRows, m_due.size());
+        for (ValueFlowStatementID statement : m_due) {
+            if (hasLongRowBehindIt(statement))
+                m_due[numberThatRun++] = statement;
+            else
+                m_dueBehindLongRows.append(statement);
+        }
+        if (numberThatRun) {
+            m_due.shrink(numberThatRun);
+            return;
+        }
+        m_dueBehindLongRows.shrink(numberThatWaited);
+    }
+    if (m_dueBehindLongRows.isEmpty())
+        return;
+    if (m_due.size() > m_dueBehindLongRows.size())
+        std::swap(m_due, m_dueBehindLongRows);
+    m_dueBehindLongRows.appendVector(m_due);
+    m_due = std::exchange(m_dueBehindLongRows, { });
 }
 
 // About half of the due statements, chosen by the seed, wait for a later round. Nothing is dropped: whoever waits stays due, and the solve does not end while a statement waits.
@@ -3844,6 +3924,8 @@ bool ValueFlowSolver::solve()
         }
     }
 
+    findStatementsWithLongRowsBehindThem();
+
     Vector<ValueSetID> heldAtRest;
     Vector<OptionSet<BuiltinUse>> usesAtRest;
     uint32_t functionsReachedAtRest = 0;
@@ -3863,7 +3945,7 @@ bool ValueFlowSolver::solve()
         m_stepTimes.begin();
         m_numberOfNodesBeforeRound = m_numberOfNodesMade;
         // Not in the round that runs every statement once more to see that nothing moves.
-        if (m_due.isEmpty()) {
+        if (m_due.isEmpty() && m_dueBehindLongRows.isEmpty()) {
             for (ValueFlowStatementID statement : std::exchange(m_dueLast, { })) {
                 if (m_isDueLast.clear(statement.index()))
                     makeDue(statement);
@@ -3871,6 +3953,8 @@ bool ValueFlowSolver::solve()
         }
         if (m_seedOfSchedule && !isFullRound)
             letSomeDueStatementsWait();
+        if (m_hasLongRows && !isFullRound)
+            letLongRowsGoFirst();
         if (!runRules())
             return false;
         MonotonicTime afterRules = MonotonicTime::now();
@@ -3916,7 +4000,7 @@ bool ValueFlowSolver::solve()
             static_cast<uint32_t>(m_graph.counters().evaluations - graphBefore.evaluations),
         });
 
-        bool isQuiet = !hasAdded && moved.isEmpty() && m_due.isEmpty() && m_dueLast.isEmpty() && m_dueStatementsThatWait.isEmpty() && m_edgesOfRound.isEmpty() && m_readToLink.isEmpty() && m_writtenToLink.isEmpty() && m_bodiesReachedInRound.isEmpty();
+        bool isQuiet = !hasAdded && moved.isEmpty() && m_due.isEmpty() && m_dueBehindLongRows.isEmpty() && m_dueLast.isEmpty() && m_dueStatementsThatWait.isEmpty() && m_edgesOfRound.isEmpty() && m_readToLink.isEmpty() && m_writtenToLink.isEmpty() && m_bodiesReachedInRound.isEmpty();
         if (isQuiet && isFullRound && m_rounds == Rounds::Due && !m_usesGeneralRulesOnly) {
             m_usesGeneralRulesOnly = true;
             heldAtRest.appendRange(m_graph.values().begin(), m_graph.values().end());

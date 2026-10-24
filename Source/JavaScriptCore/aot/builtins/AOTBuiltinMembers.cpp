@@ -61,16 +61,19 @@ BuiltinMemberName builtinMemberNameOf(const Program& program, PropertyKeyID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-BuiltinID findOwnMember(const Program& program, BuiltinID holder, PropertyKeyID key)
+static BuiltinID findOwnMember(const BuiltinTable& table, BuiltinID holder, BuiltinMemberName name)
 {
-    BuiltinMemberName name = builtinMemberNameOf(program, key);
     if (!name)
         return { };
-    const BuiltinTable& table = program.builtins();
     BuiltinID member = table.findOwnMember(holder, name.name);
     if (name.isPrivateAlias && member && !table.at(member).flags.contains(BuiltinFlag::HasPrivateAlias))
         return { };
     return member;
+}
+
+BuiltinID findOwnMember(const Program& program, BuiltinID holder, PropertyKeyID key)
+{
+    return findOwnMember(program.builtins(), holder, builtinMemberNameOf(program, key));
 }
 
 bool listsEveryMemberUnder(const Program& program, BuiltinID holder, PropertyKeyID key)
@@ -146,31 +149,60 @@ std::optional<Type> testedTypeOfInstances(const Program& program, BuiltinClassID
     return tested;
 }
 
+MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
+    : m_table(program.builtins())
+    , m_memberName(builtinMemberNameOf(program, key))
+    , m_name(program.builtinNameOf(key))
+    , m_kind(program.at(key).kind)
+    , m_isIndexLike(program.isIndexLike(key))
+{
+}
+
+BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
+{
+    return Typed::findOwnMember(m_table, holder, m_memberName);
+}
+
+bool MembersUnderKey::isClosedKey(BuiltinID holder) const
+{
+    if (m_table.at(holder).flags.contains(BuiltinFlag::IsLockedObject))
+        return true;
+    if (m_isIndexLike)
+        return m_table.closesIndexKeys(holder);
+    if (m_name)
+        return m_table.isClosedKey(holder, m_name);
+    return m_table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames) && m_kind == PropertyKeyKind::Text;
+}
+
+bool MembersUnderKey::isLockedLocation(BuiltinID holder) const
+{
+    BuiltinID member = findOwnMember(holder);
+    if (!member)
+        return isClosedKey(holder);
+    // Only library code can spell an engine private name, and it stores under none that is an alias.
+    if (m_kind == PropertyKeyKind::EnginePrivateName)
+        return true;
+    if (m_table.at(member).mutability == BuiltinMutability::AlwaysLocked || m_table.isLocationOfLockedObject(member))
+        return true;
+    // What changes is the property of an instance. Start-up locks the one of the holder with the other members.
+    return m_table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && m_table.at(holder).flags.contains(BuiltinFlag::HasLockedMembers);
+}
+
+unsigned MembersUnderKey::classOfKey() const
+{
+    unsigned kind = static_cast<unsigned>(m_kind);
+    RELEASE_ASSERT(kind < 8);
+    return kind | m_isIndexLike << 3 | !!m_memberName << 4 | !!m_name << 5 | (m_name && m_table.isClosedOnHostFunctions(m_name)) << 6 | (m_name && m_table.isSymbolName(m_name)) << 7;
+}
+
 bool isClosedKey(const Program& program, BuiltinID holder, PropertyKeyID key)
 {
-    const BuiltinTable& table = program.builtins();
-    if (table.at(holder).flags.contains(BuiltinFlag::IsLockedObject))
-        return true;
-    if (program.isIndexLike(key))
-        return table.closesIndexKeys(holder);
-    if (BuiltinName name = program.builtinNameOf(key))
-        return table.isClosedKey(holder, name);
-    return table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames) && program.at(key).kind == PropertyKeyKind::Text;
+    return MembersUnderKey(program, key).isClosedKey(holder);
 }
 
 bool isLockedLocation(const Program& program, BuiltinID holder, PropertyKeyID key)
 {
-    const BuiltinTable& table = program.builtins();
-    BuiltinID member = findOwnMember(program, holder, key);
-    if (!member)
-        return isClosedKey(program, holder, key);
-    // Only library code can spell an engine private name, and it stores under none that is an alias.
-    if (program.at(key).kind == PropertyKeyKind::EnginePrivateName)
-        return true;
-    if (table.at(member).mutability == BuiltinMutability::AlwaysLocked || table.isLocationOfLockedObject(member))
-        return true;
-    // What changes is the property of an instance. Start-up locks the one of the holder with the other members.
-    return table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && table.at(holder).flags.contains(BuiltinFlag::HasLockedMembers);
+    return MembersUnderKey(program, key).isLockedLocation(holder);
 }
 
 LocationProof locationProofOf(const BuiltinLookupContext& context, BuiltinID member)

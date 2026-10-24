@@ -54,19 +54,19 @@ void UnwrittenWordCheck::generate(CCallHelpers& jit, const B3::StackmapGeneratio
         mayBeUnwritten.link(&jit);
         if (check.readsWholeWord)
             jit.branch32(CCallHelpers::NotEqual, CCallHelpers::Address(base, check.offset + 4), CCallHelpers::TrustedImm32(static_cast<int32_t>(unwrittenHalfWord))).linkTo(done, &jit);
-        emitReportOfBrokenClaim(jit, BrokenClaim::StackSlotIsWrittenBeforeRead, check.function, check.value);
+        emitReportOfBrokenClaim(jit, BrokenClaim::StackSlotIsWrittenBeforeRead, check.function, check.value, check.offset);
     });
 }
 
-static bool fillStackSlotsAtEntry(B3::Procedure& proc)
+static bool fillStackSlotsAtEntry(B3::Procedure& proc, const StackSlots& slots)
 {
-    if (!proc.stackSlots().size())
+    if (slots.isEmpty())
         return false;
     B3::BasicBlock* root = proc.at(0);
     B3::InsertionSet insertionSet(proc);
     B3::Origin origin = root->at(0)->origin();
     B3::Value* word = insertionSet.insert<B3::Const64Value>(0, origin, static_cast<int64_t>(unwrittenWord));
-    for (B3::Air::StackSlot* slot : proc.stackSlots()) {
+    for (B3::Air::StackSlot* slot : slots) {
         B3::Value* base = insertionSet.insert<B3::SlotBaseValue>(0, origin, slot);
         for (unsigned offset = 0; offset + sizeof(uint64_t) <= slot->byteSize(); offset += sizeof(uint64_t))
             insertionSet.insert<B3::MemoryValue>(0, B3::Store, origin, word, base, static_cast<int32_t>(offset));
@@ -119,15 +119,15 @@ static bool checkLoads(B3::Procedure& proc, Typed::FunctionID function)
     return changed;
 }
 
-B3::ClientPhase reportReadsOfUnwrittenStackSlots(Typed::FunctionID function, bool entersOnlyAtRoot)
+B3::ClientPhase reportReadsOfUnwrittenStackSlots(Typed::FunctionID function, const StackSlots& slotsOfCells, bool entersOnlyAtRoot)
 {
     return {
         B3::ClientPhase::Point::AfterSinking,
         "reportReadsOfUnwrittenStackSlots"_s,
-        createSharedTask<bool(B3::Procedure&)>([function, entersOnlyAtRoot](B3::Procedure& proc) {
+        createSharedTask<bool(B3::Procedure&)>([function, &slotsOfCells, entersOnlyAtRoot](B3::Procedure& proc) {
             bool changed = checkLoads(proc, function);
             if (entersOnlyAtRoot)
-                changed |= fillStackSlotsAtEntry(proc);
+                changed |= fillStackSlotsAtEntry(proc, slotsOfCells);
             return changed;
         })
     };

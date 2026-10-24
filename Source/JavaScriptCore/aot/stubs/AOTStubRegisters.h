@@ -22,10 +22,12 @@ static constexpr GPRReg instanceGPR = GPRInfo::jitDataRegister;
 static constexpr GPRReg cellCageBaseGPR = ARM64Registers::x25;
 static constexpr GPRReg throwWordGPR = ARM64Registers::x16;
 static constexpr GPRReg faultCallerLinkGPR = ARM64Registers::x16;
+static constexpr GPRReg registerWrittenAtFaults = faultCallerLinkGPR;
 #elif CPU(X86_64)
 static constexpr GPRReg cellCageBaseGPR = X86Registers::r14;
 static constexpr GPRReg throwWordGPR = X86Registers::r11;
 static constexpr GPRReg faultCallerLinkGPR = InvalidGPRReg;
+static constexpr GPRReg registerWrittenAtFaults = X86Registers::r11;
 #endif
 
 #if CPU(ARM64)

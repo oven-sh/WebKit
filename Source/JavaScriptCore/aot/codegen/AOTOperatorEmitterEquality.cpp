@@ -13,6 +13,7 @@
 #include "AOTStringEmitter.h"
 #include "AOTStubsValues.h"
 #include "AOTTypeTable.h"
+#include "AOTValueIdentity.h"
 #include "JSCJSValueInlines.h"
 #include "JSType.h"
 
@@ -207,6 +208,12 @@ Condition EqualityEmitter::equalityOnStrings(const ValueContext& value, bool isS
     ValueID right = value->rightOperand();
     switch (representationOf(left)) {
     case Representation::Cell:
+        // Against a written text the other operand is read in place, as StringEqualsLiteral reads it.
+        for (auto [written, other] : { std::pair { right, left }, std::pair { left, right } }) {
+            const Value& definition = m_function.at(definitionThroughUpcasts(m_function, written));
+            if (definition.opcode == Opcode::String)
+                return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::String, in<CellPointer>(other).value(), definition.string(), false, true);
+        }
         return emitter<StringEmitter>().areEqual(value, in<CellPointer>(left), in<CellPointer>(right));
     case Representation::JSValue:
         return equalityOnNullableStrings(value, isStrict);
@@ -262,6 +269,12 @@ Condition EqualityEmitter::equalityOnLiteralStrings(const ValueContext& value, b
 
 Condition EqualityEmitter::equalityOnNullableStrings(const ValueContext& value, bool isStrict)
 {
+    // Against a written text the other operand is read in place, as ValueEqualsLiteral reads it. Neither undefined nor null equals a text, strictly or loosely.
+    for (auto [written, other] : { std::pair { value->rightOperand(), value->leftOperand() }, std::pair { value->leftOperand(), value->rightOperand() } }) {
+        const Value& definition = m_function.at(definitionThroughUpcasts(m_function, written));
+        if (definition.opcode == Opcode::String)
+            return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), definition.string(), false, true);
+    }
     Boxed x = in<Boxed>(value->leftOperand());
     Boxed y = in<Boxed>(value->rightOperand());
     LBasicBlock hasSameBits = newBlock();
@@ -473,6 +486,12 @@ Condition OperatorEmitter::equalityOnStringAndValue(const ValueContext& value, b
     if (!isStrict)
         return EqualityEmitter(generator()).looseEqualityOnBoxed(value);
     MixedOperands operands = mixedOperandsOf(m_generator, value.value());
+    // Against a written text the value is read in place, as ValueEqualsLiteral reads it.
+    if (const Value& definition = m_function.at(definitionThroughUpcasts(m_function, operands.typed)); definition.opcode == Opcode::String) {
+        const Type& type = typeOf(operands.boxed);
+        bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
+        return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::Value, in<Boxed>(operands.boxed).value(), definition.string(), false, everyCellIsString);
+    }
     CellPointer string = in<CellPointer>(operands.typed);
     Boxed other = in<Boxed>(operands.boxed);
     LBasicBlock isString = newBlock();

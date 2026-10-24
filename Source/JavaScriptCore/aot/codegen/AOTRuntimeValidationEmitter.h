@@ -60,7 +60,9 @@ public:
     void checkBindingIsStored(const ValueContext&, Condition);
     void checkGuardIsAvailable(const OperationContext&, ValueID guard, uint32_t operandIndex);
     void checkIsNotFrameCell(const OperationContext&, Operand, std::optional<Operand> retainer);
+    void checkIsNotReleased(const OperationContext&, CellPointer environment, LayoutID);
     void poisonFrameCells(ProgramPoint);
+    void poisonEnvironment(CellPointer, LayoutID);
 
 private:
     template<typename User> void validateOperandsOf(const OperationContext&, const User&, ValueID ownedValue);

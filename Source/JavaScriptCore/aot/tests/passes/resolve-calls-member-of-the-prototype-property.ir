@@ -1,0 +1,134 @@
+# function Animal() {}  Animal.prototype.walk = function () { .. }  Animal.prototype.walk.call(other, 1)
+# The lookup starts at the prototype object of the class of Animal, whatever `this` is. One test of the class asks that the property still holds that object and that the member is as it was assigned;
+# both reads go to the side where it fails. The guards of a function that has made no object begin there: the run time is told as long as the guard of the property does not hold. A class keeps its property, so only the member is asked for.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Animal" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce members=[{key="walk" function=f1}] namedMembers=[{key="walk" function=f1}, {key="walk"}, {key="sound" function=f1}, {key="sound" function=f2}, {key="sound"}]}
+layout L1 kind=Instance name="Plant" constructor=f3 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed members=[{key="grow" function=f2}] namedMembers=[{key="grow" function=f2}, {key="grow"}]}
+layout L2 kind=Instance name="Often" constructor=f4 flags=[IsConstructorFunction] flow={baseState=None} classFlow={members=[{key="walk" function=f1}] namedMembers=[{key="walk" function=f1}, {key="walk"}]}
+function f0 name="Animal" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L0):
+    Return
+}
+function f1 name="walk" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f2 name="sound" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f3 name="Plant" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="Often" flags=[HasThis] thisType={type=L2 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L2):
+    Return
+}
+
+function f5 name="called-with-another-this" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: anything):
+    v3 = PropGet v0 key="prototype"
+    v4 = Upcast v3 castType=anything
+    v5 = PropGet v4 key="walk"
+    v6 = Upcast v5 castType=anything
+    v7 = Call v6, v1, v2
+    Return v7
+}
+# CHECK-LABEL: function f5 name="called-with-another-this"
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NOT: PropGet
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="walk"}, {layout=L0 side=Static key="prototype"}]
+# CHECK: = CallDirect v1, v2 function=f1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+# CHECK: [[prototype]]: anything = PropGet v0 key="prototype"
+# CHECK: = PropGet {{*}} key="walk"
+# CHECK: = Call {{*}}, v1, v2
+# CHECK: frequency=Rare:
+# CHECK-NEXT: BeginMemberGuards layout=L0
+# CHECK-NEXT: Jump
+
+function f6 name="read-as-a-value" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = PropGet v0 key="prototype"
+    v2 = PropGet v1 key="walk"
+    Return v2
+}
+# CHECK-LABEL: function f6 name="read-as-a-value"
+# CHECK-NEXT: b0(v0: f0):
+# CHECK-NOT: PropGet
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="walk"}, {layout=L0 side=Static key="prototype"}]
+# CHECK: f1 = NewClosure function=f1 [isHeldByClosureTable]
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+# CHECK: = PropGet v0 key="prototype"
+# CHECK-NEXT: = PropGet {{*}} key="walk"
+# CHECK: BeginMemberGuards layout=L0
+
+function f7 name="of-a-class" parameters=[{type=f3}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f3, v1: anything, v2: anything):
+    v3 = PropGet v0 key="prototype"
+    v4 = PropGet v3 key="grow"
+    v5 = Call v4, v1, v2
+    Return v5
+}
+# CHECK-LABEL: function f7 name="of-a-class"
+# CHECK: = AreMembersUnchanged conditions=[{layout=L1 key="grow"}]
+# CHECK: = CallDirect v1, v2 function=f2
+# CHECK-NOT: BeginMemberGuards
+
+function f8 name="assigned-twice" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: anything):
+    v3 = PropGet v0 key="prototype"
+    v4 = PropGet v3 key="sound"
+    v5 = Call v4, v1, v2
+    Return v5
+}
+# CHECK-LABEL: function f8 name="assigned-twice"
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: = PropGet v0 key="prototype"
+# CHECK-NEXT: = PropGet {{*}} key="sound"
+# CHECK-NEXT: = Call
+
+function f9 name="the-prototype-object-is-kept" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: anything):
+    v3 = PropGet v0 key="prototype"
+    v4 = PropGet v3 key="walk"
+    v5 = Call v4, v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f9 name="the-prototype-object-is-kept"
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: = PropGet v0 key="prototype"
+# CHECK-NEXT: = PropGet {{*}} key="walk"
+# CHECK-NEXT: = Call
+
+function f10 name="code-runs-between-the-read-and-the-call" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: anything):
+    v3 = PropGet v0 key="prototype"
+    v4 = PropGet v3 key="walk"
+    v5 = Call v2
+    v6 = Call v4, v1, v5
+    Return v6
+}
+# CHECK-LABEL: function f10 name="code-runs-between-the-read-and-the-call"
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: = PropGet v0 key="prototype"
+# CHECK-NEXT: = PropGet {{*}} key="walk"
+# CHECK-NEXT: = Call v2
+# CHECK-NEXT: = Call
+
+function f11 name="a-function-that-is-made-again" parameters=[{type=f4}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f4, v1: anything, v2: anything):
+    v3 = PropGet v0 key="prototype"
+    v4 = PropGet v3 key="walk"
+    v5 = Call v4, v1, v2
+    Return v5
+}
+# CHECK-LABEL: function f11 name="a-function-that-is-made-again"
+# CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
+# CHECK-NEXT: = PropGet v0 key="prototype"
+# CHECK-NEXT: = PropGet {{*}} key="walk"
+# CHECK-NEXT: = Call

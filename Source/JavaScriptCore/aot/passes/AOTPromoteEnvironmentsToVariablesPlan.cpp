@@ -201,7 +201,7 @@ bool PromotionScanner::isComputedAtMostOnce(ValueID value)
         }
     }
     BlockID block = m_definingBlocks[value.index()];
-    return block && executionCountOf(block) == ExecutionCount::AtMostOnce;
+    return block && (executionCountOf(block) == ExecutionCount::AtMostOnce || m_context.build.isSabotaged(Sabotage::PromotedEnvironmentsAreMadeOften));
 }
 
 bool PromotionScanner::isRewrittenUse(const Value& user, uint32_t operandIndex) const

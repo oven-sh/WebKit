@@ -31,14 +31,12 @@ static constexpr int32_t sizeOfStepGeneratorFrame = sizeof(CallerFrameAndPC) + s
 
 CodePtr<JSEntryPtrTag> handlerOfJobEntrypoint()
 {
-    static void* const entrypoint = tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(enterHandlerOfJob()));
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
+    return entrypointInCurrentImage(Image::FrequentStub::EnterHandlerOfJob, enterHandlerOfJob());
 }
 
 CodePtr<JSEntryPtrTag> savedFrameEntrypoint()
 {
-    static void* const entrypoint = tagCodePtr<JSEntryPtrTag>(addressOfStubInCurrentImage(enterSavedFrame()));
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
+    return entrypointInCurrentImage(Image::FrequentStub::EnterSavedFrame, enterSavedFrame());
 }
 
 void emitUnmodifiedGeneratorCheck(StubAssembler& jit, GPRReg generator, GPRReg scratch, JumpList& otherwise)

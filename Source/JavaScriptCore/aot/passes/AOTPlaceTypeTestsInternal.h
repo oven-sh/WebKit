@@ -126,6 +126,8 @@ private:
     ValueID adoptEdgeProof(const ExistingProof&);
     void defineAdoptedProofs();
     void emitTests();
+    bool hasProofsNamedBy(std::span<const uint32_t> testsAtOnePosition) const;
+    void emitTestsAtOnePosition(std::span<const uint32_t> plannedTests);
     void leaveOutBlocksOfUnusedProofs(const BitVector& isUsed);
     void emitChain(TestChain&&, std::span<const uint32_t> plannedTests);
     enum class IsLastOfChain : bool { No, Yes };

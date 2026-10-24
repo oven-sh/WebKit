@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTChainDependents.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
@@ -695,6 +696,16 @@ private:
 
 } // anonymous namespace
 
+// From the prototype object of a built-in class upwards the compiler knows what a lookup finds.
+static JSObject* prototypeOfBuiltinBase(VM& vm, State& state, const LayoutData& classLayout, ClassSide side)
+{
+    uint32_t builtinBase = classLayout.classData().builtinBase;
+    if (side != ClassSide::Prototype || builtinBase == LayoutData::noBase)
+        return nullptr;
+    JSValue prototype = asObject(state.builtinCells->findObject(BuiltinID(builtinBase)))->getDirect(vm, vm.propertyNames->prototype);
+    return prototype && prototype.isObject() ? asObject(prototype) : nullptr;
+}
+
 static std::optional<GuardResolution> resolveAsDeclared(VM& vm, State& state, ClassesAbove& classes, MemberName& name)
 {
     GuardResolution resolution;
@@ -712,7 +723,11 @@ static std::optional<GuardResolution> resolveAsDeclared(VM& vm, State& state, Cl
             resolution.declarerHolder = holder;
             return resolution;
         }
-        if (hasPropertyOrSlot(vm, holder, name) || classes.at(index).hasBaseThatNobodyKnows)
+        if (hasPropertyOrSlot(vm, holder, name))
+            return std::nullopt;
+        if (JSObject* builtinPrototype = prototypeOfBuiltinBase(vm, state, *current, side); builtinPrototype && holder->getPrototypeDirect() == JSValue(builtinPrototype))
+            return resolution;
+        if (classes.at(index).hasBaseThatNobodyKnows)
             return std::nullopt;
 
         bool hasNext = classes.at(index).next;

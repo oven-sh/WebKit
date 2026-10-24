@@ -773,6 +773,13 @@ macro writeBarrierOnCell(cell, scratch)
 .isRememberedOrInEden:
 end
 
+macro branchIfBarrierIsNeeded(cell, scratch, isNeeded)
+    loadp CodeBlock[cfr], scratch
+    loadp CodeBlock::m_vm[scratch], scratch
+    loadi (constexpr (VM::offsetOfHeapBarrierThreshold()))[scratch], scratch
+    bbbeq JSCell::m_cellState[cell], scratch, isNeeded
+end
+
 # Stores to a field that is in its slot. AOT::RuntimeLayoutTable::slotAdmits() and AOT::tryWriteSlot(), for the types and representations
 # that a test of the value's tag decides, and of an int32 the range of the type.
 aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
@@ -847,6 +854,7 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .slow)
     loadb SlotKind[t6], t1
     bbeq t1, constexpr AOT::Slot::Kind::Field, .field
+    bbeq t1, constexpr AOT::Slot::Kind::ExtraPropertyAddition, .addsExtraProperty
     bbneq t1, constexpr AOT::Slot::Kind::FieldCreation, .slow
     # In place of the type such a slot holds an order word.
     btbnz SlotFlags[t6], constexpr AOT::Slot::remembersOrder, .slow
@@ -998,6 +1006,67 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
 .storeBoxedPrimitive:
     btqz [t1], .slow
     storeq t3, [t1]
+    dispatch()
+
+    # addExtraProperty() in the stubs, for a property that lies in the cell of the extra properties. t2: the StructureID of the object.
+.addsExtraProperty:
+    btbnz SlotFlags[t6], constexpr AOT::Slot::isOutOfLine, .slow
+    loadi (constexpr AOT::offsetOfOrderWord)[t0], t1
+    btinz t1, constexpr AOT::orderWordIsNotExtensible, .slow
+    branchIfBarrierIsNeeded(t0, t3, .slow)
+    structureIDToStructureWithScratch(t2, t3)
+    loadi (constexpr (AOT::CompiledStructure::offsetOfExtraPropertiesSlot()))[t2], t7
+    move t7, t3
+    urshifti constexpr AOT::SlotData::offsetBits, t3
+    bineq t3, constexpr AOT::SlotRepresentation::Cell32, .slow
+    andi constexpr AOT::SlotData::maxOffset, t7
+    loadi SlotPayload[t6], t2
+    structureIDToStructureWithScratch(t2, t3)
+
+    # t0: object, t1: its order word, t2: the Structure it gets, t5: instance, t6: slot, t7: where the object names its extra properties
+    btiz t1, constexpr AOT::orderWordHasExtraProperties, .createsExtraProperties
+    loadi [t0, t7], t1
+    btiz t1, .slow
+    lshiftp constexpr AOT::cell32Shift, t1
+    addp InstanceCellCageBase[t5], t1
+    branchIfBarrierIsNeeded(t1, t3, .slow)
+    get(m_value, t3)
+    loadConstantOrVariable(size, t3, t5)
+    loadi (constexpr (AOT::CompiledStructure::offsetOfExtraPropertiesStructureID()))[t2], t3
+    storei t3, JSCell::m_structureID[t1]
+    loadi SlotPayload[t6], t3
+    storei t3, JSCell::m_structureID[t0]
+    loadis SlotSecondPayloadWord[t6], t3
+    storeq t5, [t1, t3, 8]
+    dispatch()
+
+.createsExtraProperties:
+    loadh (constexpr (AOT::CompiledStructure::offsetOfExtraPropertiesCellSize()))[t2], t3
+    urshifti 1, t3
+    loadp InstanceCellSpace[t5], t1
+    loadp (constexpr (CompleteSubspace::offsetOfAllocatorForSizeStep()))[t1, t3, 1], t3
+    btpz t3, .slow
+    allocateCell(t3, t1, t5, .slow)
+    loadi (constexpr (AOT::CompiledStructure::offsetOfExtraPropertiesStructureID()))[t2], t3
+    storei t3, JSCell::m_structureID[t1]
+    storei (constexpr (JSFinalObject::defaultTypeInfoBlob())), JSCell::m_indexingTypeAndMisc[t1]
+    storep 0, JSObjectWithButterfly::m_butterfly[t1]
+    loadh (constexpr (AOT::CompiledStructure::offsetOfExtraPropertiesCellSize()))[t2], t3
+.clearExtraProperty:
+    subi 8, t3
+    storeq ValueEmpty, [t1, t3]
+    bia t3, sizeof JSObjectWithButterfly + 8, .clearExtraProperty
+    get(m_value, t3)
+    loadConstantOrVariable(size, t3, t5)
+    storeq t5, sizeof JSObjectWithButterfly[t1]
+    fenceAfterAllocation(t3)
+    urshiftq constexpr AOT::cell32Shift, t1
+    storei t1, [t0, t7]
+    loadi (constexpr AOT::offsetOfOrderWord)[t0], t3
+    ori constexpr AOT::orderWordHasExtraProperties, t3
+    storei t3, (constexpr AOT::offsetOfOrderWord)[t0]
+    loadi SlotPayload[t6], t3
+    storei t3, JSCell::m_structureID[t0]
     dispatch()
 
 .slow:
@@ -1889,6 +1958,128 @@ _llint_aot_char_code_at_thunk:
     jmp .hasCharacters
 
 .hostFunction:
+    jmp _llint_native_call_trampoline
+
+# What a call enters in place of llint_native_call_trampoline where the callee is a bound function: VM::getBoundFunction(). No stack trace lists the frame of a bound function, so the target of one
+# that binds a receiver alone is entered in its place, in the frame that the caller has made. Everything else is the host function's.
+global _llint_aot_bound_function_call_thunk
+_llint_aot_bound_function_call_thunk:
+    loadp CalleeFrameAtEntry + Callee[sp], t3
+    btinz (constexpr (JSBoundFunction::offsetOfBoundArgsLength()))[t3], .boundHostFunction
+    loadp (constexpr (JSBoundFunction::offsetOfTargetFunction()))[t3], t0
+    loadb JSCell::m_type[t0], t1
+    bbeq t1, constexpr CompiledClosureType, .boundClosure
+    bbeq t1, JSFunctionType, .boundFunction
+    subi constexpr SlimClosureType, t1
+    bia t1, constexpr (SlimClosureWithPropertiesType - SlimClosureType), .boundHostFunction
+    loadInstanceOfCompiledCallee(t0, t5, t1)
+    loadp InstanceSlimClosureEntrypoint[t5], t5
+.enterBoundTarget:
+    loadq (constexpr (JSBoundFunction::offsetOfBoundThis()))[t3], t1
+    storeq t1, CalleeFrameAtEntry + ThisArgumentOffset[sp]
+    storep t0, CalleeFrameAtEntry + Callee[sp]
+    jmp t5, JSEntryPtrTag
+
+    # The sign of the word of a closure says that it is a class.
+.boundClosure:
+    loadq (constexpr AOT::offsetOfClosureEntry)[t0], t1
+    bqlt t1, 0, .boundHostFunction
+    loadInstanceOfCompiledCallee(t0, t5, t1)
+    loadp InstanceClosureEntrypoint[t5], t5
+    jmp .enterBoundTarget
+
+    # virtualThunkFor().
+.boundFunction:
+    loadp JSFunction::m_executableOrRareData[t0], t1
+    btpz t1, (constexpr JSFunction::rareDataTag), .boundTargetHasExecutable
+    loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t1], t1
+.boundTargetHasExecutable:
+    loadp ExecutableBase::m_jitCodeForCallWithArityCheck[t1], t5
+    btpz t5, .boundHostFunction
+    move 0, t2
+    bbneq JSCell::m_type[t1], FunctionExecutableType, .boundTargetHasCodeBlock
+    loadp FunctionExecutable::m_codeBlockForCall[t1], t2
+.boundTargetHasCodeBlock:
+    storep t2, CalleeFrameAtEntry + CodeBlock[sp]
+    jmp .enterBoundTarget
+
+.boundHostFunction:
+    jmp _llint_native_call_trampoline
+
+# The same for predicates that text made at run time to validate values is full of, where the bits of the first argument answer. Everything else is the host function's.
+macro loadFirstArgumentOfThunk(value, hostFunction)
+    loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], value
+    bib value, 2, hostFunction
+    loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], value
+end
+
+# isNaN() and Number.isNaN() of a number.
+global _llint_aot_is_nan_thunk
+_llint_aot_is_nan_thunk:
+    loadFirstArgumentOfThunk(t0, .isNaNHostFunction)
+    move constexpr JSValue::NumberTag, t1
+    bqaeq t0, t1, .isNoNaN
+    btqz t0, t1, .isNaNHostFunction
+    addq t1, t0
+    fq2d t0, ft0
+    bdnequn ft0, ft0, .isNaN
+.isNoNaN:
+    move ValueFalse, r0
+    ret
+.isNaN:
+    move ValueTrue, r0
+    ret
+.isNaNHostFunction:
+    jmp _llint_native_call_trampoline
+
+# isFinite() and Number.isFinite() of a number: every bit of the exponent is set in an infinity and in NaN.
+global _llint_aot_is_finite_thunk
+_llint_aot_is_finite_thunk:
+    loadFirstArgumentOfThunk(t0, .isFiniteHostFunction)
+    move constexpr JSValue::NumberTag, t1
+    bqaeq t0, t1, .isFinite
+    btqz t0, t1, .isFiniteHostFunction
+    addq t1, t0
+    move 0x7ff0000000000000, t1
+    andq t1, t0
+    bqeq t0, t1, .isNotFinite
+.isFinite:
+    move ValueTrue, r0
+    ret
+.isNotFinite:
+    move ValueFalse, r0
+    ret
+.isFiniteHostFunction:
+    jmp _llint_native_call_trampoline
+
+# Number.isInteger() and Number.isSafeInteger() of an int32.
+global _llint_aot_is_integer_thunk
+_llint_aot_is_integer_thunk:
+    loadFirstArgumentOfThunk(t0, .isIntegerHostFunction)
+    move constexpr JSValue::NumberTag, t1
+    bqb t0, t1, .isIntegerHostFunction
+    move ValueTrue, r0
+    ret
+.isIntegerHostFunction:
+    jmp _llint_native_call_trampoline
+
+# Array.isArray() of everything but a proxy.
+global _llint_aot_is_array_thunk
+_llint_aot_is_array_thunk:
+    loadFirstArgumentOfThunk(t0, .isArrayHostFunction)
+    move constexpr JSValue::NotCellMask, t1
+    btqnz t0, t1, .isNoArray
+    loadb JSCell::m_type[t0], t1
+    bbeq t1, ArrayType, .isArray
+    bbeq t1, constexpr DerivedArrayType, .isArray
+    bbeq t1, constexpr ProxyObjectType, .isArrayHostFunction
+.isNoArray:
+    move ValueFalse, r0
+    ret
+.isArray:
+    move ValueTrue, r0
+    ret
+.isArrayHostFunction:
     jmp _llint_native_call_trampoline
 end
 

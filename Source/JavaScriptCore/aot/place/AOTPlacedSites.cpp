@@ -730,7 +730,7 @@ static bool declaresOrIsBornWith(const Program& program, const Layout& layout, C
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The guards of such a class hold from the start because its records say all there is to say. They do not say what a built-in parent has, or a parent that nobody knows.
+// The guards of such a class hold from the start because its records say all there is to say. They do not say what a parent has that nobody knows. What the prototype object of a built-in parent has, the compiler knows.
 static bool isLookedForAboveRecords(const PlacementContext& context, const GuardUse& guard)
 {
     if ((guard.kind != MemberGuardKind::Member && guard.kind != MemberGuardKind::PassedByStores) || !context.slots().classCreation(guard.classLayout).guardsHoldWhileClear)
@@ -741,7 +741,9 @@ static bool isLookedForAboveRecords(const PlacementContext& context, const Guard
         const Layout& layout = program.at(current);
         if (declaresOrIsBornWith(program, layout, guard.side, guard.key))
             return false;
-        if (layout.flow.baseState == BaseState::BuiltinClass || (layout.flow.baseState == BaseState::Unknown && layout.has(LayoutFlags::HasHeritage) && !layout.base))
+        if (layout.flow.baseState == BaseState::BuiltinClass)
+            return guard.kind != MemberGuardKind::Member || guard.side != ClassSide::Prototype;
+        if (layout.flow.baseState == BaseState::Unknown && layout.has(LayoutFlags::HasHeritage) && !layout.base)
             return true;
         current = expectedBaseOf(layout);
     }

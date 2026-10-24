@@ -15,6 +15,7 @@
 #include "AOTOperationData.h"
 #include "AOTRelocation.h"
 #include "AOTSchemaRecords.h"
+#include "AOTStackSlotPoisoning.h"
 #include "AOTStubCalls.h"
 #include "AOTVector.h"
 #include "AirInstObserver.h"
@@ -150,6 +151,7 @@ struct CodeRecords {
     CodeGenerationTotals& totals;
     // By the index of the operation: the code generator has compressed an operand in front of it, so the narrow reference has the origin of the operation.
     BitVector operationsWithCompressedOperand;
+    StackSlots slotsOfFrameCells;
     bool hasBirthsOfFrameCells { false };
 };
 

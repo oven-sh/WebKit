@@ -134,6 +134,7 @@ column isIntrinsic : Bool
 column allocatesInline : Bool
 column allocatesAfterLastSafepoint : Bool
 column runsOwnerBarrier : Bool
+column remembersOwner : Bool
 
 include "schema/types.def"
 include "schema/program-records.def"

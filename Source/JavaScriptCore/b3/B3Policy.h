@@ -11,6 +11,7 @@
 #include "B3HeapRange.h"
 #include "B3Limits.h"
 #include "B3Origin.h"
+#include "GPRInfo.h"
 #include "CPUFeatureSet.h"
 #include "Reg.h"
 #include <wtf/EnumTraits.h>
@@ -25,6 +26,7 @@ class CCallHelpers;
 
 namespace B3 {
 
+struct MovedLoad;
 class Procedure;
 class RelocationLowering;
 
@@ -213,7 +215,7 @@ struct Policy {
     Vector<ClientPhase, 4> clientPhases;
     // The collector's threads, and writes that no operation's result depends on.
     RefPtr<SharedTask<bool(const HeapRange&)>> isWrittenBehindTheBackOfCode;
-    RefPtr<SharedTask<void(CCallHelpers&, Origin)>> reportMovedLoadThatDiffers;
+    RefPtr<SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>> reportMovedLoadThatDiffers;
 
     JS_EXPORT_PRIVATE static Policy fromProcessOptions();
 

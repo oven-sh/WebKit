@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -69,11 +70,11 @@ ProofEnding EndingsAtWriter::endingOf(ValueID subject, bool subjectComesFromOuts
     case GuardWriter::EndedProofs::None:
         return ProofEnding::DoesNotEnd;
     case GuardWriter::EndedProofs::All:
-        return ProofEnding::MayEnd;
+        return m_analyses.context().build.isSabotaged(Sabotage::ProofsOutlastWritesToEverything) ? ProofEnding::DoesNotEnd : ProofEnding::MayEnd;
     case GuardWriter::EndedProofs::AboutSomeObjects:
         break;
     }
-    return m_guardWriter->mayEndProofAbout(subject, subjectComesFromOutside, written) ? ProofEnding::MayEnd : ProofEnding::DoesNotEnd;
+    return m_guardWriter->mayEndProofAbout(subject, subjectComesFromOutside, written) && !m_analyses.context().build.isSabotaged(Sabotage::ProofsOutlastWritesToTheirSubject) ? ProofEnding::MayEnd : ProofEnding::DoesNotEnd;
 }
 
 ProofEnding endingBetweenTestAndBranch(FunctionAnalyses& analyses, const TestCondition& condition, ValueID writer, const EffectsOnEdges& effectsOfWriter)

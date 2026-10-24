@@ -146,6 +146,8 @@ bool hasOrdinaryDefineForName(VM&, JSCell* base, Structure*, UniquedStringImpl*)
 bool hasOrdinaryDefineOwnProperty(Structure*);
 bool isHostObjectOverridingPut(Structure*);
 bool flattenOnce(VM&, JSObject*);
+// For whoever lists the names of the object. A dictionary that has given no name up keeps every offset when it ceases to be one, so it does as often as its names are listed.
+bool flattenForListing(VM&, JSObject*);
 
 enum class OutOfLineStorageChange : uint8_t { Unsupported, Stays, IsFirst, Doubled, GrowsBesideIndexingHeader };
 

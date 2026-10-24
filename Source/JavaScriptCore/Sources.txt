@@ -1386,6 +1386,7 @@ yarr/YarrFlatProgramMatcher.cpp @no-unify
 yarr/YarrInterpreter.cpp
 yarr/YarrJIT.cpp
 yarr/YarrPattern.cpp
+yarr/YarrRequiredText.cpp @no-unify
 yarr/YarrSharedRoutines.cpp @no-unify
 yarr/YarrSharedTables.cpp @no-unify
 yarr/YarrSyntaxChecker.cpp

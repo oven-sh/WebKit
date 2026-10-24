@@ -1872,7 +1872,7 @@ JSValue Interpreter::executeCall(JSObject* function, const CallData& callData, J
     return executeBoundCall(vm, boundFunction, context, args);
 }
 
-JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)
+JSValue Interpreter::executeConstructAllowingPrimitiveResult(JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)
 {
     VM& vm = this->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1906,7 +1906,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
     VMEntryScope entryScope(vm, globalObject);
     if (!vm.isSafeToRecurseSoft() || args.size() > maxArguments) [[unlikely]] {
         throwStackOverflowError(globalObject, throwScope);
-        return nullptr;
+        return { };
     }
 
     if (vm.disallowVMEntryCount) [[unlikely]] {
@@ -1923,7 +1923,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
         if (isJSConstruct) {
             // Compile the callee:
             constructData.js.functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(constructor), scope, CodeSpecializationKind::CodeForConstruct, newCodeBlock);
-            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, nullptr);
+            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, { });
             ASSERT(newCodeBlock);
         }
 
@@ -1952,10 +1952,24 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
             result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
     }
 
+    RETURN_IF_EXCEPTION(throwScope, { });
+    return JSValue::decode(result);
+}
+
+JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)
+{
+    VM& vm = this->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue result = executeConstructAllowingPrimitiveResult(constructor, constructData, args, newTarget);
     // We need to do an explicit exception check so that we don't return a non-null JSObject*
     // if an exception was thrown.
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    return asObject(JSValue::decode(result));
+    if (!result.isObject()) [[unlikely]] {
+        throwTypeError(constructor->realm(), throwScope, "The constructor did not return an object"_s);
+        return nullptr;
+    }
+    return asObject(result);
 }
 
 CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction* function)

@@ -33,6 +33,7 @@
 #include "AirCode.h"
 #include "AirLimits.h"
 #include "AirPhaseScope.h"
+#include "B3Procedure.h"
 #include <algorithm>
 #include <cmath>
 #include <wtf/BubbleSort.h>

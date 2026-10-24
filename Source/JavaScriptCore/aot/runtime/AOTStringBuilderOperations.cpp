@@ -67,18 +67,21 @@ static void appendStringRange(JSGlobalObject* globalObject, StringBuilderStorage
         auto view = base->view(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         if (view->is8Bit()) {
+            scope.release();
             storage.append(globalObject, view->span8().subspan(start, length));
             return;
         }
         // One wide character anywhere makes a whole source text wide. Most pieces of it are plain.
         std::span<const char16_t> units = view->span16().subspan(start, length);
         if (WTF::charactersAreAllLatin1(units)) {
+            scope.release();
             storage.append(globalObject, units);
             return;
         }
     }
     JSString* range = jsSubstring(globalObject, base, start, length);
     RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
     storage.append(globalObject, range);
 }
 

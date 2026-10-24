@@ -146,10 +146,44 @@ static bool knowsMoreThanEntryChecksPassOn(FunctionPassContext& context, ValueID
     return false;
 }
 
-static uint32_t computeFoldedBytes(const Program& program, const Function& caller, const Value& call, const InliningSummary& summary)
+static bool isHeldByCallAlone(FunctionPassContext& context, ValueID value, ValueID call)
 {
+    const UseLists& useLists = context.analyses.useLists();
+    while (true) {
+        std::span<const Use> uses = useLists.usesOf(value);
+        if (uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
+            return false;
+        if (uses[0].user == call)
+            return true;
+        if (!isCastWithoutTest(context.function.at(uses[0].user).opcode))
+            return false;
+        value = uses[0].user;
+    }
+}
+
+// `f(a, b)` for `function f(...list)`: the caller makes the list for the call.
+static std::optional<int64_t> lengthOfListMadeForCall(FunctionPassContext& context, ValueID argument, ValueID call)
+{
+    ValueID definition = sameObjectThroughCasts(context.function, argument);
+    const Value& list = context.function.at(definition);
+    if (list.opcode == Opcode::EmptyArgumentList)
+        return 0;
+    if (list.opcode != Opcode::NewArray || !list.holes().empty() || list.capacityOperand() || !isHeldByCallAlone(context, definition, call))
+        return std::nullopt;
+    return list.elementsOperands().size();
+}
+
+// The tests that the site decides go with the sides that it folds. They are counted where a loop of the caller repeats a hot call: elsewhere the estimate stays on the safe side, and no more is copied than the sides alone allow.
+enum class DecidedTests : uint8_t { AreCharged, Go };
+
+static uint32_t computeFoldedBytes(FunctionPassContext& context, ValueID callID, const InliningSummary& summary, DecidedTests decided)
+{
+    const Program& program = context.program;
+    const Function& caller = context.function;
+    const Value& call = caller.at(callID);
     const Function& callee = program.at(call.function());
     Vector<DominatedRange, 4> foldedRanges;
+    Vector<std::pair<DominatedRange, uint32_t>, 4> decidedTests;
     bool everyTestPasses = true;
     for (const ParameterCondition& condition : summary.conditions) {
         ValueID argument = argumentAt(call, condition.entryParameter);
@@ -160,6 +194,8 @@ static uint32_t computeFoldedBytes(const Program& program, const Function& calle
         ConditionEvaluator evaluator(program, caller, argument, callee);
         KnownBoolean outcome = evaluator.evaluate(condition.condition).toBoolean(program);
         everyTestPasses &= outcome == KnownBoolean::True || !condition.isTestInFrontOfSharedBytes;
+        if (outcome != KnownBoolean::Unknown)
+            decidedTests.append({ condition.rangeAround, condition.bytesOfTest });
         switch (outcome) {
         case KnownBoolean::True:
             foldedRanges.append(condition.rangeIfFalse);
@@ -174,12 +210,15 @@ static uint32_t computeFoldedBytes(const Program& program, const Function& calle
     for (const ParameterSwitch& parameterSwitch : summary.switches) {
         ValueID argument = argumentAt(call, parameterSwitch.entryParameter);
         std::optional<int64_t> constant;
-        if (argument && !parameterSwitch.isOnStrings)
+        if (argument && parameterSwitch.isOnLength)
+            constant = lengthOfListMadeForCall(context, argument, callID);
+        else if (argument && !parameterSwitch.isOnStrings)
             constant = integerConstantThroughCasts(program, caller, argument);
         else if (StringID literal = argument ? program.typeOf(caller, argument).singleStringLiteral() : StringID())
             constant = literal.index();
         if (!constant)
             continue;
+        decidedTests.append({ parameterSwitch.rangeAround, parameterSwitch.bytesOfTest });
         bool isListed = false;
         for (size_t position = 0; position < parameterSwitch.bytesOnlyInCase.size(); ++position) {
             if (parameterSwitch.bytesOnlyInCase[position].first == *constant)
@@ -207,6 +246,15 @@ static uint32_t computeFoldedBytes(const Program& program, const Function& calle
                 foldedBytes = saturatingSum<uint32_t>(foldedBytes, part.bytes);
         }
     }
+    for (auto [rangeAround, bytes] : decidedTests) {
+        if (decided == DecidedTests::Go && !isFolded(rangeAround))
+            foldedBytes = saturatingSum<uint32_t>(foldedBytes, bytes);
+    }
+    for (const SpreadOfParameter& spread : summary.spreadsOfParameters) {
+        ValueID argument = argumentAt(call, spread.entryParameter);
+        if (argument && !isFolded(spread.rangeAround) && lengthOfListMadeForCall(context, argument, callID))
+            foldedBytes = saturatingSum<uint32_t>(foldedBytes, spread.bytes);
+    }
     for (const ParameterCondition& condition : summary.conditions) {
         addIfFolded(condition.rangeIfTrue, condition.bytesOnlyIfTrue);
         addIfFolded(condition.rangeIfFalse, condition.bytesOnlyIfFalse);
@@ -216,23 +264,8 @@ static uint32_t computeFoldedBytes(const Program& program, const Function& calle
             addIfFolded(parameterSwitch.caseRanges[position], parameterSwitch.bytesOnlyInCase[position].second);
         addIfFolded(parameterSwitch.rangeOtherwise, parameterSwitch.bytesOnlyOtherwise);
     }
-    ASSERT(foldedBytes <= summary.codeBytes);
-    return foldedBytes;
-}
-
-static bool isHeldByCallAlone(FunctionPassContext& context, ValueID value, ValueID call)
-{
-    const UseLists& useLists = context.analyses.useLists();
-    while (true) {
-        std::span<const Use> uses = useLists.usesOf(value);
-        if (uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
-            return false;
-        if (uses[0].user == call)
-            return true;
-        if (!isCastWithoutTest(context.function.at(uses[0].user).opcode))
-            return false;
-        value = uses[0].user;
-    }
+    // A decided test in the code behind failed tests is counted with that code and by itself.
+    return std::min(foldedBytes, summary.codeBytes);
 }
 
 // A closure that the caller makes for the call alone is not made where the copy calls its function directly.
@@ -505,10 +538,6 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     if (!canInlineWholeBody && !summary.canInlineHead())
         return { .decision = InlineDecision::Barrier };
 
-    uint32_t foldedBytes = computeFoldedBytes(program, caller, value, summary);
-    uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
-    uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
-
     HeatClass heat = heatClassOf(context, block);
     // However often the caller runs, this part of it is not expected to.
     if (caller.at(block).frequency != BlockFrequency::Normal && !isCold(heat))
@@ -516,6 +545,13 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // In a loop within a loop of the caller the call runs more often, for each time that the caller runs, than a loop goes round.
     if (heat == HeatClass::Warm && context.inputs.heat.callsInLoopsAreHot() && context.analyses.blockFrequencies().frequencyOf(block) >= frequencyConstants.iterationsPerLoop)
         heat = HeatClass::Hot;
+
+    // How often the caller is entered is a product along paths of calls. A loop around the call is in the text.
+    bool isRepeatedByCaller = isHot(heat) && context.analyses.isInCycle(block);
+    uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
+    uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
+    uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
+
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
     Bets bets = isCold(heat) || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;

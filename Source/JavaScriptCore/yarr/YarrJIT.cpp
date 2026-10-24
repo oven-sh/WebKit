@@ -44,6 +44,9 @@
 #include "YarrDisassembler.h"
 #include "YarrJITRegisters.h"
 #include "YarrMatchingContextHolder.h"
+#if defined(YARR_FOR_IMAGE)
+#include "YarrRequiredText.h"
+#endif
 #include <wtf/ASCIICType.h>
 #include <wtf/BitVector.h>
 #include <wtf/HexNumber.h>
@@ -6357,6 +6360,11 @@ class YarrGenerator final : public YarrJITInfo {
 
                 // We will reenter after the check, and assume the input position to have been
                 // set as appropriate to this alternative.
+#if defined(YARR_FOR_IMAGE) && (CPU(X86_64) || CPU(ARM64))
+                if (!m_requiredTexts.isEmpty() && !alternative->onceThrough())
+                    generateRequiredTextSearches(op);
+                else
+#endif
                 defineReentryLabel(op);
 
                 // These may advance |index| to a candidate position before entering the body.
@@ -10941,6 +10949,264 @@ class YarrGenerator final : public YarrJITInfo {
         if (search.settledTermOp)
             m_ops[*search.settledTermOp].m_isDeadCode = true;
     }
+
+    bool hasSelectiveStartSearch()
+    {
+        for (auto& op : m_ops) {
+            if (op.m_op != YarrOpCode::BodyAlternativeBegin || op.m_alternative->onceThrough())
+                continue;
+            auto& prefilters = op.m_prefilters;
+            if (prefilters.maskedAlternatives || prefilters.sharedLead)
+                return true;
+            if (prefilters.boyerMoore) {
+                if (auto range = prefilters.boyerMoore->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan())) {
+                    // It looks at one place in as many as the range is long.
+                    auto [begin, end] = *range;
+                    auto [map, charactersFastPath] = prefilters.boyerMoore->createCandidateBitmap(begin, end);
+                    return rarityOfUnits({ map.storage()[0], map.storage()[1] }, false) + std::bit_width(end - begin) - 1 >= leastRarityWorthSearchingFor;
+                }
+            }
+            return prefilters.startPositionSearch && rarityOfUnits(prefilters.startPositionSearch->asciiMembers, prefilters.startPositionSearch->matchesAllNonASCII) >= leastRarityWorthSearchingFor;
+        }
+        return false;
+    }
+
+    // count units are at most eight bytes.
+    void branchIfRequiredUnitsDiffer(const RequiredText& required, unsigned first, unsigned count, MacroAssembler::JumpList& differ)
+    {
+        unsigned unitBytes = m_charSize == CharSize::Char8 ? 1 : 2;
+        uint64_t expected = 0;
+        uint64_t caseMask = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            expected |= static_cast<uint64_t>(required.text[first + i]) << (i * unitBytes * 8);
+            caseMask |= static_cast<uint64_t>(required.caseMask[first + i]) << (i * unitBytes * 8);
+        }
+        int32_t offset = (static_cast<int32_t>(first) - static_cast<int32_t>(required.indexInText)) * static_cast<int32_t>(unitBytes);
+        MacroAssembler::BaseIndex address(m_regs.input, m_regs.index, m_charSize == CharSize::Char8 ? MacroAssembler::TimesOne : MacroAssembler::TimesTwo, offset);
+        unsigned bytes = count * unitBytes;
+        verifySubjectRead(address, bytes, __LINE__);
+        switch (bytes) {
+        case 1:
+            m_jit.load8(address, m_regs.regT0);
+            break;
+        case 2:
+            m_jit.load16Unaligned(address, m_regs.regT0);
+            break;
+        case 4:
+            m_jit.load32WithUnalignedHalfWords(address, m_regs.regT0);
+            break;
+        case 8:
+            m_jit.load64(address, m_regs.regT0);
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        if (bytes == 8) {
+            if (caseMask) {
+                moveConstant(caseMask, m_regs.regT1);
+                m_jit.or64(m_regs.regT1, m_regs.regT0);
+            }
+            moveConstant(expected, m_regs.regT1);
+            differ.append(m_jit.branch64(MacroAssembler::NotEqual, m_regs.regT0, m_regs.regT1));
+            return;
+        }
+        if (caseMask)
+            m_jit.or32(MacroAssembler::TrustedImm32(static_cast<int32_t>(caseMask)), m_regs.regT0);
+        differ.append(m_jit.branch32(MacroAssembler::NotEqual, m_regs.regT0, MacroAssembler::TrustedImm32(static_cast<int32_t>(expected))));
+    }
+
+    // With the place of an attempt in index: moves it to the first place from there on where the text allows a match, and notes up to which index that holds. A subject without the text from here on has no match.
+    void generateRequiredTextSearch(const RequiredText& required, unsigned frameLocation, unsigned claimed)
+    {
+        auto [low, high] = required.asciiMembers;
+        JIT_COMMENT(m_jit, "required text");
+        MacroAssembler::JumpList isAbsent;
+        m_jit.pushToSave(m_regs.index);
+        if (required.leastDistance)
+            m_jit.add32(MacroAssembler::TrustedImm32(required.leastDistance), m_regs.index);
+        MacroAssembler::Label search = m_jit.label();
+        SharedRoutine::FindFirstOfClass routine = requiredTextRoutine(required);
+        if (routine.words == ClassWords::Both) {
+            BoyerMooreBitmap::Map map;
+            map.storage()[0] = low;
+            map.storage()[1] = high;
+            m_addressing.moveAddressOfData(asBytes(getBoyerMooreBitmap(map)), m_regs.regT1);
+        } else
+            moveConstant(low ? low : high, m_regs.regT1);
+        callRoutine(routine);
+        if (!required.text.isEmpty()) {
+            // Sixteen units of it tell enough.
+            constexpr unsigned maxUnitsCompared = 16;
+            unsigned at = required.indexInText < maxUnitsCompared ? 0 : required.indexInText - (maxUnitsCompared - 1);
+            unsigned end = std::min<unsigned>(required.text.size(), at + maxUnitsCompared);
+            m_jit.add32(MacroAssembler::TrustedImm32(end - required.indexInText), m_regs.index, m_regs.regT0);
+            isAbsent.append(m_jit.branch32(MacroAssembler::Above, m_regs.regT0, m_regs.length));
+            MacroAssembler::JumpList differ;
+            unsigned unitsInWord = m_charSize == CharSize::Char8 ? 8 : 4;
+            bool hasWholeWord = end - at >= unitsInWord;
+            for (; end - at >= unitsInWord; at += unitsInWord)
+                branchIfRequiredUnitsDiffer(required, at, unitsInWord, differ);
+            if (at < end && hasWholeWord)
+                branchIfRequiredUnitsDiffer(required, end - unitsInWord, unitsInWord, differ);
+            else {
+                for (unsigned count = unitsInWord / 2; count; count /= 2) {
+                    if (end - at >= count) {
+                        branchIfRequiredUnitsDiffer(required, at, count, differ);
+                        at += count;
+                    }
+                }
+            }
+            MacroAssembler::Jump isSame = m_jit.jump();
+            differ.link(&m_jit);
+            m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index);
+            m_jit.jump().linkTo(search, &m_jit);
+            isSame.link(&m_jit);
+        } else
+            isAbsent.append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.index, m_regs.length));
+
+        m_jit.add32(MacroAssembler::TrustedImm32(static_cast<int32_t>(claimed) - static_cast<int32_t>(required.leastDistance)), m_regs.index, m_regs.regT0);
+        storeToFrame(m_regs.regT0, frameLocation);
+        m_jit.popToRestore(m_regs.regT0);
+        MacroAssembler::JumpList done;
+        if (required.greatestDistance <= greatestRequiredTextDistance) {
+            m_jit.sub32(MacroAssembler::TrustedImm32(required.greatestDistance), m_regs.index);
+            MacroAssembler::Jump isBehindStart = m_jit.branch32(MacroAssembler::GreaterThan, m_regs.index, m_regs.regT0);
+            m_jit.move(m_regs.regT0, m_regs.index);
+            done.append(m_jit.jump());
+            isBehindStart.link(&m_jit);
+            if (m_decodeSurrogatePairs) {
+                auto branchIfNotTagged = [&](int32_t offset, int32_t tag) {
+                    MacroAssembler::BaseIndex address(m_regs.input, m_regs.index, MacroAssembler::TimesTwo, offset);
+                    verifySubjectRead(address, 2, __LINE__);
+                    m_jit.load16Unaligned(address, m_regs.regT0);
+                    m_jit.and32(MacroAssembler::TrustedImm32(0xfc00), m_regs.regT0);
+                    done.append(m_jit.branch32(MacroAssembler::NotEqual, m_regs.regT0, MacroAssembler::TrustedImm32(tag)));
+                };
+                branchIfNotTagged(0, 0xdc00);
+                branchIfNotTagged(-2, 0xd800);
+                m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
+            }
+        } else
+            m_jit.move(m_regs.regT0, m_regs.index);
+        done.append(m_jit.jump());
+
+        isAbsent.link(&m_jit);
+        m_jit.popToRestore(m_regs.regT0);
+        generateFailReturn();
+        done.link(&m_jit);
+    }
+
+    // With the place of an attempt in index: moves it behind the last unit of the subject that no match holds. Once a call.
+    void generateSearchFromEnd(const RequiredText& required, unsigned frameLocation)
+    {
+        auto [low, high] = required.asciiMembers;
+        JIT_COMMENT(m_jit, "units of matches at the end");
+        m_jit.move(MacroAssembler::TrustedImm32(std::numeric_limits<int32_t>::max()), m_regs.regT0);
+        storeToFrame(m_regs.regT0, frameLocation);
+        m_jit.move(m_regs.length, m_regs.regT0);
+        if (low)
+            moveConstant(low, m_regs.regT2);
+        if (high)
+            moveConstant(high, m_regs.regT3);
+        MacroAssembler::JumpList isMember;
+        MacroAssembler::JumpList isNoMember;
+        auto testBit = [&](MacroAssembler::RegisterID word) {
+#if CPU(X86_64)
+            isMember.append(m_jit.branchTestBit64(MacroAssembler::NonZero, word, m_regs.regT1));
+#else
+            m_jit.urshift64(word, m_regs.regT1, m_regs.regT1);
+            isMember.append(m_jit.branchTest64(MacroAssembler::NonZero, m_regs.regT1, MacroAssembler::TrustedImm32(1)));
+#endif
+        };
+        MacroAssembler::Label next = m_jit.label();
+        MacroAssembler::Jump hasReachedStart = m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.regT0, m_regs.index);
+        if (m_charSize == CharSize::Char8) {
+            MacroAssembler::BaseIndex address(m_regs.input, m_regs.regT0, MacroAssembler::TimesOne, -1);
+            verifySubjectRead(address, 1, __LINE__);
+            m_jit.load8(address, m_regs.regT1);
+        } else {
+            MacroAssembler::BaseIndex address(m_regs.input, m_regs.regT0, MacroAssembler::TimesTwo, -2);
+            verifySubjectRead(address, 2, __LINE__);
+            m_jit.load16Unaligned(address, m_regs.regT1);
+        }
+        (required.matchesAllNonASCII ? isMember : isNoMember).append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.regT1, MacroAssembler::TrustedImm32(128)));
+        MacroAssembler::Jump isInHighWord = m_jit.branchTest32(MacroAssembler::NonZero, m_regs.regT1, MacroAssembler::TrustedImm32(64));
+        if (low)
+            testBit(m_regs.regT2);
+        isNoMember.append(m_jit.jump());
+        isInHighWord.link(&m_jit);
+        if (high)
+            testBit(m_regs.regT3);
+        isNoMember.append(m_jit.jump());
+        isMember.link(&m_jit);
+        m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.regT0);
+        m_jit.jump().linkTo(next, &m_jit);
+        isNoMember.link(&m_jit);
+        m_jit.move(m_regs.regT0, m_regs.index);
+        hasReachedStart.link(&m_jit);
+    }
+
+    static constexpr unsigned greatestRequiredTextDistance = std::numeric_limits<int32_t>::max() / 2;
+
+    SharedRoutine::FindFirstOfClass requiredTextRoutine(const RequiredText& required) const
+    {
+        auto [low, high] = required.asciiMembers;
+        return { !high ? ClassWords::Low : !low ? ClassWords::High : ClassWords::Both, required.matchesAllNonASCII, m_charSize };
+    }
+
+    void planRequiredTextSearches()
+    {
+        if (m_executionMode == ExecutionMode::InlineTest || m_frameMode == FrameMode::Omitted)
+            return;
+        m_requiredTexts = findRequiredTexts(m_pattern);
+        // A search for where a match begins leaves few attempts for a text to save.
+        bool hasStartSearch = hasSelectiveStartSearch();
+        m_requiredTexts.removeAllMatching([&](const RequiredText& required) {
+            if (required.isAllThatMatchesAtEndHold)
+                return false;
+            // An attempt that fails within a few units costs less than the code of a search: what pays is a text behind a run.
+            return hasStartSearch || required.greatestDistance == required.leastDistance || required.leastDistance > greatestRequiredTextDistance || !canGenerateSharedRoutine(SharedRoutine { requiredTextRoutine(required) });
+        });
+        if (!m_requiredTexts.isEmpty() && m_requiredTexts[0].isSilentOnSomeRepeatedAlternative)
+            m_requiredTexts.clear();
+        if (m_requiredTexts.isEmpty())
+            return;
+        dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", m_requiredTexts.size(), " texts that every match holds");
+        m_requiredTextFrameLocation = m_callFrameSizeInBytes / sizeof(void*);
+        m_callFrameSizeInBytes = alignCallFrameSizeInBytes(m_requiredTextFrameLocation + m_requiredTexts.size());
+    }
+
+    // At the head of the repeated alternatives, with the first one's input claimed. Defines where a new attempt comes in.
+    void generateRequiredTextSearches(YarrOp& op)
+    {
+        unsigned claimed = op.m_alternative->m_minimumSize;
+        for (unsigned i = 0; i < m_requiredTexts.size(); ++i)
+            storeToFrame(MacroAssembler::TrustedImm32(0), m_requiredTextFrameLocation + i);
+        defineReentryLabel(op);
+        MacroAssembler::Label reentry = op.m_reentry;
+        Vector<MacroAssembler::Jump, maxRequiredTexts> isBehindText;
+        for (unsigned i = 0; i < m_requiredTexts.size(); ++i) {
+            loadFromFrame(m_requiredTextFrameLocation + i, m_regs.regT0);
+            isBehindText.append(m_jit.branch32(MacroAssembler::Above, m_regs.index, m_regs.regT0));
+        }
+        MacroAssembler::Jump mayBegin = m_jit.jump();
+        for (unsigned i = 0; i < m_requiredTexts.size(); ++i) {
+            isBehindText[i].link(&m_jit);
+            if (claimed)
+                m_jit.sub32(MacroAssembler::TrustedImm32(claimed), m_regs.index);
+            if (m_requiredTexts[i].isAllThatMatchesAtEndHold)
+                generateSearchFromEnd(m_requiredTexts[i], m_requiredTextFrameLocation + i);
+            else
+                generateRequiredTextSearch(m_requiredTexts[i], m_requiredTextFrameLocation + i, claimed);
+            if (!m_pattern.m_body->m_hasFixedSize)
+                setMatchStart(m_regs.index);
+            op.m_jumps.append(jumpIfNoAvailableInput(claimed));
+            m_jit.jump().linkTo(reentry, &m_jit);
+        }
+        mayBegin.link(&m_jit);
+        m_usesSIMD = true;
+        m_usesT2 = true;
+    }
 #endif
 
 #endif
@@ -12112,6 +12378,9 @@ public:
 #else
         computeClaimsSinceMatchStart();
         findAlternativesNeverTriedAgain();
+#if CPU(X86_64) || CPU(ARM64)
+        planRequiredTextSearches();
+#endif
 #endif
 
         if (Options::dumpDisassembly() || Options::dumpRegExpDisassembly()) [[unlikely]]
@@ -12690,6 +12959,8 @@ private:
     const FrameMode m_frameMode;
     StackCheck& m_stackCheck;
     bool m_didUseFrame { false };
+    RequiredTexts m_requiredTexts;
+    unsigned m_requiredTextFrameLocation { 0 };
     Vector<std::unique_ptr<CachedClassTable>> m_classTables;
     unsigned m_classTableLimitHits { 0 };
     UncheckedKeyHashMap<const PatternTerm*, size_t> m_lookaheadEndOps;

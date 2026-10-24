@@ -64,6 +64,8 @@ struct FlowSiteLoss {
     Witness witness { noWitness };
     // Of an access: what a plain function without a layout constructs arrives as the receiver.
     bool seesConstructedObject { false };
+    // What the witness has made also comes from somewhere else.
+    bool hasOtherRoots { false };
 
     friend bool operator==(const FlowSiteLoss&, const FlowSiteLoss&) = default;
 };

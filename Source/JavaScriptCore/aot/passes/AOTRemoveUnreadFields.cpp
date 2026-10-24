@@ -173,7 +173,7 @@ static bool supportsRemoval(LayoutKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isUnread(const Layout& layout, const Field& field)
+static bool isUnread(const BuildContext& build, const Layout& layout, const Field& field)
 {
     constexpr OptionSet<FieldFlags> excludedFlags { FieldFlags::IsInherited, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden };
     if (field.flags.containsAny(excludedFlags) || field.form.contains(FieldForm::IsAccessor))
@@ -193,6 +193,7 @@ static bool isUnread(const Layout& layout, const Field& field)
     case ReadState::NeverRead:
         return true;
     case ReadState::Unknown:
+        return build.isSabotaged(Sabotage::RemovedFieldsHaveUnknownReaders);
     case ReadState::OnlyAccessed:
         return false;
     }
@@ -256,7 +257,7 @@ static BitVector findCandidateVariables(const Program& program, const FlowResult
     return candidates;
 }
 
-static UnreadFieldCandidateTable findCandidateFields(const Program& program)
+static UnreadFieldCandidateTable findCandidateFields(const BuildContext& build, const Program& program)
 {
     UnreadFieldCandidateTable candidates;
     for (uint32_t layoutIndex = 0; layoutIndex < program.layouts.size(); ++layoutIndex) {
@@ -265,7 +266,7 @@ static UnreadFieldCandidateTable findCandidateFields(const Program& program)
         if (!supportsRemoval(layout.kind) || layout.flow.allocation == AllocationState::NeverAllocated)
             continue;
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
-            if (isUnread(layout, layout.fields[field]))
+            if (isUnread(build, layout, layout.fields[field]))
                 candidates.list.append(FieldReference { id, field });
         }
     }
@@ -785,7 +786,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
 
     UnreadFieldCandidateTable candidates;
     if (areReceiverSetsEnabled(program, build))
-        candidates = findCandidateFields(program);
+        candidates = findCandidateFields(build, program);
     if (inputs.flow.hasResults())
         candidates.variables = findCandidateVariables(program, inputs.flow);
     if (candidates.isEmpty())

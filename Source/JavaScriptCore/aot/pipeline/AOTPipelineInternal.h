@@ -66,6 +66,8 @@ public:
     void runOptimizeStage();
     void runSlotStage();
     void runSelectStage();
+    // None unless the report lists the sites.
+    const Heat* heatForReport();
     void runPlacementStage();
     void runRepresentationStage();
     void runPlacementAndRepresentationStagesTogether();
@@ -110,6 +112,7 @@ public:
     PassOutcome chooseCallingConventions();
     PassOutcome allocateInFrames();
     PassOutcome allocateInnerObjects();
+    PassOutcome reuseEnvironments();
     PassOutcome numberLiteralStrings();
     PassOutcome embedConstantCollections();
     PassOutcome collectRegExpLiterals();

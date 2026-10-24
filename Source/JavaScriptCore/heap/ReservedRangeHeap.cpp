@@ -77,10 +77,13 @@ static constexpr size_t mallocChunkSize = 32 * MB;
 static constexpr size_t minSegmentSize = 2 * mallocChunkSize;
 static constexpr unsigned maxSegmentPlacements = 8;
 #endif
-#if OS(LINUX)
 static constexpr unsigned maxRandomPlacements = 16;
 static constexpr uintptr_t lowestRandomAddress = 64 * GB;
 static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
+#if OS(LINUX)
+static constexpr bool refusalMeansNoRoomAnywhere = true;
+#else
+static constexpr bool refusalMeansNoRoomAnywhere = false;
 #endif
 
 static bool usesMalloc()
@@ -174,22 +177,27 @@ uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
     size_t alignment = std::max(request.alignment, roundUpToPowerOfTwo(size));
     bool isWritable = !reservesWithoutAccess(request);
     void* address = nullptr;
-#if OS(LINUX)
     if (request.placement == Placement::RandomWindow) {
         uintptr_t firstWindow = (lowestRandomAddress + alignment - 1) / alignment;
         uintptr_t endWindow = highestRandomAddress / alignment;
         for (unsigned attempt = 0; attempt < maxRandomPlacements && firstWindow < endWindow && !address; ++attempt) {
             void* requestedAddress = std::bit_cast<void*>((firstWindow + cryptographicallyRandomNumber<uint32_t>() % (endWindow - firstWindow)) * alignment);
+#if OS(DARWIN)
+            void* reserved = OSAllocator::tryReserveUncommittedAligned(size, alignment, request.usage, requestedAddress, isWritable);
+#else
             void* reserved = OSAllocator::tryReserveUncommitted(size, request.usage, requestedAddress, isWritable);
-            if (!reserved)
-                return 0;
+#endif
+            if (!reserved) {
+                if (refusalMeansNoRoomAnywhere)
+                    return 0;
+                continue;
+            }
             if (reserved == requestedAddress)
                 address = reserved;
             else
                 OSAllocator::releaseDecommitted(reserved, size, 0);
         }
     }
-#endif
     if (!address)
         address = OSAllocator::tryReserveUncommittedAligned(size, alignment, request.usage, nullptr, isWritable);
     if (!address)

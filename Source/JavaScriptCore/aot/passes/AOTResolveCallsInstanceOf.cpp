@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTLayout.h"
 #include "AOTPropertyAccessInternal.h"
 #include "AOTResultRules.h"
 #include "AOTTypeTestSite.h"
@@ -123,8 +124,10 @@ static ChainAnswers followChains(const Program& program, const LayoutList& layou
         if (end != ChainEnd::Unknown && (isMadeByConstructorFunction || !neverChangesPrototype(program, layout))) {
             switch (knownBy) {
             case PrototypeKnownBy::BitOfClass:
-                // Only a class has bits.
-                if (program.at(layout).kind == LayoutKind::Instance && !isMadeByConstructorFunction)
+                // Only a class has bits, and they follow what happens to compiled objects.
+                if (builtinBaseClassOf(program, layout))
+                    testsObject = true;
+                else if (program.at(layout).kind == LayoutKind::Instance && !isMadeByConstructorFunction)
                     addCondition(conditions, { MemberCondition::Kind::InstancePrototypeUnchanged, declaredLayoutOf(program, layout), ClassSide::Prototype, { } });
                 else
                     end = ChainEnd::Unknown;
@@ -287,7 +290,7 @@ std::optional<LayoutList> instancesAmongTestedLayouts(const Program& program, co
     PrototypeKnownBy knownBy = testsObjects ? PrototypeKnownBy::TestOfObject : PrototypeKnownBy::BitOfClass;
     ChainAnswers answers = followChains(program, established->proven, classTestedBy(program, function, instanceOf), knownBy);
     // The layouts answer only under the tests that their chains ask for. The tests of the class object are among the tests of every form.
-    if (answers.leavesOutLayouts || !testsCoverConditions(tests, answers.conditions.span()))
+    if (answers.leavesOutLayouts || (answers.testsObjects && !testsObjects) || !testsCoverConditions(tests, answers.conditions.span()))
         return std::nullopt;
 
     testedLayouts = WTF::move(answers.decided);
@@ -370,7 +373,7 @@ PlanOrDecline<InstanceOfPlan> CallResolver::planInstanceOf(const CallSite& site)
 
     FunctionAnalyses& analyses = m_context.analyses;
     BlockID block = site.position.block;
-    plan.failedTestMeansFalse = !isOverLimit && !answers.leavesOutLayouts && !hasObjectsOutsideLayouts(m_program, subjectType);
+    plan.failedTestMeansFalse = !isOverLimit && !answers.leavesOutLayouts && !answers.testsObjects && !hasObjectsOutsideLayouts(m_program, subjectType);
     plan.isAlwaysFalse = plan.failedTestMeansFalse && answers.instances.isEmpty();
     if (!plan.failedTestMeansFalse) {
         // A miss walks the chain, so nothing is asked about the layouts that are no instances.
@@ -378,6 +381,7 @@ PlanOrDecline<InstanceOfPlan> CallResolver::planInstanceOf(const CallSite& site)
     }
     if (!answers.instances.isEmpty())
         plan.instances = m_context.types.completeLayoutSet(answers.instances.span());
+    plan.testsPrototypeOfInstance = answers.testsObjects;
 
     if (plan.instances && !plan.failedTestMeansFalse) {
         bool hasFailed = analyses.findEarlierTest(makeInstanceTest(m_context.types, plan), block) == EarlierTest::Failed
@@ -439,15 +443,21 @@ void CallResolver::rewriteInstanceOf(const CallSite& site, const InstanceOfPlan&
 
     ValueID test = m_expansion.append(makeInstanceTest(m_context.types, plan));
     IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(test, testedOperandIndex, frequency, frequency);
-    if (testsOwnInstance) {
-        ValueID isOwnObject = m_expansion.append(makeObjectTest(Proof::OwnInstance, branch.provenOnTaken, { }));
-        IRBuilder::BranchBlocks ownership = m_builder.emitBranch(isOwnObject, frequency, rarerOf(frequency, BlockFrequency::Unlikely));
-        m_expansion.finishArm(m_builder.appendBoolean(true));
-        m_builder.moveToEndOf(ownership.notTaken);
+    Vector<BlockID, 2> whereTestsOfObjectFail;
+    auto testObject = [&](Proof proof) {
+        ValueID holds = m_expansion.append(makeObjectTest(proof, branch.provenOnTaken, { }));
+        whereTestsOfObjectFail.append(m_builder.emitBranch(holds, frequency, rarerOf(frequency, BlockFrequency::Unlikely)).notTaken);
+    };
+    if (testsOwnInstance)
+        testObject(Proof::OwnInstance);
+    if (plan.testsPrototypeOfInstance)
+        testObject(Proof::PrototypeLinkUnchanged);
+    m_expansion.finishArm(m_builder.appendBoolean(true));
+    for (BlockID block : whereTestsOfObjectFail) {
+        m_builder.moveToEndOf(block);
         // The walk names the subject as it was before the layout test: a type that lists layouts counts as a proof of the instance.
         finishArmWithWalk(m_expansion, plan.subject);
-    } else
-        m_expansion.finishArm(m_builder.appendBoolean(true));
+    }
 
     m_builder.moveToEndOf(branch.notTaken);
     finishArmWithWalk(m_expansion, branch.provenOnNotTaken);

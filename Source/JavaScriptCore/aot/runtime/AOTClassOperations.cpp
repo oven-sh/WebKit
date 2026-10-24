@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTHeapHooks.h"
@@ -52,6 +53,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveHeritage, EncodedJSValue, (Instance*
     OPERATION_RETURN(scope, JSValue::encode(instance->state->objects->classes.resolveHeritage(globalObject, JSValue::decode(heritage))));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidConstructBuiltinBase, void, (Instance* instance, JSCell* object, EncodedJSValue parent, EncodedJSValue newTarget, uint32_t classIndex, uint32_t builtinParent))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidConstructBuiltinBase);
+    ClassTable& classes = instance->state->objects->classes;
+    DeferTerminationForAWhile deferTermination(vm);
+    if (JSValue::decode(parent) == JSValue(instance->state->builtinCells->findObject(BuiltinID(builtinParent))))
+        classes.didConstructBuiltinBase(vm, asObject(object), *classes.classWithIndex(classIndex), JSValue::decode(newTarget));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookAtStructureBelowBuiltinBase, size_t, (Instance* instance, JSCell* object))
+{
+    return instance->state->objects->classes.lookAtStructureBelowBuiltinBase(*instance->vm, asObject(object));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTNewClass, JSCell*, (Instance* instance, uint32_t request, EncodedJSValue constructor, EncodedJSValue heritage, EncodedJSValue prototypeParent))
 {
     constexpr Entry entry = Entry::operationAOTNewClass;
@@ -78,6 +93,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Insta
         crashOnWrongOperand(entry);
     JSCell* result = asObject(prototype);
     OPERATION_RETURN(scope, result);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBeginMemberGuards, void, (Instance* instance, uint32_t classIndex))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTBeginMemberGuards);
+    DeferGCForAWhile deferGC(vm);
+    ClassTable& classes = instance->state->objects->classes;
+    classes.classPrototypeOfInstances(vm, classLayoutAt(classes, classIndex));
 }
 
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototypeByLookup(Instance*, EncodedJSValue newTarget);

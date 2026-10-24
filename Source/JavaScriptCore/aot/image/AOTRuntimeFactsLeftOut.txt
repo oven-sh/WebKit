@@ -42,7 +42,6 @@ Storage::offsetOfMinLengthAppendedByReference() | use of undeclared identifier '
 Storage::offsetOfNextFree() | use of undeclared identifier 'Storage'
 Storage::offsetOfPosition() | use of undeclared identifier 'Storage'
 Yarr::BytecodePattern::offsetOfFlatProgram() | incomplete type 'JSC::Yarr::BytecodePattern' named in nested name specifier
-Yarr::BytecodePattern::offsetOfFlatProgramFor8BitSubjects() | incomplete type 'JSC::Yarr::BytecodePattern' named in nested name specifier
 Yarr::MatchingContextHolder::offsetOfFreeList() | incomplete type 'JSC::Yarr::MatchingContextHolder' named in nested name specifier
 Yarr::MatchingContextHolder::offsetOfStackLimit() | incomplete type 'JSC::Yarr::MatchingContextHolder' named in nested name specifier
 EntryFrame::vmEntryRecordOffset() | static assertion expression is not an integral constant expression

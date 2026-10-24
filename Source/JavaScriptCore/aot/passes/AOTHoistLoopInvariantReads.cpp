@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTEffects.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGenericCopy.h"
 #include "AOTHoistLoopInvariantReads.h"
@@ -128,7 +129,7 @@ static std::optional<HoistableLoop> describeHoistableLoop(FunctionPassContext& c
     for (unsigned i = 0; i < loop.size(); ++i) {
         body.quickSet(loop.at(i).index());
         hasRead |= std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
-            return isVariableRead(function, function.at(id));
+            return function.at(id).opcode == Opcode::ToBoolean || isVariableRead(function, function.at(id));
         });
     }
     if (!hasRead)
@@ -154,10 +155,12 @@ static bool hasInvariantOperands(const Value& value, const BitVector& body, cons
     return result;
 }
 
-static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, bool isInHeader, const LoopClobbers& clobbersBeforeRead, const Vector<BlockID>& definingBlock, const BitVector& keptReads, ValueID id)
+static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, bool isInHeader, const LoopClobbers& clobbersBeforeRead, const Vector<BlockID>& definingBlock, const BitVector& keptReads, const BitVector& testsThatStay, ValueID id)
 {
     const Program& program = context.program;
     const Value& value = context.function.at(id);
+    if (value.opcode == Opcode::ToBoolean)
+        return !keptReads.get(id.index()) && !testsThatStay.get(id.index()) && hasInvariantOperands(value, loop.body, definingBlock);
     if (!hoistableReadOpcodes.contains(value.opcode))
         return false;
     MemoryAccess access = variableAccessOf(context.function, value);
@@ -181,7 +184,7 @@ static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, bo
 }
 
 // In the header what stands in front of a read is known. Anything in the loop may have run in front of a read in another block.
-static unsigned hoistReads(FunctionPassContext& context, const HoistableLoop& loop, Vector<BlockID>& definingBlock)
+static unsigned hoistReads(FunctionPassContext& context, const HoistableLoop& loop, Vector<BlockID>& definingBlock, const BitVector& testsThatStay)
 {
     Function& function = context.function;
     unsigned numberOfHoistedReads = 0;
@@ -195,7 +198,7 @@ static unsigned hoistReads(FunctionPassContext& context, const HoistableLoop& lo
         BlockValues remaining;
         remaining.reserveInitialCapacity(function.at(blockID).values.size());
         for (ValueID id : function.at(blockID).values) {
-            if (!canHoist(context, loop, blockID == loop.header, blockID == loop.header ? clobbersInHeader : loop.clobbers, definingBlock, keptReads, id)) {
+            if (!canHoist(context, loop, blockID == loop.header, blockID == loop.header ? clobbersInHeader : loop.clobbers, definingBlock, keptReads, testsThatStay, id)) {
                 addClobbers(context, id, clobbersInHeader);
                 remaining.append(id);
                 continue;
@@ -228,6 +231,23 @@ static Vector<BlockID> computeDefiningBlocks(FunctionPassContext& context)
     return definingBlock;
 }
 
+// A value that may be unspecified is tested only where the program tests it. Asked before anything moves: the answer follows the uses of values.
+static BitVector findTestsOfValuesThatMayBeUnspecified(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    BitVector tests;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::ToBoolean))
+        return tests;
+    UnspecifiedValues unspecified(context.analyses);
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            if (function.at(id).opcode == Opcode::ToBoolean && unspecified.mayContain(function.at(id).operand(0)))
+                tests.set(id.index());
+        }
+    }
+    return tests;
+}
+
 static Vector<const NaturalLoop*> findLoopsInnermostFirst(FunctionPassContext& context)
 {
     CFG& cfg = context.analyses.cfg();
@@ -252,10 +272,11 @@ PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     Vector<BlockID> definingBlock = computeDefiningBlocks(context);
+    BitVector testsThatStay = findTestsOfValuesThatMayBeUnspecified(context);
     unsigned numberOfHoistedReads = 0;
     for (const NaturalLoop* loop : loops) {
         if (std::optional<HoistableLoop> hoistable = describeHoistableLoop(context, *loop))
-            numberOfHoistedReads += hoistReads(context, *hoistable, definingBlock);
+            numberOfHoistedReads += hoistReads(context, *hoistable, definingBlock, testsThatStay);
     }
     if (!numberOfHoistedReads)
         return PassOutcome::Unchanged;

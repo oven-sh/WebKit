@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTInductionVariables.h"
@@ -68,7 +69,7 @@ static bool isRemovableBody(FunctionPassContext& context, const BitVector& body)
             return false;
         if (block.handler || block.isHandlerBlock())
             return false;
-        if (!hasNoEffectInLoop(context, block))
+        if (!hasNoEffectInLoop(context, block) && !context.build.isSabotaged(Sabotage::RemovedLoopsHaveEffects))
             return false;
     }
     return true;
@@ -162,7 +163,7 @@ static std::optional<DeadLoop> describeDeadLoop(FunctionPassContext& context, co
     if (!isRemovableBody(context, body))
         return std::nullopt;
     std::optional<BlockID> exit = findSingleExit(context.function, body);
-    if (!exit || definesValueUsedOutside(context, body) || !alwaysTerminates(context, body))
+    if (!exit || definesValueUsedOutside(context, body) || (!alwaysTerminates(context, body) && !context.build.isSabotaged(Sabotage::RemovedLoopsMayNotEnd)))
         return std::nullopt;
     return DeadLoop { loop.header(), *exit, WTF::move(body) };
 }

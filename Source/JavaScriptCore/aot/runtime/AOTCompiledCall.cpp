@@ -74,7 +74,7 @@ JSValue callCompiledCode(JSGlobalObject* realm, JSCell* closure, JSValue thisVal
     return callCompiledCode(realm->vm(), asObject(closure), callData, thisValue, nullptr, arguments);
 }
 
-JSObject* constructCompiledCode(VM& vm, JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)
+JSValue constructCompiledCode(VM& vm, JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)
 {
     ASSERT(constructData.type == CallData::Type::Compiled);
 
@@ -91,7 +91,7 @@ JSObject* constructCompiledCode(VM& vm, JSObject* constructor, const CallData& c
     VMEntryScope entryScope(vm, realm);
     if (!vm.isSafeToRecurseSoft() || args.size() > maxArguments) [[unlikely]] {
         throwStackOverflowError(realm, throwScope);
-        return nullptr;
+        return { };
     }
 
     if (vm.disallowVMEntryCount) [[unlikely]] {
@@ -100,8 +100,8 @@ JSObject* constructCompiledCode(VM& vm, JSObject* constructor, const CallData& c
     }
 
     JSValue result = enterWithArgumentList(vm, constructData, constructor, newTarget, nullptr, args);
-    RETURN_IF_EXCEPTION(throwScope, nullptr);
-    return asObject(result);
+    RETURN_IF_EXCEPTION(throwScope, { });
+    return result;
 }
 
 } } // namespace JSC::AOT

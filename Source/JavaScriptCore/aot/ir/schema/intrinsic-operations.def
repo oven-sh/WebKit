@@ -25,7 +25,7 @@ operation NativeBinding (builtin: Builtin) -> unknown ; Allocates UsesRuntime th
 operation LinkTimeConstant (constant: LinkTimeConstant) -> unknown ; CreatesConstant ; runtime = LinkTimeConstant ; flow = Unsound
 operation HasJSType (value: Any/inspects, first: CheckedJSType, last: CheckedJSType) -> natural(boolean) ; none ; branches = May ; flow = Checks
 operation GetInternalField (object: Object/inspects, index: UInt32) -> unknown ; reads(InternalFields, PromiseState, CollectionStorage) ; flow = Copies
-operation PutInternalField (object: Object/inspects+writesContents, index: UInt32, value: Any/retains(object)+returns) -> natural(same(value)) ; writes(InternalFields, PromiseState, CollectionStorage) ; runsOwnerBarrier = true ; flow = Copies
+operation PutInternalField (object: Object/inspects+writesContents, index: UInt32, value: Any/retains(object)+returns) -> natural(same(value)) ; writes(InternalFields, PromiseState, CollectionStorage) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies
 
 family PromiseIntrinsic AsRead..Placed ; isIntrinsic = true
 operation NewPromise (engine allocationSite?: AllocationSite) -> allocation(Promise) ; Allocates ; runtime = NewPromise ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CallBuiltin ; flow = Allocates
@@ -39,7 +39,7 @@ operation ArrayStorageKind (array: Array/inspects) -> natural(ArrayStorage) ; re
 operation HasContiguousIndex (array: Array/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; flow = TableProves
 operation GetContiguousIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> unknown => declared(array) ; reads(ArrayStorage, Elements[Array]) ; flow = Copies
 operation GetDoubleIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> natural(number) ; reads(ArrayStorage, Elements[Array]) ; flow = TableProves
-operation PutContiguousIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; flow = Copies
+operation PutContiguousIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies
 operation PutDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; flow = Copies
 operation NewContiguousArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates
 operation NewDoubleArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates

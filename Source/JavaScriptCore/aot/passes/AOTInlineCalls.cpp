@@ -114,6 +114,7 @@ public:
 private:
     Vector<InlineSite> findCandidates(uint32_t firstFrame) const;
     void leaveArrayChains(Vector<InlineSite>&) const;
+    bool fuseArrayMethodsTakenAlone(std::span<const InlineSite>);
     bool handsObjectToFrequentCode(ValueID call) const;
     PassOutcome markNoReturnCallBlocks();
 
@@ -164,6 +165,10 @@ PassOutcome CallInliner::run()
             site.verdict = computeVerdict(site);
         }
         spendCallerBudget(sites);
+        if (fuseArrayMethodsTakenAlone(sites.span())) {
+            outcome = PassOutcome::Changed;
+            continue;
+        }
         outcome |= markCallsClosingCycles(sites.span());
         outcome |= callCalleeVersions(sites.span());
         countVerdicts(sites.span());
@@ -236,6 +241,20 @@ void CallInliner::leaveArrayChains(Vector<InlineSite>& sites) const
     sites.removeAllMatching([&](const InlineSite& site) {
         return members.get(site.call.index());
     });
+}
+
+// The traversal in the place of the built-in's own text: a call like any other, which this run goes on to look at.
+bool CallInliner::fuseArrayMethodsTakenAlone(std::span<const InlineSite> sites)
+{
+    BitVector calls;
+    for (const InlineSite& site : sites) {
+        if (isAccepted(site) && arrayMethodCallOf(m_program, m_caller, site.call))
+            calls.set(site.call.index());
+    }
+    if (calls.isEmpty() || Typed::fuseArrayMethodsTakenAlone(m_context, calls) != PassOutcome::Changed)
+        return false;
+    m_context.analyses.invalidate(allAnalyses - m_context.keptAnalyses);
+    return true;
 }
 
 Vector<InlineSite> CallInliner::findCandidates(uint32_t firstFrame) const
@@ -340,8 +359,9 @@ bool CallInliner::fitsInCaller(const InlineSite& site, CallerBudget& budget)
     if (m_context.exceeds(LimitID::InlineFramesPerFunction, frameCount, site.call))
         return false;
 
+    // The traversal of a chain of array methods folds to a fraction of its size, and called it would read at run time what it is to do.
     uint32_t costBytes = site.verdict.costBytes;
-    if (costBytes && !site.verdict.benefits.contains(InlineBenefit::Wrapper)) {
+    if (costBytes && !site.verdict.benefits.contains(InlineBenefit::Wrapper) && !call.isAlwaysInlined()) {
         if (!budget.bytes)
             budget.bytes = computeInlinedBytes();
         if (m_context.exceeds(LimitID::MaxInlinedCallerBytes, *budget.bytes + costBytes, site.call))

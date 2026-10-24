@@ -929,6 +929,15 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
         add(result, unknownValue(ValueFlowUnknownSource::ResultOfUnknownCallee));
     }
 
+    // Every store under a key nobody knows finds the setter of `__proto__`. In one group for all of them each value would lie above each receiver.
+    ValueFlowObjectID accessorOfPrototypeLink = m_tables.accessorOfPrototypeLink();
+    if (kind == ValueFlowCallKind::Set && value && !receiver.operand && accessorOfPrototypeLink && m_context.contains(functions, accessorOfPrototypeLink)
+        && !m_context.meet(receiver.set, m_context.maker().unite(ValueSets::complement(m_universe.knownObjects()), m_universe.builtinObjects()))) {
+        changePrototype(receiver.set, *value);
+        use(m_universe.builtinOf(accessorOfPrototypeLink), BuiltinUse::Written);
+        functions = m_context.restrict(functions, ValueSets::complement(only(accessorOfPrototypeLink)));
+    }
+
     // A function that the analysis has stopped following takes the operands like any other: the group of the untracked object passes them on.
     forEachPartOfCallees(m_context, m_context.restrict(functions, m_tables.knownAccessors()), [&](ClimbingSet callees) {
         ValueFlowCallGroup group = m_context.group(callees, kind);

@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTFlowNamespaces.h"
+#include "AOTFlowResults.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

@@ -69,7 +69,9 @@ static void describeOperatorOn(const Program& program, Opcode opcode, const Type
         return;
 
     Effects own = declared;
-    if (own.mayThrow && classes.onlyMakesText(opcode))
+    // `a === b` converts nothing: all that it does to two texts is to flatten them.
+    bool onlyComparesTexts = provesOf(opcode) == Proof::Equality && !classes.hasProtocol;
+    if (own.mayThrow && (classes.onlyMakesText(opcode) || onlyComparesTexts))
         own.mayThrow = ThrowEffect::onlyForLackOfMemory();
     description.addOwn(own);
     if (!classes.convertsObjects)

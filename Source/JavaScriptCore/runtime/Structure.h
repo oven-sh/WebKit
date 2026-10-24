@@ -766,10 +766,23 @@ public:
         return OBJECT_OFFSETOF(Structure, m_previousOrRareData);
     }
 
+    static constexpr ptrdiff_t variantOffset()
+    {
+        return OBJECT_OFFSETOF(Structure, m_structureVariant);
+    }
+
     static constexpr ptrdiff_t bitFieldOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_bitField);
     }
+
+    static constexpr ptrdiff_t maxOffsetOffset()
+    {
+        return OBJECT_OFFSETOF(Structure, m_maxOffset);
+    }
+
+    // A greater one is kept in the rare data.
+    static constexpr PropertyOffset greatestMaxOffsetOutsideRareData = shortInvalidOffset - 1;
 
     static constexpr ptrdiff_t propertyHashOffset()
     {

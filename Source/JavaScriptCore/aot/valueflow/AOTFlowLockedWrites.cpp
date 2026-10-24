@@ -77,6 +77,15 @@ static LockedWriteForm writeFormOf(AccessKind kind)
     case AccessKind::Unknown:
     case AccessKind::Read:
     case AccessKind::Has:
+    case AccessKind::Truthiness:
+    case AccessKind::Equality:
+    case AccessKind::Arithmetic:
+    case AccessKind::Comparison:
+    case AccessKind::Conversion:
+    case AccessKind::TypeOf:
+    case AccessKind::InstanceOf:
+    case AccessKind::Iteration:
+    case AccessKind::Spread:
         return LockedWriteForm::None;
     }
     RELEASE_ASSERT_NOT_REACHED();

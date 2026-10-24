@@ -66,6 +66,7 @@ private:
     enum class LoopVariables : uint8_t { StayInMemory, MayBeCarried };
     std::optional<SeparationPlan> planFor(const NaturalLoop&, LoopVariables);
     std::optional<SeparationPlan> planWithCarriedVariables(const NaturalLoop&);
+    bool runsCodeOfHotFunction(const NaturalLoop&);
     bool onlyComputes(BlockID);
     BitVector findLeavingBlocks(const NaturalLoop&, const BitVector& isInLoop);
     bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves);
@@ -284,11 +285,32 @@ std::optional<SeparationPlan> LoopPathSeparator::planWithCarriedVariables(const 
     return plan;
 }
 
+// A loop runs as often as what it calls and as what was inlined into it. What counts as hot was settled while the cycle through a generic version still counted as a loop around the loop, so a loop may stand under a threshold that it set itself. The thresholds of a very large program are constants.
+bool LoopPathSeparator::runsCodeOfHotFunction(const NaturalLoop& loop)
+{
+    const Heat& heat = m_context.inputs.heat;
+    if (heat.isOfVeryLargeProgram())
+        return false;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        const Block& block = m_function.at(loop.at(index));
+        if (block.frequency != BlockFrequency::Normal)
+            continue;
+        for (ValueID id : block.values) {
+            const Value& value = m_function.at(id);
+            if (value.opcode == Opcode::CallDirect && isHot(heat.of(m_program, value.function())))
+                return true;
+            if (value.inlineFrame && isHot(heat.of(m_program, m_function.inlineFrames[value.inlineFrame].callee)))
+                return true;
+        }
+    }
+    return false;
+}
+
 std::optional<SeparationPlan> LoopPathSeparator::planFor(const NaturalLoop& loop, LoopVariables variables)
 {
     const CFG& cfg = m_analyses.cfg();
     BlockID header = loop.header();
-    if (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || heatClassOf(m_context, header) != HeatClass::Hot)
+    if (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || (!isHot(heatClassOf(m_context, header)) && !runsCodeOfHotFunction(loop)))
         return std::nullopt;
     // The cycle through the copy of a separated loop starts at a block that this pass made, which has no hint.
     bool isLoopOfProgram = std::ranges::any_of(m_function.at(header).values, [&](ValueID value) {

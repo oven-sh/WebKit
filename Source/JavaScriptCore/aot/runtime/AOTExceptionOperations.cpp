@@ -10,7 +10,6 @@
 
 #include "AOTCallSiteTable.h"
 #include "AOTErrorMessages.h"
-#include "AOTFaultHandler.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObjectModel.h"
@@ -374,11 +373,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIsThrownValueIgnored, size_t, (Instance* in
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAtSite);
-#if CPU(X86_64)
-    // The fault handler has passed the return address in the scratch register, which compiled code allocates like any other.
+    // The fault handler has passed an address in a register that compiled code allocates like any other.
     if (static_cast<ThrowSiteSource>(source) == ThrowSiteSource::FaultSite)
-        const_cast<uint64_t*>(registers)[MacroAssembler::s_scratchRegister] = scratchRegisterBeforeFault();
-#endif
+        const_cast<uint64_t*>(registers)[static_cast<unsigned>(registerWrittenAtFaults)] = instance->state->registerBeforeFault;
     DecodedThrowSite decoded = decodeThrowSite(registers, site, static_cast<ThrowSiteSource>(source));
     if (!needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame)) {
         count(*instance, RuntimeCounterID::ThrownErrorsNotCreated);

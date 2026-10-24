@@ -435,6 +435,7 @@ aot/passes/AOTResolveCallsMembers.cpp
 aot/passes/AOTResolveCallsMethodTable.cpp
 aot/passes/AOTResolveCallsTestSites.cpp
 aot/passes/AOTRestartInGenericVersion.cpp
+aot/passes/AOTReuseEnvironments.cpp
 aot/passes/AOTRewrite.cpp
 aot/passes/AOTSelectTypedResults.cpp
 aot/passes/AOTSelectTypedResultsSites.cpp
@@ -537,6 +538,7 @@ aot/place/AOTVariablePlan.cpp
 aot/represent/AOTChooseRepresentations.cpp
 aot/represent/AOTConversionInserter.cpp
 aot/represent/AOTConversions.cpp
+aot/represent/AOTRemoveRedundantBarriers.cpp
 aot/represent/AOTRepresentationCheck.cpp
 aot/represent/AOTRepresentationRules.cpp
 aot/represent/AOTRepresentationRulesOfOperators.cpp

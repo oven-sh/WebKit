@@ -62,10 +62,22 @@ struct MemberRead {
     const ValueSite& read() const LIFETIME_BOUND { return links.first(); }
 };
 
+// `F.prototype.m`, read or called with a `this` that the caller names: the lookup starts at the prototype object of the class of F.
+struct PrototypeMemberRead {
+    LayoutID classLayout;
+    ValueID classObject;
+    PropertyKeyID key;
+    // The read of `prototype` and, of a call, the read of the member, each with its casts. Nothing else uses them.
+    MemberRead reads;
+
+    explicit operator bool() const { return !!classLayout; }
+};
+
 struct CallSite {
     ValueSite position;
     Opcode opcode { Opcode::Undefined };
     MemberRead memberRead;
+    PrototypeMemberRead prototypeMemberRead;
 };
 
 MemberRead findMemberRead(FunctionPassContext&, const ValueSite& call);
@@ -116,6 +128,11 @@ struct HolderMemberPlan {
     bool retiresMemberRead { false };
 };
 
+struct PrototypeMemberPlan {
+    FunctionID method;
+    MemberConditions conditions;
+};
+
 struct ConstructArm {
     CallArm call;
     LayoutID allocatedClass;
@@ -135,6 +152,7 @@ struct InstanceOfPlan {
     MemberConditions conditions;
     bool failedTestMeansFalse { false };
     bool isAlwaysFalse { false };
+    bool testsPrototypeOfInstance { false };
 };
 
 struct BindPlan {
@@ -178,7 +196,7 @@ struct TableCallPlan {
     bool checksReceiverAtRead { false };
 };
 
-using CallPlan = Variant<ReceiverDispatchPlan, CalleeDispatchPlan, OnlyCalleePlan, HolderMemberPlan, ConstructPlan, InstanceOfPlan, ForwardedCallPlan, BindPlan, ListCallPlan, RestHandoverPlan, TableCallPlan>;
+using CallPlan = Variant<ReceiverDispatchPlan, CalleeDispatchPlan, OnlyCalleePlan, HolderMemberPlan, PrototypeMemberPlan, ConstructPlan, InstanceOfPlan, ForwardedCallPlan, BindPlan, ListCallPlan, RestHandoverPlan, TableCallPlan>;
 
 struct PlannedCall {
     CallSite site;
@@ -239,10 +257,11 @@ private:
     bool canRetireMemberRead(const CallSite&, FunctionID callee) const;
 
     void retireMemberRead(const CallSite&, bool checksReceiver, PropertyKeyID);
+    void retireReads(const MemberRead&, bool checksReceiver, PropertyKeyID, uint32_t operandIndexInOriginal);
     ValueID appendCall(const CallArm&, ValueID thisValue, ValueID closure, std::span<const ValueID> arguments);
     Vector<ValueID, 8> capturesOf(const CallArm&, ValueID closure, ValueID receiver);
     // Goes on where the conditions hold. Where they do not, the arm ends with the operations as they were.
-    void branchOnConditions(std::span<const MemberCondition>, const OriginalCopy&);
+    void branchOnConditions(std::span<const MemberCondition>, const OriginalCopy&, LayoutID classWhoseGuardsBegin = { });
 
     PlanOrDecline<CallPlan> planMemberCall(const CallSite&);
     PlanOrDecline<ReceiverDispatchPlan> planReceiverDispatch(const CallSite&, MethodKind);
@@ -255,6 +274,8 @@ private:
     MemberAnswer findMemberOnPrototypesOfHome(const Value& superAccess, Access);
     PlanOrDecline<HolderMemberPlan> planHolderMember(const CallSite&, const MemberAnswer&, ValueID thisValue);
     void rewriteHolderMember(const CallSite&, const HolderMemberPlan&);
+    PlanOrDecline<PrototypeMemberPlan> planPrototypeMember(const CallSite&);
+    void rewritePrototypeMember(const CallSite&, const PrototypeMemberPlan&);
 
     using CanEnterCallee = ScopedLambda<bool(FunctionID)>;
     PlanOrDecline<Vector<FunctionID, 4>> chooseDispatchedCallees(const CallSite&, const CalleeCandidates&, NOESCAPE const CanEnterCallee&);

@@ -120,16 +120,27 @@ public:
             // across 4GB granules. Otherwise, the top 32 bits of the address may not be constant for all
             // addresses in the range. The top 32 bits being constant is an invariant that we rely on in
             // order to encode StructureIDs.
-#if OS(LINUX) && defined(BUN_HARDENED)
+#if (OS(LINUX) && defined(BUN_HARDENED)) || OS(DARWIN)
             static constexpr uintptr_t lowestRandomAddress = 64 * GB;
             static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
             uintptr_t firstWindow = (lowestRandomAddress + mappedHeapSize - 1) / mappedHeapSize;
             uintptr_t endWindow = highestRandomAddress / mappedHeapSize;
-            for (unsigned attempt = 0; attempt < 16 && !g_jscConfig.startOfStructureHeap; ++attempt) {
+#if OS(DARWIN)
+            unsigned maxRandomPlacements = Options::runsCompiledImage() ? 16 : 0;
+#else
+            unsigned maxRandomPlacements = 16;
+#endif
+            for (unsigned attempt = 0; attempt < maxRandomPlacements && !g_jscConfig.startOfStructureHeap; ++attempt) {
                 void* requestedAddress = std::bit_cast<void*>((firstWindow + cryptographicallyRandomNumber<uint32_t>() % (endWindow - firstWindow)) * mappedHeapSize);
+#if OS(DARWIN)
+                void* reserved = OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages, requestedAddress);
+                if (!reserved)
+                    continue;
+#else
                 void* reserved = OSAllocator::tryReserveUncommitted(mappedHeapSize, OSAllocator::StructureAllocatorPages, requestedAddress);
                 if (!reserved)
                     break;
+#endif
                 if (reserved == requestedAddress)
                     g_jscConfig.startOfStructureHeap = std::bit_cast<uintptr_t>(reserved);
                 else

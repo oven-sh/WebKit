@@ -220,15 +220,6 @@ Integer ArrayAllocationEmitter::headerOfNewArray(const ArrayStorageForm& form)
     return loadMutable64(Instance::offsetOfNewArrayHeader(form.indexingType));
 }
 
-Integer ArrayAllocationEmitter::headerOfNewArrayWithShape(Word32 shape)
-{
-    ElementAccessEmitter& access = emitter<ElementAccessEmitter>();
-    Integer header = integer(0);
-    for (const ArrayStorageForm& form : arrayStorageForms)
-        header = select(access.hasShape(shape, form), headerOfNewArray(form), header);
-    return header;
-}
-
 // An empty array with room for `capacity` elements, which nobody has written yet. Whoever gives up on it leaves an array that the collector can visit.
 CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithStorage(const OperationContext& context, Integer header, Integer capacity, LBasicBlock slowPath)
 {

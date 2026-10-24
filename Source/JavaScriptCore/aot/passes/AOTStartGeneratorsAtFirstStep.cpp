@@ -29,22 +29,17 @@ struct DeferredStart {
 
 } // anonymous namespace
 
-// The call that starts a generator at its creation runs the head of the body, which evaluates the parameters, up to the initial yield. Nothing tells when a head without an effect has run.
+// The call that starts a generator at its creation runs the head of the body, which evaluates the parameters, up to the initial yield. Nothing tells when a head without an effect has run, and only behind such a head does a body ask whether it is running.
 static bool suspendsBeforeAnyEffect(FunctionPassContext& pass, const GeneratorBodyDescription& description)
 {
     const Function& body = pass.program.at(description.body);
     if (!body.hasBody() || !description.generatorParameter)
         return false;
-    FunctionAnalyses bodyAnalyses(AnalysisContext { pass.build, pass.program, &pass.inputs.flow, &pass.inputs.effects, description.body }, body);
     ValueID driver = body.at(entryBlock).parameters[*description.generatorParameter];
-    for (ValueID id : body.at(entryBlock).values) {
+    return std::ranges::any_of(body.at(entryBlock).values, [&](ValueID id) {
         const Value& value = body.at(id);
-        if (value.opcode == Opcode::IsGeneratorRunning)
-            return value.generatorOperand() == driver;
-        if (!bodyAnalyses.isUnobservable(id))
-            return false;
-    }
-    return false;
+        return value.opcode == Opcode::IsGeneratorRunning && value.generatorOperand() == driver;
+    });
 }
 
 static bool isTestOfPrototype(const Function& function, const Use& use)
@@ -93,7 +88,7 @@ static std::optional<DeferredStart> planDeferredStart(FunctionPassContext& pass,
         if (user.opcode != Opcode::StepGenerator || user.resumeMode() != ResumeMode::Next || use.operandIndex != OperandIndex::StepGenerator::generator)
             continue;
         // What the body throws in its first run leaves the generator as running. Nobody sees that where the exception leaves the function.
-        if (user.check() != GeneratorStepCheck::None || escape.singleObject(user.generatorOperand()) != *object || function.at(use.block).handler)
+        if (user.check() != GeneratorStepCheck::None || escape.singleObject(user.generatorOperand()) != *object || (function.at(use.block).handler && !pass.build.isSabotaged(Sabotage::FirstStepsStandUnderHandlers)))
             return std::nullopt;
         if (!analyses.dominates(plan.start, useLists.pointOf(use.user)))
             return std::nullopt;
@@ -112,7 +107,7 @@ static std::optional<DeferredStart> planDeferredStart(FunctionPassContext& pass,
         bool isBehindStep = plan.firstSteps.containsIf([&](ValueID step) {
             return analyses.dominates(step, use);
         });
-        if (!isBehindStep)
+        if (!isBehindStep && !pass.build.isSabotaged(Sabotage::GeneratorsAreReadBeforeTheirFirstStep))
             return std::nullopt;
     }
     return plan;
@@ -132,7 +127,7 @@ static void applyDeferredStart(FunctionPassContext& pass, IRBuilder& builder, co
     Value start(function.at(plan.start));
 
     // One step outside of every loop is the first step whenever it runs.
-    bool isKnownToBeFirst = plan.firstSteps.size() == 1 && !analyses.isInCycle(analyses.useLists().blockOf(plan.firstSteps[0]));
+    bool isKnownToBeFirst = plan.firstSteps.size() == 1 && (!analyses.isInCycle(analyses.useLists().blockOf(plan.firstSteps[0])) || pass.build.isSabotaged(Sabotage::StepsInCyclesAreFirstSteps));
 
     ValueLocation location = analyses.useLists().locationOf(plan.start);
     BitVector erased;

@@ -26,7 +26,7 @@ namespace AOT {
 
 JS_EXPORT_PRIVATE JSValue callCompiledCode(VM&, JSObject* callee, const CallData&, JSValue thisValue, JSCell* context, const ArgList&);
 JS_EXPORT_PRIVATE JSValue callCompiledCode(JSGlobalObject*, JSCell* closure, JSValue thisValue, const ArgList&);
-JS_EXPORT_PRIVATE JSObject* constructCompiledCode(VM&, JSObject* constructor, const CallData&, const ArgList&, JSValue newTarget);
+JS_EXPORT_PRIVATE JSValue constructCompiledCode(VM&, JSObject* constructor, const CallData&, const ArgList&, JSValue newTarget);
 
 ALWAYS_INLINE CallData compiledCallDataOf(JSCell* cell)
 {

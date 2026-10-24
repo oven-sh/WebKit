@@ -87,7 +87,7 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
         throwException(globalObject, scope, createNotAConstructorError(globalObject, callee, nameOfCalleeAtCallSite(vm)));
         return { };
     }
-    RELEASE_AND_RETURN(scope, construct(globalObject, callee, constructData, arguments, newTarget));
+    RELEASE_AND_RETURN(scope, constructAllowingPrimitiveResult(globalObject, callee, constructData, arguments, newTarget));
 }
 
 static JSValue constructParent(JSGlobalObject* globalObject, JSValue parent, JSValue newTarget, const ArgList& arguments)
@@ -104,7 +104,7 @@ static JSValue constructParent(JSGlobalObject* globalObject, JSValue parent, JSV
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, ErrorInstance::create(globalObject, structure, arguments.at(0), arguments.at(1), nullptr, TypeNothing, ErrorType::Error, true, asObject(newTarget)));
     }
-    RELEASE_AND_RETURN(scope, construct(globalObject, parent, constructData, arguments, newTarget));
+    RELEASE_AND_RETURN(scope, constructAllowingPrimitiveResult(globalObject, parent, constructData, arguments, newTarget));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* argumentValues))

@@ -114,6 +114,8 @@ KnownBoolean evaluateCondition(FunctionAnalyses&, const TypeTestBranches&, SlotV
 std::optional<uint32_t> decidedTargetOf(const Terminator&, KnownValue tested);
 
 void decideTerminator(IRBuilder&, BlockID, uint32_t targetIndex);
+// A test is decided against what was expected of it: the arm that was to run seldom runs whenever the test does, and so does what only that arm leads to.
+void raiseFrequenciesBehind(FunctionAnalyses&, Function&, Edge decided);
 
 } } } // namespace JSC::AOT::Typed
 

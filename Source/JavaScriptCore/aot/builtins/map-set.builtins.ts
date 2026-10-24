@@ -533,7 +533,7 @@ export default b.declarations(
       uses: {
         cleanup: [
           b.storedIn(b.resultSlot("cleanup")),
-          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: [b.resultSlot("heldValue")], result: "Ignored" }),
+          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.operand("cleanup"), args: [b.resultSlot("heldValue")], result: "Ignored" }),
         ],
       },
       implementation: b.hostCall,

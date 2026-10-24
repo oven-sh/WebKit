@@ -878,6 +878,14 @@ private:
     // For tests (TestingSwitch::DelayFlowRules, DelayOtherFlowRules): each seed is another valid schedule. The programs must answer the same under each, with about the same code.
     uint32_t m_seedOfSchedule { 0 };
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
+    // a.b().c().d(): each read and each call waits for the one before it, two rounds a link, and nobody knows what the row reaches before it is walked. A round that holds nothing else costs next to nothing: long rows are walked first.
+    void findStatementsWithLongRowsBehindThem();
+    void letLongRowsGoFirst();
+    bool hasLongRowBehindIt(ValueFlowStatementID statement) const { return m_hasLongRows && statement.index() < m_input.statements.size() && m_hasLongRowBehindIt.quickGet(statement.index()); }
+    BitVector m_hasLongRowBehindIt;
+    bool m_hasLongRows { false };
+    mutable std::atomic<uint32_t> m_numberDueWithLongRows { 0 };
+    Vector<ValueFlowStatementID> m_dueBehindLongRows;
     ValueFlowSharedBits m_hasRunInTurn;
     Vector<ValueFlowStatementID> m_dueInNextTurn;
     // Made due by watches of valueWithinAskedLast() alone.

@@ -78,6 +78,7 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
     check->clobber(RegisterSet::macroClobberedGPRs());
     check->effects = Effects::none();
     check->effects.writesLocalState = true;
+    check->isMovedLoadCheck = true;
     check->setGenerator([load, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg found = params.gpScratch(0);
@@ -91,10 +92,17 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
         else
             jit.moveFloatTo32(params[1].fpr(), given);
         CCallHelpers::Jump differs = is64Bit ? jit.branch64(CCallHelpers::NotEqual, found, given) : jit.branch32(CCallHelpers::NotEqual, found, given);
-        params.addLatePath([differs, report, origin = load.origin](CCallHelpers& jit) {
+        CCallHelpers::Label done = jit.label();
+        params.addLatePath([differs, done, found, given, report, load, bits = load.bitsOfWordsThatCount](CCallHelpers& jit) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
             differs.link(&jit);
+            if (bits) {
+                CCallHelpers::Jump counts = jit.branchTest64(CCallHelpers::NonZero, found, CCallHelpers::TrustedImm64(static_cast<int64_t>(bits)));
+                jit.branchTest64(CCallHelpers::Zero, given, CCallHelpers::TrustedImm64(static_cast<int64_t>(bits))).linkTo(done, &jit);
+                counts.link(&jit);
+            }
             if (report)
-                report->run(jit, origin);
+                report->run(jit, load, found, given);
             jit.breakpoint();
         });
     });

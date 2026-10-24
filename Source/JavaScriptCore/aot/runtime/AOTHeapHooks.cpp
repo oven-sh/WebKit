@@ -11,6 +11,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTCompiledCallee.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTMutatorMarkStackLayout.h"
 #include "AOTObject.h"
@@ -35,7 +36,6 @@
 
 namespace JSC { namespace AOT {
 
-// The constraints are added before the heap joins its collector, so that its first collection has them. Until then other heaps' collections run them too.
 static bool shouldVisitRoots(VM& vm, const AbstractSlotVisitor& visitor)
 {
     return vm.hasCompiledCode() && visitor.collector().hasHeap(vm.heap);
@@ -72,9 +72,10 @@ static void visitExecutionRoots(VM& vm, Visitor& visitor)
     }
 }
 
-void addMarkingConstraints(VM& vm)
+WTF::Vector<std::unique_ptr<MarkingConstraint>> createMarkingConstraints(VM& vm)
 {
-    vm.heap.addMarkingConstraint(makeUnique<SimpleMarkingConstraint>(
+    WTF::Vector<std::unique_ptr<MarkingConstraint>> constraints;
+    constraints.append(makeUnique<SimpleMarkingConstraint>(
         "Ao"_s, "Instances of Statically Compiled Code"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([&vm] (auto& visitor) {
             if (!shouldVisitRoots(vm, visitor))
@@ -85,7 +86,7 @@ void addMarkingConstraints(VM& vm)
         ConstraintVolatility::GreyedByMarking,
         ConstraintConcurrency::Concurrent,
         ConstraintParallelism::Sequential));
-    vm.heap.addMarkingConstraint(makeUnique<SimpleMarkingConstraint>(
+    constraints.append(makeUnique<SimpleMarkingConstraint>(
         "At"_s, "Static Variables of Compiled Code"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([&vm] (auto& visitor) {
             if (!shouldVisitRoots(vm, visitor))
@@ -96,6 +97,7 @@ void addMarkingConstraints(VM& vm)
         ConstraintVolatility::GreyedByExecution,
         ConstraintConcurrency::Concurrent,
         ConstraintParallelism::Sequential));
+    return constraints;
 }
 
 void initializeCollectorWords(VM& vm, Instance& instance)
@@ -194,6 +196,11 @@ void noteInnerCellsWithoutMark(JSCell* outerCell)
         Locker locker { state.innerCellsWithoutMark.lock };
         state.innerCellsWithoutMark.cells.append(inner);
     }
+}
+
+void willWorkOnThisThread(VM& vm)
+{
+    Image::setCurrentOfThread(vm.aotState().image);
 }
 
 void didFinishMarking(VM& vm)

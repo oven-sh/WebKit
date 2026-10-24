@@ -48,6 +48,7 @@
 #include "AOTRemoveUnreadFields.h"
 #include "AOTRemoveUnusedParameters.h"
 #include "AOTRemoveUnusedResults.h"
+#include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTSplitBehindEntryChecks.h"
@@ -71,6 +72,7 @@ static SlotPlanInputs createSlotPlanInputs(Pipeline& pipeline)
         .callGraph = pipeline.analyses().callGraph(flow),
         .heat = pipeline.analyses().heat(flow),
         .frameAllocation = *output.frameAllocation,
+        .environmentReuse = *output.environmentReuse,
     };
 }
 
@@ -85,6 +87,7 @@ PlacementInputs Pipeline::createPlacementInputs(const CallGraph& callGraph)
         .heat = pipeline.analyses().heat(flow),
         .callingConventions = *output.callingConventions,
         .frameAllocation = *output.frameAllocation,
+        .environmentReuse = *output.environmentReuse,
         .literalStrings = *output.literalStrings,
         .constantCollections = *output.constantCollections,
         .slots = *output.slots,
@@ -412,6 +415,16 @@ PassOutcome Pipeline::allocateInnerObjects()
     return m_runner.lastProgramPassOutcome();
 }
 
+PassOutcome Pipeline::reuseEnvironments()
+{
+    *m_output->environmentReuse = edit(PassID::ReuseEnvironments, [&](ProgramEditor& editor) {
+        return Typed::reuseEnvironments(editor, flow(), *m_output->frameAllocation, m_build, [&] {
+            return m_analyses.borrowedParameters();
+        });
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
 PassOutcome Pipeline::numberLiteralStrings()
 {
     internPiecesOfModulePaths(m_program);
@@ -701,6 +714,8 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return allocateInFrames();
     case PassID::AllocateInnerObjects:
         return allocateInnerObjects();
+    case PassID::ReuseEnvironments:
+        return reuseEnvironments();
     case PassID::NumberLiteralStrings:
         return numberLiteralStrings();
     case PassID::EmbedConstantCollections:

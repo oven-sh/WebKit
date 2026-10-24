@@ -968,7 +968,8 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
             continue;
         auto firstOther = std::ranges::find_if(plan.steps[index], [&](FunctionID callee) {
             size_t called = moduleWithBody[callee.index()].index();
-            return modules[called].kind != ModuleKind::CommonJs || plan.hasNoState.quickGet(called);
+            bool runsCommonJS = modules[called].kind == ModuleKind::CommonJs || commonJsModuleCapturedBy(program, modules[called]);
+            return !runsCommonJS || plan.hasNoState.quickGet(called);
         });
         starts.last().numberOfStepsBeforeItBegins = firstOther - plan.steps[index].begin();
     }

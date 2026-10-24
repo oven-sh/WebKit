@@ -3411,6 +3411,13 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
     
     constraints.append(makeUnique<MarkStackMergingConstraint>(*this));
 
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode()) {
+        for (auto& constraint : AOT::createMarkingConstraints(vm()))
+            constraints.append(WTF::move(constraint));
+    }
+#endif
+
     return constraints;
 }
 

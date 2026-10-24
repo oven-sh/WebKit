@@ -26,6 +26,7 @@
 #include "AOTPipelineInternal.h"
 #include "AOTPlacement.h"
 #include "AOTRegExpRequests.h"
+#include "AOTReuseEnvironments.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTSummarizeForInlining.h"
@@ -429,6 +430,9 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
         return;
     case PassID::AllocateInFrames:
         output.frameAllocation->dump(out, m_program);
+        return;
+    case PassID::ReuseEnvironments:
+        output.environmentReuse->dump(out, m_program);
         return;
     case PassID::NumberLiteralStrings:
         output.literalStrings->dump(out, m_program);

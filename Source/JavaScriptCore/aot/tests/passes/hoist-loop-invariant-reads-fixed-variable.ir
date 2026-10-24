@@ -77,9 +77,12 @@ function f3 name="callBeforeRead" parameters=[{type=anything}, {type=boolean}] r
   b3():
     Return v4
 }
+# The one store stands outside every cycle, so the call in the loop is not what stores.
 # CHECK-LABEL: function f3 name="callBeforeRead"
 # CHECK: b0(
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK: b1():
+# CHECK-NOT: GetModuleVariable
 
 function f4 name="initializedBeforeCall" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything, v1: boolean):

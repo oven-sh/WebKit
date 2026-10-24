@@ -653,6 +653,8 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
     RELEASE_ASSERT(context || (!hasSite && !effects.mayCollect));
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
+    if (effects.mayCollect)
+        emitter<BarrierEmitter>().validateBeforeCollection(*context);
 
     RuntimeValidationEmitter::OperandCells cellsBeforeCall;
     if (generator().validates() && context && request.end == CallEnd::Returns && !mayConvertCells(effects) && !options.runsCodeOfHost)
@@ -801,6 +803,9 @@ StubCallResult RuntimeCallEmitter::callStubForTwoReads(const OperationContext& c
 B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationContext& context, const CallPatchpointRequest& request)
 {
     Effects effects = effectsOfCall(context, request.effects);
+    if (effects.mayCollect)
+        emitter<BarrierEmitter>().validateBeforeCollection(context);
+
     B3::PatchpointValue* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);

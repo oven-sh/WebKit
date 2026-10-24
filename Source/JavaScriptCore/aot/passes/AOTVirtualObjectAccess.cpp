@@ -263,6 +263,20 @@ static bool canRelyOn(const VirtualObjectContext& context, const VirtualObjectDe
     return (proven | required) == proven;
 }
 
+// What is planned for a filled slot says nothing of an empty one, so the access is planned once more as one that finds the slot empty.
+static bool looksAtNothingAboveEmptySlot(const VirtualObjectContext& context, const VirtualObjectDescription& description, PropertyAccessQuery query)
+{
+    if ((query.access != Access::Store && query.access != Access::Read) || query.expectsEmptySlot)
+        return false;
+    query.expectsEmptySlot = true;
+    PropertyAccessPlan plan = planPropertyAccess({ context.program, context.flow }, query);
+    if (plan.form != AccessForm::Slot || !plan.conditions.isEmpty() || plan.requiredProofs.contains(Proof::SlotFilled) || plan.requiredProofs.contains(Proof::BirthFieldsFilled))
+        return false;
+    if (query.access == Access::Read && plan.operation != Opcode::GetSlotOrUndefined)
+        return false;
+    return canRelyOn(context, description, plan.requiredProofs);
+}
+
 VirtualFieldAccess lookUpNamedField(const VirtualObjectContext& context, const VirtualObjectDescription& description, const Value& access)
 {
     const Program& program = context.program;
@@ -308,7 +322,7 @@ VirtualFieldAccess lookUpNamedField(const VirtualObjectContext& context, const V
     VirtualFieldAccess result = lookUpSlot(program, description, plan.operation, query->key);
     // A field of birth may have been deleted since: what is planned for a filled slot says nothing of an empty one.
     if (plan.requiredProofs.contains(Proof::SlotFilled) || plan.requiredProofs.contains(Proof::BirthFieldsFilled))
-        result.whenAbsent = AbsentField::Unknown;
+        result.whenAbsent = result.lookup == FieldLookup::Field && looksAtNothingAboveEmptySlot(context, description, *query) ? AbsentField::FindsNothing : AbsentField::Unknown;
     return result;
 }
 

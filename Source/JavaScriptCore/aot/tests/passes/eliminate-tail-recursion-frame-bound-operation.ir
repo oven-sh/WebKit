@@ -26,10 +26,10 @@ function f0 name="evaluatesText" parameters=[{type=number}, {type=anything}] res
 # CHECK-NEXT: ReturnCall v5
 # CHECK-NOT: LoopHint
 
-function f1 name="materializesEnvironment" parameters=[{type=number}] results=[{type=number}] {
+function f1 name="releasesEnvironment" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L0 fields=[0] storage=FrameUntilMaterialized
-    v2 = MaterializeEnvironment v1 layout=L0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    ReleaseEnvironment v1
     v3 = ToBoolean v0
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -38,7 +38,7 @@ function f1 name="materializesEnvironment" parameters=[{type=number}] results=[{
   b2():
     Return v0
 }
-# CHECK-LABEL: function f1 name="materializesEnvironment"
+# CHECK-LABEL: function f1 name="releasesEnvironment"
 # CHECK-NOT: LoopHint
 # CHECK: v4: number = CallDirect v0 function=f1
 # CHECK-NEXT: ReturnCall v4

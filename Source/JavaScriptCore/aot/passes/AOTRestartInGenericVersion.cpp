@@ -31,9 +31,9 @@ static FunctionID findGenericVersionBeside(const Program& program, FunctionID id
 }
 
 // Nobody can tell that it ran, so nobody can tell that it ran twice.
-static bool canRunTwice(const Effects& effects)
+static bool canRunTwice(const BuildContext& build, const Effects& effects)
 {
-    return effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode();
+    return (effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode()) || build.isSabotaged(Sabotage::WritesMayRunTwice);
 }
 
 static BitVector findBlocksThatEndBeforeAnyEffect(FunctionPassContext& pass)
@@ -42,8 +42,8 @@ static BitVector findBlocksThatEndBeforeAnyEffect(FunctionPassContext& pass)
     const CFG& cfg = pass.analyses.cfg();
     BitVector endsBeforeAnyEffect(function.blocks.size());
     for (BlockID block : cfg.reversePostOrder()) {
-        auto canRunTwiceOnAnyEdge = [](const EffectsOnEdges& effects) {
-            return canRunTwice(effects.normal) && canRunTwice(effects.handler);
+        auto canRunTwiceOnAnyEdge = [&](const EffectsOnEdges& effects) {
+            return canRunTwice(pass.build, effects.normal) && canRunTwice(pass.build, effects.handler);
         };
         bool everythingCanRunTwice = canRunTwiceOnAnyEdge(pass.analyses.effectsOfTerminator(block)) && std::ranges::all_of(function.at(block).values, [&](ValueID id) {
             return canRunTwiceOnAnyEdge(pass.analyses.effectsOf(id));

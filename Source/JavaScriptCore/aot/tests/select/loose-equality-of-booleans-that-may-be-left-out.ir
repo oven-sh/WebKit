@@ -1,0 +1,19 @@
+# `a.bold == b.bold` with `bold?: boolean`. No conversion is made between a boolean, undefined and null: two booleans are equal if they are the same, undefined and null equal each other, and neither equals a boolean.
+# So the bits are compared. Beside an object or a number a boolean is converted
+# FORM: Prepared
+# RUN: operator-forms
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Box" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+function f0 name="operators" parameters=[{type=undefined|boolean}, {type=null|boolean}, {type=boolean}, {type=undefined|L0}, {type=undefined|number}] results=[{type=anything}] {
+  b0(v0: undefined|boolean, v1: null|boolean, v2: boolean, v3: undefined|L0, v4: undefined|number):
+    v5 = Eq v0, v1
+    v6 = Eq v0, v2
+    v7 = Eq v0, v3
+    v8 = Eq v0, v4
+    Return v5
+}
+# CHECK: v5 Eq Bits : boolean ; none ; calls=0
+# CHECK-NEXT: v6 Eq Bits : boolean ; none ; calls=0
+# CHECK-NEXT: v7 Eq Generic
+# CHECK-NEXT: v8 Eq Generic

@@ -491,7 +491,7 @@ JSC_DEFINE_HOST_FUNCTION(constructBoundClosure, (JSGlobalObject* globalObject, C
     JSValue newTarget = callFrame->newTarget();
     if (newTarget == JSValue(callee))
         newTarget = target;
-    RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, target, JSC::getConstructData(target), arguments, newTarget)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructAllowingPrimitiveResult(globalObject, target, JSC::getConstructData(target), arguments, newTarget)));
 }
 
 bool Closure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)

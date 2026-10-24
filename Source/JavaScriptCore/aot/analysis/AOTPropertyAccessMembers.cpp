@@ -179,10 +179,10 @@ static void addConditionWithCause(MemberAnswer& walked, const MemberCondition& c
     addCause(walked, cause);
 }
 
-// The object itself must not stand in the way of the lookup.
+// The object itself must not stand in the way of the lookup. The bits of a class follow what happens to compiled objects.
 static void requireLookupPastObject(const Program& program, MemberAnswer& walked, const MemberAnswer& found, const MemberQuery& query, Proof proof, UnprovenCause cause)
 {
-    if (isMemberOfClass(found))
+    if (isMemberOfClass(found) && !builtinBaseClassOf(program, query.layout))
         addConditionWithCause(walked, { MemberCondition::Kind::MemberNotHidden, declaredLayoutOf(program, query.layout), ClassSide::Prototype, query.key }, cause);
     else
         addReceiverProof(walked, proof, cause);
@@ -588,11 +588,14 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
         const BuiltinTable& table = program.builtins();
         BuiltinName name = program.builtinNameOf(key);
         if (BuiltinID member = name ? table.findOwnPropertyOfInstances(builtinBase, name) : BuiltinID()) {
+            // The table lists what an instance may have: an error has a cause only where it was given one.
+            if (query.access == Access::Has)
+                return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
             MemberAnswer answer = createProvenAnswer(MemberKind::Builtin);
             answer.builtin = member;
             return answer;
         }
-        if (table.mayDefineOnNewInstances(builtinBase, name))
+        if (table.mayDefineOnNewInstances(builtinBase, name) || query.access == Access::Store || query.access == Access::Define)
             return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
     }
 

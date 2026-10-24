@@ -115,8 +115,11 @@ static CompiledUnwindResult finishAtHandler(Instance& instance, const CompiledHa
 // The stub takes the thrown value, hands it to whoever waits for the coroutine and returns from the frame.
 static CompiledUnwindResult finishInRejectingStub(Instance& instance, CallFrame* callFrame, const ImageFrame& frame)
 {
-    static void* const code[] = { addressOfStubInCurrentImage(rejectInFrame(false)), addressOfStubInCurrentImage(rejectInFrame(true)) };
-    return finishAtHandler(instance, { callFrame, code[frame.liesBelowSpilledArguments()], CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
+    bool liesBelowSpilledArguments = frame.liesBelowSpilledArguments();
+    void* code = Image::current()->frequentStub(liesBelowSpilledArguments ? Image::FrequentStub::RejectInFrameBelowSpilledArguments : Image::FrequentStub::RejectInFrame, [&] {
+        return addressOfStubInCurrentImage(rejectInFrame(liesBelowSpilledArguments));
+    });
+    return finishAtHandler(instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
 }
 
 bool needsExceptionForEveryThrow(const Instance& instance)

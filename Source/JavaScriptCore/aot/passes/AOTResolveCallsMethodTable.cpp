@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTLayout.h"
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTValueIdentity.h"
@@ -89,7 +90,7 @@ PlanOrDecline<TableCallPlan> CallResolver::planTableCall(const CallSite& site)
         bool isEnteredThroughTable = answer.kind == MemberKind::Method && answer.receiverProofs.isEmpty() && canRetireMemberRead(site, answer.method)
             && canHaveTableEntrypoint(m_program, m_context.types, answer.method, parameters.span());
         for (LayoutID layout : arm.layouts)
-            (isEnteredThroughTable ? receivers : otherReceivers).add(layout);
+            (isEnteredThroughTable && !builtinBaseClassOf(m_program, layout) ? receivers : otherReceivers).add(layout);
         if (!isEnteredThroughTable)
             continue;
         hasConditions |= !answer.conditions.isEmpty();

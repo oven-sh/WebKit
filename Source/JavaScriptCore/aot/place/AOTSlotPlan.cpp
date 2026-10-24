@@ -175,6 +175,7 @@ static Vector<PlannedLayout> createPlannedLayouts(const SlotPlanContext& context
         planned.holdsWideReferences = holdsWideReferences(context, id);
         planned.size = packed.sizes[index];
         planned.extensionSize = packed.extensionSizes[index];
+        planned.isEscapedOffset = packed.isEscapedOffsets[index];
         planned.bytesKeptZero = WTF::move(packed.bytesKeptZero[index]);
         ASSERT(std::ranges::is_sorted(planned.bytesKeptZero));
         planned.slots = packed.slots.subvector(context.rows.firstRowOf(id), context.rows.numberOfRowsOf(id));

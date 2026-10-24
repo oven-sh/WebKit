@@ -230,8 +230,16 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
         if (areWritersKnown && flow.stores == StoreCount::Unknown && order.stores == StoreCount::AtMostOnce && !startsAsFunction)
             flow.stores = StoreCount::AtMostOnce;
     };
-    for (uint32_t index = 0; index < program.variables.size(); ++index)
-        apply(application.variables[index].flow, orders.orderOf(VariableID(index)), index, program.variables[index].initialization == VariableInitialization::Function, !!program.variables[index].owner);
+    for (uint32_t index = 0; index < program.variables.size(); ++index) {
+        LocationFlow& flow = application.variables[index].flow;
+        FlowLocationOrder order = orders.orderOf(VariableID(index));
+        bool isStaticField = !!program.variables[index].owner;
+        apply(flow, order, index, program.variables[index].initialization == VariableInitialization::Function, isStaticField);
+        // The one store stands outside every cycle of code that runs once, so no loop holds it, and every read comes behind it, wherever inlining puts the read: whoever enters a loop that holds a read has passed the store.
+        bool isStoredOnce = flow.stores == StoreCount::AtMostOnce && order.stores == StoreCount::AtMostOnce && flow.storeNaming == StoreNaming::EveryStoreNamesLocation;
+        if (isStoredOnce && !isStaticField && flow.initialization == InitializationState::StoredBeforeEveryRead && order.isStoredBeforeCallersOfReaders)
+            flow.isUnchangedDuringActivation = true;
+    }
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         if (!program.layouts[index].isEnvironment())
             continue;

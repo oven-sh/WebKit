@@ -57,16 +57,21 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
             connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyGetter), ValueFlowProgramNodes::escaped());
             connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everySetter), ValueFlowProgramNodes::escaped());
         }
-        // Only an object that the program has allocated with a layout holds nothing but what was written into it. A built-in object has its members and a namespace object its exports: such a source is handed over whole.
-        Members handedOver;
-        m_context.forEachMember(known(sources), [&](ValueFlowObjectID object) {
-            ValueFlowObjectKind objectKind = m_universe.kindOf(object);
-            LayoutID layout = objectKind == ValueFlowObjectKind::Site || objectKind == ValueFlowObjectKind::Instance ? m_universe.layoutOf(object) : LayoutID();
-            LayoutKind layoutKind = layout ? m_program.at(layout).kind : LayoutKind::ModuleNamespace;
-            if (layoutKind != LayoutKind::Record && layoutKind != LayoutKind::Instance && layoutKind != LayoutKind::Container)
-                handedOver.append(object);
-        });
-        add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOver.span()));
+        // Any other source is handed over whole.
+        add(ValueFlowProgramNodes::escaped(), m_context.restrict(known(sources), ValueSets::complement(m_tables.objectsHoldingOnlyWhatWasWritten())));
+    }
+    // Whoever holds a copy reads out of it what the sources held. Nothing that is done to the copy is done to a source.
+    if (hasEscaped(known(targets))) {
+        ClimbingSet all = withSourcesOfCopies(m_context, known(sources));
+        ClimbingSet read = m_context.restrict(all, m_tables.objectsHoldingOnlyWhatWasWritten());
+        add(ValueFlowProgramNodes::escaped(), m_context.restrict(all, ValueSets::complement(m_tables.objectsHoldingOnlyWhatWasWritten())));
+        connect(m_context.read(read, everyValue), ValueFlowProgramNodes::escaped());
+        connect(storedThroughUnknownObjectInto(read, everyValue), ValueFlowProgramNodes::escaped());
+        connect(storedThroughUntrackedObjectInto(read, everyValue), ValueFlowProgramNodes::escaped());
+        if (keepsAccessors) {
+            connect(m_context.read(read, everyGetter), ValueFlowProgramNodes::escaped());
+            connect(m_context.read(read, everySetter), ValueFlowProgramNodes::escaped());
+        }
     }
 
     // The table knows what a built-in object holds, and the lookup reads the table: the copy reads every member, and one that the host makes at its first read is made here.

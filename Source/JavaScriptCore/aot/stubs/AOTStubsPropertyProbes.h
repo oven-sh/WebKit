@@ -209,12 +209,20 @@ inline GPRReg indexRegisterOfObjectLookup(StubAssembler& jit)
 // Asks the receiver and then the objects above it, each for what it has at this moment.
 // willReturnValue: what to do in front of the return of a plain value that the property table of object has listed. structure has the offset above the eight bits of the attributes and is kept. size, vector and index are free.
 void answerFromObjectsAndReturn(StubAssembler&, ObjectLookupQuestion, const ObjectLookupRegisters&, ObjectLookupName, JumpList& isUnknown, const ScopedLambda<void()>* willReturnValue = nullptr);
+// Where the search for a name that the table lacks ends: at the word of the index that the name would take. vector and size are as the table has them, and index is the number of the word.
+struct EmptyWordsOfPropertyTable {
+    JumpList inCompactIndex;
+    JumpList inWideIndex;
+};
+
 // Takes the Structure of an ordinary object in structure and leaves there what its property table has for uid: the offset, above the eight bits of the attributes. Writes size, vector and index.
-void findInPropertyTable(StubAssembler&, const ObjectLookupRegisters&, JumpList& isAbsent, JumpList& isUnknown);
+// With emptyWords every search goes as far as the index, and nothing is added to isAbsent.
+void findInPropertyTable(StubAssembler&, const ObjectLookupRegisters&, JumpList& isAbsent, JumpList& isUnknown, EmptyWordsOfPropertyTable* = nullptr);
 // object is a compiled object. Leaves in index where the row of its shape has the entry of the field with the name. Writes name, where the name is given by its uid, and vector.
 void locateFieldOfObject(StubAssembler&, const ObjectLookupRegisters&, ObjectLookupName, JumpList& hasNoField, JumpList& isUnknown);
 // Where receiver itself has the property as a plain value that may be written, puts value in its place and returns, and nothing is filed.
-void replaceOwnValueAndReturn(StubAssembler&, SlotOperation, const ObjectLookupRegisters&, ObjectLookupName, GPRReg value, JumpList& cannot);
+// spare is a register that nobody reads once the store cannot fail. With one, and the name given by its uid, a dictionary is also given a name that it lacks, where neither its table nor its storage has to grow.
+void replaceOwnValueAndReturn(StubAssembler&, SlotOperation, const ObjectLookupRegisters&, ObjectLookupName, GPRReg value, JumpList& cannot, GPRReg spare = InvalidGPRReg);
 // What the objects answer is never filed, so a pair that comes again and again has to leave for the operation that files: one miss in MissesOfPairs::missesBetweenFilings.
 void countMissOfPair(StubAssembler&, GPRReg structureID, GPRReg uid, GPRReg counter, JumpList& isDueForFiling);
 

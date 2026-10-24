@@ -26,7 +26,7 @@ static bool isExactInteger(const Type& type, int64_t limit = maxExactInteger)
     return type.isInteger() && type.integers.isSubsetOf({ -limit, limit });
 }
 
-static bool canDivideAsIntegers(QuotientRounding rounding, const Type& dividend, const Type& divisor)
+static bool canDivideAsIntegers(const BuildContext& build, QuotientRounding rounding, const Type& dividend, const Type& divisor)
 {
     int64_t limit = rounding == QuotientRounding::Round ? maxExactInteger >> 2 : maxExactInteger;
     if (!isExactInteger(dividend, limit) || !isExactInteger(divisor, limit))
@@ -41,11 +41,11 @@ static bool canDivideAsIntegers(QuotientRounding rounding, const Type& dividend,
     bool isNeverNegative = dividends.minimum >= 0 && isDivisorPositive;
     switch (rounding) {
     case QuotientRounding::Floor:
-        return isDivisorPositive;
+        return isDivisorPositive || build.isSabotaged(Sabotage::FlooredQuotientsHaveAnyDivisor);
     case QuotientRounding::Ceil:
     case QuotientRounding::Truncate:
     case QuotientRounding::Round:
-        return isNeverNegative;
+        return isNeverNegative || build.isSabotaged(Sabotage::RoundedQuotientsHaveAnySign);
     case QuotientRounding::ToInt32:
         return true;
     }
@@ -166,7 +166,7 @@ private:
             return std::nullopt;
 
         Quotient quotient { definition.leftOperand(), definition.rightOperand() };
-        if (!canDivideAsIntegers(rounding, typeOf(quotient.dividend), typeOf(quotient.divisor)))
+        if (!canDivideAsIntegers(m_context.build, rounding, typeOf(quotient.dividend), typeOf(quotient.divisor)))
             return std::nullopt;
         return quotient;
     }

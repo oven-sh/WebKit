@@ -687,6 +687,19 @@ bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid,
     return false;
 }
 
+bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, UniquedStringImpl* uid)
+{
+    if (structure->id() == m_structureMadeForAdditionByKey)
+        return true;
+    // Zero stands for no pair.
+    uint32_t hash = WTF::pairIntHash(structure->id().bits(), WTF::PtrHash<UniquedStringImpl*>::hash(uid)) | 1;
+    uint32_t& first = m_firstAdditionsByKey[(hash >> 1) % numberOfFirstAdditionsByKey];
+    if (first == hash)
+        return true;
+    first = hash;
+    return false;
+}
+
 const Slot* PropertyCaches::findByKey(Structure* structure, UniquedStringImpl* uid, SlotAccess access)
 {
     StructureID id = structure->id();

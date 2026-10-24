@@ -80,12 +80,6 @@ inline std::span<const uint8_t> withoutByteOrderMark(std::span<const uint8_t> by
     return bytes.subspan(hasMark ? 3 : 0);
 }
 
-// The json() of a body looks for a mark in three bytes or more.
-inline bool hasUTF16LittleEndianMark(std::span<const uint8_t> bytes)
-{
-    return bytes.size() >= 3 && bytes[0] == 0xff && bytes[1] == 0xfe;
-}
-
 // The text JSON.parse gets in place of the bytes of a body. A body without bytes throws what json() rejects with. A value that is no Uint8Array is returned as it is.
 JSValue decodeJSONBody(JSGlobalObject*, JSValue bytes);
 

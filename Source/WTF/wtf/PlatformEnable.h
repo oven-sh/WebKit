@@ -778,6 +778,14 @@
 #endif
 #endif
 
+#if !defined(ENABLE_AOT_POSITION_INDEPENDENT_IMAGE)
+#if OS(DARWIN) || OS(WINDOWS)
+#define ENABLE_AOT_POSITION_INDEPENDENT_IMAGE 1
+#else
+#define ENABLE_AOT_POSITION_INDEPENDENT_IMAGE 0
+#endif
+#endif
+
 /* The JIT disassembler is a debugging-only facility: it is reached solely by
    diagnostic options such as dumpDisassembly, dumpDFGDisassembly,
    dumpFTLDisassembly and logJIT. Its instruction tables are large - the

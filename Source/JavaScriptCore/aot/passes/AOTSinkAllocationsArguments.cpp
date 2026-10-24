@@ -598,12 +598,14 @@ Execution ObjectInterpreter::executeCallOnArguments(ValueID call)
         return listArguments(call);
     if (value.opcode == Opcode::CallBuiltin && value.builtinCallForm() == BuiltinCallForm::List)
         return passListedElements(call);
-    if (value.opcode != Opcode::CallBuiltin || value.builtinCallForm() != BuiltinCallForm::Whole)
+    if (value.opcode != Opcode::CallBuiltin || (value.builtinCallForm() != BuiltinCallForm::Whole && value.builtinCallForm() != BuiltinCallForm::AnyReceiver))
         return executeOther(call);
 
     BuiltinCall builtinCall = builtinCallOf(program(), value);
     if (std::optional<ForwardedCallPlan> plan = planForwardedCall(program(), function(), builtinCall); plan && isArguments(plan->list))
         return forwardArguments(call, *plan);
+    if (value.builtinCallForm() != BuiltinCallForm::Whole)
+        return executeOther(call);
     if (program().builtins().at(builtinCall.overload).builtin == Builtins::ArrayPrototypeSlice && isArguments(builtinCall.receiver))
         return sliceArguments(call);
     return executeOther(call);

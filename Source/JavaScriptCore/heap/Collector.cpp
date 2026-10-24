@@ -22,6 +22,7 @@
 #include "config.h"
 #include "Collector.h"
 
+#include "AOTHeapHooks.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
@@ -100,6 +101,9 @@ private:
 
     WorkResult work() final
     {
+#if ENABLE(AOT)
+        AOT::HeapHooks::willWorkOnThisThread(m_collector.heap().vm());
+#endif
         m_collector.collectInCollectorThread();
         return WorkResult::Continue;
     }
@@ -560,6 +564,9 @@ void Collector::startHelpers()
             }
 
             Thread::registerGCThread(GCThreadType::Helper);
+#if ENABLE(AOT)
+            AOT::HeapHooks::willWorkOnThisThread(heap().vm());
+#endif
 
             {
                 ParallelModeEnabler parallelModeEnabler(*visitor);

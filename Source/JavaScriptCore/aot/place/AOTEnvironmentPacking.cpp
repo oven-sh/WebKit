@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
+#include "AOTReuseEnvironments.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
@@ -33,6 +34,7 @@ public:
         , m_uses(uses)
         , m_packed(packed)
         , m_layout(layout)
+        , m_isReused(context.inputs.environmentReuse.isReused(layout))
     {
         for (unsigned field = 0; field < context.rows.numberOfFieldsOf(layout); ++field) {
             const SlotClaim& claim = claims[rowOf(field)];
@@ -52,7 +54,7 @@ private:
     PlacedSlot& slotOf(unsigned field) { return m_packed.slots[rowOf(field)]; }
     uint32_t sizeOfField(unsigned field) { return widthOf(slotOf(field).representation); }
     uint32_t useCountOf(unsigned field) const { return m_uses.rows[rowOf(field)].environmentUses; }
-    uint32_t allocationSizeFor(uint32_t fieldsEnd) const { return WTF::roundUpToMultipleOf<16>(fieldsEnd); }
+    uint32_t allocationSizeFor(uint32_t fieldsEnd) const { return WTF::roundUpToMultipleOf<16>(fieldsEnd + (m_isReused ? sizeof(bool) : 0)); }
 
     void packWidestFirst();
     void packMostUsedFirst();
@@ -63,6 +65,7 @@ private:
     const SlotUses& m_uses;
     PackedLayouts& m_packed;
     LayoutID m_layout;
+    bool m_isReused;
     Vector<unsigned> m_order;
 };
 
@@ -77,6 +80,8 @@ void EnvironmentPacker::run()
 
 void EnvironmentPacker::setFieldsEnd(uint32_t end)
 {
+    if (m_isReused)
+        m_packed.isEscapedOffsets[m_layout.index()] = end;
     m_packed.sizes[m_layout.index()] = allocationSizeFor(end);
 }
 

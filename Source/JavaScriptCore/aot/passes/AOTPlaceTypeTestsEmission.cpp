@@ -10,6 +10,7 @@
 
 #include "AOTFlowApply.h"
 #include "AOTVector.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -90,7 +91,9 @@ void TestPlacer::emitTests()
 {
     defineAdoptedProofs();
 
-    Vector<uint32_t, 4> run;
+    using TestsAtOnePosition = Vector<uint32_t, 4>;
+    Vector<TestsAtOnePosition, 2> waiting;
+    TestsAtOnePosition run;
     for (uint32_t index = 0; index < m_plan.tests.size();) {
         const PlannedTest& first = m_plan.tests[index];
         run.shrink(0);
@@ -100,26 +103,59 @@ void TestPlacer::emitTests()
         }
         if (run.isEmpty())
             continue;
-
-        RELEASE_ASSERT(m_copy);
-        TestChain chain;
-        switch (first.position) {
-        case PlannedTestPosition::BeforeUse: {
-            const Cut* cut = findCut(first.point);
-            RELEASE_ASSERT(cut);
-            chain = TestChain { cut->blockBefore, Target { cut->blockAfter, { }, { } }, Target { m_copy->copyOf(cut->blockAfter), { }, { } }, m_function.at(cut->blockAfter).frequency, true };
-            break;
-        }
-        case PlannedTestPosition::OnEdge: {
-            BlockID block = ensureSplit(first.edge);
-            Target next = m_function.at(block).terminator.next();
-            chain = TestChain { block, next, Target { m_copy->copyOf(next.block), next.arguments, { } }, m_function.at(next.block).frequency, false };
-            break;
-        }
-        }
-        RELEASE_ASSERT(chain.failedTarget.block);
-        emitChain(WTF::move(chain), run.span());
+        if (hasProofsNamedBy(run.span()))
+            emitTestsAtOnePosition(run.span());
+        else
+            waiting.append(run);
     }
+
+    // Where a slow path comes into a loop behind its head, the order of the blocks has the head behind the body, which rests on the tests of the head.
+    // Every way through the tested code makes a proof in front of the tests that name it, so the first of the waiting tests on such a way waits for none of the others: each turn emits some.
+    while (!waiting.isEmpty()) {
+        unsigned numberOfPositionsEmitted = waiting.removeAllMatching([&](const TestsAtOnePosition& tests) {
+            if (!hasProofsNamedBy(tests.span()))
+                return false;
+            emitTestsAtOnePosition(tests.span());
+            return true;
+        });
+        RELEASE_ASSERT(numberOfPositionsEmitted);
+    }
+}
+
+bool TestPlacer::hasProofsNamedBy(std::span<const uint32_t> testsAtOnePosition) const
+{
+    bool hasProofs = true;
+    for (size_t index = 0; index < testsAtOnePosition.size(); ++index) {
+        forEachTestPrerequisite(m_plan.requirements.span(), *m_plan.conditions, m_plan.tests[testsAtOnePosition[index]].requirement, [&](const TestPrerequisite& prerequisite) {
+            hasProofs = hasProofs && (!m_definitions[prerequisite.condition.index()].isEmpty() || std::ranges::any_of(testsAtOnePosition.first(index), [&](uint32_t earlier) {
+                return m_plan.tests[earlier].condition == prerequisite.condition;
+            }));
+        });
+    }
+    return hasProofs;
+}
+
+void TestPlacer::emitTestsAtOnePosition(std::span<const uint32_t> plannedTests)
+{
+    RELEASE_ASSERT(m_copy);
+    const PlannedTest& first = m_plan.tests[plannedTests.front()];
+    TestChain chain;
+    switch (first.position) {
+    case PlannedTestPosition::BeforeUse: {
+        const Cut* cut = findCut(first.point);
+        RELEASE_ASSERT(cut);
+        chain = TestChain { cut->blockBefore, Target { cut->blockAfter, { }, { } }, Target { m_copy->copyOf(cut->blockAfter), { }, { } }, m_function.at(cut->blockAfter).frequency, true };
+        break;
+    }
+    case PlannedTestPosition::OnEdge: {
+        BlockID block = ensureSplit(first.edge);
+        Target next = m_function.at(block).terminator.next();
+        chain = TestChain { block, next, Target { m_copy->copyOf(next.block), next.arguments, { } }, m_function.at(next.block).frequency, false };
+        break;
+    }
+    }
+    RELEASE_ASSERT(chain.failedTarget.block);
+    emitChain(WTF::move(chain), plannedTests);
 }
 
 void TestPlacer::emitChain(TestChain&& chain, std::span<const uint32_t> plannedTests)

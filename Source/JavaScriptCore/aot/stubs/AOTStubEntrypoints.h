@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImage.h"
 #include "AOTStubKey.h"
 #include "JSExportMacros.h"
 #include "MacroAssemblerCodeRef.h"
@@ -16,6 +17,7 @@ namespace JSC { namespace AOT {
 struct Instance;
 
 JS_EXPORT_PRIVATE void* addressOfStubInCurrentImage(StubKey);
+CodePtr<JSEntryPtrTag> entrypointInCurrentImage(Image::FrequentStub, StubKey);
 
 CodePtr<JSEntryPtrTag> closureEntrypoint();
 JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> slimClosureEntrypoint();

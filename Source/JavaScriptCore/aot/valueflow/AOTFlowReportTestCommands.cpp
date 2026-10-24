@@ -227,7 +227,7 @@ void runFlowReportTestCommand(TestCommandContext& context)
     }
 
     if (output->flow)
-        printFlowReport(context.out, *output->program, buildFlowReport(*output->program, *output->flow, gradeAccessSites(*output->flow, WTF::move(output->accessSiteObservations), context.build).span(), output->remainingChecks.span(), collectFlowReportBodyRecords(*output->program, context.build), context.build));
+        printFlowReport(context.out, *output->program, buildFlowReport(*output->program, *output->flow, gradeAccessSites(*output->program, *output->flow, WTF::move(output->accessSiteObservations), context.build), output->remainingChecks.span(), collectFlowReportBodyRecords(*output->program, context.build), context.build));
     else
         context.out.println("no results"_s);
 

@@ -70,3 +70,32 @@ function f1 name="theHoleHasCodeOfItsOwn" parameters=[{type=Array<string, proven
 }
 # CHECK-LABEL: function f1 name="theHoleHasCodeOfItsOwn"
 # CHECK-NOT: b4() frequency=Unlikely:
+
+# A new array takes what is stored into it but where it has left the storage that it was made with: the arm behind a store that failed is rare, and its store gets no test
+function f2 name="theStoreThatWasTriedFails" parameters=[{type=Array<string, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, pristine[Storage, Names]>):
+    v1: int[0, 4294967295] = GetArrayLength v0
+    v2 = NewArrayWithCapacity v1, v0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967295]):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b5()
+  b2(v7: int[0, 4294967294]):
+    v8 = ElemGet v0, v7 [keyIsIntegral]
+    v9 = TryPutByValDirect v2, v7, v8
+    Branch v9 -> taken b4(), notTaken b3()
+  b3():
+    ElemSet v2, v7, v8 [keyIsIntegral]
+    Jump -> next b4()
+  b4():
+    v11 = Increment v7
+    Jump -> next b1(v11)
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="theStoreThatWasTriedFails"
+# CHECK: b3() frequency=Rare:
+# CHECK-NEXT: ElemSet v2, v7, v8
+# CHECK-NOT: PutArrayElement

@@ -677,6 +677,8 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateAtBirth(ValueID id) cons
     if (allocation.prototypeOperand() && mayAllocateOtherLayout(m_program, allocation))
         return std::nullopt;
     const PlacedAllocation& placed = m_placement.allocation(allocation.allocation());
+    if (m_placement.freeCellOffset(placed.layout))
+        return std::nullopt;
     bool hasFieldInExtension = std::ranges::any_of(placed.initialFields, [&](FieldIndex field) {
         return m_placement.slot(placed.layout, field).isOutOfLine();
     });

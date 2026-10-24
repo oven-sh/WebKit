@@ -244,13 +244,12 @@ static void checkThrowsUnlessCallable(const StubRun& run, uint64_t callee)
 static void testCallsOfNonCells(bool hasOneInstance)
 {
     Calls calls(hasOneInstance);
-    const std::array passed { firstArgument, secondArgument };
     calls.runner.recordCallsOf(Entry::operationAOTThrowUnlessCallable);
     for (uint64_t callee : { undefinedBits, boxedInt32(5), nullBits }) {
         checkThrowsUnlessCallable(calls.runner.runCall(callValue(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee);
         checkThrowsUnlessCallable(calls.runner.runCall(callValueWithoutThis(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee);
         checkThrowsUnlessCallable(calls.runner.runCall(callValue(0), callee, thisValue, { }), callee);
-        checkLandedInEngine(calls.runner.runCall(callValueWithCount(), callee, thisValue, { firstArgument, secondArgument }), callee, thisValue, passed);
+        checkThrowsUnlessCallable(calls.runner.runCall(callValueWithCount(), callee, thisValue, { firstArgument, secondArgument }), callee);
     }
 }
 

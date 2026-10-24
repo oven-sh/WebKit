@@ -1635,8 +1635,9 @@ void JSObject::convertInt32ForValue(VM& vm, JSValue value)
 void JSObject::convertFromCopyOnWrite(VM& vm)
 {
     ASSERT(isCopyOnWrite(indexingMode()));
-    // Every caller that reaches this for an object with immutable properties is about to write its elements in place.
-    RELEASE_ASSERT(!structure()->hasImmutableProperties());
+    // Every caller that reaches this for an object with immutable properties is about to write its elements in place, except defineOwnIndexedProperty() where it
+    // applies new attributes: it moves the elements on to a sparse map at once.
+    RELEASE_ASSERT(!structure()->hasImmutableProperties() || vm.allowLazyMaterializationOfImmutablePropertiesCount);
     ASSERT(structure()->indexingMode() == indexingMode());
 
     const bool hasIndexingHeader = true;
@@ -3256,8 +3257,8 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Nothing below applies: the descriptor is validated against the current one, which defineOwnNonIndexProperty() does.
-    if (structure()->hasImmutableIndexedProperties()) [[unlikely]]
+    // The descriptor is validated against the current one, which defineOwnNonIndexProperty() does. One that only restricts the element comes back here to be applied.
+    if (structure()->hasImmutableIndexedProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         RELEASE_AND_RETURN(scope, defineOwnNonIndexProperty(globalObject, Identifier::from(vm, index), descriptor, throwException));
 
     ASSERT(index <= MAX_ARRAY_INDEX);
@@ -4394,8 +4395,15 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         return true;
     // Step 9.
     std::optional<AllowLazyMaterializationOfImmutableProperties> admitsNewAttributes;
-    if (restrictsImmutableProperty) [[unlikely]]
+    if (restrictsImmutableProperty) [[unlikely]] {
         admitsNewAttributes.emplace(vm);
+        // The attributes of an element lie with the element.
+        if (parseIndex(propertyName))
+            RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, throwException));
+        // An array answers for its length by itself. (JSArray::defineOwnProperty(): one whose every property is immutable stays as it is.)
+        if (propertyName == vm.propertyNames->length && isJSArray(object))
+            return true;
+    }
     unsigned attributes = descriptor.attributesOverridingCurrent(current);
     if (descriptor.isAccessorDescriptor() || (current.isAccessorDescriptor() && !descriptor.isDataDescriptor())) {
         ASSERT(attributes & PropertyAttribute::Accessor);

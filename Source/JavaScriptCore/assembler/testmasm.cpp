@@ -9943,6 +9943,115 @@ void testAddOrFromMemoryAliasing()
 #endif // CPU(X86_64)
 
 #if CPU(X86_64) || CPU(ARM64)
+// The 32-bit immediate of a 64-bit operation stands for its sign extension, whether or not the instruction can hold it.
+void testImmediatesOf64BitOperationsAreSignExtended()
+{
+    constexpr int32_t immediates[] = {
+        -1, -4095, -4096, -4097, -5000, -0x00fff000, -0x00fff001, -0x01000000, std::numeric_limits<int32_t>::min(),
+        0, 1, 4095, 4096, 4097, 5000, 0x00fff001, std::numeric_limits<int32_t>::max()
+    };
+    constexpr CCallHelpers::RelationalCondition conditions[] = {
+        CCallHelpers::Equal, CCallHelpers::NotEqual, CCallHelpers::LessThan, CCallHelpers::GreaterThanOrEqual, CCallHelpers::Below, CCallHelpers::AboveOrEqual
+    };
+    auto holds = [](CCallHelpers::RelationalCondition condition, int64_t left, int64_t right) {
+        switch (condition) {
+        case CCallHelpers::Equal:
+            return left == right;
+        case CCallHelpers::NotEqual:
+            return left != right;
+        case CCallHelpers::LessThan:
+            return left < right;
+        case CCallHelpers::GreaterThanOrEqual:
+            return left >= right;
+        case CCallHelpers::Below:
+            return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+        case CCallHelpers::AboveOrEqual:
+            return static_cast<uint64_t>(left) >= static_cast<uint64_t>(right);
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    };
+
+    for (int32_t immediate : immediates) {
+        const int64_t extended = immediate;
+        const int64_t operands[] = {
+            extended, extended - 1, extended + 1, static_cast<int64_t>(static_cast<uint32_t>(immediate)), 0, -1,
+            std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max()
+        };
+        const CCallHelpers::TrustedImm32 right(immediate);
+
+        for (auto condition : conditions) {
+            auto branch = compile([&](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                auto taken = jit.branch64(condition, GPRInfo::argumentGPR0, right);
+                jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+                taken.link(&jit);
+                jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+            auto select = compile([&](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                jit.moveConditionally64(condition, GPRInfo::argumentGPR0, right, GPRInfo::argumentGPR1, GPRInfo::argumentGPR2, GPRInfo::returnValueGPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+            auto selectDouble = compile([&](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                jit.moveDoubleConditionally64(condition, GPRInfo::argumentGPR0, right, FPRInfo::argumentFPR0, FPRInfo::argumentFPR1, FPRInfo::returnValueFPR);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+            for (int64_t operand : operands) {
+                bool expected = holds(condition, operand, extended);
+                CHECK_EQ(invoke<int32_t>(branch, operand), static_cast<int32_t>(expected));
+                CHECK_EQ(invoke<int64_t>(select, operand, static_cast<int64_t>(11), static_cast<int64_t>(22)), static_cast<int64_t>(expected ? 11 : 22));
+                CHECK_EQ(invoke<double>(selectDouble, operand, 1.5, 2.5), expected ? 1.5 : 2.5);
+            }
+        }
+
+        auto subtract = compile([&](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.branchSub64(CCallHelpers::Zero, GPRInfo::argumentGPR0, right, GPRInfo::returnValueGPR).link(&jit);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+        for (int64_t operand : operands)
+            CHECK_EQ(invoke<uint64_t>(subtract, operand), static_cast<uint64_t>(operand) - static_cast<uint64_t>(extended));
+
+#if CPU(ARM64)
+        auto add = compile([&](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.branchAdd64(CCallHelpers::Zero, GPRInfo::argumentGPR0, right, GPRInfo::returnValueGPR).link(&jit);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+        for (int64_t operand : operands)
+            CHECK_EQ(invoke<uint64_t>(add, operand), static_cast<uint64_t>(operand) + static_cast<uint64_t>(extended));
+#endif
+    }
+}
+
+void testAdd64OfRegisterToMemory()
+{
+    constexpr uint64_t registerValue = 0x00ff00ff12345678ULL;
+    constexpr uint64_t memoryValue = 0x0f0f0f0f87654321ULL;
+    uint64_t words[] = { 1, memoryValue, 2 };
+    uint64_t registerAfterwards = compileAndRun<uint64_t>([&](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.add64(GPRInfo::argumentGPR1, CCallHelpers::Address(GPRInfo::argumentGPR0, sizeof(uint64_t)));
+        jit.move(GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    }, words, registerValue);
+    CHECK_EQ(registerAfterwards, registerValue);
+    CHECK_EQ(words[0], static_cast<uint64_t>(1));
+    CHECK_EQ(words[1], memoryValue + registerValue);
+    CHECK_EQ(words[2], static_cast<uint64_t>(2));
+}
+
 enum class TargetPosition : bool { BeforeSite, AfterSite };
 
 struct PCRelativeProgram {
@@ -11657,6 +11766,8 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #endif
 
 #if CPU(X86_64) || CPU(ARM64)
+    RUN(testImmediatesOf64BitOperationsAreSignExtended());
+    RUN(testAdd64OfRegisterToMemory());
     RUN(testCPUFeatureSet());
     RUN(testAssemblerPolicy());
     RUN(testPCRelativeAddress());

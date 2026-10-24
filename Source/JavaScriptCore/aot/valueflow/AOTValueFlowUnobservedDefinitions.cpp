@@ -37,6 +37,8 @@ struct InitializerSummary {
     Keys definedKeys;
     // Defined as undefined in front of an operation of the initializer that may run other code or throw.
     Keys keysShownToOtherCode;
+    // Defined as undefined in front of another definition.
+    Keys keysDefinedBeforeOthers;
     bool usesObjectOnlyInDefinitions { true };
     bool holdsItself { false };
 };
@@ -156,6 +158,8 @@ static InitializerSummary summarizeInitializer(const Program& program, const Fun
             if (!definesProperty || usesOfObject != 1u + storesAlias)
                 return summary;
             summary.holdsItself |= storesAlias;
+            for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined)
+                summary.keysDefinedBeforeOthers.add(definition.key);
             std::optional<PropertyKeyID> key = keyOfFieldAccess(program, value);
             if (!key) {
                 // ToPropertyKey on an object runs user code.
@@ -460,6 +464,95 @@ static bool superReturnsNewObject(const Program& program, BuildContext& build, L
     return !program.at(current).has(LayoutFlags::HasHeritage);
 }
 
+// The constructor and its initializer define fields of the object, store to them and read them, and do nothing else with it.
+static bool keepsObjectToItself(const Program& program, BuildContext& build, FunctionID id, Keys& definedKeys)
+{
+    const Function& constructor = program.at(id);
+    FunctionAnalyses analyses(AnalysisContext { build, program, nullptr, nullptr, id }, constructor);
+    if (analyses.cfg().hasHandlers())
+        return false;
+
+    Vector<ValueID, 2> objects;
+    if (std::optional<unsigned> thisIndex = constructor.thisParameterIndex())
+        objects.append(analyses.identityOf(constructor.at(entryBlock).parameters[*thisIndex]));
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID value : constructor.at(block).values) {
+            Opcode opcode = constructor.at(value).opcode;
+            if (opcode == Opcode::SuperConstruct || opcode == Opcode::SuperConstructList || (opcode == Opcode::NewObject && program.at(constructor.at(value).layout()).kind == LayoutKind::Instance))
+                objects.append(analyses.identityOf(value));
+        }
+    }
+    auto isObject = [&](ValueID operand) {
+        return operand && objects.contains(analyses.identityOf(operand));
+    };
+    // What an edge hands the object to may be the object. Each round adds a parameter, of which there are finitely many.
+    for (bool changed = true; std::exchange(changed, false);) {
+        for (BlockID block : analyses.cfg().reversePostOrder()) {
+            for (const Target& target : constructor.at(block).terminator.targets) {
+                const auto& parameters = constructor.at(target.block).parameters;
+                for (uint32_t index = 0; index < target.arguments.size(); ++index) {
+                    if (isObject(target.arguments[index]) && !isObject(parameters[index])) {
+                        objects.append(analyses.identityOf(parameters[index]));
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    Vector<ValueID, 8> accesses;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        if (isNeverEntered(constructor, block))
+            continue;
+        for (ValueID valueID : constructor.at(block).values) {
+            const Value& value = constructor.at(valueID);
+            if (handsOperandOnUntested(value.opcode) || value.opcode == Opcode::TypeTest || !countOperands(value, isObject))
+                continue;
+            if (value.opcode == Opcode::CallDirect && program.at(value.function()).kind == FunctionKind::Initializer) {
+                const Function& initializer = program.at(value.function());
+                InitializerSummary summary = summarizeInitializer(program, initializer);
+                if (!summary.usesObjectOnlyInDefinitions || countOperands(value, isObject) != 1)
+                    return false;
+                unsigned thisIndex = *initializer.thisParameterIndex();
+                if (thisIndex >= value.argumentsOperands().size() || !isObject(value.argumentsOperands()[thisIndex]))
+                    return false;
+                for (PropertyKeyID key : summary.definedKeys.span())
+                    definedKeys.add(key);
+                continue;
+            }
+            if (!keyOfFieldAccess(program, value) || !isObject(value.objectOperand()))
+                return false;
+            accesses.append(valueID);
+        }
+
+        const Terminator& terminator = constructor.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Return && countOperands(terminator, isObject))
+            return false;
+    }
+    // Under any other name a store may find a setter above the object, and a read a getter.
+    return std::ranges::all_of(accesses, [&](ValueID access) {
+        return definedKeys.contains(*keyOfFieldAccess(program, constructor.at(access)));
+    });
+}
+
+// An object that somebody else has had in hand may refuse a definition: it takes no more properties, the name is fixed, the private name is there already.
+static bool takesEveryDefinitionBehindSuper(const Program& program, BuildContext& build, LayoutID classLayout)
+{
+    Vector<LayoutID, 4> classesAbove;
+    LayoutID current = predictedHeritageOf(program.at(classLayout));
+    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+        classesAbove.append(current);
+        current = predictedHeritageOf(program.at(current));
+    }
+    Keys definedKeys;
+    for (size_t index = classesAbove.size(); index--;) {
+        FunctionID constructor = program.at(classesAbove[index]).constructor;
+        if (!constructor || !program.at(constructor).hasBody() || !keepsObjectToItself(program, build, constructor, definedKeys))
+            return false;
+    }
+    return true;
+}
+
 static bool isDeclaredByBaseClass(const Program& program, LayoutID classLayout, PropertyKeyID key)
 {
     LayoutID current = predictedHeritageOf(program.at(classLayout));
@@ -504,6 +597,13 @@ static InitializerCall analyzeCall(const Program& program, BuildContext& build, 
     if (isKnownToOtherCode) {
         for (PropertyKeyID key : summary.keysShownToOtherCode.span())
             result.observedKeys.add(key);
+        bool isEveryEarlierKeyObserved = std::ranges::all_of(summary.keysDefinedBeforeOthers.span(), [&](PropertyKeyID key) {
+            return result.observedKeys.contains(key);
+        });
+        if (!isEveryEarlierKeyObserved && !takesEveryDefinitionBehindSuper(program, build, caller.constructedClass)) {
+            for (PropertyKeyID key : summary.keysDefinedBeforeOthers.span())
+                result.observedKeys.add(key);
+        }
     }
     // Redefining a property that a base class created can succeed on an object that the base class made non-extensible, where the next definition throws.
     for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined) {

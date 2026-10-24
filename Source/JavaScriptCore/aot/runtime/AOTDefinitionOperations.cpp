@@ -30,6 +30,7 @@
 #include "AOTState.h"
 #include "DeferTermination.h"
 #include "Error.h"
+#include "ExceptionHelpers.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
@@ -127,6 +128,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
 {
     constexpr Entry entry = Entry::operationAOTDefineField;
     AOT_OPERATION_BEGIN(instance, entry);
+    if (!JSValue::decode(encodedObject).isObject()) [[unlikely]] {
+        throwException(globalObject, scope, JSC::createNotAnObjectError(globalObject, JSValue::decode(encodedObject)));
+        OPERATION_RETURN(scope);
+    }
     JSObject* object = objectArgument(encodedObject, entry);
     JSValue key = JSValue::decode(encodedKey);
     if (std::optional<uint32_t> index = key.tryGetAsUint32Index(); index && canDefineElementsDirectly(object)) {
@@ -243,7 +248,7 @@ static JSObject* createDescriptorLiteral(JSGlobalObject* globalObject, JSValue v
 {
     VM& vm = globalObject->vm();
     const CommonIdentifiers& names = *vm.propertyNames;
-    JSObject* literal = bits.inheritsNothing ? constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()) : constructEmptyObject(globalObject);
+    JSObject* literal = bits.inheritsNothing ? constructEmptyObject(vm, WTF::opaque(globalObject->nullPrototypeObjectStructure())) : constructEmptyObject(globalObject);
     if (bits.hasValue)
         literal->putDirect(vm, names.value, valueOrGetter);
     if (bits.hasWritable)
@@ -270,7 +275,7 @@ static bool descriptorObjectsInheritNoMembers(JSGlobalObject* globalObject)
 // These run nobody's code when a property is defined. One that refuses is as it was, but for a list that is cut short, which refuses again where it stopped.
 static bool definesWithoutOtherCode(VM& vm, JSObject* object, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
-    auto define = WTF::opaque(object)->methodTable()->defineOwnProperty;
+    auto define = object->methodTable()->defineOwnProperty;
     if (define == JSObject::defineOwnProperty || define == Object::info()->methodTable.defineOwnProperty)
         return true;
     if (define == JSArray::info()->methodTable.defineOwnProperty)

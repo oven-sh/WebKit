@@ -55,6 +55,8 @@ NumberBounds narrowToType(const NumberBounds&, const Type&);
 // A position that a value enters. At the other sites a value is read, from a position that has a promise of its own.
 bool isEnteredAt(TypeSiteKind);
 TypeSiteKind siteKindOf(const Program&, const DeclaredType&);
+// `e as int32` in a dependency is its author's word for e: no proof is demanded, and the position that e enters next tests it like any other conversion.
+bool isAssertionOfDependency(const Program&, const DeclaredType&);
 
 // Works on the expected types of a function whose int32 promises are still requests. Each flow is judged alone: what has entered another promise is an int32.
 struct Int32ProofInputs {

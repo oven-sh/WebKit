@@ -111,6 +111,9 @@ static PristineTestInFront findPristineTestInFrontOf(FunctionPassContext& contex
 PlanOrDecline<CallPlan> CallResolver::planFunctionMethod(const CallSite& site)
 {
     const Value& value = m_function.at(site.position.value);
+    // A call by value throws for what cannot be called, as `call` and `apply` do for such a receiver.
+    if (value.builtinCallForm() == BuiltinCallForm::AnyReceiver)
+        return toCallPlan(planForwardedCall(site));
     if (value.builtinCallForm() != BuiltinCallForm::Whole)
         return std::unexpected(CallDeclineReason::None);
 

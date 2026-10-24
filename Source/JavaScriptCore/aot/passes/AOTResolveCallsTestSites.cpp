@@ -466,7 +466,7 @@ static void reportForwardedListTest(TestSiteReporter& reporter)
 {
     FunctionPassContext& context = reporter.context();
     const Value& call = reporter.useValue();
-    if (call.builtinCallForm() != BuiltinCallForm::Whole || !reporter.typeOf(reporter.use()).isAnything())
+    if ((call.builtinCallForm() != BuiltinCallForm::Whole && call.builtinCallForm() != BuiltinCallForm::AnyReceiver) || !reporter.typeOf(reporter.use()).isAnything())
         return;
     std::optional<ForwardedCallPlan> plan = planForwardedCall(context.program, context.function, builtinCallOf(context.program, call));
     if (!plan || !plan->list || isAlwaysArray(reporter.typeOf(plan->list)))

@@ -134,6 +134,37 @@ InitializationState FlowScopeOwnerAnalysis::initializationOf(FlowScopeLocation l
     return InitializationState::Unknown;
 }
 
+// A function is entered only by a call that flow has linked. What the host enters, a call that flow has not linked may enter too.
+bool FlowScopeOwnerAnalysis::anyPrecedesCallersOf(const InitializingStores& stores, FunctionID reader)
+{
+    AOT_THRESHOLD(size_t, mostCallersToFollow, 64);
+    Vector<FunctionID, 8> followed { reader };
+    for (size_t next = 0; next < followed.size(); ++next) {
+        FunctionID function = followed[next];
+        if (followed.size() > mostCallersToFollow || m_index.calls.functionsEnteredByHost.get(function.index()) || !anyPrecedes(stores, entryOf(function)))
+            return false;
+        for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
+            if (FlowScopeFrame* frame = findFrame(call.caller)) {
+                if (!anyPrecedes(stores, entryAt(*frame, call.site)))
+                    return false;
+            } else if (!followed.contains(call.caller))
+                followed.append(call.caller);
+        }
+    }
+    return true;
+}
+
+// The one call of a frame stands in a frame, so that is the only place where its body may come to stand.
+bool FlowScopeOwnerAnalysis::isStoredBeforeCallersOfReaders(FlowScopeLocation location)
+{
+    InitializingStores stores = initializingStoresOf(location);
+    bool result = true;
+    forEachReader(location, [&](const FlowScopeLocationAccess& read) {
+        result = result && (findFrame(read.function) || anyPrecedesCallersOf(stores, read.function));
+    });
+    return result;
+}
+
 StoreCount FlowScopeOwnerAnalysis::storeCountOf(FlowScopeLocation location, bool isSetAtCreation, NOESCAPE const Invocable<bool(const FlowScopeLocationAccess&)> auto& canRunTwice)
 {
     auto stores = accessesAt(m_index.stores.span(), location);
@@ -261,6 +292,8 @@ void FlowScopeOwnerAnalysis::computeOrders(std::span<FlowLocationOrder> orders)
                 return canRunTwice(store);
             }),
         };
+        if (orders[location].initialization == InitializationState::StoredBeforeEveryRead && orders[location].stores == StoreCount::AtMostOnce)
+            orders[location].isStoredBeforeCallersOfReaders = isStoredBeforeCallersOfReaders(location);
     }
     for (LayoutID layout : m_owner.environments)
         computeEnvironmentOrders(layout, orders);

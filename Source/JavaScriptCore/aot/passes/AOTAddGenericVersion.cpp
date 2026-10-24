@@ -123,6 +123,7 @@ private:
     bool removeRedundantChecks();
     bool isReliedOn(ValueID check, Vector<ValueID, 8>& casts);
     bool isOnlyComparedByBits(ValueID check) const;
+    bool isListedTextThatIsOnlyCompared(ValueID check, Vector<ValueID, 8>& casts);
     bool dropChecksNobodyReliesOn();
     bool dropChecksThatTurnAwayWhatArrives();
     bool guardElementsThatOneOperatorTakes();
@@ -510,6 +511,76 @@ bool GenericVersionBuilder::isOnlyComparedByBits(ValueID check) const
     });
 }
 
+// `level === "warn"`: a text is compared with a listed text as it is. To find which of the listed texts it is takes a search, which costs more than the comparisons. Appends the check and the casts of its value.
+bool GenericVersionBuilder::isListedTextThatIsOnlyCompared(ValueID check, Vector<ValueID, 8>& casts)
+{
+    const Type& checked = m_context.types.at(m_function.at(check).castType());
+    if (!checked.hasLiteralStrings() || !checked.hasOnlyPrimitives(Primitive::LiteralString | Primitive::UndefinedOrNull))
+        return false;
+
+    const UseLists& useLists = m_analyses.useLists();
+    BitVector isSameValue(m_function.values.size());
+    Vector<ValueID, 8> worklist;
+    auto add = [&](ValueID value) {
+        if (isSameValue.add(value.index()))
+            worklist.append(value);
+    };
+    // What a test has left of the value goes on as a parameter of the block behind the test.
+    auto addValuesNarrowedBehind = [&](BlockID from) {
+        const Terminator& terminator = m_function.at(from).terminator;
+        for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
+            uint32_t first = firstEdgeResultParameter(m_function, from, targetIndex);
+            const CompactList<ValueID>& parameters = m_function.at(terminator.targets[targetIndex].block).parameters;
+            for (uint32_t resultIndex = 0; resultIndex < numberOfEdgeResults(m_function, from, targetIndex); ++resultIndex) {
+                ValueID narrowed = operandNarrowedOnEdge(m_function, { from, targetIndex, resultIndex });
+                if (narrowed && isSameValue.get(narrowed.index()))
+                    add(parameters[first + resultIndex]);
+            }
+        }
+    };
+    add(check);
+    casts.append(check);
+    while (!worklist.isEmpty()) {
+        for (const Use& use : useLists.usesOf(worklist.takeLast())) {
+            switch (use.kind) {
+            case Use::Kind::Operand: {
+                const Value& user = m_function.at(use.user);
+                if (isCastWithoutTest(user.opcode)) {
+                    if (!isSameValue.get(use.user.index()))
+                        casts.append(use.user);
+                    add(use.user);
+                    break;
+                }
+                // An operation that takes any value and only looks at it.
+                if (user.operandKind(use.operandIndex) != OperandKind::Any || user.operandUses(use.operandIndex) != OperandUses { OperandUse::Inspects })
+                    return false;
+                for (const Use& useOfAnswer : useLists.usesOf(use.user)) {
+                    if (useOfAnswer.kind == Use::Kind::TerminatorOperand)
+                        addValuesNarrowedBehind(useOfAnswer.block);
+                }
+                break;
+            }
+            case Use::Kind::TerminatorOperand:
+                if (m_function.at(use.block).terminator.kind != TerminatorKind::SwitchString)
+                    return false;
+                addValuesNarrowedBehind(use.block);
+                break;
+            case Use::Kind::EdgeArgument:
+            case Use::Kind::HandlerArgument: {
+                const CompactList<ValueID>& parameters = m_function.at(targetOf(m_function, use.edge()).block).parameters;
+                if (use.operandIndex >= parameters.size())
+                    return false;
+                add(parameters[use.operandIndex]);
+                break;
+            }
+            case Use::Kind::BlockSubject:
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // A value that is only handed on, as an argument of a call by value or into a position of any type, is the same value in both versions of the function.
 bool GenericVersionBuilder::dropChecksNobodyReliesOn()
 {
@@ -525,7 +596,8 @@ bool GenericVersionBuilder::dropChecksNobodyReliesOn()
         Vector<ValueID, 8> casts;
         if (isOnlyComparedByBits(site.check))
             casts.append(site.check);
-        else if (!entryParameters.contains(sameObjectThroughCasts(m_function, m_function.at(site.check).valueOperand())) || isReliedOn(site.check, casts))
+        else if (isListedTextThatIsOnlyCompared(site.check, casts)) {
+        } else if (casts.shrink(0); !entryParameters.contains(sameObjectThroughCasts(m_function, m_function.at(site.check).valueOperand())) || isReliedOn(site.check, casts))
             continue;
         dropped.append(site.check);
         erasedCasts.appendVector(casts);

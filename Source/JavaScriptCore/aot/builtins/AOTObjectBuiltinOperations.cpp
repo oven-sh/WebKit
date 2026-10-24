@@ -134,7 +134,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTOwnPropertyKeys, JSCell*, (Instance* instan
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     }
     if (object->structure()->isDictionary()) [[unlikely]]
-        flattenOnce(vm, object);
+        flattenForListing(vm, object);
     Object* compiled = instance->state->objects->layouts.compiledObject(object);
     if (compiled && !globalObject->isHavingABadTime()) {
         if (JSArray* keys = tryListOwnKeys(globalObject, *compiled, kind))

@@ -993,7 +993,7 @@ void ValueFlowPositions::takeWhatArrives(const DeclaredType& declared, ValueFlow
     DeclaredType anything { .type = TypeTable::anything };
     anything.flags.add(PositionFlags::IsExpected);
     ValueFlowPositionResult arriving = resultAt(anything, m_inputs.solver().valueOf(node));
-    if (arriving.proof != ValueFlowProof::Proven || !arriving.narrowed || arriving.narrowed->primitives & ~expected.primitives)
+    if (arriving.proof != ValueFlowProof::Proven || !arriving.narrowed || arriving.narrowed->anyObject || arriving.narrowed->primitives & ~expected.primitives)
         return;
     update.type = m_types.intern(*arriving.narrowed);
     update.replacesExpectation = true;
@@ -1080,7 +1080,7 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
 }
 
 // What a call of JSON.parse or its like has made: a built-in whose row answers plain data is among the callees of the call that the object stands for.
-static bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
+bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
     const ValueFlowUniverse& universe = inputs.universe();
     const BuiltinTable& builtins = inputs.program.builtins();
@@ -1128,8 +1128,12 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
             return loss;
         if (std::optional<ValueFlowUnknownSource> source = m_inputs.solver().unknownSourceOf(node))
             loss.cause = unprovenCauseOf(*source);
-        if (const ValueFlowBirthsOfUnknownObject* births = m_counts.births(m_inputs))
+        if (const ValueFlowBirthsOfUnknownObject* births = m_counts.births(m_inputs)) {
             loss.witness = births->witnessOf(node);
+            loss.hasOtherRoots = births->hasSeveralRoots(node);
+            if (std::optional<ValueFlowUnknownSource> source = births->sourceOf(node))
+                loss.cause = unprovenCauseOf(*source);
+        }
         return loss;
     }
     case ValueFlowProof::Untracked:

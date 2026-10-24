@@ -34,6 +34,7 @@
 #include <tuple>
 #include <wtf/ASCIICType.h>
 #include <wtf/Hasher.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdUnorderedMap.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -51,11 +52,11 @@ public:
 
     std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> build()
     {
-        bool givesUpAtSurrogates = false;
-        if (m_pattern.eitherUnicode() && !consumesSingleCodeUnits(*m_pattern.m_body, Subjects::All)) {
-            if (!consumesSingleCodeUnits(*m_pattern.m_body, Subjects::With8BitCharacters))
-                return makeUnexpected(FlatProgramDecline::UnicodeMode);
-            givesUpAtSurrogates = true;
+        if (m_pattern.eitherUnicode()) {
+            auto steps = whatStepsConsume(*m_pattern.m_body);
+            if (steps == Steps::Strings)
+                return makeUnexpected(FlatProgramDecline::ClassWithStrings);
+            m_decodesSurrogatePairs = steps == Steps::Surrogates;
         }
         if (m_pattern.hasDuplicateNamedCaptureGroups())
             return makeUnexpected(FlatProgramDecline::DuplicateNamedGroups);
@@ -68,7 +69,7 @@ public:
         if (m_pattern.hasEndAnchoredFixedSize())
             program->endAnchoredFixedSize = m_pattern.m_endAnchoredFixedSize;
         program->triesOnlyOnce = m_pattern.sticky();
-        program->givesUpAtSurrogates = givesUpAtSurrogates;
+        program->decodesSurrogatePairs = m_decodesSurrogatePairs;
         program->countsTurns = m_countsTurns;
 
         auto& alternatives = m_pattern.m_body->m_alternatives;
@@ -97,7 +98,11 @@ public:
         removeUnneededLogging(*program);
         assignMemoRows();
         if (!m_countsTurns)
-            program->stepsPerCharacterBeforeStopping = program->jitCountsTurns ? 32 : program->memoRows ? 8 : 0;
+            program->stepsPerCharacterBeforeStoppingOnFullMachine = program->jitCountsTurns ? 32 : program->memoRows ? 8 : 0;
+        program->needsFullMachine = std::ranges::any_of(program->ops, isStepBackward);
+        program->isEnteredOutOfLine = m_countsTurns || program->needsFullMachine;
+        if (!program->needsFullMachine)
+            program->stepsPerCharacterBeforeStopping = program->stepsPerCharacterBeforeStoppingOnFullMachine;
         if (!m_countsTurns)
             computeStartScan(alternatives.span().first(count));
 
@@ -116,6 +121,7 @@ public:
         program->turnsThatMayTakeNothing.shrinkToFit();
         program->loopsThatCountTurns.shrinkToFit();
         program->aroundMemoRow.shrinkToFit();
+        program->referencedGroups.shrinkToFit();
         return program;
     }
 
@@ -124,7 +130,7 @@ private:
 
     static bool holdsSingleCodeUnits(const CharacterClass& characterClass)
     {
-        if (characterClass.hasStrings() || characterClass.hasNonBMPCharacters())
+        if (characterClass.hasNonBMPCharacters())
             return false;
         bool hasSurrogate = std::ranges::any_of(characterClass.m_matches32, [](char32_t character) {
             return U_IS_SURROGATE(character);
@@ -135,15 +141,15 @@ private:
         return !hasSurrogate;
     }
 
-    enum class Subjects : bool { All, With8BitCharacters };
+    enum class Steps : uint8_t { SingleCodeUnits, Surrogates, Strings };
 
     // In unicode mode a step consumes a code point. Where no step can consume a surrogate, a code point that is consumed is one code unit, and the program for code units answers the same.
-    // A subject of 8-bit characters has no surrogate for a class to consume, whatever the class holds.
     // The parser has made classes of the letters that have other cases. RegExp::matchInline keeps a match from beginning inside a surrogate pair.
-    static bool consumesSingleCodeUnits(const PatternDisjunction& disjunction, Subjects subjects, unsigned depth = 0)
+    static Steps whatStepsConsume(const PatternDisjunction& disjunction, unsigned depth = 0)
     {
+        Steps steps = Steps::SingleCodeUnits;
         if (depth > maxNestingDepth)
-            return false;
+            return steps;
         for (auto& alternative : disjunction.m_alternatives) {
             for (const PatternTerm& term : alternative->m_terms) {
                 switch (term.type) {
@@ -157,33 +163,29 @@ private:
                     break;
                 case PatternTerm::Type::PatternCharacter:
                     if (!isSingleCodeUnit(term.patternCharacter))
-                        return false;
+                        steps = std::max(steps, Steps::Surrogates);
                     break;
                 case PatternTerm::Type::CharacterClass:
-                    if (subjects == Subjects::With8BitCharacters) {
-                        if (term.characterClass->hasStrings())
-                            return false;
-                        break;
-                    }
+                    if (term.characterClass->hasStrings())
+                        return Steps::Strings;
                     if (term.invert() || !holdsSingleCodeUnits(*term.characterClass))
-                        return false;
+                        steps = std::max(steps, Steps::Surrogates);
                     break;
                 case PatternTerm::Type::ParenthesesSubpattern:
                 case PatternTerm::Type::ParentheticalAssertion:
-                    if (!consumesSingleCodeUnits(*term.parentheses.disjunction, subjects, depth + 1))
-                        return false;
+                    steps = std::max(steps, whatStepsConsume(*term.parentheses.disjunction, depth + 1));
                     break;
                 case PatternTerm::Type::DotStarEnclosure:
                     break;
                 }
             }
         }
-        return true;
+        return steps;
     }
 
     using Kind = FlatOp::Kind;
     using Alternatives = std::span<const std::unique_ptr<PatternAlternative>>;
-    using SetKey = std::tuple<const CharacterClass*, bool, char16_t, char16_t>;
+    using SetKey = std::tuple<const CharacterClass*, bool, char32_t, char32_t>;
 
     static constexpr unsigned maxNestingDepth = 64;
     static constexpr unsigned maxTermsVisitedForEmptiness = 64;
@@ -303,7 +305,8 @@ private:
             case Kind::LazyRun:
             case Kind::GreedyRunBeforeKnownCharacters:
             case Kind::LazyRunBeforeKnownCharacters:
-                if (!hasTooManyRows[i]) {
+                // The step behind such a Choice changes the position in its frame.
+                if (!hasTooManyRows[i] && !isStepBackward(ops[i + 1])) {
                     ops[i].memoRow = static_cast<uint16_t>(m_program->memoRows + 1);
                     m_program->memoRows += rowsOfOp[i];
                     m_program->aroundMemoRow.grow(m_program->memoRows + 1);
@@ -317,12 +320,20 @@ private:
     }
     void setTarget(unsigned op) { m_program->ops[op].target = here(); }
 
+    // In units, as YarrPatternConstructor::setupAlternativeOffsets() counts them.
+    static uint64_t unitsOfOne(const PatternTerm& term)
+    {
+        if (term.type == PatternTerm::Type::PatternCharacter)
+            return U16_LENGTH(term.patternCharacter);
+        return term.characterClass->hasOneCharacterSize() && !term.invert() && term.characterClass->hasNonBMPCharacters() ? 2 : 1;
+    }
+
     static uint64_t minimumSize(const PatternTerm& term)
     {
         switch (term.type) {
         case PatternTerm::Type::PatternCharacter:
         case PatternTerm::Type::CharacterClass:
-            return static_cast<unsigned>(term.quantityMinCount);
+            return static_cast<unsigned>(term.quantityMinCount) * unitsOfOne(term);
         case PatternTerm::Type::ParenthesesSubpattern:
             return static_cast<uint64_t>(static_cast<unsigned>(term.quantityMinCount)) * term.parentheses.disjunction->m_minimumSize;
         case PatternTerm::Type::AssertionBOL:
@@ -351,12 +362,31 @@ private:
         return op;
     }
 
-    unsigned emitNeedsInput(uint64_t needed) { return emitWithNeeded(Kind::NeedsInput, needed); }
+    static bool isStepBackward(const FlatOp& op) { return op.kind == Kind::DotStarEnclosure && op.registerIndex; }
+
+    // See Enclosure::readBackward().
+    FlatOp& emitStepBackward(FlatStepBackward step)
+    {
+        unsigned choice = emit(Kind::Choice);
+        unsigned op = emitWithRegister(Kind::DotStarEnclosure, std::to_underlying(step));
+        setTarget(choice);
+        return m_program->ops[op];
+    }
+
+    void emitNeedsInput(uint64_t needed)
+    {
+        if (!m_readsBackward) {
+            emitWithNeeded(Kind::NeedsInput, needed);
+            return;
+        }
+        emitStepBackward(FlatStepBackward::NeedsInput).needed = static_cast<uint32_t>(std::min<uint64_t>(needed, std::numeric_limits<uint32_t>::max()));
+    }
     unsigned emitNeedsInputElseJump(uint64_t needed) { return emitWithNeeded(Kind::NeedsInputElseJump, needed); }
 
-    static uint64_t neededToEnter(const PatternDisjunction& disjunction, uint64_t neededAfter)
+    // In a lookbehind each alternative tests for itself.
+    uint64_t neededToEnter(const PatternDisjunction& disjunction, uint64_t neededAfter) const
     {
-        return disjunction.m_minimumSize && neededAfter ? disjunction.m_minimumSize + neededAfter : 0;
+        return !m_readsBackward && disjunction.m_minimumSize && neededAfter ? disjunction.m_minimumSize + neededAfter : 0;
     }
 
     static bool hasAllLatin1Characters(const FirstSetBits& set)
@@ -652,7 +682,7 @@ private:
             m_program->startScan = FlatStartScan::OneCharacter;
     }
 
-    unsigned internSet(const CharacterClass* characterClass, bool invert, char16_t first, char16_t second)
+    unsigned internSet(const CharacterClass* characterClass, bool invert, char32_t first, char32_t second)
     {
         ASSERT(characterClass || !invert);
         auto [entry, isNew] = m_setIndexes.try_emplace(SetKey { characterClass, invert, first, second }, m_program->characterSets.size());
@@ -678,7 +708,7 @@ private:
     {
         if (term.type == PatternTerm::Type::CharacterClass)
             return internSet(term.characterClass, term.invert(), 0, 0);
-        char16_t character = term.patternCharacter;
+        char32_t character = term.patternCharacter;
         if (isCased(term))
             return internSet(nullptr, false, toASCIILower(character), toASCIIUpper(character));
         return internSet(nullptr, false, character, character);
@@ -900,7 +930,7 @@ private:
         if (context.nestingDepth >= maxNestingDepth)
             return decline(FlatProgramDecline::NestedTooDeep);
         ++context.nestingDepth;
-        if (m_countsTurns)
+        if (m_countsTurns || m_readsBackward)
             return emitAlternativesInOrder(alternatives, context);
         if (alternatives.size() == 1)
             return emitAlternative(*alternatives[0], context);
@@ -927,11 +957,11 @@ private:
             }
         }
         if (term.capture())
-            emit(Kind::LoggedCaptureStart, slot);
+            emit(Kind::LoggedCaptureStart, slot + m_readsBackward);
         if (!emitAlternatives(alternatives.span(), context))
             return false;
         if (term.capture())
-            emit(Kind::LoggedCaptureEnd, slot + 1);
+            emit(Kind::LoggedCaptureEnd, slot + !m_readsBackward);
         return true;
     }
 
@@ -1114,10 +1144,6 @@ private:
 
     bool emitGroup(const PatternTerm& term, EmitContext context)
     {
-        if (term.parentheses.isCopy)
-            return decline(FlatProgramDecline::CopiedGroup);
-        if (term.matchDirection() != Forward)
-            return decline(FlatProgramDecline::Lookbehind);
         unsigned min = term.quantityMinCount;
         unsigned max = term.quantityMaxCount;
         const PatternDisjunction& disjunction = *term.parentheses.disjunction;
@@ -1134,7 +1160,8 @@ private:
             if (computeInputConsumption(disjunction, termsLeftToVisit) == InputConsumption::None)
                 return !min || emitGroupBody(term, context);
         }
-        if (max == 1)
+        // In a lookbehind X{1,2} is X? in front of X. It takes another turn of the same group, which begins without what the first has captured.
+        if (max == 1 && !term.parentheses.isCopy)
             return min ? emitGroupBody(term, context) : emitOptionalGroup(term, context);
         Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurnsOf(term) };
         return emitLoop(loop, [&] {
@@ -1165,25 +1192,31 @@ private:
         }
     }
 
+    static std::optional<uint32_t> fixedWidth(const PatternAlternative& alternative)
+    {
+        uint64_t width = 0;
+        for (const PatternTerm& term : alternative.m_terms) {
+            bool isCharacter = term.type == PatternTerm::Type::PatternCharacter || term.type == PatternTerm::Type::CharacterClass;
+            bool isAssertion = term.type == PatternTerm::Type::AssertionBOL || term.type == PatternTerm::Type::AssertionEOL || term.type == PatternTerm::Type::AssertionWordBoundary;
+            if (!isAssertion && (!isCharacter || term.quantityType != QuantifierType::FixedCount))
+                return std::nullopt;
+            width += isCharacter ? static_cast<unsigned>(term.quantityMaxCount) : 0;
+        }
+        if (width > std::numeric_limits<int32_t>::max())
+            return std::nullopt;
+        return static_cast<uint32_t>(width);
+    }
+
     // Characters and classes that are each taken a fixed number of times, and assertions between them, match the same whichever way they are read: so a lookbehind that consists of nothing else
-    // steps back by as many characters as an alternative takes and reads it forward.
-    bool emitAlternativesOfLookbehind(Alternatives alternatives)
+    // steps back by as many characters as an alternative takes and reads it forward. Only where a character is a unit.
+    bool emitAlternativesOfFixedWidthBehind(Alternatives alternatives)
     {
         Vector<unsigned, 8> jumpsToEnd;
         for (auto& alternative : alternatives) {
-            uint64_t width = 0;
-            for (const PatternTerm& term : alternative->m_terms) {
-                bool isCharacter = term.type == PatternTerm::Type::PatternCharacter || term.type == PatternTerm::Type::CharacterClass;
-                bool isAssertion = term.type == PatternTerm::Type::AssertionBOL || term.type == PatternTerm::Type::AssertionEOL || term.type == PatternTerm::Type::AssertionWordBoundary;
-                if (!isAssertion && (!isCharacter || term.quantityType != QuantifierType::FixedCount))
-                    return decline(FlatProgramDecline::Lookbehind);
-                width += isCharacter ? static_cast<unsigned>(term.quantityMaxCount) : 0;
-            }
-            if (width > std::numeric_limits<int32_t>::max())
-                return decline(FlatProgramDecline::Lookbehind);
+            uint32_t width = *fixedWidth(*alternative);
             bool isLast = &alternative == &alternatives.back();
             unsigned choice = isLast ? 0 : emit(Kind::Choice);
-            emit(Kind::StepBack, static_cast<uint32_t>(width));
+            emit(Kind::StepBack, width);
             for (const PatternTerm& term : alternative->m_terms) {
                 if (!emitAssertion(term))
                     emitFixedAtom(term);
@@ -1202,8 +1235,20 @@ private:
     {
         Alternatives alternatives = term.parentheses.disjunction->m_alternatives.span();
         context.initialInputPosition = term.inputPosition;
+        SetForScope readsBackward(m_readsBackward, term.matchDirection() == Backward);
         auto emitBody = [&] {
-            return term.matchDirection() == Forward ? emitAlternatives(alternatives, context) : emitAlternativesOfLookbehind(alternatives);
+            if (!m_readsBackward)
+                return emitAlternatives(alternatives, context);
+            bool hasFixedWidth = std::ranges::all_of(alternatives, [](auto& alternative) {
+                return !!fixedWidth(*alternative);
+            });
+            if (hasFixedWidth && !m_decodesSurrogatePairs)
+                return emitAlternativesOfFixedWidthBehind(alternatives);
+            // As ByteCompiler::emitDisjunction(): one that must fail does not test for what its shortest alternative needs.
+            context.testedFor = term.parentheses.disjunction->m_minimumSize;
+            if (context.testedFor && !term.invert())
+                emitNeedsInput(context.testedFor);
+            return emitAlternatives(alternatives, context);
         };
         unsigned frameDepthRegister = m_nextRegister++;
         if (term.invert()) {
@@ -1316,20 +1361,22 @@ private:
             emitNeedsInput(neededAfter);
     }
 
-    void emitFixedAtom(const PatternTerm& term)
+    // testedForFromHere: FlatProgramForm::CountsTurns, where surrogate pairs are decoded: for how many units from the term on the bytecode has tested.
+    void emitFixedAtom(const PatternTerm& term, uint64_t testedForFromHere = 0)
     {
         unsigned count = term.quantityMaxCount;
         if (!count)
             return;
-        if (count > 1)
-            emitWithSet(Kind::SetCount, setForTerm(term), count);
-        else if (term.type == PatternTerm::Type::PatternCharacter && !isCased(term))
+        if (count == 1 && term.type == PatternTerm::Type::PatternCharacter && !isCased(term) && (!m_decodesSurrogatePairs || isSingleCodeUnit(term.patternCharacter))) {
             emit(Kind::Character, term.patternCharacter);
-        else
-            emitWithSet(Kind::Set, setForTerm(term));
+            return;
+        }
+        unsigned op = count > 1 ? emitWithSet(Kind::SetCount, setForTerm(term), count) : emitWithSet(Kind::Set, setForTerm(term));
+        if (testedForFromHere > count * unitsOfOne(term))
+            setNeeded(op, testedForFromHere - count * unitsOfOne(term));
     }
 
-    static bool isTextCharacter(const PatternAlternative& alternative, unsigned i, bool wide)
+    bool isTextCharacter(const PatternAlternative& alternative, unsigned i, bool wide) const
     {
         auto& terms = alternative.m_terms;
         if (i >= terms.size())
@@ -1337,32 +1384,39 @@ private:
         const PatternTerm& term = terms[i];
         if (term.type != PatternTerm::Type::PatternCharacter || term.matchDirection() != Forward || term.quantityType != QuantifierType::FixedCount || term.quantityMaxCount != 1)
             return false;
-        if (isLatin1(term.patternCharacter) == wide)
+        if (isLatin1(term.patternCharacter) == wide || (m_decodesSurrogatePairs && U_IS_SURROGATE(term.patternCharacter)))
             return false;
         bool beginsRun = i + 1 < terms.size() && isAtom(terms[i + 1]) && terms[i + 1].quantityType != QuantifierType::FixedCount && matchesSameCharacters(term, terms[i + 1]);
         return !beginsRun;
     }
 
-    unsigned emitFixedAtoms(const PatternAlternative& alternative, unsigned i, unsigned limit = std::numeric_limits<unsigned>::max())
+    unsigned emitFixedAtoms(const PatternAlternative& alternative, unsigned i, unsigned limit = std::numeric_limits<unsigned>::max(), uint64_t testedForFromHere = 0)
     {
         auto& terms = alternative.m_terms;
         const PatternTerm& term = terms[i];
         bool isWide = term.type == PatternTerm::Type::PatternCharacter && !isLatin1(term.patternCharacter);
         unsigned end = i;
+        unsigned units = 0;
         bool hasCase = false;
         while (end < limit && isTextCharacter(alternative, end, isWide)) {
             hasCase |= isCased(terms[end]);
+            units += U16_LENGTH(terms[end].patternCharacter);
             ++end;
         }
-        if (end - i < 2) {
-            emitFixedAtom(term);
+        if (units < 2) {
+            emitFixedAtom(term, testedForFromHere);
             return 1;
         }
         if (isWide) {
             unsigned offset = m_program->wideText.size();
-            for (unsigned j = i; j < end; ++j)
-                m_program->wideText.append(static_cast<char16_t>(terms[j].patternCharacter));
-            emit(Kind::WideText, offset, end - i);
+            for (unsigned j = i; j < end; ++j) {
+                char32_t character = terms[j].patternCharacter;
+                if (U_IS_BMP(character))
+                    m_program->wideText.append(static_cast<char16_t>(character));
+                else
+                    m_program->wideText.appendList({ U16_LEAD(character), U16_TRAIL(character) });
+            }
+            emit(Kind::WideText, offset, units);
         } else {
             unsigned offset = m_program->text.size();
             for (unsigned j = i; j < end; ++j) {
@@ -1380,11 +1434,21 @@ private:
 
     bool emitBackReference(const PatternTerm& term)
     {
-        if (term.matchDirection() != Forward)
+        // The bytecode reads surrogate pairs in front of the position in a way of its own.
+        if (m_readsBackward && m_decodesSurrogatePairs)
             return decline(FlatProgramDecline::Lookbehind);
-        m_searchDependsOnMoreThanPosition = true;
+        uint32_t group = term.backReferenceSubpatternId << 1;
+        if (!m_program->referencedGroups.contains(group))
+            m_program->referencedGroups.append(group);
+        m_searchDependsOnMoreThanPosition |= m_program->referencedGroups.size() > FlatProgram::maxReferencedGroups;
         auto emitReference = [&] {
-            emit(term.ignoreCase() ? Kind::BackReferenceIgnoringCase : Kind::BackReference, term.backReferenceSubpatternId << 1, m_pattern.eitherUnicode());
+            if (m_readsBackward) {
+                FlatOp& op = emitStepBackward(FlatStepBackward::BackReference);
+                op.argument = group;
+                op.target = m_pattern.eitherUnicode();
+                op.needed = term.ignoreCase();
+            } else
+                emit(term.ignoreCase() ? Kind::BackReferenceIgnoringCase : Kind::BackReference, group, m_pattern.eitherUnicode());
             return true;
         };
         unsigned max = term.quantityMaxCount;
@@ -1396,10 +1460,79 @@ private:
         return emitLoop({ isFixed ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, true, 0, std::nullopt }, emitReference);
     }
 
+    bool emitAtomReadBackward(const PatternTerm& term)
+    {
+        constexpr unsigned maxCopies = 8;
+        unsigned max = term.quantityMaxCount;
+        bool isFixed = term.quantityType == QuantifierType::FixedCount;
+        auto emitOne = [&] {
+            unsigned set = setForTerm(term);
+            emitStepBackward(FlatStepBackward::Set).set = static_cast<uint16_t>(set);
+            return true;
+        };
+        if (!isFixed || max > maxCopies)
+            return emitLoop({ isFixed ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, false, 0, std::nullopt }, emitOne);
+        for (unsigned i = 0; i < max; ++i)
+            emitOne();
+        return true;
+    }
+
+    // The last term first, as ByteCompiler::emitDisjunction().
+    bool emitAlternativeReadBackward(const PatternAlternative& alternative, EmitContext context)
+    {
+        auto& terms = alternative.m_terms;
+        // FlatProgramForm::CountsTurns: the bytecode tests for no group but one that is taken exactly once.
+        auto testedFor = [&](const PatternTerm& term) {
+            bool isLeftOut = m_countsTurns && term.type == PatternTerm::Type::ParenthesesSubpattern && (term.quantityMaxCount != 1 || term.quantityType != QuantifierType::FixedCount);
+            return isLeftOut ? 0 : minimumSize(term);
+        };
+        uint64_t neededAfter = context.neededAfter;
+        for (auto& term : terms)
+            neededAfter += testedFor(term);
+        for (const PatternTerm& term : terms.span() | std::views::reverse) {
+            if (hasExceededIndexLimit())
+                return decline(FlatProgramDecline::TooManySetsOrRegisters);
+            neededAfter -= testedFor(term);
+            switch (term.type) {
+            case PatternTerm::Type::AssertionBOL:
+            case PatternTerm::Type::AssertionEOL:
+            case PatternTerm::Type::AssertionWordBoundary:
+                emitAssertion(term);
+                break;
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass:
+                if (!emitAtomReadBackward(term))
+                    return false;
+                break;
+            case PatternTerm::Type::ParenthesesSubpattern:
+                if (!emitGroup(term, { neededAfter, context.nestingDepth, context.sharedPrefixDepth, 0, 0 }))
+                    return false;
+                break;
+            case PatternTerm::Type::ParentheticalAssertion:
+                if (!emitLookahead(term, { 0, context.nestingDepth, context.sharedPrefixDepth, 0, 0 }))
+                    return false;
+                break;
+            case PatternTerm::Type::NumberedBackReference:
+            case PatternTerm::Type::NamedBackReference:
+                if (!emitBackReference(term))
+                    return false;
+                break;
+            case PatternTerm::Type::NumberedForwardReference:
+            case PatternTerm::Type::NamedForwardReference:
+                break;
+            case PatternTerm::Type::DotStarEnclosure:
+                return decline(FlatProgramDecline::Lookbehind);
+            }
+        }
+        return true;
+    }
+
     bool emitAlternative(const PatternAlternative& alternative, EmitContext context, unsigned begin = 0)
     {
-        if (alternative.matchDirection() != Forward)
+        if ((alternative.matchDirection() == Backward) != m_readsBackward)
             return decline(FlatProgramDecline::Lookbehind);
+        if (m_readsBackward)
+            return emitAlternativeReadBackward(alternative, context);
         auto& terms = alternative.m_terms;
         uint64_t neededAfter = context.neededAfter;
         for (unsigned i = begin; i < terms.size(); ++i)
@@ -1432,7 +1565,7 @@ private:
                     i += run->terms - 1;
                     break;
                 }
-                i += emitFixedAtoms(alternative, i) - 1;
+                i += emitFixedAtoms(alternative, i, std::numeric_limits<unsigned>::max(), m_countsTurns && m_decodesSurrogatePairs ? neededAfter : 0) - 1;
                 break;
             case PatternTerm::Type::ParenthesesSubpattern:
                 if (!emitGroup(term, { neededAfter, context.nestingDepth, context.sharedPrefixDepth, 0, 0 }))
@@ -1472,6 +1605,8 @@ private:
     Vector<std::tuple<unsigned, unsigned, unsigned>, 8> m_turnsThatMayTakeNothing;
     Vector<std::tuple<unsigned, unsigned, unsigned, unsigned>, 8> m_loopsThatCountTurns;
     bool m_searchDependsOnMoreThanPosition { false };
+    bool m_decodesSurrogatePairs { false };
+    bool m_readsBackward { false };
     unsigned m_nextRegister { 0 };
     const bool m_countsTurns;
 };
@@ -1481,7 +1616,8 @@ size_t FlatProgram::estimatedSizeInBytes() const
     return ops.capacity() * sizeof(FlatOp) + characterSets.capacity() * sizeof(CharacterSetBits) + firstSets.capacity() * sizeof(FirstSetBits)
         + dispatchClasses.capacity() * sizeof(uint16_t) + dispatchEntries.capacity() * sizeof(uint32_t)
         + wideRanges.capacity() * sizeof(CharacterRange) + text.capacity() + wideText.capacity() * sizeof(char16_t)
-        + turnsThatMayTakeNothing.capacity() * sizeof(TurnThatMayTakeNothing) + loopsThatCountTurns.capacity() * sizeof(LoopThatCountsTurns) + aroundMemoRow.capacity() * sizeof(AroundMemoRow);
+        + turnsThatMayTakeNothing.capacity() * sizeof(TurnThatMayTakeNothing) + loopsThatCountTurns.capacity() * sizeof(LoopThatCountsTurns) + aroundMemoRow.capacity() * sizeof(AroundMemoRow)
+        + referencedGroups.capacity() * sizeof(uint32_t);
 }
 
 // As YarrGenerator::disjunctionContainsBacktrackableContent().
@@ -1521,8 +1657,8 @@ std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgr
 ASCIILiteral description(FlatProgramDecline reason)
 {
     switch (reason) {
-    case FlatProgramDecline::UnicodeMode:
-        return "unicode mode"_s;
+    case FlatProgramDecline::ClassWithStrings:
+        return "class with strings"_s;
     case FlatProgramDecline::Lookbehind:
         return "lookbehind"_s;
     case FlatProgramDecline::DuplicateNamedGroups:

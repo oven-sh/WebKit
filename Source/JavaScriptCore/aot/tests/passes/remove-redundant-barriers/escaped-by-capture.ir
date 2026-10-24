@@ -1,0 +1,34 @@
+# A closure retains the environment it captures and its allocation can collect, so a store to an environment the function allocated keeps its barrier once a closure has captured it.
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="escaped-by-capture" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewClosure v1 function=f2
+    PutModuleVariable v2 variable=g0
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: function f0 name="escaped-by-capture"
+# CHECK: PutEnvironmentField v1, v0 layout=L0
+# CHECK-NOT: ownerCannotBeMarked
+function f1 name="stored-before-capture" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    v3 = NewClosure v1 function=f2
+    PutModuleVariable v3 variable=g0
+    Return
+}
+# CHECK-LABEL: function f1 name="stored-before-capture"
+# CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+function f2 name="captures-environment" kind=Arrow captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    Return
+}

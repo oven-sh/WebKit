@@ -2,7 +2,7 @@
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys
-# STATISTIC: OwnKeyWalksExpanded = 3
+# STATISTIC: OwnKeyWalksExpanded = 2
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=string}}] flow={constructorOrders=[{fields=[1, 0]}]}
@@ -14,29 +14,21 @@ function f0 name="expected" parameters=[{type=object}] results=[{type=anything}]
     v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
     Return v2
 }
+# A layout that is only expected gets no arm: behind arms the list of the built-in is made even where only its length is asked for.
 # CHECK-LABEL: function f0 name="expected"
 # CHECK: b0(v0: object ~ L0):
-# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
-# CHECK: [[done0]](v1: Array<string>):
+# CHECK-NEXT: v1:{{*}}= CallBuiltin -, v0 overload=ObjectKeys/0
 # CHECK-NEXT: v2:{{*}}= CallBuiltin v1 overload=ArrayPrototypeLength/0
-# CHECK: frequency=Rare:
-# CHECK-NEXT: [[call0]]: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0
-# CHECK-NEXT: Jump -> next [[done0]]([[call0]])
-# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[1, 0]
-# CHECK-NOT: GetSlot
-# CHECK: [[yKey]]: "y" = String string="y"
-# CHECK-NEXT: [[xKey]]: "x" = String string="x"
-# CHECK-NEXT: [[keys]]: Array<string> = NewArray [[yKey]], [[xKey]] contents=string
-# CHECK-NEXT: Jump -> next [[done0]]([[keys]])
+# CHECK-NOT: ShapeTest
 
-function f1 name="symbolAndPrivateFields" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object ~ L1):
+function f1 name="symbolAndPrivateFields" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
     v1 = CallBuiltin -, v0 overload=ObjectKeys/0
     v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
     Return v2
 }
 # CHECK-LABEL: function f1 name="symbolAndPrivateFields"
-# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1, 2]
+# CHECK: = HasKeyOrder v0 layout=L1 fields=[0, 1, 2]
 # CHECK: [[aKey]]: "a" = String string="a"
 # CHECK-NEXT: = NewArray [[aKey]] contents=string
 

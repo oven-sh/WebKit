@@ -14,6 +14,8 @@
 #include "AOTCallGraph.h"
 #include "AOTCheckCause.h"
 #include "AOTDiagnostics.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTHeat.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTResultRules.h"
@@ -61,6 +63,23 @@ struct FlowSiteObservation {
     LayoutID layout;
     PropertyKeyID key;
     uint32_t candidatesOfLeftOperation { 0 };
+    double heat { 0 };
+};
+
+// An operator, a test or a protocol that is left in the form that takes any value.
+struct GeneralOperation {
+    Wire::SourceLocation location;
+    AccessKind kind { AccessKind::Unknown };
+    FunctionID function;
+    // The access or the call that has made the operand nobody knows the type of.
+    AccessSiteID madeBy;
+    bool isParameter { false };
+    double heat { 0 };
+};
+
+struct ObservationsOfFunction {
+    Vector<FlowSiteObservation> sites;
+    Vector<GeneralOperation> generalOperations;
 };
 
 // What a branch proves on an edge is a parameter of the block that the edge enters.
@@ -337,11 +356,12 @@ static void forEachDescribedSite(const Program& program, const Terminator& termi
 }
 
 template<typename InstructionType>
-static void collectObservations(const Program& program, const FlowResults& flow, const Function& function, const InstructionType& instruction, BlockID block, TestsMadeForAccesses& tests, Vector<FlowSiteObservation>& observations)
+static void collectObservations(const Program& program, const FlowResults& flow, const Function& function, const InstructionType& instruction, BlockID block, double heat, TestsMadeForAccesses& tests, Vector<FlowSiteObservation>& observations)
 {
     forEachDescribedSite(program, instruction, [&](AccessSiteID site, const AccessDescription& access) {
         FlowSiteObservation observation = observationOf(program, flow, access, site);
         observation.cost = costOf(flow, access, observation, instruction, block, tests);
+        observation.heat = heat;
         observation.frequency = function.at(block).frequency;
         observation.place = instruction.inlineFrame ? CopyPlace::Caller : CopyPlace::OwnBody;
         observation.isInGenericVersion = program.sourceFunctionOf(function, instruction.origin()).role == FunctionRole::GenericVersion;
@@ -431,19 +451,114 @@ static void gradeSlowHalvesOfUnstampedOperations(const FlowResults& flow, const 
     }
 }
 
-static Vector<FlowSiteObservation> observeAccessSites(const Program& program, const FlowResults& flow, FunctionID id)
+static AccessKind kindOfOperator(Opcode opcode)
 {
-    Vector<FlowSiteObservation> observations;
+    switch (opcode) {
+    case Opcode::ToBoolean:
+        return AccessKind::Truthiness;
+    case Opcode::StrictEq:
+    case Opcode::Eq:
+        return AccessKind::Equality;
+    case Opcode::Less:
+    case Opcode::LessEq:
+    case Opcode::Greater:
+    case Opcode::GreaterEq:
+        return AccessKind::Comparison;
+    case Opcode::ToNumber:
+    case Opcode::ToNumeric:
+    case Opcode::ToString:
+        return AccessKind::Conversion;
+    default:
+        return AccessKind::Arithmetic;
+    }
+}
+
+// Unknown for an operation that has a form for the types of its operands.
+static AccessKind kindOfGeneralOperation(const Value& value)
+{
+    if (PayloadWord::form(value.opcode))
+        return value.form() == OperatorForm::Generic ? kindOfOperator(value.opcode) : AccessKind::Unknown;
+    switch (value.opcode) {
+    case Opcode::ValueEqualsLiteral:
+    case Opcode::ValueLooselyEqualsLiteral:
+        return AccessKind::Equality;
+    case Opcode::TypeOf:
+        return AccessKind::TypeOf;
+    case Opcode::InstanceOf:
+        return AccessKind::InstanceOf;
+    case Opcode::IteratorOpen:
+    case Opcode::IteratorResume:
+        return AccessKind::Iteration;
+    case Opcode::CopyDataProperties:
+    case Opcode::CopyObject:
+        return AccessKind::Spread;
+    default:
+        return AccessKind::Unknown;
+    }
+}
+
+// The operand whose type keeps the operation general comes out of a read, a call or a parameter. Where two ways meet, the first that leads to one of these speaks for the operand.
+static bool findMakerOfOperand(const Function& function, ValueID operand, GeneralOperation& operation)
+{
+    const Value* definition = &function.at(sameObjectThroughCasts(function, operand));
+    if (definition->opcode == Opcode::ResultAt)
+        definition = &function.at(sameObjectThroughCasts(function, definition->resultsOperand()));
+    if (definition->opcode == Opcode::Parameter) {
+        operation.isParameter = true;
+        return true;
+    }
+    if (!PayloadWord::accessSite(definition->opcode) || !definition->accessSite())
+        return false;
+    operation.madeBy = definition->accessSite();
+    return true;
+}
+
+static void collectGeneralOperation(const Program& program, const Function& function, const Value& value, double heat, Vector<GeneralOperation>& operations)
+{
+    AccessKind kind = kindOfGeneralOperation(value);
+    if (kind == AccessKind::Unknown)
+        return;
+    const Function& source = program.sourceFunctionOf(function, value.origin());
+    Wire::SourceLocation location = function.locationOf(value.origin());
+    if (!hasModule(location) || source.role == FunctionRole::GenericVersion)
+        return;
+    GeneralOperation operation { .location = location, .kind = kind, .function = value.inlineFrame ? function.inlineFrames[value.inlineFrame].callee : FunctionID(), .heat = heat };
+    bool hasMaker = false;
+    value.forEachChild([&](ValueID operand) {
+        if (!hasMaker && !constants.contains(function.at(operand).opcode) && program.typeOf(function, operand).hasObjects())
+            hasMaker = findMakerOfOperand(function, operand, operation);
+    });
+    operations.append(operation);
+}
+
+static ObservationsOfFunction observeAccessSites(const Program& program, const FlowResults& flow, BuildContext& build, const Heat* heat, FunctionID id)
+{
+    ObservationsOfFunction observations;
     const Function& function = program.at(id);
     CFG cfg(function);
     TestsMadeForAccesses tests(program, function, cfg);
+    // How often a function is entered is a product of guesses, one for every loop and call on the way, and is off by more the larger it is. Its rank among the functions holds better: the hottest count a hundred times the coldest.
+    std::optional<FunctionAnalyses> analyses;
+    double weightOfFunction = 0;
+    if (heat) {
+        analyses.emplace(AnalysisContext { build, program, &flow, nullptr, id }, function);
+        weightOfFunction = 100.0 / (101 - std::min<unsigned>(heat->percentileOf(program, id), 100));
+    }
     for (BlockID blockID : cfg.reversePostOrder()) {
         const Block& block = function.at(blockID);
-        for (ValueID value : block.values)
-            collectObservations(program, flow, function, function.at(value), blockID, tests, observations);
-        collectObservations(program, flow, function, block.terminator, blockID, tests, observations);
+        double heatOfBlock = analyses ? weightOfFunction * analyses->blockFrequencies().frequencyOf(blockID) : 0;
+        for (ValueID value : block.values) {
+            collectObservations(program, flow, function, function.at(value), blockID, heatOfBlock, tests, observations.sites);
+            if (heat)
+                collectGeneralOperation(program, function, function.at(value), heatOfBlock, observations.generalOperations);
+        }
+        collectObservations(program, flow, function, block.terminator, blockID, heatOfBlock, tests, observations.sites);
     }
-    gradeSlowHalvesOfUnstampedOperations(flow, function, cfg, observations);
+    for (GeneralOperation& operation : observations.generalOperations) {
+        if (!operation.function)
+            operation.function = id;
+    }
+    gradeSlowHalvesOfUnstampedOperations(flow, function, cfg, observations.sites);
     return observations;
 }
 
@@ -548,6 +663,8 @@ struct NearestCopies {
 static void foldObservation(FlowSiteLevel& folded, NearestCopies& nearest, const FlowSiteObservation& observation)
 {
     // The slow half of a guarded access is a copy in a block that is rarer than its fast half, and so is the copy in the generic version of the function.
+    if (!observation.isInGenericVersion)
+        folded.heat += observation.heat;
     uint8_t rarity = rarityOf(observation.frequency);
     if (rarity < nearest.rarity) {
         nearest.rarity = rarity;
@@ -575,7 +692,7 @@ static void foldObservation(FlowSiteLevel& folded, NearestCopies& nearest, const
 struct AccessSiteObservations::OfFunctions {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(OfFunctions);
 
-    Vector<Vector<FlowSiteObservation>> observations;
+    Vector<ObservationsOfFunction> observations;
 };
 
 AccessSiteObservations::AccessSiteObservations() = default;
@@ -592,12 +709,12 @@ std::unique_ptr<AccessSiteObservations::OfFunctions> AccessSiteObservations::tak
     return WTF::move(m_ofFunctions);
 }
 
-static Vector<FlowSiteLevel> foldSiteLevels(const FlowResults& flow, std::span<const Vector<FlowSiteObservation>> observationsOfFunctions)
+static Vector<FlowSiteLevel> foldSiteLevels(const FlowResults& flow, std::span<const ObservationsOfFunction> observationsOfFunctions)
 {
     Vector<FlowSiteLevel> levels(flow.numberOfAccessSites());
     Vector<NearestCopies> nearestCopies(levels.size());
-    for (const Vector<FlowSiteObservation>& observations : observationsOfFunctions) {
-        for (const FlowSiteObservation& observation : observations) {
+    for (const ObservationsOfFunction& observations : observationsOfFunctions) {
+        for (const FlowSiteObservation& observation : observations.sites) {
             size_t index = observation.site.index();
             if (index < levels.size())
                 foldObservation(levels[index], nearestCopies[index], observation);
@@ -615,7 +732,7 @@ static Vector<FlowSiteLevel> foldSiteLevels(const FlowResults& flow, std::span<c
     return levels;
 }
 
-AccessSiteObservations observeAccessSites(const Program& program, const FlowResults& flow, BuildContext& build)
+AccessSiteObservations observeAccessSites(const Program& program, const FlowResults& flow, BuildContext& build, const Heat* heat)
 {
     // Closures and the host enter entrypoints, and an entrypoint may hold a copy of the body it stands for.
     BitVector hasNoCode;
@@ -623,9 +740,9 @@ AccessSiteObservations observeAccessSites(const Program& program, const FlowResu
         hasNoCode = findBodiesWithoutCode(program, build);
 
     auto ofFunctions = makeUnique<AccessSiteObservations::OfFunctions>();
-    ofFunctions->observations = collectInParallel<Vector<FlowSiteObservation>>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<Vector<FlowSiteObservation>>& found) {
+    ofFunctions->observations = collectInParallel<ObservationsOfFunction>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<ObservationsOfFunction>& found) {
         if (program.functions[index].hasBody() && !hasNoCode.get(index))
-            found.append(observeAccessSites(program, flow, FunctionID(index)));
+            found.append(observeAccessSites(program, flow, build, heat, FunctionID(index)));
     });
     return AccessSiteObservations(WTF::move(ofFunctions));
 }
@@ -633,11 +750,12 @@ AccessSiteObservations observeAccessSites(const Program& program, const FlowResu
 struct AccessSiteObserver::State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
 
-    State(const Program& program, const FlowResults& flow, BuildContext& build)
+    State(const Program& program, const FlowResults& flow, BuildContext& build, const Heat* heat)
         : program(program)
         , flow(flow)
         , build(build)
-        , observations(build.parallelLoops(), program.functions.size(), [](unsigned) { return Vector<FlowSiteObservation>(); })
+        , heat(heat)
+        , observations(build.parallelLoops(), program.functions.size(), [](unsigned) { return ObservationsOfFunction(); })
         , calledFunctions(build.parallelLoops(), program.functions.size(), [](unsigned) { return Vector<FunctionID>(); })
     {
     }
@@ -645,12 +763,13 @@ struct AccessSiteObserver::State {
     const Program& program;
     const FlowResults& flow;
     BuildContext& build;
-    ParallelArray<Vector<FlowSiteObservation>> observations;
+    const Heat* heat;
+    ParallelArray<ObservationsOfFunction> observations;
     ParallelArray<Vector<FunctionID>> calledFunctions;
 };
 
-AccessSiteObserver::AccessSiteObserver(const Program& program, const FlowResults& flow, BuildContext& build)
-    : m_state(makeUnique<State>(program, flow, build))
+AccessSiteObserver::AccessSiteObserver(const Program& program, const FlowResults& flow, BuildContext& build, const Heat* heat)
+    : m_state(makeUnique<State>(program, flow, build, heat))
 {
 }
 
@@ -658,7 +777,7 @@ AccessSiteObserver::~AccessSiteObserver() = default;
 
 void AccessSiteObserver::observe(FunctionID id)
 {
-    m_state->observations[id.index()] = observeAccessSites(m_state->program, m_state->flow, id);
+    m_state->observations[id.index()] = observeAccessSites(m_state->program, m_state->flow, m_state->build, m_state->heat, id);
     Vector<FunctionID>& called = m_state->calledFunctions[id.index()];
     forEachCalledFunction(m_state->program.at(id), [&](FunctionID target) {
         called.append(target);
@@ -671,7 +790,7 @@ AccessSiteObservations AccessSiteObserver::finish()
     RELEASE_ASSERT(program.form() >= IRForm::Selected && m_state->observations.size() == program.functions.size());
     BitVector hasNoCode = findBodiesWithoutCode(program, m_state->build, m_state->calledFunctions.span());
     auto ofFunctions = makeUnique<AccessSiteObservations::OfFunctions>();
-    ofFunctions->observations = collectInParallel<Vector<FlowSiteObservation>>(m_state->build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<Vector<FlowSiteObservation>>& found) {
+    ofFunctions->observations = collectInParallel<ObservationsOfFunction>(m_state->build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<ObservationsOfFunction>& found) {
         if (program.functions[index].hasBody() && !hasNoCode.get(index))
             found.append(WTF::move(m_state->observations[index]));
     });
@@ -680,15 +799,6 @@ AccessSiteObservations AccessSiteObserver::finish()
     return AccessSiteObservations(WTF::move(ofFunctions));
 }
 
-Vector<FlowSiteLevel> gradeAccessSites(const FlowResults& flow, AccessSiteObservations&& observations, BuildContext& build)
-{
-    std::unique_ptr<AccessSiteObservations::OfFunctions> ofFunctions = observations.take();
-    if (!ofFunctions)
-        return { };
-    Vector<FlowSiteLevel> levels = foldSiteLevels(flow, ofFunctions->observations.span());
-    build.destroyLater(WTF::move(ofFunctions));
-    return levels;
-}
 
 static Access memberAccessOf(AccessKind kind)
 {
@@ -705,6 +815,15 @@ static Access memberAccessOf(AccessKind kind)
         return Access::Has;
     case AccessKind::Unknown:
     case AccessKind::Delete:
+    case AccessKind::Truthiness:
+    case AccessKind::Equality:
+    case AccessKind::Arithmetic:
+    case AccessKind::Comparison:
+    case AccessKind::Conversion:
+    case AccessKind::TypeOf:
+    case AccessKind::InstanceOf:
+    case AccessKind::Iteration:
+    case AccessKind::Spread:
         return Access::None;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -839,7 +958,81 @@ static Wire::AccessRecord siteRecordOf(const Program& program, const FlowResults
         .function = findFunctionAsRead(&program, access.function).index(),
         .illTypedCause = illTypedCauseOf(loss.cause),
         .cost = level.cost,
+        .hasOtherRoots = loss.hasOtherRoots,
+        .heat = level.heat,
     };
+}
+
+// The operation is general for the reason that the read or the call that made its operand is: what is read out of a value nobody knows is a value nobody knows.
+static FlowSiteLoss lossOfGeneralOperation(const Program& program, const FlowResults& flow, const BuildContext& build, std::span<const FlowSiteLevel> levels, const GeneralOperation& operation)
+{
+    FlowSiteLoss loss;
+    if (operation.madeBy && operation.madeBy.index() < levels.size())
+        loss = lossBelowProven(program, flow, build, operation.madeBy, levels[operation.madeBy.index()]);
+    else if (operation.isParameter) {
+        const FunctionFlow& function = flow.function(operation.function);
+        loss = { function.cause, LimitID::None, function.witness };
+    }
+    if (loss.cause == UnprovenCause::Unknown || loss.cause == UnprovenCause::LeftByPasses)
+        loss = { UnprovenCause::Untracked, LimitID::None, noWitness };
+    // Those that nothing explains are listed function by function.
+    if (!hasFunction(loss.witness) || !hasModule(loss.witness.location))
+        loss.witness = { operation.function.index(), Wire::none, program.at(operation.function).declarationLocation() };
+    if (!hasModule(loss.witness.location))
+        loss.witness.location = operation.location;
+    loss.witness.function = findFunctionAsRead(&program, FunctionID(loss.witness.function)).index();
+    return loss;
+}
+
+static Vector<Wire::AccessRecord> buildRecordsOfGeneralOperations(const Program& program, const FlowResults& flow, const BuildContext& build, std::span<const FlowSiteLevel> levels, std::span<const ObservationsOfFunction> observationsOfFunctions)
+{
+    Vector<GeneralOperation> operations;
+    for (const ObservationsOfFunction& observations : observationsOfFunctions)
+        operations.appendVector(observations.generalOperations);
+    // A copy that knows where its operand comes from speaks for the place.
+    AOT::stableSort(operations, [](const GeneralOperation& a, const GeneralOperation& b) {
+        return std::tuple { a.location.module, a.location.position, a.kind, !a.madeBy, a.madeBy.index(), !a.isParameter, a.function.index() }
+            < std::tuple { b.location.module, b.location.position, b.kind, !b.madeBy, b.madeBy.index(), !b.isParameter, b.function.index() };
+    });
+
+    Vector<Wire::AccessRecord> records;
+    for (const GeneralOperation& operation : operations) {
+        if (!records.isEmpty() && records.last().location == operation.location && records.last().kind == operation.kind) {
+            records.last().copies = saturatingSum<uint32_t>(records.last().copies, 1u);
+            records.last().heat += operation.heat;
+            continue;
+        }
+        FlowSiteLoss loss = lossOfGeneralOperation(program, flow, build, levels, operation);
+        records.append(Wire::AccessRecord {
+            .location = operation.location,
+            .kind = operation.kind,
+            .level = KnowledgeLevel::Unknown,
+            .cause = loss.cause == UnprovenCause::DataFromOutside ? UnprovenCause::UnknownObject : loss.cause,
+            .limit = loss.limit,
+            .layout = Wire::none,
+            .copies = 1,
+            .distance = 0,
+            .witness = loss.witness,
+            .function = findFunctionAsRead(&program, operation.function).index(),
+            .illTypedCause = illTypedCauseOf(loss.cause),
+            .cost = AccessCost::ByName,
+            .hasOtherRoots = loss.hasOtherRoots,
+            .heat = operation.heat,
+        });
+    }
+    return records;
+}
+
+GradedSites gradeAccessSites(const Program& program, const FlowResults& flow, AccessSiteObservations&& observations, BuildContext& build)
+{
+    std::unique_ptr<AccessSiteObservations::OfFunctions> ofFunctions = observations.take();
+    if (!ofFunctions)
+        return { };
+    GradedSites sites;
+    sites.levels = foldSiteLevels(flow, ofFunctions->observations.span());
+    sites.generalOperations = buildRecordsOfGeneralOperations(program, flow, build, sites.levels.span(), ofFunctions->observations.span());
+    build.destroyLater(WTF::move(ofFunctions));
+    return sites;
 }
 
 namespace {
@@ -877,6 +1070,7 @@ static Vector<Wire::AccessRecord> foldDuplicateRecords(std::span<const SiteRecor
         }
         Wire::AccessRecord& record = records.last();
         record.copies = saturatingSum<uint32_t>(record.copies, site.record.copies);
+        record.heat += site.record.heat;
         if (site.isInGenericVersion && !costIsOfGenericVersion)
             continue;
         if (costIsOfGenericVersion != site.isInGenericVersion || rankOf(site.record.cost) < rankOf(record.cost)) {
@@ -909,20 +1103,31 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
     return foldDuplicateRecords(sites.span());
 }
 
-static std::array<uint32_t, numberOfEnumerators<KnowledgeLevel>>& countersOf(Wire::AccessCountRecord& record, AccessKind kind)
+static std::array<uint32_t, numberOfEnumerators<KnowledgeLevel>>* countersOf(Wire::AccessCountRecord& record, AccessKind kind)
 {
     switch (kind) {
     case AccessKind::Unknown:
         break;
+    // The counts of a build are of property accesses and of calls.
+    case AccessKind::Truthiness:
+    case AccessKind::Equality:
+    case AccessKind::Arithmetic:
+    case AccessKind::Comparison:
+    case AccessKind::Conversion:
+    case AccessKind::TypeOf:
+    case AccessKind::InstanceOf:
+    case AccessKind::Iteration:
+    case AccessKind::Spread:
+        return nullptr;
     case AccessKind::Read:
     case AccessKind::Store:
     case AccessKind::Define:
     case AccessKind::Has:
     case AccessKind::Delete:
-        return record.accesses;
+        return &record.accesses;
     case AccessKind::Call:
     case AccessKind::Construct:
-        return record.calls;
+        return &record.calls;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -934,9 +1139,11 @@ Vector<Wire::AccessCountRecord> countAccesses(const Program& program, std::span<
         counts[module].module = module;
     for (const Wire::AccessRecord& access : accesses) {
         Wire::AccessCountRecord& record = counts[access.location.module];
-        auto& countsByLevel = countersOf(record, access.kind);
-        ++countsByLevel[rankOf(access.level)];
-        if (&countsByLevel == &record.accesses)
+        auto* countsByLevel = countersOf(record, access.kind);
+        if (!countsByLevel)
+            continue;
+        ++(*countsByLevel)[rankOf(access.level)];
+        if (countsByLevel == &record.accesses)
             ++record.accessCosts[rankOf(access.cost)];
     }
     for (const Wire::TypeTestRecord& typeTest : typeTests)

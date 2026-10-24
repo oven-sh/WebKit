@@ -82,15 +82,36 @@ class Image {
     WTF_MAKE_TZONE_ALLOCATED(Image);
     WTF_MAKE_NONCOPYABLE(Image);
 public:
-    static const Image* current() { return s_current.load(std::memory_order_acquire); }
-    static bool isRegistered() { return !!current(); }
+    // The image of the program that this thread runs, or collects for. In a process with one image every thread has the same answer.
+    static const Image* current()
+    {
+        const Image* image = s_current.load(std::memory_order_acquire);
+        if (image != differsByThread()) [[likely]]
+            return image;
+        return currentOfThread();
+    }
+    static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
+    JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
+    // The image that was published with these bytes.
+    JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
 
     JS_EXPORT_PRIVATE static Wire::ImageVerdict check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity);
     // A host reads its start-up options before it can call useImage(). Nothing for bytes whose header check() refuses under every identity.
     JS_EXPORT_PRIVATE static std::optional<Wire::AdmittedCode> admittedCode(std::span<const uint8_t> bytes);
     JS_EXPORT_PRIVATE static std::optional<OptionSet<ImageFlag>> flags(std::span<const uint8_t> bytes);
     JS_EXPORT_PRIVATE static std::unique_ptr<Image> create(std::span<const uint8_t> bytes, const uint8_t* code);
-    JS_EXPORT_PRIVATE static bool publish(std::unique_ptr<Image>&&);
+    // It becomes the image of the calling thread. The images of a process lie in allImages, which the first call says.
+    JS_EXPORT_PRIVATE static void publish(std::unique_ptr<Image>&&, std::span<const uint8_t> allImages);
+
+    struct PositionInFile {
+        int descriptor { -1 };
+        int64_t offset { 0 };
+    };
+    // Where the image begins in a file that stays open: the file it was loaded from, or the executable whose loader mapped it.
+    const std::optional<PositionInFile>& positionInFile() const { return m_positionInFile; }
+    void setPositionInFile(std::optional<PositionInFile> position) { m_positionInFile = position; }
+    // Its place among the images of the process.
+    unsigned number() const { return m_number; }
 
     const ImageHeader& header() const { return *reinterpret_cast<const ImageHeader*>(m_bytes.data()); }
     template<typename T> std::span<const T> section(ImageSection) const;
@@ -117,6 +138,9 @@ public:
     uint64_t closureWord(FunctionID) const;
 
     JS_EXPORT_PRIVATE const void* stubAddress(StubKey) const;
+    // The stubs that the run time enters again and again. The functor finds the address, with the tag its user wants, at the first request.
+    enum class FrequentStub : uint8_t { EnterClosure, EnterSlimClosure, EnterModuleBody, EnterClosureForConstruct, EnterHandlerOfJob, EnterSavedFrame, RejectInFrame, RejectInFrameBelowSpilledArguments };
+    template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
     std::span<const StubReturnSite> stubReturnSites() const;
     std::span<const uint32_t> sharedCodeCopies() const { return section<uint32_t>(ImageSection::SharedCodeCopies); }
@@ -149,8 +173,15 @@ public:
 private:
     Image(std::span<const uint8_t> bytes, const uint8_t* code);
 
+    static const Image* differsByThread() { return std::bit_cast<const Image*>(static_cast<uintptr_t>(1)); }
+    JS_EXPORT_PRIVATE static const Image* currentOfThread();
+
+    // The only image, or differsByThread().
     JS_EXPORT_PRIVATE static std::atomic<const Image*> s_current;
 
+    mutable std::array<std::atomic<void*>, 8> m_frequentStubs { };
+    std::optional<PositionInFile> m_positionInFile;
+    unsigned m_number { 0 };
     std::span<const uint8_t> m_bytes;
     const uint8_t* m_code;
     const ImageFunction* m_functions;
@@ -224,6 +255,18 @@ inline const uint8_t* Image::sharedCodeCopy(unsigned index) const
     std::span copies = sharedCodeCopies();
     RELEASE_ASSERT(index < copies.size());
     return m_code + copies[index];
+}
+
+template<typename Functor>
+inline void* Image::frequentStub(FrequentStub stub, const Functor& find) const
+{
+    std::atomic<void*>& place = m_frequentStubs[static_cast<size_t>(stub)];
+    void* address = place.load(std::memory_order_relaxed);
+    if (!address) [[unlikely]] {
+        address = find();
+        place.store(address, std::memory_order_relaxed);
+    }
+    return address;
 }
 
 inline bool Image::isBackedByStaticData(const StringImpl& string)

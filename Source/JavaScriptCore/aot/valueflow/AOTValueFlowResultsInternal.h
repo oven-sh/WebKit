@@ -474,17 +474,36 @@ public:
 
     // None where the node does not hold the object, where the object comes out of the seed of a body, and where a statement has made it that lies in no function.
     Witness witnessOf(ValueFlowNodeID) const;
+    // What the rule at that operation has named as its source. None where the node has no root: the solver's answer stands.
+    std::optional<ValueFlowUnknownSource> sourceOf(ValueFlowNodeID) const;
+    // The object also comes from another root: without the one that witnessOf() names the node still holds it.
+    bool hasSeveralRoots(ValueFlowNodeID node) const { return node && m_hasSeveralRoots.get(node.index()); }
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
 
+    // An operation that brings the object into being though none of its operands holds it.
+    struct Root {
+        Witness witness { noWitness };
+        ValueFlowUnknownSource source { ValueFlowUnknownSource::UnseenCode };
+    };
+    struct Holders;
+
+    void findRoots(const ValueFlowResultInputs&, const Holders&);
+
     // By node: where its witness stands in the list.
     Vector<uint32_t> m_birthOfNode;
     Vector<Witness> m_witnesses;
+    // What is read out of the unknown object, what it answers when it is called, and what it does with a function or an object that it was handed, begin where that unknown object began.
+    Vector<uint32_t> m_rootOfNode;
+    Vector<Root> m_roots;
+    BitVector m_hasSeveralRoots;
 };
 
 // Where the program makes the object: the operation of its site, or the declaration of the function that a closure, the result of a coroutine or a rest array belongs to. None for any other object.
 Witness witnessOfAllocation(const ValueFlowResultInputs&, ValueFlowObjectID);
+// What a call of JSON.parse or its like has made.
+bool isDataFromOutside(const ValueFlowResultInputs&, ValueFlowObjectID);
 // The operation that the statement stands for, or the declaration of the function in whose body it lies. None for a statement of the host and for one that a rule has made.
 Witness witnessOfStatement(const Program&, const ValueFlowStatement&);
 

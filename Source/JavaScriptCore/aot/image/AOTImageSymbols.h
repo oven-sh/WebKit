@@ -47,6 +47,7 @@ struct ImageSymbolInputs {
     const Typed::Program& program;
     const Typed::Heat& heat;
     const RegExpRequests& regExpRequests;
+    UTF8CString arrivalSites { };
 };
 
 Vector<ImageSymbol> collectSymbols(const ImageSymbolInputs&);

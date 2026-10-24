@@ -111,6 +111,8 @@ struct FlowLocationOrder {
     StoreCount stores { StoreCount::Unknown };
     // Of a field of an environment that every allocation lists with the `undefined` that a `var` starts as: a store comes before every read, so nobody sees that `undefined`.
     bool undefinedAtStartIsNeverRead { false };
+    // Of a variable that is stored before every read: the store also comes before the entry of every function that the body of a reader may be inlined into.
+    bool isStoredBeforeCallersOfReaders { false };
 
     friend bool operator==(const FlowLocationOrder&, const FlowLocationOrder&) = default;
 };

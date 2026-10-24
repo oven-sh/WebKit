@@ -941,6 +941,11 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     if (structure->needImpurePropertyWatchpoint())
         return;
 
+#if ENABLE(AOT)
+    if (structure->typeInfo().type() == CompiledClosureType)
+        return;
+#endif
+
     if (structure->isDictionary()) {
         if (structure->hasBeenFlattenedBefore())
             return;
@@ -2876,8 +2881,15 @@ static void handleVarargsCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalObject
     JSValue result;
     if (Opcode::opcodeID != op_construct_varargs && Opcode::opcodeID != op_super_construct_varargs)
         result = call(globalObject, getOperand(callFrame, bytecode.m_callee), getOperand(callFrame, bytecode.m_thisValue), args, ""_s);
-    else
-        result = construct(globalObject, getOperand(callFrame, bytecode.m_callee), getOperand(callFrame, bytecode.m_thisValue), args, ""_s);
+    else {
+        JSValue callee = getOperand(callFrame, bytecode.m_callee);
+        auto constructData = JSC::getConstructData(callee);
+        if (constructData.type == CallData::Type::None) [[unlikely]] {
+            throwTypeError(globalObject, scope, ""_s);
+            return;
+        }
+        result = constructAllowingPrimitiveResult(globalObject, callee, constructData, args, getOperand(callFrame, bytecode.m_thisValue));
+    }
 
     RETURN_IF_EXCEPTION(scope, void());
     callFrame->uncheckedR(bytecode.m_dst) = result;

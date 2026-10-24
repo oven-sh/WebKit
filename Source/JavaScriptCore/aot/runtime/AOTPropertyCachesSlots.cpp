@@ -251,6 +251,17 @@ bool flattenOnce(VM& vm, JSObject* object)
     return true;
 }
 
+bool flattenForListing(VM& vm, JSObject* object)
+{
+    Structure* structure = object->structure();
+    if (!structure->isDictionary() || structure->isUncacheableDictionary())
+        return flattenOnce(vm, object);
+    if (structure->typeInfo().prohibitsPropertyCaching() || structure->isCompiledStructure())
+        return false;
+    structure->flattenDictionaryStructure(vm, object);
+    return true;
+}
+
 static bool isReadableByStructure(Structure* structure)
 {
     TypeInfo info = structure->typeInfo();

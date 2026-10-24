@@ -129,9 +129,9 @@ constexpr InvalidatedAnalyses nothing = InvalidatedAnalyses::None;
 constexpr InvalidatedAnalyses values = InvalidatedAnalyses::Values;
 constexpr InvalidatedAnalyses everything = InvalidatedAnalyses::All;
 
-constexpr Results slotInputs { Flow, CallGraph, Heat, FrameAllocation };
-constexpr Results placementInputs { Flow, CallGraph, Heat, CallingConventions, FrameAllocation, LiteralStrings, ConstantCollections, SlotPlan, RegExpRequests };
-constexpr Results codeGenerationInputs { Flow, EffectSummaries, Heat, CallingConventions, FrameAllocation, LiteralStrings, ConstantCollections, RegExpRequests, StackChecks, Placement, SiteCaches };
+constexpr Results slotInputs { Flow, CallGraph, Heat, FrameAllocation, EnvironmentReuse };
+constexpr Results placementInputs { Flow, CallGraph, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, SlotPlan, RegExpRequests };
+constexpr Results codeGenerationInputs { Flow, EffectSummaries, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, RegExpRequests, StackChecks, Placement, SiteCaches };
 
 constexpr std::array rows {
     verifiedAfterNextPass(programPass(AllocateTaggedLayouts, Required, { AsRead, AsRead }, { }, { }, { })),
@@ -169,6 +169,7 @@ constexpr std::array rows {
     addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { }, { }, resultsAboutBodies)),
     addingOnly({ Opcode::MaterializeEnvironment, Opcode::EmptyArgumentList }, programPass(AllocateInFrames, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat, EffectSummaries }, { FrameAllocation }, { EffectSummaries })),
     addingOnly({ }, programPass(AllocateInnerObjects, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, { })),
+    addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
     addingOnly({ Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData }, programPass(EmbedConstantCollections, Optional, { Prepared, Prepared }, { Flow }, { ConstantCollections }, { })),
     countingOwnChanges(programPass(CollectRegExpLiterals, Required, { Selected, Selected }, { Flow }, { RegExpRequests }, { })),
@@ -239,6 +240,7 @@ constexpr std::array rows {
 
     producing(Selected, functionPass(Select, select, Required, Prepared, { Flow, Heat, EffectSummaries, CallingConventions, SlotPlan }, everything)),
     functionPass(ChooseRepresentations, chooseRepresentations, Required, Placed, { CallingConventions, Placement }, everything),
+    functionPass(RemoveRedundantBarriers, removeRedundantBarriers, Optional, Placed, { EffectSummaries, CallingConventions, Placement }, nothing),
 };
 
 constexpr std::array typeSteps {
@@ -359,6 +361,7 @@ constexpr std::array selectSteps {
 
 constexpr std::array representSteps {
     ScheduleStep::run(ChooseRepresentations),
+    ScheduleStep::run(RemoveRedundantBarriers),
 };
 
 constexpr unsigned indexOf(PassID id) { return static_cast<unsigned>(id); }

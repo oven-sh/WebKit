@@ -21,10 +21,12 @@ public:
     void generateGetClassPrototype(const ValueContext&);
     void generateDefineMethod(const ValueContext&);
     void generateFinishClass(const ValueContext&);
+    void generateBeginMemberGuards(const ValueContext&);
     void generateNewClassToken(const ValueContext&);
     void generateGetConstructPrototype(const ValueContext&);
     void generateSuperConstruct(const ValueContext&);
     void generateSuperConstructList(const ValueContext&);
+    Boxed noteObjectMadeByBuiltinBase(const ValueContext&, Boxed object);
 
 private:
     std::optional<uint32_t> rankOfClassWithOnePrototypeObject(const ValueContext&) const;

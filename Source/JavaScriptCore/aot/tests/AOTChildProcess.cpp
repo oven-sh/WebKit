@@ -199,7 +199,8 @@ static bool readOutput(int pipe, Vector<uint8_t>& output)
 
 static void disableCrashReports()
 {
-    struct rlimit noCoreFile { 0, 0 };
+    // Where core_pattern names a program, Linux starts it whatever the limit is, except for a limit of 1. No file is written under a limit of less than a page.
+    struct rlimit noCoreFile { 1, 1 };
     setrlimit(RLIMIT_CORE, &noCoreFile);
 }
 

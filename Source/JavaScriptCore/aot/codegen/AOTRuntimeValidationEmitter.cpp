@@ -54,6 +54,8 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
             checkValue(operand, get(operand));
         if (hasTestableBits(operand))
             checkClassProofs(operand, get(operand), type);
+        if (type.environment && representationOf(operand) == Representation::Cell)
+            checkIsNotReleased(context, in<CellPointer>(operand), type.environment);
         checkRetainedOperand(context, user, operand, operandIndex);
         checkIsNoFrameArray(context, user, operand, operandIndex);
     });
@@ -191,6 +193,7 @@ void RuntimeValidationEmitter::validateResult(const ValueContext& value)
             return;
         checkIsNotFrameCell(value, get(operand), result);
     });
+    emitter<BarrierEmitter>().validateAfterStore(value);
 }
 
 // The collector changes the state of a cell, and it and the compiler threads of the engine take the lock in the indexing byte, while the program runs.

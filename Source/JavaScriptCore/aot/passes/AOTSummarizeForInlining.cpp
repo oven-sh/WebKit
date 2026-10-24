@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayCapacities.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCallGraph.h"
@@ -318,6 +319,14 @@ private:
         return entryParameterBehind(m_analyses.identityOf(value));
     }
 
+    std::optional<uint32_t> entryParameterMeasuredBy(ValueID length)
+    {
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(m_program, m_function.at(sameObjectThroughCasts(m_function, length)));
+        if (!measured || measured->heap != AbstractHeap::ArrayStorage)
+            return std::nullopt;
+        return entryParameterWithIdentityOf(measured->owner);
+    }
+
     bool isAdmissibleInHead(const InliningSummary& summary, BlockID id)
     {
         const Block& block = m_function.at(id);
@@ -397,7 +406,10 @@ private:
             }
             if (isRematerializable(value))
                 continue;
-            if (!m_analyses.effectsOf(id).normal.isPure() || m_build.exceeds(LimitID::MaxConditionChainLength, ++chainLength, m_analyses.subject(condition)))
+            // Resolving a rope changes no result: `kind === "error"` is decided by the parameter as `kind === 1` is.
+            const Effects& effects = m_analyses.effectsOf(id).normal;
+            bool isDecidedByOperands = effects.isRemovableWhenUnused() && effects.reads.containsOnly(heapsWhoseWritesNobodySees);
+            if (!isDecidedByOperands || m_build.exceeds(LimitID::MaxConditionChainLength, ++chainLength, m_analyses.subject(condition)))
                 return std::nullopt;
             value.forEachOperand([&](ValueID operand, uint32_t) {
                 worklist.append(operand);
@@ -414,9 +426,13 @@ private:
         for (BlockID block : cfg.reversePostOrder()) {
             auto& terminator = m_function.at(block).terminator;
             if (terminator.kind == TerminatorKind::Switch || terminator.kind == TerminatorKind::SwitchString) {
-                if (std::optional<uint32_t> entryParameter = entryParameterWithIdentityOf(terminator.subjectOperand())) {
+                std::optional<uint32_t> entryParameter = entryParameterWithIdentityOf(terminator.subjectOperand());
+                bool isOnLength = !entryParameter;
+                if (isOnLength)
+                    entryParameter = entryParameterMeasuredBy(terminator.subjectOperand());
+                if (entryParameter) {
                     bool isOnStrings = terminator.kind == TerminatorKind::SwitchString;
-                    summary.switches.append(ParameterSwitch { *entryParameter, isOnStrings, { }, 0 });
+                    summary.switches.append(ParameterSwitch { *entryParameter, isOnStrings, isOnLength, { }, 0 });
                     summary.switches.last().caseRanges.grow(terminator.targets.size() - 1);
                     for (size_t position = 0; position + 1 < terminator.targets.size(); ++position)
                         summary.switches.last().bytesOnlyInCase.append({ isOnStrings ? int64_t { terminator.strings()[position].index() } : terminator.cases()[position], 0 });
@@ -431,8 +447,12 @@ private:
                 branchingBlocks.append(block);
             }
         }
-        if (branchingBlocks.isEmpty() && switchingBlocks.isEmpty())
+        if (branchingBlocks.isEmpty() && switchingBlocks.isEmpty()) {
+            findSpreadsOfParameters(summary, [](BlockID) {
+                return DominatedRange { };
+            });
             return;
+        }
 
         struct Subtree {
             uint32_t* ownBytes { nullptr };
@@ -491,14 +511,55 @@ private:
         };
         m_analyses.dominators().walkTree(enter, leave);
 
-        findBytesBehindFailedTests(summary, branchingBlocks.span(), [&](BlockID block) {
+        auto rangeAround = [&](BlockID block) {
             uint32_t subtree = innermostSubtrees[block.index()];
             return subtree == noSubtree ? DominatedRange { } : *subtrees[subtree].range;
-        });
+        };
+        auto bytesOfTestIn = [&](BlockID block, ValueID subject) {
+            if (!m_blockBytes[block.index()])
+                return 0u;
+            uint32_t bytes = estimatedCodeBytes(m_function.at(block).terminator);
+            for (ValueID id = subject; m_function.at(block).values.contains(id); id = m_function.at(id).operand(0)) {
+                bytes += estimatedCodeBytes(m_program, m_function, m_function.at(id));
+                if (!isCast(m_function.at(id).opcode))
+                    break;
+            }
+            return bytes;
+        };
+        for (size_t i = 0; i < branchingBlocks.size(); ++i) {
+            summary.conditions[i].bytesOfTest = bytesOfTestIn(branchingBlocks[i], summary.conditions[i].condition);
+            summary.conditions[i].rangeAround = rangeAround(branchingBlocks[i]);
+        }
+        for (size_t i = 0; i < switchingBlocks.size(); ++i) {
+            summary.switches[i].bytesOfTest = bytesOfTestIn(switchingBlocks[i], m_function.at(switchingBlocks[i]).terminator.subjectOperand());
+            summary.switches[i].rangeAround = rangeAround(switchingBlocks[i]);
+        }
+        findBytesBehindFailedTests(summary, branchingBlocks.span(), rangeAround);
+        findSpreadsOfParameters(summary, rangeAround);
 
         summary.conditions.removeAllMatching([](const ParameterCondition& condition) {
             return condition.rangeIfTrue.begin == condition.rangeIfTrue.end && condition.rangeIfFalse.begin == condition.rangeIfFalse.end && !condition.isTestInFrontOfSharedBytes;
         });
+    }
+
+    void findSpreadsOfParameters(InliningSummary& summary, NOESCAPE const Invocable<DominatedRange(BlockID)> auto& rangeAround)
+    {
+        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            if (!m_blockBytes[block.index()])
+                continue;
+            for (ValueID id : m_function.at(block).values) {
+                const Value& spread = m_function.at(id);
+                if (spread.opcode != Opcode::AppendSpread)
+                    continue;
+                const Value& list = m_function.at(sameObjectThroughCasts(m_function, spread.arrayOperand()));
+                std::optional<uint32_t> entryParameter = entryParameterWithIdentityOf(spread.iterableOperand());
+                if (!entryParameter || list.opcode != Opcode::NewArray)
+                    continue;
+                // The elements of the literal are passed either way.
+                uint32_t bytesOfAllocation = estimatedCodeBytes(m_program, m_function, list) - (estimatedDirectCallBytes(list.numberOfOperands()) - estimatedDirectCallBytes(0));
+                summary.spreadsOfParameters.append({ *entryParameter, rangeAround(block), estimatedCodeBytes(m_program, m_function, spread) + bytesOfAllocation });
+            }
+        }
     }
 
     void findBytesBehindFailedTests(InliningSummary& summary, std::span<const BlockID> branchingBlocks, NOESCAPE const Invocable<DominatedRange(BlockID)> auto& rangeAround)
@@ -814,7 +875,7 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
                 out.print(" guardsSharedBytes(v", condition.condition.index(), ")");
         }
         for (const ParameterSwitch& parameterSwitch : summary.switches) {
-            out.print(" switch(p", parameterSwitch.entryParameter);
+            out.print(" switch(p", parameterSwitch.entryParameter, parameterSwitch.isOnLength ? ".length" : "");
             for (auto [key, bytes] : parameterSwitch.bytesOnlyInCase) {
                 if (parameterSwitch.isOnStrings)
                     out.print(" s", key, "=", bytes);
@@ -825,6 +886,8 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
         }
         if (summary.bytesOnlyIfSomeTestFails)
             out.print(" someTestFails=", summary.bytesOnlyIfSomeTestFails);
+        for (const SpreadOfParameter& spread : summary.spreadsOfParameters)
+            out.print(" spread(p", spread.entryParameter, " bytes=", spread.bytes, ")");
         for (const ReceiverParameter& receiver : summary.receiverParameters)
             out.print(" receiver(p", receiver.entryParameter, " accesses=", receiver.accessesByName, " stores=", receiver.stores, ")");
         out.print("\n");

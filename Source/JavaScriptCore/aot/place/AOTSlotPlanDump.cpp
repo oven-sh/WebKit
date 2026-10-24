@@ -119,6 +119,7 @@ static void dumpLayout(IRPrinter& printer, LayoutID id, const PlannedLayout& lay
         out.print(" fields="_s, layout.numberOfRecordFields);
     printFlag(out, layout.holdsWideReferences, "wide"_s);
     printFlag(out, layout.keysAreNeverEnumerated, "unordered"_s);
+    printOptional(out, " escaped@"_s, layout.isEscapedOffset);
     printFlag(out, layout.mayBeInnerObject, "inner"_s);
     out.print("\n"_s);
     for (const PlacedInnerObject& inner : layout.innerObjects) {

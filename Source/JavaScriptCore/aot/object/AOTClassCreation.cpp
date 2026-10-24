@@ -97,6 +97,7 @@ private:
     ClassStructures m_shared;
     bool m_mayShareStructures { false };
     bool m_hasOnlyPlainMembers { true };
+    bool m_hasMembersCreatedAtDefinition { false };
     bool m_classObjectMayBePrototype { false };
     EarlyStores m_earlyStores;
     EarlyStores m_earlyPrototypeStores;
@@ -343,8 +344,10 @@ void ClassDefinition::defineMembers(JSObject* target, std::span<const MethodData
 {
     auto scope = DECLARE_THROW_SCOPE(m_vm);
     for (auto& method : methods) {
-        if (method.flags & methodIsCreatedAtDefinition)
+        if (method.flags & methodIsCreatedAtDefinition) {
+            m_hasMembersCreatedAtDefinition = true;
             continue;
+        }
         ASSERT(!(method.flags & methodHasComputedName));
         JSObject* function = m_classes.createMethodClosure(m_vm, m_classObject, m_classLayout, method);
         defineMember(target, method, keyFor(method), function);
@@ -443,7 +446,8 @@ bool ClassDefinition::hasAssumedBase() const
 void ClassDefinition::armGuards()
 {
     using HolderState = ClassTable::HolderState;
-    bool holdersHaveWhatRecordSays = m_hasOnlyPlainMembers && !isShared() && m_earlyStores.keysAndAttributes.isEmpty() && m_earlyPrototypeStores.keysAndAttributes.isEmpty();
+    // A member that the definition creates later may have the name of one that is there now.
+    bool holdersHaveWhatRecordSays = m_hasOnlyPlainMembers && !m_hasMembersCreatedAtDefinition && !isShared() && m_earlyStores.keysAndAttributes.isEmpty() && m_earlyPrototypeStores.keysAndAttributes.isEmpty();
     HolderState stateOfPrototype = holdersHaveWhatRecordSays ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;
     // A static field may have the name of a static method, and lies in a variable.
     HolderState stateOfClassObject = holdersHaveWhatRecordSays && m_classLayout.staticFields().empty() ? HolderState::AsDefinitionMadeIt : HolderState::Unknown;

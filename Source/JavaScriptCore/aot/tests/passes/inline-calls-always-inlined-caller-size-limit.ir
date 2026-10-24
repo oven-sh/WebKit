@@ -1,12 +1,11 @@
-# A call marked isAlwaysInlined counts against the limit on the size of its caller
+# A call marked isAlwaysInlined does not count against the limit on the size of its caller: the traversal of a chain of array methods, called, would read at run time what it is to do
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:100
 # RUN: pass InlineCalls
-# STATISTIC: InlineDecisionInline = 0
-# STATISTIC: InlineDecisionCallerSizeLimit = 1
-# LOSS: MaxInlinedCallerBytes x1 f1 v1
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCallerSizeLimit = 0
 # LOSS: MaxInlineHeadBytes x1 f0
-# CHECK: outcome: Unchanged
+# CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="twentyFourOperations" parameters=[{type=number}] results=[{type=number}] {
@@ -44,5 +43,5 @@ function f1 name="markedCall" parameters=[{type=number}] results=[{type=number}]
     Return v1
 }
 # CHECK-LABEL: name="markedCall"
-# CHECK: = CallDirect {{*}} function=f0 [isAlwaysInlined]
-# CHECK-NEXT: Return
+# CHECK-NOT: CallDirect
+# CHECK: Return

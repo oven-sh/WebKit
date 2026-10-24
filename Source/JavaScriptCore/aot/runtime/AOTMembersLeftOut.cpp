@@ -55,6 +55,23 @@ HashMap<VM*, MembersLeftOut>& membersByVM() WTF_REQUIRES_LOCK(membersLock)
     return map;
 }
 
+// Most callers find the exception with exceptionForInspection(), which does not count as a check, so a scope that verifies when it is constructed would fail here.
+// They declare no scope of their own because it would make every caller above them check after each read.
+class UnverifiedExceptionScope final : public ExceptionScope {
+public:
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    explicit UnverifiedExceptionScope(VM& vm)
+        : ExceptionScope(vm, ExceptionEventLocation(EXCEPTION_SCOPE_POSITION_FOR_ASAN(vm), __FUNCTION__, __FILE__, __LINE__))
+    {
+    }
+#else
+    explicit UnverifiedExceptionScope(VM& vm)
+        : ExceptionScope(vm)
+    {
+    }
+#endif
+};
+
 JSC_DECLARE_HOST_FUNCTION(constructStandIn);
 
 JSC_DEFINE_HOST_FUNCTION(constructStandIn, (JSGlobalObject* realm, CallFrame* callFrame))
@@ -95,8 +112,9 @@ static String takeMessageOfErrorOfCodeLeftOut(VM& vm)
         message = std::exchange(found->value.message, String());
         found->value.error.clear();
     }
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    scope.clearException();
+    UnverifiedExceptionScope scope(vm);
+    bool isCleared = scope.tryClearException();
+    RELEASE_ASSERT(isCleared);
     return message;
 }
 

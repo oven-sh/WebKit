@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <wtf/Forward.h>
+#include <wtf/text/CString.h>
 
 namespace JSC { namespace AOT {
 
@@ -70,21 +71,9 @@ private:
     bool m_isCounting { false };
 };
 
-// What the counts of a run are joined to, by number.
-struct ArrivalSiteReport {
-    // Ascending by number.
-    Vector<Wire::ArrivalSiteRecord> sites;
-    // The numbers of the expected layouts. Each site names a range of this list.
-    Vector<uint32_t> siteLayouts;
-    // Every layout whose objects can arrive, expected anywhere or not, ascending by number.
-    Vector<Wire::ArrivalLayoutRecord> layouts;
-    // The own data properties with a text key, in field order. Each layout names a range of this list.
-    Vector<Wire::ArrivalLayoutFieldRecord> layoutFields;
-    // What the text ranges of the records are ranges of.
-    Vector<uint8_t> text;
-};
-
-JS_EXPORT_PRIVATE ArrivalSiteReport describeArrivalSites(const PropertyAccessContext&, const ArrivalSiteNumbers&, BuildContext&);
+// What the counts of a run are joined to, by number: lines for the map of the image.
+// "S" number, operation, kind, level, cause, stamp, path, line, column, function, expected layouts. "L" number, kind, name, the layout it was derived from, own data properties with a text key in field order.
+JS_EXPORT_PRIVATE UTF8CString describeArrivalSites(const PropertyAccessContext&, const ArrivalSiteNumbers&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed
 

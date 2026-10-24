@@ -377,6 +377,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
     AOT_OPERATION_BEGIN(instance, entry);
     State& state = *instance->state;
     JSCell* classToken = cellArgument<JSCellButterfly>(token, entry);
+    // A constructor of the host may answer `new` with a primitive, which a class below it then has as `this`.
+    if (!JSValue::decode(object).isObject()) [[unlikely]] {
+        throwException(globalObject, scope, JSC::createNotAnObjectError(globalObject, JSValue::decode(object)));
+        OPERATION_RETURN(scope);
+    }
     JSObject* base = objectArgument(object, entry);
     if (tryDefineInEmptySlot(vm, state, base, classToken, field, JSValue::decode(value))) {
         ensureStillAliveHere(classToken);

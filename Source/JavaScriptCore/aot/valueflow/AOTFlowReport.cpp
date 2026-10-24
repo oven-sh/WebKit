@@ -315,7 +315,7 @@ FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, Build
     return records;
 }
 
-FlowReport buildFlowReport(const Program& program, const FlowResults& flow, std::span<const FlowSiteLevel> levels, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&& bodyRecords, BuildContext& build)
+FlowReport buildFlowReport(const Program& program, const FlowResults& flow, const GradedSites& sites, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&& bodyRecords, BuildContext& build)
 {
     FlowReport report;
     report.unseenCode = Vector<Wire::UnseenCodeRecord>(flow.unseenCode());
@@ -331,7 +331,8 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, std:
     ReportSet reports = build.options().reports;
     bool collectsRecords = hasFlag(reports, ReportSet::Flow);
     report.typeTests = WTF::move(bodyRecords.typeTests);
-    report.accesses = buildAccessRecords(program, flow, levels, build);
+    report.accesses = buildAccessRecords(program, flow, sites.levels.span(), build);
+    report.accesses.appendVector(sites.generalOperations);
     if (program.form() == IRForm::AsRead)
         report.remainingChecks = WTF::move(bodyRecords.remainingChecks);
     else if (collectsRecords)

@@ -24,6 +24,7 @@
 
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 #include <errno.h>
+#include <signal.h>
 #include <sys/mman.h>
 #if OS(DARWIN)
 #include <crt_externs.h>
@@ -351,10 +352,7 @@ void CodeMapping::release()
 #if OS(LINUX) || OS(FREEBSD)
 namespace {
 
-struct PositionInFile {
-    int descriptor { -1 };
-    int64_t offset { 0 };
-};
+using PositionInFile = Image::PositionInFile;
 
 struct LoadedSegment {
     int64_t offsetInFile;
@@ -369,9 +367,6 @@ struct SegmentSearch {
 };
 
 } // anonymous namespace
-
-// Where the image begins in a file that stays open: the file it was loaded from, or the executable whose loader mapped it.
-static std::optional<PositionInFile> s_positionOfImage;
 
 static int findSegmentContaining(struct dl_phdr_info* object, size_t, void* data)
 {
@@ -395,20 +390,27 @@ static std::optional<LoadedSegment> findLoadedSegment(const uint8_t* address)
     return search.found;
 }
 
-static void rememberPositionOfImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file)
+static std::optional<PositionInFile> findPositionOfImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file)
 {
     if (file) {
         int descriptor = fcntl(static_cast<int>(file->descriptor), F_DUPFD_CLOEXEC, 0);
-        if (descriptor >= 0)
-            s_positionOfImage = PositionInFile { descriptor, file->offset };
-        return;
+        if (descriptor < 0)
+            return std::nullopt;
+        return PositionInFile { descriptor, file->offset };
     }
     std::optional<LoadedSegment> segment = findLoadedSegment(bytes.data());
     if (!segment)
-        return;
-    auto closeUnlessImageIsInFile = [&](int& descriptor) {
+        return std::nullopt;
+    auto isImageInFile = [&](int descriptor) {
         std::array<uint8_t, offsetof(ImageHeader, codeSize) + sizeof(ImageHeader::codeSize)> header;
-        if (descriptor >= 0 && (pread(descriptor, header.data(), header.size(), segment->offsetInFile) != static_cast<ssize_t>(header.size()) || memcmp(header.data(), bytes.data(), header.size()))) {
+        return pread(descriptor, header.data(), header.size(), segment->offsetInFile) == static_cast<ssize_t>(header.size()) && !memcmp(header.data(), bytes.data(), header.size());
+    };
+    // Every image of an executable is in the one file.
+    static int descriptorOfExecutable = -1;
+    if (descriptorOfExecutable >= 0)
+        return isImageInFile(descriptorOfExecutable) ? std::optional(PositionInFile { descriptorOfExecutable, segment->offsetInFile }) : std::nullopt;
+    auto closeUnlessImageIsInFile = [&](int& descriptor) {
+        if (descriptor >= 0 && !isImageInFile(descriptor)) {
             close(descriptor);
             descriptor = -1;
         }
@@ -423,8 +425,10 @@ static void rememberPositionOfImage(std::span<const uint8_t> bytes, std::optiona
         closeUnlessImageIsInFile(descriptor);
     }
 #endif
-    if (descriptor >= 0)
-        s_positionOfImage = PositionInFile { descriptor, segment->offsetInFile };
+    if (descriptor < 0)
+        return std::nullopt;
+    descriptorOfExecutable = descriptor;
+    return PositionInFile { descriptor, segment->offsetInFile };
 }
 #endif
 
@@ -542,8 +546,9 @@ static bool isLoadedAsItsHeaderSays(std::span<const uint8_t> bytes, const ImageH
         && liesInOneSegmentOfExecutable(bytes.subspan(endOfExecutedPart, header.size - endOfExecutedPart), false);
 }
 
-static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const ImageHeader& header, Wire::ImageVerdict& refusal)
+static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::optional<Image::PositionInFile>& position, const ImageHeader& header, Wire::ImageVerdict& refusal)
 {
+    UNUSED_PARAM(position);
     refusal = Wire::ImageVerdict::CannotMapCode;
     size_t size = header.size - header.codeOffset;
     size_t executableSize = header.executableSize;
@@ -561,13 +566,13 @@ static std::optional<CodeMapping> createCodeMapping(std::span<const uint8_t> byt
     if (isLoadedExecutable && isAddressRandomizationDisabled())
         return CodeMapping::useExecutableSegment(code);
 #endif
-    if (s_positionOfImage && (!segment || segment->offsetInFile != s_positionOfImage->offset + static_cast<int64_t>(header.codeOffset))) {
+    if (position && (!segment || segment->offsetInFile != position->offset + static_cast<int64_t>(header.codeOffset))) {
         refusal = Wire::ImageVerdict::OutsideItsSegments;
         return std::nullopt;
     }
     std::optional<CodeMapping> mapping;
-    if (s_positionOfImage)
-        mapping = CodeMapping::mapFile({ s_positionOfImage->descriptor, s_positionOfImage->offset }, header.codeOffset, size, executableSize);
+    if (position)
+        mapping = CodeMapping::mapFile({ position->descriptor, position->offset }, header.codeOffset, size, executableSize);
 #if OS(LINUX) && !defined(BUN_REFUSES_EXECUTE_ONLY_START)
     if (!mapping && isLoadedExecutable)
         mapping = CodeMapping::moveExecutableSegment(code, executableSize);
@@ -614,10 +619,11 @@ bool mapPrivateCloneOfImagePages(std::span<const uint8_t> pages, void* target)
     return mach_vm_protect(mach_task_self(), address, pages.size(), true, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS
         && mach_vm_protect(mach_task_self(), address, pages.size(), false, VM_PROT_READ) == KERN_SUCCESS;
 #elif OS(LINUX) || OS(FREEBSD)
-    if (!s_positionOfImage)
+    const std::optional<Image::PositionInFile>& position = Image::current()->positionInFile();
+    if (!position)
         return false;
-    int64_t offset = s_positionOfImage->offset + (pages.data() - reinterpret_cast<const uint8_t*>(&Image::current()->header()));
-    return mmap(target, pages.size(), PROT_READ, MAP_PRIVATE | MAP_FIXED, s_positionOfImage->descriptor, offset) != MAP_FAILED;
+    int64_t offset = position->offset + (pages.data() - reinterpret_cast<const uint8_t*>(&Image::current()->header()));
+    return mmap(target, pages.size(), PROT_READ, MAP_PRIVATE | MAP_FIXED, position->descriptor, offset) != MAP_FAILED;
 #else
     UNUSED_PARAM(target);
     return false;
@@ -629,15 +635,29 @@ static bool hasFaultSites(const ImageHeader& header)
     return !!header.sections[static_cast<size_t>(ImageSection::FaultSites)].size;
 }
 
+// A signal mask stays across execve(), and every thread starts with the mask of the thread that made it.
+static void unblockAccessFaults()
+{
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
+    sigset_t accessFaults;
+    sigemptyset(&accessFaults);
+    sigaddset(&accessFaults, SIGSEGV);
+    sigaddset(&accessFaults, SIGBUS);
+    pthread_sigmask(SIG_UNBLOCK, &accessFaults, nullptr);
+#endif
+}
+
 static void didPublishImage(const Image& image)
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    if (auto directory = image.section<uint8_t>(ImageSection::WebAssemblyDirectory); !directory.empty())
+    // The code of WebAssembly modules is the process's: that of the first image that has any.
+    if (auto directory = image.section<uint8_t>(ImageSection::WebAssemblyDirectory); !directory.empty() && !Wasm::CodeInImage::isInProcess())
         Wasm::CodeInImage::setImage(directory.data(), image.webAssemblyCode());
 #else
     UNUSED_PARAM(image);
 #endif
     // An image without fault sites still has returns that are diverted to a page without code.
+    unblockAccessFaults();
     activateSignalHandlersFor(Signal::AccessFault);
 #if OS(LINUX) && !defined(BUN_HARDENED)
     if (Options::useAOTPerfMap()) [[unlikely]]
@@ -650,14 +670,18 @@ static void didPublishImage(const Image& image)
 extern "C" __attribute__((used, retain)) const char JSC__AOT__startsOnlyWhereItsFileCanBeRead[] = "execute-only start: nothing moves the code that the loader mapped";
 #endif
 
-Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::array<uint8_t, 16>& identity)
+Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::array<uint8_t, 16>& identity, std::span<const uint8_t> allImages)
 {
     using Wire::ImageVerdict;
 
     if (!Options::useAOT())
         return ImageVerdict::CompiledCodeDisabled;
-    if (Image::isRegistered())
-        return ImageVerdict::AlreadyInUse;
+    static Lock lock;
+    Locker locker { lock };
+    if (const Image* image = Image::find(bytes)) {
+        Image::setCurrentOfThread(image);
+        return ImageVerdict::Accepted;
+    }
     if (ImageVerdict verdict = Image::check(bytes, identity); verdict != ImageVerdict::Accepted)
         return verdict;
 
@@ -674,21 +698,21 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
         return ImageVerdict::CannotMapCode;
     if (!removeWriteAccessFromLoadedSection(bytes.first(header.size)))
         return ImageVerdict::CannotMapCode;
+    std::optional<Image::PositionInFile> positionInFile;
 #if OS(LINUX) || OS(FREEBSD)
-    rememberPositionOfImage(bytes, file);
+    positionInFile = findPositionOfImage(bytes, file);
 #endif
 #if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)
-    if (!file && !s_positionOfImage)
+    if (!file && !positionInFile)
         return ImageVerdict::CannotReadExecutable;
 #endif
     ImageVerdict refusal;
-    std::optional<CodeMapping> mapping = createCodeMapping(bytes, file, header, refusal);
+    std::optional<CodeMapping> mapping = createCodeMapping(bytes, file, positionInFile, header, refusal);
     if (!mapping)
         return refusal;
-    if (!Image::publish(Image::create(bytes, mapping->code()))) {
-        mapping->release();
-        return ImageVerdict::AlreadyInUse;
-    }
+    std::unique_ptr<Image> image = Image::create(bytes, mapping->code());
+    image->setPositionInFile(positionInFile);
+    Image::publish(WTF::move(image), allImages);
     didPublishImage(*Image::current());
     return ImageVerdict::Accepted;
 }
@@ -701,7 +725,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace JSC { namespace AOT {
 
-Wire::ImageVerdict useImage(std::span<const uint8_t>, std::optional<ImageFile>, const std::array<uint8_t, 16>&)
+Wire::ImageVerdict useImage(std::span<const uint8_t>, std::optional<ImageFile>, const std::array<uint8_t, 16>&, std::span<const uint8_t>)
 {
     return Wire::ImageVerdict::Unsupported;
 }

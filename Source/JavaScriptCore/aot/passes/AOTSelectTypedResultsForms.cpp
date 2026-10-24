@@ -47,7 +47,7 @@ static std::optional<Value> tryMakeBuiltinCall(const TypingContext& typing, Buil
 
 bool canCallBodyBytesForm(const TypingContext& typing, BuiltinID bodyBytesForm, ValueID body)
 {
-    return tryMakeBuiltinCall(typing, bodyBytesForm, { body, { } }).has_value();
+    return tryMakeBuiltinCall(typing, bodyBytesForm, { { }, { body } }).has_value();
 }
 
 static BuiltinID bodyBytesFormOf(const BuiltinTable& builtins, const Value& bodyCall)
@@ -213,7 +213,7 @@ void TypedResultExpander::expandParsedBody(const TypedResultSite& site)
 {
     Function& function = builder().function();
     TypingContext typing { program(), function, inputs().types };
-    std::optional<Value> bytesCall = tryMakeBuiltinCall(typing, bodyBytesFormOf(program().builtins(), m_originalCall), { site.source, { } });
+    std::optional<Value> bytesCall = tryMakeBuiltinCall(typing, bodyBytesFormOf(program().builtins(), m_originalCall), { { }, { site.source } });
     RELEASE_ASSERT(bytesCall);
 
     bytesCall->setOrigin(m_originalCall.origin());

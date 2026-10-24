@@ -4,7 +4,7 @@
 # CHECK: variable g0 {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled isUnchangedDuringActivation=true}
 # CHECK: variable g1 {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=NeverRead isUnchangedDuringActivation=true}
 # CHECK: variable g2 {{*}}flow={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation initialization=SetAtCreation isUnchangedDuringActivation=true}
-# CHECK: variable g3 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead reads=NeverRead}
+# CHECK: variable g3 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead reads=NeverRead isUnchangedDuringActivation=true}
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

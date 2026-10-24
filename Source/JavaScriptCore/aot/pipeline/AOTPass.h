@@ -68,13 +68,14 @@ enum class ProgramResult : uint32_t {
     InliningSummaries = 1 << 4,
     CallingConventions = 1 << 5,
     FrameAllocation = 1 << 6,
-    LiteralStrings = 1 << 7,
-    ConstantCollections = 1 << 8,
-    SlotPlan = 1 << 9,
-    RegExpRequests = 1 << 10,
-    StackChecks = 1 << 11,
-    Placement = 1 << 12,
-    SiteCaches = 1 << 13,
+    EnvironmentReuse = 1 << 7,
+    LiteralStrings = 1 << 8,
+    ConstantCollections = 1 << 9,
+    SlotPlan = 1 << 10,
+    RegExpRequests = 1 << 11,
+    StackChecks = 1 << 12,
+    Placement = 1 << 13,
+    SiteCaches = 1 << 14,
 };
 
 enum class FunctionSchedule : uint8_t { Type, Simplify, Prepare, Resolve, Optimize, Select, Represent };
@@ -117,6 +118,7 @@ struct FunctionPassContext {
     bool isInRounds { false };
     bool isBehindRounds { false };
     bool hasUsesAwaitingExpansion { false };
+    bool hasCountersConvertedSinceTestsWerePlaced { false };
     // Set by a pass in a run that changes the function: the analyses that describe the function as it is behind the run. The runner empties it in front of every run and drops what the row of the pass names, less these.
     AnalysisSet keptAnalyses { };
     Vector<uint64_t> tracesOfAllocationsNotWorthSinking;

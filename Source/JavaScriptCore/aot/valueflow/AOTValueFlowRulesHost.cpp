@@ -805,6 +805,11 @@ bool mayAnswerToName(const Program& program, ModuleID id)
     return !isWrittenByProgram(program, module) || !isInnerFile(program, id);
 }
 
+static bool isAskedOfHostByName(const Module& module)
+{
+    return module.kind == ModuleKind::RuntimeSource && !module.flags.contains(ModuleFlags::IsLoadedByImportOnly);
+}
+
 static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE const Invocable<void(ModuleID, bool isOfProgram)> auto& functor)
 {
     const Program& program = context.program();
@@ -812,9 +817,9 @@ static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE 
         const Module& module = program.modules[index];
         if (!mayAnswerToName(program, ModuleID(index)))
             continue;
-        // A load under a name nobody knows brings nothing into the image and runs no module that nothing else runs.
+        // A load under a name nobody knows brings nothing into the image. It runs a module that something else runs, and a module of the library that the build lists as one the host is asked for by name.
         bool isOfProgram = isWrittenByProgram(program, module);
-        if (module.body ? !context.isReached(module.body) : !isOfProgram && module.kind != ModuleKind::Runtime)
+        if (module.body ? !context.isReached(module.body) && !isAskedOfHostByName(module) : !isOfProgram && module.kind != ModuleKind::Runtime)
             continue;
         functor(ModuleID(index), isOfProgram);
     }
@@ -1220,8 +1225,8 @@ void runModulesLoadedByName(const ValueFlowStatement&, ValueFlowRuleContext& con
             return;
         // Whoever names the module at run time is seen code.
         context.add(nodes.ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(id)));
-        // Only for a module without code: data, or a module that stays outside the image.
-        if (isOfProgram)
+        // For a module without code: data, or a module that stays outside the image. And for a module of the library that only a name at run time asks for.
+        if (isOfProgram || isAskedOfHostByName(context.program().at(id)))
             evaluateModule(context, id);
         if (areRequired) {
             connect(context, requiredValueOf(context, id), nodes.ofHost(ValueFlowHostNode::RequiredValuesLoadedByName));

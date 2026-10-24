@@ -569,13 +569,20 @@ static void testLeafOperationsAnswerByName(LoadedProgram& program)
     const Slot* replacement = table.find(structure->id(), nameWithDigit.impl(), SlotAccess::Store);
     AOT_TEST_CHECK(replacement && replacement->kind == Slot::Kind::Value && replacement->has(Slot::isOwn));
     AOT_TEST_CHECK(put(keyFor(addedName), jsNumber(9)) == LeafAnswer::Yes && object->getDirect(vm, addedName) == jsNumber(9));
-    AOT_TEST_CHECK(!table.find(structure->id(), addedName.impl(), SlotAccess::Store));
-    JSObject* nextObject = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
-    nextObject->putDirect(vm, nameWithDigit, jsNumber(7));
-    AOT_TEST_CHECK(nextObject->structure() == structure);
-    AOT_TEST_CHECK(static_cast<LeafAnswer>(operationAOTPutByValGeneric(instance, nextObject, keyFor(addedName), JSValue::encode(jsNumber(9)))) == LeafAnswer::Yes);
+    // The first object that is given a name becomes a dictionary, the second gets a Structure for it, and the third addition is filed.
+    AOT_TEST_CHECK(object->structure()->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
+    auto makeNextObject = [&] {
+        JSObject* nextObject = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
+        nextObject->putDirect(vm, nameWithDigit, jsNumber(7));
+        AOT_TEST_CHECK(nextObject->structure() == structure);
+        AOT_TEST_CHECK(static_cast<LeafAnswer>(operationAOTPutByValGeneric(instance, nextObject, keyFor(addedName), JSValue::encode(jsNumber(9)))) == LeafAnswer::Yes && nextObject->getDirect(vm, addedName) == jsNumber(9));
+        return nextObject;
+    };
+    JSObject* secondObject = makeNextObject();
+    AOT_TEST_CHECK(!secondObject->structure()->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
+    JSObject* thirdObject = makeNextObject();
     const Slot* addition = table.find(structure->id(), addedName.impl(), SlotAccess::Store);
-    AOT_TEST_CHECK(addition && addition->kind == Slot::Kind::Transition && addition->transition.newStructureID == object->structure()->id() && nextObject->structure() == object->structure());
+    AOT_TEST_CHECK(addition && addition->kind == Slot::Kind::Transition && addition->transition.newStructureID == secondObject->structure()->id() && thirdObject->structure() == secondObject->structure());
     AOT_TEST_CHECK(put(index, jsNumber(1)) == LeafAnswer::TakeSlowPath);
 }
 

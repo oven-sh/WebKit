@@ -311,15 +311,16 @@ static Uses findDominatedUses(FunctionPassContext& context, const CounterCandida
     return uses;
 }
 
-static void passCounterOnEdge(FunctionPassContext& context, IRBuilder& builder, const CounterCandidate& candidate, const Uses& dominatedUses)
+static ValueID passCounterOnEdge(FunctionPassContext& context, IRBuilder& builder, const CounterCandidate& candidate, const Uses& dominatedUses)
 {
     builder.setOrigin(context.function.at(candidate.comparison).origin());
     ValueID narrowed = builder.addEdgeResult(candidate.stayingEdge, candidate.testedOperandIndex);
     for (const Use& use : dominatedUses)
         replaceUse(context.function, use, narrowed);
+    return narrowed;
 }
 
-static void passCountersOnEdges(FunctionPassContext& context, IRBuilder& builder, std::span<const CounterCandidate> candidates)
+static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBuilder& builder, std::span<const CounterCandidate> candidates)
 {
     splitSharedStayingEdges(context, builder, candidates);
 
@@ -327,14 +328,16 @@ static void passCountersOnEdges(FunctionPassContext& context, IRBuilder& builder
     for (const CounterCandidate& candidate : candidates)
         dominatedUses.append(findDominatedUses(context, candidate));
 
+    Vector<ValueID, 4> narrowedCounters;
     for (size_t index = 0; index < candidates.size(); ++index)
-        passCounterOnEdge(context, builder, candidates[index], dominatedUses[index]);
+        narrowedCounters.append(passCounterOnEdge(context, builder, candidates[index], dominatedUses[index]));
     context.analyses.didChangeValues();
+    return narrowedCounters;
 }
 
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
-    if (!hasNumberParameter(context.program, context.function))
+    if (!context.analyses.cfg().hasCycle() || !hasNumberParameter(context.program, context.function))
         return PassOutcome::Unchanged;
 
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -345,10 +348,11 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         Vector<CounterCandidate, 4> candidates = findCandidates(context, parametersOverStepLimit);
         if (candidates.isEmpty())
             break;
-        passCountersOnEdges(context, builder, candidates.span());
+        Vector<ValueID, 4> narrowedCounters = passCountersOnEdges(context, builder, candidates.span());
         outcome = PassOutcome::Changed;
 
-        TypePropagationOutcome typing = typeValuesFromNever({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo });
+        // A counter is typed from itself, so it and whatever else the narrowed values reach start over from never. Nothing else is typed from them.
+        TypePropagationOutcome typing = narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, narrowedCounters.span());
         // Cutting a block renumbers the values, so no id from before names its value any more.
         if (typing.didChangeControlFlow()) {
             parametersOverStepLimit.clearAll();
@@ -359,8 +363,10 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         });
     }
 
-    if (numberOfConvertedCounters)
+    if (numberOfConvertedCounters) {
         context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);
+        context.hasCountersConvertedSinceTestsWerePlaced = true;
+    }
     // The analyses were told of every edit, and the search that found no more candidates came behind the last one.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses;

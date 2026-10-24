@@ -52,6 +52,8 @@ function from(items /*, mapFn, thisArg */)
             @throwTypeError("Array.from requires that the property of the first argument, items[Symbol.iterator], when exists, be a function");
 
         var result = this !== @Array && @isConstructor(this) ? new this() : [];
+        if (!@isObject(result))
+            @throwTypeError("Array.from requires that |this| constructs an object");
 
         var k = 0;
         var iterator = iteratorMethod.@call(items);
@@ -80,6 +82,8 @@ function from(items /*, mapFn, thisArg */)
     var arrayLikeLength = @toLength(arrayLike.length);
 
     var result = this !== @Array && @isConstructor(this) ? new this(arrayLikeLength) : @newArrayWithSize(arrayLikeLength);
+    if (!@isObject(result))
+        @throwTypeError("Array.from requires that |this| constructs an object");
 
     var k = 0;
     while (k < arrayLikeLength) {
@@ -102,6 +106,8 @@ async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg)
     "use strict";
 
     var result = this !== @Array && @isConstructor(this) ? new this() : [];
+    if (!@isObject(result))
+        @throwTypeError("Array.fromAsync requires that |this| constructs an object");
 
     var k = 0;
 
@@ -138,6 +144,8 @@ async function defaultAsyncFromAsyncIteratorWithNext(iterator, mapFn, thisArg)
     var nextMethod = iterator.next;
 
     var result = this !== @Array && @isConstructor(this) ? new this() : [];
+    if (!@isObject(result))
+        @throwTypeError("Array.fromAsync requires that |this| constructs an object");
 
     var k = 0;
     for (;;) {
@@ -184,6 +192,8 @@ async function defaultAsyncFromAsyncArrayLike(asyncItems, mapFn, thisArg)
     var arrayLikeLength = @toLength(arrayLike.length);
 
     var result = this !== @Array && @isConstructor(this) ? new this(arrayLikeLength) : @newArrayWithSize(arrayLikeLength);
+    if (!@isObject(result))
+        @throwTypeError("Array.fromAsync requires that |this| constructs an object");
 
     var k = 0;
     while (k < arrayLikeLength) {

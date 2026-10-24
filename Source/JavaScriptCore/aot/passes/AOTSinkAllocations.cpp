@@ -291,6 +291,7 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
 
         sinking.addTracesOfFruitlessAllocations(context.tracesOfAllocationsNotWorthSinking);
         sinking.rewrite(builder);
+        sinking.raiseFrequenciesBehindDecidedBranches();
         sinking.recordLosses();
         sinking.countStatistics();
         return PassOutcome::Changed;

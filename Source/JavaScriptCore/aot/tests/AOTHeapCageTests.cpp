@@ -286,6 +286,21 @@ static void testRangeGrowsBySegments()
     AOT_TEST_CHECK(count < size / MB && range->reservedSize() <= size);
 }
 
+static void testRandomWindowsLieFarApart()
+{
+    constexpr size_t size = 64 * MB;
+    constexpr size_t alignment = 32 * GB;
+    uintptr_t lowest = std::numeric_limits<uintptr_t>::max();
+    uintptr_t highest = 0;
+    for (unsigned index = 0; index < 6; ++index) {
+        ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({ .name = "Range in a random window"_s, .size = size, .minSize = size, .alignment = alignment, .placement = ReservedRangeHeap::Placement::RandomWindow });
+        AOT_TEST_CHECK(range && !(range->start() % alignment));
+        lowest = std::min(lowest, range->start());
+        highest = std::max(highest, range->start());
+    }
+    AOT_TEST_CHECK(highest - lowest > 4 * 1024 * GB);
+}
+
 static void testEncodeDecodeRoundTrip()
 {
     static_assert(MarkedBlockCage::shift == 3 && MarkedBlockCage::maxSize == 32 * GB && MarkedBlockCage::minIndex == 1u << 21);
@@ -777,6 +792,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/takes-what-the-budget-leaves"_s, testRangeTakesWhatBudgetLeaves },
         { "heap-cage/reserved-range/exhaustion-returns-null"_s, testExhaustionReturnsNull },
         { "heap-cage/reserved-range/grows-by-segments"_s, testRangeGrowsBySegments },
+        { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },
         { "heap-cage/cage/off-without-compiled-code"_s, testCageIsOffWithoutCompiledCode },

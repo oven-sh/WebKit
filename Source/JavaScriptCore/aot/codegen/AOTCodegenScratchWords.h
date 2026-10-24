@@ -25,6 +25,8 @@ struct ExpectedCallWords {
 };
 
 struct CodegenScratchWords {
+    // Not a root: compiled code compares it and never dereferences it.
+    JSCell* pendingBarrierOwner;
     ExpectedCallWords expectedCall;
     // Under validation: set whenever the run time enters compiled code.
     uint64_t didEnterCompiledCode;

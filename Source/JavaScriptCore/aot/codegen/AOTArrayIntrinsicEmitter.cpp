@@ -23,6 +23,8 @@ static constexpr const ArrayStorageForm& contiguous = arrayStorageFormOf(ArraySt
 
 static_assert(int32s.hole == contiguous.hole && int32s.element != Representation::Double && contiguous.element == Representation::JSValue);
 static_assert(doubles.element == Representation::Double);
+static_assert(!remembersOwnerOf(Opcode::TryPutByValDirect), "tryStore runs the owner barrier only on the path that stores, so it cannot cover an earlier store");
+static_assert(!remembersOwnerOf(Opcode::TryPutIndex), "tryStoreElement remembers the stored element, not the array");
 
 ArrayIntrinsicEmitter::ArrayIntrinsicEmitter(CodeGenerator& generator)
     : BuiltinFamilyEmitter(generator)
@@ -266,16 +268,11 @@ void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)
     Integer length = integerOperand(value->lengthOperand());
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    Word32 mode = elements.indexingMode(array, IndexingShapeAndWritabilityMask);
-    Condition hasForm;
-    for (const ArrayStorageForm& form : arrayStorageForms)
-        hasForm = logicalOr(hasForm, elements.hasWritableShape(mode, form));
-    branchUnless(hasForm, slowPath);
-    branchUnless(isNotZero(ArrayAllocationEmitter(generator()).headerOfNewArrayWithShape(mode)), slowPath);
+    static_assert(ArrayWithInt32 + 2 == ArrayWithDouble && ArrayWithDouble + 2 == ArrayWithContiguous, "an array has no mode between these");
+    branchUnless(belowOrEqual(sub(elements.indexingMode(array, IndexingShapeAndWritabilityMask), word32(ArrayWithInt32)), word32(ArrayWithContiguous - ArrayWithInt32)), slowPath);
     ArrayElements storage = elements.elementsOf(array);
-    Integer capacity = elements.publicLength(storage);
-    branchUnless(belowOrEqual(length, capacity), slowPath);
-    Integer unusedCapacity = sub(capacity, length);
+    // Below a length that is above the capacity this wraps to more than any length.
+    Integer unusedCapacity = sub(elements.publicLength(storage), length);
     branchUnless(logicalOr(belowOrEqual(unusedCapacity, integer(smallUnusedCapacity)), belowOrEqual(unusedCapacity, length)), slowPath);
     elements.setPublicLength(storage, length);
     join.add(array);

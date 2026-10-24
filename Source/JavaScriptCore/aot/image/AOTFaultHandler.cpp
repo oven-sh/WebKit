@@ -15,6 +15,7 @@
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
 #include "AOTOperationData.h"
+#include "AOTState.h"
 #include "AOTStubDescriptor.h"
 #include "AOTStubKey.h"
 #include "AOTStubRegisters.h"
@@ -59,7 +60,7 @@ static uintptr_t& registerOf(PlatformRegisters& registers, GPRReg reg)
 #elif CPU(X86_64)
 static uintptr_t& scratchRegisterOf(PlatformRegisters& registers)
 {
-    static_assert(MacroAssembler::s_scratchRegister == X86Registers::r11);
+    static_assert(MacroAssembler::s_scratchRegister == X86Registers::r11 && registerWrittenAtFaults == X86Registers::r11);
 #if OS(DARWIN)
     return reinterpret_cast<uintptr_t&>(registers.__r11);
 #elif OS(WINDOWS)
@@ -69,13 +70,6 @@ static uintptr_t& scratchRegisterOf(PlatformRegisters& registers)
 #else
     return reinterpret_cast<uintptr_t&>(registers.machineContext.gregs[REG_R11]);
 #endif
-}
-
-static thread_local uint64_t s_scratchRegisterBeforeFault;
-
-uint64_t scratchRegisterBeforeFault()
-{
-    return s_scratchRegisterBeforeFault;
 }
 #endif
 
@@ -133,12 +127,14 @@ static SignalAction handleNullCheck(const Fault& fault, PlatformRegisters& regis
 
     // The call-site table and ThrowAtSite treat the faulting instruction as a near call, whatever its length.
     uintptr_t returnAddress = fault.pc + sizeOfNearCall;
+    uint64_t& registerBeforeFault = std::bit_cast<Instance*>(instanceIn(registers))->state->registerBeforeFault;
 #if CPU(ARM64)
+    registerBeforeFault = registerOf(registers, faultCallerLinkGPR);
     if (fault.callerFrame == CallerFrame::Frameless)
         registerOf(registers, faultCallerLinkGPR) = registerOf(registers, ARM64Registers::lr);
     registerOf(registers, ARM64Registers::lr) = returnAddress;
 #elif CPU(X86_64)
-    s_scratchRegisterBeforeFault = scratchRegisterOf(registers);
+    registerBeforeFault = scratchRegisterOf(registers);
     scratchRegisterOf(registers) = returnAddress;
 #endif
     MachineContext::setInstructionPointer(registers, target);

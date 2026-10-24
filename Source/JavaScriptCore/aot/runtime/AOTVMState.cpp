@@ -53,7 +53,6 @@ void VMState::attachImage(VM& vm)
     hasCompiledCode = true;
     vm.setMayHaveUncacheableTransitions();
 
-    addMarkingConstraints(vm);
     vm.heap.setValidatesCellVisits(validatesRuntime || Options::verifyGC());
 
     reporter = makeUniqueWithoutFastMallocCheck<RuntimeReporter>(vm);

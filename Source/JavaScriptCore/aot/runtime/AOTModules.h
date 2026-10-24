@@ -263,6 +263,7 @@ private:
     bool didCaptureExports(ModuleID) const;
     void captureExports(ModuleID);
     void captureExportsBehindEvaluation(ModuleID);
+    void captureExportsOfFilesBeingEvaluated(ModuleID root);
     JSValue evaluateForCapture(ModuleID);
     bool tryCaptureFields(ModuleID, JSValue exports);
     JSValue capturedField(const LoadedModule&, UniquedStringImpl* name) const;

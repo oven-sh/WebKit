@@ -33,15 +33,20 @@ static bool canSinkToCall(FunctionPassContext& context, std::span<const ValueSit
     }
 
     // A read that is proven to find methods walks the chain and runs nobody's code. Any other may run a getter.
-    Effects effectsOfRead = context.analyses.effectsOf(links.front().value).normal;
     const BlockValues& values = context.function.at(call.block).values;
-    for (uint32_t index = links.front().index + 1; index < call.index; ++index) {
-        ValueID id = values[index];
-        bool isLink = std::ranges::any_of(links, [&](const ValueSite& link) {
-            return link.value == id;
-        });
-        if (!isLink && !validationsOfValues.contains(context.function.at(id).opcode) && context.analyses.effectsOf(id).normal.interferesWith(effectsOfRead))
-            return false;
+    for (const ValueSite& read : links) {
+        Opcode opcode = context.function.at(read.value).opcode;
+        if (opcode != Opcode::PropGet && opcode != Opcode::SuperGet)
+            continue;
+        Effects effectsOfRead = context.analyses.effectsOf(read.value).normal;
+        for (uint32_t index = read.index + 1; index < call.index; ++index) {
+            ValueID id = values[index];
+            bool isLink = std::ranges::any_of(links, [&](const ValueSite& link) {
+                return link.value == id;
+            });
+            if (!isLink && !validationsOfValues.contains(context.function.at(id).opcode) && context.analyses.effectsOf(id).normal.interferesWith(effectsOfRead))
+                return false;
+        }
     }
     return true;
 }
@@ -100,6 +105,54 @@ static MemberRead findLinksOfMemberRead(FunctionPassContext& context, const Valu
         memberRead.links.append(ValueSite { location.block, location.index, link });
     }
     return memberRead;
+}
+
+static bool isReadOfPrototypeProperty(const Program& program, const Value& value)
+{
+    return value.opcode == Opcode::PropGet && !value.isFreeName() && value.key() == program.keyOf(BuiltinNames::prototype);
+}
+
+static bool readsMemberOfPrototypeProperty(const Program& program, const Function& function, const Value& value)
+{
+    return value.opcode == Opcode::PropGet && !value.isFreeName() && isReadOfPrototypeProperty(program, function.at(CastChain(function, value.objectOperand()).last()));
+}
+
+static PrototypeMemberRead findPrototypeMemberRead(FunctionPassContext& context, const ValueSite& site)
+{
+    static_assert(!OperandIndex::PropGet::object, "findCastChainUsedByCallAlone starts at operand 0 of its user.");
+    const Program& program = context.program;
+    const Function& function = context.function;
+    bool isCall = function.at(site.value).opcode == Opcode::Call;
+    if (!readsMemberOfPrototypeProperty(program, function, isCall ? function.at(CastChain(function, function.at(site.value).calleeOperand()).last()) : function.at(site.value)))
+        return { };
+
+    const UseLists& useLists = context.analyses.useLists();
+    PrototypeMemberRead found;
+    Vector<ValueID, 2> member;
+    if (isCall) {
+        member = findCastChainUsedByCallAlone(function, useLists, site.value, found.reads.validations);
+        if (member.isEmpty())
+            return { };
+    }
+    ValueID memberRead = isCall ? member.first() : site.value;
+    Vector<ValueID, 2> holder = findCastChainUsedByCallAlone(function, useLists, memberRead, found.reads.validations);
+    if (holder.isEmpty())
+        return { };
+
+    found.classObject = function.at(holder.first()).objectOperand();
+    const Type& classObjectType = program.typeOf(function, found.classObject);
+    if (classObjectType.mayBeUndefinedOrNull())
+        return { };
+    found.classLayout = classOfClassObject(program, classObjectType);
+    found.key = function.at(memberRead).key();
+    for (const Vector<ValueID, 2>* chain : { &holder, &member }) {
+        for (ValueID link : *chain) {
+            ValueLocation location = useLists.locationOf(link);
+            RELEASE_ASSERT(location.placement == ValuePlacement::InBlock);
+            found.reads.links.append(ValueSite { location.block, location.index, link });
+        }
+    }
+    return found;
 }
 
 MemberRead findMemberRead(FunctionPassContext& context, const ValueSite& call)
@@ -164,6 +217,8 @@ bool CallResolver::mayHavePlan(const Value& value) const
     switch (value.opcode) {
     case Opcode::PropGet:
     case Opcode::PropSet: {
+        if (m_resolution == Resolution::Everything && readsMemberOfPrototypeProperty(m_program, m_function, value))
+            return true;
         const Type& receiver = typeOf(value.objectOperand());
         if (receiver.mayBeUndefinedOrNull())
             return false;
@@ -172,6 +227,8 @@ bool CallResolver::mayHavePlan(const Value& value) const
         return !!classOfClassObject(m_program, receiver);
     }
     case Opcode::CallBuiltin:
+        if (value.builtinCallForm() == BuiltinCallForm::AnyReceiver)
+            return m_program.at(value.type).isAnything();
         if (value.builtinCallForm() != BuiltinCallForm::Whole)
             return false;
         return m_program.at(value.type).isAnything() || m_program.builtins().at(value.overload()).builtin == Builtins::FunctionPrototypeBind;
@@ -203,6 +260,11 @@ Vector<CallSite> CallResolver::collectSites()
             if (!site.memberRead.isEmpty())
                 isMemberRead.quickSet(site.memberRead.read().value.index());
         }
+        if (m_resolution == Resolution::Everything && site.memberRead.isEmpty() && (value.opcode == Opcode::Call || value.opcode == Opcode::PropGet)) {
+            site.prototypeMemberRead = findPrototypeMemberRead(m_context, position);
+            for (const ValueSite& link : site.prototypeMemberRead.reads.links)
+                isMemberRead.quickSet(link.value.index());
+        }
         sites.append(WTF::move(site));
     });
 
@@ -225,6 +287,10 @@ std::optional<SiteContent> CallResolver::contentOf(const CallSite& site) const
         content.add(access.receivers());
         content.addTypesOf(m_function, access.objectOperand());
     };
+
+    // The plan follows from what the receiver was read from.
+    if (site.prototypeMemberRead)
+        return std::nullopt;
 
     switch (value.opcode) {
     case Opcode::PropGet:
@@ -275,6 +341,8 @@ Vector<PlannedCall> CallResolver::planSites(std::span<CallSite> sites)
             continue;
         if (!site.memberRead.isEmpty())
             site.memberRead.canSinkToCall = canSinkToCall(m_context, site.memberRead.links.span(), site.position);
+        if (site.prototypeMemberRead)
+            site.prototypeMemberRead.reads.canSinkToCall = canSinkToCall(m_context, site.prototypeMemberRead.reads.links.span(), site.position);
 
         std::optional<SiteContent> content = cache ? contentOf(site) : std::nullopt;
         std::optional<uint32_t> reasonOfKnownRefusal = content ? cache->refusedContents.find(*content) : std::nullopt;
@@ -329,10 +397,11 @@ PlanOrDecline<CallPlan> CallResolver::plan(const CallSite& site)
     case Opcode::Call:
         if (!site.memberRead.isEmpty() && (tryNext(planMemberCall(site)) || tryNext(planClassObjectMember(site)) || tryNext(planSuperMember(site))))
             break;
-        tryNext(planCalleeDispatch(site));
+        if (!tryNext(planPrototypeMember(site)))
+            tryNext(planCalleeDispatch(site));
         break;
     case Opcode::PropGet:
-        if (!tryNext(planReceiverDispatch(site, MethodKind::Getter)))
+        if (!tryNext(planPrototypeMember(site)) && !tryNext(planReceiverDispatch(site, MethodKind::Getter)))
             tryNext(planClassObjectMember(site));
         break;
     case Opcode::PropSet:
@@ -388,6 +457,9 @@ void CallResolver::rewrite(const PlannedCall& planned)
         },
         [&](const HolderMemberPlan& plan) {
             rewriteHolderMember(site, plan);
+        },
+        [&](const PrototypeMemberPlan& plan) {
+            rewritePrototypeMember(site, plan);
         },
         [&](const ConstructPlan& plan) {
             rewriteConstruct(site, plan);
@@ -477,24 +549,31 @@ static Value makeObjectCoercibleCheck(FunctionPassContext& context, const Value&
 
 void CallResolver::retireMemberRead(const CallSite& site, bool checksReceiver, PropertyKeyID key)
 {
-    RELEASE_ASSERT(m_expansion.isOpen() && !site.memberRead.isEmpty());
+    retireReads(site.memberRead, checksReceiver, key, OperandIndex::Call::callee);
+}
+
+void CallResolver::retireReads(const MemberRead& reads, bool checksReceiver, PropertyKeyID key, uint32_t operandIndexInOriginal)
+{
+    RELEASE_ASSERT(m_expansion.isOpen() && !reads.isEmpty());
 
     Vector<Value, 2> copies;
-    for (const ValueSite& link : site.memberRead.links)
+    for (const ValueSite& link : reads.links) {
         copies.append(m_function.at(link.value));
-    m_expansion.addReplaced(copies.first());
+        if (copies.last().opcode == Opcode::PropGet || copies.last().opcode == Opcode::SuperGet)
+            m_expansion.addReplaced(copies.last());
+    }
 
-    ValueID read = site.memberRead.read().value;
+    ValueID read = reads.read().value;
     if (checksReceiver)
         m_function.edit(read) = makeObjectCoercibleCheck(m_context, copies.first(), key);
     else
         becomeUndefined(m_function, read);
-    for (const ValueSite& cast : site.memberRead.links.span().subspan(1))
-        becomeUndefined(m_function, cast.value);
-    for (ValueID validation : site.memberRead.validations)
+    for (const ValueSite& link : reads.links.span().subspan(1))
+        becomeUndefined(m_function, link.value);
+    for (ValueID validation : reads.validations)
         becomeUndefined(m_function, validation);
 
-    m_expansion.setOperationsBeforeOriginal(WTF::move(copies), OperandIndex::Call::callee);
+    m_expansion.setOperationsBeforeOriginal(WTF::move(copies), operandIndexInOriginal);
     m_context.analyses.didChangeValues();
 }
 
@@ -509,7 +588,7 @@ Vector<ValueID, 8> CallResolver::capturesOf(const CallArm& arm, ValueID closure,
     return appendCaptures(m_builder, arm.closureFunction, closure);
 }
 
-void CallResolver::branchOnConditions(std::span<const MemberCondition> conditions, const OriginalCopy& original)
+void CallResolver::branchOnConditions(std::span<const MemberCondition> conditions, const OriginalCopy& original, LayoutID classWhoseGuardsBegin)
 {
     RELEASE_ASSERT(m_expansion.isOpen());
     if (conditions.empty())
@@ -521,6 +600,18 @@ void CallResolver::branchOnConditions(std::span<const MemberCondition> condition
     IRBuilder::BranchBlocks branch = m_builder.emitBranch(areUnchanged, frequency, rarerOf(frequency, BlockFrequency::Unlikely));
     m_builder.endPrediction(failedUnasked, branch.notTaken);
     m_builder.moveToEndOf(branch.notTaken);
+    if (classWhoseGuardsBegin) {
+        // Guards that have begun say so: the one of the property holds until the program puts another object there.
+        MemberCondition property { MemberCondition::Kind::MemberUnchanged, classWhoseGuardsBegin, ClassSide::Static, m_program.keyOf(BuiltinNames::prototype) };
+        ValueID haveBegun = m_expansion.append(makeConditionsTest(m_context.types, { &property, 1 }));
+        IRBuilder::BranchBlocks begun = m_builder.emitBranch(haveBegun, m_function.at(m_builder.currentBlock()).frequency, BlockFrequency::Rare);
+        m_builder.moveToEndOf(begun.notTaken);
+        Value begin = IRBuilder::make(Opcode::BeginMemberGuards);
+        begin.setLayout(classWhoseGuardsBegin);
+        m_expansion.append(WTF::move(begin));
+        m_builder.emitJump(begun.taken);
+        m_builder.moveToEndOf(begun.taken);
+    }
     m_expansion.finishArm(m_expansion.appendOriginal(original));
     m_builder.moveToEndOf(branch.taken);
 }

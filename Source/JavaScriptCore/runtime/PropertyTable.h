@@ -169,6 +169,9 @@ public:
 
     static constexpr ptrdiff_t offsetOfIndexSize() { return OBJECT_OFFSETOF(PropertyTable, m_indexSize); }
     static constexpr ptrdiff_t offsetOfIndexVector() { return OBJECT_OFFSETOF(PropertyTable, m_indexVector); }
+    static constexpr ptrdiff_t offsetOfKeyCount() { return OBJECT_OFFSETOF(PropertyTable, m_keyCount); }
+    static constexpr ptrdiff_t offsetOfDeletedCount() { return OBJECT_OFFSETOF(PropertyTable, m_deletedCount); }
+    static constexpr ptrdiff_t offsetOfDeletedOffsets() { return OBJECT_OFFSETOF(PropertyTable, m_deletedOffsets); }
     static constexpr uintptr_t flagOfCompactIndexVector = 0x1;
 
 private:

@@ -167,6 +167,8 @@ public:
     ValueSetID builtinObjectsAndPlaceholders() const { return m_builtinObjectsAndPlaceholders; }
     // The table's entry for native code that nothing describes. On a chain it stands for a prototype object that the table does not describe, among accessors for one that the table does not list.
     ValueFlowObjectID undescribedNativeCode() const { return m_undescribedNativeCode; }
+    // The accessor `__proto__` of Object.prototype. None where the table has none.
+    ValueFlowObjectID accessorOfPrototypeLink() const { return m_accessorOfPrototypeLink; }
     // What HeapRule::prototypesAtCreationOf() has found for a block of a set (ValueSets::forEachBlock()): five words: a count, the name of the block, then up to six prototypes, each one more than its number, two a word.
     static constexpr uint64_t noBlockKept = UINT64_MAX;
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
@@ -184,6 +186,8 @@ public:
     ValueSetID argumentsObjects() const { return m_argumentsObjects; }
     ValueSetID arraysThatOperationsAllocate() const { return m_arraysThatOperationsAllocate; }
     ValueSetID objectsWithoutPropertiesOfNativeCode() const { return m_objectsWithoutPropertiesOfNativeCode; }
+    // Only an object that the program has allocated with a layout holds nothing but what was written into it. A built-in object has its members and a namespace object its exports.
+    ValueSetID objectsHoldingOnlyWhatWasWritten() const { return m_objectsHoldingOnlyWhatWasWritten; }
 
     PropertyKeyID prototypeKey() const { return m_prototypeKey; }
     PropertyKeyID constructorKey() const { return m_constructorKey; }
@@ -246,7 +250,9 @@ private:
     ValueSetID m_argumentsObjects;
     ValueSetID m_arraysThatOperationsAllocate;
     ValueSetID m_objectsWithoutPropertiesOfNativeCode;
+    ValueSetID m_objectsHoldingOnlyWhatWasWritten;
     ValueFlowObjectID m_undescribedNativeCode;
+    ValueFlowObjectID m_accessorOfPrototypeLink;
     std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesAtCreation;
     std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesOfBlocks;
     unsigned m_shiftOfBlocks { 64 };

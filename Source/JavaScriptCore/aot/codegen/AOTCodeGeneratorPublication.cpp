@@ -334,6 +334,8 @@ void CodeGenerator::publishKnownProperties(ValueID id, Operand operand, bool isC
     if (!typeHoldsWhereverComputed(*this, m_values.span(), id, isConverted ? PublishedValue::DerivedFromIt : PublishedValue::Itself))
         return;
 
+    if (range && range->min() < range->max() && build().recordedOptions().isSabotaged(Sabotage::RangesEndOneEarly))
+        range = B3::IntRange(range->min(), range->max() - 1);
     if (range)
         m_proc.setKnownRange(lowered, *range);
     if (bytes) {

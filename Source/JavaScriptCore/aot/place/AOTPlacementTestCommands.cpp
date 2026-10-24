@@ -19,6 +19,7 @@
 #include "AOTPlacementSteps.h"
 #include "AOTPlacementTestSupport.h"
 #include "AOTRegExpRequests.h"
+#include "AOTReuseEnvironments.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTTestRunner.h"
@@ -111,6 +112,7 @@ PlacementInputs PlacedProgram::inputs() const
         .heat = *output->heat,
         .callingConventions = *output->callingConventions,
         .frameAllocation = *output->frameAllocation,
+        .environmentReuse = *output->environmentReuse,
         .literalStrings = *output->literalStrings,
         .constantCollections = *output->constantCollections,
         .slots = *output->slots,
@@ -405,6 +407,19 @@ static void printSiteCells(PrintStream& out, const Program& program, const Stati
     }
 }
 
+static void printFreeCells(IRPrinter& printer, const Placement& placement)
+{
+    for (uint32_t index = 0; index < printer.program().layouts.size(); ++index) {
+        LayoutID id(index);
+        std::optional<uint32_t> offset = placement.freeCellOffset(id);
+        if (!offset)
+            continue;
+        printer.out().print("free-cell "_s);
+        printer.print(id);
+        printer.out().println(" @"_s, *offset);
+    }
+}
+
 static void printStatics(PrintStream& out, const PlacedProgram& placed)
 {
     const Placement& placement = placed.placement();
@@ -417,6 +432,7 @@ static void printStatics(PrintStream& out, const PlacedProgram& placed)
     printModuleBuiltinCells(printer, statics);
     printSharedStorage(printer, placement.requests());
     printSiteCells(out, placed.program(), statics);
+    printFreeCells(printer, placement);
 
     out.print("roots="_s);
     printNumbers(out, statics.roots);

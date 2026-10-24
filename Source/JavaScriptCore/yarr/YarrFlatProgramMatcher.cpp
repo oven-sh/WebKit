@@ -176,9 +176,9 @@ struct StartCandidates {
     uint64_t mask { 0 };
 };
 
-// The first place from `from` on where a match can begin. Past the end: none. Out of line so that its loops do not take registers from Machine::run().
+// The first place from `from` on where a match can begin by the tables. Past the end: none.
 template<typename CharType>
-static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartCandidates& candidates)
+static ALWAYS_INLINE unsigned findStartByTables(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartCandidates& candidates)
 {
     if (auto found = candidates.find(from))
         return *found;
@@ -197,10 +197,10 @@ static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const 
         unsigned character = input[at];
         return program.startTable[sizeof(CharType) == 1 || character < 256 ? character : 256];
     };
-    // Behind a surrogate pair the places of a match are no longer those of the subject: the attempt is made, and given up. See FlatProgram::givesUpAtSurrogates.
+    // Behind a surrogate pair the places of a match are no longer those of the subject: the attempt is made.
     auto canBeginAt = [&](unsigned at) {
         for (unsigned place = 0; place < depth; ++place) {
-            if (sizeof(CharType) > 1 && U16_IS_SURROGATE(input[at + place]) && program.givesUpAtSurrogates)
+            if (sizeof(CharType) > 1 && U16_IS_SURROGATE(input[at + place]) && program.decodesSurrogatePairs)
                 return true;
             if (!(entryOf(at + place) >> place & 1))
                 return false;
@@ -257,16 +257,40 @@ static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const 
     return none;
 }
 
+struct StartSearch {
+    StartCandidates candidates { };
+    RequiredTextPlaces requiredTextPlaces { };
+};
+
+// The first place from `from` on where a match can begin. Past the end: none. Out of line so that its loops do not take registers from Machine::run().
+template<typename CharType>
+static NEVER_INLINE unsigned findStartOfMatch(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
+{
+    if (program.requiredTexts.isEmpty())
+        return findStartByTables(program, input, length, from, search.candidates);
+    for (;;) {
+        from = nextStartWithRequiredTexts(program.requiredTexts, std::span { input, length }, from, search.requiredTextPlaces);
+        if (from > length || program.startScan == FlatStartScan::RequiredTextsAlone)
+            return from;
+        unsigned next = findStartByTables(program, input, length, from, search.candidates);
+        if (next == from || next > length)
+            return next;
+        from = next;
+    }
+}
+
 // The characters around the last one from 256 up that was looked for in a set, as far as the set treats them alike: the letters of one script lie side by side.
 struct WideNeighbors {
-    ALWAYS_INLINE bool contains(std::span<const CharacterRange> wideRanges, const CharacterSetBits& wanted, char16_t character)
+    template<typename Character>
+    ALWAYS_INLINE bool contains(std::span<const CharacterRange> wideRanges, const CharacterSetBits& wanted, Character character)
     {
         if (set != &wanted || character < first || character > last) [[unlikely]]
             find(wideRanges, wanted, character);
         return areInSet;
     }
 
-    NEVER_INLINE void find(std::span<const CharacterRange> wideRanges, const CharacterSetBits& wanted, char16_t character)
+    template<typename Character>
+    NEVER_INLINE void find(std::span<const CharacterRange> wideRanges, const CharacterSetBits& wanted, Character character)
     {
         auto ranges = wideRanges.subspan(wanted.firstWideRange, wanted.wideRangeCount);
         auto next = std::ranges::upper_bound(ranges, character, { }, &CharacterRange::begin);
@@ -282,6 +306,45 @@ struct WideNeighbors {
     char32_t last { 0 };
     bool areInSet { false };
 };
+
+// As Interpreter::tryConsumeBackReference(). Only outside unicode mode is a character from 128 up never the same as an ASCII one.
+static ALWAYS_INLINE bool areEqualIgnoringCase(char32_t expected, char32_t actual, bool isUnicodeMode)
+{
+    if (expected == actual)
+        return true;
+    if (!isUnicodeMode && (isASCII(expected) || isASCII(actual)))
+        return toASCIIUpper(expected) == toASCIIUpper(actual);
+    return areCanonicallyEquivalent(expected, actual, isUnicodeMode ? CanonicalMode::Unicode : CanonicalMode::UCS2);
+}
+
+static constexpr char32_t noCharacter = std::numeric_limits<char32_t>::max();
+
+// As Interpreter::InputStream::reread(): see FlatProgram::decodesSurrogatePairs.
+static NEVER_INLINE char32_t characterAtSurrogate(const char16_t* input, unsigned length, unsigned at)
+{
+    char32_t unit = input[at];
+    if (U16_IS_SURROGATE_LEAD(unit))
+        return at + 1 < length && U16_IS_TRAIL(input[at + 1]) ? U16_GET_SUPPLEMENTARY(unit, input[at + 1]) : unit;
+    return at && U16_IS_LEAD(input[at - 1]) ? noCharacter : unit;
+}
+
+// See FlatProgram::referencedGroups.
+static NEVER_INLINE bool holdsBoundsOfReferencedGroups(const FlatProgram& program, const uint32_t* bounds, const unsigned* output)
+{
+    for (unsigned group : program.referencedGroups) {
+        if (*bounds++ != output[group] || *bounds++ != output[group + 1])
+            return false;
+    }
+    return true;
+}
+
+static NEVER_INLINE void storeBoundsOfReferencedGroups(const FlatProgram& program, uint32_t* bounds, const unsigned* output)
+{
+    for (unsigned group : program.referencedGroups) {
+        *bounds++ = output[group];
+        *bounds++ = output[group + 1];
+    }
+}
 
 // What a match seldom uses. Separate from Machine for the same reason as FrameStorage.
 template<typename CharType>
@@ -350,10 +413,65 @@ struct Enclosure {
         return true;
     }
 
+    // A step of a lookbehind stands behind a Choice that goes on behind the step, and always fails. So the search goes on from the frame of the Choice: at the position that the step has written there,
+    // or, where the step cannot be made, not at all.
+    NEVER_INLINE void readBackward(const FlatProgram& program, const FlatOp& op, const CharType* input, const unsigned* output, FlatFrame& frame)
+    {
+        unsigned reached = positionBehindStepBackward(program, op, input, frame.position, output);
+        if (reached != cannotReadBackward) {
+            frame.position = reached;
+            return;
+        }
+        frame.op = program.recordFailureOp * sizeof(FlatOp);
+        frame.extra = recordsNothing;
+    }
+
+    static constexpr unsigned cannotReadBackward = std::numeric_limits<unsigned>::max();
+    static constexpr uint32_t recordsNothing = std::numeric_limits<uint32_t>::max();
+
+    unsigned positionBehindStepBackward(const FlatProgram& program, const FlatOp& op, const CharType* input, unsigned position, const unsigned* output)
+    {
+        switch (static_cast<FlatStepBackward>(op.registerIndex)) {
+        case FlatStepBackward::NeedsInput:
+            return position >= op.needed ? position : cannotReadBackward;
+        case FlatStepBackward::Set: {
+            // As Interpreter::InputStream::tryReadBackward(): what is read ends at the position even where that lies inside a surrogate pair.
+            if (!position)
+                return cannotReadBackward;
+            char32_t character = input[--position];
+            if constexpr (sizeof(CharType) > 1) {
+                if (U16_IS_TRAIL(character) && program.decodesSurrogatePairs && position && U16_IS_LEAD(input[position - 1]))
+                    character = U16_GET_SUPPLEMENTARY(static_cast<char32_t>(input[--position]), character);
+            }
+            const CharacterSetBits& set = program.characterSets[op.set];
+            bool isMember = character > 0xff ? wideRangesContain(program.wideRanges.span(), set, character) : contains(set, program.wideRanges.span(), static_cast<Latin1Character>(character));
+            return isMember ? position : cannotReadBackward;
+        }
+        case FlatStepBackward::BackReference: {
+            unsigned begin = output[op.argument];
+            unsigned end = output[op.argument + 1];
+            if (begin == offsetNoMatch || end == offsetNoMatch)
+                return position;
+            unsigned count = end - begin;
+            if (position < count)
+                return cannotReadBackward;
+            position -= count;
+            for (unsigned i = 0; i < count; ++i) {
+                if (input[begin + i] != input[position + i] && !(op.needed && areEqualIgnoringCase(input[begin + i], input[position + i], op.target)))
+                    return cannotReadBackward;
+            }
+            return position;
+        }
+        case FlatStepBackward::None:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
     ALWAYS_INLINE JSRegExpResult resultUnlessGivenUp(const FlatProgram& program, JSRegExpResult result) const
     {
         if constexpr (sizeof(CharType) > 1) {
-            if (hasMetSurrogate && program.givesUpAtSurrogates)
+            if (hasMetSurrogate && program.decodesSurrogatePairs)
                 return JSRegExpResult::JITCodeFailure;
         }
         return result;
@@ -363,16 +481,17 @@ struct Enclosure {
     const unsigned length;
     const unsigned steps;
     unsigned noNewlineBefore { startOffset };
-    StartCandidates startCandidates { };
+    StartSearch startSearch { };
     struct Nothing { };
-    NO_UNIQUE_ADDRESS std::conditional_t<sizeof(CharType) == 1, Nothing, bool> hasMetSurrogate { }; // See FlatProgram::givesUpAtSurrogates.
+    NO_UNIQUE_ADDRESS std::conditional_t<sizeof(CharType) == 1, Nothing, bool> hasMetSurrogate { }; // See FlatProgram::decodesSurrogatePairs.
     NO_UNIQUE_ADDRESS std::conditional_t<sizeof(CharType) == 1, Nothing, WideNeighbors> neighbors { };
 };
 
-template<typename CharType> static JSRegExpResult matchBehindLimit(const FlatProgram&, const CharType* input, const Enclosure<CharType>&, unsigned* output);
+template<typename CharType, bool isFull> static JSRegExpResult matchBehindLimit(const FlatProgram&, const CharType* input, const Enclosure<CharType>&, unsigned* output);
 
 // remembers: keeps the table of failed searches. See FlatMatchPolicy.
-template<typename CharType, bool remembers>
+// isFull: can do what few programs need: see FlatProgram::needsFullMachine. It keeps the table where it is given one. The others are kept free of that, since whatever is added to run() costs them registers.
+template<typename CharType, bool remembers, bool isFull = false>
 struct Machine {
     using Kind = FlatOp::Kind;
 
@@ -394,7 +513,7 @@ struct Machine {
         , remainingSteps(enclosure.steps)
         , memo(memo)
     {
-        ASSERT(remembers == !!memo);
+        ASSERT(isFull || remembers == !!memo);
     }
 
     ALWAYS_INLINE JSRegExpResult run()
@@ -427,7 +546,7 @@ struct Machine {
         for (;;) {
             Step step = runOp();
             if (step == Step::AtEnclosure)
-                step = enclosure.widen(program, *op, input, matchStart, position, output) ? Step::Matched : Step::Failed;
+                step = leaveMainLoop() ? Step::Matched : Step::Failed;
             if (step == Step::Failed)
                 step = backtrack();
             switch (step) {
@@ -442,7 +561,9 @@ struct Machine {
                 return JSRegExpResult::NoMatch;
             case Step::HitLimit:
                 if constexpr (!remembers)
-                    return matchBehindLimit(program, input, enclosure, output);
+                    return matchBehindLimit<CharType, false>(program, input, enclosure, output);
+                if (isFull && !memo)
+                    return matchBehindLimit<CharType, true>(program, input, enclosure, output);
                 return JSRegExpResult::ErrorHitLimit;
             case Step::NeedsFrames:
                 if (!growFrames(frameStorage))
@@ -456,13 +577,58 @@ struct Machine {
         }
     }
 
+    ALWAYS_INLINE bool leaveMainLoop()
+    {
+        if constexpr (isFull) {
+            if (op->registerIndex) {
+                enclosure.readBackward(program, *op, input, output, top[-1]);
+                return false;
+            }
+        }
+        return enclosure.widen(program, *op, input, matchStart, position, output);
+    }
+
     // 0: the search from there has not begun. Else one more than the turns that it began before it failed.
     ALWAYS_INLINE uint32_t& memoEntry(unsigned row, unsigned at)
     {
         ASSERT(row && row <= program.memoRows && at <= length);
         return memo[static_cast<size_t>(row - 1) * (static_cast<size_t>(length) + 1) + at];
     }
-    static ALWAYS_INLINE bool isMemoized(const FlatOp* at) { return remembers && at->memoRow; }
+
+    ALWAYS_INLINE size_t memoIndex(unsigned row, unsigned at) const
+    {
+        ASSERT(row && row <= program.memoRows && at <= length);
+        return static_cast<size_t>(row - 1) * (static_cast<size_t>(length) + 1) + at;
+    }
+
+    // The bounds of the referenced groups lie behind all the entries, in the entries' order.
+    ALWAYS_INLINE uint32_t* boundsOfMemoEntry(size_t index) { return memo + memoIndex(program.memoRows, length) + 1 + index * 2 * program.referencedGroups.size(); }
+
+    // 0: the search from there has not begun while the referenced groups held what they hold now. Else one more than the turns that it began before it failed.
+    ALWAYS_INLINE uint32_t findFailedSearch(unsigned row, unsigned at)
+    {
+        size_t index = memoIndex(row, at);
+        uint32_t entry = memo[index];
+        if constexpr (isFull) {
+            if (entry && !holdsBoundsOfReferencedGroups(program, boundsOfMemoEntry(index), output))
+                return 0;
+        }
+        return entry;
+    }
+
+    ALWAYS_INLINE void enterSearch(unsigned row, unsigned at, uint32_t value)
+    {
+        size_t index = memoIndex(row, at);
+        memo[index] = value;
+        if constexpr (isFull)
+            storeBoundsOfReferencedGroups(program, boundsOfMemoEntry(index), output);
+    }
+    ALWAYS_INLINE bool isMemoized(const FlatOp* at) const
+    {
+        if constexpr (isFull)
+            return memo && at->memoRow;
+        return remembers && at->memoRow;
+    }
 
     ALWAYS_INLINE bool takeTurnsOfFailedSearch(uint32_t entry)
     {
@@ -477,12 +643,17 @@ struct Machine {
         return true;
     }
 
-    static constexpr uint32_t dependsOnWhereTurnBegan = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t dependsOnWhereTurnBegan = Enclosure<CharType>::recordsNothing;
 
     ALWAYS_INLINE void recordFailedSearch(unsigned row, const FlatFrame& frame)
     {
-        if (frame.extra != dependsOnWhereTurnBegan)
-            memoEntry(row, frame.position) = 1 + (frame.extra - program.remainingTurns);
+        if constexpr (isFull) {
+            if (frame.extra != dependsOnWhereTurnBegan)
+                enterSearch(row, frame.position, 1 + (frame.extra - program.remainingTurns));
+        } else {
+            if (frame.extra != dependsOnWhereTurnBegan)
+                memoEntry(row, frame.position) = 1 + (frame.extra - program.remainingTurns);
+        }
     }
 
     ALWAYS_INLINE bool isInsideLookahead(const FlatOp* at) const { return program.aroundMemoRow[at->memoRow].isInsideLookahead; }
@@ -508,20 +679,37 @@ struct Machine {
 
     ALWAYS_INLINE Step pushChoice(uint32_t limit)
     {
-        if (isMemoized(op)) [[unlikely]] {
-            if (!turnsAroundHaveTakenSomething(op->memoRow)) {
-                push(position, limit, dependsOnWhereTurnBegan);
+        if constexpr (isFull) {
+            if (isMemoized(op)) [[unlikely]] {
+                if (!turnsAroundHaveTakenSomething(op->memoRow)) {
+                    push(position, limit, dependsOnWhereTurnBegan);
+                    return Step::Next;
+                }
+                unsigned row = memoRowOf(op);
+                if (uint32_t entry = findFailedSearch(row, position))
+                    return takeTurnsOfFailedSearch(entry) ? Step::Failed : Step::HitLimit;
+                enterSearch(row, position, !isInsideLookahead(op));
+                push(position, limit, program.remainingTurns);
                 return Step::Next;
             }
-            uint32_t& entry = memoEntry(memoRowOf(op), position);
-            if (entry)
-                return takeTurnsOfFailedSearch(entry) ? Step::Failed : Step::HitLimit;
-            entry = !isInsideLookahead(op);
-            push(position, limit, program.remainingTurns);
+            push(position, limit, 0);
+            return Step::Next;
+        } else {
+            if (isMemoized(op)) [[unlikely]] {
+                if (!turnsAroundHaveTakenSomething(op->memoRow)) {
+                    push(position, limit, dependsOnWhereTurnBegan);
+                    return Step::Next;
+                }
+                uint32_t& entry = memoEntry(memoRowOf(op), position);
+                if (entry)
+                    return takeTurnsOfFailedSearch(entry) ? Step::Failed : Step::HitLimit;
+                entry = !isInsideLookahead(op);
+                push(position, limit, program.remainingTurns);
+                return Step::Next;
+            }
+            push(position, limit, 0);
             return Step::Next;
         }
-        push(position, limit, 0);
-        return Step::Next;
     }
 
     // The last alternative is about to begin. A program that counts turns has to hear when that has failed too.
@@ -548,6 +736,51 @@ struct Machine {
             }
         }
         return Yarr::contains(set, wideRanges, static_cast<Latin1Character>(character));
+    }
+
+    ALWAYS_INLINE char32_t characterAt(unsigned at) const
+    {
+        char32_t unit = input[at];
+        if constexpr (isFull && sizeof(CharType) > 1) {
+            if (U16_IS_SURROGATE(unit) && program.decodesSurrogatePairs) [[unlikely]]
+                return characterAtSurrogate(input, length, at);
+        }
+        return unit;
+    }
+
+    ALWAYS_INLINE bool isInsidePair(unsigned at) const { return isFull && sizeof(CharType) > 1 && at < length && characterAt(at) == noCharacter; }
+
+    // How many units the character at `at`, which is before `end`, takes. 0: it is not in the set, or ends behind `end`.
+    ALWAYS_INLINE unsigned widthOfMember(const CharacterSetBits& set, unsigned at, unsigned end) const
+    {
+        if constexpr (!isFull)
+            return contains(set, input[at]);
+        if constexpr (sizeof(CharType) > 1) {
+            if (input[at] > 0xff) [[unlikely]] {
+                char32_t character = input[at];
+                unsigned width = 1;
+                if (U16_IS_SURROGATE(character) && program.decodesSurrogatePairs) [[unlikely]] {
+                    character = characterAt(at);
+                    width = U16_LENGTH(character);
+                    if (character == noCharacter || width > end - at)
+                        return 0;
+                }
+                return enclosure.neighbors.contains(wideRanges, set, character) ? width : 0;
+            }
+        }
+        return Yarr::contains(set, wideRanges, static_cast<Latin1Character>(input[at]));
+    }
+
+    ALWAYS_INLINE void advance(unsigned width) { position += isFull ? width : 1; }
+
+    // How many units the character in front of `at`, which is not 0, takes.
+    ALWAYS_INLINE unsigned widthBefore(unsigned at) const
+    {
+        if constexpr (isFull && sizeof(CharType) > 1) {
+            if (U16_IS_TRAIL(input[at - 1]) && program.decodesSurrogatePairs && at > 1 && U16_IS_LEAD(input[at - 2])) [[unlikely]]
+                return 2;
+        }
+        return 1;
     }
 
     ALWAYS_INLINE bool contains(const FirstSetBits& set, CharType character) const { return isInFirstSet(set, character); }
@@ -596,23 +829,32 @@ struct Machine {
     {
         if (program.startScan == FlatStartScan::None)
             return true;
-        matchStart = findStartOfMatch(program, input, length, matchStart, enclosure.startCandidates);
+        matchStart = findStartOfMatch(program, input, length, matchStart, enclosure.startSearch);
         return matchStart <= length;
     }
 
     ALWAYS_INLINE bool beginAttempt()
     {
-        if (!findNextStart())
-            return false;
-        if constexpr (sizeof(CharType) > 1) {
-            enclosure.hasMetSurrogate |= matchStart < length && U16_IS_SURROGATE(input[matchStart]);
-            if (enclosure.hasMetSurrogate && program.givesUpAtSurrogates)
+        if constexpr (isFull) {
+            if (!findNextStart())
                 return false;
+            position = matchStart;
+            op = ops;
+            top = bottom;
+            return true;
+        } else {
+            if (!findNextStart())
+                return false;
+            if constexpr (sizeof(CharType) > 1) {
+                enclosure.hasMetSurrogate |= matchStart < length && U16_IS_SURROGATE(input[matchStart]);
+                if (enclosure.hasMetSurrogate && program.decodesSurrogatePairs)
+                    return false;
+            }
+            position = matchStart;
+            op = ops;
+            top = bottom;
+            return true;
         }
-        position = matchStart;
-        op = ops;
-        top = bottom;
-        return true;
     }
 
     ALWAYS_INLINE Step consumeIf(bool condition, unsigned count)
@@ -624,7 +866,14 @@ struct Machine {
     }
 
     ALWAYS_INLINE Step runCharacter() { return consumeIf(position < length && input[position] == op->argument, 1); }
-    ALWAYS_INLINE Step runSet() { return consumeIf(position < length && contains(characterSets[op->set], input[position]), 1); }
+
+    ALWAYS_INLINE Step runSet()
+    {
+        if constexpr (!isFull)
+            return consumeIf(position < length && contains(characterSets[op->set], input[position]), 1);
+        unsigned width = position < length ? widthOfMember(characterSets[op->set], position, length) : 0;
+        return consumeIf(width && hasNeededBehind(position + width), width);
+    }
 
     ALWAYS_INLINE Step runText()
     {
@@ -654,55 +903,138 @@ struct Machine {
         return Step::Next;
     }
 
+    // FlatProgramForm::CountsTurns: a surrogate pair has taken a unit more than was tested for. As Interpreter::InputStream::readChecked().
+    ALWAYS_INLINE bool hasNeededBehind(unsigned at) const { return !isFull || length - at >= op->needed; }
+
+    // The caller has tested for as many units.
     ALWAYS_INLINE bool consumeMembers(const CharacterSetBits& set, unsigned count)
     {
-        for (unsigned i = 0; i < count; ++i) {
-            if (!contains(set, input[position + i]))
-                return false;
+        if constexpr (isFull) {
+            unsigned at = position;
+            for (unsigned i = 0; i < count; ++i) {
+                unsigned width = at < length ? widthOfMember(set, at, length) : 0;
+                if (!width)
+                    return false;
+                at += width;
+            }
+            position = at;
+            return true;
+        } else {
+            for (unsigned i = 0; i < count; ++i) {
+                if (!contains(set, input[position + i]))
+                    return false;
+            }
+            position += count;
+            return true;
         }
-        position += count;
-        return true;
     }
 
-    ALWAYS_INLINE Step runSetCount() { return nextIf(length - position >= op->argument && consumeMembers(characterSets[op->set], op->argument)); }
+    ALWAYS_INLINE Step runSetCount() { return nextIf(length - position >= op->argument && consumeMembers(characterSets[op->set], op->argument) && hasNeededBehind(position)); }
 
     // A search that comes into the same long run again does not walk it again.
     ALWAYS_INLINE void consumeMembersUpTo(unsigned end)
     {
-        constexpr unsigned leastLengthToKnow = 32;
-        const CharacterSetBits& set = characterSets[op->set];
-        if constexpr (!remembers) {
+        if constexpr (isFull) {
+            constexpr unsigned leastLengthToKnow = 32;
+            const CharacterSetBits& set = characterSets[op->set];
+            auto consume = [&] {
+                while (position < end) {
+                    unsigned width = widthOfMember(set, position, end);
+                    if (!width)
+                        break;
+                    position += width;
+                }
+            };
+            if constexpr (!remembers)
+                return consume();
+            if (isFull && !memo)
+                return consume();
+            unsigned begin = position;
+            // An attempt may begin inside a surrogate pair.
+            bool isInKnownRun = op->set == knownRunSet && begin - knownRunBegin <= knownRunEnd - knownRunBegin && !isInsidePair(begin);
+            if (isInKnownRun) {
+                position = std::min(knownRunEnd, end);
+                position -= isInsidePair(position);
+            }
+            consume();
+            if (isInKnownRun)
+                knownRunEnd = std::max(knownRunEnd, position);
+            else if (position - begin >= leastLengthToKnow) {
+                knownRunSet = op->set;
+                knownRunBegin = begin;
+                knownRunEnd = position;
+            }
+        } else {
+            constexpr unsigned leastLengthToKnow = 32;
+            const CharacterSetBits& set = characterSets[op->set];
+            if constexpr (!remembers) {
+                while (position < end && contains(set, input[position]))
+                    ++position;
+                return;
+            }
+            unsigned begin = position;
+            bool isInKnownRun = op->set == knownRunSet && begin - knownRunBegin <= knownRunEnd - knownRunBegin;
+            if (isInKnownRun)
+                position = std::min(knownRunEnd, end);
             while (position < end && contains(set, input[position]))
                 ++position;
-            return;
-        }
-        unsigned begin = position;
-        bool isInKnownRun = op->set == knownRunSet && begin - knownRunBegin <= knownRunEnd - knownRunBegin;
-        if (isInKnownRun)
-            position = std::min(knownRunEnd, end);
-        while (position < end && contains(set, input[position]))
-            ++position;
-        if (isInKnownRun)
-            knownRunEnd = std::max(knownRunEnd, position);
-        else if (position - begin >= leastLengthToKnow) {
-            knownRunSet = op->set;
-            knownRunBegin = begin;
-            knownRunEnd = position;
+            if (isInKnownRun)
+                knownRunEnd = std::max(knownRunEnd, position);
+            else if (position - begin >= leastLengthToKnow) {
+                knownRunSet = op->set;
+                knownRunBegin = begin;
+                knownRunEnd = position;
+            }
         }
     }
 
     ALWAYS_INLINE std::optional<unsigned> consumeGreedyRun()
     {
-        unsigned available = length - position;
-        if (available < op->needed)
-            return std::nullopt;
-        available -= op->needed;
-        unsigned end = available > op->argument ? position + op->argument : position + available;
+        if constexpr (isFull) {
+            unsigned available = length - position;
+            if (available < op->needed)
+                return std::nullopt;
+            available -= op->needed;
+            return consumeRun(position + available, op->target, op->argument);
+        } else {
+            unsigned available = length - position;
+            if (available < op->needed)
+                return std::nullopt;
+            available -= op->needed;
+            unsigned end = available > op->argument ? position + op->argument : position + available;
+            unsigned begin = position;
+            consumeMembersUpTo(end);
+            if (position - begin < op->target)
+                return std::nullopt;
+            return begin + op->target;
+        }
+    }
+
+    // Takes as many members as it can, up to `most`, that end at `end` or before. Answers where it stood behind the first `least`, or nothing where there are fewer.
+    ALWAYS_INLINE std::optional<unsigned> consumeRun(unsigned end, unsigned least, unsigned most)
+    {
         unsigned begin = position;
-        consumeMembersUpTo(end);
-        if (position - begin < op->target)
+        if (!program.decodesSurrogatePairs) [[likely]] {
+            consumeMembersUpTo(end - begin > most ? begin + most : end);
+            if (position - begin < least)
+                return std::nullopt;
+            return begin + least;
+        }
+        // As many characters are no longer as many units.
+        if (end - begin < least || !consumeMembers(characterSets[op->set], least) || position > end)
             return std::nullopt;
-        return begin + op->target;
+        unsigned behindLeast = position;
+        if (most == quantifyInfinite)
+            consumeMembersUpTo(end);
+        else {
+            for (unsigned taken = least; taken < most && position < end; ++taken) {
+                unsigned width = widthOfMember(characterSets[op->set], position, end);
+                if (!width)
+                    break;
+                position += width;
+            }
+        }
+        return behindLeast;
     }
 
     ALWAYS_INLINE Step runGreedyRun()
@@ -725,92 +1057,182 @@ struct Machine {
     template<bool knowsFollowingCharacters>
     ALWAYS_INLINE Step goOnFromGreedyRun(const FlatOp* from)
     {
-        FlatFrame& frame = top[-1];
-        unsigned row = memoRowOf(from);
-        for (;; --position) {
-            if (!knowsFollowingCharacters || (position == length ? firstSets[from->firstSet].atEnd : contains(firstSets[from->firstSet], input[position]))) {
-                if (!turnsAroundHaveTakenSomething(from->memoRow)) {
-                    frame.extra = dependsOnWhereTurnBegan;
-                    break;
+        if constexpr (isFull) {
+            FlatFrame& frame = top[-1];
+            unsigned row = memoRowOf(from);
+            for (;; position -= widthBefore(position)) {
+                if (!knowsFollowingCharacters || (position == length ? firstSets[from->firstSet].atEnd : contains(firstSets[from->firstSet], input[position]))) {
+                    if (!turnsAroundHaveTakenSomething(from->memoRow)) {
+                        frame.extra = dependsOnWhereTurnBegan;
+                        break;
+                    }
+                    uint32_t entry = findFailedSearch(row, position);
+                    if (!entry) {
+                        enterSearch(row, position, !isInsideLookahead(from));
+                        frame.extra = program.remainingTurns;
+                        break;
+                    }
+                    if (!takeTurnsOfFailedSearch(entry))
+                        return Step::HitLimit;
                 }
-                uint32_t& entry = memoEntry(row, position);
-                if (!entry) {
-                    entry = !isInsideLookahead(from);
-                    frame.extra = program.remainingTurns;
-                    break;
+                if (position == frame.limit) {
+                    --top;
+                    return Step::Failed;
                 }
-                if (!takeTurnsOfFailedSearch(entry))
-                    return Step::HitLimit;
             }
-            if (position == frame.limit) {
-                --top;
-                return Step::Failed;
+            frame.position = position;
+            op = from;
+            return Step::Next;
+        } else {
+            FlatFrame& frame = top[-1];
+            unsigned row = memoRowOf(from);
+            for (;; --position) {
+                if (!knowsFollowingCharacters || (position == length ? firstSets[from->firstSet].atEnd : contains(firstSets[from->firstSet], input[position]))) {
+                    if (!turnsAroundHaveTakenSomething(from->memoRow)) {
+                        frame.extra = dependsOnWhereTurnBegan;
+                        break;
+                    }
+                    uint32_t& entry = memoEntry(row, position);
+                    if (!entry) {
+                        entry = !isInsideLookahead(from);
+                        frame.extra = program.remainingTurns;
+                        break;
+                    }
+                    if (!takeTurnsOfFailedSearch(entry))
+                        return Step::HitLimit;
+                }
+                if (position == frame.limit) {
+                    --top;
+                    return Step::Failed;
+                }
             }
+            frame.position = position;
+            op = from;
+            return Step::Next;
         }
-        frame.position = position;
-        op = from;
-        return Step::Next;
     }
 
     template<bool knowsFollowingCharacters>
     ALWAYS_INLINE Step resumeMemoizedGreedyRun(const FlatOp* from)
     {
-        const FlatFrame& frame = top[-1];
-        recordFailedSearch(memoRowOf(from), frame);
-        if (frame.position == frame.limit) {
-            --top;
-            return Step::Failed;
+        if constexpr (isFull) {
+            const FlatFrame& frame = top[-1];
+            recordFailedSearch(memoRowOf(from), frame);
+            if (frame.position == frame.limit) {
+                --top;
+                return Step::Failed;
+            }
+            position = frame.position - widthBefore(frame.position);
+            return goOnFromGreedyRun<knowsFollowingCharacters>(from);
+        } else {
+            const FlatFrame& frame = top[-1];
+            recordFailedSearch(memoRowOf(from), frame);
+            if (frame.position == frame.limit) {
+                --top;
+                return Step::Failed;
+            }
+            position = frame.position - 1;
+            return goOnFromGreedyRun<knowsFollowingCharacters>(from);
         }
-        position = frame.position - 1;
-        return goOnFromGreedyRun<knowsFollowingCharacters>(from);
+    }
+
+    // Takes one more character into a lazy run that has taken `taken`, if it ends at `end` or before.
+    ALWAYS_INLINE bool extendLazyRun(const FlatOp* from, unsigned taken, unsigned end)
+    {
+        unsigned width = taken != from->argument && position < end ? widthOfMember(characterSets[from->set], position, end) : 0;
+        if (!width)
+            return false;
+        advance(width);
+        return true;
     }
 
     // The top frame is the run's: its limit is how many characters the run has taken up to position.
     template<bool knowsFollowingCharacters>
     ALWAYS_INLINE Step goOnFromLazyRun(const FlatOp* from)
     {
-        FlatFrame& frame = top[-1];
-        unsigned row = memoRowOf(from);
-        for (;;) {
-            if (!knowsFollowingCharacters || position == length || contains(firstSets[from->firstSet], input[position])) {
-                if (!turnsAroundHaveTakenSomething(from->memoRow)) {
-                    frame.extra = dependsOnWhereTurnBegan;
-                    break;
+        if constexpr (isFull) {
+            FlatFrame& frame = top[-1];
+            unsigned row = memoRowOf(from);
+            for (;;) {
+                if (!knowsFollowingCharacters || position == length || contains(firstSets[from->firstSet], input[position])) {
+                    if (!turnsAroundHaveTakenSomething(from->memoRow)) {
+                        frame.extra = dependsOnWhereTurnBegan;
+                        break;
+                    }
+                    uint32_t entry = findFailedSearch(row, position);
+                    if (!entry) {
+                        enterSearch(row, position, !isInsideLookahead(from));
+                        frame.extra = program.remainingTurns;
+                        break;
+                    }
+                    if (!takeTurnsOfFailedSearch(entry))
+                        return Step::HitLimit;
                 }
-                uint32_t& entry = memoEntry(row, position);
-                if (!entry) {
-                    entry = !isInsideLookahead(from);
-                    frame.extra = program.remainingTurns;
-                    break;
+                if (!extendLazyRun(from, frame.limit, length - from->needed)) {
+                    --top;
+                    return Step::Failed;
                 }
-                if (!takeTurnsOfFailedSearch(entry))
-                    return Step::HitLimit;
+                ++frame.limit;
             }
+            frame.position = position;
+            op = from;
+            return Step::Next;
+        } else {
+            FlatFrame& frame = top[-1];
+            unsigned row = memoRowOf(from);
+            for (;;) {
+                if (!knowsFollowingCharacters || position == length || contains(firstSets[from->firstSet], input[position])) {
+                    if (!turnsAroundHaveTakenSomething(from->memoRow)) {
+                        frame.extra = dependsOnWhereTurnBegan;
+                        break;
+                    }
+                    uint32_t& entry = memoEntry(row, position);
+                    if (!entry) {
+                        entry = !isInsideLookahead(from);
+                        frame.extra = program.remainingTurns;
+                        break;
+                    }
+                    if (!takeTurnsOfFailedSearch(entry))
+                        return Step::HitLimit;
+                }
+                if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position])) {
+                    --top;
+                    return Step::Failed;
+                }
+                ++frame.limit;
+                ++position;
+            }
+            frame.position = position;
+            op = from;
+            return Step::Next;
+        }
+    }
+
+    template<bool knowsFollowingCharacters>
+    ALWAYS_INLINE Step resumeMemoizedLazyRun(const FlatOp* from)
+    {
+        if constexpr (isFull) {
+            FlatFrame& frame = top[-1];
+            recordFailedSearch(memoRowOf(from), frame);
+            position = frame.position;
+            if (!extendLazyRun(from, frame.limit, length - from->needed)) {
+                --top;
+                return Step::Failed;
+            }
+            ++frame.limit;
+            return goOnFromLazyRun<knowsFollowingCharacters>(from);
+        } else {
+            FlatFrame& frame = top[-1];
+            recordFailedSearch(memoRowOf(from), frame);
+            position = frame.position;
             if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position])) {
                 --top;
                 return Step::Failed;
             }
             ++frame.limit;
             ++position;
+            return goOnFromLazyRun<knowsFollowingCharacters>(from);
         }
-        frame.position = position;
-        op = from;
-        return Step::Next;
-    }
-
-    template<bool knowsFollowingCharacters>
-    ALWAYS_INLINE Step resumeMemoizedLazyRun(const FlatOp* from)
-    {
-        FlatFrame& frame = top[-1];
-        recordFailedSearch(memoRowOf(from), frame);
-        position = frame.position;
-        if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position])) {
-            --top;
-            return Step::Failed;
-        }
-        ++frame.limit;
-        ++position;
-        return goOnFromLazyRun<knowsFollowingCharacters>(from);
     }
 
     ALWAYS_INLINE Step runGreedyRunBeforeKnownCharacters()
@@ -834,8 +1256,13 @@ struct Machine {
 
     ALWAYS_INLINE bool consumeLazyRunMinimum()
     {
-        unsigned available = length - position;
-        return available >= op->needed && available - op->needed >= op->target && consumeMembers(characterSets[op->set], op->target);
+        if constexpr (isFull) {
+            unsigned available = length - position;
+            return available >= op->needed && available - op->needed >= op->target && consumeMembers(characterSets[op->set], op->target) && hasNeededBehind(position);
+        } else {
+            unsigned available = length - position;
+            return available >= op->needed && available - op->needed >= op->target && consumeMembers(characterSets[op->set], op->target);
+        }
     }
 
     ALWAYS_INLINE Step runLazyRun()
@@ -852,44 +1279,88 @@ struct Machine {
 
     ALWAYS_INLINE Step runLazyRunBeforeKnownCharacters()
     {
-        if (!tryReserveFrames(1))
-            return Step::NeedsFrames;
-        if (!consumeLazyRunMinimum())
-            return Step::Failed;
-        if (isMemoized(op)) [[unlikely]] {
-            push(position, op->target, 0);
-            return goOnFromLazyRun<true>(op);
-        }
-        const CharacterSetBits& set = characterSets[op->set];
-        const FirstSetBits& following = firstSets[op->firstSet];
-        unsigned begin = position;
-        unsigned limit = length - op->needed;
-        if (op->argument - op->target < limit - position)
-            limit = position + (op->argument - op->target);
-        while (position < length && !contains(following, input[position])) {
-            if (position >= limit || !contains(set, input[position]))
+        if constexpr (isFull) {
+            if (!tryReserveFrames(1))
+                return Step::NeedsFrames;
+            if (!consumeLazyRunMinimum())
                 return Step::Failed;
-            ++position;
+            if (isMemoized(op)) [[unlikely]] {
+                push(position, op->target, 0);
+                return goOnFromLazyRun<true>(op);
+            }
+            const FirstSetBits& following = firstSets[op->firstSet];
+            unsigned taken = op->target;
+            if (!program.decodesSurrogatePairs) {
+                const CharacterSetBits& set = characterSets[op->set];
+                unsigned begin = position;
+                unsigned limit = length - op->needed;
+                if (op->argument - op->target < limit - position)
+                    limit = position + (op->argument - op->target);
+                while (position < length && !contains(following, input[position])) {
+                    if (position >= limit || !contains(set, input[position]))
+                        return Step::Failed;
+                    ++position;
+                }
+                taken += position - begin;
+            } else {
+                for (; position < length && !contains(following, input[position]); ++taken) {
+                    if (!extendLazyRun(op, taken, length - op->needed))
+                        return Step::Failed;
+                }
+            }
+            push(position, taken, length - op->needed);
+            return Step::Next;
+        } else {
+            if (!tryReserveFrames(1))
+                return Step::NeedsFrames;
+            if (!consumeLazyRunMinimum())
+                return Step::Failed;
+            if (isMemoized(op)) [[unlikely]] {
+                push(position, op->target, 0);
+                return goOnFromLazyRun<true>(op);
+            }
+            const CharacterSetBits& set = characterSets[op->set];
+            const FirstSetBits& following = firstSets[op->firstSet];
+            unsigned begin = position;
+            unsigned limit = length - op->needed;
+            if (op->argument - op->target < limit - position)
+                limit = position + (op->argument - op->target);
+            while (position < length && !contains(following, input[position])) {
+                if (position >= limit || !contains(set, input[position]))
+                    return Step::Failed;
+                ++position;
+            }
+            push(position, op->target + (position - begin), length - op->needed);
+            return Step::Next;
         }
-        push(position, op->target + (position - begin), length - op->needed);
-        return Step::Next;
     }
 
     ALWAYS_INLINE Step runPossessiveRun()
     {
-        unsigned end = length - position > op->argument ? position + op->argument : length;
-        unsigned begin = position;
-        consumeMembersUpTo(end);
-        return nextIf(position - begin >= op->target);
+        if constexpr (isFull) {
+            return nextIf(!!consumeRun(length, op->target, op->argument));
+        } else {
+            unsigned end = length - position > op->argument ? position + op->argument : length;
+            unsigned begin = position;
+            consumeMembersUpTo(end);
+            return nextIf(position - begin >= op->target);
+        }
     }
 
     ALWAYS_INLINE std::optional<unsigned> consumeCapturedRun()
     {
-        unsigned begin = position;
-        consumeMembersUpTo(length);
-        if (position - begin < op->target)
-            return std::nullopt;
-        return begin;
+        if constexpr (isFull) {
+            unsigned begin = position;
+            if (!consumeRun(length, op->target, quantifyInfinite))
+                return std::nullopt;
+            return begin;
+        } else {
+            unsigned begin = position;
+            consumeMembersUpTo(length);
+            if (position - begin < op->target)
+                return std::nullopt;
+            return begin;
+        }
     }
 
     ALWAYS_INLINE Step runCapturedRun()
@@ -1005,15 +1476,22 @@ struct Machine {
 
     ALWAYS_INLINE Step runStepBack()
     {
-        if (position < op->argument)
-            return Step::Failed;
-        if constexpr (sizeof(CharType) > 1) {
-            // The step is in characters: see FlatProgram::givesUpAtSurrogates.
-            for (unsigned i = 1; i <= op->argument; ++i)
-                enclosure.hasMetSurrogate |= U16_IS_SURROGATE(input[position - i]);
+        if constexpr (isFull) {
+            if (position < op->argument)
+                return Step::Failed;
+            position -= op->argument;
+            return Step::Next;
+        } else {
+            if (position < op->argument)
+                return Step::Failed;
+            if constexpr (sizeof(CharType) > 1) {
+                // The step is in characters: see FlatProgram::decodesSurrogatePairs.
+                for (unsigned i = 1; i <= op->argument; ++i)
+                    enclosure.hasMetSurrogate |= U16_IS_SURROGATE(input[position - i]);
+            }
+            position -= op->argument;
+            return Step::Next;
         }
-        position -= op->argument;
-        return Step::Next;
     }
     ALWAYS_INLINE Step runLineStart() { return nextIf(!position || contains(characterSets[op->set], input[position - 1])); }
     ALWAYS_INLINE Step runInputEnd() { return nextIf(position == length); }
@@ -1161,32 +1639,41 @@ struct Machine {
         return Step::Failed;
     }
 
-    // As Interpreter::tryConsumeBackReference(). Only outside unicode mode is a character from 128 up never the same as an ASCII one.
-    static ALWAYS_INLINE bool areEqualIgnoringCase(char32_t expected, char32_t actual, bool isUnicodeMode)
-    {
-        if (expected == actual)
-            return true;
-        if (!isUnicodeMode && (isASCII(expected) || isASCII(actual)))
-            return toASCIIUpper(expected) == toASCIIUpper(actual);
-        return areCanonicallyEquivalent(expected, actual, isUnicodeMode ? CanonicalMode::Unicode : CanonicalMode::UCS2);
-    }
-
     template<bool ignoresCase>
     ALWAYS_INLINE Step consumeCapturedText()
     {
-        unsigned begin = output[op->argument];
-        unsigned end = output[op->argument + 1];
-        if (begin == offsetNoMatch || end == offsetNoMatch)
-            return Step::Next;
-        unsigned count = end - begin;
-        if (length - position < count)
-            return Step::Failed;
-        for (unsigned i = 0; i < count; ++i) {
-            if (ignoresCase ? !areEqualIgnoringCase(input[begin + i], input[position + i], op->target) : input[begin + i] != input[position + i])
+        if constexpr (isFull) {
+            unsigned begin = output[op->argument];
+            unsigned end = output[op->argument + 1];
+            if (begin == offsetNoMatch || end == offsetNoMatch)
+                return Step::Next;
+            unsigned count = end - begin;
+            if (length - position < count)
                 return Step::Failed;
+            for (unsigned i = 0; i < count; ++i) {
+                char32_t expected = characterAt(begin + i);
+                char32_t actual = characterAt(position + i);
+                if (expected == noCharacter || actual == noCharacter || (ignoresCase ? !areEqualIgnoringCase(expected, actual, op->target) : expected != actual))
+                    return Step::Failed;
+                i += U16_LENGTH(expected) - 1;
+            }
+            position += count;
+            return Step::Next;
+        } else {
+            unsigned begin = output[op->argument];
+            unsigned end = output[op->argument + 1];
+            if (begin == offsetNoMatch || end == offsetNoMatch)
+                return Step::Next;
+            unsigned count = end - begin;
+            if (length - position < count)
+                return Step::Failed;
+            for (unsigned i = 0; i < count; ++i) {
+                if (ignoresCase ? !areEqualIgnoringCase(input[begin + i], input[position + i], op->target) : input[begin + i] != input[position + i])
+                    return Step::Failed;
+            }
+            position += count;
+            return Step::Next;
         }
-        position += count;
-        return Step::Next;
     }
 
     ALWAYS_INLINE Step runBackReference() { return consumeCapturedText<false>(); }
@@ -1225,15 +1712,27 @@ struct Machine {
 
     ALWAYS_INLINE Step resumeGreedyRun()
     {
-        FlatFrame* frame = top - 1;
-        const FlatOp* from = opOf(*frame);
-        if (isMemoized(from)) [[unlikely]]
-            return resumeMemoizedGreedyRun<false>(from);
-        position = --frame->position;
-        if (position == frame->limit)
-            --top;
-        op = from;
-        return Step::Next;
+        if constexpr (isFull) {
+            FlatFrame* frame = top - 1;
+            const FlatOp* from = opOf(*frame);
+            if (isMemoized(from)) [[unlikely]]
+                return resumeMemoizedGreedyRun<false>(from);
+            position = frame->position -= widthBefore(frame->position);
+            if (position == frame->limit)
+                --top;
+            op = from;
+            return Step::Next;
+        } else {
+            FlatFrame* frame = top - 1;
+            const FlatOp* from = opOf(*frame);
+            if (isMemoized(from)) [[unlikely]]
+                return resumeMemoizedGreedyRun<false>(from);
+            position = --frame->position;
+            if (position == frame->limit)
+                --top;
+            op = from;
+            return Step::Next;
+        }
     }
 
     ALWAYS_INLINE Step resumeGreedyRunBeforeKnownCharacters()
@@ -1254,38 +1753,72 @@ struct Machine {
 
     ALWAYS_INLINE Step resumeLazyRunBeforeKnownCharacters()
     {
-        FlatFrame* frame = top - 1;
-        const FlatOp* from = opOf(*frame);
-        if (isMemoized(from)) [[unlikely]]
-            return resumeMemoizedLazyRun<true>(from);
-        position = frame->position;
-        do {
-            if (frame->limit == from->argument || position >= frame->extra || !contains(characterSets[from->set], input[position])) {
-                --top;
-                return Step::Failed;
-            }
-            ++frame->limit;
-            ++position;
-        } while (position < length && !contains(firstSets[from->firstSet], input[position]));
-        frame->position = position;
-        op = from;
-        return Step::Next;
+        if constexpr (isFull) {
+            FlatFrame* frame = top - 1;
+            const FlatOp* from = opOf(*frame);
+            if (isMemoized(from)) [[unlikely]]
+                return resumeMemoizedLazyRun<true>(from);
+            position = frame->position;
+            do {
+                if (!extendLazyRun(from, frame->limit, frame->extra)) {
+                    --top;
+                    return Step::Failed;
+                }
+                ++frame->limit;
+            } while (position < length && !contains(firstSets[from->firstSet], input[position]));
+            frame->position = position;
+            op = from;
+            return Step::Next;
+        } else {
+            FlatFrame* frame = top - 1;
+            const FlatOp* from = opOf(*frame);
+            if (isMemoized(from)) [[unlikely]]
+                return resumeMemoizedLazyRun<true>(from);
+            position = frame->position;
+            do {
+                if (frame->limit == from->argument || position >= frame->extra || !contains(characterSets[from->set], input[position])) {
+                    --top;
+                    return Step::Failed;
+                }
+                ++frame->limit;
+                ++position;
+            } while (position < length && !contains(firstSets[from->firstSet], input[position]));
+            frame->position = position;
+            op = from;
+            return Step::Next;
+        }
     }
 
     ALWAYS_INLINE Step resumeLazyRun()
     {
-        FlatFrame* frame = top - 1;
-        const FlatOp* from = opOf(*frame);
-        if (isMemoized(from)) [[unlikely]]
-            return resumeMemoizedLazyRun<false>(from);
-        if (frame->limit < from->argument && frame->position < frame->extra && contains(characterSets[from->set], input[frame->position])) {
-            ++frame->limit;
-            position = ++frame->position;
-            op = from;
-            return Step::Next;
+        if constexpr (isFull) {
+            FlatFrame* frame = top - 1;
+            const FlatOp* from = opOf(*frame);
+            if (isMemoized(from)) [[unlikely]]
+                return resumeMemoizedLazyRun<false>(from);
+            position = frame->position;
+            if (extendLazyRun(from, frame->limit, frame->extra)) {
+                ++frame->limit;
+                frame->position = position;
+                op = from;
+                return Step::Next;
+            }
+            --top;
+            return Step::Failed;
+        } else {
+            FlatFrame* frame = top - 1;
+            const FlatOp* from = opOf(*frame);
+            if (isMemoized(from)) [[unlikely]]
+                return resumeMemoizedLazyRun<false>(from);
+            if (frame->limit < from->argument && frame->position < frame->extra && contains(characterSets[from->set], input[frame->position])) {
+                ++frame->limit;
+                position = ++frame->position;
+                op = from;
+                return Step::Next;
+            }
+            --top;
+            return Step::Failed;
         }
-        --top;
-        return Step::Failed;
     }
 
     ALWAYS_INLINE Step resumeLogged()
@@ -1443,33 +1976,71 @@ struct Machine {
 };
 
 template<typename CharType>
+static NEVER_INLINE JSRegExpResult runFullMachine(const FlatProgram& program, const CharType* input, Enclosure<CharType>& enclosure, unsigned* output, uint32_t* memo)
+{
+    return Machine<CharType, true, true>(program, std::span { input, enclosure.length }, enclosure.startOffset, output, enclosure, memo).run();
+}
+
+template<typename CharType, bool isFull = false>
 static NEVER_INLINE JSRegExpResult matchForgetting(const FlatProgram& program, const CharType* input, unsigned length, unsigned start, unsigned* output, unsigned steps)
 {
     Enclosure<CharType> enclosure { start, length, steps };
+    if constexpr (isFull)
+        return runFullMachine(program, input, enclosure, output, nullptr);
     JSRegExpResult result = Machine<CharType, false>(program, std::span { input, length }, start, output, enclosure).run();
     return enclosure.resultUnlessGivenUp(program, result);
 }
 
-template<typename CharType>
+template<typename CharType, bool isFull = false>
 static NEVER_INLINE JSRegExpResult matchRemembering(const FlatProgram& program, const CharType* input, unsigned length, unsigned start, unsigned* output)
 {
     constexpr uint64_t maxMemoSize = 32 * MB;
     uint64_t entries = static_cast<uint64_t>(program.memoRows) * (static_cast<uint64_t>(length) + 1);
+    if constexpr (isFull)
+        entries *= program.memoEntrySize();
     Vector<uint32_t> memo;
     if (!entries || entries * sizeof(uint32_t) > maxMemoSize || !memo.tryGrow(entries))
-        return matchForgetting(program, input, length, start, output, matchLimit);
+        return matchForgetting<CharType, isFull>(program, input, length, start, output, matchLimit);
     zeroSpan(memo.mutableSpan());
     Enclosure<CharType> enclosure { start, length, matchLimit };
+    if constexpr (isFull)
+        return runFullMachine(program, input, enclosure, output, memo.mutableSpan().data());
     JSRegExpResult result = Machine<CharType, true>(program, std::span { input, length }, start, output, enclosure, memo.mutableSpan().data()).run();
     return enclosure.resultUnlessGivenUp(program, result);
 }
 
-template<typename CharType>
+template<typename CharType, bool isFull>
 static NEVER_INLINE JSRegExpResult matchBehindLimit(const FlatProgram& program, const CharType* input, const Enclosure<CharType>& enclosure, unsigned* output)
 {
     if (enclosure.steps == matchLimit || program.jitCountsTurns)
         return JSRegExpResult::ErrorHitLimit;
+    if (isFull || !program.referencedGroups.isEmpty())
+        return matchRemembering<CharType, true>(program, input, enclosure.length, enclosure.startOffset, output);
     return matchRemembering(program, input, enclosure.length, enclosure.startOffset, output);
+}
+
+template<typename CharType, bool isFull>
+static JSRegExpResult matchByPolicy(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output, FlatMatchPolicy policy)
+{
+    unsigned length = input.size();
+    unsigned stepsPerCharacter = isFull ? program.stepsPerCharacterBeforeStoppingOnFullMachine : program.stepsPerCharacterBeforeStopping;
+    if (policy == FlatMatchPolicy::HandsOverEarly && stepsPerCharacter)
+        return matchForgetting<CharType, isFull>(program, input.data(), length, start, output, static_cast<unsigned>(std::min<uint64_t>(matchLimit, stepsPerCharacter * (static_cast<uint64_t>(length) + 32))));
+    if (policy != FlatMatchPolicy::RunsToMatchLimit && (program.countsTurns || policy == FlatMatchPolicy::RemembersFromStart)) {
+        if (isFull || !program.referencedGroups.isEmpty())
+            return matchRemembering<CharType, true>(program, input.data(), length, start, output);
+        return matchRemembering(program, input.data(), length, start, output);
+    }
+    return matchForgetting<CharType, isFull>(program, input.data(), length, start, output, matchLimit);
+}
+
+// Whatever is not the common case.
+template<typename CharType>
+static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output, FlatMatchPolicy policy)
+{
+    if (program.needsFullMachine)
+        return matchByPolicy<CharType, true>(program, input, start, output, policy);
+    return matchByPolicy<CharType, false>(program, input, start, output, policy);
 }
 
 template<typename CharType>
@@ -1478,8 +2049,8 @@ static ALWAYS_INLINE JSRegExpResult match(const FlatProgram& program, std::span<
     unsigned length = input.size();
     if (policy == FlatMatchPolicy::HandsOverEarly && program.stepsPerCharacterBeforeStopping) [[likely]]
         return matchForgetting(program, input.data(), length, start, output, static_cast<unsigned>(std::min<uint64_t>(matchLimit, program.stepsPerCharacterBeforeStopping * (static_cast<uint64_t>(length) + 32))));
-    if (policy != FlatMatchPolicy::RunsToMatchLimit && (program.countsTurns || policy == FlatMatchPolicy::RemembersFromStart))
-        return matchRemembering(program, input.data(), length, start, output);
+    if (policy != FlatMatchPolicy::HandsOverEarly || program.isEnteredOutOfLine)
+        return matchOutOfLine(program, input, start, output, policy);
     return matchForgetting(program, input.data(), length, start, output, matchLimit);
 }
 
@@ -1496,6 +2067,11 @@ JSRegExpResult matchFlatProgram(const FlatProgram& program, StringView input, un
     if (input.is8Bit())
         return match(program, input.span8(), start, output, policy);
     return match(program, input.span16(), start, output, policy);
+}
+
+JSRegExpResult matchFlatProgramBehindSurrogate(const FlatProgram& program, StringView input, unsigned start, unsigned* output, FlatMatchPolicy policy)
+{
+    return matchByPolicy<char16_t, true>(program, input.span16(), start, output, policy);
 }
 
 void validateFlatProgramResult(const FlatProgram& program, StringView input, unsigned start, RegExpMatchOutcome flat, RegExpMatchOutcome interpreter)

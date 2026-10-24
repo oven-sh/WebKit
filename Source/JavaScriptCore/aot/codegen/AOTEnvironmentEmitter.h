@@ -17,8 +17,13 @@ public:
 
     void generateGetCapture(const ValueContext&);
     void generateMaterializeEnvironment(const ValueContext&);
+    void generateMarkEnvironmentEscaped(const ValueContext&);
+    void generateReleaseEnvironment(const ValueContext&);
 
     Operand closureCapture(CellPointer closure, FunctionID, unsigned index);
+
+private:
+    TypedPointer escapeMarkOf(CellPointer environment, uint32_t isEscapedOffset);
 };
 
 } } } // namespace JSC::AOT::Typed

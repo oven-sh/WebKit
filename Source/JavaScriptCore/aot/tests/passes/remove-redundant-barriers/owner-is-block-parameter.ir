@@ -1,0 +1,43 @@
+# A block parameter never counts as a young allocation, even when every incoming value is one
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 2
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="owner-is-block-parameter" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0 form=Generic
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject layout=L0 fields=[]
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewObject layout=L0 fields=[]
+    Jump -> next b3(v3)
+  b3(v4):
+    PutEnvironmentField v4, v0 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: function f0 name="owner-is-block-parameter"
+# CHECK: PutEnvironmentField v4, v0 layout=L0
+# CHECK-NOT: ownerCannotBeMarked
+function f1 name="owner-is-allocation-of-each-arm" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0 form=Generic
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v2, v0 layout=L0 field=0
+    Jump -> next b3()
+  b2():
+    v4 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v4, v0 layout=L0 field=0
+    Jump -> next b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1 name="owner-is-allocation-of-each-arm"
+# CHECK: PutEnvironmentField v2, v0 layout=L0 [ownerCannotBeMarked]
+# CHECK: PutEnvironmentField v4, v0 layout=L0 [ownerCannotBeMarked]

@@ -44,13 +44,13 @@ namespace {
 
 struct PathsNotInImage {
     Lock lock;
-    std::array<String, 32> paths WTF_GUARDED_BY_LOCK(lock);
+    std::array<std::pair<const Image*, String>, 32> paths WTF_GUARDED_BY_LOCK(lock);
 };
 
 // Static strings: every thread may hold them.
 struct PathsOfModules {
     Lock lock;
-    UncheckedKeyHashMap<uint32_t, StringImpl*> byModule WTF_GUARDED_BY_LOCK(lock);
+    UncheckedKeyHashMap<uint64_t, StringImpl*> byImageAndModule WTF_GUARDED_BY_LOCK(lock);
 };
 
 } // anonymous namespace
@@ -62,17 +62,18 @@ std::optional<ModuleID> findModule(StringView publicPath)
         return std::nullopt;
     static NeverDestroyed<PathsNotInImage> pathsNotInImage;
     PathsNotInImage& notFound = pathsNotInImage.get();
+    const Image* image = Image::current();
     size_t place = publicPath.hash() % notFound.paths.size();
     {
         Locker locker { notFound.lock };
-        if (notFound.paths[place] == publicPath)
+        if (notFound.paths[place].first == image && notFound.paths[place].second == publicPath)
             return std::nullopt;
     }
     std::optional<ModuleID> found = table->findByPath(publicPath);
     if (!found) {
         String copy = publicPath.toString().isolatedCopy();
         Locker locker { notFound.lock };
-        notFound.paths[place] = WTF::move(copy);
+        notFound.paths[place] = { image, WTF::move(copy) };
     }
     return found;
 }
@@ -83,7 +84,8 @@ String modulePath(ModuleID module)
     static NeverDestroyed<PathsOfModules> pathsOfModules;
     PathsOfModules& paths = pathsOfModules.get();
     Locker locker { paths.lock };
-    return paths.byModule.ensure(module.index() + 1, [&] {
+    uint64_t key = static_cast<uint64_t>(Image::current()->number()) << 32 | (module.index() + 1);
+    return paths.byImageAndModule.ensure(key, [&] {
         std::optional<ModuleTable> table = currentModuleTable();
         RELEASE_ASSERT(table);
         String path = table->pathText(module);

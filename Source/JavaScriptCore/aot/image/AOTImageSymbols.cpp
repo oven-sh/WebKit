@@ -536,6 +536,8 @@ void writeMapFile(const UTF8CString& path, std::span<const ImageSymbol> symbols,
     printTables(out, image, inputs.program, context.identifierNumbering());
     printRegExps(out, symbols, inputs.regExpRequests, inputs.program);
     printConstantsAndFFICode(out, symbols);
+    if (!inputs.arrivalSites.isNull())
+        out.print(inputs.arrivalSites);
     out.println("B\t", built.layout.codeSize);
 }
 

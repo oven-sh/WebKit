@@ -263,14 +263,9 @@ Vector<uint32_t> findIndicesInParallel(const ParallelLoops& loops, unsigned coun
 JS_EXPORT_PRIVATE void sortRunsAndMerge(const ParallelLoops&, const SortSteps&, char* list, size_t count);
 
 template<typename T, typename Less>
-void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isLess)
+void sortOnPool(const ParallelLoops& loops, std::span<T> list, const Less& isLess)
 {
-    AOT_THRESHOLD(size_t, fewestForPool, 1 << 13);
     size_t count = list.size();
-    if (count < fewestForPool) {
-        AOT::sort(list, isLess);
-        return;
-    }
     if constexpr (movesAsBytes<T>) {
         std::decay_t<Less> order = isLess;
         std::identity identity;
@@ -311,6 +306,17 @@ void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isL
         }
         static_assert(numberOfRuns == 16, "an even number of rounds of merging leaves the result in the list");
     }
+}
+
+template<typename T, typename Less>
+void parallelSort(const ParallelLoops& loops, std::span<T> list, const Less& isLess)
+{
+    AOT_THRESHOLD(size_t, fewestForPool, 1 << 13);
+    if (list.size() < fewestForPool) {
+        AOT::sort(list, isLess);
+        return;
+    }
+    sortOnPool(loops, list, isLess);
 }
 
 template<typename T, size_t inlineCapacity>

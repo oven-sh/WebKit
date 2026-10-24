@@ -333,7 +333,7 @@ void RuntimeValidationEmitter::generateShouldFailPrediction(const ValueContext& 
     defineTest(value, Condition(m_out.belowOrEqual(drawn, m_out.constInt32(static_cast<int32_t>(UINT32_MAX / period)))));
 }
 
-// One number may be held as an integer and as a double.
+// One number may be held as an integer and as a double, and NaN with any sign and payload.
 void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& value)
 {
     ValueID kept = value->keptOperand();
@@ -369,7 +369,8 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
     m_out.appendTo(areNumbers);
     Number keptNumber = conversions.unbox(keptValue, m_program.at(TypeTable::number), Representation::Double).as<Number>();
     Number replacingNumber = conversions.unbox(replacingValue, m_program.at(TypeTable::number), Representation::Double).as<Number>();
-    failUnless(Condition(m_out.doubleEqual(keptNumber.value(), replacingNumber.value())), kind, keptValue, value.id());
+    Condition areBothNaN = logicalNot(logicalOr(equal(keptNumber, keptNumber), equal(replacingNumber, replacingNumber)));
+    failUnless(logicalOr(equal(keptNumber, replacingNumber), areBothNaN), kind, keptValue, value.id());
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -506,6 +507,15 @@ void RuntimeValidationEmitter::checkEnvironmentShape(CellPointer cell, LayoutID 
     failUnless(hasShape, ValidationFailureKind::ValueType, { }, id);
 }
 
+void RuntimeValidationEmitter::checkIsNotReleased(const OperationContext& context, CellPointer environment, LayoutID layout)
+{
+    std::optional<uint32_t> freeCellOffset = m_placement.freeCellOffset(layout);
+    if (!freeCellOffset)
+        return;
+    CellPointer freeCell(m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.collectorState, *freeCellOffset)));
+    failUnless(notEqual(freeCell, environment), ValidationFailureKind::ValueType, { }, context.valueID());
+}
+
 void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer)
 {
     if (!mayHoldPointer(operand))
@@ -588,6 +598,11 @@ void RuntimeValidationEmitter::poisonFrameArray(CellPointer array)
     m_out.storePtr(m_out.constIntPtr(-1), array.value(), m_heaps.JSObject_butterfly);
     m_out.jump(continuation);
     m_out.appendTo(continuation);
+}
+
+void RuntimeValidationEmitter::poisonEnvironment(CellPointer environment, LayoutID layout)
+{
+    poisonFields(environment, layout, AbstractHeap::EnvironmentFields);
 }
 
 // The fields become absent: checkHasType reports that at the next read of one that is always filled.

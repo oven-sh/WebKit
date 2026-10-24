@@ -264,6 +264,8 @@ private:
     InitializingStores initializingStoresOf(FlowScopeLocation);
     bool isDefinedAtEveryAccessThroughClassObject(FlowScopeLocation, const InitializingStores&);
     InitializationState initializationOf(FlowScopeLocation, bool isSetAtCreation, bool startsAbsent);
+    bool anyPrecedesCallersOf(const InitializingStores&, FunctionID);
+    bool isStoredBeforeCallersOfReaders(FlowScopeLocation);
     StoreCount storeCountOf(FlowScopeLocation, bool isSetAtCreation, NOESCAPE const Invocable<bool(const FlowScopeLocationAccess&)> auto& canRunTwice);
     bool canRunTwice(const FlowScopeLocationAccess&);
     bool canRunTwicePerInstance(const FlowScopeLocationAccess& store, BlockID allocation);

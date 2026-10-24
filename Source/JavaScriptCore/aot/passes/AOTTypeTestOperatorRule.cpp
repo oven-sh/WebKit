@@ -61,7 +61,9 @@ static TypeID testedTypeContaining(const Type& expected)
     return { };
 }
 
-// Whoever asks whether a value is truthy reckons with undefined and null: `if (props.bold)` with `bold?: boolean`.
+// Whoever asks whether a value is truthy, or whether it is the same as another, reckons with undefined and null: `if (props.bold)`, `kept !== props.bold` with `bold?: boolean`.
+static constexpr OpcodeSet operatorsThatTakeNullish { Opcode::ToBoolean, Opcode::StrictEq, Opcode::Eq };
+
 static TypeID admitExpectedNullish(TestSiteReporter& reporter, ValueID operand, TypeID tested)
 {
     TypeArena& types = reporter.types();
@@ -94,7 +96,7 @@ static TypeID testedTypeFor(TestSiteReporter& reporter, const OperatorSite& site
     if (!expected)
         return { };
     TypeID tested = testedTypeContaining(*expected);
-    if (tested && (user.opcode == Opcode::ToBoolean || (user.opcode == Opcode::StrictEq && tested == TypeTable::object)))
+    if (tested && operatorsThatTakeNullish.contains(user.opcode))
         tested = admitExpectedNullish(reporter, operand, tested);
     if (!tested || reporter.typeOf(operand).isSubsetOf(reporter.types().at(tested), reporter.program()))
         return { };
@@ -111,7 +113,7 @@ static bool isNumberByTypeOrExpectedType(TestSiteReporter& reporter, ValueID ope
 }
 
 // An expected type that names no primitive, or leaves out no kind of them, says nothing to an operator. Such an operand is taken for a number where the operand beside it is one.
-static TypeID testedTypeBesideNumber(TestSiteReporter& reporter, ValueID operand, ValueID other)
+static TypeID testedTypeBesideNumber(TestSiteReporter& reporter, const Value& user, ValueID operand, ValueID other)
 {
     const Type& type = reporter.typeOf(operand);
     if (!(type.primitives & Primitive::Number) || type.isNumber() || !isNumberByTypeOrExpectedType(reporter, other))
@@ -120,7 +122,8 @@ static TypeID testedTypeBesideNumber(TestSiteReporter& reporter, ValueID operand
     std::optional<Type> expected = reporter.expectedPartOf(operand, noPrimitives);
     if (expected && expected->primitives && expected->primitives != type.primitives)
         return { };
-    return TypeTable::number;
+    // What is compared with a number that may be left out may have been left out too.
+    return operatorsThatTakeNullish.contains(user.opcode) ? admitExpectedNullish(reporter, other, TypeTable::number) : TypeTable::number;
 }
 
 static bool isBetterForm(Opcode opcode, const OperatorChoice& now, const OperatorChoice& then)
@@ -384,7 +387,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
             for (uint32_t operandIndex : { leftOperand, rightOperand }) {
                 if (tested[operandIndex] && tested[operandIndex] != TypeTable::object)
                     continue;
-                if (TypeID number = testedTypeBesideNumber(reporter, value.operand(operandIndex), value.operand(1 - operandIndex)))
+                if (TypeID number = testedTypeBesideNumber(reporter, value, value.operand(operandIndex), value.operand(1 - operandIndex)))
                     tested[operandIndex] = number;
             }
         }

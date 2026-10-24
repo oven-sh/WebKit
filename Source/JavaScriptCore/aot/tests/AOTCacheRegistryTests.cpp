@@ -16,6 +16,7 @@
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
+#include "MarkingConstraint.h"
 #include "VM.h"
 #include <array>
 #include <optional>
@@ -65,7 +66,8 @@ public:
     CollectingVM()
     {
         vm().aotState().caches = makeUnique<CacheRegistry>();
-        addMarkingConstraints(vm());
+        for (auto& constraint : createMarkingConstraints(vm()))
+            vm().heap.addMarkingConstraint(WTF::move(constraint));
     }
 
     CacheRegistry& registry() { return *vm().aotState().caches; }

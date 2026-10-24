@@ -81,7 +81,7 @@ CharacterSetBits buildCharacterSetBits(const CharacterClass& characterClass, boo
     return appendWideRanges(set, wide, wideRanges);
 }
 
-CharacterSetBits buildCharacterSetBits(char16_t first, char16_t second, Vector<CharacterRange>& wideRanges)
+CharacterSetBits buildCharacterSetBits(char32_t first, char32_t second, Vector<CharacterRange>& wideRanges)
 {
     CharacterSetBits set;
     Vector<CharacterRange, 8> wide;

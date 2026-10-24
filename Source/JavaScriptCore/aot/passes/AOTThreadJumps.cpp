@@ -481,7 +481,7 @@ private:
         bool canRemoveValues = std::ranges::all_of(block.values, [&](ValueID value) {
             return m_analyses.isRemovableWhenUnused(value);
         });
-        return canRemoveValues && !m_context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size(), tested);
+        return (canRemoveValues || m_context.build.isSabotaged(Sabotage::SkippedBlocksHaveEffects)) && !m_context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size(), tested);
     }
 
     bool hasDecidedEdge(const CFG& cfg, BlockID candidate) const

@@ -311,6 +311,61 @@ static void testStatisticsFromManyThreads()
     AOT_TEST_CHECK(std::accumulate(values.begin(), values.end(), uint64_t { 0 }) == numberOfCalls + sumOfIndexes);
 }
 
+struct NumberMovedByItsConstructor {
+    NumberMovedByItsConstructor() = default;
+    explicit NumberMovedByItsConstructor(unsigned number)
+        : number(number)
+    {
+    }
+    NumberMovedByItsConstructor(NumberMovedByItsConstructor&& other)
+        : number(std::exchange(other.number, 0))
+    {
+    }
+    NumberMovedByItsConstructor(const NumberMovedByItsConstructor&) = default;
+    NumberMovedByItsConstructor& operator=(NumberMovedByItsConstructor&& other)
+    {
+        number = std::exchange(other.number, 0);
+        return *this;
+    }
+    NumberMovedByItsConstructor& operator=(const NumberMovedByItsConstructor&) = default;
+    ~NumberMovedByItsConstructor() { number = 0; }
+
+    unsigned number { 0 };
+};
+static_assert(!movesAsBytes<NumberMovedByItsConstructor>);
+static_assert(movesAsBytes<unsigned>);
+
+// The pool sorts sixteen runs and merges them: in a list shorter than that some runs are empty.
+static void testSortOnPoolOfListsOfEveryLength()
+{
+    constexpr unsigned longestOfEveryLength = 70;
+    constexpr unsigned shuffleFactor = 7919;
+
+    ParallelLoops loops(numberOfWorkers);
+    auto check = [&](unsigned length) {
+        Vector<NumberMovedByItsConstructor> moved;
+        Vector<unsigned> bytes;
+        for (unsigned index = 0; index < length; ++index) {
+            unsigned number = 1 + index * shuffleFactor % (length / 2 + 1);
+            moved.append(NumberMovedByItsConstructor(number));
+            bytes.append(number);
+        }
+        Vector<unsigned> expected = bytes;
+        std::ranges::sort(expected);
+        sortOnPool(loops, moved.mutableSpan(), [](const NumberMovedByItsConstructor& a, const NumberMovedByItsConstructor& b) {
+            return a.number < b.number;
+        });
+        sortOnPool(loops, bytes.mutableSpan(), std::less<unsigned> { });
+        AOT_TEST_CHECK(bytes == expected);
+        AOT_TEST_CHECK(moved.size() == length);
+        for (unsigned index = 0; index < length; ++index)
+            AOT_TEST_CHECK(moved[index].number == expected[index]);
+    };
+    for (unsigned length = 0; length <= longestOfEveryLength; ++length)
+        check(length);
+    check(10000);
+}
+
 static void testLossesKeepLowestSubject()
 {
     constexpr unsigned numberOfHits = 10000;
@@ -623,6 +678,7 @@ std::span<const NativeTest> supportTests()
         { "losses/declines-name-functions-as-read"_s, testDeclinesNameFunctionsAsRead },
         { "losses/declines-are-collected-on-request"_s, testDeclinesAreCollectedOnRequest },
         { "statistics/many-threads"_s, testStatisticsFromManyThreads },
+        { "threads/sort-on-pool-of-lists-of-every-length"_s, testSortOnPoolOfListsOfEveryLength },
         { "losses/lowest-subject"_s, testLossesKeepLowestSubject },
         { "losses/subject-with-location"_s, testLossesPreferSubjectWithLocation },
         { "sort/equal-elements"_s, testSortLeavesEqualElementsWhereTheStandardLibraryDoes },

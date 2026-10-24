@@ -464,7 +464,9 @@ void FunctionVerifier::verifyReturnCall(BlockID block, const Terminator& termina
     TypingContext context = typing();
     Type returned = typeOf(call);
     for (TailCast cast : terminator.casts()) {
-        const Type& declared = context.typeOf(cast.declared);
+        DeclaredType target = cast.declared;
+        target.type = targetOfConvert(context, target);
+        const Type& declared = context.typeOf(target);
         bool narrowsWithoutProof = !canNarrow(cast.resolution) && !returned.isSubsetOf(declared, m_program);
         if (!isLegalIn(cast.resolution, m_form) || narrowsWithoutProof) {
             fail(InternalErrorKind::InvalidReturnCall, block, call);

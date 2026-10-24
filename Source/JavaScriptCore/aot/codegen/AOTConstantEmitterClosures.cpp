@@ -227,6 +227,8 @@ void ConstantEmitter::storeCaptures(CellPointer closure, const NewClosureRequest
 {
     const Function& callee = m_program.at(request.function);
     for (unsigned i = 0; i < request.captures.size(); ++i) {
+        if (request.storage == AllocationStorage::Frame && build().recordedOptions().isSabotaged(Sabotage::ClosureInFrameKeepsNoCaptures))
+            break;
         Operand capture = captureOf(request, i);
         LValue stored = b3TypeOf(capture.representation) == B3::Int32 ? m_out.zeroExtPtr(capture.value) : capture.value;
         m_out.store(stored, m_out.address(closure.value(), captureWords[closureCaptureSlotOf(m_program, callee, i)]));

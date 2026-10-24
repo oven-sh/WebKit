@@ -203,7 +203,12 @@ bool isCallThatRequiredPassRemoves(const Program& program, const Value& call)
     const Builtin& entry = table.at(table.at(call.overload()).builtin);
     if (!entry.flags.contains(BuiltinFlag::IsCompilerHelper) && entry.holder != Builtins::BunBundle)
         return false;
-    return call.builtinCallForm() != BuiltinCallForm::Whole || !BuiltinBindings::directFunctionNumberOf(call.overload(), call.argumentsOperands().size());
+    if (call.builtinCallForm() != BuiltinCallForm::Whole)
+        return true;
+    // Which of its own helpers a host enters directly is known where there is a host.
+    if (!BuiltinBindings::hasHost() && table.at(call.overload()).code.implementation.kind == BuiltinImplementationKind::HostCall)
+        return false;
+    return !BuiltinBindings::directFunctionNumberOf(call.overload(), call.argumentsOperands().size());
 }
 
 bool overloadHasForm(const BuiltinTable& table, BuiltinOverloadID id, BuiltinCallForm form)

@@ -1,0 +1,242 @@
+# A heap environment goes back to its layout's free list where the function has done with it, unless a reference to it escaped
+# FORM: Prepared
+# RUN: pass ReuseEnvironments
+# OPTIONS: disable=pass:AllocateInFrames
+# STATISTIC: EnvironmentsReused = 6
+# CHECK: reused environments: [L0 L1 L2 L3 L4 L7]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="copiedPerIteration" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="diesOnTwoPaths" fields=[{key="x" declared={type=anything}}]
+layout L2 kind=Environment name="markedInCallee" fields=[{key="x" declared={type=anything}}]
+layout L3 kind=Environment name="liveAcrossAwaitInCallee" fields=[{key="x" declared={type=anything}}]
+layout L4 kind=Environment name="neverDeadInside" fields=[{key="x" declared={type=anything}}]
+layout L5 kind=Environment name="markedOnEveryPath" fields=[{key="x" declared={type=anything}}]
+layout L6 kind=Environment name="calleeWithoutBody" fields=[{key="x" declared={type=anything}}]
+layout L7 kind=Environment name="captureParameterDies" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="copiedPerIteration" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v5 = NewClosure v3 function=f10
+    v6 = Call v0, -, v5
+    Jump -> next b3()
+  b3():
+    v7 = GetEnvironmentField v3 layout=L0 field=0
+    v8 = NewObject -, v7 layout=L0 fields=[0]
+    Branch v1 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b1(v8)
+  b5():
+    Return v7
+}
+# CHECK-LABEL: function f0 name="copiedPerIteration"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: b2():
+# CHECK-NEXT: MarkEnvironmentEscaped v3
+# CHECK-NEXT: NewClosure
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: GetEnvironmentField v3
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NEXT: NewObject
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: b5():
+# CHECK-NEXT: ReleaseEnvironment v8
+# CHECK-NOT: ReleaseEnvironment
+
+function f1 name="diesOnTwoPaths" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v4 = GetEnvironmentField v3 layout=L1 field=0
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b3():
+    Branch v1 -> taken b1(), notTaken b4()
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="diesOnTwoPaths"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: Branch v1 -> taken b2(), notTaken [[edgeBlock]]()
+# CHECK: GetEnvironmentField v3
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: [[edgeBlock]]():
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NOT: ReleaseEnvironment
+
+function f2 name="markedInCallee" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = CallDirect v3, v0 function=f3
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f2 name="markedInCallee"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: CallDirect
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+
+function f3 name="capturesInHeapClosure" kind=Arrow captures=[{type=env L2}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L2, v1: anything):
+    v2 = NewClosure v0 function=f11
+    v3 = Call v1, -, v2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="capturesInHeapClosure"
+# CHECK: b0(
+# CHECK-NEXT: MarkEnvironmentEscaped v0
+# CHECK-NEXT: NewClosure
+# CHECK-NOT: ReleaseEnvironment
+
+function f4 name="liveAcrossAwaitInCallee" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L3 fields=[0]
+    v4 = CallDirect v3, v0 function=f5
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f4 name="liveAcrossAwaitInCallee"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: CallDirect
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+
+function f5 name="readsCaptureAfterAwait" kind=Arrow flags=[IsAsync] captures=[{type=env L3}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L3, v1: anything):
+    v2 = Await v1
+    v3 = GetEnvironmentField v0 layout=L3 field=0
+    Return v3
+}
+# CHECK-LABEL: function f5 name="readsCaptureAfterAwait"
+# CHECK: b0(
+# CHECK-NEXT: MarkEnvironmentEscaped v0
+# CHECK-NEXT: Await
+# CHECK-NOT: ReleaseEnvironment
+
+function f6 name="neverDeadInside" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0 layout=L4 fields=[0]
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = NewObject -, v0 layout=L4 fields=[0]
+    v6 = GetEnvironmentField v3 layout=L4 field=0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v5)
+  b3():
+    v7 = GetEnvironmentField v5 layout=L4 field=0
+    Return v7
+}
+# CHECK-LABEL: function f6 name="neverDeadInside"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: b3():
+# CHECK-NEXT: = GetEnvironmentField v5
+# CHECK-NEXT: ReleaseEnvironment v5
+# CHECK-NOT: ReleaseEnvironment
+
+function f7 name="markedOnEveryPath" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L5 fields=[0]
+    Jump -> next b2()
+  b2():
+    v4 = NewClosure v3 function=f12
+    v5 = Call v0, -, v4
+    v6 = GetEnvironmentField v3 layout=L5 field=0
+    Branch v1 -> taken b1(), notTaken b3()
+  b3():
+    Return v6
+}
+# CHECK-LABEL: function f7 name="markedOnEveryPath"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+
+function f8 name="calleeWithoutBody" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L6 fields=[0]
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v3 function=f13
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b3():
+    Branch v1 -> taken b1(), notTaken b4()
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f8 name="calleeWithoutBody"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+
+function f9 name="captureParameterDies" captures=[{type=env L7}] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: env L7, v1: anything, v2: boolean):
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    v5 = GetEnvironmentField v3 layout=L7 field=0
+    v6 = NewObject -, v5 layout=L7 fields=[0]
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v6)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: function f9 name="captureParameterDies"
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: b3():
+# CHECK-NEXT: ReleaseEnvironment v6
+# CHECK-NOT: ReleaseEnvironment
+
+function f10 name="callback" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+
+function f11 name="callback" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    Return v1
+}
+
+function f12 name="callback" kind=Arrow captures=[{type=env L5}] results=[{type=anything}] {
+  b0(v0: env L5):
+    v1 = GetEnvironmentField v0 layout=L5 field=0
+    Return v1
+}
+
+function f13 name="withoutBody" kind=Arrow captures=[{type=env L6}] results=[{type=anything}]

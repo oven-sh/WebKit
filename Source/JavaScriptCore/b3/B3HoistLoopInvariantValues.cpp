@@ -73,7 +73,7 @@ static bool isTrappingLoad(const Value* value)
 // Whether a poll leaves depends on nothing that the procedure computes, so it guards no value behind it.
 static bool isBarrier(const Value* value, const Effects& effects)
 {
-    return effects.isTrapBarrier() && !isLoopPoll(value);
+    return effects.isTrapBarrier() && !isLoopPoll(value) && !isMovedLoadCheck(value);
 }
 
 static bool isReachedWithoutTrapBarrier(const NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* block, const IndexSet<BasicBlock*>& blockBarriers)

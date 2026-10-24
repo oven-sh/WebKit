@@ -114,6 +114,8 @@ static bool judgeRequests(FunctionPassContext& context, Int32Prover& prover, Jud
 
             DeclaredType declared = request.declared();
             RELEASE_ASSERT(isPromise(declared));
+            if (isAssertionOfDependency(context.program, declared))
+                continue;
             ValueID value = request.valueOperand();
             // A list of arguments stands for its elements, of which nothing is known. It is no value of the position.
             const Type& known = typing.typeOf(value);
@@ -161,7 +163,7 @@ static bool judgeTailCasts(FunctionPassContext& context, Int32Prover& prover)
             }
             if (bounds.isInt32OrNullish())
                 continue;
-            if (isEnteredAt(siteKindOf(context.program, cast.declared))) {
+            if (isEnteredAt(siteKindOf(context.program, cast.declared)) && !isAssertionOfDependency(context.program, cast.declared)) {
                 reportUnprovenFlow(context, { cast.declared, function.locationOf(terminator.origin()) }, bounds);
                 hasReported = true;
             }

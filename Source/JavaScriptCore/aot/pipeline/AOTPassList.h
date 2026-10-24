@@ -43,6 +43,7 @@
     v(DeferClosuresInFields) \
     v(AllocateInFrames) \
     v(AllocateInnerObjects) \
+    v(ReuseEnvironments) \
     v(NumberLiteralStrings) \
     v(EmbedConstantCollections) \
     v(CollectRegExpLiterals) \
@@ -111,6 +112,7 @@
     v(FinishBirths, finishBirths) \
     v(RestartInGenericVersion, restartInGenericVersion) \
     v(Select, select) \
-    v(ChooseRepresentations, chooseRepresentations)
+    v(ChooseRepresentations, chooseRepresentations) \
+    v(RemoveRedundantBarriers, removeRedundantBarriers)
 
 #endif // ENABLE(AOT)

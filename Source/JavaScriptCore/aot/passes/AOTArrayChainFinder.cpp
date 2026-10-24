@@ -22,7 +22,7 @@ namespace {
 class ArrayChainFinder {
     WTF_MAKE_NONCOPYABLE(ArrayChainFinder);
 public:
-    explicit ArrayChainFinder(FunctionPassContext&);
+    ArrayChainFinder(FunctionPassContext&, const BitVector* callsTakenAlone);
 
     Vector<ArrayChain> run();
 
@@ -31,6 +31,7 @@ private:
 
     void tryChain(BlockID, const ArrayMethodCall& last);
     bool isWorthFusingIn(BlockID);
+    bool paysAlone(const ArrayMethodCall&) const;
     bool takeEnd(ArrayChain&, const ArrayMethodCall& last);
     bool takeRange(ArrayChain&, const ArrayMethodCall& slice);
     ValueID collectLinks(ArrayChain&, const ArrayMethodCall& last, Links&);
@@ -44,14 +45,16 @@ private:
     FunctionPassContext& m_context;
     const Function& m_function;
     FunctionAnalyses& m_analyses;
+    const BitVector* m_callsTakenAlone;
     BitVector m_isInChain;
     Vector<ArrayChain> m_chains;
 };
 
-ArrayChainFinder::ArrayChainFinder(FunctionPassContext& context)
+ArrayChainFinder::ArrayChainFinder(FunctionPassContext& context, const BitVector* callsTakenAlone)
     : m_context(context)
     , m_function(context.function)
     , m_analyses(context.analyses)
+    , m_callsTakenAlone(callsTakenAlone)
 {
 }
 
@@ -99,7 +102,7 @@ void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
     chain.source = collectLinks(chain, last, linksFromLast);
 
     size_t numberOfLinks = linksFromLast.size();
-    if (numberOfLinks + (chain.rangeCall ? 1 : 0) + (chain.shape.end != ChainEndKind::Array ? 1 : 0) < 2)
+    if (numberOfLinks + (chain.rangeCall ? 1 : 0) + (chain.shape.end != ChainEndKind::Array ? 1 : 0) < 2 && !paysAlone(last))
         return;
     if (!isWorthFusingIn(block))
         return;
@@ -117,6 +120,14 @@ void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
     for (const ArrayMethodCall& link : linksFromLast)
         m_isInChain.set(link.call.index());
     m_chains.append(WTF::move(chain));
+}
+
+// The traversal knows how long the array can get and which storage holds what the callback returns, and it is shorter than the text of the built-in.
+bool ArrayChainFinder::paysAlone(const ArrayMethodCall& call) const
+{
+    if (!m_callsTakenAlone || !m_callsTakenAlone->get(call.call.index()))
+        return false;
+    return call.method->role == ChainMethodRole::End ? call.method->end == ChainEndKind::FlatMap : call.method->link != ChainLinkKind::None;
 }
 
 bool ArrayChainFinder::takeEnd(ArrayChain& chain, const ArrayMethodCall& last)
@@ -240,9 +251,9 @@ FunctionID ArrayChainFinder::calleeOf(ValueID callback) const
 
 } // anonymous namespace
 
-Vector<ArrayChain> findArrayChains(FunctionPassContext& context)
+Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector* callsTakenAlone)
 {
-    return ArrayChainFinder(context).run();
+    return ArrayChainFinder(context, callsTakenAlone).run();
 }
 
 } } } // namespace JSC::AOT::Typed

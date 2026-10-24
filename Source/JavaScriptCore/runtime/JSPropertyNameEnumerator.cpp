@@ -127,7 +127,7 @@ void getEnumerablePropertyNames(JSGlobalObject* globalObject, JSObject* base, Pr
 
         base->getNonReifiedStaticPropertyNames(vm, propertyNames, DontEnumPropertiesMode::Exclude);
         unsigned nonStructurePropertyCount = propertyNames.size();
-        structure->getPropertyNamesFromStructure(vm, propertyNames, DontEnumPropertiesMode::Exclude);
+        base->structure()->getPropertyNamesFromStructure(vm, propertyNames, DontEnumPropertiesMode::Exclude);
         scope.assertNoException();
 
         // |propertyNames| contains properties exclusively from the structure.

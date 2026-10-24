@@ -5158,6 +5158,22 @@ void CaseBlockNode::emitBytecodeForBlock(BytecodeGenerator& generator, RegisterI
     } else {
         // Setup jumps
         SetForScope isInCaseTest(generator.isInCaseTest(), true);
+        // A variable that has a register of its own is stored into by this function alone, so neither a name nor a member of one changes it.
+        auto mayStoreIntoVariable = [&](ClauseListNode* list) {
+            for (; list; list = list->getNext()) {
+                ExpressionNode* expression = list->getClause()->expr();
+                while (expression->isDotAccessorNode())
+                    expression = static_cast<DotAccessorNode*>(expression)->base();
+                if (!expression->isConstant() && !expression->isResolveNode() && !expression->isThisNode())
+                    return true;
+            }
+            return false;
+        };
+        RefPtr<RegisterID> copyOfSwitchExpression;
+        if (!switchExpression->isTemporary() && (mayStoreIntoVariable(m_list1) || mayStoreIntoVariable(m_list2))) {
+            copyOfSwitchExpression = generator.move(generator.newTemporary(), switchExpression);
+            switchExpression = copyOfSwitchExpression.get();
+        }
         for (ClauseListNode* list = m_list1; list; list = list->getNext()) {
             RefPtr<RegisterID> clauseVal = generator.emitNode(list->getClause()->expr());
             Ref<Label> clauseLabel = generator.newLabel();

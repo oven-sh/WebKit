@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTDecidedBranches.h"
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
@@ -323,7 +324,8 @@ void AllocationSinking::rewriteBlock(BlockID block)
     if (m_inputs.throwingTerminators.get(block.index()))
         m_cursor->willKeepThrowingValue(interpreter);
     rewriteEdges(interpreter, terminator, edges.span());
-    foldTerminator(interpreter, terminator);
+    if (foldTerminator(interpreter, terminator))
+        m_tables->blocksWithDecidedBranches.append(m_cursor->block());
     for (const Target& target : terminator.targets)
         m_tables->enteredBlocks.set(target.block.index());
     interpreter.resolveOperands(terminator);
@@ -493,10 +495,23 @@ std::optional<Target> RewriteCursor::handlerTargetFor(ObjectInterpreter& interpr
     return target;
 }
 
-void AllocationSinking::foldTerminator(ObjectInterpreter& interpreter, Terminator& terminator)
+void AllocationSinking::raiseFrequenciesBehindDecidedBranches()
+{
+    Function& function = m_cursor->builder().function();
+    bool hasAnalysesOfRewrittenFunction = false;
+    for (BlockID block : m_tables->blocksWithDecidedBranches) {
+        if (!isRarerThan(function.at(function.at(block).terminator.next().block).frequency, function.at(block).frequency))
+            continue;
+        if (!std::exchange(hasAnalysesOfRewrittenFunction, true))
+            m_analyses.didChangeControlFlow();
+        raiseFrequenciesBehind(m_analyses, function, Edge { block, 0 });
+    }
+}
+
+bool AllocationSinking::foldTerminator(ObjectInterpreter& interpreter, Terminator& terminator)
 {
     if (!interpreter.hasInterpretedTest(terminator))
-        return;
+        return false;
 
     Vector<uint32_t, 2> liveTargets;
     for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
@@ -506,13 +521,14 @@ void AllocationSinking::foldTerminator(ObjectInterpreter& interpreter, Terminato
     RELEASE_ASSERT(!liveTargets.isEmpty());
     if (liveTargets.size() == 1) {
         becomeJump(terminator, liveTargets[0]);
-        return;
+        return true;
     }
     if (terminator.kind != TerminatorKind::SwitchOnShape)
-        return;
+        return false;
 
     VirtualObjectID object = interpreter.objectOf(terminator.subjectOperand());
     becomeSwitchOnTag(shapeContext(object), *interpreter.state().find(object), interpreter.values().find(object)->tag, terminator);
+    return false;
 }
 
 ValueID AllocationSinking::entryConstant(Value&& value)

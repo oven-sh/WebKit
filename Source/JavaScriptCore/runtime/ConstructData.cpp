@@ -59,6 +59,13 @@ JSObject* construct(JSGlobalObject* globalObject, const JSValue& constructorObje
     return vm.interpreter.executeConstruct(asObject(constructorObject), constructData, args, newTarget);
 }
 
+JSValue constructAllowingPrimitiveResult(JSGlobalObject* globalObject, const JSValue& constructorObject, const CallData& constructData, const ArgList& args, const JSValue& newTarget)
+{
+    VM& vm = globalObject->vm();
+    ASSERT(constructData.type == CallData::Type::JS || constructData.type == CallData::Type::Native || constructData.type == CallData::Type::Compiled);
+    return vm.interpreter.executeConstructAllowingPrimitiveResult(asObject(constructorObject), constructData, args, newTarget);
+}
+
 JSObject* profiledConstruct(JSGlobalObject* globalObject, ProfilingReason reason, const JSValue& constructorObject, const CallData& constructData, const ArgList& args, const JSValue& newTarget)
 {
     VM& vm = globalObject->vm();

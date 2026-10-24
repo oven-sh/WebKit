@@ -120,12 +120,15 @@ static UnprovenVariants unprovenVariantsOf(const VirtualFamily& family, const Ob
     std::optional<uint32_t> unprovenField = family.findCounterpart(namedField);
     if (!unprovenField)
         return UnprovenVariants::None;
-    size_t count = std::ranges::count_if(state.variants, [&](const ObjectVariant& variant) {
-        return hasStored(family.at(variant.shape), *unprovenField);
-    });
-    if (!count)
+    auto isStoredInSomeVariant = [&](uint32_t field) {
+        return std::ranges::any_of(state.variants, [&](const ObjectVariant& variant) {
+            return hasStored(family.at(variant.shape), field);
+        });
+    };
+    if (!isStoredInSomeVariant(*unprovenField))
         return UnprovenVariants::None;
-    return count == state.variants.size() ? UnprovenVariants::All : UnprovenVariants::Some;
+    // A variant that has the property in neither place has no such property.
+    return isStoredInSomeVariant(namedField) ? UnprovenVariants::Some : UnprovenVariants::All;
 }
 
 static TypeID typeOfCell(const AllocationSinking& sinking, VirtualObjectID object)
@@ -651,13 +654,14 @@ bool ObjectInterpreter::canStore(VirtualObjectID object, const VirtualFieldAcces
 bool ObjectInterpreter::canStoreUnprovenValue(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t namedField) const
 {
     const VirtualFamily& family = m_sinking.familyOf(object);
-    if (access.whenPresent != PresentField::IsOwnData || family.refusesUnprovenValues() || m_sinking.storesByNameWaitIn(m_state.block))
+    if (family.refusesUnprovenValues() || m_sinking.storesByNameWaitIn(m_state.block))
         return false;
     return std::ranges::all_of(stateOf(object)->variants, [&](const ObjectVariant& variant) {
         const VirtualShape& shape = family.at(variant.shape);
         if (shape.kind != VirtualShapeKind::Fields || !canHoldUnprovenValue(program(), family.descriptionOf(shape), access.field))
             return false;
-        return hasStored(shape, namedField) || hasStoredCounterpart(family, shape, namedField);
+        bool isPresent = hasStored(shape, namedField) || hasStoredCounterpart(family, shape, namedField);
+        return isPresent ? access.whenPresent == PresentField::IsOwnData : access.whenAbsent == AbsentField::FindsNothing;
     });
 }
 

@@ -137,7 +137,9 @@ struct ArrayChain {
     ValueID firstCall() const { return rangeCall ? rangeCall : callbacks.isEmpty() ? lastCall : callbacks[0].call; }
 };
 
-Vector<ArrayChain> findArrayChains(FunctionPassContext&);
+// The body of its callee is about to take the place of a call that is taken alone, so no longer chain will come of it.
+Vector<ArrayChain> findArrayChains(FunctionPassContext&, const BitVector* callsTakenAlone = nullptr);
+PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext&, const BitVector& calls);
 ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&);
 void rewriteArrayChain(FunctionPassContext&, IRBuilder&, const ArrayChain&);
 
