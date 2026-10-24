@@ -81,6 +81,8 @@ public:
     CodeFeatures features() const { return m_features; }
 
     ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
+    // Null when the record has made none, or has given it up (didFinishWithExecutable). Does not allocate.
+    ModuleProgramExecutable* executableIfExists() const { return m_moduleProgramExecutable.get(); }
     // This record will not run its body (again): it ran to the end, it threw, or a module it depends on did. (Not where a
     // failed link is rolled back: such a record keeps its environment and its executable for the next attempt.)
     void didFinishWithExecutable(VM&);

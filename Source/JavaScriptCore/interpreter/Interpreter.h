@@ -80,6 +80,9 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ModuleProgramExecutable;
     class Register;
     class JSAsyncFunctionGenerator;
+    class JSPromise;
+    struct AsyncStackTraceLink;
+    enum class AsyncStackTraceRule : uint8_t;
     class JSGenerator;
     class JSObject;
     class JSScope;
@@ -172,11 +175,25 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         NEVER_INLINE void debug(CallFrame*, DebugHookType, JSValue data);
         static String stackTraceAsString(VM&, const Vector<StackFrame>&);
 
+#if USE(BUN_JSC_ADDITIONS)
+        // maxAsyncStackSize: the most frames to take from the await chain, when that is less than maxStackSize.
+        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, size_t maxAsyncStackSize = std::numeric_limits<size_t>::max());
+#else
         void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+        // Adds the async frames of what waits for the promise to settle, innermost first: the async functions, and
+        // the module whose top-level await ends the chain. Bun calls it for a promise that native code rejects
+        // (AsyncStackTraceRule::NativeRejection).
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSPromise*, size_t maxStackSize);
+#endif
+        // Nothing reads the stack of the Exception that a throw at the top call frame creates: a user catch clause
+        // takes the thrown value, or the throw leaves a microtask job that rejects a promise with the value.
         bool isExceptionCaughtByUserCatchClause();
 
     private:
-        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, AsyncStackTraceLink, size_t maxStackSize, AsyncStackTraceRule);
+        template<typename GetParentGenerator> void walkAwaitChain(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* firstGenerator, size_t maxStackSize, const GetParentGenerator&);
         enum ExecutionFlag { Normal, InitializeAndReturn };
 
         CodeBlock* prepareForCachedCall(CachedCall&, JSFunction*);

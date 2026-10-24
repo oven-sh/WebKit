@@ -2297,6 +2297,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionLineStartTableIsBuilt);
 static JSC_DECLARE_HOST_FUNCTION(functionRejectPromiseAsHandled);
 static JSC_DECLARE_HOST_FUNCTION(functionMarkPromiseAsHandled);
 static JSC_DECLARE_HOST_FUNCTION(functionLastExceptionHasCapturedStack);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionAsyncStackTraceForNativeRejection);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionSetUserPreferredLanguages);
 static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
@@ -4649,6 +4652,22 @@ JSC_DEFINE_HOST_FUNCTION(functionLastExceptionHasCapturedStack, (JSGlobalObject*
     return JSValue::encode(jsBoolean(!exception->stack().isEmpty()));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The async frames that Bun gives an Error with which native code rejects the promise, as Error.prototype.stack
+// prints them. Undefined for what is not a promise.
+JSC_DEFINE_HOST_FUNCTION(functionAsyncStackTraceForNativeRejection, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0));
+    if (!promise || !Options::useAsyncStackTrace())
+        return JSValue::encode(jsUndefined());
+    Vector<StackFrame> frames;
+    vm.interpreter.getAsyncStackTrace(promise, frames, promise, std::numeric_limits<size_t>::max());
+    return JSValue::encode(jsString(vm, Interpreter::stackTraceAsString(vm, frames)));
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(functionSetUserPreferredLanguages, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -6070,6 +6089,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "rejectPromiseAsHandled"_s, functionRejectPromiseAsHandled, 1);
     addFunction(vm, allowIfNotFuzz, "markPromiseAsHandled"_s, functionMarkPromiseAsHandled, 1);
     addFunction(vm, allowIfNotFuzz, "lastExceptionHasCapturedStack"_s, functionLastExceptionHasCapturedStack, 1);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, allowIfNotFuzz, "asyncStackTraceForNativeRejection"_s, functionAsyncStackTraceForNativeRejection, 1);
+#endif
 
     addFunction(vm, allowIfNotFuzz, "setUserPreferredLanguages"_s, functionSetUserPreferredLanguages, 1);
     addFunction(vm, allowIfNotFuzz, "icuVersion"_s, functionICUVersion, 0);
