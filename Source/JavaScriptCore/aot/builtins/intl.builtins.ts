@@ -98,7 +98,8 @@ const boundFormat = (inlineBuiltin: string, parameter: string) =>
     throws: true,
     runsOnlyOperandCode: true,
     uses: { this: [b.retained, mayHoldFormatter] },
-    implementation: b.hostCall,
+    // A custom accessor of a static table: it has no function object, and a read of it leaves no frame of a getter in a stack trace.
+    implementation: b.generic,
     call: [
       {
         args: { [parameter]: b.f64 },

@@ -168,7 +168,7 @@ static NEVER_INLINE Vector<JSCell*> createUnreferencedCustomGetters(LoadedProgra
 static void checkGetterOfCustomAccessorSurvivesACollection(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    AOT_TEST_CHECK(customGetterKeyOf().hasCell(BuiltinTable::singleton()));
+    // The engine's own custom accessors are read by name. Some of a host's have a cell.
     uint32_t number = putKeyInPlaceOf(program, BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeByteLength), customGetterKeyOf());
     uintptr_t hiddenGetter = fillCellOfCustomGetter(program, number);
     Vector<JSCell*> otherGetters = createUnreferencedCustomGetters(program);

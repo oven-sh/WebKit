@@ -448,6 +448,20 @@ void AOTHeaps::appendHeapsWrittenByCollection(B3HeapList& list) const
     list.append(&weakTableEntries);
 }
 
+bool AOTHeaps::mayCollect(const B3::Effects& effects) const
+{
+    return effects.writes.overlaps(rangeOf(collectorState)) && effects.writes.overlaps(rangeOf(weakTableStorage));
+}
+
+bool AOTHeaps::isFreedWithOwner(const B3::HeapRange& range) const
+{
+    for (const B3::AbstractHeap* heap : { &StringImpl_data, &StringImpl_hashAndFlags, &StringImpl_length, &characters8.atAnyIndex(), &characters16.atAnyIndex(), &ArrayBuffer_shared }) {
+        if (range.overlaps(rangeOf(*heap)))
+            return true;
+    }
+    return false;
+}
+
 std::optional<CoveredLocations> AOTHeaps::locationsOf(const B3::AbstractHeap& heap) const
 {
     for (const B3::AbstractHeap* current = &heap; current; current = current->parent()) {

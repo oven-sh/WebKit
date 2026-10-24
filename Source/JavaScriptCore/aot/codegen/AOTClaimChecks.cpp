@@ -28,6 +28,7 @@
 #include "B3ValueInlines.h"
 #include "CCallHelpers.h"
 #include <algorithm>
+#include <wtf/IndexMap.h>
 #include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT {
@@ -103,12 +104,113 @@ static bool saysWhatCountsOfUnchangingWord(AOTHeaps& heaps, const B3::MemoryValu
     return true;
 }
 
-// A word that never changes still holds, wherever what was read from it is used, what was read. The check keeps the address alive, and with it the cell.
+// The text of a string lies outside the heap and goes when the cell of the string goes. Its address keeps no cell alive. What was read from it stays right, and nothing reads it
+// for the program once the string is out of use, so behind an operation that may collect there may be no word left to read again.
+class OwnedMemory {
+public:
+    OwnedMemory(B3::Procedure& proc, const AOTHeaps& heaps)
+        : m_proc(proc)
+        , m_heaps(heaps)
+    {
+    }
+
+    bool mayBeFreedBetween(B3::MemoryValue* load, B3::BasicBlock* block, unsigned index)
+    {
+        findPlaces();
+        Place read = m_reads.get(load);
+        RELEASE_ASSERT(read.block);
+        if (read.block == block)
+            return collectsBetween(block, read.index, index);
+        follow(read);
+        return m_isEnteredBehindCollection[block] || collectsBetween(block, 0, index);
+    }
+
+private:
+    struct Place {
+        B3::BasicBlock* block { nullptr };
+        unsigned index { 0 };
+    };
+
+    void findPlaces()
+    {
+        if (std::exchange(m_hasPlaces, true))
+            return;
+        m_collections.resize(m_proc.size());
+        m_isEnteredBehindCollection.resize(m_proc.size());
+        m_isEnteredBeforeCollection.resize(m_proc.size());
+        for (B3::BasicBlock* block : m_proc) {
+            for (unsigned index = 0; index < block->size(); ++index) {
+                B3::Value* value = block->at(index);
+                if (auto* load = value->as<B3::MemoryValue>(); load && load->isLoad() && m_heaps.isFreedWithOwner(load->range()))
+                    m_reads.add(load, Place { block, index });
+                if ((value->opcode() == B3::Patchpoint || value->opcode() == B3::CCall) && m_heaps.mayCollect(value->effects()))
+                    m_collections[block].append(index);
+            }
+        }
+    }
+
+    // From `begin` on, in front of `end`.
+    bool collectsBetween(B3::BasicBlock* block, unsigned begin, unsigned end) const
+    {
+        for (unsigned index : m_collections[block]) {
+            if (index >= begin)
+                return index < end;
+        }
+        return false;
+    }
+
+    // The read runs again wherever its block is entered again.
+    void follow(Place read)
+    {
+        unsigned collectionsBehindRead = 0;
+        for (unsigned index : m_collections[read.block])
+            collectionsBehindRead += index > read.index;
+        if (m_followed.block == read.block && m_collectionsBehindFollowed == collectionsBehindRead)
+            return;
+        m_followed = read;
+        m_collectionsBehindFollowed = collectionsBehindRead;
+        for (B3::BasicBlock* block : m_proc) {
+            m_isEnteredBehindCollection[block] = false;
+            m_isEnteredBeforeCollection[block] = false;
+        }
+
+        Vector<B3::BasicBlock*, 16> behind;
+        Vector<B3::BasicBlock*, 16> before;
+        auto leave = [&](B3::BasicBlock* block, bool hasCollected) {
+            auto& isEntered = hasCollected ? m_isEnteredBehindCollection : m_isEnteredBeforeCollection;
+            for (B3::BasicBlock* successor : block->successorBlocks()) {
+                if (successor == read.block || std::exchange(isEntered[successor], true))
+                    continue;
+                (hasCollected ? behind : before).append(successor);
+            }
+        };
+        leave(read.block, !!collectionsBehindRead);
+        while (!before.isEmpty()) {
+            B3::BasicBlock* block = before.takeLast();
+            leave(block, !m_collections[block].isEmpty());
+        }
+        while (!behind.isEmpty())
+            leave(behind.takeLast(), true);
+    }
+
+    B3::Procedure& m_proc;
+    const AOTHeaps& m_heaps;
+    bool m_hasPlaces { false };
+    UncheckedKeyHashMap<B3::Value*, Place> m_reads;
+    IndexMap<B3::BasicBlock*, Vector<unsigned>> m_collections;
+    Place m_followed;
+    unsigned m_collectionsBehindFollowed { 0 };
+    IndexMap<B3::BasicBlock*, bool> m_isEnteredBehindCollection;
+    IndexMap<B3::BasicBlock*, bool> m_isEnteredBeforeCollection;
+};
+
+// A word that never changes still holds, wherever what was read from it is used, what was read. The check keeps the address alive, and with it the cell that the word lies in.
 static bool readUnchangingWordsAgainAtUses(B3::Procedure& proc, Typed::FunctionID function)
 {
     bool changed = false;
     RefPtr<B3::DifferenceReport> report = reportOf(BrokenClaim::WordNeverChanges, function);
     AOTHeaps& heaps = AOTHeaps::of(proc);
+    OwnedMemory ownedMemory(proc, heaps);
     B3::InsertionSet insertionSet(proc);
     for (B3::BasicBlock* block : proc) {
         for (unsigned index = 0; index < block->size(); ++index) {
@@ -120,6 +222,8 @@ static bool readUnchangingWordsAgainAtUses(B3::Procedure& proc, Typed::FunctionI
                     continue;
                 std::optional<B3::MovedLoad> described = B3::MovedLoad::describe(load);
                 if (!described || !saysWhatCountsOfUnchangingWord(heaps, *load, *described))
+                    continue;
+                if (heaps.isFreedWithOwner(load->range()) && ownedMemory.mayBeFreedBetween(load, block, index))
                     continue;
                 insertionSet.insertValue(index, B3::createMovedLoadCheck(proc, *described, load->lastChild(), load, report));
                 lastChecked = load;

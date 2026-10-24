@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClaimChecks.h"
 #include "AOTHeaps.h"
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
@@ -21,6 +22,7 @@
 #include "GPRInfo.h"
 #include <bit>
 #include <wtf/HashSet.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
 
@@ -781,6 +783,134 @@ static void testCallsConvertCells()
         AOT_TEST_CHECK(!lookup->effects.writes.overlaps(heaps.rangeOf(heaps.entire(heap))));
 }
 
+static void testWhatCellsOwnOutsideTheHeap()
+{
+    HeapFixture fixture;
+    AOTHeaps& heaps = fixture.heaps;
+
+    B3::PatchpointValue* collection = fixture.root->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+    collection->effects = B3::Effects::none();
+    B3::PatchpointValue* barrier = fixture.root->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+    barrier->effects = B3::Effects::none();
+    B3::PatchpointValue* lookup = fixture.root->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+    lookup->effects = B3::Effects::none();
+    const B3::AbstractHeap& secondCharacter = heaps.characters8[1];
+    B3HeapList writtenByCollection;
+    heaps.appendHeapsWrittenByCollection(writtenByCollection);
+    heaps.decoratePatchpointWrite(writtenByCollection.span(), collection);
+    heaps.decoratePatchpointWrite(&heaps.collectorState, barrier);
+    B3HeapList writtenByLookup;
+    heaps.appendHeapsOfConvertedCells(writtenByLookup);
+    heaps.decoratePatchpointWrite(writtenByLookup.span(), lookup);
+    heaps.computeRangesAndDecorateInstructions();
+
+    AOT_TEST_CHECK(heaps.mayCollect(collection->effects) && !heaps.mayCollect(barrier->effects) && !heaps.mayCollect(lookup->effects));
+    for (const B3::AbstractHeap* heap : HeapPointers { &heaps.StringImpl_length, &heaps.StringImpl_data, &heaps.StringImpl_hashAndFlags, &secondCharacter, &heaps.characters8.atAnyIndex(), &heaps.characters16.atAnyIndex(), &heaps.ArrayBuffer_shared })
+        AOT_TEST_CHECK(heaps.isFreedWithOwner(heaps.rangeOf(*heap)));
+    for (const B3::AbstractHeap* heap : HeapPointers { &heaps.JSString_value, &heaps.JSRopeString_length, &heaps.JSCell_typeInfoType, &heaps.AOTObject_shapeWord, &heaps.JSArrayBuffer_impl, &heaps.AOTClosure_entry, &heaps.Structure_classInfo })
+        AOT_TEST_CHECK(!heaps.isFreedWithOwner(heaps.rangeOf(*heap)));
+}
+
+namespace {
+
+// root: reads, uses, collects, uses -> loop: uses, collects or not, uses -> done: uses
+struct ReadsAroundCollections {
+    ReadsAroundCollections(HeapFixture& fixture, const B3::AbstractHeap& heap, bool collectsInRoot, bool collectsInLoop)
+        : fixture(fixture)
+    {
+        B3::Procedure& proc = fixture.proc;
+        loop = proc.addBlock();
+        done = proc.addBlock();
+        load = fixture.appendLoad(heap);
+        load->setReadsMutability(B3::Mutability::Immutable);
+        appendUse(fixture.root);
+        if (collectsInRoot)
+            appendCollection(fixture.root);
+        appendUse(fixture.root);
+        fixture.root->appendNew<B3::Value>(proc, B3::Jump, B3::Origin());
+        fixture.root->setSuccessors(B3::FrequentedBlock(loop));
+        appendUse(loop);
+        if (collectsInLoop)
+            appendCollection(loop);
+        appendUse(loop);
+        loop->appendNew<B3::Value>(proc, B3::Branch, B3::Origin(), loop->appendNew<B3::ArgumentRegValue>(proc, B3::Origin(), GPRInfo::argumentGPR1));
+        loop->setSuccessors(B3::FrequentedBlock(loop), B3::FrequentedBlock(done));
+        appendUse(done);
+        done->appendNew<B3::Value>(proc, B3::Return, B3::Origin());
+        proc.resetReachability();
+        fixture.heaps.computeRangesAndDecorateInstructions();
+
+        B3::Policy policy;
+        checkClaimsAtRunTime(policy, Typed::FunctionID(0u), { }, true);
+        policy.clientPhases[0].run->run(proc);
+    }
+
+    void appendUse(B3::BasicBlock* block)
+    {
+        B3::PatchpointValue* use = block->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+        use->effects = B3::Effects::none();
+        use->effects.writesLocalState = true;
+        use->append(load, B3::ValueRep::SomeRegister);
+        uses.append(use);
+    }
+
+    void appendCollection(B3::BasicBlock* block)
+    {
+        B3::PatchpointValue* collection = block->appendNew<B3::PatchpointValue>(fixture.proc, B3::Void, B3::Origin());
+        collection->effects = B3::Effects::none();
+        B3HeapList written;
+        fixture.heaps.appendHeapsWrittenByCollection(written);
+        fixture.heaps.decoratePatchpointWrite(written.span(), collection);
+    }
+
+    // One letter a use, in the order root, root, loop, loop, done.
+    String usesWithSecondRead() const
+    {
+        StringBuilder result;
+        for (B3::BasicBlock* block : fixture.proc) {
+            for (unsigned index = 0; index < block->size(); ++index) {
+                if (!uses.contains(block->at(index)))
+                    continue;
+                B3::Value* before = index ? block->at(index - 1) : nullptr;
+                bool isReadAgain = before && before->opcode() == B3::Patchpoint && !uses.contains(before) && before->numChildren() == 2 && before->child(1) == load;
+                result.append(isReadAgain ? 'r' : '-');
+            }
+        }
+        return result.toString();
+    }
+
+    HeapFixture& fixture;
+    B3::BasicBlock* loop;
+    B3::BasicBlock* done;
+    B3::MemoryValue* load;
+    Vector<B3::Value*, 5> uses;
+};
+
+} // anonymous namespace
+
+static String usesWithSecondRead(B3::AbstractHeap AOTHeaps::* heap, bool collectsInRoot, bool collectsInLoop)
+{
+    HeapFixture fixture;
+    return ReadsAroundCollections(fixture, fixture.heaps.*heap, collectsInRoot, collectsInLoop).usesWithSecondRead();
+}
+
+static void testWordsOutsideTheHeapAreReadAgainInFrontOfCollections()
+{
+    using Member = B3::AbstractHeap AOTHeaps::*;
+    for (Member heap : std::initializer_list<Member> { &AOTHeaps::StringImpl_length, &AOTHeaps::StringImpl_data, &AOTHeaps::ArrayBuffer_shared }) {
+        AOT_TEST_CHECK(usesWithSecondRead(heap, false, false) == "rrrrr"_s);
+        AOT_TEST_CHECK(usesWithSecondRead(heap, true, false) == "r----"_s);
+        AOT_TEST_CHECK(usesWithSecondRead(heap, false, true) == "rr---"_s);
+        AOT_TEST_CHECK(usesWithSecondRead(heap, true, true) == "r----"_s);
+    }
+    for (Member heap : std::initializer_list<Member> { &AOTHeaps::JSCell_typeInfoType, &AOTHeaps::AOTClosure_entry, &AOTHeaps::JSArrayBuffer_impl }) {
+        for (bool collectsInRoot : { false, true }) {
+            for (bool collectsInLoop : { false, true })
+                AOT_TEST_CHECK(usesWithSecondRead(heap, collectsInRoot, collectsInLoop) == "rrrrr"_s);
+        }
+    }
+}
+
 std::span<const NativeTest> b3HeapTests()
 {
     static constexpr NativeTest tests[] = {
@@ -802,6 +932,8 @@ std::span<const NativeTest> b3HeapTests()
         { "b3-heaps/ranges-of-heaps-that-grow-inside-one-another"_s, testRangesOfHeapsThatGrowInsideOneAnother },
         { "b3-heaps/write-sets-exclude-other-heaps"_s, testWriteSetsExcludeOtherHeaps },
         { "b3-heaps/calls-convert-cells"_s, testCallsConvertCells },
+        { "b3-heaps/what-cells-own-outside-the-heap"_s, testWhatCellsOwnOutsideTheHeap },
+        { "b3-heaps/words-outside-the-heap-are-read-again-in-front-of-collections"_s, testWordsOutsideTheHeapAreReadAgainInFrontOfCollections },
     };
     return tests;
 }

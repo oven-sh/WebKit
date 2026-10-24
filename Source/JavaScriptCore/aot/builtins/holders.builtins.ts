@@ -608,7 +608,8 @@ export default b.declarations(
         capability: "heap",
         throws: true,
         uses: { this: [b.retained] },
-        implementation: b.hostCall,
+        // A custom accessor of a static table, as `format` of the other formatters.
+        implementation: b.generic,
         call: {
           args: { x: b.any.optional, y: b.any.optional },
           returns: b.f64,

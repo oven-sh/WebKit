@@ -1728,6 +1728,14 @@ template<CodeSpecializationKind kind>
 static NEVER_INLINE EncodedJSValue enterNativeFunctionUnderValidation(JSGlobalObject* globalObject, JSObject* callee, JSValue thisValueOrNewTarget, const ArgList& args, TaggedNativeFunction nativeFunction, ProtoCallFrame& protoCallFrame, bool& didRunCode)
 {
     VM& vm = globalObject->vm();
+    if (!AOT::validatesNativeCalls(vm)) {
+        // Nothing says what the callee is, so it counts as code where it has run some.
+        bool didEnterVMBefore = std::exchange(vm.didEnterVM, false);
+        EncodedJSValue result = vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame);
+        didRunCode = vm.didEnterVM;
+        vm.didEnterVM |= didEnterVMBefore;
+        return result;
+    }
     AOT::NativeCallValidationScope validation(vm, { globalObject, callee, kind, thisValueOrNewTarget, args });
     EncodedJSValue result = vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame);
     if constexpr (kind == CodeSpecializationKind::CodeForCall)

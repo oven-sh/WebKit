@@ -14,6 +14,7 @@
 #include "AOTMemoryLocation.h"
 #include "AOTVector.h"
 #include "B3AbstractHeapRepository.h"
+#include "B3Effects.h"
 #include "JSArrayBuffer.h"
 #include "JSGlobalObject.h"
 #include "JSPropertyNameEnumerator.h"
@@ -92,6 +93,9 @@ struct AOTHeaps final : B3::AbstractHeapRepository {
 
     void appendHeaps(const Typed::LocationMasks&, B3HeapList&) const;
     void appendHeapsWrittenByCollection(B3HeapList&) const;
+    bool mayCollect(const B3::Effects&) const;
+    // Memory outside the heap that a cell owns. A pointer into it keeps nothing alive.
+    bool isFreedWithOwner(const B3::HeapRange&) const;
     static bool mayConvertCells(const Typed::Effects& effectsOfCall);
     void appendHeapsOfConvertedCells(B3HeapList&) const;
 
