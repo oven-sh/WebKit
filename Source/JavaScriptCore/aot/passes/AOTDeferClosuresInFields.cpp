@@ -83,8 +83,9 @@ enum class Rejection : uint8_t {
     CapturesSeveralEnvironments,
     HoldsOtherThanObjects,
     IsPartOfConstantData,
+    LeavesNoRoomForEnvironment,
 };
-constexpr size_t numberOfRejections = 9;
+constexpr size_t numberOfRejections = 10;
 
 struct FieldState {
     bool canDefer() const { return function && rejection == Rejection::None; }
@@ -259,6 +260,8 @@ static ASCIILiteral describe(Rejection rejection)
         return "rejected: the field may get a value that is neither an object nor undefined nor null"_s;
     case Rejection::IsPartOfConstantData:
         return "rejected: constant data gives the field a value other than undefined and null"_s;
+    case Rejection::LeavesNoRoomForEnvironment:
+        return "rejected: the layout has as many fields as it may have, and the environment takes one more"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1072,6 +1075,7 @@ private:
     void reject(ClosureFieldRow, Rejection);
     void rejectFieldsNamedBy(const Value& access, Rejection);
     void rejectFieldsOfConstantData();
+    void rejectFieldsWithoutRoomForEnvironment();
     void rejectFieldsStoredOutsideInitialization();
     void rejectFieldsGivenOtherThanObjects();
     void findFieldsGivenOtherClosures();
@@ -1079,7 +1083,7 @@ private:
     bool storesClosureOverReceiver(const Function&, const Value& store, FunctionID closureFunction) const;
     bool rejectFieldsListedWithOtherThanObjects(const ClosureFieldFreshObject&, const Vector<Fold, 16>&);
     bool rejectFieldsReadWhereTheyMayHaveLeftTheSlot();
-    bool rejectFieldsOverEnvironments(LayoutID);
+    bool rejectFieldsOverEnvironments(LayoutID, Rejection);
     bool countFolds();
     bool keepStoresNotFoldedByEveryWindow();
     bool rejectFieldsNotInitializedByEveryAllocation();
@@ -1488,6 +1492,16 @@ void DeferralAnalysis::rejectFieldsOfConstantData()
     }
 }
 
+void DeferralAnalysis::rejectFieldsWithoutRoomForEnvironment()
+{
+    for (size_t index : m_layoutsWithEnvironmentCandidates) {
+        LayoutID id(index);
+        const Layout& layout = m_program.at(id);
+        if (!layout.flow.closureEnvironmentField && m_build.exceeds(LimitID::FieldsInKeyOrder, layout.fields.size() + 1, Subject { .layout = id }))
+            rejectFieldsOverEnvironments(id, Rejection::LeavesNoRoomForEnvironment);
+    }
+}
+
 void DeferralAnalysis::rejectFieldsStoredOutsideInitialization()
 {
     for (const ValueReference& store : m_stores) {
@@ -1795,14 +1809,14 @@ bool DeferralAnalysis::mayFindSlotEmpty(const Value& read) const
     });
 }
 
-bool DeferralAnalysis::rejectFieldsOverEnvironments(LayoutID layout)
+bool DeferralAnalysis::rejectFieldsOverEnvironments(LayoutID layout, Rejection rejection)
 {
     bool didReject = false;
     for (uint32_t field = 0; field < m_rows.numberOfFields(layout); ++field) {
         FieldState& state = m_states[rowOf(layout, field)];
         if (!state.canDefer() || deferralFor(m_program, state.function) != ClosureDeferral::CapturesEnvironment)
             continue;
-        state.rejection = Rejection::CapturesSeveralEnvironments;
+        state.rejection = rejection;
         didReject = true;
     }
     return didReject;
@@ -1823,7 +1837,7 @@ bool DeferralAnalysis::rejectFieldsOverSeveralEnvironments()
             environment = initializer.environment;
         });
         if (hasSeveralEnvironments)
-            didReject |= rejectFieldsOverEnvironments(object.layout);
+            didReject |= rejectFieldsOverEnvironments(object.layout, Rejection::CapturesSeveralEnvironments);
     }
 
     for (size_t index : m_layoutsWithEnvironmentCandidates) {
@@ -1842,7 +1856,7 @@ bool DeferralAnalysis::rejectFieldsOverSeveralEnvironments()
             type = captured;
         }
         if (hasSeveralTypes)
-            didReject |= rejectFieldsOverEnvironments(id);
+            didReject |= rejectFieldsOverEnvironments(id, Rejection::CapturesSeveralEnvironments);
     }
     return didReject;
 }
@@ -1943,6 +1957,7 @@ void DeferralAnalysis::run()
     findCalleesEnteredOnlyFromWindows();
     findCalleeStores();
     rejectFieldsOfConstantData();
+    rejectFieldsWithoutRoomForEnvironment();
     rejectFieldsStoredOutsideInitialization();
     findFieldsGivenOtherClosures();
     rejectFieldsGivenOtherThanObjects();

@@ -20,6 +20,7 @@
 # DECLINES: decline ArrayChainNotFused f37 v9 None [0] reason=ValueBetweenLinksInterferes
 # DECLINES: decline ArrayChainNotFused f38 v10 None [0] reason=ValueBetweenLinksInterferes
 # DECLINES: decline ArrayChainNotFused f43 v6 None [0] reason=CallbackWritesSource
+# DECLINES: decline ArrayChainNotFused f46 v11 None [0] reason=CallbackWritesSource
 # DECLINES-NOT: decline
 
 module m0 path="main.js" displayPath="main.js"
@@ -668,6 +669,26 @@ function f45 name="unknownFirstCalleeSecondTakesNumbers" parameters=[{type=Array
 # CHECK-NEXT: [[fused45]]: anything = CallDirect v0, [[zero45]], [[none45]], v1, [[none45]], v5, [[none45]] function=[[mapMapToArray]]
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
+
+function f46 name="copyOfLocalArrayThatSecondCallbackHoldsAndPushesTo" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewArray v0, v0 contents=number
+    v2 = CallBuiltin v1 overload=ArrayPrototypeSlice/0
+    v3 = AssumeType v2 castType=Array<number, proven>
+    v4 = NewClosure function=f6
+    v5 = NewArray contents=anything
+    v6 = CallDirect v3, v4, v5 function=f4
+    v7 = AssumeType v6 castType=Array<number>
+    v8 = AssumeType v7 castType=Array<number, proven>
+    v9 = NewClosure v1 function=f13
+    v10 = NewArray contents=anything
+    v11 = CallDirect v8, v9, v10 function=f3
+    Return v11
+}
+# CHECK-LABEL: function f46 name="copyOfLocalArrayThatSecondCallbackHoldsAndPushesTo"
+# CHECK: v2: {{*}} = CallBuiltin v1 overload=ArrayPrototypeSlice/0
+# CHECK: v6: anything = CallDirect v3, v4, {{*}} function=f4
+# CHECK: v11: anything = CallDirect v8, v9, {{*}} function=f3
 
 # CHECK: function [[mapToLength]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=17}
 # CHECK: function [[mapToForEach]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=18}

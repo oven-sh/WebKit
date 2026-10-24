@@ -476,6 +476,8 @@ KeyOrderTable::KeyOrderTable(State& state)
     state.caches->add(CacheKind::StrongRoots, "key lists"_s, *this);
     // A StructureID may name another Structure after a collection.
     state.caches->addClearedEachCollection("published enumerators"_s, asWritableBytes(std::span { instance.objects.enumerators, numberOfCachedEnumerators }));
+    // Another object and another table may lie where these lay.
+    state.caches->addClearedEachCollection("places of positioned keys"_s, asWritableBytes(std::span { m_placesOfPositionedKeys }));
 }
 
 KeyOrderTable::~KeyOrderTable() = default;

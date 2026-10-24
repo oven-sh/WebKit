@@ -1103,6 +1103,7 @@ static void computeAddedKeys(const FieldResults& results, std::span<const Vector
     BitVector isConstructedByNativeCode = findLayoutsConstructedByNativeCode(results);
     const Vector<PropertyKeyID>& sharedKeys = results.stores.keysStoredThroughPlaceholders();
     results.tables.wholeProgram.keysStoredThroughUnknownReceivers = sharedKeys;
+    results.tables.wholeProgram.keysDefinedOnObjectsWithoutKnownLayout = results.stores.keysDefinedOnObjectsWithoutKnownLayout();
     const Vector<PropertyKeyID>& keysOfSeveralSymbols = results.tables.wholeProgram.keysOfSeveralSymbols;
     // A layout has its allocation classes to itself.
     forEachIndexInParallel(results.inputs.loops(), program.layouts.size(), [&](unsigned index) {

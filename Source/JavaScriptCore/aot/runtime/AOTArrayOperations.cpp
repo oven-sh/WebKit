@@ -11,6 +11,8 @@
 #include "AOTArrayAllocationProfile.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinIDs.h"
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTConvention.h"
 #include "AOTFrameArrays.h"
@@ -389,12 +391,25 @@ unsigned pushToFullVector(VM& vm, JSArray* array, JSValue value)
     return length + 1;
 }
 
-static EncodedJSValue pushToArray(JSGlobalObject* globalObject, JSArray* array, JSValue value)
+// An array that takes no more elements, one whose length is fixed, and one below a prototype with elements of its own keep a map beside the vector or store the slow way. A frozen one may keep its elements where they were.
+static bool mayRefuseOrRunOtherCode(JSArray* array)
 {
+    IndexingType type = array->indexingType();
+    if (hasAnyArrayStorage(type))
+        return hasSlowPutArrayStorage(type) || array->butterfly()->arrayStorage()->m_sparseMap;
+    return isCopyOnWrite(array->indexingMode()) && array->hasFrozenElementsInPlace();
+}
+
+static EncodedJSValue pushToArray(Instance* instance, JSArray* array, JSValue value)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = globalObject->vm();
     if (unsigned newLength = pushToFullVector(vm, array, value))
         return JSValue::encode(jsNumber(newLength));
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Array.prototype.push() itself refuses, and runs the code of others, in a frame of its own.
+    if (mayRefuseOrRunOtherCode(array)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypePush, array, value)));
     array->push(globalObject, value);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     return JSValue::encode(jsNumber(array->length()));
@@ -405,7 +420,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPush, EncodedJSValue, (Instance* insta
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayPush);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayPush);
-    OPERATION_RETURN(scope, pushToArray(globalObject, array, JSValue::decode(value)));
+    OPERATION_RETURN(scope, pushToArray(instance, array, JSValue::decode(value)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushNumber, EncodedJSValue, (Instance* instance, JSCell* cell, uint64_t numberBits))
@@ -416,7 +431,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushNumber, EncodedJSValue, (Instance*
     double number = std::bit_cast<double>(numberBits);
     if (number == number)
         array->tryMakeWritableDouble(vm);
-    OPERATION_RETURN(scope, pushToArray(globalObject, array, jsNumber(purifyNaN(number))));
+    OPERATION_RETURN(scope, pushToArray(instance, array, jsNumber(purifyNaN(number))));
 }
 
 static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* array, int64_t from, int64_t to)

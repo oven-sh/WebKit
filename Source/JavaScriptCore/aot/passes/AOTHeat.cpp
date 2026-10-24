@@ -165,8 +165,10 @@ double Heat::leastHeatOfFastCode(const Program& program, FunctionID id, double f
 {
     if (!m_thresholds)
         return frequencyConstants.iterationsPerLoop;
-    bool runsInLoop = frequencyInFunction >= HeatModel::minWeightOfCallInLoop || m_entries.of(program, id).isCalledInLoop;
-    return runsInLoop ? m_thresholds->leastHeatOfFastCodeInLoops : frequencyConstants.iterationsPerLoop;
+    // How often a function is entered is a product along paths of calls, and a call by value spreads over all that it may reach. A loop of its own is in the text.
+    if (frequencyInFunction >= HeatModel::minWeightOfCallInLoop)
+        return m_thresholds->leastHeatOfFastCodeInLoops / frequencyConstants.iterationsPerLoop;
+    return m_entries.of(program, id).isCalledInLoop ? m_thresholds->leastHeatOfFastCodeInLoops : frequencyConstants.iterationsPerLoop;
 }
 
 // Where nothing in the program runs more often than one loop, the loop is hot, and so is the function that it calls.

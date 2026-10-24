@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTLayout.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "JSBoundFunction.h"
 #include <algorithm>
@@ -80,6 +81,15 @@ static bool mayBeObjectOrNull(const Type& type)
     return type.hasObjects() || type.primitives & Primitive::Null;
 }
 
+// The constructor of a built-in class makes the objects of a class below it: cells of that class, which have no order word.
+static bool mayBeMadeByBuiltinClass(const InlineBuiltinSite& site, const Type* type)
+{
+    const Program& program = site.context.program();
+    return type && std::ranges::any_of(membersOf(program, *type), [&](LayoutID member) {
+        return !!builtinBaseClassOf(program, member);
+    });
+}
+
 static bool canFreezeInPlace(const InlineBuiltinSite& site)
 {
     const Type* object = argumentTypeOf(site, 0);
@@ -90,7 +100,7 @@ static bool canFreezeInPlace(const InlineBuiltinSite& site)
     // A module namespace object cannot be frozen: its exports stay writable, and the attempt throws.
     bool areOrdinaryObjects = std::ranges::all_of(members, [&](LayoutID member) {
         LayoutKind kind = program.at(member).kind;
-        return kind == LayoutKind::Record || kind == LayoutKind::Instance;
+        return (kind == LayoutKind::Record || kind == LayoutKind::Instance) && !builtinBaseClassOf(program, member);
     });
     return !members.empty() && areOrdinaryObjects && !receiverStateOf(program, members).cannot(ObjectMutation::ChangeIntegrity);
 }
@@ -111,7 +121,7 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinSite& site)
     case InlineBuiltin::CallObjectConstructor:
         return callIf(site, !hasObjectPart(argumentTypeOf(site, 0)), InlineForm::TwoWay);
     case InlineBuiltin::SetPrototypeOf:
-        return callIf(site, site.arguments().size() < 2 || !hasObjectPart(argumentTypeOf(site, 0)) || site.shape != CodeShape::Fast, InlineForm::TwoWay);
+        return callIf(site, site.arguments().size() < 2 || !hasObjectPart(argumentTypeOf(site, 0)) || mayBeMadeByBuiltinClass(site, argumentTypeOf(site, 0)) || site.shape != CodeShape::Fast, InlineForm::TwoWay);
     case InlineBuiltin::ObjectPrototypeToString:
         return callIf(site, !receiverTypeOf(site).hasObjects(), InlineForm::TwoWay);
     case InlineBuiltin::ObjectFreeze:

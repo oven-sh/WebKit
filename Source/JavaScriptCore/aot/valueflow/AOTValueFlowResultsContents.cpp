@@ -1024,9 +1024,10 @@ void ContainerAnalysis::collectArrayWrites()
     m_valuesBehindChecks = { };
 }
 
-// The type of a container names what the containers in it hold, so those come first. Containers that hold each other say nothing of each other.
+// The type of a container names what the containers in it hold, so those come first. Containers that hold each other say nothing of each other, and neither do those of the last level.
 Vector<Vector<uint32_t>> ContainerAnalysis::scheduleConversions()
 {
+    AOT_THRESHOLD(uint32_t, lastLevel, 16);
     constexpr uint32_t containersPerTask = 256;
     uint32_t numberOfContainers = m_containers.size();
     Vector<DependencyList> dependencies(numberOfContainers);
@@ -1064,7 +1065,7 @@ Vector<Vector<uint32_t>> ContainerAnalysis::scheduleConversions()
         for (uint32_t dependency : dependencies[index]) {
             uint32_t dependencyComponent = components.componentOf[dependency];
             if (dependencyComponent != component)
-                levelOfComponent[component] = std::max(levelOfComponent[component], levelOfComponent[dependencyComponent] + 1);
+                levelOfComponent[component] = std::max(levelOfComponent[component], std::min(levelOfComponent[dependencyComponent] + 1, lastLevel));
         }
         numberOfLevels = std::max(numberOfLevels, levelOfComponent[component] + 1);
     }

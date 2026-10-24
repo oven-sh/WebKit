@@ -241,6 +241,8 @@ static GeneratorFusionDeclineReason findUseObservingGenerator(const CandidateSea
             continue;
         if (!objectUse.isEscape && !objectUse.isContentsStore && !readsGeneratorState(search.pass.analyses, use))
             continue;
+        if (search.pass.build.isSabotaged(Sabotage::FusedGeneratorsAreSeenByOthers))
+            continue;
         candidate.witness = use;
         return GeneratorFusionDeclineReason::MayEscapeBeforeStep;
     }

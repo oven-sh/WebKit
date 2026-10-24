@@ -16,6 +16,7 @@
 #include "YarrJIT.h"
 #include "YarrPattern.h"
 #include "YarrSyntaxChecker.h"
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <span>
@@ -286,6 +287,24 @@ static void testOnePatternServesBothWidthsAndRetries()
     checkPatternServesBothWidthsAndRetries("a*b"_s);
 }
 
+static bool searchesForOneOfAClass(ASCIILiteral patternString)
+{
+    CompiledRegExp regExp = compileToCode({ patternString, { } });
+    return std::ranges::any_of(regExp.code[0]->symbols, [](const RegExpSymbol& symbol) {
+        auto* routine = std::get_if<Yarr::SharedRoutine>(&symbol);
+        return routine && routine->kind() == Yarr::SharedRoutine::Kind::FindFirstOfClass;
+    });
+}
+
+// A search for the place where a match can begin stops at once where most characters of a subject can begin one.
+static void testOnlyARareFirstCharacterIsSearchedFor()
+{
+    AOT_TEST_CHECK(searchesForOneOfAClass("[#%&~]+"_s));
+    AOT_TEST_CHECK(searchesForOneOfAClass("\\b[0-9]+"_s));
+    AOT_TEST_CHECK(!searchesForOneOfAClass("[a-z]+"_s));
+    AOT_TEST_CHECK(!searchesForOneOfAClass("\\b[a-z0-9-]+"_s));
+}
+
 static void testUnicodePropertyLookup()
 {
     OptionSet<Yarr::Flags> unicode { Yarr::Flags::Unicode };
@@ -351,6 +370,7 @@ std::span<const NativeTest> regExpCompilerTests()
         { "regexp-compiler/candidate-budget"_s, testCandidateBudget },
         { "regexp-compiler/compilation-is-thread-independent"_s, testCompilationIsThreadIndependent },
         { "regexp-compiler/one-pattern-serves-both-widths-and-retries"_s, testOnePatternServesBothWidthsAndRetries },
+        { "regexp-compiler/only-a-rare-first-character-is-searched-for"_s, testOnlyARareFirstCharacterIsSearchedFor },
         { "regexp-compiler/unicode-property-lookup"_s, testUnicodePropertyLookup },
         { "regexp-compiler/class-table-limits-are-counted"_s, testClassTableLimitsAreCounted },
     };

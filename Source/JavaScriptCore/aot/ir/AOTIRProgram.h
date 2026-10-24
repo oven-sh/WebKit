@@ -156,6 +156,9 @@ public:
     const Vector<PropertyKeyID>* keysStoredThroughUnknownReceivers() const { return m_keysStoredThroughUnknownReceivers ? &*m_keysStoredThroughUnknownReceivers : nullptr; }
     void setKeysStoredThroughUnknownReceivers(Vector<PropertyKeyID>&& ascendingKeys) { m_keysStoredThroughUnknownReceivers = WTF::move(ascendingKeys); }
     bool mayBeStoredThroughUnknownReceiver(PropertyKeyID) const;
+    // The analysis has seen a built-in give a property of this name a value that is no function, as Object.defineProperty(object, "name", { value }) does, on an object without a layout or on one that nobody has followed.
+    void setKeysDefinedOnObjectsWithoutKnownLayout(Vector<PropertyKeyID>&& ascendingKeys) { m_keysDefinedOnObjectsWithoutKnownLayout = WTF::move(ascendingKeys); }
+    bool isDefinedOnObjectsWithoutKnownLayout(PropertyKeyID key) const { return std::ranges::binary_search(m_keysDefinedOnObjectsWithoutKnownLayout, key); }
     // The layouts that have this one on their chain of proven bases, ascending, without those that are never allocated.
     std::span<const LayoutID> layoutsBelow(LayoutID) const LIFETIME_BOUND;
     // By the parents that are proven and, where none is, by those that the program text names.
@@ -225,6 +228,7 @@ private:
     std::optional<BodiesAsRead> m_bodiesAsRead;
     DerivedTables m_derivedTables;
     std::optional<Vector<PropertyKeyID>> m_keysStoredThroughUnknownReceivers;
+    Vector<PropertyKeyID> m_keysDefinedOnObjectsWithoutKnownLayout;
     mutable Caches m_caches;
     std::unique_ptr<FamilyTables> m_familyTables;
 };

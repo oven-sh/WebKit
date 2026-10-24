@@ -517,8 +517,14 @@ template<typename CharType>
 ALWAYS_INLINE unsigned nextStart(const RequiredTexts& texts, std::span<const CharType> subject, unsigned start, RequiredTextPlaces& places)
 {
     bool isFirstAttempt = !places[0];
-    unsigned next = nextStartOfRepeatedAlternatives(texts, subject, start, places);
-    return isFirstAttempt && texts[0].isFirstAttemptAlwaysMade ? start : next;
+    if (!isFirstAttempt || !texts[0].isFirstAttemptAlwaysMade)
+        return nextStartOfRepeatedAlternatives(texts, subject, start, places);
+    // The search waits until that attempt has failed: every later one begins behind place 0, and so looks for the text.
+    if (texts[0].isAllThatMatchesAtEndHold)
+        nextStartOfRepeatedAlternatives(texts, subject, start, places);
+    else
+        places[0] = 1;
+    return start;
 }
 
 RequiredTexts find(const YarrPattern& pattern)

@@ -18,18 +18,18 @@
 
 namespace JSC { namespace AOT {
 
-JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSValue second, JSValue third)
+static JSValue objectOf(Instance* instance, BuiltinID id)
+{
+    JSCell* cell = id ? instance->state->builtinCells->findObject(id) : nullptr;
+    return cell ? JSValue(cell) : jsUndefined();
+}
+
+static JSValue callInEngineOn(Instance* instance, BuiltinID function, JSValue receiver, JSValue first, JSValue second, JSValue third)
 {
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BuiltinCells& cells = *instance->state->builtinCells;
-    auto valueOf = [&](BuiltinID id) {
-        JSCell* cell = id ? cells.findObject(id) : nullptr;
-        return cell ? JSValue(cell) : jsUndefined();
-    };
-    JSValue callee = valueOf(function);
-    JSValue holder = valueOf(BuiltinTable::singleton().at(function).holder);
+    JSValue callee = objectOf(instance, function);
     auto callData = JSC::getCallData(callee);
     if (callData.type == CallData::Type::None) {
         throwException(globalObject, scope, createNotAFunctionError(globalObject, callee));
@@ -42,9 +42,19 @@ JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSVa
     if (third)
         list.append(third);
     // Where the stack has no room for the call, what it answers is not empty.
-    JSValue result = call(globalObject, callee, callData, holder, list);
+    JSValue result = call(globalObject, callee, callData, receiver, list);
     RETURN_IF_EXCEPTION(scope, { });
     return result;
+}
+
+JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSValue second, JSValue third)
+{
+    return callInEngineOn(instance, function, objectOf(instance, BuiltinTable::singleton().at(function).holder), first, second, third);
+}
+
+JSValue callMethodInEngine(Instance* instance, BuiltinID function, JSValue receiver, JSValue argument)
+{
+    return callInEngineOn(instance, function, receiver, argument, { }, { });
 }
 
 static bool isOriginalStructureOfLazyClass(JSGlobalObject* realm, Structure* structure)

@@ -610,17 +610,16 @@ static void valueFlowGraphFindsTheLeastSolution()
 
 namespace {
 
-struct WorkOfSolve {
-    uint64_t evaluations;
-    uint64_t edgesLookedAt;
-    uint64_t waves;
+struct OutcomeOfSolve {
+    Vector<uint32_t> moved;
+    Vector<Vector<uint32_t>> membersOfNode;
 
-    friend bool operator==(const WorkOfSolve&, const WorkOfSolve&) = default;
+    friend bool operator==(const OutcomeOfSolve&, const OutcomeOfSolve&) = default;
 };
 
 } // anonymous namespace
 
-static Vector<WorkOfSolve> solveWithEdgesInOrderOf(unsigned seedOfGraph, unsigned seedOfOrder, unsigned numberOfThreads)
+static Vector<OutcomeOfSolve> solveWithEdgesInOrderOf(unsigned seedOfGraph, unsigned seedOfOrder, unsigned numberOfThreads)
 {
     constexpr uint32_t sizeOfUniverse = 200;
     WeakRandom random(seedOfGraph);
@@ -634,7 +633,7 @@ static Vector<WorkOfSolve> solveWithEdgesInOrderOf(unsigned seedOfGraph, unsigne
 
     Vector<bool> isConstant;
     Vector<ValueFlowNodeID> moved;
-    Vector<WorkOfSolve> work;
+    Vector<OutcomeOfSolve> outcomes;
     for (unsigned batch = 0; batch < 12; ++batch) {
         uint32_t numberOfNewNodes = 1 + random.getUint32(batch ? 12 : 70);
         ValueFlowNodeID first = graph.addNodes(numberOfNewNodes);
@@ -661,18 +660,63 @@ static Vector<WorkOfSolve> solveWithEdgesInOrderOf(unsigned seedOfGraph, unsigne
         else
             graph.addInitialEdges(edges.span());
         graph.solve(moved);
-        const ValueFlowGraph::Counters& counters = graph.counters();
-        work.append(WorkOfSolve { counters.evaluations, counters.edgesLookedAt, counters.waves });
+        OutcomeOfSolve outcome;
+        for (ValueFlowNodeID node : moved)
+            outcome.moved.append(node.index());
+        for (uint32_t node = 0; node < isConstant.size(); ++node) {
+            Vector<uint32_t> members;
+            sets.forEachMember(graph.valueOf(ValueFlowNodeID(node)), [&](ValueFlowObjectID member) {
+                members.append(member.index());
+            });
+            outcome.membersOfNode.append(WTF::move(members));
+        }
+        outcomes.append(WTF::move(outcome));
     }
-    return work;
+    return outcomes;
 }
 
-static void workOfTheGraphDoesNotHangOnTheOrderOfTheEdges()
+static void whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges()
 {
     for (unsigned seed = 1; seed <= 100; ++seed) {
-        Vector<WorkOfSolve> work = solveWithEdgesInOrderOf(seed, 1, 1);
+        Vector<OutcomeOfSolve> outcomes = solveWithEdgesInOrderOf(seed, 1, 1);
         for (unsigned order = 2; order <= 5; ++order)
-            AOT_TEST_CHECK(solveWithEdgesInOrderOf(seed, order, order % 2 ? 4 : 1) == work);
+            AOT_TEST_CHECK(solveWithEdgesInOrderOf(seed, order, order % 2 ? 4 : 1) == outcomes);
+    }
+}
+
+static void rowsOfNodesInsideOneShardAreWalkedInOneWave()
+{
+    constexpr uint32_t numberOfRows = 2048;
+    constexpr uint32_t nodesOfRow = 8;
+    for (unsigned numberOfThreads : { 1u, 4u }) {
+        ParallelLoops loops(numberOfThreads);
+        ValueSets sets(numberOfRows);
+        Vector<std::unique_ptr<ValueSetMaker>> makers(numberOfThreads, [&](size_t) {
+            return makeUnique<ValueSetMaker>(sets);
+        });
+        ValueFlowGraph graph(loops, makers.span());
+        uint32_t numberOfRowsSolved = numberOfThreads == 1 ? 16 : numberOfRows;
+        ValueFlowNodeID firstOfRows = graph.addNodes(numberOfRowsSolved * nodesOfRow);
+        ValueFlowNodeID firstConstant = graph.addNodes(numberOfRowsSolved);
+        Vector<ValueFlowEdge> edges;
+        for (uint32_t row = 0; row < numberOfRowsSolved; ++row) {
+            ValueFlowObjectID member(row);
+            graph.makeConstant(ValueFlowNodeID(firstConstant.index() + row), makers[0]->of(member));
+            uint32_t first = firstOfRows.index() + row * nodesOfRow;
+            edges.append(ValueFlowEdge { ValueFlowNodeID(firstConstant.index() + row), ValueFlowNodeID(first) });
+            for (uint32_t index = 1; index < nodesOfRow; ++index)
+                edges.append(ValueFlowEdge { ValueFlowNodeID(first + index - 1), ValueFlowNodeID(first + index) });
+        }
+        graph.addInitialEdges(edges.span());
+        Vector<ValueFlowNodeID> moved;
+        graph.solve(moved);
+        AOT_TEST_CHECK(moved.size() == numberOfRowsSolved * nodesOfRow);
+        AOT_TEST_CHECK(graph.counters().waves == 1);
+        AOT_TEST_CHECK(graph.counters().evaluations == numberOfRowsSolved * nodesOfRow);
+        for (uint32_t row = 0; row < numberOfRowsSolved; ++row) {
+            ValueFlowObjectID member(row);
+            AOT_TEST_CHECK(graph.valueOf(ValueFlowNodeID(firstOfRows.index() + row * nodesOfRow + nodesOfRow - 1)) == makers[0]->of(member));
+        }
     }
 }
 
@@ -1550,7 +1594,7 @@ static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
 }
 
 #define FOR_EACH_AOT_VALUE_FLOW_CORE_TEST(v) \
-    v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(workOfTheGraphDoesNotHangOnTheOrderOfTheEdges) \
+    v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
     v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue)

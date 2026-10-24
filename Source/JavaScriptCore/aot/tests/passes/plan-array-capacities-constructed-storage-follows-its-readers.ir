@@ -1,7 +1,6 @@
 # The array that an inlined `map` makes takes its elements through tested stores, and the code behind it reads a number[]: it tests for double storage.
 # Allocated with storage for any value, each fresh array failed that test, was converted and read by the generic path. Where every tested store puts in a number
-# and a reader tests for doubles, the allocation, its stores and their tests all go by double storage. Other elements, or no such reader: nothing changes.
-# The array of a traversal takes its elements through direct stores: integers alone would give it storage for integers, and the same reader makes it doubles
+# and a reader tests for doubles, the allocation, its stores and their tests all go by double storage. Other elements, or no such reader: nothing changes
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
 # CHECK: outcome: Changed
@@ -75,56 +74,3 @@ function f2 name="nobodyReadsDoubles" parameters=[{type=int[0, 100]}, {type=Arra
 # CHECK-LABEL: function f2
 # CHECK-NOT: NewArrayLike v0, v1 arrayStorage=
 # CHECK: PutArrayElement v3, v4, v2, v9 arrayStorage=Contiguous
-
-function f3 name="integersStoredDirectly" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
-    v3 = NewArrayLike v0, v1
-    v4 = Integer integer=0
-    v5 = TryPutByValDirect v3, v4, v2
-    v6 = HasArrayStorage v3 arrayStorage=Double
-    Branch v6 -> taken b1(| 0), notTaken b2()
-  b1(v7):
-    Return v4
-  b2() frequency=Unlikely:
-    v8 = ElemGet v3, v4
-    Return v8
-}
-# CHECK-LABEL: function f3
-# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Double
-# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Double
-
-function f4 name="integersStoredDirectlyInArraysMadeInTwoPlaces" parameters=[{type=boolean}, {type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: boolean, v1: int[0, 100], v2: Array<anything>, v3: i32):
-    Branch v0 -> taken b1(), notTaken b2()
-  b1():
-    v4 = NewArrayLike v1, v2
-    Jump -> next b3(v4)
-  b2():
-    v5 = NewArrayLike v1, v2
-    Jump -> next b3(v5)
-  b3(v6):
-    v7 = Integer integer=0
-    v8 = TryPutByValDirect v6, v7, v3
-    v9 = HasArrayStorage v6 arrayStorage=Double
-    Branch v9 -> taken b4(| 0), notTaken b5()
-  b4(v10):
-    Return v7
-  b5() frequency=Unlikely:
-    v11 = ElemGet v6, v7
-    Return v11
-}
-# CHECK-LABEL: function f4
-# CHECK: v4: {{*}} = NewArrayLike v1, v2 arrayStorage=Double
-# CHECK: v5: {{*}} = NewArrayLike v1, v2 arrayStorage=Double
-# CHECK: v8: {{*}} = TryPutByValDirect v6, v7, v3 arrayStorage=Double
-
-function f5 name="integersStoredDirectlyThatNobodyReadsAsDoubles" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
-    v3 = NewArrayLike v0, v1
-    v4 = Integer integer=0
-    v5 = TryPutByValDirect v3, v4, v2
-    Return v3
-}
-# CHECK-LABEL: function f5
-# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
-# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32

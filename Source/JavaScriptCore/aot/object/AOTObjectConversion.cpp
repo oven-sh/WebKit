@@ -75,6 +75,7 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
         return false;
     if (!tryStore(vm, field, value))
         return false;
+    forgetPlacesOfPositionedKeys(state());
     {
         VM::DeletePropertyModeScope ignoreConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
         DeletePropertySlot slot;

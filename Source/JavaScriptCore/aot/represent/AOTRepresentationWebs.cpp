@@ -609,6 +609,22 @@ void RepresentationWebs::collectProducers()
     }
 }
 
+// The back end adds in 32 bits then, whichever width the operands come in.
+bool RepresentationWebs::isSumOfWhichOnlyLowBitsAreUsed(ValueID id) const
+{
+    const Function& function = m_inputs.function;
+    const Value& sum = function.at(id);
+    if ((sum.opcode != Opcode::Add && sum.opcode != Opcode::Sub) || representationOf(id) != Representation::Int64)
+        return false;
+    auto uses = m_analyses.useLists().usesOf(id);
+    return !uses.empty() && std::ranges::all_of(uses, [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        Opcode opcode = function.at(use.user).opcode;
+        return (opcode == Opcode::BitOr || opcode == Opcode::BitAnd || opcode == Opcode::BitXor) && representationOf(use.user) == Representation::Int32;
+    });
+}
+
 void RepresentationWebs::collectUses()
 {
     const Function& function = m_inputs.function;
@@ -632,7 +648,7 @@ void RepresentationWebs::collectUses()
             case Use::Kind::Operand:
                 if (isForwardedOperand(function.at(use.user), use.operandIndex))
                     addCopyTo(use.user, member, votesOf(use.block));
-                else
+                else if (!isSumOfWhichOnlyLowBitsAreUsed(use.user))
                     addUse(web, wantedRepresentationOf(m_inputs, function.at(use.user), use.operandIndex), votesOf(use.block));
                 break;
             case Use::Kind::TerminatorOperand:

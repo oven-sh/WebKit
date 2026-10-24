@@ -168,7 +168,7 @@ static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, bo
         return false;
 
     const MemoryLocation& location = access.location;
-    if (std::ranges::binary_search(loop.clobbers.locations, location))
+    if (std::ranges::binary_search(loop.clobbers.locations, location) && !context.build.isSabotaged(Sabotage::HoistedReadsAreStoredInTheirLoops))
         return false;
 
     LocationStability stability = stabilityOfRead(program, value, access);

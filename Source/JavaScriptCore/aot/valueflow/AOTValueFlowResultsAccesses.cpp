@@ -462,12 +462,20 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
     };
 
     EscapesOfObjects escapes(inputs);
-    // What an operation does because it reads from, calls or hands something to a value that nobody knows begins where that value began.
+    struct Beginning {
+        ValueFlowNodeID node;
+        Witness witness;
+        ValueFlowUnknownSource source;
+    };
+    Vector<Beginning> beginningsAtOperationsOnUnknownValues;
+    // What an operation does because it reads from, calls or hands something to a value that nobody knows begins where that value began, and at the operation where no line can be named for that value: the global object was never handed to anybody.
     auto beginAt = [&](ValueFlowStatementID beginning, ValueFlowNodeID node, ValueFlowUnknownSource source) {
         if (!beginning)
             return;
         const ValueFlowStatement& statement = solver.statementAt(beginning);
-        if (!deriveFromOperands(statement, statement.operandCount, node))
+        if (deriveFromOperands(statement, statement.operandCount, node))
+            beginningsAtOperationsOnUnknownValues.append({ node, witnessOfStatement(inputs.program, statement), source });
+        else
             seed(node, witnessOfStatement(inputs.program, statement), source);
     };
     auto readsThroughSet = [&](uint32_t node) -> ValueSetID {
@@ -513,7 +521,15 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
     // Of the roots that are nearest to a node it takes the lowest.
     BitVector isInNextLevel(numberOfNodes);
     size_t endOfLevel = 0;
-    for (size_t next = 0; next < found.size() || !seedsInLibrary.isEmpty(); ++next) {
+    for (size_t next = 0; next < found.size() || !beginningsAtOperationsOnUnknownValues.isEmpty() || !seedsInLibrary.isEmpty(); ++next) {
+        if (next == found.size()) {
+            Vector<Beginning> beginnings = std::exchange(beginningsAtOperationsOnUnknownValues, { });
+            beginnings.removeAllMatching([&](const Beginning& beginning) {
+                return m_rootOfNode[beginning.node.index()] != none;
+            });
+            for (const Beginning& beginning : beginnings)
+                seed(beginning.node, beginning.witness, beginning.source);
+        }
         if (next == found.size()) {
             AOT::sort(seedsInLibrary, [&](const auto& a, const auto& b) {
                 return isLowerWitness(m_roots[a.second].witness, m_roots[b.second].witness);

@@ -676,6 +676,8 @@ public:
 
     template<typename Functor>
     void forEachProperty(VM&, NOESCAPE const Functor&);
+    // For whoever asks where a property stands among the others. This may grab the lock.
+    PropertyTable* propertyTableInOrderOfAddition(VM& vm) { return ensurePropertyTable(vm); }
 
     IGNORE_RETURN_TYPE_WARNINGS_BEGIN
     inline PropertyOffset get(VM&, Concurrency, UniquedStringImpl* uid, unsigned& attributes); // Defined in StructureInlines.h

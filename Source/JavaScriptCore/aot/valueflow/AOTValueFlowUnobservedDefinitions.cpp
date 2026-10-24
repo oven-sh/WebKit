@@ -734,11 +734,17 @@ KeysOfLiterals keysDefinedBehindAllocationsOfLiterals(const Function& function)
 KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Function& function)
 {
     KeysOfLiterals keys;
-    Vector<ValueID, 8> freshObjects;
+    // A list of literals has all of them fresh at once.
+    BitVector isFresh;
+    Vector<ValueID, 8> objectsOfBlock;
+    unsigned numberOfFreshObjects = 0;
     for (const Block& block : function.blocks) {
         if (block.handler)
             continue;
-        freshObjects.shrink(0);
+        for (ValueID object : objectsOfBlock)
+            isFresh.quickClear(object.index());
+        objectsOfBlock.shrink(0);
+        numberOfFreshObjects = 0;
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
             if (handsOperandOnUntested(value.opcode) || value.opcode == Opcode::TypeTest)
@@ -746,20 +752,25 @@ KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Fun
 
             bool isStrictStore = value.opcode == Opcode::PropSet && value.mode() == ECMAMode::Strict && program.nameClassOf(value.key()) != NameClass::Proto;
             ValueID receiver;
-            for (uint32_t index = 0; index < value.numberOfOperands() && !freshObjects.isEmpty(); ++index) {
+            for (uint32_t index = 0; index < value.numberOfOperands() && numberOfFreshObjects; ++index) {
                 ValueID object = value.operand(index) ? sameObjectThroughCasts(function, value.operand(index)) : ValueID();
-                if (!object || !freshObjects.contains(object))
+                if (!object || !isFresh.get(object.index()))
                     continue;
                 if ((isStrictStore || value.opcode == Opcode::PropDefine) && index == *receiverOf(value.opcode))
                     receiver = object;
-                else
-                    freshObjects.removeFirst(object);
+                else {
+                    isFresh.quickClear(object.index());
+                    --numberOfFreshObjects;
+                }
             }
-            if (isStrictStore && receiver && freshObjects.contains(receiver) && program.at(value.key()).kind == PropertyKeyKind::Text && program.nameClassOf(value.key()) == NameClass::Ordinary)
+            if (isStrictStore && receiver && isFresh.get(receiver.index()) && program.at(value.key()).kind == PropertyKeyKind::Text && program.nameClassOf(value.key()) == NameClass::Ordinary)
                 keys.add(receiver.index(), Vector<PropertyKeyID, 8>()).iterator->value.append(value.key());
 
-            if (value.opcode == Opcode::NewObject ? !program.at(value.layout()).isEnvironment() : value.opcode == Opcode::Data && program.at(value.data()).root.is<DataNode::Object>())
-                freshObjects.append(id);
+            if (value.opcode == Opcode::NewObject ? !program.at(value.layout()).isEnvironment() : value.opcode == Opcode::Data && program.at(value.data()).root.is<DataNode::Object>()) {
+                isFresh.set(id.index());
+                objectsOfBlock.append(id);
+                ++numberOfFreshObjects;
+            }
         }
     }
     return keys;

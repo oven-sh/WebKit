@@ -183,7 +183,7 @@ void ObjectBuiltinEmitter::generateObjectFreeze(const InlineCall& call)
     ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
     Word32 frozen = word32(static_cast<int32_t>(orderWordIntegrityBits));
     CellPointer cell = objectOrMiss(call, argument);
-    if (!type.hasOnlyLayouts(m_program))
+    if (!shapeTests.hasOnlyCompiledObjects(type))
         missUnless(call, shapeTests.hasShapeIn(cell, type.layouts, type));
     missUnless(call, hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits));
     Word32 word = shapeTests.orderWordOf(cell);

@@ -88,6 +88,7 @@ public:
         dumpStoredValueUses();
         dumpProgramInstances();
         dumpKeysStoredThroughUnknownReceivers();
+        dumpKeysDefinedOnObjectsWithoutKnownLayout();
     }
 
 private:
@@ -459,6 +460,18 @@ private:
         if (keys.isEmpty())
             return;
         beginLine("stored-through-unknown-receivers"_s);
+        m_printer.list(keys, [&](PropertyKeyID key) {
+            m_printer.print(key);
+        });
+        m_printer.endLine();
+    }
+
+    void dumpKeysDefinedOnObjectsWithoutKnownLayout()
+    {
+        const Vector<PropertyKeyID>& keys = m_tables.wholeProgram.keysDefinedOnObjectsWithoutKnownLayout;
+        if (keys.isEmpty())
+            return;
+        beginLine("defined-on-objects-without-known-layout"_s);
         m_printer.list(keys, [&](PropertyKeyID key) {
             m_printer.print(key);
         });

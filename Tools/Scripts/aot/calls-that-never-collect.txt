@@ -51,3 +51,4 @@ Vector<.*(appendSlowCase|expandCapacity)
 ^AOT::crashOnValidationFailure$
 ^AOT::ChainDependents::hasDependents$
 ^AOT::slotAgreesWithStructures$
+^AOT::Image::currentOfThread$

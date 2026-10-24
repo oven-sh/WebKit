@@ -65,6 +65,7 @@ private:
     void restrictToLegalRepresentations();
     void collectProducers();
     void collectUses();
+    bool isSumOfWhichOnlyLowBitsAreUsed(ValueID) const;
     static void addProducer(Web&, Representation, uint64_t votes);
     static void addUse(Web&, Representation, uint64_t votes);
     uint64_t votesOf(BlockID) const;

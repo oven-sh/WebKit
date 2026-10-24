@@ -6454,6 +6454,10 @@ class YarrGenerator final : public YarrJITInfo {
 #else
                 if (op.m_prefilters.boyerMoore) {
                     auto range = op.m_prefilters.boyerMoore->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan());
+#if CPU(X86_64) || CPU(ARM64)
+                    if (range && rarityOfStops(*op.m_prefilters.boyerMoore, *range) < leastRarityOfStartWorthSearchingFor)
+                        range = std::nullopt;
+#endif
 #endif
                     if (range) {
                         auto [beginIndex, endIndex] = *range;
@@ -10814,6 +10818,8 @@ class YarrGenerator final : public YarrJITInfo {
 
     // Half of ASCII: with more candidates a search stops at every other character.
     static constexpr unsigned maxStartPositionCandidates = 64;
+    // A search that stops at the place it began at costs as much as an attempt or two that fail at their first character: it pays where it stops at one place in four or fewer.
+    static constexpr unsigned leastRarityOfStartWorthSearchingFor = 2;
 
     SharedRoutine::FindFirstOfClass startPositionSearchRoutine(const StartPositionSearch& search) const
     {
@@ -10896,6 +10902,8 @@ class YarrGenerator final : public YarrJITInfo {
         unsigned asciiCount = asciiMembers.count();
         if ((!asciiCount && !nonASCIICount) || asciiCount > maxStartPositionCandidates)
             return std::nullopt;
+        if (rarityOfUnits({ asciiMembers.storage()[0], asciiMembers.storage()[1] }, !!nonASCIICount) < leastRarityOfStartWorthSearchingFor)
+            return std::nullopt;
         int32_t frequency = 0;
         asciiMembers.forEachSetBit([&](unsigned character) {
             frequency += m_sampler.frequency(character);
@@ -10950,6 +10958,14 @@ class YarrGenerator final : public YarrJITInfo {
             m_ops[*search.settledTermOp].m_isDeadCode = true;
     }
 
+    // The search looks at one place in as many as the range is long.
+    static unsigned rarityOfStops(const BoyerMooreInfo& info, std::tuple<unsigned, unsigned> range)
+    {
+        auto [begin, end] = range;
+        auto [map, charactersFastPath] = info.createCandidateBitmap(begin, end);
+        return rarityOfUnits({ map.storage()[0], map.storage()[1] }, false) + std::bit_width(end - begin) - 1;
+    }
+
     bool hasSelectiveStartSearch()
     {
         for (auto& op : m_ops) {
@@ -10959,12 +10975,8 @@ class YarrGenerator final : public YarrJITInfo {
             if (prefilters.maskedAlternatives || prefilters.sharedLead)
                 return true;
             if (prefilters.boyerMoore) {
-                if (auto range = prefilters.boyerMoore->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan())) {
-                    // It looks at one place in as many as the range is long.
-                    auto [begin, end] = *range;
-                    auto [map, charactersFastPath] = prefilters.boyerMoore->createCandidateBitmap(begin, end);
-                    return rarityOfUnits({ map.storage()[0], map.storage()[1] }, false) + std::bit_width(end - begin) - 1 >= leastRarityWorthSearchingFor;
-                }
+                if (auto range = prefilters.boyerMoore->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan()))
+                    return rarityOfStops(*prefilters.boyerMoore, *range) >= leastRarityWorthSearchingFor;
             }
             return prefilters.startPositionSearch && rarityOfUnits(prefilters.startPositionSearch->asciiMembers, prefilters.startPositionSearch->matchesAllNonASCII) >= leastRarityWorthSearchingFor;
         }
@@ -11173,37 +11185,52 @@ class YarrGenerator final : public YarrJITInfo {
             return;
         dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", m_requiredTexts.size(), " texts that every match holds");
         m_requiredTextFrameLocation = m_callFrameSizeInBytes / sizeof(void*);
-        m_callFrameSizeInBytes = alignCallFrameSizeInBytes(m_requiredTextFrameLocation + m_requiredTexts.size());
+        m_callFrameSizeInBytes = alignCallFrameSizeInBytes(m_requiredTextFrameLocation + m_requiredTexts.size() + (m_requiredTexts.size() > 1 ? 1 : 0));
     }
 
-    // At the head of the repeated alternatives, with the first one's input claimed. Defines where a new attempt comes in.
+    // At the head of the repeated alternatives, with the first one's input claimed. The first attempt begins with the searches. Defines where a new attempt comes in: it makes one comparison as long as every text is known to lie ahead.
     void generateRequiredTextSearches(YarrOp& op)
     {
         unsigned claimed = op.m_alternative->m_minimumSize;
-        for (unsigned i = 0; i < m_requiredTexts.size(); ++i)
-            storeToFrame(MacroAssembler::TrustedImm32(0), m_requiredTextFrameLocation + i);
-        defineReentryLabel(op);
-        MacroAssembler::Label reentry = op.m_reentry;
-        Vector<MacroAssembler::Jump, maxRequiredTexts> isBehindText;
-        for (unsigned i = 0; i < m_requiredTexts.size(); ++i) {
-            loadFromFrame(m_requiredTextFrameLocation + i, m_regs.regT0);
-            isBehindText.append(m_jit.branch32(MacroAssembler::Above, m_regs.index, m_regs.regT0));
-        }
-        MacroAssembler::Jump mayBegin = m_jit.jump();
-        for (unsigned i = 0; i < m_requiredTexts.size(); ++i) {
-            isBehindText[i].link(&m_jit);
+        unsigned count = m_requiredTexts.size();
+        static_assert(maxRequiredTexts == 2);
+        auto slot = [&](unsigned index) {
+            return frameAddress().withOffset((m_requiredTextFrameLocation + index) * sizeof(void*));
+        };
+        auto generateSearch = [&](unsigned index) {
             if (claimed)
                 m_jit.sub32(MacroAssembler::TrustedImm32(claimed), m_regs.index);
-            if (m_requiredTexts[i].isAllThatMatchesAtEndHold)
-                generateSearchFromEnd(m_requiredTexts[i], m_requiredTextFrameLocation + i);
+            if (m_requiredTexts[index].isAllThatMatchesAtEndHold)
+                generateSearchFromEnd(m_requiredTexts[index], m_requiredTextFrameLocation + index);
             else
-                generateRequiredTextSearch(m_requiredTexts[i], m_requiredTextFrameLocation + i, claimed);
-            if (!m_pattern.m_body->m_hasFixedSize)
-                setMatchStart(m_regs.index);
-            op.m_jumps.append(jumpIfNoAvailableInput(claimed));
-            m_jit.jump().linkTo(reentry, &m_jit);
+                generateRequiredTextSearch(m_requiredTexts[index], m_requiredTextFrameLocation + index, claimed);
+        };
+        // Behind the slots of two texts comes one that has the lesser of them.
+        unsigned least = count == 1 ? 0 : count;
+        if (count > 1)
+            storeToFrame(MacroAssembler::TrustedImm32(0), m_requiredTextFrameLocation + 1);
+        MacroAssembler::Label isBehindText = m_jit.label();
+        generateSearch(0);
+        if (count > 1) {
+            MacroAssembler::Label isBehindFirstText = isBehindText;
+            MacroAssembler::Jump hasSearched = m_jit.jump();
+            isBehindText = m_jit.label();
+            m_jit.branch32(MacroAssembler::Above, m_regs.index, slot(0)).linkTo(isBehindFirstText, &m_jit);
+            generateSearch(1);
+            hasSearched.link(&m_jit);
+            loadFromFrame(m_requiredTextFrameLocation, m_regs.regT0);
+            loadFromFrame(m_requiredTextFrameLocation + 1, m_regs.regT1);
+            MacroAssembler::Jump isLesser = m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.regT0, m_regs.regT1);
+            m_jit.move(m_regs.regT1, m_regs.regT0);
+            isLesser.link(&m_jit);
+            storeToFrame(m_regs.regT0, m_requiredTextFrameLocation + least);
         }
-        mayBegin.link(&m_jit);
+        if (!m_pattern.m_body->m_hasFixedSize)
+            setMatchStart(m_regs.index);
+        op.m_jumps.append(jumpIfNoAvailableInput(claimed));
+
+        defineReentryLabel(op);
+        m_jit.branch32(MacroAssembler::Above, m_regs.index, slot(least)).linkTo(isBehindText, &m_jit);
         m_usesSIMD = true;
         m_usesT2 = true;
     }

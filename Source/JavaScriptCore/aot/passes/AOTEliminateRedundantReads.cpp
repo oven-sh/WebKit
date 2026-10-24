@@ -751,7 +751,7 @@ private:
                 if (store.base && accessClass.base != store.base) {
                     if (!allocation)
                         allocation = uncapturedAllocationOf(store.base, afterStore);
-                    if (areDistinctObjects(accessClass, store.base, *allocation, afterStore))
+                    if (areDistinctObjects(accessClass, store.base, *allocation, afterStore) || m_context.build.isSabotaged(Sabotage::RememberedReadsOutlastStoresThroughOtherNames))
                         return;
                 }
                 appendClear(actions, accessClass.bits);
@@ -763,7 +763,7 @@ private:
     {
         forEachClassWithBitIn(row, { m_firstClobberableBit, static_cast<uint32_t>(m_bits.size()) }, [&](AccessClass& accessClass) {
             const LocationClasses& entry = m_locations[accessClass.location];
-            if (writes.overlaps(entry.location.heap(), entry.mask) && !survives(accessClass))
+            if (writes.overlaps(entry.location.heap(), entry.mask) && !survives(accessClass) && !m_context.build.isSabotaged(Sabotage::RememberedReadsOutlastWrites))
                 appendClear(actions, accessClass.bits);
         });
     }

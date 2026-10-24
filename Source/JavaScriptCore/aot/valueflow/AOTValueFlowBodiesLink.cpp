@@ -67,12 +67,17 @@ ValueFlowObjectID ValueFlowUniverse::siteObject(const ValueFlowStatement& statem
 {
     if (statement.firstSite == UINT32_MAX)
         return { };
-    uint32_t end = m_firstSiteOfFunction[statement.function.index() + 1];
-    for (uint32_t site = statement.firstSite; site < end && m_sites[site].value == statement.site; ++site) {
-        if (m_sites[site].ordinal == ordinal)
-            return m_objectOfSite[site];
-    }
-    return { };
+    if (m_sites[statement.firstSite].ordinal == ordinal)
+        return m_objectOfSite[statement.firstSite];
+    // A table of data has a site for each of its objects and arrays, and each of them is asked for.
+    auto keyOf = [](const ValueFlowSite& site) {
+        return std::pair { site.value, site.ordinal };
+    };
+    std::span<const ValueFlowSite> sites = m_sites.subspan(statement.firstSite, m_firstSiteOfFunction[statement.function.index() + 1] - statement.firstSite);
+    auto found = std::ranges::lower_bound(sites, std::pair { statement.site, ordinal }, { }, keyOf);
+    if (found == sites.end() || keyOf(*found) != std::pair { statement.site, ordinal })
+        return { };
+    return m_objectOfSite[statement.firstSite + static_cast<uint32_t>(found - sites.begin())];
 }
 
 bool ValueFlowUniverse::isSiteObjectOf(const ValueFlowStatement& statement, ValueFlowObjectID object) const

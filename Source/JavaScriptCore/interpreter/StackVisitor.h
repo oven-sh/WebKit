@@ -297,7 +297,7 @@ private:
 };
 
 template <StackVisitor::EmptyEntryFrameAction action, StackVisitorFunctor Functor>
-ALWAYS_INLINE void StackVisitor::visitWithCompiledFrames(CallFrame* startFrame, VM& vm, NOESCAPE const Functor& functor, bool skipFirstFrame)
+NEVER_INLINE void StackVisitor::visitWithCompiledFrames(CallFrame* startFrame, VM& vm, NOESCAPE const Functor& functor, bool skipFirstFrame)
 {
     WithCompiledFrames visitor(startFrame, vm, skipFirstFrame, compiledFrameVisitFor<Functor>);
     if (action == TerminateIfTopEntryFrameIsEmpty && visitor.topEntryFrameIsEmpty())
@@ -311,7 +311,7 @@ ALWAYS_INLINE void StackVisitor::visitWithCompiledFrames(CallFrame* startFrame, 
 }
 
 template<StackVisitorFunctor Functor>
-ALWAYS_INLINE void StackVisitor::visitFrom(VM& vm, const AOT::CompiledFrameExit& exit, NOESCAPE const Functor& functor)
+NEVER_INLINE void StackVisitor::visitFrom(VM& vm, const AOT::CompiledFrameExit& exit, NOESCAPE const Functor& functor)
 {
     WithCompiledFrames visitor(vm, exit, compiledFrameVisitFor<Functor>);
     while (visitor->callFrame()) {

@@ -22,7 +22,9 @@ namespace AOT {
 
 inline constexpr size_t oneDigitBigIntSize = roundUpToMultipleOf<MarkedBlock::atomSize>(JSBigInt::allocationSize(1));
 
+// The receiver is the object that holds the function.
 JSValue callInEngine(Instance*, BuiltinID function, JSValue first, JSValue second = JSValue(), JSValue third = JSValue());
+JSValue callMethodInEngine(Instance*, BuiltinID function, JSValue receiver, JSValue argument);
 
 void markPristineIfOriginal(Instance&, JSObject*);
 

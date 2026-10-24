@@ -165,6 +165,11 @@ public:
     template<typename Functor>
     void forEachProperty(NOESCAPE const Functor&) const;
 
+    // The entries stand in the order in which they were added, numbered from 1 as in FindResult::entryIndex. One that was removed keeps its number, without a key, until the table is rehashed.
+    unsigned numberOfEntriesWithRemovedOnes() const { return m_keyCount + m_deletedCount; }
+    unsigned numberOfRemovedEntries() const { return m_deletedCount; }
+    KeyType keyOfEntry(unsigned entryIndex) const;
+
     static constexpr unsigned EmptyEntryIndex = 0;
 
     static constexpr ptrdiff_t offsetOfIndexSize() { return OBJECT_OFFSETOF(PropertyTable, m_indexSize); }
@@ -650,6 +655,15 @@ inline bool PropertyTable::canInsert(const ValueType& entry)
     if (!isCompact())
         return true;
     return canFitInCompact(entry);
+}
+
+inline PropertyTable::KeyType PropertyTable::keyOfEntry(unsigned entryIndex) const
+{
+    ASSERT(entryIndex && entryIndex <= usedCount());
+    return withIndexVector([&](const auto* vector) -> KeyType {
+        KeyType key = tableFromIndexVector(vector)[entryIndex - 1].key();
+        return key == PROPERTY_MAP_DELETED_ENTRY_KEY ? nullptr : key;
+    });
 }
 
 template<typename Functor>

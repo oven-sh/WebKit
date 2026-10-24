@@ -347,6 +347,8 @@ bool AccessResolver::listFirstStoresAtAllocation(BlockID block, uint32_t allocat
     static_assert(OperandIndex::PropDefine::object == OperandIndex::PropSet::object && OperandIndex::PropDefine::object == OperandIndex::SetLiteralPrototype::object && OperandIndex::PropDefine::object == OperandIndex::FinishObject::object);
     Vector<UseInBlock, 16> uses;
     Vector<ValueID, 2> names { allocationID };
+    // Nothing is listed behind the first use that is no store into the object, so nobody looks further.
+    uint32_t endOfSearch = function.at(block).values.size();
     for (size_t name = 0; name < names.size(); ++name) {
         const Block& contents = function.at(block);
         ValueID named = names[name];
@@ -359,18 +361,20 @@ bool AccessResolver::listFirstStoresAtAllocation(BlockID block, uint32_t allocat
         addUsesOutsideValues({ &contents.subject, 1 });
         if (contents.handler)
             addUsesOutsideValues(contents.handler->arguments.span());
-        uint32_t index = 0;
-        for (ValueID user : contents.values) {
+        for (uint32_t index = allocationIndex + 1; index < endOfSearch; ++index) {
+            ValueID user = contents.values[index];
             uint32_t operandIndex = 0;
             for (ValueID operand : function.at(user).operands()) {
                 if (operand == named) {
-                    uses.append({ index, user, operandIndex == OperandIndex::PropDefine::object });
+                    bool isReceiver = operandIndex == OperandIndex::PropDefine::object;
+                    uses.append({ index, user, isReceiver });
                     if (function.at(user).opcode == Opcode::FinishObject)
                         names.append(user);
+                    if (!isReceiver)
+                        endOfSearch = index + 1;
                 }
                 ++operandIndex;
             }
-            ++index;
         }
         addUsesOutsideValues(contents.terminator.operands());
         for (const Target& target : contents.terminator.targets)

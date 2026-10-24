@@ -440,6 +440,7 @@ auto StoresByLayout::findObjectsOf(ValueSetID set) const -> ObjectsOfSet
     }
     objects.holdsUnknownObject = m_inputs.sets().contains(set, ValueFlowUniverse::unknownObject());
     objects.holdsUntrackedObject = m_inputs.sets().contains(set, ValueFlowUniverse::untrackedObject());
+    objects.holdsObjectWithoutLayout = m_inputs.sets().meet(set, m_inputs.universe().constructedObjects()) || m_inputs.sets().meet(set, m_inputs.universe().closures());
     LayoutsOfObjects::SharedLists lists = m_layoutsOfObjects.forEachLayoutListedForMembers(set, [&](LayoutID layout) {
         objects.layouts.append(layout);
     });
@@ -953,6 +954,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .isStoredByConstructor = isNamedByOperation && store.isIntoThisOfConstructor,
         .isWrittenByOperation = writer.statement.kind == ValueFlowStatementKind::Operation,
         .givesValueItself = writer.statement.kind == ValueFlowStatementKind::Operation && writer.statement.opcode != Opcode::Call,
+        .isWrittenByCallOfBuiltin = writer.statement.kind == ValueFlowStatementKind::Operation && writer.statement.opcode == Opcode::Call,
         .definesValue = store.definesValue,
         .leavesOutComputedKey = leavesOutComputedKey(m_inputs.program, writer.statement, name),
         .accessorForms = store.accessorForms,
@@ -974,6 +976,7 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
         merged.isStoredByConstructor |= write.isStoredByConstructor;
         merged.isWrittenByOperation |= write.isWrittenByOperation;
         merged.givesValueItself |= write.givesValueItself;
+        merged.isWrittenByCallOfBuiltin |= write.isWrittenByCallOfBuiltin;
         merged.definesValue |= write.definesValue;
         merged.leavesOutComputedKey |= write.leavesOutComputedKey;
         merged.accessorForms |= write.accessorForms;
@@ -1131,6 +1134,32 @@ void StoresByLayout::noteWrites()
     });
     if (std::ranges::any_of(writes.span(), &WritesThroughSet::createsData))
         indexNumbersInData();
+
+    // An object that has escaped is not listed beside the placeholder that stands for it. A built-in that defines a property makes a new one as a rule: a field of a layout is stored to.
+    // An accessor or a method is defined on a prototype object as a rule, and the objects below it may all have layouts.
+    Vector<PropertyKeyID> keysOfAccessorsAndMethods;
+    for (uint32_t position = 0; position < numberOfSets; ++position) {
+        const ObjectsOfSet& objects = objectsOfSet[position];
+        bool holdsPlaceholder = objects.holdsUnknownObject || objects.holdsUntrackedObject || objects.holdsAlmostEverything;
+        if (!objects.holdsObjectWithoutLayout && !holdsPlaceholder)
+            continue;
+        for (const WritesThroughSet& write : writesThrough(position)) {
+            if (!write.isWrittenByCallOfBuiltin)
+                continue;
+            ValueFlowNameKind kind = write.name().kind;
+            bool mayDefineMethod = kind == ValueFlowNameKind::Property && (ValueSets::isComplement(write.value) || m_inputs.sets().meet(write.value, m_inputs.universe().callables()));
+            if (kind == ValueFlowNameKind::Getter || kind == ValueFlowNameKind::Setter || mayDefineMethod)
+                keysOfAccessorsAndMethods.append(PropertyKeyID(write.payload));
+            else if (kind == ValueFlowNameKind::Property)
+                m_keysDefinedOnObjectsWithoutKnownLayout.append(PropertyKeyID(write.payload));
+        }
+    }
+    AOT::sort(keysOfAccessorsAndMethods);
+    AOT::sort(m_keysDefinedOnObjectsWithoutKnownLayout);
+    removeRepeatedElements(m_keysDefinedOnObjectsWithoutKnownLayout);
+    m_keysDefinedOnObjectsWithoutKnownLayout.removeAllMatching([&](PropertyKeyID key) {
+        return std::ranges::binary_search(keysOfAccessorsAndMethods, key);
+    });
 
     Vector<uint32_t> firstSetOfLayout;
     firstSetOfLayout.fill(0u, numberOfLayouts + 1);
@@ -1543,12 +1572,8 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
         getters = maker.unite(getters, found->value.getters);
         setters = found->value.setters;
         forms |= found->value.accessorForms;
-        // `object.name = value` runs the setter where there is one: what it stores is no value of the property.
-        if (setters == ValueSets::nothing) {
-            values = maker.unite(values, found->value.valueFromOperations);
-            isGivenValue |= found->value.isGivenValueByOperation;
-        } else
-            isGivenValue |= found->value.isGivenValueByDefinition;
+        values = maker.unite(values, found->value.valueFromOperations);
+        isGivenValue |= found->value.isGivenValueByOperation;
     }
     // A descriptor without `value` defines none.
     if (isGivenValue || getters == ValueSets::nothing || !sets.isSubset(values, m_inputs.universe().undefinedValue()))

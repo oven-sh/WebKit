@@ -110,6 +110,9 @@ std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject*, Structure
 // After the interpreter's lookup in an object that is not compiled. Files what the interpreter's own cache cannot hold: an absent name, an accessor, a property of a compiled object above the base.
 void didGetById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PropertySlot&);
 
+// A class makes its static members when one of them is first asked for. Until then it shares a Structure that lists none of them with other classes.
+bool sharesStructureWithClassesThatLackTheirMembers(VM&, JSCell* closure);
+
 // A new_object followed at once by direct put_by_ids to its result. llint_aot_op_new_object allocates the finished object and skips the stores.
 struct ObjectLiteralPlan {
     static constexpr unsigned maxNumberOfValues = 16;

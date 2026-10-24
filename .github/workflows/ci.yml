@@ -557,7 +557,9 @@ jobs:
   release:
     name: release
     # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
-    # is published when every build job succeeded and every listed asset is on it, and deleted otherwise.
+    # is published when every build job succeeded and every listed asset is on it. A pull request's is also published
+    # when lanes failed, with the lanes that were built, and the job fails: whoever tries the preview is not held up by
+    # a lane that they do not use. Otherwise, and when the run was cancelled, it is deleted.
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -580,21 +582,22 @@ jobs:
           set -euo pipefail
           ok=true
           failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          cancelled=$(jq -r 'to_entries[] | select(.value.result == "cancelled") | .key' <<< "$NEEDS")
           if [ -n "$failed" ]; then
             echo "jobs that did not succeed:"; echo "$failed"; ok=false
-          else
-            jq -r '.[]' <<< "$LABELS" | sort > expected.txt
-            gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
-            missing=$(comm -23 expected.txt uploaded.txt)
-            if [ -n "$missing" ]; then
-              echo "assets missing from $TAG:"; echo "$missing"; ok=false
-            fi
           fi
-          if [ "$ok" = true ]; then
+          jq -r '.[]' <<< "$LABELS" | sort > expected.txt
+          gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt || : > uploaded.txt
+          missing=$(comm -23 expected.txt uploaded.txt)
+          if [ -n "$missing" ]; then
+            echo "assets missing from $TAG:"; echo "$missing"; ok=false
+          fi
+          if [ "$ok" = true ] || { [ -n "$PR" ] && [ -z "$cancelled" ] && [ -s uploaded.txt ]; }; then
             url=$(gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -F draft=false --jq .html_url)
             echo "published $TAG with $(wc -l < uploaded.txt) assets: $url"
             # A pull request gets a comment linking its release, edited in place by the next build.
             [ -z "$PR" ] || gh pr comment "$PR" --edit-last --create-if-none --body "Preview build of ${REF:0:8}: [\`$TAG\`]($url)" || echo "::warning::could not comment on #$PR"
+            [ "$ok" = true ] || exit 1
             exit 0
           fi
           # Only the draft this run created is deleted: not a published release (a re-run of a run that succeeded),

@@ -942,7 +942,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
         return;
 
 #if ENABLE(AOT)
-    if (structure->typeInfo().type() == CompiledClosureType)
+    if (structure->typeInfo().type() == CompiledClosureType && AOT::Interpreter::sharesStructureWithClassesThatLackTheirMembers(vm, baseCell))
         return;
 #endif
 
@@ -993,12 +993,13 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     vm.writeBarrier(codeBlock);
 }
 
-static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
+template<bool hasCompiledCode>
+static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
 {
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    Structure* structureBefore = vm.hasCompiledCode() && baseValue.isObject() ? WTF::opaque(baseValue.asCell()->structure()) : nullptr;
+    Structure* structureBefore = hasCompiledCode && baseValue.isObject() ? WTF::opaque(baseValue.asCell()->structure()) : nullptr;
     if (structureBefore) {
         if (std::optional<JSValue> result = AOT::Interpreter::tryGetById(globalObject, baseValue.asCell(), ident))
             RELEASE_AND_RETURN(throwScope, *result);
@@ -1072,6 +1073,22 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 }
 
 #if ENABLE(AOT)
+static NEVER_INLINE JSValue performLLIntGetByIDWithCompiledCode(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
+{
+    return performLLIntGetByIDImpl<true>(bytecodeIndex, codeBlock, globalObject, baseValue, ident, metadata);
+}
+#endif
+
+static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
+{
+#if ENABLE(AOT)
+    if (globalObject->vm().hasCompiledCode()) [[unlikely]]
+        return performLLIntGetByIDWithCompiledCode(bytecodeIndex, codeBlock, globalObject, baseValue, ident, metadata);
+#endif
+    return performLLIntGetByIDImpl<false>(bytecodeIndex, codeBlock, globalObject, baseValue, ident, metadata);
+}
+
+#if ENABLE(AOT)
 // llint_aot_op_get_by_id takes an empty slot for a miss, which no other reader of such a cache does. It comes here for a compiled object as long as the site is in the default mode and holds nothing.
 static void cacheFieldOfCompiledObject(VM& vm, CodeBlock* codeBlock, JSGlobalObject* globalObject, Structure* structure, const Identifier& ident, GetByIdModeMetadata& metadata)
 {
@@ -1100,14 +1117,16 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
     const Identifier& ident = codeBlock->identifier(bytecode.m_property);
     JSValue baseValue = getOperand(callFrame, bytecode.m_base);
 #if ENABLE(AOT)
-    Structure* structureOfCompiledObject = baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType ? WTF::opaque(baseValue.asCell()->structure()) : nullptr;
+    if (vm.hasCompiledCode() && baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType) [[unlikely]] {
+        Structure* structure = WTF::opaque(baseValue.asCell()->structure());
+        JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
+        if (!throwScope.exception())
+            cacheFieldOfCompiledObject(vm, codeBlock, globalObject, structure, ident, metadata.m_modeMetadata);
+        LLINT_RETURN_PROFILED(result);
+    }
 #endif
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
-#if ENABLE(AOT)
-    if (structureOfCompiledObject && !throwScope.exception())
-        cacheFieldOfCompiledObject(vm, codeBlock, globalObject, structureOfCompiledObject, ident, metadata.m_modeMetadata);
-#endif
     LLINT_RETURN_PROFILED(result);
 }
 

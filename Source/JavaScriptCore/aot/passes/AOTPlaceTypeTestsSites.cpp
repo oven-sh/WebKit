@@ -12,6 +12,7 @@
 #include "AOTCodeShapes.h"
 #include "AOTFlowResults.h"
 #include "AOTHeat.h"
+#include "AOTPropertyAccess.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -350,6 +351,40 @@ static bool asksOnlyForLayouts(FunctionPassContext& context, const TestSites& si
     });
 }
 
+// The object that a site asks for a name, where nothing but a guess says that it has a layout.
+static ValueID findReceiverWithGuessedLayout(FunctionPassContext& context, const TestSites& sites, const TestSite& site)
+{
+    const Value& use = context.function.at(site.use);
+    if (!isNamedAccess(use.opcode) || !asksOnlyForLayouts(context, sites, site))
+        return { };
+    // A site without a test of a type guesses nothing: `view.length` of a typed array asks whether the array is as it was made.
+    bool testsType = std::ranges::contains(sites.tests.span().subspan(site.firstTest, site.numberOfTests), Opcode::TypeTest, &Value::opcode);
+    if (!testsType)
+        return { };
+    ValueID receiver = use.operand(*receiverOf(use.opcode));
+    return context.program.typeOf(context.function, receiver).layouts ? ValueID() : context.analyses.identityOf(receiver);
+}
+
+// Object.defineProperty(this, "inner", { value }) in a plain function: the program defines some names on objects without a layout too. An object that is asked for such names alone may well be one of those.
+// A test for the layouts that have the names would turn it away, and what stands behind the test would run in the copy.
+static BitVector findReceiversAskedOnlyForNamesDefinedWithoutLayout(FunctionPassContext& context, const TestSites& sites)
+{
+    BitVector receivers(context.function.values.size());
+    BitVector receiversAskedForOtherNames(context.function.values.size());
+    for (const TestSite& site : sites.sites) {
+        ValueID receiver = findReceiverWithGuessedLayout(context, sites, site);
+        if (!receiver)
+            continue;
+        const Value& use = context.function.at(site.use);
+        // What the analysis has seen arrive does arrive, whatever else does.
+        bool isSeenWithLayout = PayloadWord::receivers(use.opcode) && use.receivers();
+        bool isFoundWithoutLayout = !isSeenWithLayout && context.program.isDefinedOnObjectsWithoutKnownLayout(keyOfNamedAccess(context.program, use));
+        (isFoundWithoutLayout ? receivers : receiversAskedForOtherNames).quickSet(receiver.index());
+    }
+    receivers.exclude(receiversAskedForOtherNames);
+    return receivers;
+}
+
 TestSites collectTestSites(FunctionPassContext& context)
 {
     if (!context.build.recordedOptions().usesExpectedTypes())
@@ -370,7 +405,10 @@ TestSites collectTestSites(FunctionPassContext& context)
         RELEASE_ASSERT(testSiteOpcodes.contains(context.function.at(site.use).opcode));
     // A test buys a fast path and costs a copy of what stands behind it.
     bool isColdFunction = isCold(context.inputs.heat.of(context.program, context.id));
+    BitVector receiversThatMayHaveNoLayout = findReceiversAskedOnlyForNamesDefinedWithoutLayout(context, sites);
     sites.sites.removeAllMatching([&](const TestSite& site) {
+        if (ValueID receiver = receiversThatMayHaveNoLayout.isEmpty() ? ValueID() : findReceiverWithGuessedLayout(context, sites, site); receiver && receiversThatMayHaveNoLayout.quickGet(receiver.index()))
+            return true;
         // What a plain function without a layout constructs arrives as the receiver. A test for a layout would turn it away, and what stands behind the test would run in the copy.
         const Value& use = context.function.at(site.use);
         if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site))

@@ -309,6 +309,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
         if (ordinal)
             object->removeExtraKeyFromOrder(vm, state, *ordinal);
         object->didChangeExtraProperties(vm);
+        object->didRemoveExtraKey(state);
         didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, name.uid());
     }
     return isDeleted;

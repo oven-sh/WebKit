@@ -13,6 +13,8 @@
 #include "AOTProgramTables.h"
 #include "AOTVector.h"
 #include "RememberedSlot.h"
+#include <array>
+#include <bit>
 #include <memory>
 #include <optional>
 #include <span>
@@ -22,11 +24,30 @@ namespace JSC {
 
 class JSCellButterfly;
 class JSPropertyNameEnumerator;
+class PropertyTable;
 class StructureChain;
 
 namespace AOT {
 
 struct State;
+
+// Where the keys end that the entries of an object's key order count, in the table of its extra properties. A removed key keeps its number in that table until the table is rehashed,
+// so an entry counts a key exactly if the key stands no further back than the last one that the entry counts. All zero: nothing is remembered.
+struct PlacesOfPositionedKeys {
+    static constexpr uint32_t maxNumberOfCounts = 4;
+
+    const Object* object;
+    const PropertyTable* table;
+    uint32_t structureID;
+    uint32_t orderWord;
+    uint32_t numberOfRemovedEntries;
+    uint32_t numberOfCounts;
+    std::array<uint32_t, maxNumberOfCounts> counts;
+    std::array<uint32_t, maxNumberOfCounts> lastEntries;
+    // What extraKeyOrdinal() was last asked for, until didRemoveExtraKey() has heard of it.
+    uint32_t entryOfKeyAskedFor;
+    uint32_t keyAskedForIsExtraKey;
+};
 
 class KeyOrderTable final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(KeyOrderTable);
@@ -68,6 +89,8 @@ public:
         }
         return std::nullopt;
     }
+    PlacesOfPositionedKeys& placesOfPositionedKeys(const Object& object) LIFETIME_BOUND { return m_placesOfPositionedKeys[std::bit_cast<uintptr_t>(&object) >> 4 & (m_placesOfPositionedKeys.size() - 1)]; }
+
     // Two questions that fall on one place may be asked in turns for ever: a server asks the same few at every request.
     void rememberWhetherOrderLists(uint32_t shape, uint32_t orderAndCount, uint32_t key, bool lists)
     {
@@ -104,6 +127,7 @@ private:
         uint32_t next;
     };
     std::array<FieldFoundLast, 64> m_fieldsFoundLast { };
+    std::array<PlacesOfPositionedKeys, 8> m_placesOfPositionedKeys { };
     size_t indexOfFieldAt(const LayoutData&, uint32_t slotKey);
     UncheckedKeyHashMap<uint32_t, Vector<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
     std::optional<ChainDependentOwnerID> m_ownerOfPublishedEnumerators;

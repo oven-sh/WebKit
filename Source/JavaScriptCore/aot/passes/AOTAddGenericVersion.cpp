@@ -552,8 +552,13 @@ bool GenericVersionBuilder::isListedTextThatIsOnlyCompared(ValueID check, Vector
                     add(use.user);
                     break;
                 }
-                // An operation that takes any value and only looks at it.
-                if (user.operandKind(use.operandIndex) != OperandKind::Any || user.operandUses(use.operandIndex) != OperandUses { OperandUse::Inspects })
+                // What flow says of the value behind the check goes with the check.
+                if (typeValidations.contains(user.opcode)) {
+                    casts.append(use.user);
+                    break;
+                }
+                // An operation that takes any value, only looks at it and answers yes or no.
+                if (user.operandKind(use.operandIndex) != OperandKind::Any || user.operandUses(use.operandIndex) != OperandUses { OperandUse::Inspects } || !m_program.typeOf(m_function, use.user).isBoolean())
                     return false;
                 for (const Use& useOfAnswer : useLists.usesOf(use.user)) {
                     if (useOfAnswer.kind == Use::Kind::TerminatorOperand)

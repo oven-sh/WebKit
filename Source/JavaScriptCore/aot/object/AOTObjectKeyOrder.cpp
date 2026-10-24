@@ -14,6 +14,7 @@
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
+#include "PropertyTable.h"
 #include <algorithm>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringCommon.h>
@@ -84,39 +85,149 @@ Vector<UniquedStringImpl*, 16> Object::extraKeyNames() const
     return names;
 }
 
-static uint32_t countPositionedExtraKeys(State& state, const Object& object)
+using CountsOfPositionedKeys = Vector<uint32_t, PlacesOfPositionedKeys::maxNumberOfCounts>;
+
+// How many extra keys stand in front of each place of the order at which a field follows extra keys, ascending. An object that is used as a dictionary positions none.
+static CountsOfPositionedKeys countPositionedExtraKeys(State& state, const Object& object)
 {
+    CountsOfPositionedKeys counts;
     const LayoutData& layout = object.layout();
     if (layout.keysAreNeverEnumerated)
-        return 0;
+        return counts;
     ExtraKeyCounter positioned(layout.numberOfFields);
     object.forEachKeyInOrder(state, [&](uint16_t key) {
-        if (key >= layout.numberOfFields)
+        if (key >= layout.numberOfFields) {
             positioned.add(key);
+            return;
+        }
+        if (positioned.count() && (counts.isEmpty() || counts.last() != positioned.count()))
+            counts.append(positioned.count());
     });
-    return positioned.count();
+    // No order is written with entries that no field follows. One that has them all the same loses them with the first key that they count.
+    if (positioned.count() && (counts.isEmpty() || counts.last() != positioned.count()))
+        counts.append(positioned.count());
+    return counts;
 }
 
-// No entry of the order counts a key that lies behind the positioned ones, so the walk ends there: an object that is used as a dictionary positions none.
+static bool describes(const PlacesOfPositionedKeys& places, const Object& object, const PropertyTable& table, const CountsOfPositionedKeys& counts)
+{
+    return places.object == &object && places.table == &table && places.structureID == object.structureID().bits() && places.orderWord == object.orderWord()
+        && places.numberOfRemovedEntries == table.numberOfRemovedEntries() && std::ranges::equal(std::span { places.counts }.first(places.numberOfCounts), counts);
+}
+
+// One walk over the keys that are positioned. Whoever removes key after key pays for it once: didRemoveExtraKey() keeps the places right.
+static bool tryFindPlacesOfPositionedKeys(State& state, const Object& object, const PropertyTable& table, const CountsOfPositionedKeys& counts, PlacesOfPositionedKeys& places)
+{
+    places = { &object, &table, object.structureID().bits(), object.orderWord(), table.numberOfRemovedEntries(), static_cast<uint32_t>(counts.size()), { }, { }, 0, 0 };
+    std::ranges::copy(counts, places.counts.begin());
+    uint32_t numberOfKeys = 0;
+    uint32_t next = 0;
+    for (unsigned entry = 1, end = table.numberOfEntriesWithRemovedOnes(); entry <= end && next < counts.size(); ++entry) {
+        UniquedStringImpl* key = table.keyOfEntry(entry);
+        if (!key || !isExtraKey(state, object, key))
+            continue;
+        if (++numberOfKeys == counts[next])
+            places.lastEntries[next++] = entry;
+    }
+    return next == counts.size();
+}
+
+static std::optional<uint32_t> findOrdinalByWalk(State& state, const Object& object, const PropertyTable& table, unsigned entry, uint32_t numberOfPositionedKeys)
+{
+    uint32_t ordinal = 0;
+    for (unsigned earlier = 1; earlier < entry && ordinal < numberOfPositionedKeys; ++earlier) {
+        UniquedStringImpl* key = table.keyOfEntry(earlier);
+        ordinal += key && isExtraKey(state, object, key);
+    }
+    if (ordinal >= numberOfPositionedKeys)
+        return std::nullopt;
+    return ordinal;
+}
+
 std::optional<uint32_t> Object::extraKeyOrdinal(PropertyName name) const
 {
     JSObject* extra = extraProperties();
     if (!extra)
         return std::nullopt;
     State& state = this->state();
-    uint32_t numberOfPositionedKeys = countPositionedExtraKeys(state, *this);
-    if (!numberOfPositionedKeys || !isExtraKey(state, *this, name.uid()))
+    PlacesOfPositionedKeys& places = state.objects->keyOrders.placesOfPositionedKeys(*this);
+    if (places.object == this)
+        places.entryOfKeyAskedFor = 0;
+    CountsOfPositionedKeys counts = countPositionedExtraKeys(state, *this);
+    if (counts.isEmpty())
         return std::nullopt;
-    uint32_t ordinal = 0;
-    bool isFound = false;
-    extra->structure()->forEachProperty(vm(), [&](const auto& property) {
-        isFound = property.key() == name.uid();
-        ordinal += !isFound && isExtraKey(state, *this, property.key());
-        return !isFound && ordinal < numberOfPositionedKeys;
-    });
-    if (!isFound)
+    PropertyTable& table = *extra->structure()->propertyTableInOrderOfAddition(vm());
+    unsigned entry = table.find(name.uid()).entryIndex;
+    if (entry == PropertyTable::EmptyEntryIndex)
         return std::nullopt;
-    return ordinal;
+    bool isExtra = isExtraKey(state, *this, name.uid());
+
+    // After so many fields that were created behind extra keys nothing is remembered.
+    if (counts.size() > PlacesOfPositionedKeys::maxNumberOfCounts)
+        return isExtra ? findOrdinalByWalk(state, *this, table, entry, counts.last()) : std::nullopt;
+    if (!describes(places, *this, table, counts) && !tryFindPlacesOfPositionedKeys(state, *this, table, counts, places)) {
+        places = { };
+        return isExtra ? findOrdinalByWalk(state, *this, table, entry, counts.last()) : std::nullopt;
+    }
+    places.entryOfKeyAskedFor = entry;
+    places.keyAskedForIsExtraKey = isExtra;
+    if (!isExtra)
+        return std::nullopt;
+    for (uint32_t index = 0; index < counts.size(); ++index) {
+        if (entry <= places.lastEntries[index])
+            return index ? counts[index - 1] : 0;
+    }
+    return std::nullopt;
+}
+
+void Object::forgetPlacesOfPositionedKeys(State& state)
+{
+    PlacesOfPositionedKeys& places = state.objects->keyOrders.placesOfPositionedKeys(*this);
+    if (places.object == this)
+        places = { };
+}
+
+void Object::didRemoveExtraKey(State& state)
+{
+    PlacesOfPositionedKeys& places = state.objects->keyOrders.placesOfPositionedKeys(*this);
+    if (places.object != this)
+        return;
+    uint32_t removed = std::exchange(places.entryOfKeyAskedFor, 0);
+    JSObject* extra = extraProperties();
+    const PropertyTable* table = extra ? extra->structure()->propertyTableInOrderOfAddition(vm()) : nullptr;
+    // The table is another one, or it was rehashed when it lost the key.
+    if (!removed || table != places.table || table->numberOfRemovedEntries() != places.numberOfRemovedEntries + 1) {
+        places = { };
+        return;
+    }
+    for (uint32_t index = 0; places.keyAskedForIsExtraKey && index < places.numberOfCounts; ++index) {
+        if (removed > places.lastEntries[index])
+            continue;
+        uint32_t countInFront = index ? places.counts[index - 1] : 0;
+        // The entry counted this key alone on top of the one in front of it, and is gone from the order.
+        if (--places.counts[index] == countInFront) {
+            places = { };
+            return;
+        }
+        if (removed != places.lastEntries[index])
+            continue;
+        // The entry still counts a key, which stands in front of this one.
+        unsigned entry = removed - 1;
+        auto isExtraKeyAt = [&](unsigned candidate) {
+            UniquedStringImpl* key = table->keyOfEntry(candidate);
+            return key && isExtraKey(state, *this, key);
+        };
+        while (entry && !isExtraKeyAt(entry))
+            --entry;
+        if (!entry) {
+            places = { };
+            return;
+        }
+        places.lastEntries[index] = entry;
+    }
+    places.numberOfRemovedEntries = table->numberOfRemovedEntries();
+    places.structureID = structureID().bits();
+    places.orderWord = orderWord();
 }
 
 std::optional<Object::InitialKeyOrder> Object::initialKeyOrder(VM& vm, std::span<const uint16_t> keys, JSObject* extra)
@@ -327,15 +438,18 @@ void Object::removeExtraKeyFromOrder(VM& vm, State& state, uint32_t ordinal)
     ExtraKeyCounter positionedAfter(numberOfFields);
     bool isChanged = false;
     Vector<uint16_t, 16> keys;
+    // Of the entries in a row that count extra keys only the sum matters, and only where a field follows. Written anew each time, the row stays as short as its sum allows.
+    uint32_t countInFrontOfNextField = 0;
     forEachKeyInOrder(state, [&](uint16_t key) {
         if (key < numberOfFields) {
+            positionedAfter.appendEntriesCountingTo(countInFrontOfNextField, keys);
             keys.append(key);
             return;
         }
         positionedBefore.add(key);
         bool countsRemovedKey = positionedBefore.count() > ordinal;
         isChanged |= countsRemovedKey;
-        positionedAfter.appendEntriesCountingTo(positionedBefore.count() - countsRemovedKey, keys);
+        countInFrontOfNextField = positionedBefore.count() - countsRemovedKey;
     });
     if (isChanged)
         setKeyOrder(vm, state, keys.span());
@@ -345,12 +459,25 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
 {
     if (object.layout().keysAreNeverEnumerated)
         return;
+    object.forgetPlacesOfPositionedKeys(state);
     uint16_t index = object.indexOf(field);
+    uint32_t numberOfFields = object.layout().numberOfFields;
+    auto countsExtraKeys = [&](uint16_t key) {
+        return key >= numberOfFields;
+    };
     Vector<uint16_t, 16> remaining;
     object.forEachKeyInOrder(state, [&](uint16_t key) {
-        if (key != index)
+        if (key == index)
+            return;
+        // Of two entries in a row that count extra keys the larger says all that the other says. Only on top of a full one does the next one count.
+        if (countsExtraKeys(key) && !remaining.isEmpty() && countsExtraKeys(remaining.last()) && remaining.last() != maxKeyOrderEntry)
+            remaining.last() = std::max(remaining.last(), key);
+        else
             remaining.append(key);
     });
+    // The extra keys that no field follows stand at the end without an entry. So an order does not grow by an entry each time a field goes and comes again behind one more key.
+    while (!remaining.isEmpty() && countsExtraKeys(remaining.last()))
+        remaining.removeLast();
     object.setKeyOrder(vm, state, remaining.span());
 }
 

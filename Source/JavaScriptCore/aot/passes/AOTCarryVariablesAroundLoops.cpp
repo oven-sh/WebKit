@@ -280,7 +280,7 @@ void VariableCarrier::findVariables(const NaturalLoop& loop, const BitVector* le
                 variable.blocksOfOtherWrites.append(access.point.block);
         }
         for (const OtherWrite& write : m_otherWrites) {
-            if (write.writes.overlaps(m_program, variable.location))
+            if (write.writes.overlaps(m_program, variable.location) && !m_context.build.isSabotaged(Sabotage::CarriedVariablesAreWrittenByOthers))
                 variable.blocksOfOtherWrites.append(write.block);
         }
         variable.isWrittenOnLeavingPath = m_writesOnLeavingPaths.overlaps(m_program, variable.location);
@@ -710,7 +710,7 @@ bool VariableCarrier::delayStoresIn(const NaturalLoop& loop, std::span<const Var
         if (block.handler || block.isHandlerBlock())
             return false;
         auto look = [&](Effects effects) {
-            if (effects.mayThrow || effects.mayRunOtherCode())
+            if ((effects.mayThrow || effects.mayRunOtherCode()) && !m_context.build.isSabotaged(Sabotage::DelayedStoresPassWhatMayThrow))
                 return false;
             for (DelayedVariable& candidate : delayed)
                 candidate.isSeenByOthers |= effects.reads.overlaps(m_program, candidate.variable.location) || effects.writes.overlaps(m_program, candidate.variable.location);
@@ -774,6 +774,8 @@ bool VariableCarrier::delayStoresIn(const NaturalLoop& loop, std::span<const Var
             delayedStores.append(delayedStore);
         }
         for (BlockID block : blocksOnLeavingEdges) {
+            if (m_context.build.isSabotaged(Sabotage::DelayedStoresAreLeftOut))
+                break;
             Value storeOnEdge = store;
             for (uint32_t operand = 0; operand < storeOnEdge.numberOfOperands(); ++operand) {
                 if (storeOnEdge.operand(operand) == storedBySample)

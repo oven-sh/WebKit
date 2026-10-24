@@ -332,7 +332,10 @@ struct TypeInterningPhase::ParallelMerge {
                     depth = std::max<unsigned>(depth, visitType(contents));
             }
         }
-        RELEASE_ASSERT(depth < 255);
+        if (depth >= maxNestingDepth) {
+            isNestedTooDeeply = true;
+            depth = maxNestingDepth;
+        }
         types.positions[index] = static_cast<uint32_t>(types.ids.size());
         types.ids.append(id);
         nestingDepths.append(static_cast<uint8_t>(depth));
@@ -342,7 +345,7 @@ struct TypeInterningPhase::ParallelMerge {
     enum class Kind : uint8_t { PropertyKey, LayoutSet, CalleeSet, Type };
 
     // A task lists a record that an earlier task has listed too, and committing it again does nothing.
-    void findCommitOrder(std::span<const unsigned> taskOrder)
+    bool findCommitOrder(std::span<const unsigned> taskOrder)
     {
         constexpr size_t tasksPerChunk = 256;
         constexpr uint64_t neverListed = UINT64_MAX;
@@ -426,6 +429,7 @@ struct TypeInterningPhase::ParallelMerge {
                 break;
             }
         }
+        return !isNestedTooDeeply;
     }
 
     template<typename IDType>
@@ -544,15 +548,19 @@ struct TypeInterningPhase::ParallelMerge {
         publish(types, merge.remap.m_types);
     }
 
-    void run(std::span<const unsigned> taskOrder)
+    bool run(std::span<const unsigned> taskOrder)
     {
         findTypesThatReferToProvisionalRecords();
-        findCommitOrder(taskOrder);
+        if (!findCommitOrder(taskOrder))
+            return false;
         commitRecordsWithoutReferences<PropertyKey>(propertyKeys, merge.remap.m_propertyKeys);
         commitRecordsWithoutReferences<LayoutSet>(layoutSets, merge.remap.m_layoutSets);
         commitRecordsWithoutReferences<CalleeSet>(calleeSets, merge.remap.m_calleeSets);
         commitTypes();
+        return true;
     }
+
+    static constexpr unsigned maxNestingDepth = 254;
 
     Merge& merge;
     TypeInterningPhase& phase;
@@ -563,6 +571,7 @@ struct TypeInterningPhase::ParallelMerge {
     CommitOrder<TypeID> types;
     Vector<uint8_t> refersToOthers;
     Vector<uint8_t> nestingDepths;
+    bool isNestedTooDeeply { false };
 };
 
 template<typename Record, typename IDType>
@@ -750,9 +759,8 @@ TypeRemap TypeInterningPhase::merge(std::span<const unsigned> taskOrder, const F
     unsigned initialTableSize = m_committedTable->size();
 
     Merge merge(*this, functions, strings);
-    if (loops && loops->width() > 1 && merge.numberOfProvisionalRecords >= minRecordsForThreads)
-        ParallelMerge(merge, *loops).run(taskOrder);
-    else {
+    bool isMerged = loops && loops->width() > 1 && merge.numberOfProvisionalRecords >= minRecordsForThreads && ParallelMerge(merge, *loops).run(taskOrder);
+    if (!isMerged) {
         for (unsigned task : taskOrder)
             merge.commitTask(task);
     }

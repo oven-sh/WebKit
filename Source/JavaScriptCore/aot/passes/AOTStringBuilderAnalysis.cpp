@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBlockCycles.h"
+#include "AOTBuildContext.h"
 #include "AOTDecidedBranches.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsOfOperands.h"
@@ -781,7 +782,7 @@ IterationStatus StringBuilderAnalyzer::visitConcatenation(uint32_t web, BlockID 
     bool hasOtherLiveState = m_hasUnreplaceableUse.quickGet(id.index()) || std::ranges::any_of(m_liveValues, [&](ValueID other) {
         return other != id && webOf(other) == web && !isLiveOnlyForHandler(other, blockID, index);
     });
-    if (hasOtherLiveState)
+    if (hasOtherLiveState && !m_context.build.isSabotaged(Sabotage::GrowingTextsAreHeldInOneState))
         return cut(id, StringBuilderDeclineReason::TwoStatesLive) ? IterationStatus::Done : IterationStatus::Continue;
 
     if (!hasMember(web, m_liveValues.span()))

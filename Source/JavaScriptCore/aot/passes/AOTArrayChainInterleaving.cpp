@@ -188,7 +188,7 @@ static bool mayWriteSource(FunctionPassContext& context, const ArrayChain& chain
     if (!source)
         return true;
     const TrackedObject& tracked = escape.at(*source);
-    return tracked.kind != ObjectKind::Allocation || tracked.state != EscapeState::DoesNotEscape;
+    return tracked.kind != ObjectKind::Allocation || tracked.state != EscapeState::DoesNotEscape || !escape.containersOf(*source).empty();
 }
 
 static bool hasInterferingValueBetweenCalls(FunctionPassContext& context, const ArrayChain& chain, std::span<const Effects> effects)

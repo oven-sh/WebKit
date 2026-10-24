@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChainDependents.h"
+#include "AOTClosure.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImmortalCells.h"
 #include "AOTInstance.h"
@@ -336,6 +337,12 @@ static std::optional<JSValue> tryGetByName(JSGlobalObject* globalObject, JSCell*
 std::optional<JSValue> tryGetById(JSGlobalObject* globalObject, JSCell* base, const Identifier& ident)
 {
     return tryGetByName(globalObject, base, ident, CacheOfOperation::HoldsOwnValues);
+}
+
+bool sharesStructureWithClassesThatLackTheirMembers(VM& vm, JSCell* cell)
+{
+    Closure* closure = uncheckedDowncast<Closure>(cell);
+    return closure->kind().isConstructor && closure->classData() && !closure->getDirect(vm, vm.propertyNames->prototype);
 }
 
 std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObject, Structure* structure, const Identifier& ident)

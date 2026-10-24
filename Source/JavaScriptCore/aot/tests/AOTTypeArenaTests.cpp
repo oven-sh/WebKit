@@ -63,6 +63,32 @@ Vector<RecordsOfTask> internInParallel(TypeTable& types, unsigned numberOfThread
     return records;
 }
 
+TypeID internNestedLists(TypeTable& types, const ParallelLoops* loops, unsigned depth)
+{
+    constexpr unsigned numberOfOtherTypes = 5000;
+    TypeInterningPhase phase(types, 1);
+    TypeID list;
+    {
+        TypeArena arena(phase, 0);
+        for (unsigned index = 0; index < numberOfOtherTypes; ++index)
+            arena.intern(Type::integer(Range { 0, 1000 + index }));
+        list = arena.intern(Type::integer(Range { 0, 7 }));
+        for (unsigned level = 0; level < depth; ++level) {
+            const TypeID contents[] { list };
+            list = arena.intern(Type::builtinClass(BuiltinClasses::Array, contents));
+        }
+    }
+    return phase.finish(StringRemap(), loops)(list);
+}
+
+unsigned nestingDepthOf(const TypeTable& types, TypeID list)
+{
+    unsigned depth = 0;
+    for (; !types.at(list).classes.isEmpty(); list = types.at(list).classes[0].contents[0])
+        ++depth;
+    return depth;
+}
+
 template<typename IDType>
 bool haveEqualRecords(const TypeTable& first, const TypeTable& second, unsigned count)
 {
@@ -98,6 +124,20 @@ static void internedTablesDoNotDependOnThreads()
     TypeArena serialArena(tableWithoutPhase);
     for (unsigned task = 0; task < numberOfTasks; ++task)
         AOT_TEST_CHECK(internRecordsOfTask(serialArena, task) == serialRecords[task]);
+}
+
+static void listsNestedToAnyDepthAreMergedAlikeByOneThreadAndByMany()
+{
+    ParallelLoops loops(8);
+    for (unsigned depth : { 3u, 253u, 254u, 255u, 256u, 257u, 300u, 1000u }) {
+        TypeTable serialTypes(BuiltinTable::singleton());
+        TypeTable parallelTypes(BuiltinTable::singleton());
+        TypeID serialList = internNestedLists(serialTypes, nullptr, depth);
+        TypeID parallelList = internNestedLists(parallelTypes, &loops, depth);
+        AOT_TEST_CHECK(serialList == parallelList && serialTypes.size() == parallelTypes.size());
+        AOT_TEST_CHECK(haveEqualRecords<TypeID>(serialTypes, parallelTypes, serialTypes.size()));
+        AOT_TEST_CHECK(nestingDepthOf(parallelTypes, parallelList) == depth);
+    }
 }
 
 static void provisionalStringLiteralsAreSortedAfterRemap()
@@ -406,7 +446,7 @@ static void internedTablesDoNotDependOnSharedAnswers()
 }
 
 #define FOR_EACH_AOT_TYPE_ARENA_TEST(v) \
-    v(internedTablesDoNotDependOnThreads) v(provisionalStringLiteralsAreSortedAfterRemap) v(scratchArenaInOpenPhaseLeavesNoRecord) \
+    v(internedTablesDoNotDependOnThreads) v(listsNestedToAnyDepthAreMergedAlikeByOneThreadAndByMany) v(provisionalStringLiteralsAreSortedAfterRemap) v(scratchArenaInOpenPhaseLeavesNoRecord) \
     v(scratchArenaWithoutOpenPhaseLeavesNoRecord) v(scratchArenasWithoutOpenPhaseOnManyThreads) v(layoutSetOfTwoTasksGetsOneID) \
     v(tasksCommitInTheListedOrder) v(discardedPhaseLeavesNoRecord) v(sharedMemoIsThreadSafe) v(fullSharedMemoRejectsNewEntries) \
     v(arenasShareOnlySideEffectFreeAnswers) v(verifyingSharedMemoRecomputesAnswers) v(internedTablesDoNotDependOnSharedAnswers)

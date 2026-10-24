@@ -473,6 +473,8 @@ public:
     Vector<PropertyKeyID> keysNamedByStoresIntoKnownObjects(LayoutID) const;
     bool isStoredByConstructor(LayoutID, PropertyKeyID) const;
     const Vector<PropertyKeyID>& keysStoredThroughPlaceholders() const LIFETIME_BOUND { return m_keysThroughPlaceholders; }
+    // The names under which a call of a built-in puts a value that is no function on what a plain function without a layout constructs, on a function, or on an object that a placeholder stands for. Ascending, each once.
+    const Vector<PropertyKeyID>& keysDefinedOnObjectsWithoutKnownLayout() const LIFETIME_BOUND { return m_keysDefinedOnObjectsWithoutKnownLayout; }
     bool isReachedThroughPlaceholders(LayoutID layout) const
     {
         return hasEscapedObject(layout) || hasLostObject(layout) || !m_keysIntoEveryObject.isEmpty()
@@ -532,6 +534,7 @@ private:
         bool holdsUnknownObject { false };
         bool holdsUntrackedObject { false };
         bool holdsAlmostEverything { false };
+        bool holdsObjectWithoutLayout { false };
     };
 
     struct WritesThroughSet {
@@ -548,6 +551,8 @@ private:
         bool isStoredByConstructor;
         bool isWrittenByOperation;
         bool givesValueItself;
+        // Object.defineProperty(object, "name", ..).
+        bool isWrittenByCallOfBuiltin;
         bool definesValue;
         bool leavesOutComputedKey;
         uint8_t accessorForms;
@@ -661,6 +666,7 @@ private:
     Vector<PropertyKeyID> m_keysIntoEveryEscapedClass;
     Vector<PropertyKeyID> m_keysIntoEveryLostClass;
     Vector<PropertyKeyID> m_keysThroughPlaceholders;
+    Vector<PropertyKeyID> m_keysDefinedOnObjectsWithoutKnownLayout;
     BitVector m_hasEscapedObject;
     BitVector m_hasLostObject;
     BitVector m_isEscapedClass;

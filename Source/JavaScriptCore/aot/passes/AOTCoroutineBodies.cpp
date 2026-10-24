@@ -496,7 +496,7 @@ bool CoroutineBodyBuilder::headHasNoEffect(ProgramPoint initialYield)
     if (initialYield.block != entryBlock)
         return false;
     return std::ranges::all_of(m_body.at(entryBlock).values.span().first(initialYield.index), [&](ValueID id) {
-        return m_analyses.isUnobservable(id);
+        return m_analyses.isUnobservable(id) && m_analyses.effectsOf(id).onAnyEdge().reads.restrictedTo(orderedHeaps).isEmpty();
     }) || m_analyses.context().build.isSabotaged(Sabotage::GeneratorHeadsHaveEffects);
 }
 

@@ -445,6 +445,8 @@ private:
     uint64_t m_lowMembersKeptOutOfNodesMadeForPlaceholders { 0 };
     uint32_t m_coveredNodeThatTakesWhatIsKeptOut { 0 };
     BitVector m_hasMoved;
+    static_assert(numberOfShards <= 64);
+    std::array<std::array<uint64_t, numberOfShards>, 2> m_shardsWithMessagesOfShard { };
 
     Vector<uint8_t> m_isNewEdge;
     size_t m_numberOfEdges { 0 };

@@ -831,6 +831,8 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
                 }
                 byTarget.shrink(0);
             }
+            if (numberOfMessages)
+                m_shardsWithMessagesOfShard[m_parity][number] |= 1ull << number;
             m_numberOfMessagesWithShards.fetch_add(numberOfMessages, std::memory_order_relaxed);
         });
         for (Vector<ValueFlowEdge>& onlyToLink : m_edgesOnlyToLink)
@@ -1208,7 +1210,7 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
 ALWAYS_INLINE void ValueFlowGraph::evaluateAll(Arrivals& arrivals, Worker& worker, NOESCAPE const Invocable<void(const Message&)> auto& leave)
 {
     constexpr size_t distance = 8;
-    std::span<const uint32_t> nodes = arrivals.nodes.span();
+    const Vector<uint32_t>& nodes = arrivals.nodes;
     for (size_t index = 0; index < nodes.size(); ++index) {
         if (index + distance < nodes.size()) {
             __builtin_prefetch(&m_gates[nodes[index + distance]]);
@@ -1222,7 +1224,8 @@ ALWAYS_INLINE void ValueFlowGraph::evaluateAll(Arrivals& arrivals, Worker& worke
 
 void ValueFlowGraph::runWave(Team& team)
 {
-    AOT_THRESHOLD(size_t, fewestMessagesForThreads, 1024);
+    AOT_THRESHOLD(size_t, fewestMessagesForThreads, 256);
+    AOT_THRESHOLD(size_t, mostNodesOfWaveOnOneThread, 512);
     unsigned parity = m_parity;
     m_parity ^= 1;
     size_t numberWithShards = m_numberOfMessagesWithShards.exchange(0, std::memory_order_relaxed);
@@ -1230,8 +1233,9 @@ void ValueFlowGraph::runWave(Team& team)
 
     if (numberWithShards + inOneList.size() < fewestMessagesForThreads || m_loops.width() == 1) {
         if (numberWithShards) {
-            for (const std::unique_ptr<Shard>& source : m_shards) {
-                for (Vector<Message>& messages : source->messages[parity]) {
+            for (unsigned source = 0; source < numberOfShards; ++source) {
+                for (uint64_t shards = std::exchange(m_shardsWithMessagesOfShard[parity][source], 0); shards; shards &= shards - 1) {
+                    Vector<Message>& messages = m_shards[source]->messages[parity][std::countr_zero(shards)];
                     takeArrivals(m_arrivals, messages.span());
                     messages.shrink(0);
                 }
@@ -1241,7 +1245,10 @@ void ValueFlowGraph::runWave(Team& team)
         inOneList.shrink(0);
         Vector<Message>& next = m_messages[parity ^ 1];
         evaluateAll(m_arrivals, *m_workers[0], [&](const Message& message) {
-            next.append(message);
+            if (m_arrivals.nodes.size() < mostNodesOfWaveOnOneThread)
+                takeArrival(m_arrivals, message);
+            else
+                next.append(message);
         });
         return;
     }
@@ -1250,8 +1257,10 @@ void ValueFlowGraph::runWave(Team& team)
     team.run(numberOfShards, [&](unsigned number, unsigned worker) {
         Shard& shard = *m_shards[number];
         if (numberWithShards) {
-            for (const std::unique_ptr<Shard>& source : m_shards) {
-                Vector<Message>& messages = source->messages[parity][number];
+            for (unsigned source = 0; source < numberOfShards; ++source) {
+                if (!(m_shardsWithMessagesOfShard[parity][source] >> number & 1))
+                    continue;
+                Vector<Message>& messages = m_shards[source]->messages[parity][number];
                 takeArrivals(shard.arrivals, messages.span());
                 messages.shrink(0);
             }
@@ -1261,13 +1270,21 @@ void ValueFlowGraph::runWave(Team& team)
                 takeArrival(shard.arrivals, message);
         }
         size_t numberOfMessages = 0;
+        uint64_t shardsWithMessages = 0;
         std::array<Vector<Message>, numberOfShards>& next = shard.messages[parity ^ 1];
         evaluateAll(shard.arrivals, *m_workers[worker], [&](const Message& message) {
+            if (shardOf(message.to) == number) {
+                takeArrival(shard.arrivals, message);
+                return;
+            }
             next[shardOf(message.to)].append(message);
+            shardsWithMessages |= 1ull << shardOf(message.to);
             ++numberOfMessages;
         });
+        m_shardsWithMessagesOfShard[parity ^ 1][number] |= shardsWithMessages;
         m_numberOfMessagesWithShards.fetch_add(numberOfMessages, std::memory_order_relaxed);
     });
+    m_shardsWithMessagesOfShard[parity].fill(0);
     inOneList.shrink(0);
 }
 

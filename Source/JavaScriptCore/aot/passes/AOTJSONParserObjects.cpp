@@ -352,7 +352,8 @@ void JSONParserBuilder::emitUnorderedMembers(const ObjectParse& parse)
     emitJumpIf(builder().append(Opcode::JSONKeyHasEscapes, { state.cursor }), exits.unknown);
 
     auto emitMatchedMember = [&](size_t index, ValueID valueStart) {
-        emitJumpIf(state.seen[index], exits.unknown);
+        if (!inputs().build.isSabotaged(Sabotage::ParsedMembersComeOnce))
+            emitJumpIf(state.seen[index], exits.unknown);
         ObjectState stateOfMember = state;
         emitMember(parse, index, valueStart, stateOfMember, parse.anyOrder);
     };

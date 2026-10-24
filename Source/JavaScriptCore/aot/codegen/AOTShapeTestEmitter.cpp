@@ -49,8 +49,8 @@ bool ShapeTestEmitter::hasOnlyCompiledObjects(const Type& known) const
     });
 }
 
-// No test tells such an object yet: Object.freeze in compiled code writes the order word of whatever is typed by a layout, and an object that a built-in class made has its butterfly there.
-static bool isMadeByBuiltinBase(const Program&, LayoutID)
+// To the types a layout and a built-in class have no object in common, and an object of a class below Map belongs to both. Until the types know it no test tells such an object: what is typed by such a class goes on as an object nobody knows.
+bool ShapeTestEmitter::isMadeByBuiltinBase(LayoutID) const
 {
     return false;
 }
@@ -58,7 +58,7 @@ static bool isMadeByBuiltinBase(const Program&, LayoutID)
 bool ShapeTestEmitter::mayBeMadeByBuiltinBase(const Type& type) const
 {
     return type.layouts && std::ranges::any_of(m_program.at(type.layouts).members, [&](LayoutID member) {
-        return isMadeByBuiltinBase(m_program, member);
+        return isMadeByBuiltinBase(member);
     });
 }
 
@@ -102,7 +102,7 @@ Condition ShapeTestEmitter::isMadeByBuiltinBaseFor(CellPointer cell, LayoutSetID
     Condition result;
     Vector<BuiltinClassID, 2> bases;
     for (LayoutID member : m_program.at(tested).members) {
-        if (!isMadeByBuiltinBase(m_program, member))
+        if (!isMadeByBuiltinBase(member))
             continue;
         BuiltinClassID base = builtinBaseClassOf(m_program, member);
         if (m_builtins.at(base).instanceTest == BuiltinInstanceTest::JSTypeEquals && !bases.contains(base))
@@ -115,7 +115,7 @@ Condition ShapeTestEmitter::isMadeByBuiltinBaseFor(CellPointer cell, LayoutSetID
                 Word32 madeFor = shiftRightUnsigned(loadField<Word32>(structure, m_heaps.BrandedStructure_compiledClassWord), word32(BrandedStructure::compiledClassStateBits));
                 Condition isMember;
                 for (LayoutID member : m_program.at(tested).members) {
-                    if (isMadeByBuiltinBase(m_program, member) && builtinBaseClassOf(m_program, member) == base)
+                    if (isMadeByBuiltinBase(member) && builtinBaseClassOf(m_program, member) == base)
                         isMember = logicalOr(isMember, equal(madeFor, word32(member.index() + 1)));
                 }
                 return isMember;
@@ -145,18 +145,18 @@ Condition ShapeTestEmitter::hasStateBelowBuiltinBase(CellPointer cell, uint32_t 
     });
 }
 
-Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)
+Condition ShapeTestEmitter::hasLayoutIn(CellPointer cell, LayoutSetID tested, const Type& known)
 {
     if (mayBeMadeByBuiltinBase(Type::forLayoutSet(tested)) && !hasOnlyCompiledObjects(known)) {
         Condition isMade = isMadeByBuiltinBaseFor(cell, tested);
         if (m_placement.shapes().testOf(tested).form == ShapeTestForm::NeverPasses)
             return isMade;
-        return logicalOr(isMade, hasShapeOfCompiledObjectIn(cell, tested, known));
+        return logicalOr(isMade, hasShapeIn(cell, tested, known));
     }
-    return hasShapeOfCompiledObjectIn(cell, tested, known);
+    return hasShapeIn(cell, tested, known);
 }
 
-Condition ShapeTestEmitter::hasShapeOfCompiledObjectIn(CellPointer cell, LayoutSetID tested, const Type& known)
+Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)
 {
     const ShapeTable& shapes = m_placement.shapes();
     bool isKnownCompiledObject = hasOnlyCompiledObjects(known);

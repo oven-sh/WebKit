@@ -91,3 +91,36 @@ function f3 name="comparedAgainBehindComparison" parameters=[{type=Array<string>
 # CHECK-LABEL: function f3 name="comparedAgainBehindComparison"
 # CHECK-NOT: TypeTest {{*}}testedType={{*}}"high"
 # CHECK: Return
+
+# A build that validates holds the value against what is known of it behind the check. That goes with the check.
+function f4 name="comparedInBuildThatValidates" parameters=[{type=Array<string>}, {type=i32}] results=[{type=i32}] {
+  b0(v0: Array<string>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = Check v2 castType=undefined|null|"high"|"low"|"mid"
+    ValidateType v3 validatedType=undefined|"low"
+    v5 = String string="low"
+    v6 = StrictEq v3, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Integer integer=10
+    Return v7
+  b2():
+    v8 = Integer integer=30
+    Return v8
+}
+# CHECK-LABEL: function f4 name="comparedInBuildThatValidates"
+# CHECK-NOT: Check
+# CHECK-NOT: ValidateType
+# CHECK: = StrictEq
+
+# What an addition makes of the value depends on what the value is.
+function f5 name="added" parameters=[{type=Array<string>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<string>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = Check v2 castType="high"|"low"|"mid"
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f5 name="added"
+# CHECK: TypeTest {{*}}testedType="high"|"low"|"mid"

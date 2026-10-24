@@ -290,9 +290,13 @@ public:
     std::optional<InitialKeyOrder> initialKeyOrder(VM&, std::span<const uint16_t> keys, JSObject* extraProperties);
     void setInitialKeyOrder(VM&, InitialKeyOrder, JSObject* extraProperties);
     Vector<UniquedStringImpl*, 16> extraKeyNames() const;
+    // For removeExtraKeyFromOrder(): a number that is below the count of exactly those entries of the key order that count the key. Nothing: no entry counts it.
     std::optional<uint32_t> extraKeyOrdinal(PropertyName) const;
     bool hasPositionAmongKeys(UniquedStringImpl*) const;
     void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
+    // The key that extraKeyOrdinal() was last asked for is gone from the extra properties, and from the key order if that counted it.
+    void didRemoveExtraKey(State&);
+    void forgetPlacesOfPositionedKeys(State&);
 
     bool tryCopyFieldsOf(VM&, const Object& source);
     static Object* tryCreateCopyOfFields(VM&, const Object& source);

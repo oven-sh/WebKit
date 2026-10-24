@@ -387,6 +387,7 @@ void applyLayoutUpdates(const FlowApplyContext& context)
         field.declared.flags.remove(PositionFlags::IsExpected);
     }
     program.setKeysStoredThroughUnknownReceivers(Vector<PropertyKeyID>(context.results.keysStoredThroughUnknownReceivers()));
+    program.setKeysDefinedOnObjectsWithoutKnownLayout(Vector<PropertyKeyID>(context.results.keysDefinedOnObjectsWithoutKnownLayout()));
     program.indexClasses();
     times.didFinish("applyLayoutUpdate"_s);
 

@@ -1358,6 +1358,26 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
                 return jsNumber(-1);
             }
 
+            if (searchElement.isString()) {
+                JSString* searchString = asString(searchElement);
+                unsigned searchLength = searchString->length();
+                for (; index < length; ++index) {
+                    JSValue value = data[index].get();
+                    if (!value || !value.isString())
+                        continue;
+                    JSString* string = asString(value);
+                    if (string == searchString)
+                        return jsNumber(index);
+                    if (string->length() != searchLength)
+                        continue;
+                    bool isEqual = string->equalInline(globalObject, searchString);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    if (isEqual)
+                        return jsNumber(index);
+                }
+                return jsNumber(-1);
+            }
+
             for (; index < length; ++index) {
                 JSValue value = data[index].get();
                 if (!value)

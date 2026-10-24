@@ -79,11 +79,12 @@ static bool isOrdinaryText(const Program& program, PropertyKeyID key)
 }
 
 // A private name is found on the objects of its class alone, and a symbol that the program makes on the objects that the program puts it on.
+// A name that the program also defines on objects without a layout does not say that the object has one.
 static bool tellsLayoutsApart(const Program& program, PropertyKeyID key)
 {
     switch (program.at(key).kind) {
     case PropertyKeyKind::Text:
-        return isOrdinaryText(program, key) && !program.builtinNameOf(key);
+        return isOrdinaryText(program, key) && !program.builtinNameOf(key) && !program.isDefinedOnObjectsWithoutKnownLayout(key);
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::CreatedSymbol:
         return true;
@@ -455,7 +456,7 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     using RankedLayout = std::pair<Likelihood, LayoutID>;
     Vector<RankedLayout, 16> likeliestFirst(layouts.size(), [&](size_t index) {
         LayoutID layout = layouts.span()[index];
-        return RankedLayout { Likelihood { layoutsSeenToArrive.contains(layout), nameOfSubject && heat.isStoredUnder(layout, nameOfSubject), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module)), heat.allocationsOf(layout) }, layout };
+        return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject), layoutsSeenToArrive.contains(layout), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module)), heat.allocationsOf(layout) }, layout };
     });
     AOT::stableSort(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
 

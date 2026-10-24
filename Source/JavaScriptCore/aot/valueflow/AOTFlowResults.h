@@ -187,6 +187,7 @@ struct FlowProgramTables {
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     ProgramInstances instances { ProgramInstances::Unknown };
     Vector<PropertyKeyID> keysStoredThroughUnknownReceivers;
+    Vector<PropertyKeyID> keysDefinedOnObjectsWithoutKnownLayout;
     Vector<PropertyKeyID> keysOfSeveralSymbols;
 };
 
@@ -312,6 +313,7 @@ public:
     OptionSet<BuiltinUse> usesOf(BuiltinID) const;
     ProgramInstances programInstances() const { return m_tables.wholeProgram.instances; }
     std::span<const PropertyKeyID> keysStoredThroughUnknownReceivers() const LIFETIME_BOUND { return m_tables.wholeProgram.keysStoredThroughUnknownReceivers.span(); }
+    std::span<const PropertyKeyID> keysDefinedOnObjectsWithoutKnownLayout() const LIFETIME_BOUND { return m_tables.wholeProgram.keysDefinedOnObjectsWithoutKnownLayout.span(); }
     bool standsForSeveralSymbols(PropertyKeyID key) const { return std::ranges::binary_search(m_tables.wholeProgram.keysOfSeveralSymbols, key); }
 
     void dump(PrintStream&, const Program&) const;

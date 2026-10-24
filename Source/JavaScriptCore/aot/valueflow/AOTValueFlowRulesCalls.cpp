@@ -302,11 +302,11 @@ static ValueID findCallThatAloneTakesRestArray(const Function& function)
                 call = id;
             }
         }
-        bool isUsedByTerminator = false;
-        block.terminator.forEachChild([&](ValueID child) {
-            isUsedByTerminator |= isRestArray(child);
+        bool isUsedOutsideValues = false;
+        block.forEachChildOutsideValues([&](ValueID child) {
+            isUsedOutsideValues |= isRestArray(child);
         });
-        if (isUsedByTerminator)
+        if (isUsedOutsideValues)
             return { };
     }
     return call;

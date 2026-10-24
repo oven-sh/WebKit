@@ -90,11 +90,13 @@ static BlockID createLoopHeader(FunctionPassContext& context, IRBuilder& builder
     return header;
 }
 
-static void replaceCallWithJump(IRBuilder& builder, TailRecursionSite site, BlockID header)
+static void replaceCallWithJump(const BuildContext& build, IRBuilder& builder, TailRecursionSite site, BlockID header)
 {
     Function& function = builder.function();
     const Value& call = function.at(site.call);
     Arguments arguments(call.variadicOperands());
+    if (build.isSabotaged(Sabotage::TailCallsSwapTheirLastArguments) && arguments.size() > 1 && function.at(arguments[arguments.size() - 1]).type == function.at(arguments[arguments.size() - 2]).type)
+        std::swap(arguments[arguments.size() - 1], arguments[arguments.size() - 2]);
 
     Block& block = function.edit(site.block);
     size_t indexOfCall = block.values.reverseFind(site.call);
@@ -123,7 +125,7 @@ PassOutcome eliminateTailRecursion(FunctionPassContext& context)
     for (TailRecursionSite site : sites) {
         if (site.block == entryBlock)
             site.block = header;
-        replaceCallWithJump(builder, site, header);
+        replaceCallWithJump(context.build, builder, site, header);
     }
 
     context.build.statistics().count(StatisticID::TailRecursionsEliminated, sites.size());
