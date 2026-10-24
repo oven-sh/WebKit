@@ -812,10 +812,11 @@ TEST_F(WTF_URLParser, ParserDifferences)
         { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/foo/bar"_s, ""_s, ""_s, "file:///C:/foo/bar"_s });
     checkRelativeURLDifferences("//C:/foo/bar"_s, "file:///tmp/mock/path"_s,
         { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/foo/bar"_s, ""_s, ""_s, "file:///C:/foo/bar"_s });
+    // The drive letter is the whole path: the query or fragment follows it directly, as for "C|?" relative to a file URL.
     checkRelativeURLDifferences("//C|?foo/bar"_s, "file:///tmp/mock/path"_s,
-        { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/"_s, "foo/bar"_s, ""_s, "file:///C:/?foo/bar"_s });
+        { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "foo/bar"_s, ""_s, "file:///C:?foo/bar"_s });
     checkRelativeURLDifferences("//C|#foo/bar"_s, "file:///tmp/mock/path"_s,
-        { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/"_s, ""_s, "foo/bar"_s, "file:///C:/#foo/bar"_s });
+        { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, "foo/bar"_s, "file:///C:#foo/bar"_s });
     checkURLDifferences("http://0xFFFFFfFF/"_s,
         { "http"_s, ""_s, ""_s, "255.255.255.255"_s, 0, "/"_s, ""_s, ""_s, "http://255.255.255.255/"_s });
     checkURLDifferences("http://0000000000000000037777777777/"_s,
@@ -1182,6 +1183,106 @@ TEST_F(WTF_URLParser, DotSegmentsInLongPaths)
     checkRelativeURL("./cccccccccccccccc"_s, "http://host/aaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbb"_s,
         { "http"_s, ""_s, ""_s, "host"_s, 0, "/aaaaaaaaaaaaaaaa/cccccccccccccccc"_s, ""_s, ""_s,
             "http://host/aaaaaaaaaaaaaaaa/cccccccccccccccc"_s });
+}
+
+TEST_F(WTF_URLParser, FileWindowsDriveLetterWithAuthority)
+{
+    // A drive letter in the host position is the whole path when '?' or '#' follows it (file host state, then path state).
+    checkURL("file://C|?q"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, ""_s, "file:///C:?q"_s });
+    checkURL("file://C:?q"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, ""_s, "file:///C:?q"_s });
+    checkURL("file://C|#f"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, "f"_s, "file:///C:#f"_s });
+    checkURL("file://C:#f"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, "f"_s, "file:///C:#f"_s });
+    checkURL("file://C|?q#f"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, "f"_s, "file:///C:?q#f"_s });
+    checkURL("file://C|?"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:?"_s });
+    checkURL("file://C|#"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:#"_s });
+    checkURL("file:\\\\C|?q"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, ""_s, "file:///C:?q"_s });
+    checkURL("file:///C:?q"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, ""_s, "file:///C:?q"_s });
+    checkRelativeURL("file://C|?q"_s, "file:///tmp/mock/path"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, ""_s, "file:///C:?q"_s });
+    checkRelativeURL("//C|#f"_s, "file://host/dir/file"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, "f"_s, "file:///C:#f"_s });
+    // A slash after the drive letter is a path separator as before.
+    checkURL("file://C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:"_s });
+    checkURL("file://C|/"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/"_s, ""_s, ""_s, "file:///C:/"_s });
+    checkURL("file://C|/?q"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/"_s, "q"_s, ""_s, "file:///C:/?q"_s });
+    checkURL("file://C|/x?q#f"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, "q"_s, "f"_s, "file:///C:/x?q#f"_s });
+    checkURL("file://C|\\x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkURL("file://C|/.."_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/"_s, ""_s, ""_s, "file:///C:/"_s });
+    checkURL("file://C|/D|/x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/D|/x"_s, ""_s, ""_s, "file:///C:/D|/x"_s });
+
+    // The path state's drive letter quirk applies whether or not the URL has a host.
+    checkURL("file://host/C|/x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/x"_s, ""_s, ""_s, "file://host/C:/x"_s });
+    checkURL("file://host/C|"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:"_s, ""_s, ""_s, "file://host/C:"_s });
+    checkURL("file://host/C|/"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/"_s, ""_s, ""_s, "file://host/C:/"_s });
+    checkURL("file://host/c|?q"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/c:"_s, "q"_s, ""_s, "file://host/c:?q"_s });
+    checkURL("file://host/C|#f"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:"_s, ""_s, "f"_s, "file://host/C:#f"_s });
+    checkURL("file://host\\C|\\x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/x"_s, ""_s, ""_s, "file://host/C:/x"_s });
+    checkURL("file://HOST/C|/x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/x"_s, ""_s, ""_s, "file://host/C:/x"_s });
+    checkURL("file://1.2.3.4/C|/x"_s, { "file"_s, ""_s, ""_s, "1.2.3.4"_s, 0, "/C:/x"_s, ""_s, ""_s, "file://1.2.3.4/C:/x"_s });
+    checkURL("file://[::1]/C|/x"_s, { "file"_s, ""_s, ""_s, "[::1]"_s, 0, "/C:/x"_s, ""_s, ""_s, "file://[::1]/C:/x"_s });
+    // Like a host-less one, a drive letter under a host is never popped by "..".
+    checkURL("file://host/C|/.."_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/"_s, ""_s, ""_s, "file://host/C:/"_s });
+    checkURL("file://host/C|/x/../.."_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/"_s, ""_s, ""_s, "file://host/C:/"_s });
+    checkRelativeURL("../../y"_s, "file://host/C|/a/b"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/y"_s, ""_s, ""_s, "file://host/C:/y"_s });
+    // Only the first segment is a drive letter, and only if it is exactly a letter and ':' or '|'.
+    checkURL("file://host/C:/x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/x"_s, ""_s, ""_s, "file://host/C:/x"_s });
+    checkURL("file://host/C|x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C|x"_s, ""_s, ""_s, "file://host/C|x"_s });
+    checkURL("file://host/C||/x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C||/x"_s, ""_s, ""_s, "file://host/C||/x"_s });
+    checkURL("file://host/C%7C/x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C%7C/x"_s, ""_s, ""_s, "file://host/C%7C/x"_s });
+    checkURL("file://host/1|/x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/1|/x"_s, ""_s, ""_s, "file://host/1|/x"_s });
+    checkURL("file://host/C|/D|/x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/D|/x"_s, ""_s, ""_s, "file://host/C:/D|/x"_s });
+    checkURL("file://host//C|/x"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "//C|/x"_s, ""_s, ""_s, "file://host//C|/x"_s });
+    checkURL("file://host/x/C|/y"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/x/C|/y"_s, ""_s, ""_s, "file://host/x/C|/y"_s });
+    checkURL("http://host/C|/x"_s, { "http"_s, ""_s, ""_s, "host"_s, 0, "/C|/x"_s, ""_s, ""_s, "http://host/C|/x"_s });
+
+    // "localhost" is dropped, so the result must be what parsing it without the host gives (it used to be the
+    // non-idempotent "file:///C|/x", which parses as "file:///C:/x").
+    checkURL("file://localhost/C|/x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkURL("file://localhost/C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:"_s });
+    checkURL("file://LOCALHOST/C|?q"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, ""_s, "file:///C:?q"_s });
+    checkURL("file://localhost\\C|\\x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkURL("file://localhost/C|/.."_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/"_s, ""_s, ""_s, "file:///C:/"_s });
+    checkURL("file://localhost/C|x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C|x"_s, ""_s, ""_s, "file:///C|x"_s });
+    checkURL("file://localhost//C|/x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "//C|/x"_s, ""_s, ""_s, "file:////C|/x"_s });
+    checkURL("file://localhost?q"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/"_s, "q"_s, ""_s, "file:///?q"_s });
+    checkURL("file://host#f"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/"_s, ""_s, "f"_s, "file://host/#f"_s });
+
+    // Dot segments that leave the path empty do not disable the quirk (it used to produce the non-idempotent "file:///C|").
+    checkURL("file:///./C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:"_s });
+    checkURL("file:///./C:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:"_s });
+    checkURL("file:///../C|/x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkURL("file:///a/../C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:"_s });
+    checkURL("file:///a/b/../../C|?q"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, ""_s, "file:///C:?q"_s });
+    checkURL("file:///%2e/C|#f"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, "f"_s, "file:///C:#f"_s });
+    checkURL("file:///.%2E/C|\\x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkURL("file:./C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:"_s });
+    checkURL("file://host/./C|/.."_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/"_s, ""_s, ""_s, "file://host/C:/"_s });
+    checkURL("file://localhost/../C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:"_s });
+    checkRelativeURL("../../C|"_s, "file:///a/b"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, ""_s, ""_s, "file:///C:"_s });
+    checkRelativeURL("../C|/x"_s, "file://host/a/b"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/x"_s, ""_s, ""_s, "file://host/C:/x"_s });
+    checkURL("file:///./C|x"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C|x"_s, ""_s, ""_s, "file:///C|x"_s });
+    checkURL("file:///a/./C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/a/C|"_s, ""_s, ""_s, "file:///a/C|"_s });
+    checkURL("file:////./C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "//C|"_s, ""_s, ""_s, "file:////C|"_s });
+    checkRelativeURL("./C|"_s, "file:///tmp/mock/path"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/tmp/mock/C|"_s, ""_s, ""_s, "file:///tmp/mock/C|"_s });
+    checkURL("http://host/./C|"_s, { "http"_s, ""_s, ""_s, "host"_s, 0, "/C|"_s, ""_s, ""_s, "http://host/C|"_s });
+
+    // Resolving against a URL whose path is a drive letter alone keeps the drive letter: shortening such a path is a no-op.
+    checkRelativeURL("x"_s, "file:///C:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkRelativeURL("x"_s, "file://C|"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkRelativeURL("x"_s, "file:///C:?q#f"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkRelativeURL("x/y"_s, "file://host/C|"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/C:/x/y"_s, ""_s, ""_s, "file://host/C:/x/y"_s });
+    checkRelativeURL("file:x"_s, "file:///C:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkRelativeURL(".."_s, "file:///C:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/"_s, ""_s, ""_s, "file:///C:/"_s });
+    checkRelativeURL("."_s, "file:///C:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/"_s, ""_s, ""_s, "file:///C:/"_s });
+    checkRelativeURL("?q"_s, "file:///C:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:"_s, "q"_s, ""_s, "file:///C:?q"_s });
+    checkRelativeURL("D|"_s, "file:///C:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/D:"_s, ""_s, ""_s, "file:///D:"_s });
+    checkRelativeURL("D|/z"_s, "file:///C:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/D:/z"_s, ""_s, ""_s, "file:///D:/z"_s });
+    checkRelativeURL("x"_s, "file:///C:/"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    checkRelativeURL("x"_s, "file:///C:/a"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/C:/x"_s, ""_s, ""_s, "file:///C:/x"_s });
+    // Any other lone segment is replaced.
+    checkRelativeURL("x"_s, "file:///ab:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/x"_s, ""_s, ""_s, "file:///x"_s });
+    checkRelativeURL("x"_s, "file:///1:"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/x"_s, ""_s, ""_s, "file:///x"_s });
+    checkRelativeURL("x"_s, "file:///C"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/x"_s, ""_s, ""_s, "file:///x"_s });
+    checkRelativeURL("x"_s, "file://host/a"_s, { "file"_s, ""_s, ""_s, "host"_s, 0, "/x"_s, ""_s, ""_s, "file://host/x"_s });
+    checkRelativeURL("x"_s, "file:///"_s, { "file"_s, ""_s, ""_s, ""_s, 0, "/x"_s, ""_s, ""_s, "file:///x"_s });
 }
 
 } // namespace TestWebKitAPI
