@@ -111,6 +111,10 @@ public:
     void setColumn(unsigned column) { m_lineColumn.column = column; }
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
+    // The frames VM::onComputeErrorInfo() wrote, for as long as the stack is unread. Null otherwise.
+    String collectedStackString() const { return m_collectedStackFrames ? m_stackString : String(); }
+    // The stack is then the error's name and message followed by m_stackString, with no call to VM::onComputeCollectedErrorInfoJSValue().
+    void clearCollectedStackFrames();
 
 #endif
 
@@ -171,6 +175,10 @@ protected:
     LineColumn m_lineColumn;
     String m_sourceURL;
     String m_stackString;
+#if USE(BUN_JSC_ADDITIONS)
+    // One for each frame VM::onComputeErrorInfo() wrote in m_stackString.
+    std::unique_ptr<Vector<CollectedStackFrame>> m_collectedStackFrames;
+#endif
     RuntimeType m_runtimeTypeForCause { TypeNothing };
     ErrorType m_errorType { ErrorType::Error };
     bool m_stackOverflowError : 1;

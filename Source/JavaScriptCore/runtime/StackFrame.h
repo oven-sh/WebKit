@@ -26,6 +26,7 @@
 #pragma once
 
 #include "BytecodeIndex.h"
+#include "DebuggerPrimitives.h"
 #include "Heap.h"
 #include "LineColumn.h"
 #include "SlotVisitorMacros.h"
@@ -133,5 +134,21 @@ public:
 private:
     FrameData m_frameData { JSFrameData {} };
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+// VM::onComputeErrorInfo() fills one for a frame whose line it writes in the string it returns.
+struct CollectedStackFrame {
+    // Where the line has them. The length is 0 when the line has a placeholder or nothing.
+    unsigned functionNameOffset { 0 };
+    unsigned functionNameLength { 0 };
+    unsigned sourceURLOffset { 0 };
+    unsigned sourceURLLength { 0 };
+    // The line is 0 when the frame has no position.
+    LineColumn lineColumn;
+    SourceID sourceID { noSourceID };
+    // JSC does not read these: they are the embedder's.
+    unsigned flags { 0 };
+};
+#endif
 
 } // namespace JSC
