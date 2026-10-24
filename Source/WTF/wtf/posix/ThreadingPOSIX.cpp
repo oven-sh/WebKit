@@ -688,40 +688,50 @@ bool Thread::signal(int signalNumber)
     return !errNo; // A 0 errNo means success.
 }
 
-auto Thread::suspend(const ThreadSuspendLocker&) -> std::expected<void, PlatformSuspendError>
+auto Thread::suspend(const ThreadSuspendLocker& locker) -> std::expected<void, PlatformSuspendError>
 {
     // currentMayBeNull, not currentSingleton: the libpas scavenger calls this while holding
     // the heap lock, and currentSingleton would lazy-allocate a Thread for it.
     RELEASE_ASSERT_WITH_MESSAGE(this != Thread::currentMayBeNull(), "We do not support suspending the current thread itself.");
 #if OS(DARWIN)
+    UNUSED_PARAM(locker);
     kern_return_t result = thread_suspend(m_platformThread);
     if (result != KERN_SUCCESS)
         return makeUnexpected(result);
     return { };
 #else
-    if (!m_suspendCount) {
-        targetThread.store(this);
-
-        while (true) {
-            publishSuspendResumeRequest(m_handle, SuspendResumeRequest::Suspend);
-            // We must use pthread_kill to avoid queue-overflow problem with real-time signals.
-            int result = pthread_kill(m_handle, g_wtfConfig.sigThreadSuspendResume);
-            if (result) {
-                clearSuspendResumeRequest();
-                return makeUnexpected(result);
-            }
-            globalSemaphoreForSuspendResume->wait();
-            if (m_platformRegisters)
-                break;
-            // Because of an alternative signal stack, we failed to suspend this thread.
-            // Retry suspension again after yielding.
-            Thread::yield();
-        }
+    while (true) {
+        auto result = trySuspend(locker);
+        if (!result)
+            return makeUnexpected(result.error());
+        if (*result == SuspendResult::Suspended)
+            return { };
+        Thread::yield();
     }
-    ++m_suspendCount;
-    return { };
 #endif
 }
+
+#if !OS(DARWIN)
+std::expected<Thread::SuspendResult, Thread::PlatformSuspendError> Thread::trySuspend(const ThreadSuspendLocker&)
+{
+    RELEASE_ASSERT_WITH_MESSAGE(this != Thread::currentMayBeNull(), "We do not support suspending the current thread itself.");
+    if (!m_suspendCount) {
+        targetThread.store(this);
+        publishSuspendResumeRequest(m_handle, SuspendResumeRequest::Suspend);
+        // We must use pthread_kill to avoid queue-overflow problem with real-time signals.
+        int result = pthread_kill(m_handle, g_wtfConfig.sigThreadSuspendResume);
+        if (result) {
+            clearSuspendResumeRequest();
+            return makeUnexpected(result);
+        }
+        globalSemaphoreForSuspendResume->wait();
+        if (!m_platformRegisters)
+            return SuspendResult::TemporarilyUnavailable;
+    }
+    ++m_suspendCount;
+    return SuspendResult::Suspended;
+}
+#endif
 
 void Thread::resume(const ThreadSuspendLocker&)
 {

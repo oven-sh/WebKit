@@ -194,6 +194,10 @@ public:
 #endif
 
     WTF_EXPORT_PRIVATE std::expected<void, PlatformSuspendError> suspend(const ThreadSuspendLocker&);
+    enum class SuspendResult : uint8_t { Suspended, TemporarilyUnavailable };
+    // One suspension attempt. A live thread on a foreign stack remains running;
+    // callers must release their suspension locker before retrying it.
+    WTF_EXPORT_PRIVATE std::expected<SuspendResult, PlatformSuspendError> trySuspend(const ThreadSuspendLocker&);
     WTF_EXPORT_PRIVATE void resume(const ThreadSuspendLocker&);
     WTF_EXPORT_PRIVATE size_t getRegisters(const ThreadSuspendLocker&, PlatformRegisters&);
 
