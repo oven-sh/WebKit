@@ -95,6 +95,32 @@ static void loadStackPointerOfHandler(StubAssembler& jit)
 #endif
 }
 
+// Where unwinding has left a number of bytes in the word: clear() finds the stack pointer of the handler in end, and that many bytes below it in lowest.
+template<typename Functor>
+static void clearDeadStack(StubAssembler& jit, GPRReg lowest, GPRReg end, const Functor& clear)
+{
+    Address bytes(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.bytesOfDeadStackBelowHandler));
+    jit.load32(bytes, lowest);
+    Jump hasNone = jit.branchTest32(CCallHelpers::Zero, lowest);
+    jit.store32(TrustedImm32(0), bytes);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.stackPointerOfHandler)), end);
+    jit.neg64(lowest);
+    jit.add64(end, lowest);
+    clear();
+    hasNone.link(&jit);
+}
+
+// From the top, as a stack grows.
+static void clearDownTo(StubAssembler& jit, GPRReg lowest, GPRReg cursor)
+{
+    Jump isEmpty = jit.branchPtr(CCallHelpers::BelowOrEqual, cursor, lowest);
+    CCallHelpers::Label next = jit.label();
+    jit.subPtr(TrustedImm32(sizeof(void*)), cursor);
+    jit.store64(TrustedImm32(0), Address(cursor));
+    jit.branchPtr(CCallHelpers::Above, cursor, lowest).linkTo(next, &jit);
+    isEmpty.link(&jit);
+}
+
 void emitUnwind(StubAssembler& jit)
 {
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), T10);
@@ -105,6 +131,10 @@ void emitUnwind(StubAssembler& jit)
     jit.move(GPRInfo::returnValueGPR2, GPRInfo::callFrameRegister);
     restoreCalleeSavesAndClearBuffer(jit, savedVM, A2);
     loadStackPointerOfHandler(jit);
+    static_assert(noOverlap(T10, T11, GPRInfo::returnValueGPR, GPRInfo::callFrameRegister, instanceGPR));
+    clearDeadStack(jit, T10, T11, [&] {
+        clearDownTo(jit, T10, T11);
+    });
     jit.farJump(GPRInfo::returnValueGPR, NoPtrTag);
     isNotInCompiledCallers.link(&jit);
     jumpToGenericUnwindTarget(jit);
@@ -160,11 +190,23 @@ void generateHandleExceptionPreservingRegisters(StubAssembler& jit)
     jit.move(GPRInfo::returnValueGPR, landingPad);
     jit.move(GPRInfo::returnValueGPR2, GPRInfo::callFrameRegister);
     restoreCalleeSavesAndClearBuffer(jit, savedVM, A2);
+    // Around the registers that are kept here.
+    static_assert(noOverlap(T10, A1, A2, landingPad, GPRInfo::callFrameRegister, instanceGPR));
+    clearDeadStack(jit, T10, A2, [&] {
+        jit.addPtr(TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(registers.size() * sizeof(CPURegister))), sp, A1);
+        clearDownTo(jit, A1, A2);
+        jit.move(sp, A1);
+        clearDownTo(jit, T10, A1);
+    });
     for (unsigned i = 0; i < registers.size(); ++i) {
         if (registers[i].isGPR())
             jit.loadPtr(Address(sp, i * sizeof(CPURegister)), registers[i].gpr());
         else
             jit.loadDouble(Address(sp, i * sizeof(CPURegister)), registers[i].fpr());
+    }
+    for (unsigned i = 0; i < registers.size(); ++i) {
+        if (registers[i].isGPR())
+            jit.store64(TrustedImm32(0), Address(sp, i * sizeof(CPURegister)));
     }
     loadStackPointerOfHandler(jit);
     jit.farJump(landingPad, NoPtrTag);

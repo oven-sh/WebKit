@@ -18,6 +18,8 @@ ALWAYS_INLINE bool throwOutOfMemoryErrorIfOwed(VM& vm, JSGlobalObject* globalObj
 {
     if (!vm.traps().needsOutOfMemoryError()) [[likely]]
         return false;
+    if (vm.heap.cage().errorWaitsForPoll())
+        return false;
     vm.traps().setNeedsOutOfMemoryError(false);
     String limit = vm.heap.cage().describeExhaustedLimit();
     vm.heap.cage().didThrowOutOfMemoryError();

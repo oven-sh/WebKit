@@ -56,7 +56,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryError(vm)) [[unlikely]] {
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
         DeferGCForAWhile deferGC(vm);
         throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
     }
@@ -71,7 +71,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance,
     vm.traps().handleTraps(VMTraps::AsyncEvents);
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().errorWaitsForPoll()) [[unlikely]] {
         OPERATION_RETURN(scope, std::bit_cast<void*>(static_cast<uintptr_t>(pollAtPrologueMustThrow)));
     }
     OPERATION_RETURN(scope, resumeAddressAfterStackCheck(returnAddress));
@@ -100,6 +100,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJS
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
+    if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
+        vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();
@@ -112,6 +114,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
+    if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
+        vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();

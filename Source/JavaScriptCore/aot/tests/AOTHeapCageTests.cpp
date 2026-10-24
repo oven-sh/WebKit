@@ -613,6 +613,42 @@ static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
     traps.setNeedsOutOfMemoryError(false);
 }
 
+// The error that barren collections owe is offered to a poll first: one more full collection runs there. If little can be allocated behind that one too, the error is owed again and is anybody's to throw.
+static void checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce()
+{
+    TestVM test;
+    test.createRealm();
+    VM& vm = test.vm();
+    VMTraps& traps = vm.traps();
+    MarkedBlockCage& cage = test.cage();
+    auto findNoRoomAfterAllocating = [&](size_t bytes) {
+        vm.heap.didAllocate(bytes);
+        cage.didFindNoRoom(vm, MarkedBlockCage::ExhaustedHeap::Cells);
+    };
+    findNoRoomAfterAllocating(vm.heap.objectSpace().capacity() / 64);
+    for (unsigned times = 0; times < 4; ++times) {
+        AOT_TEST_CHECK(!traps.needsOutOfMemoryError() && !cage.errorWaitsForPoll());
+        findNoRoomAfterAllocating(1);
+    }
+    AOT_TEST_CHECK(traps.needsOutOfMemoryError() && cage.errorWaitsForPoll());
+    AOT_TEST_CHECK(cage.tryTakeBackOutOfMemoryErrorAtPoll(vm));
+    AOT_TEST_CHECK(!traps.needsOutOfMemoryError() && !cage.errorWaitsForPoll());
+
+    findNoRoomAfterAllocating(1);
+    AOT_TEST_CHECK(traps.needsOutOfMemoryError() && !cage.errorWaitsForPoll());
+    AOT_TEST_CHECK(!cage.tryTakeBackOutOfMemoryErrorAtPoll(vm) && traps.needsOutOfMemoryError());
+    traps.setNeedsOutOfMemoryError(false);
+
+    // No poll came by before the next barren collection.
+    findNoRoomAfterAllocating(vm.heap.objectSpace().capacity() / 64);
+    for (unsigned times = 0; times < 4; ++times)
+        findNoRoomAfterAllocating(1);
+    AOT_TEST_CHECK(traps.needsOutOfMemoryError() && cage.errorWaitsForPoll());
+    findNoRoomAfterAllocating(1);
+    AOT_TEST_CHECK(traps.needsOutOfMemoryError() && !cage.errorWaitsForPoll());
+    traps.setNeedsOutOfMemoryError(false);
+}
+
 static void checkRangeIsReused()
 {
     uintptr_t baseOfFirst;
@@ -811,6 +847,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/reserve-is-kept-once-half-full"_s, withCage<checkReserveIsKeptOnceHalfFull> },
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
+        { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },
         { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
         { "heap-cage/cage/other-allocator-warms-up-with-the-cage"_s, withCage<checkOtherAllocatorWarmsUpWithTheCage> },

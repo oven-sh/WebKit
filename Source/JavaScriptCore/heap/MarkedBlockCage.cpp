@@ -23,6 +23,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/StackPointer.h>
 #include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
@@ -49,6 +50,8 @@ static constexpr unsigned barrenCollectionsUntilError = 4;
 // While the error finds no place to be thrown: after this many a thread that can end alone is asked to, and after this many the process ends.
 static constexpr unsigned barrenCollectionsUntilThreadEnds = 8;
 static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
+// Creating the error, collections and the frame of a signal reach this far below where the error is thrown, at most.
+static constexpr size_t stackBelowErrorToClear = 64 * KB;
 
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
 static_assert(smallestUsableSize / randomPrefixDivisor >= randomPrefixGranule);
@@ -292,6 +295,43 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
     return true;
 }
 
+bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
+{
+    m_errorWaitsForPoll = false;
+    if (vm.heap.isDeferred() || (m_hasCollectedAtPoll && !m_owesCollection))
+        return false;
+    m_owesCollection = false;
+    m_hasCollectedAtPoll = true;
+    clearDeadStack(vm);
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    if (!vm.traps().needsOutOfMemoryError())
+        return false;
+    if (m_hasReleasedReserve) {
+        if (!tryKeepReleasedReserveAgain())
+            return false;
+    } else if (m_exhaustedHeap != ExhaustedHeap::Cells)
+        return false;
+    else {
+        // How much the program can allocate now says whether this collection was barren too.
+        m_numberOfBarrenCollections = barrenCollectionsUntilError - 1;
+    }
+    vm.traps().setNeedsOutOfMemoryError(false);
+    return true;
+}
+
+void* MarkedBlockCage::takeLowestAddressOfDeadStack(VM& vm)
+{
+    uintptr_t lowest = std::bit_cast<uintptr_t>(currentStackPointer());
+    if (void* stackPointerAtError = std::exchange(m_stackPointerAtError, nullptr))
+        lowest = std::min(lowest, std::bit_cast<uintptr_t>(stackPointerAtError));
+    return std::bit_cast<void*>(std::max(lowest - stackBelowErrorToClear, std::bit_cast<uintptr_t>(vm.softStackLimit())));
+}
+
+void MarkedBlockCage::clearDeadStack(VM& vm)
+{
+    sanitizeStackForVMFrom(vm, takeLowestAddressOfDeadStack(vm));
+}
+
 bool MarkedBlockCage::releaseLastReserve()
 {
     if (m_reserve.isEmpty())
@@ -372,8 +412,16 @@ String MarkedBlockCage::describeExhaustedLimit() const
 void MarkedBlockCage::didThrowOutOfMemoryError()
 {
     m_hasReleasedReserve = false;
+    m_errorWaitsForPoll = false;
     if (std::exchange(m_exhaustedHeap, ExhaustedHeap::Cells) == ExhaustedHeap::Structures)
         StructureAlignedMemoryAllocator::didThrowOutOfMemoryError();
+}
+
+void MarkedBlockCage::didCreateOutOfMemoryError()
+{
+    m_numberOfBarrenCollections = 0;
+    m_hasCollectedAtPoll = false;
+    m_stackPointerAtError = currentStackPointer();
 }
 
 void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
@@ -386,12 +434,15 @@ void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
         return;
     if (bytesAllocatedSinceLastFull >= vm.heap.objectSpace().capacity() / barrenCollectionDivisor) {
         m_numberOfBarrenCollections = 0;
+        m_hasCollectedAtPoll = false;
         return;
     }
     if (++m_numberOfBarrenCollections < barrenCollectionsUntilError)
         return;
+    m_errorWaitsForPoll = false;
     if (!vm.traps().needsOutOfMemoryError()) {
         setExhaustedHeap(exhaustedHeap);
+        m_errorWaitsForPoll = !m_hasCollectedAtPoll;
         vm.traps().setNeedsOutOfMemoryError(true);
     }
     if (m_numberOfBarrenCollections == barrenCollectionsUntilThreadEnds)

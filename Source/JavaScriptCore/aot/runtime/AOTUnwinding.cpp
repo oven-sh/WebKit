@@ -288,7 +288,7 @@ static bool callersPlanErrors(VM& vm, const Image& image, CallFrame* frameThatRe
 CallFrame* findReturnIntoFunctionWithoutHandlers(VM& vm, CallFrame* operationFrame)
 {
     const Image& image = *vm.aotState().image;
-    if (vm.exceptionForInspection() || !image.stubAddress(handleException(false)))
+    if (vm.exceptionForInspection() || vm.heap.cage().errorWaitsForPoll() || !image.stubAddress(handleException(false)))
         return nullptr;
     CallFrame* frame = operationFrame;
     CodeLocation location = image.locate(removeCodePtrTag(frame->rawReturnPC()));

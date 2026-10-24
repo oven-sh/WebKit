@@ -191,8 +191,8 @@ list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS}
 )
 
-# Written by aot-source-lists.ts: every .cpp under aot/tests/ but AOTShell.cpp, every AOT*TestCommands.cpp, and what else is there for tests alone: the lexer and
-# the parser of IR text, the runs of single passes, the dumps that only test commands print. Linked into testaot only, with JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES.
+# Written by aot-source-lists.ts: every .cpp under aot/tests/ but AOTShell.cpp, every AOT*TestCommands.cpp, and what else is there for tests alone: the runs of
+# single passes, the dumps that only test commands print. Linked into testaot only, with JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES.
 set(JavaScriptCore_AOT_TEST_SOURCES
     aot/analysis/AOTAnalysisTestCommands.cpp
     aot/analysis/AOTFunctionAnalysesTestCommands.cpp
@@ -202,14 +202,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/codegen/AOTCollectorTestCommands.cpp
     aot/codegen/AOTGeneratedCodeTestCommands.cpp
     aot/codegen/AOTValidationTestCommands.cpp
-    aot/ir/AOTEffectsTestCommands.cpp
-    aot/ir/AOTIRLexer.cpp
-    aot/ir/AOTIRParser.cpp
-    aot/ir/AOTIRParserFunctions.cpp
-    aot/ir/AOTIRParserTypes.cpp
-    aot/ir/AOTIRTestCommands.cpp
-    aot/ir/AOTTypeTestCommands.cpp
-    aot/ir/AOTWireProgramBuilder.cpp
     aot/passes/AOTFrameAllocationTestCommands.cpp
     aot/passes/AOTPassTestCommands.cpp
     aot/passes/AOTPlaceTypeTestsTestCommands.cpp
@@ -264,6 +256,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTDictionaryExtraPropertiesTests.cpp
     aot/tests/AOTDriverTests.cpp
     aot/tests/AOTEffectSummariesTests.cpp
+    aot/tests/AOTEffectsTestCommands.cpp
     aot/tests/AOTEngineHookTests.cpp
     aot/tests/AOTExtensionTests.cpp
     aot/tests/AOTFFIStubTests.cpp
@@ -281,11 +274,16 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTHeatGraphTests.cpp
     aot/tests/AOTIDTests.cpp
     aot/tests/AOTIRFunctionTests.cpp
+    aot/tests/AOTIRLexer.cpp
+    aot/tests/AOTIRParser.cpp
+    aot/tests/AOTIRParserFunctions.cpp
     aot/tests/AOTIRParserTests.cpp
+    aot/tests/AOTIRParserTypes.cpp
     aot/tests/AOTIRPrinterForTestaot.cpp
     aot/tests/AOTIRPrinterTests.cpp
     aot/tests/AOTIRPrinterTypesForTestaot.cpp
     aot/tests/AOTIRProgramTests.cpp
+    aot/tests/AOTIRTestCommands.cpp
     aot/tests/AOTIRTests.cpp
     aot/tests/AOTIdentifierNumberingTests.cpp
     aot/tests/AOTImageBuildTests.cpp
@@ -412,6 +410,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTThisAllocationTests.cpp
     aot/tests/AOTTypeArenaTests.cpp
     aot/tests/AOTTypeErrorMessageTests.cpp
+    aot/tests/AOTTypeTestCommands.cpp
     aot/tests/AOTTypedResultProgramTests.cpp
     aot/tests/AOTUnwindingTests.cpp
     aot/tests/AOTValidatedValueTests.cpp
@@ -419,6 +418,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTWaiterOrderProgramTests.cpp
     aot/tests/AOTWebAssemblyImageTests.cpp
     aot/tests/AOTWebAssemblyInstanceTests.cpp
+    aot/tests/AOTWireProgramBuilder.cpp
     aot/tests/cliffs/stack-capture-large-image.cpp
     aot/tests/testaot.cpp
     aot/tests/unit/BuiltinValidationTests.cpp

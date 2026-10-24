@@ -1668,8 +1668,8 @@ ALWAYS_INLINE JSValue LiteralParser<CharType, reviverMode>::parsePrimitiveValue(
         }
         if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(vm);
-            throwOutOfMemoryErrorIfOwed(vm, m_globalObject, scope);
-            return { };
+            if (throwOutOfMemoryErrorIfOwed(vm, m_globalObject, scope))
+                return { };
         }
         m_lexer.nextAfterValue();
         return result;

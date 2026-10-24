@@ -72,14 +72,22 @@ public:
     void didFindNoRoomWhereNothingCollects() { m_owesCollection = true; }
     bool owesCollection() const { return m_owesCollection; }
     JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryError(VM&);
+    // At a poll the frames of the loop's callees are gone. What they left on the stack is cleared and one more full collection runs. If it makes room, no error is owed any more.
+    JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryErrorAtPoll(VM&);
+    // An error that barren collections owe is offered to a poll first.
+    bool errorWaitsForPoll() const { return m_errorWaitsForPoll; }
     JS_EXPORT_PRIVATE void didThrowOutOfMemoryError();
+    // A program that catches the error lets go of objects. Words of frames that are gone still name them, and a later frame is scanned with every word under it that it does not write.
+    bool hasDeadStackToClear() const { return m_stackPointerAtError; }
+    JS_EXPORT_PRIVATE void clearDeadStack(VM&);
+    JS_EXPORT_PRIVATE void* takeLowestAddressOfDeadStack(VM&);
     size_t reserveSize() const;
 
     enum class ExhaustedHeap : bool { Cells, Structures };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
-    void didCreateOutOfMemoryError() { m_numberOfBarrenCollections = 0; }
+    JS_EXPORT_PRIVATE void didCreateOutOfMemoryError();
 
     struct ReservationFailure {
         size_t sizeWithinBudget { 0 };
@@ -109,6 +117,9 @@ private:
     bool m_sharesRange { false };
     bool m_hasReleasedReserve { false };
     bool m_owesCollection { false };
+    bool m_errorWaitsForPoll { false };
+    bool m_hasCollectedAtPoll { false };
+    void* m_stackPointerAtError { nullptr };
     size_t m_numberOfChunksReleased { 0 };
     ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
     unsigned m_numberOfBarrenCollections { 0 };

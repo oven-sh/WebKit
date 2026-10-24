@@ -619,6 +619,8 @@ static void addToDictionary(StubAssembler& jit, const ObjectLookupRegisters& r, 
     cannot.append(jit.branchPtr(CCallHelpers::NotEqual, owner, r.receiver));
     loadStructure(jit, owner, structure);
     cannot.append(jit.branchTest32(CCallHelpers::Zero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(dictionaryKinds)));
+    // A table that is not pinned is made again from the transitions. Structure::addPropertyWithoutTransition() pins it.
+    cannot.append(jit.branchTest32(CCallHelpers::Zero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_isPinnedPropertyTableBits)));
     cannot.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(bitsThatForbid)));
     // JSObject::canPerformFastPutInlineExcludingProto(), for the objects above.
     const GPRReg objectAbove = scratch;
