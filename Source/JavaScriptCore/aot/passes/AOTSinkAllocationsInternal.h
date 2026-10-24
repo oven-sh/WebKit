@@ -377,6 +377,7 @@ private:
     bool paysToSink(const Candidate&) const;
     void resetCounters();
 
+    bool meetsWholeResultOfCallee(const Candidate&) const;
     Vector<Edge, 2> collectCellEdges(VirtualObjectID, BlockID mergeBlock);
     Vector<BlockID> collectLiveRange(VirtualObjectID, BlockID mergeBlock);
     bool paysWithoutEdges(VirtualObjectID, std::span<const Edge>);

@@ -66,8 +66,10 @@ static void applyFieldUpdates(Layout& layout, const FlowLayoutUpdate& update)
         field.flow = fieldUpdate.flow;
 
         bool wasAnalyzed = field.flow.location.writers == WriterState::AllKnown;
-        if (wasAnalyzed && !field.flow.stability.contains(FieldStability::IsNeverDeleted))
+        if (wasAnalyzed && !field.flow.stability.contains(FieldStability::IsNeverDeleted) && field.flags.contains(FieldFlags::IsRequired)) {
             field.flags.remove(FieldFlags::IsRequired);
+            field.flags.add(FieldFlags::IsRequiredUntilDeleted);
+        }
     }
 }
 

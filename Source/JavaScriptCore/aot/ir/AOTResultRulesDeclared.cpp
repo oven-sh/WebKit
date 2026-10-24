@@ -544,6 +544,26 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Terminator& use
     return context.atLevel(TypeLevel::Proven).typeIDOf(function.result());
 }
 
+RequiredTypeHolder holderOfRequiredTypes(const Program& program, const Value& user)
+{
+    switch (user.opcode) {
+    case Opcode::PutModuleVariable:
+    case Opcode::PutEnvironmentField:
+    case Opcode::NewClosure:
+    case Opcode::CallDirect:
+    case Opcode::CallTable:
+    case Opcode::AwaitCallBySavingFrame:
+    case Opcode::Results:
+    case Opcode::CreateIteratorResult:
+        return RequiredTypeHolder::PositionThatFlowFollows;
+    case Opcode::NewObject:
+    case Opcode::CloneAs:
+        return program.at(user.layout()).isEnvironment() ? RequiredTypeHolder::PositionThatFlowFollows : RequiredTypeHolder::InitializedSlot;
+    default:
+        return RequiredTypeHolder::StoredSlot;
+    }
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

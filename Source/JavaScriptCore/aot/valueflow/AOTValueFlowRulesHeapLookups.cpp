@@ -991,6 +991,19 @@ bool HeapRule::isMemberOfBun(BuiltinID member) const
     return holder && m_builtins.canonicalID(holder) == Builtins::Bun;
 }
 
+// In place of a member that was left out stands a function that throws when it is called. A property that code of the library fills with what is no function cannot be taken for that, so it is made for whoever goes over Bun.
+bool HeapRule::isMemberOfBunUsedByNameAlone(BuiltinID member) const
+{
+    if (!isMemberOfBun(member))
+        return false;
+    if (isObjectKind(m_builtins.at(member).kind) || !isMadeWithCodeOfLibrary(m_builtins, member))
+        return true;
+    return std::ranges::any_of(m_builtins.overloadsOf(m_builtins.canonicalID(member)), [&](const BuiltinOverload& overload) {
+        const BuiltinType& answer = m_builtins.at(overload.result.type);
+        return overload.mode == BuiltinCallMode::Get && (answer.isAnything() || answer.flags.contains(BuiltinTypeFlag::HasAnyFunction) || !answer.parts.empty());
+    });
+}
+
 bool HeapRule::hasMemberOfHost(ValueFlowObjectID holder) const
 {
     return std::ranges::any_of(m_builtins.membersOf(m_universe.builtinOf(holder)), [&](BuiltinID member) {
@@ -1487,7 +1500,7 @@ void HeapRule::noteUseOfMembers(const HeapKey& key, BuiltinUse noted)
             return;
         if (!namesMember && isFoundByNameAlone(m_builtins.canonicalID(member)))
             return;
-        if (noted == BuiltinUse::Read && !namesMember && isMemberOfBun(member))
+        if (noted == BuiltinUse::Read && !namesMember && isMemberOfBunUsedByNameAlone(member))
             return;
         if (noted != BuiltinUse::Read || !m_tables.letsInUnseenCode(member))
             use(member, noted);

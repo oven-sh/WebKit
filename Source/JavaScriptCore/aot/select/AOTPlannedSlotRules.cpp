@@ -73,6 +73,16 @@ static bool findsOffsetByShape(Opcode opcode, const SlotAgreement& agreement)
     return operationsWithOffsetByShape.contains(opcode) && agreement.hasOffsetByShape(storedOf(opcode).has_value());
 }
 
+// The objects of a class that extends a class of the module are the module's as much as those that it makes itself: the methods of a base class mostly meet its heirs.
+static bool belongsTo(const Program& program, const Heat& heat, LayoutID layout, ModuleID module)
+{
+    for (LayoutID current = declaredLayoutOf(program, layout); current; current = expectedBaseOf(program.at(current))) {
+        if (program.at(current).module == module || heat.isAllocatedIn(current, module))
+            return true;
+    }
+    return heat.isAllocatedIn(layout, module);
+}
+
 // The arms are tested in this order: first the groups with a layout of the module that the function is written in, for a library handles the objects that it makes.
 static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAgreement& agreement)
 {
@@ -84,7 +94,7 @@ static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAg
     Vector<std::tuple<bool, double, size_t>, 4> likelihoods(agreement.groups.size(), [&](size_t index) {
         std::span<const LayoutID> members = agreement.groups[index].members.span();
         bool hasLayoutOfModule = module && std::ranges::any_of(members, [&](LayoutID layout) {
-            return program.at(layout).module == module || heat.isAllocatedIn(layout, module);
+            return belongsTo(program, heat, layout, module);
         });
         double allocations = 0;
         for (LayoutID layout : members)

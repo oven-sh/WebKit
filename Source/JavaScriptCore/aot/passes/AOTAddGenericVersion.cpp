@@ -964,24 +964,20 @@ void GenericVersionBuilder::insertAssumedTypes(std::span<const OperandOfOtherKin
 // The slot of an object is written without a test. storeUnprovenInitialValues() has dealt with what an allocation writes, but for a field of which flow says that nothing outside its type is ever stored.
 static bool writesSlotOfObjectWithoutProof(const Program& program, const Value& value, uint32_t operandIndex)
 {
-    switch (value.opcode) {
-    case Opcode::NewObject:
-    case Opcode::CloneAs: {
-        if (program.at(value.layout()).isEnvironment())
-            return false;
+    switch (holderOfRequiredTypes(program, value)) {
+    case RequiredTypeHolder::StoredSlot:
+        return true;
+    case RequiredTypeHolder::InitializedSlot: {
         std::optional<uint32_t> valueIndex = value.variadicOperandIndex(operandIndex);
         if (!valueIndex)
             return true;
         const Field& field = fieldAt(program, declarationOf(program, { value.layout(), value.fields()[*valueIndex] }));
         return !field.flow.stability.contains(FieldStability::IsNeverStoredWithOtherType);
     }
-    case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
-    case Opcode::PutSlots:
-        return true;
-    default:
+    case RequiredTypeHolder::PositionThatFlowFollows:
         return false;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // Flow follows what a check turns away through the same operations, so what it has proven of a position holds for the generic version too.

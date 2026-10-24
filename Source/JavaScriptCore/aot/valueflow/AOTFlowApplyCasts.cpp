@@ -321,19 +321,15 @@ static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& 
     if (provesEverythingIn(body))
         return true;
 
-    switch (user.opcode) {
-    case Opcode::NewObject:
-    case Opcode::CloneAs:
-        if (!isObjectLayout(body.program.at(user.layout()).kind))
-            return true;
-        return hasProvenInitialValues(body, { user.layout(), user.fields()[*user.variadicOperandIndex(operandIndex)] });
-    case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
-    case Opcode::PutSlots:
+    switch (holderOfRequiredTypes(body.program, user)) {
+    case RequiredTypeHolder::StoredSlot:
         return false;
-    default:
+    case RequiredTypeHolder::InitializedSlot:
+        return hasProvenInitialValues(body, { user.layout(), user.fields()[*user.variadicOperandIndex(operandIndex)] });
+    case RequiredTypeHolder::PositionThatFlowFollows:
         return true;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // Where a store comes before every read of a binding, the type of its field has lost `absent`, and nothing sees what the allocation of the environment puts there.

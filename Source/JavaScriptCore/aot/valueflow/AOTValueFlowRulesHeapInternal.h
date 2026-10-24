@@ -243,6 +243,7 @@ private:
     void readEvaluators(const ValueFlowOperand& object, const HeapKey&);
     bool isNativeModuleThatNobodyNames(ValueFlowObjectID holder);
     bool isMemberOfBun(BuiltinID member) const;
+    bool isMemberOfBunUsedByNameAlone(BuiltinID member) const;
     bool mayNamePropertyAtCreation(const HeapKey&) const;
     void readPropertiesAtCreation(ClimbingSet objects, const HeapKey&, ValueFlowNodeID result);
     void handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey&);

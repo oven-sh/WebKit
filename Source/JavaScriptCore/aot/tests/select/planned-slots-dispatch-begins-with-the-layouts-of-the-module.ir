@@ -27,3 +27,17 @@ function f1 name="inTheApplication" module=m0 parameters=[{type=L0|L1|L2}] resul
 # CHECK-LABEL: function f1 name="inTheApplication"
 # CHECK-NEXT: b0(v0: L0|L1|L2):
 # CHECK-NEXT: = TypeTest v0 testedType=L0|L2
+
+# The classes of the application that extend a class of the library are the library's too: among them the larger group comes first, not the class that the library makes itself.
+layout L3 kind=Instance name="Base" module=m1 fields=[{key="count" declared={type=undefined|number}}] flow={baseState=None members=[L3]}
+layout L4 kind=Instance name="First" module=m0 base=L3 fields=[{key="pad" declared={type=number}}, {key="count" declared={type=undefined|string}}] flow={members=[L4]}
+layout L5 kind=Instance name="Second" module=m0 base=L3 fields=[{key="pad" declared={type=number}}, {key="count" declared={type=undefined|string}}] flow={members=[L5]}
+
+function f2 name="inTheBaseClass" module=m1 parameters=[{type=L3|L4|L5}] results=[{type=anything}] {
+  b0(v0: L3|L4|L5):
+    v1 = GetSlotOrUndefined v0 key="count" receivers=[L3, L4, L5] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f2 name="inTheBaseClass"
+# CHECK-NEXT: b0(v0: L3|L4|L5):
+# CHECK-NEXT: = TypeTest v0 testedType=L4|L5

@@ -68,21 +68,22 @@ const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
 const NEHALEM = "-march=nehalem";
 const ARMV8 = "-march=armv8-a+crc";
 
-// The variant is the label's suffix: bun-webkit-linux-amd64 is "release", bun-webkit-linux-amd64-debug-asan is
-// "debug-asan". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
+// The variant is the label's suffix: bun-webkit-linux-amd64 is "release", bun-webkit-linux-amd64-debug-asan-aot is
+// "debug-asan-aot". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
 //
 // `aot: false` is ENABLE_AOT=0: neither the ahead-of-time compiler nor the run time of its programs is in the libraries.
 // That is what a bun built with --aot=off links. Each such variant has a twin with both, "-aot", which is what `bun`
-// links. Every other variant has both.
+// links. Every other variant has both and no twin without. A label says which it is: a lane with both has "-aot" in its
+// label, and a lane without has the label it had before there was a compiler.
 const variants = {
   "release": { buildType: "Release", mimalloc: true, aot: false },
   "aot": { buildType: "Release", mimalloc: true },
   "lto": { buildType: "Release", mimalloc: true, lto: true, aot: false },
   "lto-aot": { buildType: "Release", mimalloc: true, lto: true },
-  "debug": { buildType: "Debug" },
-  "asan": { buildType: "Release", sanitizers: SANITIZERS },
-  "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS },
-  // For fuzzing. Each is "release" with assertions, coverage or both added and nothing else changed, so that what is
+  "debug-aot": { buildType: "Debug" },
+  "asan-aot": { buildType: "Release", sanitizers: SANITIZERS },
+  "debug-asan-aot": { buildType: "Debug", sanitizers: SANITIZERS },
+  // For fuzzing. Each is "aot" with assertions, coverage or both added and nothing else changed, so that what is
   // fuzzed is as close as it can be to what ships. `assertions` is the assertions of the asan variants without the
   // sanitizers. `coverage` is ENABLE_FUZZILLI: JavaScriptCore (not WTF or bmalloc) calls
   // __sanitizer_cov_trace_pc_guard on every edge. The libraries leave that for bun to define, and jsc takes --reprl.
@@ -90,23 +91,23 @@ const variants = {
   // Not "lto": coverage does not link with ThinLTO ("undefined symbol: __sancov_gen_.1"). Of an inline function that
   // several modules have, ThinLTO keeps one copy and makes the others available_externally, their guards included,
   // which are private to the module. Inlining such a copy leaves a reference to guards that nothing defines.
-  "assertions": { buildType: "Release", mimalloc: true, assertions: true },
-  "coverage": { buildType: "Release", mimalloc: true, coverage: true },
-  "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
+  "assertions-aot": { buildType: "Release", mimalloc: true, assertions: true },
+  "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
+  "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
   // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed. Only what ships
-  // has a twin, so "hardened" has the compiler and no "-aot".
-  "hardened": { buildType: "Release", mimalloc: true, hardened: true },
+  // has a twin without the compiler.
+  "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
   "lto-hardened-aot-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, webAssembly: false },
 };
-const NO_ASAN = ["release", "aot", "lto", "lto-aot", "debug"];
-const ALL = [...NO_ASAN, "asan", "debug-asan"];
-const FUZZING = ["assertions", "coverage", "assertions-coverage"];
-const HARDENED = ["hardened", "lto-hardened", "lto-hardened-aot", "lto-hardened-aot-no-webassembly"];
-// "lto-aot" is "lto" with the compiler.
+const NO_ASAN = ["release", "aot", "lto", "lto-aot", "debug-aot"];
+const ALL = [...NO_ASAN, "asan-aot", "debug-asan-aot"];
+const FUZZING = ["assertions-aot", "coverage-aot", "assertions-coverage-aot"];
+const HARDENED = ["hardened-aot", "lto-hardened", "lto-hardened-aot", "lto-hardened-aot-no-webassembly"];
+// "lto-aot" is "lto" with the compiler, and "asan-aot" is what bun calls "asan".
 const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/-aot$/, ""));
 
 // Each platform:
@@ -192,7 +193,7 @@ const platforms = [
       CPP_FLAGS: v.mimalloc ? "" : "-D_LIBCXX_ENABLE_ASSERTIONS=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       // Debug builds break the heap down by type, except under ASAN.
-      ENABLE_MALLOC_HEAP_BREAKDOWN: variant === "debug" ? "ON" : "OFF",
+      ENABLE_MALLOC_HEAP_BREAKDOWN: variant === "debug-aot" ? "ON" : "OFF",
     }),
   },
   {
@@ -204,10 +205,10 @@ const platforms = [
     lanes: {
       // ASAN is x64 only: LLVM ships no Windows ARM64 ASAN runtime. The sanitizer runtime (import lib, /MT runtime
       // thunk, DLL) comes from the compiler-rt-windows-* release tag.
-      amd64: ["release", "aot", "lto", "lto-aot", "debug", "asan"],
+      amd64: ["release", "aot", "lto", "lto-aot", "debug-aot", "asan-aot"],
       // No arm64 lto: LLVM's CodeView emitter (still true of 23.1) has no register mapping for ARM64 NEON quad-register tuples
       // ("LLVM ERROR: unknown codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates values into them.
-      arm64: ["release", "aot", "debug"],
+      arm64: ["release", "aot", "debug-aot"],
     },
     lto: LTO_WINDOWS,
     bunTests: arch => [arch === "arm64" ? "release" : "lto"],
@@ -259,14 +260,14 @@ const platforms = [
 //              and in the lanes the `test` job here runs
 //   testaot    in the lanes the `test` job here runs. It has the table of built-ins of the stand-in host (aot/tests/host).
 // and, in lib/, the objects of jsc and of testaot without a table (shell/CMakeLists.txt), which bun links with its own:
-//   jsc-objects, testaot-objects   in those same lanes, and in linux-amd64-debug-asan for bun's "AoT cargo test" job.
+//   jsc-objects, testaot-objects   in those same lanes, and in linux-amd64-debug-asan-aot for bun's "AoT cargo test" job.
 //                                  bun's build looks for them in the tarball (scripts/build/deps/webkit.ts).
 function programs(platform, arch, variant, test) {
   const objects = ["jsc-objects", "testaot-objects"];
   if (test && variants[variant].aot === false) return ["jsc", "testFFI"];
   if (test) return ["jsc", "testFFI", "testaot", ...objects];
   if (platform.bunTests?.(arch).includes(withoutAOT(variant))) return variants[variant].aot === false ? ["jsc", "testFFI"] : ["jsc", "testFFI", ...objects];
-  return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan" ? ["jsc", ...objects] : ["jsc"];
+  return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan-aot" ? ["jsc", ...objects] : ["jsc"];
 }
 
 // One more asset of every release, next to the lanes' tarballs: what a tarball has under Source/JavaScriptCore/aot but the
@@ -319,6 +320,7 @@ const lanes = platforms.flatMap(platform =>
       // each compile of WebKit.
       if (v.aot === false) buildArgs.MARCH_FLAG += " -DENABLE_AOT=0";
       const label = platform.label(arch) + (variant === "release" ? "" : `-${variant}`);
+      if ((v.aot !== false) !== /-aot(-|$)/.test(label)) throw new Error(`${label}: a lane has "-aot" in its label where it has the compiler, and only there`);
       return {
         label,
         sources: label === SOURCES.from ? SOURCES.label : "",

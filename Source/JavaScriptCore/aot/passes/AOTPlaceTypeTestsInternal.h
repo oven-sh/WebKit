@@ -70,7 +70,6 @@ private:
     struct EmittedTest {
         uint32_t plannedTest { 0 };
         BlockID block;
-        ValueID subject;
         BlockID passed;
         BlockID failed;
         ValueID provenWhenPassed;

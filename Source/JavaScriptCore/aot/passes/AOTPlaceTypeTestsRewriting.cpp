@@ -504,15 +504,22 @@ void TestPlacer::replaceDominatedUses()
         return *edge;
     };
 
+    // Where the copies meet, the repair of SSA has given the test the join of what each of them passes on.
+    auto subjectOf = [&](const EmittedTest& emitted) {
+        ValueID test = m_function.at(edgeInto(emitted.passed).from).terminator.conditionOperand();
+        return m_function.at(test).operand(testedOperandIndex);
+    };
+
     DominatedUseReplacer replacer(m_context, m_builder, m_changedValues);
     for (uint32_t index : narrowingTests)
-        replacer.addSubject(m_emittedTests[index].subject);
+        replacer.addSubject(subjectOf(m_emittedTests[index]));
     replacer.collectUses();
     for (uint32_t index : narrowingTests) {
         const EmittedTest& emitted = m_emittedTests[index];
-        replacer.replaceUsesDominatedBy(edgeInto(emitted.passed), emitted.subject, emitted.provenWhenPassed);
+        ValueID subject = subjectOf(emitted);
+        replacer.replaceUsesDominatedBy(edgeInto(emitted.passed), subject, emitted.provenWhenPassed);
         if (emitted.provenWhenFailed)
-            replacer.replaceUsesDominatedBy(edgeInto(emitted.failed), emitted.subject, emitted.provenWhenFailed);
+            replacer.replaceUsesDominatedBy(edgeInto(emitted.failed), subject, emitted.provenWhenFailed);
     }
     replacer.insertCasts();
     analyses.didChangeValues();

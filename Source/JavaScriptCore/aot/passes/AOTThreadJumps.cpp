@@ -751,6 +751,131 @@ private:
     bool m_hasHandlers { false };
 };
 
+// An edge that decides the test of a merge point gets a copy of the block for itself. There the test folds.
+class CopyingThreader : public EdgeThreader {
+public:
+    using EdgeThreader::EdgeThreader;
+
+protected:
+    struct DecidedEdge {
+        BlockID mergePoint;
+        Edge edge;
+    };
+
+    struct Copy {
+        BlockID original;
+        Arguments originalDefinitions;
+        Arguments copiedDefinitions;
+    };
+
+    void giveCopyTo(const DecidedEdge& decided)
+    {
+        RegionCloner cloner(m_builder, m_function);
+        cloner.cloneBlocks(singleElementSpan(decided.mergePoint), [](ValueID, Value&) { });
+
+        Copy copy { decided.mergePoint, { }, { } };
+        auto addDefinition = [&](ValueID definition) {
+            copy.originalDefinitions.append(definition);
+            copy.copiedDefinitions.append(cloner.cloneOf(definition));
+        };
+        for (ValueID parameter : m_function.at(decided.mergePoint).parameters)
+            addDefinition(parameter);
+        for (ValueID value : m_function.at(decided.mergePoint).values) {
+            if (resultRuleOf(m_function.at(value).opcode) != ResultRule::None)
+                addDefinition(value);
+        }
+        m_copies.append(WTF::move(copy));
+
+        Arguments arguments = targetOf(m_function, decided.edge).arguments;
+        m_builder.redirectEdge(decided.edge, Target { cloner.cloneOf(decided.mergePoint), WTF::move(arguments), { } });
+        m_outcome = PassOutcome::Changed;
+    }
+
+    void mergeCopiedDefinitions()
+    {
+        if (m_copies.isEmpty())
+            return;
+        m_builder.emptyUnreachableBlocks();
+        SSARepair repair(m_builder, m_analyses);
+        for (size_t first = 0; first < m_copies.size(); ++first) {
+            const Copy& firstCopy = m_copies[first];
+            bool isFirstCopyOfOriginal = std::ranges::none_of(m_copies.span().first(first), [&](const Copy& earlier) {
+                return earlier.original == firstCopy.original;
+            });
+            if (!isFirstCopyOfOriginal)
+                continue;
+            for (size_t index = 0; index < firstCopy.originalDefinitions.size(); ++index) {
+                SSARepair::Variable variable = repair.addVariable(firstCopy.originalDefinitions[index]);
+                for (const Copy& copy : m_copies.span().subspan(first)) {
+                    if (copy.original == firstCopy.original)
+                        repair.addDefinition(variable, copy.copiedDefinitions[index]);
+                }
+            }
+        }
+        repair.run();
+    }
+
+    Vector<Copy, 4> m_copies;
+};
+
+// What an edge passes decides the test, but the block does more than test: it reads a variable that the code below uses, or may throw. No edge can skip that, and a copy of it costs less than the test and the merge.
+class SmallJoinCopier : public CopyingThreader {
+public:
+    using CopyingThreader::CopyingThreader;
+
+    PassOutcome run()
+    {
+        const CFG& cfg = m_analyses.cfg();
+        for (BlockID block : cfg.reversePostOrder()) {
+            if (isMergePoint(cfg, block) && !isLoopHeader(cfg, block) && isSmallJoin(block) && everyEdgeDecidesTest(cfg, block))
+                m_candidates.append(block);
+        }
+        if (m_candidates.isEmpty())
+            return PassOutcome::Unchanged;
+        collectIncomingEdges();
+
+        // The last edge keeps the block.
+        Vector<DecidedEdge, 8> decidedEdges;
+        for (BlockID candidate : m_candidates) {
+            for (Edge edge : m_incomingEdges[candidate].span().first(m_incomingEdges[candidate].size() - 1))
+                decidedEdges.append({ candidate, edge });
+        }
+        for (const DecidedEdge& decided : decidedEdges)
+            giveCopyTo(decided);
+        mergeCopiedDefinitions();
+        return m_outcome;
+    }
+
+private:
+    bool isSmallJoin(BlockID id)
+    {
+        const Block& block = m_function.at(id);
+        if (block.terminator.kind != TerminatorKind::Branch || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency != BlockFrequency::Normal)
+            return false;
+        ValueID condition = block.terminator.conditionOperand();
+        const Value& test = m_function.at(condition);
+        if (test.opcode != Opcode::TypeTest || !block.values.contains(condition) || !block.parameters.contains(test.valueOperand()))
+            return false;
+        size_t numberOfCopies = m_analyses.cfg().incomingEdges(id).size() - 1;
+        if (m_context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size() * numberOfCopies, condition))
+            return false;
+        return RegionCloner::checkCanDuplicate(m_analyses, singleElementSpan(id)) == CloneCheck::CanClone;
+    }
+
+    bool everyEdgeDecidesTest(const CFG& cfg, BlockID id) const
+    {
+        const Block& block = m_function.at(id);
+        const Value& test = m_function.at(block.terminator.conditionOperand());
+        const Type& tested = m_context.types.at(test.testedType());
+        return std::ranges::all_of(cfg.incomingEdges(id), [&](Edge edge) {
+            if (!canRedirect(edge))
+                return false;
+            const Type& passed = m_program.typeOf(m_function, substituteParameter(block, test.valueOperand(), targetOf(m_function, edge).arguments));
+            return evaluateTypeTest(m_program, passed, tested) != KnownBoolean::Unknown;
+        });
+    }
+};
+
 // Each run of RepeatedTestThreader takes one step along a row of equal tests, and every step costs a round of the passes beside this one. A row of calls of one function is short.
 static const Value* findFunctionTestBranchedOn(const FunctionPassContext& context, const Block& block)
 {
@@ -779,9 +904,9 @@ static bool hasTwoFunctionTestsForOneType(const FunctionPassContext& context)
 }
 
 // Two ways part at a test of a value for a type, come together again, and the same test of the same value follows: `f(f(x))` where f may be one of the functions that its type lists or any other.
-class RepeatedTestThreader : public EdgeThreader {
+class RepeatedTestThreader : public CopyingThreader {
 public:
-    using EdgeThreader::EdgeThreader;
+    using CopyingThreader::CopyingThreader;
 
     PassOutcome run()
     {
@@ -813,17 +938,6 @@ private:
         BlockID block;
 
         auto key() const { return std::tuple { subject.index(), testedType.index() }; }
-    };
-
-    struct DecidedEdge {
-        BlockID mergePoint;
-        Edge edge;
-    };
-
-    struct Copy {
-        BlockID original;
-        Arguments originalDefinitions;
-        Arguments copiedDefinitions;
     };
 
     void collectTests()
@@ -890,56 +1004,8 @@ private:
         });
     }
 
-    void giveCopyTo(const DecidedEdge& decided)
-    {
-        RegionCloner cloner(m_builder, m_function);
-        cloner.cloneBlocks(singleElementSpan(decided.mergePoint), [](ValueID, Value&) { });
-
-        Copy copy { decided.mergePoint, { }, { } };
-        auto addDefinition = [&](ValueID definition) {
-            copy.originalDefinitions.append(definition);
-            copy.copiedDefinitions.append(cloner.cloneOf(definition));
-        };
-        for (ValueID parameter : m_function.at(decided.mergePoint).parameters)
-            addDefinition(parameter);
-        for (ValueID value : m_function.at(decided.mergePoint).values) {
-            if (resultRuleOf(m_function.at(value).opcode) != ResultRule::None)
-                addDefinition(value);
-        }
-        m_copies.append(WTF::move(copy));
-
-        Arguments arguments = targetOf(m_function, decided.edge).arguments;
-        m_builder.redirectEdge(decided.edge, Target { cloner.cloneOf(decided.mergePoint), WTF::move(arguments), { } });
-        m_outcome = PassOutcome::Changed;
-    }
-
-    void mergeCopiedDefinitions()
-    {
-        if (m_copies.isEmpty())
-            return;
-        m_builder.emptyUnreachableBlocks();
-        SSARepair repair(m_builder, m_analyses);
-        for (size_t first = 0; first < m_copies.size(); ++first) {
-            const Copy& firstCopy = m_copies[first];
-            bool isFirstCopyOfOriginal = std::ranges::none_of(m_copies.span().first(first), [&](const Copy& earlier) {
-                return earlier.original == firstCopy.original;
-            });
-            if (!isFirstCopyOfOriginal)
-                continue;
-            for (size_t index = 0; index < firstCopy.originalDefinitions.size(); ++index) {
-                SSARepair::Variable variable = repair.addVariable(firstCopy.originalDefinitions[index]);
-                for (const Copy& copy : m_copies.span().subspan(first)) {
-                    if (copy.original == firstCopy.original)
-                        repair.addDefinition(variable, copy.copiedDefinitions[index]);
-                }
-            }
-        }
-        repair.run();
-    }
-
     Vector<Test> m_tests;
     IndexMap<BlockID, uint32_t> m_positionOfBlock;
-    Vector<Copy, 4> m_copies;
 };
 
 } // anonymous namespace
@@ -948,6 +1014,7 @@ PassOutcome threadJumps(FunctionPassContext& context)
 {
     PassOutcome outcome = ParameterBranchThreader(context).run();
     outcome |= DecidedBranchThreader(context).run();
+    outcome |= SmallJoinCopier(context).run();
     if (hasTwoFunctionTestsForOneType(context))
         outcome |= RepeatedTestThreader(context).run();
     if (outcome == PassOutcome::Changed)

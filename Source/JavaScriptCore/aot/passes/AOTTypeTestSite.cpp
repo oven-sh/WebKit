@@ -197,7 +197,7 @@ bool TestSiteReporter::asksForBagOfOptions(std::span<const Value> tests) const
         return tested.layouts && std::ranges::all_of(program().at(tested.layouts).members, [&](LayoutID id) {
             const Layout& layout = program().at(id);
             return layout.kind == LayoutKind::Record && layout.fields.size() >= minFieldsOfBagOfOptions && std::ranges::none_of(layout.fields, [](const Field& field) {
-                return field.flags.contains(FieldFlags::IsRequired);
+                return field.flags.containsAny({ FieldFlags::IsRequired, FieldFlags::IsRequiredUntilDeleted });
             });
         });
     });

@@ -150,10 +150,8 @@ void TestPlacer::emitTest(const TestChain& chain, uint32_t plannedTest, IsLastOf
 auto TestPlacer::branchOn(const TestChain& chain, uint32_t plannedTest, ValueID test, IsLastOfChain isLast) -> EmittedTest&
 {
     BlockID block = m_builder.currentBlock();
-    const Value& value = m_function.at(test);
-    ValueID subject = value.numberOfOperands() ? value.operand(testedOperandIndex) : ValueID();
 
-    bool provesNothingWhenFailed = provesForStretch(provesOf(value.opcode));
+    bool provesNothingWhenFailed = provesForStretch(provesOf(m_function.at(test).opcode));
     bool entersPassedTarget = isLast == IsLastOfChain::Yes && chain.isOnlyWayToPassedTarget;
     IRBuilder::ProvenBranchTargets targets;
     if (entersPassedTarget)
@@ -168,7 +166,7 @@ auto TestPlacer::branchOn(const TestChain& chain, uint32_t plannedTest, ValueID 
     if (!entersPassedTarget)
         m_builder.moveToEndOf(branch.taken);
 
-    m_emittedTests.append(EmittedTest { plannedTest, block, subject, branch.taken, branch.notTaken, branch.provenOnTaken, branch.provenOnNotTaken });
+    m_emittedTests.append(EmittedTest { plannedTest, block, branch.taken, branch.notTaken, branch.provenOnTaken, branch.provenOnNotTaken });
     return m_emittedTests.last();
 }
 

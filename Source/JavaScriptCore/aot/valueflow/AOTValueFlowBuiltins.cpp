@@ -752,6 +752,9 @@ private:
         }
         for (const BuiltinCallback& callback : overload.flow.callbacks)
             applyCallback(callback);
+        // The walk goes into whatever the reviver has put into a holder in the meantime, and deletes and defines there.
+        if (m_builtins.canonicalID(m_builtin) == Builtins::JSONParse && !overload.flow.callbacks.empty())
+            letUnknownCodeWrite(m_context);
         for (const BuiltinHandlerCall& handlerCall : overload.flow.handlerCalls)
             applyHandlerCall(handlerCall);
         for (const BuiltinPropertyAction& action : overload.flow.propertyActions)

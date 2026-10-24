@@ -179,6 +179,10 @@ FieldTypeState fieldTypeStateOf(const Program&, FieldReference);
 const OpcodeSet& opcodesWithRequiredOperandTypes();
 TypeID requiredTypeOfOperand(const TypingContext&, const Value& user, uint32_t operandIndex);
 TypeID requiredTypeOfOperand(const TypingContext&, const Terminator& user, uint32_t operandIndex);
+
+// What stands behind the required type of an operand. A slot is written without a test, so what is stored there has to be proven. An operation that is not known to do otherwise stores into a slot.
+enum class RequiredTypeHolder : uint8_t { StoredSlot, InitializedSlot, PositionThatFlowFollows };
+RequiredTypeHolder holderOfRequiredTypes(const Program&, const Value& user);
 TypeID declaredEntryTypeOf(const TypingContext&, const Function& callee, unsigned entryParameterIndex);
 
 } } } // namespace JSC::AOT::Typed

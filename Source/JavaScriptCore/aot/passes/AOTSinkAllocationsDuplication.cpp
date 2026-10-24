@@ -166,13 +166,32 @@ void AllocationSinking::duplicate(IRBuilder& builder, std::span<const BlockID> r
     cloner.repairSSA(m_analyses);
 }
 
+// A callee that hands over the parts of its result hands over the object itself on some of its ways. The caller puts the parts together only to have one value where the two meet.
+bool AllocationSinking::meetsWholeResultOfCallee(const Candidate& join) const
+{
+    if (join.isLeftOut || m_function.at(join.block).frequency != BlockFrequency::Normal)
+        return false;
+    bool isMadeOnEveryPath = std::ranges::any_of(m_candidates, [&](const Candidate& candidate) {
+        return candidate.family == join.family && allocatesOnEveryPath(candidate);
+    });
+    if (!isMadeOnEveryPath)
+        return false;
+    size_t parameterIndex = m_function.at(join.block).parameters.find(join.definition);
+    return std::ranges::any_of(m_analyses.cfg().incomingEdges(join.block), [&](Edge edge) {
+        ValueID incoming = valuePassedOn(m_function, edge, parameterIndex);
+        return incoming && m_function.at(sameObjectThroughCasts(m_function, incoming)).opcode == Opcode::ResultAt;
+    });
+}
+
 bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
 {
     Vector<DuplicationPlan, 2> plans;
     for (uint32_t index = 0; index < m_candidates.size(); ++index) {
         const Candidate& candidate = m_candidates[index];
-        if (!candidate.isJoin && candidate.mergeBlock && candidate.abandonedBy == LimitID::None)
-            plans.append(DuplicationPlan { VirtualObjectID(index), candidate.mergeBlock, { } });
+        if (candidate.abandonedBy != LimitID::None)
+            continue;
+        if (candidate.isJoin ? meetsWholeResultOfCallee(candidate) : !!candidate.mergeBlock)
+            plans.append(DuplicationPlan { VirtualObjectID(index), candidate.isJoin ? candidate.block : candidate.mergeBlock, { } });
     }
     if (plans.isEmpty() || hasSpentItsWork())
         return false;

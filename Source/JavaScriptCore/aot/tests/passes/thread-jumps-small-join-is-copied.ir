@@ -1,0 +1,64 @@
+# What each edge passes decides the test of a merge point, but the block also reads a variable that may not be initialized yet and that the code below uses: no edge can skip that. Each edge gets the block for itself, where the test folds, so a loop does not test what it has just made.
+# FORM: Prepared optimizing
+# RUN: pass ThreadJumps
+# RUN(FOLDED): pass ThreadJumps SimplifyControlFlow RemoveTrivialParameters RetypeValues FoldConstants SimplifyControlFlow EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="limit" module=m0 declared={type=number|absent} flow={writers=AllKnown stores=AtMostOnce}
+
+function f0 name="everyEdgeDecides" parameters=[{type=i32}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: i32, v1: string, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = GetModuleVariable variable=g0
+    v5 = CheckInitialized v4 name="limit"
+    v6 = TypeTest v3 testedType=i32
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = StrictEq v7, v5
+    Return v8
+  b5():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="everyEdgeDecides"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next [[copy]](v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: = GetModuleVariable variable=g0
+# CHECK: [[copy]](
+# CHECK-NEXT: = GetModuleVariable variable=g0
+# CHECK-NEXT: = CheckInitialized
+# FOLDED-LABEL: function f0 name="everyEdgeDecides"
+# FOLDED-NOT: TypeTest
+
+# An edge that leaves the test open keeps the block as it is.
+function f1 name="oneEdgeLeavesTheTestOpen" parameters=[{type=i32}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: i32, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = GetModuleVariable variable=g0
+    v5 = CheckInitialized v4 name="limit"
+    v6 = TypeTest v3 testedType=i32
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = StrictEq v7, v5
+    Return v8
+  b5():
+    Return v5
+}
+# CHECK-LABEL: function f1 name="oneEdgeLeavesTheTestOpen"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# FOLDED-LABEL: function f1 name="oneEdgeLeavesTheTestOpen"
+# FOLDED: = TypeTest
