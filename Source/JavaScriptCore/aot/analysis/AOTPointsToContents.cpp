@@ -301,6 +301,32 @@ bool PointsToSolver::handsOperandOn(ValueID user, uint32_t operandIndex) const
     return isSharedByObjects(user) && operandUsesOf(opcode, std::min(operandIndex, numberOfNamedOperandsOf(opcode))).contains(OperandUse::Returns);
 }
 
+// On every way into its block, straight or through parameters like itself.
+bool PointsToSolver::getsOnlyUnspecifiedValues(ValueID parameter) const
+{
+    AOT_THRESHOLD(size_t, maxValuesFollowedToUnspecified, 16);
+    Vector<ValueID, maxValuesFollowedToUnspecified> seen { parameter };
+    for (size_t index = 0; index < seen.size(); ++index) {
+        ValueID value = seen[index];
+        if (m_function.at(value).opcode == Opcode::Unspecified)
+            continue;
+        ValueLocation location = m_useLists.locationOf(value);
+        if (location.placement != ValuePlacement::Parameter || location.block == m_cfg.root())
+            return false;
+        for (Edge edge : m_cfg.incomingEdges(location.block)) {
+            IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+            if (incoming.kind != IncomingValue::Kind::Argument || !incoming.argument)
+                return false;
+            if (seen.contains(incoming.argument))
+                continue;
+            if (seen.size() == maxValuesFollowedToUnspecified)
+                return false;
+            seen.append(incoming.argument);
+        }
+    }
+    return true;
+}
+
 bool PointsToSolver::mayBeUntracked(ValueID value) const
 {
     if (!value)
@@ -309,7 +335,9 @@ bool PointsToSolver::mayBeUntracked(ValueID value) const
     if (m_function.at(value).opcode == Opcode::Unspecified)
         return false;
     ValueSetID set = m_results.setOfValue[value.index()];
-    return !set || m_setsThatMayBeUntracked[set.index()];
+    if (!set)
+        return !getsOnlyUnspecifiedValues(value);
+    return m_setsThatMayBeUntracked[set.index()];
 }
 
 bool PointsToSolver::hasUntrackedSource(ValueID value) const

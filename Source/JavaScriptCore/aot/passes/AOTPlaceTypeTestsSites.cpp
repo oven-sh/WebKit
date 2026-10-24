@@ -351,6 +351,23 @@ static bool asksOnlyForLayouts(FunctionPassContext& context, const TestSites& si
     });
 }
 
+// In a checked function of the program the type of a variable, a parameter or a field is the checker's, and so is that of an element read out of it. The library is handed what its callers have.
+static bool isDescribedByChecker(FunctionPassContext& context, ValueID value)
+{
+    if (!context.function.has(FunctionFlags::IsChecked) || isLibraryCode(context.program, context.function))
+        return false;
+    // It ends: a list is defined in front of the read of its element.
+    for (;;) {
+        ValueID identity = context.analyses.identityOf(value);
+        if (context.program.expectedOrTypeOf(context.function, identity).anyObject)
+            return false;
+        const Value& definition = context.function.at(identity);
+        if (definition.opcode != Opcode::GetArrayElement && definition.opcode != Opcode::ElemGet)
+            return true;
+        value = definition.operand(0);
+    }
+}
+
 // The object that a site asks for a name, where nothing but a guess says that it has a layout.
 static ValueID findReceiverWithGuessedLayout(FunctionPassContext& context, const TestSites& sites, const TestSite& site)
 {
@@ -362,7 +379,9 @@ static ValueID findReceiverWithGuessedLayout(FunctionPassContext& context, const
     if (!testsType)
         return { };
     ValueID receiver = use.operand(*receiverOf(use.opcode));
-    return context.program.typeOf(context.function, receiver).layouts ? ValueID() : context.analyses.identityOf(receiver);
+    if (context.program.typeOf(context.function, receiver).layouts || isDescribedByChecker(context, receiver))
+        return { };
+    return context.analyses.identityOf(receiver);
 }
 
 // Object.defineProperty(this, "inner", { value }) in a plain function: the program defines some names on objects without a layout too. An object that is asked for such names alone may well be one of those.

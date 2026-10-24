@@ -431,7 +431,7 @@ static void cacheStore(Instance* instance, JSObject* object, Structure* structur
     caches.cache({ structureBefore, { uid, std::nullopt }, SlotAccess::Store }, classifyStore({ instance->globalObject, object, structureBefore, uid, slot, PutMode::Strict }));
 }
 
-static bool hasStructureAtHand(VM& vm)
+bool hasStructureAtHand(VM& vm)
 {
     Allocator allocator = vm.structureSpace().allocatorFor(sizeof(Structure), AllocatorForMode::AllocatorIfExists);
     return !std::bit_cast<FreeList*>(std::bit_cast<char*>(allocator.localAllocator()) + LocalAllocator::offsetOfFreeList())->allocationWillFail();

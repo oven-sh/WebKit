@@ -527,6 +527,17 @@ static void testSlotFiledByNumberIsCopiedForKeys(LoadedProgram& program)
     AOT_TEST_CHECK(copy && copy->headerBits() == filed->headerBits() && copy->payloadBits() == filed->payloadBits());
 }
 
+static void makeStructure(LoadedProgram& program)
+{
+    JSFinalObject::createStructure(program.vm(), program.realm(), jsNull(), 0);
+}
+
+static void fetchStructures(LoadedProgram& program)
+{
+    while (!hasStructureAtHand(program.vm()))
+        makeStructure(program);
+}
+
 static void testLeafOperationsAnswerByName(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -574,14 +585,18 @@ static void testLeafOperationsAnswerByName(LoadedProgram& program)
     AOT_TEST_CHECK(put(keyFor(nameWithDigit), jsNumber(8)) == LeafAnswer::Yes && object->getDirect(vm, nameWithDigit) == jsNumber(8));
     const Slot* replacement = table.find(structure->id(), nameWithDigit.impl(), SlotAccess::Store);
     AOT_TEST_CHECK(replacement && replacement->kind == Slot::Kind::Value && replacement->has(Slot::isOwn));
-    AOT_TEST_CHECK(put(keyFor(addedName), jsNumber(9)) == LeafAnswer::Yes && object->getDirect(vm, addedName) == jsNumber(9));
+    JSString* addedKey = keyFor(addedName);
+    fetchStructures(program);
+    AOT_TEST_CHECK(put(addedKey, jsNumber(9)) == LeafAnswer::Yes && object->getDirect(vm, addedName) == jsNumber(9));
     // The first object that is given a name becomes a dictionary, the second gets a Structure for it, and the third addition is filed.
     AOT_TEST_CHECK(object->structure()->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
     auto makeNextObject = [&] {
         JSObject* nextObject = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
         nextObject->putDirect(vm, nameWithDigit, jsNumber(7));
         AOT_TEST_CHECK(nextObject->structure() == structure);
-        AOT_TEST_CHECK(static_cast<LeafAnswer>(operationAOTPutByValGeneric(instance, nextObject, keyFor(addedName), JSValue::encode(jsNumber(9)))) == LeafAnswer::Yes && nextObject->getDirect(vm, addedName) == jsNumber(9));
+        JSString* key = keyFor(addedName);
+        fetchStructures(program);
+        AOT_TEST_CHECK(static_cast<LeafAnswer>(operationAOTPutByValGeneric(instance, nextObject, key, JSValue::encode(jsNumber(9)))) == LeafAnswer::Yes && nextObject->getDirect(vm, addedName) == jsNumber(9));
         return nextObject;
     };
     JSObject* secondObject = makeNextObject();
@@ -590,6 +605,33 @@ static void testLeafOperationsAnswerByName(LoadedProgram& program)
     const Slot* addition = table.find(structure->id(), addedName.impl(), SlotAccess::Store);
     AOT_TEST_CHECK(addition && addition->kind == Slot::Kind::Transition && addition->transition.newStructureID == secondObject->structure()->id() && thirdObject->structure() == secondObject->structure());
     AOT_TEST_CHECK(put(index, jsNumber(1)) == LeafAnswer::TakeSlowPath);
+}
+
+static void testLeafStoreMakesStructureOnlyOutOfBlockAtHand(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Identifier heldName = Identifier::fromString(vm, "6g"_s);
+    Identifier addedName = Identifier::fromString(vm, "7h"_s);
+    JSObject* object = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
+    object->putDirect(vm, heldName, jsNumber(1));
+    Structure* structure = object->structure();
+    auto keyFor = [&](const Identifier& name) {
+        return jsNontrivialString(vm, makeString(name.string().string().left(1), name.string().string().substring(1)));
+    };
+    auto put = [&](JSCell* key, JSValue value) {
+        return static_cast<LeafAnswer>(operationAOTPutByValGeneric(&program.instance(), object, key, JSValue::encode(value)));
+    };
+    JSString* heldKey = keyFor(heldName);
+    JSString* addedKey = keyFor(addedName);
+
+    while (hasStructureAtHand(vm))
+        makeStructure(program);
+    AOT_TEST_CHECK(put(addedKey, jsNumber(2)) == LeafAnswer::TakeSlowPath && object->structure() == structure && !object->getDirect(vm, addedName));
+    AOT_TEST_CHECK(put(heldKey, jsNumber(3)) == LeafAnswer::Yes && object->getDirect(vm, heldName) == jsNumber(3));
+    AOT_TEST_CHECK(!hasStructureAtHand(vm));
+
+    fetchStructures(program);
+    AOT_TEST_CHECK(put(addedKey, jsNumber(2)) == LeafAnswer::Yes && object->getDirect(vm, addedName) == jsNumber(2));
 }
 
 static void testLeafOperationsAnswerByIndex(LoadedProgram& program)
@@ -712,7 +754,7 @@ static void testNamedChangeDropsOnlyThatName(LoadedProgram& program)
     AOT_TEST_CHECK(inherited && inherited->kind == Slot::Kind::Value && inherited->holder == fixture.prototype && inherited->has(Slot::dependsOnChain));
     AOT_TEST_CHECK(inherited->offsetInStorage() == fixture.prototype->getDirectOffset(vm, fixture.label));
     bool isInFront = !!fixture.caches.tables().front().find(fixture.object->structure()->id(), *fixture.caches.nameOf(fixture.label.impl()).identifierNumber, SlotAccess::Read);
-    AOT_TEST_CHECK(isInFront == vm.heap.cage().contains(fixture.prototype));
+    AOT_TEST_CHECK(isInFront == (MarkedBlockCage::baseOf(fixture.prototype) == vm.heap.cage().base()));
 }
 
 // Nobody tells the table when an owner evicts what depends on a chain. A full collection asks the owners, but only when as many dependents were added as were left the last time.
@@ -1374,6 +1416,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/absence-filter-names-what-stops-stores"_s, withProgram<testAbsenceFilterNamesWhatStopsStores> },
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },
         { "property-lookup/leaf-operations-answer-by-name"_s, withProgram<testLeafOperationsAnswerByName> },
+        { "property-lookup/leaf-store-makes-a-structure-only-out-of-the-block-at-hand"_s, withProgram<testLeafStoreMakesStructureOnlyOutOfBlockAtHand> },
         { "property-lookup/leaf-operations-answer-by-index"_s, withProgram<testLeafOperationsAnswerByIndex> },
         { "property-lookup/named-change-drops-only-that-name"_s, withProgram<testNamedChangeDropsOnlyThatName> },
         { "property-lookup/evicted-dependents-are-dropped-when-the-table-has-doubled"_s, withProgram<testEvictedDependentsAreDroppedWhenTheTableHasDoubled> },

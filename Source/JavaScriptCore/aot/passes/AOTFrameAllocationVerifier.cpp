@@ -61,6 +61,11 @@ private:
     bool retainsInFrameCell(const Value& user, uint32_t operandIndex) const;
     bool dieTogether(ValueID container, ValueID stored) const;
     bool isHolderOfFrameCell(ValueID);
+    bool takesEdgeAsFrameArray(Edge, ValueID identity) const;
+    bool reachesAsFrameArray(ValueID, BlockID);
+    const BitVector& arraysByPaths();
+    bool mayBeFrameArrayIn(BlockID, ValueID);
+    bool mayPointIntoFrameIn(BlockID, ValueID);
     std::optional<ValueID> findHolder(ValueID, const BitVector& holders) const;
     bool addHolder(ValueID, BitVector& holders) const;
     bool addHoldersAcrossEdge(Edge, const Target&, BitVector& holders) const;
@@ -81,6 +86,8 @@ private:
     Liveness m_liveness;
     const ValueIdentities& m_identities;
     std::optional<BitVector> m_frameCellHolders;
+    Vector<std::pair<ValueID, BitVector>, 2> m_blocksReachedAsFrameArray;
+    std::optional<BitVector> m_arraysByPaths;
 };
 
 FramePointerVerifier::FramePointerVerifier(FunctionAnalyses& analyses, const FramePointers& pointers, const LivenessOptions& livenessOptions)
@@ -146,7 +153,7 @@ void FramePointerVerifier::verifyOperands(BlockID block)
 void FramePointerVerifier::verifyArrayOperand(BlockID block, ValueID userID, uint32_t operandIndex)
 {
     const Value& user = m_function.at(userID);
-    if (mayBeGivenFrameArray(m_program, m_flow, m_function, user, operandIndex))
+    if (mayBeGivenFrameArray(m_program, m_flow, m_function, user, operandIndex) || !mayBeFrameArrayIn(block, user.operand(operandIndex)))
         return;
     report(effectRuleOf(user.opcode) == EffectRule::Call ? InternalErrorKind::CalleeRetainsFramePointer : InternalErrorKind::FramePointerRetained, block, userID);
 }
@@ -257,13 +264,112 @@ bool FramePointerVerifier::isHolderOfFrameCell(ValueID id)
     return m_frameCellHolders->get(id.index());
 }
 
+// What AOTFrameArrayParameters.cpp allows in a function that is handed an array is allowed where a part of that function was taken into its caller:
+// an array in a frame leaves a test of it on the side that the test has for every such array.
+bool FramePointerVerifier::takesEdgeAsFrameArray(Edge edge, ValueID identity) const
+{
+    const Terminator& terminator = m_function.at(edge.from).terminator;
+    if (edge.isHandlerEdge() || !terminator.isConditionalBranch())
+        return true;
+    std::optional<FrameArrayTest> test = testOfFrameArray(m_program, m_function.at(terminator.conditionOperand()));
+    bool isTakenEdge = !edge.targetIndex;
+    return !test || test->passes == isTakenEdge || m_identities.identityOf(test->tested) != identity;
+}
+
+bool FramePointerVerifier::reachesAsFrameArray(ValueID id, BlockID block)
+{
+    ValueID identity = m_identities.identityOf(id);
+    for (const auto& [known, reached] : m_blocksReachedAsFrameArray) {
+        if (known == identity)
+            return reached.quickGet(block.index());
+    }
+
+    ValueLocation location = m_useLists.locationOf(identity);
+    if (location.placement == ValuePlacement::Detached)
+        return true;
+    BitVector reached(m_function.blocks.size());
+    reached.quickSet(location.block.index());
+    Vector<BlockID, 16> worklist { location.block };
+    while (!worklist.isEmpty()) {
+        forEachOutgoingEdge(m_function, worklist.takeLast(), [&](Edge edge, const Target& target) {
+            if (takesEdgeAsFrameArray(edge, identity) && !reached.quickSet(target.block.index()))
+                worklist.append(target.block);
+        });
+    }
+    m_blocksReachedAsFrameArray.append({ identity, WTF::move(reached) });
+    return m_blocksReachedAsFrameArray.last().second.quickGet(block.index());
+}
+
+const BitVector& FramePointerVerifier::arraysByPaths()
+{
+    if (m_arraysByPaths)
+        return *m_arraysByPaths;
+
+    BitVector arrays(m_function.values.size());
+    for (ValueID allocation : m_arrays.allocations())
+        arrays.quickSet(allocation.index());
+    auto isArrayIn = [&](BlockID block, ValueID id) {
+        return arrays.quickGet(id.index()) && reachesAsFrameArray(id, block);
+    };
+
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            for (ValueID id : m_function.at(block).values) {
+                if (!m_arrays.contains(id) || arrays.quickGet(id.index()))
+                    continue;
+                bool isArray = false;
+                forEachReturnedOperand(m_function, m_function.at(id), [&](ValueID operand) {
+                    isArray |= isArrayIn(block, operand);
+                });
+                if (isArray)
+                    changed |= !arrays.quickSet(id.index());
+            }
+            forEachOutgoingEdge(m_function, block, [&](Edge edge, const Target& target) {
+                const CompactList<ValueID>& parameters = m_function.at(target.block).parameters;
+                auto pass = [&](ValueID passed, ValueID parameter) {
+                    if (m_arrays.contains(parameter) && isArrayIn(block, passed) && takesEdgeAsFrameArray(edge, m_identities.identityOf(passed)))
+                        changed |= !arrays.quickSet(parameter.index());
+                };
+                for (uint32_t argumentIndex = 0; argumentIndex < target.arguments.size(); ++argumentIndex)
+                    pass(target.arguments[argumentIndex], parameters[argumentIndex]);
+                if (edge.isHandlerEdge())
+                    return;
+
+                uint32_t firstParameter = firstEdgeResultParameter(m_function, block, edge.targetIndex);
+                uint32_t numberOfResults = numberOfEdgeResults(m_function, block, edge.targetIndex);
+                for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex) {
+                    EdgeResult result = edgeResultAt(m_function, { block, edge.targetIndex, resultIndex });
+                    if (result.kind == EdgeResultKind::NarrowedOperand)
+                        pass(result.subject, parameters[firstParameter + resultIndex]);
+                }
+            });
+        }
+    }
+    m_arraysByPaths = WTF::move(arrays);
+    return *m_arraysByPaths;
+}
+
+bool FramePointerVerifier::mayBeFrameArrayIn(BlockID block, ValueID id)
+{
+    return arraysByPaths().quickGet(id.index()) && reachesAsFrameArray(id, block);
+}
+
+bool FramePointerVerifier::mayPointIntoFrameIn(BlockID block, ValueID id)
+{
+    if (!m_pointers.contains(id))
+        return false;
+    bool isArrayAtMost = m_pointersBesideArrays && !m_pointersBesideArrays->contains(id);
+    return !isArrayAtMost || mayBeFrameArrayIn(block, id);
+}
+
 void FramePointerVerifier::verifyTerminator(BlockID block)
 {
     const Terminator& terminator = m_function.at(block).terminator;
     if (terminator.kind == TerminatorKind::ReturnCall)
         verifyReturnCall(block, terminator.callOperand());
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (m_pointers.contains(operand))
+        if (mayPointIntoFrameIn(block, operand))
             verifyTerminatorOperand(block, terminator, operandIndex);
     });
 }
@@ -299,7 +405,7 @@ void FramePointerVerifier::verifyReturnCall(BlockID block, ValueID call)
 {
     bool passesFramePointer = false;
     m_function.at(call).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        passesFramePointer |= m_pointers.contains(operand) && !isLentTo(m_function, m_function.at(call), operandIndex);
+        passesFramePointer |= mayPointIntoFrameIn(block, operand) && !isLentTo(m_function, m_function.at(call), operandIndex);
     });
     if (passesFramePointer)
         report(InternalErrorKind::FramePointerInTailCall, block, call);

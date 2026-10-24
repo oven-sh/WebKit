@@ -1,0 +1,125 @@
+# An array that lies in a frame is joined with another value and the joined value is tested, as where the head of a callee was taken into its caller. The side of the test that no such array takes may do with the value what it likes. The side that it takes may not, nor may a test of another value open anything.
+# FORM: AsRead
+# RUN: frame-pointers flow
+# DIAGNOSTIC: FramePointerRetained 3
+# DIAGNOSTIC: FramePointerReturned 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = CallDirect v1 function=f3
+    v5 = CallDirect v1 function=f4
+    v6 = CallDirect v1 function=f5
+    Return
+}
+
+function f1 name="keptAndReturnedWhereItIsNoArray" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything storage=Frame
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3: anything):
+    v4 = TypeTest v3 testedType=Array
+    Branch v4 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v5: Array):
+    v6 = Integer integer=0
+    v7 = ElemGet v5, v6
+    Return v7
+  b5(v8: undefined|null|boolean|number|string|symbol|bigint|object):
+    PutModuleVariable v8 variable=g0
+    PutModuleVariable v3 variable=g0
+    v11 = ToBoolean v0
+    Branch v11 -> taken b6(), notTaken b7()
+  b6():
+    Return v3
+  b7():
+    Jump -> next b8(v8)
+  b8(v12: anything):
+    Return v12
+}
+
+function f2 name="keptWhereItIsAnArray" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything storage=Frame
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3: anything):
+    v4 = TypeTest v3 testedType=Array
+    Branch v4 -> taken b4(| 0), notTaken b5()
+  b4(v5: Array):
+    PutModuleVariable v5 variable=g0
+    Return
+  b5():
+    Return
+}
+
+function f3 name="anotherValueIsTested" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything storage=Frame
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3: anything):
+    v4 = TypeTest v0 testedType=Array
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return
+  b5():
+    PutModuleVariable v3 variable=g0
+    Return
+}
+
+function f4 name="bothSidesComeTogetherAgain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything storage=Frame
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3: anything):
+    v4 = TypeTest v3 testedType=Array
+    Branch v4 -> taken b4(), notTaken b4()
+  b4():
+    PutModuleVariable v3 variable=g0
+    Return
+}
+
+function f5 name="returnedWhereItIsAnArray" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything storage=Frame
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3: anything):
+    v4 = TypeTest v3 testedType=Array
+    Branch v4 -> taken b4(| 0), notTaken b5()
+  b4(v5: Array):
+    Jump -> next b6(v5)
+  b5():
+    Jump -> next b6(v0)
+  b6(v6: anything):
+    Return v6
+}

@@ -260,6 +260,7 @@ private:
 
     bool isExactCapable(ValueID) const;
     bool handsOperandOn(ValueID user, uint32_t operandIndex) const;
+    bool getsOnlyUnspecifiedValues(ValueID parameter) const;
     bool mayBeUntracked(ValueID) const;
     bool hasUntrackedSource(ValueID) const;
     void forEachExactAlias(ValueID, const Use&, NOESCAPE const ScopedLambda<void(ValueID)>&) const;

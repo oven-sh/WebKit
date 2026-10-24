@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTNativeCallExpectation.h"
+#include "AOTRemovableFeature.h"
 #include "AOTRuntimeValidation.h"
 #include "ArgList.h"
 #include "CodeSpecializationKind.h"
@@ -25,6 +26,9 @@ struct NativeCall {
     ArgList arguments;
 };
 
+// The table of built-ins leaves an executable together with the code generator. The other validators of the run time need neither.
+ALWAYS_INLINE bool validatesNativeCalls(VM& vm) { return validatesRuntime(vm) && !isFeatureRemoved(RemovableFeature::ImageCompiler); }
+
 // Compares what a native function does to its operands with what the table of built-ins declares and with what the compiler believed about the call.
 class NativeCallValidationScope {
     WTF_FORBID_HEAP_ALLOCATION;
@@ -33,13 +37,13 @@ public:
     // Takes what the caller left for the callee.
     ALWAYS_INLINE NativeCallValidationScope(VM& vm, const NativeCall& call)
     {
-        if (validatesRuntime(vm)) [[unlikely]]
+        if (validatesNativeCalls(vm)) [[unlikely]]
             open(vm, call, NativeCallExpectation::take(call.realm, call.callee));
     }
 
     ALWAYS_INLINE NativeCallValidationScope(VM& vm, const NativeCall& call, const NativeCallExpectation& expectation)
     {
-        if (validatesRuntime(vm)) [[unlikely]]
+        if (validatesNativeCalls(vm)) [[unlikely]]
             open(vm, call, expectation);
     }
 

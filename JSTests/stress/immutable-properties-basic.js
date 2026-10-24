@@ -95,6 +95,37 @@ function make() {
     shouldBe(snapshot(object), before);
 }
 
+// The two values are compared as a definition compares them: an equal string in another cell, a number read out of a list of doubles and NaN are the value that is held. -0 is not +0.
+{
+    let doubles = [0.5, 3, -0, NaN, 0];
+    let letter = "t";
+    let object = { text: "two", whole: 3, none: NaN, zero: 0, negativeZero: -0, big: 10n };
+    $vm.makePropertiesImmutable(object);
+    let before = snapshot(object);
+    (function () {
+        "use strict";
+        object.text = letter + "wo";
+        object.text = [letter, "w", "o"].join("");
+        object.text = "a two".slice(2);
+        object.whole = doubles[1];
+        object.none = doubles[3];
+        object.none = doubles[4] / doubles[4];
+        object.zero = doubles[4];
+        object.negativeZero = doubles[2];
+        object.big = 5n + 5n;
+    })();
+    shouldBe(Reflect.set(object, "text", letter + "wo"), true);
+    shouldBe(Reflect.set(object, "whole", doubles[1]), true);
+    shouldBe(Reflect.set(object, "zero", doubles[2]), false);
+    shouldThrow(() => { "use strict"; object.zero = doubles[2]; }, TypeError);
+    shouldThrow(() => { "use strict"; object.negativeZero = doubles[4]; }, TypeError);
+    shouldThrow(() => { "use strict"; object.text = letter + "wO"; }, TypeError);
+    shouldThrow(() => { "use strict"; object.whole = "3"; }, TypeError);
+    shouldThrow(() => { "use strict"; object.big = 10; }, TypeError);
+    shouldBe(snapshot(object), before);
+    shouldBe(Object.is(object.zero, 0) && Object.is(object.negativeZero, -0), true);
+}
+
 // [[DefineOwnProperty]]: writable and configurable may go from true to false, so that Object.freeze() and Object.seal() succeed: the value stays what it is.
 for (let narrower of [{ writable: false }, { configurable: false }, { writable: false, configurable: false }, { value: 1, writable: false }]) {
     let object = $vm.makePropertiesImmutable(make());

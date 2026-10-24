@@ -17,6 +17,7 @@ namespace JSC {
 class JSCell;
 class JSGlobalObject;
 class JSObject;
+class VM;
 
 namespace AOT {
 
@@ -39,6 +40,9 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
 enum class ChainLookups : uint8_t { Unknown, Ordinary };
 
 ChainLookups classifyChainLookups(JSObject* base);
+
+// A leaf operation cannot collect: a store by key makes a Structure only out of the block that the allocator holds.
+bool hasStructureAtHand(VM&);
 
 } } // namespace JSC::AOT
 

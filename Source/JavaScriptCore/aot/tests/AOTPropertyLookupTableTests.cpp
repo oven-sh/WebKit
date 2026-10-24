@@ -870,7 +870,8 @@ void validatorAcceptsInheritedEntries()
     };
     AOT_TEST_CHECK(isInlineOffset(offsetOf(inlineAccessor)) && !isInlineOffset(offsetOf(outOfLineValue)));
 
-    bool isInCage = vm.heap.cage().contains(holder);
+    // The table names a holder by its distance from the base of the cage. Without a cage the base is zero, and some systems put cells within that distance of it.
+    bool canBeNamed = MarkedBlockCage::baseOf(holder) == vm.heap.cage().base();
     Structure* owner = fixture.createStructure(holder);
     FiledSlots slots { fixture, owner };
     for (uint32_t number : { inlineValue, outOfLineValue, valuePastPackedWordIndex })
@@ -880,7 +881,7 @@ void validatorAcceptsInheritedEntries()
         slots.file(number, SlotAccess::Store, accessorSlot(owner, Kind::Setter, holder, offsetOf(number)));
     }
     for (uint32_t number : { inlineValue, inlineAccessor, outOfLineValue, outOfLineAccessor })
-        AOT_TEST_CHECK(!!fixture.front().find(owner->id(), number, SlotAccess::Read) == isInCage);
+        AOT_TEST_CHECK(!!fixture.front().find(owner->id(), number, SlotAccess::Read) == canBeNamed);
     AOT_TEST_CHECK(!fixture.front().find(owner->id(), valuePastPackedWordIndex, SlotAccess::Read));
 
     AOT_TEST_CHECK(!fixture.sweep(CollectionScope::Full));

@@ -1299,6 +1299,16 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         readWhatNamesOfProgramMayHaveHidden(chain, result, builtinGetters);
     if (mayHoldUndeclaredProperty(chain.objects, key))
         builtinGetters.append(m_tables.undescribedNativeCode());
+    // Whoever has the prototype object of a class has the class, under `constructor`.
+    if (key.keyClass == HeapKeyClass::Unknown || (key.keyClass == HeapKeyClass::Name && key.name == m_tables.prototypeKey())) {
+        Members classes;
+        m_context.forEachMember(m_context.restrict(chain.objects, holdersOfUndeclaredPropertiesUnder(key)), [&](ValueFlowObjectID holder) {
+            BuiltinID builtin = m_universe.builtinOf(holder);
+            if (builtin && m_builtins.at(builtin).kind == BuiltinKind::Constructor)
+                classes.append(holder);
+        });
+        add(ValueFlowProgramNodes::escaped(), m_context.maker().of(classes.span()));
+    }
 
     // The method by which a class of the host prints itself calls a function of a start-up module, whoever calls the method: the formatter, or the program, which has it from here.
     for (BuiltinName name : m_builtins.namesOfHostMethodsCallingStartupLoads()) {

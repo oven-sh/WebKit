@@ -577,13 +577,14 @@ bool JSObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prop
     return putInlineForJSObject(cell, globalObject, propertyName, value, slot);
 }
 
-static bool holdsInWritableProperty(VM& vm, JSObject* object, PropertyName propertyName, JSValue value)
+// As a definition compares the two: an equal string in another cell and a number in another form are the value that is held.
+static bool holdsInWritableProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, JSValue value)
 {
     unsigned attributes;
-    PropertyOffset offset = object->structure()->get(vm, propertyName, attributes);
+    PropertyOffset offset = object->structure()->get(globalObject->vm(), propertyName, attributes);
     if (!isValidOffset(offset) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
         return false;
-    return object->getDirect(offset) == value;
+    return sameValue(globalObject, object->getDirect(offset), value);
 }
 
 // `object.__proto__ = value` where the put finds the accessor of a locked Object.prototype, which is the original one. Its setter leaves the object as it is
@@ -625,7 +626,9 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     // canPerformFastPutInlineExcludingProto() says no for such a receiver. A put of the value the property holds changes nothing and
     // succeeds, like a definition that changes nothing: `Object.assign = Object.assign || polyfill`.
     if (structure()->isImmutableProperty(propertyName.uid()) && !isThisValueAltered(slot, this)) [[unlikely]] {
-        if (holdsInWritableProperty(vm, this, propertyName, value) || changesNothingThroughSetterOfPrototype(vm, globalObject, this, propertyName, value))
+        bool holdsValue = holdsInWritableProperty(globalObject, this, propertyName, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (holdsValue || changesNothingThroughSetterOfPrototype(vm, globalObject, this, propertyName, value))
             return true;
         RefusalIs refusalIs = slot.context() == PutPropertySlot::ReflectSet || isStoreRefusedByLanguage(globalObject, this, propertyName) ? RefusalIs::Answered : RefusalIs::ToldToOperation;
         return refuseChangeOfImmutableProperty(globalObject, scope, slot.isStrictMode(), refusalIs, this, propertyName, ReadonlyPropertyWriteError);
