@@ -5858,7 +5858,14 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
             // Bound function itself is completely wiped. And we should behave as if the current caller is directly calling this function.
             // If the current caller is calling the callee in a tail-call form, then it should be a tail-call.
-            Terminality terminality = handleCall(resultOperand, callOp, callOp == Call ? InlineCallFrame::BoundFunctionCall : InlineCallFrame::BoundFunctionTailCall, osrExitIndex, jsConstant(boundFunction->targetFunction()), numberOfParameters - 1, newRegisterOffset, CallLinkStatus(CallVariant(boundFunction->targetFunction())), prediction, nullptr);
+            InlineCallFrame::Kind targetKind = callOp == Call ? InlineCallFrame::BoundFunctionCall : InlineCallFrame::BoundFunctionTailCall;
+            // The kind picks the return PC of the target's frame after OSR exit. Array#sort's comparator must keep returning
+            // to arraySortComparatorReturnTrampoline: the current instruction is the call to sort, not a call to the comparator.
+            if (kind == InlineCallFrame::ArraySortComparatorCall) {
+                ASSERT(callOp == Call);
+                targetKind = InlineCallFrame::ArraySortComparatorCall;
+            }
+            Terminality terminality = handleCall(resultOperand, callOp, targetKind, osrExitIndex, jsConstant(boundFunction->targetFunction()), numberOfParameters - 1, newRegisterOffset, CallLinkStatus(CallVariant(boundFunction->targetFunction())), prediction, nullptr);
             didSetResult = true;
             return terminality == NonTerminal ? CallOptimizationResult::Inlined : CallOptimizationResult::InlinedTerminal;
         }
